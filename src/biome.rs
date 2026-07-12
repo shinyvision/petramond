@@ -26,7 +26,6 @@ pub enum Biome {
     // serialized into chunk bytes). ---
     RedwoodForest,
     OldGrowthTaiga,
-    CherryGrove,
     Meadow,
     Grove,
     SnowySlopes,

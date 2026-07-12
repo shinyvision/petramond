@@ -99,6 +99,7 @@ impl Project {
                 format: FORMAT_VERSION,
                 kind: kind.to_owned(),
                 class: contracts::class_for(kind),
+                compact_below_w: None,
                 root,
             },
             editor: EditorSettings::default(),

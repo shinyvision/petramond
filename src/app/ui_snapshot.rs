@@ -17,9 +17,8 @@ pub(super) fn build(game: Option<&Game>, screen: AppScreen, cursor_px: (f32, f32
 
     let menu = game.menu_read_model();
     let inv = menu.inventory;
-    let craft = menu.craft;
     snapshot.active = inv.active_slot();
-    snapshot.result = craft.result().copied().map(stack_tuple);
+    snapshot.craft_output = menu.craft_output.map(stack_tuple);
     snapshot.cursor = inv.cursor().copied().map(stack_tuple);
     snapshot.furnace = menu.furnace;
     snapshot.chest = menu.chest;
@@ -32,10 +31,6 @@ pub(super) fn build(game: Option<&Game>, screen: AppScreen, cursor_px: (f32, f32
     for (i, slot) in snapshot.slots.iter_mut().enumerate() {
         *slot = inv.slot(i).copied().map(stack_tuple);
     }
-    for (slot, cell) in snapshot.craft.iter_mut().zip(craft.cells()) {
-        *slot = cell.as_ref().copied().map(stack_tuple);
-    }
-
     snapshot
 }
 

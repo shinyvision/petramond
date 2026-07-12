@@ -58,7 +58,3 @@ pub(crate) fn redwood_grove(rng: &mut FeatureRng) -> &'static ConfiguredFeature 
     }
 }
 
-pub(crate) fn cherry(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
-    let _ = rng.next_i32(0, 99);
-    &features::CHERRY
-}

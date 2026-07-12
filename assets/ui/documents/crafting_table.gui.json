@@ -1,83 +1,153 @@
 {
-    "format": 1,
-    "kind": "petramond:crafting_table",
-    "class": "container",
-    "root": {
-        "type": "frame",
-        "style": "panel.large",
+  "format": 1,
+  "kind": "petramond:crafting_table",
+  "class": "container",
+  "root": {
+    "type": "column",
+    "style": "panel.large",
+    "layout": {
+        "w": 220,
+      "pad": [4, 3, 4, 4],
+      "gap": 4,
+      "align": "stretch",
+      "anchor": { "h": "center", "v": "center" }
+    },
+    "children": [
+      { "type": "label", "text": "Crafting Table" },
+      {
+        "type": "row",
+        "layout": { "gap": 2, "align": "stretch" },
+        "children": [
+          {
+            "type": "text_input",
+            "id": "craft_search",
+            "placeholder": "Search recipes...",
+            "max_chars": 64,
+            "layout": { "w": { "grow": 1 } },
+            "bind": { "text": "craft_search" }
+          },
+          {
+            "type": "toggle",
+            "id": "craft_filter",
+            "style": "button.toggle",
+            "icon": "icon.craft_filter",
+            "layout": { "w": 16 },
+            "bind": { "value": "craft_filter_on" }
+          }
+        ]
+      },
+      {
+        "type": "label",
+        "text": "No matching recipes",
+        "style": "label.muted",
+        "bind": { "visible": "no_craft_results" }
+      },
+      {
+        "type": "scroll",
+        "id": "craft_scroll",
+        "axis": "vertical",
+        "style": "panel.inset",
         "layout": {
-            "pad": [
-                4,
-                2,
-                4,
-                4
-            ],
-            "gap": 6
+          "h": {
+            "grow": 1
+          },
+          "min_h": 48,
+          "pad": [1, 1, 1, 1]
         },
         "children": [
-            {
-                "type": "label",
-                "text": "Crafting"
+          {
+            "type": "list",
+            "id": "craft_recipes_list",
+            "layout": {
+              "align": "stretch",
+              "gap": 1
             },
-            {
-                "type": "row",
+            "bind": {
+              "items": "craft_recipes",
+              "selected": "craft_recipe_sel"
+            },
+            "children": [
+              {
+                "type": "button",
+                "id": "recipe",
                 "layout": {
-                    "gap": 10,
-                    "align": "center",
-                    "justify": "center"
+                  "w": { "grow": 1 },
+                  "h": 34,
+                  "pad": [3, 3, 3, 3],
+                  "gap": 4,
+                  "dir": "row",
+                  "align": "center"
                 },
+                "bind": { "enabled": "enabled" },
                 "children": [
-                    {
-                        "type": "slot_grid",
-                        "role": "craft_input",
-                        "cols": 3,
-                        "rows": 3
+                  {
+                    "type": "hook",
+                    "id": "recipe_result",
+                    "layout": { "w": 20, "h": 20 }
+                  },
+                  {
+                    "type": "column",
+                    "layout": {
+                      "w": { "grow": 1 },
+                      "gap": 2,
+                      "align": "stretch"
                     },
-                    {
-                        "type": "gauge",
-                        "id": "craft_arrow",
-                        "mode": "grow_lr",
-                        "style": "gauge.arrow",
-                        "bind": {
-                            "value": "always_full"
-                        },
-                        "layout": {
-                            "w": 24,
-                            "h": 17
-                        }
-                    },
-                    {
-                        "type": "slot",
-                        "role": "craft_result"
-                    }
-                ]
-            },
-            {
-                "type": "spacer",
-                "layout": {
-                    "h": 2
-                }
-            },
-            {
-                "type": "slot_grid",
-                "role": "player_inv",
-                "cols": 9,
-                "rows": 3
-            },
-            {
-                "type": "slot_grid",
-                "role": "hotbar",
-                "cols": 9,
-                "rows": 1,
-                "layout": {
-                    "margin": [
-                        0,
-                        2,
-                        0,
-                        0
+                    "children": [
+                      {
+                        "type": "label",
+                        "bind": { "text": "name" }
+                      },
+                      {
+                        "type": "hook",
+                        "id": "recipe_ingredients",
+                        "layout": { "w": { "grow": 1 }, "h": 12 }
+                      }
                     ]
-                }
-            }
+                  }
+                ]
+              }
+            ]
+          }
         ]
-    }
+      },
+      {
+        "type": "row",
+        "layout": { "gap": 3, "align": "center" },
+        "children": [
+          {
+            "type": "slot",
+            "role": "craft_result"
+          },
+          {
+            "type": "button",
+            "id": "craft",
+            "text": "CRAFT",
+            "style": "button.success",
+            "layout": { "w": { "grow": 1 } },
+            "bind": { "enabled": "can_craft" }
+          }
+        ]
+      },
+      { "type": "label", "text": "Inventory" },
+      {
+        "type": "column",
+        "layout": { "align": "center" },
+        "children": [
+          {
+            "type": "slot_grid",
+            "role": "player_inv",
+            "cols": 9,
+            "rows": 3
+          },
+          {
+            "type": "slot_grid",
+            "role": "hotbar",
+            "cols": 9,
+            "rows": 1,
+            "layout": { "margin": [0, 2, 0, 0] }
+          }
+        ]
+      }
+    ]
+  }
 }

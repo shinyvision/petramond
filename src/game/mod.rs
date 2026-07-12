@@ -175,6 +175,9 @@ pub struct Game {
     /// The client's replicated MENU-session view (`MenuSyncMsg`, on-change):
     /// the EXCLUSIVE source `menu_read_model` renders container screens from.
     menu_view: replicated::MenuView,
+    /// Immutable enabled player-crafting catalog agreed at join. Remote
+    /// clients use the server's name-addressed rows, never local pack files.
+    crafting: crate::crafting::CraftingCatalog,
     /// This frame's replicated tick events (world-anchored + self one-shots +
     /// sound queues), buffered by `apply_tick_update` and drained once per
     /// `Game::tick` into `GameEvents`.
@@ -674,6 +677,51 @@ impl Game {
         });
     }
 
+    /// Request one explicit craft by stable recipe key (`bulk` = shift-craft
+    /// the maximum possible). The authoritative server revalidates station,
+    /// ingredients, and output fit.
+    pub fn craft_recipe(&mut self, recipe: &str, bulk: bool) {
+        let request_id = self.prediction.begin_track_only();
+        self.outbox.push(ClientToServer::CraftRecipe {
+            recipe: recipe.to_owned(),
+            bulk,
+            request_id,
+        });
+    }
+
+    /// The recipe browser's craftable-only filter preference (mirrored from
+    /// the world's player data at join; client-owned afterwards).
+    pub fn craft_craftable_only(&self) -> bool {
+        self.player.craft_craftable_only
+    }
+
+    /// Flip the craftable-only filter locally and tell the server, which
+    /// stores it on the player so it persists with the world's player data.
+    pub fn set_craft_craftable_only(&mut self, craftable_only: bool) {
+        if self.player.craft_craftable_only == craftable_only {
+            return;
+        }
+        self.player.craft_craftable_only = craftable_only;
+        self.outbox
+            .push(ClientToServer::SetCraftFilter { craftable_only });
+    }
+
+    pub fn crafting_catalog(&self) -> &crate::crafting::CraftingCatalog {
+        &self.crafting
+    }
+
+    pub(crate) fn replicated_inventory_revision(&self) -> u64 {
+        self.self_view.inventory_revision
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_crafting_catalog_for_test(
+        &mut self,
+        catalog: crate::crafting::CraftingCatalog,
+    ) {
+        self.crafting = catalog;
+    }
+
     /// Whether a click's outcome is container-independent — the ONLY clicks
     /// the client may predict without a local container mirror, because the
     /// shared apply (`ContainerMenu::click`) reroutes the rest by the open
@@ -742,14 +790,14 @@ impl Game {
 
     /// Read-only state needed to build the UI snapshot for the LOCAL player's
     /// current menu — assembled ENTIRELY from the replicated stores: the
-    /// inventory from `SelfView`, the menu-session views (craft grid, furnace,
+    /// inventory from `SelfView`, the menu-session views (craft output, furnace,
     /// chest, workbench, mod GUI slots + state map) from the `MenuView` the
     /// per-tick `MenuSyncMsg`s feed. No server-session reads.
     pub fn menu_read_model(&self) -> crate::server::menu::MenuReadModel<'_> {
         let view = &self.menu_view;
         crate::server::menu::MenuReadModel {
             inventory: &self.self_view.inventory,
-            craft: &view.craft,
+            craft_output: view.craft_output,
             furnace: view.furnace,
             chest: view.chest,
             workbench: view.workbench.clone(),
@@ -758,23 +806,12 @@ impl Game {
         }
     }
 
-    // Menu sessions open SERVER-SIDE on the tick (at the interaction / mod
-    // action / OpenInventory request sites) since C2c-iii. The App's open_*
-    // calls below keep their historical signatures: `open_crafting(2)` (the E
-    // key) is the one genuine REQUEST — it sends `PlayerAction::OpenInventory`
-    // — while the rest are client-side ACKNOWLEDGMENTS the App makes when it
-    // receives the matching `GameEvents.open_*` one-shot (by which point the
-    // server session is already open). Since Phase D the client holds no
-    // session state to assert against, so the acks are plain no-ops.
+    // Block-menu sessions open server-side before their `OpenScreen` event.
+    // Inventory is the exception: the E key explicitly requests its session.
 
-    /// The E-key inventory screen (`cols == 2`): REQUEST the server open the
-    /// 2×2 crafting session on the next tick. `cols == 3` is the App's ack of
-    /// a server-opened crafting-table session (no-op; see above).
-    pub fn open_crafting(&mut self, cols: usize) {
-        if cols <= 2 {
-            self.outbox
-                .push(ClientToServer::Action(PlayerAction::OpenInventory));
-        }
+    pub fn request_open_inventory(&mut self) {
+        self.outbox
+            .push(ClientToServer::Action(PlayerAction::OpenInventory));
     }
 
     /// Ack of a server-opened furnace session at `pos` (no-op; see above).
@@ -796,7 +833,7 @@ impl Game {
     }
 
     /// Close the LOCAL player's open menu session. The server-side close
-    /// (cursor stash, craft-grid return, viewer release) runs ON THE TICK the
+    /// (cursor/output stash, transient-input return, viewer release) runs ON THE TICK the
     /// message lands on; there is no client-side menu state to clear — the App
     /// owns which screen is up.
     pub fn close_open_menu(&mut self) {

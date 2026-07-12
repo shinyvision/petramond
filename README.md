@@ -40,8 +40,12 @@ feels like yours.
   recipes, sounds, GUIs, and world behavior.
 - There's technically multiplayer.
 
-## No recipe book
-Crafting recipes are less discoverable at this moment. [You can look here](https://github.com/shinyvision/petramond/blob/main/assets/recipes.json) and [here](https://github.com/shinyvision/petramond/blob/main/mods-src/kitchen/pack/recipes.json) to see how to craft things. It's not great, but most recipes look like ones from similar voxel sandbox games. Just remember you need coal at the bottom of a furnace to craft it.
+## Crafting recipes
+
+Open your inventory or a crafting table to browse the recipes available there.
+The list is searchable, shows ingredient icons and quantities, and disables recipes
+you cannot currently afford. Select one and press **CRAFT**; crafting tables also
+offer the recipes that require a table.
 
 ## Current Status
 

@@ -169,18 +169,12 @@ pub(crate) fn contract_for(kind: GuiKind) -> SlotContract {
             ("player_inv", 27),
             ("hotbar", 9),
         ]),
-        GuiKind::Inventory => SlotContract::new(&[
-            ("player_inv", 27),
-            ("hotbar", 9),
-            ("craft_input", 4),
-            ("craft_result", 1),
-        ]),
-        GuiKind::CraftingTable => SlotContract::new(&[
-            ("player_inv", 27),
-            ("hotbar", 9),
-            ("craft_input", 9),
-            ("craft_result", 1),
-        ]),
+        GuiKind::Inventory => {
+            SlotContract::new(&[("player_inv", 27), ("hotbar", 9), ("craft_result", 1)])
+        }
+        GuiKind::CraftingTable => {
+            SlotContract::new(&[("player_inv", 27), ("hotbar", 9), ("craft_result", 1)])
+        }
         GuiKind::Furnace => SlotContract::new(&[
             ("player_inv", 27),
             ("hotbar", 9),
@@ -360,8 +354,8 @@ mod tests {
         // mis-routing clicks; every slot-bearing kind must pin its counts.
         for (kind, total) in [
             (GuiKind::Chest, 27 + 27 + 9),
-            (GuiKind::Inventory, 27 + 9 + 4 + 1),
-            (GuiKind::CraftingTable, 27 + 9 + 9 + 1),
+            (GuiKind::Inventory, 27 + 9 + 1),
+            (GuiKind::CraftingTable, 27 + 9 + 1),
             (GuiKind::Furnace, 27 + 9 + 3),
             (GuiKind::Hotbar, 9),
             (GuiKind::FurnitureWorkbench, 27 + 9 + 1 + 21),
@@ -411,6 +405,142 @@ mod tests {
         for kind in [GuiKind::Sleep, GuiKind::Death] {
             assert!(doc_for(kind).is_some(), "{kind:?} document loads");
         }
+    }
+
+    #[test]
+    fn crafting_browser_documents_ship_and_validate() {
+        for kind in [GuiKind::Inventory, GuiKind::CraftingTable] {
+            let doc = doc_for(kind).unwrap_or_else(|| panic!("{kind:?} document loads"));
+            assert!(
+                doc.doc
+                    .role_slots()
+                    .iter()
+                    .all(|(role, _)| role != "craft_input"),
+                "the removed grid role must not return"
+            );
+        }
+    }
+
+    #[test]
+    fn crafting_table_browser_shrinks_before_inventory_leaves_the_viewport() {
+        use petramond_ui::{
+            FrameArgs, FrameOutput, FrameState, NoImages, UiMap, UiRuntime, UiState, UiValue,
+        };
+
+        let doc = doc_for(GuiKind::CraftingTable).expect("crafting table document loads");
+        let rows = (0..12)
+            .map(|_| {
+                let mut row = UiMap::new();
+                row.insert("name".into(), UiValue::Str("Recipe".into()));
+                row.insert("enabled".into(), UiValue::Bool(true));
+                row
+            })
+            .collect();
+        let mut state = UiState::new();
+        state.set("craft_recipes", UiValue::List(Arc::new(rows)));
+        state.set("no_craft_results", UiValue::Bool(false));
+        state.set("can_craft", UiValue::Bool(false));
+
+        let runtime = UiRuntime::new(doc.doc, crate::gui::doc_theme::theme());
+        let mut frame_state = FrameState::new();
+        let mut output = FrameOutput::default();
+        runtime.frame(
+            FrameArgs {
+                screen: (1280, 720),
+                scale: 3,
+                now: 0.0,
+                state: &state,
+                input: &[],
+                clipboard: None,
+                images: &NoImages,
+                dim: None,
+                preview: None,
+            },
+            &mut frame_state,
+            &mut output,
+        );
+
+        assert!(
+            output
+                .slots
+                .iter()
+                .all(|slot| slot.rect.y >= 0 && slot.rect.y + slot.rect.h <= 720),
+            "responsive recipe scroll must keep every inventory slot on-screen"
+        );
+    }
+
+    #[test]
+    fn inventory_browser_shrinks_before_inventory_leaves_the_viewport() {
+        use petramond_ui::{
+            FrameArgs, FrameOutput, FrameState, NoImages, UiMap, UiRuntime, UiState, UiValue,
+        };
+
+        let doc = doc_for(GuiKind::Inventory).expect("inventory document loads");
+        let rows = (0..12)
+            .map(|_| {
+                let mut row = UiMap::new();
+                row.insert(
+                    "name".into(),
+                    UiValue::Str("An intentionally long recipe name".into()),
+                );
+                row.insert("enabled".into(), UiValue::Bool(true));
+                row
+            })
+            .collect();
+        let mut state = UiState::new();
+        state.set("craft_recipes", UiValue::List(Arc::new(rows)));
+        state.set("no_craft_results", UiValue::Bool(false));
+        state.set("can_craft", UiValue::Bool(false));
+
+        let runtime = UiRuntime::new(doc.doc, crate::gui::doc_theme::theme());
+        let mut frame_state = FrameState::new();
+        let mut output = FrameOutput::default();
+        runtime.frame(
+            FrameArgs {
+                screen: (960, 720),
+                scale: 3,
+                now: 0.0,
+                state: &state,
+                input: &[],
+                clipboard: None,
+                images: &NoImages,
+                dim: None,
+                preview: None,
+            },
+            &mut frame_state,
+            &mut output,
+        );
+
+        assert!(
+            output
+                .slots
+                .iter()
+                .all(|slot| slot.rect.x >= 0 && slot.rect.x + slot.rect.w <= 960),
+            "responsive recipe panel must keep every inventory slot on-screen"
+        );
+        assert!(
+            output
+                .slots
+                .iter()
+                .all(|slot| slot.rect.y >= 0 && slot.rect.y + slot.rect.h <= 720),
+            "the compact stacked form must keep every inventory slot on-screen"
+        );
+        // Below the compact breakpoint the two panels stack: crafting first,
+        // then the inventory grids UNDER the CRAFT button, never beside it.
+        let craft = output
+            .named
+            .iter()
+            .find(|(key, _)| key.id == "craft")
+            .expect("craft button solves")
+            .1;
+        assert!(
+            output
+                .slots
+                .iter()
+                .filter(|slot| slot.role == "player_inv" || slot.role == "hotbar")
+                .all(|slot| slot.rect.y >= craft.y + craft.h),
+            "small screens stack the crafting panel above the inventory panel"
+        );
     }
 
     #[test]

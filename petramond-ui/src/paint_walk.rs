@@ -78,6 +78,11 @@ impl PaintCtx<'_> {
             .as_ref()
             .is_some_and(|(k, _)| Some(k) == inst.key.as_ref())
             && hovered)
+            // The frame a click fires keeps the pressed face: the host applies
+            // the event (e.g. a list selection) only before the NEXT frame, so
+            // without this bridge a selected row would flash unpressed for one
+            // frame between release and the rebound selection.
+            || (inst.key.is_some() && self.fs.clicked.as_ref() == inst.key.as_ref())
             || self
                 .preview
                 .is_some_and(|pv| pv.pressed.as_ref() == inst.key.as_ref() && inst.key.is_some());
@@ -117,7 +122,7 @@ impl PaintCtx<'_> {
                 } else if *wrap {
                     p.text_wrapped(text, rect, color, clip);
                 } else {
-                    p.text(text, rect.x, rect.y, color, clip);
+                    p.text_ellipsized(text, rect, color, clip);
                 }
             }
             NodeKind::Image { fit, .. } => {
@@ -160,9 +165,10 @@ impl PaintCtx<'_> {
                 }
             }
             NodeKind::Button { icon, .. } => {
+                let selected = row_state == Some("selected");
                 let state = if !inst.enabled {
                     "disabled"
-                } else if pressed {
+                } else if pressed || selected {
                     "pressed"
                 } else if hovered {
                     "hover"
@@ -220,7 +226,7 @@ impl PaintCtx<'_> {
                     );
                 }
             }
-            NodeKind::Checkbox | NodeKind::Toggle => {
+            NodeKind::Checkbox | NodeKind::Toggle { .. } => {
                 let state = if !inst.enabled {
                     "disabled"
                 } else if inst.value_bool.unwrap_or(false) {
@@ -238,6 +244,25 @@ impl PaintCtx<'_> {
                         [1.0; 4],
                         clip,
                     );
+                }
+                if let NodeKind::Toggle { icon: Some(icon) } = &inst.node.kind {
+                    let icon_part = self.theme.part(icon);
+                    let (icon_w, icon_h) = icon_part.map(|p| p.natural()).unwrap_or((0, 0));
+                    if let Some(face) = icon_part.and_then(|pt| pt.face("default")) {
+                        p.sprite(
+                            TexId::ThemeAtlas,
+                            RectI {
+                                x: rect.x + (rect.w - icon_w) / 2,
+                                y: rect.y + (rect.h - icon_h) / 2,
+                                w: icon_w,
+                                h: icon_h,
+                            },
+                            face.rect,
+                            atlas,
+                            [1.0; 4],
+                            clip,
+                        );
+                    }
                 }
             }
             NodeKind::Slider { min, max, .. } => {
@@ -505,9 +530,12 @@ impl PaintCtx<'_> {
         let is_list = matches!(inst.node.kind, NodeKind::List);
         for (row, &c) in inst.children.iter().enumerate() {
             let child_row_state = if is_list {
-                let selected = inst.selected == Some(row as i32);
-                let hovered_row = self.row_hover == Some((i, row as u32));
-                Some(if selected {
+                let child_enabled = self.tree.get(c).enabled;
+                let selected = child_enabled && inst.selected == Some(row as i32);
+                let hovered_row = child_enabled && self.row_hover == Some((i, row as u32));
+                Some(if !child_enabled {
+                    "disabled"
+                } else if selected {
                     "selected"
                 } else if hovered_row {
                     "hover"

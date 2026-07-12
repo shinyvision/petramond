@@ -39,7 +39,7 @@ pub use input::{
 pub use layout::{grid_cell, solve, LayoutEnv, RectI, SlotMetrics, Solved};
 pub use paint::{Batch, DrawList, Painter, TexId, UiVertex};
 pub use paint_walk::{DocImages, NoImages};
-pub use runtime::{FrameArgs, FrameOutput, SlotRectOut, UiRuntime};
+pub use runtime::{FrameArgs, FrameOutput, HookRectOut, SlotRectOut, UiRuntime};
 pub use state::{UiMap, UiState, UiValue};
 pub use text_edit::{TextClipboard, TextInput, TextInputRender};
 pub use theme::{ImageData, Part, PartFace, Theme, ThemeEnv, ThemeError};

@@ -159,6 +159,16 @@ impl App {
     /// legacy hit-test used. Off-panel presses throw the cursor stack.
     pub(super) fn drive_doc_menu(&mut self, kind: GuiKind, screen: (u32, u32), now: f64) {
         self.ui.ensure_active(kind);
+        let crafting_station = match kind {
+            GuiKind::Inventory => Some(crate::crafting::CraftingStation::Inventory),
+            GuiKind::CraftingTable => Some(crate::crafting::CraftingStation::CraftingTable),
+            _ => None,
+        };
+        if let (Some(station), Some(game)) = (crafting_station, self.game.as_ref()) {
+            let mut state = std::mem::take(self.ui.state_mut());
+            self.crafting_browser.populate(game, station, &mut state);
+            *self.ui.state_mut() = state;
+        }
         if let Some(game) = self.game.as_ref() {
             let menu = game.menu_read_model();
             let furnace = menu.furnace;
@@ -186,6 +196,16 @@ impl App {
             petramond_ui::PointerButton::Secondary => crate::controls::PointerButton::Secondary,
         };
         for ev in self.ui.take_events() {
+            let handled_crafting = if crafting_station.is_some() {
+                self.game
+                    .as_mut()
+                    .is_some_and(|game| self.crafting_browser.handle(game, &ev, modifier_shift))
+            } else {
+                false
+            };
+            if handled_crafting {
+                continue;
+            }
             match ev {
                 // Widget (mod GUI button) clicks: primary only, like the
                 // legacy dispatch.

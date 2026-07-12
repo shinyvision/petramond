@@ -402,6 +402,50 @@ impl Inventory {
     pub fn raw_slots(&self) -> &[Option<ItemStack>; TOTAL_SLOTS] {
         &self.slots
     }
+
+    /// Atomically decrement the planned quantities from concrete inventory
+    /// slots. The crafting planner computes this against the same inventory
+    /// borrow immediately before commit; validation here keeps the mutation
+    /// all-or-nothing if a future caller ever hands in a stale plan.
+    pub(crate) fn consume_slots(&mut self, takes: &[(usize, u8)]) -> bool {
+        let mut totals = [0u16; TOTAL_SLOTS];
+        for &(slot, count) in takes {
+            let Some(total) = totals.get_mut(slot) else {
+                return false;
+            };
+            if count == 0 {
+                return false;
+            }
+            let Some(next) = total.checked_add(u16::from(count)) else {
+                return false;
+            };
+            *total = next;
+        }
+        if totals.iter().enumerate().any(|(slot, &count)| {
+            count > 0
+                && self.slots[slot]
+                    .as_ref()
+                    .is_none_or(|stack| u16::from(stack.count) < count)
+        }) {
+            return false;
+        }
+        if takes.is_empty() {
+            return true;
+        }
+        for (slot, count) in totals.into_iter().enumerate() {
+            if count == 0 {
+                continue;
+            }
+            let stack = self.slots[slot].as_mut().expect("plan validated above");
+            stack.count -= count as u8;
+            if stack.count == 0 {
+                self.slots[slot] = None;
+            }
+        }
+        self.bump_revision();
+        true
+    }
+
     pub fn from_parts(
         slots: [Option<ItemStack>; TOTAL_SLOTS],
         cursor: Option<ItemStack>,

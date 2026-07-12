@@ -141,7 +141,7 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
         "rotimage" => NodeKind::Rotimage { image: "image.png".into(), pivot: None },
         "button" => NodeKind::Button { text: Some("BUTTON".into()), icon: None },
         "checkbox" => NodeKind::Checkbox,
-        "toggle" => NodeKind::Toggle,
+        "toggle" => NodeKind::Toggle { icon: None },
         "slider" => NodeKind::Slider { min: 0.0, max: 100.0, step: None },
         "text_input" => NodeKind::TextInput { placeholder: None, max_chars: 64 },
         "scroll" => NodeKind::Scroll { axis: petramond_ui::ScrollAxis::Vertical },

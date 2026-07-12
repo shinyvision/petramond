@@ -35,8 +35,8 @@ impl Feature for TreeFeature {
     }
 }
 
-/// Big "fancy oak": a SINGLE-column trunk (the 2×2
-/// trunk belongs to dark oak / jungle, not oak), a handful of limbs angling up
+/// Big "fancy oak": a SINGLE-column trunk (a 2×2
+/// trunk would read as jungle, not oak), a handful of limbs angling up
 /// and out to leaf blobs, and a rounded central crown of stacked leaf discs.
 pub struct GiantOakFeature {
     pub log: Block,
@@ -108,7 +108,7 @@ impl Feature for GiantOakFeature {
 /// tipped with a rounded leaf clump, under a rounded central crown. The
 /// overlapping clumps read as one irregular puffy canopy instead of the boxy
 /// stacked-square blob. One struct expresses every broadleaf species (oak,
-/// birch, jungle, dark oak, cherry) as data — width, limb count, clump size —
+/// birch, jungle) as data — width, limb count, clump size —
 /// in `data::features`.
 ///
 /// Determinism/seam contract: draw order is fixed (height, then per-limb

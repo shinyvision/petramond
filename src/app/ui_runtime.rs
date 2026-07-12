@@ -321,6 +321,43 @@ impl AppUi {
         )
     }
 
+    /// Recipe-browser host hooks from the same solved frame as `doc_slots`.
+    /// Unknown hook ids and non-list instances are deliberately ignored.
+    pub fn doc_hooks(&self) -> std::sync::Arc<Vec<crate::gui::DocHook>> {
+        std::sync::Arc::new(
+            self.out
+                .hooks
+                .iter()
+                .filter_map(|hook| {
+                    let kind = match hook.key.id.as_str() {
+                        "recipe_result" => crate::gui::DocHookKind::CraftRecipeResult,
+                        "recipe_ingredients" => crate::gui::DocHookKind::CraftRecipeIngredients,
+                        _ => return None,
+                    };
+                    let index = hook.key.item? as usize;
+                    let rect = crate::gui::SlotRect {
+                        x: hook.rect.x as f32,
+                        y: hook.rect.y as f32,
+                        w: hook.rect.w as f32,
+                        h: hook.rect.h as f32,
+                    };
+                    let clip = hook.clip.map(|clip| crate::gui::SlotRect {
+                        x: clip.x as f32,
+                        y: clip.y as f32,
+                        w: clip.w as f32,
+                        h: clip.h as f32,
+                    });
+                    Some(crate::gui::DocHook {
+                        kind,
+                        index,
+                        rect,
+                        clip,
+                    })
+                })
+                .collect(),
+        )
+    }
+
     /// Drop the active screen's ephemeral state (screen closed/changed).
     pub fn deactivate(&mut self) {
         if self.active.take().is_some() {

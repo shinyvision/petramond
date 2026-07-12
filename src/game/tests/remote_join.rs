@@ -31,7 +31,9 @@ fn join_data() -> Box<JoinData> {
             effects: vec![("petramond:regeneration".to_string(), 400)],
             inventory: slots,
             active_slot: 2,
+            craft_craftable_only: false,
         },
+        crafting_recipes: Vec::new(),
         players: vec![
             (PlayerId(0), "Host".to_string()),
             (PlayerId(1), "Visitor".to_string()),

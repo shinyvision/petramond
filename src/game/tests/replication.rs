@@ -10,11 +10,28 @@ use super::common::{count_item, filled_inventory, game, install_empty_chunk};
 use crate::controls::PointerButton;
 use crate::entity::DroppedItem;
 use crate::events::DamageSource;
-use crate::gui::{CraftHit, MenuSlot};
+use crate::gui::MenuSlot;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::Vec3;
 use crate::mob::Mob;
 use crate::net::protocol::MobStateRow;
+
+fn test_crafting_recipe(
+    key: &str,
+    ingredient: ItemType,
+    result: ItemType,
+) -> crate::crafting::CraftingRecipe {
+    crate::crafting::CraftingRecipe::new(
+        key.into(),
+        crate::crafting::CraftingStation::Inventory,
+        vec![crate::crafting::CraftingIngredient {
+            selector: crate::crafting::IngredientSelector::Item(ingredient),
+            count: 1,
+            use_mode: crate::crafting::IngredientUse::Consume,
+        }],
+        ItemStack::new(result, 2),
+    )
+}
 
 /// One pump that must have executed at least one fixed tick, returning its
 /// replication batch (the trailing `Tick` message of the pump's output).
@@ -245,36 +262,135 @@ fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
     assert_eq!(count_item(game.inventory(), ItemType::Dirt), 63);
     assert_ne!(rev(&game), before, "a drop bumps the revision");
 
-    // Craft: log → cursor → grid, then take the planks result.
+    // Craft: the explicit stable-key request consumes inventory into a real
+    // output, then the ordinary result-slot click takes it.
+    game.server.recipes = crate::crafting::Recipes::new(
+        vec![test_crafting_recipe(
+            "test:revision",
+            ItemType::Coal,
+            ItemType::Stick,
+        )],
+        Vec::new(),
+        Vec::new(),
+    );
     game.server.sessions[0]
         .player
         .inventory
-        .add(ItemStack::new(ItemType::OakLog, 1));
-    game.open_crafting(2);
-    for slot in [
-        MenuSlot::Inventory(1), // the log landed after the dirt stack
-        MenuSlot::Craft(CraftHit::Input(0)),
-    ] {
-        game.menu_click(slot, PointerButton::Primary, false, false);
-        game.apply_latched_actions_for_test();
-    }
+        .add(ItemStack::new(ItemType::Coal, 1));
+    game.server
+        .open_crafting_for(0, crate::crafting::CraftingStation::Inventory);
     let before = rev(&game);
-    game.menu_click(
-        MenuSlot::Craft(CraftHit::Result),
-        PointerButton::Primary,
-        false,
-        false,
+    game.game.craft_recipe("test:revision", false);
+    game.apply_latched_actions_for_test();
+    assert_eq!(
+        game.menu_read_model().craft_output.map(|s| s.item),
+        Some(ItemType::Stick),
+        "the accepted request replicated a real output"
     );
+    assert_ne!(rev(&game), before, "crafting consumes inventory");
+
+    let before = rev(&game);
+    game.menu_click(MenuSlot::CraftResult, PointerButton::Primary, false, false);
     game.apply_latched_actions_for_test();
     assert_eq!(
         game.inventory().cursor().map(|s| s.item),
-        Some(ItemType::OakPlanks),
+        Some(ItemType::Stick),
         "the craft result landed on the cursor"
     );
     assert_ne!(
         rev(&game),
         before,
         "taking a craft result bumps the revision"
+    );
+}
+
+#[test]
+fn crafting_outputs_replicate_per_session_and_remain_independent() {
+    use crate::crafting::CraftingStation;
+    use crate::net::protocol::{ClientToServer, MenuSlotWire, MenuTargetWire};
+
+    let mut game = game();
+    game.server.recipes = crate::crafting::Recipes::new(
+        vec![
+            test_crafting_recipe("test:local", ItemType::Coal, ItemType::Stick),
+            test_crafting_recipe("test:remote", ItemType::Dirt, ItemType::Glass),
+        ],
+        Vec::new(),
+        Vec::new(),
+    );
+    let remote = game
+        .server
+        .add_session_for_test(crate::player::Player::new(Vec3::new(2.5, 64.0, 2.5)));
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::Coal, 1));
+    game.server.sessions[remote]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::Dirt, 1));
+    game.server.open_crafting_for(0, CraftingStation::Inventory);
+    game.server
+        .open_crafting_for(remote, CraftingStation::Inventory);
+
+    game.server.apply_message(
+        0,
+        ClientToServer::CraftRecipe {
+            recipe: "test:local".into(),
+            bulk: false,
+            request_id: 41,
+        },
+    );
+    game.server.apply_message(
+        remote,
+        ClientToServer::CraftRecipe {
+            recipe: "test:remote".into(),
+            bulk: false,
+            request_id: 42,
+        },
+    );
+    let mut events = TickEvents::default();
+    game.server.tick_menu(0, &mut events);
+    game.server.tick_menu(remote, &mut events);
+
+    let local_sync = game
+        .server
+        .build_menu_sync(0)
+        .expect("local output changed the session view");
+    let remote_sync = game
+        .server
+        .build_menu_sync(remote)
+        .expect("remote output changed the session view");
+    assert!(matches!(
+        local_sync.target,
+        MenuTargetWire::Inventory { output: Some(slot) }
+            if slot.item_id == ItemType::Stick.0
+    ));
+    assert!(matches!(
+        remote_sync.target,
+        MenuTargetWire::Inventory { output: Some(slot) }
+            if slot.item_id == ItemType::Glass.0
+    ));
+
+    game.server.apply_message(
+        0,
+        ClientToServer::MenuClick {
+            slot: MenuSlotWire::from_menu_slot(&MenuSlot::CraftResult),
+            button: 0,
+            shift: false,
+            gather: false,
+            request_id: 43,
+        },
+    );
+    game.server.tick_menu(0, &mut events);
+    assert!(game.server.sessions[0].menu.craft_output().is_none());
+    assert_eq!(
+        game.server.sessions[remote]
+            .menu
+            .craft_output()
+            .map(|s| s.item),
+        Some(ItemType::Glass),
+        "taking one session's output cannot mutate another session"
     );
 }
 

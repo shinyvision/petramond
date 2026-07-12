@@ -240,7 +240,7 @@ impl Theme {
     /// A styled container's chrome insets (its default face's 9-slice) —
     /// content and scrollbars sit inside them (border-box).
     pub fn container_insets(&self, node: &Node) -> [i32; 4] {
-        if !node.kind.is_container() {
+        if !node.lays_out_children() {
             return [0; 4];
         }
         self.part_for(node)
@@ -288,7 +288,7 @@ pub fn default_style_key(kind: &NodeKind) -> Option<&'static str> {
     Some(match kind {
         NodeKind::Button { .. } => "button.default",
         NodeKind::Checkbox => "checkbox",
-        NodeKind::Toggle => "toggle",
+        NodeKind::Toggle { .. } => "toggle",
         NodeKind::Slider { .. } => "slider.track",
         NodeKind::TextInput { .. } => "input",
         NodeKind::Slot { .. } | NodeKind::SlotGrid { .. } => "slot",
@@ -383,7 +383,7 @@ impl LayoutEnv for ThemeEnv<'_> {
                 (icon_w + gap + text_w + m.button_pad * 2, m.button_h)
             }
             NodeKind::Checkbox => part_natural((10, 10)),
-            NodeKind::Toggle => part_natural((18, 10)),
+            NodeKind::Toggle { .. } => part_natural((18, 10)),
             NodeKind::Slider { .. } => {
                 let handle_h = self
                     .theme
@@ -840,6 +840,35 @@ mod tests {
         );
         let (aw, ah) = t.atlas.size;
         assert_eq!(t.atlas.rgba.len(), (aw * ah * 4) as usize);
+    }
+
+    #[test]
+    fn only_compound_buttons_use_their_face_as_container_insets() {
+        let t = Theme::placeholder();
+        let leaf = Document::from_json(
+            r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "button", "id": "leaf", "text": "OK" }
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(t.container_insets(&leaf.root), [0; 4]);
+
+        let compound = Document::from_json(
+            r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "button", "id": "compound", "children": [
+                { "type": "label", "text": "OK" }
+            ] }
+        }"#,
+        )
+        .unwrap();
+        let authored = t
+            .part("button.default")
+            .and_then(|part| part.face("default"))
+            .and_then(|face| face.slice)
+            .expect("placeholder compound button has sliced chrome");
+        assert_eq!(t.container_insets(&compound.root), authored);
     }
 
     #[test]

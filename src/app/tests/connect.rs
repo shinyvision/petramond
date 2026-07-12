@@ -42,7 +42,9 @@ fn join_data() -> Box<JoinData> {
             effects: Vec::new(),
             inventory: vec![None; 37],
             active_slot: 0,
+            craft_craftable_only: false,
         },
+        crafting_recipes: Vec::new(),
         players: vec![(PlayerId(0), "Host".to_string())],
     })
 }

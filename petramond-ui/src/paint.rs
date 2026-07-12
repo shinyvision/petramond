@@ -318,6 +318,28 @@ impl Painter<'_> {
         self.text_scaled(s, x, y, 1, color, clip);
     }
 
+    /// Single-line text constrained to its solved layout box. Runs that do
+    /// not fit end in an ASCII ellipsis, and the box is intersected with any
+    /// inherited scroll clip so labels never paint over adjacent widgets.
+    pub fn text_ellipsized(&mut self, s: &str, rect: RectI, color: [f32; 4], clip: Option<RectI>) {
+        let clip = clip.map_or(rect, |inherited| inherited.intersect(rect));
+        if clip.w == 0 || clip.h == 0 || rect.w <= 0 {
+            return;
+        }
+        let capacity = ((rect.w + 1) / crate::text::ADVANCE).max(0) as usize;
+        if capacity == 0 {
+            return;
+        }
+        if s.chars().count() <= capacity {
+            self.text(s, rect.x, rect.y, color, Some(clip));
+            return;
+        }
+        let dots = capacity.min(3);
+        let mut shown: String = s.chars().take(capacity - dots).collect();
+        shown.extend(std::iter::repeat_n('.', dots));
+        self.text(&shown, rect.x, rect.y, color, Some(clip));
+    }
+
     pub fn text_input_view(
         &mut self,
         view: &crate::text_edit::TextInputRender,
@@ -459,6 +481,29 @@ fn clamp_pair(lead: f32, trail: f32, span: f32) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_line_text_ellipsizes_and_clips_to_its_layout_box() {
+        let mut dl = DrawList::default();
+        let mut p = Painter {
+            list: &mut dl,
+            scale: 2,
+        };
+        let rect = RectI {
+            x: 4,
+            y: 5,
+            w: crate::text::width_chars(6),
+            h: crate::text::GLYPH_H,
+        };
+        p.text_ellipsized("A long recipe name", rect, [1.0; 4], None);
+
+        assert_eq!(dl.vertices.len(), 6 * 6, "three characters plus '...'");
+        assert_eq!(
+            dl.batches[0].clip,
+            Some([8, 10, rect.w * 2, rect.h * 2]),
+            "the solved label box becomes the physical scissor"
+        );
+    }
 
     #[test]
     fn batches_merge_on_same_tex_and_clip() {

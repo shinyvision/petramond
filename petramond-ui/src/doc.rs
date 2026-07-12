@@ -24,7 +24,21 @@ pub struct Document {
     /// The kind key the host registers/opens this document under.
     pub kind: String,
     pub class: DocClass,
+    /// Compact breakpoint: when the solve viewport is narrower than this many
+    /// logical px, every node with a `compact_layout` arranges by it instead
+    /// of `layout`. Same tree, same widgets, different arrangement — slots and
+    /// bindings can never diverge between the two forms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_below_w: Option<i32>,
     pub root: Node,
+}
+
+impl Document {
+    /// Whether a viewport this many logical px wide arranges by the compact
+    /// layouts.
+    pub fn compact_active(&self, viewport_w: i32) -> bool {
+        self.compact_below_w.is_some_and(|w| viewport_w < w)
+    }
 }
 
 /// What kind of surface a document is. The host uses this to decide input
@@ -52,6 +66,12 @@ pub struct Node {
     pub kind: NodeKind,
     #[serde(default, skip_serializing_if = "LayoutProps::is_default")]
     pub layout: LayoutProps,
+    /// COMPLETE replacement layout used while the document's compact
+    /// breakpoint is active (see [`Document::compact_below_w`]); it does not
+    /// inherit from `layout`, so restate every field the node needs. Absent =
+    /// the same layout at every size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_layout: Option<Box<LayoutProps>>,
     /// Theme part key (e.g. `button.danger`). `None` = the widget's default
     /// part for its type, or unskinned for plain containers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -106,6 +126,8 @@ pub enum NodeKind {
         pivot: Option<[f32; 2]>,
     },
     Button {
+        /// Inline label for a leaf button. A compound button uses `children`
+        /// instead and leaves `text`/`icon` unset.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         text: Option<String>,
         /// Theme part drawn as the button's icon (centred alone, or left of
@@ -114,7 +136,12 @@ pub enum NodeKind {
         icon: Option<String>,
     },
     Checkbox,
-    Toggle,
+    Toggle {
+        /// Theme part drawn centred on the toggle face — an on/off icon
+        /// button (e.g. the crafting browser's craftable-only filter).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
+    },
     Slider {
         min: f32,
         max: f32,
@@ -185,6 +212,7 @@ impl NodeKind {
                 | NodeKind::Column
                 | NodeKind::Scroll { .. }
                 | NodeKind::List
+                | NodeKind::Button { .. }
         )
     }
 
@@ -194,7 +222,7 @@ impl NodeKind {
             self,
             NodeKind::Button { .. }
                 | NodeKind::Checkbox
-                | NodeKind::Toggle
+                | NodeKind::Toggle { .. }
                 | NodeKind::Slider { .. }
                 | NodeKind::TextInput { .. }
                 | NodeKind::Image {
@@ -218,7 +246,7 @@ impl NodeKind {
             NodeKind::Rotimage { .. } => "rotimage",
             NodeKind::Button { .. } => "button",
             NodeKind::Checkbox => "checkbox",
-            NodeKind::Toggle => "toggle",
+            NodeKind::Toggle { .. } => "toggle",
             NodeKind::Slider { .. } => "slider",
             NodeKind::TextInput { .. } => "text_input",
             NodeKind::Scroll { .. } => "scroll",
@@ -611,24 +639,57 @@ impl Node {
             id: None,
             kind,
             layout: LayoutProps::default(),
+            compact_layout: None,
             style: None,
             bind: Bindings::default(),
             children: Vec::new(),
         }
     }
 
+    /// The layout this node arranges by in the given form.
+    pub fn layout_for(&self, compact: bool) -> &LayoutProps {
+        if compact {
+            if let Some(l) = &self.compact_layout {
+                return l;
+            }
+        }
+        &self.layout
+    }
+
+    /// Whether this instance uses child-flow layout. Buttons are the one
+    /// dual-form widget: a text/icon-only button stays a leaf with its exact
+    /// historical natural size, while a button with children becomes a
+    /// themed layout container for compound rows.
+    pub fn lays_out_children(&self) -> bool {
+        match self.kind {
+            NodeKind::Button { .. } => !self.children.is_empty(),
+            _ => self.kind.is_container(),
+        }
+    }
+
     /// The effective flow direction for this node's children.
     pub fn flow_dir(&self) -> Dir {
+        self.flow_dir_of(&self.layout)
+    }
+
+    /// [`Self::flow_dir`] against an explicit layout (the solver passes the
+    /// instance's active normal/compact layout).
+    pub fn flow_dir_of(&self, layout: &LayoutProps) -> Dir {
         match self.kind {
             NodeKind::Row => Dir::Row,
             NodeKind::Column => Dir::Column,
-            _ => self.layout.dir,
+            _ => layout.dir,
         }
     }
 
     /// The effective cross-axis alignment of this node's children.
     pub fn effective_align(&self) -> Align {
-        self.layout.align.unwrap_or(match self.kind {
+        self.effective_align_of(&self.layout)
+    }
+
+    /// [`Self::effective_align`] against an explicit layout.
+    pub fn effective_align_of(&self, layout: &LayoutProps) -> Align {
+        layout.align.unwrap_or(match self.kind {
             NodeKind::Scroll { .. } => Align::Stretch,
             _ => Align::Start,
         })

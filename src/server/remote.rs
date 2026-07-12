@@ -382,6 +382,7 @@ impl ServerGame {
             clock: super::daynight::current_clock(&self.world),
             tables: crate::net::remap::local_name_tables(),
             self_restore: self_restore_from(&player),
+            crafting_recipes: self.recipes.crafting().to_data(),
             players: self
                 .sessions
                 .iter()
@@ -487,6 +488,7 @@ fn self_restore_from(player: &crate::player::Player) -> SelfRestore {
             })
             .collect(),
         active_slot: player.inventory.active_slot(),
+        craft_craftable_only: player.craft_craftable_only,
     }
 }
 

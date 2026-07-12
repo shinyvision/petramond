@@ -132,11 +132,6 @@ impl TestGame {
         self.flush_outbox_for_test();
     }
 
-    pub(super) fn open_crafting(&mut self, cols: usize) {
-        self.game.open_crafting(cols);
-        self.flush_outbox_for_test();
-    }
-
     /// Queue + latch the close, then apply it the way the next tick would.
     pub(super) fn close_open_menu(&mut self) {
         self.game.close_open_menu();

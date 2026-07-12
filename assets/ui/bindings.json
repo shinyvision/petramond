@@ -190,14 +190,46 @@
    "notes": "HUD only: presentation-driven. Hearts/status effects and chat overlays are host-drawn beside/over the document."
   },
   "petramond:inventory": {
-   "state": {},
-   "handles": {},
-   "notes": "container: slots route to the game automatically by role; no custom keys"
+   "state": {
+    "craft_search": { "type": "str", "doc": "live result-name recipe filter" },
+    "craft_recipes": {
+     "type": "list",
+     "item": { "name": "str", "enabled": "bool" },
+     "doc": "inventory-tier recipes after search + craftable-only filtering, craftable rows first"
+    },
+    "craft_recipe_sel": { "type": "i32", "doc": "selected filtered row; -1 = none" },
+    "can_craft": { "type": "bool", "doc": "selected recipe is affordable and the result still fits the output slot" },
+    "craft_filter_on": { "type": "bool", "doc": "craftable-only browser filter (persisted in the world's player data)" },
+    "no_craft_results": { "type": "bool", "doc": "search/filter has no matches" }
+   },
+   "handles": {
+    "craft_search": "text_input: filter recipes without firing gameplay bindings",
+    "craft_filter": "toggle: show only recipes craftable with current resources",
+    "recipe": "click (per row): select the stable recipe key",
+    "craft": "click: request one authoritative craft (shift: craft the maximum possible)"
+   },
+   "notes": "container: inventory/output slots route automatically; recipe result and ingredient icons occupy host hooks"
   },
   "petramond:crafting_table": {
-   "state": {},
-   "handles": {},
-   "notes": "container: slots route by role"
+   "state": {
+    "craft_search": { "type": "str", "doc": "live result-name recipe filter" },
+    "craft_recipes": {
+     "type": "list",
+     "item": { "name": "str", "enabled": "bool" },
+     "doc": "inventory- and table-tier recipes after search + craftable-only filtering, craftable rows first"
+    },
+    "craft_recipe_sel": { "type": "i32", "doc": "selected filtered row; -1 = none" },
+    "can_craft": { "type": "bool", "doc": "selected recipe is affordable and the result still fits the output slot" },
+    "craft_filter_on": { "type": "bool", "doc": "craftable-only browser filter (persisted in the world's player data)" },
+    "no_craft_results": { "type": "bool", "doc": "search/filter has no matches" }
+   },
+   "handles": {
+    "craft_search": "text_input: filter recipes without firing gameplay bindings",
+    "craft_filter": "toggle: show only recipes craftable with current resources",
+    "recipe": "click (per row): select the stable recipe key",
+    "craft": "click: request one authoritative craft (shift: craft the maximum possible)"
+   },
+   "notes": "container: inventory/output slots route by role; recipe icons occupy host hooks"
   },
   "petramond:chest": {
    "state": {},

@@ -488,6 +488,7 @@ fn kitchen_reuse_inner() {
     game.server.sessions[0].look = Some(super::common::hit(far_cell, IVec3::new(0, 0, -1)));
     game.server.queue_place_click_for_test(0);
     game.server.tick_place(0, &mut ev);
+    game.server.tick_menu(0, &mut ev);
     assert_eq!(
         game.server.sessions[0].request_open_mod_gui.take(),
         Some((kind, Some(far_cell))),
@@ -526,6 +527,7 @@ fn kitchen_reuse_inner() {
     game.server.sessions[0].look = Some(super::common::hit(far_cell, IVec3::new(0, 0, -1)));
     game.server.queue_place_click_for_test(0);
     game.server.tick_place(0, &mut ev);
+    game.server.tick_menu(0, &mut ev);
     assert_eq!(
         game.server.sessions[0].request_open_mod_gui,
         Some((kind, Some(far_cell))),

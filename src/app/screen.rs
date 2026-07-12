@@ -30,7 +30,7 @@ pub(super) enum AppScreen {
     Chat,
     Pause,
     Inventory,
-    /// The 3×3 crafting-table screen, opened by right-clicking a placed table.
+    /// The crafting-table recipe browser, opened by right-clicking a placed table.
     CraftingTable,
     /// The furnace screen, opened by right-clicking a placed furnace.
     Furnace,

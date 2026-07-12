@@ -145,7 +145,7 @@ impl ServerGame {
     /// body — the classic corpse pile, waiting where they died.
     fn spill_inventory_on_death(&mut self, s: usize, events: &mut TickEvents) {
         // An open container session first returns its transient contents
-        // (craft grid, cursor stack) to the inventory, so they spill too
+        // (crafting output, cursor stack) to the inventory, so they spill too
         // instead of quietly surviving in a menu the app closes a frame later.
         self.close_open_menu_for(s, events);
         let centre = self.sessions[s].player.body_center();

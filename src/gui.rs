@@ -74,14 +74,6 @@ pub(crate) fn gui_state_clear(map: &mut Arc<GuiStateMap>) {
     }
 }
 
-/// A hit-tested crafting slot: an input cell index (`0..cols*cols`, row-major) or
-/// the single output result slot.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum CraftHit {
-    Input(usize),
-    Result,
-}
-
 /// A hit-tested furnace role: the smeltable input, the fuel, or the take-only
 /// output. One slot each, so these are identified by role, never by position.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -106,8 +98,8 @@ pub enum WorkbenchHit {
 pub enum MenuSlot {
     /// A main inventory/hotbar slot (the 36-slot grid drawn under every panel).
     Inventory(usize),
-    /// A crafting input cell or the result slot of the open craft grid.
-    Craft(CraftHit),
+    /// The real, take-only output of an accepted player-crafting request.
+    CraftResult,
     /// A furnace role slot (smeltable input, fuel, or take-only output).
     Furnace(FurnaceHit),
     /// A chest storage slot index.
@@ -133,7 +125,6 @@ pub(crate) enum Role {
     Storage,
     PlayerInv,
     Hotbar,
-    CraftInput,
     CraftResult,
     FurnaceInput,
     FurnaceFuel,
@@ -154,7 +145,6 @@ impl Role {
             "storage" => Role::Storage,
             "player_inv" => Role::PlayerInv,
             "hotbar" => Role::Hotbar,
-            "craft_input" => Role::CraftInput,
             "craft_result" => Role::CraftResult,
             "furnace_input" => Role::FurnaceInput,
             "furnace_fuel" => Role::FurnaceFuel,
@@ -174,8 +164,7 @@ impl Role {
             Role::Storage => MenuSlot::Chest(i),
             Role::Hotbar => MenuSlot::Inventory(i),
             Role::PlayerInv => MenuSlot::Inventory(HOTBAR_LEN + i),
-            Role::CraftInput => MenuSlot::Craft(CraftHit::Input(i)),
-            Role::CraftResult => MenuSlot::Craft(CraftHit::Result),
+            Role::CraftResult => MenuSlot::CraftResult,
             Role::FurnaceInput => MenuSlot::Furnace(FurnaceHit::Input),
             Role::FurnaceFuel => MenuSlot::Furnace(FurnaceHit::Fuel),
             Role::FurnaceOutput => MenuSlot::Furnace(FurnaceHit::Output),
@@ -195,6 +184,22 @@ pub struct SlotRect {
     pub y: f32,
     pub w: f32,
     pub h: f32,
+}
+
+/// A game-owned item-icon region embedded in a GUI document. Recipe-browser
+/// hooks carry their filtered row index; `clip` preserves scroll clipping.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DocHookKind {
+    CraftRecipeResult,
+    CraftRecipeIngredients,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct DocHook {
+    pub(crate) kind: DocHookKind,
+    pub(crate) index: usize,
+    pub(crate) rect: SlotRect,
+    pub(crate) clip: Option<SlotRect>,
 }
 
 /// Integer GUI scale chosen from the screen size (vanilla-style auto scale): one
@@ -294,17 +299,16 @@ pub struct UiSnapshot {
     /// One entry per inventory slot (`[0,9)` hotbar, `[9,36)` main grid):
     /// `(item, count)`, or `None` for an empty slot.
     pub slots: [Option<(ItemType, u8)>; TOTAL_SLOTS],
-    /// The crafting input cells (only the first `panel.cols()²` are drawn).
-    pub craft: [Option<(ItemType, u8)>; crate::crafting::MAX_CELLS],
-    /// The crafting result preview, drawn in the result slot.
-    pub result: Option<(ItemType, u8)>,
+    /// The real player-crafting output, drawn in the take-only result slot.
+    pub craft_output: Option<(ItemType, u8)>,
+    /// Filtered recipe rows, in the same order as the browser document list.
+    pub craft_recipes: Vec<CraftingRecipeView>,
     /// The cursor-held stack (drag/drop), drawn at `cursor_px` when open.
     pub cursor: Option<(ItemType, u8)>,
     /// The open furnace's slots + progress gauges, or `None` when the open panel is
     /// not a furnace. When `Some`, the furnace panel is drawn instead of the grid.
     pub furnace: Option<FurnaceView>,
-    /// The open chest's 27 storage slots, or `None`. When `Some`, the chest panel +
-    /// storage grid are drawn instead of the crafting grid.
+    /// The open chest's 27 storage slots, or `None`.
     pub chest: Option<ChestView>,
     /// The open furniture workbench's input + offered results, or `None`. When `Some`,
     /// the workbench panel is drawn with the result grid (greyed where not craftable).
@@ -333,6 +337,14 @@ pub struct UiSnapshot {
     pub heart_wiggle: Option<(i32, i32, f32)>,
 }
 
+/// Host-drawn item data for one filtered recipe-browser row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CraftingRecipeView {
+    pub result: ItemType,
+    pub ingredients: Vec<(ItemType, u16)>,
+    pub craftable: bool,
+}
+
 /// One document slot cell: the game role, in-role index, and physical rect.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DocSlot {
@@ -355,8 +367,8 @@ impl Default for UiSnapshot {
             cursor_px: (0.0, 0.0),
             active: 0,
             slots: [None; TOTAL_SLOTS],
-            craft: [None; crate::crafting::MAX_CELLS],
-            result: None,
+            craft_output: None,
+            craft_recipes: Vec::new(),
             cursor: None,
             furnace: None,
             chest: None,

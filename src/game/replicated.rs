@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use glam::{Quat, Vec3};
 
-use crate::crafting::CraftGrid;
 use crate::gui::{ChestView, ContainerView, FurnaceView, GuiStateMap, WorkbenchView};
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
@@ -114,6 +113,9 @@ pub(crate) struct SelfView {
     /// renders slots + cursor from it. Contents refresh only when the server
     /// shipped them (revision moved); the active slot refreshes every batch.
     pub(crate) inventory: Inventory,
+    /// Server-side content revision. Reconstructing `Inventory` from a wire
+    /// snapshot resets its own local counter, so cache users retain this one.
+    pub(crate) inventory_revision: u64,
     /// The in-progress mining target + crack stage (0..=9).
     pub(crate) mining: Option<(IVec3, u8)>,
     /// The in-progress eat's progress in `[0, 1)`.
@@ -138,6 +140,7 @@ impl SelfView {
                 .map(|e| (e.effect, e.remaining))
                 .collect(),
             inventory: player.inventory.clone(),
+            inventory_revision: player.inventory.revision(),
             mining: None,
             eating: None,
             sleeping: None,
@@ -165,6 +168,7 @@ impl SelfView {
             let active = self.inventory.active_slot();
             self.inventory = inventory_from_wire(slots, active);
         }
+        self.inventory_revision = state.inventory_revision;
         self.eating = state.eating.map(|p| p as f32 / 255.0);
         self.sleeping = state.sleeping.map(|p| p as f32 / 255.0);
         self.sleep_bed = state.sleep_bed;
@@ -175,8 +179,8 @@ impl SelfView {
 /// on-change only) — the exclusive source `Game::menu_read_model` renders
 /// from. Wire ids arrive already remapped to local ids.
 pub(crate) struct MenuView {
-    /// The open crafting grid (cells + the SERVER-computed result preview).
-    pub(crate) craft: CraftGrid,
+    /// The real output produced by the last accepted CRAFT request.
+    pub(crate) craft_output: Option<ItemStack>,
     pub(crate) furnace: Option<FurnaceView>,
     pub(crate) chest: Option<ChestView>,
     pub(crate) workbench: Option<WorkbenchView>,
@@ -189,10 +193,8 @@ pub(crate) struct MenuView {
 
 impl Default for MenuView {
     fn default() -> Self {
-        let mut craft = CraftGrid::new();
-        craft.set_view(&[], None);
         Self {
-            craft,
+            craft_output: None,
             furnace: None,
             chest: None,
             workbench: None,
@@ -210,17 +212,18 @@ impl MenuView {
     /// Adopt one on-change sync: the target view is replaced whole; the mod
     /// GUI state map is kept unless the sync carries a fresh one.
     pub(crate) fn apply(&mut self, msg: MenuSyncMsg) {
-        let cells: Vec<Option<ItemStack>> =
-            msg.craft_grid.iter().map(|s| stack_from_wire(*s)).collect();
-        self.craft
-            .set_view(&cells, stack_from_wire(msg.craft_result));
+        self.craft_output = None;
         self.furnace = None;
         self.chest = None;
         self.workbench = None;
         self.container = None;
         match msg.target {
-            MenuTargetWire::None | MenuTargetWire::Inventory | MenuTargetWire::Table => {
+            MenuTargetWire::None => {
                 self.gui_state = None;
+            }
+            MenuTargetWire::Inventory { output } | MenuTargetWire::Table { output } => {
+                self.gui_state = None;
+                self.craft_output = stack_from_wire(output);
             }
             MenuTargetWire::Furnace {
                 slots,
@@ -355,9 +358,7 @@ impl Game {
                 }
                 ServerToClient::ColumnUnload { pos, cache_hashes } => {
                     for (sp, section) in self.replica.uninstall_remote_column(pos) {
-                        if let Some(&(_, hash)) =
-                            cache_hashes.iter().find(|(cy, _)| *cy == sp.cy)
-                        {
+                        if let Some(&(_, hash)) = cache_hashes.iter().find(|(cy, _)| *cy == sp.cy) {
                             self.park_evicted_section(sp, section, hash);
                         }
                     }

@@ -90,6 +90,7 @@ mod tests {
             format: FORMAT_VERSION,
             kind: "petramond:test".into(),
             class: DocClass::Screen,
+            compact_below_w: None,
             root: Node::leaf(NodeKind::Label { text: Some(label.into()), wrap: false, scale: 1 }),
         }
     }

@@ -11,7 +11,6 @@ pub(crate) mod surfaces;
 pub(crate) mod trees;
 
 mod beach;
-mod cherry_grove;
 mod deep_ocean;
 mod desert;
 mod desert_lakes;
@@ -204,7 +203,6 @@ pub(crate) static SPECS: [&BiomeSpec; BIOME_COUNT] = [
     &wetland::SPEC,
     &redwood_forest::SPEC,
     &old_growth_taiga::SPEC,
-    &cherry_grove::SPEC,
     &meadow::SPEC,
     &grove::SPEC,
     &snowy_slopes::SPEC,

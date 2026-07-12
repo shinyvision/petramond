@@ -111,28 +111,6 @@ static ACACIA_F: TreeFeature = TreeFeature {
     leaf: Block::AcaciaLeaves,
     height: (5, 8),
 };
-static DARK_OAK_F: CanopyTreeFeature = CanopyTreeFeature {
-    log: Block::DarkOakLog,
-    leaf: Block::DarkOakLeaves,
-    height: (6, 8),
-    split: 0.45,
-    limbs: (4, 6),
-    reach: (3, 4),
-    tip_radius: (2, 3),
-    crown_radius: 3,
-    round: 0.40,
-};
-static CHERRY_F: CanopyTreeFeature = CanopyTreeFeature {
-    log: Block::CherryLog,
-    leaf: Block::CherryLeaves,
-    height: (6, 9),
-    split: 0.55,
-    limbs: (3, 4),
-    reach: (2, 4),
-    tip_radius: (2, 3),
-    crown_radius: 3,
-    round: 0.70,
-};
 
 pub static OAK_SMALL: ConfiguredFeature = ConfiguredFeature {
     feature: &OAK_SMALL_F,
@@ -150,10 +128,6 @@ pub static SPRUCE: ConfiguredFeature = ConfiguredFeature { feature: &SPRUCE_F };
 pub static BIRCH: ConfiguredFeature = ConfiguredFeature { feature: &BIRCH_F };
 pub static JUNGLE: ConfiguredFeature = ConfiguredFeature { feature: &JUNGLE_F };
 pub static ACACIA: ConfiguredFeature = ConfiguredFeature { feature: &ACACIA_F };
-pub static DARK_OAK: ConfiguredFeature = ConfiguredFeature {
-    feature: &DARK_OAK_F,
-};
-pub static CHERRY: ConfiguredFeature = ConfiguredFeature { feature: &CHERRY_F };
 
 /// Pick the tree a placed sapling grows into when it matures (see
 /// `world::sapling`). An oak sapling becomes the big fancy oak 20% of the time and
@@ -174,8 +148,6 @@ pub fn sapling_tree(sapling: Block, rng: &mut FeatureRng) -> &'static Configured
         Block::BirchSapling => &BIRCH,
         Block::JungleSapling => &JUNGLE,
         Block::AcaciaSapling => &ACACIA,
-        Block::DarkOakSapling => &DARK_OAK,
-        Block::CherrySapling => &CHERRY,
         _ => &OAK_SMALL,
     }
 }

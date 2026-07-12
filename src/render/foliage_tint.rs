@@ -123,11 +123,8 @@ mod tests {
             t("oak_leaves"),
             t("acacia_leaves"),
             t("birch_leaves"),
-            t("dark_oak_leaves"),
             t("jungle_leaves"),
-            t("mangrove_leaves"),
             t("spruce_leaves"),
-            t("cherry_leaves"),
             t("azalea_leaves"),
         ] {
             let m = face_material(tile);

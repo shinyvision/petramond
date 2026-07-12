@@ -173,8 +173,8 @@ pub(crate) fn resolve_load_order(
 }
 
 /// Collect every registration-relevant catalog key the pack at `dir` states —
-/// the row keys of the registry catalogs (blocks/items/sounds/models/mobs/
-/// effects) plus atlas tile names. Used for namespace-prefix validation before the pack is
+/// the row keys of registry catalogs plus player-crafting recipe ids and atlas
+/// tile names. Used for namespace-prefix validation before the pack is
 /// admitted to the overlay. A malformed catalog is an error (the pack gets
 /// disabled rather than panicking the registry bootstrap later).
 pub(crate) fn registration_keys(dir: &std::path::Path) -> Result<Vec<String>, String> {
@@ -206,6 +206,27 @@ pub(crate) fn registration_keys(dir: &std::path::Path) -> Result<Vec<String>, St
                 .get(key_field)
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| format!("{rel}: row #{i} has no string '{key_field}' key"))?;
+            keys.push(key.to_owned());
+        }
+    }
+    let recipes_path = dir.join("recipes.json");
+    if let Ok(text) = std::fs::read_to_string(&recipes_path) {
+        let value: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("recipes.json: invalid JSON: {e}"))?;
+        let rows = value
+            .get("recipes")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| "recipes.json: expected a top-level 'recipes' array".to_owned())?;
+        for (index, row) in rows.iter().enumerate() {
+            if row.get("type").and_then(|value| value.as_str()) != Some("crafting") {
+                continue;
+            }
+            let key = row
+                .get("recipe")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| {
+                    format!("recipes.json: crafting row #{index} has no string 'recipe' key")
+                })?;
             keys.push(key.to_owned());
         }
     }
@@ -339,5 +360,32 @@ mod tests {
         for bad in ["", "Day", "day-night", "day night", "dæy", "petramond"] {
             assert!(!valid_mod_id(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn crafting_recipe_ids_join_pack_namespace_validation() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "petramond-recipe-manifest-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("create fixture");
+        std::fs::write(
+            dir.join("recipes.json"),
+            r#"{"recipes":[
+                {"type":"crafting","recipe":"fixture:tool"},
+                {"type":"processing","class":"fixture:cooking"}
+            ]}"#,
+        )
+        .expect("write fixture");
+
+        let keys = registration_keys(&dir).expect("catalog parses");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(keys, vec!["fixture:tool"]);
+        assert!(foreign_namespaced_keys(Some("fixture"), &keys).is_empty());
+        assert_eq!(foreign_namespaced_keys(Some("other"), &keys), keys);
     }
 }

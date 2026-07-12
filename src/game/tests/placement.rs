@@ -47,6 +47,7 @@ fn right_clicking_interactable_blocks_requests_their_screen() {
 
         let mut events = TickEvents::default();
         game.server.tick_place(0, &mut events);
+        game.server.tick_menu(0, &mut events);
 
         assert!(
             events.player_at(0).placed_block.is_none(),

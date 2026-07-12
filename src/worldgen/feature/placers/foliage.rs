@@ -5,7 +5,7 @@
 //! FIELDS on the placer, so a new look is a data row in `data::features`, not a
 //! new impl. A genuinely new *shape* (different layer profile, entangled
 //! branches) is a new placer or a bespoke `Feature` instead. Broadleaf trees
-//! (oak/birch/jungle/dark-oak/cherry) no longer use a placer pair at all — they
+//! (oak/birch/jungle) no longer use a placer pair at all — they
 //! are `tree::CanopyTreeFeature` skeletons.
 //!
 //! Iteration order and the per-cell RNG draws are fixed so cross-chunk seam

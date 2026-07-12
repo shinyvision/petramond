@@ -18,9 +18,10 @@ impl Renderer {
         let screen = frame.viewport.size;
         let scale = frame.viewport.scale as f32;
         let slots = frame.document.as_ref().map(|document| document.slots);
+        let hooks = frame.document.as_ref().map(|document| document.hooks);
         self.prepare_doc_ui(frame.document.as_ref(), screen);
         self.prepare_client_overlays(frame.client_overlays, screen, frame.client_overlay_dim);
-        self.build_ui_frame(frame.content, screen, scale, slots);
+        self.build_ui_frame(frame.content, screen, scale, slots, hooks);
         self.prepared_ui_viewport = frame.viewport;
         true
     }
@@ -40,13 +41,14 @@ impl Renderer {
         screen: (u32, u32),
         scale: f32,
         slots: Option<&[crate::gui::DocSlot]>,
+        hooks: Option<&[crate::gui::DocHook]>,
     ) {
         self.ui_count_vertex_count = 0;
         self.ui_drag_count_vertex_count = 0;
         self.icon_quad_vertex_count = 0;
         self.drag_icon_quad_vertex_count = 0;
 
-        build_ui(content, screen, scale, slots, &mut self.ui_build);
+        build_ui(content, screen, scale, slots, hooks, &mut self.ui_build);
         let cap = crate::render::pipeline::MAX_UI_VERTICES as usize;
         let vsize = std::mem::size_of::<UiVertex>();
 
@@ -118,6 +120,25 @@ impl Renderer {
                     [1.0, 1.0, 1.0, 0.35],
                 );
             }
+            for icon in &self.ui_build.hook_icon_quads {
+                let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(icon.item);
+                let Some((visible, uv_tl, uv_br)) =
+                    clipped_icon(icon.rect, icon.clip, [u0, v0, u1, v1])
+                else {
+                    continue;
+                };
+                crate::render::ui::push_quad_uv(
+                    &mut verts,
+                    screen,
+                    visible.x,
+                    visible.y,
+                    visible.w,
+                    visible.h,
+                    uv_tl,
+                    uv_br,
+                    [1.0, 1.0, 1.0, if icon.dim { 0.35 } else { 1.0 }],
+                );
+            }
             let normal_icon_vertex_count = verts.len() as u32;
             for &(item, r) in &self.ui_build.drag_icon_quads {
                 let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(item);
@@ -155,4 +176,25 @@ impl Renderer {
         }
         self.icon_quad_verts = verts;
     }
+}
+
+fn clipped_icon(
+    rect: crate::gui::SlotRect,
+    clip: Option<crate::gui::SlotRect>,
+    uv: [f32; 4],
+) -> Option<(crate::gui::SlotRect, [f32; 2], [f32; 2])> {
+    let visible = clip.map_or(Some(rect), |clip| {
+        crate::render::ui::intersect_rect(rect, clip)
+    })?;
+    let fx0 = (visible.x - rect.x) / rect.w;
+    let fy0 = (visible.y - rect.y) / rect.h;
+    let fx1 = (visible.x + visible.w - rect.x) / rect.w;
+    let fy1 = (visible.y + visible.h - rect.y) / rect.h;
+    let du = uv[2] - uv[0];
+    let dv = uv[3] - uv[1];
+    Some((
+        visible,
+        [uv[0] + du * fx0, uv[1] + dv * fy0],
+        [uv[0] + du * fx1, uv[1] + dv * fy1],
+    ))
 }

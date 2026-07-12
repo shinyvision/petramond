@@ -782,44 +782,64 @@ fn farming_processing_inner() {
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;
 
-    // --- Grid crafting (flour itself comes from the kitchen miller, proven
-    // in the kitchen tests).
+    // --- Stable-key inventory crafting. The mod's recipes join the same
+    // authoritative catalog as engine recipes; no grid or mod-specific path.
     {
         let sess = &mut game.server.sessions[0];
         let (menu, inv) = (&mut sess.menu, &mut sess.player.inventory);
-        menu.open_crafting(2, &recipes);
+        menu.open_crafting(crate::crafting::CraftingStation::Inventory);
 
-        // --- Dough: 3 wheat + a water bucket craft 3 dough; the emptied
-        // bucket returns to its cell, which also stops a second craft.
-        *menu_cell(menu, 0) = Some(ItemStack::new(wheat, 1));
-        *menu_cell(menu, 1) = Some(ItemStack::new(wheat, 1));
-        *menu_cell(menu, 2) = Some(ItemStack::new(wheat, 1));
-        *menu_cell(menu, 3) = Some(ItemStack::new(ItemType::WaterBucket, 1));
-        menu.craft_grid_mut().recompute(&recipes);
-        menu.craft_take_result(inv, &recipes, |s| panic!("unexpected overflow: {s:?}"));
+        // --- Dough: aggregate quantities are consumed from inventory and the
+        // water bucket's remainder is safely returned there.
+        inv.add(ItemStack::new(wheat, 3));
+        inv.add(ItemStack::new(ItemType::WaterBucket, 1));
         assert_eq!(
-            inv.cursor().map(|s| (s.item, s.count)),
+            menu.craft_recipe(inv, &recipes, "farming:dough", false),
+            Ok(Vec::new())
+        );
+        assert_eq!(
+            menu.craft_output().map(|s| (s.item, s.count)),
             Some((dough, 3)),
-            "one craft yields 3 dough"
+            "the name-addressed mod recipe produces one real output stack"
         );
         assert_eq!(
-            menu.craft_grid().cell(3).map(|s| s.item),
-            Some(ItemType::WoodenBucket),
-            "the water bucket's remainder returns to its cell"
+            inventory_count(inv, ItemType::WoodenBucket),
+            1,
+            "the water bucket's remainder returns to inventory"
         );
-        assert!(
-            menu.craft_grid().result().is_none(),
-            "the empty bucket stops a second craft"
+        menu.click(
+            &mut game.server.world,
+            inv,
+            &recipes,
+            crate::gui::MenuSlot::CraftResult,
+            crate::controls::PointerButton::Primary,
+            false,
+            false,
+        );
+        assert!(menu.craft_output().is_none());
+        assert_eq!(
+            menu.craft_recipe(inv, &recipes, "farming:dough", false),
+            Err(crate::game::container::CraftMenuFailure::MissingIngredients),
+            "the returned empty bucket cannot satisfy another water-bucket craft"
         );
         inv.click_slot(30); // park the cursor stack somewhere out of the way
 
         // --- Farmer's lunch: 1 bread + 2 carrots.
-        *menu_cell(menu, 3) = None; // pocket the returned bucket
-        *menu_cell(menu, 0) = Some(ItemStack::new(bread, 1));
-        *menu_cell(menu, 1) = Some(ItemStack::new(carrot, 1));
-        *menu_cell(menu, 2) = Some(ItemStack::new(carrot, 1));
-        menu.craft_grid_mut().recompute(&recipes);
-        menu.craft_take_result(inv, &recipes, |s| panic!("unexpected overflow: {s:?}"));
+        inv.add(ItemStack::new(bread, 1));
+        inv.add(ItemStack::new(carrot, 2));
+        assert_eq!(
+            menu.craft_recipe(inv, &recipes, "farming:farmers_lunch", false),
+            Ok(Vec::new())
+        );
+        menu.click(
+            &mut game.server.world,
+            inv,
+            &recipes,
+            crate::gui::MenuSlot::CraftResult,
+            crate::controls::PointerButton::Primary,
+            false,
+            false,
+        );
         assert_eq!(
             inv.cursor().map(|s| s.item),
             Some(lunch),
@@ -881,11 +901,14 @@ fn farming_processing_inner() {
     assert!(!disabled, "the farming mod never trapped");
 }
 
-fn menu_cell<'a>(
-    menu: &'a mut crate::game::ContainerMenu,
-    i: usize,
-) -> &'a mut Option<crate::item::ItemStack> {
-    menu.craft_grid_mut().cell_mut(i)
+fn inventory_count(inventory: &crate::inventory::Inventory, item: crate::item::ItemType) -> u16 {
+    inventory
+        .raw_slots()
+        .iter()
+        .flatten()
+        .filter(|stack| stack.item == item)
+        .map(|stack| u16::from(stack.count))
+        .sum()
 }
 
 /// Runs ONLY in the child process spawned above: with kitchen absent the

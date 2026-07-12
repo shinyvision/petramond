@@ -245,35 +245,43 @@ impl ServerGame {
         if cancelled {
             return true;
         }
-        // The screen-open arms BOTH open the menu session server-side on this
-        // tick AND queue the one-shot the client's `SelfEvents.open_screen`
-        // carries (so its screen opens off the batch).
+        // Menu opens join the ordered menu-action stream. Placement resolves
+        // before the Menu stage, so this appends behind any close/click/craft
+        // messages already received for the old screen.
         match block.interaction() {
             BlockInteraction::OpenCraftingTable => {
-                self.open_crafting_for(s, 3);
-                self.sessions[s].request_open_table = true;
+                self.sessions[s]
+                    .pending_menu_actions
+                    .push(crate::server::player::PendingMenuAction::OpenCraftingTable);
                 true
             }
             BlockInteraction::OpenFurnace => {
-                self.open_furnace_screen_for(s, h.block);
-                self.sessions[s].request_open_furnace = Some(h.block);
+                self.sessions[s].pending_menu_actions.push(
+                    crate::server::player::PendingMenuAction::OpenFurnace(h.block),
+                );
                 true
             }
             BlockInteraction::OpenChest => {
-                self.open_chest_screen_for(s, h.block, events);
-                self.sessions[s].request_open_chest = Some(h.block);
+                self.sessions[s]
+                    .pending_menu_actions
+                    .push(crate::server::player::PendingMenuAction::OpenChest(h.block));
                 true
             }
             BlockInteraction::OpenFurnitureWorkbench => {
-                self.open_workbench_screen_for(s);
-                self.sessions[s].request_open_workbench = true;
+                self.sessions[s]
+                    .pending_menu_actions
+                    .push(crate::server::player::PendingMenuAction::OpenWorkbench);
                 true
             }
             BlockInteraction::OpenModGui(kind) => {
                 // The clicked block's position rides the session so gui_click
                 // dispatches carry where the GUI was opened from.
-                self.open_mod_gui_screen_for(s, kind, Some(h.block));
-                self.sessions[s].request_open_mod_gui = Some((kind, Some(h.block)));
+                self.sessions[s].pending_menu_actions.push(
+                    crate::server::player::PendingMenuAction::OpenModGui {
+                        kind,
+                        pos: Some(h.block),
+                    },
+                );
                 true
             }
             // Right-clicking a door toggles it: the open/closed bit flips on this tick

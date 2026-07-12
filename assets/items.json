@@ -169,48 +169,6 @@
       ]
     },
     {
-      "item": "petramond:dark_oak_log",
-      "key": "petramond:dark_oak_log",
-      "name": "Dark Oak Log",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": [
-        "logs"
-      ]
-    },
-    {
-      "item": "petramond:cherry_log",
-      "key": "petramond:cherry_log",
-      "name": "Cherry Log",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": [
-        "logs"
-      ]
-    },
-    {
-      "item": "petramond:mangrove_log",
-      "key": "petramond:mangrove_log",
-      "name": "Mangrove Log",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": [
-        "logs"
-      ]
-    },
-    {
       "item": "petramond:spruce_leaves",
       "key": "petramond:spruce_leaves",
       "name": "Spruce Leaves",
@@ -250,42 +208,6 @@
       "item": "petramond:acacia_leaves",
       "key": "petramond:acacia_leaves",
       "name": "Acacia Leaves",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:dark_oak_leaves",
-      "key": "petramond:dark_oak_leaves",
-      "name": "Dark Oak Leaves",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:mangrove_leaves",
-      "key": "petramond:mangrove_leaves",
-      "name": "Mangrove Leaves",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:cherry_leaves",
-      "key": "petramond:cherry_leaves",
-      "name": "Cherry Leaves",
       "max_stack_size": 64,
       "held_pose": {
         "pitch": 0,
@@ -907,48 +829,6 @@
       ]
     },
     {
-      "item": "petramond:dark_oak_planks",
-      "key": "petramond:dark_oak_planks",
-      "name": "Dark Oak Planks",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": [
-        "planks"
-      ]
-    },
-    {
-      "item": "petramond:cherry_planks",
-      "key": "petramond:cherry_planks",
-      "name": "Cherry Planks",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": [
-        "planks"
-      ]
-    },
-    {
-      "item": "petramond:mangrove_planks",
-      "key": "petramond:mangrove_planks",
-      "name": "Mangrove Planks",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": [
-        "planks"
-      ]
-    },
-    {
       "item": "petramond:crafting_table",
       "key": "petramond:crafting_table",
       "name": "Crafting Table",
@@ -1270,7 +1150,9 @@
         "roll": 0.5
       },
       "sprite": "wooden_shovel",
-      "tags": ["shovels"],
+      "tags": [
+        "shovels"
+      ],
       "tool": {
         "kind": "shovel",
         "tier": 1
@@ -1287,7 +1169,9 @@
         "roll": 0.5
       },
       "sprite": "stone_shovel",
-      "tags": ["shovels"],
+      "tags": [
+        "shovels"
+      ],
       "tool": {
         "kind": "shovel",
         "tier": 2
@@ -1304,7 +1188,9 @@
         "roll": 0.5
       },
       "sprite": "iron_shovel",
-      "tags": ["shovels"],
+      "tags": [
+        "shovels"
+      ],
       "tool": {
         "kind": "shovel",
         "tier": 3
@@ -1321,7 +1207,9 @@
         "roll": 0.5
       },
       "sprite": "diamond_shovel",
-      "tags": ["shovels"],
+      "tags": [
+        "shovels"
+      ],
       "tool": {
         "kind": "shovel",
         "tier": 4
@@ -1400,30 +1288,6 @@
       "tags": []
     },
     {
-      "item": "petramond:dark_oak_sapling",
-      "key": "petramond:dark_oak_sapling",
-      "name": "Dark Oak Sapling",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:cherry_sapling",
-      "key": "petramond:cherry_sapling",
-      "name": "Cherry Sapling",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
       "item": "petramond:oak_door",
       "key": "petramond:oak_door",
       "name": "Oak Door",
@@ -1486,45 +1350,6 @@
         "roll": 0
       },
       "sprite": "acacia_door_item",
-      "tags": []
-    },
-    {
-      "item": "petramond:dark_oak_door",
-      "key": "petramond:dark_oak_door",
-      "name": "Dark Oak Door",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "sprite": "dark_oak_door_item",
-      "tags": []
-    },
-    {
-      "item": "petramond:cherry_door",
-      "key": "petramond:cherry_door",
-      "name": "Cherry Door",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "sprite": "cherry_door_item",
-      "tags": []
-    },
-    {
-      "item": "petramond:mangrove_door",
-      "key": "petramond:mangrove_door",
-      "name": "Mangrove Door",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "sprite": "mangrove_door_item",
       "tags": []
     },
     {
@@ -1632,42 +1457,6 @@
       "item": "petramond:acacia_stairs",
       "key": "petramond:acacia_stairs",
       "name": "Acacia Stairs",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:dark_oak_stairs",
-      "key": "petramond:dark_oak_stairs",
-      "name": "Dark Oak Stairs",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:cherry_stairs",
-      "key": "petramond:cherry_stairs",
-      "name": "Cherry Stairs",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:mangrove_stairs",
-      "key": "petramond:mangrove_stairs",
-      "name": "Mangrove Stairs",
       "max_stack_size": 64,
       "held_pose": {
         "pitch": 0,
@@ -1857,42 +1646,6 @@
       "item": "petramond:acacia_slab",
       "key": "petramond:acacia_slab",
       "name": "Acacia Slab",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:dark_oak_slab",
-      "key": "petramond:dark_oak_slab",
-      "name": "Dark Oak Slab",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:cherry_slab",
-      "key": "petramond:cherry_slab",
-      "name": "Cherry Slab",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": []
-    },
-    {
-      "item": "petramond:mangrove_slab",
-      "key": "petramond:mangrove_slab",
-      "name": "Mangrove Slab",
       "max_stack_size": 64,
       "held_pose": {
         "pitch": 0,

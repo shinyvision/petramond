@@ -59,6 +59,7 @@ pub(crate) struct DocumentUiFrame<'a> {
     pub draw: &'a petramond_ui::DrawList,
     pub images: &'a [crate::gui::DocImageSource],
     pub slots: &'a [crate::gui::DocSlot],
+    pub hooks: &'a [crate::gui::DocHook],
 }
 
 /// The complete UI handoff for one render frame. Every physical-pixel layer
@@ -102,6 +103,7 @@ mod ui_frame_coherence_tests {
                 draw: &draw,
                 images: &images,
                 slots: &slots,
+                hooks: &[],
             }),
             content: &content,
             client_overlays: &[],
@@ -119,6 +121,7 @@ mod ui_frame_coherence_tests {
                 draw: &draw,
                 images: &images,
                 slots: &slots,
+                hooks: &[],
             }),
             content: &content,
             client_overlays: &[],

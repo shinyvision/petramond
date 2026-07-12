@@ -249,7 +249,9 @@ mod tests {
                 effects: Vec::new(),
                 inventory: Vec::new(),
                 active_slot: 2,
+                craft_craftable_only: false,
             },
+            crafting_recipes: Vec::new(),
             players: vec![(PlayerId(0), "Host".to_string())],
         })
     }
@@ -278,8 +280,14 @@ mod tests {
             },
             ServerToClient::JoinAccept(join_data()),
         ]);
-        let data = client_handshake(&mut s, "Rachel", 16, &installed(&["kitchen", "extra"]), Vec::new())
-            .expect("handshake succeeds");
+        let data = client_handshake(
+            &mut s,
+            "Rachel",
+            16,
+            &installed(&["kitchen", "extra"]),
+            Vec::new(),
+        )
+        .expect("handshake succeeds");
         assert_eq!(*data.join, *join_data());
         assert_eq!(
             data.server_mods,

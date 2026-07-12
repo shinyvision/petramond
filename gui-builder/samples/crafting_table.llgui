@@ -5,13 +5,13 @@
     "kind": "petramond:crafting_table",
     "class": "container",
     "root": {
-      "type": "frame",
+      "type": "column",
       "layout": {
-        "w": "auto",
+        "w": 220,
         "h": "auto",
         "pad": [
           4,
-          2,
+          3,
           4,
           4
         ],
@@ -21,15 +21,20 @@
           0,
           0
         ],
-        "gap": 6,
+        "gap": 4,
         "dir": "column",
-        "justify": "start"
+        "align": "stretch",
+        "justify": "start",
+        "anchor": {
+          "h": "center",
+          "v": "center"
+        }
       },
       "style": "panel.large",
       "children": [
         {
           "type": "label",
-          "text": "Crafting"
+          "text": "Crafting Table"
         },
         {
           "type": "row",
@@ -48,25 +53,22 @@
               0,
               0
             ],
-            "gap": 10,
+            "gap": 2,
             "dir": "column",
-            "align": "center",
-            "justify": "center"
+            "align": "stretch",
+            "justify": "start"
           },
           "children": [
             {
-              "type": "slot_grid",
-              "role": "craft_input",
-              "cols": 3,
-              "rows": 3
-            },
-            {
-              "id": "craft_arrow",
-              "type": "gauge",
-              "mode": "grow_lr",
+              "id": "craft_search",
+              "type": "text_input",
+              "placeholder": "Search recipes...",
+              "max_chars": 64,
               "layout": {
-                "w": 24,
-                "h": 17,
+                "w": {
+                  "grow": 1
+                },
+                "h": "auto",
                 "pad": [
                   0,
                   0,
@@ -83,27 +85,62 @@
                 "dir": "column",
                 "justify": "start"
               },
-              "style": "gauge.arrow",
               "bind": {
-                "value": "always_full"
+                "text": "craft_search"
               }
             },
             {
-              "type": "slot",
-              "role": "craft_result"
+              "id": "craft_filter",
+              "type": "toggle",
+              "icon": "icon.craft_filter",
+              "layout": {
+                "w": 16,
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              },
+              "style": "button.toggle",
+              "bind": {
+                "value": "craft_filter_on"
+              }
             }
           ]
         },
         {
-          "type": "spacer",
+          "type": "label",
+          "text": "No matching recipes",
+          "style": "label.muted",
+          "bind": {
+            "visible": "no_craft_results"
+          }
+        },
+        {
+          "id": "craft_scroll",
+          "type": "scroll",
+          "axis": "vertical",
           "layout": {
             "w": "auto",
-            "h": 2,
+            "h": {
+              "grow": 1
+            },
             "pad": [
-              0,
-              0,
-              0,
-              0
+              1,
+              1,
+              1,
+              1
             ],
             "margin": [
               0,
@@ -113,20 +150,157 @@
             ],
             "gap": 0,
             "dir": "column",
-            "justify": "start"
-          }
+            "justify": "start",
+            "min_h": 48
+          },
+          "style": "panel.inset",
+          "children": [
+            {
+              "id": "craft_recipes_list",
+              "type": "list",
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 1,
+                "dir": "column",
+                "align": "stretch",
+                "justify": "start"
+              },
+              "bind": {
+                "items": "craft_recipes",
+                "selected": "craft_recipe_sel"
+              },
+              "children": [
+                {
+                  "id": "recipe",
+                  "type": "button",
+                  "layout": {
+                    "w": {
+                      "grow": 1
+                    },
+                    "h": 34,
+                    "pad": [
+                      3,
+                      3,
+                      3,
+                      3
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 4,
+                    "dir": "row",
+                    "align": "center",
+                    "justify": "start"
+                  },
+                  "bind": {
+                    "enabled": "enabled"
+                  },
+                  "children": [
+                    {
+                      "id": "recipe_result",
+                      "type": "hook",
+                      "layout": {
+                        "w": 20,
+                        "h": 20,
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      }
+                    },
+                    {
+                      "type": "column",
+                      "layout": {
+                        "w": {
+                          "grow": 1
+                        },
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 2,
+                        "dir": "column",
+                        "align": "stretch",
+                        "justify": "start"
+                      },
+                      "children": [
+                        {
+                          "type": "label",
+                          "bind": {
+                            "text": "name"
+                          }
+                        },
+                        {
+                          "id": "recipe_ingredients",
+                          "type": "hook",
+                          "layout": {
+                            "w": {
+                              "grow": 1
+                            },
+                            "h": 12,
+                            "pad": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "margin": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "gap": 0,
+                            "dir": "column",
+                            "justify": "start"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         },
         {
-          "type": "slot_grid",
-          "role": "player_inv",
-          "cols": 9,
-          "rows": 3
-        },
-        {
-          "type": "slot_grid",
-          "role": "hotbar",
-          "cols": 9,
-          "rows": 1,
+          "type": "row",
           "layout": {
             "w": "auto",
             "h": "auto",
@@ -138,20 +312,161 @@
             ],
             "margin": [
               0,
-              2,
+              0,
+              0,
+              0
+            ],
+            "gap": 3,
+            "dir": "column",
+            "align": "center",
+            "justify": "start"
+          },
+          "children": [
+            {
+              "type": "slot",
+              "role": "craft_result"
+            },
+            {
+              "id": "craft",
+              "type": "button",
+              "text": "CRAFT",
+              "layout": {
+                "w": {
+                  "grow": 1
+                },
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              },
+              "style": "button.success",
+              "bind": {
+                "enabled": "can_craft"
+              }
+            }
+          ]
+        },
+        {
+          "type": "label",
+          "text": "Inventory"
+        },
+        {
+          "type": "column",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "margin": [
+              0,
+              0,
               0,
               0
             ],
             "gap": 0,
             "dir": "column",
+            "align": "center",
             "justify": "start"
-          }
+          },
+          "children": [
+            {
+              "type": "slot_grid",
+              "role": "player_inv",
+              "cols": 9,
+              "rows": 3
+            },
+            {
+              "type": "slot_grid",
+              "role": "hotbar",
+              "cols": 9,
+              "rows": 1,
+              "layout": {
+                "w": "auto",
+                "h": "auto",
+                "pad": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "margin": [
+                  0,
+                  2,
+                  0,
+                  0
+                ],
+                "gap": 0,
+                "dir": "column",
+                "justify": "start"
+              }
+            }
+          ]
         }
       ]
     }
   },
   "editor": {
-    "sample_state": {},
+    "sample_state": {
+      "can_craft": {
+        "bool": true
+      },
+      "craft_filter_on": {
+        "bool": true
+      },
+      "craft_recipe_sel": {
+        "i32": 0
+      },
+      "craft_recipes": {
+        "list": [
+          {
+            "enabled": {
+              "bool": true
+            },
+            "name": {
+              "str": "First item"
+            }
+          },
+          {
+            "enabled": {
+              "bool": true
+            },
+            "name": {
+              "str": "Second item"
+            }
+          },
+          {
+            "enabled": {
+              "bool": true
+            },
+            "name": {
+              "str": "Third item"
+            }
+          }
+        ]
+      },
+      "craft_search": {
+        "str": "Sample text"
+      },
+      "no_craft_results": {
+        "bool": true
+      }
+    },
     "zoom": 1.0,
     "preview_scale": 2,
     "screen": [

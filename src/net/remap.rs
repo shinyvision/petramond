@@ -216,8 +216,8 @@ impl IdRemap {
                         }
                     }
                 }
-                // Effects travel by name; tables ARE the vocabulary. Nothing
-                // else in JoinData carries ids.
+                // Effects and crafting recipes travel by name; tables ARE
+                // the vocabulary. Nothing else in JoinData carries ids.
             }
             // Name-addressed or id-free messages:
             ServerToClient::HelloAck { .. }
@@ -296,12 +296,11 @@ impl IdRemap {
     /// read as empty slots / dropped workbench rows, the inventory policy).
     fn remap_menu_sync(&self, sync: &mut super::protocol::MenuSyncMsg) {
         use super::protocol::MenuTargetWire;
-        for slot in &mut sync.craft_grid {
-            remap_slot(self, slot);
-        }
-        remap_slot(self, &mut sync.craft_result);
         match &mut sync.target {
-            MenuTargetWire::None | MenuTargetWire::Inventory | MenuTargetWire::Table => {}
+            MenuTargetWire::None => {}
+            MenuTargetWire::Inventory { output } | MenuTargetWire::Table { output } => {
+                remap_slot(self, output);
+            }
             MenuTargetWire::Furnace { slots, .. } => {
                 for slot in slots {
                     remap_slot(self, slot);
@@ -341,15 +340,18 @@ impl IdRemap {
             return;
         }
         match msg {
-            // MenuClick carries slot indices + widget-name strings, no
-            // registry ids.
+            // MenuClick carries slot indices + widget-name strings and
+            // CraftRecipe carries a stable recipe name; neither needs an id
+            // remap.
             ClientToServer::Hello { .. }
             | ClientToServer::ModQuery
             | ClientToServer::Join { .. }
             | ClientToServer::SetViewDistance { .. }
+            | ClientToServer::SetCraftFilter { .. }
             | ClientToServer::PlayerUpdate(_)
             | ClientToServer::Action(_)
             | ClientToServer::MenuClick { .. }
+            | ClientToServer::CraftRecipe { .. }
             | ClientToServer::ChatSend { .. }
             | ClientToServer::StreamBatchAck { .. }
             | ClientToServer::SectionCacheMiss { .. }
@@ -536,6 +538,49 @@ mod tests {
             vec![(9, [0b0111, 3 % n, 4 % n])],
             "SectionStatesPayload slab layer ids rewrite through the block LUT"
         );
+    }
+
+    /// Crafting output moved inside the menu target, so both crafting
+    /// contexts must still cross the same item-id boundary as every other
+    /// live slot. Unknown joined content degrades to an empty output.
+    #[test]
+    fn crafting_target_outputs_remap_and_skip_unknown_items() {
+        use crate::net::protocol::{ItemSlotWire, MenuSyncMsg, MenuTargetWire};
+
+        let local = local_name_tables();
+        let mut tables = local.clone();
+        tables.items.rotate_left(1);
+        tables.items.push("ghost_mod:result".to_string());
+        let unknown = (tables.items.len() - 1) as u8;
+        let map = IdRemap::build(&tables);
+
+        let mut known = MenuSyncMsg {
+            target: MenuTargetWire::Inventory {
+                output: Some(ItemSlotWire {
+                    item_id: 0,
+                    count: 4,
+                }),
+            },
+        };
+        map.remap_menu_sync(&mut known);
+        let MenuTargetWire::Inventory { output } = known.target else {
+            unreachable!()
+        };
+        assert_eq!(output.map(|slot| slot.item_id), Some(1));
+
+        let mut missing = MenuSyncMsg {
+            target: MenuTargetWire::Table {
+                output: Some(ItemSlotWire {
+                    item_id: unknown,
+                    count: 1,
+                }),
+            },
+        };
+        map.remap_menu_sync(&mut missing);
+        let MenuTargetWire::Table { output } = missing.target else {
+            unreachable!()
+        };
+        assert_eq!(output, None);
     }
 
     /// Entity/self batches: known ids map through the mob/item/effect LUTs;

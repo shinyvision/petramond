@@ -9,7 +9,7 @@
 //! session-id order on the tick.
 
 use crate::controls::PointerButton;
-use crate::crafting::CraftGrid;
+use crate::crafting::CraftingStation;
 use crate::events::{ContainerKind, PostEvent, SimCtx};
 use crate::gui::{ChestView, ContainerView, FurnaceView, GuiStateMap, MenuSlot, WorkbenchView};
 use crate::inventory::Inventory;
@@ -18,8 +18,10 @@ use crate::mathh::IVec3;
 use crate::net::protocol::{ItemSlotWire, MenuSyncMsg, MenuTargetWire};
 
 use super::game::ServerGame;
-use crate::game::container::ContainerTarget;
+use crate::game::container::{ContainerTarget, CraftMenuFailure};
 use crate::game::tick::TickEvents;
+use crate::net::protocol::ActionDenyReason;
+use crate::server::player::PendingMenuAction;
 
 /// Read-only menu state consumed by the app's UI snapshot builder. Since
 /// C2c-iii the CLIENT assembles this entirely from its replicated stores
@@ -27,7 +29,7 @@ use crate::game::tick::TickEvents;
 /// `Game::menu_read_model`; nothing here reads a server session.
 pub struct MenuReadModel<'a> {
     pub inventory: &'a Inventory,
-    pub craft: &'a CraftGrid,
+    pub craft_output: Option<ItemStack>,
     pub furnace: Option<FurnaceView>,
     pub chest: Option<ChestView>,
     pub workbench: Option<WorkbenchView>,
@@ -56,58 +58,133 @@ impl ServerGame {
     pub(crate) fn apply_latched_actions_for_test(&mut self) {
         let mut events = TickEvents::default();
         for s in 0..self.sessions.len() {
-            if std::mem::take(&mut self.sessions[s].close_menu_requested) {
-                self.close_open_menu_for(s, &mut events);
-            }
+            self.tick_menu(s, &mut events);
+            self.tick_drops(s, &mut events);
         }
-        self.tick_drops(0, &mut events);
-        self.tick_menu(0, &mut events);
     }
 
-    /// Apply this frame's latched container-menu clicks, in order, on the tick. Splits the
+    /// Apply this frame's ordered menu actions on the tick. Splits the
     /// disjoint `menu` / `world` / `inventory` borrows the menu needs and lends the
     /// recipes; the menu decodes each interaction keyed on its target. Widget
     /// (button) clicks mutate no container — they dispatch to the open mod
-    /// GUI's owning mod instead. A latched `OpenInventory` opens the 2×2
-    /// crafting session FIRST, so clicks queued behind the open land in it.
+    /// GUI's owning mod instead. Keeping transitions and mutations in one
+    /// stream prevents close/click/craft races.
     pub(crate) fn tick_menu(&mut self, s: usize, events: &mut TickEvents) {
-        if std::mem::take(&mut self.sessions[s].open_inventory_requested) {
-            self.open_crafting_for(s, 2);
-            self.sessions[s].request_open_inventory = true;
-        }
-        for (slot, button, shift, gather, request_id) in
-            std::mem::take(&mut self.sessions[s].pending_menu_clicks)
-        {
-            if let MenuSlot::Widget(id) = slot {
-                // Only a primary click activates a button (a right-click over
-                // one is consumed by the panel but triggers nothing).
-                if button == PointerButton::Primary {
-                    self.dispatch_gui_click(s, id, events);
+        for action in std::mem::take(&mut self.sessions[s].pending_menu_actions) {
+            match action {
+                PendingMenuAction::OpenInventory => {
+                    self.replace_open_menu_for(s, events);
+                    self.open_crafting_for(s, CraftingStation::Inventory);
+                    self.sessions[s].request_open_inventory = true;
                 }
-                self.push_action_outcome(s, request_id, true, None);
-                continue;
+                PendingMenuAction::OpenCraftingTable => {
+                    self.replace_open_menu_for(s, events);
+                    self.open_crafting_for(s, CraftingStation::CraftingTable);
+                    self.sessions[s].request_open_table = true;
+                }
+                PendingMenuAction::OpenFurnace(pos) => {
+                    self.replace_open_menu_for(s, events);
+                    self.open_furnace_screen_for(s, pos);
+                    self.sessions[s].request_open_furnace = Some(pos);
+                }
+                PendingMenuAction::OpenChest(pos) => {
+                    self.replace_open_menu_for(s, events);
+                    self.open_chest_screen_for(s, pos, events);
+                    self.sessions[s].request_open_chest = Some(pos);
+                }
+                PendingMenuAction::OpenWorkbench => {
+                    self.replace_open_menu_for(s, events);
+                    self.open_workbench_screen_for(s);
+                    self.sessions[s].request_open_workbench = true;
+                }
+                PendingMenuAction::OpenModGui { kind, pos } => {
+                    self.replace_open_menu_for(s, events);
+                    self.open_mod_gui_screen_for(s, kind, pos);
+                    self.sessions[s].request_open_mod_gui = Some((kind, pos));
+                }
+                PendingMenuAction::Close => self.close_open_menu_for(s, events),
+                PendingMenuAction::SlotClick {
+                    slot,
+                    button,
+                    shift,
+                    gather,
+                    request_id,
+                } => {
+                    if let MenuSlot::Widget(id) = slot {
+                        // A right-click is consumed by the button but does not
+                        // activate it.
+                        if button == PointerButton::Primary {
+                            self.dispatch_gui_click(s, id, events);
+                        }
+                    } else {
+                        let sess = &mut self.sessions[s];
+                        sess.menu.click(
+                            &mut self.world,
+                            &mut sess.player.inventory,
+                            &self.recipes,
+                            slot,
+                            button,
+                            shift,
+                            gather,
+                        );
+                    }
+                    self.push_action_outcome(s, request_id, true, None);
+                }
+                PendingMenuAction::CraftRecipe {
+                    recipe,
+                    bulk,
+                    request_id,
+                } => {
+                    let result = {
+                        let sess = &mut self.sessions[s];
+                        sess.menu.craft_recipe(
+                            &mut sess.player.inventory,
+                            &self.recipes,
+                            &recipe,
+                            bulk,
+                        )
+                    };
+                    match result {
+                        Ok(overflow) => {
+                            for stack in overflow {
+                                self.sessions[s].drop_queue.queue_stack(stack);
+                            }
+                            self.push_action_outcome(s, request_id, true, None);
+                        }
+                        Err(error) => {
+                            let reason = match error {
+                                CraftMenuFailure::InvalidRecipe => ActionDenyReason::InvalidSlot,
+                                CraftMenuFailure::OutputOccupied => ActionDenyReason::Busy,
+                                CraftMenuFailure::MissingIngredients => ActionDenyReason::Denied,
+                            };
+                            self.push_action_outcome(s, request_id, false, Some(reason));
+                        }
+                    }
+                }
             }
-            let sess = &mut self.sessions[s];
-            // Craft-transaction remainders that fit neither their input cell
-            // nor the inventory are thrown into the world — same policy as
-            // `close_crafting_for`. Gathered first: the drop spawn path
-            // borrows `world` later on the fixed tick.
-            let mut overflow = Vec::new();
-            sess.menu.click(
-                &mut self.world,
-                &mut sess.player.inventory,
-                &self.recipes,
-                slot,
-                button,
-                shift,
-                gather,
-                |stack| overflow.push(stack),
-            );
-            for stack in overflow {
-                sess.drop_queue.queue_stack(stack);
-            }
-            self.push_action_outcome(s, request_id, true, None);
         }
+    }
+
+    /// Replace an existing menu through the ordinary close funnel before a
+    /// new target opens. Transient cursor/output/workbench stacks are thereby
+    /// recovered exactly once, and chest viewer state cannot leak across a
+    /// direct menu transition.
+    fn replace_open_menu_for(&mut self, s: usize, events: &mut TickEvents) {
+        if self.sessions[s].menu.target() != ContainerTarget::None {
+            self.close_open_menu_for(s, events);
+        } else {
+            self.clear_menu_open_requests(s);
+        }
+    }
+
+    fn clear_menu_open_requests(&mut self, s: usize) {
+        let sess = &mut self.sessions[s];
+        sess.request_open_inventory = false;
+        sess.request_open_table = false;
+        sess.request_open_furnace = None;
+        sess.request_open_chest = None;
+        sess.request_open_workbench = false;
+        sess.request_open_mod_gui = None;
     }
 
     /// Dispatch a latched button click to the open mod GUI's OWNING mod (the
@@ -144,12 +221,10 @@ impl ServerGame {
         mods.dispatch_gui_click(&mut ctx, kind_key, widget_id, pos.map(|p| [p.x, p.y, p.z]));
     }
 
-    /// Configure session `s`'s crafting grid for a screen of `cols×cols`
-    /// (2 = inventory, 3 = table) and clear it. Runs on the tick, at the
-    /// request site (interaction arm / `OpenInventory` latch).
-    pub(crate) fn open_crafting_for(&mut self, s: usize, cols: usize) {
+    /// Begin a fresh player-crafting session for the requested station.
+    pub(crate) fn open_crafting_for(&mut self, s: usize, station: CraftingStation) {
         let sess = &mut self.sessions[s];
-        sess.menu.open_crafting(cols, &self.recipes);
+        sess.menu.open_crafting(station);
         self.emit_container_opened(s);
     }
 
@@ -226,7 +301,7 @@ impl ServerGame {
     }
 
     /// Close player `s`'s open menu session in the app-required cleanup order:
-    /// cursor stack, crafting grid, furnace, chest, furniture workbench, then
+    /// cursor stack, player-crafting output, furnace, chest, furniture workbench, then
     /// any mod GUI (whose session state map is cleared with it).
     pub(crate) fn close_open_menu_for(&mut self, s: usize, events: &mut TickEvents) {
         // `container_closed` for whatever session was actually open. Emitted
@@ -242,6 +317,7 @@ impl ServerGame {
         self.sessions[s].menu.close_chest();
         self.close_workbench_for(s);
         self.close_mod_gui_for(s);
+        self.clear_menu_open_requests(s);
     }
 
     /// `container_opened` for the session that just began. The `open_*_for`
@@ -254,17 +330,13 @@ impl ServerGame {
         }
     }
 
-    /// Close the crafting grid: return every input item to the inventory (any
-    /// overflow is thrown into the world), then clear the result. Overflow is
-    /// gathered first, then queued after the menu call so the drop spawn path can
-    /// borrow `world` later on the fixed tick.
+    /// Return the real player-crafting output to the inventory, queueing any
+    /// overflow for the ordinary world-drop stage.
     fn close_crafting_for(&mut self, s: usize) {
         let mut overflow = Vec::new();
         let sess = &mut self.sessions[s];
         sess.menu
-            .close_crafting(&mut sess.player.inventory, &self.recipes, |stack| {
-                overflow.push(stack);
-            });
+            .close_crafting(&mut sess.player.inventory, |stack| overflow.push(stack));
         for stack in overflow {
             sess.drop_queue.queue_stack(stack);
         }
@@ -298,8 +370,8 @@ impl ServerGame {
         }
     }
 
-    /// End the workbench session: return the input block to the inventory (overflow
-    /// thrown into the world), like closing the crafting grid.
+    /// End the workbench session: return the input block to the inventory
+    /// (overflow thrown into the world).
     fn close_workbench_for(&mut self, s: usize) {
         let mut overflow = Vec::new();
         let sess = &mut self.sessions[s];
@@ -316,8 +388,12 @@ impl ServerGame {
         let sess = &self.sessions[s];
         let target = match sess.menu.target() {
             ContainerTarget::None => MenuTargetWire::None,
-            ContainerTarget::Inventory => MenuTargetWire::Inventory,
-            ContainerTarget::Table => MenuTargetWire::Table,
+            ContainerTarget::Inventory => MenuTargetWire::Inventory {
+                output: slot_wire(sess.menu.craft_output()),
+            },
+            ContainerTarget::Table => MenuTargetWire::Table {
+                output: slot_wire(sess.menu.craft_output()),
+            },
             ContainerTarget::Furnace(pos) => {
                 let v = sess.menu.open_furnace_view(&self.world).unwrap_or_default();
                 MenuTargetWire::Furnace {
@@ -355,15 +431,7 @@ impl ServerGame {
                 gui_state: None,
             },
         };
-        let craft = sess.menu.craft_grid();
-        MenuSyncMsg {
-            target,
-            craft_grid: craft.cells()[..craft.capacity()]
-                .iter()
-                .map(|c| slot_wire(*c))
-                .collect(),
-            craft_result: slot_wire(craft.result().copied()),
-        }
+        MenuSyncMsg { target }
     }
 }
 

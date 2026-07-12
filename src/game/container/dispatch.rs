@@ -2,7 +2,7 @@ use super::{ContainerMenu, ContainerTarget};
 use crate::controls::PointerButton;
 use crate::crafting::Recipes;
 use crate::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
-use crate::gui::{CraftHit, FurnaceHit, MenuSlot, WorkbenchHit};
+use crate::gui::{FurnaceHit, MenuSlot, WorkbenchHit};
 use crate::inventory::Inventory;
 use crate::world::World;
 
@@ -16,12 +16,8 @@ impl ContainerMenu {
     ///
     /// Every block-entity container slot (chest, furnace, mod document) decodes
     /// through ONE generic path driven by the target's `SlotSpec`s — the furnace's
-    /// role hits just map to their conventional indices first. Only the transient
-    /// stations (craft grid, workbench) keep dedicated handling.
-    /// `overflow` receives stacks a craft transaction could return to neither
-    /// an input cell nor the inventory (a bucket remainder with everything
-    /// full) — the caller owes them the world-drop path; they are never
-    /// deleted.
+    /// role hits just map to their conventional indices first. The transient
+    /// crafting output and furniture workbench keep dedicated handling.
     pub(crate) fn click(
         &mut self,
         world: &mut World,
@@ -31,7 +27,6 @@ impl ContainerMenu {
         button: PointerButton,
         shift: bool,
         gather: bool,
-        overflow: impl FnMut(crate::item::ItemStack),
     ) {
         match slot {
             MenuSlot::Inventory(i) => {
@@ -62,27 +57,7 @@ impl ContainerMenu {
                     }
                 }
             }
-            MenuSlot::Craft(hit) => match hit {
-                CraftHit::Input(i) => {
-                    if shift {
-                        self.craft_shift_slot(inv, recipes, i);
-                    } else {
-                        match button {
-                            PointerButton::Primary => self.craft_click_slot(inv, recipes, i),
-                            PointerButton::Secondary => {
-                                self.craft_right_click_slot(inv, recipes, i)
-                            }
-                        }
-                    }
-                }
-                CraftHit::Result => {
-                    if shift {
-                        self.craft_shift_result(inv, recipes, overflow);
-                    } else {
-                        self.craft_take_result(inv, recipes, overflow);
-                    }
-                }
-            },
+            MenuSlot::CraftResult => self.craft_take_output(inv, shift),
             // The furnace's role hits are its conventional container indices;
             // its SlotSpecs (take-only output, tag filters) drive the rest.
             MenuSlot::Furnace(hit) => {

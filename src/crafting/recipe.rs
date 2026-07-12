@@ -1,178 +1,388 @@
-//! Recipe representation + grid matching.
+//! Resolved recipe data and catalog lookups.
 //!
-//! A recipe is either *shapeless* (a multiset of ingredients placed anywhere) or
-//! *shaped* (a fixed `width×height` pattern matched at any offset within the
-//! grid, by bounding box). An [`Ingredient`] is an exact item or a tag (any item
-//! in a set, e.g. `#planks`). Matching is pure over a square `cols×cols` grid.
+//! Player crafting is inventory-driven: recipes declare aggregate ingredient
+//! quantities and a minimum station, never a grid arrangement. Processing and
+//! furniture recipes remain separate because their interaction models differ.
 
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemTag, ItemType};
+
+pub(crate) const MAX_INGREDIENT_UNITS: u32 = crate::inventory::TOTAL_SLOTS as u32 * u8::MAX as u32;
 
 /// The furnace's processing-recipe class (see [`ProcessingRecipe::class`]).
 pub const SMELTING_CLASS: &str = "petramond:smelting";
 
-/// A machine-processing recipe: one `input` item produces `result` when
-/// processed by the machine consuming `class` — the furnace smelts
-/// [`SMELTING_CLASS`] rows, a mod machine (the kitchen oven) consumes its own
-/// namespaced class. Looked up by `(class, input)` (see [`Recipes::process`]).
-/// Separate from the grid [`Recipe`]s because it isn't matched over a grid.
-#[derive(Clone, Debug)]
-pub struct ProcessingRecipe {
-    /// Namespaced class key: which machine kind consumes this recipe.
-    pub class: String,
-    pub input: ItemType,
-    pub result: ItemStack,
+/// The minimum context a player-crafting recipe requires.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CraftingStation {
+    Inventory,
+    CraftingTable,
 }
 
-/// A furniture-workbench recipe: placing `cost` of `input` in the workbench lets you
-/// craft `result`. Looked up by the input item (see [`Recipes::furniture_for`]): the
-/// workbench shows every result whose `input` matches the placed block, each greyed
-/// out until at least `cost` of it is present. Separate from the grid [`Recipe`]s
-/// because the workbench takes a single block, not a grid.
-#[derive(Clone, Copy, Debug)]
-pub struct FurnitureRecipe {
-    pub input: ItemType,
-    pub result: ItemStack,
-    /// How many `input` items one craft consumes.
-    pub cost: u8,
+impl CraftingStation {
+    pub const INVENTORY_KEY: &'static str = "petramond:inventory";
+    pub const CRAFTING_TABLE_KEY: &'static str = "petramond:crafting_table";
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        match key {
+            Self::INVENTORY_KEY => Some(Self::Inventory),
+            Self::CRAFTING_TABLE_KEY => Some(Self::CraftingTable),
+            _ => None,
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Inventory => Self::INVENTORY_KEY,
+            Self::CraftingTable => Self::CRAFTING_TABLE_KEY,
+        }
+    }
+
+    /// Whether this open context admits a recipe with minimum station `required`.
+    pub fn admits(self, required: Self) -> bool {
+        matches!(self, Self::CraftingTable) || required == Self::Inventory
+    }
 }
 
-/// One cell's requirement: an exact item, or any item carrying a tag (tag
-/// membership is defined in item data — see [`ItemType::has_tag`]).
-#[derive(Clone, Debug)]
-pub enum Ingredient {
+/// An exact item or an open, item-owned tag selector.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum IngredientSelector {
     Item(ItemType),
     Tag(ItemTag),
 }
 
-impl Ingredient {
-    /// Whether `item` satisfies this ingredient.
+impl IngredientSelector {
     #[inline]
-    pub fn matches(&self, item: ItemType) -> bool {
+    pub fn matches(self, item: ItemType) -> bool {
         match self {
-            Ingredient::Item(i) => *i == item,
-            Ingredient::Tag(tag) => item.has_tag(*tag),
+            Self::Item(exact) => exact == item,
+            Self::Tag(tag) => item.has_tag(tag),
+        }
+    }
+
+    /// A deterministic icon for the recipe browser. Prefer an owned matching
+    /// item because that is what the planner can actually consume; otherwise
+    /// use the first registered tag member as the unavailable-row exemplar.
+    pub fn display_item(self, inventory: &Inventory) -> Option<ItemType> {
+        match self {
+            Self::Item(item) => Some(item),
+            Self::Tag(tag) => inventory
+                .raw_slots()
+                .iter()
+                .flatten()
+                .find(|stack| stack.item.has_tag(tag))
+                .map(|stack| stack.item)
+                .or_else(|| {
+                    ItemType::all()
+                        .iter()
+                        .copied()
+                        .find(|item| item.has_tag(tag))
+                }),
         }
     }
 }
 
-/// What one craft DOES with the stack in a matched grid cell. The mode belongs
-/// to the ingredient OCCURRENCE, not the item: the same item may be consumed
-/// by one recipe and retained by another.
+/// What one assigned ingredient unit does when CRAFT commits.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum IngredientUse {
-    /// Decrement the matched stack by one (the default).
     Consume,
-    /// Leave the matched stack untouched — a catalyst (a shovel that grinds
-    /// but is not spent). A retained catalyst never bounds shift-crafting.
     Keep,
-    /// Decrement by one and return the declared item — a drained container
-    /// (a water bucket's empty bucket). A remainder is NEVER deleted: it goes
-    /// to the input cell, then the inventory, then the safe overflow drop.
     Remainder(ItemType),
 }
 
-/// One recipe-slot requirement plus what the craft transaction does with the
-/// stack that matched it.
-#[derive(Clone, Debug)]
-pub struct RecipeIngredient {
-    pub what: Ingredient,
-    pub mode: IngredientUse,
+/// One aggregate player-crafting ingredient row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CraftingIngredient {
+    pub selector: IngredientSelector,
+    pub count: u16,
+    pub use_mode: IngredientUse,
 }
 
-impl RecipeIngredient {
-    /// The default occurrence: consumed on craft.
-    pub fn consumed(what: Ingredient) -> Self {
-        RecipeIngredient {
-            what,
-            mode: IngredientUse::Consume,
-        }
-    }
+/// One selectable player-crafting recipe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CraftingRecipe {
+    key: String,
+    station: CraftingStation,
+    ingredients: Vec<CraftingIngredient>,
+    result: ItemStack,
 }
 
-/// A successful grid match: the crafted stack plus, per grid cell, what the
-/// craft transaction does with that cell (`None` = empty cell, untouched).
-/// Consumption always derives from this plan — never a blind decrement of
-/// every occupied cell.
-#[derive(Clone, Debug)]
-pub struct GridMatch {
-    pub result: ItemStack,
-    pub uses: [Option<IngredientUse>; super::MAX_CELLS],
-}
-
-/// A crafting recipe. `result` is the full output stack (item + yield count).
-#[derive(Clone, Debug)]
-pub enum Recipe {
-    /// Order-independent: the grid's non-empty items, as a multiset, must match
-    /// `ingredients` one-to-one.
-    Shapeless {
-        ingredients: Vec<RecipeIngredient>,
+impl CraftingRecipe {
+    #[cfg(test)]
+    pub(crate) fn new(
+        key: String,
+        station: CraftingStation,
+        ingredients: Vec<CraftingIngredient>,
         result: ItemStack,
-    },
-    /// A `width×height` pattern. `cells` is row-major (`Some` = required
-    /// ingredient, `None` = must be empty); it must align with the grid's
-    /// occupied bounding box exactly.
-    Shaped {
-        width: usize,
-        height: usize,
-        cells: Vec<Option<RecipeIngredient>>,
-        result: ItemStack,
-    },
-}
-
-impl Recipe {
-    /// The crafted stack if this recipe is satisfied by `grid` — a `cols×cols`
-    /// square in row-major order — else `None`.
-    pub fn matches(&self, grid: &[Option<ItemStack>], cols: usize) -> Option<ItemStack> {
-        self.match_plan(grid, cols).map(|m| m.result)
-    }
-
-    /// [`matches`](Self::matches) plus the per-cell transaction plan.
-    pub fn match_plan(&self, grid: &[Option<ItemStack>], cols: usize) -> Option<GridMatch> {
-        match self {
-            Recipe::Shapeless {
-                ingredients,
-                result,
-            } => Some(GridMatch {
-                result: *result,
-                uses: match_shapeless(grid, ingredients)?,
-            }),
-            Recipe::Shaped {
-                width,
-                height,
-                cells,
-                result,
-            } => Some(GridMatch {
-                result: *result,
-                uses: match_shaped(grid, cols, *width, *height, cells)?,
-            }),
-        }
-    }
-}
-
-/// The loaded recipe set: grid (crafting) recipes searched in declaration order,
-/// the machine-processing table looked up by (class, input item), and the
-/// furniture-workbench recipes looked up by their input block.
-#[derive(Clone, Default)]
-pub struct Recipes {
-    list: Vec<Recipe>,
-    processing: Vec<ProcessingRecipe>,
-    furniture: Vec<FurnitureRecipe>,
-}
-
-impl Recipes {
-    pub fn new(
-        list: Vec<Recipe>,
-        processing: Vec<ProcessingRecipe>,
-        furniture: Vec<FurnitureRecipe>,
     ) -> Self {
-        Recipes {
-            list,
-            processing,
-            furniture,
+        Self {
+            key,
+            station,
+            ingredients,
+            result,
         }
     }
 
-    /// Number of grid (crafting) recipes.
+    pub(crate) fn try_new(
+        key: String,
+        station: CraftingStation,
+        ingredients: Vec<CraftingIngredient>,
+        result: ItemStack,
+    ) -> Result<Self, String> {
+        if !crate::registry::is_namespaced(&key) {
+            return Err(format!("crafting recipe key '{key}' is not namespaced"));
+        }
+        if ingredients.is_empty() {
+            return Err("crafting recipe has no ingredients".into());
+        }
+        let total = ingredients.iter().try_fold(0u32, |total, ingredient| {
+            total.checked_add(u32::from(ingredient.count))
+        });
+        let Some(total) = total else {
+            return Err("crafting ingredient total overflows".into());
+        };
+        if total == 0 || total > MAX_INGREDIENT_UNITS {
+            return Err(format!(
+                "crafting recipe requires {total} units (allowed 1..={MAX_INGREDIENT_UNITS})"
+            ));
+        }
+        for ingredient in &ingredients {
+            if ingredient.count == 0 {
+                return Err("crafting ingredient count is zero".into());
+            }
+            match ingredient.selector {
+                IngredientSelector::Item(ItemType::Air) => {
+                    return Err("crafting ingredient item is air".into())
+                }
+                IngredientSelector::Item(item) if item.max_stack_size() == 0 => {
+                    return Err(format!(
+                        "crafting ingredient item '{}' has zero stack size",
+                        item.key()
+                    ))
+                }
+                IngredientSelector::Tag(tag)
+                    if !ItemType::all().iter().any(|item| item.has_tag(tag)) =>
+                {
+                    return Err(format!(
+                        "crafting ingredient tag '{}' has no items",
+                        public_tag_key(tag)
+                    ))
+                }
+                _ => {}
+            }
+            if let IngredientUse::Remainder(item) = ingredient.use_mode {
+                if item == ItemType::Air {
+                    return Err("crafting remainder item is air".into());
+                }
+                if item.max_stack_size() == 0 {
+                    return Err(format!(
+                        "crafting remainder item '{}' has zero stack size",
+                        item.key()
+                    ));
+                }
+            }
+        }
+        if !ingredients
+            .iter()
+            .any(|ingredient| ingredient.use_mode != IngredientUse::Keep)
+        {
+            return Err("crafting recipe consumes no ingredient".into());
+        }
+        if result.item == ItemType::Air || result.count == 0 {
+            return Err("crafting result is empty".into());
+        }
+        if result.count > result.item.max_stack_size() {
+            return Err(format!(
+                "result count {} does not fit one '{}' stack (max {})",
+                result.count,
+                result.item.key(),
+                result.item.max_stack_size()
+            ));
+        }
+        Ok(Self {
+            key,
+            station,
+            ingredients,
+            result,
+        })
+    }
+
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn station(&self) -> CraftingStation {
+        self.station
+    }
+
+    pub fn ingredients(&self) -> &[CraftingIngredient] {
+        &self.ingredients
+    }
+
+    pub fn result(&self) -> ItemStack {
+        self.result
+    }
+
+    pub fn craftable_with(&self, inventory: &Inventory) -> bool {
+        super::plan::plan(self, inventory).is_some()
+    }
+
+    pub(crate) fn from_data(data: CraftingRecipeData) -> Result<Self, String> {
+        let station = CraftingStation::from_key(&data.station)
+            .ok_or_else(|| format!("unknown crafting station '{}'", data.station))?;
+        let result_item = item_by_key(&data.result.item)
+            .ok_or_else(|| format!("unknown result item '{}'", data.result.item))?;
+        let mut ingredients = Vec::with_capacity(data.ingredients.len());
+        for ingredient in data.ingredients {
+            let selector = match ingredient.selector {
+                CraftingSelectorData::Item(key) => IngredientSelector::Item(
+                    item_by_key(&key).ok_or_else(|| format!("unknown ingredient item '{key}'"))?,
+                ),
+                CraftingSelectorData::Tag(key) => IngredientSelector::Tag(
+                    ItemTag::resolve(&key)
+                        .map_err(|e| format!("unknown ingredient tag '{key}': {e}"))?,
+                ),
+            };
+            let use_mode = match ingredient.use_mode {
+                IngredientUseData::Consume => IngredientUse::Consume,
+                IngredientUseData::Keep => IngredientUse::Keep,
+                IngredientUseData::Remainder(key) => IngredientUse::Remainder(
+                    item_by_key(&key).ok_or_else(|| format!("unknown remainder item '{key}'"))?,
+                ),
+            };
+            ingredients.push(CraftingIngredient {
+                selector,
+                count: ingredient.count,
+                use_mode,
+            });
+        }
+        Self::try_new(
+            data.recipe,
+            station,
+            ingredients,
+            ItemStack {
+                item: result_item,
+                count: data.result.count,
+            },
+        )
+    }
+
+    pub(crate) fn to_data(&self) -> CraftingRecipeData {
+        CraftingRecipeData {
+            recipe: self.key.clone(),
+            station: self.station.key().to_owned(),
+            ingredients: self
+                .ingredients
+                .iter()
+                .map(|ingredient| CraftingIngredientData {
+                    selector: match ingredient.selector {
+                        IngredientSelector::Item(item) => {
+                            CraftingSelectorData::Item(item.key().to_owned())
+                        }
+                        IngredientSelector::Tag(tag) => {
+                            CraftingSelectorData::Tag(public_tag_key(tag))
+                        }
+                    },
+                    count: ingredient.count,
+                    use_mode: match ingredient.use_mode {
+                        IngredientUse::Consume => IngredientUseData::Consume,
+                        IngredientUse::Keep => IngredientUseData::Keep,
+                        IngredientUse::Remainder(item) => {
+                            IngredientUseData::Remainder(item.key().to_owned())
+                        }
+                    },
+                })
+                .collect(),
+            result: CraftingStackData {
+                item: self.result.item.key().to_owned(),
+                count: self.result.count,
+            },
+        }
+    }
+}
+
+/// Name-addressed immutable crafting catalog data sent once at join. Registry
+/// names, rather than session-local numeric ids, make this remap-free.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CraftingRecipeData {
+    pub recipe: String,
+    pub station: String,
+    pub ingredients: Vec<CraftingIngredientData>,
+    pub result: CraftingStackData,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CraftingIngredientData {
+    pub selector: CraftingSelectorData,
+    pub count: u16,
+    pub use_mode: IngredientUseData,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum CraftingSelectorData {
+    Item(String),
+    Tag(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum IngredientUseData {
+    Consume,
+    Keep,
+    Remainder(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CraftingStackData {
+    pub item: String,
+    pub count: u8,
+}
+
+/// Ordered player-crafting recipes plus stable-key lookup.
+#[derive(Clone, Default)]
+pub struct CraftingCatalog {
+    list: Vec<CraftingRecipe>,
+    by_key: HashMap<String, usize>,
+}
+
+impl CraftingCatalog {
+    pub fn new(list: Vec<CraftingRecipe>) -> Self {
+        let mut kept = Vec::with_capacity(list.len());
+        let mut by_key = HashMap::with_capacity(list.len());
+        for recipe in list {
+            if by_key.contains_key(recipe.key()) {
+                log::error!("skipping duplicate crafting recipe key '{}'", recipe.key());
+                continue;
+            }
+            let index = kept.len();
+            by_key.insert(recipe.key().to_owned(), index);
+            kept.push(recipe);
+        }
+        Self { list: kept, by_key }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &CraftingRecipe> {
+        self.list.iter()
+    }
+
+    pub fn get(&self, key: &str) -> Option<&CraftingRecipe> {
+        self.by_key.get(key).and_then(|index| self.list.get(*index))
+    }
+
+    pub fn get_at(&self, key: &str, station: CraftingStation) -> Option<&CraftingRecipe> {
+        self.get(key)
+            .filter(|recipe| station.admits(recipe.station()))
+    }
+
+    pub fn at(&self, station: CraftingStation) -> impl Iterator<Item = &CraftingRecipe> {
+        self.list
+            .iter()
+            .filter(move |recipe| station.admits(recipe.station()))
+    }
+
     pub fn len(&self) -> usize {
         self.list.len()
     }
@@ -181,261 +391,189 @@ impl Recipes {
         self.list.is_empty()
     }
 
-    /// The result of the first grid recipe that matches `grid` (a `cols×cols`
-    /// square), or `None` if nothing matches.
-    pub fn find(&self, grid: &[Option<ItemStack>], cols: usize) -> Option<ItemStack> {
-        self.find_match(grid, cols).map(|m| m.result)
+    pub(crate) fn to_data(&self) -> Vec<CraftingRecipeData> {
+        self.list.iter().map(CraftingRecipe::to_data).collect()
     }
 
-    /// [`find`](Self::find) plus the matched recipe's per-cell transaction
-    /// plan — what taking the result does to each grid cell.
-    pub fn find_match(&self, grid: &[Option<ItemStack>], cols: usize) -> Option<GridMatch> {
-        self.list.iter().find_map(|r| r.match_plan(grid, cols))
+    pub(crate) fn from_data(data: Vec<CraftingRecipeData>) -> Self {
+        let mut recipes = Vec::with_capacity(data.len());
+        for row in data {
+            let key = row.recipe.clone();
+            match CraftingRecipe::from_data(row) {
+                Ok(recipe) => recipes.push(recipe),
+                Err(error) => log::error!("ignoring joined crafting recipe '{key}': {error}"),
+            }
+        }
+        Self::new(recipes)
+    }
+}
+
+/// A machine-processing recipe, keyed by `(class, input)`.
+#[derive(Clone, Debug)]
+pub struct ProcessingRecipe {
+    pub class: String,
+    pub input: ItemType,
+    pub result: ItemStack,
+}
+
+/// A furniture-workbench recipe, keyed by its single input block.
+#[derive(Clone, Copy, Debug)]
+pub struct FurnitureRecipe {
+    pub input: ItemType,
+    pub result: ItemStack,
+    pub cost: u8,
+}
+
+/// Every loaded recipe interaction model.
+#[derive(Clone, Default)]
+pub struct Recipes {
+    crafting: CraftingCatalog,
+    processing: Vec<ProcessingRecipe>,
+    furniture: Vec<FurnitureRecipe>,
+}
+
+impl Recipes {
+    pub fn new(
+        crafting: Vec<CraftingRecipe>,
+        processing: Vec<ProcessingRecipe>,
+        furniture: Vec<FurnitureRecipe>,
+    ) -> Self {
+        Self {
+            crafting: CraftingCatalog::new(crafting),
+            processing,
+            furniture,
+        }
     }
 
-    /// The product `class` machines make from `input`, or `None` if that
-    /// class has no recipe for it.
+    pub fn crafting(&self) -> &CraftingCatalog {
+        &self.crafting
+    }
+
+    pub fn len(&self) -> usize {
+        self.crafting.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.crafting.is_empty()
+    }
+
     pub fn process(&self, class: &str, input: ItemType) -> Option<ItemStack> {
         self.processing
             .iter()
-            .find(|r| r.class == class && r.input == input)
-            .map(|r| r.result)
+            .find(|recipe| recipe.class == class && recipe.input == input)
+            .map(|recipe| recipe.result)
     }
 
-    /// [`process`](Self::process) for the furnace's [`SMELTING_CLASS`].
     pub fn smelt(&self, input: ItemType) -> Option<ItemStack> {
         self.process(SMELTING_CLASS, input)
     }
 
-    /// Every furniture-workbench recipe whose input is `input`, in declaration order —
-    /// the items the workbench offers when that block is placed in it.
     pub fn furniture_for(&self, input: ItemType) -> impl Iterator<Item = &FurnitureRecipe> {
-        self.furniture.iter().filter(move |r| r.input == input)
-    }
-}
-
-/// Shapeless match: the grid's non-empty items map one-to-one onto `ingredients`.
-/// Exact-item ingredients are matched before tags so a tag never consumes an item
-/// an exact ingredient still needs. On success, each occupied grid cell carries
-/// the use mode of the ingredient occurrence it was assigned.
-fn match_shapeless(
-    grid: &[Option<ItemStack>],
-    ingredients: &[RecipeIngredient],
-) -> Option<[Option<IngredientUse>; super::MAX_CELLS]> {
-    let occupied = grid.iter().flatten().count();
-    if occupied == 0 || occupied != ingredients.len() {
-        return None;
-    }
-    let mut used = [false; super::MAX_CELLS];
-    let mut uses = [None; super::MAX_CELLS];
-    for (cell, stack) in grid.iter().enumerate() {
-        let Some(stack) = stack else { continue };
-        let it = stack.item;
-        let pick = ingredients
+        self.furniture
             .iter()
-            .position(|ing| matches!(ing.what, Ingredient::Item(i) if i == it))
-            .filter(|&k| !used[k])
-            .or_else(|| {
-                ingredients
-                    .iter()
-                    .enumerate()
-                    .find(|(k, ing)| !used[*k] && ing.what.matches(it))
-                    .map(|(k, _)| k)
-            });
-        match pick {
-            Some(k) if !used[k] => {
-                used[k] = true;
-                uses[cell] = Some(ingredients[k].mode);
-            }
-            _ => return None,
-        }
+            .filter(move |recipe| recipe.input == input)
     }
-    Some(uses)
 }
 
-/// Shaped match: the grid's occupied bounding box must equal the pattern's
-/// dimensions, and each pattern cell must agree with the grid (ingredient ↔
-/// matching item, blank ↔ empty). On success, each occupied grid cell carries
-/// its pattern cell's use mode.
-fn match_shaped(
-    grid: &[Option<ItemStack>],
-    cols: usize,
-    width: usize,
-    height: usize,
-    cells: &[Option<RecipeIngredient>],
-) -> Option<[Option<IngredientUse>; super::MAX_CELLS]> {
-    let rows = cols; // the grid is always square
-    if width == 0 || height == 0 || width > cols || height > rows {
-        return None;
+fn item_by_key(key: &str) -> Option<ItemType> {
+    ItemType::all()
+        .iter()
+        .copied()
+        .find(|item| item.key() == key)
+}
+
+fn public_tag_key(tag: ItemTag) -> String {
+    let name = tag.name();
+    if name.contains(':') {
+        name.to_owned()
+    } else {
+        format!("petramond:{name}")
     }
-    // Bounding box of the occupied cells.
-    let (mut min_r, mut min_c, mut max_r, mut max_c) = (rows, cols, 0usize, 0usize);
-    let mut any = false;
-    for r in 0..rows {
-        for c in 0..cols {
-            if grid[r * cols + c].is_some() {
-                any = true;
-                min_r = min_r.min(r);
-                max_r = max_r.max(r);
-                min_c = min_c.min(c);
-                max_c = max_c.max(c);
-            }
-        }
-    }
-    if !any || (max_c - min_c + 1) != width || (max_r - min_r + 1) != height {
-        return None;
-    }
-    let mut uses = [None; super::MAX_CELLS];
-    for r in 0..height {
-        for c in 0..width {
-            let grid_idx = (min_r + r) * cols + (min_c + c);
-            let ing = &cells[r * width + c];
-            match (ing, &grid[grid_idx]) {
-                (Some(ing), Some(stack)) => {
-                    if !ing.what.matches(stack.item) {
-                        return None;
-                    }
-                    uses[grid_idx] = Some(ing.mode);
-                }
-                (None, None) => {}
-                _ => return None,
-            }
-        }
-    }
-    Some(uses)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn grid_from(items: &[Option<ItemType>], cols: usize) -> Vec<Option<ItemStack>> {
-        items
-            .iter()
-            .map(|o| o.map(|i| ItemStack::new(i, 1)))
-            .chain(std::iter::repeat(None))
-            .take(cols * cols)
-            .collect()
-    }
-
-    fn ing(what: Ingredient) -> RecipeIngredient {
-        RecipeIngredient::consumed(what)
-    }
-
-    fn stick_recipe() -> Recipe {
-        Recipe::Shaped {
-            width: 1,
-            height: 2,
-            cells: vec![
-                Some(ing(Ingredient::Tag(ItemTag::PLANKS))),
-                Some(ing(Ingredient::Tag(ItemTag::PLANKS))),
-            ],
-            result: ItemStack::new(ItemType::Stick, 4),
-        }
+    #[test]
+    fn table_admits_both_recipe_tiers_but_inventory_does_not() {
+        assert!(CraftingStation::Inventory.admits(CraftingStation::Inventory));
+        assert!(!CraftingStation::Inventory.admits(CraftingStation::CraftingTable));
+        assert!(CraftingStation::CraftingTable.admits(CraftingStation::Inventory));
+        assert!(CraftingStation::CraftingTable.admits(CraftingStation::CraftingTable));
     }
 
     #[test]
-    fn shapeless_single_ingredient_matches_anywhere() {
-        let r = Recipe::Shapeless {
-            ingredients: vec![ing(Ingredient::Item(ItemType::OakLog))],
-            result: ItemStack::new(ItemType::OakPlanks, 4),
-        };
-        // One oak log in any of the four 2×2 cells crafts planks.
-        for slot in 0..4 {
-            let mut items = [None; 4];
-            items[slot] = Some(ItemType::OakLog);
-            let g = grid_from(&items, 2);
-            assert_eq!(
-                r.matches(&g, 2),
-                Some(ItemStack::new(ItemType::OakPlanks, 4))
-            );
-        }
-        // Two logs (extra ingredient) does NOT match the one-log recipe.
-        let g = grid_from(
-            &[Some(ItemType::OakLog), Some(ItemType::OakLog), None, None],
-            2,
+    fn joined_catalog_round_trips_namespaced_selectors_and_stable_keys() {
+        let recipe = CraftingRecipe::new(
+            "test:sticks".into(),
+            CraftingStation::Inventory,
+            vec![CraftingIngredient {
+                selector: IngredientSelector::Tag(ItemTag::PLANKS),
+                count: 2,
+                use_mode: IngredientUse::Consume,
+            }],
+            ItemStack::new(ItemType::Stick, 4),
         );
-        assert_eq!(r.matches(&g, 2), None);
-    }
-
-    #[test]
-    fn shaped_stick_fits_any_column_of_two() {
-        let r = stick_recipe();
-        // Vertical pair in the left column of a 2×2.
-        let g = grid_from(
-            &[
-                Some(ItemType::OakPlanks),
-                None,
-                Some(ItemType::OakPlanks),
-                None,
-            ],
-            2,
-        );
-        assert_eq!(r.matches(&g, 2), Some(ItemStack::new(ItemType::Stick, 4)));
-        // The same shape fits anywhere in a 3×3 via the bounding box.
-        let mut items = [None; 9];
-        items[1] = Some(ItemType::SprucePlanks);
-        items[4] = Some(ItemType::SprucePlanks);
-        let g = grid_from(&items, 3);
-        assert_eq!(r.matches(&g, 3), Some(ItemStack::new(ItemType::Stick, 4)));
-        // A horizontal pair must NOT match the vertical pattern.
-        let g = grid_from(
-            &[
-                Some(ItemType::OakPlanks),
-                Some(ItemType::OakPlanks),
-                None,
-                None,
-            ],
-            2,
-        );
-        assert_eq!(r.matches(&g, 2), None);
-    }
-
-    #[test]
-    fn shaped_pickaxe_requires_exact_layout_and_tag_mixing() {
-        let r = Recipe::Shaped {
-            width: 3,
-            height: 3,
-            cells: vec![
-                Some(ing(Ingredient::Tag(ItemTag::PLANKS))),
-                Some(ing(Ingredient::Tag(ItemTag::PLANKS))),
-                Some(ing(Ingredient::Tag(ItemTag::PLANKS))),
-                None,
-                Some(ing(Ingredient::Item(ItemType::Stick))),
-                None,
-                None,
-                Some(ing(Ingredient::Item(ItemType::Stick))),
-                None,
-            ],
-            result: ItemStack::new(ItemType::WoodenPickaxe, 1),
-        };
-        // Top row mixes plank types (tag), sticks down the centre.
-        let g = grid_from(
-            &[
-                Some(ItemType::OakPlanks),
-                Some(ItemType::SprucePlanks),
-                Some(ItemType::OakPlanks),
-                None,
-                Some(ItemType::Stick),
-                None,
-                None,
-                Some(ItemType::Stick),
-                None,
-            ],
-            3,
-        );
+        let catalog = CraftingCatalog::new(vec![recipe]);
+        let restored = CraftingCatalog::from_data(catalog.to_data());
+        let restored = restored.get("test:sticks").expect("stable key lookup");
+        assert_eq!(restored.station(), CraftingStation::Inventory);
+        assert_eq!(restored.ingredients()[0].count, 2);
         assert_eq!(
-            r.matches(&g, 3),
-            Some(ItemStack::new(ItemType::WoodenPickaxe, 1))
+            restored.ingredients()[0].selector,
+            IngredientSelector::Tag(ItemTag::PLANKS)
         );
-        // A pickaxe pattern is 3 wide: it can NEVER match a 2×2 grid.
-        let g2 = grid_from(&[Some(ItemType::OakPlanks); 4], 2);
-        assert_eq!(r.matches(&g2, 2), None);
     }
 
     #[test]
-    fn empty_grid_matches_nothing() {
-        let r = stick_recipe();
-        assert_eq!(r.matches(&grid_from(&[None; 4], 2), 2), None);
+    fn joined_catalog_rejects_invalid_identity_capacity_and_empty_items() {
+        let data =
+            |recipe: &str, ingredient: CraftingIngredientData, result: &str| CraftingRecipeData {
+                recipe: recipe.into(),
+                station: CraftingStation::INVENTORY_KEY.into(),
+                ingredients: vec![ingredient],
+                result: CraftingStackData {
+                    item: result.into(),
+                    count: 1,
+                },
+            };
+        let coal = |count| CraftingIngredientData {
+            selector: CraftingSelectorData::Item(ItemType::Coal.key().into()),
+            count,
+            use_mode: IngredientUseData::Consume,
+        };
+
+        assert!(CraftingRecipe::from_data(data("bare", coal(1), ItemType::Stick.key())).is_err());
+        assert!(CraftingRecipe::from_data(data(
+            "test:too_large",
+            coal((MAX_INGREDIENT_UNITS + 1) as u16),
+            ItemType::Stick.key(),
+        ))
+        .is_err());
+        assert!(
+            CraftingRecipe::from_data(data("test:air_result", coal(1), ItemType::Air.key(),))
+                .is_err()
+        );
+        assert!(CraftingRecipe::from_data(data(
+            "test:air_ingredient",
+            CraftingIngredientData {
+                selector: CraftingSelectorData::Item(ItemType::Air.key().into()),
+                count: 1,
+                use_mode: IngredientUseData::Consume,
+            },
+            ItemType::Stick.key(),
+        ))
+        .is_err());
+        assert!(CraftingRecipe::from_data(data(
+            "test:air_remainder",
+            CraftingIngredientData {
+                selector: CraftingSelectorData::Item(ItemType::Coal.key().into()),
+                count: 1,
+                use_mode: IngredientUseData::Remainder(ItemType::Air.key().into()),
+            },
+            ItemType::Stick.key(),
+        ))
+        .is_err());
     }
 }

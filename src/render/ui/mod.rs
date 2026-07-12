@@ -18,6 +18,7 @@ pub(crate) mod icon;
 use crate::gui::{GuiKind, Role, SlotRect, UiSnapshot};
 use crate::inventory::HOTBAR_LEN;
 use crate::item::ItemType;
+use petramond_text::tiny as tiny_text;
 
 /// A single UI vertex: NDC position (y up) + texture uv + RGBA color. `uv.x < 0`
 /// is the solid-color sentinel (see `ui.wgsl`). 32 bytes.
@@ -62,6 +63,9 @@ pub struct UiBuild {
     /// Like [`icon_quads`](Self::icon_quads) but drawn semi-transparent (greyed) — the
     /// furniture-workbench results the placed block can't yet make (not enough input).
     pub dim_icon_quads: Vec<(ItemType, SlotRect)>,
+    /// Recipe-browser icons embedded in document hooks. Each carries the
+    /// inherited scroll clip and whether the unavailable row should dim it.
+    pub hook_icon_quads: Vec<HookIconQuad>,
     /// Stack-count digits (solid), drawn over the icons.
     pub counts: Vec<UiVertex>,
     /// Cursor-held item icon, drawn front-most.
@@ -82,11 +86,20 @@ impl UiBuild {
         self.effects.clear();
         self.icon_quads.clear();
         self.dim_icon_quads.clear();
+        self.hook_icon_quads.clear();
         self.counts.clear();
         self.drag_icon_quads.clear();
         self.drag_counts.clear();
         self.vignette.clear();
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct HookIconQuad {
+    pub item: ItemType,
+    pub rect: SlotRect,
+    pub clip: Option<SlotRect>,
+    pub dim: bool,
 }
 
 /// Convert a physical-pixel point (top-left origin, y down) to NDC (y up).
@@ -212,6 +225,271 @@ fn push_doc_game_content(
     }
 }
 
+fn push_recipe_hook_content(
+    ui: &UiSnapshot,
+    build: &mut UiBuild,
+    hooks: &[crate::gui::DocHook],
+    screen: (u32, u32),
+    scale: f32,
+) {
+    for hook in hooks {
+        let Some(recipe) = ui.craft_recipes.get(hook.index) else {
+            continue;
+        };
+        match hook.kind {
+            crate::gui::DocHookKind::CraftRecipeResult => {
+                let side = hook.rect.w.min(hook.rect.h);
+                let Some(clip) = effective_hook_clip(*hook) else {
+                    continue;
+                };
+                build.hook_icon_quads.push(HookIconQuad {
+                    item: recipe.result,
+                    rect: SlotRect {
+                        x: hook.rect.x + (hook.rect.w - side) * 0.5,
+                        y: hook.rect.y + (hook.rect.h - side) * 0.5,
+                        w: side,
+                        h: side,
+                    },
+                    clip: Some(clip),
+                    dim: !recipe.craftable,
+                });
+            }
+            crate::gui::DocHookKind::CraftRecipeIngredients => {
+                push_ingredient_strip(recipe, build, *hook, screen, scale);
+            }
+        }
+    }
+}
+
+fn push_ingredient_strip(
+    recipe: &crate::gui::CraftingRecipeView,
+    build: &mut UiBuild,
+    hook: crate::gui::DocHook,
+    screen: (u32, u32),
+    scale: f32,
+) {
+    if recipe.ingredients.is_empty() {
+        return;
+    }
+    let Some(clip) = effective_hook_clip(hook) else {
+        return;
+    };
+    let clip = Some(clip);
+    let layout = ingredient_strip_layout(&recipe.ingredients, hook.rect.w, hook.rect.h, scale);
+    let icon_side = layout.icon_side;
+    let gap = 3.0 * scale;
+    let mut x = hook.rect.x;
+    for (index, (ingredient, count)) in recipe.ingredients.iter().take(layout.visible).enumerate() {
+        let icon_rect = SlotRect {
+            x,
+            y: hook.rect.y + (hook.rect.h - icon_side) * 0.5,
+            w: icon_side,
+            h: icon_side,
+        };
+        build.hook_icon_quads.push(HookIconQuad {
+            item: *ingredient,
+            rect: icon_rect,
+            clip,
+            dim: !recipe.craftable,
+        });
+        x += icon_side + scale;
+        let y = hook.rect.y + (hook.rect.h - tiny_text::GLYPH_H as f32 * scale) * 0.5;
+        push_ingredient_count(
+            &mut build.counts,
+            screen,
+            *count as u32,
+            x,
+            y,
+            scale,
+            clip,
+            !recipe.craftable,
+        );
+        x += prefixed_number_width(*count as u32, scale);
+        if index + 1 < layout.visible {
+            x += gap;
+        }
+    }
+    if layout.omitted > 0 {
+        if layout.visible > 0 {
+            x += gap;
+        }
+        let y = hook.rect.y + (hook.rect.h - tiny_text::GLYPH_H as f32 * scale) * 0.5;
+        push_prefixed_number(
+            &mut build.counts,
+            screen,
+            layout.omitted.min(u32::MAX as usize) as u32,
+            x,
+            y,
+            scale,
+            clip,
+            !recipe.craftable,
+            [0b010, 0b010, 0b111, 0b010, 0b010],
+        );
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct IngredientStripLayout {
+    visible: usize,
+    omitted: usize,
+    icon_side: f32,
+}
+
+fn ingredient_strip_layout(
+    ingredients: &[(ItemType, u16)],
+    width: f32,
+    height: f32,
+    scale: f32,
+) -> IngredientStripLayout {
+    let icon_side = height.min(12.0 * scale).max(0.0);
+    let gap = 3.0 * scale;
+    let pair_width =
+        |count: u16| icon_side + scale + prefixed_number_width(u32::from(count), scale);
+    let mut visible = ingredients.len();
+    let mut pairs_width: f32 = ingredients
+        .iter()
+        .map(|(_, count)| pair_width(*count))
+        .sum();
+    loop {
+        let omitted = ingredients.len() - visible;
+        let pair_gaps = visible.saturating_sub(1) as f32 * gap;
+        let overflow = if omitted == 0 {
+            0.0
+        } else {
+            (if visible > 0 { gap } else { 0.0 })
+                + prefixed_number_width(omitted.min(u32::MAX as usize) as u32, scale)
+        };
+        if pairs_width + pair_gaps + overflow <= width {
+            return IngredientStripLayout {
+                visible,
+                omitted,
+                icon_side,
+            };
+        }
+        if visible == 0 {
+            break;
+        }
+        visible -= 1;
+        pairs_width -= pair_width(ingredients[visible].1);
+    }
+    IngredientStripLayout {
+        visible: 0,
+        omitted: ingredients.len(),
+        icon_side,
+    }
+}
+
+fn prefixed_number_width(number: u32, scale: f32) -> f32 {
+    (tiny_text::GLYPH_W + 1 + tiny_text::number_width(number)) as f32 * scale
+}
+
+fn effective_hook_clip(hook: crate::gui::DocHook) -> Option<SlotRect> {
+    hook.clip.map_or(Some(hook.rect), |inherited| {
+        intersect_rect(hook.rect, inherited)
+    })
+}
+
+fn push_ingredient_count(
+    out: &mut Vec<UiVertex>,
+    screen: (u32, u32),
+    count: u32,
+    x: f32,
+    y: f32,
+    scale: f32,
+    clip: Option<SlotRect>,
+    dim: bool,
+) {
+    push_prefixed_number(
+        out,
+        screen,
+        count,
+        x,
+        y,
+        scale,
+        clip,
+        dim,
+        [0b000, 0b101, 0b010, 0b101, 0b000],
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_prefixed_number(
+    out: &mut Vec<UiVertex>,
+    screen: (u32, u32),
+    count: u32,
+    x: f32,
+    y: f32,
+    scale: f32,
+    clip: Option<SlotRect>,
+    dim: bool,
+    prefix: [u8; tiny_text::GLYPH_H as usize],
+) {
+    let color = if dim {
+        [0.62, 0.62, 0.62, 1.0]
+    } else {
+        [1.0, 1.0, 1.0, 1.0]
+    };
+    for (row, bits) in prefix.into_iter().enumerate() {
+        for col in 0..tiny_text::GLYPH_W {
+            if (bits >> (tiny_text::GLYPH_W - 1 - col)) & 1 == 1 {
+                push_clipped_solid(
+                    out,
+                    screen,
+                    SlotRect {
+                        x: x + col as f32 * scale,
+                        y: y + row as f32 * scale,
+                        w: scale,
+                        h: scale,
+                    },
+                    clip,
+                    color,
+                );
+            }
+        }
+    }
+    let digits_x = x + (tiny_text::GLYPH_W + 1) as f32 * scale;
+    tiny_text::for_each_lit_cell(count, |px, py| {
+        push_clipped_solid(
+            out,
+            screen,
+            SlotRect {
+                x: digits_x + px as f32 * scale,
+                y: y + py as f32 * scale,
+                w: scale,
+                h: scale,
+            },
+            clip,
+            color,
+        );
+    });
+}
+
+fn push_clipped_solid(
+    out: &mut Vec<UiVertex>,
+    screen: (u32, u32),
+    rect: SlotRect,
+    clip: Option<SlotRect>,
+    color: [f32; 4],
+) {
+    let Some(rect) = clip.map_or(Some(rect), |clip| intersect_rect(rect, clip)) else {
+        return;
+    };
+    push_solid(out, screen, rect.x, rect.y, rect.w, rect.h, color);
+}
+
+pub(super) fn intersect_rect(a: SlotRect, b: SlotRect) -> Option<SlotRect> {
+    let x0 = a.x.max(b.x);
+    let y0 = a.y.max(b.y);
+    let x1 = (a.x + a.w).min(b.x + b.w);
+    let y1 = (a.y + a.h).min(b.y + b.h);
+    (x1 > x0 && y1 > y0).then_some(SlotRect {
+        x: x0,
+        y: y0,
+        w: x1 - x0,
+        h: y1 - y0,
+    })
+}
+
 /// The game state filling slot `i` of `role`, as `(item, count)` — the one place
 /// that maps a slot role to its backing model. `None` for an empty slot or a
 /// decorative role.
@@ -234,13 +512,7 @@ fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<(ItemType, u32)> {
             .copied()
             .flatten()
             .map(|(it, c)| (it, c as u32)),
-        Role::CraftInput => ui
-            .craft
-            .get(i)
-            .copied()
-            .flatten()
-            .map(|(it, c)| (it, c as u32)),
-        Role::CraftResult => ui.result.map(|(it, c)| (it, c as u32)),
+        Role::CraftResult => ui.craft_output.map(|(it, c)| (it, c as u32)),
         Role::FurnaceInput => ui.furnace.and_then(|f| f.input).map(stack),
         Role::FurnaceFuel => ui.furnace.and_then(|f| f.fuel).map(stack),
         Role::FurnaceOutput => ui.furnace.and_then(|f| f.output).map(stack),
@@ -352,6 +624,7 @@ pub fn build_ui(
     screen: (u32, u32),
     scale: f32,
     doc_slots: Option<&[crate::gui::DocSlot]>,
+    doc_hooks: Option<&[crate::gui::DocHook]>,
     build: &mut UiBuild,
 ) {
     build.clear();
@@ -364,6 +637,9 @@ pub fn build_ui(
     }
     if let Some(doc_slots) = doc_slots {
         push_doc_game_content(ui, build, doc_slots, screen, scale);
+    }
+    if let Some(doc_hooks) = doc_hooks {
+        push_recipe_hook_content(ui, build, doc_hooks, screen, scale);
     }
 }
 
@@ -429,7 +705,7 @@ mod tests {
     }
 
     fn build(ui: &UiSnapshot, slots: Option<&[DocSlot]>, out: &mut UiBuild) {
-        build_ui(ui, SCREEN, crate::gui::gui_scale(SCREEN), slots, out);
+        build_ui(ui, SCREEN, crate::gui::gui_scale(SCREEN), slots, None, out);
     }
 
     #[test]
@@ -445,7 +721,7 @@ mod tests {
         let mut b = UiBuild::default();
         let s = snap(GuiKind::Hotbar, false);
         let slots = [cell(Role::Hotbar, 0)];
-        build_ui(&s, (0, 0), 1.0, Some(&slots), &mut b);
+        build_ui(&s, (0, 0), 1.0, Some(&slots), None, &mut b);
         assert!(b.icon_quads.is_empty() && b.hearts.is_empty());
 
         // No solved document (and therefore no slots): game content draws nothing.
@@ -453,6 +729,104 @@ mod tests {
         s.cursor = Some((ItemType::Dirt, 12));
         build(&s, None, &mut b);
         assert!(b.icon_quads.is_empty() && b.drag_icon_quads.is_empty() && b.counts.is_empty());
+    }
+
+    #[test]
+    fn recipe_hooks_emit_result_ingredients_counts_and_scroll_clips() {
+        let mut snapshot = snap(GuiKind::Inventory, true);
+        snapshot.craft_recipes.push(crate::gui::CraftingRecipeView {
+            result: ItemType::Stick,
+            ingredients: vec![(ItemType::Coal, 2), (ItemType::Dirt, 3)],
+            craftable: false,
+        });
+        let clip = SlotRect {
+            x: 100.0,
+            y: 105.0,
+            w: 160.0,
+            h: 20.0,
+        };
+        let hooks = [
+            crate::gui::DocHook {
+                kind: crate::gui::DocHookKind::CraftRecipeResult,
+                index: 0,
+                rect: SlotRect {
+                    x: 100.0,
+                    y: 100.0,
+                    w: 20.0,
+                    h: 20.0,
+                },
+                clip: Some(clip),
+            },
+            crate::gui::DocHook {
+                kind: crate::gui::DocHookKind::CraftRecipeIngredients,
+                index: 0,
+                rect: SlotRect {
+                    x: 124.0,
+                    y: 105.0,
+                    w: 120.0,
+                    h: 14.0,
+                },
+                clip: Some(clip),
+            },
+            crate::gui::DocHook {
+                kind: crate::gui::DocHookKind::CraftRecipeResult,
+                index: 0,
+                rect: SlotRect {
+                    x: 100.0,
+                    y: 200.0,
+                    w: 20.0,
+                    h: 20.0,
+                },
+                clip: Some(clip),
+            },
+            crate::gui::DocHook {
+                kind: crate::gui::DocHookKind::CraftRecipeIngredients,
+                index: 0,
+                rect: SlotRect {
+                    x: 124.0,
+                    y: 200.0,
+                    w: 120.0,
+                    h: 14.0,
+                },
+                clip: Some(clip),
+            },
+        ];
+        let mut build = UiBuild::default();
+
+        build_ui(
+            &snapshot,
+            SCREEN,
+            crate::gui::gui_scale(SCREEN),
+            None,
+            Some(&hooks),
+            &mut build,
+        );
+
+        assert_eq!(
+            build.hook_icon_quads.len(),
+            3,
+            "fully clipped recipe rows emit no host content"
+        );
+        assert!(build.hook_icon_quads.iter().all(|icon| icon.dim));
+        assert!(build.hook_icon_quads.iter().all(|icon| icon.clip.is_some()));
+        assert!(
+            !build.counts.is_empty(),
+            "ingredient ×N labels are host-drawn"
+        );
+    }
+
+    #[test]
+    fn oversized_ingredient_strips_keep_icons_readable_and_report_omissions() {
+        let ingredients = vec![(ItemType::Coal, u16::MAX); 12];
+        let scale = 3.0;
+        let compact = ingredient_strip_layout(&ingredients, 120.0 * scale, 12.0 * scale, scale);
+        assert!(compact.visible > 0 && compact.visible < ingredients.len());
+        assert_eq!(compact.visible + compact.omitted, ingredients.len());
+        assert!(compact.icon_side >= 8.0 * scale);
+
+        let roomy = ingredient_strip_layout(&ingredients, 10_000.0, 12.0 * scale, scale);
+        assert_eq!(roomy.visible, ingredients.len());
+        assert_eq!(roomy.omitted, 0);
     }
 
     #[test]

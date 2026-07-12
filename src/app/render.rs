@@ -66,6 +66,7 @@ impl App {
         self.compose_document_ui(doc_kind.is_some());
         self.compose_client_overlays(screen_size);
         let doc_slots = doc_kind.map(|_| self.ui.doc_slots());
+        let doc_hooks = doc_kind.map(|_| self.ui.doc_hooks());
 
         let Some(game) = self.game.as_mut() else {
             // No session, no health bar: a fresh world must never wiggle off a
@@ -97,6 +98,7 @@ impl App {
                 draw: &self.composed_doc,
                 images: &self.composed_doc_images,
                 slots: doc_slots.as_deref().map(Vec::as_slice).unwrap_or(&[]),
+                hooks: doc_hooks.as_deref().map(Vec::as_slice).unwrap_or(&[]),
             });
             if !renderer.prepare_ui_frame(UiFrame {
                 viewport,
@@ -260,6 +262,8 @@ impl App {
         }
         self.scene.upload(renderer);
         let mut ui = ui_snapshot::build(Some(game), self.screen, self.pointer.cursor());
+        ui.craft_recipes
+            .extend(self.crafting_browser.views().cloned());
         if let Some(kind) = doc_kind {
             ui.kind = kind;
         }
@@ -276,6 +280,7 @@ impl App {
             draw: &self.composed_doc,
             images: &self.composed_doc_images,
             slots: doc_slots.as_deref().map(Vec::as_slice).unwrap_or(&[]),
+            hooks: doc_hooks.as_deref().map(Vec::as_slice).unwrap_or(&[]),
         });
         if !renderer.prepare_ui_frame(UiFrame {
             viewport,

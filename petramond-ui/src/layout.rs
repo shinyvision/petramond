@@ -172,7 +172,7 @@ pub fn solve(
         return solver.out;
     }
 
-    let rl = &tree.root().node.layout;
+    let rl = tree.root().layout;
     let root_hint = match rl.w {
         Size::Px(p) => Some(p),
         Size::Grow(_) => Some(viewport.0 - rl.margin[0] - rl.margin[2]),
@@ -278,13 +278,13 @@ impl Solver<'_, '_, '_> {
         let tree = self.tree;
         let inst = tree.get(idx);
         let node = inst.node;
-        let l = &node.layout;
+        let l = inst.layout;
         let pad = content_pad(l, self.env.container_insets(node));
         let pad_w = pad[0] + pad[2];
         let pad_h = pad[1] + pad[3];
 
-        let mut natural = if node.kind.is_container() {
-            let dir = node.flow_dir();
+        let mut natural = if node.lays_out_children() {
+            let dir = inst.flow_dir();
             let main = Ax::of_dir(dir);
             let cross = Ax {
                 horizontal: !main.horizontal,
@@ -297,7 +297,7 @@ impl Solver<'_, '_, '_> {
             let mut cross_max = 0i32;
             let mut n_flow = 0i32;
             for &c in &inst.children {
-                let cn = tree.get(c).node;
+                let cn = tree.get(c);
                 let cm = cn.layout.margin;
                 // Wrap hints only flow down columns, where each child gets the
                 // full content width; a row's split is unknown until arrange.
@@ -351,10 +351,10 @@ impl Solver<'_, '_, '_> {
         if inst.children.is_empty() {
             return;
         }
-        let l = &node.layout;
+        let l = inst.layout;
         let pad = content_pad(l, self.env.container_insets(node));
         let content = rect.inset(pad);
-        let dir = node.flow_dir();
+        let dir = inst.flow_dir();
         let main = Ax::of_dir(dir);
         let cross = Ax {
             horizontal: !main.horizontal,
@@ -384,7 +384,7 @@ impl Solver<'_, '_, '_> {
             .children
             .iter()
             .copied()
-            .filter(|&c| tree.get(c).node.layout.abs.is_none())
+            .filter(|&c| tree.get(c).layout.abs.is_none())
             .collect();
 
         // Main-axis base sizes + grow weights. Inside a scroll node, grow is
@@ -398,7 +398,7 @@ impl Solver<'_, '_, '_> {
         let mut weights: Vec<u32> = Vec::with_capacity(flow.len());
         let mut outer_sum = 0i32;
         for &c in &flow {
-            let cl = &tree.get(c).node.layout;
+            let cl = tree.get(c).layout;
             let nat_main = main.of(self.naturals[c as usize]);
             let base = match main.size_prop(cl) {
                 Size::Px(p) => p,
@@ -431,7 +431,7 @@ impl Solver<'_, '_, '_> {
             } else {
                 flow.iter()
                     .map(|&c| {
-                        let cl = &tree.get(c).node.layout;
+                        let cl = tree.get(c).layout;
                         match axis {
                             ScrollAxis::Vertical => {
                                 self.naturals[c as usize].1 + cl.margin[1] + cl.margin[3]
@@ -480,7 +480,7 @@ impl Solver<'_, '_, '_> {
             }
             for (i, s) in shares.iter().enumerate() {
                 // Respect max_* caps; capped leftover is not redistributed.
-                let cl = &tree.get(flow[i]).node.layout;
+                let cl = tree.get(flow[i]).layout;
                 let capped = if main.horizontal {
                     clamp_opt(bases[i] + s, None, cl.max_w)
                 } else {
@@ -497,7 +497,7 @@ impl Solver<'_, '_, '_> {
         // Only when every grower is at its minimum does content overflow.
         if leftover < 0 && total_weight > 0 {
             let min_of = |i: usize| -> i32 {
-                let cl = &tree.get(flow[i]).node.layout;
+                let cl = tree.get(flow[i]).layout;
                 if main.horizontal {
                     cl.min_w.unwrap_or(0)
                 } else {
@@ -557,9 +557,9 @@ impl Solver<'_, '_, '_> {
         cursor += main.of((avail.x, avail.y));
 
         let content_cross = cross.of((avail.w, avail.h));
-        let align = node.effective_align();
+        let align = inst.effective_align();
         for (i, &c) in flow.iter().enumerate() {
-            let cl = tree.get(c).node.layout.clone();
+            let cl = tree.get(c).layout.clone();
             let m_lead = cross.margin_lead(cl.margin);
             let m_trail = cross.margin_trail(cl.margin);
             let nat_cross = cross.of(self.naturals[c as usize]);
@@ -612,22 +612,22 @@ impl Solver<'_, '_, '_> {
         // natural/explicit size, unaffected by scroll offset.
         for &c in &inst.children {
             let cn = tree.get(c);
-            let Some(abs) = cn.node.layout.abs else {
+            let Some(abs) = cn.layout.abs else {
                 continue;
             };
             let (nw, nh) = self.naturals[c as usize];
-            let w = match cn.node.layout.w {
+            let w = match cn.layout.w {
                 Size::Px(p) => p,
                 Size::Grow(_) => (content.w - abs.x).max(0),
                 Size::Auto => nw,
             };
-            let h = match cn.node.layout.h {
+            let h = match cn.layout.h {
                 Size::Px(p) => p,
                 Size::Grow(_) => (content.h - abs.y).max(0),
                 Size::Auto => nh,
             };
-            let w = clamp_opt(w, cn.node.layout.min_w, cn.node.layout.max_w);
-            let h = clamp_opt(h, cn.node.layout.min_h, cn.node.layout.max_h);
+            let w = clamp_opt(w, cn.layout.min_w, cn.layout.max_w);
+            let h = clamp_opt(h, cn.layout.min_h, cn.layout.max_h);
             self.arrange(
                 c,
                 RectI {
@@ -643,7 +643,7 @@ impl Solver<'_, '_, '_> {
         if scroll_axis.is_some() {
             let mut cross_used = 0i32;
             for &c in &flow {
-                let cl = &tree.get(c).node.layout;
+                let cl = tree.get(c).layout;
                 let r = self.out.rects[c as usize];
                 cross_used = cross_used.max(
                     cross.of((r.w, r.h))
@@ -692,7 +692,7 @@ mod tests {
                 }
                 NodeKind::Button { .. } => (text_len * 6 + 8, 20),
                 NodeKind::Checkbox => (10, 10),
-                NodeKind::Toggle => (18, 10),
+                NodeKind::Toggle { .. } => (18, 10),
                 NodeKind::SlotGrid { cols, rows, .. } => {
                     let m = self.slot_metrics();
                     (
@@ -820,6 +820,33 @@ mod tests {
         );
         assert_eq!(s.rects[1].w, 120, "stretch fills the column width");
         assert_eq!(s.rects[1].h, 20, "main axis stays natural");
+    }
+
+    #[test]
+    fn leaf_button_keeps_leaf_size_while_compound_button_measures_children() {
+        let (leaf, _) = solve_doc(
+            r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "button", "id": "leaf", "text": "OK" }
+        }"#,
+            (100, 100),
+        );
+        assert_eq!(leaf.rects[0].w, 20);
+        assert_eq!(leaf.rects[0].h, 20);
+
+        let (compound, _) = solve_doc(
+            r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "button", "id": "compound", "children": [
+                { "type": "label", "text": "OK" }
+            ] }
+        }"#,
+            (100, 100),
+        );
+        assert_eq!(compound.rects[0].w, 12);
+        assert_eq!(compound.rects[0].h, 9);
+        assert_eq!(compound.rects[1].w, 12);
+        assert_eq!(compound.rects[1].h, 9);
     }
 
     #[test]

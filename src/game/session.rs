@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use crate::camera::Camera;
-use crate::crafting::load_recipes_for;
+use crate::crafting::{load_recipes_for, CraftingCatalog};
 use crate::entity::ParticleSystem;
 use crate::mathh::Vec3;
 use crate::player::Player;
@@ -38,6 +38,7 @@ pub(crate) struct ClientBootstrap {
     replicated_tick: u64,
     fallback_world: SurfaceDensitySystem,
     client_mods: crate::modding::client::ClientModRuntime,
+    crafting: CraftingCatalog,
 }
 
 impl Game {
@@ -95,6 +96,7 @@ impl Game {
                 &crate::modding::client::remote_session_key(server_identity),
                 server_mods,
             ),
+            crafting: CraftingCatalog::from_data(join.crafting_recipes),
         };
         let mut game = Self::assemble(cam, handle, bootstrap);
         game.remote = true;
@@ -154,6 +156,7 @@ impl Game {
             replicated_items: Default::default(),
             self_view: bootstrap.self_view,
             menu_view: Default::default(),
+            crafting: bootstrap.crafting,
             pending_events: Default::default(),
             self_id: bootstrap.self_id,
             player_roster: HashMap::new(),
@@ -218,6 +221,7 @@ pub(crate) fn build_session(
     // HUD is right before the first tick's batch arrives.
     let self_view = crate::game::replicated::SelfView::seed_from(&server.sessions[0].player);
     let self_id = server.sessions[0].id;
+    let crafting = server.recipes.crafting().clone();
     // Client mods activate for the session's ENABLED packs (installed minus
     // this world's disabled set) — the same authority the server host uses.
     let enabled_mods: BTreeSet<String> =
@@ -241,6 +245,7 @@ pub(crate) fn build_session(
             replicated_tick,
             fallback_world,
             client_mods,
+            crafting,
         },
     )
 }
@@ -432,6 +437,7 @@ fn player_from_restore(r: &crate::net::protocol::SelfRestore) -> Player {
         .bed_spawn
         .map(|(bed, spot)| crate::player::BedSpawn { bed, spot });
     player.inventory = crate::game::replicated::inventory_from_wire(&r.inventory, r.active_slot);
+    player.craft_craftable_only = r.craft_craftable_only;
     for (name, remaining) in &r.effects {
         match crate::effect::by_name(name) {
             Some(effect) => player.apply_effect(effect, *remaining),

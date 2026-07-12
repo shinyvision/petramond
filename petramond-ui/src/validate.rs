@@ -61,6 +61,14 @@ impl Document {
                 message: "kind key is empty".into(),
             });
         }
+        if let Some(w) = self.compact_below_w {
+            if w <= 0 {
+                issues.push(DocIssue {
+                    path: "document".into(),
+                    message: format!("compact_below_w must be positive, got {w}"),
+                });
+            }
+        }
         let mut seen_ids: HashSet<&str> = HashSet::new();
         walk(&self.root, "root", &mut seen_ids, styles, &mut issues);
 
@@ -169,6 +177,23 @@ fn walk<'a>(
             }
         }
         NodeKind::Button { icon, .. } => {
+            if !node.children.is_empty()
+                && (node.bind.text.is_some()
+                    || matches!(&node.kind, NodeKind::Button { text: Some(_), .. })
+                    || icon.is_some())
+            {
+                issue(
+                    "button children replace its inline text/icon; remove text, icon, and text binding"
+                        .into(),
+                );
+            }
+            if let (Some(styles), Some(icon)) = (styles, icon.as_deref()) {
+                if !styles.has_style(icon) {
+                    issue(format!("unknown icon part '{icon}'"));
+                }
+            }
+        }
+        NodeKind::Toggle { icon } => {
             if let (Some(styles), Some(icon)) = (styles, icon.as_deref()) {
                 if !styles.has_style(icon) {
                     issue(format!("unknown icon part '{icon}'"));
@@ -332,5 +357,26 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert!(issues[0].message.contains("unknown style 'button.bogus'"));
         assert!(issues[0].path.contains("button#b"));
+    }
+
+    #[test]
+    fn compound_button_accepts_children_but_not_overlapping_inline_content() {
+        let compound = doc(r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "button", "id": "recipe", "children": [
+                { "type": "label", "text": "Recipe" },
+                { "type": "hook", "id": "icon", "layout": { "w": 16, "h": 16 } }
+            ] }
+        }"#);
+        assert!(compound.validate(None, None).is_empty());
+
+        let overlapping = doc(r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "button", "id": "recipe", "text": "Inline",
+                "children": [ { "type": "label", "text": "Child" } ] }
+        }"#);
+        assert!(overlapping.validate(None, None).iter().any(|issue| issue
+            .message
+            .contains("children replace its inline text/icon")));
     }
 }

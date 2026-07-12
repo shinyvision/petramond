@@ -16,7 +16,8 @@ pub(crate) mod remap;
 
 /// Bumped on ANY wire-incompatible change. Checked first in the handshake —
 /// nothing else is parseable across a mismatch.
-pub(crate) const PROTOCOL_VERSION: u16 = 15; // 15: UseClick.jabbed + SelfEvents.used_unpredicted (hand-jab echo for mod-consumed clicks)
+// 16: name-addressed player-crafting catalog, request, and transient output.
+pub(crate) const PROTOCOL_VERSION: u16 = 17;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

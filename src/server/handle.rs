@@ -302,7 +302,7 @@ fn server_main(
             match control.try_recv() {
                 Ok(ControlMsg::Shutdown) => {
                     hub.shutdown();
-                    server.save_all();
+                    server.close_sessions_and_save();
                     return;
                 }
                 Ok(ControlMsg::SaveAll) => server.save_all(),
@@ -325,7 +325,7 @@ fn server_main(
                 // (no clean Shutdown reached us): save and exit.
                 Err(TryRecvError::Disconnected) => {
                     hub.shutdown();
-                    server.save_all();
+                    server.close_sessions_and_save();
                     return;
                 }
             }
@@ -375,7 +375,7 @@ fn server_main(
         // farewell the remotes, save, and exit.
         if disconnected {
             hub.shutdown();
-            server.save_all();
+            server.close_sessions_and_save();
             return;
         }
 

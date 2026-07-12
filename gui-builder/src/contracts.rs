@@ -30,13 +30,11 @@ pub fn contract_for(kind: &str) -> SlotContract {
         "petramond:inventory" => SlotContract::new(&[
             ("player_inv", 27),
             ("hotbar", 9),
-            ("craft_input", 4),
             ("craft_result", 1),
         ]),
         "petramond:crafting_table" => SlotContract::new(&[
             ("player_inv", 27),
             ("hotbar", 9),
-            ("craft_input", 9),
             ("craft_result", 1),
         ]),
         "petramond:furnace" => SlotContract::new(&[
@@ -97,11 +95,11 @@ mod tests {
             ("petramond:chest", &[("storage", 27), ("player_inv", 27), ("hotbar", 9)]),
             (
                 "petramond:inventory",
-                &[("player_inv", 27), ("hotbar", 9), ("craft_input", 4), ("craft_result", 1)],
+                &[("player_inv", 27), ("hotbar", 9), ("craft_result", 1)],
             ),
             (
                 "petramond:crafting_table",
-                &[("player_inv", 27), ("hotbar", 9), ("craft_input", 9), ("craft_result", 1)],
+                &[("player_inv", 27), ("hotbar", 9), ("craft_result", 1)],
             ),
             (
                 "petramond:furnace",

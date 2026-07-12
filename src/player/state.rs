@@ -82,6 +82,10 @@ pub struct Player {
     pub inventory: crate::inventory::Inventory,
     /// Bed spawn point, if a bed interaction set one (see [`BedSpawn`]).
     pub bed_spawn: Option<BedSpawn>,
+    /// The recipe browser's craftable-only filter — a per-player UI preference
+    /// that persists with the world's player data and follows the player
+    /// across joins.
+    pub craft_craftable_only: bool,
     /// Active status effects, in application order (deterministic iteration).
     /// Stepped once per game tick by `Game::tick_effects`; persisted by
     /// registry name in `level.dat`.
@@ -103,6 +107,7 @@ impl Player {
             fall_distance: 0.0,
             inventory: crate::inventory::Inventory::new(),
             bed_spawn: None,
+            craft_craftable_only: false,
             effects: Vec::new(),
         }
     }

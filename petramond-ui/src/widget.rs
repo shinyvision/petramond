@@ -16,7 +16,7 @@ pub(crate) fn pointer_target(inst: &Inst<'_>) -> bool {
         inst.node.kind,
         NodeKind::Button { .. }
             | NodeKind::Checkbox
-            | NodeKind::Toggle
+            | NodeKind::Toggle { .. }
             | NodeKind::Slider { .. }
             | NodeKind::TextInput { .. }
             | NodeKind::Image {

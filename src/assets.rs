@@ -317,24 +317,34 @@ pub fn layer_dirs_with_ids(rel: &str) -> Vec<(PathBuf, Option<String>)> {
     out
 }
 
-/// Read EVERY copy of the layered catalog `rel`, lowest priority first: the
-/// base file (from the first base root that has it), then each pack's copy in
-/// load order. The caller merges layers by its catalogue's key semantics.
-/// Empty if nothing provides the file.
-pub fn read_layers(rel: &str) -> Vec<(String, PathBuf)> {
+/// [`read_layers`] with each layer's owning pack namespace (`None` for the
+/// base catalog or an id-less override pack). Recipe loading needs the owner
+/// so disabling a pack removes even rows that reference engine content only.
+pub fn read_layers_with_ids(rel: &str) -> Vec<(String, PathBuf, Option<String>)> {
     let mut layers = Vec::new();
     for root in base_roots() {
         let path = root.join(rel);
         if let Ok(s) = std::fs::read_to_string(&path) {
-            layers.push((s, path));
+            layers.push((s, path, None));
             break; // base roots shadow each other; only one base layer
         }
     }
     for pack in packs() {
         let path = pack.dir.join(rel);
         if let Ok(s) = std::fs::read_to_string(&path) {
-            layers.push((s, path));
+            layers.push((s, path, pack.id.clone()));
         }
     }
     layers
+}
+
+/// Read EVERY copy of the layered catalog `rel`, lowest priority first: the
+/// base file (from the first base root that has it), then each pack's copy in
+/// load order. The caller merges layers by its catalogue's key semantics.
+/// Empty if nothing provides the file.
+pub fn read_layers(rel: &str) -> Vec<(String, PathBuf)> {
+    read_layers_with_ids(rel)
+        .into_iter()
+        .map(|(text, path, _)| (text, path))
+        .collect()
 }

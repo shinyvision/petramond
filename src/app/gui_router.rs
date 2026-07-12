@@ -41,7 +41,7 @@ impl GuiRouter {
             MenuSlot::Chest(i) => Some(CHEST_SLOT_STREAK_BASE + i),
             // Mod container slots skip the gather streak (like the furnace's
             // semantic slots): the double-click sweep is a plain-storage read.
-            MenuSlot::Craft(_)
+            MenuSlot::CraftResult
             | MenuSlot::Furnace(_)
             | MenuSlot::Workbench(_)
             | MenuSlot::Container(_)

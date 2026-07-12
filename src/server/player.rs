@@ -257,6 +257,34 @@ pub(crate) enum FallOutcome {
     Splashed(f32),
 }
 
+/// One ordered menu intent. Open, close, slot clicks, and explicit crafts
+/// share a queue so network arrival order is also simulation order.
+#[derive(Clone, Debug)]
+pub(crate) enum PendingMenuAction {
+    OpenInventory,
+    OpenCraftingTable,
+    OpenFurnace(IVec3),
+    OpenChest(IVec3),
+    OpenWorkbench,
+    OpenModGui {
+        kind: crate::gui::GuiKind,
+        pos: Option<IVec3>,
+    },
+    Close,
+    SlotClick {
+        slot: MenuSlot,
+        button: PointerButton,
+        shift: bool,
+        gather: bool,
+        request_id: crate::net::protocol::ClientRequestId,
+    },
+    CraftRecipe {
+        recipe: String,
+        bulk: bool,
+        request_id: crate::net::protocol::ClientRequestId,
+    },
+}
+
 /// One player's simulation session: authoritative player state plus every
 /// per-player latch, timer, and menu session the tick stages consume.
 pub(crate) struct ConnectedPlayer {
@@ -334,15 +362,9 @@ pub(crate) struct ConnectedPlayer {
     /// The in-progress eat (held secondary button on food), or `None`.
     pub eating: Option<EatingState>,
     pub drop_queue: DropQueue,
-    /// Container-menu clicks latched since the last tick, applied in order.
-    /// Each carries the client's [`ClientRequestId`] for [`ActionOutcome`].
-    pub pending_menu_clicks: Vec<(
-        MenuSlot,
-        PointerButton,
-        bool,
-        bool,
-        crate::net::protocol::ClientRequestId,
-    )>,
+    /// Menu transitions and mutations latched since the last tick, applied in
+    /// one arrival-ordered stream.
+    pub pending_menu_actions: Vec<PendingMenuAction>,
     /// Outcomes queued this tick window for the next `TickUpdate`.
     pub pending_action_outcomes: Vec<crate::net::protocol::ActionOutcome>,
     /// Latched `BreakFinished` request, applied by the mining stage.
@@ -393,12 +415,6 @@ pub(crate) struct ConnectedPlayer {
     pub sleep: Option<SleepState>,
     pub wake_requested: bool,
     pub respawn_requested: bool,
-    /// `PlayerAction::OpenInventory` latched; the Menu stage opens the 2×2
-    /// crafting session on the tick.
-    pub open_inventory_requested: bool,
-    /// `PlayerAction::CloseMenu` latched; the tick closes the open menu
-    /// session at its start (cursor stash, craft-grid return, viewer release).
-    pub close_menu_requested: bool,
     // --- One-shot outbox: screen/effect requests the tick queues for this
     // player's client, consumed into its `SelfEvents` per replication batch
     // (INTERNAL since C2c-iii — the client only sees `OpenScreen`). ---
@@ -478,7 +494,7 @@ impl ConnectedPlayer {
             tick_teleported: false,
             eating: None,
             drop_queue: DropQueue::default(),
-            pending_menu_clicks: Vec::new(),
+            pending_menu_actions: Vec::new(),
             pending_action_outcomes: Vec::new(),
             pending_break_finished: None,
             deferred_break_finished: None,
@@ -498,8 +514,6 @@ impl ConnectedPlayer {
             sleep: None,
             wake_requested: false,
             respawn_requested: false,
-            open_inventory_requested: false,
-            close_menu_requested: false,
             request_open_inventory: false,
             request_open_table: false,
             request_open_furnace: None,

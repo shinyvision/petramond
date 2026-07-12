@@ -214,6 +214,9 @@ pub(super) fn parse_layers(
 }
 
 fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDef, String> {
+    if r.max_stack_size == 0 {
+        return Err("max_stack_size must be positive".to_owned());
+    }
     let sprite = match &r.sprite {
         Some(name) => {
             Some(Tile::from_name(name).ok_or_else(|| format!("unknown sprite tile '{name}'"))?)
@@ -401,6 +404,9 @@ mod tests {
         let bad_block = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "bogus_block"}]}"#;
         let err = parse_test_layers(&[&base, bad_block]).expect_err("unknown block refused");
         assert!(err.contains("bogus_block"), "{err}");
+        let zero_stack = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 0, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}]}"#;
+        let err = parse_test_layers(&[&base, zero_stack]).expect_err("zero stack size refused");
+        assert!(err.contains("max_stack_size must be positive"), "{err}");
     }
 
     #[test]

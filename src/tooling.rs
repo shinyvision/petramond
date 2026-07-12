@@ -118,8 +118,6 @@ pub mod worldgen {
             "birch",
             "jungle",
             "acacia",
-            "dark_oak",
-            "cherry",
         ]
     }
 
@@ -159,8 +157,6 @@ pub mod worldgen {
             "birch" => &crate::worldgen::data::features::BIRCH,
             "jungle" => &crate::worldgen::data::features::JUNGLE,
             "acacia" => &crate::worldgen::data::features::ACACIA,
-            "dark_oak" => &crate::worldgen::data::features::DARK_OAK,
-            "cherry" => &crate::worldgen::data::features::CHERRY,
             _ => return None,
         })
     }

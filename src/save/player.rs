@@ -14,7 +14,7 @@ use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u32, put_u8,
 
 /// The one supported player-file version. Only the CURRENT version decodes —
 /// no legacy ladders. Bump this and let old dev players respawn fresh.
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// Decoded `players/<name>.dat` contents.
 pub struct PlayerData {
@@ -34,6 +34,8 @@ pub struct PlayerData {
     /// ids, because ids are session-scoped (like the block palette). Unknown
     /// names (a removed mod's effect) are dropped with a warning at restore.
     pub effects: Vec<(String, u32)>,
+    /// The recipe browser's craftable-only filter preference.
+    pub craft_craftable_only: bool,
 }
 
 pub fn encode(player: &Player) -> Vec<u8> {
@@ -65,6 +67,7 @@ pub fn encode(player: &Player) -> Vec<u8> {
     }
     put_item_slot(&mut b, player.inventory.cursor().copied());
     put_u8(&mut b, player.inventory.active_slot());
+    put_u8(&mut b, player.craft_craftable_only as u8);
     // Active status effects, persisted by registry NAME — ids are
     // session-scoped.
     put_u32(&mut b, player.effects().len() as u32);
@@ -109,6 +112,7 @@ pub fn decode(bytes: &[u8]) -> Option<PlayerData> {
     let cursor = get_item_slot(&mut r)?;
     let active = r.u8()?;
     let inventory = Inventory::from_parts(slots, cursor, active);
+    let craft_craftable_only = r.u8()? != 0;
 
     let mut effects = Vec::new();
     let n = r.u32()?;
@@ -129,6 +133,7 @@ pub fn decode(bytes: &[u8]) -> Option<PlayerData> {
         bed_spawn,
         inventory,
         effects,
+        craft_craftable_only,
     })
 }
 
@@ -146,6 +151,7 @@ impl PlayerData {
         player.set_health(self.health);
         player.inventory = self.inventory.clone();
         player.bed_spawn = self.bed_spawn;
+        player.craft_craftable_only = self.craft_craftable_only;
         for (name, remaining) in &self.effects {
             match crate::effect::by_name(name) {
                 Some(effect) => player.apply_effect(effect, *remaining),
@@ -198,6 +204,7 @@ mod tests {
             spot: IVec3::new(-2, 70, 13),
         });
         player.apply_effect(crate::effect::Effect::Regeneration, 950);
+        player.craft_craftable_only = true;
 
         let bytes = encode(&player);
         let got = decode(&bytes).expect("decodes");
@@ -222,6 +229,10 @@ mod tests {
         assert_eq!(
             got.inventory.selected().map(|s| s.item),
             player.inventory.selected().map(|s| s.item)
+        );
+        assert!(
+            got.restore().craft_craftable_only,
+            "the craftable-only browser preference survives the round-trip"
         );
     }
 

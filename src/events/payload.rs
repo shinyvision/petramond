@@ -138,7 +138,7 @@ pub(crate) enum ModAction {
 }
 
 /// Which container GUI a session opened/closed on (mirrors the game's container
-/// targets, including the inventory's own 2×2 crafting grid).
+/// targets, including the inventory's own crafting recipe browser).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ContainerKind {
     Inventory,

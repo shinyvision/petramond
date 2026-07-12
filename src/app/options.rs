@@ -19,6 +19,12 @@ impl App {
     /// CloseScreen press — the host's quit signal, exactly like the old
     /// hardcoded translation.
     pub fn handle_raw_key(&mut self, code: KeyCode, down: bool) -> bool {
+        // Text entry owns key presses while focused. Releases still flow
+        // through the binding engine so an action held before focus cannot
+        // stick; Escape remains the explicit close-screen control.
+        if down && self.ui.text_input_focused() && code != KeyCode::Escape {
+            return true;
+        }
         let mut out = Vec::new();
         self.binding_engine.on_input(
             &self.action_table,

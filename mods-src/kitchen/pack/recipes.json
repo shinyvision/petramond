@@ -1,20 +1,31 @@
 {
   "recipes": [
     {
-      "type": "shaped",
-      "pattern": [
-        "CCC",
-        "IFI",
-        "PPP"
+      "type": "crafting",
+      "recipe": "kitchen:oven",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:cobblestone",
+          "count": 3
+        },
+        {
+          "item": "petramond:iron_ingot",
+          "count": 2
+        },
+        {
+          "item": "petramond:furnace",
+          "count": 1
+        },
+        {
+          "tag": "petramond:planks",
+          "count": 3
+        }
       ],
-      "key": {
-        "C": "petramond:cobblestone",
-        "I": "petramond:iron_ingot",
-        "F": "petramond:furnace",
-        "P": "#petramond:planks"
-      },
-      "result": "kitchen:oven",
-      "count": 1
+      "result": {
+        "item": "kitchen:oven",
+        "count": 1
+      }
     },
     {
       "type": "processing",
@@ -23,19 +34,27 @@
       "result": "kitchen:cooked_mutton"
     },
     {
-      "type": "shaped",
-      "pattern": [
-        "III",
-        "SCS",
-        "SSS"
+      "type": "crafting",
+      "recipe": "kitchen:miller",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:iron_ingot",
+          "count": 3
+        },
+        {
+          "item": "petramond:stone",
+          "count": 5
+        },
+        {
+          "item": "petramond:chest",
+          "count": 1
+        }
       ],
-      "key": {
-        "I": "petramond:iron_ingot",
-        "S": "petramond:stone",
-        "C": "petramond:chest"
-      },
-      "result": "kitchen:miller",
-      "count": 1
+      "result": {
+        "item": "kitchen:miller",
+        "count": 1
+      }
     }
   ]
 }

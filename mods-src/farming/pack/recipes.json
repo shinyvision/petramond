@@ -1,53 +1,62 @@
 {
   "recipes": [
     {
-      "type": "shaped",
-      "pattern": [
-        "II",
-        "S ",
-        "S "
-      ],
-      "key": {
-        "I": "petramond:iron_ingot",
-        "S": "petramond:stick"
-      },
-      "result": "farming:iron_hoe"
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "II",
-        " S",
-        " S"
-      ],
-      "key": {
-        "I": "petramond:iron_ingot",
-        "S": "petramond:stick"
-      },
-      "result": "farming:iron_hoe"
-    },
-    {
-      "type": "shapeless",
+      "type": "crafting",
+      "recipe": "farming:iron_hoe",
+      "station": "petramond:crafting_table",
       "ingredients": [
-        "farming:wheat",
-        "farming:wheat",
-        "farming:wheat",
+        {
+          "item": "petramond:iron_ingot",
+          "count": 2
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "farming:iron_hoe",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "farming:dough",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "farming:wheat",
+          "count": 3
+        },
         {
           "item": "petramond:water_bucket",
+          "count": 1,
           "remainder": "petramond:wooden_bucket"
         }
       ],
-      "result": "farming:dough",
-      "count": 3
+      "result": {
+        "item": "farming:dough",
+        "count": 3
+      }
     },
     {
-      "type": "shapeless",
+      "type": "crafting",
+      "recipe": "farming:farmers_lunch",
+      "station": "petramond:inventory",
       "ingredients": [
-        "farming:bread",
-        "farming:carrot",
-        "farming:carrot"
+        {
+          "item": "farming:bread",
+          "count": 1
+        },
+        {
+          "item": "farming:carrot",
+          "count": 2
+        }
       ],
-      "result": "farming:farmers_lunch"
+      "result": {
+        "item": "farming:farmers_lunch",
+        "count": 1
+      }
     },
     {
       "type": "processing",

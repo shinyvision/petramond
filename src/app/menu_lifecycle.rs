@@ -20,7 +20,7 @@ impl App {
             self.enter_connection_lost(reason);
             return;
         }
-        // Right-clicking a placed crafting table opens its 3x3 screen.
+        // Right-clicking a placed crafting table opens its recipe browser.
         if events.open_crafting_table && self.screen.gameplay_enabled() {
             self.open_crafting_table();
         }
@@ -95,16 +95,13 @@ impl App {
     fn open_inventory(&mut self) {
         self.enter_menu(AppScreen::Inventory);
         if let Some(game) = self.game.as_mut() {
-            game.open_crafting(2);
+            game.request_open_inventory();
         }
     }
 
-    /// Open the 3x3 crafting-table screen (after right-clicking a placed table).
+    /// Open the crafting-table recipe browser after right-clicking a table.
     fn open_crafting_table(&mut self) {
         self.enter_menu(AppScreen::CraftingTable);
-        if let Some(game) = self.game.as_mut() {
-            game.open_crafting(3);
-        }
     }
 
     /// Open the furnace screen for the furnace at `pos` (after right-clicking it).
@@ -144,13 +141,16 @@ impl App {
     /// cursor next tick, and clear any stale click streak so the first click
     /// can't register a phantom double.
     fn enter_menu(&mut self, screen: AppScreen) {
+        if matches!(screen, AppScreen::Inventory | AppScreen::CraftingTable) {
+            self.crafting_browser.reset();
+        }
         self.screen = screen;
         self.pointer.release_for_menu();
         self.gui_router.reset_click_streak();
     }
 
-    /// Close any open menu: return crafting-grid items to the inventory, drop back
-    /// to gameplay, and re-grab the pointer. The chest-close SOUND is event-driven
+    /// Close any open menu: recover transient cursor/output/input stacks, drop
+    /// back to gameplay, and re-grab the pointer. The chest-close SOUND is event-driven
     /// now: the server's viewer release emits a positional `ChestClosed` world
     /// event on the tick this close lands on (so every observer hears it, at
     /// the chest).
@@ -159,6 +159,7 @@ impl App {
             game.close_open_menu();
         }
         self.screen = AppScreen::Game;
+        self.crafting_browser.reset();
         self.pointer.grab_for_gameplay();
     }
 

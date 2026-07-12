@@ -1,18 +1,23 @@
 {
   "recipes": [
     {
-      "type": "shaped",
-      "pattern": [
-        " S ",
-        "SLS",
-        " S "
+      "type": "crafting",
+      "recipe": "wheel:wheel_of_fortune",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:stick",
+          "count": 4
+        },
+        {
+          "tag": "petramond:logs",
+          "count": 1
+        }
       ],
-      "key": {
-        "S": "petramond:stick",
-        "L": "#petramond:logs"
-      },
-      "result": "wheel:wheel_of_fortune",
-      "count": 1
+      "result": {
+        "item": "wheel:wheel_of_fortune",
+        "count": 1
+      }
     }
   ]
 }

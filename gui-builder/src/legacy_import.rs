@@ -163,6 +163,7 @@ fn convert(legacy: &LegacyProject) -> Imported {
         format: FORMAT_VERSION,
         kind: kind.clone(),
         class,
+        compact_below_w: None,
         root: Node::leaf(NodeKind::Frame),
     };
     let mut ids_doc = doc_stub; // grows ids as we mint them
@@ -173,7 +174,7 @@ fn convert(legacy: &LegacyProject) -> Imported {
         let (cols, rows) = slot.grid.as_ref().map(|g| (g.cols, g.rows)).unwrap_or((1, 1));
         let node = match slot.role.as_str() {
             // Item-slot roles pass straight through.
-            "generic" | "storage" | "player_inv" | "hotbar" | "craft_input" | "craft_result"
+            "generic" | "storage" | "player_inv" | "hotbar" | "craft_result"
             | "furnace_input" | "furnace_fuel" | "furnace_output" | "workbench_input"
             | "workbench_result" => {
                 let kind = if cols * rows <= 1 {
@@ -219,7 +220,7 @@ fn convert(legacy: &LegacyProject) -> Imported {
     }
 
     Imported {
-        document: Document { format: FORMAT_VERSION, kind, class, root },
+        document: Document { format: FORMAT_VERSION, kind, class, compact_below_w: None, root },
         warnings,
     }
 }

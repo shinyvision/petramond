@@ -21,7 +21,7 @@ use crate::net::protocol::{
     SelfState, SelfTransform, ServerToClient, TickUpdate, WorldEventMsg,
 };
 use crate::player;
-use crate::server::player::{ConnectedPlayer, PlayerId};
+use crate::server::player::{ConnectedPlayer, PendingMenuAction, PlayerId};
 use crate::world::{StreamEvent, World};
 
 /// Most fixed ticks run in a single frame before the leftover is dropped. Caps
@@ -84,11 +84,9 @@ pub(crate) struct ServerGame {
     /// world's engine KV map; the listen server's local session is always an
     /// operator independently of this set.
     pub(crate) operators: BTreeSet<String>,
-    /// Loaded crafting recipes (from `assets/recipes.json`). Used both by the open
-    /// `ContainerMenu`'s craft preview (borrowed in per call) and by the furnace
-    /// *smelting* tick (`World::game_tick`), which is why they live here rather
-    /// than on the menu — the menu would otherwise need a self-referential
-    /// borrow during the tick.
+    /// Loaded recipes (from layered `recipes.json`). Player CRAFT requests and
+    /// machine-processing ticks share this immutable catalog, which is why it
+    /// lives above individual menu sessions.
     pub(crate) recipes: Recipes,
     /// Mob loot tables (from `assets/loot_tables.json`), rolled when a mob dies to
     /// spawn its dropped items. Loaded once at world load, like [`recipes`](Self::recipes).
@@ -180,12 +178,40 @@ impl ServerGame {
                 self.world.mod_kv(),
             ));
             for session in &self.sessions {
-                save.save_player(&session.name, crate::save::player::encode(&session.player));
+                let mut snapshot = session.player.clone();
+                let complete = session
+                    .menu
+                    .unpersisted_items()
+                    .into_iter()
+                    .flatten()
+                    .all(|stack| snapshot.inventory.add(stack).is_none());
+                if !complete {
+                    log::debug!(
+                        "deferring player save for '{}': transient menu items do not fit",
+                        session.name
+                    );
+                    continue;
+                }
+                save.save_player(&session.name, crate::save::player::encode(&snapshot));
             }
             save.save_mods_json(crate::modding::modset::encode_active(
                 self.world.disabled_mods(),
             ));
         }
+    }
+
+    /// Final persistence boundary. Menu state is intentionally transient, so
+    /// recover every cursor/crafting/workbench stack (and materialize safe
+    /// overflow drops) before encoding players and world entities. This runs
+    /// independently of fixed ticks and therefore also works while paused.
+    pub(crate) fn close_sessions_and_save(&mut self) {
+        let mut events = TickEvents::with_next_spatial_sound_handle(self.next_mod_sound_handle);
+        for s in 0..self.sessions.len() {
+            self.close_open_menu_for(s, &mut events);
+            self.tick_drops(s, &mut events);
+        }
+        self.next_mod_sound_handle = events.next_spatial_sound_handle();
+        self.save_all();
     }
 
     pub(crate) fn maybe_autosave(&mut self, dt: f32) {
@@ -697,13 +723,29 @@ impl ServerGame {
                 gather,
                 request_id,
             } => {
-                self.sessions[s].pending_menu_clicks.push((
-                    slot.to_menu_slot(),
-                    crate::net::protocol::button_from_wire(button),
-                    shift,
-                    gather,
+                self.sessions[s]
+                    .pending_menu_actions
+                    .push(PendingMenuAction::SlotClick {
+                        slot: slot.to_menu_slot(),
+                        button: crate::net::protocol::button_from_wire(button),
+                        shift,
+                        gather,
+                        request_id,
+                    });
+            }
+            ClientToServer::CraftRecipe {
+                recipe,
+                bulk,
+                request_id,
+            } => self.sessions[s].pending_menu_actions.push(
+                PendingMenuAction::CraftRecipe {
+                    recipe,
+                    bulk,
                     request_id,
-                ));
+                },
+            ),
+            ClientToServer::SetCraftFilter { craftable_only } => {
+                self.sessions[s].player.craft_craftable_only = craftable_only;
             }
             ClientToServer::ChatSend { text } => {
                 // A slash is a command prefix only at byte zero. Leading
@@ -1016,11 +1058,14 @@ impl ServerGame {
             }
             PlayerAction::Wake => self.sessions[s].wake_requested = true,
             PlayerAction::Respawn => self.sessions[s].respawn_requested = true,
-            // Menu transitions run ON THE TICK (their chest-viewer transitions
-            // must land in the tick's world events): latched here, consumed by
-            // `game_tick_step` (close) / the Menu stage (inventory open).
-            PlayerAction::OpenInventory => self.sessions[s].open_inventory_requested = true,
-            PlayerAction::CloseMenu => self.sessions[s].close_menu_requested = true,
+            // Menu transitions join clicks and crafts in one ordered queue so
+            // arrival order remains authoritative on the fixed tick.
+            PlayerAction::OpenInventory => self.sessions[s]
+                .pending_menu_actions
+                .push(PendingMenuAction::OpenInventory),
+            PlayerAction::CloseMenu => self.sessions[s]
+                .pending_menu_actions
+                .push(PendingMenuAction::Close),
         }
     }
 
@@ -1072,15 +1117,6 @@ impl ServerGame {
         self.pump_stream_events();
         self.apply_mod_actions(events);
         self.drain_post_events(events);
-
-        // Latched menu closes (the CloseMenu message) apply before any stage,
-        // where CloseMenu used to apply at message time — the close's chest
-        // 1→0 transition lands in THIS tick's world events.
-        for s in 0..self.sessions.len() {
-            if std::mem::take(&mut self.sessions[s].close_menu_requested) {
-                self.close_open_menu_for(s, events);
-            }
-        }
 
         // Keep action intent before world/entity simulation so inputs resolve
         // on the tick. Per-player stages loop the sessions in id order INSIDE

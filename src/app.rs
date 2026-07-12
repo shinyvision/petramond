@@ -8,6 +8,7 @@
 mod chat;
 mod client_mod_ui;
 mod connect;
+mod crafting_browser;
 mod gui_router;
 mod input;
 mod menu_lifecycle;
@@ -77,6 +78,9 @@ pub struct App {
     gui_router: GuiRouter,
     /// GUI-document runtime driver (every screen is document-backed).
     ui: ui_runtime::AppUi,
+    /// Search/selection and filtered rows for player crafting. Presentation
+    /// state only; the stable selected key is sent on CRAFT.
+    crafting_browser: crafting_browser::CraftingBrowser,
     /// Reused draw list for the active GUI document.
     composed_doc: petramond_ui::DrawList,
     composed_doc_images: Vec<crate::gui::DocImageSource>,
@@ -226,6 +230,7 @@ impl App {
             pointer: PointerState::default(),
             gui_router: GuiRouter::default(),
             ui: ui_runtime::AppUi::new(),
+            crafting_browser: Default::default(),
             composed_doc: petramond_ui::DrawList::default(),
             composed_doc_images: Vec::new(),
             client_canvas: None,

@@ -180,6 +180,10 @@ pub struct FrameState {
     pub(crate) scroll: BTreeMap<InstKey, i32>,
     pub(crate) editors: BTreeMap<InstKey, TextInput>,
     pub(crate) drag: Option<Drag>,
+    /// The widget whose click fired THIS frame — painted pressed for the one
+    /// frame between the event and the host's rebound state (see the paint
+    /// walk's pressed-face bridge). Cleared at the top of every frame.
+    pub(crate) clicked: Option<InstKey>,
     /// Last list-row press, for double-click activation.
     pub(crate) last_row_click: Option<(InstKey, u32, f64)>,
     /// Last observed bound selection per list, so a selection change (e.g.
@@ -235,6 +239,7 @@ impl FrameState {
         self.scroll.clear();
         self.editors.clear();
         self.drag = None;
+        self.clicked = None;
         self.last_row_click = None;
         self.last_selected.clear();
     }

@@ -160,14 +160,6 @@ pub(super) const BIOME_DEFS: &[BiomeDef] = &[
         water_color: [0.13, 0.44, 0.64],
     },
     BiomeDef {
-        biome: Biome::CherryGrove,
-        name: "cherry_grove",
-        fog_color: [0.94, 0.84, 0.88],
-        grass_color: [0.46, 0.78, 0.42],
-        foliage_color: [0.56, 0.80, 0.48],
-        water_color: [0.20, 0.60, 0.86],
-    },
-    BiomeDef {
         biome: Biome::Meadow,
         name: "meadow",
         fog_color: [0.72, 0.86, 0.96],

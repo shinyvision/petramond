@@ -1,70 +1,245 @@
-use super::{app, app_with_grass, cursor_over_craft, cursor_over_slot, panel_gap_point};
+use super::{
+    app, app_with_grass, cursor_over_craft_result, cursor_over_slot, cursor_over_widget,
+    panel_gap_point,
+};
 use crate::controls::{Control, Modifiers};
-use crate::gui::CraftHit;
 use crate::item::{ItemStack, ItemType};
 
-#[test]
-fn craft_slot_clicks_route_through_to_crafting() {
-    let mut app = app();
-    // Give the player one oak log and open the inventory (2x2 crafting).
-    app.add_to_inventory(ItemStack::new(ItemType::OakLog, 1));
-    app.handle_control(Control::ToggleInventory, true);
-    let screen = (1280u32, 720u32);
-
-    // Pick the log up from inventory slot 0.
-    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
-    app.set_cursor_position(cx, cy);
+fn search_recipes(app: &mut super::TestApp, screen: (u32, u32), query: &str) {
+    let (x, y) = cursor_over_widget(app, screen, "craft_search", None);
+    app.set_cursor_position(x, y);
     app.click_screen_for_test(screen, 0.0);
-    assert!(app.inventory().cursor().is_some());
+    assert!(app.handle_text_input(query));
+    // The first frame resolves TextChanged; the second repopulates the real
+    // list document from the browser's new query.
+    app.solve_menu_frame_for_test(screen);
+    app.solve_menu_frame_for_test(screen);
+}
 
-    // Drop it into the first 2x2 craft input cell -> planks preview appears.
-    let cc = cursor_over_craft(&mut app, screen, CraftHit::Input(0));
-    app.set_cursor_position(cc.0, cc.1);
+fn replace_recipe_search(app: &mut super::TestApp, screen: (u32, u32), query: &str) {
+    let (x, y) = cursor_over_widget(app, screen, "craft_search", None);
+    app.set_cursor_position(x, y);
+    app.click_screen_for_test(screen, 0.0);
+    app.set_modifiers(Modifiers {
+        ctrl: true,
+        ..Modifiers::default()
+    });
+    assert!(app.handle_text_shortcut_code(winit::keyboard::KeyCode::KeyA));
+    app.set_modifiers(Modifiers::default());
+    assert!(app.handle_text_input(query));
+    app.solve_menu_frame_for_test(screen);
+    app.solve_menu_frame_for_test(screen);
+}
+
+fn select_first_recipe_and_craft(app: &mut super::TestApp, screen: (u32, u32)) {
+    let (x, y) = cursor_over_widget(app, screen, "recipe", Some(0));
+    app.set_cursor_position(x, y);
     app.click_screen_for_test(screen, 0.1);
-    assert!(
-        app.inventory().cursor().is_none(),
-        "log placed into the craft cell"
-    );
-    assert_eq!(
-        app.game().menu_read_model().craft.result().map(|s| s.item),
-        Some(ItemType::OakPlanks)
-    );
-
-    // Click the result slot: 4 planks land on the cursor, ingredients consumed.
-    let rc = cursor_over_craft(&mut app, screen, CraftHit::Result);
-    app.set_cursor_position(rc.0, rc.1);
+    let (x, y) = cursor_over_widget(app, screen, "craft", None);
+    app.set_cursor_position(x, y);
     app.click_screen_for_test(screen, 0.2);
-    assert_eq!(
-        app.inventory().cursor().map(|s| (s.item, s.count)),
-        Some((ItemType::OakPlanks, 4))
-    );
-    assert!(app.game().menu_read_model().craft.result().is_none());
 }
 
 #[test]
-fn closing_a_menu_returns_craft_grid_items_to_inventory() {
+fn recipe_browser_searches_selects_crafts_and_routes_output_take() {
     let mut app = app();
-    app.add_to_inventory(ItemStack::new(ItemType::OakLog, 2));
+    app.install_test_crafting_recipe();
+    app.add_to_inventory(ItemStack::new(ItemType::Coal, 1));
     app.handle_control(Control::ToggleInventory, true);
     let screen = (1280u32, 720u32);
-    // Move the logs onto the cursor and into a craft cell.
-    let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
-    app.set_cursor_position(cx, cy);
-    app.click_screen_for_test(screen, 0.0);
-    let cc = cursor_over_craft(&mut app, screen, crate::gui::CraftHit::Input(0));
-    app.set_cursor_position(cc.0, cc.1);
+
+    search_recipes(&mut app, screen, "stick");
+    let query = app
+        .ui
+        .state_mut()
+        .get_str("craft_search")
+        .map(str::to_owned);
+    let rows = app.ui.state_mut().get_list("craft_recipes").cloned();
+    assert!(
+        rows.as_ref().is_some_and(|rows| rows.len() == 1),
+        "the real inventory document was filtered to the matching recipe; query={query:?}, rows={rows:?}"
+    );
+    select_first_recipe_and_craft(&mut app, screen);
+    assert_eq!(
+        app.game().menu_read_model().craft_output.map(|s| s.item),
+        Some(ItemType::Stick)
+    );
+
+    let rc = cursor_over_craft_result(&mut app, screen);
+    app.set_cursor_position(rc.0, rc.1);
+    app.click_screen_for_test(screen, 0.3);
+    assert_eq!(
+        app.inventory().cursor().map(|s| s.item),
+        Some(ItemType::Stick)
+    );
+    assert!(app.game().menu_read_model().craft_output.is_none());
+}
+
+#[test]
+fn unaffordable_recipe_row_stays_disabled_and_cannot_be_selected() {
+    let mut app = app();
+    app.install_test_crafting_recipe();
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280u32, 720u32);
+
+    search_recipes(&mut app, screen, "stick");
+    let rows = app
+        .ui
+        .state_mut()
+        .get_list("craft_recipes")
+        .expect("matching row exists");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].get("enabled"),
+        Some(&petramond_ui::UiValue::Bool(false))
+    );
+
+    let (x, y) = cursor_over_widget(&mut app, screen, "recipe", Some(0));
+    app.set_cursor_position(x, y);
     app.click_screen_for_test(screen, 0.1);
-    // Close with Escape: the logs return to the inventory.
+    app.solve_menu_frame_for_test(screen);
+    assert_eq!(app.ui.state_mut().get_i32("craft_recipe_sel"), Some(-1));
+    assert_eq!(app.ui.state_mut().get_bool("can_craft"), Some(false));
+    assert!(app.game().menu_read_model().craft_output.is_none());
+}
+
+#[test]
+fn crafting_search_owns_key_presses_but_not_releases_or_escape() {
+    use winit::keyboard::KeyCode;
+
+    let mut app = app();
+    assert!(app.handle_raw_key(KeyCode::KeyW, true));
+    assert!(app.take_game_input().movement.forward);
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280u32, 720u32);
+    let (x, y) = cursor_over_widget(&mut app, screen, "craft_search", None);
+    app.set_cursor_position(x, y);
+    app.click_screen_for_test(screen, 0.0);
+    assert!(app.ui.text_input_focused());
+
+    assert!(app.handle_raw_key(KeyCode::KeyW, false));
+    assert!(
+        !app.take_game_input().movement.forward,
+        "a movement key held before focus must still release"
+    );
+    assert!(app.handle_raw_key(KeyCode::KeyE, true));
+    assert!(
+        app.screen.inventory_open(),
+        "typing E must not toggle the menu"
+    );
+    assert!(app.handle_text_input("e"));
+    app.solve_menu_frame_for_test(screen);
+    app.solve_menu_frame_for_test(screen);
+    assert_eq!(app.ui.state_mut().get_str("craft_search"), Some("e"));
+    assert!(app.handle_raw_key(KeyCode::KeyE, false));
+    assert!(app.screen.inventory_open());
+
+    assert!(app.handle_raw_key(KeyCode::Escape, true));
+    assert!(!app.screen.inventory_open(), "Escape still closes the menu");
+}
+
+#[test]
+fn recipe_rows_are_cached_until_the_search_or_inventory_changes() {
+    let mut app = app();
+    app.install_test_crafting_recipe();
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280u32, 720u32);
+    app.solve_menu_frame_for_test(screen);
+    let first = app
+        .ui
+        .state_mut()
+        .get_list("craft_recipes")
+        .expect("recipe rows")
+        .clone();
+
+    app.solve_menu_frame_for_test(screen);
+    let unchanged = app
+        .ui
+        .state_mut()
+        .get_list("craft_recipes")
+        .expect("recipe rows")
+        .clone();
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &unchanged),
+        "static rows and affordability are not rebuilt every frame"
+    );
+
+    app.add_to_inventory(ItemStack::new(ItemType::Coal, 1));
+    app.solve_menu_frame_for_test(screen);
+    let refreshed = app
+        .ui
+        .state_mut()
+        .get_list("craft_recipes")
+        .expect("recipe rows")
+        .clone();
+    assert!(!std::sync::Arc::ptr_eq(&first, &refreshed));
+}
+
+#[test]
+fn hidden_recipe_selection_returns_when_the_search_matches_again() {
+    let mut app = app();
+    app.install_test_crafting_recipe();
+    app.add_to_inventory(ItemStack::new(ItemType::Coal, 1));
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280u32, 720u32);
+    search_recipes(&mut app, screen, "stick");
+    let (x, y) = cursor_over_widget(&mut app, screen, "recipe", Some(0));
+    app.set_cursor_position(x, y);
+    app.click_screen_for_test(screen, 0.1);
+    app.solve_menu_frame_for_test(screen);
+    assert_eq!(app.ui.state_mut().get_i32("craft_recipe_sel"), Some(0));
+
+    replace_recipe_search(&mut app, screen, "no match");
+    assert_eq!(app.ui.state_mut().get_i32("craft_recipe_sel"), Some(-1));
+    replace_recipe_search(&mut app, screen, "stick");
+    assert_eq!(
+        app.ui.state_mut().get_i32("craft_recipe_sel"),
+        Some(0),
+        "selection is stable-key state, not a disposable filtered index"
+    );
+}
+
+#[test]
+fn crafting_buttons_do_not_use_the_shell_ui_click_sound() {
+    let mut app = app();
+    app.install_test_crafting_recipe();
+    app.add_to_inventory(ItemStack::new(ItemType::Coal, 1));
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280u32, 720u32);
+    search_recipes(&mut app, screen, "stick");
+    app.audio.take_played_for_test();
+
+    let (x, y) = cursor_over_widget(&mut app, screen, "recipe", Some(0));
+    app.set_cursor_position(x, y);
+    app.click_screen_for_test(screen, 0.1);
+    let (x, y) = cursor_over_widget(&mut app, screen, "craft", None);
+    app.set_cursor_position(x, y);
+    app.click_screen_for_test(screen, 0.2);
+
+    assert!(app.audio.take_played_for_test().is_empty());
+}
+
+#[test]
+fn closing_a_menu_stashes_untaken_craft_output() {
+    let mut app = app();
+    app.install_test_crafting_recipe();
+    app.add_to_inventory(ItemStack::new(ItemType::Coal, 1));
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280u32, 720u32);
+    search_recipes(&mut app, screen, "stick");
+    select_first_recipe_and_craft(&mut app, screen);
+    assert!(app.game().menu_read_model().craft_output.is_some());
+
     assert!(app.handle_control(Control::CloseScreen, true));
-    // The close is a latched message now; apply it as the next tick would.
     app.apply_latched_actions_for_test();
     assert!(!app.screen.inventory_open());
-    let logs: u32 = (0..crate::inventory::TOTAL_SLOTS)
+    let sticks: u32 = (0..crate::inventory::TOTAL_SLOTS)
         .filter_map(|i| app.inventory().slot(i))
-        .filter(|s| s.item == ItemType::OakLog)
+        .filter(|s| s.item == ItemType::Stick)
         .map(|s| s.count as u32)
         .sum();
-    assert_eq!(logs, 2, "craft-grid logs came back to the inventory");
+    assert!(sticks > 0, "untaken output was parked in the inventory");
+    assert!(app.game().menu_read_model().craft_output.is_none());
 }
 
 #[test]
@@ -262,5 +437,109 @@ fn route_click_on_panel_background_does_not_throw() {
     assert!(
         app.inventory().cursor().is_some(),
         "click on panel art must not throw the stack"
+    );
+}
+
+#[test]
+fn craftable_recipes_sort_first_and_the_filter_hides_the_rest() {
+    let mut app = app();
+    // Catalog order deliberately puts the UNAFFORDABLE recipe first.
+    app.install_test_crafting_catalog(vec![
+        super::test_recipe(
+            "test:planks",
+            ItemType::OakPlanks,
+            ItemStack::new(ItemType::OakPlanks, 1),
+        ),
+        super::test_recipe("test:sticks", ItemType::Coal, ItemStack::new(ItemType::Stick, 2)),
+    ]);
+    app.add_to_inventory(ItemStack::new(ItemType::Coal, 1));
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280u32, 720u32);
+    app.solve_menu_frame_for_test(screen);
+
+    let rows = app
+        .ui
+        .state_mut()
+        .get_list("craft_recipes")
+        .expect("recipe rows")
+        .clone();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows[0].get("enabled"),
+        Some(&petramond_ui::UiValue::Bool(true)),
+        "the craftable recipe leads even though the catalog lists it second"
+    );
+    assert_eq!(
+        rows[1].get("enabled"),
+        Some(&petramond_ui::UiValue::Bool(false))
+    );
+
+    let (x, y) = cursor_over_widget(&mut app, screen, "craft_filter", None);
+    app.set_cursor_position(x, y);
+    app.click_screen_for_test(screen, 0.1);
+    app.solve_menu_frame_for_test(screen);
+    let rows = app
+        .ui
+        .state_mut()
+        .get_list("craft_recipes")
+        .expect("recipe rows")
+        .clone();
+    assert_eq!(rows.len(), 1, "the filter hides uncraftable recipes");
+    assert_eq!(app.ui.state_mut().get_bool("craft_filter_on"), Some(true));
+    assert!(
+        app.server.sessions[0].player.craft_craftable_only,
+        "the toggle reaches the server player, whose save carries it"
+    );
+}
+
+#[test]
+fn stackable_output_keeps_craft_enabled_and_shift_crafts_the_maximum() {
+    let mut app = app();
+    app.install_test_crafting_recipe();
+    let max = ItemType::Stick.max_stack_size();
+    app.add_to_inventory(ItemStack::new(ItemType::Coal, max));
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280u32, 720u32);
+
+    search_recipes(&mut app, screen, "stick");
+    select_first_recipe_and_craft(&mut app, screen);
+    assert_eq!(
+        app.game().menu_read_model().craft_output,
+        Some(ItemStack::new(ItemType::Stick, 2))
+    );
+    app.solve_menu_frame_for_test(screen);
+    assert_eq!(
+        app.ui.state_mut().get_bool("can_craft"),
+        Some(true),
+        "a same-item output must not disable CRAFT"
+    );
+
+    // A repeat click merges into the output stack.
+    let (x, y) = cursor_over_widget(&mut app, screen, "craft", None);
+    app.set_cursor_position(x, y);
+    app.click_screen_for_test(screen, 0.3);
+    assert_eq!(
+        app.game().menu_read_model().craft_output,
+        Some(ItemStack::new(ItemType::Stick, 4))
+    );
+
+    // Shift+CRAFT fills the rest of the output stack in one request.
+    app.set_modifiers(Modifiers {
+        shift: true,
+        ..Modifiers::default()
+    });
+    let (x, y) = cursor_over_widget(&mut app, screen, "craft", None);
+    app.set_cursor_position(x, y);
+    app.click_screen_for_test(screen, 0.4);
+    app.set_modifiers(Modifiers::default());
+    assert_eq!(
+        app.game().menu_read_model().craft_output,
+        Some(ItemStack::new(ItemType::Stick, max / 2 * 2))
+    );
+    app.solve_menu_frame_for_test(screen);
+    assert_eq!(
+        app.ui.state_mut().get_bool("can_craft"),
+        Some(false),
+        "a FULL output stack disables CRAFT until it is taken"
     );
 }

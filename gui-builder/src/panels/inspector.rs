@@ -388,6 +388,30 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
                     });
             });
         }
+        NodeKind::Toggle { icon } => {
+            // Icon = a theme part key drawn centred on the toggle face
+            // (on/off icon buttons like the craftable-only filter).
+            ui.horizontal(|ui| {
+                ui.label("icon");
+                let current = icon.clone().unwrap_or_default();
+                let shown = if current.is_empty() { "(none)" } else { current.as_str() };
+                egui::ComboBox::from_id_salt("toggle_icon")
+                    .selected_text(shown)
+                    .width(150.0)
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(current.is_empty(), "(none)").clicked() {
+                            *icon = None;
+                            t.changed = true;
+                        }
+                        for key in ctx.style_keys {
+                            if ui.selectable_label(current == *key, key).clicked() {
+                                *icon = Some(key.clone());
+                                t.changed = true;
+                            }
+                        }
+                    });
+            });
+        }
         NodeKind::Badge { text } => {
             text_prop(ui, "text", text, t, focus);
         }
@@ -530,7 +554,6 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
         | NodeKind::Column
         | NodeKind::Spacer
         | NodeKind::Checkbox
-        | NodeKind::Toggle
         | NodeKind::List
         | NodeKind::Hook => {}
     }
@@ -553,7 +576,10 @@ fn layout_props(ui: &mut Ui, node: &mut petramond_ui::Node, t: &mut Track, is_ro
         ui.label("gap");
         t.hit(ui.add(DragValue::new(&mut l.gap)));
     });
-    if matches!(node.kind, NodeKind::Frame | NodeKind::Scroll { .. }) {
+    if matches!(
+        node.kind,
+        NodeKind::Frame | NodeKind::Button { .. } | NodeKind::Scroll { .. }
+    ) {
         ui.horizontal(|ui| {
             ui.label("dir");
             for (d, name) in [(Dir::Row, "row"), (Dir::Column, "column")] {

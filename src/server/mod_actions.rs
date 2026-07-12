@@ -49,12 +49,12 @@ impl ServerGame {
                         events,
                     );
                 }
-                // Screen opens run server-side on this tick (like a block
-                // interact's) and queue the one-shot the recipient's
-                // `SelfEvents.open_screen` carries.
+                // GUI opens share the ordered menu boundary with player
+                // clicks and closes; this action point precedes that stage.
                 ModAction::OpenGui { kind } => {
-                    self.open_mod_gui_screen_for(s, kind, None);
-                    self.sessions[s].request_open_mod_gui = Some((kind, None));
+                    self.sessions[s].pending_menu_actions.push(
+                        crate::server::player::PendingMenuAction::OpenModGui { kind, pos: None },
+                    );
                 }
                 ModAction::CloseGui => {
                     self.sessions[s].request_close_mod_gui = true;

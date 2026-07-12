@@ -33,7 +33,6 @@ pub const BIOME_NAMES: &[&str] = &[
     "wetland",
     "redwood_forest",
     "old_growth_taiga",
-    "cherry_grove",
     "meadow",
     "grove",
     "snowy_slopes",
@@ -62,15 +61,14 @@ pub const FOOTHILLS: u8 = 15;
 pub const WETLAND: u8 = 16;
 pub const REDWOOD_FOREST: u8 = 17;
 pub const OLD_GROWTH_TAIGA: u8 = 18;
-pub const CHERRY_GROVE: u8 = 19;
-pub const MEADOW: u8 = 20;
-pub const GROVE: u8 = 21;
-pub const SNOWY_SLOPES: u8 = 22;
-pub const WINDSWEPT_HILLS: u8 = 23;
-pub const STONY_PEAKS: u8 = 24;
-pub const WOODED_HILLS: u8 = 25;
-pub const MOUNTAIN_EDGE: u8 = 26;
-pub const DESERT_LAKES: u8 = 27;
+pub const MEADOW: u8 = 19;
+pub const GROVE: u8 = 20;
+pub const SNOWY_SLOPES: u8 = 21;
+pub const WINDSWEPT_HILLS: u8 = 22;
+pub const STONY_PEAKS: u8 = 23;
+pub const WOODED_HILLS: u8 = 24;
+pub const MOUNTAIN_EDGE: u8 = 25;
+pub const DESERT_LAKES: u8 = 26;
 
 /// The stable snake_case name for a biome id, `None` for an unknown id.
 pub fn name(id: u8) -> Option<&'static str> {

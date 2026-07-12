@@ -1,1006 +1,863 @@
 {
   "recipes": [
     {
-      "type": "shapeless",
+      "type": "crafting",
+      "recipe": "petramond:oak_planks",
+      "station": "petramond:inventory",
       "ingredients": [
-        "petramond:oak_log"
+        {
+          "item": "petramond:oak_log",
+          "count": 1
+        }
       ],
-      "result": "petramond:oak_planks",
-      "count": 4
+      "result": {
+        "item": "petramond:oak_planks",
+        "count": 4
+      }
     },
     {
-      "type": "shapeless",
+      "type": "crafting",
+      "recipe": "petramond:spruce_planks",
+      "station": "petramond:inventory",
       "ingredients": [
-        "petramond:spruce_log"
+        {
+          "item": "petramond:spruce_log",
+          "count": 1
+        }
       ],
-      "result": "petramond:spruce_planks",
-      "count": 4
+      "result": {
+        "item": "petramond:spruce_planks",
+        "count": 4
+      }
     },
     {
-      "type": "shapeless",
+      "type": "crafting",
+      "recipe": "petramond:birch_planks",
+      "station": "petramond:inventory",
       "ingredients": [
-        "petramond:birch_log"
+        {
+          "item": "petramond:birch_log",
+          "count": 1
+        }
       ],
-      "result": "petramond:birch_planks",
-      "count": 4
+      "result": {
+        "item": "petramond:birch_planks",
+        "count": 4
+      }
     },
     {
-      "type": "shapeless",
+      "type": "crafting",
+      "recipe": "petramond:jungle_planks",
+      "station": "petramond:inventory",
       "ingredients": [
-        "petramond:jungle_log"
+        {
+          "item": "petramond:jungle_log",
+          "count": 1
+        }
       ],
-      "result": "petramond:jungle_planks",
-      "count": 4
+      "result": {
+        "item": "petramond:jungle_planks",
+        "count": 4
+      }
     },
     {
-      "type": "shapeless",
+      "type": "crafting",
+      "recipe": "petramond:acacia_planks",
+      "station": "petramond:inventory",
       "ingredients": [
-        "petramond:acacia_log"
+        {
+          "item": "petramond:acacia_log",
+          "count": 1
+        }
       ],
-      "result": "petramond:acacia_planks",
-      "count": 4
+      "result": {
+        "item": "petramond:acacia_planks",
+        "count": 4
+      }
     },
     {
-      "type": "shapeless",
+      "type": "crafting",
+      "recipe": "petramond:redwood_planks",
+      "station": "petramond:inventory",
       "ingredients": [
-        "petramond:dark_oak_log"
+        {
+          "item": "petramond:redwood_log",
+          "count": 1
+        }
       ],
-      "result": "petramond:dark_oak_planks",
-      "count": 4
+      "result": {
+        "item": "petramond:redwood_planks",
+        "count": 4
+      }
     },
     {
-      "type": "shapeless",
+      "type": "crafting",
+      "recipe": "petramond:stick",
+      "station": "petramond:inventory",
       "ingredients": [
-        "petramond:cherry_log"
+        {
+          "tag": "petramond:planks",
+          "count": 2
+        }
       ],
-      "result": "petramond:cherry_planks",
-      "count": 4
+      "result": {
+        "item": "petramond:stick",
+        "count": 4
+      }
     },
     {
-      "type": "shapeless",
+      "type": "crafting",
+      "recipe": "petramond:crafting_table",
+      "station": "petramond:inventory",
       "ingredients": [
-        "petramond:mangrove_log"
+        {
+          "tag": "petramond:planks",
+          "count": 4
+        }
       ],
-      "result": "petramond:mangrove_planks",
-      "count": 4
+      "result": {
+        "item": "petramond:crafting_table",
+        "count": 1
+      }
     },
     {
-      "type": "shapeless",
+      "type": "crafting",
+      "recipe": "petramond:furniture_workbench",
+      "station": "petramond:crafting_table",
       "ingredients": [
-        "petramond:redwood_log"
-      ],
-      "result": "petramond:redwood_planks",
-      "count": 4
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "#",
-        "#"
-      ],
-      "key": {
-        "#": "#petramond:planks"
-      },
-      "result": "petramond:stick",
-      "count": 4
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "##",
-        "##"
-      ],
-      "key": {
-        "#": "#petramond:planks"
-      },
-      "result": "petramond:crafting_table",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        " T ",
-        "LLL"
-      ],
-      "key": {
-        "T": "petramond:crafting_table",
-        "L": "#petramond:logs"
-      },
-      "result": "petramond:furniture_workbench",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "P  ",
-        "PP ",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:oak_planks"
-      },
-      "result": "petramond:oak_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  P",
-        " PP",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:oak_planks"
-      },
-      "result": "petramond:oak_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "P  ",
-        "PP ",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:spruce_planks"
-      },
-      "result": "petramond:spruce_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  P",
-        " PP",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:spruce_planks"
-      },
-      "result": "petramond:spruce_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "P  ",
-        "PP ",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:birch_planks"
-      },
-      "result": "petramond:birch_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  P",
-        " PP",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:birch_planks"
-      },
-      "result": "petramond:birch_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "P  ",
-        "PP ",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:jungle_planks"
-      },
-      "result": "petramond:jungle_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  P",
-        " PP",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:jungle_planks"
-      },
-      "result": "petramond:jungle_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "P  ",
-        "PP ",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:acacia_planks"
-      },
-      "result": "petramond:acacia_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  P",
-        " PP",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:acacia_planks"
-      },
-      "result": "petramond:acacia_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "P  ",
-        "PP ",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:dark_oak_planks"
-      },
-      "result": "petramond:dark_oak_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  P",
-        " PP",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:dark_oak_planks"
-      },
-      "result": "petramond:dark_oak_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "P  ",
-        "PP ",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:cherry_planks"
-      },
-      "result": "petramond:cherry_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  P",
-        " PP",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:cherry_planks"
-      },
-      "result": "petramond:cherry_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "P  ",
-        "PP ",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:mangrove_planks"
-      },
-      "result": "petramond:mangrove_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  P",
-        " PP",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:mangrove_planks"
-      },
-      "result": "petramond:mangrove_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "P  ",
-        "PP ",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:redwood_planks"
-      },
-      "result": "petramond:redwood_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  P",
-        " PP",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:redwood_planks"
-      },
-      "result": "petramond:redwood_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "C  ",
-        "CC ",
-        "CCC"
-      ],
-      "key": {
-        "C": "petramond:cobblestone"
-      },
-      "result": "petramond:cobblestone_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  C",
-        " CC",
-        "CCC"
-      ],
-      "key": {
-        "C": "petramond:cobblestone"
-      },
-      "result": "petramond:cobblestone_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "S  ",
-        "SS ",
-        "SSS"
-      ],
-      "key": {
-        "S": "petramond:stone"
-      },
-      "result": "petramond:stone_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  S",
-        " SS",
-        "SSS"
-      ],
-      "key": {
-        "S": "petramond:stone"
-      },
-      "result": "petramond:stone_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "D  ",
-        "DD ",
-        "DDD"
-      ],
-      "key": {
-        "D": "petramond:dirt"
-      },
-      "result": "petramond:dirt_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:oak_planks"
-      },
-      "result": "petramond:oak_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:spruce_planks"
-      },
-      "result": "petramond:spruce_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:birch_planks"
-      },
-      "result": "petramond:birch_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:jungle_planks"
-      },
-      "result": "petramond:jungle_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:acacia_planks"
-      },
-      "result": "petramond:acacia_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:dark_oak_planks"
-      },
-      "result": "petramond:dark_oak_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:cherry_planks"
-      },
-      "result": "petramond:cherry_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:mangrove_planks"
-      },
-      "result": "petramond:mangrove_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:redwood_planks"
-      },
-      "result": "petramond:redwood_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "CCC"
-      ],
-      "key": {
-        "C": "petramond:cobblestone"
-      },
-      "result": "petramond:cobblestone_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "SSS"
-      ],
-      "key": {
-        "S": "petramond:stone"
-      },
-      "result": "petramond:stone_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "DDD"
-      ],
-      "key": {
-        "D": "petramond:dirt"
-      },
-      "result": "petramond:dirt_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  D",
-        " DD",
-        "DDD"
-      ],
-      "key": {
-        "D": "petramond:dirt"
-      },
-      "result": "petramond:dirt_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "WW",
-        "WW"
-      ],
-      "key": {
-        "W": "petramond:wool"
-      },
-      "result": "petramond:wool_block",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "W  ",
-        "WW ",
-        "WWW"
-      ],
-      "key": {
-        "W": "petramond:wool_block"
-      },
-      "result": "petramond:wool_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  W",
-        " WW",
-        "WWW"
-      ],
-      "key": {
-        "W": "petramond:wool_block"
-      },
-      "result": "petramond:wool_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "WWW"
-      ],
-      "key": {
-        "W": "petramond:wool_block"
-      },
-      "result": "petramond:wool_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "MM",
-        "MM"
-      ],
-      "key": {
-        "M": "petramond:marble"
-      },
-      "result": "petramond:polished_marble",
-      "count": 4
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "M  ",
-        "MM ",
-        "MMM"
-      ],
-      "key": {
-        "M": "petramond:marble"
-      },
-      "result": "petramond:marble_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  M",
-        " MM",
-        "MMM"
-      ],
-      "key": {
-        "M": "petramond:marble"
-      },
-      "result": "petramond:marble_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "MMM"
-      ],
-      "key": {
-        "M": "petramond:marble"
-      },
-      "result": "petramond:marble_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "P  ",
-        "PP ",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:polished_marble"
-      },
-      "result": "petramond:polished_marble_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "  P",
-        " PP",
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:polished_marble"
-      },
-      "result": "petramond:polished_marble_stairs",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PPP"
-      ],
-      "key": {
-        "P": "petramond:polished_marble"
-      },
-      "result": "petramond:polished_marble_slab",
-      "count": 6
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PPP",
-        " S ",
-        " S "
-      ],
-      "key": {
-        "P": "#petramond:planks",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:wooden_pickaxe",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "CCC",
-        " S ",
-        " S "
-      ],
-      "key": {
-        "C": "petramond:cobblestone",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:stone_pickaxe",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "III",
-        " S ",
-        " S "
-      ],
-      "key": {
-        "I": "petramond:iron_ingot",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:iron_pickaxe",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "DDD",
-        " S ",
-        " S "
-      ],
-      "key": {
-        "D": "petramond:diamond",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:diamond_pickaxe",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "P",
-        "S",
-        "S"
-      ],
-      "key": {
-        "P": "#petramond:planks",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:wooden_shovel",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "C",
-        "S",
-        "S"
-      ],
-      "key": {
-        "C": "petramond:cobblestone",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:stone_shovel",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "I",
-        "S",
-        "S"
-      ],
-      "key": {
-        "I": "petramond:iron_ingot",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:iron_shovel",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "D",
-        "S",
-        "S"
-      ],
-      "key": {
-        "D": "petramond:diamond",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:diamond_shovel",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PP",
-        "PS",
-        " S"
-      ],
-      "key": {
-        "P": "#petramond:planks",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:wooden_axe",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PP",
-        "SP",
-        "S "
-      ],
-      "key": {
-        "P": "#petramond:planks",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:wooden_axe",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "CC",
-        "CS",
-        " S"
-      ],
-      "key": {
-        "C": "petramond:cobblestone",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:stone_axe",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "CC",
-        "SC",
-        "S "
-      ],
-      "key": {
-        "C": "petramond:cobblestone",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:stone_axe",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "II",
-        "IS",
-        " S"
-      ],
-      "key": {
-        "I": "petramond:iron_ingot",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:iron_axe",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "II",
-        "SI",
-        "S "
-      ],
-      "key": {
-        "I": "petramond:iron_ingot",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:iron_axe",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "DD",
-        "DS",
-        " S"
-      ],
-      "key": {
-        "D": "petramond:diamond",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:diamond_axe",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "DD",
-        "SD",
-        "S "
-      ],
-      "key": {
-        "D": "petramond:diamond",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:diamond_axe",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "I ",
-        " I"
-      ],
-      "key": {
-        "I": "petramond:iron_ingot"
-      },
-      "result": "petramond:shears",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        " I",
-        "I "
-      ],
-      "key": {
-        "I": "petramond:iron_ingot"
-      },
-      "result": "petramond:shears",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "CCC",
-        "C C",
-        "CKC"
-      ],
-      "key": {
-        "C": "petramond:cobblestone",
-        "K": "petramond:coal"
-      },
-      "result": "petramond:furnace",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "PPP",
-        "P P",
-        "PPP"
-      ],
-      "key": {
-        "P": "#petramond:planks"
-      },
-      "result": "petramond:chest",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "C",
-        "S"
-      ],
-      "key": {
-        "C": "petramond:coal",
-        "S": "petramond:stick"
-      },
-      "result": "petramond:torch",
-      "count": 4
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "P P",
-        " P "
-      ],
-      "key": {
-        "P": "#petramond:planks"
-      },
-      "result": "petramond:wooden_bucket",
-      "count": 1
-    },
-    {
-      "type": "shaped",
-      "pattern": [
-        "WWW",
-        "WBW",
-        "WWW"
-      ],
-      "key": {
-        "W": "petramond:wool",
-        "B": "petramond:bed_frame"
-      },
-      "result": "petramond:bed",
-      "count": 1
+        {
+          "item": "petramond:crafting_table",
+          "count": 1
+        },
+        {
+          "tag": "petramond:logs",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:furniture_workbench",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:oak_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:oak_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:oak_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:spruce_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:spruce_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:spruce_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:birch_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:birch_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:birch_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:jungle_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:jungle_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:jungle_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:acacia_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:acacia_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:acacia_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:redwood_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:redwood_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:redwood_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:cobblestone_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:cobblestone",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:cobblestone_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:stone_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:stone",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:stone_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:dirt_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:dirt",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:dirt_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:oak_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:oak_planks",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:oak_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:spruce_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:spruce_planks",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:spruce_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:birch_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:birch_planks",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:birch_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:jungle_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:jungle_planks",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:jungle_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:acacia_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:acacia_planks",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:acacia_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:redwood_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:redwood_planks",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:redwood_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:cobblestone_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:cobblestone",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:cobblestone_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:stone_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:stone",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:stone_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:dirt_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:dirt",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:dirt_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:wool_block",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:wool",
+          "count": 4
+        }
+      ],
+      "result": {
+        "item": "petramond:wool_block",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:wool_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:wool_block",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:wool_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:wool_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:wool_block",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:wool_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:polished_marble",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:marble",
+          "count": 4
+        }
+      ],
+      "result": {
+        "item": "petramond:polished_marble",
+        "count": 4
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:marble_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:marble",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:marble_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:marble_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:marble",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:marble_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:polished_marble_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:polished_marble",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:polished_marble_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:polished_marble_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:polished_marble",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:polished_marble_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:wooden_pickaxe",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "tag": "petramond:planks",
+          "count": 3
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:wooden_pickaxe",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:stone_pickaxe",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:cobblestone",
+          "count": 3
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:stone_pickaxe",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:iron_pickaxe",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:iron_ingot",
+          "count": 3
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:iron_pickaxe",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:diamond_pickaxe",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:diamond",
+          "count": 3
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:diamond_pickaxe",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:wooden_shovel",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "tag": "petramond:planks",
+          "count": 1
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:wooden_shovel",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:stone_shovel",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:cobblestone",
+          "count": 1
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:stone_shovel",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:iron_shovel",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:iron_ingot",
+          "count": 1
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:iron_shovel",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:diamond_shovel",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:diamond",
+          "count": 1
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:diamond_shovel",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:wooden_axe",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "tag": "petramond:planks",
+          "count": 3
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:wooden_axe",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:stone_axe",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:cobblestone",
+          "count": 3
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:stone_axe",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:iron_axe",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:iron_ingot",
+          "count": 3
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:iron_axe",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:diamond_axe",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:diamond",
+          "count": 3
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:diamond_axe",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:shears",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:iron_ingot",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "petramond:shears",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:furnace",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:cobblestone",
+          "count": 7
+        },
+        {
+          "item": "petramond:coal",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:furnace",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:chest",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "tag": "petramond:planks",
+          "count": 8
+        }
+      ],
+      "result": {
+        "item": "petramond:chest",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:torch",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:coal",
+          "count": 1
+        },
+        {
+          "item": "petramond:stick",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:torch",
+        "count": 4
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:wooden_bucket",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "tag": "petramond:planks",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:wooden_bucket",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:bed",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:wool",
+          "count": 8
+        },
+        {
+          "item": "petramond:bed_frame",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:bed",
+        "count": 1
+      }
     },
     {
       "type": "processing",
@@ -1033,16 +890,19 @@
       "result": "petramond:glass"
     },
     {
-      "type": "shaped",
-      "pattern": [
-        "GGG",
-        "GGG"
+      "type": "crafting",
+      "recipe": "petramond:glass_pane",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:glass",
+          "count": 6
+        }
       ],
-      "key": {
-        "G": "petramond:glass"
-      },
-      "result": "petramond:glass_pane",
-      "count": 16
+      "result": {
+        "item": "petramond:glass_pane",
+        "count": 16
+      }
     },
     {
       "type": "furniture",
@@ -1072,24 +932,6 @@
       "type": "furniture",
       "input": "petramond:acacia_planks",
       "result": "petramond:acacia_door",
-      "cost": 1
-    },
-    {
-      "type": "furniture",
-      "input": "petramond:dark_oak_planks",
-      "result": "petramond:dark_oak_door",
-      "cost": 1
-    },
-    {
-      "type": "furniture",
-      "input": "petramond:cherry_planks",
-      "result": "petramond:cherry_door",
-      "cost": 1
-    },
-    {
-      "type": "furniture",
-      "input": "petramond:mangrove_planks",
-      "result": "petramond:mangrove_door",
       "cost": 1
     },
     {
@@ -1125,24 +967,6 @@
     {
       "type": "furniture",
       "input": "petramond:acacia_planks",
-      "result": "petramond:bed_frame",
-      "cost": 5
-    },
-    {
-      "type": "furniture",
-      "input": "petramond:dark_oak_planks",
-      "result": "petramond:bed_frame",
-      "cost": 5
-    },
-    {
-      "type": "furniture",
-      "input": "petramond:cherry_planks",
-      "result": "petramond:bed_frame",
-      "cost": 5
-    },
-    {
-      "type": "furniture",
-      "input": "petramond:mangrove_planks",
       "result": "petramond:bed_frame",
       "cost": 5
     },

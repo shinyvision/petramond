@@ -48,12 +48,24 @@ pub struct SlotRectOut {
     pub rect: RectI,
 }
 
+/// One host-drawn `hook` instance. The rect and inherited clip are physical
+/// pixels, matching [`SlotRectOut`]; `key.item` identifies a repeated list
+/// row. Hosts must apply `clip` when drawing content inside scrolling hooks.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HookRectOut {
+    pub key: InstKey,
+    pub rect: RectI,
+    pub clip: Option<RectI>,
+}
+
 #[derive(Default)]
 pub struct FrameOutput {
     pub draw: DrawList,
     pub events: Vec<UiEvent>,
     /// Physical rects of every id-bearing instance (hooks, widgets).
     pub named: Vec<(InstKey, RectI)>,
+    /// Physical rects and inherited clips for host-drawn `hook` instances.
+    pub hooks: Vec<HookRectOut>,
     /// Physical rects of every slot cell, role-indexed like the host's slots.
     pub slots: Vec<SlotRectOut>,
     /// The root panel's physical rect (outside = cursor-throw territory).
@@ -86,6 +98,7 @@ impl UiRuntime {
         out.draw.clear();
         out.events.clear();
         out.named.clear();
+        out.hooks.clear();
         out.slots.clear();
         out.hover_slot = None;
         out.panel_rect = RectI::ZERO;
@@ -93,9 +106,16 @@ impl UiRuntime {
             return;
         }
         fs.now = args.now;
+        // The click bridge lives exactly one frame (set below in interaction,
+        // read by this frame's paint).
+        fs.clicked = None;
 
         let scale = args.scale;
-        let tree = InstTree::expand(&self.doc, args.state);
+        let viewport = (
+            (args.screen.0 as i32) / scale,
+            (args.screen.1 as i32) / scale,
+        );
+        let tree = InstTree::expand_form(&self.doc, args.state, self.doc.compact_active(viewport.0));
         if tree.is_empty() {
             return;
         }
@@ -104,10 +124,6 @@ impl UiRuntime {
             theme: &self.theme,
             image_size: &|name| images.resolve(name).map(|(_, (w, h))| (w as i32, h as i32)),
         };
-        let viewport = (
-            (args.screen.0 as i32) / scale,
-            (args.screen.1 as i32) / scale,
-        );
         let solved = solve(&tree, &env, viewport, &|i| {
             tree.get(i)
                 .key
@@ -207,7 +223,7 @@ impl UiRuntime {
         };
         let hover = (0..tree.len() as u32)
             .rev()
-            .find(|&i| widget::pointer_target(tree.get(i)) && visible_at(i));
+            .find(|&i| tree.get(i).enabled && widget::pointer_target(tree.get(i)) && visible_at(i));
         let slot_hover = hover.and_then(|i| match tree.get(i).node.kind {
             NodeKind::Slot { .. } => Some((i, 0)),
             NodeKind::SlotGrid { cols, rows, .. } => (0..cols * rows)
@@ -228,7 +244,7 @@ impl UiRuntime {
             tree.get(i)
                 .children
                 .iter()
-                .position(|&c| visible_at(c))
+                .position(|&c| tree.get(c).enabled && visible_at(c))
                 .map(|row| (i, row as u32))
         });
 
@@ -270,7 +286,15 @@ impl UiRuntime {
         out.panel_rect = phys(solved.rects[ROOT as usize]);
         for (i, inst) in tree.insts.iter().enumerate() {
             if let Some(key) = &inst.key {
-                out.named.push((key.clone(), phys(solved.rects[i])));
+                let rect = phys(solved.rects[i]);
+                out.named.push((key.clone(), rect));
+                if matches!(inst.node.kind, NodeKind::Hook) {
+                    out.hooks.push(HookRectOut {
+                        key: key.clone(),
+                        rect,
+                        clip: solved.clips[i].map(phys),
+                    });
+                }
             }
         }
         for slot in &slots {
@@ -724,6 +748,249 @@ mod tests {
         assert!(image_events[1].1 > 80.0, "drag remains captured outside");
     }
 
+    fn compound_recipe_doc() -> Arc<Document> {
+        Arc::new(
+            Document::from_json(
+                r#"{
+                "format": 1, "kind": "petramond:test_recipes", "class": "screen",
+                "root": { "type": "column", "layout": { "w": 80, "h": 50 },
+                    "children": [
+                        { "type": "scroll", "id": "recipe_scroll", "layout": { "w": 64, "h": 30 },
+                          "children": [
+                            { "type": "list", "id": "recipes",
+                              "bind": { "items": "rows", "selected": "selected" },
+                              "children": [
+                                { "type": "button", "id": "recipe",
+                                  "bind": { "enabled": "enabled" },
+                                  "layout": { "w": 60, "h": 20, "dir": "row", "align": "center" },
+                                  "children": [
+                                    { "type": "hook", "id": "recipe_icon",
+                                      "layout": { "w": 10, "h": 10 } }
+                                  ] }
+                              ] }
+                          ] }
+                    ] }
+            }"#,
+            )
+            .unwrap(),
+        )
+    }
+
+    fn compound_recipe_state(enabled: [bool; 2], selected: i32) -> UiState {
+        let rows = enabled
+            .into_iter()
+            .map(|enabled| {
+                let mut row = UiMap::new();
+                row.insert("enabled".into(), UiValue::Bool(enabled));
+                row
+            })
+            .collect();
+        let mut state = UiState::new();
+        state.set("rows", UiValue::List(Arc::new(rows)));
+        state.set("selected", UiValue::I32(selected));
+        state
+    }
+
+    #[test]
+    fn compound_buttons_click_by_row_and_hooks_keep_the_scroll_clip() {
+        let rt = UiRuntime::new(compound_recipe_doc(), Arc::new(Theme::placeholder()));
+        let state = compound_recipe_state([true, false], 0);
+        let mut fs = FrameState::new();
+        let mut out = FrameOutput::default();
+        let frame = |input: &[InputEvent], fs: &mut FrameState, out: &mut FrameOutput| {
+            rt.frame(
+                FrameArgs {
+                    screen: (400, 200),
+                    scale: 2,
+                    now: 0.0,
+                    state: &state,
+                    input,
+                    clipboard: None,
+                    images: &NoImages,
+                    dim: None,
+                    preview: None,
+                },
+                fs,
+                out,
+            );
+        };
+        frame(&[], &mut fs, &mut out);
+
+        assert_eq!(out.hooks.len(), 2);
+        assert_eq!(out.hooks[0].key.item, Some(0));
+        assert_eq!(out.hooks[1].key.item, Some(1));
+        let clip = out.hooks[0].clip.expect("hook inherits its scroll clip");
+        assert_eq!(out.hooks[1].clip, Some(clip));
+        assert!(out
+            .named
+            .iter()
+            .any(|(key, _)| { key.id == "recipe_icon" && key.item == Some(0) }));
+
+        let recipe0 = out
+            .named
+            .iter()
+            .find(|(key, _)| key.id == "recipe" && key.item == Some(0))
+            .unwrap()
+            .1;
+        let p0 = (
+            (recipe0.x + recipe0.w / 2) as f32,
+            (recipe0.y + recipe0.h / 2) as f32,
+        );
+        frame(&[down(p0.0, p0.1), up(p0.0, p0.1)], &mut fs, &mut out);
+        assert!(out.events.iter().any(
+            |event| matches!(event, UiEvent::Click { id, item: Some(0), .. } if id == "recipe")
+        ));
+
+        let recipe1 = out
+            .named
+            .iter()
+            .find(|(key, _)| key.id == "recipe" && key.item == Some(1))
+            .unwrap()
+            .1;
+        let p1 = ((recipe1.x + recipe1.w / 2) as f32, (recipe1.y + 2) as f32);
+        frame(&[down(p1.0, p1.1), up(p1.0, p1.1)], &mut fs, &mut out);
+        assert!(
+            out.events.is_empty(),
+            "disabled compound row emitted {:#?}",
+            out.events
+        );
+    }
+
+    #[test]
+    fn disabled_list_row_gap_does_not_select() {
+        let doc = Arc::new(
+            Document::from_json(
+                r#"{
+                "format": 1, "kind": "petramond:test_rows", "class": "screen",
+                "root": { "type": "list", "id": "rows", "bind": { "items": "items" },
+                    "children": [
+                        { "type": "row", "bind": { "enabled": "enabled" },
+                          "layout": { "w": 60, "h": 20 },
+                          "children": [ { "type": "label", "text": "Disabled" } ] }
+                    ] }
+            }"#,
+            )
+            .unwrap(),
+        );
+        let mut row = UiMap::new();
+        row.insert("enabled".into(), UiValue::Bool(false));
+        let mut state = UiState::new();
+        state.set("items", UiValue::List(Arc::new(vec![row])));
+        let rt = UiRuntime::new(doc, Arc::new(Theme::placeholder()));
+        let mut fs = FrameState::new();
+        let mut out = FrameOutput::default();
+        rt.frame(
+            FrameArgs {
+                screen: (200, 100),
+                scale: 1,
+                now: 0.0,
+                state: &state,
+                input: &[down(125.0, 50.0)],
+                clipboard: None,
+                images: &NoImages,
+                dim: None,
+                preview: None,
+            },
+            &mut fs,
+            &mut out,
+        );
+        assert!(
+            !out.events
+                .iter()
+                .any(|event| matches!(event, UiEvent::ListSelect { .. })),
+            "disabled row gap selected: {:?}",
+            out.events
+        );
+    }
+
+    #[cfg(feature = "raster")]
+    #[test]
+    fn compound_button_faces_cover_normal_hover_pressed_selected_and_disabled() {
+        use crate::raster::{rasterize, TextureSet};
+
+        enum FaceInput {
+            None,
+            Hover,
+            Press,
+        }
+        let sample = |enabled: bool, selected: i32, input: FaceInput| -> [u8; 4] {
+            let theme = Arc::new(Theme::placeholder());
+            let rt = UiRuntime::new(compound_recipe_doc(), theme.clone());
+            let state = compound_recipe_state([enabled, true], selected);
+            let mut fs = FrameState::new();
+            let mut out = FrameOutput::default();
+            rt.frame(
+                FrameArgs {
+                    screen: (400, 200),
+                    scale: 2,
+                    now: 0.0,
+                    state: &state,
+                    input: &[],
+                    clipboard: None,
+                    images: &NoImages,
+                    dim: None,
+                    preview: None,
+                },
+                &mut fs,
+                &mut out,
+            );
+            let rect = out
+                .named
+                .iter()
+                .find(|(key, _)| key.id == "recipe" && key.item == Some(0))
+                .unwrap()
+                .1;
+            let p = ((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
+            let input = match input {
+                FaceInput::None => Vec::new(),
+                FaceInput::Hover => vec![InputEvent::PointerMove { x: p.0, y: p.1 }],
+                FaceInput::Press => vec![down(p.0, p.1)],
+            };
+            if !input.is_empty() {
+                rt.frame(
+                    FrameArgs {
+                        screen: (400, 200),
+                        scale: 2,
+                        now: 0.0,
+                        state: &state,
+                        input: &input,
+                        clipboard: None,
+                        images: &NoImages,
+                        dim: None,
+                        preview: None,
+                    },
+                    &mut fs,
+                    &mut out,
+                );
+            }
+            let mut rgba = Vec::new();
+            rasterize(
+                &out.draw,
+                &TextureSet {
+                    theme_atlas: &theme.atlas,
+                    font: &theme.font,
+                    doc_images: &[],
+                },
+                (400, 200),
+                [0, 0, 0, 255],
+                &mut rgba,
+            );
+            let i =
+                (((rect.y + rect.h / 2) as u32 * 400 + (rect.x + rect.w / 2) as u32) * 4) as usize;
+            [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+        };
+
+        let normal = sample(true, -1, FaceInput::None);
+        let hover = sample(true, -1, FaceInput::Hover);
+        let pressed = sample(true, -1, FaceInput::Press);
+        let selected = sample(true, 0, FaceInput::None);
+        let disabled = sample(false, 0, FaceInput::Hover);
+        assert_ne!(normal, hover);
+        assert_ne!(normal, pressed);
+        assert_eq!(selected, pressed, "selected row must keep the pressed face");
+        assert_ne!(disabled, pressed, "disabled must override selected/hover");
+    }
+
     #[test]
     fn draw_list_is_nonempty_and_batched() {
         let mut h = Harness::new();
@@ -736,5 +1003,127 @@ mod tests {
             h.out.draw.vertices.len(),
             "batches tile the vertex buffer"
         );
+    }
+
+    #[cfg(feature = "raster")]
+    #[test]
+    fn a_clicked_row_never_flashes_unpressed_between_release_and_rebound_selection() {
+        use crate::raster::{rasterize, TextureSet};
+
+        let theme = Arc::new(Theme::placeholder());
+        let rt = UiRuntime::new(compound_recipe_doc(), theme.clone());
+        let state = compound_recipe_state([true, true], -1);
+        let mut fs = FrameState::new();
+        let mut out = FrameOutput::default();
+        let mut frame = |input: &[InputEvent], out: &mut FrameOutput| {
+            rt.frame(
+                FrameArgs {
+                    screen: (400, 200),
+                    scale: 2,
+                    now: 0.0,
+                    state: &state,
+                    input,
+                    clipboard: None,
+                    images: &NoImages,
+                    dim: None,
+                    preview: None,
+                },
+                &mut fs,
+                out,
+            );
+        };
+        frame(&[], &mut out);
+        let rect = out
+            .named
+            .iter()
+            .find(|(key, _)| key.id == "recipe" && key.item == Some(0))
+            .unwrap()
+            .1;
+        let center = ((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
+        let pixel = |out: &FrameOutput| {
+            let mut rgba = Vec::new();
+            rasterize(
+                &out.draw,
+                &TextureSet {
+                    theme_atlas: &theme.atlas,
+                    font: &theme.font,
+                    doc_images: &[],
+                },
+                (400, 200),
+                [0, 0, 0, 255],
+                &mut rgba,
+            );
+            let i =
+                (((rect.y + rect.h / 2) as u32 * 400 + (rect.x + rect.w / 2) as u32) * 4) as usize;
+            [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+        };
+
+        frame(&[down(center.0, center.1)], &mut out);
+        let held = pixel(&out);
+        frame(&[up(center.0, center.1)], &mut out);
+        assert!(
+            out.events
+                .iter()
+                .any(|event| matches!(event, UiEvent::Click { id, .. } if id == "recipe")),
+            "release-in fires the row click"
+        );
+        assert_eq!(
+            pixel(&out),
+            held,
+            "the click frame keeps the pressed face (the host rebinds selection next frame)"
+        );
+        frame(&[], &mut out);
+        assert_ne!(
+            pixel(&out),
+            held,
+            "the bridge lives exactly one frame; unselected rows return to hover"
+        );
+    }
+
+    #[test]
+    fn compact_breakpoint_swaps_node_layouts_by_viewport_width() {
+        let doc = Arc::new(
+            Document::from_json(
+                r#"{
+                "format": 1, "kind": "petramond:test_compact", "class": "screen",
+                "compact_below_w": 100,
+                "root": { "type": "frame",
+                    "layout": { "dir": "row", "gap": 2 },
+                    "compact_layout": { "dir": "column", "gap": 2 },
+                    "children": [
+                        { "type": "button", "id": "a", "text": "A" },
+                        { "type": "button", "id": "b", "text": "B" }
+                    ] }
+            }"#,
+            )
+            .unwrap(),
+        );
+        let rt = UiRuntime::new(doc, Arc::new(Theme::placeholder()));
+        let state = UiState::new();
+        let mut fs = FrameState::new();
+        let mut out = FrameOutput::default();
+        let mut solve_at = |screen: (u32, u32)| {
+            rt.frame(
+                FrameArgs {
+                    screen,
+                    scale: 1,
+                    now: 0.0,
+                    state: &state,
+                    input: &[],
+                    clipboard: None,
+                    images: &NoImages,
+                    dim: None,
+                    preview: None,
+                },
+                &mut fs,
+                &mut out,
+            );
+            (out.rect("a").unwrap(), out.rect("b").unwrap())
+        };
+
+        let (a, b) = solve_at((200, 100));
+        assert!(b.x > a.x && b.y == a.y, "wide viewports flow the row");
+        let (a, b) = solve_at((80, 100));
+        assert!(b.y > a.y && b.x == a.x, "below the breakpoint the compact layout stacks");
     }
 }

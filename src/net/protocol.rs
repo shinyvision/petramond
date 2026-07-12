@@ -16,6 +16,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::chunk::{ChunkPos, SectionPos};
+use crate::crafting::CraftingRecipeData;
 use crate::mathh::{IVec3, Vec3};
 use crate::server::player::PlayerId;
 
@@ -148,6 +149,8 @@ pub(crate) struct SelfRestore {
     pub inventory: Vec<Option<ItemSlotWire>>,
     /// The active hotbar slot, so the restored selection survives the join.
     pub active_slot: u8,
+    /// The recipe browser's craftable-only filter preference.
+    pub craft_craftable_only: bool,
 }
 
 /// Everything a client needs to enter the world, sent on `JoinAccept`.
@@ -160,6 +163,10 @@ pub(crate) struct JoinData {
     pub clock: u64,
     pub tables: NameTables,
     pub self_restore: SelfRestore,
+    /// The enabled player-crafting catalog, sent once and resolved locally by
+    /// registry name. Unlike live slot contents, these rows carry no numeric
+    /// registry ids and therefore need no transport remap.
+    pub crafting_recipes: Vec<CraftingRecipeData>,
     /// Already-connected players (id, name), local player excluded.
     pub players: Vec<(PlayerId, String)>,
 }
@@ -292,8 +299,8 @@ pub(crate) enum PlayerAction {
     /// tracker re-anchors so the switch is never measured as a fall. The
     /// authoritative mode flows back via [`SelfState::mode`].
     ToggleMode,
-    /// The inventory key (E): the server opens the 2×2 crafting session on the
-    /// next tick and answers with [`OpenScreen::Inventory`].
+    /// The inventory key (E): the server opens the inventory crafting session
+    /// on the next tick and answers with [`OpenScreen::Inventory`].
     OpenInventory,
     CloseMenu,
 }
@@ -304,7 +311,6 @@ pub(crate) enum PlayerAction {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum MenuSlotWire {
     Inventory(u32),
-    CraftInput(u32),
     CraftResult,
     FurnaceInput,
     FurnaceFuel,
@@ -318,11 +324,10 @@ pub(crate) enum MenuSlotWire {
 
 impl MenuSlotWire {
     pub(crate) fn from_menu_slot(slot: &crate::gui::MenuSlot) -> Self {
-        use crate::gui::{CraftHit, FurnaceHit, MenuSlot, WorkbenchHit};
+        use crate::gui::{FurnaceHit, MenuSlot, WorkbenchHit};
         match slot {
             MenuSlot::Inventory(i) => Self::Inventory(*i as u32),
-            MenuSlot::Craft(CraftHit::Input(i)) => Self::CraftInput(*i as u32),
-            MenuSlot::Craft(CraftHit::Result) => Self::CraftResult,
+            MenuSlot::CraftResult => Self::CraftResult,
             MenuSlot::Furnace(FurnaceHit::Input) => Self::FurnaceInput,
             MenuSlot::Furnace(FurnaceHit::Fuel) => Self::FurnaceFuel,
             MenuSlot::Furnace(FurnaceHit::Output) => Self::FurnaceOutput,
@@ -335,11 +340,10 @@ impl MenuSlotWire {
     }
 
     pub(crate) fn to_menu_slot(&self) -> crate::gui::MenuSlot {
-        use crate::gui::{CraftHit, FurnaceHit, MenuSlot, WorkbenchHit};
+        use crate::gui::{FurnaceHit, MenuSlot, WorkbenchHit};
         match self {
             Self::Inventory(i) => MenuSlot::Inventory(*i as usize),
-            Self::CraftInput(i) => MenuSlot::Craft(CraftHit::Input(*i as usize)),
-            Self::CraftResult => MenuSlot::Craft(CraftHit::Result),
+            Self::CraftResult => MenuSlot::CraftResult,
             Self::FurnaceInput => MenuSlot::Furnace(FurnaceHit::Input),
             Self::FurnaceFuel => MenuSlot::Furnace(FurnaceHit::Fuel),
             Self::FurnaceOutput => MenuSlot::Furnace(FurnaceHit::Output),
@@ -652,9 +656,9 @@ pub(crate) enum ModSpatialSoundMsg {
 /// session is already open server-side; the client shows the matching screen).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum OpenScreen {
-    /// The inventory screen with its 2×2 crafting grid.
+    /// The inventory screen with inventory-tier recipes.
     Inventory,
-    /// The 3×3 crafting-table screen.
+    /// The crafting-table screen with inventory- and table-tier recipes.
     CraftingTable,
     Furnace(IVec3),
     Chest(IVec3),
@@ -754,10 +758,12 @@ pub(crate) enum MenuTargetWire {
     /// No menu session is open (sent once when a session closes).
     #[default]
     None,
-    /// The inventory's 2×2 crafting session (grid rides `craft_grid`).
-    Inventory,
-    /// The crafting table's 3×3 session.
-    Table,
+    /// Player crafting from the inventory screen. The result is transient
+    /// server-owned menu state, not an inventory slot.
+    Inventory { output: Option<ItemSlotWire> },
+    /// Player crafting from a crafting table. Its recipe catalog includes
+    /// both inventory and table recipes.
+    Table { output: Option<ItemSlotWire> },
     Furnace {
         pos: IVec3,
         /// `[input, fuel, output]`.
@@ -791,10 +797,6 @@ pub(crate) enum MenuTargetWire {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct MenuSyncMsg {
     pub target: MenuTargetWire,
-    /// The open crafting grid's cells (`cols²` entries; empty when no crafting
-    /// session is up).
-    pub craft_grid: Vec<Option<ItemSlotWire>>,
-    pub craft_result: Option<ItemSlotWire>,
 }
 
 /// One executed server tick's replication to one client. At most one per pump
@@ -872,6 +874,16 @@ pub(crate) enum ClientToServer {
         gather: bool,
         request_id: ClientRequestId,
     },
+    /// Craft one stable, name-addressed recipe into the open crafting
+    /// session's output slot (merging onto a same-item output stack). The
+    /// server validates station, ingredients, and output fit on the next
+    /// deterministic tick. `bulk` (shift-craft) repeats until ingredients run
+    /// out or the output stack fills.
+    CraftRecipe {
+        recipe: String,
+        bulk: bool,
+        request_id: ClientRequestId,
+    },
     /// A player-submitted chat line. The server trims/sanitizes/formats it and
     /// broadcasts the resulting [`ServerToClient::ChatLine`].
     ChatSend {
@@ -896,6 +908,12 @@ pub(crate) enum ClientToServer {
     /// outside it unloads client-side through the ordinary diff.
     SetViewDistance {
         chunks: u8,
+    },
+    /// The client toggled the recipe browser's craftable-only filter — a
+    /// fire-and-forget preference the server stores on the player so it
+    /// persists with the world's player data.
+    SetCraftFilter {
+        craftable_only: bool,
     },
     Pause(bool),
     KeepAlive,
@@ -1151,6 +1169,9 @@ mod tests {
             cache_hashes: vec![(0, 1), (3, u64::MAX)],
         });
         roundtrip(&ClientToServer::SetViewDistance { chunks: 24 });
+        roundtrip(&ClientToServer::SetCraftFilter {
+            craftable_only: true,
+        });
         roundtrip(&ClientToServer::PlayerUpdate(PlayerUpdate {
             pos: Vec3::new(1.5, 80.0, -3.25),
             vel: Vec3::ZERO,
@@ -1191,6 +1212,19 @@ mod tests {
             shift: false,
             gather: true,
             request_id: 3,
+        });
+        roundtrip(&ClientToServer::CraftRecipe {
+            recipe: "kitchen:bread".into(),
+            bulk: true,
+            request_id: 4,
+        });
+        roundtrip(&MenuSyncMsg {
+            target: MenuTargetWire::Table {
+                output: Some(ItemSlotWire {
+                    item_id: 7,
+                    count: 2,
+                }),
+            },
         });
         roundtrip(&ClientToServer::Action(PlayerAction::BreakFinished {
             request_id: 9,
@@ -1412,8 +1446,6 @@ mod tests {
                     ]),
                     gui_state: Some(vec![("kitchen:burn01".into(), GuiValueWire::F32(0.5))]),
                 },
-                craft_grid: Vec::new(),
-                craft_result: None,
             }),
         })));
     }

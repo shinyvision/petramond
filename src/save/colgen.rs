@@ -18,11 +18,11 @@ use crate::chunk::{ChunkPos, SECTION_SIZE};
 use crate::save::codec::{deflate, inflate, put_u32, put_u8, Reader};
 use crate::save::region::{REGION_SHIFT, REGION_SIZE};
 
-/// Bumped to 3 for the cave update (new carvers, cave biomes, full-depth
-/// scatter): older records describe surfaces the current generator no longer
-/// produces, so they are rejected and regenerated. No upgrade path — this is a
-/// disposable cache.
-pub(crate) const VERSION: u8 = 3;
+/// Bumped to 4 when the unreachable cherry-grove biome was removed (biome ids
+/// above it shifted): older records describe surfaces the current generator no
+/// longer produces, so they are rejected and regenerated. No upgrade path —
+/// this is a disposable cache.
+pub(crate) const VERSION: u8 = 4;
 const CELLS: usize = SECTION_SIZE * SECTION_SIZE;
 const MESH_BIOME_SIDE: usize = SECTION_SIZE + 4;
 const MESH_BIOME_CELLS: usize = MESH_BIOME_SIDE * MESH_BIOME_SIDE;

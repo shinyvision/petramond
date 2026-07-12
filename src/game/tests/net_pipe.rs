@@ -7,10 +7,28 @@ use super::super::tick::TickEvents;
 use super::common::{self, filled_inventory, game, install_empty_chunk};
 use crate::block::Block;
 use crate::gui::MenuSlot;
+use crate::item::{ItemStack, ItemType};
 use crate::mathh::{IVec3, Vec3};
 use crate::mob::Mob;
 use crate::net::protocol::{ClientToServer, MenuSlotWire, PlayerAction, TargetRef};
 use crate::server::health::fall_damage_health;
+
+fn install_test_crafting_recipe(game: &mut super::common::TestGame) {
+    game.server.recipes = crate::crafting::Recipes::new(
+        vec![crate::crafting::CraftingRecipe::new(
+            "test:ordered".into(),
+            crate::crafting::CraftingStation::Inventory,
+            vec![crate::crafting::CraftingIngredient {
+                selector: crate::crafting::IngredientSelector::Item(ItemType::Coal),
+                count: 1,
+                use_mode: crate::crafting::IngredientUse::Consume,
+            }],
+            ItemStack::new(ItemType::Stick, 2),
+        )],
+        Vec::new(),
+        Vec::new(),
+    );
+}
 
 fn apply_update(game: &mut super::common::TestGame, u: crate::net::protocol::PlayerUpdate) {
     game.server
@@ -250,9 +268,9 @@ fn menu_click_messages_latch_then_apply_on_the_tick() {
         },
     );
     assert_eq!(
-        game.server.sessions[0].pending_menu_clicks.len(),
+        game.server.sessions[0].pending_menu_actions.len(),
         1,
-        "the click latched for the tick"
+        "the click joined the ordered menu-action queue for the tick"
     );
     assert!(
         game.server.sessions[0].player.inventory.cursor().is_none(),
@@ -263,6 +281,191 @@ fn menu_click_messages_latch_then_apply_on_the_tick() {
     assert!(
         game.server.sessions[0].player.inventory.cursor().is_some(),
         "the tick applied the container edit (stack picked onto the cursor)"
+    );
+}
+
+#[test]
+fn menu_open_click_craft_and_close_execute_in_wire_order() {
+    let mut game = game();
+    install_test_crafting_recipe(&mut game);
+    let inventory = &mut game.server.sessions[0].player.inventory;
+    inventory.add(ItemStack::new(ItemType::Coal, 1));
+    inventory.click_slot(0); // begin with the ingredient on the cursor
+
+    game.server
+        .apply_message(0, ClientToServer::Action(PlayerAction::OpenInventory));
+    game.server.apply_message(
+        0,
+        ClientToServer::MenuClick {
+            slot: MenuSlotWire::Inventory(0),
+            button: 0,
+            shift: false,
+            gather: false,
+            request_id: 21,
+        },
+    );
+    game.server.apply_message(
+        0,
+        ClientToServer::CraftRecipe {
+            recipe: "test:ordered".into(),
+            bulk: false,
+            request_id: 22,
+        },
+    );
+    game.server
+        .apply_message(0, ClientToServer::Action(PlayerAction::CloseMenu));
+
+    game.server.tick_menu(0, &mut TickEvents::default());
+
+    assert_eq!(
+        game.server.sessions[0].menu.target(),
+        crate::game::container::ContainerTarget::None
+    );
+    assert_eq!(
+        common::count_item(&game.server.sessions[0].player.inventory, ItemType::Coal),
+        0
+    );
+    assert_eq!(
+        common::count_item(&game.server.sessions[0].player.inventory, ItemType::Stick),
+        2
+    );
+    let outcomes = &game.server.sessions[0].pending_action_outcomes;
+    assert!(outcomes
+        .iter()
+        .any(|outcome| outcome.id == 21 && outcome.accepted));
+    assert!(outcomes
+        .iter()
+        .any(|outcome| outcome.id == 22 && outcome.accepted));
+}
+
+#[test]
+fn craft_after_close_is_denied_once_without_consuming() {
+    let mut game = game();
+    install_test_crafting_recipe(&mut game);
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::Coal, 1));
+    game.server
+        .apply_message(0, ClientToServer::Action(PlayerAction::OpenInventory));
+    game.server
+        .apply_message(0, ClientToServer::Action(PlayerAction::CloseMenu));
+    game.server.apply_message(
+        0,
+        ClientToServer::CraftRecipe {
+            recipe: "test:ordered".into(),
+            bulk: false,
+            request_id: 23,
+        },
+    );
+
+    game.server.tick_menu(0, &mut TickEvents::default());
+
+    assert_eq!(
+        common::count_item(&game.server.sessions[0].player.inventory, ItemType::Coal),
+        1
+    );
+    let outcomes: Vec<_> = game.server.sessions[0]
+        .pending_action_outcomes
+        .iter()
+        .filter(|outcome| outcome.id == 23)
+        .collect();
+    assert_eq!(outcomes.len(), 1);
+    assert!(!outcomes[0].accepted);
+    assert_eq!(
+        outcomes[0].reason,
+        Some(crate::net::protocol::ActionDenyReason::InvalidSlot)
+    );
+    assert!(
+        !game.server.sessions[0].request_open_inventory,
+        "same-tick close cancels the stale open-screen one-shot"
+    );
+}
+
+#[test]
+fn close_then_table_interact_recovers_output_before_opening_the_new_menu() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    install_test_crafting_recipe(&mut game);
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::Coal, 1));
+    game.server
+        .open_crafting_for(0, crate::crafting::CraftingStation::Inventory);
+    game.server.apply_message(
+        0,
+        ClientToServer::CraftRecipe {
+            recipe: "test:ordered".into(),
+            bulk: false,
+            request_id: 24,
+        },
+    );
+    game.server.tick_menu(0, &mut TickEvents::default());
+    assert!(game.server.sessions[0].menu.craft_output().is_some());
+
+    game.server
+        .apply_message(0, ClientToServer::Action(PlayerAction::CloseMenu));
+    let table = IVec3::new(4, 64, 4);
+    game.server.world.set_block_world(
+        table.x,
+        table.y,
+        table.z,
+        crate::block::Block::CraftingTable,
+    );
+    game.server.sessions[0].look = Some(common::hit(table, IVec3::Y));
+    game.server.queue_place_click_for_test(0);
+    let mut events = TickEvents::default();
+    game.server.tick_place(0, &mut events);
+    game.server.tick_menu(0, &mut events);
+
+    assert_eq!(
+        common::count_item(&game.server.sessions[0].player.inventory, ItemType::Stick),
+        2,
+        "the previous output was recovered through close before replacement"
+    );
+    assert_eq!(
+        game.server.sessions[0].menu.target(),
+        crate::game::container::ContainerTarget::Table
+    );
+    assert!(game.server.sessions[0].request_open_table);
+    assert!(game.server.sessions[0].menu.craft_output().is_none());
+}
+
+#[test]
+fn shutdown_recovers_untaken_output_without_waiting_for_a_tick() {
+    let mut game = game();
+    install_test_crafting_recipe(&mut game);
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::Coal, 1));
+    game.server
+        .open_crafting_for(0, crate::crafting::CraftingStation::Inventory);
+    game.server.apply_message(
+        0,
+        ClientToServer::CraftRecipe {
+            recipe: "test:ordered".into(),
+            bulk: false,
+            request_id: 25,
+        },
+    );
+    game.server.tick_menu(0, &mut TickEvents::default());
+    assert!(game.server.sessions[0].menu.craft_output().is_some());
+    game.server
+        .apply_message(0, ClientToServer::Action(PlayerAction::CloseMenu));
+    game.server.paused = true;
+
+    game.server.close_sessions_and_save();
+
+    assert_eq!(
+        common::count_item(&game.server.sessions[0].player.inventory, ItemType::Stick),
+        2
+    );
+    assert!(game.server.sessions[0].menu.craft_output().is_none());
+    assert_eq!(
+        game.server.sessions[0].menu.target(),
+        crate::game::container::ContainerTarget::None
     );
 }
 

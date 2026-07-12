@@ -146,7 +146,7 @@ impl Interact<'_> {
                 .get(i)
                 .children
                 .iter()
-                .position(|&c| self.visible_at(c, x, y))
+                .position(|&c| self.tree.get(c).enabled && self.visible_at(c, x, y))
                 .map(|row| (i, row as u32))
         })
     }
@@ -155,7 +155,8 @@ impl Interact<'_> {
     fn scroll_hit(&self, fs: &FrameState) -> Option<u32> {
         let (x, y) = self.cur(fs);
         (0..self.tree.len() as u32).rev().find(|&i| {
-            matches!(self.tree.get(i).node.kind, NodeKind::Scroll { .. })
+            self.tree.get(i).enabled
+                && matches!(self.tree.get(i).node.kind, NodeKind::Scroll { .. })
                 && self.visible_at(i, x, y)
         })
     }
@@ -179,7 +180,7 @@ impl Interact<'_> {
             let NodeKind::Scroll { axis } = inst.node.kind else {
                 continue;
             };
-            if axis != ScrollAxis::Vertical {
+            if !inst.enabled || axis != ScrollAxis::Vertical {
                 continue;
             }
             let rect = self.solved.rects[i as usize];
@@ -221,25 +222,33 @@ impl Interact<'_> {
             let rect = self.solved.rects[i as usize];
             match &inst.node.kind {
                 NodeKind::Slot { .. } | NodeKind::SlotGrid { .. } => {
-                    if let Some(slot) = self.slots.iter().find(|s| s.inst == i) {
-                        let cell = match inst.node.kind {
-                            NodeKind::SlotGrid { cols, rows, .. } => (0..cols * rows).find(|&c| {
-                                widget::contains_f(grid_cell(rect, cols, c, self.metrics), x, y)
-                            }),
-                            _ => Some(0),
-                        };
-                        if let Some(cell) = cell {
-                            events.push(UiEvent::SlotClick {
-                                role: slot.role.clone(),
-                                index: slot.base + cell,
-                                button,
-                                shift,
-                            });
+                    if inst.enabled {
+                        if let Some(slot) = self.slots.iter().find(|s| s.inst == i) {
+                            let cell = match inst.node.kind {
+                                NodeKind::SlotGrid { cols, rows, .. } => {
+                                    (0..cols * rows).find(|&c| {
+                                        widget::contains_f(
+                                            grid_cell(rect, cols, c, self.metrics),
+                                            x,
+                                            y,
+                                        )
+                                    })
+                                }
+                                _ => Some(0),
+                            };
+                            if let Some(cell) = cell {
+                                events.push(UiEvent::SlotClick {
+                                    role: slot.role.clone(),
+                                    index: slot.base + cell,
+                                    button,
+                                    shift,
+                                });
+                            }
                         }
                     }
                     self.blur_editor(fs);
                 }
-                NodeKind::Button { .. } | NodeKind::Checkbox | NodeKind::Toggle => {
+                NodeKind::Button { .. } | NodeKind::Checkbox | NodeKind::Toggle { .. } => {
                     if inst.enabled {
                         if let Some(key) = self.key_of(i) {
                             fs.active = Some((key, button));
@@ -437,13 +446,22 @@ impl Interact<'_> {
             return;
         }
         let inst = self.tree.get(i);
+        if !inst.enabled {
+            return;
+        }
         match inst.node.kind {
-            NodeKind::Button { .. } => events.push(UiEvent::Click {
-                id: key.id,
-                item: key.item,
-                button,
-            }),
-            NodeKind::Checkbox | NodeKind::Toggle => events.push(UiEvent::Toggle {
+            NodeKind::Button { .. } => {
+                // Keep the pressed face through the click frame: the host
+                // applies the event (e.g. a list selection) before the NEXT
+                // frame, so without this the row flashes unpressed once.
+                fs.clicked = Some(key.clone());
+                events.push(UiEvent::Click {
+                    id: key.id,
+                    item: key.item,
+                    button,
+                });
+            }
+            NodeKind::Checkbox | NodeKind::Toggle { .. } => events.push(UiEvent::Toggle {
                 id: key.id,
                 item: key.item,
                 on: !inst.value_bool.unwrap_or(false),

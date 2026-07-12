@@ -22,6 +22,10 @@ pub struct InstKey {
 #[derive(Debug)]
 pub struct Inst<'d> {
     pub node: &'d Node,
+    /// The layout this instance arranges by: the node's `compact_layout` when
+    /// the tree expanded in compact form (and the node carries one), else its
+    /// ordinary `layout`.
+    pub layout: &'d crate::doc::LayoutProps,
     /// The innermost list item index this instance was stamped from.
     pub item: Option<u32>,
     /// Resolved display text (label/button/badge/alert): binding, else static.
@@ -53,6 +57,16 @@ pub struct InstTree<'d> {
 pub const ROOT: u32 = 0;
 
 impl Inst<'_> {
+    /// The effective flow direction for this instance's children.
+    pub fn flow_dir(&self) -> crate::doc::Dir {
+        self.node.flow_dir_of(self.layout)
+    }
+
+    /// The effective cross-axis alignment of this instance's children.
+    pub fn effective_align(&self) -> crate::doc::Align {
+        self.node.effective_align_of(self.layout)
+    }
+
     /// The effective image name for `image`/`rotimage` nodes: the bound
     /// override, else the node's static name (`None` when empty).
     pub fn image_name(&self) -> Option<&str> {
@@ -70,8 +84,14 @@ impl Inst<'_> {
 
 impl<'d> InstTree<'d> {
     pub fn expand(doc: &'d Document, state: &UiState) -> InstTree<'d> {
+        Self::expand_form(doc, state, false)
+    }
+
+    /// Expand in normal or compact form (the caller resolves the document's
+    /// breakpoint against its viewport — see [`Document::compact_active`]).
+    pub fn expand_form(doc: &'d Document, state: &UiState, compact: bool) -> InstTree<'d> {
         let mut tree = InstTree { insts: Vec::new() };
-        tree.grow(&doc.root, state, None, None, None);
+        tree.grow(&doc.root, state, None, None, None, true, compact);
         tree
     }
 
@@ -106,6 +126,7 @@ impl<'d> InstTree<'d> {
 
     /// Expand `node` (and descendants) into the arena; returns its index, or
     /// `None` when the node resolved invisible.
+    #[allow(clippy::too_many_arguments)]
     fn grow(
         &mut self,
         node: &'d Node,
@@ -113,6 +134,8 @@ impl<'d> InstTree<'d> {
         item_map: Option<&UiMap>,
         item: Option<u32>,
         parent: Option<u32>,
+        parent_enabled: bool,
+        compact: bool,
     ) -> Option<u32> {
         if !resolve_bool(state, item_map, &node.bind.visible, true) {
             return None;
@@ -120,6 +143,7 @@ impl<'d> InstTree<'d> {
         let idx = self.insts.len() as u32;
         self.insts.push(Inst {
             node,
+            layout: node.layout_for(compact),
             item,
             text: resolve_text(state, item_map, node),
             value_f32: resolve_key(state, item_map, &node.bind.value).and_then(UiValue::as_f32),
@@ -128,7 +152,7 @@ impl<'d> InstTree<'d> {
                 Some(UiValue::I32(i)) => Some(*i),
                 _ => None,
             },
-            enabled: resolve_bool(state, item_map, &node.bind.enabled, true),
+            enabled: parent_enabled && resolve_bool(state, item_map, &node.bind.enabled, true),
             image: resolve_key(state, item_map, &node.bind.image).and_then(|v| match v {
                 UiValue::Str(s) => Some(s.clone()),
                 _ => None,
@@ -141,6 +165,7 @@ impl<'d> InstTree<'d> {
             }),
         });
 
+        let enabled = self.insts[idx as usize].enabled;
         let child_indices = match &node.kind {
             NodeKind::List => {
                 let template = node.children.first();
@@ -155,9 +180,15 @@ impl<'d> InstTree<'d> {
                 let mut out = Vec::new();
                 if let (Some(template), Some(items)) = (template, items) {
                     for (i, m) in items.iter().enumerate() {
-                        if let Some(ci) =
-                            self.grow(template, state, Some(m), Some(i as u32), Some(idx))
-                        {
+                        if let Some(ci) = self.grow(
+                            template,
+                            state,
+                            Some(m),
+                            Some(i as u32),
+                            Some(idx),
+                            enabled,
+                            compact,
+                        ) {
                             out.push(ci);
                         }
                     }
@@ -167,7 +198,7 @@ impl<'d> InstTree<'d> {
             _ => node
                 .children
                 .iter()
-                .filter_map(|c| self.grow(c, state, item_map, item, Some(idx)))
+                .filter_map(|c| self.grow(c, state, item_map, item, Some(idx), enabled, compact))
                 .collect(),
         };
         self.insts[idx as usize].children = child_indices;
@@ -317,5 +348,31 @@ mod tests {
         // Default (key absent) is visible.
         let tree = InstTree::expand(&doc, &UiState::new());
         assert!(tree.find("back", None).is_some());
+    }
+
+    #[test]
+    fn disabled_ancestor_disables_every_descendant() {
+        let doc = Document::from_json(
+            r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "frame", "bind": { "enabled": "panel_on" },
+                "children": [
+                    { "type": "button", "id": "action", "text": "Action",
+                      "bind": { "enabled": "action_on" } }
+                ] }
+        }"#,
+        )
+        .unwrap();
+        let mut state = UiState::new();
+        state.set("panel_on", UiValue::Bool(false));
+        state.set("action_on", UiValue::Bool(true));
+        let tree = InstTree::expand(&doc, &state);
+        assert!(!tree.get(0).enabled);
+        assert!(!tree.get(1).enabled);
+
+        state.set("panel_on", UiValue::Bool(true));
+        let tree = InstTree::expand(&doc, &state);
+        assert!(tree.get(0).enabled);
+        assert!(tree.get(1).enabled);
     }
 }

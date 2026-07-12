@@ -55,21 +55,16 @@ struct Cell {
 
 fn block_color(block: Block) -> [u8; 3] {
     match block {
-        Block::OakLog | Block::DarkOakLog => [104, 74, 40],
+        Block::OakLog => [104, 74, 40],
         Block::SpruceLog => [70, 50, 32],
         Block::BirchLog => [206, 206, 198],
         Block::JungleLog | Block::AcaciaLog => [120, 90, 54],
-        Block::CherryLog => [76, 50, 60],
-        Block::MangroveLog => [92, 44, 40],
         Block::RedwoodLog => [127, 60, 51],
         Block::OakLeaves => [44, 110, 40],
         Block::SpruceLeaves => [40, 78, 52],
         Block::BirchLeaves => [108, 150, 78],
         Block::JungleLeaves => [48, 124, 28],
         Block::AcaciaLeaves => [104, 130, 40],
-        Block::DarkOakLeaves => [36, 84, 30],
-        Block::CherryLeaves => [236, 170, 206],
-        Block::MangroveLeaves => [60, 124, 44],
         Block::RedwoodLeaves => [38, 86, 46],
         _ => [120, 120, 124],
     }

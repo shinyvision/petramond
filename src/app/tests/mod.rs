@@ -107,7 +107,56 @@ impl TestApp {
 
     fn add_to_inventory(&mut self, stack: ItemStack) {
         self.server.sessions[0].player.inventory.add(stack);
+        // Recipe affordance is presentation-side and therefore reads the
+        // replicated inventory, just like the real client after a batch.
+        self.server.sessions[0].last_sent_inventory_revision = None;
+        let state = self.server.build_self_state(0);
+        let sync = self.server.build_menu_sync(0);
+        self.app
+            .game
+            .as_mut()
+            .expect("test app has a loaded game")
+            .apply_views_for_test(&state, sync);
     }
+
+    fn install_test_crafting_catalog(&mut self, recipes: Vec<crate::crafting::CraftingRecipe>) {
+        self.server.recipes =
+            crate::crafting::Recipes::new(recipes.clone(), Vec::new(), Vec::new());
+        self.app
+            .game
+            .as_mut()
+            .expect("test app has a loaded game")
+            .set_crafting_catalog_for_test(crate::crafting::CraftingCatalog::new(recipes));
+    }
+
+    fn install_test_crafting_recipe(&mut self) {
+        self.install_test_crafting_catalog(vec![test_recipe(
+            "test:sticks",
+            ItemType::Coal,
+            ItemStack::new(ItemType::Stick, 2),
+        )]);
+    }
+}
+
+/// One inventory-tier test recipe: consume 1 `ingredient` → `result`.
+fn test_recipe(
+    key: &str,
+    ingredient: ItemType,
+    result: ItemStack,
+) -> crate::crafting::CraftingRecipe {
+    use crate::crafting::{
+        CraftingIngredient, CraftingRecipe, CraftingStation, IngredientSelector, IngredientUse,
+    };
+    CraftingRecipe::new(
+        key.into(),
+        CraftingStation::Inventory,
+        vec![CraftingIngredient {
+            selector: IngredientSelector::Item(ingredient),
+            count: 1,
+            use_mode: IngredientUse::Consume,
+        }],
+        result,
+    )
 }
 
 fn app() -> TestApp {
@@ -127,10 +176,7 @@ fn app() -> TestApp {
 /// inventory is empty now, so inventory-interaction tests seed a stack first.
 fn app_with_grass() -> TestApp {
     let mut app = app();
-    app.server.sessions[0]
-        .player
-        .inventory
-        .add(ItemStack::new(ItemType::Grass, 64));
+    app.add_to_inventory(ItemStack::new(ItemType::Grass, 64));
     app
 }
 
@@ -154,8 +200,30 @@ fn cursor_over_slot(app: &mut App, screen: (u32, u32), slot: usize) -> (f32, f32
     cursor_over_menu(app, screen, MenuSlot::Inventory(slot))
 }
 
-fn cursor_over_craft(app: &mut App, screen: (u32, u32), hit: crate::gui::CraftHit) -> (f32, f32) {
-    cursor_over_menu(app, screen, MenuSlot::Craft(hit))
+fn cursor_over_craft_result(app: &mut App, screen: (u32, u32)) -> (f32, f32) {
+    cursor_over_menu(app, screen, MenuSlot::CraftResult)
+}
+
+/// Center of one real document widget instance. `item` identifies a repeated
+/// list row; `None` addresses an ordinary singleton widget.
+fn cursor_over_widget(
+    app: &mut App,
+    screen: (u32, u32),
+    id: &str,
+    item: Option<u32>,
+) -> (f32, f32) {
+    app.solve_menu_frame_for_test(screen);
+    let (_, rect) = app
+        .ui
+        .out()
+        .named
+        .iter()
+        .find(|(key, _)| key.id == id && key.item == item)
+        .unwrap_or_else(|| panic!("no document widget {id:?} row {item:?}"));
+    (
+        rect.x as f32 + rect.w as f32 * 0.5,
+        rect.y as f32 + rect.h as f32 * 0.5,
+    )
 }
 
 /// A point inside the open menu's panel rectangle that is NOT over any slot.

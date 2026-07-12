@@ -95,7 +95,7 @@ impl Tile {
     /// This tile's OUT-OF-WORLD tint class — icons, held/dropped items, and
     /// break particles, which have no biome context. Defaults to
     /// [`world_tint`](Self::world_tint); a manifest row overrides it with
-    /// `icon_tint` when the two classifications differ (cherry/azalea leaves
+    /// `icon_tint` when the two classifications differ (azalea leaves
     /// green in icons but keep their baked colour in the world).
     #[inline]
     pub fn icon_tint(self) -> Option<TileTint> {
@@ -774,8 +774,8 @@ mod tests {
             let t = Tile::from_name(name).unwrap();
             assert_eq!(t.world_tint(), Some(TileTint::Foliage), "{name}");
         }
-        // Cherry/azalea keep their baked colour in the WORLD but green in icons.
-        for name in ["cherry_leaves", "azalea_leaves"] {
+        // Azalea keeps its baked colour in the WORLD but green in icons.
+        for name in ["azalea_leaves"] {
             let t = Tile::from_name(name).unwrap();
             assert_eq!(t.world_tint(), None, "{name}");
             assert_eq!(t.icon_tint(), Some(TileTint::Foliage), "{name}");
