@@ -622,56 +622,6 @@ pub fn cube_solid(tint: [f32; 3], origin: Vec3, size: f32) -> (Vec<Vertex>, Vec<
     (verts, indices)
 }
 
-/// Camera basis vectors for building world-space camera-facing billboards. The
-/// renderer derives these from the view matrix each frame (the camera's right and
-/// up axes) so a billboard quad always faces the viewer.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct BillboardBasis {
-    pub right: Vec3,
-    pub up: Vec3,
-}
-
-/// Append a **double-sided**, camera-facing billboard quad (8 verts / 12 indices)
-/// for `tile`, centred at world `center` and `size` across, oriented by the camera
-/// `basis`. Full-bright and untinted; reuses the textured packing so the opaque
-/// block pipeline samples the tile (its `< 0.5` alpha discard cuts out the cross
-/// plant cleanly). Used by world item-entities (sprite kind).
-///
-/// Both windings are emitted so the sprite is visible regardless of which way the
-/// camera basis winds the quad — the item-entity pass shares the back-face-culling
-/// opaque pipeline, so a single-sided quad could silently vanish if the basis sign
-/// ever regressed. Double-siding is cheap (8 verts) and removes that risk.
-pub(super) fn push_billboard_world_lit(
-    verts: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    tile: Tile,
-    center: Vec3,
-    size: f32,
-    basis: BillboardBasis,
-    light: DynLight,
-) {
-    let h = size * 0.5;
-    let r = basis.right * h;
-    let u = basis.up * h;
-    // Corners CCW from the camera's view: bl, br, tr, tl (matches corner_uv).
-    let bl = (center - r - u).to_array();
-    let br = (center + r - u).to_array();
-    let tr = (center + r + u).to_array();
-    let tl = (center - r + u).to_array();
-    // Sprites are flat: use the brightest (top) shade so they read evenly. Fern /
-    // short-grass sprites get the fixed grass tint (flowers stay untinted).
-    let tint = foliage_tint::face_material(tile).tint;
-    let base = (tile.index() as u32)
-        | (Face::PosY.shade_idx() << 10)
-        | FULL_AO
-        | lighting::skylight_bits(light.sky);
-    let word2 = lighting::blocklight_word(light.block);
-    // Front winding (faces the camera) + reversed winding (faces away), so the
-    // sprite never culls from either side.
-    push_quad(verts, indices, [bl, br, tr, tl], tint, base, word2);
-    push_quad(verts, indices, [br, bl, tl, tr], tint, base, word2);
-}
-
 /// Append a flat, upright, double-sided billboard quad of one `tile`, centered on
 /// `center` in the X (right) / Y (up) plane, `size` tall & wide, full-bright, into
 /// the caller-owned `verts`/`indices` (capacity reused). Emitted in both windings

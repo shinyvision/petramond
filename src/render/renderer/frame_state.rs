@@ -69,12 +69,6 @@ impl Renderer {
         self.cam_pos = cam.pos;
         self.render_origin = render_origin;
         self.visual_time = time;
-        // Camera right/up axes for world-space billboards (item sprites + dust):
-        // a quad spanned by these always faces the viewer.
-        self.billboard_basis = BillboardBasis {
-            right: cam.right(),
-            up: cam.up(),
-        };
         self.update_shader_params(shader_params);
         let mut effective_sky_scale = 1.0;
         let mut effective_sky_color = [1.0, 1.0, 1.0];
@@ -296,6 +290,7 @@ impl Renderer {
         self.break_draw.index_count = 0;
         self.item_entity_draw.index_count = 0;
         self.item_model_entity_draw.index_count = 0;
+        self.item_sprite_entity_draw.index_count = 0;
         self.chest_draw.index_count = 0;
         self.door_draw.index_count = 0;
         self.particle_draw.vertex_count = 0;

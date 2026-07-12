@@ -205,9 +205,9 @@ pub struct HeldItemFrame {
 }
 
 /// A dropped item-entity to draw in the world this frame: a small spinning +
-/// bobbing cube (or billboard for sprite-kind items) at `pos`, rotated by `spin`
-/// radians about Y. The App fills a slice of these from its `DroppedItem`s. A
-/// stack draws as several offset, layered copies (capped at 5) per `count`.
+/// bobbing cube (or extruded 3D slab for sprite-kind items) at `pos`, rotated by
+/// `spin` radians about Y. The App fills a slice of these from its `DroppedItem`s.
+/// A stack draws as several offset, layered copies (capped at 5) per `count`.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ItemEntityInstance {
     pub pos: Vec3,

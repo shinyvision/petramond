@@ -129,10 +129,6 @@ impl Camera {
         Vec3::new(-self.yaw.cos(), 0.0, self.yaw.sin()).normalize()
     }
 
-    pub fn up(&self) -> Vec3 {
-        Vec3::Y
-    }
-
     pub fn proj(&self) -> Mat4 {
         Mat4::perspective_rh(self.fov_y, self.aspect, self.near, self.far)
     }

@@ -466,7 +466,8 @@ pub enum ItemRenderKind {
     /// A full-cube block-item: render isometric 3D in slots, held as a 3D cube.
     BlockCube(Block),
     /// A flat sprite (cross-plant blocks like flowers/grass, and future tools):
-    /// render the tile flat in slots, held as a flat billboard item.
+    /// render the tile flat in slots; held and dropped it extrudes into a
+    /// pixel-perfect 3D slab one texel (1/16 block) deep.
     Sprite(Tile),
     /// A data-driven bbmodel block: render its actual baked model (cubes + the model
     /// atlas) in slots / in-hand / dropped, not a stand-in cube. See `crate::block_model`.
@@ -1031,10 +1032,7 @@ mod tests {
     fn item_tags_are_item_data() {
         const PLANKS: ItemTag = ItemTag::PLANKS;
         const LOGS: ItemTag = ItemTag::LOGS;
-        for p in [
-            ItemType::OakPlanks,
-            ItemType::SprucePlanks,
-        ] {
+        for p in [ItemType::OakPlanks, ItemType::SprucePlanks] {
             assert!(p.has_tag(PLANKS), "{p:?}");
         }
         for log in [

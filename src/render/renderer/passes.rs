@@ -339,11 +339,12 @@ impl Renderer {
             pass.set_pipeline(&self.model_pipe);
             self.item_model_entity_draw.draw(&mut pass);
         }
-        // ITEM-ENTITY PASS (§8 2b): dropped items as full-bright spinning cubes /
-        // sprite billboards, drawn by the EXISTING opaque pipeline (no new
-        // pipeline) with the SAME uniform + atlas binds. Load color + depth,
-        // depth test + write so items occlude and are occluded by terrain.
-        if self.item_entity_draw.index_count > 0 {
+        // ITEM-ENTITY PASS (§8 2b): dropped items as spinning cubes (the EXISTING
+        // opaque pipeline, terrain atlas array) plus extruded sprite slabs (the
+        // mob-layout pipeline over the 2D block atlas — their per-texel wall UVs
+        // need explicit UVs). Load color + depth, depth test + write so items
+        // occlude and are occluded by terrain.
+        if self.item_entity_draw.index_count > 0 || self.item_sprite_entity_draw.index_count > 0 {
             let mut pass = color_depth_pass(
                 enc,
                 view,
@@ -355,6 +356,10 @@ impl Renderer {
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             self.item_entity_draw.draw(&mut pass);
+            if self.item_sprite_entity_draw.index_count > 0 {
+                pass.set_bind_group(1, &self.atlas_bind, &[]);
+                self.item_sprite_entity_draw.draw(&mut pass);
+            }
         }
         // CHEST + DOOR PASS: placed chests (inset body + hinged lid) and doors (2-tall
         // hinged slab) drawn as full opaque geometry by the EXISTING opaque pipeline

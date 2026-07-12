@@ -189,13 +189,15 @@ fn world_pipeline(
     })
 }
 /// Max vertices in the item-entity dynamic vbuf. A stack draws up to 5 layered
-/// copies (120 verts per cube / 40 per sprite), so this is sized 5× the old
-/// single-copy budget to still cover ~170 simultaneously-visible dropped items
-/// (more when they're single, unstacked drops) without the bake overflowing and
-/// dropping every item entity that frame.
+/// copies (120 verts per cube), so this is sized 5× the old single-copy budget
+/// to still cover ~170 simultaneously-visible dropped items (more when they're
+/// single, unstacked drops) without the bake overflowing and dropping every
+/// item entity that frame. Also sizes the separate extruded-sprite item stream
+/// (an extruded flower is a few hundred `ItemVertex` per layer, so that stream
+/// covers dozens of visible sprite drops before its bake bails for a frame).
 pub(super) const MAX_ITEM_ENTITY_VERTICES: u64 = 20480;
-/// Max indices in the item-entity dynamic ibuf (up to 180 per cube / 30 per
-/// sprite for a 5-layer stack), matching [`MAX_ITEM_ENTITY_VERTICES`].
+/// Max indices in the item-entity dynamic ibuf (up to 180 per cube for a
+/// 5-layer stack), matching [`MAX_ITEM_ENTITY_VERTICES`].
 pub(super) const MAX_ITEM_ENTITY_INDICES: u64 = 30720;
 /// Max vertices in the chest dynamic vbuf. Each chest is a body box + lid box = 48
 /// verts, so this covers ~512 simultaneously-visible chests before the bake bails

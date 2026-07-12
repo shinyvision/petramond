@@ -228,8 +228,9 @@ impl Renderer {
         // subsystem keeps its OWN buffer caps (item-entity vs chest sized apart so
         // a wall of chests can't make dropped items vanish).
 
-        // Item entities (spinning cubes / sprite billboards), frustum-culled so
-        // off-screen drops cost nothing. Drawn by the EXISTING opaque pipeline.
+        // Item entities (spinning cubes / extruded sprite slabs), frustum-culled
+        // so off-screen drops cost nothing. Cubes ride the EXISTING opaque
+        // pipeline; sprites bake below into their explicit-UV stream.
         self.item_entity_visible.clear();
         for inst in &self.item_entities {
             // ~0.5 m cull box around the item centre.
@@ -240,13 +241,12 @@ impl Renderer {
                 self.item_entity_visible.push(*inst);
             }
         }
-        let basis = self.billboard_basis;
         let visible = &self.item_entity_visible;
         self.item_entity_draw.bake(
             &self.queue,
             &mut self.item_entity_verts,
             &mut self.item_entity_indices,
-            |verts, indices| build_item_entities(visible, basis, verts, indices),
+            |verts, indices| build_item_entities(visible, verts, indices),
         );
         // Dropped bbmodel items (their own model atlas), baked from the same visible set.
         let visible = &self.item_entity_visible;
@@ -259,6 +259,25 @@ impl Renderer {
                 crate::render::item_entity::build_item_model_entities(visible, env, verts, indices)
             },
         );
+        // Dropped sprite items as extruded pixel-perfect 3D slabs (block atlas,
+        // explicit-UV stream), spinning + bobbing like the cubes above.
+        let visible = &self.item_entity_visible;
+        let mut sprite_scratch = std::mem::take(&mut self.item_sprite_scratch);
+        self.item_sprite_entity_draw.bake(
+            &self.queue,
+            &mut self.item_sprite_entity_verts,
+            &mut self.item_sprite_entity_indices,
+            |verts, indices| {
+                crate::render::item_entity::build_item_sprite_entities(
+                    visible,
+                    env,
+                    &mut sprite_scratch,
+                    verts,
+                    indices,
+                )
+            },
+        );
+        self.item_sprite_scratch = sprite_scratch;
 
         // Chests (inset body + hinged lid), frustum-culled like item entities and
         // reusing their CPU scratch. Drawn by the EXISTING opaque pipeline.

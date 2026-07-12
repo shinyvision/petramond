@@ -3,8 +3,10 @@
 //! (no new pipeline). Each [`ItemEntityInstance`] becomes either:
 //! - a small spinning + bobbing lit cube ([`block_model::cube_textured`])
 //!   for `BlockCube` items (logs etc. keep their per-face tiles), or
-//! - a small camera-facing billboard ([`billboard quad in world space`]) for
-//!   `Sprite` items (flowers / cross-plants).
+//! - a spinning extruded pixel-perfect 3D slab for `Sprite` items (flowers /
+//!   tools), baked by [`build_item_sprite_entities`] into the explicit-UV
+//!   `ItemVertex` stream (block atlas) since its side walls sample single
+//!   boundary texels the packed vertex cannot express.
 //!
 //! Geometry is built in WORLD space because it rides the opaque pipeline whose
 //! vertex shader (`block.wgsl::vs_main`) transforms `pos` by `view_proj`. Verts
@@ -15,7 +17,7 @@
 
 use glam::{Mat4, Vec3};
 
-use super::item_cube::{push_block_item_cube_lit, BillboardBasis};
+use super::item_cube::push_block_item_cube_lit;
 use super::item_model::ItemVertex;
 use super::lighting::{DynLight, LightEnv};
 use super::ItemEntityInstance;
@@ -26,7 +28,7 @@ use crate::mesh::Vertex;
 /// Side length (metres) of a dropped block-cube. Small so items read as loot, not
 /// world blocks.
 const ITEM_CUBE_SIZE: f32 = 0.4;
-/// Side length (metres) of a dropped sprite billboard (flowers etc.).
+/// Side length (metres) of a dropped extruded sprite (flowers etc.).
 const ITEM_SPRITE_SIZE: f32 = 0.45;
 /// Vertical bob amplitude (metres) — a gentle hover.
 const BOB_AMP: f32 = 0.08;
@@ -49,12 +51,10 @@ const STACK_LAYER_OFFSETS: [Vec3; STACK_MAX_LAYERS] = [
 ];
 
 /// Bake all `instances` into `verts` / `indices` (cleared first, capacity reused).
-/// `basis` supplies the camera right/up vectors for sprite billboards. Returns the
-/// number of indices written. Caller is responsible for frustum-culling instances
-/// before calling (so culled items cost nothing here).
+/// Returns the number of indices written. Caller is responsible for frustum-culling
+/// instances before calling (so culled items cost nothing here).
 pub fn build_item_entities(
     instances: &[ItemEntityInstance],
-    basis: BillboardBasis,
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
 ) -> u32 {
@@ -76,24 +76,68 @@ pub fn build_item_entities(
                     push_spinning_cube(verts, indices, inst, block, offset);
                 }
             }
-            ItemRenderKind::Sprite(tile) => {
-                for &offset in &STACK_LAYER_OFFSETS[..layers] {
-                    let center = inst.pos
-                        + Vec3::new(offset.x, BOB_BASE + bob(inst.spin) + offset.y, offset.z);
-                    super::item_cube::push_billboard_world_lit(
-                        verts,
-                        indices,
-                        tile,
-                        center,
-                        ITEM_SPRITE_SIZE,
-                        basis,
-                        inst_light(inst),
-                    );
-                }
-            }
+            // Sprite items ride the explicit-UV block-atlas stream, baked by
+            // `build_item_sprite_entities` (extruded 3D slabs) — skip here.
+            ItemRenderKind::Sprite(_) => {}
             // bbmodel items ride the explicit-UV model stream (own atlas), baked by
             // `build_item_model_entities` and drawn by the model pipeline — skip here.
             ItemRenderKind::Model(_) => {}
+        }
+    }
+    indices.len() as u32
+}
+
+/// Bake the sprite-kind dropped items as EXTRUDED, pixel-perfect 3D slabs into
+/// `verts`/`indices` (cleared first, capacity reused): the sprite's alpha mask
+/// gains one texel of depth (front + back faces plus per-texel boundary side
+/// walls, see [`super::item_model::build_extruded_item_lit`]) and the slab
+/// spins and bobs about Y exactly like a dropped block cube — no camera-facing
+/// billboard. `scratch` holds one instance's extrusion in model space before
+/// per-layer placement (cleared per instance, capacity reused). Returns the
+/// index count. Drawn with the block ATLAS (2D): the wall UVs address single
+/// texels.
+pub fn build_item_sprite_entities(
+    instances: &[ItemEntityInstance],
+    env: LightEnv,
+    scratch: &mut Vec<ItemVertex>,
+    verts: &mut Vec<ItemVertex>,
+    indices: &mut Vec<u32>,
+) -> u32 {
+    verts.clear();
+    indices.clear();
+    for inst in instances {
+        let ItemRenderKind::Sprite(tile) = inst.item.render_kind() else {
+            continue;
+        };
+        // One extrusion per instance (light is per-instance, folded into the
+        // tint); the layered pile copies just re-place the same model-space mesh.
+        let count =
+            super::item_model::build_extruded_item_lit(tile, inst_light(inst), env, scratch);
+        if count == 0 {
+            continue;
+        }
+        let layers = (inst.count.max(1) as usize).min(STACK_MAX_LAYERS);
+        let (s, c) = inst.spin.sin_cos();
+        let bob_y = BOB_BASE + bob(inst.spin);
+        for &offset in &STACK_LAYER_OFFSETS[..layers] {
+            let base = verts.len() as u32;
+            for v in scratch.iter() {
+                // Scale the unit slab, offset within the pile, then Y-spin +
+                // translate — the same order as `spin_into_world` so the pile
+                // rotates as one body.
+                let lx = v.pos[0] * ITEM_SPRITE_SIZE + offset.x;
+                let ly = v.pos[1] * ITEM_SPRITE_SIZE + offset.y;
+                let lz = v.pos[2] * ITEM_SPRITE_SIZE + offset.z;
+                let rx = lx * c + lz * s;
+                let rz = -lx * s + lz * c;
+                verts.push(ItemVertex {
+                    pos: [inst.pos.x + rx, inst.pos.y + bob_y + ly, inst.pos.z + rz],
+                    ..*v
+                });
+            }
+            // The extrusion is a non-indexed triangle list; sequential indices
+            // let it ride the indexed ItemVertex draw.
+            indices.extend(base..base + count);
         }
     }
     indices.len() as u32
@@ -219,18 +263,11 @@ mod tests {
     use super::*;
     use crate::item::ItemType;
 
-    fn basis() -> BillboardBasis {
-        BillboardBasis {
-            right: Vec3::X,
-            up: Vec3::Y,
-        }
-    }
-
     #[test]
     fn empty_instances_produce_no_geometry() {
         let mut v = Vec::new();
         let mut i = Vec::new();
-        let n = build_item_entities(&[], basis(), &mut v, &mut i);
+        let n = build_item_entities(&[], &mut v, &mut i);
         assert_eq!(n, 0);
         assert!(v.is_empty() && i.is_empty());
     }
@@ -247,7 +284,7 @@ mod tests {
             skylight: super::super::lighting::FULL_SKYLIGHT,
             blocklight: 0,
         };
-        let n = build_item_entities(std::slice::from_ref(&inst), basis(), &mut v, &mut i);
+        let n = build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
         assert_eq!(v.len(), 24, "one textured cube = 24 verts");
         assert_eq!(n, 36, "one textured cube = 36 indices");
         // Cube is centred near pos (+ bob base), not at the origin.
@@ -256,23 +293,89 @@ mod tests {
     }
 
     #[test]
-    fn sprite_item_bakes_a_double_sided_billboard() {
-        let mut v = Vec::new();
-        let mut i = Vec::new();
-        // Poppy is a cross-plant -> Sprite render kind.
+    fn sprite_item_bakes_an_extruded_slab_not_a_billboard() {
+        // Poppy is a cross-plant -> Sprite render kind: it must emit NOTHING on
+        // the packed stream and an extruded 3D slab on the ItemVertex stream.
         let inst = ItemEntityInstance {
-            pos: Vec3::ZERO,
+            pos: Vec3::new(3.0, 10.0, -2.0),
             item: ItemType::Poppy,
             count: 1,
             spin: 1.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
             blocklight: 0,
         };
-        let n = build_item_entities(std::slice::from_ref(&inst), basis(), &mut v, &mut i);
-        // Camera-facing billboard, emitted double-sided (two windings) so a basis
-        // sign change can't cull the sprite: 8 verts / 12 indices.
-        assert_eq!(v.len(), 8);
-        assert_eq!(n, 12);
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        let n = build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
+        assert_eq!(n, 0, "sprites no longer bake on the packed stream");
+
+        let mut scratch = Vec::new();
+        let mut sv = Vec::new();
+        let mut si = Vec::new();
+        let n = build_item_sprite_entities(
+            std::slice::from_ref(&inst),
+            LightEnv::IDENTITY,
+            &mut scratch,
+            &mut sv,
+            &mut si,
+        );
+        // Front + back faces are 12 verts; a real flower silhouette adds side
+        // walls on top. Sequential indices (non-indexed list riding the draw).
+        assert!(n > 12, "expected extruded front+back+walls, got {n}");
+        assert_eq!(n as usize, sv.len());
+        assert_eq!(n as usize, si.len());
+        // The slab is placed at the instance position (plus bob), not the origin.
+        // Bounds midpoint, not vertex mean: wall quads cluster on the silhouette.
+        let (min_x, max_x) = sv.iter().fold((f32::MAX, f32::MIN), |(lo, hi), vert| {
+            (lo.min(vert.pos[0]), hi.max(vert.pos[0]))
+        });
+        let cx = (min_x + max_x) * 0.5;
+        assert!((cx - 3.0).abs() < 0.01, "slab centred on pos.x, got {cx}");
+        // Spun about Y (spin = 1.0), the flat sprite gains real Z extent.
+        let (min_z, max_z) = sv.iter().fold((f32::MAX, f32::MIN), |(lo, hi), vert| {
+            (lo.min(vert.pos[2]), hi.max(vert.pos[2]))
+        });
+        assert!(
+            max_z - min_z > 0.1,
+            "spun slab spans Z, got {}",
+            max_z - min_z
+        );
+    }
+
+    #[test]
+    fn sprite_stack_bakes_layered_copies() {
+        let inst = ItemEntityInstance {
+            pos: Vec3::ZERO,
+            item: ItemType::Poppy,
+            count: 3,
+            spin: 0.0,
+            skylight: super::super::lighting::FULL_SKYLIGHT,
+            blocklight: 0,
+        };
+        let mut scratch = Vec::new();
+        let mut sv = Vec::new();
+        let mut si = Vec::new();
+        build_item_sprite_entities(
+            std::slice::from_ref(&inst),
+            LightEnv::IDENTITY,
+            &mut scratch,
+            &mut sv,
+            &mut si,
+        );
+        let per_layer = scratch.len();
+        assert!(per_layer > 12);
+        assert_eq!(sv.len(), per_layer * 3, "3-stack = 3 layered slabs");
+
+        // A huge count is capped at 5 layered copies, not 64.
+        let huge = ItemEntityInstance { count: 64, ..inst };
+        build_item_sprite_entities(
+            std::slice::from_ref(&huge),
+            LightEnv::IDENTITY,
+            &mut scratch,
+            &mut sv,
+            &mut si,
+        );
+        assert_eq!(sv.len(), per_layer * 5, "count capped at 5 layers");
     }
 
     #[test]
@@ -287,11 +390,11 @@ mod tests {
             skylight: super::super::lighting::FULL_SKYLIGHT,
             blocklight: 0,
         };
-        build_item_entities(std::slice::from_ref(&inst), basis(), &mut v, &mut i);
+        build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
         let (cap_v, cap_i) = (v.capacity(), i.capacity());
         // Same input -> identical vert/index count, so the cleared+refilled
         // buffers keep their capacity: rebuilding to the same size never reallocs.
-        build_item_entities(std::slice::from_ref(&inst), basis(), &mut v, &mut i);
+        build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
         assert_eq!(v.len(), 24, "one textured cube = 24 verts");
         assert_eq!(v.capacity(), cap_v, "vert buffer reused");
         assert_eq!(i.capacity(), cap_i, "index buffer reused");
@@ -310,7 +413,7 @@ mod tests {
             blocklight: 7,
         };
 
-        build_item_entities(std::slice::from_ref(&inst), basis(), &mut v, &mut i);
+        build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
 
         for vert in &v {
             assert_eq!((vert.packed >> 23) & 0x3F, 12, "sky channel in word 1");
@@ -331,18 +434,18 @@ mod tests {
             skylight: super::super::lighting::FULL_SKYLIGHT,
             blocklight: 0,
         };
-        let n = build_item_entities(std::slice::from_ref(&three), basis(), &mut v, &mut i);
+        let n = build_item_entities(std::slice::from_ref(&three), &mut v, &mut i);
         assert_eq!(v.len(), 24 * 3, "3-stack = 3 layered cubes");
         assert_eq!(n, 36 * 3);
 
         // A huge count is capped at 5 layered copies, not 64.
         let huge = ItemEntityInstance { count: 64, ..three };
-        build_item_entities(std::slice::from_ref(&huge), basis(), &mut v, &mut i);
+        build_item_entities(std::slice::from_ref(&huge), &mut v, &mut i);
         assert_eq!(v.len(), 24 * 5, "count capped at 5 layers");
 
         // count 0 is treated as a single layer (never zero geometry).
         let zero = ItemEntityInstance { count: 0, ..three };
-        build_item_entities(std::slice::from_ref(&zero), basis(), &mut v, &mut i);
+        build_item_entities(std::slice::from_ref(&zero), &mut v, &mut i);
         assert_eq!(v.len(), 24, "count 0 still draws one layer");
     }
 }

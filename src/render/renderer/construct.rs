@@ -354,6 +354,23 @@ async fn new_renderer_inner(
         usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    // Dropped SPRITE item-entities extruded into pixel-perfect 3D slabs ride the
+    // same mob-layout pipeline over the 2D BLOCK atlas (their side walls sample
+    // single boundary texels) in their own buffers, sized like the packed
+    // item-entity buffers.
+    let item_sprite_entity_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("item sprite entity vbuf"),
+        size: crate::render::pipeline::MAX_ITEM_ENTITY_VERTICES
+            * std::mem::size_of::<ItemVertex>() as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let item_sprite_entity_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("item sprite entity ibuf"),
+        size: crate::render::pipeline::MAX_ITEM_ENTITY_INDICES * 4,
+        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
     // Bake every item's inventory icon into the icon atlas ONCE, here at init: the
     // cube/sprite icons through the depthless `model3d_pipe` and the bbmodel-block
@@ -580,6 +597,16 @@ async fn new_renderer_inner(
         ),
         item_model_entity_verts: Vec::new(),
         item_model_entity_indices: Vec::new(),
+        item_sprite_entity_draw: DynamicDraw::new(
+            pipelines.mob_pipe.clone(),
+            item_sprite_entity_vbuf,
+            item_sprite_entity_ibuf,
+            crate::render::pipeline::MAX_ITEM_ENTITY_VERTICES,
+            crate::render::pipeline::MAX_ITEM_ENTITY_INDICES,
+        ),
+        item_sprite_entity_verts: Vec::new(),
+        item_sprite_entity_indices: Vec::new(),
+        item_sprite_scratch: Vec::new(),
         emitter_particle_draw: DynamicVertexDraw::new(
             pipelines.emitter_particle_pipe,
             pipelines.emitter_particle_vbuf,
@@ -635,10 +662,6 @@ async fn new_renderer_inner(
         particle_block_vertex_count: 0,
         viewport_generation: 1,
         prepared_ui_viewport: UiViewport::default(),
-        billboard_basis: BillboardBasis {
-            right: glam::Vec3::X,
-            up: glam::Vec3::Y,
-        },
         item_entity_verts: Vec::new(),
         item_entity_indices: Vec::new(),
         item_entity_visible: Vec::new(),

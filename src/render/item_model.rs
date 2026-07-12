@@ -1,4 +1,5 @@
-//! Extruded 3D mesh for a held flat item sprite (flowers / future tools).
+//! Extruded 3D mesh for a flat item sprite (flowers / tools), shared by the
+//! first-person hand, the third-person held item, and the dropped item-entity.
 //!
 //! A flat 16×16 item tile is given real voxel depth by extruding its alpha mask:
 //! a textured FRONT and BACK face (the full tile, alpha-cutout in the shader)
@@ -223,8 +224,10 @@ pub struct ItemVertex {
 
 /// Texels per side of an item tile (the alpha mask is sampled on this grid).
 const GRID: usize = 16;
-/// Extrusion depth as a fraction of the 1.0 sprite size (~1.5/16, MC-like).
-const DEPTH: f32 = 1.5 / 16.0;
+/// Extrusion depth as a fraction of the 1.0 sprite size: exactly one texel
+/// (1/16 of a full block width), so the extruded shape is pixel-perfect — its
+/// side walls are precisely one texel wide and one texel deep.
+const DEPTH: f32 = 1.0 / 16.0;
 
 /// Directional shades so the extrusion reads as 3D (front brightest, back dim,
 /// side walls in between). Mirrors the "top bright / bottom dark" voxel feel.

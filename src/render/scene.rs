@@ -28,7 +28,7 @@ use crate::game::presentation::{
 /// this frame.
 #[derive(Default)]
 pub(crate) struct Scene {
-    /// Baked dropped-item billboards/cubes for this frame.
+    /// Baked dropped-item cubes/extruded sprites for this frame.
     item_entities: Vec<ItemEntityInstance>,
     /// Baked block-atlas particle cubes for this frame.
     particles: Vec<ParticleInstance>,

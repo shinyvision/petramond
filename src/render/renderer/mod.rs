@@ -31,7 +31,6 @@ use super::crosshair::crosshair_vertices;
 use super::door_model::build_doors;
 use super::hand::build_hand_lit;
 use super::hand_animator::HeldItemAnimator;
-use super::item_cube::BillboardBasis;
 use super::item_entity::build_item_entities;
 use super::item_model::ItemVertex;
 use super::mob_model::build_mob_instances;
@@ -313,6 +312,14 @@ pub struct Renderer {
     item_model_entity_draw: DynamicDraw,
     item_model_entity_verts: Vec<super::item_model::ItemVertex>,
     item_model_entity_indices: Vec<u32>,
+    /// Dropped SPRITE item-entities extruded into pixel-perfect 3D slabs
+    /// (world-space ItemVertex, 2D block atlas — the wall UVs address single
+    /// texels), drawn in the item-entity pass on the mob-layout pipeline.
+    item_sprite_entity_draw: DynamicDraw,
+    item_sprite_entity_verts: Vec<super::item_model::ItemVertex>,
+    item_sprite_entity_indices: Vec<u32>,
+    /// Per-instance staging for one extruded-sprite build (the builder clears).
+    item_sprite_scratch: Vec<super::item_model::ItemVertex>,
     /// Particle billboard draw: the particle pipeline + a per-frame vbuf and a
     /// STATIC quad ibuf, as one [`DynamicVertexDraw`].
     particle_draw: DynamicVertexDraw,
@@ -401,9 +408,6 @@ pub struct Renderer {
     /// resize, plus the viewport of the most recently prepared coherent UI.
     viewport_generation: u64,
     prepared_ui_viewport: UiViewport,
-    /// Camera right/up basis for world-space billboards (item sprites + particles),
-    /// refreshed in `update_uniforms` from the inverse view rotation.
-    billboard_basis: BillboardBasis,
     /// Reusable CPU staging for baked item-entity geometry (cleared + refilled per
     /// frame, capacity retained).
     item_entity_verts: Vec<crate::mesh::Vertex>,
