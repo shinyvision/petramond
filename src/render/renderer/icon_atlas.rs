@@ -142,7 +142,13 @@ pub(super) fn bake(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: if std::env::var_os("PETRAMOND_DUMP_ICON_ATLAS").is_some() {
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+        } else {
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
+        },
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -420,11 +426,73 @@ pub(super) fn bake(
     }
     queue.submit(std::iter::once(enc.finish()));
 
+    // Debug aid: PETRAMOND_DUMP_ICON_ATLAS=<path.png> writes the atlas exactly
+    // as baked, for checking icon fidelity without clicking through the game.
+    if let Ok(path) = std::env::var("PETRAMOND_DUMP_ICON_ATLAS") {
+        dump_atlas(device, queue, &texture, aw, ah, format, &path);
+    }
+
     IconAtlas {
         bind,
         width: aw as f32,
         height: ah as f32,
     }
+}
+
+/// Read the baked atlas back and write it as a PNG (BGRA surfaces swapped to
+/// RGBA). Debug-only path behind `PETRAMOND_DUMP_ICON_ATLAS`.
+fn dump_atlas(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    w: u32,
+    h: u32,
+    format: wgpu::TextureFormat,
+    path: &str,
+) {
+    let row = w * 4; // 4096 for the 16-col atlas: already 256-aligned
+    let buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("icon atlas dump"),
+        size: (row * h) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&Default::default());
+    enc.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buf,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: None,
+            },
+        },
+        wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit(std::iter::once(enc.finish()));
+    buf.slice(..).map_async(wgpu::MapMode::Read, |r| r.unwrap());
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        })
+        .unwrap();
+    let mut data = buf.slice(..).get_mapped_range().to_vec();
+    if matches!(
+        format,
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    ) {
+        for px in data.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+    }
+    image::save_buffer(path, &data, w, h, image::ColorType::Rgba8).unwrap();
+    eprintln!("icon atlas dumped to {path}");
 }
 
 /// Restrict a render pass to cell `(col, row)`'s 64×64 pixel rect (viewport maps the

@@ -88,6 +88,11 @@ impl ServerGame {
                 continue;
             }
             let sess = &mut self.sessions[s];
+            // Craft-transaction remainders that fit neither their input cell
+            // nor the inventory are thrown into the world — same policy as
+            // `close_crafting_for`. Gathered first: the drop spawn path
+            // borrows `world` later on the fixed tick.
+            let mut overflow = Vec::new();
             sess.menu.click(
                 &mut self.world,
                 &mut sess.player.inventory,
@@ -96,7 +101,11 @@ impl ServerGame {
                 button,
                 shift,
                 gather,
+                |stack| overflow.push(stack),
             );
+            for stack in overflow {
+                sess.drop_queue.queue_stack(stack);
+            }
             self.push_action_outcome(s, request_id, true, None);
         }
     }

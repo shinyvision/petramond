@@ -41,6 +41,13 @@ impl ContainerMenu {
         &self.craft
     }
 
+    /// Mutable grid access for tests that stage cells directly instead of
+    /// walking the click router.
+    #[cfg(test)]
+    pub(crate) fn craft_grid_mut(&mut self) -> &mut CraftGrid {
+        &mut self.craft
+    }
+
     /// Configure the crafting grid for a screen of `cols×cols` (2 = inventory,
     /// 3 = table) and clear it. Called when a crafting screen opens.
     pub(crate) fn open_crafting(&mut self, cols: usize, recipes: &Recipes) {

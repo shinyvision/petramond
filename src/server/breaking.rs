@@ -48,15 +48,22 @@ impl ServerGame {
         ) {
             // Hold-path finish: if a TooFast BreakFinished was deferred for
             // this cell, accept it here. The initiator's own BlockBroken is
-            // stripped when they presented locally (a deferred PREDICTED
-            // finish, or — with no request latched yet — the common race
-            // where their predicted finish is still in flight); a deferred
-            // track-only finish never presented, so its event must flow.
+            // stripped only on EVIDENCE they presented locally — a deferred
+            // finish flagged `predicted`. With no request latched the client
+            // may never present at all: its per-frame timer can sit behind
+            // this one (a sub-tick crosshair flicker resets it invisibly to
+            // the tick-sampled look), and the break delta then cancels its
+            // mining before it finishes — stripping on the old "finish must
+            // be in flight" assumption made those breaks SILENT. A finish
+            // that is merely in flight still presents exactly once: the
+            // client's own presented cell suppresses the wire event until
+            // the request resolves (the `predicted_presentation_cells`
+            // belt in `game/replicated.rs`).
             let broken_pos = event.pos;
             let deferred = self.sessions[s]
                 .deferred_break_finished
                 .take_if(|d| d.pos == broken_pos);
-            let presented = deferred.is_none_or(|d| d.predicted);
+            let presented = deferred.is_some_and(|d| d.predicted);
             if self.finish_player_break(s, event, events, presented) {
                 if let Some(req) = deferred {
                     self.sessions[s].pending_break_ack.remove(&broken_pos);
@@ -249,10 +256,11 @@ impl ServerGame {
     /// clear the block, scatter block-entity contents + harvested drops, spawn the
     /// burst, and queue `block_broken`. Returns whether the block actually broke.
     ///
-    /// `initiator_presented`: whether the breaking client already played the
-    /// break presentation locally (predicted finish, or a finish still in
-    /// flight) — gates the echo strip. A client that never presented (frozen
-    /// ledger, replica disagreement) must still receive its `BlockBroken`.
+    /// `initiator_presented`: whether the breaking client is KNOWN to have
+    /// played the break presentation locally (a finish request flagged
+    /// `predicted`) — gates the echo strip. A client that never presented
+    /// (frozen ledger, replica disagreement, or a hold-path finish that
+    /// outpaced its timer) must still receive its `BlockBroken`.
     pub(crate) fn finish_player_break(
         &mut self,
         s: usize,
@@ -285,10 +293,10 @@ impl ServerGame {
             }
         }
         events.player(s).broke_block = Some(event.block);
-        // Echo rule: strip the initiator's BlockBroken only when they already
-        // presented it locally — a double burst is worse than none, but a
-        // client that never presented still needs the event. Observers get
-        // the shared event either way.
+        // Echo rule: strip the initiator's BlockBroken only on evidence they
+        // already presented it locally; a client that never presented still
+        // needs the event, and one whose finish is in flight suppresses the
+        // wire copy itself. Observers get the shared event either way.
         if initiator_presented {
             self.sessions[s].presented_breaks.push(event.pos);
         }

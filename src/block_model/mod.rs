@@ -521,17 +521,40 @@ impl PlacementOrientation {
 pub struct BlockModelDef {
     pub key: &'static str,
     pub model_file: &'static str,
-    /// The block's footprint in CELLS `(sx, sy, sz)` — the model is fitted into this
-    /// cell box and split across it. `(1, 1, 1)` is an ordinary single-cell block.
+    /// The block's footprint in CELLS `(sx, sy, sz)` — what the placed block
+    /// OCCUPIES (placement gating, collision, selection, per-cell split).
+    /// `(1, 1, 1)` is an ordinary single-cell block. How the model's geometry
+    /// maps into it is [`fit`](Self::fit).
     pub cells: [u8; 3],
     pub collision: CollisionSpec,
     /// How the model turns to meet the placing player (workbench across the view,
     /// bed away from it).
     pub orientation: PlacementOrientation,
+    /// How the authored geometry maps onto the footprint (see [`FitMode`]).
+    pub fit: FitMode,
     /// Authored cube NAMES this row hides (applied after the cache load, so
     /// several rows can share one `.bbmodel` with different parts visible —
     /// the lit/unlit machine pattern). Empty for most rows.
     pub hidden_parts: &'static [&'static str],
+}
+
+/// How a model's authored geometry maps onto its footprint cell box.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FitMode {
+    /// The default: uniform-scale the model's baked bounds to FILL the cell
+    /// box (largest axis flush), X/Z centred, resting on the floor. Right for
+    /// furniture that should exactly span its cells (workbench, bed, oven).
+    #[default]
+    Fill,
+    /// Authored pixels map 1:1 onto the footprint grid — cell `(i,j,k)` IS
+    /// authored `16i..16(i+1)`, no scaling, no centring. Geometry outside the
+    /// box OVERHANGS visually (a hopper lip, a tray): it renders (assigned to
+    /// the nearest footprint cell) but never extends collision, selection, or
+    /// placement beyond the footprint — the standard cell clipping applies.
+    /// Right for machines whose occupied space is smaller than their
+    /// silhouette. Author the model resting at `y = 0` inside `0..16·cells`.
+    Native,
 }
 
 /// One model row as written in `models.json`.
@@ -542,6 +565,8 @@ struct RawModelDef {
     model_file: String,
     cells: [u8; 3],
     orientation: PlacementOrientation,
+    #[serde(default)]
+    fit: FitMode,
     #[serde(default)]
     hidden_parts: Vec<String>,
 }
@@ -605,6 +630,7 @@ fn parse_layers(texts: &[&str]) -> Result<Vec<BlockModelDef>, String> {
             cells: r.cells,
             collision: CollisionSpec::FromModel,
             orientation: r.orientation,
+            fit: r.fit,
             hidden_parts: Box::leak(hidden_parts.into_boxed_slice()),
         });
     }
@@ -779,26 +805,42 @@ impl ModelInstance {
         let footprint = d.cells.map(|c| c.max(1));
         let at = atlas();
 
-        // --- Fit the model into the footprint cell box: uniform scale (no stretch),
-        // X/Z centred, resting on the floor in Y. Uses the BAKED posed bounds so the fit,
-        // the outline, and the collision all agree on the model's extent. ---
+        // --- Map the model into footprint space, per the row's fit mode. Uses
+        // the BAKED posed bounds so the fit, the outline, and the collision all
+        // agree on the model's extent. ---
         let (mn, mx) = (Vec3::from(m.bounds.min), Vec3::from(m.bounds.max));
-        let extent = mx - mn;
         let fp = Vec3::new(
             footprint[0] as f32,
             footprint[1] as f32,
             footprint[2] as f32,
         );
-        // World units per model unit: the tightest axis sets a uniform scale so the
-        // model fills its largest footprint axis and keeps its proportions.
-        let per_unit = [extent.x / fp.x, extent.y / fp.y, extent.z / fp.z]
-            .into_iter()
-            .fold(f32::MIN_POSITIVE, f32::max);
-        let scale = 1.0 / per_unit;
-        // Centre on X/Z within the footprint; floor on Y.
-        let span = extent * scale;
-        let lo = Vec3::new((fp.x - span.x) * 0.5, 0.0, (fp.z - span.z) * 0.5);
-        let to_fp = |v: Vec3| lo + (v - mn) * scale;
+        let (scale, lo, anchor) = match d.fit {
+            // Fill: uniform scale (no stretch) so the largest axis spans the
+            // cell box, X/Z centred, resting on the floor in Y.
+            FitMode::Fill => {
+                let extent = mx - mn;
+                // World units per model unit: the tightest axis sets a uniform
+                // scale so the model fills its largest footprint axis and
+                // keeps its proportions.
+                let per_unit = [extent.x / fp.x, extent.y / fp.y, extent.z / fp.z]
+                    .into_iter()
+                    .fold(f32::MIN_POSITIVE, f32::max);
+                let scale = 1.0 / per_unit;
+                // Centre on X/Z within the footprint; floor on Y.
+                let span = extent * scale;
+                (
+                    scale,
+                    Vec3::new((fp.x - span.x) * 0.5, 0.0, (fp.z - span.z) * 0.5),
+                    mn,
+                )
+            }
+            // Native: authored pixels ARE the footprint grid (16 px = 1 cell,
+            // authored origin = footprint origin); out-of-box geometry
+            // overhangs visually and is clipped out of collision/selection by
+            // the ordinary per-cell clipping below.
+            FitMode::Native => (1.0 / 16.0, Vec3::ZERO, Vec3::ZERO),
+        };
+        let to_fp = |v: Vec3| lo + (v - anchor) * scale;
         // A model-space AABB → footprint space (uniform scale + translate keeps it axis-
         // aligned, so transforming the two corners suffices).
         let to_fp_box = |b: &Aabb| Aabb {
@@ -912,13 +954,15 @@ impl ModelInstance {
 
         // Centred-unit item space → authored display space (blocks about the display
         // pivot): invert the item bake's centring (`p_fp = p_unit·uspan + fp/2`), then
-        // the footprint fit (`p_px = mn + (p_fp − lo)·per_unit`), then rebase on the
-        // pivot in blocks. Uniform scale + translation, folded into one matrix.
+        // the footprint mapping (`p_px = anchor + (p_fp − lo)/scale` — the inverse of
+        // `to_fp`, any fit mode), then rebase on the pivot in blocks. Uniform scale +
+        // translation, folded into one matrix.
         let display_from_unit = {
             let uspan = fp.max_element().max(1.0);
             let pivot = Vec3::from(m.display_pivot);
+            let per_unit = 1.0 / scale;
             let k = uspan * per_unit / 16.0;
-            let offset = (mn + (fp * 0.5 - lo) * per_unit - pivot) / 16.0;
+            let offset = (anchor + (fp * 0.5 - lo) * per_unit - pivot) / 16.0;
             Mat4::from_translation(offset) * Mat4::from_scale(Vec3::splat(k))
         };
 

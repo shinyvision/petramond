@@ -244,6 +244,12 @@ pub(crate) enum PlayerAction {
         target: Option<TargetRef>,
         request_id: Option<ClientRequestId>,
         predicted: bool,
+        /// Whether the client played its own P0 hand jab for this click (its
+        /// "predictably does something" verdict). When the server consumes a
+        /// click the client could NOT foresee — a mod-cancelled item use or
+        /// block interact — it echoes `SelfEvents::used_unpredicted` so the
+        /// jab still plays exactly once.
+        jabbed: bool,
     },
     /// Primary press: attack the mob under the crosshair (stable mob id), the
     /// remote PLAYER under the crosshair (`PlayerId` byte — PvP), or punch the
@@ -674,6 +680,10 @@ pub(crate) struct SelfEvents {
     // deliberately do NOT ride here: the recipient initiated those actions and
     // already animated them at click time — echoing them back replays the
     // animation one RTT later. Observers get them via `player_actions`.
+    // `used_unpredicted` is the one deliberate exception: it fires ONLY for a
+    // consumed click whose `UseClick.jabbed` said the initiator stayed silent
+    // (a mod-consumed use/interact the replica cannot foresee), so it can
+    // never double an already-played jab.
     pub picked_up_item: bool,
     pub bed_interacted: bool,
     pub player_damaged: bool,
@@ -685,6 +695,10 @@ pub(crate) struct SelfEvents {
     /// The door toggle's NEW open state — only the TOGGLER gets this one-shot
     /// (the world-anchored `DoorToggled` event reaches every observer).
     pub toggled_door: Option<bool>,
+    /// A use click was CONSUMED server-side (mod-cancelled item use / block
+    /// interact) but the initiator's own jab verdict was silent — play the
+    /// hand jab now. See the header note on the no-echo rule.
+    pub used_unpredicted: bool,
 }
 
 impl SelfEvents {
@@ -702,6 +716,7 @@ impl SelfEvents {
         }
         self.close_mod_gui |= other.close_mod_gui;
         self.toggled_door = other.toggled_door.or(self.toggled_door);
+        self.used_unpredicted |= other.used_unpredicted;
     }
 }
 
@@ -1164,6 +1179,7 @@ mod tests {
             }),
             request_id: Some(7),
             predicted: true,
+            jabbed: false,
         }));
         roundtrip(&ClientToServer::Action(PlayerAction::AttackClick {
             mob: None,

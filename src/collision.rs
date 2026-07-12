@@ -99,6 +99,61 @@ where
     travel
 }
 
+/// Lift a body straight up out of SHALLOW foot penetration. Swept collision
+/// deliberately ignores boxes a body already overlaps (that is what lets it
+/// slide off contact without sticking), so when a block GROWS under standing
+/// feet — a mod pressing 15/16 farmland back to full-cube dirt, a machine
+/// variant swap — the next downward sweep would tunnel straight through the
+/// floor. This pre-pass heals that: any box whose vertical span contains the
+/// FEET line (and overlaps the body on X/Z) lifts the body onto its top,
+/// capped by `max_lift` and clamped by the actual headroom above (via an
+/// upward sweep, so a low ceiling gives a partial lift instead of clipping
+/// the head). Boxes higher up in the body are not healed — you cannot climb
+/// out of a block materialised at chest height. Returns the applied lift
+/// (`0.0` almost always: a body flush ON a box top does not count as inside
+/// it).
+pub fn depenetrate_up<F>(min: [f32; 3], max: [f32; 3], max_lift: f32, boxes_fn: F) -> f32
+where
+    F: Fn(i32, i32, i32) -> &'static [Aabb],
+{
+    let mut need = 0.0f32;
+    for cx in min[0].floor() as i32..=max[0].floor() as i32 {
+        for cy in min[1].floor() as i32..=max[1].floor() as i32 {
+            for cz in min[2].floor() as i32..=max[2].floor() as i32 {
+                let cell = [cx as f32, cy as f32, cz as f32];
+                for b in boxes_fn(cx, cy, cz) {
+                    // Overlap on X/Z (touching within EPS doesn't count) —
+                    // the same cross test the sweep uses.
+                    let mut cross = true;
+                    for i in [0, 2] {
+                        let wlo = cell[i] + b.min[i];
+                        let whi = cell[i] + b.max[i];
+                        if !(max[i] > wlo + EPS && min[i] < whi - EPS) {
+                            cross = false;
+                            break;
+                        }
+                    }
+                    if !cross {
+                        continue;
+                    }
+                    let wbot = cell[1] + b.min[1];
+                    let wtop = cell[1] + b.max[1];
+                    if wbot <= min[1] + EPS && wtop > min[1] + EPS {
+                        need = need.max(wtop - min[1]);
+                    }
+                }
+            }
+        }
+    }
+    let need = need.min(max_lift);
+    if need <= EPS {
+        return 0.0;
+    }
+    // Respect headroom: the boxes being escaped sit behind an upward sweep
+    // (their bottoms are below the head), so only a real ceiling clamps.
+    sweep_axis(min, max, 1, need, boxes_fn).max(0.0)
+}
+
 /// Resolve a simple body's whole move for one tick: sweep Y (so it lands first), then the
 /// horizontal move via [`step_horizontal`] — which auto-climbs a `step_height` ledge ONLY
 /// when the body is grounded (resting on the floor), like a player/mob walking up a slab.
@@ -122,6 +177,16 @@ where
     let mut mx = max;
     let mut moved = [0.0f32; 3];
     let mut hit = [false; 3];
+
+    // Heal shallow foot penetration first (a block grew under the body —
+    // see `depenetrate_up`), so the Y sweep lands ON the new top instead of
+    // tunnelling through the box it started inside.
+    let lift = depenetrate_up(mn, mx, STEP_HEIGHT, &boxes_fn);
+    if lift > 0.0 {
+        mn[1] += lift;
+        mx[1] += lift;
+        moved[1] += lift;
+    }
 
     // Y first, so we land before sliding horizontally.
     let dy = vel[1] * dt;
@@ -393,6 +458,47 @@ mod tests {
             (moved[1] - (-0.4)).abs() < 1e-3,
             "clamped to the floor, got {}",
             moved[1]
+        );
+    }
+
+    /// A 15/16 block (farmland) whose cell becomes a FULL cube under standing
+    /// feet: without the depenetration heal the downward sweep skips the box
+    /// it starts inside and the body tunnels through the world; with it the
+    /// body lifts the missing texel and lands grounded on the new top.
+    #[test]
+    fn a_block_growing_underfoot_lifts_the_body_instead_of_tunnelling() {
+        let floor = |_x: i32, y: i32, _z: i32| if y == 0 { FULL } else { &[][..] };
+        // Feet at the old farmland top (15/16), now 1/16 inside the dirt cube.
+        let (min, max) = ([0.2, 0.9375, 0.2], [0.8, 2.7375, 0.8]);
+        let lift = depenetrate_up(min, max, STEP_HEIGHT, floor);
+        assert!(
+            (lift - 0.0625).abs() < 1e-3,
+            "lifts exactly the penetration, got {lift}"
+        );
+        let (moved, grounded, _) = resolve_body(min, max, [0.0, -5.0, 0.0], 0.1, 0.0, floor);
+        assert!(grounded, "the healed body lands on the grown block");
+        assert!(
+            (moved[1] - 0.0625).abs() < 1e-3,
+            "net movement is the upward heal, not a fall, got {}",
+            moved[1]
+        );
+        // A body flush ON a box top is not inside it: nothing to heal.
+        let rest = depenetrate_up([0.2, 1.0, 0.2], [0.8, 2.8, 0.8], STEP_HEIGHT, floor);
+        assert_eq!(rest, 0.0, "standing on top never lifts");
+        // Headroom clamps the heal: a ceiling one texel above the head turns
+        // the lift into a partial one instead of clipping into the ceiling.
+        let tight = move |x: i32, y: i32, z: i32| -> &'static [Aabb] {
+            if y == 3 {
+                FULL
+            } else {
+                floor(x, y, z)
+            }
+        };
+        // (A taller body whose head sits 0.02 under the ceiling.)
+        let clamped = depenetrate_up([0.2, 0.9375, 0.2], [0.8, 2.98, 0.8], STEP_HEIGHT, tight);
+        assert!(
+            clamped < 0.0625 && clamped > 0.0,
+            "a low ceiling caps the lift, got {clamped}"
         );
     }
 

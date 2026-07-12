@@ -839,3 +839,231 @@ fn kitchen_mutton_inner() {
         "an aborted eat consumes nothing"
     );
 }
+
+#[test]
+fn kitchen_miller_grinds_the_milling_class_via_wasm() {
+    let Some(root) = crate::modding::tests::stage_mods_fixture("kitchen-miller", &["kitchen"])
+    else {
+        return;
+    };
+    // A synthetic grain pack beside the kitchen: one millable item pair + the
+    // milling recipe, all data (no wasm) — the composition the recipe-class
+    // design exists for (farming's wheat -> flour row is the shipped twin).
+    let mill = root.join("mods").join("testmill");
+    std::fs::create_dir_all(&mill).unwrap();
+    std::fs::write(
+        mill.join("pack.json"),
+        r#"{ "name": "Test Mill", "id": "testmill", "version": "0.1.0" }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        mill.join("items.json"),
+        r#"{ "items": [
+            { "item": "testmill:grain", "key": "testmill:grain", "name": "Grain",
+              "max_stack_size": 64, "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+              "sprite": "stone", "tags": ["kitchen:millable"] },
+            { "item": "testmill:meal", "key": "testmill:meal", "name": "Meal",
+              "max_stack_size": 64, "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+              "sprite": "stone", "tags": [] }
+        ] }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        mill.join("recipes.json"),
+        r#"{ "recipes": [
+            { "type": "processing", "class": "kitchen:milling",
+              "ingredient": "testmill:grain", "result": "testmill:meal" }
+        ] }"#,
+    )
+    .unwrap();
+    crate::modding::tests::run_child_test(&root, "game::tests::kitchen_mod::kitchen_miller_inner");
+}
+
+/// Runs ONLY in the child process spawned above. The miller end to end: the
+/// 1x2x1 native-fit model placement, accepts-filtered routing, the 200-tick grind of the
+/// `kitchen:milling` class, the flour-cube visual (full/empty block variants
+/// following the OUTPUT slot), the live progress gauge, and the take-out.
+#[test]
+#[ignore = "spawned by kitchen_miller_grinds_the_milling_class_via_wasm with a fixture pack env"]
+fn kitchen_miller_inner() {
+    use crate::block::Block;
+    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    use crate::controls::PointerButton;
+    use crate::gui::{GuiValue, MenuSlot};
+    use crate::item::{ItemStack, ItemType};
+    use crate::mathh::IVec3;
+
+    let by_key = |key: &str| {
+        ItemType::all()
+            .iter()
+            .copied()
+            .find(|i| i.key() == key)
+            .unwrap_or_else(|| panic!("{key} registered from the fixture packs"))
+    };
+    let block_by_name = |name: &str| {
+        Block::all()
+            .iter()
+            .copied()
+            .find(|b| crate::registry::names().blocks.name(b.id()) == Some(name))
+            .unwrap_or_else(|| panic!("block {name} registered"))
+    };
+    let miller_item = by_key("kitchen:miller");
+    let grain = by_key("testmill:grain");
+    let meal = by_key("testmill:meal");
+    let miller_block = block_by_name("kitchen:miller");
+    let miller_full = block_by_name("kitchen:miller_full");
+
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
+    game.server.world.clear_world();
+    let cp = ChunkPos::new(0, 0);
+    game.server.world.insert_empty_column_for_test(cp);
+    let mut chunk = Chunk::new(0, 0);
+    for z in 0..CHUNK_SZ {
+        for x in 0..CHUNK_SX {
+            chunk.set_block(x, 63, z, Block::Stone);
+        }
+    }
+    game.server.world.insert_chunk_for_test(cp, chunk);
+    game.server.sessions[0].player.pos = Vec3::new(6.0, 64.0, 8.0);
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions[0].player.on_ground = true;
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(miller_item, 1));
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(grain, 2));
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::RawIron, 1));
+
+    // Place through the real path; the group resolves from any cell.
+    let floor = IVec3::new(9, 63, 8);
+    game.server.sessions[0].look = Some(super::common::hit(floor, IVec3::Y));
+    game.server.queue_place_click_for_test(0);
+    let mut ev = TickEvents::default();
+    game.server.game_tick_step(&mut ev);
+    assert!(
+        ev.player_at(0).placed_block.is_some(),
+        "the miller placed from the held item"
+    );
+    let clicked = floor + IVec3::Y;
+    let (_, anchor, cells) = game
+        .server
+        .world
+        .model_group(clicked)
+        .expect("the placed miller resolves as a model group");
+    assert_eq!(
+        cells.len(),
+        2,
+        "the declared 1x2x1 footprint — the tray OVERHANGS it (fit: native)"
+    );
+
+    let kind = crate::gui::resolve_kind("kitchen:miller")
+        .expect("the pack's open_gui interaction registered the kind");
+    let far_cell = *cells
+        .iter()
+        .find(|c| **c != anchor)
+        .expect("a non-anchor footprint cell");
+    game.server.open_mod_gui_screen_for(0, kind, Some(far_cell));
+    let slots = |game: &super::common::TestGame| {
+        game.server
+            .world
+            .container_at(anchor)
+            .expect("the session created the container at the ANCHOR cell")
+            .slots
+            .clone()
+    };
+    assert_eq!(slots(&game).len(), 2, "sized by the document's slot count");
+
+    // Shift-routing honors the millable filter: grain in, raw iron refused.
+    let inv_slot_of = |game: &super::common::TestGame, item: ItemType| -> usize {
+        (0..crate::inventory::TOTAL_SLOTS)
+            .find(|&i| {
+                game.server.sessions[0]
+                    .player
+                    .inventory
+                    .slot(i)
+                    .is_some_and(|s| s.item == item)
+            })
+            .expect("item somewhere in the inventory")
+    };
+    for item in [grain, ItemType::RawIron] {
+        let i = inv_slot_of(&game, item);
+        game.menu_click(MenuSlot::Inventory(i), PointerButton::Primary, true, false);
+        game.server.game_tick_step(&mut ev);
+    }
+    let s = slots(&game);
+    assert_eq!(
+        s[0],
+        Some(ItemStack::new(grain, 2)),
+        "the input slot got the grain"
+    );
+    assert_eq!(s[1], None, "nothing routed into the take-only output");
+    assert!(
+        !slots(&game)
+            .iter()
+            .flatten()
+            .any(|s| s.item == ItemType::RawIron),
+        "raw iron routed NOWHERE into the miller (it is not millable)"
+    );
+
+    // 200 ticks grind one grain into one meal; the output-holding variant
+    // shows the authored flour cube across the whole footprint.
+    for _ in 0..210 {
+        game.server.game_tick_step(&mut ev);
+    }
+    let s = slots(&game);
+    assert_eq!(s[0], Some(ItemStack::new(grain, 1)), "one grain consumed");
+    assert_eq!(s[1], Some(ItemStack::new(meal, 1)), "one meal produced");
+    for &c in &cells {
+        assert_eq!(
+            Block::from_id(game.server.world.chunk_block(c.x, c.y, c.z)),
+            miller_full,
+            "a loaded output shows the full variant at {c:?}"
+        );
+    }
+    // Mid-second-grind: the progress gauge is live while the session is open.
+    match game.server.sessions[0].gui_state.get("kitchen:mill01") {
+        Some(GuiValue::F32(v)) => {
+            assert!((0.0..1.0).contains(v), "grind progress publishes, got {v}")
+        }
+        other => panic!("kitchen:mill01 should be live while open, got {other:?}"),
+    }
+
+    // Take the meal out: the output empties and the visual swaps back even
+    // though the second grind keeps running.
+    game.menu_click(MenuSlot::Container(1), PointerButton::Primary, true, false);
+    game.server.game_tick_step(&mut ev);
+    game.server.game_tick_step(&mut ev);
+    assert_eq!(slots(&game)[1], None, "the meal moved to the inventory");
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(anchor.x, anchor.y, anchor.z)),
+        miller_block,
+        "an emptied output hides the flour cube again"
+    );
+
+    // The second grind completes on schedule.
+    for _ in 0..210 {
+        game.server.game_tick_step(&mut ev);
+    }
+    let s = slots(&game);
+    assert_eq!(s[0], None, "all grain consumed");
+    assert_eq!(
+        s[1],
+        Some(ItemStack::new(meal, 1)),
+        "the second meal produced"
+    );
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(anchor.x, anchor.y, anchor.z)),
+        miller_full,
+        "and the flour cube returns"
+    );
+
+    let (disabled, _, _) = game.mods_for_test().probe(0);
+    assert!(!disabled, "the kitchen mod never trapped");
+}

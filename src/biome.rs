@@ -150,7 +150,25 @@ impl Biome {
 
 #[cfg(test)]
 mod tests {
-    use super::{blended_fog_color, Biome, SKY_FOG_BLEND_SPAN_BLOCKS};
+    use super::{blended_fog_color, Biome, BIOME_COUNT, SKY_FOG_BLEND_SPAN_BLOCKS};
+
+    /// The mod-facing biome vocabulary (`mod_api::biome`) mirrors this
+    /// compiled table. Worldgen hooks hand mods raw biome ids; the ABI names
+    /// are their only sanctioned addressing, so a drifted or missing entry
+    /// must fail HERE, not in a mod at runtime.
+    #[test]
+    fn mod_api_biome_vocabulary_matches_the_engine_table() {
+        assert_eq!(
+            mod_api::biome::BIOME_NAMES.len(),
+            BIOME_COUNT,
+            "append new biomes to mod_api::biome in the same change"
+        );
+        for id in 1..=BIOME_COUNT as u8 {
+            let biome = Biome::from_id(id);
+            assert_eq!(mod_api::biome::name(id), Some(biome.name()));
+            assert_eq!(mod_api::biome::by_name(biome.name()), Some(id));
+        }
+    }
 
     fn assert_color_close(actual: [f32; 3], expected: [f32; 3]) {
         for i in 0..3 {

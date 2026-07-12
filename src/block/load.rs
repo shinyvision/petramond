@@ -250,6 +250,19 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
     if matches!(r.shape, RenderShape::Slab) {
         flags = flags.with(BlockFlags::SLAB);
     }
+    if let RenderShape::LoweredCube(h) = r.shape {
+        if !(1..=15).contains(&h) {
+            return Err(format!(
+                "lowered_cube height {h} out of range (1..=15 texels visible)"
+            ));
+        }
+        // The sunken top means neighbours must keep their faces toward this
+        // block — an opaque lowered cube would cull them and open a 1-texel
+        // x-ray slit over its top.
+        if flags.is_opaque() {
+            return Err("a lowered_cube row must not carry the 'opaque' flag".into());
+        }
+    }
     let drops: Vec<Drop> = r
         .drops
         .iter()

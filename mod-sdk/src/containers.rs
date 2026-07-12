@@ -1,9 +1,22 @@
 //! Engine-backed mod container storage plus the item/recipe registry reads
 //! that make furnace-like machine logic possible without duplicating data.
 
-use mod_api::{HostCall, HostRet, ItemInfoData, ItemStackData};
+use mod_api::{HostCall, HostRet, ItemId, ItemInfoData, ItemStackData};
 
 use crate::__rt;
+
+/// Resolve an item registry name to this session's numeric [`ItemId`], or
+/// `None` for an unknown name. Registry-only (the [`resolve_block`] contract):
+/// legal on any instance, any time. Resolve once in `init` and compare against
+/// the ids in event payloads (`item_use_pre`) — never persist numeric ids.
+///
+/// [`resolve_block`]: crate::worldgen::resolve_block
+pub fn resolve_item(key: &str) -> Option<ItemId> {
+    match __rt::host_call(&HostCall::ResolveItem { key: key.into() }) {
+        HostRet::Item(id) => id,
+        other => panic!("ResolveItem returned {other:?}"),
+    }
+}
 
 /// Read every slot of the mod container at `pos` — the engine-backed item
 /// storage behind a mod GUI document's `container` role slots. Multi-cell

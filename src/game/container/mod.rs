@@ -70,7 +70,7 @@ mod tests {
             Some((ItemType::OakPlanks, 4))
         );
         // Take the result: 4 planks onto the cursor, the log consumed, no result.
-        menu.craft_take_result(&mut inv, &recipes);
+        menu.craft_take_result(&mut inv, &recipes, |s| panic!("unexpected overflow: {s:?}"));
         assert_eq!(
             inv.cursor().map(|s| (s.item, s.count)),
             Some((ItemType::OakPlanks, 4))
@@ -93,12 +93,135 @@ mod tests {
             0,
             ItemStack::new(ItemType::OakLog, 3),
         );
-        menu.craft_shift_result(&mut inv, &recipes);
+        menu.craft_shift_result(&mut inv, &recipes, |s| panic!("unexpected overflow: {s:?}"));
         assert!(
             menu.craft_grid().cells().iter().all(Option::is_none),
             "all logs consumed"
         );
         assert_eq!(count_item(&inv, ItemType::OakPlanks), 12);
+    }
+
+    /// The transactional ingredient modes: a `keep` catalyst survives normal
+    /// AND shift crafting (which stays bounded by the CONSUMED ingredient),
+    /// and a `remainder` occurrence returns its declared item — to the input
+    /// cell when it empties, else to the inventory — never deleted.
+    #[test]
+    fn craft_transaction_keeps_catalysts_and_returns_remainders() {
+        use crate::crafting::{Ingredient, IngredientUse, Recipe, RecipeIngredient};
+        use crate::item::ItemTag;
+        let recipes = Recipes::new(
+            vec![
+                // 1 coal ground by any retained #shovels catalyst → 2 sticks.
+                Recipe::Shapeless {
+                    ingredients: vec![
+                        RecipeIngredient::consumed(Ingredient::Item(ItemType::Coal)),
+                        RecipeIngredient {
+                            what: Ingredient::Tag(ItemTag::SHOVELS),
+                            mode: IngredientUse::Keep,
+                        },
+                    ],
+                    result: ItemStack::new(ItemType::Stick, 2),
+                },
+                // 1 water bucket → 1 glass, the drained bucket returned.
+                Recipe::Shapeless {
+                    ingredients: vec![RecipeIngredient {
+                        what: Ingredient::Item(ItemType::WaterBucket),
+                        mode: IngredientUse::Remainder(ItemType::WoodenBucket),
+                    }],
+                    result: ItemStack::new(ItemType::Glass, 1),
+                },
+                // A STACKABLE ingredient with a remainder, for the
+                // occupied-cell fallback scenario below.
+                Recipe::Shapeless {
+                    ingredients: vec![RecipeIngredient {
+                        what: Ingredient::Item(ItemType::Coal),
+                        mode: IngredientUse::Remainder(ItemType::Stick),
+                    }],
+                    result: ItemStack::new(ItemType::Glass, 1),
+                },
+            ],
+            Vec::new(),
+            Vec::new(),
+        );
+
+        // Catalyst: shift-crafting 5 coal + 1 shovel crafts exactly 5 times.
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        menu.open_crafting(2, &recipes);
+        place_in_craft_cell(
+            &mut menu,
+            &mut inv,
+            &recipes,
+            0,
+            ItemStack::new(ItemType::Coal, 5),
+        );
+        place_in_craft_cell(
+            &mut menu,
+            &mut inv,
+            &recipes,
+            1,
+            ItemStack::new(ItemType::IronShovel, 1),
+        );
+        menu.craft_shift_result(&mut inv, &recipes, |s| panic!("unexpected overflow: {s:?}"));
+        assert_eq!(count_item(&inv, ItemType::Stick), 10, "5 crafts, 2 each");
+        assert_eq!(
+            menu.craft_grid().cell(1).map(|s| (s.item, s.count)),
+            Some((ItemType::IronShovel, 1)),
+            "the retained catalyst survives shift-crafting untouched"
+        );
+        assert!(menu.craft_grid().cell(0).is_none(), "the coal is spent");
+
+        // Remainder into the EMPTIED cell: one water bucket crafts once and
+        // leaves the wooden bucket in its own cell (which also stops the
+        // recipe from matching again).
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        menu.open_crafting(2, &recipes);
+        place_in_craft_cell(
+            &mut menu,
+            &mut inv,
+            &recipes,
+            0,
+            ItemStack::new(ItemType::WaterBucket, 1),
+        );
+        menu.craft_take_result(&mut inv, &recipes, |s| panic!("unexpected overflow: {s:?}"));
+        assert_eq!(
+            inv.cursor().map(|s| s.item),
+            Some(ItemType::Glass),
+            "the result landed on the cursor"
+        );
+        assert_eq!(
+            menu.craft_grid().cell(0).map(|s| (s.item, s.count)),
+            Some((ItemType::WoodenBucket, 1)),
+            "the drained bucket returns to the consumed cell"
+        );
+        assert!(
+            menu.craft_grid().result().is_none(),
+            "the empty bucket does not satisfy the recipe again"
+        );
+
+        // Remainder with an OCCUPIED cell falls back to the inventory.
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        menu.open_crafting(2, &recipes);
+        place_in_craft_cell(
+            &mut menu,
+            &mut inv,
+            &recipes,
+            0,
+            ItemStack::new(ItemType::Coal, 2),
+        );
+        menu.craft_take_result(&mut inv, &recipes, |s| panic!("unexpected overflow: {s:?}"));
+        assert_eq!(
+            menu.craft_grid().cell(0).map(|s| (s.item, s.count)),
+            Some((ItemType::Coal, 1)),
+            "one coal consumed, the other still occupies the cell"
+        );
+        assert_eq!(
+            count_item(&inv, ItemType::Stick),
+            1,
+            "the remainder went to the inventory instead"
+        );
     }
 
     #[test]
@@ -233,6 +356,7 @@ mod tests {
             PointerButton::Primary,
             false,
             false,
+            |s| panic!("unexpected craft overflow: {s:?}"),
         );
     }
 
@@ -276,6 +400,7 @@ mod tests {
             PointerButton::Primary,
             false,
             false,
+            |s| panic!("unexpected craft overflow: {s:?}"),
         );
         assert_eq!(
             inv.cursor().map(|s| (s.item, s.count)),
@@ -309,6 +434,7 @@ mod tests {
             PointerButton::Primary,
             true,
             false,
+            |s| panic!("unexpected craft overflow: {s:?}"),
         );
         assert_eq!(
             menu.open_workbench_view(&recipes)
@@ -339,6 +465,7 @@ mod tests {
             PointerButton::Primary,
             true,
             false,
+            |s| panic!("unexpected craft overflow: {s:?}"),
         );
         assert!(
             menu.open_workbench_view(&recipes).unwrap().input.is_none(),
@@ -381,6 +508,7 @@ mod tests {
             PointerButton::Primary,
             false,
             false,
+            |s| panic!("unexpected craft overflow: {s:?}"),
         );
         assert!(inv.cursor().is_none(), "no craft below cost");
         assert_eq!(

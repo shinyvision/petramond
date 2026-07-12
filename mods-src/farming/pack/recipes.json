@@ -1,0 +1,65 @@
+{
+  "recipes": [
+    {
+      "type": "shaped",
+      "pattern": [
+        "II",
+        "S ",
+        "S "
+      ],
+      "key": {
+        "I": "petramond:iron_ingot",
+        "S": "petramond:stick"
+      },
+      "result": "farming:iron_hoe"
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "II",
+        " S",
+        " S"
+      ],
+      "key": {
+        "I": "petramond:iron_ingot",
+        "S": "petramond:stick"
+      },
+      "result": "farming:iron_hoe"
+    },
+    {
+      "type": "shapeless",
+      "ingredients": [
+        "farming:wheat",
+        "farming:wheat",
+        "farming:wheat",
+        {
+          "item": "petramond:water_bucket",
+          "remainder": "petramond:wooden_bucket"
+        }
+      ],
+      "result": "farming:dough",
+      "count": 3
+    },
+    {
+      "type": "shapeless",
+      "ingredients": [
+        "farming:bread",
+        "farming:carrot",
+        "farming:carrot"
+      ],
+      "result": "farming:farmers_lunch"
+    },
+    {
+      "type": "processing",
+      "class": "kitchen:cooking",
+      "ingredient": "farming:dough",
+      "result": "farming:bread"
+    },
+    {
+      "type": "processing",
+      "class": "kitchen:milling",
+      "ingredient": "farming:wheat",
+      "result": "farming:flour"
+    }
+  ]
+}

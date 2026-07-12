@@ -72,6 +72,13 @@ impl TestGame {
         }
     }
 
+    /// Inject a raw server→client message into the loopback pipe, as if the
+    /// server thread had sent it — for tests asserting how the client applies
+    /// a hand-crafted batch.
+    pub(super) fn send_server_message(&mut self, msg: crate::net::protocol::ServerToClient) {
+        let _ = self.pipe.outbox.send(msg);
+    }
+
     /// [`Self::tick`], but returning a copy of every server→client message
     /// the pump forwarded — the streaming-path observability the section
     /// cache tests assert on (payload copies are `Arc` bumps).

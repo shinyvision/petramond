@@ -511,7 +511,9 @@ pub fn list_worlds() -> std::io::Result<Vec<WorldInfo>> {
 }
 
 /// Rename a world's DISPLAY name (`world.json`); the save directory keeps its
-/// original name so nothing references a moved path.
+/// original name so nothing references a moved path. Client-mod data (minimap
+/// exploration, waypoints) keys on the DIRECTORY name too, so it follows a
+/// renamed world by construction — moving the directory would strand it.
 pub fn rename_world(dir_name: &str, new_name: &str) -> std::io::Result<()> {
     if !is_single_path_component(dir_name) {
         return Err(std::io::Error::other("invalid world directory name"));

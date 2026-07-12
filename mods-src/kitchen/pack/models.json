@@ -3,15 +3,50 @@
     {
       "key": "kitchen:oven",
       "model_file": "models/kitchen_oven.bbmodel",
-      "cells": [2, 3, 2],
+      "cells": [
+        2,
+        3,
+        2
+      ],
       "orientation": "left_to_right",
-      "hidden_parts": ["fire"]
+      "hidden_parts": [
+        "fire"
+      ]
     },
     {
       "key": "kitchen:oven_lit",
       "model_file": "models/kitchen_oven.bbmodel",
-      "cells": [2, 3, 2],
+      "cells": [
+        2,
+        3,
+        2
+      ],
       "orientation": "left_to_right"
+    },
+    {
+      "key": "kitchen:miller",
+      "model_file": "models/miller.bbmodel",
+      "cells": [
+        1,
+        2,
+        1
+      ],
+      "orientation": "left_to_right",
+      "hidden_parts": [
+        "flour"
+      ],
+      "fit": "native"
+    },
+    {
+      "key": "kitchen:miller_full",
+      "model_file": "models/miller.bbmodel",
+      "cells": [
+        1,
+        2,
+        1
+      ],
+      "orientation": "left_to_right",
+      "fit": "native"
     }
   ]
 }

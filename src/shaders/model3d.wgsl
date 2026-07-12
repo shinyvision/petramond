@@ -83,6 +83,9 @@ struct VsOut {
     @location(4) uv2: vec2<f32>,
     // overlay tile id (0 = none); disambiguates the solid vs overlay flag use.
     @location(5) @interpolate(flat) overlay_tile: u32,
+    // Half-texel-inset sample bounds of the base / overlay tile (see inset_tile).
+    @location(6) @interpolate(flat) uv_bounds: vec4<f32>,
+    @location(7) @interpolate(flat) uv2_bounds: vec4<f32>,
 };
 
 // Shrink a tile rect (u0,v0,u1,v1) toward its centre by half a texel on every
@@ -91,12 +94,23 @@ struct VsOut {
 // they need no inset. But the small, rotated, magnified iso icons + held hand
 // (this shader) DO interpolate uv right at the tile boundary, and with a full-tile
 // rect those edge fragments bleed into the ADJACENT atlas tile (a 1px sliver of a
-// wrong texture down the centre seam where the cube faces meet). Insetting by half
-// a texel keeps every reconstructed uv strictly inside its own tile; half a texel
-// of a 16px tile is imperceptible, so the texture is not visibly shrunk.
+// wrong texture down the centre seam where the cube faces meet).
+//
+// The guard is applied as a per-FRAGMENT clamp into this inset rect — NOT by
+// reconstructing the corner uvs from the inset rect. Corner insetting stretches
+// the inner 15 texels of the tile across the full quad, so a 16px sprite icon
+// baked at 64px renders 15 uneven ~4.27px texels (and its edge rows half-clipped)
+// instead of 16 crisp 4px ones. Clamping leaves every interior fragment's uv
+// untouched (texel-exact icons) and only pulls true edge fragments inside the
+// tile, which lands on the same edge texel under nearest sampling.
 fn inset_tile(r: vec4<f32>) -> vec4<f32> {
     let inset = (vec2<f32>(r.z - r.x, r.w - r.y)) * (0.5 / 16.0);
     return vec4<f32>(r.x + inset.x, r.y + inset.y, r.z - inset.x, r.w - inset.y);
+}
+
+// Clamp an interpolated uv into its tile's inset bounds (u0,v0,u1,v1).
+fn clamp_uv(uv: vec2<f32>, b: vec4<f32>) -> vec2<f32> {
+    return clamp(uv, b.xy, b.zw);
 }
 
 // Same corner mapping as block.wgsl: 0->(u0,v1) 1->(u1,v1) 2->(u1,v0) 3->(u0,v0).
@@ -120,10 +134,12 @@ fn vs_model(in: VsIn) -> VsOut {
     let sky6 = (in.packed >> 23u) & 0x3Fu;
     let uv_mode = (in.packed >> 29u) & 0x7u;
 
-    // Inset the tile rect by half a texel before reconstructing the corner uv so
-    // edge fragments of the magnified iso icons never sample the neighbour tile
+    // Reconstruct uvs from the FULL tile rect (texel-exact mapping); the
+    // fragment stage clamps them into the half-texel-inset bounds so edge
+    // fragments of the magnified iso icons never sample the neighbour tile
     // (see inset_tile). Applied to BOTH the base uv and the grass-side overlay uv2.
-    let r = inset_tile(uv_rects[tile]);
+    let r = uv_rects[tile];
+    out.uv_bounds = inset_tile(r);
     if (uv_mode == UV_MODE_CELL_LOCAL) {
         let c = vec2<f32>(
             f32((in.packed2 >> 6u) & 0x1Fu),
@@ -133,7 +149,9 @@ fn vs_model(in: VsIn) -> VsOut {
     } else {
         out.uv = corner_uv(r, corner);
     }
-    out.uv2 = corner_uv(inset_tile(uv_rects[overlay_tile]), corner);
+    let r2 = uv_rects[overlay_tile];
+    out.uv2 = corner_uv(r2, corner);
+    out.uv2_bounds = inset_tile(r2);
     // Mirror of block.wgsl lighting: directional shade * AO * max(sky term, block
     // term), with the same sky-scale/-colour lanes so the held block dims and
     // tints with the world (identity at scale 1.0 + white) while torch light stays
@@ -162,8 +180,8 @@ fn fs_model(in: VsOut) -> @location(0) vec4<f32> {
         // Grass-block side: untinted dirt base + biome-tinted grayscale grass-side
         // overlay, composited by the overlay's alpha (mirror of block.wgsl
         // fs_opaque) so the side greens to match the tinted top.
-        let base = textureSample(atlas, samp, in.uv);
-        let ov = textureSample(atlas, samp, in.uv2);
+        let base = textureSample(atlas, samp, clamp_uv(in.uv, in.uv_bounds));
+        let ov = textureSample(atlas, samp, clamp_uv(in.uv2, in.uv2_bounds));
         let rgb = mix(base.rgb, ov.rgb * in.tint, ov.a);
         return vec4<f32>(rgb * in.light, 1.0);
     }
@@ -172,7 +190,7 @@ fn fs_model(in: VsOut) -> @location(0) vec4<f32> {
         // the cuboid reads as a 3D shape. Fully opaque.
         return vec4<f32>(in.tint * in.light, 1.0);
     }
-    let tex = textureSample(atlas, samp, in.uv);
+    let tex = textureSample(atlas, samp, clamp_uv(in.uv, in.uv_bounds));
     // Flat sprite items (flowers) and leaf cutouts: drop transparent texels so the
     // billboard cuts out cleanly. Block cubes are full-alpha so this is a no-op.
     if (tex.a < 0.5) { discard; }

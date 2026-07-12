@@ -347,6 +347,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ContainerGetMany { .. }
         | HostCall::ContainerSet { .. }
         | HostCall::ItemInfo { .. }
+        | HostCall::ResolveItem { .. }
         | HostCall::RecipeResult { .. } => containers::handle_container_call(&data.mod_id, call),
         HostCall::ClientRegisterOverlay { .. }
         | HostCall::ClientRegisterKey { .. }

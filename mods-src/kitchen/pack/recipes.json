@@ -21,6 +21,21 @@
       "class": "kitchen:cooking",
       "ingredient": "kitchen:raw_mutton",
       "result": "kitchen:cooked_mutton"
+    },
+    {
+      "type": "shaped",
+      "pattern": [
+        "III",
+        "SCS",
+        "SSS"
+      ],
+      "key": {
+        "I": "petramond:iron_ingot",
+        "S": "petramond:stone",
+        "C": "petramond:chest"
+      },
+      "result": "kitchen:miller",
+      "count": 1
     }
   ]
 }

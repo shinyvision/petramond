@@ -259,6 +259,11 @@ pub(crate) struct PlayerTickEvents {
     pub(crate) respawned: bool,
     /// The door toggle's NEW open state, latched for the TOGGLER only.
     pub(crate) toggled_door: Option<bool>,
+    /// A use click was consumed but the initiator's own jab verdict
+    /// (`UseClick::jabbed`) was silent — echo the hand jab back to them
+    /// (`SelfEvents::used_unpredicted`). Observers are unaffected (they get
+    /// `used_item`/`interacted` via the shared action rows).
+    pub(crate) used_unpredicted: bool,
 }
 
 /// A block the sim destroyed this tick (player-mined or natural), with
@@ -593,10 +598,12 @@ impl Game {
     /// and `open_*` fields read exactly as they did pre-wire).
     fn assemble_game_events(&mut self, events: ClientEvents) -> GameEvents {
         let se = events.self_events;
-        // The hand one-shots are fed EXCLUSIVELY by the local prediction
-        // latches — the server never echoes self-initiated actions back
-        // so nothing plays twice.
-        let local_jab = std::mem::take(&mut self.local_hand_jab);
+        // The hand one-shots are fed by the local prediction latches — the
+        // server never echoes an action the client already animated. The one
+        // exception is `used_unpredicted`: a consumed click whose shipped
+        // `jabbed` verdict was silent (a mod-consumed use/interact the
+        // replica can't foresee), so folding it in can never play twice.
+        let local_jab = std::mem::take(&mut self.local_hand_jab) || se.used_unpredicted;
         let local_swing = std::mem::take(&mut self.local_hand_swing);
         let local_threw = std::mem::take(&mut self.local_hand_threw);
         let local_broke = std::mem::take(&mut self.local_broke_block);
@@ -724,17 +731,20 @@ impl Game {
                 // including a PLAUSIBLE placement the ghost convention keeps
                 // unpredicted (oriented model, replace-in-place, slab stack).
                 // A click the client knows is a no-op still ships (the server
-                // may know better — mods, state the replica can't see) but
-                // stays silent locally; a server-side surprise animates
-                // through the replicated `interacted`/`used_item` events.
-                self.local_hand_jab = !matches!(place, PlacePrediction::No)
+                // may know better — mods, state the replica can't see) and
+                // stays silent locally; the verdict rides the wire so a
+                // server-side surprise (a mod-consumed use/interact) echoes
+                // the jab back through `SelfEvents::used_unpredicted`.
+                let jabbed = !matches!(place, PlacePrediction::No)
                     || self.use_click_predicts_effect(input, use_mob);
+                self.local_hand_jab = jabbed;
                 self.frame_messages
                     .push(ClientToServer::Action(PlayerAction::UseClick {
                         mob: use_mob,
                         target,
                         request_id,
                         predicted: matches!(place, PlacePrediction::Predicted(_)),
+                        jabbed,
                     }));
             }
             if input.attack_clicked {
@@ -814,6 +824,26 @@ impl Game {
         else {
             return PlacePrediction::No;
         };
+        // A dual-natured item (both food and placeable — contextual placeable
+        // food, e.g. a plantable carrot) resolves place-vs-eat server-side
+        // through mod placement rules the replica cannot evaluate. Never
+        // ghost it: jab only, and a real placement arrives unpredicted.
+        if self
+            .self_view
+            .inventory
+            .selected()
+            .is_some_and(|s| s.item.food().is_some())
+        {
+            return PlacePrediction::Plausible;
+        }
+        // A MOD-registered block's placement may be governed by mod law the
+        // replica cannot evaluate (`block_place_pre` — a crop plants only on
+        // farmland). Never ghost one: jab only, and a real placement arrives
+        // unpredicted through the authoritative delta. Engine blocks keep
+        // full prediction; a mod cancelling THOSE accepts rollback jank.
+        if !block.is_engine() {
+            return PlacePrediction::Plausible;
+        }
         // A non-sneak click on an interactable block opens/uses it instead of
         // placing (the server's interact ladder) — no ghost, or the client
         // would render a phantom block the server never places.

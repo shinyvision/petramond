@@ -106,6 +106,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::MobKvSet { .. }
         | HostCall::MobKvDelete { .. }
         | HostCall::ResolveBlock { .. }
+        | HostCall::ResolveItem { .. }
         | HostCall::RegisterWorldgenFeature { .. }
         | HostCall::RegisterStageReplacement { .. }
         | HostCall::RegisterGenerator { .. }

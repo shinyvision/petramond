@@ -12,13 +12,6 @@ pub(super) struct OutlineVertices {
 pub(super) fn outline_vertices(shape: SelectionShape) -> OutlineVertices {
     match shape {
         SelectionShape::Box { min, max } => box_outline_vertices(min, max),
-        SelectionShape::Cross {
-            origin,
-            u_min,
-            u_max,
-            v_min,
-            v_max,
-        } => cross_outline_vertices(origin, u_min, u_max, v_min, v_max),
         SelectionShape::Torch { origin, transform } => torch_outline_vertices(origin, transform),
         SelectionShape::Boxes { boxes } => box_list_outline_vertices(boxes),
     }
@@ -326,43 +319,6 @@ fn torch_outline_vertices(origin: IVec3, transform: Mat4) -> OutlineVertices {
         push_line(&mut out, a, b);
     }
     out
-}
-
-fn cross_outline_vertices(
-    origin: IVec3,
-    u_min: f32,
-    u_max: f32,
-    v_min: f32,
-    v_max: f32,
-) -> OutlineVertices {
-    const PAD: f32 = 0.002;
-    let u0 = (u_min - PAD).clamp(0.0, 1.0);
-    let u1 = (u_max + PAD).clamp(0.0, 1.0);
-    let v0 = (v_min - PAD).clamp(0.0, 1.0);
-    let v1 = (v_max + PAD).clamp(0.0, 1.0);
-
-    let x = origin.x as f32;
-    let y = origin.y as f32;
-    let z = origin.z as f32;
-    let mut out = OutlineVertices {
-        vertices: [[0.0; 3]; MAX_OUTLINE_VERTICES],
-        count: 0,
-    };
-
-    let p0 = |u: f32, v: f32| [x + u, y + v, z + u];
-    push_rect(&mut out, p0(u0, v0), p0(u1, v0), p0(u1, v1), p0(u0, v1));
-
-    let p1 = |u: f32, v: f32| [x + u, y + v, z + 1.0 - u];
-    push_rect(&mut out, p1(u0, v0), p1(u1, v0), p1(u1, v1), p1(u0, v1));
-
-    out
-}
-
-fn push_rect(out: &mut OutlineVertices, p0: [f32; 3], p1: [f32; 3], p2: [f32; 3], p3: [f32; 3]) {
-    push_line(out, p0, p1);
-    push_line(out, p1, p2);
-    push_line(out, p2, p3);
-    push_line(out, p3, p0);
 }
 
 fn push_line(out: &mut OutlineVertices, a: [f32; 3], b: [f32; 3]) {

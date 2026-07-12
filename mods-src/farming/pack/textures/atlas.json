@@ -1,0 +1,24 @@
+{
+  "tiles": [
+    { "name": "farming:farmland_dry", "file": "farmland_dry.png" },
+    { "name": "farming:farmland_wet", "file": "farmland_wet.png" },
+    { "name": "farming:wild_wheat", "file": "wild_wheat.png" },
+    { "name": "farming:wild_carrots", "file": "wild_carrots.png" },
+    { "name": "farming:wheat_0", "file": "wheat_0.png" },
+    { "name": "farming:wheat_1", "file": "wheat_1.png" },
+    { "name": "farming:wheat_2", "file": "wheat_2.png" },
+    { "name": "farming:wheat_3", "file": "wheat_3.png" },
+    { "name": "farming:carrots_0", "file": "carrots_0.png" },
+    { "name": "farming:carrots_1", "file": "carrots_1.png" },
+    { "name": "farming:carrots_2", "file": "carrots_2.png" },
+    { "name": "farming:carrots_3", "file": "carrots_3.png" },
+    { "name": "farming:iron_hoe", "file": "iron_hoe.png" },
+    { "name": "farming:wheat_seeds", "file": "wheat_seeds.png" },
+    { "name": "farming:wheat", "file": "wheat_item.png" },
+    { "name": "farming:carrot", "file": "carrot_item.png" },
+    { "name": "farming:flour", "file": "flour.png" },
+    { "name": "farming:dough", "file": "dough.png" },
+    { "name": "farming:bread", "file": "bread.png" },
+    { "name": "farming:farmers_lunch", "file": "farmers_lunch.png" }
+  ]
+}

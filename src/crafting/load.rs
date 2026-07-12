@@ -12,7 +12,9 @@ use serde::Deserialize;
 
 use crate::item::{ItemStack, ItemTag, ItemType};
 
-use super::recipe::{FurnitureRecipe, Ingredient, ProcessingRecipe, Recipe, Recipes};
+use super::recipe::{
+    FurnitureRecipe, Ingredient, IngredientUse, ProcessingRecipe, Recipe, RecipeIngredient, Recipes,
+};
 
 /// Embedded fallback, so the game always has recipes even when run outside the
 /// project tree. The on-disk copy, when found, takes priority.
@@ -27,14 +29,14 @@ struct RawFile {
 #[serde(tag = "type", rename_all = "lowercase")]
 enum RawRecipe {
     Shapeless {
-        ingredients: Vec<String>,
+        ingredients: Vec<RawIngredient>,
         result: String,
         #[serde(default = "one")]
         count: u8,
     },
     Shaped {
         pattern: Vec<String>,
-        key: HashMap<String, String>,
+        key: HashMap<String, RawIngredient>,
         result: String,
         #[serde(default = "one")]
         count: u8,
@@ -62,6 +64,44 @@ enum RawRecipe {
         #[serde(default = "one")]
         count: u8,
     },
+}
+
+/// One grid-recipe ingredient occurrence: the plain string form is a consumed
+/// item/`#tag` (the default); the object form adds a use mode — `keep: true`
+/// retains the matched catalyst, `remainder` consumes it and returns the
+/// declared item (e.g. a water bucket's empty bucket). The mode sits on the
+/// OCCURRENCE because the same item may be consumed by one recipe and kept by
+/// another.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawIngredient {
+    Key(String),
+    Spec {
+        item: String,
+        #[serde(default)]
+        keep: bool,
+        #[serde(default)]
+        remainder: Option<String>,
+    },
+}
+
+impl RawIngredient {
+    /// The `#tag`/item key this occurrence matches (for disabled-namespace
+    /// filtering on RAW strings, before item resolution).
+    fn match_key(&self) -> &str {
+        match self {
+            RawIngredient::Key(s) => s,
+            RawIngredient::Spec { item, .. } => item,
+        }
+    }
+
+    /// The declared remainder item key, if any (also namespace-filtered).
+    fn remainder_key(&self) -> Option<&str> {
+        match self {
+            RawIngredient::Key(_) => None,
+            RawIngredient::Spec { remainder, .. } => remainder.as_deref(),
+        }
+    }
 }
 
 /// A converted recipe sorted into the grid list, the processing table, or the
@@ -164,17 +204,17 @@ fn disabled_namespace_in<'a>(
         let ns = crate::registry::namespace(key)?;
         disabled.get(ns).map(String::as_str)
     };
+    let hit_ing = |ing: &RawIngredient| -> Option<&'a str> {
+        hit(ing.match_key()).or_else(|| ing.remainder_key().and_then(hit))
+    };
     match raw {
         RawRecipe::Shapeless {
             ingredients,
             result,
             ..
-        } => ingredients
-            .iter()
-            .find_map(|s| hit(s))
-            .or_else(|| hit(result)),
+        } => ingredients.iter().find_map(hit_ing).or_else(|| hit(result)),
         RawRecipe::Shaped { key, result, .. } => {
-            key.values().find_map(|s| hit(s)).or_else(|| hit(result))
+            key.values().find_map(hit_ing).or_else(|| hit(result))
         }
         RawRecipe::Processing {
             class,
@@ -235,7 +275,7 @@ fn convert(raw: RawRecipe) -> Result<Converted, String> {
             let result = item_stack(&result, count)?;
             let ingredients = ingredients
                 .iter()
-                .map(|s| parse_ingredient(s))
+                .map(parse_recipe_ingredient)
                 .collect::<Result<Vec<_>, _>>()?;
             if ingredients.is_empty() {
                 return Err("shapeless recipe has no ingredients".into());
@@ -247,6 +287,7 @@ fn convert(raw: RawRecipe) -> Result<Converted, String> {
                     super::MAX_CELLS
                 ));
             }
+            require_a_consumer(ingredients.iter())?;
             Ok(Converted::Grid(Recipe::Shapeless {
                 ingredients,
                 result,
@@ -283,11 +324,12 @@ fn convert(raw: RawRecipe) -> Result<Converted, String> {
                             let sym = key
                                 .get(&ch.to_string())
                                 .ok_or_else(|| format!("pattern char '{ch}' missing from key"))?;
-                            cells.push(Some(parse_ingredient(sym)?));
+                            cells.push(Some(parse_recipe_ingredient(sym)?));
                         }
                     }
                 }
             }
+            require_a_consumer(cells.iter().flatten())?;
             Ok(Converted::Grid(Recipe::Shaped {
                 width,
                 height,
@@ -309,6 +351,44 @@ fn parse_ingredient(s: &str) -> Result<Ingredient, String> {
         item_from_key(s)
             .map(Ingredient::Item)
             .ok_or_else(|| format!("unknown item '{s}'"))
+    }
+}
+
+/// Parse one ingredient occurrence: what it matches plus its use mode.
+fn parse_recipe_ingredient(raw: &RawIngredient) -> Result<RecipeIngredient, String> {
+    let what = parse_ingredient(raw.match_key())?;
+    let mode = match raw {
+        RawIngredient::Key(_) => IngredientUse::Consume,
+        RawIngredient::Spec {
+            keep: true,
+            remainder: Some(_),
+            item,
+        } => {
+            return Err(format!(
+                "ingredient '{item}' declares both keep and remainder (pick one)"
+            ))
+        }
+        RawIngredient::Spec { keep: true, .. } => IngredientUse::Keep,
+        RawIngredient::Spec {
+            remainder: Some(rem),
+            ..
+        } => IngredientUse::Remainder(
+            item_from_key(rem).ok_or_else(|| format!("unknown remainder item '{rem}'"))?,
+        ),
+        RawIngredient::Spec { .. } => IngredientUse::Consume,
+    };
+    Ok(RecipeIngredient { what, mode })
+}
+
+/// A grid recipe must consume SOMETHING: an all-`keep` recipe would let one
+/// shift-click craft unbounded results from an unchanging grid.
+fn require_a_consumer<'a>(
+    mut occurrences: impl Iterator<Item = &'a RecipeIngredient>,
+) -> Result<(), String> {
+    if occurrences.any(|i| i.mode != IngredientUse::Keep) {
+        Ok(())
+    } else {
+        Err("recipe consumes no ingredient (every occurrence is 'keep')".into())
     }
 }
 
@@ -509,6 +589,46 @@ mod tests {
         for json in passes {
             assert_eq!(disabled_namespace_in(&raw(json), &disabled), None, "{json}");
         }
+    }
+
+    /// The ingredient object form: `keep: true` retains a catalyst,
+    /// `remainder` declares the returned item, plain strings stay consumed.
+    /// Degenerate rows (both modes, or a recipe that consumes nothing) are
+    /// load errors — an all-keep recipe would shift-craft unbounded results.
+    #[test]
+    fn ingredient_use_modes_parse_and_validate() {
+        use crate::crafting::IngredientUse;
+        let text = r##"{ "recipes": [
+            { "type": "shapeless",
+              "ingredients": ["petramond:coal", {"item": "#petramond:shovels", "keep": true}],
+              "result": "petramond:stick" },
+            { "type": "shaped", "pattern": ["B"],
+              "key": {"B": {"item": "petramond:water_bucket", "remainder": "petramond:wooden_bucket"}},
+              "result": "petramond:glass" },
+            { "type": "shapeless",
+              "ingredients": [{"item": "petramond:coal", "keep": true, "remainder": "petramond:stick"}],
+              "result": "petramond:glass" },
+            { "type": "shapeless",
+              "ingredients": [{"item": "petramond:coal", "keep": true}],
+              "result": "petramond:glass" },
+            { "type": "shapeless",
+              "ingredients": [{"item": "petramond:coal", "remainder": "mystery"}],
+              "result": "petramond:glass" }
+        ] }"##;
+        let (grid, _, _) = parse(text);
+        assert_eq!(grid.len(), 2, "the three degenerate rows are skipped");
+        let Recipe::Shapeless { ingredients, .. } = &grid[0] else {
+            panic!("first recipe is shapeless");
+        };
+        assert_eq!(ingredients[0].mode, IngredientUse::Consume);
+        assert_eq!(ingredients[1].mode, IngredientUse::Keep);
+        let Recipe::Shaped { cells, .. } = &grid[1] else {
+            panic!("second recipe is shaped");
+        };
+        assert_eq!(
+            cells[0].as_ref().map(|i| i.mode),
+            Some(IngredientUse::Remainder(ItemType::WoodenBucket))
+        );
     }
 
     #[test]

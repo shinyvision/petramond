@@ -1,0 +1,10 @@
+{
+  "name": "Farming",
+  "id": "farming",
+  "version": "0.1.0",
+  "description": "Discover wild wheat and carrots while exploring, then turn a patch beside your home into a productive irrigated field: till with the iron hoe, route water, grow four-stage crops, grind flour, throw it in water for dough, and bake bread in the kitchen oven.",
+  "summary": "Adds farming to your world.",
+  "icon": "icon.png",
+  "wasm": "mod.wasm",
+  "dependencies": ["kitchen"]
+}

@@ -1647,6 +1647,14 @@ impl World {
         self.bump_terrain_revision();
     }
 
+    /// Arm the random-tick / streaming anchor for a test world. Random ticks
+    /// only run around a load target, which production code sets from the
+    /// per-frame streaming path a direct-stepping test never exercises.
+    #[cfg(test)]
+    pub(crate) fn set_load_target_for_test(&mut self, cx: i32, cy: i32, cz: i32, render_dist: i32) {
+        self.last_load_target = Some(LoadTarget::new(cx, cy, cz, render_dist));
+    }
+
     /// Install an entire column of empty (all-air) sections for a test, so
     /// world-coordinate edits anywhere in the vertical range land in a loaded section.
     /// Unlike [`insert_chunk_for_test`](Self::insert_chunk_for_test) with an empty

@@ -1270,7 +1270,7 @@
         "roll": 0.5
       },
       "sprite": "wooden_shovel",
-      "tags": [],
+      "tags": ["shovels"],
       "tool": {
         "kind": "shovel",
         "tier": 1
@@ -1287,7 +1287,7 @@
         "roll": 0.5
       },
       "sprite": "stone_shovel",
-      "tags": [],
+      "tags": ["shovels"],
       "tool": {
         "kind": "shovel",
         "tier": 2
@@ -1304,7 +1304,7 @@
         "roll": 0.5
       },
       "sprite": "iron_shovel",
-      "tags": [],
+      "tags": ["shovels"],
       "tool": {
         "kind": "shovel",
         "tier": 3
@@ -1321,7 +1321,7 @@
         "roll": 0.5
       },
       "sprite": "diamond_shovel",
-      "tags": [],
+      "tags": ["shovels"],
       "tool": {
         "kind": "shovel",
         "tier": 4

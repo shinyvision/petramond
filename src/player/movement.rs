@@ -137,7 +137,7 @@ impl Player {
         // Position-aware so a multi-cell bbmodel block collides per its own cell shape.
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
         let water = |x: i32, y: i32, z: i32| world.water_cell_at(x, y, z);
-        let water_flow = |x: i32, y: i32, z: i32| world.water_flow_dir_at(x, y, z);
+        let water_flow = |p: Vec3| world.water_flow_at_point(p);
         self.update_core_with_current(dt, &boxes, &water, &water_flow, input);
     }
 
@@ -149,7 +149,7 @@ impl Player {
         F: Fn(i32, i32, i32) -> bool,
         W: Fn(i32, i32, i32) -> bool,
     {
-        let still_water = |_: i32, _: i32, _: i32| Vec3::ZERO;
+        let still_water = |_: Vec3| Vec3::ZERO;
         // Adapt the test's bool solidity to the general collision-box predicate: a
         // solid cell is one full cube, an empty cell no box.
         let boxes = |x: i32, y: i32, z: i32| {
@@ -173,7 +173,7 @@ impl Player {
     ) where
         F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
         W: Fn(i32, i32, i32) -> bool,
-        C: Fn(i32, i32, i32) -> Vec3,
+        C: Fn(Vec3) -> Vec3,
     {
         if self.is_spectator() {
             self.update_spectator(dt, input);
@@ -192,14 +192,19 @@ impl Player {
         let water_x = self.pos.x.floor() as i32;
         let water_z = self.pos.z.floor() as i32;
         let swim_y = (self.pos.y + WATER_PROBE_Y).floor() as i32;
-        let feet_y = (self.pos.y + WADING_CURRENT_PROBE_Y).floor() as i32;
         let in_water = water(water_x, swim_y, water_z);
-        let flow_dir = if in_water {
-            water_flow(water_x, swim_y, water_z)
-        } else if water(water_x, feet_y, water_z) {
-            water_flow(water_x, feet_y, water_z)
-        } else {
-            Vec3::ZERO
+        // The current samples POINTS, surface-height aware (see
+        // `World::water_flow_at_point`): the swim probe when it's submerged,
+        // else the feet — so wading in a shallow flowing film still drifts,
+        // but feet standing on a lowered block beside a channel, above the
+        // fluid's real surface, catch nothing.
+        let flow_dir = {
+            let f = water_flow(self.pos + Vec3::new(0.0, WATER_PROBE_Y, 0.0));
+            if f.length_squared() > 0.0 {
+                f
+            } else {
+                water_flow(self.pos + Vec3::new(0.0, WADING_CURRENT_PROBE_Y, 0.0))
+            }
         };
 
         // --- Vertical. In water: ease toward a rise (holding jump) or a gentle
@@ -248,6 +253,21 @@ impl Player {
                 GRAVITY
             };
             self.vel.y = (self.vel.y - g * dt).max(-TERMINAL);
+        }
+        // Heal shallow foot penetration first — a block that GREW under the
+        // standing feet (farmland pressed back to full-cube dirt, a machine
+        // variant swap) would otherwise be skipped by the sweep and the
+        // player tunnels through the floor (see `collision::depenetrate_up`).
+        {
+            let mn = self.aabb_min();
+            let mx = self.aabb_max();
+            let lift = crate::collision::depenetrate_up(
+                [mn.x, mn.y, mn.z],
+                [mx.x, mx.y, mx.z],
+                crate::collision::STEP_HEIGHT,
+                boxes,
+            );
+            self.pos.y += lift;
         }
         let dy = self.vel.y * dt;
         let blocked_y = self.sweep_boxes(Axis::Y, dy, boxes);

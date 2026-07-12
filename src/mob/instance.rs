@@ -647,7 +647,7 @@ impl Instance {
         } else {
             (Vec3::ZERO, false)
         };
-        let water_flow = |c: IVec3| world.water_flow_dir_at(c.x, c.y, c.z);
+        let water_flow = |p: Vec3| world.water_flow_at_point(p);
         let was_on_ground = self.on_ground;
         self.integrate_with_flow(
             dt,
@@ -703,7 +703,7 @@ impl Instance {
         boxes: &impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
         solid: &impl Fn(IVec3) -> bool,
         water: &impl Fn(IVec3) -> bool,
-        water_flow: &impl Fn(IVec3) -> Vec3,
+        water_flow: &impl Fn(Vec3) -> Vec3,
     ) {
         if jump && self.on_ground {
             self.vel.y = d.jump_speed;
@@ -747,7 +747,7 @@ impl Instance {
         // full drift in one tick (max step = the target speed) rather than a small accel
         // step that would never accumulate. It still never slows a mob already swimming
         // downstream faster than the current.
-        let flow = flow_at_body(self.pos, d.size.height, water, water_flow);
+        let flow = flow_at_body(self.pos, d.size.height, water_flow);
         self.vel = add_flow_push(self.vel, flow, WATER_CURRENT_SPEED, WATER_CURRENT_SPEED);
 
         // Vertical. In water the mob always swims toward the surface (no jump key, so
@@ -951,23 +951,16 @@ fn route_steering_supported(on_ground: bool, in_water: bool, vertical_velocity: 
 
 /// The water-flow direction acting on a mob whose feet are at `pos`: the current at the
 /// swim probe (a fraction up the body, where the mob is submerged enough to swim), else
-/// the current at the feet cell (so a mob wading in a shallow flowing film is still
-/// nudged), else zero when no water touches it.
-fn flow_at_body(
-    pos: Vec3,
-    height: f32,
-    water: &impl Fn(IVec3) -> bool,
-    water_flow: &impl Fn(IVec3) -> Vec3,
-) -> Vec3 {
-    let swim = voxel_at(pos + Vec3::new(0.0, height * SWIM_PROBE_FRAC, 0.0));
-    if water(swim) {
-        return water_flow(swim);
+/// the current at the feet (so a mob wading in a shallow flowing film is still nudged),
+/// else zero when no water touches it. Probes are POINTS, surface-height aware (see
+/// `World::water_flow_at_point`) — feet standing on a lowered block beside a channel,
+/// above the fluid's real surface, catch nothing.
+fn flow_at_body(pos: Vec3, height: f32, water_flow: &impl Fn(Vec3) -> Vec3) -> Vec3 {
+    let f = water_flow(pos + Vec3::new(0.0, height * SWIM_PROBE_FRAC, 0.0));
+    if f.length_squared() > 0.0 {
+        return f;
     }
-    let feet = voxel_at(pos);
-    if water(feet) {
-        return water_flow(feet);
-    }
-    Vec3::ZERO
+    water_flow(pos)
 }
 
 /// Add a capped push along the water-flow direction `dir` without slowing a body that
@@ -1091,7 +1084,7 @@ mod tests {
         let boxes = |_x: i32, y: i32, _z: i32| if y == 0 { chest } else { &[][..] };
         let solid = |c: IVec3| c.y == 0; // nav sees the chest cell as a unit obstacle
         let dry = |_: IVec3| false;
-        let still = |_: IVec3| Vec3::ZERO;
+        let still = |_: Vec3| Vec3::ZERO;
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
         for _ in 0..600 {
             owl.integrate_with_flow(
@@ -1132,7 +1125,7 @@ mod tests {
         };
         let solid = |c: IVec3| c.y == 0 || (c.y == 1 && c.x >= 1); // nav obstacle
         let dry = |_: IVec3| false;
-        let still = |_: IVec3| Vec3::ZERO;
+        let still = |_: Vec3| Vec3::ZERO;
         let wish = Vec3::new(1.0, 0.0, 0.0);
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
         for _ in 0..180 {
@@ -1164,7 +1157,7 @@ mod tests {
         // velocity and the jump stalls at the face.
         let solid = |c: IVec3| c.y < 1 || (c.x >= 1 && c.y < 2);
         let dry = |_: IVec3| false;
-        let still = |_: IVec3| Vec3::ZERO;
+        let still = |_: Vec3| Vec3::ZERO;
         let wish = Vec3::new(1.0, 0.0, 0.0);
         let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
 
@@ -1257,7 +1250,7 @@ mod tests {
     fn airborne_sheep_carries_velocity_without_walk_steering() {
         let empty_boxes = |_x: i32, _y: i32, _z: i32| -> &'static [crate::block::Aabb] { &[] };
         let dry = |_: IVec3| false;
-        let still = |_: IVec3| Vec3::ZERO;
+        let still = |_: Vec3| Vec3::ZERO;
         let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
         sheep.vel.x = 1.0;
 
@@ -1742,7 +1735,7 @@ mod tests {
         // downstream — like the player and dropped items do.
         let solid = |c: IVec3| c.y < 0;
         let water = |c: IVec3| (0..=5).contains(&c.y);
-        let flow = |_: IVec3| Vec3::new(1.0, 0.0, 0.0);
+        let flow = |_: Vec3| Vec3::new(1.0, 0.0, 0.0);
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
         let x0 = owl.pos.x;
         for _ in 0..60 {
@@ -1766,7 +1759,7 @@ mod tests {
 
         // Still water (no current) leaves an idle mob where it is — proving it's the flow
         // doing the carrying, not stray drift.
-        let still = |_: IVec3| Vec3::ZERO;
+        let still = |_: Vec3| Vec3::ZERO;
         let mut calm = Instance::new(Mob::Owl, Vec3::new(0.5, 1.0, 0.5), 0.0, 1);
         for _ in 0..60 {
             calm.integrate_with_flow(

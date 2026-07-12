@@ -6,7 +6,9 @@
 //! `entity` module never draws — `App` reads `pos`/`spin`/`stack` directly.
 
 use crate::item::ItemStack;
-use crate::mathh::{voxel_at, IVec3, Vec3};
+#[cfg(test)]
+use crate::mathh::IVec3;
+use crate::mathh::Vec3;
 use crate::world::World;
 
 use super::{hash01, hash_signed};
@@ -172,7 +174,7 @@ impl DroppedItem {
         // The shared, model-aware box source — the item collides with a bbmodel block's
         // real legs/top, exactly like the player/mob bodies (all via `collision_boxes_at`).
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
-        let flow_at = |p: IVec3| world.water_flow_dir_at(p.x, p.y, p.z);
+        let flow_at = |p: Vec3| world.water_flow_at_point(p);
         self.integrate_with_flow(dt, magnet_target, &boxes, &flow_at);
     }
 
@@ -193,7 +195,7 @@ impl DroppedItem {
                 &[][..]
             }
         };
-        let still_water = |_: IVec3| Vec3::ZERO;
+        let still_water = |_: Vec3| Vec3::ZERO;
         self.integrate_with_flow(dt, magnet_target, &boxes, &still_water);
     }
 
@@ -202,7 +204,7 @@ impl DroppedItem {
         dt: f32,
         magnet_target: Option<Vec3>,
         boxes: &impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
-        flow_at: &impl Fn(IVec3) -> Vec3,
+        flow_at: &impl Fn(Vec3) -> Vec3,
     ) {
         // Snapshot the pre-tick pose so the renderer can interpolate this tick's motion
         // (physics runs on the fixed game tick; frames in between blend prev → current).
@@ -238,7 +240,7 @@ impl DroppedItem {
 
         self.vel = add_flow_push(
             self.vel,
-            flow_at(voxel_at(self.pos)),
+            flow_at(self.pos),
             WATER_CURRENT_SPEED,
             WATER_CURRENT_ACCEL * dt,
         );
@@ -387,8 +389,8 @@ mod tests {
     fn flowing_water_pushes_item_entities_along_current() {
         let mut d = DroppedItem::new(Vec3::new(0.5, 1.5, 0.5), stack(), 15);
         d.vel = Vec3::ZERO;
-        let flow = |p: IVec3| {
-            if p.y == 1 {
+        let flow = |p: Vec3| {
+            if p.y.floor() as i32 == 1 {
                 Vec3::Z
             } else {
                 Vec3::ZERO
@@ -436,7 +438,7 @@ mod tests {
             "the chest box must actually be inset (top {chest_top})"
         );
         let boxes = |_x: i32, y: i32, _z: i32| if y == 0 { chest } else { &[][..] };
-        let still = |_: IVec3| Vec3::ZERO;
+        let still = |_: Vec3| Vec3::ZERO;
         let mut d = DroppedItem::new(Vec3::new(0.5, 3.0, 0.5), stack(), 1);
         d.vel = Vec3::ZERO;
         for _ in 0..300 {

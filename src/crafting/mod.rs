@@ -4,9 +4,11 @@ mod recipe;
 #[cfg(test)]
 pub use load::load_recipes;
 pub use load::load_recipes_for;
-pub use recipe::Recipes;
 #[cfg(test)]
-pub use recipe::{FurnitureRecipe, ProcessingRecipe, SMELTING_CLASS};
+pub use recipe::{
+    FurnitureRecipe, Ingredient, ProcessingRecipe, Recipe, RecipeIngredient, SMELTING_CLASS,
+};
+pub use recipe::{GridMatch, IngredientUse, Recipes};
 
 use crate::item::ItemStack;
 pub const MAX_GRID: usize = 3;
@@ -83,33 +85,72 @@ impl CraftGrid {
     pub fn recompute(&mut self, recipes: &Recipes) {
         self.result = recipes.find(self.cells(), self.cols);
     }
-    pub fn consume_one(&mut self) {
-        for cell in self.cells[..self.cols * self.cols].iter_mut() {
-            if let Some(stack) = cell {
-                stack.count -= 1;
-                if stack.count == 0 {
-                    *cell = None;
+    /// The matched recipe's transaction plan for the CURRENT grid, or `None`
+    /// when nothing matches — recomputed at consumption time so the applied
+    /// plan can never diverge from the grid it applies to.
+    pub fn current_match(&self, recipes: &Recipes) -> Option<GridMatch> {
+        recipes.find_match(self.cells(), self.cols)
+    }
+    /// Apply one matched craft as an atomic transaction: consume, keep, or
+    /// replace-with-remainder per matched cell — never a blind decrement of
+    /// every occupied cell. A remainder returns to its own cell when the cell
+    /// empties (or stacks with a matching occupant); anything else goes to
+    /// `overflow`, whose owner owes it the inventory-then-drop path — a
+    /// remainder is never deleted.
+    pub fn apply_craft(&mut self, m: &GridMatch, mut overflow: impl FnMut(ItemStack)) {
+        for (cell, mode) in self.cells[..self.cols * self.cols].iter_mut().zip(&m.uses) {
+            let (Some(stack), Some(mode)) = (cell.as_mut(), mode) else {
+                continue;
+            };
+            match mode {
+                IngredientUse::Keep => {}
+                IngredientUse::Consume => {
+                    stack.count -= 1;
+                    if stack.count == 0 {
+                        *cell = None;
+                    }
+                }
+                IngredientUse::Remainder(rem) => {
+                    stack.count -= 1;
+                    let rem = ItemStack::new(*rem, 1);
+                    if stack.count == 0 {
+                        *cell = Some(rem);
+                    } else if stack.can_stack_with(&rem) && stack.space_left() >= 1 {
+                        stack.count += 1;
+                    } else {
+                        overflow(rem);
+                    }
                 }
             }
         }
     }
-    pub fn take_result(&mut self, recipes: &Recipes, cursor: &mut Option<ItemStack>) {
-        let Some(result) = self.result else {
+    /// Take one craft from the result slot onto `cursor` (stacking onto a
+    /// matching held stack with room), applying the matched recipe's
+    /// transaction. No-op when nothing matches or the cursor can't accept the
+    /// whole result. Remainders that can't return to their cell go to
+    /// `overflow`.
+    pub fn take_result(
+        &mut self,
+        recipes: &Recipes,
+        cursor: &mut Option<ItemStack>,
+        overflow: impl FnMut(ItemStack),
+    ) {
+        let Some(m) = self.current_match(recipes) else {
             return;
         };
         let placed = match cursor {
             None => {
-                *cursor = Some(result);
+                *cursor = Some(m.result);
                 true
             }
-            Some(cur) if cur.can_stack_with(&result) && cur.space_left() >= result.count => {
-                cur.count += result.count;
+            Some(cur) if cur.can_stack_with(&m.result) && cur.space_left() >= m.result.count => {
+                cur.count += m.result.count;
                 true
             }
             _ => false,
         };
         if placed {
-            self.consume_one();
+            self.apply_craft(&m, overflow);
             self.recompute(recipes);
         }
     }
@@ -146,7 +187,8 @@ mod tests {
         assert_eq!(grid.result().map(|s| s.item), Some(ItemType::CraftingTable));
 
         // Consuming one craft empties each occupied cell by one (all were 1).
-        grid.consume_one();
+        let m = grid.current_match(&recipes).expect("table match");
+        grid.apply_craft(&m, |s| panic!("no remainder expected, got {s:?}"));
         assert!(grid.cells().iter().all(Option::is_none));
         grid.recompute(&recipes);
         assert!(grid.result().is_none());

@@ -335,7 +335,21 @@ impl BlockTag {
 #[serde(rename_all = "snake_case")]
 pub enum RenderShape {
     Cube,
+    /// A cube whose VISIBLE box stops `16 - n` texels short of the cell top
+    /// (`{"lowered_cube": 15}` = 1 texel shorter — farmland, future dirt
+    /// paths). Meshes through the ordinary cube face loop with the top
+    /// lowered; rows must NOT carry the `opaque` flag (the sunken top means
+    /// neighbours keep their faces — see the mesher notes) but the block
+    /// still blocks light like a full cube ([`Block::light_shape`]). Offers
+    /// no complete torch-support face; collision follows the row's boxes.
+    LoweredCube(u8),
     Cross,
+    /// A planted-crop lattice: four axis-aligned billboard quads, one pair
+    /// perpendicular to each horizontal axis, inset [`CROP_PLANE_INSET`] from
+    /// the cell faces and spanning edge to edge along their long axis (a `#`
+    /// seen from above). Same cutout/flat-lit treatment as [`Cross`]
+    /// (see [`RenderShape::Cross`]); reads as a row crop instead of a tuft.
+    Crop,
     Torch,
     /// A chunk-meshed directional stair, with the low side facing the player when
     /// placed. Its per-cell facing lives in the section's stair-facing map; collision,
@@ -360,6 +374,17 @@ pub enum RenderShape {
     /// (see [`crate::door`]). The mesher skips a door cell, exactly like a chest.
     Door,
 }
+
+/// How far a [`RenderShape::Crop`] plane sits in from the cell faces it is
+/// perpendicular to (2/16 of a block). Shared by the mesher, the targeting
+/// ray, and the selection outline so they always trace the same geometry.
+pub const CROP_PLANE_INSET: f32 = 2.0 / 16.0;
+
+/// How far a [`RenderShape::Crop`] plane hangs BELOW its cell (1/16): the
+/// art's bottom row sits on the sunken top of the farmland underneath
+/// ([`RenderShape::LoweredCube`]) instead of floating a texel above it. On a
+/// full block (a wild crop on grass) the overhang is buried and invisible.
+pub const CROP_PLANE_DROP: f32 = 1.0 / 16.0;
 
 /// How a block participates in light propagation. This is the render/collision-neutral
 /// shape category that `world::light` consumes; per-cell state, such as stair facing,
@@ -406,6 +431,9 @@ impl Block {
         match self.def().shape {
             RenderShape::Stair => BlockLightShape::Stair,
             RenderShape::Slab => BlockLightShape::Slab,
+            // A hair shorter than a block visually, but a full light blocker
+            // — the deliberate simplification (no partial-cell light shape).
+            RenderShape::LoweredCube(_) => BlockLightShape::OpaqueCube,
             _ => BlockLightShape::Open,
         }
     }
@@ -493,6 +521,15 @@ impl Block {
     #[inline]
     pub fn from_id(id: u8) -> Block {
         data::from_id(id)
+    }
+
+    /// Whether this is a compiled-in engine block, as opposed to one a mod
+    /// pack registered at load time. Mod-registered blocks may carry mod-side
+    /// rules (placement gates, hooks) the engine — and a client replica —
+    /// cannot evaluate.
+    #[inline]
+    pub fn is_engine(self) -> bool {
+        (self.0 as usize) < ENGINE_BLOCK_NAMES.len()
     }
 
     #[inline]

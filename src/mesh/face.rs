@@ -170,6 +170,50 @@ pub(super) fn cross_quads(x: f32, y: f32, z: f32) -> [[[f32; 3]; 4]; 2] {
     ]
 }
 
+/// The four axis-aligned billboard quads of a planted-crop lattice
+/// ([`RenderShape::Crop`](crate::block::RenderShape::Crop)): one pair
+/// perpendicular to each horizontal axis, inset
+/// [`CROP_PLANE_INSET`](crate::block::CROP_PLANE_INSET) from the cell faces
+/// and running edge to edge along their long axis — a `#` from above. Corner
+/// order matches [`cross_quads`] (bottom-left, bottom-right, top-right,
+/// top-left) so the tile maps upright; the mesher draws each plane in both
+/// windings.
+pub(super) fn crop_quads(x: f32, y: f32, z: f32) -> [[[f32; 3]; 4]; 4] {
+    let a = crate::block::CROP_PLANE_INSET;
+    let b = 1.0 - a;
+    // Dropped 1/16 so the art roots on sunken farmland (see CROP_PLANE_DROP).
+    let y0 = y - crate::block::CROP_PLANE_DROP;
+    let y1 = y0 + 1.0;
+    [
+        // The pair perpendicular to X, spanning the full Z edge.
+        [
+            [x + a, y0, z],
+            [x + a, y0, z + 1.0],
+            [x + a, y1, z + 1.0],
+            [x + a, y1, z],
+        ],
+        [
+            [x + b, y0, z],
+            [x + b, y0, z + 1.0],
+            [x + b, y1, z + 1.0],
+            [x + b, y1, z],
+        ],
+        // The pair perpendicular to Z, spanning the full X edge.
+        [
+            [x, y0, z + a],
+            [x + 1.0, y0, z + a],
+            [x + 1.0, y1, z + a],
+            [x, y1, z + a],
+        ],
+        [
+            [x, y0, z + b],
+            [x + 1.0, y0, z + b],
+            [x + 1.0, y1, z + b],
+            [x, y1, z + b],
+        ],
+    ]
+}
+
 pub(super) const FACES: [Face; 6] = [
     Face::PosX,
     Face::NegX,

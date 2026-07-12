@@ -1,0 +1,151 @@
+{
+  "items": [
+    {
+      "item": "farming:iron_hoe",
+      "key": "farming:iron_hoe",
+      "name": "Iron Hoe",
+      "max_stack_size": 1,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -1.5,
+        "roll": 0.5
+      },
+      "sprite": "farming:iron_hoe",
+      "tags": []
+    },
+    {
+      "item": "farming:wheat_seeds",
+      "key": "farming:wheat_seeds",
+      "name": "Wheat Seeds",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "farming:wheat_seeds",
+      "tags": [],
+      "block": "farming:wheat_0"
+    },
+    {
+      "item": "farming:wheat",
+      "key": "farming:wheat",
+      "name": "Wheat",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "farming:wheat",
+      "tags": [
+        "kitchen:millable"
+      ]
+    },
+    {
+      "item": "farming:carrot",
+      "key": "farming:carrot",
+      "name": "Carrot",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "farming:carrot",
+      "tags": [],
+      "block": "farming:carrots_0",
+      "food": {
+        "eat_ticks": 20,
+        "effects": [
+          {
+            "effect": "petramond:regeneration",
+            "ticks": 200
+          }
+        ]
+      }
+    },
+    {
+      "item": "farming:flour",
+      "key": "farming:flour",
+      "name": "Flour",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "farming:flour",
+      "tags": [],
+      "dropped_reaction": {
+        "environment": "water",
+        "result": "farming:dough",
+        "burst": "farming:flour_poof",
+        "sound": "petramond:water_splash_small"
+      }
+    },
+    {
+      "item": "farming:dough",
+      "key": "farming:dough",
+      "name": "Dough",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "farming:dough",
+      "tags": [
+        "kitchen:cookable"
+      ]
+    },
+    {
+      "item": "farming:bread",
+      "key": "farming:bread",
+      "name": "Bread",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "farming:bread",
+      "tags": [],
+      "food": {
+        "eat_ticks": 30,
+        "effects": [
+          {
+            "effect": "petramond:regeneration",
+            "ticks": 600
+          }
+        ]
+      }
+    },
+    {
+      "item": "farming:farmers_lunch",
+      "key": "farming:farmers_lunch",
+      "name": "Farmer's Lunch",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "farming:farmers_lunch",
+      "tags": [],
+      "food": {
+        "eat_ticks": 40,
+        "effects": [
+          {
+            "effect": "petramond:regeneration",
+            "ticks": 600
+          },
+          {
+            "effect": "farming:well_fed",
+            "ticks": 1200
+          }
+        ]
+      }
+    }
+  ]
+}

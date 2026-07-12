@@ -1,0 +1,12 @@
+[package]
+name = "farming"
+version = "0.1.0"
+edition = "2021"
+description = "Farming content pack: wild wheat and carrot foraging, iron-hoe cultivation on irrigated farmland, four-stage crop growth, flour/dough processing through world water, and kitchen-oven baking."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mod-sdk = { path = "../../mod-sdk" }

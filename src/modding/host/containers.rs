@@ -114,6 +114,12 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 tags: item.tags().iter().map(|t| t.name().to_owned()).collect(),
             }))
         }
+        // Registry-only like ResolveBlock: legal on any instance, any time —
+        // how a mod matches the numeric ids in event payloads (item_use_pre)
+        // against its own names.
+        HostCall::ResolveItem { key } => {
+            HostRet::Item(crate::registry::names().items.id(&key).map(mod_api::ItemId))
+        }
         HostCall::RecipeResult { class, key } => {
             let Some(recipes) = crate::modding::active_recipes() else {
                 log::warn!("[mod {mod_id}] RecipeResult: no recipe catalog installed");
@@ -142,6 +148,31 @@ mod tests {
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
+
+    /// ResolveItem is registry-only: it answers OUTSIDE any published SimCtx
+    /// (the ResolveBlock contract), returns the session id for a known name,
+    /// and `None` — never an error — for an unknown one.
+    #[test]
+    fn resolve_item_answers_without_a_sim_scope() {
+        let mut store = ModStoreData::new("somemod", 1);
+        let got = handle_host_call(
+            &mut store,
+            HostCall::ResolveItem {
+                key: "petramond:stick".into(),
+            },
+        );
+        let HostRet::Item(Some(id)) = got else {
+            panic!("expected a resolved id for petramond:stick, got {got:?}");
+        };
+        assert_eq!(id.0, crate::item::ItemType::Stick.id());
+        let unknown = handle_host_call(
+            &mut store,
+            HostCall::ResolveItem {
+                key: "somemod:not_a_thing".into(),
+            },
+        );
+        assert_eq!(unknown, HostRet::Item(None));
+    }
 
     /// Container host calls canonicalize any footprint cell of a multi-cell
     /// model block to the group ANCHOR: a write through a non-anchor cell

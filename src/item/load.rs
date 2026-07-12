@@ -62,6 +62,28 @@ pub(super) struct RawItemDef {
     /// Edible-item data (hold right mouse to eat); absent = not food.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub food: Option<RawFood>,
+    /// Dropped-entity environmental reaction (see
+    /// [`DroppedReaction`](super::DroppedReaction)); absent = inert.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dropped_reaction: Option<RawDroppedReaction>,
+}
+
+/// A dropped-reaction declaration in `items.json`: the environment predicate,
+/// what the stack becomes, and the optional per-entity presentation.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawDroppedReaction {
+    /// Environment name (snake_case — see
+    /// [`ReactionEnvironment`](super::ReactionEnvironment)).
+    pub environment: super::ReactionEnvironment,
+    /// Registry name of the item the whole stack becomes.
+    pub result: String,
+    /// A one-shot burst bundle key (`particle_emitters.json`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub burst: Option<String>,
+    /// A `sounds.json` key played once per transformed entity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<String>,
 }
 
 /// A food declaration in `items.json`: how long the eat takes and which
@@ -255,6 +277,42 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
         }
         None => None,
     };
+    let dropped_reaction = match &r.dropped_reaction {
+        Some(dr) => {
+            let result =
+                names.items.id(&dr.result).map(ItemType).ok_or_else(|| {
+                    format!("unknown dropped_reaction result item '{}'", dr.result)
+                })?;
+            let burst = match &dr.burst {
+                Some(key) => {
+                    let bundle = crate::particle_emitters::by_key(key)
+                        .ok_or_else(|| format!("unknown dropped_reaction burst bundle '{key}'"))?;
+                    if bundle.burst.is_none() {
+                        return Err(format!(
+                            "dropped_reaction burst '{key}' is a looping bundle (one-shot \
+                             'burst' bundles only)"
+                        ));
+                    }
+                    Some(bundle.id)
+                }
+                None => None,
+            };
+            let sound = match &dr.sound {
+                Some(key) => Some(
+                    crate::audio::sound_by_name(key)
+                        .ok_or_else(|| format!("unknown dropped_reaction sound '{key}'"))?,
+                ),
+                None => None,
+            };
+            Some(super::DroppedReaction {
+                environment: dr.environment,
+                result,
+                burst,
+                sound,
+            })
+        }
+        None => None,
+    };
     Ok(ItemDef {
         item,
         key: Box::leak(r.key.into_boxed_str()),
@@ -272,6 +330,7 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
         fuel_burn_ticks: r.fuel_burn_ticks,
         tool,
         food,
+        dropped_reaction,
     })
 }
 

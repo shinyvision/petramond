@@ -5,7 +5,11 @@
       "key": "kitchen:oven",
       "name": "Kitchen Oven",
       "max_stack_size": 64,
-      "held_pose": { "pitch": 0, "yaw": 1.8, "roll": 0 },
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
       "tags": [],
       "block": "kitchen:oven"
     },
@@ -14,24 +18,50 @@
       "key": "kitchen:raw_mutton",
       "name": "Raw Mutton",
       "max_stack_size": 64,
-      "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
       "sprite": "kitchen:raw_mutton",
-      "tags": ["kitchen:cookable"]
+      "tags": [
+        "kitchen:cookable"
+      ]
     },
     {
       "item": "kitchen:cooked_mutton",
       "key": "kitchen:cooked_mutton",
       "name": "Cooked Mutton",
       "max_stack_size": 64,
-      "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
       "sprite": "kitchen:cooked_mutton",
       "tags": [],
       "food": {
         "eat_ticks": 20,
         "effects": [
-          { "effect": "petramond:regeneration", "ticks": 1200 }
+          {
+            "effect": "petramond:regeneration",
+            "ticks": 1200
+          }
         ]
       }
+    },
+    {
+      "item": "kitchen:miller",
+      "key": "kitchen:miller",
+      "name": "Miller",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "kitchen:miller"
     }
   ]
 }

@@ -602,8 +602,9 @@ fn unpredicted_placement_keeps_the_initiators_world_event() {
 }
 
 /// Player block placement and (mined) breaks broadcast position-carrying
-/// `WorldEventMsg`s. The initiator's own batch omits their predicted
-/// place/break presentation (echo rule); a second session still receives them.
+/// `WorldEventMsg`s. The initiator's own batch omits their PREDICTED place
+/// presentation (echo rule), while a hold-path break they never presented
+/// still reaches them; a second session receives both either way.
 #[test]
 fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     use crate::block::Block;
@@ -666,8 +667,12 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
         observer_batch.events
     );
 
-    // Break: hold-path finish — initiator NEVER receives BlockBroken (own
-    // breaks are stripped; observers still hear them).
+    // Break: a PURE hold-path finish — no BreakFinished was ever sent, so the
+    // client never presented (its timer reset on a sub-tick target flicker,
+    // or the break delta cancelled its mining). The initiator MUST receive
+    // BlockBroken; stripping it here was the silent-break bug. A predicted
+    // finish merely in flight presents once regardless: the client's own
+    // suppress belt (`predicted_presentation_cells`) drops the wire copy.
     game.server.sessions[0].look = Some(super::common::hit(placed_at, IVec3::Y));
     game.server.sessions[0].intent_gameplay = true;
     game.server.sessions[0].intent_break_held = true;
@@ -719,12 +724,62 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
         }
     }
     assert!(
-        !initiator_heard,
-        "initiator must never re-hear their own BlockBroken"
+        initiator_heard,
+        "a never-presented hold-path break must reach the initiator"
     );
     assert!(
         observer_heard,
         "observers still receive the hold-path break"
+    );
+}
+
+/// The client-side suppress belt (`predicted_presentation_cells`): with the
+/// hold-path no longer stripping on assumption (a never-presented break must
+/// flow — the test above), this belt is what keeps a predicted finish whose
+/// request is still IN FLIGHT from presenting twice. A wire `BlockBroken`
+/// for a cell this client already presented is dropped until its request
+/// resolves; any other cell's event assembles normally.
+#[test]
+fn wire_break_for_a_presented_cell_is_suppressed_while_its_request_is_pending() {
+    use crate::block::Block;
+    use crate::mathh::IVec3;
+    use crate::net::protocol::{ServerToClient, TickUpdate, WorldEventMsg};
+
+    let mut game = game();
+    let presented = IVec3::new(8, 64, 8);
+    let other = IVec3::new(3, 64, 3);
+    game.game.predicted_presentation_cells.insert(presented);
+
+    let update = TickUpdate {
+        events: vec![
+            WorldEventMsg::BlockBroken {
+                pos: presented,
+                block_id: Block::Stone.0,
+                normal: None,
+            },
+            WorldEventMsg::BlockBroken {
+                pos: other,
+                block_id: Block::Stone.0,
+                normal: None,
+            },
+        ],
+        ..Default::default()
+    };
+    game.send_server_message(ServerToClient::Tick(Box::new(update)));
+
+    let events = game.game.tick_receive(TICK_DT);
+    let broken: Vec<IVec3> = events
+        .world_events
+        .iter()
+        .filter_map(|e| match e {
+            crate::game::tick::WorldEvent::BlockBroken { pos, .. } => Some(*pos),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        broken,
+        vec![other],
+        "the presented cell's wire copy is suppressed; the un-presented one flows"
     );
 }
 

@@ -341,6 +341,14 @@ impl App {
         };
         if let Err(e) = crate::save::delete_world(&world.dir_name) {
             log::warn!("could not delete world '{}': {e}", world.name);
+        } else if let Err(e) = crate::modding::client::delete_local_world_storage(&world.dir_name) {
+            // Client-mod data (minimap exploration, waypoints) keys on the
+            // save-directory name and lives outside the save — deleted with
+            // the world, or a future world reusing the name inherits it.
+            log::warn!(
+                "could not delete client mod data for world '{}': {e}",
+                world.name
+            );
         }
         self.selected_world = None;
         self.screen = AppScreen::WorldSelect;

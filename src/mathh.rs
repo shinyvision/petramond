@@ -23,13 +23,6 @@ pub enum SelectionShape {
         min: Vec3,
         max: Vec3,
     },
-    Cross {
-        origin: IVec3,
-        u_min: f32,
-        u_max: f32,
-        v_min: f32,
-        v_max: f32,
-    },
     /// A torch pole. The outline's box corners are `transform`-mapped from the
     /// torch's local model box and offset by `origin` (the cell), so the wireframe
     /// traces the rendered pole — straight for a floor torch, tilted for a wall one.

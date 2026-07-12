@@ -604,6 +604,7 @@ impl ServerGame {
             open_screen,
             close_mod_gui: std::mem::take(&mut sess.request_close_mod_gui),
             toggled_door: p.toggled_door,
+            used_unpredicted: p.used_unpredicted,
         }
     }
 
@@ -918,6 +919,7 @@ impl ServerGame {
                 target,
                 request_id,
                 predicted,
+                jabbed,
             } => {
                 let sess = &mut self.sessions[s];
                 if let Some(old) = sess.pending_place_request_id.take() {
@@ -933,6 +935,7 @@ impl ServerGame {
                     target.filter(|t| player::block_within_reach(eye, t.block));
                 sess.pending_place_request_id = request_id;
                 sess.pending_place_predicted = predicted;
+                sess.pending_place_jabbed = jabbed;
             }
             PlayerAction::AttackClick { mob, player } => {
                 let sess = &mut self.sessions[s];
@@ -1208,7 +1211,21 @@ impl ServerGame {
         // anchors carry ids alongside the body centres.
         let magnet_anchors: Vec<(PlayerId, crate::mathh::Vec3)> =
             anchors.iter().map(|a| (a.id, a.pos)).collect();
-        self.world.tick_item_physics(TICK_DT, &magnet_anchors);
+        // Row-declared dropped-item reactions (flour landing in water) return
+        // their presentation batch: one burst + sound per transformed ENTITY,
+        // routed onto the replicated world-event channels like any other
+        // positional one-shot.
+        for fx in self.world.tick_item_physics(TICK_DT, &magnet_anchors) {
+            if let Some(bundle) = fx.burst {
+                events.world.emitter_bursts.push((bundle, fx.pos, 1.0));
+            }
+            if let Some(sound) = fx.sound {
+                events.world.sounds.push(crate::game::ModSound {
+                    sound,
+                    pos: Some(fx.pos),
+                });
+            }
+        }
         self.end_stage(Stage::ItemPhysics, events);
 
         self.begin_stage(Stage::Spawning, events);

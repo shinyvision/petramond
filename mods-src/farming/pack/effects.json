@@ -1,0 +1,10 @@
+{
+  "effects": [
+    {
+      "effect": "farming:well_fed",
+      "display": "Well Fed",
+      "icon": "textures/well_fed_icon.png",
+      "behavior": "none"
+    }
+  ]
+}

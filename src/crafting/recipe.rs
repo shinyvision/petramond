@@ -55,13 +55,57 @@ impl Ingredient {
     }
 }
 
+/// What one craft DOES with the stack in a matched grid cell. The mode belongs
+/// to the ingredient OCCURRENCE, not the item: the same item may be consumed
+/// by one recipe and retained by another.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum IngredientUse {
+    /// Decrement the matched stack by one (the default).
+    Consume,
+    /// Leave the matched stack untouched — a catalyst (a shovel that grinds
+    /// but is not spent). A retained catalyst never bounds shift-crafting.
+    Keep,
+    /// Decrement by one and return the declared item — a drained container
+    /// (a water bucket's empty bucket). A remainder is NEVER deleted: it goes
+    /// to the input cell, then the inventory, then the safe overflow drop.
+    Remainder(ItemType),
+}
+
+/// One recipe-slot requirement plus what the craft transaction does with the
+/// stack that matched it.
+#[derive(Clone, Debug)]
+pub struct RecipeIngredient {
+    pub what: Ingredient,
+    pub mode: IngredientUse,
+}
+
+impl RecipeIngredient {
+    /// The default occurrence: consumed on craft.
+    pub fn consumed(what: Ingredient) -> Self {
+        RecipeIngredient {
+            what,
+            mode: IngredientUse::Consume,
+        }
+    }
+}
+
+/// A successful grid match: the crafted stack plus, per grid cell, what the
+/// craft transaction does with that cell (`None` = empty cell, untouched).
+/// Consumption always derives from this plan — never a blind decrement of
+/// every occupied cell.
+#[derive(Clone, Debug)]
+pub struct GridMatch {
+    pub result: ItemStack,
+    pub uses: [Option<IngredientUse>; super::MAX_CELLS],
+}
+
 /// A crafting recipe. `result` is the full output stack (item + yield count).
 #[derive(Clone, Debug)]
 pub enum Recipe {
     /// Order-independent: the grid's non-empty items, as a multiset, must match
     /// `ingredients` one-to-one.
     Shapeless {
-        ingredients: Vec<Ingredient>,
+        ingredients: Vec<RecipeIngredient>,
         result: ItemStack,
     },
     /// A `width×height` pattern. `cells` is row-major (`Some` = required
@@ -70,7 +114,7 @@ pub enum Recipe {
     Shaped {
         width: usize,
         height: usize,
-        cells: Vec<Option<Ingredient>>,
+        cells: Vec<Option<RecipeIngredient>>,
         result: ItemStack,
     },
 }
@@ -79,17 +123,28 @@ impl Recipe {
     /// The crafted stack if this recipe is satisfied by `grid` — a `cols×cols`
     /// square in row-major order — else `None`.
     pub fn matches(&self, grid: &[Option<ItemStack>], cols: usize) -> Option<ItemStack> {
+        self.match_plan(grid, cols).map(|m| m.result)
+    }
+
+    /// [`matches`](Self::matches) plus the per-cell transaction plan.
+    pub fn match_plan(&self, grid: &[Option<ItemStack>], cols: usize) -> Option<GridMatch> {
         match self {
             Recipe::Shapeless {
                 ingredients,
                 result,
-            } => match_shapeless(grid, ingredients).then_some(*result),
+            } => Some(GridMatch {
+                result: *result,
+                uses: match_shapeless(grid, ingredients)?,
+            }),
             Recipe::Shaped {
                 width,
                 height,
                 cells,
                 result,
-            } => match_shaped(grid, cols, *width, *height, cells).then_some(*result),
+            } => Some(GridMatch {
+                result: *result,
+                uses: match_shaped(grid, cols, *width, *height, cells)?,
+            }),
         }
     }
 }
@@ -129,7 +184,13 @@ impl Recipes {
     /// The result of the first grid recipe that matches `grid` (a `cols×cols`
     /// square), or `None` if nothing matches.
     pub fn find(&self, grid: &[Option<ItemStack>], cols: usize) -> Option<ItemStack> {
-        self.list.iter().find_map(|r| r.matches(grid, cols))
+        self.find_match(grid, cols).map(|m| m.result)
+    }
+
+    /// [`find`](Self::find) plus the matched recipe's per-cell transaction
+    /// plan — what taking the result does to each grid cell.
+    pub fn find_match(&self, grid: &[Option<ItemStack>], cols: usize) -> Option<GridMatch> {
+        self.list.iter().find_map(|r| r.match_plan(grid, cols))
     }
 
     /// The product `class` machines make from `input`, or `None` if that
@@ -155,46 +216,57 @@ impl Recipes {
 
 /// Shapeless match: the grid's non-empty items map one-to-one onto `ingredients`.
 /// Exact-item ingredients are matched before tags so a tag never consumes an item
-/// an exact ingredient still needs.
-fn match_shapeless(grid: &[Option<ItemStack>], ingredients: &[Ingredient]) -> bool {
-    let items: Vec<ItemType> = grid.iter().flatten().map(|s| s.item).collect();
-    if items.is_empty() || items.len() != ingredients.len() {
-        return false;
+/// an exact ingredient still needs. On success, each occupied grid cell carries
+/// the use mode of the ingredient occurrence it was assigned.
+fn match_shapeless(
+    grid: &[Option<ItemStack>],
+    ingredients: &[RecipeIngredient],
+) -> Option<[Option<IngredientUse>; super::MAX_CELLS]> {
+    let occupied = grid.iter().flatten().count();
+    if occupied == 0 || occupied != ingredients.len() {
+        return None;
     }
     let mut used = [false; super::MAX_CELLS];
-    for &it in &items {
+    let mut uses = [None; super::MAX_CELLS];
+    for (cell, stack) in grid.iter().enumerate() {
+        let Some(stack) = stack else { continue };
+        let it = stack.item;
         let pick = ingredients
             .iter()
-            .position(|ing| matches!(ing, Ingredient::Item(i) if *i == it))
+            .position(|ing| matches!(ing.what, Ingredient::Item(i) if i == it))
             .filter(|&k| !used[k])
             .or_else(|| {
                 ingredients
                     .iter()
                     .enumerate()
-                    .find(|(k, ing)| !used[*k] && ing.matches(it))
+                    .find(|(k, ing)| !used[*k] && ing.what.matches(it))
                     .map(|(k, _)| k)
             });
         match pick {
-            Some(k) if !used[k] => used[k] = true,
-            _ => return false,
+            Some(k) if !used[k] => {
+                used[k] = true;
+                uses[cell] = Some(ingredients[k].mode);
+            }
+            _ => return None,
         }
     }
-    true
+    Some(uses)
 }
 
 /// Shaped match: the grid's occupied bounding box must equal the pattern's
 /// dimensions, and each pattern cell must agree with the grid (ingredient ↔
-/// matching item, blank ↔ empty).
+/// matching item, blank ↔ empty). On success, each occupied grid cell carries
+/// its pattern cell's use mode.
 fn match_shaped(
     grid: &[Option<ItemStack>],
     cols: usize,
     width: usize,
     height: usize,
-    cells: &[Option<Ingredient>],
-) -> bool {
+    cells: &[Option<RecipeIngredient>],
+) -> Option<[Option<IngredientUse>; super::MAX_CELLS]> {
     let rows = cols; // the grid is always square
     if width == 0 || height == 0 || width > cols || height > rows {
-        return false;
+        return None;
     }
     // Bounding box of the occupied cells.
     let (mut min_r, mut min_c, mut max_r, mut max_c) = (rows, cols, 0usize, 0usize);
@@ -211,24 +283,26 @@ fn match_shaped(
         }
     }
     if !any || (max_c - min_c + 1) != width || (max_r - min_r + 1) != height {
-        return false;
+        return None;
     }
+    let mut uses = [None; super::MAX_CELLS];
     for r in 0..height {
         for c in 0..width {
-            let cell = &grid[(min_r + r) * cols + (min_c + c)];
+            let grid_idx = (min_r + r) * cols + (min_c + c);
             let ing = &cells[r * width + c];
-            match (ing, cell) {
+            match (ing, &grid[grid_idx]) {
                 (Some(ing), Some(stack)) => {
-                    if !ing.matches(stack.item) {
-                        return false;
+                    if !ing.what.matches(stack.item) {
+                        return None;
                     }
+                    uses[grid_idx] = Some(ing.mode);
                 }
                 (None, None) => {}
-                _ => return false,
+                _ => return None,
             }
         }
     }
-    true
+    Some(uses)
 }
 
 #[cfg(test)]
@@ -244,13 +318,17 @@ mod tests {
             .collect()
     }
 
+    fn ing(what: Ingredient) -> RecipeIngredient {
+        RecipeIngredient::consumed(what)
+    }
+
     fn stick_recipe() -> Recipe {
         Recipe::Shaped {
             width: 1,
             height: 2,
             cells: vec![
-                Some(Ingredient::Tag(ItemTag::PLANKS)),
-                Some(Ingredient::Tag(ItemTag::PLANKS)),
+                Some(ing(Ingredient::Tag(ItemTag::PLANKS))),
+                Some(ing(Ingredient::Tag(ItemTag::PLANKS))),
             ],
             result: ItemStack::new(ItemType::Stick, 4),
         }
@@ -259,7 +337,7 @@ mod tests {
     #[test]
     fn shapeless_single_ingredient_matches_anywhere() {
         let r = Recipe::Shapeless {
-            ingredients: vec![Ingredient::Item(ItemType::OakLog)],
+            ingredients: vec![ing(Ingredient::Item(ItemType::OakLog))],
             result: ItemStack::new(ItemType::OakPlanks, 4),
         };
         // One oak log in any of the four 2×2 cells crafts planks.
@@ -319,14 +397,14 @@ mod tests {
             width: 3,
             height: 3,
             cells: vec![
-                Some(Ingredient::Tag(ItemTag::PLANKS)),
-                Some(Ingredient::Tag(ItemTag::PLANKS)),
-                Some(Ingredient::Tag(ItemTag::PLANKS)),
+                Some(ing(Ingredient::Tag(ItemTag::PLANKS))),
+                Some(ing(Ingredient::Tag(ItemTag::PLANKS))),
+                Some(ing(Ingredient::Tag(ItemTag::PLANKS))),
                 None,
-                Some(Ingredient::Item(ItemType::Stick)),
+                Some(ing(Ingredient::Item(ItemType::Stick))),
                 None,
                 None,
-                Some(Ingredient::Item(ItemType::Stick)),
+                Some(ing(Ingredient::Item(ItemType::Stick))),
                 None,
             ],
             result: ItemStack::new(ItemType::WoodenPickaxe, 1),

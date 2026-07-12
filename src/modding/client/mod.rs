@@ -11,6 +11,9 @@ mod state;
 mod storage;
 
 pub(in crate::modding) use calls::{client_capability, handle_client_call};
-pub(crate) use runtime::{ClientCanvasView, ClientModRuntime, ClientUiView};
+pub(crate) use runtime::{
+    delete_local_world_storage, local_session_key, remote_session_key, ClientCanvasView,
+    ClientModRuntime, ClientUiView,
+};
 pub(in crate::modding) use state::ClientStoreData;
 pub(crate) use state::{ClientCommand, ClientImageData, ClientOverlayRegistration};

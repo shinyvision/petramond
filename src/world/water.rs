@@ -251,6 +251,25 @@ impl World {
         surface_flow_dir(wx, wy, wz, &block_at, &fluid_at)
     }
 
+    /// The current acting on a body PROBE POINT: the cell's flow direction only
+    /// while the point sits below the fluid's actual surface. An uncapped cell
+    /// tops out at 8/9, so a probe skimming the cell's top sliver — feet
+    /// standing on a 15/16 block beside an irrigation channel — catches no
+    /// current; capped/falling cells fill the whole cell and push everywhere
+    /// in it. This is the sampler every body integrator (player, mob, dropped
+    /// item) drifts by.
+    pub fn water_flow_at_point(&self, p: Vec3) -> Vec3 {
+        let c = IVec3::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+        if block_at(self, c) != Block::Water {
+            return Vec3::ZERO;
+        }
+        let water_above = block_at(self, IVec3::new(c.x, c.y + 1, c.z)) == Block::Water;
+        if p.y - c.y as f32 >= fluid_height(meta_at(self, c), water_above) {
+            return Vec3::ZERO;
+        }
+        self.water_flow_dir_at(c.x, c.y, c.z)
+    }
+
     /// Set a water cell at world coords: write the cell, remesh its chunk (plus
     /// the neighbour across a shared border, whose culled faces change), and
     /// announce the change to neighbours. Water is itself transparent and emits
@@ -589,6 +608,39 @@ mod tests {
         let dir = w.water_flow_dir_at(3, 65, 8);
         assert!(dir.x > 0.99, "expected eastward flow, got {dir:?}");
         assert!(dir.z.abs() < 1e-5, "expected no sideways flow, got {dir:?}");
+    }
+
+    /// The body-probe sampler only pushes below the fluid's real surface: a
+    /// probe in a flowing cell's top sliver (feet standing on a 15/16 block
+    /// beside an irrigation channel) catches no current, while a submerged
+    /// probe in the same cell does.
+    #[test]
+    fn flow_at_a_point_stops_above_the_fluid_surface() {
+        let mut w = flat_world();
+        for x in 0..=5 {
+            w.set_block_world(x, 65, 7, Block::Stone);
+            w.set_block_world(x, 65, 9, Block::Stone);
+        }
+        assert!(w.set_water_world(IVec3::new(2, 65, 8), Block::Water, 0));
+        assert!(w.set_water_world(IVec3::new(3, 65, 8), Block::Water, flowing(4)));
+
+        let submerged = w.water_flow_at_point(Vec3::new(3.5, 65.2, 8.5));
+        assert!(
+            submerged.x > 0.99,
+            "a submerged probe drifts: {submerged:?}"
+        );
+        // 15/16 = 0.9375, above even a full source's 8/9 surface.
+        let skimming = w.water_flow_at_point(Vec3::new(3.5, 65.9375, 8.5));
+        assert_eq!(skimming, Vec3::ZERO, "above the surface there is no water");
+        let source_top = w.water_flow_at_point(Vec3::new(2.5, 65.9375, 8.5));
+        assert_eq!(source_top, Vec3::ZERO, "a source tops out at 8/9 too");
+        // A capped cell fills to the brim and pushes through its whole height.
+        assert!(w.set_water_world(IVec3::new(3, 66, 8), Block::Water, flowing(1)));
+        let capped = w.water_flow_at_point(Vec3::new(3.5, 65.9375, 8.5));
+        assert!(
+            capped.length_squared() > 0.0,
+            "water above caps the cell full: {capped:?}"
+        );
     }
 
     #[test]

@@ -213,7 +213,7 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
     );
     assert!(
         game.server.sessions[0].presented_breaks.contains(&pos),
-        "own breaks always strip BlockBroken from the initiator"
+        "a deferred PREDICTED finish strips the initiator's BlockBroken"
     );
 }
 
@@ -478,6 +478,7 @@ fn place_resolves_at_the_click_target_not_the_freshest_look() {
             target: Some(hit(a, IVec3::Y)),
             request_id: Some(3),
             predicted: true,
+            jabbed: false,
         }),
     );
     // ...then the crosshair moves to B before the tick resolves the click.
@@ -526,6 +527,7 @@ fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
             target: Some(hit(t, IVec3::Y)),
             request_id: None,
             predicted: false,
+            jabbed: false,
         }),
     );
     game.server.tick_place(0, &mut TickEvents::default());

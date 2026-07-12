@@ -72,7 +72,7 @@ fn moves_freely_in_open_air() {
 #[test]
 fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
     use crate::block::Aabb;
-    let still = |_: i32, _: i32, _: i32| Vec3::ZERO;
+    let still = |_: Vec3| Vec3::ZERO;
     let walk_x = Input {
         wishdir: Vec3::new(1.0, 0.0, 0.0),
         jump: false,
@@ -871,7 +871,7 @@ fn raycast_precise_shape_uses_the_shape_surface_normal() {
 }
 
 #[test]
-fn raycast_hits_opaque_plant_texel() {
+fn raycast_hits_a_plants_selection_box_without_pixel_precision() {
     let blocks = |x: i32, y: i32, z: i32| {
         if (x, y, z) == (2, 64, 0) {
             Block::Poppy
@@ -879,17 +879,31 @@ fn raycast_hits_opaque_plant_texel() {
             Block::Air
         }
     };
+    // z = 0.5 crosses the cell centre where the sparse poppy art may well be
+    // transparent — a BOX hitbox must select it anyway.
     let eye = Vec3::new(0.5, 64.25, 0.5);
     let (hit, _) =
         Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None)
             .unwrap();
     assert_eq!(hit.block, IVec3::new(2, 64, 0));
     assert_eq!(hit.normal, IVec3::new(-1, 0, 0));
-    assert!(matches!(hit.outline, SelectionShape::Cross { .. }));
+    // The outline is the SAME square box the ray hit, trimmed to the art —
+    // shorter than the cell (a ray can pass above it) and pulled in from the
+    // cell walls.
+    let SelectionShape::Box { min, max } = hit.outline else {
+        panic!("plant outlines are square, got {:?}", hit.outline);
+    };
+    assert!(max.y < 65.0, "trims to the sprite's height, got {}", max.y);
+    assert!(
+        min.x > 2.0 && max.x < 3.0,
+        "pulls in from the cell walls, got {}..{}",
+        min.x,
+        max.x
+    );
 }
 
 #[test]
-fn raycast_ignores_transparent_plant_texel() {
+fn raycast_over_a_short_plants_box_misses_it() {
     let blocks = |x: i32, y: i32, z: i32| {
         if (x, y, z) == (2, 64, 0) {
             Block::Poppy
@@ -905,7 +919,7 @@ fn raycast_ignores_transparent_plant_texel() {
 }
 
 #[test]
-fn raycast_through_transparent_plant_texel_hits_block_behind() {
+fn raycast_over_a_short_plants_box_hits_the_block_behind() {
     let blocks = |x: i32, y: i32, z: i32| match (x, y, z) {
         (2, 64, 0) => Block::Poppy,
         (3, 64, 0) => Block::Stone,
@@ -1039,8 +1053,8 @@ fn swim_open_water_no_boost() {
 #[test]
 fn flowing_water_pushes_idle_player_along_current() {
     let water = |_x: i32, y: i32, _z: i32| y == 64;
-    let flow = |_x: i32, y: i32, _z: i32| {
-        if y == 64 {
+    let flow = |p: Vec3| {
+        if p.y.floor() as i32 == 64 {
             Vec3::X
         } else {
             Vec3::ZERO

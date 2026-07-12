@@ -71,6 +71,7 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
             }),
             request_id: None,
             predicted: false,
+            jabbed: false,
         }),
     );
     let mut ev = TickEvents::default();

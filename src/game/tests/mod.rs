@@ -6,6 +6,7 @@ mod camera;
 mod combat_entities;
 mod drops;
 mod events;
+mod farming_mod;
 mod item_use;
 mod kitchen_mod;
 mod menu;

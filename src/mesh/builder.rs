@@ -13,7 +13,7 @@ use crate::facing::Facing;
 use crate::section::Section;
 use crate::torch::warm_tint;
 
-use super::face::{cactus_quad, cross_quads, quad_for, vertex_ao, Face, FACES};
+use super::face::{cactus_quad, crop_quads, cross_quads, quad_for, vertex_ao, Face, FACES};
 use super::tint;
 use super::vertex::{
     pack_tint, pack_vertex, pack_vertex2, ChunkMesh, ModelVertex, Vertex, UV_MODE_NONE,
@@ -693,15 +693,16 @@ fn section_geometry(
                 let wz = oz + lz as i32;
                 let ci = lz * SECTION_SIZE + lx;
 
-                if shape == RenderShape::Cross {
+                if matches!(shape, RenderShape::Cross | RenderShape::Crop) {
                     let tile = block.tiles()[0];
                     let l = neighbour_light(wx, wy, wz) as u32;
                     let bl = neighbour_blocklight(wx, wy, wz) as u32;
                     let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
                     let tint = warm_tint(tint_tile(tile.world_tint(), ci), warm);
-                    emit_cross(
+                    emit_plant(
                         &mut opaque,
                         &mut opaque_idx,
+                        shape,
                         wx as f32,
                         wy as f32,
                         wz as f32,
@@ -1011,8 +1012,17 @@ fn section_geometry(
                     let is_water_top = is_water && matches!(face, Face::PosY);
                     let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
                     let is_cactus_side = block == Block::Cactus && is_side;
+                    // A lowered cube's top plane sits INSIDE the cell — nothing
+                    // above can ever cover it, so it is exempt from the
+                    // neighbour cull (the block-above's bottom face still draws
+                    // since lowered rows are non-opaque: no x-ray slit).
+                    let lowered = match shape {
+                        RenderShape::LoweredCube(h) => Some(h),
+                        _ => None,
+                    };
+                    let is_lowered_top = lowered.is_some() && matches!(face, Face::PosY);
                     let nb_solid = nb.is_opaque() || (nb.is_slab() && slab_full_at(nwx, nwy, nwz));
-                    if nb_solid && !is_water_top && !is_cactus_side {
+                    if nb_solid && !is_water_top && !is_cactus_side && !is_lowered_top {
                         continue;
                     }
                     if is_water && is_side && !neighbour_loaded(nwx, nwy, nwz) {
@@ -1028,6 +1038,13 @@ fn section_geometry(
                     // sides so a glass wall reads as one pane, not stacked frames.
                     if block == Block::Glass && nb == Block::Glass {
                         continue;
+                    }
+                    // Two flush lowered cubes share no visible side either: the
+                    // neighbour's body covers my whole (equally short) face.
+                    if let (Some(h), RenderShape::LoweredCube(nh)) = (lowered, nb.render_shape()) {
+                        if is_side && nh >= h {
+                            continue;
+                        }
                     }
                     let mut water_exposed_step = false;
                     if let Some(ws) = &water_surface {
@@ -1067,6 +1084,15 @@ fn section_geometry(
                     } else {
                         quad_for(face, base_x, base_y, base_z)
                     };
+                    if let Some(h) = lowered {
+                        // Sink the visible top: the top face drops to h/16 and
+                        // side faces shorten with it (full tile compressed a
+                        // texel, like the cactus insets — no UV plumbing).
+                        let top = base_y + h as f32 / 16.0;
+                        for c in &mut corners {
+                            c[1] = c[1].min(top);
+                        }
+                    }
                     if let Some(ws) = &water_surface {
                         ws.warp_quad(&mut corners, base_x, base_y, base_z, water_exposed_step);
                     }
@@ -1326,11 +1352,11 @@ fn chunk_geometry(
                     continue;
                 }
 
-                // Cross-model plants: two diagonal billboard quads in the opaque
-                // (cutout) pass, then skip the cube face loop. They never cull or
-                // get culled (non-opaque), carry no directional shade or AO, and
-                // sample their own cell's skylight.
-                if block.render_shape() == RenderShape::Cross {
+                // Billboard plants (X cross / crop lattice) go into the opaque
+                // (cutout) pass, then skip the cube face loop. They never cull
+                // or get culled (non-opaque), carry no directional shade or
+                // AO, and sample their own cell's skylight.
+                if matches!(block.render_shape(), RenderShape::Cross | RenderShape::Crop) {
                     let ci = z * CHUNK_SX + x;
                     let tile = block.tiles()[0];
                     let wx = ox + x as i32;
@@ -1341,9 +1367,10 @@ fn chunk_geometry(
                     let bl = neighbour_blocklight(wx, y as i32, wz) as u32;
                     let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
                     let tint = warm_tint(tints.tile(tile.world_tint(), ci), warm);
-                    emit_cross(
+                    emit_plant(
                         &mut opaque,
                         &mut opaque_idx,
+                        block.render_shape(),
                         wx as f32,
                         y as f32,
                         wz as f32,
@@ -1579,7 +1606,14 @@ fn chunk_geometry(
                     // — never cull them. Its flush top/bottom DO cull normally, so the
                     // bottom hides against the (opaque) block the cactus rests on.
                     let is_cactus_side = block == Block::Cactus && is_side;
-                    if nb.is_opaque() && !is_water_top && !is_cactus_side {
+                    // A lowered cube's sunken top can never be covered — exempt
+                    // it from the neighbour cull (see the section mesher twin).
+                    let lowered = match block.render_shape() {
+                        RenderShape::LoweredCube(h) => Some(h),
+                        _ => None,
+                    };
+                    let is_lowered_top = lowered.is_some() && matches!(face, Face::PosY);
+                    if nb.is_opaque() && !is_water_top && !is_cactus_side && !is_lowered_top {
                         continue;
                     }
                     if is_water && is_side && unloaded_horizontal_neighbor {
@@ -1595,6 +1629,12 @@ fn chunk_geometry(
                     // sides so a glass wall reads as one pane, not stacked frames.
                     if block == Block::Glass && nb == Block::Glass {
                         continue;
+                    }
+                    // Two flush lowered cubes share no visible side either.
+                    if let (Some(h), RenderShape::LoweredCube(nh)) = (lowered, nb.render_shape()) {
+                        if is_side && nh >= h {
+                            continue;
+                        }
                     }
                     // Set on the one water-water side face we DON'T cull: a
                     // full-height cell's exposed step over a shorter neighbour.
@@ -1659,6 +1699,13 @@ fn chunk_geometry(
                     } else {
                         quad_for(face, base_x, base_y, base_z)
                     };
+                    if let Some(h) = lowered {
+                        // Sink the visible top (see the section mesher twin).
+                        let top = base_y + h as f32 / 16.0;
+                        for c in &mut corners {
+                            c[1] = c[1].min(top);
+                        }
+                    }
 
                     // Water vertices are warped onto the cell's surface (top edge to
                     // the per-corner height; exposed-step faces also trim the bottom).
@@ -1923,14 +1970,17 @@ pub(super) fn face_index(face: Face) -> usize {
     }
 }
 
-/// Emit an X-shaped plant: two diagonal billboard quads into the opaque (cutout)
-/// buffer, each drawn in BOTH windings so the plant is visible from both sides
-/// under back-face culling. Flat-lit (AO = 3, shade index 0 = "top", no
-/// directional darkening), biome-tinted for grass/fern; `fs_opaque`'s alpha
-/// discard handles the transparent texels exactly like leaves.
-fn emit_cross(
+/// Emit a billboard plant — the X cross (two diagonal quads) or the planted
+/// crop lattice (four axis-aligned quads, see `crop_quads`) — into the opaque
+/// (cutout) buffer, each plane drawn in BOTH windings so the plant is visible
+/// from both sides under back-face culling. Flat-lit (AO = 3, shade index 0 =
+/// "top", no directional darkening), biome-tinted for grass/fern;
+/// `fs_opaque`'s alpha discard handles the transparent texels exactly like
+/// leaves.
+fn emit_plant(
     opaque: &mut Vec<Vertex>,
     opaque_idx: &mut Vec<u32>,
+    shape: RenderShape,
     bx: f32,
     y: f32,
     bz: f32,
@@ -1939,13 +1989,22 @@ fn emit_cross(
     sky6: u32,
     block6: u32,
 ) {
+    let cross;
+    let crop;
+    let planes: &[[[f32; 3]; 4]] = if shape == RenderShape::Crop {
+        crop = crop_quads(bx, y, bz);
+        &crop
+    } else {
+        cross = cross_quads(bx, y, bz);
+        &cross
+    };
     // Flat-lit: shade index 0 (top, no directional darkening), AO = 3, no overlay;
     // `pack_vertex`/`pack_vertex2` own the bit layouts.
-    for plane in cross_quads(bx, y, bz) {
+    for plane in planes {
         let start = opaque.len() as u32;
-        for (corner, p) in plane.into_iter().enumerate() {
+        for (corner, p) in plane.iter().enumerate() {
             opaque.push(Vertex {
-                pos: p,
+                pos: *p,
                 tint: pack_tint(tint),
                 packed: pack_vertex(tile.index() as u32, corner as u32, 0, 0, false, 3, sky6),
                 packed2: pack_vertex2(block6),

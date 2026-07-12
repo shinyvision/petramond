@@ -1,0 +1,408 @@
+{
+  "blocks": [
+    {
+      "block": "farming:farmland_dry",
+      "shape": {
+        "lowered_cube": 15
+      },
+      "flags": [
+        "solid",
+        "ao_occluder"
+      ],
+      "tags": [
+        "no_pane_connect"
+      ],
+      "behavior": "farming:farmland",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            0.9375,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "farming:farmland_dry",
+        "dirt",
+        "dirt"
+      ],
+      "material": "dirt",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [
+        {
+          "item": "petramond:dirt",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:farmland_wet",
+      "shape": {
+        "lowered_cube": 15
+      },
+      "flags": [
+        "solid",
+        "ao_occluder"
+      ],
+      "tags": [
+        "no_pane_connect"
+      ],
+      "behavior": "farming:farmland",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            0.9375,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "farming:farmland_wet",
+        "dirt",
+        "dirt"
+      ],
+      "material": "dirt",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [
+        {
+          "item": "petramond:dirt",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:wild_wheat",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:wild_wheat",
+        "farming:wild_wheat",
+        "farming:wild_wheat"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:wheat",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        },
+        {
+          "item": "farming:wheat_seeds",
+          "min": 1,
+          "max": 3,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:wild_carrots",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:wild_carrots",
+        "farming:wild_carrots",
+        "farming:wild_carrots"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:carrot",
+          "min": 1,
+          "max": 3,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:wheat_0",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:wheat_0",
+        "farming:wheat_0",
+        "farming:wheat_0"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:wheat_seeds",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:wheat_1",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:wheat_1",
+        "farming:wheat_1",
+        "farming:wheat_1"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:wheat_seeds",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:wheat_2",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:wheat_2",
+        "farming:wheat_2",
+        "farming:wheat_2"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:wheat_seeds",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:wheat_3",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:wheat_3",
+        "farming:wheat_3",
+        "farming:wheat_3"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:wheat",
+          "min": 1,
+          "max": 2,
+          "chance": 1.0
+        },
+        {
+          "item": "farming:wheat_seeds",
+          "min": 1,
+          "max": 3,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:carrots_0",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:carrots_0",
+        "farming:carrots_0",
+        "farming:carrots_0"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:carrot",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:carrots_1",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:carrots_1",
+        "farming:carrots_1",
+        "farming:carrots_1"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:carrot",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:carrots_2",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:carrots_2",
+        "farming:carrots_2",
+        "farming:carrots_2"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:carrot",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:carrots_3",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:carrots_3",
+        "farming:carrots_3",
+        "farming:carrots_3"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:carrot",
+          "min": 2,
+          "max": 3,
+          "chance": 1.0
+        }
+      ]
+    }
+  ]
+}

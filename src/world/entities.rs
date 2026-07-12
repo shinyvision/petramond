@@ -40,6 +40,17 @@ pub const ITEM_LIFETIME_TICKS: u32 = 6000;
 /// can pull it back.
 pub const ITEM_PICKUP_DELAY_TICKS: u32 = 10;
 
+/// One dropped-item environmental transform's presentation — ONE per
+/// transformed entity, never per item in the stack. Returned from the physics
+/// tick as a batch; the stage owner routes it onto the world-event channels.
+pub struct ItemReactionFx {
+    /// The item row's one-shot burst bundle id, if declared.
+    pub burst: Option<u8>,
+    /// The item row's one-shot sound, if declared.
+    pub sound: Option<crate::audio::Sound>,
+    pub pos: Vec3,
+}
+
 /// The world's active dropped-item entities: those resting in currently-loaded
 /// chunks. Owns the backing `Vec<DroppedItem>` and the entity-subsystem logic
 /// (physics ticking, pickup planning/splitting, lifetime/despawn, and the
@@ -108,7 +119,8 @@ impl DroppedItems {
         dt: f32,
         magnet_anchors: &[(PlayerId, Vec3)],
         freeze_unloaded: bool,
-    ) {
+    ) -> Vec<ItemReactionFx> {
+        let mut fx = Vec::new();
         for it in &mut self.items {
             if freeze_unloaded {
                 let (cx, cz) = chunk_xz(it.pos);
@@ -132,7 +144,33 @@ impl DroppedItems {
                 it.skylight = world.skylight6_at_world(after.x, after.y, after.z);
                 it.blocklight = world.blocklight6_at_world(after.x, after.y, after.z);
             }
+            // Row-declared environmental reaction (`DroppedReaction`): only
+            // items whose row declares one pay the environment probe. The
+            // whole stack transforms IN PLACE — count, motion, identity, age,
+            // and pickup state stay; only the item kind changes — and it
+            // naturally fires once (the result row no longer matches). The
+            // probe is checked every ticked frame, not just on cell
+            // crossings, so water flowing OVER a resting item still counts
+            // as the item entering water. Stream-final gated: an in-flight
+            // section reads as "not there yet", never a transient transform.
+            if let Some(reaction) = it.stack.item.dropped_reaction() {
+                let in_env = match reaction.environment {
+                    crate::item::ReactionEnvironment::Water => {
+                        world.block_if_stream_final(after.x, after.y, after.z)
+                            == Some(crate::block::Block::Water)
+                    }
+                };
+                if in_env {
+                    it.stack.item = reaction.result;
+                    fx.push(ItemReactionFx {
+                        burst: reaction.burst,
+                        sound: reaction.sound,
+                        pos: it.pos,
+                    });
+                }
+            }
         }
+        fx
     }
 
     /// Per fixed game-tick lifetime step: age each active item by one tick and
@@ -363,14 +401,19 @@ impl World {
     /// terrain. Drives the owned [`DroppedItems`] against an immutable view of
     /// the rest of the world: the field is moved out so the
     /// `&mut DroppedItems` and `&World` borrows stay disjoint.
-    pub fn tick_item_physics(&mut self, dt: f32, magnet_anchors: &[(PlayerId, Vec3)]) {
+    pub fn tick_item_physics(
+        &mut self,
+        dt: f32,
+        magnet_anchors: &[(PlayerId, Vec3)],
+    ) -> Vec<ItemReactionFx> {
         if self.dropped_items.is_empty() {
-            return;
+            return Vec::new();
         }
         let freeze_unloaded = self.save.is_some();
         let mut drops = std::mem::take(&mut self.dropped_items);
-        drops.tick_physics(self, dt, magnet_anchors, freeze_unloaded);
+        let fx = drops.tick_physics(self, dt, magnet_anchors, freeze_unloaded);
         self.dropped_items = drops;
+        fx
     }
 
     /// Per fixed game-tick lifetime step: age each active item and despawn those
@@ -415,6 +458,102 @@ mod tests {
 
     fn drop_at(x: f32, z: f32) -> DroppedItem {
         DroppedItem::new(Vec3::new(x, 64.0, z), ItemStack::new(ItemType::Dirt, 1), 1)
+    }
+
+    /// The dropped-item environmental reaction seam (`items.json`
+    /// `dropped_reaction`): a declaring item's dropped entity transforms its
+    /// whole stack IN PLACE the first physics tick its center sits in water —
+    /// count, identity, and age preserved, one fx record per entity, exactly
+    /// once — while an identical entity on dry ground never transforms. Pack
+    /// rows need the fixture registry, so the assertions run in a child
+    /// process (the established `PETRAMOND_MODS` re-spawn pattern).
+    #[test]
+    fn dropped_reaction_transforms_the_stack_in_water() {
+        // A content-only fixture pack — no wasm build involved.
+        let Some(root) = crate::modding::tests::stage_mods_fixture("dropped-reaction", &[]) else {
+            return;
+        };
+        let pack = root.join("mods").join("testreact");
+        std::fs::create_dir_all(&pack).unwrap();
+        std::fs::write(
+            pack.join("pack.json"),
+            r#"{ "name": "Test React", "id": "testreact", "version": "0.0.1" }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pack.join("items.json"),
+            r#"{ "items": [
+                { "item": "testreact:flour", "key": "testreact:flour", "name": "Test Flour",
+                  "max_stack_size": 64, "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+                  "tags": [],
+                  "dropped_reaction": { "environment": "water", "result": "testreact:dough",
+                                        "burst": "petramond:water_splash",
+                                        "sound": "petramond:water_splash_small" } },
+                { "item": "testreact:dough", "key": "testreact:dough", "name": "Test Dough",
+                  "max_stack_size": 64, "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+                  "tags": [] }
+            ] }"#,
+        )
+        .unwrap();
+        crate::modding::tests::run_child_test(
+            &root,
+            "world::entities::tests::dropped_reaction_inner",
+        );
+    }
+
+    /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
+    /// pointing at the fixture pack before first registry touch).
+    #[test]
+    #[ignore = "spawned by dropped_reaction_transforms_the_stack_in_water with a fixture pack env"]
+    fn dropped_reaction_inner() {
+        let by_key = |key: &str| {
+            ItemType::all()
+                .iter()
+                .copied()
+                .find(|i| i.key() == key)
+                .unwrap_or_else(|| panic!("fixture item '{key}' registered"))
+        };
+        let (flour, dough) = (by_key("testreact:flour"), by_key("testreact:dough"));
+        assert!(flour.dropped_reaction().is_some(), "the row resolved");
+
+        let mut w = World::new(1, 4);
+        w.clear_world();
+        w.insert_chunk_for_test(
+            crate::chunk::ChunkPos::new(0, 0),
+            crate::chunk::Chunk::new(0, 0),
+        );
+        // A water cell over stone, and a dry stone shelf as the control.
+        w.set_block_world(2, 63, 2, crate::block::Block::Stone);
+        w.set_block_world(2, 64, 2, crate::block::Block::Water);
+        w.set_block_world(4, 63, 4, crate::block::Block::Stone);
+
+        let mut wet = DroppedItem::new(Vec3::new(2.5, 64.5, 2.5), ItemStack::new(flour, 7), 1);
+        wet.vel = Vec3::ZERO;
+        wet.ticks_lived = 123;
+        let mut dry = DroppedItem::new(Vec3::new(4.5, 64.2, 4.5), ItemStack::new(flour, 3), 2);
+        dry.vel = Vec3::ZERO;
+        w.spawn_item(wet);
+        w.spawn_item(dry);
+        let wet_id = w.item_entities()[0].id;
+
+        let fx = w.tick_item_physics(0.05, &[]);
+        assert_eq!(fx.len(), 1, "one fx per transformed ENTITY, not per item");
+        assert!(fx[0].burst.is_some() && fx[0].sound.is_some());
+        let wet_now = &w.item_entities()[0];
+        assert_eq!(wet_now.stack.item, dough, "the whole stack transformed");
+        assert_eq!(wet_now.stack.count, 7, "count preserved 1:1");
+        assert_eq!(wet_now.id, wet_id, "entity identity preserved");
+        assert_eq!(wet_now.ticks_lived, 123, "age preserved");
+        assert_eq!(
+            w.item_entities()[1].stack.item,
+            flour,
+            "dry flour never transforms"
+        );
+
+        // A second tick fires nothing: dough has no reaction row.
+        let fx = w.tick_item_physics(0.05, &[]);
+        assert!(fx.is_empty(), "the transform fires exactly once");
+        assert_eq!(w.item_entities()[0].stack.item, dough);
     }
 
     #[test]

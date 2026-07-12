@@ -14,7 +14,7 @@ use crate::data::{
     ItemInfoData, ItemStackData, MobSnapshot, PlayerSnapshot, RuntimeSide,
 };
 use crate::events::{EventKind, EventPayload, Outcome};
-use crate::ids::BlockId;
+use crate::ids::{BlockId, ItemId};
 use crate::sched::{AttachSide, Stage, WorldgenStage};
 
 /// Guest → host: what a mod asks the engine for through `host_dispatch`.
@@ -628,6 +628,15 @@ pub enum HostCall {
     ClientStorageSetMany {
         entries: Vec<(String, Vec<u8>)>,
     },
+    /// Resolve an item registry NAME to this session's numeric id, or `None`
+    /// for an unknown name. Registry-only (no world access): legal on any
+    /// instance, any time — the [`HostCall::ResolveBlock`] contract. This is
+    /// how a mod identifies its own items in id-bearing event payloads
+    /// (e.g. `item_use_pre`) without persisting numeric ids.
+    /// → [`HostRet::Item`].
+    ResolveItem {
+        key: String,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -673,6 +682,8 @@ pub enum HostRet {
     ClientSurface(Vec<Option<ClientSurfaceCell>>),
     ClientTextSize([u16; 2]),
     ClientStorageValues(Vec<Option<Vec<u8>>>),
+    /// [`HostCall::ResolveItem`]: `None` = unknown item name.
+    Item(Option<ItemId>),
 }
 
 /// One worldgen block write: `(world position, block)`. Applied by the engine

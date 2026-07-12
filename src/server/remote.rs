@@ -771,6 +771,7 @@ mod tests {
                 }),
                 request_id: None,
                 predicted: false,
+                jabbed: false,
             }))
             .expect("live connection");
         drain_until(&mut remote, Duration::from_secs(10), |msg| {

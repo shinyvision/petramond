@@ -8,6 +8,10 @@ use crate::mathh::{IVec3, Vec3};
 use crate::net::protocol::TargetRef;
 use crate::torch::TorchPlacement;
 
+/// Hold-to-interact repeat cadence: a HELD use button re-runs the use-click
+/// ladder this many ticks apart (250 ms at the 20 TPS tick).
+pub(crate) const USE_REPEAT_TICKS: u32 = 5;
+
 impl ServerGame {
     /// Placement / interaction, on the tick: consume a buffered secondary-button press
     /// once. Right-clicking a placed interactable block uses its block-owned capability
@@ -22,22 +26,69 @@ impl ServerGame {
         let use_mob = std::mem::take(&mut self.sessions[s].pending_use_mob);
         let target = std::mem::take(&mut self.sessions[s].pending_place_target);
         if std::mem::take(&mut self.sessions[s].pending_place) {
-            self.place_click(s, use_mob, target, events);
+            self.place_click(s, use_mob, target, events, false);
+            // A real click paces the hold-repeat: the first repeat comes one
+            // full interval after it (and spam clicks never compound rates).
+            self.sessions[s].use_repeat_cooldown = USE_REPEAT_TICKS;
+        } else {
+            self.tick_use_repeat(s, events);
         }
         self.advance_eating(s, events);
     }
 
+    /// A HELD use button re-runs the WHOLE use-click ladder every
+    /// [`USE_REPEAT_TICKS`] against the current look latch, as if the player
+    /// re-clicked: doors keep toggling, the hoe keeps tilling
+    /// (`item_use_pre`), crops keep planting and harvesting, blocks keep
+    /// placing. Two deliberate exceptions ride the `repeat` flag into
+    /// [`place_click`](Self::place_click): a repeat never STARTS an eat (one
+    /// eat per click — and no surprise bite when the look wanders off a door
+    /// onto grass), and it ships no corrective cells (there is no client
+    /// prediction to reconcile). A held button over nothing actionable
+    /// attempts-and-does-nothing, exactly like today's single click; an
+    /// in-progress eat owns the hold outright. Mob use (shears) does not
+    /// repeat — a targeted mob blanks the block look, and the mob id only
+    /// rides real clicks. Consumed repeats animate through the ordinary
+    /// click machinery: `interacted`/`used_item` rows for observers, the
+    /// `used_unpredicted` echo for the initiator's own jab (there was no
+    /// client click to animate it).
+    fn tick_use_repeat(&mut self, s: usize, events: &mut TickEvents) {
+        let sess = &mut self.sessions[s];
+        if !sess.intent_use_held
+            || !sess.intent_gameplay
+            || sess.eating.is_some()
+            || sess.player.is_spectator()
+        {
+            return;
+        }
+        sess.use_repeat_cooldown = sess.use_repeat_cooldown.saturating_sub(1);
+        if sess.use_repeat_cooldown > 0 {
+            return;
+        }
+        sess.use_repeat_cooldown = USE_REPEAT_TICKS;
+        let look = sess.look;
+        self.place_click(s, None, look, events, true);
+    }
+
     /// Resolve one consumed secondary-button press against the CLICK's block
     /// target (never the look latch, which may be newer than the click).
+    ///
+    /// `repeat` marks a server-paced hold-repeat (see
+    /// [`tick_use_repeat`](Self::tick_use_repeat)) rather than a real client
+    /// click: the ladder runs identically except a repeat never STARTS an
+    /// eat and never ships corrective cells — there is no click-side
+    /// prediction to reconcile.
     fn place_click(
         &mut self,
         s: usize,
         use_mob: Option<u64>,
         target: Option<TargetRef>,
         events: &mut TickEvents,
+        repeat: bool,
     ) {
         let request_id = self.sessions[s].pending_place_request_id.take();
         let predicted = std::mem::take(&mut self.sessions[s].pending_place_predicted);
+        let jabbed = std::mem::take(&mut self.sessions[s].pending_place_jabbed);
         let mut consumed = false;
         let mut placed_at = None;
         // Using the held item ON the targeted mob (shears on a sheep) comes first:
@@ -52,39 +103,40 @@ impl ServerGame {
             // The one place every consumed interaction passes through: the interact
             // hand jab defaults ON for all of them (see `GameEvents::interacted`).
             events.player(s).interacted |= interacted;
-            if interacted || self.try_start_eating(s, events) {
+            // An item that is BOTH food and placeable (a carrot: edible produce
+            // AND planting stock) tries its placement first — a VALID placement
+            // wins over starting to eat; a refused one (unplaceable target,
+            // cancelled block_place_pre) falls through to the ordinary eat.
+            // Ordering the real placement attempt ahead of the eat gate keeps
+            // one dispatch per event: no dry-run duplicating `try_place`.
+            let contextual_place = !interacted
+                && self.sessions[s]
+                    .player
+                    .inventory
+                    .selected()
+                    .is_some_and(|st| {
+                        st.item.food().is_some()
+                            && st.item.as_block().is_some_and(|b| b != Block::Air)
+                    });
+            if contextual_place {
+                placed_at = self.place_held(s, target, predicted, events);
+            }
+            if interacted || placed_at.is_some() || (!repeat && self.try_start_eating(s, events)) {
                 consumed = true;
             } else if self.try_use_item(s, target, events) {
                 events.player(s).used_item = true;
                 consumed = true;
-            } else {
-                // Capture the held block before `try_place` consumes it: on success that is
-                // exactly the block placed, which the client maps to a place sound.
-                let held = self.sessions[s]
-                    .player
-                    .inventory
-                    .selected()
-                    .and_then(|st| st.item.as_block());
-                if let Some(pos) = self.try_place(s, target, events) {
-                    events.player(s).placed_block = held;
-                    consumed = true;
-                    placed_at = Some(pos);
-                    // Strip this cell from the initiator's TickUpdate.events
-                    // only when they PRESENTED the place locally (full ghost).
-                    // An unpredicted placement — oriented model, replace-in-
-                    // place, slab stack, frozen ledger — keeps its event, or
-                    // the initiator never hears their own place.
-                    if predicted {
-                        self.sessions[s].presented_places.push(pos);
-                    }
-                    if let Some(block) = held {
-                        // Every observer presents the placement (positional sound)
-                        // from the world-anchored event.
-                        events.world.block_placed.push((pos, block));
-                        self.bus.emit(PostEvent::BlockPlaced { pos, block });
-                    }
-                }
+            } else if !contextual_place {
+                placed_at = self.place_held(s, target, predicted, events);
+                consumed = placed_at.is_some();
             }
+        }
+        // A consumed click whose initiator stayed silent (its replica could
+        // not foresee the effect — a mod-cancelled use/interact like tilling
+        // or a right-click harvest) gets its hand jab echoed back; `jabbed`
+        // guarantees this can never double an already-played one.
+        if consumed && !jabbed {
+            events.player(s).used_unpredicted = true;
         }
         // The client's ghost convention is `target.block + normal` — accept
         // ONLY a placement that landed exactly there (accept never rolls
@@ -106,7 +158,9 @@ impl ServerGame {
         // Reconcile channel: when the click did nothing (the client may have
         // clicked a block that only exists in ITS replica) or its prediction
         // was denied, ship the authoritative state of the disputed cells.
-        if let Some(t) = target {
+        // Repeats skip it — no click, no prediction, nothing to reconcile
+        // (a held button over a no-op target must not stream deltas).
+        if let Some(t) = target.filter(|_| !repeat) {
             let disputed = !consumed || (request_id.is_some() && !accepted);
             if disputed {
                 let sess = &mut self.sessions[s];
@@ -116,6 +170,42 @@ impl ServerGame {
                 }
             }
         }
+    }
+
+    /// Ordinary placement of the held item's block, with the shared
+    /// bookkeeping every placement path owes: the place-sound latch, the
+    /// initiator's presented-place strip, and the placed events.
+    fn place_held(
+        &mut self,
+        s: usize,
+        target: Option<TargetRef>,
+        predicted: bool,
+        events: &mut TickEvents,
+    ) -> Option<IVec3> {
+        // Capture the held block before `try_place` consumes it: on success that is
+        // exactly the block placed, which the client maps to a place sound.
+        let held = self.sessions[s]
+            .player
+            .inventory
+            .selected()
+            .and_then(|st| st.item.as_block());
+        let pos = self.try_place(s, target, events)?;
+        events.player(s).placed_block = held;
+        // Strip this cell from the initiator's TickUpdate.events
+        // only when they PRESENTED the place locally (full ghost).
+        // An unpredicted placement — oriented model, replace-in-
+        // place, slab stack, frozen ledger — keeps its event, or
+        // the initiator never hears their own place.
+        if predicted {
+            self.sessions[s].presented_places.push(pos);
+        }
+        if let Some(block) = held {
+            // Every observer presents the placement (positional sound)
+            // from the world-anchored event.
+            events.world.block_placed.push((pos, block));
+            self.bus.emit(PostEvent::BlockPlaced { pos, block });
+        }
+        Some(pos)
     }
 
     /// If the click's block target has a secondary-use capability, apply it

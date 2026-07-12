@@ -50,10 +50,9 @@ impl Game {
         // Loopback skips the remap, so the local vocabulary IS the session's
         // — binding it keys this cache for a later harvest (a remote join to
         // a server with identical tables may legitimately claim it).
-        game.section_cache
-            .adopt_session(section_cache_registry_key(
-                &crate::net::remap::local_name_tables(),
-            ));
+        game.section_cache.adopt_session(section_cache_registry_key(
+            &crate::net::remap::local_name_tables(),
+        ));
         game
     }
 
@@ -93,7 +92,7 @@ impl Game {
             // activate for this session.
             client_mods: crate::modding::client::ClientModRuntime::load(
                 join.seed,
-                &format!("remote:{server_identity}"),
+                &crate::modding::client::remote_session_key(server_identity),
                 server_mods,
             ),
         };
@@ -228,7 +227,7 @@ pub(crate) fn build_session(
             .collect();
     let client_mods = crate::modding::client::ClientModRuntime::load(
         server.world.seed,
-        &format!("local:{world_name}"),
+        &crate::modding::client::local_session_key(world_name),
         &enabled_mods,
     );
 

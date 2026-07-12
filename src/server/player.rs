@@ -277,6 +277,9 @@ pub(crate) struct ConnectedPlayer {
     pub intent_use_held: bool,
     pub intent_sneak: bool,
     pub intent_gameplay: bool,
+    /// Ticks until a HELD use button re-runs the use-click ladder — paces
+    /// the hold-to-interact repeat (see `tick_use_repeat`).
+    pub use_repeat_cooldown: u32,
     pub pending_attack: bool,
     /// The STABLE id of the mob the attack click targeted, resolved client-side
     /// at click time and re-resolved to an index at consume time (despawns
@@ -363,6 +366,11 @@ pub(crate) struct ConnectedPlayer {
     /// Whether the latched place click PRESENTED client-side (full ghost) —
     /// gates the initiator's `BlockPlaced` echo strip, never validation.
     pub pending_place_predicted: bool,
+    /// Whether the latched use click already played its own P0 hand jab
+    /// client-side — gates the `SelfEvents::used_unpredicted` echo for
+    /// consumed clicks the client's replica could not foresee (mod-cancelled
+    /// uses/interacts), never validation.
+    pub pending_place_jabbed: bool,
     /// Movement intent from the latest `PlayerUpdate` (F2 server integrate).
     pub move_wishdir: crate::mathh::Vec3,
     pub move_jump: bool,
@@ -452,6 +460,7 @@ impl ConnectedPlayer {
             intent_use_held: false,
             intent_sneak: false,
             intent_gameplay: false,
+            use_repeat_cooldown: 0,
             pending_attack: false,
             pending_attack_mob: None,
             pending_attack_player: None,
@@ -476,6 +485,7 @@ impl ConnectedPlayer {
             pending_break_ack: Default::default(),
             pending_place_request_id: None,
             pending_place_predicted: false,
+            pending_place_jabbed: false,
             move_wishdir: crate::mathh::Vec3::ZERO,
             move_jump: false,
             move_sprint: false,

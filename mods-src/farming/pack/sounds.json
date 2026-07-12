@@ -1,0 +1,20 @@
+{
+  "sounds": [
+    {
+      "sound": "farming:till",
+      "variants": ["sounds/till1.ogg", "sounds/till2.ogg"],
+      "gain": 0.9,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 12.0,
+      "category": "block"
+    },
+    {
+      "sound": "farming:harvest",
+      "variants": ["sounds/harvest.ogg"],
+      "gain": 0.85,
+      "pitch_variation": 0.1,
+      "attenuation_distance": 12.0,
+      "category": "block"
+    }
+  ]
+}

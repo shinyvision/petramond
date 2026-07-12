@@ -311,7 +311,7 @@ pub struct ItemTag(u8);
 
 /// Engine item-tag names, id-ordered to match the consts on [`ItemTag`].
 static ITEM_TAGS: crate::registry::TagTable =
-    crate::registry::TagTable::new(&["planks", "logs", "fuel", "smeltable"]);
+    crate::registry::TagTable::new(&["planks", "logs", "fuel", "smeltable", "shovels"]);
 
 impl ItemTag {
     /// Any wood-type planks (recipe key `#petramond:planks`).
@@ -322,6 +322,9 @@ impl ItemTag {
     pub const FUEL: ItemTag = ItemTag(2);
     /// Anything a furnace can smelt — shift-clicked into the input slot.
     pub const SMELTABLE: ItemTag = ItemTag(3);
+    /// Any shovel-class digging tool (recipe key `#petramond:shovels`). Packs
+    /// opt compatible shovels in by listing the tag on their item rows.
+    pub const SHOVELS: ItemTag = ItemTag(4);
 
     /// Resolve a tag's registry name (the text after `#` in a recipe, or an
     /// `items.json` row entry), interning an unseen namespaced pack tag.
@@ -389,6 +392,42 @@ pub struct FoodDef {
     pub eat_ticks: u32,
     /// `(effect, duration ticks)` granted on being eaten.
     pub effects: &'static [(crate::effect::Effect, u32)],
+}
+
+/// A dropped-item environmental reaction (`"dropped_reaction"` in
+/// `items.json`): when this item's DROPPED entity finds its center inside a
+/// matching environment cell during deterministic item physics, the whole
+/// stack becomes [`result`](Self::result) in place, 1:1 — count, position,
+/// velocity, entity identity, age, and pickup state all preserved; only the
+/// stack's item kind changes. It fires once per qualifying entity (the
+/// transformed row no longer matches), with ONE optional presentation burst
+/// and sound per entity, never per item in the stack.
+///
+/// This is row-owned CONTENT like `food` or `fuel_burn_ticks`: only items
+/// whose rows declare a reaction pay the environment check, and the engine
+/// interprets the environment vocabulary — packs supply policy as data
+/// (flour-in-water is a pack row, not an engine case).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct DroppedReaction {
+    pub environment: ReactionEnvironment,
+    /// The item the whole stack becomes.
+    pub result: ItemType,
+    /// A one-shot burst bundle id (`particle_emitters.json`), fired once per
+    /// transformed entity at its position.
+    pub burst: Option<u8>,
+    /// A one-shot sound (`sounds.json`), played once per transformed entity.
+    pub sound: Option<crate::audio::Sound>,
+}
+
+/// The environments a [`DroppedReaction`] can react to. An engine-interpreted
+/// vocabulary (extend with a variant + one predicate arm — see
+/// `world::entities`); rows reference variants by snake_case name.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReactionEnvironment {
+    /// The entity's center cell holds any form of water (source, flowing,
+    /// or falling).
+    Water,
 }
 
 /// A mining tool: its [`kind`](Self::kind) and material `tier` (`1` = wooden,
@@ -685,6 +724,14 @@ impl ItemType {
         self.def().food
     }
 
+    /// This item's dropped-entity environmental reaction
+    /// (`"dropped_reaction"` in `items.json`), or `None` — see
+    /// [`DroppedReaction`].
+    #[inline]
+    pub fn dropped_reaction(self) -> Option<DroppedReaction> {
+        self.def().dropped_reaction
+    }
+
     /// Whether this item belongs to `tag`. Membership is item data — each item's
     /// [`ItemDef`](definition::ItemDef) lists its tags — so recipes can require a
     /// group (e.g. any `#petramond:planks`) without naming every member, and a new
@@ -737,18 +784,30 @@ impl ItemType {
         self.def().name
     }
 
-    /// How to draw this item. Block-items follow their block's render shape
-    /// (`BlockCube` for full cubes, `Sprite` for cross-model plants); item-only
-    /// items are flat sprites pulled from [`item_sprite`](Self::item_sprite),
-    /// unless they carry their own bbmodel ([`item_model`](Self::item_model)).
+    /// How to draw this item. A ROW-DECLARED sprite always wins: an item that
+    /// places a block but ships its own flat art (seeds planting a crop, a
+    /// door, the torch) draws that art everywhere the ITEM is shown — the
+    /// block's in-world look never leaks into the icon/drop. Otherwise
+    /// block-items follow their block's render shape (`BlockCube` for full
+    /// cubes, `Sprite` for cross-model plants), and item-only items are flat
+    /// sprites, unless they carry their own bbmodel
+    /// ([`item_model`](Self::item_model)).
     #[inline]
     pub fn render_kind(self) -> ItemRenderKind {
+        if let Some(sprite) = self.def().sprite {
+            return ItemRenderKind::Sprite(sprite);
+        }
         match self.as_block() {
             Some(block) => match block.render_shape() {
                 RenderShape::Cube => ItemRenderKind::BlockCube(block),
+                RenderShape::LoweredCube(_) => ItemRenderKind::BlockCube(block),
                 RenderShape::Stair => ItemRenderKind::BlockCube(block),
                 RenderShape::Slab => ItemRenderKind::BlockCube(block),
                 RenderShape::Cross => ItemRenderKind::Sprite(block.tiles()[0]),
+                // A sprite-less crop item falls back to the plant tile, like
+                // the cross plants (crop planters normally declare a sprite —
+                // the early return above).
+                RenderShape::Crop => ItemRenderKind::Sprite(block.tiles()[0]),
                 // A torch isn't a cube; it shows the full torch sprite as a flat
                 // hotbar icon and an extruded sprite in-hand (like a flower), not
                 // the cropped per-face tiles the in-world pole uses.
@@ -1078,6 +1137,13 @@ mod tests {
                         "{block:?}"
                     );
                 }
+                RenderShape::LoweredCube(_) => {
+                    assert_eq!(
+                        item.render_kind(),
+                        ItemRenderKind::BlockCube(block),
+                        "{block:?}"
+                    );
+                }
                 RenderShape::Stair => {
                     assert_eq!(
                         item.render_kind(),
@@ -1097,6 +1163,14 @@ mod tests {
                         item.render_kind(),
                         ItemRenderKind::Sprite(block.tiles()[0]),
                         "{block:?}"
+                    );
+                }
+                // Crop planters normally carry their own sprite (which wins);
+                // either way the ITEM is always a flat sprite, never a cube.
+                RenderShape::Crop => {
+                    assert!(
+                        matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
+                        "{block:?} crop items render as flat sprites"
                     );
                 }
                 RenderShape::Torch => {

@@ -198,6 +198,7 @@ fn samples() -> Samples {
     s.pin("HostCall::ClientStorageSetMany", &HostCall::ClientStorageSetMany {
         entries: vec![("m:k".into(), vec![1])],
     });
+    s.pin("HostCall::ResolveItem", &HostCall::ResolveItem { key: "m:i".into() });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -235,6 +236,7 @@ fn samples() -> Samples {
     ]));
     s.pin("HostRet::ClientTextSize", &HostRet::ClientTextSize([1, 2]));
     s.pin("HostRet::ClientStorageValues", &HostRet::ClientStorageValues(vec![None, Some(vec![1])]));
+    s.pin("HostRet::Item", &HostRet::Item(Some(ItemId(1))));
 
     // --- GuestCall: every variant, declaration order -------------------------
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
@@ -507,6 +509,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::ClientCanvasViewSet", "4c036d3a630000803f00000040"),
     ("HostCall::ClientStorageGetMany", "4d01036d3a6b"),
     ("HostCall::ClientStorageSetMany", "4e01036d3a6b0101"),
+    ("HostCall::ResolveItem", "4f036d3a69"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -527,6 +530,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::ClientSurface", "1102000101010203"),
     ("HostRet::ClientTextSize", "120102"),
     ("HostRet::ClientStorageValues", "130200010101"),
+    ("HostRet::Item", "140101"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c0c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),

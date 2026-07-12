@@ -18,6 +18,10 @@ impl ContainerMenu {
     /// through ONE generic path driven by the target's `SlotSpec`s — the furnace's
     /// role hits just map to their conventional indices first. Only the transient
     /// stations (craft grid, workbench) keep dedicated handling.
+    /// `overflow` receives stacks a craft transaction could return to neither
+    /// an input cell nor the inventory (a bucket remainder with everything
+    /// full) — the caller owes them the world-drop path; they are never
+    /// deleted.
     pub(crate) fn click(
         &mut self,
         world: &mut World,
@@ -27,6 +31,7 @@ impl ContainerMenu {
         button: PointerButton,
         shift: bool,
         gather: bool,
+        overflow: impl FnMut(crate::item::ItemStack),
     ) {
         match slot {
             MenuSlot::Inventory(i) => {
@@ -72,9 +77,9 @@ impl ContainerMenu {
                 }
                 CraftHit::Result => {
                     if shift {
-                        self.craft_shift_result(inv, recipes);
+                        self.craft_shift_result(inv, recipes, overflow);
                     } else {
-                        self.craft_take_result(inv, recipes);
+                        self.craft_take_result(inv, recipes, overflow);
                     }
                 }
             },

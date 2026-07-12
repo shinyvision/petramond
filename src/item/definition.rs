@@ -48,4 +48,7 @@ pub(super) struct ItemDef {
     pub tool: Option<Tool>,
     /// Edible-item data (`"food"` in `items.json`), or `None` for non-food.
     pub food: Option<super::FoodDef>,
+    /// Dropped-entity environmental reaction (`"dropped_reaction"` in
+    /// `items.json`), or `None` — see [`super::DroppedReaction`].
+    pub dropped_reaction: Option<super::DroppedReaction>,
 }

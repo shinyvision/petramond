@@ -1,5 +1,5 @@
 use super::state::Player;
-use crate::atlas::{tile_alpha_bounds, tile_alpha_opaque, TileAlphaBounds};
+use crate::atlas::{tile_alpha_bounds, TileAlphaBounds};
 use crate::block::{Block, RenderShape};
 use crate::mathh::{IVec3, SelectionBoxes, SelectionShape, Vec3};
 use crate::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
@@ -56,7 +56,8 @@ impl Player {
     /// selectable block within `REACH`, also returning the distance from `eye` to the
     /// hit (used to compare a block hit against a mob hit — the nearer wins, so looking
     /// at a mob interrupts block selection). Voxel DDA (Amanatides & Woo), with
-    /// cross-model plants tested against their alpha-cutout billboards.
+    /// plant-shaped blocks tested against their square selection box (see
+    /// `plant_selection_aabb`).
     pub(crate) fn raycast_with_dist(
         eye: Vec3,
         dir: Vec3,
@@ -262,10 +263,16 @@ impl Player {
                         return Some((hit(pos, shape.normal.unwrap_or(entry_normal), block), t));
                     }
                 }
-            } else if block.render_shape() == RenderShape::Cross {
-                if let Some(t) = intersect_cross_plant(eye, dir, pos, block) {
+            } else if let Some((mn, mx)) = plant_selection_aabb(pos, block) {
+                // Plants target as their square selection box — the same box
+                // the outline draws, so "aim inside the outline" is exactly
+                // "hit". No pixel precision, but the box is trimmed to the
+                // art, so the ray still passes above short grass to the
+                // blocks behind/below it.
+                if let Some(shape) = ray_vs_aabb_hit(eye, dir, mn, mx) {
+                    let t = shape.t;
                     if t + EPS >= t_enter && t <= t_exit + EPS && t <= REACH {
-                        return Some((hit(pos, entry_normal, block), t));
+                        return Some((hit(pos, shape.normal.unwrap_or(entry_normal), block), t));
                     }
                 }
             }
@@ -322,25 +329,53 @@ fn outline_shape(block_pos: IVec3, block: Block) -> SelectionShape {
             max: base + Vec3::new(mx[0], mx[1], mx[2]),
         };
     }
-    if block.render_shape() != RenderShape::Cross {
-        return SelectionShape::full_block(block_pos);
+    // Plant shapes outline the same square box the raycast targets.
+    if let Some((min, max)) = plant_selection_aabb(block_pos, block) {
+        return SelectionShape::Box { min, max };
     }
+    SelectionShape::full_block(block_pos)
+}
 
-    let Some(bounds) = tile_alpha_bounds(block.tiles()[0]) else {
-        return SelectionShape::full_block(block_pos);
+/// The square selection box a plant-shaped block (`Cross`, `Crop`) presents
+/// to the crosshair — ONE AABB shared by targeting and the outline, so "aim
+/// inside the outline" is exactly "hit". Derived from the art's opaque
+/// bounds: trimmed to the sprite's height and horizontal extent, so the ray
+/// still passes over short grass to the block behind/below it. Dense art
+/// (or art without bounds) reads as the full cell. `None` for every other
+/// shape — solids, models, and torches keep their precise ray tests, which
+/// is what lets a ray aim past a chest or a bbmodel block's empty parts.
+fn plant_selection_aabb(block_pos: IVec3, block: Block) -> Option<(Vec3, Vec3)> {
+    let shape = block.render_shape();
+    if !matches!(shape, RenderShape::Cross | RenderShape::Crop) {
+        return None;
+    }
+    let base = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32);
+    let trimmed = tile_alpha_bounds(block.tiles()[0]).filter(|b| !should_outline_as_full_block(*b));
+    let Some(b) = trimmed else {
+        return Some((base, base + Vec3::ONE));
     };
-
-    if should_outline_as_full_block(bounds) {
-        return SelectionShape::full_block(block_pos);
-    }
-
-    SelectionShape::Cross {
-        origin: block_pos,
-        u_min: bounds.u_min,
-        u_max: bounds.u_max,
-        v_min: bounds.v_min,
-        v_max: bounds.v_max,
-    }
+    Some(match shape {
+        // The lattice's flanks are inset; the box hangs 1/16 below the cell,
+        // rooted on sunken farmland (mirroring `mesh::face::crop_quads`).
+        RenderShape::Crop => {
+            let inset = crate::block::CROP_PLANE_INSET;
+            let drop = crate::block::CROP_PLANE_DROP;
+            (
+                base + Vec3::new(inset, b.v_min - drop, inset),
+                base + Vec3::new(1.0 - inset, b.v_max - drop, 1.0 - inset),
+            )
+        }
+        // An X sprite: the art's opaque extent, mirrored across the cell
+        // centre so the box covers both diagonal quads however the art leans.
+        _ => {
+            let lo = b.u_min.min(1.0 - b.u_max);
+            let hi = b.u_max.max(1.0 - b.u_min);
+            (
+                base + Vec3::new(lo, b.v_min, lo),
+                base + Vec3::new(hi, b.v_max, hi),
+            )
+        }
+    })
 }
 
 fn should_outline_as_full_block(bounds: TileAlphaBounds) -> bool {
@@ -520,51 +555,6 @@ fn axis_normal(axis: usize, sign: i32) -> IVec3 {
         1 => IVec3::new(0, sign, 0),
         _ => IVec3::new(0, 0, sign),
     }
-}
-
-fn intersect_cross_plant(eye: Vec3, dir: Vec3, block_pos: IVec3, block: Block) -> Option<f32> {
-    let tile = block.tiles()[0];
-    let x = block_pos.x as f32;
-    let y = block_pos.y as f32;
-    let z = block_pos.z as f32;
-    let mut best = f32::INFINITY;
-
-    // Plane 1: (x,z) -> (x+1,z+1).
-    let denom = dir.x - dir.z;
-    if denom.abs() > EPS {
-        let numer = -((eye.x - x) - (eye.z - z));
-        let t = numer / denom;
-        if t >= -EPS {
-            let p = eye + dir * t;
-            let u = p.x - x;
-            let v = p.y - y;
-            if in_unit(u) && in_unit(v) && tile_alpha_opaque(tile, u, v) {
-                best = best.min(t.max(0.0));
-            }
-        }
-    }
-
-    // Plane 2: (x,z+1) -> (x+1,z).
-    let denom = dir.x + dir.z;
-    if denom.abs() > EPS {
-        let numer = -((eye.x - x) + (eye.z - (z + 1.0)));
-        let t = numer / denom;
-        if t >= -EPS {
-            let p = eye + dir * t;
-            let u = p.x - x;
-            let v = p.y - y;
-            if in_unit(u) && in_unit(v) && tile_alpha_opaque(tile, u, v) {
-                best = best.min(t.max(0.0));
-            }
-        }
-    }
-
-    best.is_finite().then_some(best)
-}
-
-#[inline]
-fn in_unit(v: f32) -> bool {
-    (-EPS..=1.0 + EPS).contains(&v)
 }
 
 #[inline]
