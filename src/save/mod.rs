@@ -987,9 +987,12 @@ mod tests {
             snap.entities.push(drop);
             opened.save.save_sections(vec![snap]);
 
-            opened
-                .save
-                .save_level(level::encode(0xABCD, 4242, &Default::default()));
+            opened.save.save_level(level::encode(
+                0xABCD,
+                4242,
+                &Default::default(),
+                &Default::default(),
+            ));
 
             // The player rides its own file, keyed by SANITIZED name — the
             // display name may contain anything.

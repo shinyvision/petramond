@@ -63,8 +63,7 @@ const RANDOM_TICK_SPEED: u32 = 3;
 /// players (grass creep, leaf decay, sapling growth), not world simulation —
 /// at the old `render_dist - 2` (30 chunks at the server default) the scan
 /// plus behaviour probes over ~2 800 columns per player burned half the
-/// server tick thread on an idle world. 8 chunks (128 blocks) matches the
-/// vanilla-Minecraft ambience range at ~1/14 the area.
+/// server tick thread on an idle world. 8 chunks (128 blocks)
 const RANDOM_TICK_CHUNK_RADIUS: i32 = 8;
 
 /// Per-world tick/update/schedule bookkeeping.

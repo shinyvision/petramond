@@ -28,10 +28,13 @@ pub(super) const MAX_MODEL3D_INDICES: u64 = 8192;
 pub(super) const MAX_ITEM3D_VERTICES: u64 = 4096;
 /// Max vertices / indices in the reusable `mob` dynamic buffers (animated entity
 /// models), drawn by the dedicated mob pipeline with the explicit-UV `ItemVertex`.
-/// Current mobs are well under this; it covers dozens of simultaneously-visible
-/// instances before a bake bails for that frame.
-pub(super) const MAX_MOB_VERTICES: u64 = 20480;
-pub(super) const MAX_MOB_INDICES: u64 = 30720;
+/// Sized per SPECIES (each gets its own buffers): a 16-cube sheep is ≤384 verts,
+/// so this covers ~200 simultaneously-visible sheep — far above what worldgen
+/// herds put in the streamed area. The bake also truncates to whole instances,
+/// closest first, so exceeding the budget drops the farthest mobs instead of
+/// blanking the species for the frame (see `dynamic_bake`).
+pub(super) const MAX_MOB_VERTICES: u64 = 81920;
+pub(super) const MAX_MOB_INDICES: u64 = 122880;
 /// Boxes the break-overlay buffers must hold: a legacy block cracks over ONE cube, but a
 /// bbmodel block cracks over EVERY cube of its model (the workbench is ~36), so size for a
 /// comfortably complex model — otherwise the multi-box bake overflows and the whole crack

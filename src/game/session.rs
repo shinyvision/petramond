@@ -312,6 +312,7 @@ fn build_server(
     if let Some(level) = &opened.level {
         world.set_mod_kv(level.world_kv.clone());
         world.restore_tick(level.tick);
+        world.set_populated_columns(level.populated_columns.clone());
     }
     let operators = crate::server::permissions::load(&world);
 

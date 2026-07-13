@@ -8,9 +8,8 @@
 //!   - SPAGHETTI: two decorrelated OpenSimplex fields, carved where BOTH are near
 //!     zero. Each near-zero set is a 2-D sheet; their intersection is a 1-D
 //!     winding curve, i.e. a tunnel. Low frequency = long, sweeping tunnels; a
-//!     slow roughness field fattens and pinches them along their run (the
-//!     Minecraft 1.18 recipe: ridged tunnel noises plus a separate thickness
-//!     modulator). A second BRANCH system shares field A with the main system,
+//!     slow roughness field fattens and pinches them along their run.
+//!     A second BRANCH system shares field A with the main system,
 //!     so both tunnel families run along the same A≈0 sheet and genuinely cross
 //!     at isolated points — natural junctions, tunnels that fork every now and
 //!     then. Widths are calibrated against the noodle caliber (radius/frequency):

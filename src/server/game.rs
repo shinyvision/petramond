@@ -176,6 +176,7 @@ impl ServerGame {
                 self.world.seed,
                 self.world.current_tick(),
                 self.world.mod_kv(),
+                self.world.populated_columns(),
             ));
             for session in &self.sessions {
                 let mut snapshot = session.player.clone();
@@ -737,13 +738,13 @@ impl ServerGame {
                 recipe,
                 bulk,
                 request_id,
-            } => self.sessions[s].pending_menu_actions.push(
-                PendingMenuAction::CraftRecipe {
+            } => self.sessions[s]
+                .pending_menu_actions
+                .push(PendingMenuAction::CraftRecipe {
                     recipe,
                     bulk,
                     request_id,
-                },
-            ),
+                }),
             ClientToServer::SetCraftFilter { craftable_only } => {
                 self.sessions[s].player.craft_craftable_only = craftable_only;
             }
@@ -1271,8 +1272,20 @@ impl ServerGame {
         self.end_stage(Stage::ItemPhysics, events);
 
         self.begin_stage(Stage::Spawning, events);
-        for (kind, pos) in self.world.spawn_mobs_tick(anchors[spawn_s].pos) {
+        // One-time worldgen herds land as chunks near the round-robin player
+        // settle; the persisted populated set keeps that stock one-time.
+        for (kind, pos) in self.world.populate_mobs_tick(anchors[spawn_s].pos) {
             self.bus.emit(PostEvent::MobSpawned { kind, pos });
+        }
+        // The passive trickle backfills on the slow creature cadence — one
+        // attempt per player per interval, not per tick, or killing animals
+        // becomes a respawn faucet.
+        if self.world.current_tick() % crate::mob::PASSIVE_SPAWN_INTERVAL_TICKS == 0 {
+            for anchor in &anchors {
+                for (kind, pos) in self.world.spawn_mobs_tick(anchor.pos) {
+                    self.bus.emit(PostEvent::MobSpawned { kind, pos });
+                }
+            }
         }
         self.tick_mod_hostile_mob_spawns(&anchors, events);
         self.end_stage(Stage::Spawning, events);

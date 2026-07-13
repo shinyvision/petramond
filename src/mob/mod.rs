@@ -25,9 +25,10 @@ mod loot;
 mod manager;
 mod model_meta;
 mod nav;
-mod path;
-mod ragdoll;
 mod noise;
+mod path;
+mod populate;
+mod ragdoll;
 mod spawn;
 
 pub use brain::Brain;
@@ -37,7 +38,7 @@ pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnch
 pub use noise::{player_steps_are_audible, Noise, NoiseKind};
 pub(crate) use spawn::{
     body_fits_at as spawn_body_fits_at, hostile_attempt_sites, hostile_kind_has_room,
-    hostile_spawn_plan, HOSTILE_SPAWN_ATTEMPTS,
+    hostile_spawn_plan, HOSTILE_SPAWN_ATTEMPTS, PASSIVE_SPAWN_INTERVAL_TICKS,
 };
 
 use std::sync::LazyLock;

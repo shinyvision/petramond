@@ -1,6 +1,9 @@
-//! Natural mob spawning: one attempt per game tick.
+//! Natural mob spawning: the slow passive backfill trickle.
 //!
-//! Each tick the manager calls [`attempt`], which picks a random column in the
+//! The game runs [`attempt`] once per player every [`PASSIVE_SPAWN_INTERVAL_TICKS`]
+//! (the initial animal stock comes from [`super::populate`] instead, so this
+//! trickle only refills genuinely decimated areas — up to the population caps).
+//! An attempt picks a random column in the
 //! loaded area, picks a species that still has population room, and tests the site
 //! against the universal "definitely no" rules -- too near the player, no footing,
 //! no room for the body -- and then the species' own [`SpawnRule`](super::SpawnRule)
@@ -38,6 +41,13 @@ const MIN_PLAYER_DIST: f32 = 50.0;
 /// Farthest any natural spawn may appear from its player anchor. The nine-chunk
 /// census margin encloses this range even when the player stands at a chunk edge.
 const MAX_PLAYER_DIST: f32 = 128.0;
+
+/// Passive natural spawning is a slow backfill trickle: one attempt per player
+/// every this many game ticks (20 s at 20 TPS — the reference game's creature
+/// cycle cadence). The initial animal stock comes from the one-time worldgen
+/// herds ([`super::populate`]); a fast cadence here would turn killing animals
+/// into a respawn faucet, which is exactly what the trickle exists to avoid.
+pub(crate) const PASSIVE_SPAWN_INTERVAL_TICKS: u64 = 400;
 
 /// How many times to resample a column offset to land one inside the loaded disc
 /// before giving up for this tick (a near-degenerate disc could miss every time).
@@ -126,45 +136,56 @@ pub(super) fn attempt(
     let want = d.spawn_group.roll(rng).min(room_for(kind));
 
     let (wx, wz) = random_column(rng, cx, cz, r)?;
-    let first = spawn_at(world, player_pos, kind, wx, wz, rng)?;
+    let site =
+        |world: &World, kind: Mob, wx: i32, wz: i32| spawn_site(world, player_pos, kind, wx, wz);
+    let first = spawn_with(world, kind, wx, wz, rng, &site)?;
     let mut spawns = Vec::with_capacity(want as usize);
     spawns.push(first);
 
     let origin = IVec3::new(wx, 0, wz);
     while spawns.len() < want as usize {
-        let next = nearby_spawn(world, player_pos, kind, origin, &spawns, rng)?;
+        let next = nearby_spawn(world, kind, origin, &spawns, rng, &site)?;
         spawns.push(next);
     }
     Some(spawns)
 }
 
-fn spawn_at(
+/// Judge a site with `site` and roll the spawn's facing — the shared "one member"
+/// step for natural spawning and worldgen population, which differ only in the
+/// site rule (the player-distance band).
+pub(super) fn spawn_with(
     world: &World,
-    player_pos: Vec3,
     kind: Mob,
     wx: i32,
     wz: i32,
     rng: &mut MobRng,
+    site: &impl Fn(&World, Mob, i32, i32) -> Option<Vec3>,
 ) -> Option<Spawn> {
-    let pos = spawn_site(world, player_pos, kind, wx, wz)?;
+    let pos = site(world, kind, wx, wz)?;
     let yaw = rng.next_f32() * std::f32::consts::TAU;
     Some(Spawn { kind, pos, yaw })
 }
 
 fn spawn_site(world: &World, player_pos: Vec3, kind: Mob, wx: i32, wz: i32) -> Option<Vec3> {
-    let d = def(kind);
-    // The surface to stand on, and the feet cell resting on top of it.
-    let ground_y = world.surface_collision_y(wx, wz)?;
-    let feet = IVec3::new(wx, ground_y + 1, wz);
-    let feet_pos = Vec3::new(wx as f32 + 0.5, feet.y as f32, wz as f32 + 0.5);
-
-    // --- Universal "definitely no" checks. ---
-    // Too close to the player.
+    let feet_pos = site_for(world, kind, wx, wz)?;
+    // Natural spawns keep a distance band around the player; worldgen population
+    // (`super::populate`) deliberately doesn't — its herds are "already there".
     if too_close(player_pos, feet_pos, MIN_PLAYER_DIST)
         || !too_close(player_pos, feet_pos, MAX_PLAYER_DIST)
     {
         return None;
     }
+    Some(feet_pos)
+}
+
+/// The player-independent site judgment: surface footing, body clearance (dry),
+/// then the species' own [`SpawnRule`](super::SpawnRule) (biome + ground block).
+pub(super) fn site_for(world: &World, kind: Mob, wx: i32, wz: i32) -> Option<Vec3> {
+    // The surface to stand on, and the feet cell resting on top of it.
+    let ground_y = world.surface_collision_y(wx, wz)?;
+    let feet = IVec3::new(wx, ground_y + 1, wz);
+    let feet_pos = Vec3::new(wx as f32 + 0.5, feet.y as f32, wz as f32 + 0.5);
+
     // The ground must have collision AND the body must fit (clearance above the
     // feet) — exactly what a foothold test asserts.
     if !body_fits_at(world, kind, feet) {
@@ -174,7 +195,7 @@ fn spawn_site(world: &World, player_pos: Vec3, kind: Mob, wx: i32, wz: i32) -> O
     // --- Species rule: biome + the block it would stand on. ---
     let biome = Biome::from_id(world.column_biome(wx, wz)?);
     let ground = Block::from_id(world.chunk_block(wx, ground_y, wz));
-    if !d.spawn.admits(biome, ground) {
+    if !def(kind).spawn.admits(biome, ground) {
         return None;
     }
 
@@ -240,7 +261,7 @@ pub(crate) fn hostile_spawn_plan(
     })
 }
 
-fn mob_census_ready(world: &World, player_pos: Vec3) -> bool {
+pub(super) fn mob_census_ready(world: &World, player_pos: Vec3) -> bool {
     let center = chunk_pos_at(player_pos);
     world.mob_census_loaded_around(center, MOB_CENSUS_CHUNK_RADIUS)
 }
@@ -477,20 +498,20 @@ fn yaw_away_from_player(player_pos: Vec3, spawn_pos: Vec3) -> f32 {
     (-dx).atan2(-dz)
 }
 
-fn splitmix(mut z: u64) -> u64 {
+pub(super) fn splitmix(mut z: u64) -> u64 {
     z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)
 }
 
-fn nearby_spawn(
+pub(super) fn nearby_spawn(
     world: &World,
-    player_pos: Vec3,
     kind: Mob,
     origin: IVec3,
     existing: &[Spawn],
     rng: &mut MobRng,
+    site: &impl Fn(&World, Mob, i32, i32) -> Option<Vec3>,
 ) -> Option<Spawn> {
     let r2 = GROUP_RADIUS * GROUP_RADIUS;
     for _ in 0..GROUP_MEMBER_TRIES {
@@ -500,7 +521,7 @@ fn nearby_spawn(
             continue;
         }
         let (wx, wz) = (origin.x + dx, origin.z + dz);
-        let Some(spawn) = spawn_at(world, player_pos, kind, wx, wz, rng) else {
+        let Some(spawn) = spawn_with(world, kind, wx, wz, rng, site) else {
             continue;
         };
         if too_near_existing(kind, spawn.pos, existing) {
@@ -565,6 +586,13 @@ fn random_column(rng: &mut MobRng, cx: i32, cz: i32, r: i32) -> Option<(i32, i32
     None
 }
 
+/// Whether a species may enter the world by spawning at all: its mod is not
+/// disabled for this world (per-world `settings.json`). Shared by the natural
+/// picker and worldgen population.
+pub(super) fn species_enabled(kind: Mob, disabled: &std::collections::BTreeSet<String>) -> bool {
+    !crate::registry::namespace(def(kind).name).is_some_and(|ns| disabled.contains(ns))
+}
+
 /// Pick one species uniformly among those with population room, or `None` if none
 /// has room. Reservoir sampling — uniform without allocating a candidate list.
 /// A species whose spawn rule can't admit any site (empty biome/ground list — a
@@ -583,7 +611,7 @@ fn choose_kind(
         if !def(m).spawn.is_spawnable() || room_for(m) < def(m).spawn_group.min_count() {
             continue;
         }
-        if crate::registry::namespace(def(m).name).is_some_and(|ns| disabled.contains(ns)) {
+        if !species_enabled(m, disabled) {
             continue;
         }
         seen += 1;

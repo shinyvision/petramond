@@ -343,7 +343,24 @@ impl Renderer {
             }
         }
         let queue = &self.queue;
+        let cam_pos = self.cam_pos;
         for g in &mut self.mob_gpu {
+            // Whole-instance budget: the worst-case per-instance cost from the
+            // cube count (a face can bake fewer verts, never more). When more
+            // instances are visible than fit the species' fixed buffers, keep
+            // the CLOSEST — dropping the farthest is invisible, while letting
+            // the bake overflow would blank the whole species for the frame.
+            let verts_per = (g.model.cubes.len() * 24).max(1);
+            let indices_per = (g.model.cubes.len() * 36).max(1);
+            let max_fit = (g.draw.vbuf_cap / verts_per).min(g.draw.ibuf_cap / indices_per);
+            if g.visible.len() > max_fit {
+                g.visible.sort_by(|a, b| {
+                    let da = (a.pos - cam_pos).length_squared();
+                    let db = (b.pos - cam_pos).length_squared();
+                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                g.visible.truncate(max_fit);
+            }
             let model = g.model;
             let scale = g.scale;
             let visible = &g.visible;

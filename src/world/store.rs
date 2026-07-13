@@ -1,5 +1,5 @@
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::block::Block;
@@ -334,6 +334,11 @@ pub struct World {
     /// and the mod-set record consult it. The palette/mod-host gates take it
     /// separately at session construction.
     pub(super) disabled_mods: std::collections::BTreeSet<String>,
+    /// Chunk columns whose one-time worldgen herd actually spawned (see
+    /// `mob::populate`) — the fact that keeps the initial animal stock from
+    /// re-minting every session. Persisted in `level.dat`; BTreeSet so the
+    /// encoding iterates in one deterministic order. Mutated on the tick only.
+    pub(super) populated_columns: BTreeSet<ChunkPos>,
 }
 
 impl World {
@@ -422,6 +427,7 @@ impl World {
             environment: WorldEnvironment::default(),
             mod_kv: BTreeMap::new(),
             disabled_mods: std::collections::BTreeSet::new(),
+            populated_columns: BTreeSet::new(),
         }
     }
 
@@ -980,13 +986,43 @@ impl World {
         attacks
     }
 
-    /// Run one natural mob-spawn attempt (one per game tick). Returns the mobs
-    /// actually spawned, for the caller to report as `mob_spawned` events.
+    /// Run one natural mob-spawn attempt (the passive backfill trickle; the
+    /// caller owns the cadence). Returns the mobs actually spawned, for the
+    /// caller to report as `mob_spawned` events.
     pub fn spawn_mobs_tick(&mut self, player_pos: Vec3) -> Vec<(crate::mob::Mob, Vec3)> {
         let mut mobs = std::mem::take(&mut self.mobs);
         let spawned = mobs.spawn_tick(self, player_pos);
         self.mobs = mobs;
         spawned
+    }
+
+    /// Run one worldgen-population step around `player_pos` (see `mob::populate`):
+    /// place the one-time herds of nearby chunks whose deterministic roll says so,
+    /// and record the chunks that spawned in the persisted populated set. Returns
+    /// the mobs spawned, for the caller's `mob_spawned` events.
+    pub fn populate_mobs_tick(&mut self, player_pos: Vec3) -> Vec<(crate::mob::Mob, Vec3)> {
+        let mut mobs = std::mem::take(&mut self.mobs);
+        let (spawned, populated) = mobs.populate_tick(self, player_pos);
+        self.mobs = mobs;
+        self.populated_columns.extend(populated);
+        spawned
+    }
+
+    /// Whether `chunk`'s one-time worldgen herd already spawned (this session or
+    /// any earlier one — the set is restored from `level.dat` at world open).
+    pub fn column_populated(&self, chunk: ChunkPos) -> bool {
+        self.populated_columns.contains(&chunk)
+    }
+
+    /// The persisted populated-chunk set, for the `level.dat` encoder.
+    pub fn populated_columns(&self) -> &BTreeSet<ChunkPos> {
+        &self.populated_columns
+    }
+
+    /// Restore the populated-chunk set at world open (before the first tick, so
+    /// the first population pass already sees every historical herd).
+    pub fn set_populated_columns(&mut self, set: BTreeSet<ChunkPos>) {
+        self.populated_columns = set;
     }
 
     #[inline]
@@ -1180,10 +1216,9 @@ impl World {
                     Some((_, section)) => *section,
                     None => {
                         let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                        let section = (SectionPos::cy_in_range(cy)
-                            && self.stream_writable(sp))
-                        .then(|| self.sections.get(&sp).map(Arc::as_ref))
-                        .flatten();
+                        let section = (SectionPos::cy_in_range(cy) && self.stream_writable(sp))
+                            .then(|| self.sections.get(&sp).map(Arc::as_ref))
+                            .flatten();
                         sections.push((cy, section));
                         section
                     }
@@ -1848,9 +1883,7 @@ mod tests {
         let mut s = Section::new(0, 4, 0);
         s.set_block(8, 0, 8, Block::Stone);
         world.insert_section_for_test(sp, s);
-        world
-            .ensure_column(sp.chunk_pos())
-            .set_surface_y(8, 8, 64);
+        world.ensure_column(sp.chunk_pos()).set_surface_y(8, 8, 64);
 
         let before = world.column_payload_revision(sp.chunk_pos());
         world.set_block_world(8, 64, 8, Block::Dirt);

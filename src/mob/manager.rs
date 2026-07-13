@@ -11,9 +11,11 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use rustc_hash::FxHashSet;
+
 use crate::block::Block;
 use crate::body::{separation, Body};
-use crate::chunk::SectionPos;
+use crate::chunk::{ChunkPos, SectionPos};
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
@@ -21,7 +23,8 @@ use super::brain::{AiMob, TickInputs};
 use super::model_meta::{self, IdleAnimMeta, Skeleton};
 use super::noise::{Noise, NoiseKind};
 use super::{
-    def, defs, model, spawn, EntityRef, Instance, Mob, MobDamageFeedback, MobRng, SavedMob,
+    def, defs, model, populate, spawn, EntityRef, Instance, Mob, MobDamageFeedback, MobRng,
+    SavedMob,
 };
 
 /// What a mob leaves behind the instant it dies, so `Game` can roll its loot table and
@@ -185,6 +188,11 @@ pub struct Mobs {
     /// The batch every mob's AI hears THIS tick — snapshotted before any mob
     /// moves, so hearing is independent of iteration order.
     heard: Vec<Noise>,
+    /// Chunks whose one-time population roll already completed THIS SESSION
+    /// (see [`populate`]) — a memo so the per-tick scan doesn't re-roll them.
+    /// The cross-session "this chunk spawned its herd" fact lives on the
+    /// world's persisted populated set, not here.
+    populate_checked: FxHashSet<ChunkPos>,
 }
 
 impl Default for Mobs {
@@ -206,6 +214,7 @@ impl Mobs {
             contact_scratch: Vec::new(),
             pending_noises: Vec::new(),
             heard: Vec::new(),
+            populate_checked: FxHashSet::default(),
         }
     }
 
@@ -347,9 +356,7 @@ impl Mobs {
                 // from the attacker. A target that vanished mid-tick (player
                 // disconnected, mob culled) fizzles the strike whole.
                 let target_pos = match intent.target {
-                    EntityRef::Player(pid) => {
-                        anchors.iter().find(|a| a.id == pid).map(|a| a.pos)
-                    }
+                    EntityRef::Player(pid) => anchors.iter().find(|a| a.id == pid).map(|a| a.pos),
                     EntityRef::Mob(id) => ai_mobs
                         .iter()
                         .find(|m| m.id == id && m.active)
@@ -568,6 +575,39 @@ impl Mobs {
             }
         }
         spawned
+    }
+
+    /// Run one worldgen-population step around `player_pos` (see [`populate`]):
+    /// roll a budgeted batch of nearby unchecked chunks and place their one-time
+    /// herds, ignoring the population caps (worldgen stock — only the [`MAX_MOBS`]
+    /// memory backstop applies). Returns the spawns performed plus the chunks to
+    /// record as populated; the caller owns the persisted populated set, and a
+    /// chunk is only recorded once at least one member actually spawned, so a
+    /// fully-failed placement retries in a later session.
+    pub fn populate_tick(
+        &mut self,
+        world: &World,
+        player_pos: Vec3,
+    ) -> (Vec<(Mob, Vec3)>, Vec<ChunkPos>) {
+        let herds = populate::attempt(world, player_pos, &mut self.populate_checked);
+        let mut spawned = Vec::new();
+        let mut populated = Vec::new();
+        for herd in herds {
+            let mut any = false;
+            for s in herd.spawns {
+                let c = voxel_at(s.pos + Vec3::new(0.0, 0.3, 0.0));
+                let sky = world.skylight6_at_world(c.x, c.y, c.z);
+                let block = world.blocklight6_at_world(c.x, c.y, c.z);
+                if self.spawn_lit(s.kind, s.pos, s.yaw, sky, block) {
+                    spawned.push((s.kind, s.pos));
+                    any = true;
+                }
+            }
+            if any {
+                populated.push(herd.chunk);
+            }
+        }
+        (spawned, populated)
     }
 
     /// Drain and return the live mobs resting in section `pos`, as [`SavedMob`]s — used
@@ -900,7 +940,8 @@ mod tests {
                 0,
                 100.0,
                 Some(Vec3::new(5.0, 64.0, 8.5)),
-                true, None,
+                true,
+                None,
                 &MobDamageFeedback::default()
             )
             .is_some());
@@ -1090,7 +1131,8 @@ mod tests {
                 0,
                 100.0,
                 Some(Vec3::new(5.0, 64.0, 2.5)),
-                true, None,
+                true,
+                None,
                 &MobDamageFeedback::default()
             )
             .is_some());
@@ -1128,7 +1170,8 @@ mod tests {
                 0,
                 100.0,
                 Some(Vec3::new(9.0, 64.0, 8.5)),
-                true, None,
+                true,
+                None,
                 &MobDamageFeedback::default()
             )
             .is_some());
