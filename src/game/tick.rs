@@ -674,7 +674,10 @@ impl Game {
             yaw: self.player.yaw,
             pitch: self.player.pitch,
             on_ground: self.player.on_ground,
-            sneak: input.movement.sneak,
+            // Sneak is part of the F2 movement intent now: ship EXACTLY what the
+            // local physics consumed (gameplay-gated), so the server integrates
+            // the same edge-guarded, half-speed step the prediction ran.
+            sneak: intent.sneak,
             gameplay: input.gameplay_enabled,
             break_held: input.break_held,
             use_held: input.use_held,

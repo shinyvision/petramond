@@ -25,6 +25,10 @@ pub struct Input {
     pub wishdir: Vec3,
     pub jump: bool,
     pub sprint: bool,
+    /// Sneaking (held): halves land speed and, while grounded, refuses any
+    /// horizontal move that would drop the feet farther than a step-down —
+    /// see the edge guard in [`Player::update`]. Overrides `sprint`.
+    pub sneak: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

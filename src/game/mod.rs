@@ -105,8 +105,14 @@ pub struct Game {
     /// `pump` drains it every frame).
     frame_messages: Vec<ClientToServer>,
     /// Visual-only vertical lag after grounded auto-step movement. The player
-    /// feet and collision state update immediately; only the camera eases upward.
+    /// feet and collision state update immediately; only the camera eases —
+    /// upward after a step-up, downward after a sneak snap-down.
     camera_step_y_offset: f32,
+    /// Visual-only eased eye drop while sneaking (`0` upright …
+    /// `-SNEAK_EYE_DROP` crouched) — the first-person feedback that sneak is
+    /// active. Camera only: the collision box and the sim eye stay full
+    /// height.
+    camera_sneak_y_offset: f32,
     last_player_eye_y: f32,
     /// Third-person view state (boom camera + body pose). `cam` above stays the
     /// authoritative first-person eye for every presentation consumer; see

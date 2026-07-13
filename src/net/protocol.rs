@@ -196,10 +196,10 @@ pub(crate) struct ActionOutcome {
 
 /// Per-frame (local) / throttled (TCP) client transform + held intents.
 ///
-/// Movement F2: `wishdir` / `jump` / `sprint` are the authoritative input; the
-/// server integrates physics on the fixed tick. `pos`/`vel`/`on_ground` remain
-/// the client's prediction (used for soft comparison / fall bookkeeping until
-/// a hard correct ships via [`SelfTransform`]).
+/// Movement F2: `wishdir` / `jump` / `sprint` / `sneak` are the authoritative
+/// input; the server integrates physics on the fixed tick. `pos`/`vel`/
+/// `on_ground` remain the client's prediction (used for soft comparison / fall
+/// bookkeeping until a hard correct ships via [`SelfTransform`]).
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct PlayerUpdate {
     pub pos: Vec3,
@@ -207,6 +207,9 @@ pub(crate) struct PlayerUpdate {
     pub yaw: f32,
     pub pitch: f32,
     pub on_ground: bool,
+    /// Sneak held — movement intent (half speed + edge guard, integrated
+    /// server-side like `wishdir`) AND the interact-vs-place gate; gameplay-
+    /// gated client-side like the rest of the predicted input.
     pub sneak: bool,
     /// Gameplay input live (false while a screen owns focus — server forces
     /// held intents off, mirroring `capture_intent`).

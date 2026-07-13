@@ -364,29 +364,43 @@ impl Model {
     /// instead of snapping. Scaling the euler track is exact for the same
     /// reason the loader's XYZ order is: the authored tracks are per-axis.
     pub fn pose_scaled(&self, anim: &Animation, time: f32, weight: f32) -> Vec<Mat4> {
-        let t = if anim.length <= 0.0 {
-            0.0
-        } else if anim.looping {
-            time.rem_euclid(anim.length)
-        } else {
-            // Non-looping (Blockbench `once`/`hold`): play through once and hold the
-            // final frame instead of wrapping back to the start.
-            time.clamp(0.0, anim.length)
-        };
-        let w = weight.clamp(0.0, 1.0);
+        self.pose_layers(&[(anim, time, weight)])
+    }
+
+    /// Pose blended from several `(animation, time, weight)` layers at once: each
+    /// bone rotates by the weight-scaled SUM of the layers' sampled eulers (the
+    /// multi-layer generalization of [`pose_scaled`](Self::pose_scaled) — summing
+    /// weighted per-axis euler tracks is the same exactness argument). Weights
+    /// clamp to `[0, 1]` individually; layers totalling 1 cross-fade (the player
+    /// walk↔sneak blend), and an empty/zero-weight set is exactly the rest pose.
+    pub fn pose_layers(&self, layers: &[(&Animation, f32, f32)]) -> Vec<Mat4> {
         // Each bone's LOCAL transform: rotate about its pivot by the authored rest
-        // euler plus the sampled (weighted) animation euler.
+        // euler plus the summed, weighted animation eulers.
         let local: Vec<Mat4> = self
             .bones
             .iter()
             .enumerate()
             .map(|(i, b)| {
-                let rot = anim
-                    .tracks
-                    .get(&i)
-                    .map(|kfs| sample_track(kfs, t))
-                    .unwrap_or(Vec3::ZERO);
-                bone_transform(b, rot * w)
+                let mut rot = Vec3::ZERO;
+                for (anim, time, weight) in layers {
+                    let w = weight.clamp(0.0, 1.0);
+                    if w <= 0.0 {
+                        continue;
+                    }
+                    let t = if anim.length <= 0.0 {
+                        0.0
+                    } else if anim.looping {
+                        time.rem_euclid(anim.length)
+                    } else {
+                        // Non-looping (Blockbench `once`/`hold`): play through once
+                        // and hold the final frame instead of wrapping back.
+                        time.clamp(0.0, anim.length)
+                    };
+                    if let Some(kfs) = anim.tracks.get(&i) {
+                        rot += sample_track(kfs, t) * w;
+                    }
+                }
+                bone_transform(b, rot)
             })
             .collect();
 

@@ -104,9 +104,15 @@ impl Game {
 
         let vel = self.player.vel;
         let hspeed = Vec3::new(vel.x, 0.0, vel.z).length();
-        self.third_person
-            .pose
-            .advance(dt, hspeed, self.player.yaw, !self.player.is_spectator());
+        // Sneak state = what the local physics consumed this frame, so the
+        // stance and the slowdown always agree.
+        self.third_person.pose.advance(
+            dt,
+            hspeed,
+            self.player.yaw,
+            !self.player.is_spectator(),
+            self.predicted_input.sneak,
+        );
 
         // Boom camera: retreat from the eye opposite the look direction, stopped
         // early by any block collision box so the camera never enters geometry.

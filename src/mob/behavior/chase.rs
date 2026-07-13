@@ -13,6 +13,11 @@
 //! and an engaged chase tolerates brief occlusion: once sight stays blocked for more
 //! than [`LOST_SIGHT_GIVE_UP_TICKS`] consecutive ticks, the mob gives up.
 //!
+//! A SNEAKING player is harder to detect: the row's optional `sneak_radius_penalty`
+//! shrinks the engage radius while the target sneaks. Only detection shrinks —
+//! an engaged chase keeps its ordinary `give_up_radius` (sneaking doesn't make a
+//! mob forget you).
+//!
 //! The goal is a *valid mob foothold* near the player (the same navigation-foothold
 //! test the pathfinder uses), scanned vertically around the player's feet. A player
 //! with no standable cell nearby (flying, deep water) yields no goal, and the merge
@@ -41,20 +46,34 @@ struct ChaseParams {
     radius: f64,
     /// Once engaged, keep chasing until the player is beyond this (≥ `radius`).
     give_up_radius: f64,
+    /// How many blocks a SNEAKING player shrinks the engage radius by
+    /// (clamped at zero; an already-engaged chase is unaffected — detection is
+    /// harder while sneaking, forgetting is not). Optional; defaults to 0.
+    #[serde(default)]
+    sneak_radius_penalty: f64,
 }
 
 pub struct ChasePlayerAi {
     radius: f32,
     give_up_radius: f32,
+    sneak_radius_penalty: f32,
     chasing: bool,
     lost_sight_ticks: u16,
 }
 
 impl ChasePlayerAi {
+    /// Penalty-free construction — the tests' shorthand (production always
+    /// builds through [`from_params`](Self::from_params)).
+    #[cfg(test)]
     pub fn new(radius: f32, give_up_radius: f32) -> Self {
+        Self::with_sneak_penalty(radius, give_up_radius, 0.0)
+    }
+
+    pub fn with_sneak_penalty(radius: f32, give_up_radius: f32, sneak_radius_penalty: f32) -> Self {
         ChasePlayerAi {
             radius,
             give_up_radius: give_up_radius.max(radius),
+            sneak_radius_penalty,
             chasing: false,
             lost_sight_ticks: 0,
         }
@@ -70,7 +89,26 @@ impl ChasePlayerAi {
         if p.give_up_radius < p.radius {
             return Err("give_up_radius must be >= radius".into());
         }
-        Ok(ChasePlayerAi::new(p.radius as f32, p.give_up_radius as f32))
+        // `!(>= 0)` rather than `< 0` so a NaN penalty is rejected too.
+        if !(p.sneak_radius_penalty >= 0.0) {
+            return Err("sneak_radius_penalty must be >= 0".into());
+        }
+        Ok(ChasePlayerAi::with_sneak_penalty(
+            p.radius as f32,
+            p.give_up_radius as f32,
+            p.sneak_radius_penalty as f32,
+        ))
+    }
+
+    /// The engage radius against the CURRENT target: sneaking shrinks it by the
+    /// row's penalty (never below zero — a penalty ≥ radius means a sneaking
+    /// player is never newly detected).
+    fn engage_radius(&self, sneaking: bool) -> f32 {
+        if sneaking {
+            (self.radius - self.sneak_radius_penalty).max(0.0)
+        } else {
+            self.radius
+        }
     }
 }
 
@@ -93,11 +131,14 @@ impl AiBehavior for ChasePlayerAi {
                     }
                 }
             }
-        } else if d2 <= self.radius * self.radius {
-            let body = ctx.pos + Vec3::new(0.0, ctx.head_height * 0.5, 0.0);
-            if los::line_clear(ctx.world, body, ctx.player_pos) {
-                self.chasing = true;
-                self.lost_sight_ticks = 0;
+        } else {
+            let engage = self.engage_radius(ctx.player_sneaking);
+            if d2 <= engage * engage {
+                let body = ctx.pos + Vec3::new(0.0, ctx.head_height * 0.5, 0.0);
+                if los::line_clear(ctx.world, body, ctx.player_pos) {
+                    self.chasing = true;
+                    self.lost_sight_ticks = 0;
+                }
             }
         }
         if !self.chasing {
@@ -164,6 +205,7 @@ mod tests {
             half_width: 0.22,
             world,
             player_pos: player,
+            player_sneaking: false,
             nav_idle: true,
             in_water: false,
             head: 1,
@@ -297,6 +339,45 @@ mod tests {
     }
 
     #[test]
+    fn sneaking_shrinks_the_engage_radius_but_not_an_engaged_chase() {
+        let world = flat_world();
+        let mut rng = MobRng::new(1);
+        let mut ai = ChasePlayerAi::with_sneak_penalty(10.0, 14.0, 5.0);
+        let mob = Vec3::new(2.5, 64.0, 2.5);
+        // 7 blocks away: inside the normal radius (10), outside the sneaking one (5).
+        let player = Vec3::new(9.5, 64.9, 2.5);
+
+        let mut c = ctx(&world, &mut rng, mob, player);
+        c.player_sneaking = true;
+        assert_eq!(
+            ai.tick(&mut c).goal,
+            None,
+            "a sneaking player at 7 blocks stays undetected"
+        );
+
+        // Standing up at the same spot: detected at once.
+        assert!(ai
+            .tick(&mut ctx(&world, &mut rng, mob, player))
+            .goal
+            .is_some());
+
+        // Sneaking again does NOT shake an already-engaged chase.
+        let mut c = ctx(&world, &mut rng, mob, player);
+        c.player_sneaking = true;
+        assert!(
+            ai.tick(&mut c).goal.is_some(),
+            "sneaking shrinks detection, never an engaged chase"
+        );
+
+        // A sneaking player inside the shrunk radius is still detected.
+        let mut ai = ChasePlayerAi::with_sneak_penalty(10.0, 14.0, 5.0);
+        let near = Vec3::new(6.5, 64.9, 2.5); // 4 blocks < 10 - 5
+        let mut c = ctx(&world, &mut rng, mob, near);
+        c.player_sneaking = true;
+        assert!(ai.tick(&mut c).goal.is_some());
+    }
+
+    #[test]
     fn params_are_validated_at_load() {
         assert!(ChasePlayerAi::from_params(
             &serde_json::json!({"radius": 8.0, "give_up_radius": 12.0})
@@ -317,6 +398,20 @@ mod tests {
             )
             .is_err(),
             "unknown params are refused"
+        );
+        assert!(
+            ChasePlayerAi::from_params(&serde_json::json!({
+                "radius": 8.0, "give_up_radius": 12.0, "sneak_radius_penalty": 5.0
+            }))
+            .is_ok(),
+            "the optional sneak penalty is accepted"
+        );
+        assert!(
+            ChasePlayerAi::from_params(&serde_json::json!({
+                "radius": 8.0, "give_up_radius": 12.0, "sneak_radius_penalty": -1.0
+            }))
+            .is_err(),
+            "a negative sneak penalty is refused"
         );
     }
 }

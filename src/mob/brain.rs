@@ -68,6 +68,9 @@ pub struct AiCtx<'a> {
     pub world: &'a World,
     /// Player body-centre — for head-look (and future flee / attack).
     pub player_pos: Vec3,
+    /// Whether that player is sneaking — sneaking shrinks hostile detection
+    /// (see `chase_player`'s `sneak_radius_penalty`).
+    pub player_sneaking: bool,
     /// True when the navigator has no active path (arrived / gave up / untasked).
     /// Behaviors treat this as "the mob is idle".
     pub nav_idle: bool,
@@ -210,6 +213,7 @@ mod tests {
             half_width: 0.25,
             world,
             player_pos: Vec3::ZERO,
+            player_sneaking: false,
             nav_idle: true,
             in_water: false,
             head: 1,

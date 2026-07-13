@@ -137,6 +137,7 @@ impl Game {
             outbox: Vec::new(),
             frame_messages: Vec::new(),
             camera_step_y_offset: 0.0,
+            camera_sneak_y_offset: 0.0,
             last_player_eye_y,
             third_person: Default::default(),
             handle,

@@ -64,7 +64,8 @@
           "priority": 20,
           "params": {
             "radius": 24.0,
-            "give_up_radius": 32.0
+            "give_up_radius": 32.0,
+            "sneak_radius_penalty": 5.0
           }
         },
         {

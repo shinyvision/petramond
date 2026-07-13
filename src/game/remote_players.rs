@@ -194,7 +194,7 @@ impl RemotePlayers {
                 let vel = p.prev.vel.lerp(p.curr.vel, alpha);
                 let hspeed = Vec3::new(vel.x, 0.0, vel.z).length();
                 let yaw = lerp_angle(p.prev.yaw, p.curr.yaw, alpha);
-                p.pose.advance(dt, hspeed, yaw, p.curr.visible);
+                p.pose.advance(dt, hspeed, yaw, p.curr.visible, p.curr.sneaking);
             }
             p.eat_t = if p.curr.eating {
                 (p.eat_t + dt / EAT_RAMP_SECS).min(1.0)

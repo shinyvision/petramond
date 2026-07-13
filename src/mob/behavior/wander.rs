@@ -334,6 +334,7 @@ mod tests {
             half_width: 0.45,
             world,
             player_pos: Vec3::ZERO,
+            player_sneaking: false,
             nav_idle: true,
             in_water: false,
             head: 2,

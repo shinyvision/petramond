@@ -537,6 +537,16 @@ impl ConnectedPlayer {
         self.player.inventory.selected().map(|s| s.item)
     }
 
+    /// Whether this session is sneaking RIGHT NOW: the held sneak intent,
+    /// gated on gameplay focus like every other held intent (a menu releases
+    /// it). The single definition every consumer shares — movement physics,
+    /// the interact-vs-place gate, the replicated `sneaking` row, and the mob
+    /// AI's player anchor.
+    #[inline]
+    pub(crate) fn sneaking(&self) -> bool {
+        self.intent_sneak && self.intent_gameplay
+    }
+
     #[inline]
     pub(crate) fn held_stair_half(&self) -> StairHalf {
         self.held_rotation.stair_half(self.selected_item())

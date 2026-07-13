@@ -156,6 +156,8 @@ pub(crate) struct PlayerPresentation {
     pub(crate) anim_time: f32,
     /// Walk-pose blend weight (`0` standing … `1` full walk cycle).
     pub(crate) walk_weight: f32,
+    /// Sneak-stance blend weight (`0` upright … `1` fully crouched).
+    pub(crate) sneak_weight: f32,
     /// Asleep in a bed: the body renders lying on its back, feet at `pos`,
     /// head toward `body_yaw`.
     pub(crate) sleeping: bool,
@@ -441,6 +443,7 @@ impl GamePresentationScratch {
                     head_pitch: pitch,
                     anim_time: p.pose.anim_time,
                     walk_weight: p.pose.walk_weight,
+                    sneak_weight: p.pose.sneak_weight,
                     sleeping,
                     hurt: p.hurt_flash01(),
                     skylight: world.skylight6_at_world(c.x, c.y, c.z),
@@ -532,6 +535,7 @@ fn collect_player(game: &Game) -> Option<PlayerPresentation> {
         head_pitch: game.player.pitch,
         anim_time: game.third_person.pose.anim_time,
         walk_weight: game.third_person.pose.walk_weight,
+        sneak_weight: game.third_person.pose.sneak_weight,
         sleeping,
         skylight,
         blocklight,

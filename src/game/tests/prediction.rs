@@ -1132,6 +1132,7 @@ fn sprint_descent_down_steps_is_not_one_tall_fall() {
         wishdir: Vec3::new(1.0, 0.0, 0.0),
         jump: false,
         sprint: true,
+        sneak: false,
     };
     for _ in 0..400 {
         let mut report = None;

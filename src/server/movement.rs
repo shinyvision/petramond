@@ -41,12 +41,13 @@ impl ServerGame {
     /// Integrate one session's movement on the fixed tick from latched intent
     /// (F2), then soft-accept a validated client claim when it is close (F1).
     pub(crate) fn tick_movement(&mut self, s: usize) {
-        let (wishdir, jump, sprint, claimed_pos, claimed_vel, claimed_on_ground, spectator, fresh) = {
+        let (wishdir, jump, sprint, sneak, claimed_pos, claimed_vel, claimed_on_ground, spectator, fresh) = {
             let sess = &self.sessions[s];
             (
                 sess.move_wishdir,
                 sess.move_jump && sess.intent_gameplay,
                 sess.move_sprint && sess.intent_gameplay,
+                sess.sneaking(),
                 sess.claim_pos,
                 sess.claim_vel,
                 sess.claim_on_ground,
@@ -73,6 +74,7 @@ impl ServerGame {
             wishdir,
             jump,
             sprint,
+            sneak,
         };
         // Where the server's OWN integration ended this tick, if grounded —
         // trusted ground contact for the fall tracker below (claim adoption

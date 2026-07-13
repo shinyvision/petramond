@@ -439,6 +439,7 @@ fn a_killed_mob_ragdolls_then_despawns() {
                 id: Default::default(),
                 pos: player_pos,
                 body: Some(player_body),
+                sneaking: false,
             }],
         );
     }
@@ -472,6 +473,7 @@ fn mobs_take_player_rule_fall_damage_when_they_land() {
         id: game.server.sessions[0].id,
         pos: player,
         body: Some(body),
+        sneaking: false,
     }];
 
     let mut feed = TickEvents::default();

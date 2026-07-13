@@ -54,6 +54,9 @@ pub struct PlayerAnchor {
     pub pos: Vec3,
     /// The pushable body; `None` for a spectator (nothing to jostle or strike).
     pub body: Option<Body>,
+    /// Whether this player is sneaking — hostile detection shrinks for a
+    /// sneaking target (`chase_player`'s `sneak_radius_penalty`).
+    pub sneaking: bool,
 }
 
 /// A melee strike a mob landed on a player this tick. Drained from
@@ -270,6 +273,7 @@ impl Mobs {
                 dt,
                 world,
                 anchor.pos,
+                anchor.sneaking,
                 i,
                 &ai_mobs,
                 def(mob.kind).despawn_radius,
@@ -622,11 +626,13 @@ mod tests {
             id: crate::server::player::PlayerId(0),
             pos: Vec3::new(0.0, 64.0, 0.0),
             body: None,
+            sneaking: false,
         };
         let b = PlayerAnchor {
             id: crate::server::player::PlayerId(1),
             pos: Vec3::new(10.0, 64.0, 0.0),
             body: None,
+            sneaking: false,
         };
         let near_b = Vec3::new(8.0, 64.0, 0.0);
         assert_eq!(super::nearest_anchor(&[a, b], near_b).id.0, 1);
@@ -761,6 +767,7 @@ mod tests {
                     id: Default::default(),
                     pos: far(),
                     body: None,
+                    sneaking: false,
                 }],
                 false,
             );
@@ -844,6 +851,7 @@ mod tests {
                     id: Default::default(),
                     pos: far(),
                     body: None,
+                    sneaking: false,
                 }],
                 false,
             );
@@ -924,6 +932,7 @@ mod tests {
                 id: Default::default(),
                 pos: spot,
                 body: None,
+                sneaking: false,
             }],
             false,
         );

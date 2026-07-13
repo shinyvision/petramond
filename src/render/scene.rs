@@ -108,6 +108,7 @@ impl Scene {
             head_pitch: p.head_pitch,
             anim_time: p.anim_time,
             walk_weight: p.walk_weight,
+            sneak_weight: p.sneak_weight,
             sleeping: p.sleeping,
             hurt: player_hurt,
             skylight: p.skylight,

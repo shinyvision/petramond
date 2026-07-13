@@ -99,7 +99,7 @@ impl ServerGame {
             consumed = true;
         } else {
             let interacted =
-                !self.sessions[s].intent_sneak && self.try_open_interactable(s, target, events);
+                !self.sessions[s].sneaking() && self.try_open_interactable(s, target, events);
             // The one place every consumed interaction passes through: the interact
             // hand jab defaults ON for all of them (see `GameEvents::interacted`).
             events.player(s).interacted |= interacted;

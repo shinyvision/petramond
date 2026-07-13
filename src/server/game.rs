@@ -426,7 +426,7 @@ impl ServerGame {
                     yaw: sess.player.yaw,
                     pitch: sess.player.pitch,
                     on_ground: sess.player.on_ground,
-                    sneaking: sess.intent_sneak,
+                    sneaking: sess.sneaking(),
                     sleeping: sess.sleep.is_some(),
                     sleep_yaw: self.sleep_head_yaw(s),
                     alive,
@@ -1223,6 +1223,7 @@ impl ServerGame {
                 id: sess.id,
                 pos: sess.player.body_center(),
                 body: (!sess.player.is_spectator()).then(|| sess.player.body()),
+                sneaking: sess.sneaking(),
             })
             .collect();
         // Passive natural spawning still centres on one anchor per tick, round-robin,

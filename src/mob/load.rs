@@ -542,6 +542,7 @@ mod tests {
             half_width: z.size.half_width,
             world: &world,
             player_pos: player,
+            player_sneaking: false,
             nav_idle: true,
             in_water: false,
             head: z.size.head_cells(),
@@ -906,6 +907,7 @@ mod tests {
                     id: Default::default(),
                     pos: near,
                     body: None,
+                    sneaking: false,
                 }],
                 false,
             );
@@ -918,6 +920,7 @@ mod tests {
                 id: Default::default(),
                 pos: far,
                 body: None,
+                sneaking: false,
             }],
             false,
         );

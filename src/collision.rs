@@ -25,6 +25,15 @@ const EPS: f32 = 1e-4;
 /// half a block, so it walks up slabs / a model block's low ledge but not a full block.
 pub const STEP_HEIGHT: f32 = 0.5;
 
+/// How far past a step allowance the sneak support probes reach: a support top
+/// sitting EXACTLY a step below (the slab step-down) must pass the strict
+/// interval tests despite float noise. Block geometry is 1/16-grained, so the
+/// margin can never legalize the next-taller drop. Shared by
+/// [`clamp_to_supported`] and the player's sneak snap-down, which must agree on
+/// what counts as "within a step" or a move the clamp allowed could fail to
+/// settle.
+pub const SUPPORT_PROBE_MARGIN: f32 = 0.01;
+
 /// The largest signed distance the body `[min, max]` may travel along `axis` (0=x, 1=y,
 /// 2=z) toward `delta` before a collision box from `boxes_fn` stops it — the swept-AABB
 /// core. Scans every cell the body sweeps through (nearest wins, so it never tunnels) and,
@@ -152,6 +161,83 @@ where
     // Respect headroom: the boxes being escaped sit behind an upward sweep
     // (their bottoms are below the head), so only a real ceiling clamps.
     sweep_axis(min, max, 1, need, boxes_fn).max(0.0)
+}
+
+/// Shrink a horizontal move `(dx, dz)` so the body `[min, max]` keeps solid support
+/// within `max_drop` below its feet at the destination — the sneak edge guard. A
+/// drop within `max_drop` (stepping down a slab, the mirror of the auto step-up)
+/// passes; a destination whose support band is empty (walking off a ledge) has the
+/// offending axis pulled back toward zero in small increments, so the body slides
+/// along the edge lip instead of over it. Axes are checked independently first,
+/// then combined, so a diagonal move keeps its along-the-edge component. A body
+/// that is ALREADY unsupported (mid-air callers) is left alone — the caller gates
+/// on being grounded.
+pub fn clamp_to_supported<F>(
+    min: [f32; 3],
+    max: [f32; 3],
+    dx: f32,
+    dz: f32,
+    max_drop: f32,
+    boxes_fn: F,
+) -> (f32, f32)
+where
+    F: Fn(i32, i32, i32) -> &'static [Aabb],
+{
+    // The pull-back increment. Small enough that a clamped move still hugs the
+    // edge lip closely; per-substep deltas are at most a few multiples of it.
+    const STEP: f32 = 0.05;
+    // Support: any collision box intersecting the band from `max_drop` below the
+    // feet up to the feet line, under the horizontally-offset body. Strict at the
+    // feet line so a wall RESTING at foot height (a step-up ahead) is not
+    // mistaken for floor — the ordinary sweep handles walls.
+    let supported = |ox: f32, oz: f32| -> bool {
+        let lo = [
+            min[0] + ox,
+            min[1] - max_drop - SUPPORT_PROBE_MARGIN,
+            min[2] + oz,
+        ];
+        let hi = [max[0] + ox, min[1], max[2] + oz];
+        for cx in lo[0].floor() as i32..=hi[0].floor() as i32 {
+            for cy in lo[1].floor() as i32..=hi[1].floor() as i32 {
+                for cz in lo[2].floor() as i32..=hi[2].floor() as i32 {
+                    let cell = [cx as f32, cy as f32, cz as f32];
+                    for b in boxes_fn(cx, cy, cz) {
+                        let inside = (0..3).all(|i| {
+                            let wlo = cell[i] + b.min[i];
+                            let whi = cell[i] + b.max[i];
+                            hi[i] > wlo + EPS && lo[i] < whi - EPS
+                        });
+                        if inside {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    };
+    if !supported(0.0, 0.0) {
+        return (dx, dz);
+    }
+    let shrink = |v: f32| {
+        if v.abs() <= STEP {
+            0.0
+        } else {
+            v - STEP * v.signum()
+        }
+    };
+    let (mut cx, mut cz) = (dx, dz);
+    while cx != 0.0 && !supported(cx, 0.0) {
+        cx = shrink(cx);
+    }
+    while cz != 0.0 && !supported(0.0, cz) {
+        cz = shrink(cz);
+    }
+    while cx != 0.0 && cz != 0.0 && !supported(cx, cz) {
+        cx = shrink(cx);
+        cz = shrink(cz);
+    }
+    (cx, cz)
 }
 
 /// Resolve a simple body's whole move for one tick: sweep Y (so it lands first), then the
@@ -567,6 +653,59 @@ mod tests {
             step_horizontal([0.2, 1.0, 0.2], [0.8, 2.0, 0.8], 0.5, 0.0, 0.0, half_step);
         assert!(hit_x3, "no step-up when not grounded");
         assert!(moved3[1] < 1e-3, "no rise when step disabled");
+    }
+
+    #[test]
+    fn clamp_to_supported_holds_the_edge_but_allows_a_step_down() {
+        /// A half-height slab (top at 0.5).
+        const HALF: &[Aabb] = &[Aabb {
+            min: [0.0, 0.0, 0.0],
+            max: [1.0, 0.5, 1.0],
+        }];
+        // A body standing on the single floor cell (0,0,0), moving +X into the void:
+        // pulled back so the feet keep support (body min.x stays over the cell).
+        let (mn, mx) = ([0.2, 1.0, 0.2], [0.8, 2.8, 0.8]);
+        let (cx, cz) = clamp_to_supported(mn, mx, 1.0, 0.0, STEP_HEIGHT, one_cell(FULL));
+        assert_eq!(cz, 0.0);
+        assert!(
+            cx > 0.0 && cx < 0.8,
+            "slides to the lip, never past it: {cx}"
+        );
+
+        // A half-slab in the next cell: a step-down within STEP_HEIGHT — free travel.
+        let slab_next = |x: i32, y: i32, z: i32| -> &'static [Aabb] {
+            match (x, y, z) {
+                (0, 0, 0) => FULL,
+                (1, 0, 0) => HALF,
+                _ => &[],
+            }
+        };
+        let (cx, _) = clamp_to_supported(mn, mx, 0.4, 0.0, STEP_HEIGHT, slab_next);
+        assert_eq!(cx, 0.4, "a step-down within the allowance is not clamped");
+
+        // Diagonal along a floor strip (all z at x=0): the off-edge X component is
+        // clamped, the along-edge Z component survives.
+        let strip = |x: i32, y: i32, _z: i32| -> &'static [Aabb] {
+            if x == 0 && y == 0 {
+                FULL
+            } else {
+                &[]
+            }
+        };
+        let (cx, cz) = clamp_to_supported(mn, mx, 1.0, 1.0, STEP_HEIGHT, strip);
+        assert!(cx < 1.0, "the off-edge axis is pulled back: {cx}");
+        assert_eq!(cz, 1.0, "the along-edge axis keeps its full travel");
+
+        // An already-unsupported body (mid-air) is left alone.
+        let (cx, cz) = clamp_to_supported(
+            [5.0, 8.0, 5.0],
+            [5.6, 9.8, 5.6],
+            1.0,
+            -0.5,
+            STEP_HEIGHT,
+            one_cell(FULL),
+        );
+        assert_eq!((cx, cz), (1.0, -0.5));
     }
 
     #[test]

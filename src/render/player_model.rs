@@ -63,14 +63,44 @@ pub(super) fn build_player_body(
     verts.clear();
     indices.clear();
 
-    let walk = model.animation("walk");
-    let anim = (inst.walk_weight > 0.001 && !inst.sleeping)
-        .then_some(walk)
-        .flatten();
-    let mut pose = match anim {
-        Some(a) => model.pose_scaled(a, inst.anim_time, inst.walk_weight),
-        None => model.rest_pose(),
+    // Locomotion pose: a cross-fade of up to three layers of the two authored
+    // clips. Upright movement plays `walk`; sneaking swaps in the `sneak` clip —
+    // its FRAME 0 is the standing crouch stance, so a still sneaker holds
+    // `sneak@0` at full weight, a moving sneaker plays the clip's own cycle, and
+    // the walk blend (`walk_weight`) cross-fades between those two exactly like
+    // it fades walk↔rest when upright. Weights sum to ≤ 1; the remainder is the
+    // rest pose (`pose_layers` scales toward rest).
+    let sneak = model.animation("sneak");
+    let sw = if inst.sleeping || sneak.is_none() {
+        0.0
+    } else {
+        inst.sneak_weight.clamp(0.0, 1.0)
     };
+    let ww = if inst.sleeping {
+        0.0
+    } else {
+        inst.walk_weight.clamp(0.0, 1.0)
+    };
+    let mut layers: Vec<(&crate::bbmodel::Animation, f32, f32)> = Vec::with_capacity(3);
+    if let Some(walk) = model.animation("walk") {
+        if ww * (1.0 - sw) > 0.001 {
+            layers.push((walk, inst.anim_time, ww * (1.0 - sw)));
+        }
+    }
+    if let Some(sneak) = sneak {
+        if sw * ww > 0.001 {
+            layers.push((sneak, inst.anim_time, sw * ww));
+        }
+        if sw * (1.0 - ww) > 0.001 {
+            layers.push((sneak, 0.0, sw * (1.0 - ww)));
+        }
+    }
+    let mut pose = if layers.is_empty() {
+        model.rest_pose()
+    } else {
+        model.pose_layers(&layers)
+    };
+    let head_animated = |hb: usize| layers.iter().any(|(a, _, _)| a.affects_bone(hb));
 
     // Asleep: the rest pose lying on its back — rotated flat about the feet,
     // head toward `body_yaw`, floated onto the mattress. Head-look and the arm
@@ -100,7 +130,7 @@ pub(super) fn build_player_body(
         }
     }
     if let Some(hb) = model.head_bone() {
-        if !anim.is_some_and(|a| a.affects_bone(hb)) {
+        if !head_animated(hb) {
             model.apply_head_look(&mut pose, hb, inst.head_yaw - twist, inst.head_pitch);
         }
     }
@@ -260,6 +290,7 @@ mod tests {
             head_pitch: 0.0,
             anim_time: 0.0,
             walk_weight: 0.0,
+            sneak_weight: 0.0,
             sleeping: false,
             hurt: 0.0,
             skylight: 63,
@@ -334,6 +365,49 @@ mod tests {
         assert!(
             rest.iter().zip(&looked).any(|(x, y)| x.pos != y.pos),
             "head look poses the head"
+        );
+    }
+
+    #[test]
+    fn sneak_weight_poses_the_crouch_and_replaces_the_walk_cycle() {
+        // Full sneak while standing still: a crouch stance, not the upright rest.
+        let rest = bake(&instance(), 0.0);
+        let mut crouched = instance();
+        crouched.sneak_weight = 1.0;
+        let stance = bake(&crouched, 0.0);
+        assert!(
+            rest.iter().zip(&stance).any(|(a, b)| a.pos != b.pos),
+            "the sneak stance poses the body"
+        );
+
+        // A STILL sneaker holds the clip's first frame: the walk phase must not
+        // leak into the stance.
+        crouched.anim_time = 0.4;
+        let stance_later = bake(&crouched, 0.0);
+        assert!(
+            stance.iter().zip(&stance_later).all(|(a, b)| a.pos == b.pos),
+            "standing sneak freezes on the sneak clip's frame 0"
+        );
+
+        // A MOVING sneaker animates through the sneak clip (its own cycle)...
+        crouched.walk_weight = 1.0;
+        crouched.anim_time = 0.1;
+        let step_a = bake(&crouched, 0.0);
+        crouched.anim_time = 0.35;
+        let step_b = bake(&crouched, 0.0);
+        assert!(
+            step_a.iter().zip(&step_b).any(|(a, b)| a.pos != b.pos),
+            "sneak-walking advances the sneak cycle"
+        );
+
+        // ...and that cycle is the sneak clip, not the upright walk.
+        let mut upright = instance();
+        upright.walk_weight = 1.0;
+        upright.anim_time = 0.1;
+        let walking = bake(&upright, 0.0);
+        assert!(
+            walking.iter().zip(&step_a).any(|(a, b)| a.pos != b.pos),
+            "sneak-walking is a different cycle than the upright walk"
         );
     }
 

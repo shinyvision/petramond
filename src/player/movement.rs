@@ -5,6 +5,8 @@ use crate::world::World;
 
 pub(super) const WALK: f32 = 4.3;
 pub(crate) const SPRINT: f32 = 5.6;
+/// Land-speed multiplier while sneaking (applies to walk; sneak overrides sprint).
+pub(super) const SNEAK_FACTOR: f32 = 0.5;
 pub(super) const SPECTATOR_SPEED: f32 = 48.0;
 pub(crate) const SPECTATOR_SPRINT: f32 = 96.0;
 pub(crate) const GRAVITY: f32 = 28.0;
@@ -284,7 +286,13 @@ impl Player {
         // --- Horizontal: input accelerates toward the wish velocity; friction
         // decays it. In water this is a slow swim with heavy drag; on land it is
         // the original ground/air handling. ---
-        let speed = if input.sprint { SPRINT } else { WALK };
+        let speed = if input.sneak {
+            WALK * SNEAK_FACTOR
+        } else if input.sprint {
+            SPRINT
+        } else {
+            WALK
+        };
         let wish = if input.wishdir.length_squared() > 1.0 {
             input.wishdir.normalize()
         } else {
@@ -381,8 +389,35 @@ impl Player {
         self.vel.x = vx;
         self.vel.z = vz;
 
-        let dx = self.vel.x * dt;
-        let dz = self.vel.z * dt;
+        let mut dx = self.vel.x * dt;
+        let mut dz = self.vel.z * dt;
+        // Sneak edge guard: while grounded (and not swimming), refuse any horizontal
+        // move whose destination has no support within a step-down below the feet —
+        // stepping down a slab still works (the mirror of the auto step-up), walking
+        // off anything taller is pulled back to the ledge lip. A clamped axis also
+        // zeroes its velocity, like a wall hit, so speed doesn't pile up against the
+        // edge. Jumping escapes: the take-off's Y sweep already cleared `on_ground`.
+        let sneak_guard = input.sneak && self.on_ground && !in_water;
+        if sneak_guard {
+            let mn = self.aabb_min();
+            let mx = self.aabb_max();
+            let (cx, cz) = crate::collision::clamp_to_supported(
+                [mn.x, mn.y, mn.z],
+                [mx.x, mx.y, mx.z],
+                dx,
+                dz,
+                crate::collision::STEP_HEIGHT,
+                boxes,
+            );
+            if cx != dx {
+                self.vel.x = 0.0;
+            }
+            if cz != dz {
+                self.vel.z = 0.0;
+            }
+            dx = cx;
+            dz = cz;
+        }
         // Horizontal slide with auto step-up: a grounded player walks up a half-block
         // ledge (a slab / a model block's low edge) without jumping. Airborne → step 0.
         // Same `collision::step_horizontal` the mob/item resolver uses.
@@ -409,6 +444,35 @@ impl Player {
         }
         if hit_z {
             self.vel.z = 0.0;
+        }
+
+        // Sneak step-down is INSTANT, mirroring the instant auto step-up: settle
+        // the body straight onto the support the edge guard just vouched for. An
+        // airborne half-block drop would take ~10 frames of gravity, and for all
+        // of them `on_ground` is false — the guard disengages and the retained
+        // horizontal momentum can carry the body across the landing block and
+        // off ITS far edge (the diagonal step-down fall-off). Snapping down in
+        // the same move keeps the sneaker grounded through the whole descent, so
+        // the guard holds every frame. The probe shares the clamp's margin: any
+        // drop the guard allowed lands here; anything deeper stays put (only the
+        // untouched clamp can refuse it).
+        if sneak_guard {
+            let probe = -(crate::collision::STEP_HEIGHT + crate::collision::SUPPORT_PROBE_MARGIN);
+            let mn = self.aabb_min();
+            let mx = self.aabb_max();
+            let down = crate::collision::sweep_axis(
+                [mn.x, mn.y, mn.z],
+                [mx.x, mx.y, mx.z],
+                1,
+                probe,
+                boxes,
+            );
+            if down > probe {
+                // Blocked within a step: rest on it (0 while anything is still
+                // underfoot, so flat walking never moves). `on_ground` stays
+                // true and `vel.y` stays 0 — the body never counted as falling.
+                self.pos.y += down;
+            }
         }
 
         // Measure the fall now that `on_ground` and the final feet `y` are settled; the

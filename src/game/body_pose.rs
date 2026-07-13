@@ -19,6 +19,9 @@ const MOVING_SPEED_SQ: f32 = 0.05 * 0.05;
 /// Exponential rate the walk↔stand pose blend settles at, so stopping eases the
 /// limbs back to rest instead of snapping to the rest pose in one frame.
 const WALK_BLEND_RATE: f32 = 10.0;
+/// Exponential rate the stand↔sneak stance blend settles at — the same feel as
+/// the walk blend, so crouching down and rising ease identically.
+const SNEAK_BLEND_RATE: f32 = 10.0;
 
 /// A player body's presentation pose, advanced once per frame.
 #[derive(Copy, Clone, Debug, Default)]
@@ -32,6 +35,11 @@ pub(crate) struct BodyPose {
     /// Walk-pose blend weight (`0` standing … `1` full walk cycle), eased
     /// toward `moving` so starts and stops transition instead of snapping.
     pub(crate) walk_weight: f32,
+    /// Sneak-stance blend weight (`0` upright … `1` fully crouched), eased
+    /// toward the sneak intent. The renderer cross-fades the sneak animation
+    /// in by this: its FRAME 0 is the standing-still stance, and while moving
+    /// the same clip's cycle replaces the walk cycle.
+    pub(crate) sneak_weight: f32,
 }
 
 impl BodyPose {
@@ -43,6 +51,7 @@ impl BodyPose {
         self.anim_time = 0.0;
         self.moving = false;
         self.walk_weight = 0.0;
+        self.sneak_weight = 0.0;
     }
 
     /// Freeze into the lying pose: the body faces `body_yaw` (the bed's
@@ -51,15 +60,32 @@ impl BodyPose {
         self.body_yaw = body_yaw;
         self.moving = false;
         self.walk_weight = 0.0;
+        self.sneak_weight = 0.0;
     }
 
     /// One frame of the pose: ease the walk blend toward the moving state,
     /// advance the phase by ground speed, and follow the body yaw behind the
     /// head (`head_yaw` = the look yaw). `can_move` gates the walk animation
     /// (false for spectators — the local body never draws for one, but the
-    /// gate keeps both drivers identical).
-    pub(crate) fn advance(&mut self, dt: f32, hspeed: f32, head_yaw: f32, can_move: bool) {
+    /// gate keeps both drivers identical). `sneaking` eases the sneak-stance
+    /// blend in/out.
+    pub(crate) fn advance(
+        &mut self,
+        dt: f32,
+        hspeed: f32,
+        head_yaw: f32,
+        can_move: bool,
+        sneaking: bool,
+    ) {
         self.moving = hspeed * hspeed > MOVING_SPEED_SQ && can_move;
+        // Stand↔sneak blends like walk↔stand: eased, with a snap-to-rest floor
+        // so the weight actually reaches 0/1.
+        let sneak_target = if sneaking && can_move { 1.0 } else { 0.0 };
+        let sneak_settle = 1.0 - (-SNEAK_BLEND_RATE * dt.max(0.0)).exp();
+        self.sneak_weight += (sneak_target - self.sneak_weight) * sneak_settle;
+        if self.sneak_weight < 0.01 && sneak_target == 0.0 {
+            self.sneak_weight = 0.0;
+        }
         // Walk↔stand blends instead of snapping: the weight eases toward the
         // moving state; the phase advances only while moving (a stopping body
         // fades its frozen mid-stride pose back to rest).
@@ -176,7 +202,7 @@ mod tests {
     #[test]
     fn pose_walk_weight_eases_in_and_back_to_rest() {
         let mut pose = BodyPose::default();
-        pose.advance(1.0 / 60.0, 3.0, 0.0, true);
+        pose.advance(1.0 / 60.0, 3.0, 0.0, true, false);
         assert!(pose.moving);
         assert!(
             pose.walk_weight > 0.0 && pose.walk_weight < 1.0,
@@ -187,7 +213,7 @@ mod tests {
         assert!(mid_phase > 0.0, "the phase advances while moving");
         // Stop: the weight decays smoothly and eventually clamps to rest.
         for _ in 0..120 {
-            pose.advance(1.0 / 60.0, 0.0, 0.0, true);
+            pose.advance(1.0 / 60.0, 0.0, 0.0, true, false);
         }
         assert_eq!(pose.walk_weight, 0.0, "stopping settles back to rest");
     }

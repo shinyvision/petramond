@@ -13,6 +13,16 @@ const STEP_CAMERA_EPS: f32 = 0.001;
 /// Camera height above the feet while asleep: head-on-the-pillow, a touch
 /// above the mattress the body is standing on (vs the standing `player::EYE`).
 const SLEEP_EYE_HEIGHT: f32 = 0.25;
+/// How far the first-person eye drops while sneaking (blocks) — the in-view
+/// feedback that sneak is active. CAMERA ONLY: the sim eye (`player::EYE`),
+/// reach, and the collision box stay full height, exactly like the sleep
+/// pillow-height camera. Well inside the server's `REACH + 1` target-latch
+/// slack, so a raycast from the lowered eye never trips reach validation.
+const SNEAK_EYE_DROP: f32 = 0.3;
+/// Exponential settle rate of the sneak eye drop — matches the body pose's
+/// sneak blend rate so the first-person dip and the third-person crouch land
+/// together.
+const SNEAK_EYE_SETTLE_SPEED: f32 = 10.0;
 
 impl Game {
     pub(super) fn apply_camera_input(&mut self, input: &GameInput) {
@@ -87,6 +97,7 @@ impl Game {
             wishdir: wishdir.normalize_or_zero(),
             jump: input.gameplay_enabled && input.movement.jump,
             sprint: input.gameplay_enabled && input.movement.sprint,
+            sneak: input.gameplay_enabled && input.movement.sneak,
         };
         // Stash for `build_player_update`: the wire intent must be the exact
         // input the local physics consumed this frame.
@@ -151,15 +162,28 @@ impl Game {
     pub(super) fn sync_camera_to_player_eye(&mut self, dt: f32) {
         let target = self.player.eye();
         let eye_dy = target.y - self.last_player_eye_y;
+        let grounded_still =
+            self.player.on_ground && self.player.vel.y.abs() <= STEP_CAMERA_EPS;
         if self.player.is_spectator() {
             self.camera_step_y_offset = 0.0;
-        } else if self.player.on_ground
-            && self.player.vel.y.abs() <= STEP_CAMERA_EPS
+        } else if grounded_still
             && eye_dy > STEP_CAMERA_EPS
             && eye_dy <= crate::collision::STEP_HEIGHT + STEP_CAMERA_EPS
         {
             let max_lag = crate::collision::STEP_HEIGHT * 1.5;
             self.camera_step_y_offset = (self.camera_step_y_offset - eye_dy).max(-max_lag);
+        } else if grounded_still
+            && self.predicted_input.sneak
+            && eye_dy < -STEP_CAMERA_EPS
+            && eye_dy >= -(crate::collision::STEP_HEIGHT + STEP_CAMERA_EPS)
+        {
+            // The sneak snap-down: physics dropped the feet onto the lower step
+            // instantly (grounded throughout, so the guard never let go); the
+            // camera starts the step ABOVE and settles down — the mirror of the
+            // step-up glide. Sneak-gated so ordinary landing dips keep their
+            // un-eased feel.
+            let max_lag = crate::collision::STEP_HEIGHT * 1.5;
+            self.camera_step_y_offset = (self.camera_step_y_offset - eye_dy).min(max_lag);
         }
 
         let settle = 1.0 - (-STEP_CAMERA_SETTLE_SPEED * dt.max(0.0)).exp();
@@ -168,6 +192,16 @@ impl Game {
             self.camera_step_y_offset = 0.0;
         }
 
+        // The sneak eye drop eases toward its target so crouching dips instead
+        // of teleporting; the same intent drives the third-person stance blend.
+        let sneak_target = if !self.player.is_spectator() && self.predicted_input.sneak {
+            -SNEAK_EYE_DROP
+        } else {
+            0.0
+        };
+        let sneak_settle = 1.0 - (-SNEAK_EYE_SETTLE_SPEED * dt.max(0.0)).exp();
+        self.camera_sneak_y_offset += (sneak_target - self.camera_sneak_y_offset) * sneak_settle;
+
         // Lying in bed: the body stays a standing collision box on the
         // mattress (physics unchanged), but the camera drops to pillow height
         // so the player visibly lies down rather than standing on the bed.
@@ -175,7 +209,7 @@ impl Game {
         let eye_y = if self.self_view.sleeping.is_some() {
             self.player.pos.y + SLEEP_EYE_HEIGHT
         } else {
-            target.y + self.camera_step_y_offset
+            target.y + self.camera_step_y_offset + self.camera_sneak_y_offset
         };
         self.cam.pos = Vec3::new(target.x, eye_y, target.z);
         self.last_player_eye_y = target.y;

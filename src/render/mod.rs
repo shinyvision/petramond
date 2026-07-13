@@ -288,6 +288,10 @@ pub struct PlayerRenderInstance {
     /// Walk-pose blend weight (`0` standing … `1` full walk cycle), eased by the
     /// game so starts/stops transition instead of snapping.
     pub walk_weight: f32,
+    /// Sneak-stance blend weight (`0` upright … `1` crouched), eased like the
+    /// walk blend. Cross-fades the authored `sneak` clip in: frame 0 while
+    /// standing, its own cycle (instead of `walk`) while moving.
+    pub sneak_weight: f32,
     /// Asleep in a bed: render lying on the back, feet at `pos`, head toward
     /// `body_yaw`; head-look and the arm swing are suppressed.
     pub sleeping: bool,
