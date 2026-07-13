@@ -13,14 +13,14 @@ use std::f32::consts::{PI, TAU};
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
-use super::brain::{AiCtx, AiMob, AttackIntent, BehaviorOutput, Brain};
+use super::brain::{AiCtx, AttackIntent, BehaviorOutput, Brain, TickInputs};
 use super::model_meta::{IdleAnimMeta, Skeleton};
 use super::nav::Navigator;
 use super::path;
 use super::ragdoll::Ragdoll;
 use super::{
-    def, Mob, MobDamageFeedback, MobDamageFeedbackComponent, MobDef, MobRng,
-    DEFAULT_DAMAGE_FLASH_SECS,
+    def, EntityRef, Mob, MobDamageFeedback, MobDamageFeedbackComponent, MobDef, MobRng,
+    PlayerAnchor, DEFAULT_DAMAGE_FLASH_SECS,
 };
 
 /// Downward acceleration (m/s²) applied to airborne mobs.
@@ -162,10 +162,24 @@ pub struct Instance {
     death: DeathState,
     /// The animation kind playing last tick, to detect changes (and reset `anim_time`).
     anim_kind: AnimKind,
-    /// A melee strike the brain wants landed on the player THIS tick — latched during
+    /// A melee strike the brain wants landed THIS tick — latched during
     /// [`tick`](Self::tick), drained by the manager into a
     /// [`MobAttack`](super::MobAttack). Never persisted; cleared every tick.
     attack: Option<AttackIntent>,
+    /// The target the brain settled on last tick (the merged
+    /// `BehaviorOutput::target`), fed back as `AiCtx::target` so attack nodes
+    /// strike what the winning perception node locked. Transient AI state,
+    /// never persisted (a reloaded mob re-perceives, like its navigation).
+    current_target: Option<EntityRef>,
+    /// Who last damaged this mob + ticks since — the retaliation input,
+    /// recorded by [`damage`](Self::damage). Ages out on the node's own
+    /// memory policy; never persisted.
+    attacker: Option<EntityRef>,
+    attacker_ticks: u32,
+    /// The entities whose bodies overlapped this mob, recorded by the
+    /// manager's push pass each tick and read by the NEXT tick's AI as
+    /// `AiCtx::contacts` (the touch perception channel). Never persisted.
+    contacts: Vec<EntityRef>,
     brain: Brain,
     nav: Navigator,
     rng: MobRng,
@@ -241,6 +255,10 @@ impl Instance {
             death: DeathState::Alive,
             anim_kind: AnimKind::Rest,
             attack: None,
+            current_target: None,
+            attacker: None,
+            attacker_ticks: 0,
+            contacts: Vec::new(),
             brain: super::build_brain(d),
             nav: Navigator::new(d.size.head_cells(), d.size.half_width),
             rng: MobRng::new(seed),
@@ -303,11 +321,16 @@ impl Instance {
     /// hit was lethal. A dead mob ignores damage (no double-kill, no knockback on a
     /// corpse). `petramond:ragdoll` is death-gated: it only starts the ragdoll if a
     /// `petramond:decrease_health` component made this hit cross to zero.
+    ///
+    /// `attacker` is the entity that caused the hit, when the source names one —
+    /// recorded as this mob's retaliation memory (see the `retaliate` brain node).
+    /// Whether the species reacts is brain data; the record itself is generic.
     pub fn damage(
         &mut self,
         amount: f32,
         origin: Option<Vec3>,
         attack: bool,
+        attacker: Option<EntityRef>,
         feedback: &MobDamageFeedback,
     ) -> bool {
         if self.death.is_dead() {
@@ -323,6 +346,12 @@ impl Instance {
         } else {
             false
         };
+        if decreases_health && amount > 0.0 {
+            if let Some(who) = attacker {
+                self.attacker = Some(who);
+                self.attacker_ticks = 0;
+            }
+        }
         if lethal {
             self.health = 0.0;
         }
@@ -397,6 +426,20 @@ impl Instance {
     /// collision-resolved step so it can't push the mob through terrain.
     pub(super) fn set_push(&mut self, push: Vec3) {
         self.push = push;
+    }
+
+    /// Replace this mob's touch-contact record (see the field docs) — the
+    /// manager's push pass writes it from the same overlap tests that compute
+    /// the pushes. The buffer is reused; nothing allocates on a quiet tick.
+    pub(super) fn set_contacts(&mut self, contacts: impl IntoIterator<Item = EntityRef>) {
+        self.contacts.clear();
+        self.contacts.extend(contacts);
+    }
+
+    /// The entities whose bodies overlapped this mob last tick.
+    #[inline]
+    pub fn contacts(&self) -> &[EntityRef] {
+        &self.contacts
     }
 
     /// Is the mob dead (ragdolling or done)? A dead mob can't be targeted or hurt.
@@ -532,18 +575,21 @@ impl Instance {
     /// Advance one game tick: snapshot the previous pose, let the brain pick a goal,
     /// have the navigator steer toward it, and integrate the kinematics. A dead mob
     /// runs no AI — only its death ragdoll advances.
+    ///
+    /// `inputs` is the tick-wide shared perception state; `anchor` is the player
+    /// nearest this mob (the default target for player-anchored decisions).
     pub fn tick(
         &mut self,
         dt: f32,
-        world: &World,
-        player_pos: Vec3,
-        player_sneaking: bool,
+        inputs: &TickInputs,
+        anchor: &PlayerAnchor,
         mob_index: usize,
-        mobs: &[AiMob],
         despawn_radius: Option<f32>,
         idle_anims: &[IdleAnimMeta],
         skeleton: &Skeleton,
     ) {
+        let world: &World = inputs.world;
+        let player_pos = anchor.pos;
         self.prev_pos = self.pos;
         self.prev_yaw = self.yaw;
         self.prev_anim_time = self.anim_time;
@@ -575,6 +621,12 @@ impl Instance {
         }
         if self.stagger_timer > 0.0 {
             self.stagger_timer = (self.stagger_timer - dt).max(0.0);
+        }
+
+        // Attacker memory ages on the tick; the retaliation node applies its own
+        // forget policy against this counter.
+        if self.attacker.is_some() {
+            self.attacker_ticks = self.attacker_ticks.saturating_add(1);
         }
 
         // Shear regrowth counts down on the tick; at zero the coat is back. Pauses
@@ -627,19 +679,26 @@ impl Instance {
                 head_height: d.size.height,
                 half_width: d.size.half_width,
                 world,
+                player_id: anchor.id,
                 player_pos,
-                player_sneaking,
+                player_sneaking: anchor.sneaking,
+                players: inputs.players,
+                noises: inputs.noises,
+                contacts: &self.contacts,
+                target: self.current_target,
+                attacker: self.attacker.map(|who| (who, self.attacker_ticks)),
                 nav_idle,
                 in_water,
                 head: d.size.head_cells(),
                 idle_anims,
                 mob_index,
-                mobs,
+                mobs: inputs.mobs,
                 rng: &mut self.rng,
             };
             self.brain.decide(&mut ctx)
         };
         self.attack = decision.attack;
+        self.current_target = decision.target;
         let can_repath = self.on_ground || in_water;
         let can_steer = route_steering_supported(self.on_ground, in_water, self.vel.y);
         self.nav
@@ -1406,12 +1465,12 @@ mod tests {
         // A 4-health owl: three 1-damage hits don't kill; the fourth does.
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         let from = Vec3::new(5.0, 0.0, 0.5);
-        assert!(!owl.damage(1.0, Some(from), true, &default_feedback()));
-        assert!(!owl.damage(1.0, Some(from), true, &default_feedback()));
-        assert!(!owl.damage(1.0, Some(from), true, &default_feedback()));
+        assert!(!owl.damage(1.0, Some(from), true, None, &default_feedback()));
+        assert!(!owl.damage(1.0, Some(from), true, None, &default_feedback()));
+        assert!(!owl.damage(1.0, Some(from), true, None, &default_feedback()));
         assert!(!owl.is_dead(), "still alive at 1 health");
         assert!(
-            owl.damage(1.0, Some(from), true, &default_feedback()),
+            owl.damage(1.0, Some(from), true, None, &default_feedback()),
             "the lethal hit reports true"
         );
         assert!(owl.is_dead(), "dead at 0 health");
@@ -1429,7 +1488,7 @@ mod tests {
         assert!(!owl.damage(
             100.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
-            true,
+            true, None,
             &MobDamageFeedback::none()
         ));
         assert_eq!(owl.health(), health);
@@ -1452,7 +1511,7 @@ mod tests {
         let ragdoll = MobDamageFeedback {
             components: vec![MobDamageFeedbackComponent::Ragdoll],
         };
-        assert!(!ragdoll_only.damage(100.0, Some(Vec3::new(5.0, 0.0, 0.5)), true, &ragdoll));
+        assert!(!ragdoll_only.damage(100.0, Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &ragdoll));
         assert!(
             !ragdoll_only.is_dead(),
             "ragdoll alone cannot kill without health feedback"
@@ -1465,12 +1524,8 @@ mod tests {
                 MobDamageFeedbackComponent::Ragdoll,
             ],
         };
-        assert!(dead_with_ragdoll.damage(
-            100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
-            true,
-            &health_and_ragdoll
-        ));
+        assert!(dead_with_ragdoll.damage(100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &health_and_ragdoll));
         assert!(dead_with_ragdoll.is_dead());
         assert!(
             !dead_with_ragdoll.is_despawned(),
@@ -1481,12 +1536,8 @@ mod tests {
         let health_only = MobDamageFeedback {
             components: vec![MobDamageFeedbackComponent::DecreaseHealth],
         };
-        assert!(dead_without_ragdoll.damage(
-            100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
-            true,
-            &health_only
-        ));
+        assert!(dead_without_ragdoll.damage(100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &health_only));
         assert!(dead_without_ragdoll.is_dead());
         assert!(
             dead_without_ragdoll.is_despawned(),
@@ -1498,21 +1549,13 @@ mod tests {
     fn a_dead_mob_ignores_further_damage() {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(
-            owl.damage(
-                100.0,
-                Some(Vec3::new(5.0, 0.0, 0.5)),
-                true,
-                &default_feedback()
-            ),
+            owl.damage(100.0,
+                Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &default_feedback()),
             "one big hit kills"
         );
         // A corpse takes no more damage and reports no further lethal hits.
-        assert!(!owl.damage(
-            100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
-            true,
-            &default_feedback()
-        ));
+        assert!(!owl.damage(100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &default_feedback()));
         assert!(owl.is_dead());
     }
 
@@ -1526,12 +1569,8 @@ mod tests {
         let x0 = owl.pos.x;
         // Hit from the +X side → knockback toward -X. This is the key invariant: the
         // knockback survives `integrate`'s per-tick wish-velocity overwrite.
-        assert!(!owl.damage(
-            1.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
-            true,
-            &default_feedback()
-        ));
+        assert!(!owl.damage(1.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &default_feedback()));
         // Wish toward +X (toward the attacker); the knockback must win during the stagger.
         for _ in 0..4 {
             owl.integrate(
@@ -1558,12 +1597,8 @@ mod tests {
             false
         });
         let x0 = owl.pos.x;
-        assert!(!owl.damage(
-            1.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
-            false,
-            &default_feedback()
-        ));
+        assert!(!owl.damage(1.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)), false, None, &default_feedback()));
         owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
             false
         });
@@ -1581,18 +1616,15 @@ mod tests {
             1.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
             true,
+            None,
             &default_feedback(),
         );
         assert!(owl.hurt_flash(1.0) > 0.0, "a non-lethal hit flashes red");
 
         // The killing blow flashes red too (so it looks like any other hit).
         let mut dead = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-        assert!(dead.damage(
-            100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)),
-            true,
-            &default_feedback()
-        ));
+        assert!(dead.damage(100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &default_feedback()));
         assert!(
             dead.hurt_flash(1.0) > 0.0,
             "the kill flashes red like a normal hit"

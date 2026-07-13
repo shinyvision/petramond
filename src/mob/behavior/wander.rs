@@ -333,8 +333,14 @@ mod tests {
             head_height: 1.0,
             half_width: 0.45,
             world,
+            player_id: Default::default(),
             player_pos: Vec3::ZERO,
             player_sneaking: false,
+            players: &[],
+            noises: &[],
+            contacts: &[],
+            target: None,
+            attacker: None,
             nav_idle: true,
             in_water: false,
             head: 2,
@@ -444,16 +450,22 @@ mod tests {
         };
         let mobs = [
             AiMob {
+
+                id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(0.5, 64.0, 0.5),
                 active: true,
             },
             AiMob {
+
+                id: 0,
                 kind: Mob::Owl,
                 pos: Vec3::new(2.5, 64.0, 0.5),
                 active: true,
             },
             AiMob {
+
+                id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(3.5, 64.0, 0.5),
                 active: false,
@@ -468,6 +480,8 @@ mod tests {
         let mobs = [
             mobs[0],
             AiMob {
+
+                id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(4.5, 64.0, 0.5),
                 active: true,
@@ -491,11 +505,15 @@ mod tests {
         };
         let mobs = [
             AiMob {
+
+                id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(0.5, 64.0, 0.5),
                 active: true,
             },
             AiMob {
+
+                id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(2.5, 64.0, 0.5),
                 active: true,
@@ -527,11 +545,15 @@ mod tests {
         };
         let mobs = [
             AiMob {
+
+                id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(0.5, 64.0, 0.5),
                 active: true,
             },
             AiMob {
+
+                id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(15.5, 64.0, 0.5),
                 active: true,

@@ -42,9 +42,14 @@ impl AiBehavior for WasmNodeAi {
             goal: d.goal.map(|g| IVec3::new(g[0], g[1], g[2])),
             head_look: d.head_look.map(|[yaw, pitch]| HeadLook { yaw, pitch }),
             idle_anim: d.idle_anim,
-            attack: d
-                .attack
-                .map(|[damage, knockback]| AttackIntent { damage, knockback }),
+            // A scripted strike targets the nearest player — the only target
+            // the single-player-shaped AI-node ABI can express today.
+            attack: d.attack.map(|[damage, knockback]| AttackIntent {
+                target: crate::mob::EntityRef::Player(ctx.player_id),
+                damage,
+                knockback,
+            }),
+            target: None,
         }
     }
 }

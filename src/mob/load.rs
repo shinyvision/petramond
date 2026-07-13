@@ -35,9 +35,17 @@ use super::{
 /// Constructs one AI node from its row key + brain-row params + the owning
 /// species row. Factories run once at load for validation and once per
 /// spawned mob. The key matters only to the scripted (WASM) node, which
-/// routes its dispatch on it; engine factories ignore it.
-pub(super) type NodeFactory =
-    fn(&'static str, &serde_json::Value, &'static MobDef) -> Result<Box<dyn AiBehavior>, String>;
+/// routes its dispatch on it; engine factories ignore it. The trailing slice
+/// is the FULL def table (the in-flight leaked slice during load validation)
+/// for factories that resolve cross-species references (`chase_sound`'s
+/// `mob_targets`) — a factory must NEVER call `defs()` itself: validation runs
+/// inside that LazyLock's initializer and the re-entry deadlocks the load.
+pub(super) type NodeFactory = fn(
+    &'static str,
+    &serde_json::Value,
+    &'static MobDef,
+    &[MobDef],
+) -> Result<Box<dyn AiBehavior>, String>;
 
 #[derive(Deserialize)]
 struct RawFile {
@@ -241,7 +249,7 @@ pub(super) fn parse_layers(texts: &[&str]) -> Result<&'static [MobDef], String> 
     // the load rather than the first spawn.
     for d in defs {
         for node in d.brain {
-            node.validate(d)
+            node.validate(d, defs)
                 .map_err(|e| format!("mob '{}': brain node '{}': {e}", d.name, node.node))?;
         }
     }
@@ -533,6 +541,12 @@ mod tests {
         let mut rng = super::super::MobRng::new(1);
         let mob_pos = Vec3::new(2.5, 64.0, 2.5);
         let player = Vec3::new(3.7, 64.9, 2.5); // 1.2 blocks away: chase + melee range
+        let players = [crate::mob::PlayerAnchor {
+            id: Default::default(),
+            pos: player,
+            body: None,
+            sneaking: false,
+        }];
         let mut ctx = super::super::brain::AiCtx {
             mob_id: 1,
             pos: mob_pos,
@@ -541,8 +555,14 @@ mod tests {
             head_height: z.size.height,
             half_width: z.size.half_width,
             world: &world,
+            player_id: Default::default(),
             player_pos: player,
             player_sneaking: false,
+            players: &[],
+            noises: &[],
+            contacts: &[],
+            target: None,
+            attacker: None,
             nav_idle: true,
             in_water: false,
             head: z.size.head_cells(),
@@ -557,9 +577,19 @@ mod tests {
             Some(crate::mathh::IVec3::new(3, 64, 2)),
             "chase_player steers navigation at the player's cell"
         );
-        let attack = decision
+        assert!(
+            decision.target.is_some(),
+            "the engaged chase publishes its lock"
+        );
+        // Melee strikes the PREVIOUS tick's latched lock (the instance feeds
+        // the merged target back as next tick's `AiCtx::target`), so the
+        // strike lands on the second decide.
+        ctx.players = &players;
+        ctx.target = decision.target;
+        let attack = brain
+            .decide(&mut ctx)
             .attack
-            .expect("melee_attack emits an intent in reach");
+            .expect("melee_attack strikes the locked player in reach");
         assert_eq!(attack.damage, 2.0);
         assert_eq!(attack.knockback, 5.0);
     }

@@ -951,6 +951,13 @@ impl World {
         (sky, block)
     }
 
+    /// Record one gameplay noise for the mob AI's hearing batch (see
+    /// `mob::noise` for the timing contract). Emitters are the game's own
+    /// funnels: player steps, block place/break.
+    pub fn push_noise(&mut self, noise: crate::mob::Noise) {
+        self.mobs.push_noise(noise);
+    }
+
     /// Advance the mobs one fixed game tick against an immutable view of the rest of
     /// the world (the field is moved out so the `&mut Mobs` and `&World` borrows stay
     /// disjoint). Returns the gameplay events mobs produced this tick, for `Game` to
@@ -961,6 +968,9 @@ impl World {
         anchors: &[crate::mob::PlayerAnchor],
     ) -> crate::mob::MobTickEvents {
         if self.mobs.is_empty() {
+            // Nobody is listening: drop the tick's noise batch, or a mob-free
+            // world would accumulate the player's footsteps forever.
+            self.mobs.discard_noises();
             return crate::mob::MobTickEvents::default();
         }
         let freeze_unloaded = self.save.is_some();

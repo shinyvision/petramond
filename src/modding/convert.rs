@@ -138,8 +138,8 @@ fn damage_source(s: events::DamageSource) -> api::DamageSource {
     match s {
         events::DamageSource::Fall => api::DamageSource::Fall,
         events::DamageSource::PlayerAttack(id) => api::DamageSource::PlayerAttack { id: id.0 },
-        events::DamageSource::MobAttack(mob) => api::DamageSource::MobAttack {
-            key: crate::mob::def(mob).key.to_owned(),
+        events::DamageSource::MobAttack { kind, .. } => api::DamageSource::MobAttack {
+            key: crate::mob::def(kind).key.to_owned(),
         },
         events::DamageSource::Mod(mod_id) => api::DamageSource::Mod {
             mod_id: mod_id.to_owned(),

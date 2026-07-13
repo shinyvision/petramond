@@ -27,12 +27,14 @@ mod model_meta;
 mod nav;
 mod path;
 mod ragdoll;
+mod noise;
 mod spawn;
 
 pub use brain::Brain;
 pub use instance::{hurt_flash01, Instance};
 pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop};
+pub use noise::{player_steps_are_audible, Noise, NoiseKind};
 pub(crate) use spawn::{
     body_fits_at as spawn_body_fits_at, hostile_attempt_sites, hostile_kind_has_room,
     hostile_spawn_plan, HOSTILE_SPAWN_ATTEMPTS,
@@ -63,6 +65,19 @@ pub struct Mob(pub u8);
 impl Mob {
     pub const Owl: Mob = Mob(0);
     pub const Sheep: Mob = Mob(1);
+}
+
+/// A reference to a combat-capable entity: a connected player (by session id)
+/// or a live mob (by its STABLE session id — never a storage index, which
+/// `swap_remove` renumbers between the tick that captured it and the tick that
+/// resolves it). This is the shared identity vocabulary for AI targeting
+/// (`BehaviorOutput::target`), noise attribution ([`Noise::source`]), and
+/// attacker memory (retaliation) — one type, so a perception node can lock
+/// onto exactly what a noise or a hit named.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum EntityRef {
+    Player(crate::server::player::PlayerId),
+    Mob(u64),
 }
 
 /// Engine mob names in frozen id order (`ENGINE_MOB_NAMES[id]` names `Mob(id)`).
@@ -441,9 +456,11 @@ pub struct BrainNode {
 
 impl BrainNode {
     /// Run the factory once, discarding the behavior — the loader's validation pass,
-    /// so a bad row fails the catalog load instead of the first spawn.
-    fn validate(&self, def: &'static MobDef) -> Result<(), String> {
-        (self.factory)(self.node, self.params, def).map(|_| ())
+    /// so a bad row fails the catalog load instead of the first spawn. `all` is the
+    /// in-flight def table (validation runs inside the `defs()` initializer, so the
+    /// factory must never reach for the LazyLock itself).
+    fn validate(&self, def: &'static MobDef, all: &[MobDef]) -> Result<(), String> {
+        (self.factory)(self.node, self.params, def, all).map(|_| ())
     }
 }
 
@@ -453,7 +470,7 @@ impl BrainNode {
 pub(crate) fn build_brain(def: &'static MobDef) -> Brain {
     let mut brain = Brain::new();
     for node in def.brain {
-        let behavior: Box<dyn AiBehavior> = (node.factory)(node.node, node.params, def)
+        let behavior: Box<dyn AiBehavior> = (node.factory)(node.node, node.params, def, defs())
             .unwrap_or_else(|e| {
                 panic!(
                     "mob '{}': brain node '{}' failed after load validation: {e}",

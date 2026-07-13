@@ -10,9 +10,10 @@ use crate::server::game::ATTACK_COOLDOWN_TICKS;
 
 fn strike() -> MobAttack {
     MobAttack {
-        target: Default::default(),
+        target: crate::mob::EntityRef::Player(Default::default()),
         mob_index: 0,
         mob: Mob::Owl,
+        mob_id: 1,
         origin: Vec3::new(7.0, 64.0, 8.0),
         damage: 2.0,
         knockback_dir: Vec3::new(1.0, 0.0, 0.0),
@@ -63,7 +64,7 @@ fn mob_strikes_route_to_the_targeted_session_only() {
     let h1 = game.server.sessions[other].player.health();
 
     let mut a = strike();
-    a.target = other_id;
+    a.target = crate::mob::EntityRef::Player(other_id);
     game.server.apply_mob_attacks(vec![a], &mut ev);
 
     assert_eq!(
@@ -271,7 +272,7 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
         .server
         .world
         .mobs_mut()
-        .damage_mob(0, 100.0, Some(cam_pos), true, &MobDamageFeedback::default())
+        .damage_mob(0, 100.0, Some(cam_pos), true, None, &MobDamageFeedback::default())
         .is_some());
     let batch = rows(&game);
     game.replicated_mobs.apply(batch);
@@ -294,7 +295,7 @@ fn fist_takes_four_hits_to_kill_an_owl() {
             game.server
                 .world
                 .mobs_mut()
-                .damage_mob(0, 1.0, Some(from), true, &MobDamageFeedback::default())
+                .damage_mob(0, 1.0, Some(from), true, None, &MobDamageFeedback::default())
                 .is_none(),
             "fist hit {i} isn't lethal"
         );
@@ -303,7 +304,7 @@ fn fist_takes_four_hits_to_kill_an_owl() {
         game.server
             .world
             .mobs_mut()
-            .damage_mob(0, 1.0, Some(from), true, &MobDamageFeedback::default())
+            .damage_mob(0, 1.0, Some(from), true, None, &MobDamageFeedback::default())
             .is_some(),
         "the 4th fist hit kills"
     );
@@ -420,7 +421,7 @@ fn a_killed_mob_ragdolls_then_despawns() {
             0,
             100.0,
             Some(pos + Vec3::X),
-            true,
+            true, None,
             &MobDamageFeedback::default()
         )
         .is_some());
@@ -512,6 +513,7 @@ fn killing_owls_drops_loot_into_the_world() {
             100.0,
             Some(pos + Vec3::X),
             true,
+            None,
             &MobDamageFeedback::default(),
         ) {
             game.server.spawn_mob_loot(death);

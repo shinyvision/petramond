@@ -1,14 +1,26 @@
-//! zombies — the hostile-mob proof-of-concept mod, and a
+//! monsters — the hostile-monster mod (zombies + hushjaws), and a
 //! MOD-INTEROP consumer: it reads the core `petramond:time` world-KV value and
 //! the engine's split light channels to decide when to spawn and burn.
 //!
 //! What it does, all on the deterministic tick:
 //! - **Light-based spawning**: core selects physical hostile-spawn candidates
-//!   and asks this mod whether a zombie admits each one. Zombies accept only
+//!   and asks this mod which species admits each one. Both species accept only
 //!   when `max(block_light, sky_light * daylight_factor)` is dark enough.
 //!   Daylight comes from `petramond:time`, using the same smooth dawn/dusk curve as
-//!   core day/night. Dark caves can spawn zombies during the day; torch/block
+//!   core day/night. Dark caves can spawn monsters during the day; torch/block
 //!   light blocks the spawn.
+//! - **Hushjaw spawning**: on a dark site, the hushjaw claims the spawn when
+//!   the site is deep (feet Y below −16), at least 32 blocks from the nearest
+//!   player (the candidate's own `nearest_player_dist` — multiplayer-correct),
+//!   at least 32 blocks from every live hushjaw (they hunt alone), and a
+//!   seeded 10% claim roll passes — otherwise the site falls through to the
+//!   zombie. The hushjaw's BEHAVIOR is all engine brain data on its
+//!   `mobs.json` row: `chase_sound` (hears walking, block place/break within
+//!   12 blocks, locks through walls, forgets after 40 silent ticks, rarely
+//!   hunts a heard zombie), `chase_contact` (anything that BUMPS into it —
+//!   player or any mob, sneaking or not — is locked and attacked), `retaliate`
+//!   (whoever hits it, it knows — after a 20-tick boil-over), and
+//!   `melee_attack`. No head_look: it is blind, and it never visually tracks.
 //! - **Sunburn**: every tick, each not-yet-burning zombie in strong direct sky
 //!   light has a 5% seeded chance to catch LIGHT fire: the core
 //!   `petramond:burn_light` emitter bundle (orange/yellow flames + black smoke
@@ -33,7 +45,7 @@
 //!   ZOMBIE-sourced damage landing within [`IFRAME_TICKS`] of the previous
 //!   zombie hit. A cancel suppresses both the damage AND the knockback
 //!   (Phase 3a engine contract). Only `DamageSource::MobAttack { key ==
-//!   "zombies:zombie" }` is gated — fall damage, other species, and other
+//!   "monsters:zombie" }` is gated — fall damage, other species, and other
 //!   mods' `DamagePlayer` calls pass through untouched: the i-frame window
 //!   is a property of zombie melee, not of the player.
 //!
@@ -41,7 +53,7 @@
 //!
 //! - reads `petramond:time` (4-byte LE f32 day fraction) — the sanctioned
 //!   interop surface published by core day/night.
-//! - writes `zombies:invuln_until` — 8 bytes, little-endian u64: the game
+//! - writes `monsters:invuln_until` — 8 bytes, little-endian u64: the game
 //!   tick the current i-frame window ends at, mirrored for inspection.
 //!   The in-memory copy is authoritative within a session and deliberately
 //!   resets on reload (worst case: one free hit — trivia, not state worth
@@ -49,13 +61,28 @@
 
 use mod_sdk::*;
 
-const ZOMBIE_TICK_SYSTEM: u32 = 1;
-const ZOMBIE_HOSTILE_SPAWNER: u32 = 1;
+const MONSTERS_TICK_SYSTEM: u32 = 1;
+const MONSTERS_HOSTILE_SPAWNER: u32 = 1;
 const ON_PLAYER_DAMAGE_PRE: u32 = 1;
 
-const ZOMBIE_KEY: &str = "zombies:zombie";
+const ZOMBIE_KEY: &str = "monsters:zombie";
+const HUSHJAW_KEY: &str = "monsters:hushjaw";
 const TIME_KEY: &str = "petramond:time";
-const INVULN_KEY: &str = "zombies:invuln_until";
+const INVULN_KEY: &str = "monsters:invuln_until";
+
+/// Hushjaw spawn rules — a deep-cave apex predator, deliberately never near
+/// the surface, the player, or its own kind:
+/// - only at feet Y strictly below this level;
+const HUSHJAW_BELOW_Y: i32 = -16;
+/// - never within this many blocks of the nearest player (core's hostile ring
+///   already starts at 25; this pushes the floor out further);
+const HUSHJAW_MIN_PLAYER_DIST: f32 = 32.0;
+/// - never within this many blocks of another live hushjaw (they hunt alone);
+const HUSHJAW_SPACING: f32 = 32.0;
+/// - and it claims only this % of otherwise-eligible deep dark sites, so
+///   zombies still populate the depths around it and running from one hushjaw
+///   rarely means running into another.
+const HUSHJAW_CLAIM_PER_100: u64 = 10;
 
 /// 6-bit effective light strictly below this value allows a spawn. The value
 /// is intentionally below ordinary torch light, while still accepting caves
@@ -98,7 +125,7 @@ struct Burn {
 }
 
 #[derive(Default)]
-struct Zombies {
+struct Monsters {
     /// Tick the current i-frame window ends at (authoritative; the world-KV
     /// mirror is for inspection only).
     invuln_until: u64,
@@ -108,12 +135,12 @@ struct Zombies {
     burning: std::collections::HashMap<u64, Burn>,
 }
 
-impl Mod for Zombies {
+impl Mod for Monsters {
     fn init(&mut self) {
-        register_tick_system(Stage::Spawning, AttachSide::After, 0, ZOMBIE_TICK_SYSTEM);
-        register_hostile_spawner(0, ZOMBIE_HOSTILE_SPAWNER);
+        register_tick_system(Stage::Spawning, AttachSide::After, 0, MONSTERS_TICK_SYSTEM);
+        register_hostile_spawner(0, MONSTERS_HOSTILE_SPAWNER);
         register_event_handler(EventKind::PlayerDamagePre, 0, ON_PLAYER_DAMAGE_PRE);
-        log("initialized: hostile spawner + sunburn + zombie-melee i-frames");
+        log("initialized: hostile spawner (zombie + hushjaw) + sunburn + melee i-frames");
     }
 
     fn tick_system(&mut self, _system_id: u32) {
@@ -158,13 +185,42 @@ impl Mod for Zombies {
         candidate: &HostileSpawnCandidate,
     ) -> Option<String> {
         let daylight = daylight_factor_from_daynight()?;
-        (effective_light(candidate.sky_light, candidate.block_light, daylight)
-            < SPAWN_LIGHT_THRESHOLD)
-            .then(|| ZOMBIE_KEY.to_owned())
+        if effective_light(candidate.sky_light, candidate.block_light, daylight)
+            >= SPAWN_LIGHT_THRESHOLD
+        {
+            return None;
+        }
+        // The hushjaw gets first claim on the deep dark; everything else that
+        // is dark enough is a zombie site (core still enforces species caps on
+        // whatever key we return).
+        if hushjaw_admits(candidate) {
+            return Some(HUSHJAW_KEY.to_owned());
+        }
+        Some(ZOMBIE_KEY.to_owned())
     }
 }
 
-impl Zombies {
+/// The hushjaw's spawn rules on a dark, core-validated candidate site — see
+/// the `HUSHJAW_*` constants for the policy. The claim roll draws only after
+/// the pure position checks pass, and the (host-crossing) spacing query runs
+/// only for claimed sites, so quiet ticks stay cheap and the RNG stream is a
+/// deterministic function of the deterministic candidate sequence.
+fn hushjaw_admits(candidate: &HostileSpawnCandidate) -> bool {
+    if candidate.cell[1] >= HUSHJAW_BELOW_Y {
+        return false;
+    }
+    if candidate.nearest_player_dist < HUSHJAW_MIN_PLAYER_DIST {
+        return false;
+    }
+    if mix(rng_u64("hushjaw_claim")) % 100 >= HUSHJAW_CLAIM_PER_100 {
+        return false;
+    }
+    mobs_in_radius(candidate.pos, HUSHJAW_SPACING)
+        .iter()
+        .all(|m| m.key != HUSHJAW_KEY)
+}
+
+impl Monsters {
     /// Ignite sunlit zombies and advance every burning one by one tick.
     fn tick_fire(&mut self, daylight: f32, near: &[MobSnapshot]) {
         // Forget burns whose zombie is gone from the live snapshot: it died
@@ -293,4 +349,4 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-register_mod!(Zombies);
+register_mod!(Monsters);

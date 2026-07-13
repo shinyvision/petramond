@@ -145,24 +145,27 @@ impl AiBehavior for ChasePlayerAi {
             return BehaviorOutput::default();
         }
         BehaviorOutput {
-            goal: player_goal_cell(ctx),
+            goal: goal_cell_near(ctx, ctx.player_pos),
+            target: Some(crate::mob::EntityRef::Player(ctx.player_id)),
             ..Default::default()
         }
     }
 }
 
-/// The navigation-foothold cell nearest the player that THIS mob can stand in, or
-/// `None` when no standable cell sits within the vertical scan (player airborne /
+/// The navigation-foothold cell nearest `pos` that THIS mob can stand in, or
+/// `None` when no standable cell sits within the vertical scan (target airborne /
 /// over deep water). Reuses the pathfinder's foothold test so the emitted goal is
-/// always a cell `find_path` accepts.
-fn player_goal_cell(ctx: &AiCtx) -> Option<IVec3> {
+/// always a cell `find_path` accepts. Shared by every chase-like node
+/// (`chase_player`, `chase_sound`, `retaliate`).
+pub(super) fn goal_cell_near(ctx: &AiCtx, pos: Vec3) -> Option<IVec3> {
     let solid = |c: IVec3| ctx.world.blocks_movement_at(c.x, c.y, c.z);
     let water = |c: IVec3| ctx.world.water_cell_at(c.x, c.y, c.z);
     let params = PathParams::for_body(ctx.head, ctx.half_width);
-    let x = ctx.player_pos.x.floor() as i32;
-    let z = ctx.player_pos.z.floor() as i32;
-    // `player_pos` is the body centre (feet + ~0.9), so its floor is the feet cell.
-    let y0 = ctx.player_pos.y.floor() as i32;
+    let x = pos.x.floor() as i32;
+    let z = pos.z.floor() as i32;
+    // `pos` is a body centre (feet + roughly half a body), so its floor is the
+    // feet cell for every practical target height.
+    let y0 = pos.y.floor() as i32;
     for d in 0..=GOAL_SCAN_CELLS {
         for y in [y0 - d, y0 + d] {
             let c = IVec3::new(x, y, z);
@@ -204,8 +207,14 @@ mod tests {
             head_height: 0.7,
             half_width: 0.22,
             world,
+            player_id: Default::default(),
             player_pos: player,
             player_sneaking: false,
+            players: &[],
+            noises: &[],
+            contacts: &[],
+            target: None,
+            attacker: None,
             nav_idle: true,
             in_water: false,
             head: 1,

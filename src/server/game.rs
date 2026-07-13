@@ -1231,6 +1231,11 @@ impl ServerGame {
         // own chunk/cap plan from every connected anchor below.
         let spawn_s = (self.world.current_tick() as usize) % self.sessions.len();
 
+        // Footstep noises for hearing-based mob AI, sampled from the same
+        // settled player state as the anchors (block-action noises were pushed
+        // by their own funnels during the earlier stages).
+        self.push_player_step_noises();
+
         self.begin_stage(Stage::Mobs, events);
         let mob_events = self.world.tick_mobs(TICK_DT, &anchors);
         self.apply_mob_fall_damage(mob_events.falls, events);

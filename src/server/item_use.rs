@@ -299,6 +299,7 @@ impl ServerGame {
             pos: p,
             block: Block::Water,
         });
+        self.push_block_noise(s, p, crate::mob::NoiseKind::BlockPlaced);
         // A water bucket never stacks, so the swap back to the empty bucket is
         // always an in-place slot swap and cannot fail.
         self.sessions[s]

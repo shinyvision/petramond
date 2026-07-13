@@ -12,7 +12,7 @@
 //!   ring cell degrades to the player's feet);
 //! - **death** → `kill_player()` (current health through the damage funnel as
 //!   `DamageSource::Mod{"wheel"}` — other mods' MOB-gated i-frames, like the
-//!   zombies mod's, deliberately do not apply).
+//!   monsters mod's, deliberately do not apply).
 //!
 //! Everything is deterministic: the reward is one `rng_u64("reward")` roll
 //! (host stream, seeded per world+mod+key) and the animation is pure tick
@@ -258,7 +258,7 @@ fn sheep_party() {
 
 /// Feet Y of the highest standable cell in column `(wx, wz)` near `py`: a
 /// non-air block below and two air cells of headroom, scanned top-down (the
-/// zombies mod's PoC ground rule). `None` when unloaded or no such cell.
+/// monsters mod's PoC ground rule). `None` when unloaded or no such cell.
 fn ground_y(wx: i32, py: i32, wz: i32) -> Option<i32> {
     if !is_loaded([wx, py, wz]) {
         return None;

@@ -265,6 +265,7 @@ fn samples() -> Samples {
         callback_id: 1,
         candidate: HostileSpawnCandidate {
             pos: [1.0, 2.0, 3.0], cell: [1, 2, 3], combined_light: 1, sky_light: 2, block_light: 3,
+            nearest_player_dist: 40.0,
         },
     });
     s.pin("GuestCall::BlockBehavior", &GuestCall::BlockBehavior {
@@ -544,7 +545,7 @@ const PINS: &[(&str, &str)] = &[
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
     ("GuestCall::GenStage", "0301020204060401010104010308"),
     ("GuestCall::GuiClick", "04036d3a67017701020406"),
-    ("GuestCall::HostileSpawnCandidate", "05010000803f0000004000004040020406010203"),
+    ("GuestCall::HostileSpawnCandidate", "05010000803f000000400000404002040601020300002042"),
     ("GuestCall::BlockBehavior", "060100020406"),
     ("GuestCall::AiNode", "0701010000803f00000040000040400204060000003f000080400000a0400000c0400100"),
     ("GuestCall::ClientFrame", "08cdcc4c3d0000803f00000040000040400000003f0000803e8005e00301036d3a6700"),

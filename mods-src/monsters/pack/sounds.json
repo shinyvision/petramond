@@ -1,0 +1,70 @@
+{
+  "sounds": [
+    {
+      "sound": "monsters:groan",
+      "variants": [
+        "sounds/zombie_groan.ogg"
+      ],
+      "gain": 0.85,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 8.0,
+      "category": "mob"
+    },
+    {
+      "sound": "monsters:hurt",
+      "variants": [
+        "sounds/zombie_hurt1.ogg",
+        "sounds/zombie_hurt2.ogg",
+        "sounds/zombie_hurt3.ogg"
+      ],
+      "gain": 0.85,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 8.0,
+      "category": "mob"
+    },
+    {
+      "sound": "monsters:death",
+      "variants": [
+        "sounds/zombie_death.ogg"
+      ],
+      "gain": 0.85,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 8.0,
+      "category": "mob"
+    },
+    {
+      "sound": "monsters:hushjaw_hurt",
+      "variants": [
+        "sounds/hushjaw_hurt1.ogg",
+        "sounds/hushjaw_hurt2.ogg",
+        "sounds/hushjaw_hurt3.ogg"
+      ],
+      "gain": 0.9,
+      "pitch_variation": 0.06,
+      "attenuation_distance": 12.0,
+      "category": "mob"
+    },
+    {
+      "sound": "monsters:hushjaw_death",
+      "variants": [
+        "sounds/hushjaw_death.ogg"
+      ],
+      "gain": 0.95,
+      "pitch_variation": 0.04,
+      "attenuation_distance": 14.0,
+      "category": "mob"
+    },
+    {
+      "sound": "monsters:hushjaw_idle",
+      "variants": [
+        "sounds/hushjaw_idle1.ogg",
+        "sounds/hushjaw_idle2.ogg",
+        "sounds/hushjaw_idle3.ogg"
+      ],
+      "gain": 0.85,
+      "pitch_variation": 0.05,
+      "attenuation_distance": 16.0,
+      "category": "mob"
+    }
+  ]
+}

@@ -380,6 +380,7 @@ fn hostile_candidate_at(
             combined_light: world.combined_light6_at_world(wx, y, wz),
             sky_light: world.skylight6_at_world(wx, y, wz),
             block_light: world.blocklight6_at_world(wx, y, wz),
+            nearest_player_dist: (nearest - pos).length(),
         },
         pos,
         yaw: yaw_away_from_player(nearest, pos),

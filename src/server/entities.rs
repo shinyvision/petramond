@@ -213,6 +213,7 @@ impl ServerGame {
             pre.amount,
             pre.origin,
             pre.source.is_attack(),
+            pre.source.attacker(),
             &pre.feedback,
         ) {
             if pre.feedback.plays_sound(MobDamageSound::Death) {
@@ -230,30 +231,62 @@ impl ServerGame {
     }
 
     /// Apply the melee strikes the mobs landed this tick (drained from
-    /// `World::tick_mobs`): each runs through the single [`damage_player`] funnel —
-    /// so `player_damage_pre` handlers (i-frames) see it and a cancel drops BOTH the
-    /// damage and the knockback — and an applied strike shoves the player away from
-    /// the attacker with an upward pop, mirroring the mob-side knockback feel.
-    /// Spectators have no body to hit: strikes are dropped whole.
+    /// `World::tick_mobs`), routing each by its target:
+    ///
+    /// - a PLAYER target runs through the single [`damage_player`] funnel — so
+    ///   `player_damage_pre` handlers (i-frames) see it and a cancel drops BOTH
+    ///   the damage and the knockback — and an applied strike shoves the player
+    ///   away from the attacker with an upward pop. Spectators have no body to
+    ///   hit: those strikes are dropped whole.
+    /// - a MOB target runs through the shared mob damage pipeline
+    ///   (`mob_damage_pre`, the row's feedback bundle, loot, ragdoll) with the
+    ///   striking mob as source and origin — mob-vs-mob combat is the same
+    ///   funnel as every other mob hit, so the victim's knockback comes from
+    ///   its own `petramond:knockback` feedback component and its retaliation
+    ///   memory records the biter.
     ///
     /// [`damage_player`]: ServerGame::damage_player
     pub(crate) fn apply_mob_attacks(&mut self, attacks: Vec<MobAttack>, events: &mut TickEvents) {
         for a in attacks {
-            // Each strike carries the player it targeted (the anchor nearest
-            // the mob at strike time); a session gone mid-tick can't happen —
-            // the session list only changes between ticks.
-            let Some(s) = self.sessions.iter().position(|sess| sess.id == a.target) else {
-                continue;
-            };
-            if self.sessions[s].player.is_spectator() {
-                continue;
-            }
-            let amount = a.damage.max(0.0).round() as i32;
-            let source = DamageSource::MobAttack(a.mob);
-            if self.damage_player(s, amount, source, Some(a.origin), events) {
-                let impulse = a.knockback_dir * a.knockback
-                    + Vec3::new(0.0, a.knockback * MOB_ATTACK_UP_RATIO, 0.0);
-                self.sessions[s].player.apply_knockback(impulse);
+            match a.target {
+                crate::mob::EntityRef::Player(pid) => {
+                    // A session gone mid-tick can't happen — the session list
+                    // only changes between ticks.
+                    let Some(s) = self.sessions.iter().position(|sess| sess.id == pid) else {
+                        continue;
+                    };
+                    if self.sessions[s].player.is_spectator() {
+                        continue;
+                    }
+                    let amount = a.damage.max(0.0).round() as i32;
+                    let source = DamageSource::MobAttack {
+                        kind: a.mob,
+                        id: a.mob_id,
+                    };
+                    if self.damage_player(s, amount, source, Some(a.origin), events) {
+                        let impulse = a.knockback_dir * a.knockback
+                            + Vec3::new(0.0, a.knockback * MOB_ATTACK_UP_RATIO, 0.0);
+                        self.sessions[s].player.apply_knockback(impulse);
+                    }
+                }
+                crate::mob::EntityRef::Mob(target_id) => {
+                    // Resolve the STABLE id only now: earlier strikes this tick
+                    // may have killed mobs and shifted indices.
+                    let Some(idx) = self.world.mobs().index_of_id(target_id) else {
+                        continue;
+                    };
+                    self.damage_mob_through_pipeline(
+                        0,
+                        idx,
+                        a.damage.max(0.0),
+                        DamageSource::MobAttack {
+                            kind: a.mob,
+                            id: a.mob_id,
+                        },
+                        Some(a.origin),
+                        events,
+                    );
+                }
             }
         }
     }
@@ -316,6 +349,47 @@ impl ServerGame {
             sound,
             pos: Some(pos),
         });
+    }
+
+    /// Record the gameplay noise of session `s` acting on the block at `pos`
+    /// (place/break), for hearing-based mob AI. The noise sounds at the BLOCK's
+    /// centre and names the acting player — that's what a listener locks onto.
+    /// Natural (sim-caused) breaks stay silent: they have no actor.
+    pub(crate) fn push_block_noise(
+        &mut self,
+        s: usize,
+        pos: crate::mathh::IVec3,
+        kind: crate::mob::NoiseKind,
+    ) {
+        self.world.push_noise(crate::mob::Noise {
+            pos: Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5),
+            kind,
+            source: crate::mob::EntityRef::Player(self.sessions[s].id),
+        });
+    }
+
+    /// Record every audibly-moving player's footstep noise for this tick's mob
+    /// AI batch — called once per tick right before the mob stage. Sneaking
+    /// players are silent (the whole point of sneaking near a listener);
+    /// airborne players are silent until they land.
+    pub(crate) fn push_player_step_noises(&mut self) {
+        for s in 0..self.sessions.len() {
+            let p = &self.sessions[s].player;
+            let horizontal_sq = p.vel.x * p.vel.x + p.vel.z * p.vel.z;
+            if crate::mob::player_steps_are_audible(
+                horizontal_sq,
+                p.on_ground,
+                self.sessions[s].sneaking(),
+                p.is_spectator(),
+            ) {
+                let noise = crate::mob::Noise {
+                    pos: p.pos,
+                    kind: crate::mob::NoiseKind::Step,
+                    source: crate::mob::EntityRef::Player(self.sessions[s].id),
+                };
+                self.world.push_noise(noise);
+            }
+        }
     }
 
     /// Roll a dead mob's loot table and scatter the drops at its body. Called the

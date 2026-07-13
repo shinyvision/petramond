@@ -172,9 +172,9 @@ pub(crate) fn stage_mods_fixture(tag: &str, ids: &[&str]) -> Option<PathBuf> {
     Some(root)
 }
 
-/// The zombies pack fixture.
-pub(crate) fn stage_zombies_fixture(tag: &str) -> Option<PathBuf> {
-    stage_mods_fixture(tag, &["zombies"])
+/// The monsters pack fixture.
+pub(crate) fn stage_monsters_fixture(tag: &str) -> Option<PathBuf> {
+    stage_mods_fixture(tag, &["monsters"])
 }
 
 /// Re-spawn the test binary on `test_path` (an `#[ignore]`d inner test) with

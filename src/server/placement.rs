@@ -204,6 +204,7 @@ impl ServerGame {
             // from the world-anchored event.
             events.world.block_placed.push((pos, block));
             self.bus.emit(PostEvent::BlockPlaced { pos, block });
+            self.push_block_noise(s, pos, crate::mob::NoiseKind::BlockPlaced);
         }
         Some(pos)
     }

@@ -10,7 +10,12 @@
 //! so its pivot meets the matching spot on its parent, keeping the skeleton connected
 //! while each bone still tumbles on its own. Each joint also has a swing limit: a limb
 //! sags under gravity relative to its parent only up to [`MAX_JOINT_SWING`], so legs
-//! droop like dead weight but never fold through the body.
+//! droop like dead weight but never fold through the body. Bones flagged
+//! [`welded`](super::model_meta::SkBone::welded) (authored `_weld` name suffix, or a
+//! cube-less animation-rig group) opt out of all of this: they ride their nearest
+//! non-welded ancestor rigidly, so a hushjaw's teeth move with its jaw instead of
+//! flapping on joints of their own, and its rig-only root never becomes a noise-driven
+//! placeholder box that the joint pass would slave the real bones to.
 //!
 //! Everything is in the model's own units, so a sim-computed per-bone pose
 //! `(pivot position, orientation)` drops straight into the render bake
@@ -71,12 +76,21 @@ const SEED_DT: f32 = 0.05;
 /// How far outside a block face a clamped corner is parked, so it doesn't re-classify as
 /// inside the solid cell next test.
 const FACE_EPS: f32 = 1e-3;
+/// Longest per-axis move (WORLD m) a corner sweep will walk in one resolve. Real corpse
+/// motion tops out around 2 m/tick; the cap keeps a corrupted position from turning the
+/// boundary walk into a spin.
+const MAX_SWEEP: f32 = 16.0;
 const EPS: f32 = 1e-5;
 
 /// One bone as a rigid body: its 8 box-corner Verlet particles, plus the rest geometry
 /// (corner offsets from the rest centroid, the rest centroid, and the pivot) needed to
 /// shape-match a rotation and to attach to its parent. `c`/`rot` are the recovered
 /// centroid + orientation; the `prev_*` fields snapshot the tick start for interpolation.
+///
+/// A bone with `weld: Some(anchor)` runs no physics of its own — no integration, no
+/// shape matching, no collision, no joint: its `c`/`rot` are derived rigidly from the
+/// anchor (its nearest non-welded ancestor) each iteration, and its `nodes` are unused
+/// after init.
 struct RagBone {
     nodes: [Vec3; 8],
     nodes_old: [Vec3; 8],
@@ -84,6 +98,7 @@ struct RagBone {
     c0: Vec3,
     rest_pivot: Vec3,
     parent: Option<usize>,
+    weld: Option<usize>,
     c: Vec3,
     rot: Quat,
     prev_c: Vec3,
@@ -176,6 +191,24 @@ impl Ragdoll {
         } else {
             Vec3::ZERO
         };
+        // A welded bone rides its nearest non-welded ancestor (its anchor) instead of
+        // simulating a rigid body of its own — teeth move with the jaw, never on their
+        // own joints. Welded chains resolve transitively; a broken chain (no reachable
+        // physical ancestor) falls back to simulating the bone normally.
+        let anchor_of = |bone: usize| -> Option<usize> {
+            if !skel.bones[bone].welded {
+                return None;
+            }
+            let mut next = skel.bones[bone].parent;
+            for _ in 0..skel.bones.len() {
+                let p = next?;
+                if !skel.bones[p].welded {
+                    return Some(p);
+                }
+                next = skel.bones[p].parent;
+            }
+            None
+        };
         self.bones = skel
             .bones
             .iter()
@@ -219,6 +252,7 @@ impl Ragdoll {
                     c0,
                     rest_pivot: b.pivot,
                     parent: b.parent,
+                    weld: anchor_of(i),
                     c: c0,
                     rot: Quat::IDENTITY,
                     prev_c: c0,
@@ -251,38 +285,29 @@ impl Ragdoll {
         let ry = Quat::from_rotation_y(yaw);
         let ry_inv = Quat::from_rotation_y(-yaw);
         let world_of = |mp: Vec3| mob_pos + ry * (mp * scale);
-        // Per-axis voxel resolve: sweep model-space `cur` from collision-free `old`, and
-        // for any axis whose move would enter a solid cell, clamp it to that cell's face
-        // (so a corner rests *on* the surface instead of hovering a step above it). Axis
-        // order X, Z, Y so landing is decided last. Returns the resolved model position.
+        // Per-axis voxel resolve: sweep model-space `cur` from collision-free `old`,
+        // walking every cell boundary the move crosses on each axis and parking just
+        // outside the face of the first solid cell entered. Endpoint-only tests are not
+        // enough: a corpse falls up to ~2 m per tick by the end of its lifetime, which
+        // skips a one-cell floor entirely. Axis order X, Z, Y so landing is decided
+        // last. A corner that STARTS inside a solid cell (the joint pass runs after the
+        // last collision pass and can slide one in; a mob can die with geometry inside
+        // a movement-blocking cell, e.g. standing on a partial block) is healed out of
+        // the nearest open face — never resolved with collision disabled, which would
+        // let the corner (and, through shape matching, its whole limb) fall through the
+        // world. Returns the resolved model position.
         let resolve = |old: Vec3, cur: Vec3| -> Vec3 {
             let wo = world_of(old);
-            if solid(voxel_at(wo)) {
-                return cur; // started inside a block (shouldn't happen): don't trap it
-            }
-            let wc = world_of(cur);
-            let mut w = wo;
-            // Clamp `axis` of `w` to the face of the cell it would enter, given the move
-            // direction (entered the low face moving +, the high face moving -).
-            let face = |coord: f32, moving_pos: bool| {
-                if moving_pos {
-                    coord.floor() - FACE_EPS
-                } else {
-                    coord.floor() + 1.0 + FACE_EPS
-                }
+            let w = if solid(voxel_at(wo)) {
+                escape_solid(wo, solid).unwrap_or(wo) // sealed on all sides: hold still
+            } else {
+                let mut w = wo;
+                let wc = world_of(cur);
+                w.x = sweep_axis(w, 0, wc.x, solid);
+                w.z = sweep_axis(w, 2, wc.z, solid);
+                w.y = sweep_axis(w, 1, wc.y, solid);
+                w
             };
-            w.x = wc.x;
-            if solid(voxel_at(w)) {
-                w.x = face(wc.x, wc.x > wo.x);
-            }
-            w.z = wc.z;
-            if solid(voxel_at(w)) {
-                w.z = face(wc.z, wc.z > wo.z);
-            }
-            w.y = wc.y;
-            if solid(voxel_at(w)) {
-                w.y = face(wc.y, wc.y > wo.y);
-            }
             ry_inv * (w - mob_pos) / scale
         };
 
@@ -292,6 +317,9 @@ impl Ragdoll {
         let dt2 = dt * dt;
         let probe = Vec3::new(0.0, GROUND_PROBE / scale, 0.0);
         for b in &mut self.bones {
+            if b.weld.is_some() {
+                continue;
+            }
             for k in 0..8 {
                 verlet(&mut b.nodes[k], &mut b.nodes_old[k], accel, dt2);
                 if solid(voxel_at(world_of(b.nodes[k] - probe))) {
@@ -308,12 +336,17 @@ impl Ragdoll {
             // (gravity + collisions) becomes the bone's rotation.
             let max_rot = MAX_ANGULAR_SPEED * dt;
             for b in &mut self.bones {
-                b.shape_match(max_rot);
+                if b.weld.is_none() {
+                    b.shape_match(max_rot);
+                }
             }
             // Collision: resolve every corner against the voxels (from its start-of-tick
             // position, which is collision-free), so the rigid shape doesn't sink into a
             // block.
             for b in &mut self.bones {
+                if b.weld.is_some() {
+                    continue;
+                }
                 for k in 0..8 {
                     b.nodes[k] = resolve(b.nodes_old[k], b.nodes[k]);
                 }
@@ -323,6 +356,9 @@ impl Ragdoll {
             // parent (legs sag under gravity but can't fold into the body), then slide it
             // so its pivot meets the spot on its parent it attaches to (root-first order).
             for i in 0..self.bones.len() {
+                if self.bones[i].weld.is_some() {
+                    continue; // the anchor drives it; a joint would fight the weld
+                }
                 let Some(p) = self.bones[i].parent else {
                     continue;
                 };
@@ -346,6 +382,18 @@ impl Ragdoll {
                 }
                 b.c += shift;
             }
+            // Welded bones ride their anchor rigidly. Synced after the joint pass so
+            // they match the anchor's post-constraint pose exactly (and a physical bone
+            // jointed to a welded parent reads coherent parent state next iteration).
+            for i in 0..self.bones.len() {
+                let Some(a) = self.bones[i].weld else {
+                    continue;
+                };
+                let (ac, ar, ac0) = (self.bones[a].c, self.bones[a].rot, self.bones[a].c0);
+                let b = &mut self.bones[i];
+                b.rot = ar;
+                b.c = ac + ar * (b.c0 - ac0);
+            }
         }
         self.age += dt;
     }
@@ -355,12 +403,23 @@ impl Ragdoll {
     /// the rigid transform applied to the bone's rest pivot). Empty until
     /// [`init`](Self::init) runs (the renderer then falls back to the rest pose).
     pub fn pose(&self, alpha: f32) -> Vec<(Vec3, Quat)> {
+        let interp: Vec<(Vec3, Quat)> = self
+            .bones
+            .iter()
+            .map(|b| (b.prev_c.lerp(b.c, alpha), b.prev_rot.slerp(b.rot, alpha)))
+            .collect();
         self.bones
             .iter()
-            .map(|b| {
-                let c = b.prev_c.lerp(b.c, alpha);
-                let rot = b.prev_rot.slerp(b.rot, alpha);
-                (c + rot * (b.rest_pivot - b.c0), rot)
+            .enumerate()
+            .map(|(i, b)| {
+                // A welded bone is posed by its anchor's INTERPOLATED transform — its own
+                // lerped centroid would cut the chord of the anchor's rotation arc and
+                // let it drift off the anchor mid-tick.
+                let (c, rot, c0) = match b.weld {
+                    Some(a) => (interp[a].0, interp[a].1, self.bones[a].c0),
+                    None => (interp[i].0, interp[i].1, b.c0),
+                };
+                (c + rot * (b.rest_pivot - c0), rot)
             })
             .collect()
     }
@@ -374,11 +433,14 @@ impl Ragdoll {
             .collect()
     }
 
-    /// The lowest corner (model-space y) across all bones — for collision tests.
+    /// The lowest corner (model-space y) across all simulated bones — for collision
+    /// tests. Welded bones are skipped: their nodes are unused after init and frozen at
+    /// the rest pose.
     #[cfg(test)]
     pub fn lowest_node_y(&self) -> f32 {
         self.bones
             .iter()
+            .filter(|b| b.weld.is_none())
             .flat_map(|b| b.nodes)
             .map(|n| n.y)
             .fold(f32::INFINITY, f32::min)
@@ -403,6 +465,70 @@ impl RagBone {
             self.nodes[k] = c + rot * self.rest[k];
         }
     }
+}
+
+/// Walk coordinate `axis` of corner `w` (WORLD space) toward `target`, one cell boundary
+/// at a time, parking just outside the face of the first solid cell entered. Unlike
+/// testing only the endpoint, the walk can neither skip over a thin obstacle nor clamp
+/// to a face that lies inside a deeper solid cell when the move crosses several cells in
+/// one tick. Returns the resolved coordinate.
+fn sweep_axis(w: Vec3, axis: usize, target: f32, solid: &impl Fn(IVec3) -> bool) -> f32 {
+    let start = w[axis];
+    if !(start.is_finite() && target.is_finite()) {
+        return target;
+    }
+    let target = target.clamp(start - MAX_SWEEP, start + MAX_SWEEP);
+    let mut probe = w;
+    if target > start {
+        // Entering the cell ABOVE each face crossed (`face` is also that cell's index).
+        let mut face = start.floor() + 1.0;
+        while face <= target {
+            probe[axis] = face + FACE_EPS;
+            if solid(voxel_at(probe)) {
+                return face - FACE_EPS;
+            }
+            face += 1.0;
+        }
+    } else {
+        // Entering the cell BELOW each face crossed. A coordinate exactly on a boundary
+        // classifies into the cell above (`voxel_at` floors), so crossing is strict.
+        let mut face = start.floor();
+        while target < face {
+            probe[axis] = face - FACE_EPS;
+            if solid(voxel_at(probe)) {
+                return face + FACE_EPS;
+            }
+            face -= 1.0;
+        }
+    }
+    target
+}
+
+/// The corner sits inside a solid cell: push it just outside the nearest cell face whose
+/// neighbouring cell is open. The pop is minimal — an embedded corner is barely past a
+/// face — so healing is invisible. `None` when all six neighbours are solid (sealed in;
+/// the caller holds the corner in place rather than dropping it through the world).
+fn escape_solid(w: Vec3, solid: &impl Fn(IVec3) -> bool) -> Option<Vec3> {
+    let cell = voxel_at(w);
+    let lo = cell.as_vec3();
+    let mut best: Option<(f32, Vec3)> = None;
+    for axis in 0..3 {
+        let exits = [
+            (w[axis] - lo[axis], lo[axis] - FACE_EPS, -1),
+            (lo[axis] + 1.0 - w[axis], lo[axis] + 1.0 + FACE_EPS, 1),
+        ];
+        for (dist, coord, step) in exits {
+            let mut neighbour = cell;
+            neighbour[axis] += step;
+            if solid(neighbour) || best.is_some_and(|(d, _)| d <= dist) {
+                continue;
+            }
+            let mut out = w;
+            out[axis] = coord;
+            best = Some((dist, out));
+        }
+    }
+    best.map(|(_, out)| out)
 }
 
 /// One Verlet integration step for a particle: `x += (x - x_old)·damp + accel·dt²`,
@@ -480,6 +606,14 @@ mod tests {
             bbox_min: min,
             bbox_max: max,
             parent,
+            welded: false,
+        }
+    }
+
+    fn welded_box(pivot: Vec3, min: Vec3, max: Vec3, parent: Option<usize>) -> SkBone {
+        SkBone {
+            welded: true,
+            ..boxed(pivot, min, max, parent)
         }
     }
 
@@ -684,6 +818,81 @@ mod tests {
     }
 
     #[test]
+    fn a_long_fall_lands_on_thick_ground_instead_of_sinking_in() {
+        // Dropped from high up, the corpse crosses more than a cell per tick when it
+        // lands — landing must park it on the surface, never inside the terrain.
+        let skel = Skeleton {
+            bones: vec![boxed(
+                Vec3::new(0.0, 28.0, 0.0),
+                Vec3::new(-0.5, 28.0, -0.5),
+                Vec3::new(0.5, 29.0, 0.5),
+                None,
+            )],
+        };
+        let mut rag = Ragdoll::pending(4, Vec3::ZERO);
+        rag.init(&skel, 1.0, Vec3::ZERO, 0.0);
+        for _ in 0..(LIFETIME / 0.05) as usize {
+            rag.step(0.05, 1.0, Vec3::ZERO, 0.0, &floor);
+            assert!(
+                rag.lowest_node_y() > -0.2,
+                "no corner ever sinks into the ground: {}",
+                rag.lowest_node_y()
+            );
+        }
+    }
+
+    #[test]
+    fn a_fast_falling_corpse_does_not_skip_through_a_thin_floor() {
+        // A one-cell-thick floor far below: by landing time the corpse moves well over
+        // a cell per tick, and an endpoint-only collision test never sees the floor.
+        let thin = |c: IVec3| c.y == 0;
+        let skel = Skeleton {
+            bones: vec![boxed(
+                Vec3::new(0.0, 26.0, 0.0),
+                Vec3::new(-0.5, 26.0, -0.5),
+                Vec3::new(0.5, 27.0, 0.5),
+                None,
+            )],
+        };
+        let mut rag = Ragdoll::pending(4, Vec3::ZERO);
+        rag.init(&skel, 1.0, Vec3::ZERO, 0.0);
+        for _ in 0..(LIFETIME / 0.05) as usize {
+            rag.step(0.05, 1.0, Vec3::ZERO, 0.0, &thin);
+            assert!(
+                rag.lowest_node_y() > 0.8,
+                "no corner ever passes into or below the thin floor: {}",
+                rag.lowest_node_y()
+            );
+        }
+    }
+
+    #[test]
+    fn a_corner_embedded_at_death_heals_out_instead_of_falling_through() {
+        // A mob can die with geometry slightly inside a movement-blocking cell (standing
+        // on a partial block like farmland; a joint slide can also embed a corner
+        // mid-life). Embedded corners must be pushed out of the nearest open face — if
+        // collision is simply disabled for them, the limb sinks through the floor.
+        let skel = Skeleton {
+            bones: vec![boxed(
+                Vec3::new(0.0, 0.5, 0.0),
+                Vec3::new(-0.5, -0.1, -0.5),
+                Vec3::new(0.5, 0.9, 0.5),
+                None,
+            )],
+        };
+        let mut rag = Ragdoll::pending(6, Vec3::ZERO);
+        rag.init(&skel, 1.0, Vec3::ZERO, 0.0);
+        for _ in 0..(LIFETIME / 0.05) as usize {
+            rag.step(0.05, 1.0, Vec3::ZERO, 0.0, &floor);
+        }
+        assert!(
+            rag.lowest_node_y() > -0.15,
+            "embedded corners heal out and the corpse rests on the ground: {}",
+            rag.lowest_node_y()
+        );
+    }
+
+    #[test]
     fn a_corpse_falls_off_the_edge_of_a_block() {
         // The floor only covers x < 0. A box dropped straddling the edge must drape/fall
         // off the unsupported (+X) side — its lowest corner ends well below the floor top.
@@ -741,6 +950,117 @@ mod tests {
                 "bone {i} settles instead of spinning: {t} rad total over the lifetime"
             );
         }
+    }
+
+
+    #[test]
+    fn hushjaw_corpse_collapses_to_the_ground_and_neither_freezes_nor_flips() {
+        // The real hushjaw at its in-game scale: a huge geometry-bearing skull under a
+        // cube-less rig root. The corpse must COLLAPSE — the physical root visibly drops
+        // from its standing height instead of hanging in a statue pose off the rig
+        // placeholder — and must settle without the placeholder-noise flip that turned
+        // corpses upside down. Both were live bugs.
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/mods-src/monsters/pack/models/hushjaw.bbmodel"
+        ));
+        let model = Model::load(src).expect("hushjaw parses");
+        let skel = model_meta::skeleton(&model);
+        let body = (0..skel.bones.len())
+            .find(|&i| skel.bones[i].parent.is_none())
+            .expect("physical root");
+        let rest_y = skel.bones[body].pivot.y;
+        for seed in [1u64, 9] {
+            let mut rag = Ragdoll::pending(seed, Vec3::X);
+            rag.init(&skel, 0.04, Vec3::ZERO, 0.0);
+            let mut prev = rag.pose(1.0);
+            let mut total = 0.0f32;
+            for _ in 0..(LIFETIME / 0.05) as usize {
+                rag.step(0.05, 0.04, Vec3::ZERO, 0.0, &floor);
+                let pose = rag.pose(1.0);
+                let (_, rot) = pose[body];
+                assert!(
+                    rot.angle_between(Quat::IDENTITY) < 2.0,
+                    "seed {seed}: the body never flips upside down"
+                );
+                total += rot.angle_between(prev[body].1);
+                prev = pose;
+            }
+            assert!(
+                total < 10.0,
+                "seed {seed}: the body settles instead of spinning: {total} rad"
+            );
+            assert!(
+                prev[body].0.y < rest_y - 5.0,
+                "seed {seed}: the corpse collapsed to the ground, no statue: pivot y {} vs rest {rest_y}",
+                prev[body].0.y
+            );
+            // The joint pass (last, by design) may leave leg tips slightly dug in when
+            // the collapsed pose conflicts with the swing limit — but never deeper than
+            // a fraction of a block, and never through the floor. World units.
+            assert!(
+                rag.lowest_node_y() * 0.04 > -0.2,
+                "seed {seed}: the corpse rests on the ground, not through it: {} model units",
+                rag.lowest_node_y()
+            );
+        }
+    }
+
+    #[test]
+    fn welded_bones_ride_their_anchor_rigidly_through_the_tumble() {
+        // A welded bone — and a welded bone welded to it — must stay EXACTLY rigid with
+        // its nearest physical ancestor for the whole flight: no sag, no joint swing, at
+        // tick boundaries and mid-tick render alphas alike (hushjaw teeth on the jaw).
+        let skel = Skeleton {
+            bones: vec![
+                boxed(
+                    Vec3::new(0.0, 4.0, 0.0),
+                    Vec3::new(-1.0, 4.0, -1.0),
+                    Vec3::new(1.0, 6.0, 1.0),
+                    None,
+                ),
+                welded_box(
+                    Vec3::new(0.0, 5.0, 1.0),
+                    Vec3::new(-0.5, 4.5, 1.0),
+                    Vec3::new(0.5, 5.5, 2.0),
+                    Some(0),
+                ),
+                welded_box(
+                    Vec3::new(0.0, 5.0, 2.0),
+                    Vec3::new(-0.25, 4.75, 2.0),
+                    Vec3::new(0.25, 5.25, 2.5),
+                    Some(1),
+                ),
+            ],
+        };
+        let mut rag = Ragdoll::pending(11, Vec3::X);
+        rag.init(&skel, 0.25, Vec3::ZERO, 0.0);
+        let mut tumbled = 0.0f32;
+        for _ in 0..(LIFETIME / 0.05) as usize {
+            rag.step(0.05, 0.25, Vec3::ZERO, 0.0, &floor);
+            for alpha in [0.25, 1.0] {
+                let pose = rag.pose(alpha);
+                let (anchor_pos, anchor_rot) = pose[0];
+                tumbled = tumbled.max(anchor_rot.angle_between(Quat::IDENTITY));
+                for i in 1..3 {
+                    let (pos, rot) = pose[i];
+                    assert!(
+                        rot.angle_between(anchor_rot) < 1e-3,
+                        "welded bone {i} keeps its anchor's orientation"
+                    );
+                    let expected =
+                        anchor_pos + anchor_rot * (skel.bones[i].pivot - skel.bones[0].pivot);
+                    assert!(
+                        (pos - expected).length() < 1e-3,
+                        "welded bone {i} rides the anchor's rigid transform: {pos:?} vs {expected:?}"
+                    );
+                }
+            }
+        }
+        assert!(
+            tumbled > 0.2,
+            "the anchor actually tumbled, so the rigidity was exercised: {tumbled}"
+        );
     }
 
     #[test]

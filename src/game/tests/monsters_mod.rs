@@ -1,4 +1,4 @@
-//! Combat proof for the zombies PoC mod: real chase+melee strikes flow
+//! Combat proof for the monsters mod: real chase+melee strikes flow
 //! through the player damage funnel while the mod's wasm `player_damage_pre`
 //! handler enforces its 20-tick i-frames — damage AND knockback land at most
 //! once per window. Species registration needs the fixture pack in the
@@ -13,10 +13,10 @@ use std::sync::Arc;
 
 #[test]
 fn zombie_melee_damage_is_gated_by_the_mods_i_frames_via_wasm() {
-    let Some(root) = crate::modding::tests::stage_zombies_fixture("combat") else {
+    let Some(root) = crate::modding::tests::stage_monsters_fixture("combat") else {
         return;
     };
-    crate::modding::tests::run_child_test(&root, "game::tests::zombies_mod::zombie_combat_inner");
+    crate::modding::tests::run_child_test(&root, "game::tests::monsters_mod::zombie_combat_inner");
 }
 
 /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
@@ -31,13 +31,13 @@ fn zombie_combat_inner() {
 
     let zombie = crate::mob::defs()
         .iter()
-        .position(|d| d.name == "zombies:zombie")
+        .position(|d| d.name == "monsters:zombie")
         .map(|i| crate::mob::Mob(i as u8))
-        .expect("zombies:zombie registered from the fixture pack");
+        .expect("monsters:zombie registered from the fixture pack");
 
     let mut game =
         super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
-    assert_eq!(game.mods_for_test().loaded(), 1, "zombies loaded");
+    assert_eq!(game.mods_for_test().loaded(), 1, "monsters loaded");
     // The mod spawner needs loaded dark cells in the 32-128 ring; this tiny
     // fixture has neither, so this test owns its zombies. Flat floor, player
     // standing on it.
@@ -107,8 +107,8 @@ fn zombie_combat_inner() {
     let bytes = game
         .server
         .world
-        .mod_kv_get("zombies:invuln_until")
-        .expect("zombies:invuln_until mirrored to world KV");
+        .mod_kv_get("monsters:invuln_until")
+        .expect("monsters:invuln_until mirrored to world KV");
     let until = u64::from_le_bytes(bytes.try_into().expect("8-byte LE u64 contract"));
     assert!(until > 0, "the mirror records the window end");
     let (disabled, _, _) = game.mods_for_test().probe(0);
@@ -117,10 +117,10 @@ fn zombie_combat_inner() {
 
 #[test]
 fn zombie_sunburn_uses_ragdoll_death_path_via_wasm() {
-    let Some(root) = crate::modding::tests::stage_zombies_fixture("sunburn") else {
+    let Some(root) = crate::modding::tests::stage_monsters_fixture("sunburn") else {
         return;
     };
-    crate::modding::tests::run_child_test(&root, "game::tests::zombies_mod::zombie_sunburn_inner");
+    crate::modding::tests::run_child_test(&root, "game::tests::monsters_mod::zombie_sunburn_inner");
 }
 
 /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
@@ -138,13 +138,13 @@ fn zombie_sunburn_inner() {
 
     let zombie = crate::mob::defs()
         .iter()
-        .position(|d| d.name == "zombies:zombie")
+        .position(|d| d.name == "monsters:zombie")
         .map(|i| crate::mob::Mob(i as u8))
-        .expect("zombies:zombie registered from the fixture pack");
+        .expect("monsters:zombie registered from the fixture pack");
 
     let mut game =
         super::common::game_with_camera(Camera::new(Vec3::new(80.0, 66.0, 8.0), 16.0 / 9.0));
-    assert_eq!(game.mods_for_test().loaded(), 1, "zombies loaded");
+    assert_eq!(game.mods_for_test().loaded(), 1, "monsters loaded");
     game.server.world.clear_world();
     game.server.sessions[0].player.pos = Vec3::new(80.0, 64.0, 8.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
@@ -264,12 +264,12 @@ fn zombie_sunburn_inner() {
 
 #[test]
 fn zombie_burn_escalates_in_sun_and_cools_in_darkness_via_wasm() {
-    let Some(root) = crate::modding::tests::stage_zombies_fixture("burncool") else {
+    let Some(root) = crate::modding::tests::stage_monsters_fixture("burncool") else {
         return;
     };
     crate::modding::tests::run_child_test(
         &root,
-        "game::tests::zombies_mod::zombie_burn_cool_inner",
+        "game::tests::monsters_mod::zombie_burn_cool_inner",
     );
 }
 
@@ -287,9 +287,9 @@ fn zombie_burn_cool_inner() {
 
     let zombie = crate::mob::defs()
         .iter()
-        .position(|d| d.name == "zombies:zombie")
+        .position(|d| d.name == "monsters:zombie")
         .map(|i| crate::mob::Mob(i as u8))
-        .expect("zombies:zombie registered from the fixture pack");
+        .expect("monsters:zombie registered from the fixture pack");
     let light_id = crate::particle_emitters::by_key("petramond:burn_light")
         .expect("core bundle registered")
         .id;
@@ -299,7 +299,7 @@ fn zombie_burn_cool_inner() {
 
     let mut game =
         super::common::game_with_camera(Camera::new(Vec3::new(30.0, 66.0, 8.0), 16.0 / 9.0));
-    assert_eq!(game.mods_for_test().loaded(), 1, "zombies loaded");
+    assert_eq!(game.mods_for_test().loaded(), 1, "monsters loaded");
     game.server.world.clear_world();
     game.server.sessions[0].player.pos = Vec3::new(30.0, 64.0, 8.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
@@ -395,4 +395,304 @@ fn zombie_burn_cool_inner() {
     );
     let (disabled, _, _) = game.mods_for_test().probe(0);
     assert!(!disabled, "zombies stayed healthy through the cool-down");
+}
+
+#[test]
+fn hushjaw_spawn_rules_gate_on_depth_distance_and_spacing_via_wasm() {
+    let Some(root) = crate::modding::tests::stage_monsters_fixture("hushjaw-spawn") else {
+        return;
+    };
+    crate::modding::tests::run_child_test(
+        &root,
+        "game::tests::monsters_mod::hushjaw_spawn_rules_inner",
+    );
+}
+
+/// The hushjaw's spawn policy, asked through the REAL wasm spawner dispatch
+/// (`ModHost::hostile_spawn_kind`) with hand-built dark candidates over
+/// prepared standable cells: only deep (feet Y below −16), only ≥ 32 blocks
+/// from the nearest player, never within 32 blocks of another live hushjaw,
+/// and even then only a fraction of eligible sites (the rest stay zombies).
+#[test]
+#[ignore = "spawned by hushjaw_spawn_rules_gate_on_depth_distance_and_spacing_via_wasm with a fixture pack env"]
+fn hushjaw_spawn_rules_inner() {
+    use crate::block::Block;
+    use crate::chunk::ChunkPos;
+    use crate::events::SimCtx;
+    use mod_api::HostileSpawnCandidate;
+
+    let kind_of = |name: &str| {
+        crate::mob::defs()
+            .iter()
+            .position(|d| d.name == name)
+            .map(|i| crate::mob::Mob(i as u8))
+            .unwrap_or_else(|| panic!("{name} registered from the fixture pack"))
+    };
+    let zombie = kind_of("monsters:zombie");
+    let hushjaw = kind_of("monsters:hushjaw");
+
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
+    game.server.world.clear_world();
+    game.server.world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+    // Standable floors under the deep and shallow candidate cells (the engine
+    // re-validates body fit on whatever key the mod returns).
+    assert!(game.server.world.set_block_world(8, -41, 8, Block::Stone));
+    assert!(game.server.world.set_block_world(8, -11, 8, Block::Stone));
+    // One tick so core day/night republishes `petramond:time` onto the cleared
+    // world — without it the mod's spawner declines every candidate.
+    let mut ev = TickEvents::default();
+    game.server.game_tick_step(&mut ev);
+
+    let candidate = |y: i32, player_dist: f32| HostileSpawnCandidate {
+        pos: [8.5, y as f32, 8.5],
+        cell: [8, y, 8],
+        combined_light: 0,
+        sky_light: 0,
+        block_light: 0,
+        nearest_player_dist: player_dist,
+    };
+    fn ask(
+        server: &mut crate::server::game::ServerGame,
+        cand: &mod_api::HostileSpawnCandidate,
+        ev: &mut TickEvents,
+    ) -> Option<crate::mob::Mob> {
+        let crate::server::game::ServerGame {
+            world,
+            sessions,
+            mods,
+            bus,
+            ..
+        } = server;
+        let host = &mut sessions[0];
+        let mut ctx = SimCtx {
+            world,
+            player: &mut host.player,
+            gui_state: &mut host.gui_state,
+            feed: ev,
+            queue: bus.queue_mut(),
+        };
+        mods.hostile_spawn_kind(&mut ctx, cand)
+    }
+
+    // Shallow (feet above −16): never a hushjaw, always the zombie fallback.
+    for _ in 0..60 {
+        assert_eq!(
+            ask(&mut game.server, &candidate(-10, 100.0), &mut ev),
+            Some(zombie),
+            "a dark site above Y −16 is zombie territory"
+        );
+    }
+    // Deep but near a player (< 32 blocks): still never a hushjaw.
+    for _ in 0..60 {
+        assert_eq!(
+            ask(&mut game.server, &candidate(-40, 28.0), &mut ev),
+            Some(zombie),
+            "a deep site within 32 blocks of a player is zombie territory"
+        );
+    }
+    // Deep + far: over many asks the seeded claim roll yields BOTH species —
+    // hushjaws exist down here, and they don't monopolize the depths.
+    let mut kinds = std::collections::HashSet::new();
+    for _ in 0..200 {
+        let kind = ask(&mut game.server, &candidate(-40, 100.0), &mut ev)
+            .expect("a dark deep far candidate always admits some monster");
+        kinds.insert(kind);
+    }
+    assert!(
+        kinds.contains(&hushjaw),
+        "eligible deep sites are sometimes claimed by the hushjaw"
+    );
+    assert!(
+        kinds.contains(&zombie),
+        "unclaimed deep sites still fall through to zombies"
+    );
+    // Spacing: with a live hushjaw 4 blocks from the site, the claim never
+    // happens again — they hunt alone.
+    assert!(game
+        .server
+        .world
+        .spawn_mob(hushjaw, Vec3::new(12.5, -40.0, 8.5), 0.0));
+    for _ in 0..100 {
+        assert_eq!(
+            ask(&mut game.server, &candidate(-40, 100.0), &mut ev),
+            Some(zombie),
+            "no hushjaw spawns within 32 blocks of another hushjaw"
+        );
+    }
+    let (disabled, _, _) = game.mods_for_test().probe(0);
+    assert!(!disabled, "the monsters mod stayed healthy through the asks");
+}
+
+#[test]
+fn hushjaw_bites_a_silent_player_that_touches_it_via_wasm() {
+    let Some(root) = crate::modding::tests::stage_monsters_fixture("hushjaw-bump") else {
+        return;
+    };
+    crate::modding::tests::run_child_test(&root, "game::tests::monsters_mod::hushjaw_bump_inner");
+}
+
+/// Touch perception end to end: a player who never makes a sound but stands
+/// OVERLAPPING the hushjaw is felt (the push pass records the contact), locked
+/// by `chase_contact`, and bitten — the counterpart to the hearing test's
+/// silent-at-a-distance phase, which stays safe.
+#[test]
+#[ignore = "spawned by hushjaw_bites_a_silent_player_that_touches_it_via_wasm with a fixture pack env"]
+fn hushjaw_bump_inner() {
+    use crate::block::Block;
+    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+
+    let hushjaw = crate::mob::defs()
+        .iter()
+        .position(|d| d.name == "monsters:hushjaw")
+        .map(|i| crate::mob::Mob(i as u8))
+        .expect("monsters:hushjaw registered from the fixture pack");
+
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
+    game.server.world.clear_world();
+    let mut chunk = Chunk::new(0, 0);
+    for z in 0..CHUNK_SZ {
+        for x in 0..CHUNK_SX {
+            chunk.set_block(x, 63, z, Block::Grass);
+        }
+    }
+    game.server
+        .world
+        .insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
+    game.server.sessions[0].player.pos = Vec3::new(8.0, 64.0, 8.0);
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions[0].player.on_ground = true;
+    // The hushjaw spawns overlapping the still, silent player: their combined
+    // half-widths are 0.75, the horizontal gap 0.5.
+    assert!(game
+        .server
+        .world
+        .mobs_mut()
+        .spawn(hushjaw, Vec3::new(8.5, 64.0, 8.0), 0.0));
+
+    let mut ev = TickEvents::default();
+    let h0 = game.server.sessions[0].player.health();
+    let mut bitten_at = None;
+    for tick in 0..60 {
+        game.server.game_tick_step(&mut ev);
+        if game.server.sessions[0].player.health() < h0 {
+            bitten_at = Some(tick);
+            break;
+        }
+    }
+    let tick = bitten_at.expect("the touched hushjaw bites without ever hearing a sound");
+    assert_eq!(
+        h0 - game.server.sessions[0].player.health(),
+        8,
+        "the bite is the row's 8 half-hearts"
+    );
+    assert!(
+        tick >= 2,
+        "the touch takes the perception round-trip (contact → lock → strike), never tick 0"
+    );
+    let (disabled, _, _) = game.mods_for_test().probe(0);
+    assert!(!disabled, "the monsters mod stayed healthy through the bump");
+}
+
+#[test]
+fn hushjaw_hunts_footsteps_by_sound_and_ignores_a_silent_player_via_wasm() {
+    let Some(root) = crate::modding::tests::stage_monsters_fixture("hushjaw-hunt") else {
+        return;
+    };
+    crate::modding::tests::run_child_test(
+        &root,
+        "game::tests::monsters_mod::hushjaw_hearing_inner",
+    );
+}
+
+/// The hushjaw's whole hunting loop, end to end in a real `Game`: a SILENT
+/// player shares its floor unharmed; the moment the player's velocity reads as
+/// audible footsteps, the noise seam feeds `chase_sound`, the hushjaw locks,
+/// closes, and lands its 8-half-heart bite through the player damage funnel.
+#[test]
+#[ignore = "spawned by hushjaw_hunts_footsteps_by_sound_and_ignores_a_silent_player_via_wasm with a fixture pack env"]
+fn hushjaw_hearing_inner() {
+    use crate::block::Block;
+    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+
+    let hushjaw = crate::mob::defs()
+        .iter()
+        .position(|d| d.name == "monsters:hushjaw")
+        .map(|i| crate::mob::Mob(i as u8))
+        .expect("monsters:hushjaw registered from the fixture pack");
+
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
+    // One 16×16 floor island: every point on it is within the hushjaw's
+    // 12-block hearing of the centred player, and wander never leaves it
+    // (destinations must be standable footholds).
+    game.server.world.clear_world();
+    let mut chunk = Chunk::new(0, 0);
+    for z in 0..CHUNK_SZ {
+        for x in 0..CHUNK_SX {
+            chunk.set_block(x, 63, z, Block::Grass);
+        }
+    }
+    game.server
+        .world
+        .insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
+    game.server.sessions[0].player.pos = Vec3::new(8.0, 64.0, 8.0);
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions[0].player.on_ground = true;
+    // The hushjaw starts across the island, 6+ blocks out, facing away.
+    assert!(game
+        .server
+        .world
+        .mobs_mut()
+        .spawn(hushjaw, Vec3::new(14.5, 64.0, 8.5), 0.0));
+
+    let mut ev = TickEvents::default();
+    let h0 = game.server.sessions[0].player.health();
+
+    // Phase 1 — a still player is inaudible: 150 ticks, no damage. Melee is
+    // perception-gated, so even a wander that brushes the player bites
+    // nothing while no noise ever locked them.
+    for _ in 0..150 {
+        game.server.game_tick_step(&mut ev);
+    }
+    assert_eq!(
+        game.server.sessions[0].player.health(),
+        h0,
+        "a silent, still player is invisible to a blind hunter"
+    );
+
+    // Phase 2 — the player walks in place through the REAL input path: the
+    // latched movement intent alternates direction every few ticks, so the
+    // integrated speed is audible while the net drift stays tiny. The hushjaw
+    // must lock on, cross the island, and land exactly its row's 8 half-hearts.
+    let mut first_hit: Option<(i64, i32, f32)> = None;
+    for tick in 0..400i64 {
+        let dir = if (tick / 4) % 2 == 0 { 1.0 } else { -1.0 };
+        game.server.sessions[0].move_wishdir = Vec3::new(dir, 0.0, 0.0);
+        let before = game.server.sessions[0].player.health();
+        game.server.game_tick_step(&mut ev);
+        let after = game.server.sessions[0].player.health();
+        if after < before {
+            let mob_pos = game.server.world.mobs().instances()[0].pos;
+            let gap = (mob_pos - game.server.sessions[0].player.pos).length();
+            first_hit = Some((tick, before - after, gap));
+            break;
+        }
+    }
+    let (tick, drop, gap) = first_hit.expect("the walking player is hunted down and bitten");
+    assert_eq!(
+        drop, 8,
+        "the bite lands the row's 8 half-hearts through the damage funnel"
+    );
+    assert!(
+        gap < 4.0,
+        "the bite landed in melee range (gap {gap}), not from across the island"
+    );
+    assert!(
+        tick > 0,
+        "the hunt takes time — the hushjaw crossed the island first"
+    );
+    let (disabled, _, _) = game.mods_for_test().probe(0);
+    assert!(!disabled, "the monsters mod stayed healthy through the hunt");
 }

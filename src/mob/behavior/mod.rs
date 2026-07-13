@@ -11,21 +11,28 @@
 //! `RegisterAiNode` (see that module).
 
 mod chase;
+mod contact;
 mod head_look;
+mod hearing;
 mod idle_anim;
 mod los;
 mod melee;
+mod retaliate;
 mod wander;
 mod wasm;
 
 pub use chase::ChasePlayerAi;
+pub use contact::ChaseContactAi;
 pub use head_look::HeadLookAi;
+pub use hearing::ChaseSoundAi;
 pub use idle_anim::IdleAnimAi;
 pub use melee::MeleeAttackAi;
+pub use retaliate::RetaliateAi;
 pub use wander::WanderAi;
 
 use super::brain::{
-    AiBehavior, PRIORITY_ATTACK, PRIORITY_CHASE, PRIORITY_EXPRESSION, PRIORITY_WANDER,
+    AiBehavior, PRIORITY_ATTACK, PRIORITY_CHASE, PRIORITY_CONTACT, PRIORITY_EXPRESSION,
+    PRIORITY_RETALIATE, PRIORITY_WANDER,
 };
 use super::load::NodeFactory;
 use super::MobDef;
@@ -59,6 +66,18 @@ pub(super) fn node_spec(name: &str) -> Option<NodeSpec> {
             factory: chase_player_node,
             default_priority: PRIORITY_CHASE,
         },
+        "chase_sound" => NodeSpec {
+            factory: chase_sound_node,
+            default_priority: PRIORITY_CHASE,
+        },
+        "chase_contact" => NodeSpec {
+            factory: chase_contact_node,
+            default_priority: PRIORITY_CONTACT,
+        },
+        "retaliate" => NodeSpec {
+            factory: retaliate_node,
+            default_priority: PRIORITY_RETALIATE,
+        },
         "melee_attack" => NodeSpec {
             factory: melee_attack_node,
             default_priority: PRIORITY_ATTACK,
@@ -83,6 +102,7 @@ fn wander_node(
     _node: &'static str,
     params: &serde_json::Value,
     def: &'static MobDef,
+    _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
     no_params(params)?;
     Ok(Box::new(WanderAi::new(
@@ -96,6 +116,7 @@ fn head_look_node(
     _node: &'static str,
     params: &serde_json::Value,
     _def: &'static MobDef,
+    _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
     no_params(params)?;
     Ok(Box::new(HeadLookAi::new()))
@@ -105,6 +126,7 @@ fn idle_anim_node(
     _node: &'static str,
     params: &serde_json::Value,
     _def: &'static MobDef,
+    _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
     no_params(params)?;
     Ok(Box::new(IdleAnimAi::new()))
@@ -114,14 +136,43 @@ fn chase_player_node(
     _node: &'static str,
     params: &serde_json::Value,
     _def: &'static MobDef,
+    _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
     Ok(Box::new(ChasePlayerAi::from_params(params)?))
+}
+
+fn chase_sound_node(
+    _node: &'static str,
+    params: &serde_json::Value,
+    _def: &'static MobDef,
+    all: &[MobDef],
+) -> Result<Box<dyn AiBehavior>, String> {
+    Ok(Box::new(ChaseSoundAi::from_params(params, all)?))
+}
+
+fn chase_contact_node(
+    _node: &'static str,
+    params: &serde_json::Value,
+    _def: &'static MobDef,
+    _all: &[MobDef],
+) -> Result<Box<dyn AiBehavior>, String> {
+    Ok(Box::new(ChaseContactAi::from_params(params)?))
+}
+
+fn retaliate_node(
+    _node: &'static str,
+    params: &serde_json::Value,
+    _def: &'static MobDef,
+    _all: &[MobDef],
+) -> Result<Box<dyn AiBehavior>, String> {
+    Ok(Box::new(RetaliateAi::from_params(params)?))
 }
 
 fn melee_attack_node(
     _node: &'static str,
     params: &serde_json::Value,
     _def: &'static MobDef,
+    _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
     Ok(Box::new(MeleeAttackAi::from_params(params)?))
 }
@@ -142,6 +193,7 @@ fn wasm_node(
     node: &'static str,
     params: &serde_json::Value,
     _def: &'static MobDef,
+    _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
     no_params(params)?;
     Ok(Box::new(wasm::WasmNodeAi::new(node)))

@@ -1,0 +1,12 @@
+[package]
+name = "monsters"
+version = "0.1.0"
+edition = "2021"
+description = "Hostile-monster mod: light-based zombie spawning driven by petramond time, sunburn, data-driven mob sounds, chase + melee combat, and 1s player i-frames."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mod-sdk = { path = "../../mod-sdk" }

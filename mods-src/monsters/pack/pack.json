@@ -1,0 +1,9 @@
+{
+  "name": "Monsters",
+  "id": "monsters",
+  "version": "0.1.0",
+  "description": "Hostile monsters: zombies spawn in dark light levels using petramond:time, burn in sunlight, and fight back when bitten; hushjaws hunt the deep caves by sound alone. Combat runs through the engine damage pipelines; zombie melee grants 1-second i-frames by cancelling player_damage_pre.",
+  "summary": "Adds hostile monsters to the world.",
+  "icon": "icon.png",
+  "wasm": "mod.wasm"
+}

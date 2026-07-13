@@ -369,6 +369,7 @@ impl ServerGame {
             harvested: event.harvested,
             natural: false,
         });
+        self.push_block_noise(s, event.pos, crate::mob::NoiseKind::BlockBroken);
         true
     }
 

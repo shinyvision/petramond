@@ -68,6 +68,10 @@ pub struct HostileSpawnCandidate {
     pub combined_light: u8,
     pub sky_light: u8,
     pub block_light: u8,
+    /// Distance (blocks) from this site to the NEAREST connected player — the
+    /// multiplayer-correct input for proximity spawn rules (the host-session
+    /// `PlayerState` snapshot only sees one player).
+    pub nearest_player_dist: f32,
 }
 
 /// Which isolated runtime instance is executing this module. Server and

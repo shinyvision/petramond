@@ -30,6 +30,24 @@ const JUMP_TRIGGER_FRONT_XZ: f32 = 0.7;
 const STUCK_TICKS: u32 = 40;
 /// Squared per-tick displacement below which the mob counts as "not progressing".
 const STUCK_EPS_SQ: f32 = 0.015 * 0.015;
+/// A waypoint also counts as reached on OVERSHOOT — the mob PASSED it: its
+/// offset flipped sign since last tick, or it stopped getting closer — while
+/// having come within this radius (just inside the waypoint's own cell). A
+/// fast mob's per-tick step can exceed the tightened
+/// [`arrive_xz`](Navigator::arrive_xz) window several times over (the hushjaw:
+/// 0.24 m/tick vs a 0.05 m window), so it overflies the centre, turns 180°,
+/// and orbits the waypoint instead of walking the route. The sign flip catches
+/// the overfly BEFORE a single reversed step is emitted; the stalled-distance
+/// signal catches symmetric orbits and grazes ("distance grew" alone misses an
+/// orbit whose radius is constant). Closest approach is as near as that body
+/// at that speed was ever going to get, so consuming there keeps the wide-body
+/// corner-clearance contract intact: while the mob still closes in on a corner
+/// waypoint nothing changes.
+const OVERSHOOT_RADIUS: f32 = 0.45;
+/// Minimum per-tick radial improvement that still counts as "getting closer" —
+/// well below any real walk speed's per-tick step, so a slow mob's honest
+/// approach can't be mistaken for an orbit.
+const OVERSHOOT_EPS: f32 = 1e-3;
 /// Re-pathfind toward an *unchanged* goal once this many ticks have passed since the
 /// current path was computed — once a second at 20 TPS. Long enough that holding a goal
 /// across ticks is cheap, short enough that a path computed against an earlier world
@@ -40,6 +58,18 @@ const STUCK_EPS_SQ: f32 = 0.015 * 0.015;
 const REPATH_TICKS: u32 = 20;
 /// Longest same-goal retry interval after repeated partial/failed searches.
 const MAX_REPATH_BACKOFF_TICKS: u32 = 200;
+
+/// One waypoint's approach history: how near the mob has come and which way the
+/// waypoint last lay — the overshoot detector's inputs (see follow()).
+struct WaypointApproach {
+    /// Which `path` index this history belongs to.
+    index: usize,
+    /// Closest horizontal distance achieved so far.
+    best: f32,
+    /// Horizontal offset toward the waypoint on the previous tick; a sign flip
+    /// against the current offset means the mob passed it this tick.
+    toward: (f32, f32),
+}
 
 pub struct Navigator {
     path: Vec<IVec3>,
@@ -53,6 +83,9 @@ pub struct Navigator {
     half_width: f32,
     stuck: u32,
     last_pos: Vec3,
+    /// The overshoot detector's memory of the CURRENT waypoint's approach
+    /// (see [`OVERSHOOT_RADIUS`]). Reset whenever the path or cursor changes.
+    approach: Option<WaypointApproach>,
     /// Ticks since the current path was computed; at [`REPATH_TICKS`] the held goal is
     /// re-pathed to refresh a route gone stale (see the constant).
     since_path: u32,
@@ -74,6 +107,7 @@ impl Navigator {
             half_width,
             stuck: 0,
             last_pos: Vec3::ZERO,
+            approach: None,
             since_path: 0,
             repath_interval: REPATH_TICKS,
             #[cfg(test)]
@@ -104,6 +138,7 @@ impl Navigator {
         self.goal = None;
         self.path_reaches_goal = false;
         self.stuck = 0;
+        self.approach = None;
         self.since_path = 0;
         self.repath_interval = REPATH_TICKS;
     }
@@ -159,12 +194,18 @@ impl Navigator {
 
     /// (Re)compute the path from `start` to `goal`, resetting the waypoint cursor to the
     /// first step and the repath timer. Shared by a goal change and the periodic refresh.
+    ///
+    /// Both cases try to PRESERVE the waypoint the mob is already walking toward
+    /// when it is still a valid immediate step toward the new route: a chased
+    /// target crossing a cell boundary changes the goal several times a second,
+    /// and re-picking between equal-cost first steps every time snaps the mob
+    /// laterally mid-stride. Keeping the in-progress step costs at most one cell
+    /// of detour; `preserve_waypoint_path` refuses anything worse.
     fn recompute(&mut self, start: IVec3, goal: IVec3, world: &World, goal_changed: bool) {
         let solid = navigation_solid_fn(world);
         let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
         let step_allowed = door_step_gate(world, self.params);
-        let old_waypoint =
-            (!goal_changed && self.index < self.path.len()).then(|| self.path[self.index]);
+        let old_waypoint = (self.index < self.path.len()).then(|| self.path[self.index]);
         self.path = old_waypoint
             .and_then(|wp| {
                 preserve_waypoint_path(start, wp, goal, self.params, &solid, &water, &step_allowed)
@@ -186,6 +227,7 @@ impl Navigator {
         } else {
             self.path.len()
         };
+        self.approach = None;
         self.since_path = 0;
         if self.path_reaches_goal || goal_changed {
             self.repath_interval = REPATH_TICKS;
@@ -211,8 +253,43 @@ impl Navigator {
             let dy = (pos.y - wp.y as f32).abs();
 
             if horiz <= arrive_xz && dy <= ARRIVE_Y {
+                self.approach = None;
                 self.index += 1;
                 continue; // reached this waypoint; aim at the next
+            }
+
+            // Overshoot: consume a waypoint the mob has PASSED. A fast mob's
+            // per-tick step can be several times the arrive window, so it may
+            // never land inside it; without this it turns 180° back and
+            // orbits the waypoint (often at a symmetric distance either side)
+            // instead of walking the route. Two passing signals, both gated on
+            // having come within [`OVERSHOOT_RADIUS`]: the waypoint's offset
+            // FLIPPED sign since last tick (the overfly itself — caught before
+            // a single reversed step is emitted), or the mob has stopped
+            // getting closer (the symmetric orbit / a graze).
+            if dy <= ARRIVE_Y {
+                match &mut self.approach {
+                    Some(a) if a.index == self.index => {
+                        let flipped = a.toward.0 * dx + a.toward.1 * dz < 0.0;
+                        let improving = horiz + OVERSHOOT_EPS < a.best;
+                        if (flipped || !improving) && a.best.min(horiz) <= OVERSHOOT_RADIUS {
+                            self.approach = None;
+                            self.index += 1;
+                            continue;
+                        }
+                        // Not passing yet: still far out and honestly closing
+                        // in (or wedged — the stuck tally owns that case).
+                        a.best = a.best.min(horiz);
+                        a.toward = (dx, dz);
+                    }
+                    _ => {
+                        self.approach = Some(WaypointApproach {
+                            index: self.index,
+                            best: horiz,
+                            toward: (dx, dz),
+                        });
+                    }
+                }
             }
 
             // Progress / stuck tracking.
@@ -591,6 +668,103 @@ mod tests {
             !nav.path().contains(&blocked),
             "the refreshed route avoids the newly-walled cell: {:?}",
             nav.path()
+        );
+    }
+
+    #[test]
+    fn fast_wide_mob_consumes_overflown_waypoints_instead_of_orbiting() {
+        // The hushjaw jitter regression: half_width 0.45 tightens arrive_xz to
+        // 0.05 m while 4.8 m/s walks 0.24 m per tick — the mob can overfly a
+        // waypoint it can never land inside. Overshoot consumption must let it
+        // walk a straight route with ZERO 180° turn-backs; without it this
+        // exact setup orbits the first waypoint forever (measured: 1990
+        // reversals in 2000 ticks).
+        let mut nav = Navigator::new(2, 0.45);
+        nav.path = (0..=8).map(|x| IVec3::new(x, 1, 0)).collect();
+        nav.index = 1;
+        nav.goal = Some(IVec3::new(8, 1, 0));
+        nav.path_reaches_goal = true;
+
+        let step = 4.8 * 0.05; // hushjaw speed × tick dt
+        let mut pos = Vec3::new(0.5, 1.0, 0.5);
+        let mut last_dir: Option<Vec3> = None;
+        let mut reversals = 0;
+        for _ in 0..200 {
+            let (wish, _jump) = nav.follow(pos, true);
+            if wish == Vec3::ZERO {
+                break;
+            }
+            if let Some(prev) = last_dir {
+                if wish.x * prev.x + wish.z * prev.z < -0.5 {
+                    reversals += 1;
+                }
+            }
+            last_dir = Some(wish);
+            pos += wish * step;
+        }
+
+        assert!(
+            nav.is_idle(),
+            "the straight 8-cell route completes within the tick budget"
+        );
+        assert_eq!(
+            reversals, 0,
+            "no 180° turn-backs while following a straight route at speed"
+        );
+    }
+
+    #[test]
+    fn overshoot_does_not_consume_a_waypoint_still_being_approached() {
+        // The wide-corner contract's counterpart: while the distance to the
+        // waypoint is still SHRINKING, overshoot must not fire — a wide mob
+        // keeps clearing the corner exactly as before.
+        let mut nav = Navigator::new(1, 0.45);
+        nav.path = vec![
+            IVec3::new(0, 1, 0),
+            IVec3::new(1, 1, 0),
+            IVec3::new(1, 1, 1),
+        ];
+        nav.index = 1;
+        nav.goal = Some(IVec3::new(1, 1, 1));
+        // Two approaching ticks toward the corner waypoint (1,1,0): both must
+        // keep steering east at it, not consume it early.
+        for x in [1.1_f32, 1.25] {
+            let (wish, _) = nav.follow(Vec3::new(x, 1.0, 0.5), true);
+            assert!(
+                wish.x > 0.9 && wish.z.abs() < 0.1,
+                "still clearing the corner at x={x}: {wish:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn changed_goal_repath_preserves_the_current_waypoint_when_still_valid() {
+        // A chased target crossing a cell boundary CHANGES the goal several
+        // times a second. The refresh must keep steering at the waypoint the
+        // mob is mid-stride toward (when it remains a valid immediate step),
+        // not snap laterally between equal-cost first steps.
+        let world = flat_world();
+        let start = IVec3::new(1, 64, 1);
+        let old_waypoint = IVec3::new(2, 64, 1);
+        let first_goal = IVec3::new(2, 64, 3);
+        let moved_goal = IVec3::new(3, 64, 3);
+
+        let mut nav = Navigator::new(1, 0.25);
+        nav.path = vec![start, old_waypoint, IVec3::new(2, 64, 2), first_goal];
+        nav.index = 1;
+        nav.goal = Some(first_goal);
+        nav.path_reaches_goal = true;
+
+        nav.update_goal_when_supported(Some(moved_goal), start, &world, true);
+        assert_eq!(
+            nav.path().get(1),
+            Some(&old_waypoint),
+            "a changed goal keeps the in-progress step when still valid"
+        );
+        assert_eq!(
+            nav.path().last(),
+            Some(&moved_goal),
+            "and the preserved route still reaches the new goal"
         );
     }
 

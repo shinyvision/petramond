@@ -1,0 +1,188 @@
+{
+  "mobs": [
+    {
+      "mob": "monsters:zombie",
+      "key": "monsters:zombie",
+      "model": "models/zombie.bbmodel",
+      "scale": 0.059375,
+      "size": {
+        "half_width": 0.3,
+        "height": 1.8
+      },
+      "max_health": 20.0,
+      "walk_speed": 1.5,
+      "jump_speed": 7.2,
+      "turn_rate": 2.0,
+      "walk_anim_rate": 0.9,
+      "category": "hostile",
+      "cap": 70,
+      "despawn_radius": 128.0,
+      "spawn": {
+        "biomes": [],
+        "ground": []
+      },
+      "spawn_group": {
+        "min": 1,
+        "max": 1
+      },
+      "wander": {
+        "chance_per_tick": 0.005,
+        "radius": 6
+      },
+      "habitat": {
+        "avoid": [],
+        "prefer": []
+      },
+      "avoid_water": false,
+      "sounds": [
+        {
+          "category": "idle",
+          "sound": "monsters:groan",
+          "tick_interval": 400,
+          "tick_interval_variance": 200
+        },
+        {
+          "category": "hurt",
+          "sound": "monsters:hurt"
+        },
+        {
+          "category": "death",
+          "sound": "monsters:death"
+        }
+      ],
+      "brain": [
+        {
+          "node": "wander",
+          "priority": 0
+        },
+        {
+          "node": "head_look",
+          "priority": 10
+        },
+        {
+          "node": "chase_player",
+          "priority": 20,
+          "params": {
+            "radius": 24.0,
+            "give_up_radius": 32.0,
+            "sneak_radius_penalty": 5.0
+          }
+        },
+        {
+          "node": "retaliate",
+          "priority": 25,
+          "params": {
+            "memory_ticks": 200
+          }
+        },
+        {
+          "node": "melee_attack",
+          "priority": 30,
+          "params": {
+            "reach": 1.6,
+            "damage": 3.0,
+            "knockback": 7.0,
+            "cooldown_ticks": 20
+          }
+        }
+      ]
+    },
+    {
+      "mob": "monsters:hushjaw",
+      "key": "monsters:hushjaw",
+      "model": "models/hushjaw.bbmodel",
+      "scale": 0.04,
+      "size": {
+        "half_width": 0.45,
+        "height": 1.9
+      },
+      "max_health": 40.0,
+      "walk_speed": 4.8,
+      "jump_speed": 7.2,
+      "turn_rate": 5.0,
+      "walk_anim_rate": 1.4,
+      "category": "hostile",
+      "cap": 6,
+      "despawn_radius": 128.0,
+      "spawn": {
+        "biomes": [],
+        "ground": []
+      },
+      "spawn_group": {
+        "min": 1,
+        "max": 1
+      },
+      "wander": {
+        "chance_per_tick": 0.005,
+        "radius": 10
+      },
+      "habitat": {
+        "avoid": [],
+        "prefer": []
+      },
+      "avoid_water": false,
+      "sounds": [
+        {
+          "category": "idle",
+          "sound": "monsters:hushjaw_idle",
+          "tick_interval": 600,
+          "tick_interval_variance": 300
+        },
+        {
+          "category": "hurt",
+          "sound": "monsters:hushjaw_hurt"
+        },
+        {
+          "category": "death",
+          "sound": "monsters:hushjaw_death"
+        }
+      ],
+      "brain": [
+        {
+          "node": "wander",
+          "priority": 0
+        },
+        {
+          "node": "idle_anim",
+          "priority": 10
+        },
+        {
+          "node": "chase_sound",
+          "priority": 20,
+          "params": {
+            "radius": 12.0,
+            "memory_ticks": 40,
+            "mob_chance": 0.001,
+            "mob_targets": [
+              "monsters:zombie"
+            ]
+          }
+        },
+        {
+          "node": "chase_contact",
+          "priority": 22,
+          "params": {
+            "memory_ticks": 40
+          }
+        },
+        {
+          "node": "retaliate",
+          "priority": 25,
+          "params": {
+            "memory_ticks": 200
+          }
+        },
+        {
+          "node": "melee_attack",
+          "priority": 30,
+          "params": {
+            "reach": 1.8,
+            "damage": 8.0,
+            "knockback": 8.0,
+            "cooldown_ticks": 20
+          }
+        }
+      ]
+    }
+  ]
+}

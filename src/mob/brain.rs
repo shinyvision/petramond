@@ -17,7 +17,8 @@ use crate::mathh::{IVec3, Vec3};
 use crate::world::World;
 
 use super::model_meta::IdleAnimMeta;
-use super::{Mob, MobRng};
+use super::noise::Noise;
+use super::{EntityRef, Mob, MobRng, PlayerAnchor};
 
 /// Priority of wander — the lowest, so any deliberate locomotion overrides it.
 pub const PRIORITY_WANDER: u8 = 0;
@@ -25,8 +26,15 @@ pub const PRIORITY_WANDER: u8 = 0;
 /// don't contend with `goal`, so their exact priority rarely matters — but giving
 /// them a slot keeps the ordering explicit.
 pub const PRIORITY_EXPRESSION: u8 = 10;
-/// Chase locomotion (`chase_player`) — above wander, so hunting overrides roaming.
+/// Chase locomotion (`chase_player`, `chase_sound`) — above wander, so hunting
+/// overrides roaming.
 pub const PRIORITY_CHASE: u8 = 20;
+/// Contact aggression (`chase_contact`) — above ordinary chases: something
+/// touching the mob's body beats whatever it was hunting at a distance.
+pub const PRIORITY_CONTACT: u8 = 22;
+/// Retaliation (`retaliate`) — above contact: a mob that was actually hit
+/// turns on its attacker before answering a mere bump.
+pub const PRIORITY_RETALIATE: u8 = 25;
 /// Attack behaviors (`melee_attack`) — above chase; they own the `attack` field (which
 /// nothing else contends for), and the explicit slot keeps the ordering readable.
 pub const PRIORITY_ATTACK: u8 = 30;
@@ -43,9 +51,26 @@ pub struct HeadLook {
 /// nearby companions without borrowing the live [`Mobs`](super::Mobs) container.
 #[derive(Copy, Clone, Debug)]
 pub struct AiMob {
+    /// Stable session id — what noise sources, targets, and attacker memory
+    /// name, so a lock survives `swap_remove` renumbering across ticks.
+    pub id: u64,
     pub kind: Mob,
+    /// Feet position (like `Instance::pos`).
     pub pos: Vec3,
     pub active: bool,
+}
+
+/// The tick-wide, read-only inputs every mob's AI shares this tick — built once
+/// by the manager and threaded to each instance. New world-level perception
+/// channels extend this struct, not the instance tick signature.
+pub struct TickInputs<'a> {
+    pub world: &'a World,
+    /// Every connected player's anchor.
+    pub players: &'a [PlayerAnchor],
+    /// The gameplay noises audible this tick.
+    pub noises: &'a [Noise],
+    /// Snapshot of live mobs at the start of this tick.
+    pub mobs: &'a [AiMob],
 }
 
 /// Per-tick context a behavior reads to decide what the mob should do. Behaviors
@@ -66,11 +91,33 @@ pub struct AiCtx<'a> {
     pub half_width: f32,
     /// Read-only world, for sampling standable destinations / line-of-sight.
     pub world: &'a World,
+    /// The NEAREST player's session id — pairs with [`player_pos`](Self::player_pos);
+    /// what a player-anchored behavior (chase, melee fallback) targets.
+    pub player_id: crate::server::player::PlayerId,
     /// Player body-centre — for head-look (and future flee / attack).
     pub player_pos: Vec3,
     /// Whether that player is sneaking — sneaking shrinks hostile detection
     /// (see `chase_player`'s `sneak_radius_penalty`).
     pub player_sneaking: bool,
+    /// EVERY connected player's anchor, for behaviors that track a SPECIFIC
+    /// player (a heard target, an attacker) rather than the nearest one.
+    pub players: &'a [PlayerAnchor],
+    /// The gameplay noises audible this tick (see [`super::noise`]) — the
+    /// perception input for hearing-based behaviors. Radius/memory policy
+    /// lives on the listening node.
+    pub noises: &'a [Noise],
+    /// The entities whose bodies overlapped THIS mob on the previous tick —
+    /// the TOUCH perception channel, recorded by the manager's push pass
+    /// (which already finds every overlapping pair). Sneaking silences
+    /// footsteps, but nothing silences a body pressed against yours.
+    pub contacts: &'a [EntityRef],
+    /// The target the whole brain settled on LAST tick (the merged
+    /// [`BehaviorOutput::target`]) — how an attack node strikes what a
+    /// perception node locked, without in-pass ordering coupling.
+    pub target: Option<EntityRef>,
+    /// Who last damaged this mob, and how many ticks ago — the retaliation
+    /// input. Recorded by the damage pipeline; `None` until first hit.
+    pub attacker: Option<(EntityRef, u32)>,
     /// True when the navigator has no active path (arrived / gave up / untasked).
     /// Behaviors treat this as "the mob is idle".
     pub nav_idle: bool,
@@ -91,16 +138,48 @@ pub struct AiCtx<'a> {
     pub rng: &'a mut MobRng,
 }
 
-/// A melee strike a behavior wants to land on the player THIS tick. The instance
-/// latches it, the manager drains it into a [`MobAttack`](super::MobAttack) (deriving
-/// the knockback direction from the live mob→player positions), and `Game` applies it
-/// through the `player_damage_pre` pipeline — so i-frame mods cancel the damage AND the
-/// knockback together. Cooldown state lives on the emitting node, not here.
+impl AiCtx<'_> {
+    /// Whether `who` still exists as a targetable entity this tick (a
+    /// connected player, or a live mob in the snapshot).
+    pub fn entity_alive(&self, who: EntityRef) -> bool {
+        match who {
+            EntityRef::Player(pid) => self.players.iter().any(|a| a.id == pid),
+            EntityRef::Mob(id) => self.mobs.iter().any(|m| m.id == id && m.active),
+        }
+    }
+
+    /// `who`'s live body-centre position, or `None` when it is gone/dead.
+    /// (Player anchors are body centres already; mob snapshots carry feet.)
+    pub fn entity_pos(&self, who: EntityRef) -> Option<Vec3> {
+        match who {
+            EntityRef::Player(pid) => self.players.iter().find(|a| a.id == pid).map(|a| a.pos),
+            EntityRef::Mob(id) => self
+                .mobs
+                .iter()
+                .find(|m| m.id == id && m.active)
+                .map(|m| m.pos + Vec3::new(0.0, super::def(m.kind).size.height * 0.5, 0.0)),
+        }
+    }
+}
+
+/// A melee strike a behavior wants to land THIS tick. The instance latches it,
+/// the manager drains it into a [`MobAttack`](super::MobAttack) (deriving the
+/// knockback direction from the live attacker→target positions), and `Game`
+/// applies it through the matching damage pipeline: `player_damage_pre` for a
+/// player target (an i-frame cancel drops damage AND knockback together), the
+/// mob damage pipeline for a mob target (`mob_damage_pre`, feedback, loot,
+/// ragdoll — mob-vs-mob combat is the same funnel as every other mob hit).
+/// Cooldown state lives on the emitting node, not here.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct AttackIntent {
-    /// Damage in half-heart points (rounded when applied to the player).
+    /// Who the strike lands on.
+    pub target: EntityRef,
+    /// Damage in half-heart points (rounded when applied to a player; mobs
+    /// keep the fraction).
     pub damage: f32,
-    /// Horizontal knockback speed (m/s) imparted away from the mob.
+    /// Horizontal knockback speed (m/s) imparted away from the mob. Applies to
+    /// player targets; a mob target takes its row's own `petramond:knockback`
+    /// feedback component instead.
     pub knockback: f32,
 }
 
@@ -114,8 +193,12 @@ pub struct BehaviorOutput {
     pub head_look: Option<HeadLook>,
     /// An `idle_*` animation index this behavior wants played.
     pub idle_anim: Option<u8>,
-    /// A melee strike on the player this behavior wants landed this tick.
+    /// A melee strike this behavior wants landed this tick.
     pub attack: Option<AttackIntent>,
+    /// The entity this behavior is engaged on. The merged value is latched by
+    /// the instance and fed back as next tick's [`AiCtx::target`], so attack
+    /// nodes strike what the winning perception/chase node locked.
+    pub target: Option<EntityRef>,
 }
 
 /// One composable unit of mob AI. Each tick it contributes a [`BehaviorOutput`].
@@ -166,6 +249,7 @@ impl Brain {
             decision.head_look = decision.head_look.or(out.head_look);
             decision.idle_anim = decision.idle_anim.or(out.idle_anim);
             decision.attack = decision.attack.or(out.attack);
+            decision.target = decision.target.or(out.target);
         }
         decision
     }
@@ -212,8 +296,14 @@ mod tests {
             head_height: 0.7,
             half_width: 0.25,
             world,
+            player_id: Default::default(),
             player_pos: Vec3::ZERO,
             player_sneaking: false,
+            players: &[],
+            noises: &[],
+            contacts: &[],
+            target: None,
+            attacker: None,
             nav_idle: true,
             in_water: false,
             head: 1,

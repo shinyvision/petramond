@@ -88,8 +88,11 @@ pub(crate) enum DamageSource {
     Fall,
     /// A player's melee strike; carries the attacking session.
     PlayerAttack(crate::server::player::PlayerId),
-    /// A mob's melee strike; carries the attacking species.
-    MobAttack(Mob),
+    /// A mob's melee strike; carries the attacking species AND the attacker's
+    /// stable mob id — the source names WHO caused the damage, and for a mob
+    /// that identity is the instance (the struck target's retaliation memory
+    /// needs the biter, not just its species).
+    MobAttack { kind: Mob, id: u64 },
     /// A mod's `DamagePlayer`/`KillPlayer` HostCall; carries the mod's pack id
     /// (interned for the process lifetime — see `modding::host`), so handlers
     /// can filter by origin.
@@ -99,7 +102,19 @@ pub(crate) enum DamageSource {
 impl DamageSource {
     #[inline]
     pub(crate) fn is_attack(self) -> bool {
-        matches!(self, Self::PlayerAttack(_) | Self::MobAttack(_))
+        matches!(self, Self::PlayerAttack(_) | Self::MobAttack { .. })
+    }
+
+    /// The attacking ENTITY this source names, when it names one — the value
+    /// recorded as a struck mob's retaliation memory. Fall and mod damage have
+    /// no attacker identity.
+    #[inline]
+    pub(crate) fn attacker(self) -> Option<crate::mob::EntityRef> {
+        match self {
+            Self::PlayerAttack(pid) => Some(crate::mob::EntityRef::Player(pid)),
+            Self::MobAttack { id, .. } => Some(crate::mob::EntityRef::Mob(id)),
+            Self::Fall | Self::Mod(_) => None,
+        }
     }
 }
 

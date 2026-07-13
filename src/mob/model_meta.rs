@@ -52,6 +52,12 @@ pub struct SkBone {
     /// disconnected top-level authored bones are attached to the creature's main root
     /// so one mob dies as one connected body, not as independent loose parts.
     pub parent: Option<usize>,
+    /// The bone gets no rigid body of its own in the ragdoll and moves rigidly with its
+    /// parent: authored with a `_weld` name suffix (teeth, decorative shells that only
+    /// exist as separate bones for animation), or a cube-less rig group (physics anchors
+    /// on geometry; see [`skeleton`]). Never true for the root — there is nothing to
+    /// weld to.
+    pub welded: bool,
 }
 
 /// The bone hierarchy of a mob, in the SAME index order as the renderer's
@@ -118,24 +124,83 @@ pub fn skeleton(model: &Model) -> Skeleton {
         })
         .collect();
     let root = primary_root(model, &boxes);
+    let parents: Vec<Option<usize>> = model
+        .bones
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            b.parent
+                .or_else(|| inferred_parent(model, &boxes, &pivots, root, i))
+        })
+        .collect();
+    let has_geom: Vec<bool> = (0..n).map(|i| hi[i].cmpge(lo[i]).all()).collect();
+    // Nearest geometry-bearing ancestor through the (connected) provisional tree.
+    let geom_ancestor = |bone: usize| -> Option<usize> {
+        let mut next = parents[bone];
+        for _ in 0..n {
+            let p = next?;
+            if has_geom[p] {
+                return Some(p);
+            }
+            next = parents[p];
+        }
+        None
+    };
+    // Physics anchors on GEOMETRY. A cube-less group is animation rig, not a body — as a
+    // rigid body it is a tiny noise-driven placeholder box that the joint pass slaves
+    // every real bone to (the hushjaw's empty `root` froze its corpse into a statue or
+    // flipped it). So the physical root is the topmost geometry-bearing bone (preferring
+    // an authored `body`, else the largest box, `_weld` names excluded), physical parents
+    // skip across rig bones, and each rig bone is welded to the bone that adopted its
+    // children so its render pose stays defined.
+    let anchor_root = {
+        let topmost: Vec<usize> = (0..n)
+            .filter(|&i| has_geom[i] && geom_ancestor(i).is_none() && !is_weld_name(&model.bones[i].name))
+            .collect();
+        topmost
+            .iter()
+            .copied()
+            .find(|&i| model.bones[i].name.eq_ignore_ascii_case("body"))
+            .or_else(|| {
+                topmost.into_iter().max_by(|&a, &b| {
+                    box_volume(boxes[a])
+                        .partial_cmp(&box_volume(boxes[b]))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+            })
+    };
     let bones = model
         .bones
         .iter()
         .enumerate()
         .map(|(i, b)| {
-            let parent = b
-                .parent
-                .or_else(|| inferred_parent(model, &boxes, &pivots, root, i));
+            let (parent, welded) = match anchor_root {
+                Some(ar) if i == ar => (None, false),
+                Some(ar) => {
+                    let parent = geom_ancestor(i).unwrap_or(ar);
+                    (Some(parent), !has_geom[i] || is_weld_name(&b.name))
+                }
+                // No usable geometry anywhere (empty or degenerate model): keep the
+                // provisional tree and the name convention only.
+                None => (parents[i], parents[i].is_some() && is_weld_name(&b.name)),
+            };
             let (bbox_min, bbox_max) = boxes[i];
             SkBone {
                 pivot: pivots[i],
                 bbox_min,
                 bbox_max,
                 parent,
+                welded,
             }
         })
         .collect();
     Skeleton { bones }
+}
+
+/// The `_weld` bone-name suffix marks a bone as welded (see [`SkBone::welded`]). Names
+/// carry meaning like the `head` bone (AI head-look) and the `body` root preference.
+fn is_weld_name(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with("_weld")
 }
 
 fn primary_root(model: &Model, boxes: &[(Vec3, Vec3)]) -> Option<usize> {
@@ -356,6 +421,69 @@ mod tests {
                     "ragdoll box contains rendered rest-geometry corner {p:?}"
                 );
             }
+        }
+    }
+
+    fn hushjaw() -> Model {
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/mods-src/monsters/pack/models/hushjaw.bbmodel"
+        ));
+        Model::load(src).expect("hushjaw.bbmodel parses")
+    }
+
+    #[test]
+    fn weld_suffixed_and_cube_less_bones_are_welded_to_a_parent() {
+        // Two ways a bone opts out of ragdoll physics, both flagged `welded` (with a
+        // parent to weld to): the authored `_weld` name suffix (the hushjaw's teeth) and
+        // having no cubes at all (the hushjaw's rig-only `root` group — as a rigid body
+        // it is a noise-driven placeholder box every real bone gets slaved to).
+        let m = hushjaw();
+        let skel = skeleton(&m);
+        assert!(
+            m.bones.iter().any(|b| is_weld_name(&b.name)),
+            "fixture must exercise _weld bones"
+        );
+        let mut saw_cube_less = false;
+        for (i, b) in skel.bones.iter().enumerate() {
+            let has_cubes = m.cubes.iter().any(|c| c.bone == i);
+            saw_cube_less |= !has_cubes;
+            assert_eq!(
+                b.welded,
+                (is_weld_name(&m.bones[i].name) || !has_cubes) && b.parent.is_some(),
+                "welding covers `_weld` names and cube-less rig bones: {}",
+                m.bones[i].name
+            );
+        }
+        assert!(saw_cube_less, "fixture must exercise a cube-less rig bone");
+    }
+
+    #[test]
+    fn physics_roots_on_a_geometry_bearing_bone() {
+        // The hushjaw's authored root has no cubes. The PHYSICAL root must be a real
+        // body (a geometry-bearing, non-welded bone) and every non-welded bone must
+        // reach it through non-welded geometry — never through a rig placeholder.
+        let m = hushjaw();
+        let skel = skeleton(&m);
+        let roots: Vec<usize> = (0..skel.bones.len())
+            .filter(|&i| skel.bones[i].parent.is_none())
+            .collect();
+        assert_eq!(roots.len(), 1, "one physical root");
+        let root = roots[0];
+        assert!(
+            m.cubes.iter().any(|c| c.bone == root),
+            "the physical root has geometry"
+        );
+        assert!(!skel.bones[root].welded, "the physical root is simulated");
+        for (i, b) in skel.bones.iter().enumerate() {
+            if b.welded || i == root {
+                continue;
+            }
+            let p = b.parent.expect("non-root bones have parents");
+            assert!(
+                !skel.bones[p].welded,
+                "simulated bone {i} joints to a simulated parent, not a rig placeholder"
+            );
         }
     }
 

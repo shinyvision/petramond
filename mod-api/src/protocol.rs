@@ -1209,6 +1209,7 @@ mod tests {
             combined_light: 12,
             sky_light: 8,
             block_light: 12,
+            nearest_player_dist: 40.0,
         };
         roundtrip(GuestCall::HostileSpawnCandidate {
             callback_id: 7,
