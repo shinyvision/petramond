@@ -165,10 +165,11 @@ impl AiCtx<'_> {
 /// A melee strike a behavior wants to land THIS tick. The instance latches it,
 /// the manager drains it into a [`MobAttack`](super::MobAttack) (deriving the
 /// knockback direction from the live attacker→target positions), and `Game`
-/// applies it through the matching damage pipeline: `player_damage_pre` for a
-/// player target (an i-frame cancel drops damage AND knockback together), the
-/// mob damage pipeline for a mob target (`mob_damage_pre`, feedback, loot,
-/// ragdoll — mob-vs-mob combat is the same funnel as every other mob hit).
+/// applies it through the matching damage pipeline: engine immunity plus
+/// `player_damage_pre` for a player target (either rejection drops damage AND
+/// knockback together), or the mob damage pipeline for a mob target (global
+/// immunity, `mob_damage_pre`, feedback, loot, ragdoll — mob-vs-mob combat is
+/// the same funnel as every other mob hit).
 /// Cooldown state lives on the emitting node, not here.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct AttackIntent {

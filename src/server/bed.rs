@@ -190,6 +190,7 @@ impl ServerGame {
         player.teleport(target);
         player.vel = Vec3::ZERO;
         player.set_health(MAX_HEALTH);
+        player.clear_damage_immunity();
         // A fresh life starts clean: lingering status effects die with the body.
         player.clear_effects();
         events.player(s).respawned = true;

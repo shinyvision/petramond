@@ -66,11 +66,13 @@ pub struct Player {
     /// or head-bonk). Gates the apex easing so only a genuine jump arc is
     /// softened — walking off a ledge or bonking a ceiling falls at full gravity.
     pub(super) jumping: bool,
-    /// Current health in half-heart points (`0..=`[`MAX_HEALTH`]). Fall damage is the
-    /// only source for now; it is mutated on the deterministic tick (see
-    /// `crate::game::health`), never in per-frame physics — the physics only *measures*
-    /// a fall (below).
+    /// Current health in half-heart points (`0..=`[`MAX_HEALTH`]). Every source
+    /// mutates it on the deterministic tick through the server damage funnel;
+    /// per-frame physics only *measures* falls (below).
     health: i32,
+    /// Engine-owned global damage immunity. Transient: a fresh connection or
+    /// respawn starts vulnerable regardless of saved health.
+    damage_immunity: crate::damage::DamageImmunity,
     /// Highest feet-`y` reached since the player last stood on the ground (or was in
     /// water). The fall distance of a landing is this minus the landing `y`. Reset when
     /// grounded/submerged so a fall is measured from where it began, and the arc of a
@@ -107,6 +109,7 @@ impl Player {
             mode: PlayerMode::Survival,
             jumping: false,
             health: MAX_HEALTH,
+            damage_immunity: Default::default(),
             fall_peak_y: feet.y,
             fall_distance: 0.0,
             inventory: crate::inventory::Inventory::new(),
@@ -128,12 +131,32 @@ impl Player {
         self.health = health.clamp(0, MAX_HEALTH);
     }
 
-    /// Subtract `points` half-hearts of damage, never below zero. A no-op for a
-    /// non-positive amount. Call this on the tick, not in per-frame physics.
-    pub fn apply_damage(&mut self, points: i32) {
-        if points > 0 {
-            self.health = (self.health - points).max(0);
+    /// Subtract `points` half-hearts of damage, never below zero, and grant the
+    /// shared damage-immunity window. Returns whether health was actually lost.
+    /// Call this on the tick, not in per-frame physics.
+    pub fn apply_damage(&mut self, points: i32) -> bool {
+        if points <= 0 || self.health == 0 || self.damage_immunity.is_active() {
+            return false;
         }
+        self.health = (self.health - points).max(0);
+        self.damage_immunity
+            .grant_for(crate::damage::PLAYER_DAMAGE_IFRAME_TICKS);
+        true
+    }
+
+    #[inline]
+    pub(crate) fn is_damage_immune(&self) -> bool {
+        self.damage_immunity.is_active()
+    }
+
+    #[inline]
+    pub(crate) fn tick_damage_immunity(&mut self) {
+        self.damage_immunity.tick();
+    }
+
+    #[inline]
+    pub(crate) fn clear_damage_immunity(&mut self) {
+        self.damage_immunity.clear();
     }
 
     /// Add `points` half-hearts, capped at [`MAX_HEALTH`]. A no-op for a

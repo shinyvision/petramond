@@ -112,11 +112,11 @@ pub enum HostCall {
         pos: [f32; 3],
         radius: f32,
     },
-    /// Damage the mob at `index` through the `mob_damage_pre` pipeline. Mod
-    /// damage is not an attack, so default knockback is not applied; `origin`
-    /// is only spatial context for feedback/handlers. Applied at the next
-    /// action drain point (same tick), so a handler cannot re-enter the bus.
-    /// → [`HostRet::Unit`].
+    /// Damage the mob at `index` through its global engine-owned i-frames and
+    /// the `mob_damage_pre` pipeline. Mod damage is not an attack, so default
+    /// knockback is not applied; `origin` is only spatial context for
+    /// feedback/handlers. Applied at the next action drain point (same tick),
+    /// so a handler cannot re-enter the bus. → [`HostRet::Unit`].
     DamageMob {
         index: u32,
         amount: f32,
@@ -139,10 +139,11 @@ pub enum HostCall {
     // --- Phase 3b: player ---------------------------------------------------
     /// The player's current state. → [`HostRet::Player`].
     PlayerState,
-    /// Damage the player through the single engine funnel: `player_damage_pre`
-    /// (other mods' i-frames) applies, with [`DamageSource::Mod`] carrying the
-    /// calling mod's id. Queued; applied at the next action drain point (same
-    /// tick, defined order). → [`HostRet::Unit`].
+    /// Damage the player through the single engine funnel. The victim's global
+    /// engine-owned i-frames and `player_damage_pre` apply, with
+    /// [`DamageSource::Mod`] carrying the calling mod's id. Queued; applied at
+    /// the next action drain point (same tick, defined order). →
+    /// [`HostRet::Unit`].
     ///
     /// [`DamageSource::Mod`]: crate::DamageSource::Mod
     DamagePlayer {
@@ -162,8 +163,8 @@ pub enum HostCall {
         count: u8,
     },
     /// Kill the player: damage equal to current health, through the same
-    /// funnel (and queue) as [`HostCall::DamagePlayer`] — i-frame handlers can
-    /// still cancel it. → [`HostRet::Unit`].
+    /// funnel (and queue) as [`HostCall::DamagePlayer`] — global i-frames or a
+    /// pre-event handler can still reject it. → [`HostRet::Unit`].
     KillPlayer,
     /// Overwrite the player's health (clamped to `0..=20` half-hearts),
     /// BYPASSING the damage funnel — this is the heal/set primitive, not a

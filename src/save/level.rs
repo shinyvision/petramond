@@ -82,7 +82,7 @@ mod tests {
     fn level_roundtrips() {
         let kv = BTreeMap::from([
             ("petramond:time".to_owned(), vec![0x10, 0x20]),
-            ("zombies:invuln_until".to_owned(), Vec::new()),
+            ("example:opaque".to_owned(), Vec::new()),
         ]);
         // Negative coords on purpose: the chunk set must round-trip sign-exact.
         let populated = BTreeSet::from([ChunkPos::new(-3, 17), ChunkPos::new(120, -9)]);

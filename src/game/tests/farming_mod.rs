@@ -888,6 +888,9 @@ fn farming_processing_inner() {
         15,
         "Well Fed reduces a routed damage instance by one half-heart"
     );
+    for _ in 0..crate::damage::PLAYER_DAMAGE_IFRAME_TICKS {
+        game.server.sessions[0].player.tick_damage_immunity();
+    }
     let before = game.server.sessions[0].player.health();
     game.server
         .damage_player(0, 1, DamageSource::Fall, None, &mut ev);

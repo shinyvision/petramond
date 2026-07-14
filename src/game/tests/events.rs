@@ -22,9 +22,7 @@ fn player_died_fires_exactly_once_on_the_zero_transition() {
             });
     }
     let mut feed = TickEvents::default();
-    game.server.sessions[0].player.set_health(3);
-    game.server
-        .damage_player(0, 2, DamageSource::Fall, None, &mut feed); // 3 → 1: alive
+    game.server.sessions[0].player.set_health(1);
     game.server
         .damage_player(0, 2, DamageSource::Fall, None, &mut feed); // 1 → 0: dies
     game.server

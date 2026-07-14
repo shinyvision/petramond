@@ -1,9 +1,9 @@
-//! Combat proof for the monsters mod: real chase+melee strikes flow
-//! through the player damage funnel while the mod's wasm `player_damage_pre`
-//! handler enforces its 20-tick i-frames — damage AND knockback land at most
-//! once per window. Species registration needs the fixture pack in the
-//! registry, so the assertions run in a child process (the established
-//! `PETRAMOND_MODS` re-spawn pattern, staged by `modding::tests`).
+//! Combat proof for the monsters mod: real chase+melee strikes flow through
+//! the player damage funnel, whose engine-owned global i-frames admit damage
+//! and knockback at most once per window. Species registration needs the
+//! fixture pack in the registry, so the assertions run in a child process
+//! (the established `PETRAMOND_MODS` re-spawn pattern, staged by
+//! `modding::tests`).
 
 use super::super::tick::TickEvents;
 use crate::camera::Camera;
@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[test]
-fn zombie_melee_damage_is_gated_by_the_mods_i_frames_via_wasm() {
+fn zombie_melee_uses_engine_global_iframes() {
     let Some(root) = crate::modding::tests::stage_monsters_fixture("combat") else {
         return;
     };
@@ -21,10 +21,10 @@ fn zombie_melee_damage_is_gated_by_the_mods_i_frames_via_wasm() {
 
 /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
 /// pointing at the fixture packs before first registry touch). Uses the
-/// production load path — `Game::new` → `ModHost::load` — so the handler
-/// under test is the real installed wasm, dispatched from the real funnel.
+/// production load path — `Game::new` → `ModHost::load` — so the real
+/// installed wasm drives melee attacks through the production damage funnel.
 #[test]
-#[ignore = "spawned by zombie_melee_damage_is_gated_by_the_mods_i_frames_via_wasm with a fixture pack env"]
+#[ignore = "spawned by zombie_melee_uses_engine_global_iframes with a fixture pack env"]
 fn zombie_combat_inner() {
     use crate::block::Block;
     use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
@@ -55,9 +55,9 @@ fn zombie_combat_inner() {
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;
 
-    // TWO zombies in reach, facing the player: their independent 20-tick
-    // melee cooldowns would land two hits inside one window — only the mod's
-    // i-frames keep the applications 20+ ticks apart.
+    // TWO zombies in reach, facing the player: their independent melee
+    // cooldowns can land together, but the victim's global engine i-frames
+    // collapse simultaneous strikes to one application.
     for dx in [1.1f32, -1.1] {
         let pos = Vec3::new(8.0 + dx, 64.0, 8.0);
         let to_player = game.server.sessions[0].player.body_center() - pos;
@@ -103,16 +103,8 @@ fn zombie_combat_inner() {
         peak_knockback > 1.0,
         "knockback reached the player's velocity at hit time: {peak_knockback}"
     );
-    // The documented inspection mirror: 8-byte LE u64 end-of-window tick.
-    let bytes = game
-        .server
-        .world
-        .mod_kv_get("monsters:invuln_until")
-        .expect("monsters:invuln_until mirrored to world KV");
-    let until = u64::from_le_bytes(bytes.try_into().expect("8-byte LE u64 contract"));
-    assert!(until > 0, "the mirror records the window end");
     let (disabled, _, _) = game.mods_for_test().probe(0);
-    assert!(!disabled, "zombies stayed healthy through combat");
+    assert!(!disabled, "monsters mod stayed healthy through combat");
 }
 
 #[test]

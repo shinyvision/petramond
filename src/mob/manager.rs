@@ -511,6 +511,15 @@ impl Mobs {
         }
     }
 
+    /// Advance every mob's global damage-immunity window once. The server
+    /// calls this at the start of the fixed tick, before any damage source or
+    /// queued mod action can run.
+    pub(crate) fn tick_damage_immunity(&mut self) {
+        for mob in &mut self.list {
+            mob.tick_damage_immunity();
+        }
+    }
+
     /// Toggle the particle-emitter bundle registered under `key` (a
     /// `particle_emitters.json` row, any namespace) on the mob at `index`.
     /// `false` for a bad index, an unregistered key, or an activation past the

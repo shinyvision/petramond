@@ -29,6 +29,7 @@ mod column;
 mod container;
 mod controls;
 mod crafting;
+mod damage;
 mod door;
 mod effect;
 mod entity;

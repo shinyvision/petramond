@@ -212,11 +212,15 @@ fn mode_switch_drops_a_pending_fall() {
 fn health_damage_and_restore_clamp_to_the_valid_range() {
     let mut pl = p(Vec3::new(0.0, 64.0, 0.0));
     assert_eq!(pl.health(), MAX_HEALTH, "starts at full health");
-    pl.apply_damage(3);
+    assert!(pl.apply_damage(3));
     assert_eq!(pl.health(), MAX_HEALTH - 3);
-    pl.apply_damage(0); // non-positive is a no-op
+    assert!(!pl.apply_damage(0)); // non-positive is a no-op
     assert_eq!(pl.health(), MAX_HEALTH - 3);
-    pl.apply_damage(1000); // never below zero
+    assert!(!pl.apply_damage(1000), "the active i-frame window rejects damage");
+    for _ in 0..crate::damage::PLAYER_DAMAGE_IFRAME_TICKS {
+        pl.tick_damage_immunity();
+    }
+    assert!(pl.apply_damage(1000)); // never below zero
     assert_eq!(pl.health(), 0);
     pl.set_health(1000); // restore clamps to the max
     assert_eq!(pl.health(), MAX_HEALTH);

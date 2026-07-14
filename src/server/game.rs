@@ -1110,6 +1110,10 @@ impl ServerGame {
     /// systems and the post-event queue drains (see [`end_stage`](Self::end_stage)).
     /// `pub(crate)` so tests can drive exactly one tick.
     pub(crate) fn game_tick_step(&mut self, events: &mut TickEvents) {
+        // Victim-owned i-frames advance before ANY source can deal damage,
+        // including mod actions queued at the previous drain point.
+        self.tick_damage_immunity();
+
         // Post events queued from per-frame code since the last tick (section
         // stream installs, container screens) dispatch first, before any stage:
         // per-frame code only ever queues; handlers run on the tick. Mod
@@ -1244,8 +1248,8 @@ impl ServerGame {
             self.push_water_splash(splash.pos, splash.fall, events);
         }
         // Mob→player combat resolves right after the mobs moved: each strike runs
-        // through the `player_damage_pre` pipeline (i-frame mods cancel there) and
-        // an applied strike knocks the player back.
+        // through the engine-owned global i-frame + `player_damage_pre`
+        // pipeline, and an applied strike knocks the player back.
         self.apply_mob_attacks(mob_events.attacks, events);
         self.end_stage(Stage::Mobs, events);
 

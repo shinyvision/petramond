@@ -11,8 +11,8 @@ use super::game::ServerGame;
 use crate::game::tick::TickEvents;
 
 impl ServerGame {
-    /// Apply every queued mod action through the engine's own funnels, so the
-    /// registered pre handlers (i-frames, hurt tuning) see them exactly like
+    /// Apply every queued mod action through the engine's own funnels, so
+    /// global immunity and registered pre handlers treat them exactly like
     /// engine-originated damage. Actions queued *while* this batch runs (e.g.
     /// by a `player_damage_pre` handler) land at the next action point — the
     /// per-tick point count bounds them, no recursion.
@@ -29,8 +29,8 @@ impl ServerGame {
                     self.damage_player(s, amount, DamageSource::Mod(mod_id), None, events);
                 }
                 ModAction::KillPlayer { mod_id } => {
-                    // Damage = current health, through the same funnel: a
-                    // cancelling handler still saves the player.
+                    // Damage = current health, through the same funnel:
+                    // immunity or a cancelling handler still saves the player.
                     let amount = self.sessions[s].player.health();
                     self.damage_player(s, amount, DamageSource::Mod(mod_id), None, events);
                 }

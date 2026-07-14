@@ -13,9 +13,10 @@ pub fn player_state() -> PlayerSnapshot {
     }
 }
 
-/// Damage the player through the engine funnel — `player_damage_pre` (other
-/// mods' i-frames) applies, with `DamageSource::Mod` carrying this mod's id.
-/// Queued; applied at the next in-tick drain point.
+/// Damage the player through the engine funnel. The victim's global
+/// engine-owned i-frames and `player_damage_pre` apply, with
+/// `DamageSource::Mod` carrying this mod's id. Queued; applied at the next
+/// in-tick drain point.
 pub fn damage_player(amount: i32) {
     __rt::expect_unit(
         "DamagePlayer",
@@ -44,7 +45,7 @@ pub fn give_item(item_key: &str, count: u8) -> bool {
 }
 
 /// Kill the player: current-health damage through the same funnel (and queue)
-/// as [`damage_player`] — i-frame handlers can still cancel it.
+/// as [`damage_player`] — global i-frames or a pre-event handler can reject it.
 pub fn kill_player() {
     __rt::expect_unit("KillPlayer", __rt::host_call(&HostCall::KillPlayer));
 }

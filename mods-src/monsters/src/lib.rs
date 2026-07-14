@@ -41,34 +41,20 @@
 //! - **Sounds**: groan/hurt/death calls are data-driven by the zombie mob row.
 //!   The mod does not start audio directly; the engine presentation layer plays
 //!   those semantic mob sound hooks.
-//! - **I-frames** (the API proof): a `player_damage_pre` handler cancels any
-//!   ZOMBIE-sourced damage landing within [`IFRAME_TICKS`] of the previous
-//!   zombie hit. A cancel suppresses both the damage AND the knockback
-//!   (Phase 3a engine contract). Only `DamageSource::MobAttack { key ==
-//!   "monsters:zombie" }` is gated — fall damage, other species, and other
-//!   mods' `DamagePlayer` calls pass through untouched: the i-frame window
-//!   is a property of zombie melee, not of the player.
 //!
 //! # World-KV keys
 //!
 //! - reads `petramond:time` (4-byte LE f32 day fraction) — the sanctioned
 //!   interop surface published by core day/night.
-//! - writes `monsters:invuln_until` — 8 bytes, little-endian u64: the game
-//!   tick the current i-frame window ends at, mirrored for inspection.
-//!   The in-memory copy is authoritative within a session and deliberately
-//!   resets on reload (worst case: one free hit — trivia, not state worth
-//!   persisting).
 
 use mod_sdk::*;
 
 const MONSTERS_TICK_SYSTEM: u32 = 1;
 const MONSTERS_HOSTILE_SPAWNER: u32 = 1;
-const ON_PLAYER_DAMAGE_PRE: u32 = 1;
 
 const ZOMBIE_KEY: &str = "monsters:zombie";
 const HUSHJAW_KEY: &str = "monsters:hushjaw";
 const TIME_KEY: &str = "petramond:time";
-const INVULN_KEY: &str = "monsters:invuln_until";
 
 /// Hushjaw spawn rules — a deep-cave apex predator, deliberately never near
 /// the surface, the player, or its own kind:
@@ -107,8 +93,6 @@ const GREAT_FIRE_DAMAGE_INTERVAL: u32 = 20;
 /// The core emitter bundles this mod attaches (`particle_emitters.json`).
 const LIGHT_FIRE_EMITTER: &str = "petramond:burn_light";
 const GREAT_FIRE_EMITTER: &str = "petramond:burn_great";
-/// 1 s of invulnerability at 20 TPS.
-const IFRAME_TICKS: u64 = 20;
 
 #[derive(Copy, Clone, PartialEq)]
 enum BurnStage {
@@ -126,12 +110,8 @@ struct Burn {
 
 #[derive(Default)]
 struct Monsters {
-    /// Tick the current i-frame window ends at (authoritative; the world-KV
-    /// mirror is for inspection only).
-    invuln_until: u64,
     /// Burn state per burning zombie (by stable mob id). In-memory only:
-    /// resets on reload like the i-frame window — a sunlit zombie re-rolls
-    /// ignition next session.
+    /// a sunlit zombie re-rolls ignition next session.
     burning: std::collections::HashMap<u64, Burn>,
 }
 
@@ -139,8 +119,7 @@ impl Mod for Monsters {
     fn init(&mut self) {
         register_tick_system(Stage::Spawning, AttachSide::After, 0, MONSTERS_TICK_SYSTEM);
         register_hostile_spawner(0, MONSTERS_HOSTILE_SPAWNER);
-        register_event_handler(EventKind::PlayerDamagePre, 0, ON_PLAYER_DAMAGE_PRE);
-        log("initialized: hostile spawner (zombie + hushjaw) + sunburn + melee i-frames");
+        log("initialized: hostile spawner (zombie + hushjaw) + sunburn");
     }
 
     fn tick_system(&mut self, _system_id: u32) {
@@ -154,29 +133,6 @@ impl Mod for Monsters {
         let player = player_state();
         let near = mobs_in_radius(player.pos, SUNBURN_RADIUS);
         self.tick_fire(daylight, &near);
-    }
-
-    fn handle_event(&mut self, _handler_id: u32, payload: &mut EventPayload) -> Outcome {
-        // Gate ONLY zombie melee (see the module docs for why other damage
-        // sources pass through untouched).
-        let EventPayload::PlayerDamagePre {
-            source: DamageSource::MobAttack { key },
-            ..
-        } = payload
-        else {
-            return Outcome::Continue;
-        };
-        if key != ZOMBIE_KEY {
-            return Outcome::Continue;
-        }
-        let now = current_tick();
-        if now < self.invuln_until {
-            // Cancel = the engine drops the damage AND the knockback.
-            return Outcome::Cancel;
-        }
-        self.invuln_until = now + IFRAME_TICKS;
-        world_kv_set(INVULN_KEY, self.invuln_until.to_le_bytes().to_vec());
-        Outcome::Continue
     }
 
     fn hostile_spawn_candidate(

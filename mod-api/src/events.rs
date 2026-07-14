@@ -158,6 +158,7 @@ pub enum EventPayload {
         item: ItemId,
         target: Option<[i32; 3]>,
     },
+    /// A mob damage request that passed the victim's engine-owned immunity gate.
     MobDamagePre {
         /// Index into the live mob set, valid this tick only.
         mob: u32,
@@ -170,6 +171,7 @@ pub enum EventPayload {
         /// Mutable: written back by the engine after the dispatch.
         feedback: MobDamageFeedback,
     },
+    /// A player damage request that passed the victim's engine-owned immunity gate.
     PlayerDamagePre {
         /// Mutable: written back by the engine after the dispatch.
         amount: i32,

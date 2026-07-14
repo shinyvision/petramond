@@ -11,8 +11,8 @@
 //!   ground-dropped by a batched block-API column scan (a blocked or unloaded
 //!   ring cell degrades to the player's feet);
 //! - **death** → `kill_player()` (current health through the damage funnel as
-//!   `DamageSource::Mod{"wheel"}` — other mods' MOB-gated i-frames, like the
-//!   monsters mod's, deliberately do not apply).
+//!   `DamageSource::Mod{"wheel"}`; the player's global engine i-frames apply
+//!   like they do to every other damage source).
 //!
 //! Everything is deterministic: the reward is one `rng_u64("reward")` roll
 //! (host stream, seeded per world+mod+key) and the animation is pure tick

@@ -116,6 +116,9 @@ pub struct Instance {
     on_ground: bool,
     /// Current health; at `0` the mob enters a dead `DeathState`.
     health: f32,
+    /// Engine-owned global damage immunity. It is transient like hurt/stagger
+    /// presentation and starts clear when a saved mob is restored.
+    damage_immunity: crate::damage::DamageImmunity,
     /// Highest feet Y reached since the mob last stood/swum. A landing compares this
     /// peak to the landed feet Y to produce deterministic fall damage.
     fall_peak_y: f32,
@@ -241,6 +244,7 @@ impl Instance {
             vel: Vec3::ZERO,
             on_ground: false,
             health: d.max_health,
+            damage_immunity: Default::default(),
             fall_peak_y: pos.y,
             fall_distance: 0.0,
             splash_drop: 0.0,
@@ -333,7 +337,7 @@ impl Instance {
         attacker: Option<EntityRef>,
         feedback: &MobDamageFeedback,
     ) -> bool {
-        if self.death.is_dead() {
+        if self.death.is_dead() || self.damage_immunity.is_active() {
             return false;
         }
         let decreases_health = feedback
@@ -342,6 +346,8 @@ impl Instance {
             .any(|c| matches!(c, MobDamageFeedbackComponent::DecreaseHealth));
         let lethal = if decreases_health && amount > 0.0 {
             self.health -= amount;
+            self.damage_immunity
+                .grant_for(crate::damage::MOB_DAMAGE_IFRAME_TICKS);
             self.health <= 0.0
         } else {
             false
@@ -471,6 +477,16 @@ impl Instance {
     #[inline]
     pub fn health(&self) -> f32 {
         self.health
+    }
+
+    #[inline]
+    pub(crate) fn is_damage_immune(&self) -> bool {
+        self.damage_immunity.is_active()
+    }
+
+    #[inline]
+    pub(super) fn tick_damage_immunity(&mut self) {
+        self.damage_immunity.tick();
     }
 
     /// Update fall bookkeeping after a tick's movement has resolved `on_ground` and
@@ -1465,9 +1481,12 @@ mod tests {
         // A 4-health owl: three 1-damage hits don't kill; the fourth does.
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         let from = Vec3::new(5.0, 0.0, 0.5);
-        assert!(!owl.damage(1.0, Some(from), true, None, &default_feedback()));
-        assert!(!owl.damage(1.0, Some(from), true, None, &default_feedback()));
-        assert!(!owl.damage(1.0, Some(from), true, None, &default_feedback()));
+        for _ in 0..3 {
+            assert!(!owl.damage(1.0, Some(from), true, None, &default_feedback()));
+            for _ in 0..crate::damage::MOB_DAMAGE_IFRAME_TICKS {
+                owl.tick_damage_immunity();
+            }
+        }
         assert!(!owl.is_dead(), "still alive at 1 health");
         assert!(
             owl.damage(1.0, Some(from), true, None, &default_feedback()),

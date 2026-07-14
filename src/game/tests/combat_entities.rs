@@ -1,7 +1,7 @@
 use super::super::tick::{TickEvents, TICK_DT};
 use super::common::{self, filled_inventory, game, hit, install_empty_chunk};
 use crate::block::Block;
-use crate::events::Outcome;
+use crate::events::{DamageSource, Outcome};
 use crate::mathh::{IVec3, Vec3};
 use crate::mob::{Mob, MobAttack, MobDamageFeedback};
 use crate::net::protocol::{ClientToServer, PlayerAction};
@@ -53,6 +53,98 @@ fn a_mob_strike_damages_and_knocks_back_the_player_through_the_funnel() {
 }
 
 #[test]
+fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
+    use crate::damage::{MOB_DAMAGE_IFRAME_TICKS, PLAYER_DAMAGE_IFRAME_TICKS};
+
+    let mut game = game();
+    let mut ev = TickEvents::default();
+    let pos = Vec3::new(8.0, 64.0, 8.0);
+    assert!(game.server.world.mobs_mut().spawn(Mob::Sheep, pos, 0.0));
+    let player_health = game.server.sessions[0].player.health();
+    let mob_health = game.server.world.mobs().instances()[0].health();
+
+    assert!(game
+        .server
+        .damage_player(0, 2, DamageSource::Fall, None, &mut ev));
+    assert!(game.server.damage_mob_through_pipeline(
+        0,
+        0,
+        1.0,
+        DamageSource::PlayerAttack(game.server.sessions[0].id),
+        Some(pos + Vec3::X),
+        &mut ev,
+    ));
+
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.apply_mob_attacks(vec![strike()], &mut ev);
+    assert_eq!(
+        game.server.sessions[0].player.health(),
+        player_health - 2,
+        "mob damage is blocked by the window fall damage opened"
+    );
+    assert_eq!(
+        game.server.sessions[0].player.vel,
+        Vec3::ZERO,
+        "an immune player receives no attack knockback"
+    );
+    assert!(!game.server.damage_mob_through_pipeline(
+        0,
+        0,
+        1.0,
+        DamageSource::Fall,
+        None,
+        &mut ev,
+    ));
+    assert_eq!(game.server.world.mobs().instances()[0].health(), mob_health - 1.0);
+
+    for _ in 1..MOB_DAMAGE_IFRAME_TICKS {
+        game.server.game_tick_step(&mut ev);
+    }
+    assert!(!game
+        .server
+        .damage_player(0, 1, DamageSource::Mod("test"), None, &mut ev));
+    assert!(!game.server.damage_mob_through_pipeline(
+        0,
+        0,
+        1.0,
+        DamageSource::Mod("test"),
+        None,
+        &mut ev,
+    ));
+
+    game.server.game_tick_step(&mut ev);
+    assert!(!game
+        .server
+        .damage_player(0, 1, DamageSource::Mod("test"), None, &mut ev));
+    assert!(game.server.damage_mob_through_pipeline(
+        0,
+        0,
+        1.0,
+        DamageSource::Fall,
+        None,
+        &mut ev,
+    ));
+
+    for _ in (MOB_DAMAGE_IFRAME_TICKS + 1)..PLAYER_DAMAGE_IFRAME_TICKS {
+        game.server.game_tick_step(&mut ev);
+    }
+    assert!(!game
+        .server
+        .damage_player(0, 1, DamageSource::Mod("test"), None, &mut ev));
+
+    game.server.game_tick_step(&mut ev);
+    assert!(game.server.damage_player(
+        0,
+        1,
+        DamageSource::PlayerAttack(Default::default()),
+        None,
+        &mut ev,
+    ));
+    assert_eq!(game.server.sessions[0].player.health(), player_health - 3);
+    assert_eq!(game.server.world.mobs().instances()[0].health(), mob_health - 2.0);
+}
+
+#[test]
 fn mob_strikes_route_to_the_targeted_session_only() {
     let mut game = game();
     let other = game
@@ -81,9 +173,8 @@ fn mob_strikes_route_to_the_targeted_session_only() {
 
 #[test]
 fn a_cancelled_player_damage_pre_blocks_both_damage_and_knockback() {
-    // The i-frame contract: a mod cancelling `player_damage_pre` (e.g. inside its
-    // invulnerability window) must suppress the strike WHOLE — no health loss, no
-    // shove. That's why the knockback is gated on the funnel's verdict.
+    // Any pre-handler cancellation must suppress the strike WHOLE — no health
+    // loss and no shove. That's why knockback is gated on the funnel verdict.
     let mut game = game();
     let mut ev = TickEvents::default();
     game.server
@@ -125,8 +216,8 @@ fn a_spectator_takes_neither_damage_nor_knockback_from_mob_strikes() {
 fn a_mods_damage_player_action_routes_through_the_funnel() {
     // A mod's DamagePlayer HostCall queues a ModAction; the drain must send it
     // through Game::damage_player so handlers see it with a Mod source — and a
-    // registered player_damage_pre canceller (another mod's i-frames) blocks it.
-    use crate::events::{DamageSource, ModAction};
+    // registered player_damage_pre canceller can block it.
+    use crate::events::ModAction;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
@@ -162,7 +253,11 @@ fn a_mods_damage_player_action_routes_through_the_funnel() {
         "the handler saw the distinguishable Mod source"
     );
 
-    // An i-frame canceller (priority -1 = it runs first) blocks a later one.
+    for _ in 0..crate::damage::PLAYER_DAMAGE_IFRAME_TICKS {
+        game.server.tick_damage_immunity();
+    }
+
+    // A priority -1 canceller runs first and blocks a later handler.
     game.server
         .bus
         .on_player_damage_pre(-1, |_, _| Outcome::Cancel);
@@ -299,6 +394,9 @@ fn fist_takes_four_hits_to_kill_an_owl() {
                 .is_none(),
             "fist hit {i} isn't lethal"
         );
+        for _ in 0..crate::damage::MOB_DAMAGE_IFRAME_TICKS {
+            game.server.world.mobs_mut().tick_damage_immunity();
+        }
     }
     assert!(
         game.server
@@ -863,7 +961,6 @@ fn spectators_neither_attack_nor_take_pvp_hits() {
 
 #[test]
 fn a_cancelled_player_damage_pre_suppresses_pvp_damage_and_knockback() {
-    use crate::events::DamageSource;
     use std::sync::{Arc, Mutex};
 
     let mut game = game();

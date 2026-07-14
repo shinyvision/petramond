@@ -70,8 +70,8 @@ pub(crate) struct MobDamagePre {
     pub feedback: MobDamageFeedback,
 }
 
-/// `player_damage_pre` — `amount` is mutable; cancel = no damage (i-frames live
-/// here). Non-positive incoming damage is a non-event and never dispatches.
+/// `player_damage_pre` — `amount` is mutable; cancel = no damage. Non-positive
+/// or engine-immunity-blocked damage is a non-event and never dispatches.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct PlayerDamagePre {
     pub amount: i32,
@@ -122,7 +122,7 @@ impl DamageSource {
 /// the event bus is already borrowed and cannot be re-entered. `Game` drains
 /// these at defined per-tick points (after every systems batch and before each
 /// post-event drain) and routes each through the same funnel the engine's own
-/// code uses, so registered pre handlers (i-frames, hurt tuning) still apply.
+/// code uses, so global engine immunity and registered pre handlers still apply.
 #[derive(Clone, Debug)]
 pub(crate) enum ModAction {
     /// `Game::damage_player(amount, DamageSource::Mod(mod_id))`.

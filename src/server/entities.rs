@@ -113,8 +113,9 @@ impl ServerGame {
     /// the AABB's closest point — the same closest-point-plus-slack rule the
     /// block-target reach check uses (`apply_player_update`). An applied hit
     /// shoves the victim horizontally away from the attacker with the mob
-    /// strike's upward pop ratio; a cancelled `player_damage_pre` (i-frames)
-    /// suppresses damage AND knockback — the same contract as mob strikes.
+    /// strike's upward pop ratio; engine immunity or a cancelled
+    /// `player_damage_pre` suppresses damage AND knockback — the same contract
+    /// as mob strikes.
     fn resolve_player_attack(&mut self, s: usize, target: PlayerId, events: &mut TickEvents) {
         let Some(t) = self.sessions.iter().position(|sess| sess.id == target) else {
             return; // the clicked player left before the tick
@@ -152,11 +153,11 @@ impl ServerGame {
         }
     }
 
-    /// THE mob-damage pipeline, shared by player attacks and mod `DamageMob`
-    /// actions: dispatch `mob_damage_pre` (mutable amount, cancellable), apply
-    /// what survives through [`Mobs::damage_mob`](crate::mob::Mobs::damage_mob),
-    /// and on a kill queue `mob_died` + roll the loot. Returns whether damage
-    /// was applied (false = no such mob or a handler cancelled).
+    /// THE mob-damage pipeline, shared by every source: reject the victim's
+    /// engine-owned immunity, dispatch `mob_damage_pre` (mutable amount,
+    /// cancellable), apply what survives through
+    /// [`Mobs::damage_mob`](crate::mob::Mobs::damage_mob), and on a kill queue
+    /// `mob_died` + roll the loot. Returns whether the request was applied.
     pub(crate) fn damage_mob_through_pipeline(
         &mut self,
         s: usize,
@@ -171,11 +172,22 @@ impl ServerGame {
             .mobs()
             .instances()
             .get(idx)
-            .map(|m| (m.kind, m.id(), m.pos, m.is_dead()))
+            .map(|m| {
+                (
+                    m.kind,
+                    m.id(),
+                    m.pos,
+                    m.is_dead(),
+                    m.is_damage_immune(),
+                )
+            })
         else {
             return false;
         };
-        let (kind, mob_id, pos, was_dead) = snapshot;
+        let (kind, mob_id, pos, was_dead, damage_immune) = snapshot;
+        if was_dead || damage_immune {
+            return false;
+        }
         let mut pre = MobDamagePre {
             mob: idx,
             kind,
@@ -207,7 +219,7 @@ impl ServerGame {
             return false;
         }
         let soundable_hit =
-            pre.feedback.plays_sound(MobDamageSound::Hurt) && pre.amount > 0.0 && !was_dead;
+            pre.feedback.plays_sound(MobDamageSound::Hurt) && pre.amount > 0.0;
         if let Some(death) = self.world.mobs_mut().damage_mob(
             idx,
             pre.amount,
@@ -234,10 +246,10 @@ impl ServerGame {
     /// `World::tick_mobs`), routing each by its target:
     ///
     /// - a PLAYER target runs through the single [`damage_player`] funnel — so
-    ///   `player_damage_pre` handlers (i-frames) see it and a cancel drops BOTH
-    ///   the damage and the knockback — and an applied strike shoves the player
-    ///   away from the attacker with an upward pop. Spectators have no body to
-    ///   hit: those strikes are dropped whole.
+    ///   engine immunity and `player_damage_pre` cancellation both drop the
+    ///   damage and knockback — and an applied strike shoves the player away
+    ///   from the attacker with an upward pop. Spectators have no body to hit:
+    ///   those strikes are dropped whole.
     /// - a MOB target runs through the shared mob damage pipeline
     ///   (`mob_damage_pre`, the row's feedback bundle, loot, ragdoll) with the
     ///   striking mob as source and origin — mob-vs-mob combat is the same

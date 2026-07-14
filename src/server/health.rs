@@ -5,7 +5,7 @@
 //! Physics only *measures* a fall (per-frame, for local feel — see
 //! [`crate::player::Player::track_fall`]); the health *mutation* happens here, on the
 //! deterministic game tick, so it stays multiplayer-safe (no wall-clock, no RNG).
-//! Every damage source — falling is today's only one — must route through the single
+//! Every damage source must route through the single
 //! [`damage_player`](Game::damage_player) funnel so the `player_damage_pre` /
 //! `player_damaged` / `player_died` events fire consistently.
 
@@ -33,6 +33,16 @@ pub(crate) fn fall_damage_health(distance: f32) -> i32 {
 }
 
 impl ServerGame {
+    /// Advance every victim-owned damage-immunity timer exactly once at the
+    /// start of the fixed tick. Running before queued mod actions makes all
+    /// damage stages share each victim type's exact boundary.
+    pub(crate) fn tick_damage_immunity(&mut self) {
+        for session in &mut self.sessions {
+            session.player.tick_damage_immunity();
+        }
+        self.world.mobs_mut().tick_damage_immunity();
+    }
+
     /// Consume the landing the SERVER-side fall tracker latched from the
     /// session's reported transforms (`ConnectedPlayer::fall`, fed in
     /// `tick_movement`) and apply its fall damage on the tick. The client
@@ -65,11 +75,12 @@ impl ServerGame {
         self.push_water_splash(feet, fall, events);
     }
 
-    /// The single player-damage funnel: dispatch `player_damage_pre` (mutable
-    /// amount, cancellable — i-frames live here), apply what survives, queue
-    /// `player_damaged`, and fire `player_died` exactly once per >0 → 0 health
-    /// transition. There is NO default death consequence — the event just fires;
-    /// a mod (or future core content) decides what death means.
+    /// The single player-damage funnel: reject engine-owned immunity, dispatch
+    /// `player_damage_pre` (mutable amount, cancellable), apply what survives,
+    /// grant the global immunity window, queue `player_damaged`, and fire
+    /// `player_died` exactly once per >0 → 0 health transition. There is NO
+    /// default death consequence — the event just fires; a mod (or future core
+    /// content) decides what death means.
     ///
     /// Returns whether damage was actually applied, so a caller can gate the
     /// side effects that must die with a cancelled hit (a mob strike's knockback).
@@ -91,6 +102,11 @@ impl ServerGame {
         // corpse behind the death screen would re-fire `player_damaged` (hurt
         // sound + shake) every strike and knock the body around.
         if self.sessions[s].player.health() == 0 {
+            return false;
+        }
+        // Engine immunity is a sink rule, not a mod hook. Rejected attempts
+        // produce no pre-event, feedback, or source-specific side effects.
+        if self.sessions[s].player.is_damage_immune() {
             return false;
         }
         let mut pre = PlayerDamagePre {
@@ -121,7 +137,10 @@ impl ServerGame {
             return false;
         }
         let was_alive = self.sessions[s].player.health() > 0;
-        self.sessions[s].player.apply_damage(pre.amount);
+        let applied = self.sessions[s].player.apply_damage(pre.amount);
+        if !applied {
+            return false;
+        }
         let new_health = self.sessions[s].player.health();
         events.player(s).player_damaged = true;
         // Being hurt in bed ends the sleep immediately — it never continues

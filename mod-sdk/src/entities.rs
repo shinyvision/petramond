@@ -27,10 +27,10 @@ pub fn mobs_in_radius(pos: [f32; 3], radius: f32) -> Vec<MobSnapshot> {
     }
 }
 
-/// Damage a mob through the `mob_damage_pre` pipeline (applied at the next
-/// in-tick drain point; a cancelling handler blocks it). Mod damage is not an
-/// attack, so the default engine knockback is not applied; `origin` is spatial
-/// context for handlers/feedback.
+/// Damage a mob through its global engine-owned i-frames and the
+/// `mob_damage_pre` pipeline (applied at the next in-tick drain point). Mod
+/// damage is not an attack, so the default engine knockback is not applied;
+/// `origin` is spatial context for handlers/feedback.
 pub fn damage_mob(index: u32, amount: f32, origin: Option<[f32; 3]>) {
     __rt::expect_unit(
         "DamageMob",
