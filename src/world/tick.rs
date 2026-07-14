@@ -318,11 +318,11 @@ impl World {
     /// [`take_natural_breaks`]: Self::take_natural_breaks
     pub(crate) fn note_block_destroyed(&mut self, pos: IVec3, block: Block) {
         self.sim.pending_breaks.push((pos, block));
-        // A torch keeps its mount direction in the chunk's torch map; clear it so the
-        // freed cell carries no stale orientation (mirrors the player-break path).
-        if block == Block::Torch {
-            self.take_torch(pos);
-        }
+        // Sweep any block-entity record the block owned (a torch's mount, a
+        // ladder's wall facing) — the same unconditional sweep the player-break
+        // path uses, so no per-block arm is needed here and the block-entity
+        // section index stays in sync.
+        self.forget_block_entity_records(pos);
     }
 
     /// Take the blocks the simulation destroyed this tick (see [`note_block_destroyed`]),

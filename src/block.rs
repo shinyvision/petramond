@@ -154,6 +154,7 @@ impl Block {
     pub const MarbleSlab: Block = Block(113);
     pub const PolishedMarbleStairs: Block = Block(114);
     pub const PolishedMarbleSlab: Block = Block(115);
+    pub const Ladder: Block = Block(116);
 }
 
 impl std::fmt::Debug for Block {
@@ -238,6 +239,7 @@ static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
     "roots_in_sand",
     "roots_in_stone",
     "no_pane_connect",
+    "climbable",
 ]);
 
 impl BlockTag {
@@ -296,6 +298,11 @@ impl BlockTag {
     /// (see `crate::pane`); this tag is the per-row opt-out for blocks whose
     /// cube row overstates their geometry.
     pub const NO_PANE_CONNECT: BlockTag = BlockTag(11);
+    /// A block the player climbs by moving into its mounted face or holding jump
+    /// while their body occupies its cell — the ladder. The player physics reads
+    /// it through [`World::climbable_facing_at`](crate::world::World); the climb
+    /// speed and feel live in `player::movement`, never per-block.
+    pub const CLIMBABLE: BlockTag = BlockTag(12);
 
     /// Resolve a `blocks.json` row tag name (see [`crate::registry::TagTable`]).
     pub(crate) fn resolve(name: &str) -> Result<BlockTag, String> {
@@ -345,6 +352,16 @@ pub enum RenderShape {
     /// shape is needed (collision, selection, meshing), like stair corners. See
     /// `crate::pane` for the connection rules and boxes.
     Pane,
+    /// A chunk-meshed climbable wall panel: a 1/16-thick alpha-cutout slice flush
+    /// against the vertical wall face it hangs on. Its facing (the direction the
+    /// panel front points, away from the wall) lives in the section's shared
+    /// entity-facing map; the one panel box in `crate::ladder` drives targeting,
+    /// the outline, the crack overlay, the mesh (see `mesh::ladder`), and the
+    /// facing-resolved collision (a body bumps the thin panel and can stand on
+    /// top of a column — resolved position-aware, so the ROW's collision stays
+    /// empty). Climbing itself is a player-physics rule keyed off
+    /// [`BlockTag::CLIMBABLE`], not the collision shape.
+    Ladder,
     Model(BlockModelKind),
     /// A wooden door: a 2-tall thin slab on a cell edge. Like the chest it is NOT
     /// chunk-meshed — it is drawn each frame as a dynamic hinged model (see
@@ -671,6 +688,14 @@ impl Block {
     #[inline]
     pub fn is_fragile(self) -> bool {
         self.has_tag(BlockTag::FRAGILE)
+    }
+
+    /// Whether the player climbs this block (see [`BlockTag::CLIMBABLE`]).
+    /// Reads the dense loader-derived flag, not the tag list — the physics
+    /// probe asks every sub-step.
+    #[inline]
+    pub fn is_climbable(self) -> bool {
+        data::flags(self.id()).is_climbable()
     }
 
     /// Whether `ground` (the block directly below) is a surface this block may be PLACED

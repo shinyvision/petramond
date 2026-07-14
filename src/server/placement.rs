@@ -423,6 +423,27 @@ impl ServerGame {
             None
         };
 
+        // A ladder-shaped block only mounts on a vertical wall face (never floor or
+        // ceiling) and needs a complete face behind its panel. Resolve up front like
+        // the torch, so an invalid spot is a no-op that keeps the held item. The
+        // clicked face's normal names the panel front even when replacing a plant
+        // in place. Keyed on the shape, not the engine block: a pack row declaring
+        // the ladder shape gets the same mount rule.
+        let ladder_facing = if block.render_shape() == RenderShape::Ladder {
+            let facing = crate::ladder::facing_from_place_normal(h.normal)?;
+            if !self.world.ladder_supported_at(p, facing) {
+                return None;
+            }
+            // The panel is real collision, so like every colliding shape it may
+            // not be placed inside a gameplay body.
+            if self.placement_occupied_by_body(s, p, crate::ladder::collision_boxes(facing)) {
+                return None;
+            }
+            Some(facing)
+        } else {
+            None
+        };
+
         if block.render_shape() == RenderShape::Slab {
             let (target, slot) = match slab_stack_slot {
                 Some(slot) if slab_stacks_in_hit => (h.block, slot),
@@ -588,6 +609,8 @@ impl ServerGame {
                 self.world.insert_chest(p, placed_facing);
             } else if let Some(tp) = torch_placement {
                 self.world.insert_torch(p, tp);
+            } else if let Some(facing) = ladder_facing {
+                self.world.insert_entity_facing(p, facing);
             }
             self.sessions[s].player.inventory.decrement_selected();
             Some(p)

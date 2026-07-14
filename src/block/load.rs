@@ -285,6 +285,11 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
         .iter()
         .map(|t| BlockTag::resolve(t))
         .collect::<Result<_, String>>()?;
+    // Derived, not row-listed: the physics climb probe needs this as a dense
+    // flag (see `BlockFlags::CLIMBABLE`).
+    if tags.contains(&BlockTag::CLIMBABLE) {
+        flags = flags.with(BlockFlags::CLIMBABLE);
+    }
     let particle_emitter: Option<&'static [ParticleEmitter]> = match &r.particle_emitter {
         None => None,
         Some(RawEmitterRef::Key(key)) => {

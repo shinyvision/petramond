@@ -57,6 +57,24 @@ impl World {
         let Some(kind) = support_kind(normal, placement) else {
             return false;
         };
+        self.mount_face_complete(support, normal, kind)
+    }
+
+    /// Whether the VERTICAL face of the block at `support` whose outward unit
+    /// normal is `normal` is a complete flat 1×1 face able to hold a wall-mounted
+    /// block — the shared wall-support rule behind the wall torch and the ladder.
+    /// Full opaque blocks always qualify; partial blocks (stairs, slabs) only
+    /// through a genuinely complete face. Non-horizontal normals never qualify.
+    pub(crate) fn wall_face_complete(&self, support: IVec3, normal: IVec3) -> bool {
+        if normal.y != 0 || normal.x.abs() + normal.z.abs() != 1 {
+            return false;
+        }
+        self.mount_face_complete(support, normal, SupportKind::Wall)
+    }
+
+    /// The per-shape face test behind [`block_supports_torch`](Self::block_supports_torch)
+    /// and [`wall_face_complete`](Self::wall_face_complete).
+    fn mount_face_complete(&self, support: IVec3, normal: IVec3, kind: SupportKind) -> bool {
         let block = self.physics_block(support.x, support.y, support.z);
         if block.is_opaque() {
             return true;

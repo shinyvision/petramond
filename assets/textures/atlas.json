@@ -122,6 +122,7 @@
     {"name": "chest_lid_side", "file": "chest_lid_front.png"},
     {"name": "chest_inside", "file": "chest_inside.png"},
     {"name": "chest_latch", "file": "chest_latch.png"},
+    {"name": "ladder", "file": "ladder.png"},
     {"name": "torch", "file": "torch.png"},
     {"name": "torch_side", "file": "torch_side.png"},
     {"name": "torch_top", "file": "torch_top.png"},

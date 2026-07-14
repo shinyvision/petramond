@@ -114,6 +114,20 @@ impl ServerGame {
             (pos.y + player::WATER_PROBE_Y).floor() as i32,
             pos.z.floor() as i32,
         );
+        // On a ladder? Same feet-cell probe the shared physics uses (see
+        // `Player::update`): a climbing body's descent is controlled, so the
+        // authoritative fall tracker must re-anchor while it is on the ladder —
+        // otherwise a climb up then a step off would measure the whole climb as
+        // one fall the client physics never latched.
+        let climbing = !in_water
+            && self
+                .world
+                .climbable_facing_at(
+                    pos.x.floor() as i32,
+                    pos.y.floor() as i32,
+                    pos.z.floor() as i32,
+                )
+                .is_some();
         // The fall tracker must not trust a CLAIMED on_ground flag: faking
         // "grounded" every tick mid-fall would reset the peak and evade the
         // landing. When the flag came from an accepted claim, verify it
@@ -130,6 +144,10 @@ impl ServerGame {
             sess.fall.reset(pos.y);
             sess.pending_fall = 0.0;
             sess.pending_splash = 0.0;
+        } else if climbing {
+            // Re-anchor like water, but land nothing: grabbing a ladder is not a
+            // splash, and controlled ladder descent is never fall damage.
+            sess.fall.reset(pos.y);
         } else {
             // Sprinting down stairs touches each step for only a frame or
             // two, so the once-per-tick claim samples are legitimately

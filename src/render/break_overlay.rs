@@ -159,6 +159,24 @@ fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indice
                 }
             }
         }
+    } else if let Some(facing) = view.ladder_facing {
+        // A ladder cracks over the SAME panel faces the chunk mesher emitted
+        // (cell-local UVs), omitting the face buried in the supporting wall —
+        // a box crack would paint the destroy texture onto the wall's coplanar
+        // face behind the panel.
+        crate::mesh::ladder::shape_faces(facing, |min, max, face| {
+            super::item_cube::push_cell_local_face(
+                verts,
+                indices,
+                tile,
+                base,
+                1.0,
+                min,
+                max,
+                face,
+                super::lighting::DynLight::FULL,
+            );
+        });
     } else if let Some(mask) = view.pane_mask {
         // A pane cracks over the SAME post/arm faces the chunk mesher emitted
         // (cell-local UVs), so the crack reads as a full block's decal with the
@@ -240,6 +258,7 @@ mod tests {
             stair_shape: None,
             slab_state: None,
             pane_mask: None,
+            ladder_facing: None,
             model: None,
             stage: 4,
         };
@@ -283,6 +302,7 @@ mod tests {
             stair_shape: Some(shape),
             slab_state: None,
             pane_mask: None,
+            ladder_facing: None,
             model: None,
             stage: 5,
         };
@@ -348,6 +368,7 @@ mod tests {
             stair_shape: None,
             slab_state: Some(state),
             pane_mask: None,
+            ladder_facing: None,
             model: None,
             stage: 6,
         };
@@ -414,6 +435,7 @@ mod tests {
             stair_shape: None,
             slab_state: None,
             pane_mask: None,
+            ladder_facing: None,
             model: Some((kind, offset, crate::block_model::DEFAULT_MODEL_FACING)),
             stage: 3,
         };
@@ -675,6 +697,7 @@ mod tests {
             stair_shape: None,
             slab_state: None,
             pane_mask: None,
+            ladder_facing: None,
             model: None,
             stage: 0,
         };

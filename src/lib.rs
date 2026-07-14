@@ -40,6 +40,7 @@ mod game;
 mod gui;
 mod inventory;
 mod item;
+mod ladder;
 mod mathh;
 mod mesh;
 mod mining;

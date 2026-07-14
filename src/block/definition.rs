@@ -263,6 +263,11 @@ impl BlockFlags {
     /// without a `def()` big-table read, same rationale as the rest of this table.
     pub const SLAB: BlockFlags = BlockFlags(1 << 4);
     pub const DIRECTIONAL_VIEW: BlockFlags = BlockFlags(1 << 5);
+    /// Derived by the loader from the `climbable` tag, never listed in a data
+    /// row. The player physics probes "is this cell climbable" every sub-step
+    /// and needs the answer without a `def()` big-table read, same rationale
+    /// as [`SLAB`](Self::SLAB).
+    pub const CLIMBABLE: BlockFlags = BlockFlags(1 << 6);
 
     #[inline]
     pub const fn with(self, flag: BlockFlags) -> BlockFlags {
@@ -297,6 +302,11 @@ impl BlockFlags {
     #[inline]
     pub const fn is_slab(self) -> bool {
         self.contains(BlockFlags::SLAB)
+    }
+
+    #[inline]
+    pub const fn is_climbable(self) -> bool {
+        self.contains(BlockFlags::CLIMBABLE)
     }
 
     #[inline]

@@ -741,6 +741,28 @@ fn section_geometry(
                     continue;
                 }
 
+                if shape == RenderShape::Ladder {
+                    let tile = block.tiles()[0];
+                    let l = neighbour_light(wx, wy, wz) as u32;
+                    let bl = neighbour_blocklight(wx, wy, wz) as u32;
+                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    let facing = section.entity_facing(lx, ly, lz);
+                    super::ladder::emit_ladder_block(
+                        &mut opaque,
+                        &mut opaque_idx,
+                        wx,
+                        wy,
+                        wz,
+                        facing,
+                        tile,
+                        tint_tile(tile.world_tint(), ci),
+                        sky6,
+                        block6,
+                        warm,
+                    );
+                    continue;
+                }
+
                 if let RenderShape::Model(kind) = shape {
                     let offset = section.model_offset(lx, ly, lz);
                     let facing = section.model_facing(lx, ly, lz);
@@ -1412,6 +1434,13 @@ fn chunk_geometry(
                         sky6,
                         block6,
                     );
+                    continue;
+                }
+
+                // Ladder: not meshed on this fixture-only path — a fixture `Chunk`
+                // carries no entity-facing map, so there is no real mount to render.
+                // The live section path (above) is the only one that draws ladders.
+                if block.render_shape() == RenderShape::Ladder {
                     continue;
                 }
 

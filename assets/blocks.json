@@ -4393,6 +4393,37 @@
           "chance": 1
         }
       ]
+    },
+    {
+      "block": "petramond:ladder",
+      "shape": "ladder",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "climbable"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "ladder",
+        "ladder",
+        "ladder"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 0.4,
+      "drops": [
+        {
+          "item": "petramond:ladder",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
     }
   ]
 }

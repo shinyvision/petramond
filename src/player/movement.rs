@@ -74,6 +74,16 @@ const WADING_CURRENT_PROBE_Y: f32 = 0.05;
 /// at its base. It engages while still submerged (see [`Player::ledge_ahead`]) so
 /// the velocity carries you up through the waterline.
 pub(super) const SWIM_CLIMB: f32 = 7.5;
+pub(crate) const CLIMB_SPEED: f32 = WALK * 0.5;
+const CLIMB_VACCEL: f32 = 40.0;
+/// Sideways speed while on a ladder: the sneak factor of walk. Full walk speed
+/// with air-style drift scooted the body off the panel's edge mid-climb — the
+/// "slippery wall"; halved, ground-snapped movement makes lateral input a
+/// deliberate reposition instead of a slide.
+pub(super) const CLIMB_LATERAL_SPEED: f32 = WALK * SNEAK_FACTOR;
+/// Horizontal friction while idle on a ladder: heavy, so releasing the stick
+/// stops sideways drift almost immediately — hands on the rungs, not skates.
+const CLIMB_FRICTION: f32 = 0.5;
 /// Reference timestep the friction fractions are calibrated to: at exactly this
 /// `dt` the player sheds `friction` of its speed in one frame (ground 10 %, air
 /// 1 %). [`friction_retain`] rescales to any other `dt` so the slowdown per
@@ -140,7 +150,8 @@ impl Player {
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
         let water = |x: i32, y: i32, z: i32| world.water_cell_at(x, y, z);
         let water_flow = |p: Vec3| world.water_flow_at_point(p);
-        self.update_core_with_current(dt, &boxes, &water, &water_flow, input);
+        let climb = |x: i32, y: i32, z: i32| world.climbable_facing_at(x, y, z);
+        self.update_core_with_current(dt, &boxes, &water, &water_flow, &climb, input);
     }
 
     /// Physics integration against arbitrary solidity + water predicates, so the
@@ -150,6 +161,24 @@ impl Player {
     where
         F: Fn(i32, i32, i32) -> bool,
         W: Fn(i32, i32, i32) -> bool,
+    {
+        self.update_core_climb(dt, solid, water, &|_, _, _| None, input);
+    }
+
+    /// [`update_core`](Self::update_core) with a climbable-cell predicate, for
+    /// the ladder physics tests.
+    #[cfg(test)]
+    pub(super) fn update_core_climb<F, W, L>(
+        &mut self,
+        dt: f32,
+        solid: &F,
+        water: &W,
+        climb: &L,
+        input: Input,
+    ) where
+        F: Fn(i32, i32, i32) -> bool,
+        W: Fn(i32, i32, i32) -> bool,
+        L: Fn(i32, i32, i32) -> Option<crate::facing::Facing>,
     {
         let still_water = |_: Vec3| Vec3::ZERO;
         // Adapt the test's bool solidity to the general collision-box predicate: a
@@ -162,20 +191,22 @@ impl Player {
             }
             .collision_boxes()
         };
-        self.update_core_with_current(dt, &boxes, water, &still_water, input);
+        self.update_core_with_current(dt, &boxes, water, &still_water, climb, input);
     }
 
-    pub(super) fn update_core_with_current<F, W, C>(
+    pub(super) fn update_core_with_current<F, W, C, L>(
         &mut self,
         dt: f32,
         boxes: &F,
         water: &W,
         water_flow: &C,
+        climb: &L,
         input: Input,
     ) where
         F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
         W: Fn(i32, i32, i32) -> bool,
         C: Fn(Vec3) -> Vec3,
+        L: Fn(i32, i32, i32) -> Option<crate::facing::Facing>,
     {
         if self.is_spectator() {
             self.update_spectator(dt, input);
@@ -195,6 +226,15 @@ impl Player {
         let water_z = self.pos.z.floor() as i32;
         let swim_y = (self.pos.y + WATER_PROBE_Y).floor() as i32;
         let in_water = water(water_x, swim_y, water_z);
+        // On a ladder? Sample the feet cell of the body's centre column, like the
+        // water probe: walking toward a mounted ladder carries the (collisionless)
+        // panel cell around the feet. Water wins when both apply — a submerged
+        // ladder swims, it doesn't climb.
+        let ladder = if in_water {
+            None
+        } else {
+            climb(water_x, self.pos.y.floor() as i32, water_z)
+        };
         // The current samples POINTS, surface-height aware (see
         // `World::water_flow_at_point`): the swim probe when it's submerged,
         // else the feet — so wading in a shallow flowing film still drifts,
@@ -243,6 +283,24 @@ impl Player {
                 self.vel.y = approach(self.vel.y, target, SWIM_VACCEL * dt);
                 self.jumping = false;
             }
+        } else if let Some(facing) = ladder {
+            // Climbing: while the feet stand in a ladder cell, vertical speed is
+            // fully controlled — no gravity, no jump impulse. Moving INTO the
+            // panel (the wish direction pointing at the wall it hangs on) or
+            // holding jump climbs; otherwise the body slides down gently, and a
+            // fall through the cell is caught by the hard clamp (the "grab").
+            // The speed is a fraction of base WALK on purpose: sprint and sneak
+            // change nothing here.
+            let d = crate::ladder::facing_dir(facing);
+            let into_wall = -(input.wishdir.x * d.x as f32 + input.wishdir.z * d.z as f32);
+            let ascending = input.jump || into_wall > 1e-3;
+            let target = if ascending { CLIMB_SPEED } else { -CLIMB_SPEED };
+            self.vel.y = approach(
+                self.vel.y.clamp(-CLIMB_SPEED, CLIMB_SPEED),
+                target,
+                CLIMB_VACCEL * dt,
+            );
+            self.jumping = false;
         } else {
             if input.jump && was_on_ground {
                 self.vel.y = JUMP_V0;
@@ -319,6 +377,26 @@ impl Player {
                     wish.x * SWIM_SPEED,
                     wish.z * SWIM_SPEED,
                     SWIM_ACCEL * dt,
+                );
+                self.vel.x = vx;
+                self.vel.z = vz;
+            }
+        } else if ladder.is_some() {
+            // Ladder grip: sideways movement snaps like ground handling toward
+            // the halved lateral speed, and releasing input brakes hard. The
+            // default airborne handling (additive accel, near-zero friction)
+            // made the wall feel slippery while climbing.
+            if wish.length_squared() <= 1e-12 {
+                let retain = friction_retain(CLIMB_FRICTION, dt);
+                self.vel.x *= retain;
+                self.vel.z *= retain;
+            } else {
+                let (vx, vz) = move_toward(
+                    self.vel.x,
+                    self.vel.z,
+                    wish.x * CLIMB_LATERAL_SPEED,
+                    wish.z * CLIMB_LATERAL_SPEED,
+                    GROUND_ACCEL * dt,
                 );
                 self.vel.x = vx;
                 self.vel.z = vz;
@@ -476,8 +554,9 @@ impl Player {
         }
 
         // Measure the fall now that `on_ground` and the final feet `y` are settled; the
-        // tick turns a latched landing into damage (see `crate::game::health`).
-        self.track_fall(was_on_ground, in_water);
+        // tick turns a latched landing into damage (see `crate::game::health`). A
+        // ladder breaks a fall exactly like water: descent on it is controlled.
+        self.track_fall(was_on_ground, in_water || ladder.is_some());
     }
 
     fn update_spectator(&mut self, dt: f32, input: Input) {

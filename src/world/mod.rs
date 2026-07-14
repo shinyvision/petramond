@@ -13,6 +13,7 @@ pub(crate) mod environment;
 pub(crate) mod fragile;
 mod furnace;
 mod kv;
+mod ladder;
 mod light;
 mod mesh_pool;
 mod mesh_queue;

@@ -91,9 +91,13 @@ impl Player {
                     max: Vec3::from(mx),
                 };
             }
-        } else if hit_block.render_shape() == RenderShape::Door {
-            // A door outlines the actual slab where it is (facing + open state), so the
-            // wireframe + break crack hug the panel rather than the row's default box.
+        } else if matches!(
+            hit_block.render_shape(),
+            RenderShape::Door | RenderShape::Ladder
+        ) {
+            // A door outlines the actual slab where it is (facing + open state), a
+            // ladder its wall panel (facing), so the wireframe + break crack hug the
+            // panel rather than the row's default box.
             if let Some((mn, mx)) = world.selection_box_at(hit.block.x, hit.block.y, hit.block.z) {
                 let base = Vec3::new(hit.block.x as f32, hit.block.y as f32, hit.block.z as f32);
                 hit.outline = SelectionShape::Box {
@@ -243,17 +247,21 @@ impl Player {
             let block = block_at(ix, iy, iz);
             let t_exit = next_boundary_t(t_max);
             // The "solid body" selection branch: genuinely solid blocks plus the
-            // torch — not solid, but still selectable by its thin pole shape (the
-            // cross-plant case is handled separately below, like its render shape).
-            if block.is_solid() || block.render_shape() == RenderShape::Torch {
+            // torch and the ladder — not solid, but still selectable by their thin
+            // shapes (the cross-plant case is handled separately below, like its
+            // render shape). Resolve the shape once: the def-table read is per
+            // stepped ray cell.
+            let shape = block.render_shape();
+            if block.is_solid() || shape == RenderShape::Torch || shape == RenderShape::Ladder {
                 // A full cube fills its cell, so it stops the ray on entry. A
-                // custom-shaped block (the inset chest, the thin/tilted torch pole)
-                // only registers when the ray actually crosses its shape — otherwise
-                // the ray sees past the empty parts of its cell.
+                // custom-shaped block (the inset chest, the thin/tilted torch pole,
+                // the ladder panel) only registers when the ray actually crosses its
+                // shape — otherwise the ray sees past the empty parts of its cell.
                 if block.visual_aabb().is_none()
                     && block != Block::Torch
-                    && block.render_shape() != RenderShape::Stair
-                    && block.render_shape() != RenderShape::Slab
+                    && shape != RenderShape::Stair
+                    && shape != RenderShape::Slab
+                    && shape != RenderShape::Ladder
                 {
                     return Some((hit(pos, entry_normal, block), t_enter));
                 }
@@ -415,9 +423,13 @@ fn precise_shape_hit(
         )
         .map(ShapeHit::distance);
     }
-    // A door's thin slab depends on its facing + open state (the chunk door map), so
-    // test the position-aware box rather than the block row's position-less default.
-    if block.render_shape() == RenderShape::Door {
+    // A door's thin slab depends on its facing + open state (the chunk door map), and
+    // a ladder's panel on its wall facing (the entity-facing map), so test the
+    // position-aware box rather than the block row's position-less default.
+    if matches!(
+        block.render_shape(),
+        RenderShape::Door | RenderShape::Ladder
+    ) {
         let (mn, mx) = world.selection_box_at(pos.x, pos.y, pos.z)?;
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         return ray_vs_aabb_hit(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx));

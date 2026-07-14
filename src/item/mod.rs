@@ -212,6 +212,7 @@ impl ItemType {
     pub const MarbleSlab: ItemType = ItemType(138);
     pub const PolishedMarbleStairs: ItemType = ItemType(139);
     pub const PolishedMarbleSlab: ItemType = ItemType(140);
+    pub const Ladder: ItemType = ItemType(141);
 }
 
 impl std::fmt::Debug for ItemType {
@@ -578,6 +579,7 @@ impl ItemType {
             Block::MarbleSlab => ItemType::MarbleSlab,
             Block::PolishedMarbleStairs => ItemType::PolishedMarbleStairs,
             Block::PolishedMarbleSlab => ItemType::PolishedMarbleSlab,
+            Block::Ladder => ItemType::Ladder,
             _ if (b.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Self::from_id(b.id()),
             // A pack-registered block: its item declares the link via its
             // row's `block` field. No linked item -> Air (nothing to hold).
@@ -640,6 +642,7 @@ impl ItemType {
             ItemType::MarbleSlab => Some(Block::MarbleSlab),
             ItemType::PolishedMarbleStairs => Some(Block::PolishedMarbleStairs),
             ItemType::PolishedMarbleSlab => Some(Block::PolishedMarbleSlab),
+            ItemType::Ladder => Some(Block::Ladder),
             _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
             // Engine item-only items carry no link; a pack item's row may
             // (`"block": "mod:key"` in items.json).
@@ -780,6 +783,9 @@ impl ItemType {
                 // A door shows its flat door icon (the `_door_item` art), not the
                 // per-half slab tiles the in-world model uses — like the torch.
                 RenderShape::Door => ItemRenderKind::Sprite(self.item_sprite()),
+                // A ladder shows its flat rung art as icon and an extruded sprite
+                // in-hand — the wall panel only exists once mounted.
+                RenderShape::Ladder => ItemRenderKind::Sprite(self.item_sprite()),
             },
             None => match self.item_model() {
                 Some(kind) => ItemRenderKind::Model(kind),
@@ -1145,6 +1151,12 @@ mod tests {
                     assert!(
                         matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
                         "{block:?} pane renders as a flat sprite"
+                    );
+                }
+                RenderShape::Ladder => {
+                    assert!(
+                        matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
+                        "{block:?} ladder renders as a flat sprite"
                     );
                 }
             }

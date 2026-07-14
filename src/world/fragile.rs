@@ -65,11 +65,14 @@ impl World {
     }
 
     /// Whether the fragile block at `pos` still has something to stand on: plants use
-    /// the old full-opaque ground rule, while torches use the same mounted-face test
-    /// as placement.
+    /// the old full-opaque ground rule, while torches and ladders use the same
+    /// mounted-face test as their placement.
     fn fragile_supported(&self, pos: IVec3, block: Block) -> bool {
         if block == Block::Torch {
             return self.torch_supported_at(pos, self.torch_placement(pos));
+        }
+        if block.render_shape() == crate::block::RenderShape::Ladder {
+            return self.ladder_supported_at(pos, self.ladder_facing(pos));
         }
         let s = self.fragile_ground_cell(pos);
         self.physics_block(s.x, s.y, s.z).is_opaque()
@@ -192,6 +195,37 @@ mod tests {
         );
         let breaks = w.take_natural_breaks();
         assert!(breaks.iter().any(|&(p, b)| p == torch && b == Block::Torch));
+    }
+
+    #[test]
+    fn a_ladder_breaks_the_tick_after_its_wall_is_mined() {
+        use crate::facing::Facing;
+        let mut w = world();
+        let ladder = IVec3::new(8, 65, 8);
+        // An east-facing ladder hangs on the wall to its west.
+        let wall = crate::ladder::support_cell(ladder, Facing::East);
+        w.set_block_world(wall.x, wall.y, wall.z, Block::Stone);
+        w.set_block_world(ladder.x, ladder.y, ladder.z, Block::Ladder);
+        w.insert_entity_facing(ladder, Facing::East);
+        run_ticks(&mut w, 2);
+        assert_eq!(block(&w, ladder), Block::Ladder, "held up by its wall");
+
+        // Mine the wall: the ladder loses its support and breaks on the next tick
+        // (the same announce → scheduled-break cadence as the wall torch above).
+        w.set_block_world(wall.x, wall.y, wall.z, Block::Air);
+        run_ticks(&mut w, 2);
+        assert_eq!(
+            block(&w, ladder),
+            Block::Air,
+            "a ladder falls with its wall on the following tick"
+        );
+        let breaks = w.take_natural_breaks();
+        assert!(
+            breaks
+                .iter()
+                .any(|&(p, b)| p == ladder && b == Block::Ladder),
+            "the broken ladder was recorded for its drop + particle burst",
+        );
     }
 
     #[test]

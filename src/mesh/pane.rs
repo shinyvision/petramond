@@ -177,8 +177,11 @@ pub(super) fn emit_pane_block(
     });
 }
 
+/// One flat quad from a cell-local `(min, max)` box + a [`Face`], with
+/// cell-local UVs and flat lighting — shared with the ladder mesher, which
+/// emits the same kind of thin cutout panel faces.
 #[allow(clippy::too_many_arguments)]
-fn push_face(
+pub(super) fn push_face(
     vbuf: &mut Vec<Vertex>,
     ibuf: &mut Vec<u32>,
     origin: [f32; 3],

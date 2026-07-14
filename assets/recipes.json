@@ -975,6 +975,21 @@
       "input": "petramond:redwood_planks",
       "result": "petramond:bed_frame",
       "cost": 5
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:ladder",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:stick",
+          "count": 7
+        }
+      ],
+      "result": {
+        "item": "petramond:ladder",
+        "count": 3
+      }
     }
   ]
 }

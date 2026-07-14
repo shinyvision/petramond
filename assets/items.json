@@ -1822,6 +1822,19 @@
         "roll": 0
       },
       "tags": []
+    },
+    {
+      "item": "petramond:ladder",
+      "key": "petramond:ladder",
+      "name": "Ladder",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "ladder",
+      "tags": []
     }
   ]
 }
