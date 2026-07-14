@@ -96,10 +96,47 @@ impl LoadTarget {
     }
 }
 
+/// Vertical envelope of one column's direct-sky-cover changes. Skylight can
+/// only differ between the lower endpoint's seep reach and the upper endpoint,
+/// so streaming invalidation need not touch the rest of the world stack.
+#[derive(Copy, Clone, Debug)]
+pub(super) struct SkyCoverChange {
+    min_cover: i32,
+    max_cover: i32,
+}
+
+impl SkyCoverChange {
+    pub(super) fn between(old: i32, new: i32) -> Option<Self> {
+        (old != new).then_some(Self {
+            min_cover: old.min(new),
+            max_cover: old.max(new),
+        })
+    }
+
+    pub(super) fn merge(&mut self, other: Self) {
+        self.min_cover = self.min_cover.min(other.min_cover);
+        self.max_cover = self.max_cover.max(other.max_cover);
+    }
+
+    fn affects(self, pos: SectionPos) -> bool {
+        super::light::cover_change_affects_section(pos, self.min_cover, self.max_cover)
+    }
+
+    /// Generated-section ingest already invalidates that section's 3x3x3. Only
+    /// an unusual cover jump spanning farther vertically needs the additional
+    /// column-map invalidation pass.
+    pub(super) fn escapes_section_neighborhood(self, changed: SectionPos) -> bool {
+        (SECTION_MIN_CY..=SECTION_MAX_CY).any(|cy| {
+            (cy - changed.cy).abs() > 1 && self.affects(SectionPos::new(changed.cx, cy, changed.cz))
+        })
+    }
+}
+
 /// The cubic voxel world: a sparse 3D grid of 16³ [`Section`]s plus a sparse 2D
-/// grid of per-column [`Column`] data (biome, surface heightmap). Sections are the
-/// unit of storage, meshing, lighting, streaming, and saving; a column exists
-/// whenever any of its sections is loaded (see [`ensure_column`](World::ensure_column)).
+/// grid of per-column [`Column`] data (biome, visible surface, direct-sky cover).
+/// Sections are the unit of storage, meshing, lighting, streaming, and saving; a
+/// column exists whenever any of its sections is loaded (see
+/// [`ensure_column`](World::ensure_column)).
 pub struct World {
     pub seed: u32,
     /// Client/server role (see [`WorldRole`]); fixed at construction.
@@ -114,11 +151,12 @@ pub struct World {
     /// while streaming. Mutation is copy-on-write via [`Arc::make_mut`]: a setter clones a
     /// section's storage only while a bake still holds the old handle.
     pub(super) sections: FxHashMap<SectionPos, Arc<Section>>,
-    /// Per-column 2D data (biome, surface heightmap) shared by a vertical stack of
-    /// sections. Cheap; ensured present whenever a section in the column loads.
+    /// Per-column 2D data (biome, visible surface, direct-sky cover) shared by a
+    /// vertical stack of sections. Cheap; ensured present whenever a section in
+    /// the column loads.
     pub(super) columns: FxHashMap<ChunkPos, Column>,
-    /// Per-column presentation revision (biome/heightmap/summaries/visible
-    /// surface). Terrain replication resends ColumnData only when this
+    /// Per-column presentation revision (biome/surface/sky-cover/summaries).
+    /// Terrain replication resends ColumnData only when this
     /// changes, and revision-gated surface sampling relies on EQUALITY:
     /// values come from `column_revision_counter`, so a value is never reused
     /// — not even by a column that unloads and reloads with other content.
@@ -762,17 +800,18 @@ impl World {
         }
     }
 
-    /// Recompute a column's surface heightmap from its currently-loaded sections,
-    /// scanning each `(x,z)` from the top section down to the first non-air block. Used
-    /// after overlaying a saved (player-modified) section, whose blocks can differ from
-    /// what generation produced, so skylight and spawn see the true surface.
-    pub(super) fn recompute_column_heightmap(&mut self, cpos: ChunkPos) {
-        // Gather surfaces under immutable section borrows, then write the column once
-        // (the section and column maps are distinct, but both borrow `self`).
+    /// Recompute a column's visible surface and direct-sky cover from its
+    /// currently-loaded sections. Used after overlaying saved terrain, whose
+    /// blocks can differ from generation. Returns the changed cover envelope.
+    pub(super) fn recompute_column_heightmaps(&mut self, cpos: ChunkPos) -> Option<SkyCoverChange> {
+        // Gather both maps under immutable section borrows, then write the
+        // column once (the section and column maps are distinct fields).
         let mut surf = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
-        let mut remaining = surf.len();
+        let mut sky = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
+        let mut surface_remaining = surf.len();
+        let mut sky_remaining = sky.len();
         for cy in Self::column_section_range().rev() {
-            if remaining == 0 {
+            if surface_remaining == 0 && sky_remaining == 0 {
                 break;
             }
             let Some(section) = self.sections.get(&SectionPos::new(cpos.cx, cy, cpos.cz)) else {
@@ -783,13 +822,21 @@ impl World {
             for lz in 0..SECTION_SIZE {
                 for lx in 0..SECTION_SIZE {
                     let col = lz * SECTION_SIZE + lx;
-                    if surf[col] != NO_SURFACE {
-                        continue; // a higher section already set this column's surface.
+                    if surf[col] != NO_SURFACE && sky[col] != NO_SURFACE {
+                        continue;
                     }
                     for ly in (0..SECTION_SIZE).rev() {
-                        if blocks[section_idx(lx, ly, lz)] != 0 {
+                        let id = blocks[section_idx(lx, ly, lz)];
+                        if surf[col] == NO_SURFACE && id != Block::Air.id() {
                             surf[col] = oy + ly as i32;
-                            remaining -= 1;
+                            surface_remaining -= 1;
+                        }
+                        if sky[col] == NO_SURFACE && !Block::from_id(id).transmits_direct_skylight()
+                        {
+                            sky[col] = oy + ly as i32;
+                            sky_remaining -= 1;
+                        }
+                        if surf[col] != NO_SURFACE && sky[col] != NO_SURFACE {
                             break;
                         }
                     }
@@ -807,95 +854,133 @@ impl World {
                     .as_ref()
                     .map(|c| c.heightmap_surface_y(lx, lz))
                     .unwrap_or(NO_SURFACE);
-                let scanned = surf[i];
                 let ground_loaded = SectionPos::from_world(
                     cpos.cx * SECTION_SIZE as i32 + lx as i32,
                     ground,
                     cpos.cz * SECTION_SIZE as i32 + lz as i32,
                 )
                 .is_some_and(|sp| self.sections.contains_key(&sp));
-                let h = if ground_loaded || ground == NO_SURFACE {
-                    scanned
-                } else if scanned == NO_SURFACE {
-                    ground
-                } else {
-                    scanned.max(ground)
-                };
-                surf[i] = h;
-            }
-        }
-        let col = self.ensure_column(cpos);
-        let mut changed = false;
-        for lz in 0..SECTION_SIZE {
-            for lx in 0..SECTION_SIZE {
-                let height = surf[lz * SECTION_SIZE + lx];
-                if col.surface_y(lx, lz) != height {
-                    col.set_surface_y(lx, lz, height);
-                    changed = true;
+                if !ground_loaded && ground != NO_SURFACE {
+                    surf[i] = surf[i].max(ground);
+                    sky[i] = sky[i].max(ground);
                 }
             }
         }
-        if changed {
+        let col = self.ensure_column(cpos);
+        let mut payload_changed = false;
+        let mut sky_change: Option<SkyCoverChange> = None;
+        for lz in 0..SECTION_SIZE {
+            for lx in 0..SECTION_SIZE {
+                let i = lz * SECTION_SIZE + lx;
+                if col.surface_y(lx, lz) != surf[i] {
+                    col.set_surface_y(lx, lz, surf[i]);
+                    payload_changed = true;
+                }
+                if col.sky_cover_y(lx, lz) != sky[i] {
+                    let change = SkyCoverChange::between(col.sky_cover_y(lx, lz), sky[i])
+                        .expect("different cover heights");
+                    if let Some(all) = sky_change.as_mut() {
+                        all.merge(change);
+                    } else {
+                        sky_change = Some(change);
+                    }
+                    col.set_sky_cover_y(lx, lz, sky[i]);
+                    payload_changed = true;
+                }
+            }
+        }
+        if payload_changed {
             self.bump_column_payload_revision(cpos);
         }
-        // (No whole-column relight here: it queued all 20 sections — including deep,
-        // enclosed ones — bypassing the mesh/light skip and flooding the streaming
-        // backlog. Skylight after a surface shift is handled by the ingested section's own
-        // 3×3×3 neighbourhood marking in `poll`, which covers the canopy/structure band.)
+        sky_change
     }
 
     /// Merge one deterministic generated/cache section into the analytical bare
-    /// heightmap. It can only add feature blocks above that baseline; authoritative
-    /// saved terrain uses `recompute_column_heightmap` because it may also remove it.
-    pub(super) fn raise_column_heightmap_from_section(&mut self, pos: SectionPos) {
+    /// surface and sky-cover maps. It can only add feature blocks above those
+    /// baselines; authoritative saved terrain uses
+    /// [`recompute_column_heightmaps`](Self::recompute_column_heightmaps) because
+    /// it may also remove them. Returns the changed cover envelope.
+    pub(super) fn raise_column_heightmaps_from_section(
+        &mut self,
+        pos: SectionPos,
+    ) -> Option<SkyCoverChange> {
         let cpos = pos.chunk_pos();
         let oy = pos.cy * SECTION_SIZE as i32;
-        let mut raised = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
+        let mut raised_surface = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
+        let mut raised_sky = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
         let Some(section) = self.sections.get(&pos) else {
-            return;
+            return None;
         };
         let Some(column) = self.columns.get(&cpos) else {
-            return;
+            return None;
         };
         let blocks = section.blocks_slice();
         let mut any = false;
         for lz in 0..SECTION_SIZE {
             for lx in 0..SECTION_SIZE {
                 let i = lz * SECTION_SIZE + lx;
-                let current = column.surface_y(lx, lz);
-                if oy + SECTION_SIZE as i32 - 1 <= current {
-                    continue;
-                }
-                for ly in (0..SECTION_SIZE).rev() {
-                    let wy = oy + ly as i32;
-                    if wy <= current {
-                        break;
+                let surface = column.surface_y(lx, lz);
+                if oy + SECTION_SIZE as i32 - 1 > surface {
+                    for ly in (0..SECTION_SIZE).rev() {
+                        let wy = oy + ly as i32;
+                        if wy <= surface {
+                            break;
+                        }
+                        if blocks[section_idx(lx, ly, lz)] != Block::Air.id() {
+                            raised_surface[i] = wy;
+                            any = true;
+                            break;
+                        }
                     }
-                    if blocks[section_idx(lx, ly, lz)] != 0 {
-                        raised[i] = wy;
-                        any = true;
-                        break;
+                }
+
+                let sky_cover = column.sky_cover_y(lx, lz);
+                if oy + SECTION_SIZE as i32 - 1 > sky_cover {
+                    for ly in (0..SECTION_SIZE).rev() {
+                        let wy = oy + ly as i32;
+                        if wy <= sky_cover {
+                            break;
+                        }
+                        let block = Block::from_id(blocks[section_idx(lx, ly, lz)]);
+                        if !block.transmits_direct_skylight() {
+                            raised_sky[i] = wy;
+                            any = true;
+                            break;
+                        }
                     }
                 }
             }
         }
         if !any {
-            return;
+            return None;
         }
         let column = self.columns.get_mut(&cpos).expect("column checked above");
-        let mut changed = false;
+        let mut payload_changed = false;
+        let mut sky_change: Option<SkyCoverChange> = None;
         for lz in 0..SECTION_SIZE {
             for lx in 0..SECTION_SIZE {
-                let height = raised[lz * SECTION_SIZE + lx];
-                if height > column.surface_y(lx, lz) {
-                    column.set_surface_y(lx, lz, height);
-                    changed = true;
+                let i = lz * SECTION_SIZE + lx;
+                if raised_surface[i] > column.surface_y(lx, lz) {
+                    column.set_surface_y(lx, lz, raised_surface[i]);
+                    payload_changed = true;
+                }
+                if raised_sky[i] > column.sky_cover_y(lx, lz) {
+                    let change = SkyCoverChange::between(column.sky_cover_y(lx, lz), raised_sky[i])
+                        .expect("raised cover height");
+                    if let Some(all) = sky_change.as_mut() {
+                        all.merge(change);
+                    } else {
+                        sky_change = Some(change);
+                    }
+                    column.set_sky_cover_y(lx, lz, raised_sky[i]);
+                    payload_changed = true;
                 }
             }
         }
-        if changed {
+        if payload_changed {
             self.bump_column_payload_revision(cpos);
         }
+        sky_change
     }
 
     /// Harvest a section into a save snapshot for UNLOAD: this DRAINS the section's
@@ -1072,23 +1157,58 @@ impl World {
         self.queue_dirty_mesh(pos);
     }
 
-    /// A column heightmap cell moved, changing which cells are considered open sky
+    /// A column sky-cover cell moved, changing which cells are considered open sky
     /// for every skylight bake whose 3×3 XZ seed grid includes this column. Dirty only
     /// sections already in memory; absent generated/sky sections will bake from the new
-    /// heightmap when they stream in or materialize.
-    pub(super) fn mark_heightmap_light_dirty_around(&mut self, center: ChunkPos) {
+    /// cover map when they stream in or materialize.
+    /// Streaming cover changes arrive in contiguous batches, so each loaded
+    /// section is invalidated only once even when several changed columns'
+    /// dependent footprints overlap.
+    pub(super) fn mark_sky_cover_light_dirty_around_many(
+        &mut self,
+        changes: impl IntoIterator<Item = (ChunkPos, SkyCoverChange)>,
+    ) {
+        self.mark_sky_cover_light_dirty_around_impl(changes, false);
+    }
+
+    /// Gameplay-edit variant of the batched streaming invalidation. Besides
+    /// scheduling the loaded sections in the affected vertical band, it records
+    /// that any persisted cubes are stale so an eviction racing the rebake
+    /// rewrites them lightless.
+    pub(super) fn mark_sky_cover_edited_around(
+        &mut self,
+        center: ChunkPos,
+        change: SkyCoverChange,
+    ) {
+        self.mark_sky_cover_light_dirty_around_impl([(center, change)], true);
+    }
+
+    fn mark_sky_cover_light_dirty_around_impl(
+        &mut self,
+        changes: impl IntoIterator<Item = (ChunkPos, SkyCoverChange)>,
+        edited: bool,
+    ) {
         let mut affected = Vec::new();
-        for dz in -1..=1 {
-            for dx in -1..=1 {
-                for cy in Self::column_section_range() {
-                    let pos = SectionPos::new(center.cx + dx, cy, center.cz + dz);
-                    if self.sections.contains_key(&pos) {
-                        affected.push(pos);
+        let mut seen = FxHashSet::default();
+        for (center, change) in changes {
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    for cy in Self::column_section_range() {
+                        let pos = SectionPos::new(center.cx + dx, cy, center.cz + dz);
+                        if change.affects(pos)
+                            && self.sections.contains_key(&pos)
+                            && seen.insert(pos)
+                        {
+                            affected.push(pos);
+                        }
                     }
                 }
             }
         }
         for pos in affected {
+            if edited && self.save.is_some() {
+                self.light_edited_since_persist.insert(pos);
+            }
             self.mark_light_and_mesh_dirty_pos(pos);
         }
     }
@@ -1147,7 +1267,7 @@ impl World {
     // --- Column data ------------------------------------------------------------
 
     /// Ensure the per-column data for `(cx,cz)` exists, building it cheaply if not.
-    /// Worldgen fills biome + heightmap; an empty column is the pre-gen placeholder.
+    /// Worldgen fills biome + both height maps; an empty column is the pre-gen placeholder.
     pub(super) fn ensure_column(&mut self, pos: ChunkPos) -> &mut Column {
         if !self.column_payload_revisions.contains_key(&pos) {
             self.column_revision_counter += 1;
@@ -1244,11 +1364,6 @@ impl World {
             }
         }
         true
-    }
-
-    #[inline]
-    pub(super) fn column_at_mut(&mut self, wx: i32, wz: i32) -> Option<&mut Column> {
-        self.columns.get_mut(&ChunkPos::new(wx >> 4, wz >> 4))
     }
 
     // --- World-coordinate routing ----------------------------------------------
@@ -1883,7 +1998,9 @@ mod tests {
         let mut s = Section::new(0, 4, 0);
         s.set_block(8, 0, 8, Block::Stone);
         world.insert_section_for_test(sp, s);
-        world.ensure_column(sp.chunk_pos()).set_surface_y(8, 8, 64);
+        let column = world.ensure_column(sp.chunk_pos());
+        column.set_surface_y(8, 8, 64);
+        column.set_sky_cover_y(8, 8, 64);
 
         let before = world.column_payload_revision(sp.chunk_pos());
         world.set_block_world(8, 64, 8, Block::Dirt);
@@ -1896,6 +2013,23 @@ mod tests {
             before,
             world.column_payload_revision(sp.chunk_pos()),
             "a same-height surface swap must move the column revision"
+        );
+    }
+
+    #[test]
+    fn glass_raises_the_visible_surface_without_raising_sky_cover() {
+        let mut world = World::new(0, 0);
+        let cp = ChunkPos::new(0, 0);
+
+        assert!(world.set_block_world(8, 0, 8, Block::Stone));
+        assert!(world.set_block_world(8, 64, 8, Block::Glass));
+
+        let column = &world.columns[&cp];
+        assert_eq!(column.surface_y(8, 8), 64);
+        assert_eq!(
+            column.sky_cover_y(8, 8),
+            0,
+            "clear glass must not hide the open shaft from the skylight planner"
         );
     }
 
@@ -2038,12 +2172,40 @@ mod tests {
         let section = generator.generate_section(sp, &col);
         world.sections.insert(sp, Arc::new(section));
 
-        world.recompute_column_heightmap(cp);
+        world.recompute_column_heightmaps(cp);
 
         assert_eq!(
             world.columns.get(&cp).unwrap().surface_y(x, z),
             cave_top,
             "heightmap refresh must not restore original pre-cave surface {original}"
+        );
+    }
+
+    #[test]
+    fn heightmap_recompute_keeps_glass_out_of_direct_sky_cover() {
+        let mut world = World::new(0, 0);
+        let cp = ChunkPos::new(0, 0);
+        let ground = SectionPos::new(0, 0, 0);
+        let roof = SectionPos::new(0, 4, 0);
+
+        let mut ground_section = Section::new(0, 0, 0);
+        ground_section.set_block(8, 0, 8, Block::Stone);
+        world.sections.insert(ground, Arc::new(ground_section));
+        let mut roof_section = Section::new(0, 4, 0);
+        roof_section.set_block(8, 0, 8, Block::Glass);
+        world.sections.insert(roof, Arc::new(roof_section));
+
+        let column = world.ensure_column(cp);
+        column.set_surface_y(8, 8, 64);
+        column.set_sky_cover_y(8, 8, 64);
+
+        assert!(world.recompute_column_heightmaps(cp).is_some());
+        let column = &world.columns[&cp];
+        assert_eq!(column.surface_y(8, 8), 64);
+        assert_eq!(
+            column.sky_cover_y(8, 8),
+            0,
+            "saved/streamed glass must remain clear when column maps are rebuilt"
         );
     }
 
@@ -2078,7 +2240,9 @@ mod tests {
         };
 
         let mut world = World::new(seed, 0);
-        world.ensure_column(cp).set_surface_y(x, z, ground);
+        let column = world.ensure_column(cp);
+        column.set_surface_y(x, z, ground);
+        column.set_sky_cover_y(x, z, ground);
         world.column_gen.insert(cp, col);
 
         let ground_sp = SectionPos::from_world(
@@ -2107,7 +2271,7 @@ mod tests {
         );
         world.sections.insert(lower_sp, Arc::new(lower_section));
 
-        world.recompute_column_heightmap(cp);
+        world.recompute_column_heightmaps(cp);
 
         assert_eq!(
             world.columns.get(&cp).unwrap().surface_y(x, z),
@@ -2118,7 +2282,14 @@ mod tests {
 
     #[test]
     fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
+        let dir = std::env::temp_dir().join(format!(
+            "petramond-sky-cover-relight-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let opened = crate::save::open_at(dir.clone()).expect("open save");
         let mut world = World::new(0, 0);
+        world.attach_save(opened.save);
         let cp = ChunkPos::new(0, 0);
         let shaft_x = 8;
         let shaft_z = 8;
@@ -2126,9 +2297,9 @@ mod tests {
         let top = SectionPos::new(0, 4, 0);
         let lower = SectionPos::new(0, 2, 0);
 
-        world
-            .ensure_column(cp)
-            .set_surface_y(shaft_x, shaft_z, cover_y);
+        let column = world.ensure_column(cp);
+        column.set_surface_y(shaft_x, shaft_z, cover_y);
+        column.set_sky_cover_y(shaft_x, shaft_z, cover_y);
 
         let mut top_section = Section::new(top.cx, top.cy, top.cz);
         top_section.set_block(shaft_x, 0, shaft_z, Block::Dirt);
@@ -2155,15 +2326,22 @@ mod tests {
 
         assert!(world.set_block_world(shaft_x as i32, cover_y, shaft_z as i32, Block::Air));
 
-        let lower = world.sections.get(&lower).unwrap();
+        let lower_section = world.sections.get(&lower).unwrap();
         assert!(
-            lower.light_dirty,
-            "removing the heightmap cover must invalidate skylight below the edited section"
+            lower_section.light_dirty,
+            "removing sky cover must invalidate skylight below the edited section"
         );
         assert!(
-            lower.dirty,
+            lower_section.dirty,
             "sections whose cached light can change must be remeshed after the rebake"
         );
+        assert!(
+            world.light_edited_since_persist.contains(&lower),
+            "distant light invalidation must be tracked in case eviction beats the rebake"
+        );
+
+        drop(world);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

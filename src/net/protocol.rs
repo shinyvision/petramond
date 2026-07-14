@@ -1003,9 +1003,10 @@ pub(crate) enum ServerToClient {
     },
 }
 
-/// A column's client-relevant facts: the biome skin, the heightmap, and a
-/// per-cy section summary so replica physics can answer for ABSENT sections
-/// without running worldgen. Sent before the column's first section.
+/// A column's client-relevant facts: the biome skin, visible surface,
+/// direct-sky cover, and a per-cy section summary so replica physics can answer
+/// for ABSENT sections without running worldgen. Sent before the column's first
+/// section.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ColumnPayload {
     pub pos: ChunkPos,
@@ -1014,8 +1015,12 @@ pub(crate) struct ColumnPayload {
     /// 20x20 biome tint halo (two cells beyond each column edge), captured by
     /// column generation and reused by every section mesh in this column.
     pub mesh_biomes: SectionBytes,
-    /// 16×16 surface heights, same order.
-    pub heightmap: Vec<i32>,
+    /// 16×16 visible surface heights, same order.
+    pub surface_heightmap: Vec<i32>,
+    /// 16×16 highest direct-skylight blockers. Differs from
+    /// `surface_heightmap` when clear blocks such as glass sit above the real
+    /// sky cover.
+    pub sky_cover: Vec<i32>,
     /// `SectionSummary` discriminants for every cy in world order — lets the
     /// replica treat absent `FullOpaque`/`FullWater` sections truthfully.
     pub summaries: Vec<u8>,

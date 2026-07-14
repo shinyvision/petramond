@@ -13,7 +13,7 @@ use crate::block_model::{self, BlockModelKind};
 use crate::facing::Facing;
 use crate::mathh::{IVec3, Mat4, Vec3};
 
-use super::store::World;
+use super::store::{SkyCoverChange, World};
 
 impl World {
     /// The authored footprint offset of the model-block cell at world `pos` —
@@ -324,7 +324,18 @@ impl World {
     /// [`set_block_world`]: Self::set_block_world
     pub(super) fn refresh_region(&mut self, cells: &[IVec3]) {
         let mut seen = std::collections::HashSet::new();
+        let mut sky_changed: std::collections::HashMap<_, SkyCoverChange> =
+            std::collections::HashMap::new();
         for &c in cells {
+            let block = Block::from_id(self.chunk_block(c.x, c.y, c.z));
+            if let Some(change) = self.update_column_heights_after_set(c.x, c.y, c.z, block) {
+                if let Some((pos, _, _, _)) = Self::split_world(c.x, c.y, c.z) {
+                    sky_changed
+                        .entry(pos.chunk_pos())
+                        .and_modify(|all| all.merge(change))
+                        .or_insert(change);
+                }
+            }
             if let Some((pos, _, _, _)) = Self::split_world(c.x, c.y, c.z) {
                 if seen.insert(pos) {
                     self.refresh_particle_emitter_index(pos);
@@ -333,6 +344,9 @@ impl World {
             }
             // The matching 3×3 relight rides along with each cell's announce.
             self.notify_block_and_neighbors(c.x, c.y, c.z);
+        }
+        for (column, change) in sky_changed {
+            self.mark_sky_cover_edited_around(column, change);
         }
     }
 }

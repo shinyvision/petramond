@@ -418,6 +418,18 @@ impl Block {
         }
     }
 
+    /// Whether direct full-strength skylight can continue straight down through
+    /// this cell without the normal flood-step loss. Water and leaves have open
+    /// apertures, but remain filtering media rather than clear air-like cells.
+    #[inline]
+    pub(crate) fn transmits_direct_skylight(self) -> bool {
+        self == Block::Air
+            || (self.light_shape() == BlockLightShape::Open
+                && self.is_transparent()
+                && !self.is_water()
+                && !self.is_leaves())
+    }
+
     /// The block's collision shape: cell-local AABBs (`0.0..1.0`), a per-row
     /// [`BlockDef`] field. Empty = no collision: air, water, walk-through plants,
     /// and the torch (selectable by its custom pole shape yet stepped through — see

@@ -87,6 +87,10 @@ impl<'a> LightCells<'a> {
         from_mask & to_mask != 0
     }
 
+    pub(super) fn transmits_direct_skylight(self, at: (usize, usize, usize)) -> bool {
+        Block::from_id(self.blocks[nbhd_idx(at.0, at.1, at.2)]).transmits_direct_skylight()
+    }
+
     fn side_aperture(self, idx: usize, dir: (i32, i32, i32)) -> u8 {
         let block = Block::from_id(self.blocks[idx]);
         match block.light_shape() {

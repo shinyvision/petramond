@@ -108,9 +108,10 @@ impl Section {
 }
 
 impl World {
-    /// One column's client-relevant facts: biome skin, surface heightmap, and
-    /// a per-cy [`SectionSummary`] for the whole world height range so replica
-    /// physics can answer for absent sections. `None` for an unloaded column.
+    /// One column's client-relevant facts: biome skin, visible surface,
+    /// direct-sky cover, and a per-cy [`SectionSummary`] for the whole world
+    /// height range so replica physics can answer for absent sections. `None`
+    /// for an unloaded column.
     pub(crate) fn column_payload(&self, pos: ChunkPos) -> Option<ColumnPayload> {
         let col = self.columns.get(&pos)?;
         let mut biomes = vec![0u8; SECTION_SIZE * SECTION_SIZE];
@@ -150,20 +151,20 @@ impl World {
             pos,
             biomes: SectionBytes(Arc::from(biomes.into_boxed_slice())),
             mesh_biomes: SectionBytes(mesh_biomes),
-            heightmap: col.heightmap_slice().to_vec(),
+            surface_heightmap: col.surface_heightmap_slice().to_vec(),
+            sky_cover: col.sky_cover_slice().to_vec(),
             summaries,
             deep_band_lo,
         })
     }
 
-    /// Install a column's replicated facts on a replica: biome + heightmap
-    /// into the `Column`, and the per-cy summaries into `column_summaries`
+    /// Install a column's replicated facts on a replica: biome + both height
+    /// maps into the `Column`, and the per-cy summaries into `column_summaries`
     /// (the replica's absent-section answer — see `section_summary`). The
-    /// wire heightmap is the server's authoritative surface and is NOT
-    /// recomputed from installed sections, which may only partially cover the
-    /// column. Idempotent — the sender re-ships only when the column revision
-    /// changes, including immediately before a section unload changes an absent
-    /// summary.
+    /// wire maps are authoritative and are NOT recomputed from installed
+    /// sections, which may only partially cover the column. Idempotent — the
+    /// sender re-ships only when the column revision changes, including
+    /// immediately before a section unload changes an absent summary.
     pub(crate) fn install_remote_column(&mut self, payload: ColumnPayload) {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
@@ -172,7 +173,8 @@ impl World {
         let expected_sections = Self::column_section_range().count();
         if payload.biomes.0.len() != SECTION_SIZE * SECTION_SIZE
             || payload.mesh_biomes.0.len() != 20 * 20
-            || payload.heightmap.len() != SECTION_SIZE * SECTION_SIZE
+            || payload.surface_heightmap.len() != SECTION_SIZE * SECTION_SIZE
+            || payload.sky_cover.len() != SECTION_SIZE * SECTION_SIZE
             || payload.summaries.len() != expected_sections
         {
             return;
@@ -185,8 +187,11 @@ impl World {
                 if let Some(&b) = payload.biomes.0.get(i) {
                     col.set_biome(x, z, b);
                 }
-                if let Some(&h) = payload.heightmap.get(i) {
+                if let Some(&h) = payload.surface_heightmap.get(i) {
                     col.set_surface_y(x, z, h);
+                }
+                if let Some(&h) = payload.sky_cover.get(i) {
+                    col.set_sky_cover_y(x, z, h);
                 }
             }
         }
@@ -303,8 +308,8 @@ impl World {
 
         self.ensure_column(pos.chunk_pos());
         self.sections.insert(pos, Arc::new(section));
-        // Installed content may change the visible surface without moving the
-        // heightmap (a same-height block swap) — surface consumers gate on
+        // Installed content may change the visible surface without moving its
+        // height (a same-height block swap) — surface consumers gate on
         // the column revision, so it must move with every section install.
         self.bump_column_payload_revision(pos.chunk_pos());
         // The post-ingest seam, minus gen/save bookkeeping (none exists here).
@@ -372,7 +377,7 @@ impl World {
     /// Apply one authoritative server delta on a replica: write the cell
     /// unconditionally (no `stream_writable` gate — the server already
     /// arbitrated) and update everything RENDERING needs — counters/state
-    /// clears via the section setters, heightmap patch, light + mesh dirtying
+    /// clears via the section setters, column-map patch, light + mesh dirtying
     /// — but schedule NO sim work: no water checks, no block updates, no
     /// `modified` flag. Deltas for absent sections drop silently (the server
     /// only streams deltas for sections in the recipient's sent set; a race
@@ -465,11 +470,11 @@ impl World {
         self.refresh_particle_emitter_index(pos);
         // Heightmap keeps replica physics/sky queries truthful; the light it
         // would invalidate on a streaming world is server-owned here.
-        let _ = self.update_column_height_after_set(
+        let _ = self.update_column_heights_after_set(
             delta.pos.x,
             delta.pos.y,
             delta.pos.z,
-            delta.block_id != Block::Air.id(),
+            Block::from_id(delta.block_id),
         );
         self.mark_dirty_neighborhood(pos, true);
         self.vis_dirty = true;
@@ -779,6 +784,23 @@ mod tests {
             replica.apply_remote_delta(d);
         }
         assert!(!replica_lit(&replica), "the extinguish must reach it too");
+    }
+
+    #[test]
+    fn column_payload_keeps_visible_glass_separate_from_sky_cover() {
+        let (mut server, mut replica) = server_and_replica();
+        let cp = ChunkPos::new(0, 0);
+
+        assert!(server.set_block_world(8, 80, 8, Block::Glass));
+        replica.install_remote_column(server.column_payload(cp).unwrap());
+
+        let column = &replica.columns[&cp];
+        assert_eq!(column.surface_y(8, 8), 80);
+        assert_eq!(
+            column.sky_cover_y(8, 8),
+            64,
+            "replication must not collapse the two maps back into one"
+        );
     }
 
     /// block ids, water meta, and every sparse state map — reads back

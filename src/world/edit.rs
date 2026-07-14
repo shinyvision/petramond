@@ -5,7 +5,7 @@ use crate::column::NO_SURFACE;
 use crate::mathh::IVec3;
 use crate::section::SectionSummary;
 
-use super::store::World;
+use super::store::{SkyCoverChange, World};
 
 impl World {
     /// Cells a player break at `pos` clears: door both halves, model footprint,
@@ -54,10 +54,11 @@ impl World {
         Some((block, cells))
     }
 
-    /// Set a block at world coords. Updates the column surface heightmap, marks the
-    /// owning section's light plus its full 3×3×3 neighbourhood dirty so the next
-    /// `tick_mesh_budget` refreshes cached light and rebuilds meshes. Returns false
-    /// if the section is not loaded or `wy` is out of range. In-memory only.
+    /// Set a block at world coords. Updates the column's visible surface and
+    /// direct-sky cover, marks the owning section's light plus its full 3×3×3
+    /// neighbourhood dirty so the next `tick_mesh_budget` refreshes cached light
+    /// and rebuilds meshes. Returns false if the section is not loaded or `wy` is
+    /// out of range. In-memory only.
     pub fn set_block_world(&mut self, wx: i32, wy: i32, wz: i32, b: Block) -> bool {
         let Some((pos, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
             return false;
@@ -87,8 +88,8 @@ impl World {
             s.modified = true;
         }
         self.refresh_particle_emitter_index(pos);
-        if self.update_column_height_after_set(wx, wy, wz, b != Block::Air) {
-            self.mark_heightmap_light_dirty_around(pos.chunk_pos());
+        if let Some(change) = self.update_column_heights_after_set(wx, wy, wz, b) {
+            self.mark_sky_cover_edited_around(pos.chunk_pos(), change);
         }
 
         // Re-mesh the 3×3×3 so the border flood, vertex light sampling, and
@@ -127,66 +128,79 @@ impl World {
         section.set_log_axis(lx, ly, lz, axis);
         section.modified = true;
         self.refresh_particle_emitter_index(section_pos);
-        if self.update_column_height_after_set(pos.x, pos.y, pos.z, true) {
-            self.mark_heightmap_light_dirty_around(section_pos.chunk_pos());
-        }
         self.refresh_region(&[pos]);
         true
     }
 
-    /// Keep the column surface heightmap exact after one block change at world
-    /// `(wx,wy,wz)`. Placing a solid block raises the surface; removing the current
-    /// top block rescans downward through the loaded sections for the next one.
-    pub(super) fn update_column_height_after_set(
+    /// Keep the visible surface and direct-skylight cover exact after one block
+    /// change. Clear blocks may raise the visible surface without moving sky
+    /// cover; removing either current top rescans downward for its next match.
+    /// Returns the vertical cover-change envelope used to invalidate loaded
+    /// sections whose bake can observe the move.
+    pub(super) fn update_column_heights_after_set(
         &mut self,
         wx: i32,
         wy: i32,
         wz: i32,
-        solid: bool,
-    ) -> bool {
+        block: Block,
+    ) -> Option<SkyCoverChange> {
         let lx = (wx & 0x0F) as usize;
         let lz = (wz & 0x0F) as usize;
-        if solid {
-            let cpos = ChunkPos::new(
-                wx.div_euclid(SECTION_SIZE as i32),
-                wz.div_euclid(SECTION_SIZE as i32),
-            );
-            let col = self.ensure_column(cpos);
-            let old = col.surface_y(lx, lz);
-            col.raise_surface(lx, lz, wy);
-            let changed = wy > old;
-            // wy == old replaced the visible surface block in place: the
-            // heightmap is unchanged but surface consumers (map sampling)
-            // still need the revision to move.
-            if wy >= old {
-                self.bump_column_payload_revision(cpos);
-            }
-            return changed;
-        }
-        let cur = match self.column_at(wx, wz) {
-            Some(c) => c.surface_y(lx, lz),
-            None => return false,
+        let cpos = ChunkPos::new(
+            wx.div_euclid(SECTION_SIZE as i32),
+            wz.div_euclid(SECTION_SIZE as i32),
+        );
+        let (old_surface, old_sky_cover) = match self.column_at(wx, wz) {
+            Some(c) => (c.surface_y(lx, lz), c.sky_cover_y(lx, lz)),
+            None => return None,
         };
-        if wy != cur {
-            return false; // removed a block that wasn't the surface — heightmap unchanged.
+
+        let mut new_surface = old_surface;
+        let mut surface_payload_changed = false;
+        if block != Block::Air {
+            if wy > old_surface {
+                new_surface = wy;
+                surface_payload_changed = true;
+            } else if wy == old_surface {
+                // Same-height replacement can change the map's visible material.
+                surface_payload_changed = true;
+            }
+        } else if wy == old_surface {
+            new_surface = NO_SURFACE;
+            for y in (WORLD_MIN_Y..wy).rev() {
+                if self.chunk_block(wx, y, wz) != Block::Air.id() {
+                    new_surface = y;
+                    break;
+                }
+            }
+            surface_payload_changed = new_surface != old_surface;
         }
-        let mut new_top = NO_SURFACE;
-        for y in (WORLD_MIN_Y..wy).rev() {
-            if self.chunk_block(wx, y, wz) != 0 {
-                new_top = y;
-                break;
+
+        let mut new_sky_cover = old_sky_cover;
+        if !block.transmits_direct_skylight() {
+            if wy > old_sky_cover {
+                new_sky_cover = wy;
+            }
+        } else if wy == old_sky_cover {
+            new_sky_cover = NO_SURFACE;
+            for y in (WORLD_MIN_Y..wy).rev() {
+                let below = Block::from_id(self.chunk_block(wx, y, wz));
+                if !below.transmits_direct_skylight() {
+                    new_sky_cover = y;
+                    break;
+                }
             }
         }
-        if let Some(col) = self.column_at_mut(wx, wz) {
-            col.set_surface_y(lx, lz, new_top);
+
+        let sky_cover_change = SkyCoverChange::between(old_sky_cover, new_sky_cover);
+        if new_surface != old_surface || sky_cover_change.is_some() {
+            let col = self.columns.get_mut(&cpos).expect("column was read above");
+            col.set_surface_y(lx, lz, new_surface);
+            col.set_sky_cover_y(lx, lz, new_sky_cover);
         }
-        let changed = new_top != cur;
-        if changed {
-            self.bump_column_payload_revision(ChunkPos::new(
-                wx.div_euclid(SECTION_SIZE as i32),
-                wz.div_euclid(SECTION_SIZE as i32),
-            ));
+        if surface_payload_changed || sky_cover_change.is_some() {
+            self.bump_column_payload_revision(cpos);
         }
-        changed
+        sky_cover_change
     }
 }

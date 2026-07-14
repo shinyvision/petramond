@@ -56,18 +56,12 @@ impl World {
         if !crate::stair::is_stair(block) || !self.materialize_section_at(pos) {
             return false;
         }
-        let Some((section_pos, _, _, _)) = Self::split_world(pos.x, pos.y, pos.z) else {
-            return false;
-        };
         let Some((section, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
             return false;
         };
         section.set_block(lx, ly, lz, block);
         section.set_stair_state(lx, ly, lz, state);
         section.modified = true;
-        if self.update_column_height_after_set(pos.x, pos.y, pos.z, true) {
-            self.mark_heightmap_light_dirty_around(section_pos.chunk_pos());
-        }
         self.refresh_region(&[pos]);
         true
     }

@@ -310,8 +310,8 @@ impl World {
             s.modified = true;
         }
         self.refresh_particle_emitter_index(cpos);
-        if self.update_column_height_after_set(pos.x, pos.y, pos.z, block != Block::Air) {
-            self.mark_heightmap_light_dirty_around(cpos.chunk_pos());
+        if let Some(change) = self.update_column_heights_after_set(pos.x, pos.y, pos.z, block) {
+            self.mark_sky_cover_edited_around(cpos.chunk_pos(), change);
         }
         self.queue_dirty_mesh(cpos);
         // A border cell changes neighbour sections' culled faces: re-mesh the 3×3×3.

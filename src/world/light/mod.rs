@@ -1,7 +1,7 @@
 //! Async section light baking plus the light-shape rules used by the floods.
 //!
 //! Keep this subsystem split by responsibility: the queue owns jobs and workers,
-//! `neighborhood` owns snapshot assembly, `skylight` owns heightmap planning,
+//! `neighborhood` owns snapshot assembly, `skylight` owns sky-cover planning,
 //! `flood` owns propagation, and `shape` owns per-block boundary rules.
 
 mod flood;
@@ -13,6 +13,7 @@ mod skylight;
 use crate::chunk::SECTION_SIZE;
 
 pub(super) use queue::LightBakeQueue;
+pub(super) use skylight::cover_change_affects_section;
 
 /// Temporary perf-session diagnostics (see `tooling::stream::stage_stats`).
 pub(crate) fn stage_stats() -> (

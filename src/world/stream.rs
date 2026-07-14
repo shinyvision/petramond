@@ -1,4 +1,4 @@
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 
 use crate::block::Block;
@@ -12,7 +12,9 @@ use crate::section::Section;
 use crate::worker::{GenJob, GenOutput};
 use crate::worldgen::driver::ColumnGen;
 
-use super::store::{LoadAnchor, LoadTarget, World, WorldRole, VERTICAL_LOAD_RADIUS};
+use super::store::{
+    LoadAnchor, LoadTarget, SkyCoverChange, World, WorldRole, VERTICAL_LOAD_RADIUS,
+};
 
 // Used only by the column-era test/fixture helper `split_generated_column`.
 #[cfg(test)]
@@ -649,9 +651,9 @@ impl World {
     }
 
     /// Install one column's shared gen data: set the per-column biome + an initial
-    /// bare-ground surface heightmap (the pre-feature top non-air, authoritative for
-    /// skylight/spawn before the surface sections stream in), then keep the `Arc` for
-    /// driving per-section jobs.
+    /// bare-ground surface and sky-cover maps, then keep the `Arc` for driving
+    /// per-section jobs. Before features/player edits they are identical: the
+    /// analytical top is solid ground or filtering water.
     fn install_column_gen(&mut self, pos: ChunkPos, col: Arc<ColumnGen>) {
         {
             let column = self.ensure_column(pos);
@@ -660,7 +662,9 @@ impl World {
                     column.set_biome(x, z, col.biome_at(x, z));
                     // Submerged / floorless columns top out at the waterline; land cave
                     // mouths use their post-cave top so skylight can enter shafts.
-                    column.set_surface_y(x, z, col.heightmap_surface_y(x, z));
+                    let surface = col.heightmap_surface_y(x, z);
+                    column.set_surface_y(x, z, surface);
+                    column.set_sky_cover_y(x, z, surface);
                 }
             }
         }
@@ -830,8 +834,8 @@ impl World {
     /// Poll the worker and the save thread, then ingest: install each landed column's
     /// shared data (and kick off its per-section jobs), install generated sections,
     /// overlay any player-modified sections read from disk, and queue the affected
-    /// sections for heightmap refresh + light + mesh. Returns the number of columns whose
-    /// shared data was installed this call.
+    /// sections for column-map refresh + light + mesh. Returns the number of
+    /// columns whose shared data was installed this call.
     pub fn poll(&mut self) -> usize {
         // Any change to what is loaded / stream-final re-keys the per-connection
         // terrain senders (their wanted-vs-sent rescan gates on this).
@@ -1121,17 +1125,38 @@ impl World {
             return new_columns;
         }
 
-        // 5. Derived sections can only raise the analytical bare surface with
-        // generated features. Authoritative records may have removed it, so only
-        // those columns pay for a full vertical rescan.
+        // 5. Derived sections can only raise the analytical bare maps with
+        // generated features. Authoritative records may have removed them, so
+        // only those columns pay for a full vertical rescan. Cover changes that
+        // escape normal ingest invalidation dirty their dependent vertical band:
+        // the planner's Full/Dark shortcut depends on the 2D map, not just the
+        // ingested section's 3×3×3.
+        let mut sky_cover_changed: FxHashMap<ChunkPos, SkyCoverChange> = FxHashMap::default();
         for &sp in &ingested {
-            if !heightmap_recompute.contains(&sp.chunk_pos()) {
-                self.raise_column_heightmap_from_section(sp);
+            let cp = sp.chunk_pos();
+            if !heightmap_recompute.contains(&cp) {
+                if let Some(change) = self.raise_column_heightmaps_from_section(sp) {
+                    // Step 6 already invalidates a generated section's 3x3x3.
+                    // Normal terrain/tree cover moves fit that band; only a
+                    // larger vertical jump needs this extra map-wide pass.
+                    if change.escapes_section_neighborhood(sp) {
+                        sky_cover_changed
+                            .entry(cp)
+                            .and_modify(|all| all.merge(change))
+                            .or_insert(change);
+                    }
+                }
             }
         }
         for cp in heightmap_recompute {
-            self.recompute_column_heightmap(cp);
+            if let Some(change) = self.recompute_column_heightmaps(cp) {
+                sky_cover_changed
+                    .entry(cp)
+                    .and_modify(|all| all.merge(change))
+                    .or_insert(change);
+            }
         }
+        self.mark_sky_cover_light_dirty_around_many(sky_cover_changed);
 
         // 6. Light + remesh the affected sections and their neighbours. Each ingested
         //    section dirties its whole 3×3×3 (border face culling + light sampling), but
@@ -1631,6 +1656,15 @@ pub(super) fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Sectio
         for x in 0..CHUNK_SX {
             column.set_biome(x, z, chunk.biome_at(x, z));
             column.set_surface_y(x, z, chunk.surface_y(x, z));
+            let mut sky_cover = -1;
+            for y in (0..CHUNK_SY).rev() {
+                let block = Block::from_id(chunk.block_raw(x, y, z));
+                if !block.transmits_direct_skylight() {
+                    sky_cover = y as i32;
+                    break;
+                }
+            }
+            column.set_sky_cover_y(x, z, sky_cover);
         }
     }
 

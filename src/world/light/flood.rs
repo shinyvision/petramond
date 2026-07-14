@@ -16,6 +16,12 @@ const DIRECTIONS: [(i32, i32, i32); 6] = [
     (0, 0, -1),
 ];
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum FloodKind {
+    Skylight,
+    BlockLight,
+}
+
 /// Light value an emitter seeds at its own cell (x2 scale). One torch is level 14.
 pub(super) const EMITTER_LIGHT: u8 = 28;
 
@@ -117,7 +123,7 @@ pub(super) fn skylight(
         }
     }
 
-    propagate(cells, light, queue);
+    propagate(cells, light, queue, FloodKind::Skylight);
     clip_center(light)
 }
 
@@ -150,17 +156,21 @@ pub(super) fn block_light(
         }
     }
 
-    propagate(cells, light, queue);
+    propagate(cells, light, queue, FloodKind::BlockLight);
     clip_center(light)
 }
 
-fn propagate(cells: LightCells<'_>, light: &mut [u8], queue: &mut VecDeque<(usize, usize, usize)>) {
+fn propagate(
+    cells: LightCells<'_>,
+    light: &mut [u8],
+    queue: &mut VecDeque<(usize, usize, usize)>,
+    kind: FloodKind,
+) {
     while let Some(from) = queue.pop_front() {
         let level = light[nbhd_idx(from.0, from.1, from.2)];
         if level <= 2 {
             continue;
         }
-        let next = level - 2;
         for dir in DIRECTIONS {
             let Some(to) = step(from, dir) else {
                 continue;
@@ -168,6 +178,15 @@ fn propagate(cells: LightCells<'_>, light: &mut [u8], queue: &mut VecDeque<(usiz
             if !cells.can_cross(from, to, dir) {
                 continue;
             }
+            let next = if kind == FloodKind::Skylight
+                && level == SKY_FULL
+                && dir == (0, -1, 0)
+                && cells.transmits_direct_skylight(to)
+            {
+                SKY_FULL
+            } else {
+                level - 2
+            };
             let ni = nbhd_idx(to.0, to.1, to.2);
             if light[ni] < next {
                 light[ni] = next;
@@ -231,7 +250,7 @@ mod tests {
                 }
             }
         }
-        propagate(cells, &mut light, &mut queue);
+        propagate(cells, &mut light, &mut queue, FloodKind::Skylight);
         clip_center(&light)
     }
 
@@ -412,6 +431,33 @@ mod tests {
 
         assert!(cube[section_idx(8, 8, 8)] > 0);
         assert_eq!(cube[section_idx(7, 8, 8)], SKY_FULL);
+    }
+
+    #[test]
+    fn direct_skylight_stays_full_through_glass_roofs() {
+        let pos = SectionPos::new(0, 0, 0);
+        let (x, y, z) = (SECTION_SIZE + 8, SECTION_SIZE + 10, SECTION_SIZE + 8);
+        let states = default_states();
+
+        for glass in [Block::Glass, Block::GlassPane] {
+            let mut blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+            blocks[nbhd_idx(x, y, z)] = glass.id();
+            let mut surface = vec![-100i32; NBHD_AREA].into_boxed_slice();
+            surface[z * NBHD + x] = 10;
+
+            let cube = skylight(
+                pos,
+                cells(&blocks, &states),
+                &surface,
+                &mut FloodScratch::new(),
+            );
+
+            assert_eq!(
+                cube[section_idx(8, 9, 8)],
+                SKY_FULL,
+                "{glass:?} must not dim direct skylight"
+            );
+        }
     }
 
     #[test]
