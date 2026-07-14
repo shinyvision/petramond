@@ -57,7 +57,7 @@ impl ContainerMenu {
                     }
                 }
             }
-            MenuSlot::CraftResult => self.craft_take_output(inv, shift),
+            MenuSlot::CraftResult => self.craft_take_output(inv, button, shift),
             // The furnace's role hits are its conventional container indices;
             // its SlotSpecs (take-only output, tag filters) drive the rest.
             MenuSlot::Furnace(hit) => {

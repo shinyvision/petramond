@@ -11,7 +11,7 @@ use crate::container::{Container, SlotSpec};
 use crate::controls::PointerButton;
 use crate::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
 use crate::gui::{ChestView, ContainerView};
-use crate::inventory::{merge_stack, stack_onto_cursor, Inventory};
+use crate::inventory::{merge_stack, Inventory};
 use crate::item::ItemTag;
 use crate::mathh::IVec3;
 use crate::world::chest::CHEST_SLOTS;
@@ -74,7 +74,7 @@ impl ContainerMenu {
     /// The open session's container position: the chest/furnace block, or the
     /// mod GUI's opening block (`None` for a programmatic open or a screen
     /// with no block-entity slots).
-    fn container_pos(&self) -> Option<IVec3> {
+    pub(super) fn container_pos(&self) -> Option<IVec3> {
         match self.target {
             ContainerTarget::Chest(pos) | ContainerTarget::Furnace(pos) => Some(pos),
             ContainerTarget::ModGui { pos, .. } => pos,
@@ -85,7 +85,7 @@ impl ContainerMenu {
     /// The open session's slot semantics (empty when no slot-bearing GUI is
     /// up): the engine sets for the chest/furnace, the document's for a mod
     /// GUI.
-    fn slot_specs(&self) -> Arc<Vec<SlotSpec>> {
+    pub(super) fn slot_specs(&self) -> Arc<Vec<SlotSpec>> {
         match self.target {
             ContainerTarget::Chest(_) => chest_slot_specs(),
             ContainerTarget::Furnace(_) => furnace_slot_specs(),
@@ -147,13 +147,10 @@ impl ContainerMenu {
                 return;
             };
             // A take-only output never accepts the cursor stack: any click
-            // just moves the product out (the furnace-output read).
+            // only moves product out (the furnace-output read). Secondary
+            // follows the same half/one take rule as every other slot.
             if specs.get(i).is_some_and(|s| s.take_only) {
-                if let Some(out) = *slot {
-                    if stack_onto_cursor(inv.cursor_mut(), out) {
-                        *slot = None;
-                    }
-                }
+                inv.click_take_only_external_slot(slot, secondary);
             } else if secondary {
                 inv.right_click_external_slot(slot);
             } else {

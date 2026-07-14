@@ -130,6 +130,51 @@ impl ServerGame {
                     }
                     self.push_action_outcome(s, request_id, true, None);
                 }
+                PendingMenuAction::SlotDrag {
+                    slots,
+                    button,
+                    request_id,
+                } => {
+                    let sess = &mut self.sessions[s];
+                    sess.menu.drag_slots(
+                        &mut self.world,
+                        &mut sess.player.inventory,
+                        &slots,
+                        button,
+                    );
+                    // A drag is predicted across both client mirrors. Force
+                    // the authoritative pair into the outcome batch even if
+                    // stale client capacity made the server-side action a
+                    // no-op and neither ordinary on-change gate moved.
+                    sess.last_sent_inventory_revision = None;
+                    sess.last_menu_sync = None;
+                    self.push_action_outcome(s, request_id, true, None);
+                }
+                PendingMenuAction::DropSlot {
+                    slot,
+                    all,
+                    request_id,
+                } => {
+                    let dropped = {
+                        let sess = &mut self.sessions[s];
+                        sess.menu.drop_slot(
+                            &mut self.world,
+                            &mut sess.player.inventory,
+                            &self.recipes,
+                            slot,
+                            all,
+                        )
+                    };
+                    if let Some(stack) = dropped {
+                        self.sessions[s].drop_queue.queue_stack(stack);
+                    }
+                    self.push_action_outcome(
+                        s,
+                        request_id,
+                        dropped.is_some(),
+                        dropped.is_none().then_some(ActionDenyReason::Denied),
+                    );
+                }
                 PendingMenuAction::CraftRecipe {
                     recipe,
                     bulk,

@@ -1,6 +1,7 @@
 use super::ContainerMenu;
+use crate::controls::PointerButton;
 use crate::crafting::{CraftFailure, Recipes};
-use crate::inventory::{stack_onto_cursor, Inventory};
+use crate::inventory::Inventory;
 use crate::item::ItemStack;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -44,9 +45,15 @@ impl ContainerMenu {
         Ok(overflow)
     }
 
-    /// Take the real output. Shift moves it into inventory; an ordinary click
-    /// moves the whole stack onto a compatible cursor. Failed fits are no-ops.
-    pub(super) fn craft_take_output(&mut self, inventory: &mut Inventory, shift: bool) {
+    /// Take the real output. Shift moves it into inventory; otherwise primary
+    /// takes the whole compatible output and secondary follows the universal
+    /// half/one take rule. Failed fits are no-ops.
+    pub(super) fn craft_take_output(
+        &mut self,
+        inventory: &mut Inventory,
+        button: PointerButton,
+        shift: bool,
+    ) {
         let Some(stack) = self.craft_output else {
             return;
         };
@@ -56,8 +63,9 @@ impl ContainerMenu {
             }
             return;
         }
-        if stack_onto_cursor(inventory.cursor_mut(), stack) {
-            self.craft_output = None;
-        }
+        inventory.click_take_only_external_slot(
+            &mut self.craft_output,
+            button == PointerButton::Secondary,
+        );
     }
 }

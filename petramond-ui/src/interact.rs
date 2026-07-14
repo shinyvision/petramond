@@ -2,7 +2,8 @@
 //! geometry, mutating [`FrameState`] and emitting [`UiEvent`]s.
 //!
 //! Semantics preserved from the legacy GUI:
-//! - Slot and list-row presses fire on pointer **down** (menus feel snappy).
+//! - Ordinary slot and list-row presses fire on pointer **down**. A host-armed
+//!   cursor-stack slot gesture captures distinct cells through release.
 //! - Buttons, checkboxes, and toggles fire on press-in-**release**-in.
 //! - A press that hits nothing outside the panel emits `ClickOutside`
 //!   (cursor-stack throws).
@@ -90,9 +91,10 @@ impl Interact<'_> {
                     y,
                     button,
                     shift,
+                    slot_drag,
                 } => {
                     fs.cursor = (x, y);
-                    self.pointer_down(fs, button, shift, events);
+                    self.pointer_down(fs, button, shift, slot_drag, events);
                 }
                 InputEvent::PointerUp { x, y, button } => {
                     fs.cursor = (x, y);
@@ -165,11 +167,33 @@ impl Interact<'_> {
         self.tree.get(i).key.clone()
     }
 
+    /// The enabled slot cell under the cursor, resolved to its stable
+    /// document role + in-role index.
+    fn slot_hit(&self, fs: &FrameState) -> Option<(String, u32)> {
+        let i = self.hit(fs)?;
+        let inst = self.tree.get(i);
+        if !inst.enabled {
+            return None;
+        }
+        let slot = self.slots.iter().find(|slot| slot.inst == i)?;
+        let (x, y) = self.cur(fs);
+        let rect = self.solved.rects[i as usize];
+        let cell = match inst.node.kind {
+            NodeKind::SlotGrid { cols, rows, .. } => (0..cols * rows).find(|&cell| {
+                widget::contains_f(grid_cell(rect, cols, cell, self.metrics), x, y)
+            })?,
+            NodeKind::Slot { .. } => 0,
+            _ => return None,
+        };
+        Some((slot.role.clone(), slot.base + cell))
+    }
+
     fn pointer_down(
         &self,
         fs: &mut FrameState,
         button: PointerButton,
         shift: bool,
+        slot_drag: bool,
         events: &mut Vec<UiEvent>,
     ) {
         let (x, y) = self.cur(fs);
@@ -222,28 +246,20 @@ impl Interact<'_> {
             let rect = self.solved.rects[i as usize];
             match &inst.node.kind {
                 NodeKind::Slot { .. } | NodeKind::SlotGrid { .. } => {
-                    if inst.enabled {
-                        if let Some(slot) = self.slots.iter().find(|s| s.inst == i) {
-                            let cell = match inst.node.kind {
-                                NodeKind::SlotGrid { cols, rows, .. } => {
-                                    (0..cols * rows).find(|&c| {
-                                        widget::contains_f(
-                                            grid_cell(rect, cols, c, self.metrics),
-                                            x,
-                                            y,
-                                        )
-                                    })
-                                }
-                                _ => Some(0),
-                            };
-                            if let Some(cell) = cell {
-                                events.push(UiEvent::SlotClick {
-                                    role: slot.role.clone(),
-                                    index: slot.base + cell,
-                                    button,
-                                    shift,
-                                });
-                            }
+                    if let Some((role, index)) = self.slot_hit(fs) {
+                        if slot_drag {
+                            fs.drag = Some(Drag::Slots {
+                                button,
+                                shift,
+                                slots: vec![(role, index)],
+                            });
+                        } else {
+                            events.push(UiEvent::SlotClick {
+                                role,
+                                index,
+                                button,
+                                shift,
+                            });
                         }
                     }
                     self.blur_editor(fs);
@@ -339,6 +355,7 @@ impl Interact<'_> {
 
     fn pointer_drag(&self, fs: &mut FrameState, events: &mut Vec<UiEvent>) {
         let (x, y) = self.cur(fs);
+        let slot_hit = self.slot_hit(fs);
         match fs.drag.clone() {
             Some(Drag::Slider { key }) => {
                 if let Some(i) = self.tree.find(&key.id, key.item) {
@@ -389,11 +406,50 @@ impl Interact<'_> {
                     });
                 }
             }
+            Some(Drag::Slots {
+                button,
+                shift,
+                mut slots,
+            }) => {
+                if let Some(slot) = slot_hit {
+                    if !slots.contains(&slot) {
+                        slots.push(slot);
+                    }
+                }
+                fs.drag = Some(Drag::Slots {
+                    button,
+                    shift,
+                    slots,
+                });
+            }
             None => {}
         }
     }
 
     fn pointer_up(&self, fs: &mut FrameState, button: PointerButton, events: &mut Vec<UiEvent>) {
+        if let Some(Drag::Slots {
+            button: drag_button,
+            shift,
+            slots,
+        }) = fs.drag.clone()
+        {
+            if drag_button != button {
+                return;
+            }
+            fs.drag = None;
+            if slots.len() == 1 {
+                let (role, index) = slots.into_iter().next().expect("one slot");
+                events.push(UiEvent::SlotClick {
+                    role,
+                    index,
+                    button,
+                    shift,
+                });
+            } else if !slots.is_empty() {
+                events.push(UiEvent::SlotDrag { slots, button });
+            }
+            return;
+        }
         if let Some(Drag::Image {
             key,
             button: drag_button,

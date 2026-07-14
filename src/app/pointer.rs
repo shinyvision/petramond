@@ -245,11 +245,18 @@ impl App {
                 PointerButton::Secondary => petramond_ui::PointerButton::Secondary,
             };
             self.ui.push_input(if down {
+                let slot_drag = self.screen.ui_open()
+                    && !self.modifiers.shift
+                    && self
+                        .game
+                        .as_ref()
+                        .is_some_and(|game| game.cursor_has_stack());
                 petramond_ui::InputEvent::PointerDown {
                     x,
                     y,
                     button,
                     shift: self.modifiers.shift,
+                    slot_drag,
                 }
             } else {
                 petramond_ui::InputEvent::PointerUp { x, y, button }
@@ -287,6 +294,9 @@ impl App {
 
     pub fn release_pointer_buttons(&mut self) {
         self.pointer.release_buttons();
+        if self.doc_ui_kind().is_some() {
+            self.ui.push_input(petramond_ui::InputEvent::Blur);
+        }
         self.chat.pointer_up();
         self.audio.set_loop(None, super::now_seconds());
     }

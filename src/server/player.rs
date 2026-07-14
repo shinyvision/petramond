@@ -7,7 +7,7 @@
 //!
 //! Since Phase C2b input reaches a session only through `net::protocol`
 //! messages (`ServerGame::apply_message`): `PlayerUpdate` latches the
-//! transform, targeting, and held intents; `PlayerAction`/`MenuClick` latch the
+//! transform, targeting, and held intents; `PlayerAction`/menu actions latch the
 //! one-shot edges. The tick stages consume the latches exactly as before.
 
 use crate::block::RenderShape;
@@ -276,6 +276,16 @@ pub(crate) enum PendingMenuAction {
         button: PointerButton,
         shift: bool,
         gather: bool,
+        request_id: crate::net::protocol::ClientRequestId,
+    },
+    SlotDrag {
+        slots: Vec<MenuSlot>,
+        button: PointerButton,
+        request_id: crate::net::protocol::ClientRequestId,
+    },
+    DropSlot {
+        slot: MenuSlot,
+        all: bool,
         request_id: crate::net::protocol::ClientRequestId,
     },
     CraftRecipe {

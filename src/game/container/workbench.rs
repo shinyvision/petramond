@@ -2,7 +2,7 @@ use super::{ContainerMenu, ContainerTarget};
 use crate::crafting::Recipes;
 use crate::gui::WorkbenchView;
 use crate::inventory::Inventory;
-use crate::item::ItemType;
+use crate::item::{ItemStack, ItemType};
 
 impl ContainerMenu {
     pub(crate) fn open_workbench_view(&self, recipes: &Recipes) -> Option<WorkbenchView> {
@@ -98,6 +98,22 @@ impl ContainerMenu {
                 self.consume_workbench_input(recipe.cost);
             }
         }
+    }
+    /// Craft one virtual result directly into the drop sink. Furniture result
+    /// cells do not store a partial stack, so one activation always produces
+    /// the recipe's authored result stack and consumes its cost atomically.
+    pub(super) fn workbench_drop_result(
+        &mut self,
+        recipes: &Recipes,
+        i: usize,
+    ) -> Option<ItemStack> {
+        let input = self.workbench_input?;
+        let recipe = recipes.furniture_for(input.item).nth(i).copied()?;
+        if input.count < recipe.cost {
+            return None;
+        }
+        self.consume_workbench_input(recipe.cost);
+        Some(recipe.result)
     }
     fn consume_workbench_input(&mut self, cost: u8) {
         if let Some(stack) = &mut self.workbench_input {

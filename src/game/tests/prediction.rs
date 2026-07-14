@@ -4,8 +4,8 @@ use super::common::*;
 use crate::block::Block;
 use crate::controls::PointerButton;
 use crate::game::prediction::{self, PredictionSnapshot};
-use crate::game::tick::{PlacePrediction, TickEvents, TICK_DT};
-use crate::gui::MenuSlot;
+use crate::game::tick::{GameInput, PlacePrediction, TickEvents, TICK_DT};
+use crate::gui::{GuiKind, MenuSlot, WorkbenchHit};
 use crate::mathh::{IVec3, Vec3};
 use crate::net::protocol::{
     ActionDenyReason, ClientToServer, MenuSlotWire, PlayerAction, SelfTransform, TickUpdate,
@@ -36,6 +36,122 @@ fn menu_click_deny_restores_inventory_snapshot() {
         }
         other => panic!("expected inventory snapshot, got {other:?}"),
     }
+}
+
+#[test]
+fn mixed_menu_drag_prediction_rolls_back_as_one_unit_on_deny() {
+    let mut game = game();
+    game.game
+        .self_view
+        .inventory
+        .add(crate::item::ItemStack::new(
+            crate::item::ItemType::Grass,
+            10,
+        ));
+    game.game.self_view.inventory.click_slot(0);
+    game.game.menu_view.chest = Some(crate::gui::ChestView {
+        slots: [None; crate::world::chest::CHEST_SLOTS],
+    });
+
+    game.game.menu_drag(
+        GuiKind::Chest,
+        vec![MenuSlot::Inventory(9), MenuSlot::Chest(0)],
+        PointerButton::Primary,
+    );
+    assert!(game.game.self_view.inventory.cursor().is_none());
+    assert_eq!(
+        game.game
+            .self_view
+            .inventory
+            .slot(9)
+            .map(|stack| stack.count),
+        Some(5)
+    );
+    assert_eq!(
+        game.game.menu_view.chest.unwrap().slots[0].map(|stack| stack.count),
+        Some(5)
+    );
+
+    game.game.apply_tick_update(Box::new(TickUpdate {
+        action_outcomes: vec![prediction::deny(0, ActionDenyReason::Denied)],
+        ..Default::default()
+    }));
+    assert_eq!(
+        game.game
+            .self_view
+            .inventory
+            .cursor()
+            .map(|stack| stack.count),
+        Some(10)
+    );
+    assert!(game.game.self_view.inventory.slot(9).is_none());
+    assert!(game.game.menu_view.chest.unwrap().slots[0].is_none());
+}
+
+#[test]
+fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
+    let mut game = game();
+    game.server.open_workbench_screen_for(0);
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(crate::item::ItemStack::new(
+            crate::item::ItemType::Grass,
+            10,
+        ));
+    game.server.sessions[0].player.inventory.click_slot(0);
+    game.sync_self_view_for_test();
+    game.sync_menu_view_for_test();
+
+    game.game.menu_drag(
+        GuiKind::FurnitureWorkbench,
+        vec![
+            MenuSlot::Inventory(9),
+            MenuSlot::Workbench(WorkbenchHit::Input),
+        ],
+        PointerButton::Primary,
+    );
+    assert_eq!(game.game.prediction.pending_len(), 1);
+    assert!(game.game.self_view.inventory.cursor().is_none());
+    assert_eq!(
+        game.game
+            .self_view
+            .inventory
+            .slot(9)
+            .map(|stack| stack.count),
+        Some(5)
+    );
+    assert_eq!(
+        game.game
+            .menu_view
+            .workbench
+            .as_ref()
+            .and_then(|workbench| workbench.input)
+            .map(|stack| stack.count),
+        Some(5)
+    );
+
+    game.tick(TICK_DT, &GameInput::default());
+
+    assert_eq!(game.game.prediction.pending_len(), 0);
+    assert!(game.game.self_view.inventory.cursor().is_none());
+    assert_eq!(
+        game.game
+            .self_view
+            .inventory
+            .slot(9)
+            .map(|stack| stack.count),
+        Some(5)
+    );
+    assert_eq!(
+        game.game
+            .menu_view
+            .workbench
+            .as_ref()
+            .and_then(|workbench| workbench.input)
+            .map(|stack| stack.count),
+        Some(5)
+    );
 }
 
 #[test]

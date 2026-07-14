@@ -175,9 +175,11 @@ impl SelfView {
     }
 }
 
-/// The client's replicated MENU-session view, fed by [`MenuSyncMsg`]s (sent
-/// on-change only) — the exclusive source `Game::menu_read_model` renders
-/// from. Wire ids arrive already remapped to local ids.
+/// The client's MENU-session mirror, fed by [`MenuSyncMsg`]s (sent on-change
+/// only) and temporarily mutated by rollback-backed P1 menu predictions — the
+/// exclusive source `Game::menu_read_model` renders from. Wire ids arrive
+/// already remapped to local ids.
+#[derive(Clone, Debug)]
 pub(crate) struct MenuView {
     /// The real output produced by the last accepted CRAFT request.
     pub(crate) craft_output: Option<ItemStack>,
@@ -535,6 +537,19 @@ impl Game {
                         .is_none()
                     {
                         self.self_view.inventory = inv;
+                    }
+                }
+                crate::game::prediction::PredictionSnapshot::Menu { inventory, menu } => {
+                    if update
+                        .self_state
+                        .as_ref()
+                        .and_then(|s| s.inventory.as_ref())
+                        .is_none()
+                    {
+                        self.self_view.inventory = inventory;
+                    }
+                    if update.menu_sync.is_none() {
+                        self.menu_view = menu;
                     }
                 }
                 crate::game::prediction::PredictionSnapshot::World { inventory, cells } => {

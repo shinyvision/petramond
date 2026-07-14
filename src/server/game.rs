@@ -734,6 +734,35 @@ impl ServerGame {
                         request_id,
                     });
             }
+            ClientToServer::MenuDrag {
+                slots,
+                button,
+                request_id,
+            } => {
+                let slots = slots
+                    .into_iter()
+                    .take(crate::gui::MAX_MENU_DRAG_SLOTS)
+                    .map(|slot| slot.to_menu_slot())
+                    .collect();
+                self.sessions[s]
+                    .pending_menu_actions
+                    .push(PendingMenuAction::SlotDrag {
+                        slots,
+                        button: crate::net::protocol::button_from_wire(button),
+                        request_id,
+                    });
+            }
+            ClientToServer::MenuDrop {
+                slot,
+                all,
+                request_id,
+            } => self.sessions[s]
+                .pending_menu_actions
+                .push(PendingMenuAction::DropSlot {
+                    slot: slot.to_menu_slot(),
+                    all,
+                    request_id,
+                }),
             ClientToServer::CraftRecipe {
                 recipe,
                 bulk,

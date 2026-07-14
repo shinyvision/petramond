@@ -16,8 +16,8 @@ pub(crate) mod remap;
 
 /// Bumped on ANY wire-incompatible change. Checked first in the handshake —
 /// nothing else is parseable across a mismatch.
-// 18: column payload carries direct-skylight cover separately from visible surface.
-pub(crate) const PROTOCOL_VERSION: u16 = 18;
+// 19: menu drag/drop actions carry ordered logical slot identities.
+pub(crate) const PROTOCOL_VERSION: u16 = 19;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

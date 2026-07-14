@@ -877,6 +877,20 @@ pub(crate) enum ClientToServer {
         gather: bool,
         request_id: ClientRequestId,
     },
+    /// One cursor-stack distribution gesture. `slots` is the bounded,
+    /// first-hit order of distinct logical destinations; the server performs
+    /// the split atomically on the next deterministic tick.
+    MenuDrag {
+        slots: Vec<MenuSlotWire>,
+        button: u8,
+        request_id: ClientRequestId,
+    },
+    /// Drop one item or a whole stack directly from the hovered menu slot.
+    MenuDrop {
+        slot: MenuSlotWire,
+        all: bool,
+        request_id: ClientRequestId,
+    },
     /// Craft one stable, name-addressed recipe into the open crafting
     /// session's output slot (merging onto a same-item output stack). The
     /// server validates station, ingredients, and output fit on the next
@@ -1222,6 +1236,16 @@ mod tests {
             shift: false,
             gather: true,
             request_id: 3,
+        });
+        roundtrip(&ClientToServer::MenuDrag {
+            slots: vec![MenuSlotWire::Inventory(2), MenuSlotWire::Chest(4)],
+            button: 1,
+            request_id: 30,
+        });
+        roundtrip(&ClientToServer::MenuDrop {
+            slot: MenuSlotWire::FurnaceOutput,
+            all: true,
+            request_id: 31,
         });
         roundtrip(&ClientToServer::CraftRecipe {
             recipe: "kitchen:bread".into(),

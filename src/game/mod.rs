@@ -9,7 +9,7 @@
 //!
 //! Since Phase C2b input reaches the sim ONLY as [`crate::net::protocol`]
 //! messages: every frame the client translates its input + targeting into a
-//! `PlayerUpdate` (+ one-shot `Action`s/`MenuClick`s queued in
+//! `PlayerUpdate` (+ one-shot `Action`s/menu actions queued in
 //! [`Game::outbox`]) and sends them to the server. Since Phase D the server
 //! (`ServerGame`) runs on its OWN self-clocked thread behind a
 //! [`ServerHandle`] — the handoff is std::sync::mpsc channels of message
@@ -36,6 +36,7 @@ pub(crate) mod container;
 mod environment;
 mod frame;
 mod local_player;
+mod menu_prediction;
 pub(crate) mod prediction;
 pub(crate) mod presentation;
 pub(crate) mod remote_players;
@@ -178,8 +179,9 @@ pub struct Game {
     /// the HUD/hand/overlay read model (health, effects, inventory, mining,
     /// eating, sleeping).
     self_view: replicated::SelfView,
-    /// The client's replicated MENU-session view (`MenuSyncMsg`, on-change):
-    /// the EXCLUSIVE source `menu_read_model` renders container screens from.
+    /// The client's replicated MENU-session view (`MenuSyncMsg`, on-change),
+    /// including disposable P1 menu predictions until their outcomes arrive:
+    /// the exclusive source `menu_read_model` renders container screens from.
     menu_view: replicated::MenuView,
     /// Immutable enabled player-crafting catalog agreed at join. Remote
     /// clients use the server's name-addressed rows, never local pack files.
@@ -683,6 +685,64 @@ impl Game {
         });
     }
 
+    /// Drop from the hovered menu slot (Q / Ctrl-Q by default). Inventory
+    /// cells can be predicted locally; container and transient output cells
+    /// ride track-only until the authoritative menu tick applies them.
+    pub fn menu_drop(&mut self, slot: crate::gui::MenuSlot, all: bool) {
+        self.local_hand_threw |= self.menu_slot_has_stack(slot);
+        let (can, request_id) = if matches!(slot, crate::gui::MenuSlot::Inventory(_)) {
+            self.begin_inventory_prediction()
+        } else {
+            (false, self.prediction.begin_track_only())
+        };
+        if can {
+            if let crate::gui::MenuSlot::Inventory(i) = slot {
+                self.self_view.inventory.take_slot_for_drop(i, all);
+            }
+        }
+        self.outbox.push(ClientToServer::MenuDrop {
+            slot: MenuSlotWire::from_menu_slot(&slot),
+            all,
+            request_id,
+        });
+    }
+
+    fn menu_slot_has_stack(&self, slot: crate::gui::MenuSlot) -> bool {
+        use crate::gui::{FurnaceHit, MenuSlot, WorkbenchHit};
+        match slot {
+            MenuSlot::Inventory(i) => self.self_view.inventory.slot(i).is_some(),
+            MenuSlot::CraftResult => self.menu_view.craft_output.is_some(),
+            MenuSlot::Furnace(hit) => self.menu_view.furnace.is_some_and(|furnace| match hit {
+                FurnaceHit::Input => furnace.input.is_some(),
+                FurnaceHit::Fuel => furnace.fuel.is_some(),
+                FurnaceHit::Output => furnace.output.is_some(),
+            }),
+            MenuSlot::Chest(i) => self
+                .menu_view
+                .chest
+                .and_then(|chest| chest.slots.get(i).copied().flatten())
+                .is_some(),
+            MenuSlot::Workbench(WorkbenchHit::Input) => self
+                .menu_view
+                .workbench
+                .as_ref()
+                .is_some_and(|workbench| workbench.input.is_some()),
+            MenuSlot::Workbench(WorkbenchHit::Result(i)) => self
+                .menu_view
+                .workbench
+                .as_ref()
+                .and_then(|workbench| workbench.results.get(i))
+                .is_some_and(|(_, craftable)| *craftable),
+            MenuSlot::Container(i) => self
+                .menu_view
+                .container
+                .as_ref()
+                .and_then(|container| container.slots.get(i).copied().flatten())
+                .is_some(),
+            MenuSlot::Widget(_) => false,
+        }
+    }
+
     /// Request one explicit craft by stable recipe key (`bulk` = shift-craft
     /// the maximum possible). The authoritative server revalidates station,
     /// ingredients, and output fit.
@@ -795,10 +855,8 @@ impl Game {
     }
 
     /// Read-only state needed to build the UI snapshot for the LOCAL player's
-    /// current menu — assembled ENTIRELY from the replicated stores: the
-    /// inventory from `SelfView`, the menu-session views (craft output, furnace,
-    /// chest, workbench, mod GUI slots + state map) from the `MenuView` the
-    /// per-tick `MenuSyncMsg`s feed. No server-session reads.
+    /// current menu — assembled from the client mirrors: replicated state plus
+    /// any unresolved P1 prediction. No server-session reads.
     pub fn menu_read_model(&self) -> crate::server::menu::MenuReadModel<'_> {
         let view = &self.menu_view;
         crate::server::menu::MenuReadModel {

@@ -293,6 +293,50 @@ impl AppUi {
         &self.out
     }
 
+    /// Resolve the current physical cursor position against the last solved
+    /// document frame. Raw key events can arrive before the queued pointer
+    /// move is framed, so hovered-slot keyboard actions hit-test here instead
+    /// of trusting the previous frame's cached `hover_slot`.
+    pub fn menu_slot_at(&self, x: f32, y: f32) -> Option<crate::gui::MenuSlot> {
+        let (_, viewport) = self.frame_stamp?;
+        if viewport.generation != self.viewport_generation {
+            return None;
+        }
+        self.out.slots.iter().rev().find_map(|slot| {
+            let rect = slot.rect;
+            let inside = x >= rect.x as f32
+                && x < (rect.x + rect.w) as f32
+                && y >= rect.y as f32
+                && y < (rect.y + rect.h) as f32;
+            if !inside {
+                return None;
+            }
+            crate::gui::Role::from_key(&slot.role)
+                .and_then(|role| role.menu_slot(slot.index as usize))
+        })
+    }
+
+    /// Resolve the active cursor-stack gesture into game-owned slot ids for
+    /// presentation. This never latches or mutates gameplay state; release
+    /// still emits the one authoritative `SlotDrag` event.
+    pub fn menu_drag_preview(
+        &self,
+    ) -> Option<(Vec<crate::gui::MenuSlot>, petramond_ui::PointerButton)> {
+        let (_, viewport) = self.frame_stamp?;
+        if viewport.generation != self.viewport_generation {
+            return None;
+        }
+        let (button, slots) = self.fs.slot_drag()?;
+        let slots: Vec<_> = slots
+            .iter()
+            .take(crate::gui::MAX_MENU_DRAG_SLOTS)
+            .filter_map(|(role, index)| {
+                crate::gui::Role::from_key(role).and_then(|role| role.menu_slot(*index as usize))
+            })
+            .collect();
+        (!slots.is_empty()).then_some((slots, button))
+    }
+
     pub fn draw_mut(&mut self) -> &mut petramond_ui::DrawList {
         &mut self.out.draw
     }

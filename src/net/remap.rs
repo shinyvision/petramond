@@ -340,8 +340,8 @@ impl IdRemap {
             return;
         }
         match msg {
-            // MenuClick carries slot indices + widget-name strings and
-            // CraftRecipe carries a stable recipe name; neither needs an id
+            // Menu slot actions carry indices + widget-name strings and
+            // CraftRecipe carries a stable recipe name; none needs an id
             // remap.
             ClientToServer::Hello { .. }
             | ClientToServer::ModQuery
@@ -351,6 +351,8 @@ impl IdRemap {
             | ClientToServer::PlayerUpdate(_)
             | ClientToServer::Action(_)
             | ClientToServer::MenuClick { .. }
+            | ClientToServer::MenuDrag { .. }
+            | ClientToServer::MenuDrop { .. }
             | ClientToServer::CraftRecipe { .. }
             | ClientToServer::ChatSend { .. }
             | ClientToServer::StreamBatchAck { .. }

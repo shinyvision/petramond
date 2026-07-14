@@ -364,10 +364,19 @@ impl App {
                 true
             }
             ControlEvent::DropItem => {
-                // Drops the held item only while playing (not in a menu).
-                // Holding the SPRINT key (wherever it's bound) drops the
-                // whole stack.
-                if self.screen.gameplay_enabled() {
+                if self.screen.ui_open() {
+                    let (x, y) = self.pointer.cursor();
+                    if let (Some(slot), Some(game)) =
+                        (self.ui.menu_slot_at(x, y), self.game.as_mut())
+                    {
+                        // Menu shortcuts deliberately use the physical Ctrl
+                        // modifier; movement bindings do not redefine GUI
+                        // conventions.
+                        game.menu_drop(slot, self.modifiers.ctrl);
+                    }
+                } else if self.screen.gameplay_enabled() {
+                    // In captured gameplay, holding the SPRINT control
+                    // (wherever it is bound) drops the selected whole stack.
                     let whole_stack = self.input.sprint_held();
                     if let Some(game) = self.game.as_mut() {
                         game.drop_selected_item(whole_stack);

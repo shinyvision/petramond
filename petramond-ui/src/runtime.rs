@@ -423,6 +423,7 @@ mod tests {
             y,
             button: PointerButton::Primary,
             shift: false,
+            slot_drag: false,
         }
     }
 
@@ -665,6 +666,7 @@ mod tests {
                 y: cy,
                 button: PointerButton::Secondary,
                 shift: true,
+                slot_drag: false,
             }],
             &mut fs,
             &mut out,
@@ -676,6 +678,121 @@ mod tests {
         );
         // Hover reporting names the same cell.
         assert_eq!(out.hover_slot, Some(("storage".into(), 4)));
+    }
+
+    #[test]
+    fn slot_drag_reports_each_cell_once_and_resets_after_release() {
+        let doc = Arc::new(
+            Document::from_json(
+                r#"{
+                "format": 1, "kind": "petramond:test_drag", "class": "container",
+                "root": { "type": "column", "children": [
+                    { "type": "slot_grid", "role": "storage", "cols": 3, "rows": 2 },
+                    { "type": "slot", "role": "storage" }
+                ] }
+            }"#,
+            )
+            .unwrap(),
+        );
+        let rt = UiRuntime::new(doc, Arc::new(Theme::placeholder()));
+        let mut fs = FrameState::new();
+        let mut out = FrameOutput::default();
+        let state = UiState::new();
+        let frame = |input: &[InputEvent], fs: &mut FrameState, out: &mut FrameOutput| {
+            rt.frame(
+                FrameArgs {
+                    screen: (300, 300),
+                    scale: 2,
+                    now: 0.0,
+                    state: &state,
+                    input,
+                    clipboard: None,
+                    images: &NoImages,
+                    dim: None,
+                    preview: None,
+                },
+                fs,
+                out,
+            );
+            out.events.clone()
+        };
+        frame(&[], &mut fs, &mut out);
+        let centre = |index| {
+            let rect = out
+                .slots
+                .iter()
+                .find(|slot| slot.index == index)
+                .unwrap()
+                .rect;
+            ((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32)
+        };
+        let one = centre(1);
+        let four = centre(4);
+        let six = centre(6);
+
+        let drag = |x, y| InputEvent::PointerMove { x, y };
+        let down = |(x, y)| InputEvent::PointerDown {
+            x,
+            y,
+            button: PointerButton::Secondary,
+            shift: false,
+            slot_drag: true,
+        };
+        let up = |(x, y)| InputEvent::PointerUp {
+            x,
+            y,
+            button: PointerButton::Secondary,
+        };
+        let events = frame(
+            &[
+                down(one),
+                drag(four.0, four.1),
+                drag(one.0, one.1),
+                drag(six.0, six.1),
+            ],
+            &mut fs,
+            &mut out,
+        );
+        assert!(events.is_empty(), "the gesture commits only on release");
+        assert_eq!(
+            fs.slot_drag(),
+            Some((
+                PointerButton::Secondary,
+                &[
+                    ("storage".into(), 1),
+                    ("storage".into(), 4),
+                    ("storage".into(), 6),
+                ][..],
+            )),
+            "the host can render every distinct hit while the press is active"
+        );
+
+        let events = frame(&[up(six)], &mut fs, &mut out);
+        assert_eq!(
+            events,
+            vec![UiEvent::SlotDrag {
+                slots: vec![
+                    ("storage".into(), 1),
+                    ("storage".into(), 4),
+                    ("storage".into(), 6),
+                ],
+                button: PointerButton::Secondary,
+            }]
+        );
+
+        let events = frame(
+            &[down(one), drag(four.0, four.1), up(four)],
+            &mut fs,
+            &mut out,
+        );
+        assert_eq!(
+            events,
+            vec![UiEvent::SlotDrag {
+                slots: vec![("storage".into(), 1), ("storage".into(), 4)],
+                button: PointerButton::Secondary,
+            }],
+            "a fresh press may hit the same slots again"
+        );
     }
 
     #[test]

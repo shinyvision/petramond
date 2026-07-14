@@ -1,4 +1,4 @@
-use crate::item::ItemStack;
+use crate::item::{ItemStack, ItemType};
 pub(crate) fn insert_into_slots(
     slots: &mut [Option<ItemStack>],
     mut stack: ItemStack,
@@ -37,21 +37,94 @@ pub(crate) fn insert_into_slots(
     Some(stack)
 }
 
-/// Move `stack` onto the cursor if it fits: an empty cursor takes it whole; a
-/// matching cursor stack absorbs it when there is room. `false` = untouched
-/// (a full or mismatched cursor) — take-only output clicks gate on this.
-pub(crate) fn stack_onto_cursor(cursor: &mut Option<ItemStack>, stack: ItemStack) -> bool {
-    match cursor {
-        None => {
-            *cursor = Some(stack);
-            true
-        }
-        Some(cur) if cur.can_stack_with(&stack) && cur.space_left() >= stack.count => {
-            cur.count += stack.count;
-            true
-        }
-        _ => false,
+/// How many items of `item` a storage cell can accept without swapping its
+/// contents. This is the placement capacity used by slot-drag distribution.
+pub(crate) fn slot_capacity(slot: &Option<ItemStack>, item: ItemType) -> u8 {
+    match slot {
+        None => item.max_stack_size(),
+        Some(existing) if existing.item == item => existing.space_left(),
+        Some(_) => 0,
     }
+}
+
+/// Plan the per-destination counts for one ordered slot-drag gesture. The
+/// capacity callback filters incompatible/full cells before primary-button
+/// division, while actual placement remains responsible for capacity limits.
+/// This pure plan is shared by authoritative mutation and its visual preview.
+pub(crate) fn plan_drag_distribution<T: Copy + Eq>(
+    hits: &[T],
+    held_count: u8,
+    one_each: bool,
+    mut capacity: impl FnMut(T) -> u8,
+) -> Vec<(T, u8)> {
+    if held_count == 0 {
+        return Vec::new();
+    }
+
+    let mut destinations = Vec::new();
+    for &slot in hits {
+        if !destinations.contains(&slot) && capacity(slot) > 0 {
+            destinations.push(slot);
+        }
+    }
+    if destinations.is_empty() {
+        return Vec::new();
+    }
+
+    let (share, remainder) = if one_each {
+        (1, 0)
+    } else {
+        let slots = destinations.len() as u32;
+        (
+            (u32::from(held_count) / slots) as u8,
+            (u32::from(held_count) % slots) as u8,
+        )
+    };
+    let last = destinations.len() - 1;
+    destinations
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, slot)| {
+            let wanted = share + u8::from(index == last) * remainder;
+            (wanted > 0).then_some((slot, wanted))
+        })
+        .collect()
+}
+
+/// Move at most `wanted` items from the cursor into a compatible storage
+/// cell. Unlike an ordinary primary click this never swaps mismatched stacks.
+pub(crate) fn place_cursor_count(
+    cursor: &mut Option<ItemStack>,
+    slot: &mut Option<ItemStack>,
+    wanted: u8,
+) -> u8 {
+    let Some(mut held) = cursor.take() else {
+        return 0;
+    };
+    let moved = wanted.min(held.count).min(slot_capacity(slot, held.item));
+    if moved > 0 {
+        match slot {
+            None => *slot = Some(ItemStack::new(held.item, moved)),
+            Some(existing) => existing.count += moved,
+        }
+        held.count -= moved;
+    }
+    *cursor = (held.count > 0).then_some(held);
+    moved
+}
+
+/// Remove one item or a whole stack from a concrete slot.
+pub(crate) fn take_slot_stack(slot: &mut Option<ItemStack>, all: bool) -> Option<ItemStack> {
+    if all {
+        return slot.take();
+    }
+    let stack = slot.as_mut()?;
+    let item = stack.item;
+    stack.count -= 1;
+    if stack.count == 0 {
+        *slot = None;
+    }
+    Some(ItemStack::new(item, 1))
 }
 
 /// Merge `src` into `dst`: fill an empty `dst`, top up a matching stack to
@@ -318,6 +391,51 @@ impl Inventory {
         self.bump_revision();
         Self::apply_right_click(&mut self.cursor, slot);
     }
+    /// Click a take-only output. Primary takes the whole output when it fits;
+    /// secondary takes half onto an empty cursor, or one onto a compatible
+    /// cursor. The held cursor stack is never placed into the output cell.
+    pub(crate) fn click_take_only_external_slot(
+        &mut self,
+        slot: &mut Option<ItemStack>,
+        secondary: bool,
+    ) {
+        self.bump_revision();
+        Self::apply_take_only_click(&mut self.cursor, slot, secondary);
+    }
+
+    fn apply_take_only_click(
+        cursor: &mut Option<ItemStack>,
+        slot: &mut Option<ItemStack>,
+        secondary: bool,
+    ) {
+        let Some(mut output) = slot.take() else {
+            return;
+        };
+        let moved = match cursor.as_ref() {
+            None if secondary => output.count - output.count / 2,
+            None => output.count,
+            Some(held) if held.can_stack_with(&output) => {
+                if secondary {
+                    held.space_left().min(1)
+                } else if held.space_left() >= output.count {
+                    output.count
+                } else {
+                    0
+                }
+            }
+            Some(_) => 0,
+        };
+        if moved == 0 {
+            *slot = Some(output);
+            return;
+        }
+        match cursor {
+            None => *cursor = Some(ItemStack::new(output.item, moved)),
+            Some(held) => held.count += moved,
+        }
+        output.count -= moved;
+        *slot = (output.count > 0).then_some(output);
+    }
     fn apply_right_click(cursor: &mut Option<ItemStack>, slot: &mut Option<ItemStack>) {
         match (cursor.take(), slot.take()) {
             (None, None) => {}
@@ -346,6 +464,31 @@ impl Inventory {
                 }
             }
         }
+    }
+    pub(crate) fn place_cursor_count_in_slot(&mut self, i: usize, wanted: u8) -> u8 {
+        if i >= TOTAL_SLOTS || wanted == 0 {
+            return 0;
+        }
+        self.bump_revision();
+        place_cursor_count(&mut self.cursor, &mut self.slots[i], wanted)
+    }
+    pub(crate) fn place_cursor_count_in_external_slot(
+        &mut self,
+        slot: &mut Option<ItemStack>,
+        wanted: u8,
+    ) -> u8 {
+        if wanted == 0 {
+            return 0;
+        }
+        self.bump_revision();
+        place_cursor_count(&mut self.cursor, slot, wanted)
+    }
+    pub(crate) fn take_slot_for_drop(&mut self, i: usize, all: bool) -> Option<ItemStack> {
+        if i >= TOTAL_SLOTS || self.slots[i].is_none() {
+            return None;
+        }
+        self.bump_revision();
+        take_slot_stack(&mut self.slots[i], all)
     }
     pub fn can_add(&self, stack: ItemStack) -> bool {
         if stack.is_empty() {

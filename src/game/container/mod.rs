@@ -4,6 +4,7 @@ mod furnace;
 mod generic;
 mod state;
 mod target;
+mod transport;
 mod workbench;
 
 pub(crate) use crafting::CraftMenuFailure;
@@ -75,12 +76,131 @@ mod tests {
             Some(ItemStack::new(ItemType::Coal, 1))
         );
 
-        menu.craft_take_output(&mut inv, false);
+        menu.craft_take_output(&mut inv, PointerButton::Primary, false);
         assert_eq!(
             inv.cursor().copied(),
             Some(ItemStack::new(ItemType::Stick, 2))
         );
         assert!(menu.craft_output().is_none());
+    }
+
+    #[test]
+    fn secondary_click_takes_half_from_take_only_outputs() {
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        let mut world = world_with_empty_chunk();
+        menu.open_crafting(CraftingStation::Inventory);
+        menu.craft_output = Some(ItemStack::new(ItemType::Stick, 5));
+
+        menu.click(
+            &mut world,
+            &mut inv,
+            &recipes(),
+            MenuSlot::CraftResult,
+            PointerButton::Secondary,
+            false,
+            false,
+        );
+
+        assert_eq!(
+            inv.cursor().copied(),
+            Some(ItemStack::new(ItemType::Stick, 3))
+        );
+        assert_eq!(
+            menu.craft_output(),
+            Some(ItemStack::new(ItemType::Stick, 2))
+        );
+
+        let pos = IVec3::new(2, 64, 2);
+        world.set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
+        world.insert_furnace(pos, Facing::North);
+        world.container_at_mut(pos).unwrap().slots[crate::furnace::SLOT_OUTPUT] =
+            Some(ItemStack::new(ItemType::IronIngot, 5));
+        menu.open_furnace_screen(&mut world, pos);
+        *inv.cursor_mut() = None;
+
+        menu.click(
+            &mut world,
+            &mut inv,
+            &recipes(),
+            MenuSlot::Furnace(crate::gui::FurnaceHit::Output),
+            PointerButton::Secondary,
+            false,
+            false,
+        );
+
+        assert_eq!(
+            inv.cursor().copied(),
+            Some(ItemStack::new(ItemType::IronIngot, 3))
+        );
+        assert_eq!(
+            world.container_at(pos).unwrap().slots[crate::furnace::SLOT_OUTPUT],
+            Some(ItemStack::new(ItemType::IronIngot, 2))
+        );
+    }
+
+    #[test]
+    fn primary_drag_splits_across_player_and_container_slots_in_hit_order() {
+        let mut world = world_with_empty_chunk();
+        let mut menu = ContainerMenu::new();
+        let pos = IVec3::new(3, 64, 3);
+        world.set_block_world(pos.x, pos.y, pos.z, Block::Chest);
+        world.insert_chest(pos, Facing::North);
+        menu.open_chest_screen(&mut world, pos);
+
+        let mut inv = Inventory::new();
+        inv.add(ItemStack::new(ItemType::Grass, 10));
+        inv.click_slot(0);
+        menu.drag_slots(
+            &mut world,
+            &mut inv,
+            &[
+                MenuSlot::Inventory(9),
+                MenuSlot::Chest(0),
+                MenuSlot::Inventory(9),
+                MenuSlot::Chest(1),
+            ],
+            PointerButton::Primary,
+        );
+
+        assert!(inv.cursor().is_none());
+        assert_eq!(
+            inv.slot(9).copied(),
+            Some(ItemStack::new(ItemType::Grass, 3))
+        );
+        let chest = world.container_at(pos).unwrap();
+        assert_eq!(chest.slots[0], Some(ItemStack::new(ItemType::Grass, 3)));
+        assert_eq!(
+            chest.slots[1],
+            Some(ItemStack::new(ItemType::Grass, 4)),
+            "the uneven remainder belongs to the last distinct hit"
+        );
+    }
+
+    #[test]
+    fn hovered_slot_drop_removes_one_or_the_whole_container_stack() {
+        let mut world = world_with_empty_chunk();
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        let pos = IVec3::new(4, 64, 4);
+        world.set_block_world(pos.x, pos.y, pos.z, Block::Chest);
+        world.insert_chest(pos, Facing::North);
+        world.container_at_mut(pos).unwrap().slots[0] = Some(ItemStack::new(ItemType::Coal, 5));
+        menu.open_chest_screen(&mut world, pos);
+
+        assert_eq!(
+            menu.drop_slot(&mut world, &mut inv, &recipes(), MenuSlot::Chest(0), false),
+            Some(ItemStack::new(ItemType::Coal, 1))
+        );
+        assert_eq!(
+            world.container_at(pos).unwrap().slots[0],
+            Some(ItemStack::new(ItemType::Coal, 4))
+        );
+        assert_eq!(
+            menu.drop_slot(&mut world, &mut inv, &recipes(), MenuSlot::Chest(0), true),
+            Some(ItemStack::new(ItemType::Coal, 4))
+        );
+        assert!(world.container_at(pos).unwrap().slots[0].is_none());
     }
 
     #[test]

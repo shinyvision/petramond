@@ -7,6 +7,8 @@ use crate::inventory::Inventory;
 use crate::mathh::IVec3;
 use crate::net::protocol::{ActionDenyReason, ActionOutcome, ClientRequestId};
 
+use super::replicated::MenuView;
+
 /// Max in-flight predicted requests with snapshots; further local mutation
 /// freezes until the server catches up. Ids still allocate so the wire stays
 /// ordered.
@@ -17,10 +19,15 @@ pub(crate) const LEDGER_CAP: usize = 32;
 pub(crate) enum PredictionSnapshot {
     /// No local mutation to undo (P0 presentation / track-only).
     None,
-    /// Inventory (+ optional craft/chest/furnace/workbench/container views are
-    /// restored by re-applying the last authoritative menu sync — inventory is
-    /// the primary rollback target for P1 menu clicks / drops).
+    /// Inventory-only prediction used by ordinary clicks and drops.
     Inventory(Inventory),
+    /// One atomic menu transport prediction. Both halves must roll back
+    /// together because a drag may span player inventory and an open block
+    /// container.
+    Menu {
+        inventory: Inventory,
+        menu: MenuView,
+    },
     /// A predicted world mutation: optional pre-mutation inventory (place
     /// hotbar decrement) plus every replica cell written, with the previous
     /// block id. Multi-cell clears (door, model) list the full footprint.

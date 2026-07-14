@@ -204,8 +204,8 @@ mod tests {
         // Holding Q does not repeat the drop.
         assert_eq!(input.set_control(Control::DropItem, true), None);
         assert_eq!(input.set_control(Control::DropItem, false), None);
-        // Next press fires again. Whole-stack vs single (the Ctrl modifier) is the
-        // App's concern, no longer encoded in the event.
+        // Next press fires again. Whole-stack vs single is contextual App
+        // policy, no longer encoded in the event.
         assert_eq!(
             input.set_control(Control::DropItem, true),
             Some(ControlEvent::DropItem)

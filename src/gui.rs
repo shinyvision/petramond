@@ -20,6 +20,12 @@ use std::sync::Arc;
 pub use kind::GuiKind;
 pub(crate) use kind::{intern_kind, intern_str, kind_key, resolve_kind};
 
+/// Maximum distinct destination cells one pointer gesture can ship. The
+/// largest supported menu is a 54-slot generic container plus all 36 player
+/// inventory slots.
+pub(crate) const MAX_MENU_DRAG_SLOTS: usize =
+    crate::container::MAX_CONTAINER_SLOTS + crate::inventory::TOTAL_SLOTS;
+
 /// One value of the open GUI session's state map: written by mods on the tick
 /// (`GuiStateSet`), read per frame by the renderer for `label` text, `rotimage`
 /// angles (radians, `F32`), and mod overlay fractions.

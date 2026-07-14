@@ -67,6 +67,11 @@ impl App {
         self.compose_client_overlays(screen_size);
         let doc_slots = doc_kind.map(|_| self.ui.doc_slots());
         let doc_hooks = doc_kind.map(|_| self.ui.doc_hooks());
+        let menu_drag_preview = self
+            .screen
+            .ui_open()
+            .then(|| self.ui.menu_drag_preview())
+            .flatten();
 
         let Some(game) = self.game.as_mut() else {
             // No session, no health bar: a fresh world must never wiggle off a
@@ -88,7 +93,7 @@ impl App {
                 false,
                 None,
             );
-            let mut ui = ui_snapshot::build(None, self.screen, self.pointer.cursor());
+            let mut ui = ui_snapshot::build(None, self.screen, self.pointer.cursor(), None);
             if let Some(kind) = doc_kind {
                 ui.kind = kind;
             }
@@ -261,7 +266,11 @@ impl App {
             self.scene.bake(&presentation, shake.flash);
         }
         self.scene.upload(renderer);
-        let mut ui = ui_snapshot::build(Some(game), self.screen, self.pointer.cursor());
+        let drag_preview = menu_drag_preview
+            .as_ref()
+            .map(|(slots, button)| (slots.as_slice(), *button));
+        let mut ui =
+            ui_snapshot::build(Some(game), self.screen, self.pointer.cursor(), drag_preview);
         ui.craft_recipes
             .extend(self.crafting_browser.views().cloned());
         if let Some(kind) = doc_kind {

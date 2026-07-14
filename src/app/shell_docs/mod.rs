@@ -154,7 +154,8 @@ impl App {
 
     /// Drive one frame of a document-backed GAME MENU (mod GUIs and
     /// containers): bound values come from the tick-owned GUI state map and
-    /// the container views; slot + widget clicks latch to the tick as
+    /// the container views; slot clicks/drags/drops and widget clicks latch
+    /// to the tick as
     /// [`crate::gui::MenuSlot`] clicks — the same deterministic path the
     /// legacy hit-test used. Off-panel presses throw the cursor stack.
     pub(super) fn drive_doc_menu(&mut self, kind: GuiKind, screen: (u32, u32), now: f64) {
@@ -241,6 +242,19 @@ impl App {
                             .doc_gather(slot, button, shift, now, cursor_has_stack);
                     if let Some(game) = self.game.as_mut() {
                         game.menu_click(slot, button, shift, gather);
+                    }
+                }
+                petramond_ui::UiEvent::SlotDrag { slots, button } => {
+                    self.gui_router.reset_click_streak();
+                    let slots = slots
+                        .into_iter()
+                        .filter_map(|(role, index)| {
+                            crate::gui::Role::from_key(&role)
+                                .and_then(|role| role.menu_slot(index as usize))
+                        })
+                        .collect();
+                    if let Some(game) = self.game.as_mut() {
+                        game.menu_drag(kind, slots, to_button(button));
                     }
                 }
                 petramond_ui::UiEvent::ClickOutside { button } => {

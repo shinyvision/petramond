@@ -49,6 +49,10 @@ pub enum InputEvent {
         y: f32,
         button: PointerButton,
         shift: bool,
+        /// The host says a cursor-held item may start a slot-distribution
+        /// gesture. The runtime then captures distinct slot cells until the
+        /// matching release instead of firing the initial slot immediately.
+        slot_drag: bool,
     },
     PointerUp {
         x: f32,
@@ -119,13 +123,20 @@ pub enum UiEvent {
         id: String,
         index: u32,
     },
-    /// A pointer press on a slot cell. The host maps `(role, index)` to its
-    /// own slot identity and latches it to the tick.
+    /// An ordinary pointer activation on a slot cell. The host maps
+    /// `(role, index)` to its own slot identity and latches it to the tick.
     SlotClick {
         role: String,
         index: u32,
         button: PointerButton,
         shift: bool,
+    },
+    /// A cursor-held stack dragged across two or more distinct slot cells.
+    /// Cells stay in first-hit order and never repeat within one press; the
+    /// host owns the item-distribution policy and authoritative mutation.
+    SlotDrag {
+        slots: Vec<(String, u32)>,
+        button: PointerButton,
     },
     /// A press that hit nothing, outside the root panel (cursor-stack throw).
     ClickOutside {
@@ -157,6 +168,12 @@ pub(crate) enum Drag {
     Image {
         key: InstKey,
         button: PointerButton,
+    },
+    Slots {
+        button: PointerButton,
+        shift: bool,
+        /// Distinct `(role, in-role index)` cells in first-hit order.
+        slots: Vec<(String, u32)>,
     },
 }
 
@@ -202,6 +219,16 @@ impl FrameState {
 
     pub fn focused(&self) -> Option<&InstKey> {
         self.focus.as_ref()
+    }
+
+    /// The active cursor-stack distribution gesture, for presentation-only
+    /// host feedback. The ordered cells are the same de-duplicated hits that
+    /// will be emitted in [`UiEvent::SlotDrag`] on release.
+    pub fn slot_drag(&self) -> Option<(PointerButton, &[(String, u32)])> {
+        match &self.drag {
+            Some(Drag::Slots { button, slots, .. }) => Some((*button, slots)),
+            _ => None,
+        }
     }
 
     /// Focus a text input by key, creating its editor pre-loaded with `text`.

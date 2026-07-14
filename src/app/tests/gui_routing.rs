@@ -1,6 +1,6 @@
 use super::{
-    app, app_with_grass, cursor_over_craft_result, cursor_over_slot, cursor_over_widget,
-    panel_gap_point,
+    app, app_with_grass, cursor_over_craft_result, cursor_over_menu, cursor_over_slot,
+    cursor_over_widget, panel_gap_point,
 };
 use crate::controls::{Control, Modifiers};
 use crate::item::{ItemStack, ItemType};
@@ -366,6 +366,191 @@ fn route_inventory_right_click_splits_slot_stack() {
     assert!(consumed);
     assert_eq!(app.inventory().cursor().unwrap().count, 32);
     assert_eq!(app.inventory().slot(0).unwrap().count, 32);
+}
+
+#[test]
+fn primary_drag_preview_redivides_slots_before_release() {
+    let mut app = app();
+    app.add_to_inventory(ItemStack::new(ItemType::Grass, 10));
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280, 720);
+    let source = cursor_over_slot(&mut app, screen, 0);
+    app.set_cursor_position(source.0, source.1);
+    app.click_screen_for_test(screen, 0.0);
+
+    let destinations = [
+        crate::gui::MenuSlot::Inventory(9),
+        crate::gui::MenuSlot::Inventory(10),
+        crate::gui::MenuSlot::Inventory(11),
+    ];
+    let points: Vec<_> = destinations
+        .iter()
+        .map(|&slot| cursor_over_menu(&mut app, screen, slot))
+        .collect();
+    let kind = app.doc_ui_kind().expect("inventory document");
+
+    app.set_cursor_position(points[0].0, points[0].1);
+    app.set_pointer_button(crate::controls::PointerButton::Primary, true);
+    app.drive_doc_menu(kind, screen, 0.1);
+    let preview = app.menu_snapshot_for_test();
+    assert_eq!(preview.slots[9], Some((ItemType::Grass, 10)));
+    assert!(preview.cursor.is_none());
+
+    app.set_cursor_position(points[1].0, points[1].1);
+    app.drive_doc_menu(kind, screen, 0.2);
+    let preview = app.menu_snapshot_for_test();
+    assert_eq!(preview.slots[9], Some((ItemType::Grass, 5)));
+    assert_eq!(preview.slots[10], Some((ItemType::Grass, 5)));
+
+    app.set_cursor_position(points[0].0, points[0].1);
+    app.drive_doc_menu(kind, screen, 0.3);
+    let preview = app.menu_snapshot_for_test();
+    assert_eq!(preview.slots[9], Some((ItemType::Grass, 5)));
+    assert_eq!(preview.slots[10], Some((ItemType::Grass, 5)));
+
+    app.set_cursor_position(points[2].0, points[2].1);
+    app.drive_doc_menu(kind, screen, 0.4);
+    let preview = app.menu_snapshot_for_test();
+    assert_eq!(preview.slots[9], Some((ItemType::Grass, 3)));
+    assert_eq!(preview.slots[10], Some((ItemType::Grass, 3)));
+    assert_eq!(preview.slots[11], Some((ItemType::Grass, 4)));
+    assert!(preview.cursor.is_none());
+
+    assert_eq!(app.inventory().cursor().map(|stack| stack.count), Some(10));
+    assert!(app.inventory().slot(9).is_none());
+    assert!(app.inventory().slot(10).is_none());
+    assert!(app.inventory().slot(11).is_none());
+
+    app.set_pointer_button(crate::controls::PointerButton::Primary, false);
+    app.drive_doc_menu(kind, screen, 0.5);
+    let released = app.menu_snapshot_for_test();
+    assert_eq!(released.slots[9], Some((ItemType::Grass, 3)));
+    assert_eq!(released.slots[10], Some((ItemType::Grass, 3)));
+    assert_eq!(released.slots[11], Some((ItemType::Grass, 4)));
+    assert!(
+        released.cursor.is_none(),
+        "release keeps the predicted frame"
+    );
+    assert!(
+        app.inventory().slot(9).is_none(),
+        "the server has not applied the release yet"
+    );
+    app.apply_latched_actions_for_test();
+    assert_eq!(app.inventory().slot(9).map(|stack| stack.count), Some(3));
+    assert_eq!(app.inventory().slot(10).map(|stack| stack.count), Some(3));
+    assert_eq!(app.inventory().slot(11).map(|stack| stack.count), Some(4));
+}
+
+#[test]
+fn secondary_drag_preview_places_one_on_each_new_slot_before_release() {
+    let mut app = app();
+    app.add_to_inventory(ItemStack::new(ItemType::Grass, 5));
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280, 720);
+    let source = cursor_over_slot(&mut app, screen, 0);
+    app.set_cursor_position(source.0, source.1);
+    app.click_screen_for_test(screen, 0.0);
+
+    let first = cursor_over_slot(&mut app, screen, 9);
+    let second = cursor_over_slot(&mut app, screen, 10);
+    let kind = app.doc_ui_kind().expect("inventory document");
+    app.set_cursor_position(first.0, first.1);
+    app.set_pointer_button(crate::controls::PointerButton::Secondary, true);
+    app.drive_doc_menu(kind, screen, 0.1);
+    let preview = app.menu_snapshot_for_test();
+    assert_eq!(preview.slots[9], Some((ItemType::Grass, 1)));
+    assert_eq!(preview.cursor, Some((ItemType::Grass, 4)));
+
+    app.set_cursor_position(second.0, second.1);
+    app.drive_doc_menu(kind, screen, 0.2);
+    app.set_cursor_position(first.0, first.1);
+    app.drive_doc_menu(kind, screen, 0.3);
+    let preview = app.menu_snapshot_for_test();
+    assert_eq!(preview.slots[9], Some((ItemType::Grass, 1)));
+    assert_eq!(preview.slots[10], Some((ItemType::Grass, 1)));
+    assert_eq!(preview.cursor, Some((ItemType::Grass, 3)));
+
+    assert_eq!(app.inventory().cursor().map(|stack| stack.count), Some(5));
+    assert!(app.inventory().slot(9).is_none());
+    assert!(app.inventory().slot(10).is_none());
+
+    app.set_pointer_button(crate::controls::PointerButton::Secondary, false);
+    app.drive_doc_menu(kind, screen, 0.4);
+    let released = app.menu_snapshot_for_test();
+    assert_eq!(released.slots[9], Some((ItemType::Grass, 1)));
+    assert_eq!(released.slots[10], Some((ItemType::Grass, 1)));
+    assert_eq!(released.cursor, Some((ItemType::Grass, 3)));
+    app.apply_latched_actions_for_test();
+    assert_eq!(app.inventory().slot(9).map(|stack| stack.count), Some(1));
+    assert_eq!(app.inventory().slot(10).map(|stack| stack.count), Some(1));
+    assert_eq!(app.inventory().cursor().map(|stack| stack.count), Some(3));
+}
+
+#[test]
+fn primary_drag_evenly_splits_the_cursor_and_puts_remainder_last() {
+    let mut app = app();
+    app.add_to_inventory(ItemStack::new(ItemType::Grass, 10));
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280, 720);
+    let source = cursor_over_slot(&mut app, screen, 0);
+    app.set_cursor_position(source.0, source.1);
+    app.click_screen_for_test(screen, 0.0);
+    assert_eq!(app.inventory().cursor().map(|stack| stack.count), Some(10));
+
+    app.drag_screen_for_test(
+        screen,
+        0.1,
+        crate::controls::PointerButton::Primary,
+        &[
+            crate::gui::MenuSlot::Inventory(9),
+            crate::gui::MenuSlot::Inventory(10),
+            crate::gui::MenuSlot::Inventory(9),
+            crate::gui::MenuSlot::Inventory(11),
+        ],
+    );
+
+    assert!(app.inventory().cursor().is_none());
+    assert_eq!(app.inventory().slot(9).map(|stack| stack.count), Some(3));
+    assert_eq!(app.inventory().slot(10).map(|stack| stack.count), Some(3));
+    assert_eq!(app.inventory().slot(11).map(|stack| stack.count), Some(4));
+}
+
+#[test]
+fn secondary_drag_places_once_per_distinct_slot_per_press() {
+    let mut app = app();
+    app.add_to_inventory(ItemStack::new(ItemType::Grass, 5));
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280, 720);
+    let source = cursor_over_slot(&mut app, screen, 0);
+    app.set_cursor_position(source.0, source.1);
+    app.click_screen_for_test(screen, 0.0);
+
+    let destinations = [
+        crate::gui::MenuSlot::Inventory(9),
+        crate::gui::MenuSlot::Inventory(10),
+        crate::gui::MenuSlot::Inventory(9),
+        crate::gui::MenuSlot::Inventory(11),
+    ];
+    app.drag_screen_for_test(
+        screen,
+        0.1,
+        crate::controls::PointerButton::Secondary,
+        &destinations,
+    );
+    assert_eq!(app.inventory().cursor().map(|stack| stack.count), Some(2));
+    for slot in 9..=11 {
+        assert_eq!(app.inventory().slot(slot).map(|stack| stack.count), Some(1));
+    }
+
+    app.drag_screen_for_test(
+        screen,
+        0.2,
+        crate::controls::PointerButton::Secondary,
+        &destinations[..2],
+    );
+    assert!(app.inventory().cursor().is_none());
+    assert_eq!(app.inventory().slot(9).map(|stack| stack.count), Some(2));
+    assert_eq!(app.inventory().slot(10).map(|stack| stack.count), Some(2));
 }
 
 #[test]

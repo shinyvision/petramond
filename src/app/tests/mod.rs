@@ -84,6 +84,31 @@ impl TestApp {
         true
     }
 
+    /// Hold one physical menu button across an ordered set of real document
+    /// slot cells, release it, then apply the resulting atomic drag action.
+    fn drag_screen_for_test(
+        &mut self,
+        screen: (u32, u32),
+        now: f64,
+        button: PointerButton,
+        slots: &[MenuSlot],
+    ) {
+        assert!(slots.len() >= 2);
+        let points: Vec<_> = slots
+            .iter()
+            .map(|&slot| cursor_over_menu(self, screen, slot))
+            .collect();
+        self.app.set_cursor_position(points[0].0, points[0].1);
+        self.app.set_pointer_button(button, true);
+        for &(x, y) in &points[1..] {
+            self.app.set_cursor_position(x, y);
+        }
+        self.app.set_pointer_button(button, false);
+        let kind = self.doc_ui_kind().expect("open menu is document-backed");
+        self.app.drive_doc_menu(kind, screen, now);
+        self.apply_latched_actions_for_test();
+    }
+
     /// Flush the game's queued messages to the server, apply the latched
     /// actions, and refresh the replicated read models — what the game tests'
     /// harness does, reached through the App.
@@ -98,6 +123,21 @@ impl TestApp {
         let state = self.server.build_self_state(0);
         let sync = self.server.build_menu_sync(0);
         game.apply_views_for_test(&state, sync);
+    }
+
+    /// Build the exact content snapshot the renderer receives, including an
+    /// in-progress slot gesture's presentation-only distribution overlay.
+    fn menu_snapshot_for_test(&self) -> crate::gui::UiSnapshot {
+        let preview = self.app.ui.menu_drag_preview();
+        let preview = preview
+            .as_ref()
+            .map(|(slots, button)| (slots.as_slice(), *button));
+        super::ui_snapshot::build(
+            self.app.game.as_ref(),
+            self.app.screen,
+            self.app.pointer.cursor(),
+            preview,
+        )
     }
 
     /// The SESSION inventory — the authoritative one the sim mutates.
