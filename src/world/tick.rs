@@ -220,9 +220,10 @@ impl World {
     }
 
     /// Announce that the block at `(wx, wy, wz)` changed: schedule the light
-    /// rebake for its 3×3 chunk neighbourhood, then queue a block update for the
-    /// cell itself and each of its 6 orthogonal neighbours (crossing chunk
-    /// borders). Block updates are deduped within the current tick.
+    /// rebake for every section the change can influence, then queue a block
+    /// update for the cell itself and each of its 6 orthogonal neighbours
+    /// (crossing chunk borders). Block updates are deduped within the current
+    /// tick.
     ///
     /// The relight is emitted HERE, alongside the block update, so the two can
     /// never drift apart: this is the single "a block changed" choke point that
@@ -231,20 +232,45 @@ impl World {
     /// its own — forgetting one was the bug this consolidates away (water washing
     /// a torch away changes the block light, but the water path never relit). Any
     /// announced change may have moved opacity or an emitter, so any announced
-    /// change relights. The 3×3 covers the border flood: a cell's light can spill
-    /// one chunk in every direction.
+    /// change relights — the only exemption is a caller that PROVED the cell's
+    /// old and new contents light-identically (`notify_light_equivalent_change`).
     pub(super) fn notify_block_and_neighbors(&mut self, wx: i32, wy: i32, wz: i32) {
+        self.notify_block_change(wx, wy, wz, Self::LIGHT_REACH);
+    }
+
+    /// The announce for a change whose caller compared the old and new block
+    /// and proved them light-equivalent (`Block::has_same_light_behavior`),
+    /// or proved the edit sits in darkness no light reaches — delta capture
+    /// and block updates run, the relight is skipped. Callers that cannot
+    /// prove either use [`Self::notify_block_and_neighbors`].
+    pub(super) fn notify_light_equivalent_change(&mut self, wx: i32, wy: i32, wz: i32) {
+        self.notify_block_change(wx, wy, wz, -1);
+    }
+
+    /// The announce with the relight bounded to `radius` cells — for a caller
+    /// that bounded the edit's influence by the light actually present at the
+    /// cell (see `World::edit_light_reach`).
+    pub(super) fn notify_block_change_with_light_radius(
+        &mut self,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+        radius: i32,
+    ) {
+        self.notify_block_change(wx, wy, wz, radius);
+    }
+
+    fn notify_block_change(&mut self, wx: i32, wy: i32, wz: i32, light_radius: i32) {
         // Replication rides the same choke point, for the same reason as the
         // relight: every editor announces here, so no block/water change a
         // client could see can miss the delta log (see `record_block_delta`).
         if self.replication_capture {
             self.record_block_delta(wx, wy, wz);
         }
-        if let Some(sp) = SectionPos::from_world(wx, wy, wz) {
-            self.mark_light_dirty_neighborhood(sp, true);
-            if self.save.is_some() {
-                self.note_light_edited_neighborhood(sp);
-            }
+        if light_radius >= 0 {
+            // Persist staleness notes ride the mark (see
+            // `mark_light_dirty_around_cell_radius`).
+            self.mark_light_dirty_around_cell_radius(wx, wy, wz, light_radius);
         }
         let p = IVec3::new(wx, wy, wz);
         self.queue_block_update(p);

@@ -55,10 +55,11 @@ impl World {
     }
 
     /// Set a block at world coords. Updates the column's visible surface and
-    /// direct-sky cover, marks the owning section's light plus its full 3×3×3
-    /// neighbourhood dirty so the next `tick_mesh_budget` refreshes cached light
-    /// and rebuilds meshes. Returns false if the section is not loaded or `wy` is
-    /// out of range. In-memory only.
+    /// direct-sky cover, marks light dirty across the change's exact influence
+    /// reach and queues a remesh of every section whose mesh samples the cell,
+    /// so the next `tick_mesh_budget` refreshes cached light and rebuilds
+    /// meshes. Returns false if the section is not loaded or `wy` is out of
+    /// range. In-memory only.
     pub fn set_block_world(&mut self, wx: i32, wy: i32, wz: i32, b: Block) -> bool {
         let Some((pos, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
             return false;
@@ -80,28 +81,89 @@ impl World {
                 return false;
             }
         }
-        {
+        let old = {
             let Some(s) = self.section_mut(pos) else {
                 return false;
             };
+            let old = Block::from_id(s.block_raw(lx, ly, lz));
+            let was_light_dirty = s.light_dirty;
             s.set_block(lx, ly, lz, b);
             s.modified = true;
-        }
+            // The raw setter flagged this section's light; the invalidation
+            // below re-marks exactly what the edit can influence (possibly
+            // nothing at all), so hand the decision back to it. The setter's
+            // revision bump stands — an in-flight bake of the pre-edit blocks
+            // must still be rejected.
+            if !was_light_dirty {
+                s.mark_light_clean();
+            }
+            old
+        };
         self.refresh_particle_emitter_index(pos);
         if let Some(change) = self.update_column_heights_after_set(wx, wy, wz, b) {
-            self.mark_sky_cover_edited_around(pos.chunk_pos(), change);
+            self.mark_sky_cover_edited_at(wx, wz, change);
         }
 
-        // Re-mesh the 3×3×3 so the border flood, vertex light sampling, and
-        // cross-section face culling remain correct.
-        self.mark_dirty_neighborhood(pos, true);
+        // Re-mesh exactly the sections whose pads sample this cell so border
+        // face culling, AO, and smooth light stay correct across seams.
+        self.queue_dirty_meshes_sampling_cell(wx, wy, wz);
         // Plane openness may have changed; deep-visibility must re-evaluate.
         self.vis_dirty = true;
 
-        // Announce the change: re-lights the neighbourhood and lets reactive
-        // neighbours (e.g. water) re-evaluate on the next game tick.
-        self.notify_block_and_neighbors(wx, wy, wz);
+        // Announce the change: re-lights the influence reach and lets reactive
+        // neighbours (e.g. water) re-evaluate on the next game tick. A proven
+        // light-identical replacement (glass into air, stone variants) skips
+        // the relight entirely; a plain solid⇄air edit relights only as far
+        // as the light actually present at the cell can carry a change.
+        if old.has_same_light_behavior(b) {
+            self.notify_light_equivalent_change(wx, wy, wz);
+        } else {
+            let radius = self.edit_light_reach(wx, wy, wz, old, b);
+            self.notify_block_change_with_light_radius(wx, wy, wz, radius);
+        }
         true
+    }
+
+    /// How far (in cells, L1) the light change from replacing `old` with `new`
+    /// at one cell can possibly propagate — `-1` when it provably cannot
+    /// change any light value at all. Only the plain full-cube transitions
+    /// are bounded; anything stateful or emitting falls back to the full
+    /// flood reach. Sound because a value `v` at the cell decays 2 per step:
+    /// no cell past `v/2 - 1` can observe a difference. The cell's own light
+    /// cubes still hold their pre-edit values when this runs.
+    fn edit_light_reach(&self, wx: i32, wy: i32, wz: i32, old: Block, new: Block) -> i32 {
+        if old.light_emission() != 0 || new.light_emission() != 0 {
+            return Self::LIGHT_REACH;
+        }
+        let value_at = |x: i32, y: i32, z: i32| {
+            self.skylight_at_world(x, y, z)
+                .max(self.blocklight_at_world(x, y, z)) as i32
+        };
+        let v = if old.is_opaque() && new == Block::Air {
+            // Opening a cell: whatever enters comes through the six faces.
+            [
+                (1, 0, 0),
+                (-1, 0, 0),
+                (0, 1, 0),
+                (0, -1, 0),
+                (0, 0, 1),
+                (0, 0, -1),
+            ]
+            .into_iter()
+            .map(|(dx, dy, dz)| value_at(wx + dx, wy + dy, wz + dz))
+            .max()
+            .unwrap_or(0)
+        } else if old == Block::Air && new.is_opaque() {
+            // Closing a cell: only paths that ran through its own value die.
+            value_at(wx, wy, wz)
+        } else {
+            return Self::LIGHT_REACH;
+        };
+        if v == 0 {
+            -1
+        } else {
+            (v / 2 - 1).clamp(0, Self::LIGHT_REACH)
+        }
     }
 
     #[inline]

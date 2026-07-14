@@ -200,9 +200,9 @@ impl TcpServerConn {
             .name("petramond-conn-write".to_string())
             .spawn(move || {
                 let mut w = BufWriter::new(writer);
-                // Light crosses TCP too: the replica never bakes its own, so
-                // the seeded cubes (and follow-up `LightData`) are the client's
-                // ONLY light source. Mostly-uniform bytes — the frame
+                // Authoritative light crosses TCP too: seeded cubes and
+                // follow-up `LightData` replace any disposable local-prediction
+                // bake. Mostly-uniform bytes — the frame
                 // compressor crushes them.
                 //
                 // The map hook runs once per DEQUEUED message (never for the

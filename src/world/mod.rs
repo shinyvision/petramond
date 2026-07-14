@@ -19,6 +19,7 @@ mod mesh_queue;
 mod model;
 mod pane;
 mod particle_emitters;
+mod prediction_render;
 mod query;
 mod remote;
 mod render_handoff;

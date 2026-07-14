@@ -294,7 +294,7 @@ impl ServerGame {
 
         self.world.update_load_multi(&anchors);
         let _ = self.world.poll();
-        // Headless worlds drain (and request — see `headless_relight`) their
+        // Headless worlds drain (and request — see `relight_demand`) their
         // light bakes here; nothing else pumps them without a mesh queue.
         self.world.pump_light_bakes();
     }
@@ -811,12 +811,21 @@ mod tests {
         // Dirty the section's light (a solid block changes the sky column),
         // then pump the remote at ZERO headroom until the rebake lands in its
         // pending carryover — the refresh exists, the starved session got no
-        // message for it.
-        let (bx, by, bz) = (lit.cx * 16 + 8, lit.cy * 16 + 8, lit.cz * 16 + 8);
+        // message for it. The edit must genuinely change light: filling a lit
+        // AIR cell with stone (a stone-onto-stone swap is light-equivalent
+        // and correctly rebakes nothing).
+        let (ox, oy, oz) = lit.origin_world();
+        let lit_air = (0..16)
+            .flat_map(|y| (0..16).flat_map(move |z| (0..16).map(move |x| (x, y, z))))
+            .map(|(x, y, z)| (ox + x, oy + y, oz + z))
+            .find(|&(x, y, z)| {
+                server.world.chunk_block(x, y, z) == 0 && server.world.skylight_at_world(x, y, z) > 0
+            })
+            .expect("a skylight-carrying section holds a lit air cell");
         assert!(
             server
                 .world
-                .set_block_world(bx, by, bz, crate::block::Block::Stone),
+                .set_block_world(lit_air.0, lit_air.1, lit_air.2, crate::block::Block::Stone),
             "edit lands inside the streamed section"
         );
         while !server.sessions[s].terrain.pending_light.contains(&lit) {

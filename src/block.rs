@@ -430,6 +430,17 @@ impl Block {
                 && !self.is_leaves())
     }
 
+    /// Whether replacing one block with the other leaves the light solver's
+    /// inputs unchanged. Stateful partial shapes stay conservative: their
+    /// block ids alone do not capture stair facing or slab occupancy.
+    pub(crate) fn has_same_light_behavior(self, other: Block) -> bool {
+        let shape = self.light_shape();
+        shape == other.light_shape()
+            && !matches!(shape, BlockLightShape::Stair | BlockLightShape::Slab)
+            && self.transmits_direct_skylight() == other.transmits_direct_skylight()
+            && self.light_emission() == other.light_emission()
+    }
+
     /// The block's collision shape: cell-local AABBs (`0.0..1.0`), a per-row
     /// [`BlockDef`] field. Empty = no collision: air, water, walk-through plants,
     /// and the torch (selectable by its custom pole shape yet stepped through — see

@@ -383,11 +383,13 @@ impl Section {
         self.light_revision = self.light_revision.wrapping_add(1);
     }
 
-    /// Mark light final as-is WITHOUT installing cubes. Replica-only: light is
-    /// server-owned there — a lightless install is a fully-opaque section
-    /// (final by definition), and an edited cell keeps sampling the old cubes
-    /// until the server's rebake arrives as `LightData`. Nothing on a replica
-    /// may ever request a local bake.
+    /// Mark light final as-is WITHOUT installing cubes. Two legitimate
+    /// callers: the replica's authoritative-delta ingest (light is
+    /// server-owned there; keep sampling the old cubes until the server's
+    /// rebake arrives as `LightData`), and a landed rebake whose cubes proved
+    /// byte-identical to the cached ones (nothing to install or republish).
+    /// Local predicted edits instead install their disposable revision-gated
+    /// relight, which can never override server light.
     pub fn mark_light_clean(&mut self) {
         self.light_dirty = false;
     }
@@ -396,27 +398,6 @@ impl Section {
     /// buffer; absent reads as all-zero — see [`Self::set_blocklight`]).
     pub fn clear_blocklight(&mut self) {
         self.blocklight = None;
-    }
-
-    /// Raise one cell's cached light to a provisional estimate (client
-    /// prediction): an inline remesh of a just-opened cell must not sample the
-    /// removed block's stale darkness. Raise-only, and neither `light_dirty`
-    /// nor `light_revision` moves — the pending authoritative bake replaces
-    /// the whole cube when it lands.
-    pub fn seed_light_estimate(&mut self, x: usize, y: usize, z: usize, sky: u8, block: u8) {
-        let i = section_idx(x, y, z);
-        // An absent skylight cube already reads as open sky (bright).
-        if let Some(cube) = &mut self.skylight {
-            if cube[i] < sky {
-                Arc::make_mut(cube)[i] = sky;
-            }
-        }
-        if block > 0 {
-            let cube = self.blocklight.get_or_insert_with(|| uniform_cube(0));
-            if cube[i] < block {
-                Arc::make_mut(cube)[i] = block;
-            }
-        }
     }
 
     // --- Random-tick gate -------------------------------------------------------

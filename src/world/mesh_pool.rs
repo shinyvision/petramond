@@ -1,11 +1,11 @@
 //! Off-thread section meshing.
 //!
-//! The render thread must never build a section mesh: doing it inline (a blocking
-//! `rayon` batch) makes the frame stall while streaming. Instead the world hands each
-//! dirty section to the shared [`JobPool`] as an owned snapshot — the section itself
-//! plus a one-block-padded shell of its neighbours for voxel/light reads, plus the
-//! wider XZ biome halo needed by tint blending — and drains back a finished
-//! [`ChunkMesh`] to install on a later frame.
+//! Ordinary streaming must never build a section mesh on the render thread: doing it
+//! inline makes flight stall. The world instead hands each dirty section to the shared
+//! [`JobPool`] as an owned snapshot — the section itself plus a one-block-padded shell
+//! of its neighbours for voxel/light reads and the wider XZ biome halo needed by tint
+//! blending — then drains a finished [`ChunkMesh`] later. Initial local prediction is
+//! the deliberate latency exception and runs the same builder synchronously.
 //! Each job carries the section's `mesh_revision`; a result whose section has since
 //! changed (re-edited, re-lit) is discarded, so stale snapshots never reach the GPU.
 
@@ -87,6 +87,32 @@ pub(super) struct MeshJob {
     pub center: Section,
     pub nbhd: [Option<NeighborSnap>; 27],
     pub biome: Arc<[u8]>,
+}
+
+impl MeshJob {
+    /// Replace one sampled section's predicted light with a freshly baked
+    /// cube before this job is built. Prediction terrain jobs use this to
+    /// chain the ordinary light and mesh implementations inside one worker
+    /// result instead of publishing an old-light mesh between the stages.
+    pub(super) fn replace_light_snapshot(
+        &mut self,
+        pos: SectionPos,
+        skylight: Arc<[u8]>,
+        blocklight: Arc<[u8]>,
+    ) {
+        let (dx, dy, dz) = (
+            pos.cx - self.pos.cx,
+            pos.cy - self.pos.cy,
+            pos.cz - self.pos.cz,
+        );
+        if !(-1..=1).contains(&dx) || !(-1..=1).contains(&dy) || !(-1..=1).contains(&dz) {
+            return;
+        }
+        if let Some(section) = self.nbhd[nbhd_idx27(dx, dy, dz)].as_mut() {
+            section.skylight = Some(skylight);
+            section.blocklight = Some(blocklight);
+        }
+    }
 }
 
 /// Index into a 3×3×3 section neighbourhood by neighbour delta (−1/0/+1 each axis); centre

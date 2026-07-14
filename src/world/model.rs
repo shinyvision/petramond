@@ -317,36 +317,37 @@ impl World {
         Some(cells)
     }
 
-    /// Relight + remesh the 3×3 neighbourhood of every cell in `cells` (deduped per
-    /// chunk) and announce the changes — the batched tail of [`set_block_world`] for a
+    /// Relight + remesh every section each cell in `cells` can influence and
+    /// announce the changes — the batched tail of [`set_block_world`] for a
     /// multi-cell edit.
     ///
     /// [`set_block_world`]: Self::set_block_world
     pub(super) fn refresh_region(&mut self, cells: &[IVec3]) {
         let mut seen = std::collections::HashSet::new();
-        let mut sky_changed: std::collections::HashMap<_, SkyCoverChange> =
+        // Keyed per world column: consecutive same-column height updates chain
+        // (old → mid → new) and merge into one envelope; distinct columns keep
+        // their own exact segment for the distance-bounded invalidation.
+        let mut sky_changed: std::collections::HashMap<(i32, i32), SkyCoverChange> =
             std::collections::HashMap::new();
         for &c in cells {
             let block = Block::from_id(self.chunk_block(c.x, c.y, c.z));
             if let Some(change) = self.update_column_heights_after_set(c.x, c.y, c.z, block) {
-                if let Some((pos, _, _, _)) = Self::split_world(c.x, c.y, c.z) {
-                    sky_changed
-                        .entry(pos.chunk_pos())
-                        .and_modify(|all| all.merge(change))
-                        .or_insert(change);
-                }
+                sky_changed
+                    .entry((c.x, c.z))
+                    .and_modify(|all| all.merge(change))
+                    .or_insert(change);
             }
             if let Some((pos, _, _, _)) = Self::split_world(c.x, c.y, c.z) {
                 if seen.insert(pos) {
                     self.refresh_particle_emitter_index(pos);
-                    self.mark_dirty_neighborhood(pos, true);
                 }
             }
-            // The matching 3×3 relight rides along with each cell's announce.
+            self.queue_dirty_meshes_sampling_cell(c.x, c.y, c.z);
+            // The matching relight ball rides along with each cell's announce.
             self.notify_block_and_neighbors(c.x, c.y, c.z);
         }
-        for (column, change) in sky_changed {
-            self.mark_sky_cover_edited_around(column, change);
+        for ((wx, wz), change) in sky_changed {
+            self.mark_sky_cover_edited_at(wx, wz, change);
         }
     }
 }

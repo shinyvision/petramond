@@ -21,6 +21,7 @@ impl World {
             || !self.light_blocked_meshes.is_empty()
             || !self.light_deferred.is_empty()
             || self.light_bakes.has_pending()
+            || self.prediction_terrain.has_pending()
             || self.mesh_jobs_in_flight > 0
     }
 

@@ -565,10 +565,9 @@ impl Game {
                     for (c, _) in &cells {
                         self.predicted_presentation_cells.insert(*c);
                     }
-                    // The break must leave the screen the same frame its
-                    // sound/burst plays, not two async mesh-pump hops later.
-                    let footprint: Vec<IVec3> = cells.iter().map(|(c, _)| *c).collect();
-                    self.replica.remesh_edited_cells_inline(&footprint);
+                    // Initial prediction blocks on the complete exact light ->
+                    // mesh footprint so the click exposes no stale shading.
+                    self.replica.present_predicted_edit(&cells);
                     self.pending_events
                         .world
                         .push(WorldEvent::BlockBroken { pos, block, normal });
@@ -1035,7 +1034,7 @@ impl Game {
         if !self.prediction.can_predict() {
             return PlacePrediction::TrackOnly(self.prediction.begin_track_only());
         }
-        let footprint: Vec<IVec3> = cells.iter().map(|(c, _)| *c).collect();
+        let previous_cells = cells.clone();
         let snapshot = prediction::PredictionSnapshot::World {
             inventory: Some(self.self_view.inventory.clone()),
             cells,
@@ -1080,9 +1079,9 @@ impl Game {
                     .place_model_block_facing(place_pos, block, facing);
             }
         }
-        // The ghost must be on screen the same frame the hand pops — see
-        // `apply_predicted_break`; same-frame inline remesh of the footprint.
-        self.replica.remesh_edited_cells_inline(&footprint);
+        // Same synchronous prediction presentation as breaking: exact local
+        // light and geometry are installed before the ghost is exposed.
+        self.replica.present_predicted_edit(&previous_cells);
         self.self_view.inventory.decrement_selected();
         self.place_ghost = Some((place_pos, block.0));
         self.local_placed_block = Some(block);

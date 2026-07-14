@@ -72,6 +72,19 @@ impl World {
         near(t) || self.extra_load_targets.iter().copied().any(near)
     }
 
+    /// XZ variant of [`near_load_center`](Self::near_load_center) for whole
+    /// columns (CPU-mesh release retention around every anchor). Unlike the
+    /// section variant, NO target means nothing is retained: the ring exists
+    /// for players, and a world without anchors has none.
+    pub(super) fn column_near_load_center(&self, pos: crate::chunk::ChunkPos) -> bool {
+        let near = |target: super::store::LoadTarget| {
+            (pos.cx - target.center.cx).abs() <= NEAR_LOAD_RADIUS
+                && (pos.cz - target.center.cz).abs() <= NEAR_LOAD_RADIUS
+        };
+        self.last_load_target.is_some_and(near)
+            || self.extra_load_targets.iter().copied().any(near)
+    }
+
     /// Whether the mesh pump should park `pos` instead of meshing it.
     pub(super) fn section_hidden(&self, pos: SectionPos) -> bool {
         self.deep_sections.contains(&pos)

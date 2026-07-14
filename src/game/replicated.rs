@@ -550,25 +550,26 @@ impl Game {
                     }
                     // Silent restore: no world events. A same-batch
                     // authoritative delta at a cell wins over the rollback.
-                    let mut restored: Vec<IVec3> = Vec::with_capacity(cells.len());
+                    let mut restored = Vec::with_capacity(cells.len());
                     for (pos, prev_block_id) in cells {
                         if update.block_deltas.iter().any(|d| d.pos == pos) {
                             continue;
                         }
+                        let before = self.replica.chunk_block(pos.x, pos.y, pos.z);
                         let _ = self.replica.set_block_world(
                             pos.x,
                             pos.y,
                             pos.z,
                             crate::block::Block::from_id(prev_block_id),
                         );
-                        restored.push(pos);
+                        restored.push((pos, before));
                         if self.place_ghost.is_some_and(|(p, _)| p == pos) {
                             self.place_ghost = None;
                         }
                     }
-                    // A rollback is a local edit too: the restored cells
-                    // snap back this frame, not two mesh-pump hops later.
-                    self.replica.remesh_edited_cells_inline(&restored);
+                    // A rollback is a local edit too: its restored geometry
+                    // and light publish under the same prediction fence.
+                    self.replica.reconcile_predicted_edit(&restored);
                 }
             }
         }

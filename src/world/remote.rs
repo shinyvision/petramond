@@ -61,7 +61,7 @@ impl Section {
     /// block/water/light buffers (no copies) plus the sparse state maps,
     /// encoded losslessly. Baked light rides along on EVERY transport — the
     /// ship gate (`section_light_final`) guarantees it is present unless the
-    /// section never bakes (fully opaque); the replica does no light work.
+    /// section never bakes (fully opaque); replica INGEST does no light work.
     pub(crate) fn to_payload(&self) -> SectionPayload {
         let mut furnaces_lit: Vec<u16> = self
             .furnaces()
@@ -302,7 +302,8 @@ impl World {
         } else {
             // The ship gate (`section_light_final`) only lets a lightless
             // section through when it never bakes (fully opaque) — final
-            // as-is. The replica NEVER bakes: rebakes arrive as `LightData`.
+            // as-is. Authoritative rebakes arrive as `LightData`; local
+            // prediction light never enters through this ingest seam.
             section.mark_light_clean();
         }
 
@@ -362,16 +363,54 @@ impl World {
         let Some(s) = self.section_mut(pos) else {
             return; // unloaded while the message was in flight
         };
+        // Region-diff against the cached cubes: authoritative light that
+        // matches the replica's current cubes (a predicted edit's bake the
+        // server agreed with) publishes no remesh, and a change requeues
+        // exactly the neighbours that sampled the changed cells.
+        let first_bake = !s.has_baked_light();
+        let mask = if first_bake {
+            super::light::REGION_ALL
+        } else {
+            let sky = super::light::cube_region_changes(
+                s.skylight_arc().as_deref(),
+                &payload.skylight.0,
+                crate::chunk::SKY_FULL,
+            );
+            let blk = match &payload.blocklight {
+                Some(b) => super::light::cube_region_changes(
+                    s.blocklight_arc().as_deref(),
+                    &b.0,
+                    0,
+                ),
+                None => match s.blocklight_arc() {
+                    Some(old) => super::light::cube_region_changes(
+                        Some(&old),
+                        &super::light::ZERO_CUBE,
+                        0,
+                    ),
+                    None => 0,
+                },
+            };
+            sky | blk
+        };
+        // Install the server's cubes regardless — they are authoritative and
+        // an identical install is a couple of `Arc` swaps.
         s.set_skylight(payload.skylight.0);
         match payload.blocklight {
             Some(b) => s.set_blocklight(b.0),
             None => s.clear_blocklight(),
+        }
+        if mask == 0 {
+            return;
         }
         s.dirty = true;
         // An in-flight mesh snapshotted the old cubes: discard its result.
         s.mesh_revision = s.mesh_revision.wrapping_add(1);
         self.bump_lighting_revision();
         self.dirty_meshes.push(pos);
+        if !first_bake {
+            self.requeue_meshes_sampling_changed_regions(pos, mask);
+        }
     }
 
     /// Apply one authoritative server delta on a replica: write the cell
@@ -476,7 +515,9 @@ impl World {
             delta.pos.z,
             Block::from_id(delta.block_id),
         );
-        self.mark_dirty_neighborhood(pos, true);
+        // Geometry samplers only; light-driven remeshes ride the server's
+        // `LightData` install for exactly the sections whose cubes changed.
+        self.queue_dirty_meshes_sampling_cell(delta.pos.x, delta.pos.y, delta.pos.z);
         self.vis_dirty = true;
     }
 
@@ -994,9 +1035,9 @@ mod tests {
         assert_eq!(replica.physics_block(2, -20, 2), Block::Stone);
         assert!(!replica.placement_cell_open(IVec3::new(2, -20, 2)));
 
-        // Light is server-owned: installs queue MESH work only. A lightless
+        // Authoritative light is server-owned: installs queue MESH work only. A lightless
         // payload installs light-CLEAN (the ship gate only lets one through
-        // when it never bakes) — the replica must never queue its own bake.
+        // when it never bakes) — ingest must never queue a replica-side bake.
         assert!(replica.dirty_mesh_count() > 0, "installs queue mesh work");
         assert!(
             !replica

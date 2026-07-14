@@ -704,7 +704,8 @@ mod tests {
 
         // Terrain streams to the remote client WITH the server's baked light
         // (the ship gate holds a section until its light is final; the remote
-        // replica never bakes its own). Meanwhile the visitor's server-side
+        // replica never manufactures authoritative light). Meanwhile the
+        // visitor's server-side
         // body free-falls from its restored y=80 to the surface — the reach
         // eye is bounded by the F1 drift ring around the server's own
         // integration, so the client reads its SETTLED position off its own

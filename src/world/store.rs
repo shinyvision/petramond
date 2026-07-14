@@ -118,8 +118,24 @@ impl SkyCoverChange {
         self.max_cover = self.max_cover.max(other.max_cover);
     }
 
-    fn affects(self, pos: SectionPos) -> bool {
+    pub(super) fn affects(self, pos: SectionPos) -> bool {
         super::light::cover_change_affects_section(pos, self.min_cover, self.max_cover)
+    }
+
+    /// L1 gap from `pos`'s cell box to the changed direct-sky segment of the
+    /// world column `(wx, wz)` — the cells between the two cover endpoints,
+    /// whose direct-sky status flipped. Light can only change within the
+    /// flood reach of that segment, so a single-column cover move needs no
+    /// blanket 3×3-column invalidation.
+    pub(super) fn segment_gap(self, pos: SectionPos, wx: i32, wz: i32) -> i32 {
+        let (ox, oy, oz) = pos.origin_world();
+        let side = SECTION_SIZE as i32 - 1;
+        let gx = (ox - wx).max(wx - (ox + side)).max(0);
+        let gz = (oz - wz).max(wz - (oz + side)).max(0);
+        let seg_lo = self.min_cover.saturating_add(1);
+        let seg_hi = self.max_cover;
+        let gy = (oy - seg_hi).max(seg_lo - (oy + side)).max(0);
+        gx + gz + gy
     }
 
     /// Generated-section ingest already invalidates that section's 3x3x3. Only
@@ -215,8 +231,12 @@ pub struct World {
     pub render_dist: i32,
     pub(super) lighting_revision: u64,
     pub(super) light_bakes: LightBakeQueue,
-    /// Off-thread section meshing: dirty sections are submitted as owned snapshots and
-    /// finished meshes drained back, so the render thread never builds a mesh.
+    /// Asynchronous reconciliation light -> mesh bundles. Initial prediction
+    /// runs the same complete invalidation footprint synchronously.
+    pub(super) prediction_terrain: super::prediction_render::PredictionTerrainQueue,
+    /// Ordinary off-thread section meshing: dirty sections are submitted as owned
+    /// snapshots and finished meshes drained back. Local prediction deliberately
+    /// invokes the same builder synchronously.
     pub(super) mesh_pool: super::mesh_pool::MeshPool,
     pub(super) mesh_jobs_in_flight: usize,
     /// Latest mesh job per section. Re-dirtying cancels queued stale work;
@@ -302,13 +322,16 @@ pub struct World {
     /// per-connection terrain sender keys its wanted-vs-sent rescan on this
     /// (plus the anchor's quantized target), so a steady frame does no scan.
     pub(super) terrain_revision: u64,
-    /// ServerHeadless only: sections whose light went dirty since the last
-    /// [`pump_light_bakes`](Self::pump_light_bakes) drain. On the combined and
-    /// replica worlds, light rebakes are demanded by the MESH pump
-    /// (`request_light_dependencies`); headless has no mesh pump, so the mark
-    /// choke point feeds this set and the light pump requests from it —
-    /// keeping the QUEUEING off the mesh path. Bounded by edits per tick.
-    pub(super) headless_relight: FxHashSet<SectionPos>,
+    /// Sections whose light went dirty since the last
+    /// [`pump_light_bakes`](Self::pump_light_bakes) drain: the mark choke
+    /// point feeds this set and the light pump requests from it. This is the
+    /// demand path that does not depend on any mesh being queued — a distant
+    /// sky-cover segment relights without pre-marking meshes (the landed
+    /// bake's diff decides those), and headless servers have no mesh pump at
+    /// all. Nearby sections are usually ALSO demanded by the mesh pump's
+    /// `request_light_dependencies`; the pending-bake dedup makes that free.
+    /// Bounded by edits per tick.
+    pub(super) relight_demand: FxHashSet<SectionPos>,
     /// ServerHeadless only: sections whose bake LANDED since the last
     /// streaming pump — drained by [`take_light_ship_log`](Self::take_light_ship_log)
     /// into per-connection `LightData` messages (filtered to each recipient's
@@ -425,6 +448,7 @@ impl World {
             render_dist,
             lighting_revision: 0,
             light_bakes: LightBakeQueue::new(jobs.clone()),
+            prediction_terrain: super::prediction_render::PredictionTerrainQueue::new(jobs.clone()),
             mesh_pool: super::mesh_pool::MeshPool::new(jobs),
             mesh_jobs_in_flight: 0,
             mesh_job_cancels: FxHashMap::default(),
@@ -449,7 +473,7 @@ impl World {
             replication_capture: false,
             block_delta_log: FxHashMap::default(),
             terrain_revision: 0,
-            headless_relight: FxHashSet::default(),
+            relight_demand: FxHashSet::default(),
             light_ship_log: FxHashSet::default(),
             relit_since_persist: FxHashSet::default(),
             light_edited_since_persist: FxHashSet::default(),
@@ -1122,14 +1146,28 @@ impl World {
     pub(super) fn mark_light_dirty_pos(&mut self, pos: SectionPos) {
         if let Some(s) = self.section_mut(pos) {
             s.mark_light_dirty();
-            // Headless rebakes are demanded from the mark itself (no mesh pump
-            // to demand them): pump_light_bakes drains this set.
+            // Headless rebakes are demanded from the mark itself (no mesh
+            // pump to demand them). Client/combined section-grained marks
+            // (ingest, unload, topology) stay mesh-demanded, so far edges
+            // keep their dormant-until-visible behaviour; EDIT marks demand
+            // explicitly via `mark_light_dirty_demanded`.
             if self.role == WorldRole::ServerHeadless {
-                self.headless_relight.insert(pos);
+                self.relight_demand.insert(pos);
             }
         }
         if self.light_deferred.contains(&pos) {
             self.deferred_rechecks.insert(pos);
+        }
+    }
+
+    /// [`mark_light_dirty_pos`](Self::mark_light_dirty_pos) plus a direct
+    /// bake demand: edit-driven invalidation must rebake even when no queued
+    /// mesh demands the section (a distant sky-cover segment pre-marks no
+    /// meshes — the landed bake's diff requeues them if anything changed).
+    pub(super) fn mark_light_dirty_demanded(&mut self, pos: SectionPos) {
+        self.mark_light_dirty_pos(pos);
+        if self.sections.contains_key(&pos) {
+            self.relight_demand.insert(pos);
         }
     }
 
@@ -1171,16 +1209,39 @@ impl World {
         self.mark_sky_cover_light_dirty_around_impl(changes, false);
     }
 
-    /// Gameplay-edit variant of the batched streaming invalidation. Besides
-    /// scheduling the loaded sections in the affected vertical band, it records
-    /// that any persisted cubes are stale so an eviction racing the rebake
-    /// rewrites them lightless.
-    pub(super) fn mark_sky_cover_edited_around(
-        &mut self,
-        center: ChunkPos,
-        change: SkyCoverChange,
-    ) {
-        self.mark_sky_cover_light_dirty_around_impl([(center, change)], true);
+    /// Gameplay-edit variant of the sky-cover invalidation, exact to the
+    /// changed world column: only sections within light-flood reach of the
+    /// flipped direct-sky segment relight. No meshes are pre-marked — a
+    /// landed rebake requeues its own mesh and the samplers of whatever
+    /// regions actually changed (`pump_light_bakes`), so an envelope section
+    /// whose cubes prove untouched publishes nothing. Also records that any
+    /// persisted cubes are stale so an eviction racing the rebake rewrites
+    /// them lightless.
+    pub(super) fn mark_sky_cover_edited_at(&mut self, wx: i32, wz: i32, change: SkyCoverChange) {
+        // Exact flood reach (14, see `LIGHT_REACH`); the streaming batch path
+        // keeps its column-level `SKY_SEEP_REACH` bound.
+        const LIGHT_REACH: i32 = chunk::SKY_FULL as i32 / 2 - 1;
+        let center = ChunkPos::new(
+            wx.div_euclid(SECTION_SIZE as i32),
+            wz.div_euclid(SECTION_SIZE as i32),
+        );
+        let note_persist = self.save.is_some();
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                for cy in Self::column_section_range() {
+                    let pos = SectionPos::new(center.cx + dx, cy, center.cz + dz);
+                    if change.segment_gap(pos, wx, wz) > LIGHT_REACH
+                        || !self.sections.contains_key(&pos)
+                    {
+                        continue;
+                    }
+                    if note_persist {
+                        self.light_edited_since_persist.insert(pos);
+                    }
+                    self.mark_light_dirty_demanded(pos);
+                }
+            }
+        }
     }
 
     fn mark_sky_cover_light_dirty_around_impl(
@@ -1546,18 +1607,87 @@ impl World {
         }
     }
 
-    /// Record that a content change dirtied the 3×3×3's baked light (see
-    /// [`light_edited_since_persist`](Self::light_edited_since_persist)).
-    /// Only loaded sections enter: an edit's reach is always inside the
-    /// streamed core, and `mark_light_dirty_pos` no-ops on absent ones too.
-    pub(super) fn note_light_edited_neighborhood(&mut self, center: SectionPos) {
+    /// L1 distance from a section-local cell to the nearest cell of the
+    /// neighbouring section at axis delta `d` (0 within this section).
+    #[inline]
+    pub(super) fn axis_gap(local: usize, d: i32) -> i32 {
+        match d {
+            -1 => local as i32 + 1,
+            1 => SECTION_SIZE as i32 - local as i32,
+            _ => 0,
+        }
+    }
+
+    /// The exact flood reach of one changed cell, in cells: the flood loses 2
+    /// per step from at most `SKY_FULL` (30), so no single-cell change
+    /// survives past L1 distance 14.
+    pub(super) const LIGHT_REACH: i32 = chunk::SKY_FULL as i32 / 2 - 1;
+
+    /// Mark light dirty for exactly the sections one changed cell can
+    /// influence within `radius` (at most
+    /// [`LIGHT_REACH`](Self::LIGHT_REACH), so a mid-section edit invalidates
+    /// 7 sections, not 27; smaller when the caller bounded the reach by the
+    /// light actually present at the cell — an edit in the dark cannot
+    /// brighten or darken anything far away). Direct-sky cover moves reach
+    /// farther vertically and are invalidated separately via
+    /// [`SkyCoverChange`] segments.
+    pub(super) fn mark_light_dirty_around_cell_radius(
+        &mut self,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+        radius: i32,
+    ) {
+        let Some((center, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
+            return;
+        };
+        let note_persist = self.save.is_some();
         for dy in -1..=1 {
             for dz in -1..=1 {
                 for dx in -1..=1 {
-                    let p = SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz);
-                    if self.sections.contains_key(&p) {
-                        self.light_edited_since_persist.insert(p);
+                    let gap =
+                        Self::axis_gap(lx, dx) + Self::axis_gap(ly, dy) + Self::axis_gap(lz, dz);
+                    if gap > radius {
+                        continue;
                     }
+                    let pos = SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz);
+                    self.mark_light_dirty_demanded(pos);
+                    if note_persist && self.sections.contains_key(&pos) {
+                        self.light_edited_since_persist.insert(pos);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Queue a remesh of every section whose mesh samples world cell
+    /// `(wx, wy, wz)`: the owning section plus the bordering neighbours whose
+    /// one-cell 18³ pad (face culling, AO, smooth light) includes it — up to 8
+    /// sections for a corner cell, 1 for an interior cell. Sections whose
+    /// *light* the edit changes are requeued when their rebake lands (see
+    /// `pump_light_bakes`), so they need no blanket pre-mark here.
+    pub(super) fn queue_dirty_meshes_sampling_cell(&mut self, wx: i32, wy: i32, wz: i32) {
+        #[inline]
+        fn deltas(local: usize) -> &'static [i32] {
+            if local == 0 {
+                &[0, -1]
+            } else if local == SECTION_SIZE - 1 {
+                &[0, 1]
+            } else {
+                &[0]
+            }
+        }
+        let Some((center, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
+            return;
+        };
+        for &dy in deltas(ly) {
+            for &dz in deltas(lz) {
+                for &dx in deltas(lx) {
+                    self.queue_dirty_mesh(SectionPos::new(
+                        center.cx + dx,
+                        center.cy + dy,
+                        center.cz + dz,
+                    ));
                 }
             }
         }
@@ -1635,6 +1765,7 @@ impl World {
     }
 
     pub(super) fn remove_section(&mut self, pos: SectionPos) {
+        self.prediction_terrain.cancel_section(pos);
         if let Some(job) = self.mesh_job_cancels.remove(&pos) {
             job.cancel();
         }
@@ -1675,6 +1806,7 @@ impl World {
         self.missing_columns_settled = false;
         for cy in Self::column_section_range() {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
+            self.prediction_terrain.cancel_section(sp);
             self.sections.remove(&sp);
             self.block_entity_sections.remove(&sp);
             self.particle_emitter_sections.remove(&sp);
@@ -1727,6 +1859,7 @@ impl World {
     /// Drop all loaded sections, columns, meshes, and the in-flight gen set — the
     /// regen path.
     pub fn clear_world(&mut self) {
+        self.prediction_terrain.cancel_all();
         self.sections.clear();
         self.deep_sections.clear();
         self.visible_deep.clear();
@@ -1793,9 +1926,7 @@ impl World {
     /// them back forever. Feed the relight queue like an edit does.
     #[cfg(test)]
     fn request_fixture_bake(&mut self, pos: SectionPos) {
-        if self.role == WorldRole::ServerHeadless {
-            self.headless_relight.insert(pos);
-        }
+        self.relight_demand.insert(pos);
     }
 
     /// Install a whole column [`Chunk`] for a test, splitting it into sections + column
@@ -2014,6 +2145,46 @@ mod tests {
             world.column_payload_revision(sp.chunk_pos()),
             "a same-height surface swap must move the column revision"
         );
+    }
+
+    #[test]
+    fn edits_in_total_darkness_skip_light_invalidation_entirely() {
+        // The adaptive relight radius: light values bound how far a plain
+        // solid⇄air edit can matter, so mining inside unlit solid rock (the
+        // hot gameplay path) must trigger NO light invalidation or rebake.
+        let mut world = World::new(0, 4);
+        let pos = SectionPos::new(0, 0, 0);
+        let mut section = Section::new(0, 0, 0);
+        section.blocks_slice_mut().fill(Block::Stone.id());
+        section.recompute_opaque_count();
+        world.insert_section_for_test(pos, section);
+        {
+            let s = world.section_mut(pos).unwrap();
+            s.set_skylight(vec![0u8; SECTION_VOLUME].into());
+            s.set_blocklight(vec![0u8; SECTION_VOLUME].into());
+        }
+        // The fixture insert demands a bake; only the edits below are under test.
+        world.relight_demand.clear();
+        assert!(!world.sections[&pos].light_dirty, "fixture: settled dark");
+
+        assert!(world.set_block_world(8, 8, 8, Block::Air));
+        assert!(
+            !world.sections[&pos].light_dirty,
+            "no light can reach the opened cell, so nothing may invalidate"
+        );
+        assert!(world.relight_demand.is_empty());
+
+        // Control: the same break beside cached light must invalidate.
+        world
+            .section_mut(pos)
+            .unwrap()
+            .set_skylight(vec![crate::chunk::SKY_FULL; SECTION_VOLUME].into());
+        assert!(world.set_block_world(8, 4, 8, Block::Air));
+        assert!(
+            world.sections[&pos].light_dirty,
+            "a break beside lit cells must invalidate light"
+        );
+        assert!(world.relight_demand.contains(&pos));
     }
 
     #[test]
@@ -2326,18 +2497,37 @@ mod tests {
 
         assert!(world.set_block_world(shaft_x as i32, cover_y, shaft_z as i32, Block::Air));
 
-        let lower_section = world.sections.get(&lower).unwrap();
         assert!(
-            lower_section.light_dirty,
+            world.sections.get(&lower).unwrap().light_dirty,
             "removing sky cover must invalidate skylight below the edited section"
-        );
-        assert!(
-            lower_section.dirty,
-            "sections whose cached light can change must be remeshed after the rebake"
         );
         assert!(
             world.light_edited_since_persist.contains(&lower),
             "distant light invalidation must be tracked in case eviction beats the rebake"
+        );
+
+        // The mark itself demands the rebake (`relight_demand`) — no mesh is
+        // pre-queued for the distant section — and the landed bake's changed
+        // cubes requeue its mesh.
+        let mut landed = false;
+        for _ in 0..2500 {
+            world.pump_light_bakes();
+            if !world.sections.get(&lower).unwrap().light_dirty {
+                landed = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(landed, "the marked distant section must rebake unprompted");
+        let lower_section = world.sections.get(&lower).unwrap();
+        assert_eq!(
+            lower_section.skylight_at(shaft_x, 8, shaft_z),
+            crate::chunk::SKY_FULL,
+            "the opened shaft must reach full skylight below"
+        );
+        assert!(
+            lower_section.dirty,
+            "changed cubes must requeue the section's mesh"
         );
 
         drop(world);

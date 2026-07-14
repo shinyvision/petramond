@@ -946,8 +946,9 @@ pub(crate) enum ServerToClient {
     /// a world load.
     SectionData(Box<SectionPayload>),
     /// A server light bake landed for a section already sent to this
-    /// recipient: the fresh cubes replace the seeded ones. The replica never
-    /// bakes its own light — this is the ONLY post-install light writer.
+    /// recipient: the fresh cubes replace the seeded ones. This is the only
+    /// AUTHORITATIVE post-install light writer; disposable prediction bakes
+    /// are local presentation and lose to this payload.
     LightData(LightPayload),
     /// Drop one section that left the keep shape while its column stays. When
     /// `cache_hash` is present the server still held the section and vouches
@@ -1061,7 +1062,8 @@ pub(crate) struct SectionPayload {
     pub water: Option<SectionBytes>,
     /// Server-baked light. The ship gate (`plan_terrain_send`) holds a section
     /// back until its light is final, so this is `None` ONLY for sections that
-    /// never bake (fully opaque) — the replica does no light work of its own.
+    /// never bake (fully opaque). Replica ingest does no light work of its own;
+    /// local predicted edits may compute disposable presentation light.
     /// Post-install rebakes arrive as [`LightData`](ServerToClient::LightData).
     pub skylight: Option<SectionBytes>,
     pub blocklight: Option<SectionBytes>,

@@ -22,7 +22,7 @@ struct PendingLightBake {
     cancel: crate::worker::JobCancel,
 }
 
-struct LightBakeJob {
+pub(in crate::world) struct LightBakeJob {
     id: u64,
     pos: SectionPos,
     revision: u64,
@@ -59,35 +59,14 @@ impl LightBakeQueue {
         if self.pending.contains_key(&pos) {
             return;
         }
-        let Some(section) = sections.get(&pos) else {
+        let Some(job) = LightBakeJob::snapshot(self.next_id, pos, sections, columns) else {
             self.pending.remove(&pos);
             return;
         };
-        if !section.light_dirty {
-            self.pending.remove(&pos);
-            return;
-        }
 
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1).max(1);
-        let revision = section.light_revision;
-
-        let sky = skylight::plan(pos, columns);
-        let emitters = neighborhood::collect_emitters(pos, sections);
-        let nbhd = (matches!(sky, SkyPlan::Flood { .. }) || !emitters.is_empty())
-            .then(|| neighborhood::gather(pos, sections));
-
-        let cancel = self.backend.submit(
-            key,
-            LightBakeJob {
-                id,
-                pos,
-                revision,
-                sky,
-                nbhd,
-                emitters,
-            },
-        );
+        let cancel = self.backend.submit(key, job);
         self.pending.insert(pos, PendingLightBake { id, cancel });
     }
 
@@ -109,6 +88,40 @@ impl LightBakeQueue {
             }
         }
         None
+    }
+}
+
+impl LightBakeJob {
+    /// Capture the same cheap section/column snapshot used by the ordinary
+    /// asynchronous queue. Prediction bundles call this directly so their
+    /// relight and mesh stages consume one post-edit snapshot.
+    pub(in crate::world) fn snapshot(
+        id: u64,
+        pos: SectionPos,
+        sections: &FxHashMap<SectionPos, Arc<Section>>,
+        columns: &FxHashMap<ChunkPos, Column>,
+    ) -> Option<Self> {
+        let section = sections.get(&pos)?;
+        if !section.light_dirty {
+            return None;
+        }
+        let revision = section.light_revision;
+        let sky = skylight::plan(pos, columns);
+        let emitters = neighborhood::collect_emitters(pos, sections);
+        let nbhd = (matches!(sky, SkyPlan::Flood { .. }) || !emitters.is_empty())
+            .then(|| neighborhood::gather(pos, sections));
+        Some(Self {
+            id,
+            pos,
+            revision,
+            sky,
+            nbhd,
+            emitters,
+        })
+    }
+
+    pub(in crate::world) fn pos(&self) -> SectionPos {
+        self.pos
     }
 }
 
@@ -136,7 +149,7 @@ pub(crate) static LIGHT_STAGE_NS: std::sync::atomic::AtomicU64 =
 pub(crate) static LIGHT_STAGE_JOBS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
-fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
+pub(in crate::world) fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
     let t_stage = std::time::Instant::now();
     let LightBakeJob {
         id,

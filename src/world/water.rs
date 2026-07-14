@@ -311,11 +311,11 @@ impl World {
         }
         self.refresh_particle_emitter_index(cpos);
         if let Some(change) = self.update_column_heights_after_set(pos.x, pos.y, pos.z, block) {
-            self.mark_sky_cover_edited_around(cpos.chunk_pos(), change);
+            self.mark_sky_cover_edited_at(pos.x, pos.z, change);
         }
-        self.queue_dirty_mesh(cpos);
-        // A border cell changes neighbour sections' culled faces: re-mesh the 3×3×3.
-        self.mark_dirty_neighborhood(cpos, false);
+        // A border cell changes neighbour sections' culled faces: re-mesh
+        // every section whose pad samples this cell.
+        self.queue_dirty_meshes_sampling_cell(pos.x, pos.y, pos.z);
         self.notify_block_and_neighbors(pos.x, pos.y, pos.z);
         true
     }
