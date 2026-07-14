@@ -22,13 +22,21 @@ pub(super) struct PointerState {
     cursor_x: f32,
     cursor_y: f32,
     recenter_pending: bool,
+    /// A cursor warp may emit one synthetic raw-motion sample after recapture.
+    discard_next_motion: bool,
 }
 
 impl PointerState {
     fn add_motion(&mut self, dx: f32, dy: f32) {
+        if !self.grabbing {
+            return;
+        }
+        if self.discard_next_motion {
+            self.discard_next_motion = false;
+            return;
+        }
         self.dx += dx;
         self.dy += dy;
-        self.grabbing = true;
     }
 
     fn set_cursor_position(&mut self, x: f32, y: f32) {
@@ -47,7 +55,6 @@ impl PointerState {
             (PointerButton::Primary, true) => {
                 self.left_click = true;
                 self.left_held = true;
-                self.grabbing = true;
             }
             (PointerButton::Primary, false) => {
                 self.left_held = false;
@@ -55,7 +62,6 @@ impl PointerState {
             (PointerButton::Secondary, true) => {
                 self.right_click = true;
                 self.right_held = true;
-                self.grabbing = true;
             }
             (PointerButton::Secondary, false) => {
                 self.right_held = false;
@@ -85,7 +91,10 @@ impl PointerState {
 
     pub(super) fn release_for_menu(&mut self) {
         self.clear_buttons();
+        self.dx = 0.0;
+        self.dy = 0.0;
         self.grabbing = false;
+        self.discard_next_motion = false;
         self.recenter_pending = true;
     }
 
@@ -97,9 +106,12 @@ impl PointerState {
         // A menu press must never ride into gameplay: when a click flips the
         // screen BETWEEN press and release (double-click Play, RESUME), the
         // release routes through the binding engine — which never saw the
-        // press — so a stale `left_held` here would mine forever.
+        // press — so stale menu input must not reach gameplay.
         self.clear_buttons();
+        self.dx = 0.0;
+        self.dy = 0.0;
         self.grabbing = true;
+        self.discard_next_motion = true;
     }
 
     pub(super) fn recenter_if_pending(&mut self, screen_size: (u32, u32)) -> bool {
@@ -368,6 +380,7 @@ mod tests {
     fn button_edges_and_held_state_feed_game_input() {
         let mut input = InputController::default();
         let mut p = PointerState::default();
+        p.grab_for_gameplay();
 
         p.set_button(PointerButton::Primary, true);
         p.set_button(PointerButton::Primary, false);

@@ -10,7 +10,7 @@ use crate::mathh::Vec3;
 use crate::render::{new_renderer_from_target, Renderer};
 
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalSize;
+use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyCode, PhysicalKey};
@@ -145,12 +145,29 @@ fn apply_cursor_policy(window: &Window, applied: &mut Option<CursorPolicy>, curs
         return;
     }
     if applied.is_none_or(|p| p.grabbed != cursor.grabbed) {
-        let grab = if cursor.grabbed {
-            CursorGrabMode::Confined
+        let size = window.inner_size();
+        let center = PhysicalPosition::new(size.width as f64 * 0.5, size.height as f64 * 0.5);
+        if cursor.grabbed {
+            // macOS re-associates cursor motion when warping, so centre before
+            // locking there. Wayland rejects this until locked and uses the
+            // retry below as its locked-pointer position hint.
+            let centered_before_grab = window.set_cursor_position(center).is_ok();
+            // Locked keeps the hidden OS cursor from drifting while raw relative
+            // motion drives the camera. X11 cannot lock, so confine there.
+            let _ = window
+                .set_cursor_grab(CursorGrabMode::Locked)
+                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+            if !centered_before_grab {
+                let _ = window.set_cursor_position(center);
+            }
         } else {
-            CursorGrabMode::None
-        };
-        let _ = window.set_cursor_grab(grab);
+            // Set the unlock position while Wayland's locked-pointer protocol
+            // still permits it, so the visible menu cursor opens in the centre.
+            if applied.is_some_and(|previous| previous.grabbed) {
+                let _ = window.set_cursor_position(center);
+            }
+            let _ = window.set_cursor_grab(CursorGrabMode::None);
+        }
     }
     if applied.is_none_or(|p| p.visible != cursor.visible) {
         window.set_cursor_visible(cursor.visible);
@@ -343,7 +360,9 @@ impl ApplicationHandler for NativeHost {
         };
         match event {
             DeviceEvent::MouseMotion { delta: (dx, dy) } => {
-                app.add_pointer_motion(dx as f32, dy as f32);
+                if self.cursor_policy.is_some_and(|cursor| cursor.grabbed) {
+                    app.add_pointer_motion(dx as f32, dy as f32);
+                }
             }
             DeviceEvent::MouseWheel { delta } => {
                 app.add_scroll_delta(-wheel_notches(delta));
