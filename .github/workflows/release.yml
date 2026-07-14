@@ -50,7 +50,7 @@ jobs:
           set -euo pipefail
           mkdir -p staged-mods
           cp -r mods/kitchen staged-mods/kitchen
-          cp -r mods/zombies staged-mods/zombies
+          cp -r mods/monsters staged-mods/monsters
           cp -r mods/minimap staged-mods/minimap
 
       - uses: actions/upload-artifact@v4
@@ -131,7 +131,7 @@ jobs:
           cp "target/${{ matrix.target }}/release/petramond_native${EXT}" "$DEST/petramond${EXT}"
           cp -r assets "$DEST/assets"
           cp -r staged-mods/kitchen "$DEST/mods/kitchen"
-          cp -r staged-mods/zombies "$DEST/mods/zombies"
+          cp -r staged-mods/monsters "$DEST/mods/monsters"
           cp -r staged-mods/minimap "$DEST/mods/minimap"
 
           README="$DEST/README.txt"
@@ -182,7 +182,7 @@ jobs:
             echo "  program. The game loads them from here."
             echo
             echo "MODS"
-            echo "  Bundled: kitchen, zombies and minimap."
+            echo "  Bundled: kitchen, monsters and minimap."
             echo "  To add more, drop a mod folder into the \"mods\" folder."
             echo
             echo "SAVES"
