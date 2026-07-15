@@ -12,11 +12,15 @@ pub(super) struct ClientCanvasState {
     rect: Option<[f32; 4]>,
     pointer_captured: bool,
     pending_move: Option<(f32, f32)>,
+    /// Wheel notches accumulated this frame (positive = up); coalesced to one
+    /// dispatch per frame like pointer moves.
+    pending_scroll: f32,
 }
 
 impl App {
     pub(super) fn drive_client_mod_frame(&mut self, dt: f32, screen: (u32, u32)) {
         self.flush_client_canvas_move();
+        self.flush_client_canvas_scroll();
         let open = match self.screen {
             AppScreen::ClientModGui(kind) => crate::gui::kind_key(kind),
             _ => None,
@@ -151,6 +155,45 @@ impl App {
         self.apply_client_mod_commands();
     }
 
+    pub(super) fn queue_client_canvas_scroll(&mut self, delta: f32) {
+        if let Some(canvas) = self
+            .client_canvas
+            .as_mut()
+            .filter(|_| self.screen == AppScreen::ClientCanvas)
+        {
+            canvas.pending_scroll += delta;
+        }
+    }
+
+    pub(super) fn flush_client_canvas_scroll(&mut self) {
+        let Some(canvas) = self
+            .client_canvas
+            .as_mut()
+            .filter(|canvas| {
+                self.screen == AppScreen::ClientCanvas && canvas.pending_scroll != 0.0
+            })
+        else {
+            return;
+        };
+        let delta = std::mem::take(&mut canvas.pending_scroll);
+        // Wheel travel with the cursor off the canvas is dropped, not queued:
+        // canvas-local coordinates only exist inside the rect.
+        let Some([left, top, width, height]) = canvas.rect else {
+            return;
+        };
+        let (x, y) = self.pointer.cursor();
+        if x < left || y < top || x >= left + width || y >= top + height {
+            return;
+        }
+        let canvas_key = canvas.canvas_key.clone();
+        let local_x = (x - left) * canvas.source_size.0 as f32 / width;
+        let local_y = (y - top) * canvas.source_size.1 as f32 / height;
+        if let Some(game) = self.game.as_mut() {
+            game.client_mod_canvas_scroll(&canvas_key, local_x, local_y, delta);
+        }
+        self.apply_client_mod_commands();
+    }
+
     pub(super) fn queue_client_canvas_move(&mut self, x: f32, y: f32) {
         if let Some(canvas) = self
             .client_canvas
@@ -235,6 +278,7 @@ impl App {
                         rect: None,
                         pointer_captured: false,
                         pending_move: None,
+                        pending_scroll: 0.0,
                     });
                     self.screen = AppScreen::ClientCanvas;
                     self.pointer.release_for_menu();
@@ -468,6 +512,7 @@ fn render_image(
         size: (image.width, image.height),
         rgba: image.rgba,
         revision: image.revision,
+        recent_blits: image.recent_blits,
         rect,
         uv,
     }
@@ -518,6 +563,7 @@ mod tests {
             rect: None,
             pointer_captured: false,
             pending_move: None,
+            pending_scroll: 0.0,
         });
 
         assert!(client_gui_open_permitted(

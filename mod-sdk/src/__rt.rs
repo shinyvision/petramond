@@ -205,6 +205,15 @@ pub fn dispatch<T: crate::Mod>(slot: &ModSlot<T>, ptr: u32, len: u32) -> u64 {
             mod_.client_canvas(&canvas_key, &event);
             GuestRet::Unit
         }
+        GuestCall::ClientCanvasScroll {
+            canvas_key,
+            x,
+            y,
+            delta,
+        } => {
+            mod_.client_canvas_scroll(&canvas_key, x, y, delta);
+            GuestRet::Unit
+        }
     };
     to_wire(&mod_api::encode(&ret).expect("encode guest reply"))
 }

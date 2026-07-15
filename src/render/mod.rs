@@ -47,6 +47,10 @@ pub(crate) struct ClientOverlayImage {
     pub size: (u16, u16),
     pub rgba: Arc<[u8]>,
     pub revision: u64,
+    /// Recent partial updates (see `ClientImageData::recent_blits`): lets the
+    /// upload cache refresh only the changed rects when its held revision is
+    /// still inside the window.
+    pub recent_blits: Vec<(u64, [u16; 4])>,
     pub rect: [f32; 4],
     pub uv: [f32; 4],
 }

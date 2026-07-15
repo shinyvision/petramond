@@ -15,5 +15,7 @@ pub(crate) use runtime::{
     delete_local_world_storage, local_session_key, remote_session_key, ClientCanvasView,
     ClientModRuntime, ClientUiView,
 };
+#[cfg(test)]
+pub(crate) use runtime::{client_storage_dir_for_test, seed_client_storage_for_test};
 pub(in crate::modding) use state::ClientStoreData;
 pub(crate) use state::{ClientCommand, ClientImageData, ClientOverlayRegistration};

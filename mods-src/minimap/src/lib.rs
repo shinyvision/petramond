@@ -4,10 +4,11 @@
 //! canvas, document, key, and sandboxed-storage capabilities. This module owns
 //! the map projection, exploration cache, shading, waypoints, and interaction.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use mod_sdk::*;
 
+mod codec;
 mod explore;
 mod fullmap;
 mod hud;
@@ -28,7 +29,8 @@ const KEY_WAYPOINT: u32 = 2;
 
 #[derive(Default)]
 struct Minimap {
-    tiles: HashMap<(i32, i32), CachedTile>,
+    /// Explored base/mip tile caches plus the async region loader.
+    store: TileStore,
     waypoints: Vec<Waypoint>,
     player: [f32; 3],
     yaw: f32,
@@ -36,22 +38,33 @@ struct Minimap {
     last_sample: Option<(i32, i32)>,
     frame: u64,
     pan: [f32; 2],
+    /// Full-map zoom level, [`ZOOM_MIN`]..=[`ZOOM_MAX`] canvas-pixel-per-block
+    /// steps around the 2 px/block default; kept across open/close.
+    zoom: i8,
+    /// Sub-notch wheel remainder (hi-res wheels emit fractional notches).
+    scroll_accum: f32,
     drag_start: Option<([f32; 2], [f32; 2])>,
     dragged: bool,
     editor: Editor,
     draft: String,
-    full_tile_slots: [FullTileSlot; FULL_TILE_SLOTS],
+    full_tile_slots: FullTileSlots,
     full_scene_stamp: Option<FullSceneStamp>,
     full_view_bits: Option<[u32; 2]>,
+    /// The (bounds, zoom) the visible region requests were queued for.
+    full_needed_stamp: Option<([i32; 4], i8)>,
+    /// Pan at the last visible-request recompute — its delta picks the
+    /// velocity-prefetch direction.
+    last_synced_pan: Option<[f32; 2]>,
     waypoint_revision: u64,
     arrow_yaw_bits: Option<u32>,
     /// Bumps whenever any explored cell changes; part of the HUD stamp.
     explored_revision: u64,
     /// The inputs the current HUD raster was published from.
     hud_stamp: Option<HudStamp>,
-    /// Waypoint layouts cached per `waypoint_revision` (text measurement is
-    /// a host call — never re-measure per publish).
-    full_layouts: Option<(u64, Vec<FullWaypointLayout>)>,
+    /// Waypoint layouts cached per (`waypoint_revision`, zoom) — text
+    /// measurement is a host call, never re-measured per publish, and layout
+    /// pixel positions scale with the zoom level.
+    full_layouts: Option<(u64, i8, Vec<FullWaypointLayout>)>,
     /// Scale-2 text measurement cache (waypoint names, initials, cardinals).
     text_sizes: HashMap<String, [u16; 2]>,
 }
@@ -73,6 +86,10 @@ impl Mod for Minimap {
         self.player = frame.player_pos;
         self.yaw = frame.yaw;
         self.open_canvas = frame.open_canvas.clone();
+        self.store.begin_frame(self.frame);
+        // Loader heartbeat: poll async region reads, repaint arrivals, trim
+        // the caches when the map is closed.
+        self.pump_store();
         let center = (
             frame.player_pos[0].floor() as i32,
             frame.player_pos[2].floor() as i32,
@@ -93,9 +110,12 @@ impl Mod for Minimap {
         }
         if frame.open_canvas.as_deref() == Some(FULL_CANVAS) {
             self.sync_full_canvas();
+        } else if self.full_needed_stamp.is_some() {
+            // Map closed: a reopen recomputes its visible requests.
+            self.full_needed_stamp = None;
         }
         if self.frame % FLUSH_INTERVAL == 0 {
-            self.flush_dirty_tiles();
+            self.store.flush_dirty();
         }
     }
 
@@ -109,9 +129,10 @@ impl Mod for Minimap {
                     client_canvas_close();
                 } else {
                     self.editor = Editor::None;
+                    self.scroll_accum = 0.0;
                     self.pan = [
-                        snap_half_block(self.player[0]),
-                        snap_half_block(self.player[2]),
+                        snap_to_source_pixel(self.player[0], self.zoom),
+                        snap_to_source_pixel(self.player[2], self.zoom),
                     ];
                     self.sync_full_canvas();
                     client_canvas_open(FULL_CANVAS, [FULL_SIZE as u16, FULL_SIZE as u16]);
@@ -142,6 +163,20 @@ impl Mod for Minimap {
     fn client_canvas(&mut self, canvas_key: &str, event: &ClientCanvasEvent) {
         if canvas_key == FULL_CANVAS && event.button == ClientPointerButton::Primary {
             self.map_pointer(event.phase, event.x, event.y);
+        }
+    }
+
+    fn client_canvas_scroll(&mut self, canvas_key: &str, x: f32, y: f32, delta: f32) {
+        if canvas_key != FULL_CANVAS {
+            return;
+        }
+        // Whole notches step the zoom (wheel up = in), anchored at the
+        // cursor; the sub-notch remainder carries to the next event.
+        self.scroll_accum += delta;
+        let steps = self.scroll_accum.trunc();
+        self.scroll_accum -= steps;
+        if steps != 0.0 {
+            self.zoom_step(steps as i32, x, y);
         }
     }
 }

@@ -111,7 +111,33 @@ impl Renderer {
             let existing = &mut self.client_overlays.binds[index].1;
             if existing.size == image.size {
                 if existing.revision != image.revision {
-                    write_overlay_texture(&self.queue, &existing.texture, image.size, &image.rgba);
+                    // Partial refresh when every revision step since the one
+                    // this texture holds is a recorded blit rect; otherwise
+                    // the whole image.
+                    let chain_covers = image
+                        .recent_blits
+                        .first()
+                        .is_some_and(|&(oldest, _)| existing.revision >= oldest.saturating_sub(1));
+                    if chain_covers {
+                        for &(revision, rect) in &image.recent_blits {
+                            if revision > existing.revision {
+                                write_overlay_texture_rect(
+                                    &self.queue,
+                                    &existing.texture,
+                                    image.size,
+                                    &image.rgba,
+                                    rect,
+                                );
+                            }
+                        }
+                    } else {
+                        write_overlay_texture(
+                            &self.queue,
+                            &existing.texture,
+                            image.size,
+                            &image.rgba,
+                        );
+                    }
                     existing.revision = image.revision;
                 }
                 return index;
@@ -197,6 +223,40 @@ impl Renderer {
             pass.draw(batch.start..batch.start + batch.count, 0..1);
         }
     }
+}
+
+/// Upload one pixel rect from the full image buffer: byte offset + full-row
+/// stride address the sub-rect in place, no repacking.
+fn write_overlay_texture_rect(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    size: (u16, u16),
+    rgba: &[u8],
+    rect: [u16; 4],
+) {
+    let [x, y, w, h] = rect.map(|v| v as u32);
+    if w == 0 || h == 0 || x + w > size.0 as u32 || y + h > size.1 as u32 {
+        return;
+    }
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x, y, z: 0 },
+            aspect: wgpu::TextureAspect::All,
+        },
+        rgba,
+        wgpu::TexelCopyBufferLayout {
+            offset: (y as u64 * size.0 as u64 + x as u64) * 4,
+            bytes_per_row: Some(4 * size.0 as u32),
+            rows_per_image: Some(h),
+        },
+        wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+    );
 }
 
 fn write_overlay_texture(

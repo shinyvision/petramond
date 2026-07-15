@@ -198,12 +198,16 @@ fn samples() -> Samples {
         keys: vec!["m:k".into()],
     });
     s.pin("HostCall::ClientStorageSetMany", &HostCall::ClientStorageSetMany {
-        entries: vec![("m:k".into(), vec![1])],
+        entries: vec![("m:k".into(), ByteBuf::from(vec![1]))],
     });
     s.pin("HostCall::ResolveItem", &HostCall::ResolveItem { key: "m:i".into() });
     s.pin("HostCall::ClientImageBlit", &HostCall::ClientImageBlit {
         key: "m:i".into(), origin: [1, 2], size: [1, 1], rgba: vec![1, 2, 3, 4],
     });
+    s.pin("HostCall::ClientStorageReadBegin", &HostCall::ClientStorageReadBegin {
+        keys: vec!["m:k".into()],
+    });
+    s.pin("HostCall::ClientStorageReadPoll", &HostCall::ClientStorageReadPoll { ticket: 7 });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -242,8 +246,9 @@ fn samples() -> Samples {
         Some(ClientSurfaceColumn { revision: 3, cells: Some(vec![255, 127, 1, 2, 3]) }),
     ]));
     s.pin("HostRet::ClientTextSize", &HostRet::ClientTextSize([1, 2]));
-    s.pin("HostRet::ClientStorageValues", &HostRet::ClientStorageValues(vec![None, Some(vec![1])]));
+    s.pin("HostRet::ClientStorageValues", &HostRet::ClientStorageValues(vec![None, Some(ByteBuf::from(vec![1]))]));
     s.pin("HostRet::Item", &HostRet::Item(Some(ItemId(1))));
+    s.pin("HostRet::ClientStorageRead", &HostRet::ClientStorageRead(Some(vec![None, Some(ByteBuf::from(vec![1]))])));
 
     // --- GuestCall: every variant, declaration order -------------------------
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
@@ -293,6 +298,9 @@ fn samples() -> Samples {
         event: ClientCanvasEvent {
             phase: ClientPointerPhase::Down, x: 1.0, y: 2.0, button: ClientPointerButton::Primary,
         },
+    });
+    s.pin("GuestCall::ClientCanvasScroll", &GuestCall::ClientCanvasScroll {
+        canvas_key: "m:c".into(), x: 1.0, y: 2.0, delta: -1.0,
     });
 
     // --- GuestRet: every variant, declaration order --------------------------
@@ -519,6 +527,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::ClientStorageSetMany", "4e01036d3a6b0101"),
     ("HostCall::ResolveItem", "4f036d3a69"),
     ("HostCall::ClientImageBlit", "50036d3a69010201010401020304"),
+    ("HostCall::ClientStorageReadBegin", "5101036d3a6b"),
+    ("HostCall::ClientStorageReadPoll", "5207"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -540,6 +550,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::ClientTextSize", "120102"),
     ("HostRet::ClientStorageValues", "130200010101"),
     ("HostRet::Item", "140101"),
+    ("HostRet::ClientStorageRead", "15010200010101"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c0c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
@@ -552,6 +563,7 @@ const PINS: &[(&str, &str)] = &[
     ("GuestCall::ClientKey", "090101"),
     ("GuestCall::ClientUi", "0a036d3a67000162"),
     ("GuestCall::ClientCanvas", "0b036d3a63000000803f0000004000"),
+    ("GuestCall::ClientCanvasScroll", "0c036d3a630000803f00000040000080bf"),
     ("GuestRet::Unit", "00"),
     ("GuestRet::Event", "01010801"),
     ("GuestRet::GenWrites", "020102040604"),

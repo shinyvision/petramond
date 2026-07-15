@@ -33,6 +33,7 @@ pub struct ClientSurfaceQuery {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ClientSurfaceColumn {
     pub revision: u64,
+    #[serde(with = "serde_bytes")]
     pub cells: Option<Vec<u8>>,
 }
 

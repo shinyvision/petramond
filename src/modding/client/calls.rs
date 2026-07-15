@@ -36,7 +36,7 @@ const CLIENT_OVERLAY_DISPLAY_SIDE_MAX: u16 = 2048;
 const CLIENT_KEY_BINDING_MAX: usize = 32;
 const CLIENT_UI_STATE_MAX: usize = 1024;
 const CLIENT_UI_STRING_MAX: usize = 16 << 10;
-const CLIENT_IMAGE_MAX: usize = 32;
+const CLIENT_IMAGE_MAX: usize = 64;
 const CLIENT_TEXT_RUN_MAX: usize = 256;
 const CLIENT_TEXT_BYTES_MAX: usize = 16 << 10;
 const CLIENT_TEXT_SCALE_MAX: u8 = 8;
@@ -72,7 +72,9 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::ClientCanvasSceneSet { .. }
         | HostCall::ClientCanvasViewSet { .. }
         | HostCall::ClientStorageGetMany { .. }
-        | HostCall::ClientStorageSetMany { .. } => true,
+        | HostCall::ClientStorageSetMany { .. }
+        | HostCall::ClientStorageReadBegin { .. }
+        | HostCall::ClientStorageReadPoll { .. } => true,
         // Simulation, registration, and registry surfaces: server-side only.
         HostCall::CurrentTick
         | HostCall::RegisterTickSystem { .. }
@@ -331,6 +333,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                     height,
                     rgba: Arc::from(rgba.into_boxed_slice()),
                     revision,
+                    recent_blits: Vec::new(),
                 },
             );
             HostRet::Unit
@@ -377,6 +380,12 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 dst[at..at + w * 4].copy_from_slice(&rgba[src..src + w * 4]);
             }
             image.revision = revision;
+            if image.recent_blits.len() >= super::state::IMAGE_BLIT_WINDOW {
+                image.recent_blits.remove(0);
+            }
+            image
+                .recent_blits
+                .push((revision, [origin[0], origin[1], size[0], size[1]]));
             HostRet::Unit
         }
         HostCall::ClientTextMeasure { text, scale } => {
@@ -431,6 +440,9 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 );
             }
             image.revision = revision;
+            // Text bounds aren't tracked as a rect: break the partial-update
+            // chain so consumers re-upload the whole image once.
+            image.recent_blits.clear();
             HostRet::Unit
         }
         HostCall::ClientGuiOpen { kind_key } => {
@@ -554,7 +566,36 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 }
             }
             match client.storage.get_many(&keys) {
-                Ok(values) => HostRet::ClientStorageValues(values),
+                Ok(values) => HostRet::ClientStorageValues(
+                    values
+                        .into_iter()
+                        .map(|value| value.map(mod_api::ByteBuf::from))
+                        .collect(),
+                ),
+                Err(error) => HostRet::Error(error),
+            }
+        }
+        HostCall::ClientStorageReadBegin { keys } => {
+            for key in &keys {
+                if !key_owned_by_namespace(&mod_id, key) {
+                    return HostRet::Error(format!(
+                        "client storage key '{key}' must be namespaced '{mod_id}:name'"
+                    ));
+                }
+            }
+            match client.storage.read_begin(keys) {
+                Ok(ticket) => HostRet::U64(ticket),
+                Err(error) => HostRet::Error(error),
+            }
+        }
+        HostCall::ClientStorageReadPoll { ticket } => {
+            match client.storage.read_poll(ticket) {
+                Ok(values) => HostRet::ClientStorageRead(values.map(|values| {
+                    values
+                        .into_iter()
+                        .map(|value| value.map(mod_api::ByteBuf::from))
+                        .collect()
+                })),
                 Err(error) => HostRet::Error(error),
             }
         }
@@ -571,6 +612,10 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                     ));
                 }
             }
+            let entries = entries
+                .into_iter()
+                .map(|(key, value)| (key, value.into_vec()))
+                .collect();
             match client.storage.set_many(entries) {
                 Ok(()) => HostRet::Bool(true),
                 Err(error) => HostRet::Error(error),
@@ -749,6 +794,49 @@ mod tests {
         assert_eq!(&image.rgba[12..16], &[9, 8, 7, 255], "blit lands at (1,1)");
         assert_eq!(&image.rgba[0..4], &[0, 0, 0, 0], "pixels outside stay");
         assert_ne!(image.revision, revision, "a blit must move the revision");
+        assert_eq!(
+            image.recent_blits,
+            vec![(image.revision, [1, 1, 1, 1])],
+            "the blit records its rect for partial texture uploads"
+        );
+
+        // The partial-update chain: bounded window, oldest first, broken by
+        // whole-image mutations (text draws, re-publish).
+        for _ in 0..super::super::state::IMAGE_BLIT_WINDOW + 2 {
+            handle_host_call(
+                &mut data,
+                HostCall::ClientImageBlit {
+                    key: "map:tile".into(),
+                    origin: [0, 0],
+                    size: [1, 1],
+                    rgba: vec![1, 1, 1, 255],
+                },
+            );
+        }
+        let image = &data.client.as_ref().unwrap().images["map:tile"];
+        assert_eq!(image.recent_blits.len(), super::super::state::IMAGE_BLIT_WINDOW);
+        assert!(
+            image.recent_blits.windows(2).all(|w| w[1].0 == w[0].0 + 1),
+            "window entries stay consecutive"
+        );
+        assert_eq!(image.recent_blits.last().unwrap().0, image.revision);
+        handle_host_call(
+            &mut data,
+            HostCall::ClientImageDrawTexts {
+                key: "map:tile".into(),
+                runs: vec![mod_api::ClientTextRun {
+                    text: "x".into(),
+                    position: [0, 0],
+                    scale: 1,
+                    color: [255, 255, 255, 255],
+                }],
+            },
+        );
+        let image = &data.client.as_ref().unwrap().images["map:tile"];
+        assert!(
+            image.recent_blits.is_empty(),
+            "text draws break the partial chain (no rect is tracked for them)"
+        );
 
         for bad in [
             // out of bounds

@@ -5,6 +5,10 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// How many consecutive partial updates an image remembers; a consumer whose
+/// held revision fell out of the window uploads the whole texture.
+pub(crate) const IMAGE_BLIT_WINDOW: usize = 8;
+
 #[derive(Clone)]
 pub(crate) struct ClientImageData {
     pub key: String,
@@ -12,6 +16,12 @@ pub(crate) struct ClientImageData {
     pub height: u16,
     pub rgba: Arc<[u8]>,
     pub revision: u64,
+    /// The last [`IMAGE_BLIT_WINDOW`] partial updates as (revision after the
+    /// blit, pixel rect `[x, y, w, h]`), oldest first and CONSECUTIVE up to
+    /// `revision`: a consumer holding revision R ≥ `blits[0].0 − 1` needs
+    /// only the union of rects with revision > R. Cleared by any whole-image
+    /// mutation (re-publish, text draws).
+    pub recent_blits: Vec<(u64, [u16; 4])>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

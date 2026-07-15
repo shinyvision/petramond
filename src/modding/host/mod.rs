@@ -234,6 +234,10 @@ pub(in crate::modding) struct ModStoreData {
     deadline_armed_at: u64,
     /// Host calls made by the current dispatch ([`DISPATCH_HOST_CALL_MAX`]).
     dispatch_host_calls: u32,
+    /// Wall time the current dispatch spent inside host calls — the
+    /// guest/host split for slow-dispatch diagnostics (target
+    /// `petramond::modding::perf`).
+    pub(in crate::modding) dispatch_host_wall: std::time::Duration,
     /// Bounded rendering of the dispatch's most recent host call and whether
     /// it returned — diagnostics for disable messages.
     pub(in crate::modding) last_host_call: Option<(String, bool)>,
@@ -268,6 +272,7 @@ impl ModStoreData {
             deadline_budget: DISPATCH_DEADLINE_EPOCHS,
             deadline_armed_at: epoch_now(),
             dispatch_host_calls: 0,
+            dispatch_host_wall: std::time::Duration::ZERO,
             last_host_call: None,
         }
     }
@@ -278,7 +283,12 @@ impl ModStoreData {
         self.deadline_budget = DISPATCH_DEADLINE_EPOCHS;
         self.deadline_armed_at = epoch_now();
         self.dispatch_host_calls = 0;
+        self.dispatch_host_wall = std::time::Duration::ZERO;
         self.last_host_call = None;
+    }
+
+    pub(in crate::modding) fn dispatch_host_calls(&self) -> u32 {
+        self.dispatch_host_calls
     }
 
     pub(super) fn register(&mut self, reg: Registration) -> HostRet {
@@ -474,7 +484,9 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ClientCanvasSceneSet { .. }
         | HostCall::ClientCanvasViewSet { .. }
         | HostCall::ClientStorageGetMany { .. }
-        | HostCall::ClientStorageSetMany { .. } => super::client::handle_client_call(data, call),
+        | HostCall::ClientStorageSetMany { .. }
+        | HostCall::ClientStorageReadBegin { .. }
+        | HostCall::ClientStorageReadPoll { .. } => super::client::handle_client_call(data, call),
     }
 }
 
@@ -525,7 +537,9 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                     }
                     data.last_host_call = Some((short_debug(&call, DIAG_DEBUG_CAP), false));
                 }
+                let host_started = std::time::Instant::now();
                 let ret = handle_host_call(caller.data_mut(), call);
+                caller.data_mut().dispatch_host_wall += host_started.elapsed();
                 let bytes = mod_api::encode(&ret)
                     .map_err(|e| wasmtime::Error::msg(format!("encode host reply: {e}")))?;
                 let alloc =

@@ -231,3 +231,174 @@ pub(crate) fn fill_rect(
 pub(crate) fn rects_intersect(a: [i64; 4], b: [i64; 4]) -> bool {
     a[0] < b[0] + b[2] && a[0] + a[2] > b[0] && a[1] < b[1] + b[3] && a[1] + a[3] > b[1]
 }
+
+/// Average colors in HSL space: hue as saturation-weighted unit vectors (hue
+/// is circular, and gray members must not drag it toward 0°), saturation and
+/// lightness arithmetically. Production code goes through the memoized form
+/// (the mip write path); this thin wrapper is the test surface.
+#[cfg(test)]
+pub(crate) fn average_rgb_hsl(colors: &[[u8; 3]]) -> [u8; 3] {
+    let mut memo = std::collections::HashMap::new();
+    average_rgb_hsl_memo(&mut memo, colors)
+}
+
+/// [`average_rgb_hsl`] through an rgb→hsl memo: terrain colors repeat
+/// massively, so the write-path mip averaging is mostly table lookups.
+pub(crate) fn average_rgb_hsl_memo(
+    memo: &mut std::collections::HashMap<[u8; 3], (f32, f32, f32)>,
+    colors: &[[u8; 3]],
+) -> [u8; 3] {
+    if colors.len() == 1 {
+        return colors[0];
+    }
+    let mut hue_x = 0.0f32;
+    let mut hue_y = 0.0f32;
+    let mut saturation = 0.0f32;
+    let mut lightness = 0.0f32;
+    for &color in colors {
+        let (h, s, l) = match memo.get(&color) {
+            Some(&hsl) => hsl,
+            None => {
+                let hsl = rgb_to_hsl(color);
+                if memo.len() >= 4096 {
+                    memo.clear();
+                }
+                memo.insert(color, hsl);
+                hsl
+            }
+        };
+        hue_x += h.cos() * s;
+        hue_y += h.sin() * s;
+        saturation += s;
+        lightness += l;
+    }
+    let n = colors.len() as f32;
+    let hue = if hue_x == 0.0 && hue_y == 0.0 {
+        0.0
+    } else {
+        hue_y.atan2(hue_x)
+    };
+    hsl_to_rgb(hue, saturation / n, lightness / n)
+}
+
+/// RGB → (hue radians, saturation, lightness), all HSL components 0..=1
+/// except the hue angle.
+pub(crate) fn rgb_to_hsl(rgb: [u8; 3]) -> (f32, f32, f32) {
+    let r = rgb[0] as f32 / 255.0;
+    let g = rgb[1] as f32 / 255.0;
+    let b = rgb[2] as f32 / 255.0;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let lightness = (max + min) * 0.5;
+    let delta = max - min;
+    if delta <= f32::EPSILON {
+        return (0.0, 0.0, lightness);
+    }
+    let saturation = if lightness > 0.5 {
+        delta / (2.0 - max - min)
+    } else {
+        delta / (max + min)
+    };
+    let sixth = if max == r {
+        (g - b) / delta + if g < b { 6.0 } else { 0.0 }
+    } else if max == g {
+        (b - r) / delta + 2.0
+    } else {
+        (r - g) / delta + 4.0
+    };
+    (
+        sixth / 6.0 * std::f32::consts::TAU,
+        saturation,
+        lightness,
+    )
+}
+
+pub(crate) fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> [u8; 3] {
+    let to_byte = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+    if saturation <= 0.0 {
+        let v = to_byte(lightness);
+        return [v, v, v];
+    }
+    let h = (hue / std::f32::consts::TAU).rem_euclid(1.0);
+    let q = if lightness < 0.5 {
+        lightness * (1.0 + saturation)
+    } else {
+        lightness + saturation - lightness * saturation
+    };
+    let p = 2.0 * lightness - q;
+    let channel = |mut t: f32| {
+        if t < 0.0 {
+            t += 1.0;
+        }
+        if t > 1.0 {
+            t -= 1.0;
+        }
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+    [
+        to_byte(channel(h + 1.0 / 3.0)),
+        to_byte(channel(h)),
+        to_byte(channel(h - 1.0 / 3.0)),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close(a: [u8; 3], b: [u8; 3], tolerance: u8) -> bool {
+        a.iter()
+            .zip(b)
+            .all(|(x, y)| x.abs_diff(y) <= tolerance)
+    }
+
+    #[test]
+    fn hsl_roundtrips_through_rgb() {
+        for rgb in [
+            [0, 0, 0],
+            [255, 255, 255],
+            [128, 128, 128],
+            [200, 40, 40],
+            [30, 180, 90],
+            [12, 34, 210],
+            [90, 140, 60],
+        ] {
+            let (h, s, l) = rgb_to_hsl(rgb);
+            assert!(
+                close(hsl_to_rgb(h, s, l), rgb, 1),
+                "{rgb:?} -> {:?}",
+                hsl_to_rgb(h, s, l)
+            );
+        }
+    }
+
+    #[test]
+    fn hsl_average_of_identical_colors_is_identity() {
+        for rgb in [[200, 40, 40], [30, 180, 90], [128, 128, 128]] {
+            let avg = average_rgb_hsl(&[rgb, rgb, rgb, rgb]);
+            assert!(close(avg, rgb, 1), "{rgb:?} -> {avg:?}");
+        }
+    }
+
+    #[test]
+    fn hsl_average_handles_the_hue_wraparound() {
+        // Reds on either side of the 0° hue seam must average to red, not to
+        // the arithmetic-mean hue (cyan).
+        let avg = average_rgb_hsl(&[[255, 30, 0], [255, 0, 30]]);
+        assert!(avg[0] > 200 && avg[1] < 60 && avg[2] < 60, "{avg:?}");
+    }
+
+    #[test]
+    fn hsl_average_of_black_and_white_is_mid_gray() {
+        let avg = average_rgb_hsl(&[[0, 0, 0], [255, 255, 255]]);
+        assert!(close(avg, [128, 128, 128], 2), "{avg:?}");
+    }
+}

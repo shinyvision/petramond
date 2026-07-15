@@ -14,6 +14,7 @@ mod controls;
 mod drops;
 mod gui_routing;
 mod overlays;
+mod perf;
 mod sounds;
 
 impl App {
@@ -112,6 +113,59 @@ impl TestApp {
     /// Flush the game's queued messages to the server, apply the latched
     /// actions, and refresh the replicated read models — what the game tests'
     /// harness does, reached through the App.
+    /// One app frame with the loopback server pumped afterwards, standing in
+    /// for one iteration of the production server thread: terrain streams
+    /// into the replica with one frame of latency. The app clock is backdated
+    /// one fixed tick so each headless frame banks a real tick (streaming
+    /// requests and acks ride ticks).
+    /// Returns (client→server, server→client) message counts for
+    /// stream-health diagnostics.
+    fn frame_and_pump(&mut self, screen: (u32, u32)) -> (usize, usize) {
+        self.app.last -= 0.05;
+        self.app.update_frame(screen);
+        let mut inbox: Vec<crate::net::protocol::ClientToServer> = Vec::new();
+        while let Ok(msg) = self.pipe.inbox.try_recv() {
+            inbox.push(msg);
+        }
+        let sent = inbox.len();
+        let out = self.server.pump(0.05, &mut inbox);
+        let received = out.msgs.len();
+        for msg in out.msgs {
+            let _ = self.pipe.outbox.send(msg);
+        }
+        (sent, received)
+    }
+
+    /// [`frame_and_pump`](Self::frame_and_pump) that also tallies the
+    /// server→client message variants — stream-health diagnostics.
+    fn frame_and_pump_recorded(
+        &mut self,
+        screen: (u32, u32),
+        kinds: &mut std::collections::BTreeMap<String, usize>,
+    ) -> (usize, usize) {
+        self.app.last -= 0.05;
+        self.app.update_frame(screen);
+        let mut inbox: Vec<crate::net::protocol::ClientToServer> = Vec::new();
+        while let Ok(msg) = self.pipe.inbox.try_recv() {
+            inbox.push(msg);
+        }
+        let sent = inbox.len();
+        for msg in &inbox {
+            let name = format!("{msg:?}");
+            let name = name.split(&['(', ' ', '{'][..]).next().unwrap_or("?");
+            *kinds.entry(format!("c->s {name}")).or_default() += 1;
+        }
+        let out = self.server.pump(0.05, &mut inbox);
+        let received = out.msgs.len();
+        for msg in out.msgs {
+            let name = format!("{msg:?}");
+            let name = name.split(&['(', ' ', '{'][..]).next().unwrap_or("?");
+            *kinds.entry(format!("s->c {name}")).or_default() += 1;
+            let _ = self.pipe.outbox.send(msg);
+        }
+        (sent, received)
+    }
+
     fn apply_latched_actions_for_test(&mut self) {
         let game = self.app.game.as_mut().expect("test app has a loaded game");
         for msg in game.take_outbox_for_test() {
@@ -199,15 +253,34 @@ fn test_recipe(
     )
 }
 
+/// Keep test saves and client-mod storage out of the real user data dir.
+/// Every test in this process gets the same per-process temp root, so the
+/// benign parallel re-sets all write one identical value. Call before
+/// computing any data-dir-derived path.
+fn ensure_test_data_dir() {
+    std::env::set_var(
+        "PETRAMOND_DATA_DIR",
+        std::env::temp_dir().join(format!("petramond-test-data-{}", std::process::id())),
+    );
+}
+
 fn app() -> TestApp {
-    let (server, bootstrap) = crate::game::session::build_session("", 1, 1);
+    app_with_render_dist(1)
+}
+
+fn app_with_render_dist(render_dist: i32) -> TestApp {
+    ensure_test_data_dir();
+    let (server, bootstrap) = crate::game::session::build_session("", 1, render_dist);
     let (handle, pipe) = crate::server::handle::ServerHandle::loopback();
     let game = Game::assemble(
         Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0),
         handle,
         bootstrap,
     );
-    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let mut app = App::new(
+        Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0),
+        render_dist,
+    );
     app.adopt_game(game);
     TestApp { app, server, pipe }
 }

@@ -35,9 +35,12 @@ impl Minimap {
     }
 
     pub(crate) fn select_waypoint_at(&mut self, x: f32, y: f32) {
+        let bpp = blocks_per_pixel(self.zoom);
         let half = FULL_SIZE as f32 * 0.5;
-        let wx = self.pan[0] + (x - half) * FULL_BLOCKS_PER_PIXEL;
-        let wz = self.pan[1] + (y - half) * FULL_BLOCKS_PER_PIXEL;
+        let wx = self.pan[0] + (x - half) * bpp;
+        let wz = self.pan[1] + (y - half) * bpp;
+        // A steady ~12-canvas-pixel hit target at every zoom level.
+        let radius = 12.0 * bpp;
         let Some((index, _)) = self
             .waypoints
             .iter()
@@ -47,7 +50,7 @@ impl Minimap {
                 let dz = waypoint.pos[2] as f32 + 0.5 - wz;
                 (i, dx * dx + dz * dz)
             })
-            .filter(|(_, distance)| *distance <= 36.0)
+            .filter(|(_, distance)| *distance <= radius * radius)
             .min_by(|a, b| a.1.total_cmp(&b.1))
         else {
             return;

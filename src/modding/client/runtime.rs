@@ -243,6 +243,26 @@ impl ClientModRuntime {
         dispatch_unit(&mut loaded.instance, world, &call, "client canvas event");
     }
 
+    pub(crate) fn canvas_scroll(
+        &mut self,
+        world: &World,
+        canvas_key: &str,
+        x: f32,
+        y: f32,
+        delta: f32,
+    ) {
+        let call = GuestCall::ClientCanvasScroll {
+            canvas_key: canvas_key.to_owned(),
+            x,
+            y,
+            delta,
+        };
+        let Some(loaded) = self.owner_mod_mut(canvas_key) else {
+            return;
+        };
+        dispatch_unit(&mut loaded.instance, world, &call, "client canvas scroll");
+    }
+
     pub(crate) fn release_all_keys(&mut self, world: &World) {
         let pressed: Vec<_> = self.pressed.drain().collect();
         for full_id in pressed {
@@ -405,6 +425,39 @@ fn session_storage_bucket(base: &Path, session_key: &str) -> PathBuf {
 
 fn client_storage_dir(session_key: &str, mod_id: &str) -> PathBuf {
     session_storage_bucket(&crate::save::base_data_dir(), session_key).join(mod_id)
+}
+
+#[cfg(test)]
+pub(crate) fn client_storage_dir_for_test(session_key: &str, mod_id: &str) -> PathBuf {
+    client_storage_dir(session_key, mod_id)
+}
+
+/// Test seeding: write entries into a mod's session storage bucket through
+/// the ordered worker, flushed before return — perf harnesses fabricate a
+/// large explored world without driving real exploration.
+#[cfg(test)]
+pub(crate) fn seed_client_storage_for_test(
+    session_key: &str,
+    mod_id: &str,
+    mut entries: Vec<(String, Vec<u8>)>,
+) {
+    let mut storage =
+        super::storage::ClientStorage::new(client_storage_dir(session_key, mod_id));
+    while !entries.is_empty() {
+        // Stay under the per-batch byte cap whatever the value sizes.
+        let mut take = 0usize;
+        let mut bytes = 0usize;
+        while take < entries.len() && take < 512 && bytes < 8 << 20 {
+            bytes += entries[take].0.len() + entries[take].1.len();
+            take += 1;
+        }
+        let rest = entries.split_off(take);
+        storage
+            .set_many(entries)
+            .expect("seed client storage batch");
+        entries = rest;
+    }
+    // Drop flushes the worker, so files exist when the test proceeds.
 }
 
 /// Delete every client mod's sandboxed storage for a LOCAL world — the

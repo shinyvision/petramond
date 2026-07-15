@@ -732,6 +732,57 @@ fn mod_bound_key_dispatches_to_the_client_mod() {
     );
 }
 
+/// Wheel travel over an open client canvas routes to the owning mod
+/// (coalesced per frame) instead of the gameplay scroll bindings: the bundled
+/// minimap zooms around the cursor, which re-anchors its retained scene view.
+/// With the cursor off the canvas the travel is dropped.
+#[test]
+fn canvas_wheel_scroll_reaches_the_client_mod() {
+    use winit::keyboard::KeyCode;
+    let mut app = app();
+    app.update_frame((1280, 720));
+    assert!(app.handle_raw_key(KeyCode::KeyM, true));
+    let _ = app.handle_raw_key(KeyCode::KeyM, false);
+    app.update_frame((1280, 720));
+    assert!(app.screen.client_canvas_open());
+    let view = |app: &crate::app::App| {
+        app.game
+            .as_ref()
+            .unwrap()
+            .client_mod_canvas_view("minimap:full_map")
+            .expect("the world map publishes a retained scene")
+            .offset
+    };
+    let before = view(&app);
+    // The canvas display rect is computed in the render path; compose once
+    // like a drawn frame would so the scroll's inside-rect check can pass.
+    app.compose_client_overlays((1280, 720));
+    // Off-center cursor inside the canvas: the cursor-anchored zoom must
+    // shift the pan, which shows up in the published view offset.
+    app.set_cursor_position(420.0, 130.0);
+    app.add_scroll_delta(-1.0); // one wheel notch up (app-internal + = down)
+    app.update_frame((1280, 720));
+    let zoomed = view(&app);
+    assert_ne!(before, zoomed, "the wheel notch reached the minimap");
+    // Cursor outside the canvas rect: wheel travel is dropped.
+    app.set_cursor_position(10.0, 360.0);
+    app.add_scroll_delta(-1.0);
+    app.update_frame((1280, 720));
+    assert_eq!(zoomed, view(&app), "off-canvas wheel travel is dropped");
+    // Ride the wheel down to the outermost level (1 px per 2×2 blocks, the
+    // HSL-averaging raster) and let the progressive loads and budgeted
+    // rasters run: a guest fault would disable the mod and stop publishing.
+    app.set_cursor_position(640.0, 360.0);
+    for _ in 0..3 {
+        app.add_scroll_delta(1.0);
+        app.update_frame((1280, 720));
+    }
+    for _ in 0..12 {
+        app.update_frame((1280, 720));
+    }
+    let _ = view(&app);
+}
+
 /// A click whose press lands on a MENU and whose release lands in GAMEPLAY
 /// (the screen flips in between — double-clicking a world to join it, or
 /// clicking RESUME) must not leave the attack/mine state held: the release

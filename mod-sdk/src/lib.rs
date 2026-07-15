@@ -158,6 +158,12 @@ pub trait Mod: Default {
 
     /// Pointer event over this module's open physical-pixel canvas.
     fn client_canvas(&mut self, _canvas_key: &str, _event: &ClientCanvasEvent) {}
+
+    /// Mouse-wheel travel over this module's open physical-pixel canvas.
+    /// `x`/`y` are canvas-local logical pixels, `delta` is in wheel notches
+    /// (positive = scrolled up / away from the user), coalesced to at most
+    /// one call per app frame.
+    fn client_canvas_scroll(&mut self, _canvas_key: &str, _x: f32, _y: f32, _delta: f32) {}
 }
 
 /// Define the raw wasm exports for a [`Mod`] implementation. Exactly one call

@@ -177,14 +177,48 @@ pub fn client_canvas_view_set(canvas_key: &str, offset: [f32; 2]) {
 
 pub fn client_storage_get_many(keys: Vec<String>) -> Vec<Option<Vec<u8>>> {
     match __rt::host_call(&HostCall::ClientStorageGetMany { keys }) {
-        HostRet::ClientStorageValues(values) => values,
+        HostRet::ClientStorageValues(values) => values
+            .into_iter()
+            .map(|value| value.map(mod_api::ByteBuf::into_vec))
+            .collect(),
         other => panic!("ClientStorageGetMany returned {other:?}"),
     }
 }
 
 pub fn client_storage_set_many(entries: Vec<(String, Vec<u8>)>) -> bool {
+    let entries = entries
+        .into_iter()
+        .map(|(key, value)| (key, mod_api::ByteBuf::from(value)))
+        .collect();
     match __rt::host_call(&HostCall::ClientStorageSetMany { entries }) {
         HostRet::Bool(ok) => ok,
         other => panic!("ClientStorageSetMany returned {other:?}"),
+    }
+}
+
+/// Begin an asynchronous storage read on the host's background worker; the
+/// returned ticket resolves through [`client_storage_read_poll`], usually on
+/// a later frame. The REQUIRED path for bulk spatial reads — a slow disk
+/// delays the data, never the frame. Bounded outstanding tickets (see the
+/// ABI docs); ordered after already-issued writes.
+pub fn client_storage_read_begin(keys: Vec<String>) -> u64 {
+    match __rt::host_call(&HostCall::ClientStorageReadBegin { keys }) {
+        HostRet::U64(ticket) => ticket,
+        other => panic!("ClientStorageReadBegin returned {other:?}"),
+    }
+}
+
+/// Poll an asynchronous storage read: `Some(values)` (parallel to the begun
+/// keys, `None` entry = absent) consumes the ticket, `None` = still in
+/// flight. Polling an unknown or consumed ticket disables the mod.
+pub fn client_storage_read_poll(ticket: u64) -> Option<Vec<Option<Vec<u8>>>> {
+    match __rt::host_call(&HostCall::ClientStorageReadPoll { ticket }) {
+        HostRet::ClientStorageRead(values) => values.map(|values| {
+            values
+                .into_iter()
+                .map(|value| value.map(mod_api::ByteBuf::into_vec))
+                .collect()
+        }),
+        other => panic!("ClientStorageReadPoll returned {other:?}"),
     }
 }

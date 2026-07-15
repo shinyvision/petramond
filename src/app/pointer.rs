@@ -274,6 +274,13 @@ impl App {
             self.chat.scroll(delta);
             return;
         }
+        if self.screen.client_canvas_open() {
+            // Canvas wheel travel goes to the owning client mod, coalesced to
+            // one dispatch per frame. The app's delta is positive = down; the
+            // mod ABI's is positive = up.
+            self.queue_client_canvas_scroll(-delta);
+            return;
+        }
         if self.doc_ui_kind().is_some() {
             // One wheel notch scrolls ~20 logical px, natural direction.
             self.ui.push_input(petramond_ui::InputEvent::Scroll {

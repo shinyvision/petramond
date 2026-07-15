@@ -1,0 +1,6 @@
+# Core wasm SIMD128 for every guest build: the engine's wasmtime runs the
+# core SIMD proposal (deterministic — only relaxed-SIMD is disabled), and
+# LLVM autovectorizes the raster/codec loops with it. Keep in sync with the
+# engine Config in src/modding/host/mod.rs.
+[target.wasm32-unknown-unknown]
+rustflags = ["-Ctarget-feature=+simd128"]

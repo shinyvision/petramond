@@ -341,6 +341,11 @@ impl Game {
             .canvas_event(&self.replica, canvas_key, event);
     }
 
+    pub(crate) fn client_mod_canvas_scroll(&mut self, canvas_key: &str, x: f32, y: f32, delta: f32) {
+        self.client_mods
+            .canvas_scroll(&self.replica, canvas_key, x, y, delta);
+    }
+
     pub(crate) fn client_mod_overlays(&self) -> &[crate::modding::ClientOverlayRegistration] {
         self.client_mods.overlays()
     }
@@ -774,6 +779,19 @@ impl Game {
 
     pub fn crafting_catalog(&self) -> &crate::crafting::CraftingCatalog {
         &self.crafting
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replica_for_test(&self) -> &crate::world::World {
+        &self.replica
+    }
+
+    /// Pin the locally-simulated player for tests that need a deterministic
+    /// sampling location (the server session is placed by the caller).
+    #[cfg(test)]
+    pub(crate) fn place_player_for_test(&mut self, feet: crate::mathh::Vec3) {
+        self.player.pos = feet;
+        self.player.vel = crate::mathh::Vec3::ZERO;
     }
 
     pub(crate) fn replicated_inventory_revision(&self) -> u64 {

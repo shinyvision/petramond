@@ -1,10 +1,13 @@
-//! Bounded client-mod storage with ordered background writes.
+//! Bounded client-mod storage with ordered background writes and reads.
 //!
-//! Guests address exact namespaced keys in batches. Reads are bounded and
-//! synchronous; writes enter one process-wide ordered worker so map exploration
-//! never performs hundreds of filesystem operations on the app frame.
+//! Guests address exact namespaced keys in batches. Synchronous reads exist
+//! for small startup/edit lookups; BULK reads go through ticket-based
+//! asynchronous requests on the same ordered worker, so neither map
+//! exploration nor a zoomed-out viewport ever performs filesystem operations
+//! on the app frame. Reads enqueue behind already-queued writes, which makes
+//! read-your-writes ordering structural.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, LazyLock};
@@ -14,9 +17,14 @@ pub(super) const VALUE_MAX: usize = 1 << 20;
 pub(super) const BATCH_MAX: usize = 16 << 20;
 pub(super) const READ_MAX: usize = 16 << 20;
 pub(super) const GET_KEYS_MAX: usize = 4096;
+/// Async read tickets outstanding per module: enough to pipeline visible
+/// loads plus prefetch, small enough that a runaway guest cannot queue
+/// unbounded worker work.
+pub(super) const READ_TICKETS_MAX: usize = 8;
 const PENDING_MAX: usize = 32 << 20;
 
 type PendingValue = (u64, Arc<[u8]>);
+type ReadResult = Result<Vec<Option<Vec<u8>>>, String>;
 
 pub(super) struct ClientStorage {
     dir: PathBuf,
@@ -25,11 +33,17 @@ pub(super) struct ClientStorage {
     pending_bytes: Arc<AtomicUsize>,
     done_tx: mpsc::Sender<Vec<(String, u64)>>,
     done_rx: mpsc::Receiver<Vec<(String, u64)>>,
+    next_ticket: u64,
+    in_flight_reads: HashSet<u64>,
+    ready_reads: HashMap<u64, ReadResult>,
+    read_tx: mpsc::Sender<(u64, ReadResult)>,
+    read_rx: mpsc::Receiver<(u64, ReadResult)>,
 }
 
 impl ClientStorage {
     pub(super) fn new(dir: PathBuf) -> Self {
         let (done_tx, done_rx) = mpsc::channel();
+        let (read_tx, read_rx) = mpsc::channel();
         Self {
             dir,
             pending: BTreeMap::new(),
@@ -37,6 +51,67 @@ impl ClientStorage {
             pending_bytes: Arc::new(AtomicUsize::new(0)),
             done_tx,
             done_rx,
+            next_ticket: 1,
+            in_flight_reads: HashSet::new(),
+            ready_reads: HashMap::new(),
+            read_tx,
+            read_rx,
+        }
+    }
+
+    /// Queue an asynchronous read on the storage worker. The worker processes
+    /// the request after every already-queued write has committed (one FIFO
+    /// channel), so a begun read always observes this session's earlier
+    /// writes.
+    pub(super) fn read_begin(&mut self, keys: Vec<String>) -> Result<u64, String> {
+        if keys.len() > GET_KEYS_MAX {
+            return Err(format!(
+                "client storage read has {} keys; cap is {GET_KEYS_MAX}",
+                keys.len()
+            ));
+        }
+        for key in &keys {
+            if key.len() > KEY_MAX {
+                return Err(format!("client storage key '{key}' exceeds {KEY_MAX} bytes"));
+            }
+        }
+        self.drain_read_completions();
+        if self.in_flight_reads.len() + self.ready_reads.len() >= READ_TICKETS_MAX {
+            return Err(format!(
+                "client storage has {READ_TICKETS_MAX} async reads outstanding; poll them first"
+            ));
+        }
+        let ticket = self.next_ticket;
+        self.next_ticket = self.next_ticket.wrapping_add(1).max(1);
+        let message = StorageMessage::Read {
+            dir: self.dir.clone(),
+            keys,
+            ticket,
+            results: self.read_tx.clone(),
+        };
+        if storage_worker().send(message).is_err() {
+            return Err("client storage worker stopped".into());
+        }
+        self.in_flight_reads.insert(ticket);
+        Ok(ticket)
+    }
+
+    /// `Ok(Some(values))` consumes the ticket; `Ok(None)` = still in flight.
+    pub(super) fn read_poll(&mut self, ticket: u64) -> Result<Option<Vec<Option<Vec<u8>>>>, String> {
+        self.drain_read_completions();
+        if let Some(result) = self.ready_reads.remove(&ticket) {
+            return result.map(Some);
+        }
+        if self.in_flight_reads.contains(&ticket) {
+            return Ok(None);
+        }
+        Err(format!("unknown client storage read ticket {ticket}"))
+    }
+
+    fn drain_read_completions(&mut self) {
+        while let Ok((ticket, result)) = self.read_rx.try_recv() {
+            self.in_flight_reads.remove(&ticket);
+            self.ready_reads.insert(ticket, result);
         }
     }
 
@@ -161,6 +236,12 @@ enum StorageMessage {
         pending_bytes: Arc<AtomicUsize>,
         bytes: usize,
     },
+    Read {
+        dir: PathBuf,
+        keys: Vec<String>,
+        ticket: u64,
+        results: mpsc::Sender<(u64, ReadResult)>,
+    },
     Flush(mpsc::Sender<()>),
 }
 
@@ -196,11 +277,37 @@ fn storage_worker_loop(rx: mpsc::Receiver<StorageMessage>) {
                 let _ = done.send(completed);
                 pending_bytes.fetch_sub(bytes, Ordering::AcqRel);
             }
+            StorageMessage::Read {
+                dir,
+                keys,
+                ticket,
+                results,
+            } => {
+                let _ = results.send((ticket, read_many(&dir, &keys)));
+            }
             StorageMessage::Flush(done) => {
                 let _ = done.send(());
             }
         }
     }
+}
+
+fn read_many(dir: &Path, keys: &[String]) -> ReadResult {
+    let mut total = 0usize;
+    let mut out = Vec::with_capacity(keys.len());
+    for key in keys {
+        let value = read_value(&dir.join(hex_key(key)))?;
+        if let Some(value) = &value {
+            total = total.saturating_add(key.len()).saturating_add(value.len());
+            if total > READ_MAX {
+                return Err(format!(
+                    "client storage read exceeds the {READ_MAX}-byte response cap"
+                ));
+            }
+        }
+        out.push(value);
+    }
+    Ok(out)
 }
 
 fn write_many(dir: &Path, entries: &[(String, Arc<[u8]>, u64)]) -> Result<(), String> {
@@ -260,6 +367,63 @@ mod tests {
             vec![Some(vec![1, 2, 3])]
         );
         drop(reopened);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn poll_until_ready(storage: &mut ClientStorage, ticket: u64) -> Vec<Option<Vec<u8>>> {
+        for _ in 0..2000 {
+            if let Some(values) = storage.read_poll(ticket).unwrap() {
+                return values;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("async read never completed");
+    }
+
+    /// The async-read contracts: reads see writes queued before them (one
+    /// FIFO worker), a delivered result consumes its ticket, unknown tickets
+    /// error, and the outstanding-ticket cap rejects further begins.
+    #[test]
+    fn async_reads_are_ordered_after_writes_and_ticketed() {
+        let dir = std::env::temp_dir().join(format!(
+            "petramond-client-storage-async-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut storage = ClientStorage::new(dir.clone());
+
+        storage
+            .set_many(vec![("map:a".into(), vec![1]), ("map:b".into(), vec![2])])
+            .unwrap();
+        let ticket = storage
+            .read_begin(vec!["map:a".into(), "map:b".into(), "map:missing".into()])
+            .unwrap();
+        assert_eq!(
+            poll_until_ready(&mut storage, ticket),
+            vec![Some(vec![1]), Some(vec![2]), None],
+            "an async read begun after a write observes that write"
+        );
+        assert!(
+            storage.read_poll(ticket).is_err(),
+            "a delivered result consumes the ticket"
+        );
+        assert!(storage.read_poll(999).is_err(), "unknown tickets error");
+
+        let tickets: Vec<u64> = (0..READ_TICKETS_MAX)
+            .map(|_| storage.read_begin(vec!["map:a".into()]).unwrap())
+            .collect();
+        assert!(
+            storage.read_begin(vec!["map:a".into()]).is_err(),
+            "the outstanding-ticket cap rejects further begins"
+        );
+        for ticket in tickets {
+            poll_until_ready(&mut storage, ticket);
+        }
+        assert!(
+            storage.read_begin(vec!["map:a".into()]).is_ok(),
+            "consumed tickets free capacity"
+        );
+        drop(storage);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

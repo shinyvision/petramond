@@ -31,6 +31,10 @@ mod wire_pin;
 
 pub use client::*;
 pub use data::*;
+/// Bulk byte payloads ride the wire as postcard bytes either way; this
+/// wrapper makes their (de)serialization a bulk copy instead of per-byte
+/// serde visits. Re-exported so the SDK and host name one type.
+pub use serde_bytes::ByteBuf;
 pub use events::*;
 pub use ids::*;
 pub use protocol::*;

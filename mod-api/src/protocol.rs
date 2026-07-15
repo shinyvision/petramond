@@ -569,6 +569,7 @@ pub enum HostCall {
         key: String,
         width: u16,
         height: u16,
+        #[serde(with = "serde_bytes")]
         rgba: Vec<u8>,
     },
     /// Measure a single-line run with the host's shared text subsystem. The
@@ -628,7 +629,7 @@ pub enum HostCall {
     /// never cross once per tile.
     /// Keys must use the caller's namespace. → [`HostRet::Bool`].
     ClientStorageSetMany {
-        entries: Vec<(String, Vec<u8>)>,
+        entries: Vec<(String, serde_bytes::ByteBuf)>,
     },
     /// Resolve an item registry NAME to this session's numeric id, or `None`
     /// for an unknown name. Registry-only (no world access): legal on any
@@ -648,7 +649,28 @@ pub enum HostCall {
         key: String,
         origin: [u16; 2],
         size: [u16; 2],
+        #[serde(with = "serde_bytes")]
         rgba: Vec<u8>,
+    },
+    /// Begin an ASYNCHRONOUS read of a bounded batch of exact sandboxed
+    /// client-storage keys: the filesystem work runs on the background
+    /// storage worker, so a slow disk delays the result instead of the
+    /// frame. Ordered after already-queued writes (read-your-writes). Key
+    /// rules and caps match [`HostCall::ClientStorageGetMany`]; a bounded
+    /// number of tickets may be outstanding at once. This is the REQUIRED
+    /// path for bulk spatial reads — the synchronous form is for small
+    /// startup/edit reads. → [`HostRet::U64`] (the ticket).
+    ClientStorageReadBegin {
+        keys: Vec<String>,
+    },
+    /// Poll an asynchronous read begun by
+    /// [`HostCall::ClientStorageReadBegin`]. `Some(values)` (parallel to the
+    /// begun keys, `None` entry = absent) consumes the ticket; `None` means
+    /// still in flight — poll again next frame. Polling an unknown or
+    /// already-consumed ticket is an error.
+    /// → [`HostRet::ClientStorageRead`].
+    ClientStorageReadPoll {
+        ticket: u64,
     },
 }
 
@@ -676,7 +698,7 @@ pub enum HostRet {
     /// [`HostCall::PlayerState`].
     Player(PlayerSnapshot),
     /// The KV gets: `None` = key absent (or target unloaded/missing).
-    Bytes(Option<Vec<u8>>),
+    Bytes(#[serde(with = "serde_bytes")] Option<Vec<u8>>),
     /// [`HostCall::GuiStateGet`]: `None` = key absent.
     GuiValue(Option<GuiValue>),
     /// [`HostCall::ContainerGet`]: every slot in index order; `None` = no
@@ -697,9 +719,12 @@ pub enum HostRet {
     /// unchanged since the queried revision.
     ClientSurfaceColumns(Vec<Option<ClientSurfaceColumn>>),
     ClientTextSize([u16; 2]),
-    ClientStorageValues(Vec<Option<Vec<u8>>>),
+    ClientStorageValues(Vec<Option<serde_bytes::ByteBuf>>),
     /// [`HostCall::ResolveItem`]: `None` = unknown item name.
     Item(Option<ItemId>),
+    /// [`HostCall::ClientStorageReadPoll`]: `None` = still in flight (poll
+    /// again next frame); `Some` consumes the ticket.
+    ClientStorageRead(Option<Vec<Option<serde_bytes::ByteBuf>>>),
 }
 
 /// One worldgen block write: `(world position, block)`. Applied by the engine
@@ -831,6 +856,16 @@ pub enum GuestCall {
         canvas_key: String,
         event: ClientCanvasEvent,
     },
+    /// Mouse-wheel travel over this module's open modal canvas. `x`/`y` are
+    /// canvas-local logical pixels (the cursor position), `delta` is in wheel
+    /// notches with positive = scrolled up / away from the user. The host
+    /// coalesces wheel events to at most one call per app frame.
+    ClientCanvasScroll {
+        canvas_key: String,
+        x: f32,
+        y: f32,
+        delta: f32,
+    },
 }
 
 /// Guest → host reply for a [`GuestCall`].
@@ -851,10 +886,10 @@ pub enum GuestRet {
     /// Reply to a `Terrain` [`GuestCall::GenStage`]: the complete 4096-block
     /// section fill (layout `y*256 + z*16 + x`). Must be exactly 4096
     /// registered ids.
-    GenBlocks(Vec<u8>),
+    GenBlocks(#[serde(with = "serde_bytes")] Vec<u8>),
     /// Reply to a `Climate` [`GuestCall::GenStage`]: the 256-entry column
     /// biome map (`z*16 + x`). Must be exactly 256 valid biome ids.
-    GenBiomes(Vec<u8>),
+    GenBiomes(#[serde(with = "serde_bytes")] Vec<u8>),
     /// Reply to [`GuestCall::HostileSpawnCandidate`]: `Some(registry_key)` to
     /// ask core to spawn that hostile species here, `None` to reject this site.
     HostileSpawn(Option<String>),
@@ -1138,11 +1173,20 @@ mod tests {
             canvas_key: "minimap:full_map".into(),
             offset: [-80.0, 24.0],
         });
+        roundtrip(HostCall::ClientStorageReadBegin {
+            keys: vec!["minimap:tile:0:0".into(), "minimap:tile:1:0".into()],
+        });
+        roundtrip(HostCall::ClientStorageReadPoll { ticket: 7 });
+        roundtrip(HostRet::ClientStorageRead(None));
+        roundtrip(HostRet::ClientStorageRead(Some(vec![
+            Some(ByteBuf::from(vec![1, 2, 3])),
+            None,
+        ])));
         roundtrip(HostCall::ClientStorageGetMany {
             keys: vec!["minimap:tile/-1/2".into(), "minimap:waypoints".into()],
         });
         roundtrip(HostCall::ClientStorageSetMany {
-            entries: vec![("minimap:tile/-1/2".into(), vec![7, 8, 9])],
+            entries: vec![("minimap:tile/-1/2".into(), ByteBuf::from(vec![7, 8, 9]))],
         });
         roundtrip(HostRet::RuntimeSide(RuntimeSide::Client));
         roundtrip(HostRet::ClientSurfaceColumns(vec![
@@ -1157,7 +1201,7 @@ mod tests {
             }),
         ]));
         roundtrip(HostRet::ClientStorageValues(vec![
-            Some(vec![3, 1, 4]),
+            Some(ByteBuf::from(vec![3, 1, 4])),
             None,
         ]));
         roundtrip(GuestCall::ClientFrame {
@@ -1193,6 +1237,12 @@ mod tests {
                 y: 64.25,
                 button: ClientPointerButton::Primary,
             },
+        });
+        roundtrip(GuestCall::ClientCanvasScroll {
+            canvas_key: "minimap:full_map".into(),
+            x: 120.5,
+            y: 64.25,
+            delta: -2.0,
         });
         roundtrip(HostRet::GuiValue(Some(GuiValue::Str(
             "petramond:diamond".into(),

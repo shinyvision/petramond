@@ -156,9 +156,11 @@ impl ModInstance {
             }
         };
         self.arm_dispatch();
+        let started = std::time::Instant::now();
         match self.dispatch_protocol(&request) {
             Ok(ret) => {
                 self.dispatches += 1;
+                self.log_slow_dispatch(call, started.elapsed());
                 Some(ret)
             }
             Err(e) => {
@@ -167,6 +169,31 @@ impl ModInstance {
                 None
             }
         }
+    }
+
+    /// Perf diagnostics: any dispatch over the threshold logs its guest/host
+    /// wall split under the `petramond::modding::perf` target, so frame
+    /// stutter attributes to the mod, the call, and the side of the ABI it
+    /// spent its time on.
+    fn log_slow_dispatch(&self, call: &GuestCall, total: std::time::Duration) {
+        const SLOW_DISPATCH: std::time::Duration = std::time::Duration::from_millis(2);
+        if total < SLOW_DISPATCH
+            || !log::log_enabled!(target: "petramond::modding::perf", log::Level::Debug)
+        {
+            return;
+        }
+        let data = self.store.data();
+        let host = data.dispatch_host_wall;
+        log::debug!(
+            target: "petramond::modding::perf",
+            "slow mod dispatch '{}': {} took {:.1?} (guest {:.1?}, host {:.1?} across {} host calls)",
+            self.id,
+            host::short_debug(call, 48),
+            total,
+            total.saturating_sub(host),
+            host,
+            data.dispatch_host_calls(),
+        );
     }
 
     /// Arm the watchdog for one guest entry: the store's epoch deadline plus

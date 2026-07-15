@@ -5,10 +5,11 @@
 resolver = "2"
 members = ["farming", "kitchen", "minimap", "wheel", "monsters"]
 
-# Guests are size-sensitive and must abort (trap) on panic — the host treats a
-# trap as "disable the mod for this session, keep ticking".
+# Guests must abort (trap) on panic — the host treats a trap as "disable the
+# mod for this session, keep ticking". Speed over size: bundled mod wasm runs
+# raster/codec hot loops on the frame, and the size delta is a few hundred KB.
 [profile.release]
-opt-level = "s"
+opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"

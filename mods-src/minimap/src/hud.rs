@@ -42,7 +42,7 @@ impl Minimap {
         let right = [-cos, sin];
         let forward = [sin, cos];
         {
-            let mut reader = CellReader::new(&self.tiles);
+            let mut reader = CellReader::new(&self.store.tiles);
             for py in 0..HUD_SIZE {
                 for px in 0..HUD_SIZE {
                     let sx = px as f32 + 0.5 - HUD_CENTER;
