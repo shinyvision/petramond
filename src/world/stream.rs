@@ -199,12 +199,32 @@ impl World {
             .expect("at least one target")
     }
 
-    fn multi_section_key(targets: &[LoadTarget], sp: SectionPos) -> i64 {
+    fn multi_biased_section_key(
+        targets: &[LoadTarget],
+        underground: &[bool],
+        sp: SectionPos,
+        band_lo: i32,
+    ) -> i64 {
         targets
             .iter()
-            .map(|t| t.section_priority_key(sp))
+            .zip(underground)
+            .map(|(t, &u)| t.surface_biased_section_key(sp, band_lo, u))
             .min()
             .expect("at least one target")
+    }
+
+    /// Whether `target`'s anchor sits below its own column's surface band — the
+    /// caving case where the surface-first scheduling bias must stay off (see
+    /// [`LoadTarget::surface_biased_section_key`]). An anchor whose column data
+    /// hasn't landed yet counts as above ground: the bias only reorders work,
+    /// and the anchor's own column is always the nearest-first column job.
+    pub(super) fn anchor_underground(&self, target: LoadTarget) -> bool {
+        let band_lo = self
+            .column_gen
+            .get(&target.center)
+            .map(|col| *Self::surface_window_for_column(col, 0).start())
+            .or_else(|| self.column_deep_band_los.get(&target.center).copied());
+        band_lo.is_some_and(|lo| target.center_cy < lo)
     }
 
     /// [`request_missing_columns`] over the union of the anchors' discs.
@@ -245,6 +265,10 @@ impl World {
     /// [`request_wanted_sections`] with each column's wanted window = the
     /// union over the anchors that want it.
     fn request_wanted_sections_multi(&mut self, targets: &[LoadTarget]) {
+        let underground: Vec<bool> = targets
+            .iter()
+            .map(|t| self.anchor_underground(*t))
+            .collect();
         let mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)> = Vec::new();
         let mut cys: Vec<i32> = Vec::new();
         for (pos, col) in &self.column_gen {
@@ -260,6 +284,7 @@ impl World {
                 }
             }
             let content_top = col.content_top();
+            let band_lo = *Self::surface_window_for_column(col, 0).start();
             for &cy in &cys {
                 let sp = SectionPos::new(pos.cx, cy, pos.cz);
                 if self.sections.contains_key(&sp) || self.pending_sections.contains(&sp) {
@@ -268,7 +293,11 @@ impl World {
                 if self.skip_empty_sky_section(sp, content_top) {
                     continue;
                 }
-                wanted.push((Self::multi_section_key(targets, sp), sp, col.clone()));
+                wanted.push((
+                    Self::multi_biased_section_key(targets, &underground, sp, band_lo),
+                    sp,
+                    col.clone(),
+                ));
             }
         }
         wanted.sort_by_key(|(priority, _, _)| *priority);
@@ -487,6 +516,7 @@ impl World {
     /// entering the wanted shape still get the full per-column window build. This
     /// turns the per-crossing O(columns × window) rescan into O(columns × Δ).
     fn request_vertical_delta_sections(&mut self, prev: LoadTarget, target: LoadTarget) {
+        let underground = self.anchor_underground(target);
         let prev_window = Self::vertical_window(prev.center_cy, 0);
         let mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)> = Vec::new();
         let mut cys: Vec<i32> = Vec::new();
@@ -516,6 +546,7 @@ impl World {
                 }
             }
             let content_top = col.content_top();
+            let band_lo = *Self::surface_window_for_column(col, 0).start();
             for &cy in &cys {
                 let sp = SectionPos::new(pos.cx, cy, pos.cz);
                 if self.sections.contains_key(&sp) || self.pending_sections.contains(&sp) {
@@ -524,7 +555,11 @@ impl World {
                 if self.skip_empty_sky_section(sp, content_top) {
                     continue;
                 }
-                wanted.push((target.section_priority_key(sp), sp, col.clone()));
+                wanted.push((
+                    target.surface_biased_section_key(sp, band_lo, underground),
+                    sp,
+                    col.clone(),
+                ));
             }
         }
         wanted.sort_by_key(|(priority, _, _)| *priority);
@@ -542,12 +577,14 @@ impl World {
         target: LoadTarget,
         mut include_column: impl FnMut(ChunkPos) -> bool,
     ) {
+        let underground = self.anchor_underground(target);
         let center_cy = target.center_cy;
         let mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)> = Vec::new();
         for (pos, col) in &self.column_gen {
             if !Self::column_wanted(target, *pos) || !include_column(*pos) {
                 continue;
             }
+            let band_lo = *Self::surface_window_for_column(col, 0).start();
             for cy in self.wanted_section_cys_for_column(*pos, col, center_cy, 0) {
                 let sp = SectionPos::new(pos.cx, cy, pos.cz);
                 if self.sections.contains_key(&sp) || self.pending_sections.contains(&sp) {
@@ -556,7 +593,11 @@ impl World {
                 if self.skip_empty_sky_section(sp, col.content_top()) {
                     continue;
                 }
-                wanted.push((target.section_priority_key(sp), sp, col.clone()));
+                wanted.push((
+                    target.surface_biased_section_key(sp, band_lo, underground),
+                    sp,
+                    col.clone(),
+                ));
             }
         }
         wanted.sort_by_key(|(priority, _, _)| *priority);
@@ -572,8 +613,10 @@ impl World {
         let Some(col) = self.column_gen.get(&pos).cloned() else {
             return;
         };
+        let underground = self.anchor_underground(target);
         let mut wanted: Vec<(i64, SectionPos)> = Vec::new();
         let content_top = col.content_top();
+        let band_lo = *Self::surface_window_for_column(&col, 0).start();
         for cy in self.wanted_section_cys_for_column(pos, &col, target.center_cy, 0) {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             if self.sections.contains_key(&sp) || self.pending_sections.contains(&sp) {
@@ -584,7 +627,7 @@ impl World {
             }
             // The full 3D key (not just dcy²): these compete in the shared pool
             // against other columns' sections, so the key must be globally comparable.
-            wanted.push((target.section_priority_key(sp), sp));
+            wanted.push((target.surface_biased_section_key(sp, band_lo, underground), sp));
         }
         wanted.sort_by_key(|(key, _)| *key);
         for (key, sp) in wanted {
@@ -1030,8 +1073,10 @@ impl World {
                 // Disk-primary path: no base exists — generate it after all.
                 if disk_primary {
                     if let Some(col) = self.column_gen.get(&sp.chunk_pos()).cloned() {
+                        let band_lo = *Self::surface_window_for_column(&col, 0).start();
+                        let underground = self.anchor_underground(target);
                         let job = self.worker.submit(
-                            target.section_priority_key(sp),
+                            target.surface_biased_section_key(sp, band_lo, underground),
                             GenJob::Section {
                                 sp,
                                 col,
@@ -2036,6 +2081,37 @@ mod tests {
             target.column_priority_key(ChunkPos::new(6, 0)),
             target.column_priority_key(ChunkPos::new(0, 6)),
             "axes at the same distance have equal priority"
+        );
+    }
+
+    #[test]
+    fn surface_bias_orders_the_surface_shell_before_below_band_sections() {
+        let target = LoadTarget::new(0, 4, 0, 32);
+        let band_lo = 3;
+        let deep_near = SectionPos::new(0, 1, 0); // adjacent, below the band
+        let deep_far = SectionPos::new(6, 1, 0);
+        let surface_far = SectionPos::new(12, 4, 0); // half a render distance out
+
+        assert!(
+            target.surface_biased_section_key(surface_far, band_lo, false)
+                < target.surface_biased_section_key(deep_near, band_lo, false),
+            "an above-ground anchor streams the visible surface shell before \
+             even an adjacent below-band section"
+        );
+        assert!(
+            target.surface_biased_section_key(deep_near, band_lo, false)
+                < target.surface_biased_section_key(deep_far, band_lo, false),
+            "below-band sections keep their own nearest-first order"
+        );
+        assert!(
+            target.surface_biased_section_key(deep_near, band_lo, true)
+                < target.surface_biased_section_key(surface_far, band_lo, true),
+            "an underground (caving) anchor keeps pure 3D nearest-first"
+        );
+        assert_eq!(
+            target.surface_biased_section_key(surface_far, band_lo, false),
+            target.section_priority_key(surface_far),
+            "in-band sections are never penalized"
         );
     }
 

@@ -94,6 +94,29 @@ impl LoadTarget {
         let dz = pos.cz - self.center.cz;
         (dx as i64 * dx as i64) + (dy as i64 * dy as i64) + (dz as i64 * dz as i64)
     }
+
+    /// [`section_priority_key`](Self::section_priority_key) with a surface-first
+    /// bias: while the anchor itself is above ground, a section wholly below its
+    /// own column's surface band (`pos.cy < band_lo` — the same test deep
+    /// classification uses) is scheduled as if it were `render_dist / 2` sections
+    /// farther away. The player can only see such sections through cave openings,
+    /// so the visible surface shell streams, lights, and ships first; nearby cave
+    /// interiors still beat far surface rather than starving. An underground
+    /// anchor (a caving player) keeps the pure 3D nearest-first order — the deep
+    /// sections around them ARE the visible world.
+    pub(super) fn surface_biased_section_key(
+        self,
+        pos: SectionPos,
+        band_lo: i32,
+        anchor_underground: bool,
+    ) -> i64 {
+        let key = self.section_priority_key(pos);
+        if anchor_underground || pos.cy >= band_lo {
+            return key;
+        }
+        let h = i64::from((self.render_dist / 2).max(8));
+        key + h * h
+    }
 }
 
 /// Vertical envelope of one column's direct-sky-cover changes. Skylight can

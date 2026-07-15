@@ -203,6 +203,16 @@ impl World {
         self.column_summaries.insert(pos, summaries);
         self.column_biome_halos.insert(pos, payload.mesh_biomes.0);
         self.column_deep_band_los.insert(pos, payload.deep_band_lo);
+        // Sections normally land AFTER their column (the sender orders it so),
+        // but the deep classification must not silently die if that ordering
+        // ever regresses: re-classify anything already installed in this
+        // column now that the band floor is known.
+        for cy in Self::column_section_range() {
+            let sp = SectionPos::new(pos.cx, cy, pos.cz);
+            if self.sections.contains_key(&sp) {
+                self.classify_deep_on_install(sp);
+            }
+        }
         // The sender re-ships only on its own revision change; move the
         // replica's revision so surface consumers resample the column.
         self.bump_column_payload_revision(pos);
@@ -687,7 +697,20 @@ impl World {
         budget: usize,
     ) -> TerrainSendPlan {
         let target = self.send_target(anchor);
+        let underground = self.anchor_underground(target);
 
+        // Ship order mirrors the streamer's gen order: surface shell first for
+        // an above-ground anchor, pure 3D nearest-first for a caving one. The
+        // band floor is per column; memoize the lookup across the scan.
+        let mut band_los: HashMap<ChunkPos, i32> = HashMap::new();
+        let mut band_lo_of = |world: &Self, cp: ChunkPos| {
+            *band_los.entry(cp).or_insert_with(|| {
+                world.column_gen.get(&cp).map_or(
+                    crate::chunk::SECTION_MIN_CY,
+                    |col| *Self::surface_window_for_column(col, 0).start(),
+                )
+            })
+        };
         let mut sections: Vec<(i64, SectionPos)> = self
             .sections
             .keys()
@@ -695,7 +718,13 @@ impl World {
             .filter(|sp| Self::column_wanted(target, sp.chunk_pos()))
             .filter(|sp| self.stream_writable(**sp))
             .filter(|sp| self.section_light_final(**sp))
-            .map(|&sp| (target.section_priority_key(sp), sp))
+            .map(|&sp| {
+                let band_lo = band_lo_of(self, sp.chunk_pos());
+                (
+                    target.surface_biased_section_key(sp, band_lo, underground),
+                    sp,
+                )
+            })
             .collect();
         sections.sort_unstable_by_key(|(key, _)| *key);
         sections.truncate(budget);
@@ -1231,6 +1260,70 @@ mod tests {
             replica.apply_remote_delta(d);
         }
         assert!(!replica.door_state_at(base.x, base.y, base.z).unwrap().open);
+    }
+
+    /// A hand-built column payload: flat maps, all-unknown summaries, and the
+    /// given deep band floor — the minimum a replica needs to classify deep.
+    fn column_payload_fixture(
+        pos: ChunkPos,
+        deep_band_lo: i32,
+    ) -> crate::net::protocol::ColumnPayload {
+        use crate::chunk::SECTION_SIZE;
+        use crate::net::protocol::{ColumnPayload, SectionBytes};
+        let flat = |n: usize| SectionBytes(Arc::from(vec![0u8; n].into_boxed_slice()));
+        ColumnPayload {
+            pos,
+            biomes: flat(SECTION_SIZE * SECTION_SIZE),
+            mesh_biomes: flat(20 * 20),
+            surface_heightmap: vec![64; SECTION_SIZE * SECTION_SIZE],
+            sky_cover: vec![64; SECTION_SIZE * SECTION_SIZE],
+            summaries: vec![0u8; World::column_section_range().count()],
+            deep_band_lo,
+        }
+    }
+
+    /// The replica classifies deep from the replicated band floor — and a
+    /// section that lands BEFORE its column (an ordering regression the sender
+    /// currently prevents) must still be re-classified when the column
+    /// arrives, not silently stay meshable forever.
+    #[test]
+    fn replica_deep_classification_heals_out_of_order_column_installs() {
+        let deep_pos = SectionPos::new(0, -2, 0);
+        let solid = {
+            let mut s = Section::new(deep_pos.cx, deep_pos.cy, deep_pos.cz);
+            s.blocks_slice_mut().fill(Block::Stone.id());
+            s.recompute_opaque_count();
+            s
+        };
+        let make_replica = || {
+            let mut r = World::new_with_role(0, 4, WorldRole::ClientReplica);
+            // View centre far above the section so the always-mesh near ring
+            // doesn't mask the classification.
+            r.set_replica_view_center(0, 10, 0);
+            r
+        };
+
+        // Normal order: column (with its band floor) before the section.
+        let mut replica = make_replica();
+        replica.install_remote_column(column_payload_fixture(deep_pos.chunk_pos(), 2));
+        replica.install_remote_section(solid.to_payload());
+        assert!(
+            replica.deep_sections.contains(&deep_pos),
+            "a below-band section installed after its column classifies deep"
+        );
+
+        // Regressed order: section first — the column landing must heal it.
+        let mut replica = make_replica();
+        replica.install_remote_section(solid.to_payload());
+        assert!(
+            !replica.deep_sections.contains(&deep_pos),
+            "without a band floor the section stays (safely) non-deep"
+        );
+        replica.install_remote_column(column_payload_fixture(deep_pos.chunk_pos(), 2));
+        assert!(
+            replica.deep_sections.contains(&deep_pos),
+            "the column install must re-classify already-installed sections"
+        );
     }
 
     #[test]
