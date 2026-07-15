@@ -14,12 +14,14 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use mod_api::{HostCall, HostRet, RuntimeSide};
 use wasmtime::{
-    Caller, Config, Engine, Linker, Memory, Module, StoreLimits, StoreLimitsBuilder, TypedFunc,
+    AsContextMut, Caller, Config, Engine, Linker, Memory, Module, StoreLimits, StoreLimitsBuilder,
+    TypedFunc,
 };
 
 use super::client::ClientStoreData;
@@ -39,14 +41,58 @@ mod worldgen;
 /// How often the background ticker advances the engine epoch.
 const EPOCH_PERIOD: Duration = Duration::from_millis(50);
 
-/// Epochs a single guest dispatch may span before it traps: a generous ~2 s of
-/// wall time for work that should take microseconds. Hitting it is a mod bug;
-/// the mod is disabled for the session and the tick continues.
+/// Epochs of GUEST COMPUTE a single dispatch may span before it traps: a
+/// generous ~2 s for work that should take microseconds. Time spent inside
+/// re-entrant host calls is NOT charged — `host_dispatch` re-arms the deadline
+/// with the remaining budget when a host call returns, so a host-side stall
+/// (e.g. a slow storage read) cannot get an innocent mod disabled. Hitting
+/// the budget is a mod bug; the mod is disabled for the session and the tick
+/// continues.
 pub(in crate::modding) const DISPATCH_DEADLINE_EPOCHS: u64 = 40;
+
+/// Host calls one dispatch may make — the backstop that keeps the watchdog
+/// meaningful now that host-call time is uncharged: a guest spinning on cheap
+/// host calls consumes almost no charged epochs, so the call count is what
+/// bounds it. Orders of magnitude above legitimate use (the heaviest bundled
+/// dispatches make dozens).
+pub(in crate::modding) const DISPATCH_HOST_CALL_MAX: u32 = 65_536;
+
+/// Byte cap for the [`short_debug`] call renderings kept for disable-message
+/// diagnostics.
+pub(in crate::modding) const DIAG_DEBUG_CAP: usize = 160;
 
 /// Linear-memory cap per mod instance (64 MiB) — a leaky mod fails its own
 /// allocations (and traps out) instead of eating the game's address space.
 const GUEST_MEMORY_CAP: usize = 64 << 20;
+
+/// Mirror of the engine's epoch counter (wasmtime does not expose a getter),
+/// advanced in lockstep by the ticker so the host can measure how many epochs
+/// a guest stretch consumed. Diagnostics-grade accuracy: ±1 epoch races with
+/// the ticker are fine.
+static EPOCH_NOW: AtomicU64 = AtomicU64::new(0);
+
+pub(in crate::modding) fn epoch_now() -> u64 {
+    EPOCH_NOW.load(Ordering::Relaxed)
+}
+
+/// Advance the engine epoch and its mirror together — the ticker's step, also
+/// how tests simulate host-side stalls without waiting wall time.
+fn advance_epoch(engine: &Engine, ticks: u64) {
+    for _ in 0..ticks {
+        EPOCH_NOW.fetch_add(1, Ordering::Relaxed);
+        engine.increment_epoch();
+    }
+}
+
+#[cfg(test)]
+pub(in crate::modding) fn test_advance_epochs(ticks: u64) {
+    advance_epoch(engine(), ticks);
+}
+
+/// Test-only seam: runs at the top of every host call made by the mod whose
+/// id matches, so a test can simulate a host call stalling for many epochs.
+#[cfg(test)]
+pub(in crate::modding) static HOST_CALL_TEST_HOOK: Mutex<Option<(String, fn())>> = Mutex::new(None);
 
 /// The process-wide wasmtime engine, plus its epoch ticker thread. The ticker
 /// only bumps a counter — it never touches the simulation — so determinism is
@@ -65,7 +111,7 @@ pub(in crate::modding) fn engine() -> &'static Engine {
             .spawn(move || loop {
                 std::thread::sleep(EPOCH_PERIOD);
                 match weak.upgrade() {
-                    Some(engine) => engine.increment_epoch(),
+                    Some(engine) => advance_epoch(&engine, 1),
                     None => break,
                 }
             })
@@ -181,6 +227,16 @@ pub(in crate::modding) struct ModStoreData {
     pub stats: HostStats,
     pub side: RuntimeSide,
     pub client: Option<ClientStoreData>,
+    /// Watchdog accounting for the current dispatch (see
+    /// [`DISPATCH_DEADLINE_EPOCHS`]): guest-compute epochs still available,
+    /// and the [`epoch_now`] reading when the guest was last (re-)entered.
+    deadline_budget: u64,
+    deadline_armed_at: u64,
+    /// Host calls made by the current dispatch ([`DISPATCH_HOST_CALL_MAX`]).
+    dispatch_host_calls: u32,
+    /// Bounded rendering of the dispatch's most recent host call and whether
+    /// it returned — diagnostics for disable messages.
+    pub(in crate::modding) last_host_call: Option<(String, bool)>,
 }
 
 impl ModStoreData {
@@ -209,7 +265,20 @@ impl ModStoreData {
             stats: HostStats::default(),
             side,
             client: client_storage_dir.map(ClientStoreData::new),
+            deadline_budget: DISPATCH_DEADLINE_EPOCHS,
+            deadline_armed_at: epoch_now(),
+            dispatch_host_calls: 0,
+            last_host_call: None,
         }
+    }
+
+    /// Reset the watchdog accounting for one guest entry; the caller arms the
+    /// store's epoch deadline with the same budget.
+    pub(in crate::modding) fn begin_dispatch(&mut self) {
+        self.deadline_budget = DISPATCH_DEADLINE_EPOCHS;
+        self.deadline_armed_at = epoch_now();
+        self.dispatch_host_calls = 0;
+        self.last_host_call = None;
     }
 
     pub(super) fn register(&mut self, reg: Registration) -> HostRet {
@@ -273,12 +342,52 @@ fn splitmix_next(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
+/// `{value:?}` truncated at roughly `cap` bytes — safe on variants carrying
+/// large payloads (an image call would otherwise Debug-print byte by byte).
+pub(in crate::modding) fn short_debug(value: &dyn std::fmt::Debug, cap: usize) -> String {
+    struct Bounded {
+        out: String,
+        cap: usize,
+    }
+    impl std::fmt::Write for Bounded {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            let room = self.cap.saturating_sub(self.out.len());
+            let take = (0..=room.min(s.len()))
+                .rev()
+                .find(|&i| s.is_char_boundary(i))
+                .unwrap_or(0);
+            self.out.push_str(&s[..take]);
+            // Reporting an error aborts the formatting walk right here, so a
+            // multi-megabyte payload never renders past the cap.
+            if take < s.len() {
+                Err(std::fmt::Error)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let mut w = Bounded {
+        out: String::new(),
+        cap,
+    };
+    if std::fmt::write(&mut w, format_args!("{value:?}")).is_err() {
+        w.out.push('…');
+    }
+    w.out
+}
+
 /// THE host-call switchboard: routes every ABI variant to its category
 /// handler below (exhaustive, so a new variant must pick a home here). Calls
 /// that need the live simulation reach it through [`scope::with_active`];
 /// everything else lives on the store.
 pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
     data.stats.host_calls += 1;
+    #[cfg(test)]
+    if let Some((id, hook)) = HOST_CALL_TEST_HOOK.lock().unwrap().as_ref() {
+        if *id == data.mod_id {
+            hook();
+        }
+    }
     if data.side == RuntimeSide::Client && !super::client::client_capability(&call) {
         return HostRet::Error(
             "simulation host calls are unavailable to a client_wasm instance".into(),
@@ -396,6 +505,26 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                 // argument: trap (=> the mod is disabled), don't guess.
                 let call: HostCall = mod_api::decode(&buf)
                     .map_err(|e| wasmtime::Error::msg(format!("malformed host call: {e}")))?;
+                {
+                    // Charge the guest stretch since the last (re-)arm; the
+                    // host execution below stays uncharged.
+                    let now = epoch_now();
+                    let data = caller.data_mut();
+                    data.dispatch_host_calls += 1;
+                    if data.dispatch_host_calls > DISPATCH_HOST_CALL_MAX {
+                        return Err(wasmtime::Error::msg(format!(
+                            "dispatch exceeded {DISPATCH_HOST_CALL_MAX} host calls"
+                        )));
+                    }
+                    let used = now.saturating_sub(data.deadline_armed_at);
+                    data.deadline_budget = data.deadline_budget.saturating_sub(used);
+                    if data.deadline_budget == 0 {
+                        return Err(wasmtime::Error::msg(
+                            "dispatch exhausted its guest compute budget",
+                        ));
+                    }
+                    data.last_host_call = Some((short_debug(&call, DIAG_DEBUG_CAP), false));
+                }
                 let ret = handle_host_call(caller.data_mut(), call);
                 let bytes = mod_api::encode(&ret)
                     .map_err(|e| wasmtime::Error::msg(format!("encode host reply: {e}")))?;
@@ -403,6 +532,18 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                     caller.data().alloc.clone().ok_or_else(|| {
                         wasmtime::Error::msg("host_dispatch during instantiation")
                     })?;
+                // Host time is not the mod's fault: re-arm the deadline with
+                // the remaining guest budget before re-entering guest code
+                // (the reply-staging alloc below is already guest code).
+                let budget = {
+                    let data = caller.data_mut();
+                    if let Some((_, returned)) = &mut data.last_host_call {
+                        *returned = true;
+                    }
+                    data.deadline_armed_at = epoch_now();
+                    data.deadline_budget
+                };
+                caller.as_context_mut().set_epoch_deadline(budget);
                 let reply_ptr = alloc.call(&mut caller, bytes.len() as u32)?;
                 memory.write(&mut caller, reply_ptr as usize, &bytes)?;
                 Ok(mod_api::pack_ptr_len(reply_ptr, bytes.len() as u32))

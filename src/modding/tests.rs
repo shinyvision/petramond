@@ -203,6 +203,13 @@ pub(crate) fn run_child_test(root: &std::path::Path, test_path: &str) {
 /// `mod_dispatch` runs `body`. The trivial allocator returns a fixed scratch
 /// address — each test drives at most one buffer at a time.
 fn hostile_guest(body: &str) -> ModInstance {
+    hostile_guest_with_id("hostile", body)
+}
+
+/// [`hostile_guest`] under a caller-chosen mod id, so a test can target the
+/// id-keyed [`super::host::HOST_CALL_TEST_HOOK`] without touching other
+/// tests' guests.
+fn hostile_guest_with_id(id: &str, body: &str) -> ModInstance {
     let registration = mod_api::encode(&HostCall::RegisterTickSystem {
         stage: ApiStage::Mining,
         attach: AttachSide::Before,
@@ -227,7 +234,7 @@ fn hostile_guest(body: &str) -> ModInstance {
     );
     let module = wasmtime::Module::new(super::host::engine(), wat.as_bytes())
         .expect("assemble hostile guest");
-    ModInstance::from_module("hostile", &module, 1).expect("instantiate hostile guest")
+    ModInstance::from_module(id, &module, 1).expect("instantiate hostile guest")
 }
 
 /// Contract: a trapping mod is disabled for the session with the tick
@@ -324,4 +331,110 @@ fn registration_outside_init_is_rejected() {
     sim.run_slot(Attach::Before(Stage::Mining));
     let (_, _, stats) = host.probe(0);
     assert_eq!(stats.rejected_registrations, 2);
+}
+
+/// Contract: a guest spinning on host calls forever is stopped by the
+/// per-dispatch host-call cap (host-call time is deliberately not charged
+/// against the epoch deadline, so the call count is what bounds this shape
+/// of runaway) and disabled for the session.
+#[test]
+fn host_call_spinning_dispatch_is_disabled_by_the_call_cap() {
+    let mut instance = hostile_guest_with_id(
+        "spinny",
+        "(loop $spin (drop (call $hd (i32.const 0) (i32.const 5))) (br $spin))\n    (i64.const 0)",
+    );
+    instance.call_init_detached();
+    assert!(!instance.disabled());
+
+    let ret = instance.call_guest_detached(&mod_api::GuestCall::TickSystem { id: 7 });
+    assert!(ret.is_none());
+    assert!(instance.disabled(), "the call cap disabled the mod");
+    // The cap (not the epoch deadline) is what fired: exactly MAX calls were
+    // handled during the dispatch, plus init's one registration.
+    assert_eq!(
+        instance.stats().host_calls,
+        1 + super::host::DISPATCH_HOST_CALL_MAX as u64
+    );
+}
+
+/// Contract: the dispatch watchdog charges GUEST compute only. A host call
+/// that stalls for many epochs (a slow storage read, an I/O hiccup) must not
+/// get the mod disabled, while a runaway guest loop still traps. Runs in a
+/// child process because it advances the process-wide engine epoch, which
+/// could spuriously trap unrelated guests in parallel tests.
+#[test]
+fn watchdog_charges_guest_compute_only() {
+    run_isolated("modding::tests::watchdog_charges_guest_compute_only_inner");
+}
+
+#[test]
+#[ignore] // run by watchdog_charges_guest_compute_only in a child process
+fn watchdog_charges_guest_compute_only_inner() {
+    // Every host call from "stally" stalls for triple the whole deadline.
+    fn stall() {
+        super::host::test_advance_epochs(super::host::DISPATCH_DEADLINE_EPOCHS * 3);
+    }
+    *super::host::HOST_CALL_TEST_HOOK.lock().unwrap() = Some(("stally".into(), stall));
+    let mut instance = hostile_guest_with_id(
+        "stally",
+        "(drop (call $hd (i32.const 0) (i32.const 5)))\n    \
+         (drop (call $hd (i32.const 0) (i32.const 5)))\n    \
+         (drop (call $hd (i32.const 0) (i32.const 5)))\n    \
+         (i64.const 2199023255553)",
+    );
+    instance.call_init_detached();
+    assert!(!instance.disabled(), "init survived a stalling host call");
+    let ret = instance.call_guest_detached(&mod_api::GuestCall::TickSystem { id: 7 });
+    assert!(
+        ret.is_some() && !instance.disabled(),
+        "three multi-deadline host-call stalls did not disable the mod"
+    );
+
+    // A guest that never yields still traps: advance the epoch from a helper
+    // thread (standing in for the real-time ticker) while it spins.
+    std::thread::spawn(|| {
+        for _ in 0..1000 {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            super::host::test_advance_epochs(10);
+        }
+    });
+    let mut runaway =
+        hostile_guest_with_id("runaway", "(loop $spin (br $spin))\n    (i64.const 0)");
+    runaway.call_init_detached();
+    let ret = runaway.call_guest_detached(&mod_api::GuestCall::TickSystem { id: 7 });
+    assert!(
+        ret.is_none() && runaway.disabled(),
+        "the runaway loop trapped"
+    );
+}
+
+/// Contract: the disable-message diagnostics stay bounded — a call carrying a
+/// multi-hundred-KiB payload must not render byte-by-byte into the log line.
+#[test]
+fn short_debug_bounds_large_payloads() {
+    let call = HostCall::ClientImageSet {
+        key: "m:img".into(),
+        width: 256,
+        height: 256,
+        rgba: vec![7; 256 * 256 * 4],
+    };
+    let rendered = super::host::short_debug(&call, 160);
+    assert!(rendered.starts_with("ClientImageSet"));
+    assert!(rendered.ends_with('…') && rendered.len() <= 164);
+}
+
+/// Re-spawn the test binary on `test_path` (an `#[ignore]`d inner test) so it
+/// runs alone in a fresh process.
+fn run_isolated(test_path: &str) {
+    let exe = std::env::current_exe().expect("test binary path");
+    let out = Command::new(exe)
+        .args([test_path, "--exact", "--ignored", "--nocapture"])
+        .output()
+        .expect("spawn test binary");
+    assert!(
+        out.status.success(),
+        "inner test failed\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
 }

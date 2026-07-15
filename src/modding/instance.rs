@@ -111,12 +111,15 @@ impl ModInstance {
     /// must stay pure (registrations, `ResolveBlock`, `Log`, `RngU64`).
     pub(super) fn call_init_detached(&mut self) {
         debug_assert!(self.store.data().phase == Phase::Init);
-        self.store.set_epoch_deadline(DISPATCH_DEADLINE_EPOCHS);
+        self.arm_dispatch();
         let result = self.fn_init.call(&mut self.store, ());
         self.store.data_mut().phase = Phase::Run;
         match result {
             Ok(()) => self.dispatches += 1,
-            Err(e) => self.disable(&format!("mod_init trapped: {e:#}")),
+            Err(e) => {
+                let context = self.dispatch_context(None);
+                self.disable(&format!("mod_init trapped: {e:#}{context}"));
+            }
         }
     }
 
@@ -152,17 +155,44 @@ impl ModInstance {
                 return None;
             }
         };
-        self.store.set_epoch_deadline(DISPATCH_DEADLINE_EPOCHS);
+        self.arm_dispatch();
         match self.dispatch_protocol(&request) {
             Ok(ret) => {
                 self.dispatches += 1;
                 Some(ret)
             }
             Err(e) => {
-                self.disable(&e);
+                let context = self.dispatch_context(Some(call));
+                self.disable(&format!("{e}{context}"));
                 None
             }
         }
+    }
+
+    /// Arm the watchdog for one guest entry: the store's epoch deadline plus
+    /// the per-dispatch accounting `host_dispatch` charges against.
+    fn arm_dispatch(&mut self) {
+        self.store.set_epoch_deadline(DISPATCH_DEADLINE_EPOCHS);
+        self.store.data_mut().begin_dispatch();
+    }
+
+    /// Diagnostic suffix for disable messages: the guest call that was in
+    /// flight and the dispatch's most recent host call — a failure names what
+    /// was actually happening instead of just the trap kind.
+    fn dispatch_context(&self, call: Option<&GuestCall>) -> String {
+        let mut out = String::new();
+        if let Some(call) = call {
+            out.push_str(&format!(
+                " [guest call: {}]",
+                host::short_debug(call, host::DIAG_DEBUG_CAP)
+            ));
+        }
+        match &self.store.data().last_host_call {
+            Some((desc, true)) => out.push_str(&format!(" [last host call (returned): {desc}]")),
+            Some((desc, false)) => out.push_str(&format!(" [host call in flight: {desc}]")),
+            None => {}
+        }
+        out
     }
 
     pub(super) fn call_guest_client(
