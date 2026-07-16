@@ -1091,7 +1091,7 @@ impl Game {
                     // server's): a floor/ceiling click, a missing wall face, or a
                     // body overlapping the panel is a KNOWN refusal, so no ghost
                     // and no jab.
-                    match crate::ladder::facing_from_place_normal(look.normal) {
+                    match crate::facing::Facing::from_horizontal_normal(look.normal) {
                         Some(f)
                             if self.replica.ladder_supported_at(place_pos, f)
                                 && !self.placement_blocked_by_body(

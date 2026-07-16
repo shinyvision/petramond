@@ -465,7 +465,7 @@ impl ServerGame {
         // in place. Keyed on the shape, not the engine block: a pack row declaring
         // the ladder shape gets the same mount rule.
         let ladder_facing = if block.render_shape() == RenderShape::Ladder {
-            let facing = crate::ladder::facing_from_place_normal(h.normal)?;
+            let facing = crate::facing::Facing::from_horizontal_normal(h.normal)?;
             if !self.world.ladder_supported_at(p, facing) {
                 return None;
             }

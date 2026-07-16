@@ -591,7 +591,6 @@ impl World {
     /// already logged, mirroring [`set_stream_event_capture`].
     ///
     /// [`set_stream_event_capture`]: Self::set_stream_event_capture
-    #[allow(dead_code)] // consumed by the internal server loop (Phase C)
     pub(crate) fn set_replication_capture(&mut self, on: bool) {
         if !on {
             self.block_delta_log.clear();

@@ -17,11 +17,11 @@ use crate::mob::LootTables;
 use crate::modding::ModHost;
 use crate::net::protocol::{
     BlockDelta, ClientToServer, ItemSlotWire, ItemStateRow, MobStateRow, ModSpatialSoundMsg,
-    OpenScreen, PlayerAction, PlayerActionKind, PlayerStateRow, PlayerUpdate, SelfEvents,
+    OpenScreen, PlayerActionKind, PlayerStateRow, PlayerUpdate, SelfEvents,
     SelfState, SelfTransform, ServerToClient, TickUpdate, WorldEventMsg,
 };
 use crate::player;
-use crate::server::player::{ConnectedPlayer, PendingMenuAction, PendingUseClick, PlayerId};
+use crate::server::player::{ConnectedPlayer, PendingMenuAction, PlayerId};
 use crate::world::{StreamEvent, World};
 
 /// Most fixed ticks run in a single frame before the leftover is dropped. Caps
@@ -820,14 +820,7 @@ impl ServerGame {
                     }
                 } else {
                     let name = self.sessions[s].name.clone();
-                    if let Some(line) =
-                        crate::server::chat::player_line(self.alloc_chat_seq(), &name, &text)
-                    {
-                        if !self.has_local_session {
-                            log::info!("chat: {}", crate::server::chat::display_text(&line));
-                        }
-                        self.enqueue_chat(line, crate::server::chat::ChatTargets::All);
-                    }
+                    self.enqueue_player_chat(&name, &text);
                 }
             }
             // Pause is honorable only while the sole connection has always
@@ -867,68 +860,6 @@ impl ServerGame {
                 log::warn!("ignoring handshake/lifecycle message on a joined session");
             }
         }
-    }
-
-    /// Queue one accepted chat line for the next pump. Console `say`, player
-    /// chat, and join/leave always use [`ChatTargets::All`](crate::server::chat::ChatTargets::All);
-    /// mods may target a player-id list.
-    pub(crate) fn enqueue_chat(
-        &mut self,
-        line: crate::net::protocol::ChatLine,
-        targets: crate::server::chat::ChatTargets,
-    ) {
-        self.pending_chat
-            .push(crate::server::chat::PendingChat { line, targets });
-    }
-
-    pub(crate) fn enqueue_server_chat(&mut self, text: &str) {
-        if let Some(line) = crate::server::chat::server_line(self.alloc_chat_seq(), text) {
-            self.enqueue_chat(line, crate::server::chat::ChatTargets::All);
-        }
-    }
-
-    /// Mod-/engine-authored helper text (markup allowed; no `[Server]` prefix).
-    pub(crate) fn enqueue_authored_chat(
-        &mut self,
-        text: &str,
-        targets: crate::server::chat::ChatTargets,
-    ) {
-        if let Some(line) = crate::server::chat::authored_line(self.alloc_chat_seq(), text) {
-            self.enqueue_chat(line, targets);
-        }
-    }
-
-    pub(crate) fn enqueue_plain_chat(
-        &mut self,
-        text: &str,
-        color: crate::net::protocol::ChatColor,
-        targets: crate::server::chat::ChatTargets,
-    ) {
-        if let Some(line) = crate::server::chat::plain_line(self.alloc_chat_seq(), text, color) {
-            self.enqueue_chat(line, targets);
-        }
-    }
-
-    pub(crate) fn enqueue_join_chat(&mut self, name: &str) {
-        let seq = self.alloc_chat_seq();
-        self.enqueue_chat(
-            crate::server::chat::joined_line(seq, name),
-            crate::server::chat::ChatTargets::All,
-        );
-    }
-
-    pub(crate) fn enqueue_leave_chat(&mut self, name: &str) {
-        let seq = self.alloc_chat_seq();
-        self.enqueue_chat(
-            crate::server::chat::left_line(seq, name),
-            crate::server::chat::ChatTargets::All,
-        );
-    }
-
-    fn alloc_chat_seq(&mut self) -> u64 {
-        let seq = self.next_chat_seq;
-        self.next_chat_seq = self.next_chat_seq.wrapping_add(1);
-        seq
     }
 
     /// Latch a `PlayerUpdate`: movement intent (F2), validated transform (F1),
@@ -989,12 +920,10 @@ impl ServerGame {
                 .take()
                 .and_then(|click| click.request_id)
             {
-                sess.pending_action_outcomes
-                    .push(crate::net::protocol::ActionOutcome {
-                        id,
-                        accepted: false,
-                        reason: Some(crate::net::protocol::ActionDenyReason::Denied),
-                    });
+                sess.pending_action_outcomes.push(crate::game::prediction::deny(
+                    id,
+                    crate::net::protocol::ActionDenyReason::Denied,
+                ));
             }
         }
 
@@ -1005,153 +934,6 @@ impl ServerGame {
         sess.look = u
             .target
             .filter(|t| player::block_within_reach(eye, t.block));
-    }
-
-    fn apply_action(&mut self, s: usize, action: PlayerAction) {
-        use crate::net::protocol::{ActionDenyReason, ActionOutcome};
-        // EVERY latched request id must eventually receive an ActionOutcome —
-        // an unanswered id leaks the client's prediction-ledger entry forever
-        // Single-slot latches deny the
-        // superseded id; queue rejections deny immediately.
-        let deny = |id| ActionOutcome {
-            id,
-            accepted: false,
-            reason: Some(ActionDenyReason::Denied),
-        };
-        match action {
-            PlayerAction::UseClick {
-                mob,
-                target,
-                request_id,
-                predicted,
-                jabbed,
-            } => {
-                let mut click = PendingUseClick::capture(
-                    &self.sessions[s].player,
-                    mob,
-                    target,
-                    request_id,
-                    predicted,
-                    jabbed,
-                );
-                // A water-stopping ray is gameplay authority, not merely a
-                // client presentation choice. The SAME captured item that
-                // selects this ray must still occupy the captured slot when
-                // Placement consumes the click.
-                click.target = self.authoritative_use_target(s, click.held_item(), click.target);
-                let sess = &mut self.sessions[s];
-                if let Some(old) = sess
-                    .pending_use_click
-                    .replace(click)
-                    .and_then(|old| old.request_id)
-                {
-                    sess.pending_action_outcomes.push(deny(old));
-                }
-            }
-            PlayerAction::AttackClick { mob, player } => {
-                let sess = &mut self.sessions[s];
-                sess.pending_attack = true;
-                sess.pending_attack_mob = mob;
-                sess.pending_attack_player = player;
-            }
-            PlayerAction::Drop { all, request_id } => {
-                let sess = &mut self.sessions[s];
-                let slot = sess.player.inventory.active_slot();
-                sess.drop_queue.queue_selected(slot, all, Some(request_id));
-            }
-            PlayerAction::ThrowCursorStack { request_id } => {
-                let sess = &mut self.sessions[s];
-                if !sess
-                    .drop_queue
-                    .queue_cursor_stack(&sess.player.inventory, Some(request_id))
-                {
-                    sess.pending_action_outcomes.push(deny(request_id));
-                }
-            }
-            PlayerAction::ThrowCursorOne { request_id } => {
-                let sess = &mut self.sessions[s];
-                if !sess
-                    .drop_queue
-                    .queue_cursor_one(&sess.player.inventory, Some(request_id))
-                {
-                    sess.pending_action_outcomes.push(deny(request_id));
-                }
-            }
-            PlayerAction::BreakFinished {
-                request_id,
-                pos,
-                tool_item_id,
-                predicted,
-            } => {
-                // A newer finish supersedes any in-flight latch OR deferred
-                // TooFast wait — answer the old id so the ledger cannot leak.
-                let (old_pending, old_deferred) = {
-                    let sess = &mut self.sessions[s];
-                    (
-                        sess.pending_break_finished.take(),
-                        sess.deferred_break_finished.take(),
-                    )
-                };
-                if let Some(old) = old_pending {
-                    self.sessions[s]
-                        .pending_action_outcomes
-                        .push(deny(old.request_id));
-                }
-                if let Some(old) = old_deferred {
-                    self.sessions[s]
-                        .pending_action_outcomes
-                        .push(deny(old.request_id));
-                    // Old optimistic clear may still be on the client.
-                    let cells = self.world.break_footprint_cells(old.pos);
-                    self.sessions[s].pending_corrective_cells.extend(cells);
-                }
-                self.sessions[s].pending_break_finished =
-                    Some(crate::server::player::PendingBreakFinished {
-                        request_id,
-                        pos,
-                        tool_item_id,
-                        predicted,
-                    });
-            }
-            // A mode switch is not tick input: applied at message time, like
-            // the direct call it replaces. The floating spectator must never
-            // be measured as falling — re-anchor the tracker (mirrors
-            // `Player::set_mode`).
-            PlayerAction::ToggleMode => {
-                if self.is_operator(s) {
-                    let sess = &mut self.sessions[s];
-                    sess.player.toggle_mode();
-                    sess.fall.reset(sess.player.pos.y);
-                    sess.pending_fall = 0.0;
-                }
-            }
-            PlayerAction::Wake => self.sessions[s].wake_requested = true,
-            PlayerAction::Respawn => self.sessions[s].respawn_requested = true,
-            // Menu transitions join clicks and crafts in one ordered queue so
-            // arrival order remains authoritative on the fixed tick.
-            PlayerAction::OpenInventory => self.sessions[s]
-                .pending_menu_actions
-                .push(PendingMenuAction::OpenInventory),
-            PlayerAction::CloseMenu => self.sessions[s]
-                .pending_menu_actions
-                .push(PendingMenuAction::Close),
-        }
-    }
-
-    pub(crate) fn push_action_outcome(
-        &mut self,
-        s: usize,
-        id: crate::net::protocol::ClientRequestId,
-        accepted: bool,
-        reason: Option<crate::net::protocol::ActionDenyReason>,
-    ) {
-        self.sessions[s]
-            .pending_action_outcomes
-            .push(crate::net::protocol::ActionOutcome {
-                id,
-                accepted,
-                reason,
-            });
     }
 
     /// Run the fixed ticks `dt` banked. Returns the events plus how many ticks

@@ -128,18 +128,8 @@ pub fn def(id: u8) -> Option<&'static EmitterBundle> {
 /// inconsistent `particle_emitters.json` fails loudly at startup.
 pub fn defs() -> &'static [EmitterBundle] {
     static TABLE: LazyLock<&'static [EmitterBundle]> = LazyLock::new(|| {
-        let layers = crate::assets::read_layers("particle_emitters.json");
-        if layers.is_empty() {
-            panic!(
-                "particle_emitters.json not found (searched {:?}); the game cannot run without \
-                 its emitter table",
-                crate::assets::candidate_paths("particle_emitters.json")
-            );
-        }
-        let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
         Box::leak(
-            parse_layers(&texts)
-                .unwrap_or_else(|e| panic!("particle_emitters.json: {e}"))
+            crate::registry::read_catalog("particle_emitters.json", "emitter", parse_layers)
                 .into_boxed_slice(),
         )
     });
@@ -147,85 +137,60 @@ pub fn defs() -> &'static [EmitterBundle] {
 }
 
 fn parse_layers(texts: &[&str]) -> Result<Vec<EmitterBundle>, String> {
-    // Merge layers by key, then assign ids: engine keys hold their frozen ids,
-    // namespaced keys register after them in load order (bare unknowns error)
-    // — the same contract as the block/item/sound/effect catalogs.
-    let mut merged: Vec<RawBundle> = Vec::new();
-    let mut layer_keys: Vec<Vec<String>> = Vec::new();
-    for (li, text) in texts.iter().enumerate() {
-        let raw: RawFile =
-            serde_json::from_str(text).map_err(|e| format!("layer #{li}: invalid JSON: {e}"))?;
-        layer_keys.push(raw.emitters.iter().map(|r| r.emitter.clone()).collect());
-        for r in raw.emitters {
-            match merged.iter_mut().find(|m| m.emitter == r.emitter) {
-                Some(slot) => *slot = r,
-                None => merged.push(r),
-            }
-        }
-    }
-    let names = crate::registry::NameTable::build(ENGINE_EMITTER_NAMES, &layer_keys, "emitter")?;
-    let mut rows: Vec<Option<EmitterBundle>> = (0..names.len()).map(|_| None).collect();
-    for r in merged {
-        match (&r.burst, r.particles.len()) {
-            (None, 0) => {
-                return Err(format!(
-                    "emitter '{}': needs either particles (looping) or burst (one-shot)",
-                    r.emitter
-                ))
-            }
-            (Some(_), 1..) => {
-                return Err(format!(
-                    "emitter '{}': declares both particles and burst — pick one",
-                    r.emitter
-                ))
-            }
-            (None, n) if n > MAX_BUNDLE_ROWS => {
-                return Err(format!(
-                    "emitter '{}': 1..={MAX_BUNDLE_ROWS} particle rows per bundle, got {n}",
-                    r.emitter
-                ))
-            }
-            _ => {}
-        }
-        if let Some(burst) = &r.burst {
-            validate_burst(&r.emitter, burst)?;
-        }
-        if let Some(tint) = r.tint {
-            for channel in tint {
-                if !channel.is_finite() || !(0.0..=1.0).contains(&channel) {
+    crate::registry::load_catalog(
+        texts,
+        |text| serde_json::from_str::<RawFile>(text).map(|f| f.emitters),
+        |r| &r.emitter,
+        ENGINE_EMITTER_NAMES,
+        "emitter",
+        |r, id, names| {
+            match (&r.burst, r.particles.len()) {
+                (None, 0) => {
                     return Err(format!(
-                        "emitter '{}': tint channels must be in 0..=1",
+                        "emitter '{}': needs either particles (looping) or burst (one-shot)",
                         r.emitter
-                    ));
+                    ))
+                }
+                (Some(_), 1..) => {
+                    return Err(format!(
+                        "emitter '{}': declares both particles and burst — pick one",
+                        r.emitter
+                    ))
+                }
+                (None, n) if n > MAX_BUNDLE_ROWS => {
+                    return Err(format!(
+                        "emitter '{}': 1..={MAX_BUNDLE_ROWS} particle rows per bundle, got {n}",
+                        r.emitter
+                    ))
+                }
+                _ => {}
+            }
+            if let Some(burst) = &r.burst {
+                validate_burst(&r.emitter, burst)?;
+            }
+            if let Some(tint) = r.tint {
+                for channel in tint {
+                    if !channel.is_finite() || !(0.0..=1.0).contains(&channel) {
+                        return Err(format!(
+                            "emitter '{}': tint channels must be in 0..=1",
+                            r.emitter
+                        ));
+                    }
                 }
             }
-        }
-        for particle in &r.particles {
-            crate::block::validate_particle_emitter(particle)
-                .map_err(|e| format!("emitter '{}': {e}", r.emitter))?;
-        }
-        let id = names
-            .id(&r.emitter)
-            .ok_or_else(|| format!("unregistered emitter '{}'", r.emitter))?;
-        rows[id as usize] = Some(EmitterBundle {
-            id,
-            key: names.name(id).expect("id resolved from this table"),
-            tint: r.tint,
-            rows: Box::leak(r.particles.into_boxed_slice()),
-            burst: r.burst,
-        });
-    }
-    rows.into_iter()
-        .enumerate()
-        .map(|(id, row)| {
-            row.ok_or_else(|| {
-                format!(
-                    "missing row for emitter '{}'",
-                    names.name(id as u8).unwrap_or("?")
-                )
+            for particle in &r.particles {
+                crate::block::validate_particle_emitter(particle)
+                    .map_err(|e| format!("emitter '{}': {e}", r.emitter))?;
+            }
+            Ok(EmitterBundle {
+                id,
+                key: names.name(id).expect("id resolved from this table"),
+                tint: r.tint,
+                rows: Box::leak(r.particles.into_boxed_slice()),
+                burst: r.burst,
             })
-        })
-        .collect()
+        },
+    )
 }
 
 fn validate_burst(key: &str, b: &BurstSpec) -> Result<(), String> {

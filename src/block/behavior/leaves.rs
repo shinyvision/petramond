@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use crate::mathh::IVec3;
+use crate::mathh::{IVec3, FACE_NEIGHBORS};
 use crate::world::World;
 
 use super::BlockBehavior;
@@ -10,17 +10,6 @@ use super::BlockBehavior;
 /// Maximum number of face-steps from a leaf to a log — travelling only through
 /// leaves — for the leaf to count as supported.
 const MAX_LOG_DISTANCE: i32 = 6;
-
-/// The six face-neighbour offsets, for the leaf-support flood. (The block-update
-/// set in `world::tick` is the same six but is private to that module.)
-const FACE_OFFSETS: [IVec3; 6] = [
-    IVec3::new(1, 0, 0),
-    IVec3::new(-1, 0, 0),
-    IVec3::new(0, 1, 0),
-    IVec3::new(0, -1, 0),
-    IVec3::new(0, 0, 1),
-    IVec3::new(0, 0, -1),
-];
 
 /// Tree leaves. On a random tick a leaf decays to air unless a log is reachable
 /// within [`MAX_LOG_DISTANCE`] face-steps travelling only through leaves — so
@@ -73,7 +62,7 @@ fn leaf_supported(world: &World, start: IVec3) -> bool {
     let mut frontier: VecDeque<(IVec3, i32)> = VecDeque::new();
     frontier.push_back((start, 0));
     while let Some((cell, dist)) = frontier.pop_front() {
-        for d in FACE_OFFSETS {
+        for d in FACE_NEIGHBORS {
             let n = cell + d;
             match world.block_if_loaded(n.x, n.y, n.z) {
                 None => return true,                  // unknown cell: keep the leaf

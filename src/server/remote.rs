@@ -134,16 +134,6 @@ impl RemoteHub {
         Ok(port)
     }
 
-    /// Stop accepting: drop the listener and any un-joined connections.
-    /// JOINED players stay connected — closing to LAN stops new joins, it
-    /// doesn't kick anyone.
-    pub(crate) fn close_lan(&mut self) {
-        if self.listener.take().is_some() {
-            log::info!("LAN closed to new connections");
-        }
-        self.pending.clear();
-    }
-
     /// Server shutdown: farewell every joined client with `ServerClosing`,
     /// then drop all transport state (each writer drains + flushes the
     /// farewell before its socket closes).

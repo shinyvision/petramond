@@ -37,20 +37,10 @@ use std::collections::{BinaryHeap, VecDeque};
 use crate::block::Block;
 use crate::chunk::{SectionPos, SECTION_SIZE, SECTION_VOLUME};
 use crate::crafting::Recipes;
-use crate::mathh::IVec3;
+use crate::mathh::{IVec3, FACE_NEIGHBORS};
 
 use super::sim_guard::{SimReadiness, SIM_RETRY_DELAY};
 use super::store::World;
-
-/// The six orthogonal neighbour offsets, used for block-update propagation.
-pub(super) const NEIGHBORS: [IVec3; 6] = [
-    IVec3::new(1, 0, 0),
-    IVec3::new(-1, 0, 0),
-    IVec3::new(0, 1, 0),
-    IVec3::new(0, -1, 0),
-    IVec3::new(0, 0, 1),
-    IVec3::new(0, 0, -1),
-];
 
 /// One pending scheduled tick, min-heap ordered: `(due tick, schedule order, x, y, z)`.
 type ScheduledTick = Reverse<(u64, u64, i32, i32, i32)>;
@@ -274,7 +264,7 @@ impl World {
         }
         let p = IVec3::new(wx, wy, wz);
         self.queue_block_update(p);
-        for d in NEIGHBORS {
+        for d in FACE_NEIGHBORS {
             self.queue_block_update(p + d);
         }
     }

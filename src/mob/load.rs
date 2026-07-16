@@ -195,63 +195,28 @@ struct RawBrainNode {
 /// replacing rows by mob), panicking with a precise message if the table is missing
 /// or inconsistent.
 pub(super) fn table() -> &'static [MobDef] {
-    let layers = crate::assets::read_layers("mobs.json");
-    if layers.is_empty() {
-        panic!(
-            "mobs.json not found (searched {:?}); the game cannot run without its mob table",
-            crate::assets::candidate_paths("mobs.json")
-        );
-    }
-    for (_, path) in &layers {
-        log::info!("mob defs layer: {}", path.display());
-    }
-    let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
-    parse_layers(&texts).unwrap_or_else(|e| panic!("mobs.json: {e}"))
+    crate::registry::read_catalog("mobs.json", "mob", |texts| parse_layers(texts))
 }
 
 pub(super) fn parse_layers(texts: &[&str]) -> Result<&'static [MobDef], String> {
-    // Same catalog contract as blocks/items/sounds/models: merge rows by key,
-    // engine names keep their frozen ids, namespaced keys register fresh ids.
-    let mut merged: Vec<RawMobDef> = Vec::new();
-    let mut layer_keys: Vec<Vec<String>> = Vec::new();
-    for (li, text) in texts.iter().enumerate() {
-        let raw: RawFile =
-            serde_json::from_str(text).map_err(|e| format!("layer #{li}: invalid JSON: {e}"))?;
-        layer_keys.push(raw.mobs.iter().map(|r| r.mob.clone()).collect());
-        for r in raw.mobs {
-            match merged.iter_mut().find(|m| m.mob == r.mob) {
-                Some(slot) => *slot = r,
-                None => merged.push(r),
-            }
-        }
-    }
-    let names = NameTable::build(ENGINE_MOB_NAMES, &layer_keys, "mob")?;
-
-    let mut rows: Vec<Option<MobDef>> = (0..names.len()).map(|_| None).collect();
     let mut keys = HashSet::new();
-    for r in merged {
-        let id = names
-            .id(&r.mob)
-            .ok_or_else(|| format!("unregistered mob '{}'", r.mob))?;
-        if !keys.insert(r.key.clone()) {
-            return Err(format!(
-                "mob '{}': duplicate key '{}' — loot tables resolve by key, so keys must be unique",
-                r.mob, r.key
-            ));
-        }
-        let name = r.mob.clone();
-        rows[id as usize] =
-            Some(convert(r, Mob(id), &names).map_err(|e| format!("mob '{name}': {e}"))?);
-    }
-    let mut defs = Vec::with_capacity(rows.len());
-    for (id, row) in rows.into_iter().enumerate() {
-        defs.push(row.ok_or_else(|| {
-            format!(
-                "missing row for mob '{}'",
-                names.name(id as u8).unwrap_or("?")
-            )
-        })?);
-    }
+    let defs = crate::registry::load_catalog(
+        texts,
+        |text| serde_json::from_str::<RawFile>(text).map(|f| f.mobs),
+        |r| &r.mob,
+        ENGINE_MOB_NAMES,
+        "mob",
+        |r, id, names| {
+            if !keys.insert(r.key.clone()) {
+                return Err(format!(
+                    "mob '{}': duplicate key '{}' — loot tables resolve by key, so keys must be unique",
+                    r.mob, r.key
+                ));
+            }
+            let name = r.mob.clone();
+            convert(r, Mob(id), names).map_err(|e| format!("mob '{name}': {e}"))
+        },
+    )?;
     let defs: &'static [MobDef] = Box::leak(defs.into_boxed_slice());
 
     // Brain validation needs the leaked `&'static MobDef` rows (node factories read

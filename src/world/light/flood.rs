@@ -2,19 +2,10 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::chunk::{section_idx, SectionPos, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
-use crate::mathh::IVec3;
+use crate::mathh::{IVec3, FACE_NEIGHBORS};
 
 use super::shape::LightCells;
 use super::{nbhd_idx, NBHD, NBHD_VOLUME};
-
-const DIRECTIONS: [(i32, i32, i32); 6] = [
-    (1, 0, 0),
-    (-1, 0, 0),
-    (0, 1, 0),
-    (0, -1, 0),
-    (0, 0, 1),
-    (0, 0, -1),
-];
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum FloodKind {
@@ -171,7 +162,8 @@ fn propagate(
         if level <= 2 {
             continue;
         }
-        for dir in DIRECTIONS {
+        for d in FACE_NEIGHBORS {
+            let dir = (d.x, d.y, d.z);
             let Some(to) = step(from, dir) else {
                 continue;
             };

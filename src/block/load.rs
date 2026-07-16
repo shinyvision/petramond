@@ -159,20 +159,11 @@ pub(super) struct Registry {
 /// packs replacing rows by block — see [`crate::assets::read_layers`]),
 /// panicking with a precise message if the table is missing or inconsistent.
 pub(super) fn registry() -> Registry {
-    let layers = crate::assets::read_layers("blocks.json");
-    if layers.is_empty() {
-        panic!(
-            "blocks.json not found (searched {:?}); the game cannot run without its block table",
-            crate::assets::candidate_paths("blocks.json")
-        );
-    }
-    for (_, path) in &layers {
-        log::info!("block defs layer: {}", path.display());
-    }
-    let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
     // The global name table was built from these same layers, so every row key
     // resolves and every dynamic id is already assigned.
-    parse_layers(&texts, crate::registry::names()).unwrap_or_else(|e| panic!("blocks.json: {e}"))
+    crate::registry::read_catalog("blocks.json", "block", |texts| {
+        parse_layers(texts, crate::registry::names())
+    })
 }
 
 #[cfg(test)]
@@ -192,41 +183,17 @@ pub(super) fn parse_test_layers(texts: &[&str]) -> Result<Registry, String> {
 }
 
 pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Registry, String> {
-    // Merge layers by block key: a later layer's row REPLACES the earlier one,
-    // so a mod pack states only the rows it changes (or adds).
-    let mut merged: Vec<RawBlockDef> = Vec::new();
-    for (li, text) in texts.iter().enumerate() {
-        let raw: RawFile =
-            serde_json::from_str(text).map_err(|e| format!("layer #{li}: invalid JSON: {e}"))?;
-        for r in raw.blocks {
-            match merged.iter_mut().find(|m| m.block == r.block) {
-                Some(slot) => *slot = r,
-                None => merged.push(r),
-            }
-        }
-    }
-    let expected = names.blocks.len();
-    let mut rows: Vec<Option<BlockDef>> = (0..expected).map(|_| None).collect();
-    for r in merged {
-        let id = names
-            .blocks
-            .id(&r.block)
-            .ok_or_else(|| format!("unregistered block '{}'", r.block))?;
-        let key = r.block.clone();
-        rows[id as usize] =
-            Some(convert(r, Block(id), names).map_err(|e| format!("block '{key}': {e}"))?);
-    }
-    // Ids are assigned contiguously by the name table, so covering every
-    // registered name exactly once fills 0..expected with no holes.
-    let mut defs = Vec::with_capacity(expected);
-    for (id, row) in rows.into_iter().enumerate() {
-        defs.push(row.ok_or_else(|| {
-            format!(
-                "missing row for block '{}'",
-                names.blocks.name(id as u8).unwrap_or("?")
-            )
-        })?);
-    }
+    let defs = crate::registry::resolve_catalog(
+        texts,
+        |text| serde_json::from_str::<RawFile>(text).map(|f| f.blocks),
+        |r| &r.block,
+        &names.blocks,
+        "block",
+        |r, id, _| {
+            let key = r.block.clone();
+            convert(r, Block(id), names).map_err(|e| format!("block '{key}': {e}"))
+        },
+    )?;
     let defs: &'static [BlockDef] = Box::leak(defs.into_boxed_slice());
     let mut flags = [BlockFlags::NONE; 256];
     for d in defs {

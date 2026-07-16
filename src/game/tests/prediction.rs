@@ -13,8 +13,7 @@ use crate::net::protocol::{
 
 #[test]
 fn menu_click_deny_restores_inventory_snapshot() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = filled_inventory();
     game.sync_self_view_for_test();
 
@@ -156,8 +155,7 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
 
 #[test]
 fn break_finished_without_observed_mining_is_denied() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let pos = IVec3::new(2, 64, 2);
     assert!(game
         .server
@@ -199,8 +197,7 @@ fn break_finished_without_observed_mining_is_denied() {
 
 #[test]
 fn lagged_break_finished_after_hold_path_accepts_without_restore() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);
     assert!(game
         .server
@@ -262,8 +259,7 @@ fn lagged_break_finished_after_hold_path_accepts_without_restore() {
 
 #[test]
 fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);
     assert!(game
         .server
@@ -335,8 +331,7 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
 
 #[test]
 fn break_finished_after_the_observed_mining_window_is_accepted() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);
     assert!(game
         .server
@@ -378,8 +373,7 @@ fn break_finished_after_the_observed_mining_window_is_accepted() {
 
 #[test]
 fn impossible_speed_claim_is_rejected_for_integrated_pos() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let start = game.server.sessions[0].player.pos;
     let mut u = player_update(&game, true);
     u.pos = start + Vec3::new(50.0, 0.0, 0.0);
@@ -397,8 +391,7 @@ fn impossible_speed_claim_is_rejected_for_integrated_pos() {
 
 #[test]
 fn teleport_claim_with_plausible_velocity_is_rejected() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.pos = Vec3::new(8.5, 70.0, 8.5);
     let start = game.server.sessions[0].player.pos;
     let mut u = player_update(&game, true);
@@ -417,8 +410,7 @@ fn teleport_claim_with_plausible_velocity_is_rejected() {
 
 #[test]
 fn sprint_jump_claim_is_accepted() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.pos = Vec3::new(8.5, 70.0, 8.5);
     let start = game.server.sessions[0].player.pos;
     let mut u = player_update(&game, true);
@@ -440,8 +432,7 @@ fn sprint_jump_claim_is_accepted() {
 
 #[test]
 fn claim_inside_solid_geometry_is_rejected() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     assert!(game.server.world.set_block_world(8, 64, 8, Block::Stone));
     game.server.sessions[0].player.pos = Vec3::new(8.5, 66.0, 8.5);
     let mut u = player_update(&game, true);
@@ -459,8 +450,7 @@ fn claim_inside_solid_geometry_is_rejected() {
 
 #[test]
 fn each_queued_drop_in_one_tick_window_gets_its_own_outcome() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = filled_inventory();
     game.server.apply_message(
         0,
@@ -496,8 +486,7 @@ fn each_queued_drop_in_one_tick_window_gets_its_own_outcome() {
 
 #[test]
 fn multi_deny_rollback_restores_the_oldest_snapshot() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = filled_inventory();
     game.sync_self_view_for_test();
     let before = game.self_view.inventory.clone();
@@ -567,8 +556,7 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
 
 #[test]
 fn place_resolves_at_the_click_target_not_the_freshest_look() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let a = IVec3::new(8, 63, 8);
     let b = IVec3::new(11, 63, 11);
     assert!(game
@@ -620,8 +608,7 @@ fn place_resolves_at_the_click_target_not_the_freshest_look() {
 
 #[test]
 fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let t = IVec3::new(8, 64, 8);
     assert!(game
         .server
@@ -657,8 +644,7 @@ fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
 
 #[test]
 fn claim_after_a_slow_client_gap_is_accepted() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.pos = Vec3::new(8.5, 70.0, 8.5);
     let start = game.server.sessions[0].player.pos;
     let mut u = player_update(&game, true);
@@ -686,8 +672,7 @@ fn claim_after_a_slow_client_gap_is_accepted() {
 
 #[test]
 fn transform_corrections_ship_only_on_real_divergence() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let sess = &mut game.server.sessions[0];
     sess.player.pos = Vec3::new(8.5, 70.0, 8.5);
     sess.player.vel = Vec3::new(0.0, -1.4, 0.0);
@@ -755,8 +740,7 @@ fn menu_click_ships_request_id_and_server_accepts() {
 
 #[test]
 fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     // Mirror the chunk onto the replica so the place ghost can write.
     game.game.replica.insert_chunk_for_test(
         crate::chunk::ChunkPos::new(0, 0),
@@ -815,8 +799,7 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
 
 #[test]
 fn optimistic_torch_place_records_wall_mount_immediately() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
         crate::chunk::ChunkPos::new(0, 0),
         crate::chunk::Chunk::new(0, 0),
@@ -827,9 +810,7 @@ fn optimistic_torch_place_records_wall_mount_immediately() {
         .replica
         .set_block_world(wall.x, wall.y, wall.z, Block::Stone));
     game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
-    let mut inv = crate::inventory::Inventory::new();
-    inv.add(crate::item::ItemStack::new(crate::item::ItemType::Torch, 1));
-    game.server.sessions[0].player.inventory = inv;
+    give(&mut game, crate::item::ItemType::Torch, 1);
     game.sync_self_view_for_test();
 
     // Click the wall's west face: the predicted torch must carry its mount
@@ -854,8 +835,7 @@ fn optimistic_torch_place_records_wall_mount_immediately() {
 
 #[test]
 fn optimistic_stair_place_records_orientation_immediately() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
         crate::chunk::ChunkPos::new(0, 0),
         crate::chunk::Chunk::new(0, 0),
@@ -866,12 +846,7 @@ fn optimistic_stair_place_records_orientation_immediately() {
         .replica
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
     game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
-    let mut inv = crate::inventory::Inventory::new();
-    inv.add(crate::item::ItemStack::new(
-        crate::item::ItemType::OakStairs,
-        1,
-    ));
-    game.server.sessions[0].player.inventory = inv;
+    give(&mut game, crate::item::ItemType::OakStairs, 1);
     game.sync_self_view_for_test();
 
     // The absent-state fallback the mesher would read pre-fix; make the
@@ -918,8 +893,7 @@ fn optimistic_stair_place_records_orientation_immediately() {
 
 #[test]
 fn optimistic_chest_place_records_front_facing_immediately() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
         crate::chunk::ChunkPos::new(0, 0),
         crate::chunk::Chunk::new(0, 0),
@@ -930,9 +904,7 @@ fn optimistic_chest_place_records_front_facing_immediately() {
         .replica
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
     game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
-    let mut inv = crate::inventory::Inventory::new();
-    inv.add(crate::item::ItemStack::new(crate::item::ItemType::Chest, 1));
-    game.server.sessions[0].player.inventory = inv;
+    give(&mut game, crate::item::ItemType::Chest, 1);
     game.sync_self_view_for_test();
 
     let default_facing = game
@@ -968,8 +940,7 @@ fn optimistic_chest_place_records_front_facing_immediately() {
 
 #[test]
 fn slab_stack_click_is_not_predicted() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
         crate::chunk::ChunkPos::new(0, 0),
         crate::chunk::Chunk::new(0, 0),
@@ -985,12 +956,7 @@ fn slab_stack_click_is_not_predicted() {
         .game
         .replica
         .place_slab_layer(cell, Block::OakSlab, slot));
-    let mut inv = crate::inventory::Inventory::new();
-    inv.add(crate::item::ItemStack::new(
-        crate::item::ItemType::OakSlab,
-        1,
-    ));
-    game.server.sessions[0].player.inventory = inv;
+    give(&mut game, crate::item::ItemType::OakSlab, 1);
     game.sync_self_view_for_test();
 
     assert!(
@@ -1010,8 +976,7 @@ fn slab_stack_click_is_not_predicted() {
 
 #[test]
 fn optimistic_break_clears_replica_and_queues_world_event() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
         crate::chunk::ChunkPos::new(0, 0),
         crate::chunk::Chunk::new(0, 0),
@@ -1084,8 +1049,7 @@ fn denied_place_restores_cell_and_inventory_silently() {
 
 #[test]
 fn break_finished_deny_queues_corrective_cells() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let pos = IVec3::new(2, 64, 2);
     assert!(game
         .server
@@ -1117,8 +1081,7 @@ fn break_finished_deny_queues_corrective_cells() {
 
 #[test]
 fn far_claim_does_not_grant_reach() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let far = IVec3::new(14, 64, 14);
     assert!(game
         .server
@@ -1165,8 +1128,7 @@ fn far_claim_does_not_grant_reach() {
 
 #[test]
 fn horizontal_teleport_claim_is_rejected() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.pos = Vec3::new(8.5, 70.0, 8.5);
     let start = game.server.sessions[0].player.pos;
 
@@ -1188,8 +1150,7 @@ fn horizontal_teleport_claim_is_rejected() {
 
 #[test]
 fn fake_on_ground_claims_do_not_evade_fall_damage() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     assert!(game.server.world.set_block_world(8, 64, 8, Block::Stone));
     game.server.sessions[0].player.pos = Vec3::new(8.5, 80.0, 8.5);
     game.server.sessions[0].claim_pos = game.server.sessions[0].player.pos;
@@ -1216,8 +1177,7 @@ fn fake_on_ground_claims_do_not_evade_fall_damage() {
 #[test]
 fn sprint_descent_down_steps_is_not_one_tall_fall() {
     use crate::block_state::{StairHalf, StairState};
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     // A staircase of real stair blocks descending +x (low half downhill), onto
     // a floor at y = 59 — half-block steps every half block, like any player
     // staircase.
@@ -1300,8 +1260,7 @@ fn sprint_descent_down_steps_is_not_one_tall_fall() {
 
 #[test]
 fn unpredicted_break_finish_keeps_the_initiators_break_event() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);
     assert!(game
         .server
@@ -1345,8 +1304,7 @@ fn unpredicted_break_finish_keeps_the_initiators_break_event() {
 
 #[test]
 fn multi_deny_rollback_is_emission_order_independent() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = filled_inventory();
     game.sync_self_view_for_test();
     let before = game.self_view.inventory.clone();

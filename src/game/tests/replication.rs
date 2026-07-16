@@ -6,7 +6,7 @@
 
 use super::super::presentation::GamePresentationScratch;
 use super::super::tick::{TickEvents, TICK_DT};
-use super::common::{count_item, filled_inventory, game, install_empty_chunk};
+use super::common::{count_item, filled_inventory, game, game_on_empty_chunk};
 use crate::controls::PointerButton;
 use crate::entity::DroppedItem;
 use crate::events::DamageSource;
@@ -350,8 +350,7 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
 /// interpolation source the renderer blends), with the replicated kind.
 #[test]
 fn pumped_mob_batches_become_interpolated_presentation_rows() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
     // An owl in free fall right above the player: gravity guarantees its
     // position differs between consecutive ticks.
@@ -398,8 +397,7 @@ fn pumped_mob_batches_become_interpolated_presentation_rows() {
 /// the store and the presentation rows.
 #[test]
 fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
     assert!(game
         .server
@@ -439,8 +437,7 @@ fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
 /// per-spawn id, and presentation reads the replicated store.
 #[test]
 fn dropped_items_replicate_with_stable_ids_into_presentation() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     // Far from the player so no pickup interferes; above the floor so it moves
     // (falls) between ticks.
     let mut drop = DroppedItem::new(
@@ -489,8 +486,7 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
 /// pickup, menu click, drop, and craft.
 #[test]
 fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let rev = |game: &super::common::TestGame| game.server.sessions[0].player.inventory.revision();
 
     // Pickup: an eligible drop at the body centre is collected in one tick.
@@ -661,8 +657,7 @@ fn crafting_outputs_replicate_per_session_and_remain_independent() {
 /// always on the first update after join, then only after a change.
 #[test]
 fn self_state_ships_the_inventory_only_when_the_revision_moved() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
 
     let up1 = pump_one_tick(&mut game);
     let s1 = up1.self_state.as_ref().expect("self state every batch");
@@ -709,8 +704,7 @@ fn chest_viewer_transitions_emit_events_only_at_zero_boundaries() {
     use crate::block::Block;
     use crate::mathh::IVec3;
 
-    let mut game = super::common::game();
-    super::common::install_empty_chunk(&mut game);
+    let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
     game.server.world.set_block_world(3, 64, 3, Block::Chest);
     game.server
@@ -745,8 +739,7 @@ fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
     use crate::mathh::IVec3;
     use crate::net::protocol::WorldEventMsg;
 
-    let mut game = super::common::game();
-    super::common::install_empty_chunk(&mut game);
+    let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
     game.server.world.set_block_world(3, 64, 3, Block::Chest);
     game.server
@@ -787,8 +780,7 @@ fn menu_sync_ships_on_change_only() {
     use crate::mathh::IVec3;
     use crate::net::protocol::MenuTargetWire;
 
-    let mut game = super::common::game();
-    super::common::install_empty_chunk(&mut game);
+    let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
     game.server.world.set_block_world(3, 64, 3, Block::Chest);
     game.server
@@ -915,8 +907,7 @@ fn open_screen_one_shot_maps_back_onto_game_events() {
     use crate::game::GameInput;
     use crate::mathh::IVec3;
 
-    let mut game = super::common::game();
-    super::common::install_empty_chunk(&mut game);
+    let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
     // The tick's request site (interaction arm) writes this outbox field;
     // seed it directly to isolate the SelfEvents → GameEvents pipe.
@@ -947,8 +938,7 @@ fn unpredicted_placement_keeps_the_initiators_world_event() {
     use crate::mathh::IVec3;
     use crate::net::protocol::WorldEventMsg;
 
-    let mut game = super::common::game();
-    super::common::install_empty_chunk(&mut game);
+    let mut game = super::common::game_on_empty_chunk();
     game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
     let floor = IVec3::new(3, 63, 3);
     game.server
@@ -994,8 +984,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     use crate::mathh::IVec3;
     use crate::net::protocol::WorldEventMsg;
 
-    let mut game = super::common::game();
-    super::common::install_empty_chunk(&mut game);
+    let mut game = super::common::game_on_empty_chunk();
     game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
     let floor = IVec3::new(3, 63, 3);
     game.server
@@ -1170,8 +1159,7 @@ fn wire_break_for_a_presented_cell_is_suppressed_while_its_request_is_pending() 
 /// matches session truth exactly.
 #[test]
 fn hud_health_matches_session_truth_after_a_damage_tick() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
 
     let mut events = TickEvents::default();
     assert!(game
@@ -1247,8 +1235,7 @@ fn multiple_tick_updates_in_one_frame_accumulate_not_overwrite() {
 /// `TickUpdate`, alongside session 0's own row.
 #[test]
 fn every_sessions_player_row_reaches_the_local_batch() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let s1_pos = Vec3::new(2.5, 64.0, 2.5);
     let s1 = game
         .server
@@ -1291,8 +1278,7 @@ fn a_sleeping_sessions_row_carries_the_lying_head_yaw() {
     use crate::block::Block;
     use crate::mathh::IVec3;
 
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     for x in 0..16 {
         for z in 0..16 {
             game.server.world.set_block_world(x, 63, z, Block::Stone);

@@ -151,8 +151,8 @@ impl PredictionLedger {
     }
 }
 
-/// Helper for tests / callers constructing deny outcomes.
-#[allow(dead_code)]
+/// The one deny-outcome constructor, shared by the server's message-time
+/// denials and the ledger tests.
 pub(crate) fn deny(id: ClientRequestId, reason: ActionDenyReason) -> ActionOutcome {
     ActionOutcome {
         id,

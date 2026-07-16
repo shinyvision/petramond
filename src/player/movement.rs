@@ -355,7 +355,7 @@ impl Player {
             // fall through the cell is caught by the hard clamp (the "grab").
             // The speed is a fraction of base WALK on purpose: sprint and sneak
             // change nothing here.
-            let d = crate::ladder::facing_dir(facing);
+            let d = facing.dir();
             let into_wall = -(input.wishdir.x * d.x as f32 + input.wishdir.z * d.z as f32);
             let ascending = input.jump || into_wall > 1e-3;
             let target = if ascending { CLIMB_SPEED } else { -CLIMB_SPEED };

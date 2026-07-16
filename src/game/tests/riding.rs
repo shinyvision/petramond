@@ -1,14 +1,13 @@
 //! Cross-subsystem riding boundaries that need the full server fixture.
 
-use super::common::{game, install_empty_chunk};
+use super::common::{game, game_on_empty_chunk};
 use crate::block::Block;
 use crate::mathh::Vec3;
 use crate::mob::Mob;
 
 #[test]
 fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_rider() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let seat = Vec3::new(8.0, 80.0, 8.0);
     assert!(game.server.world.mobs_mut().spawn(Mob::Owl, seat, 0.0));
     let mob_id = game.server.world.mobs().instances()[0].id();

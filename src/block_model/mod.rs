@@ -580,17 +580,8 @@ struct RawModelFile {
 /// inconsistent `models.json` fails loudly at startup.
 fn defs() -> &'static [BlockModelDef] {
     static DEFS: LazyLock<&'static [BlockModelDef]> = LazyLock::new(|| {
-        let layers = crate::assets::read_layers("models.json");
-        if layers.is_empty() {
-            panic!(
-                "models.json not found (searched {:?}); the game cannot run without its model table",
-                crate::assets::candidate_paths("models.json")
-            );
-        }
-        let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
         Box::leak(
-            parse_layers(&texts)
-                .unwrap_or_else(|e| panic!("models.json: {e}"))
+            crate::registry::read_catalog("models.json", "block model", parse_layers)
                 .into_boxed_slice(),
         )
     });
@@ -598,53 +589,29 @@ fn defs() -> &'static [BlockModelDef] {
 }
 
 fn parse_layers(texts: &[&str]) -> Result<Vec<BlockModelDef>, String> {
-    // Same catalog contract as blocks/items/sounds: merge rows by key, engine
-    // keys keep their frozen ids, namespaced keys register fresh ids.
-    let mut merged: Vec<RawModelDef> = Vec::new();
-    let mut layer_keys: Vec<Vec<String>> = Vec::new();
-    for (li, text) in texts.iter().enumerate() {
-        let raw: RawModelFile =
-            serde_json::from_str(text).map_err(|e| format!("layer #{li}: invalid JSON: {e}"))?;
-        layer_keys.push(raw.models.iter().map(|r| r.key.clone()).collect());
-        for r in raw.models {
-            match merged.iter_mut().find(|m| m.key == r.key) {
-                Some(slot) => *slot = r,
-                None => merged.push(r),
-            }
-        }
-    }
-    let names = crate::registry::NameTable::build(ENGINE_MODEL_KEYS, &layer_keys, "block model")?;
-    let mut rows: Vec<Option<BlockModelDef>> = (0..names.len()).map(|_| None).collect();
-    for r in merged {
-        let id = names
-            .id(&r.key)
-            .ok_or_else(|| format!("unregistered block model '{}'", r.key))?;
-        let hidden_parts: Vec<&'static str> = r
-            .hidden_parts
-            .into_iter()
-            .map(|p| &*Box::leak(p.into_boxed_str()))
-            .collect();
-        rows[id as usize] = Some(BlockModelDef {
-            key: Box::leak(r.key.into_boxed_str()),
-            model_file: Box::leak(r.model_file.into_boxed_str()),
-            cells: r.cells,
-            collision: CollisionSpec::FromModel,
-            orientation: r.orientation,
-            fit: r.fit,
-            hidden_parts: Box::leak(hidden_parts.into_boxed_slice()),
-        });
-    }
-    rows.into_iter()
-        .enumerate()
-        .map(|(id, row)| {
-            row.ok_or_else(|| {
-                format!(
-                    "missing row for block model '{}'",
-                    names.name(id as u8).unwrap_or("?")
-                )
+    crate::registry::load_catalog(
+        texts,
+        |text| serde_json::from_str::<RawModelFile>(text).map(|f| f.models),
+        |r| &r.key,
+        ENGINE_MODEL_KEYS,
+        "block model",
+        |r, id, names| {
+            let hidden_parts: Vec<&'static str> = r
+                .hidden_parts
+                .into_iter()
+                .map(|p| &*Box::leak(p.into_boxed_str()))
+                .collect();
+            Ok(BlockModelDef {
+                key: names.name(id).expect("id resolved from this table"),
+                model_file: Box::leak(r.model_file.into_boxed_str()),
+                cells: r.cells,
+                collision: CollisionSpec::FromModel,
+                orientation: r.orientation,
+                fit: r.fit,
+                hidden_parts: Box::leak(hidden_parts.into_boxed_slice()),
             })
-        })
-        .collect()
+        },
+    )
 }
 
 /// The registry row for `kind`.

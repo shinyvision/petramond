@@ -1,5 +1,5 @@
 use super::super::tick::{TickEvents, TICK_DT};
-use super::common::{self, filled_inventory, game, hit, install_empty_chunk};
+use super::common::{self, filled_inventory, game, game_on_empty_chunk, hit};
 use crate::block::Block;
 use crate::events::{DamageSource, Outcome};
 use crate::mathh::{IVec3, Vec3};
@@ -290,8 +290,7 @@ fn queued_mod_actions_apply_within_a_game_tick() {
     // runs is applied by that tick (at its first drain point), not lost.
     use crate::events::ModAction;
 
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let mut ev = TickEvents::default();
     let h0 = game.server.sessions[0].player.health();
     game.server
@@ -307,8 +306,7 @@ fn queued_mod_actions_apply_within_a_game_tick() {
 
 #[test]
 fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.cam.pos = Vec3::new(8.0, 66.0, 8.0);
     game.cam.pitch = 0.0; // level look, so the eye ray stays at constant y
     let dir = game.cam.forward();
@@ -526,8 +524,7 @@ fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
 #[test]
 fn dead_and_spectator_players_cannot_attack_mobs() {
     for spectator in [false, true] {
-        let mut game = game();
-        install_empty_chunk(&mut game);
+        let mut game = game_on_empty_chunk();
         assert!(game
             .server
             .world
@@ -561,8 +558,7 @@ fn dead_and_spectator_players_cannot_attack_mobs() {
 
 #[test]
 fn a_newly_boarded_player_cannot_attack_their_mount_before_mirror_reconciliation() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     assert!(game
         .server
         .world
@@ -591,8 +587,7 @@ fn a_newly_boarded_player_cannot_attack_their_mount_before_mirror_reconciliation
 
 #[test]
 fn a_forged_mob_id_cannot_redirect_an_attack_past_the_nearest_body() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     assert!(game
         .server
         .world
@@ -678,8 +673,7 @@ fn opening_a_screen_drops_a_latched_action_so_it_cant_fire_behind_the_menu() {
 
 #[test]
 fn a_killed_mob_ragdolls_then_despawns() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let pos = Vec3::new(8.0, 64.0, 8.0);
     assert!(game.server.world.mobs_mut().spawn(Mob::Owl, pos, 0.0));
     assert!(game
@@ -769,8 +763,7 @@ fn mobs_take_player_rule_fall_damage_when_they_land() {
 
 #[test]
 fn killing_owls_drops_loot_into_the_world() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let pos = Vec3::new(8.0, 64.0, 8.0);
     // Over many kills the owl table (50% sticks / 25% coal) virtually always yields
     // something — this proves the death→loot path is wired, without pinning the
@@ -896,8 +889,7 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
 
 #[test]
 fn cannot_place_a_solid_block_inside_a_mob() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = filled_inventory(); // a stack of Dirt
     game.server.sessions[0].player.inventory.set_active(0);
     // Park the player far off so only the mob can block placement here.
@@ -953,8 +945,7 @@ fn cannot_place_a_solid_block_inside_a_mob() {
 
 #[test]
 fn cannot_place_a_solid_block_inside_another_player() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = filled_inventory(); // a stack of Dirt
     game.server.sessions[0].player.inventory.set_active(0);
     // Park the placer far off so only the other session can block placement here.
@@ -1244,8 +1235,7 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
         }
     }
 
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.cam.pos = Vec3::new(8.0, 66.0, 8.0);
     game.cam.pitch = 0.0;
     let dir = game.cam.forward();

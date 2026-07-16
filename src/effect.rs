@@ -147,17 +147,8 @@ pub fn by_name(name: &str) -> Option<Effect> {
 /// once; a missing or inconsistent `effects.json` fails loudly at startup.
 pub fn defs() -> &'static [EffectDef] {
     static TABLE: LazyLock<&'static [EffectDef]> = LazyLock::new(|| {
-        let layers = crate::assets::read_layers("effects.json");
-        if layers.is_empty() {
-            panic!(
-                "effects.json not found (searched {:?}); the game cannot run without its effect table",
-                crate::assets::candidate_paths("effects.json")
-            );
-        }
-        let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
         Box::leak(
-            parse_layers(&texts)
-                .unwrap_or_else(|e| panic!("effects.json: {e}"))
+            crate::registry::read_catalog("effects.json", "effect", parse_layers)
                 .into_boxed_slice(),
         )
     });
@@ -165,51 +156,26 @@ pub fn defs() -> &'static [EffectDef] {
 }
 
 fn parse_layers(texts: &[&str]) -> Result<Vec<EffectDef>, String> {
-    // Merge layers by effect key, then assign ids: engine names hold their
-    // frozen ids, namespaced keys register after them (bare unknowns error) —
-    // the same contract as the block/item/sound catalogs.
-    let mut merged: Vec<RawEffectDef> = Vec::new();
-    let mut layer_keys: Vec<Vec<String>> = Vec::new();
-    for (li, text) in texts.iter().enumerate() {
-        let raw: RawFile =
-            serde_json::from_str(text).map_err(|e| format!("layer #{li}: invalid JSON: {e}"))?;
-        layer_keys.push(raw.effects.iter().map(|r| r.effect.clone()).collect());
-        for r in raw.effects {
-            match merged.iter_mut().find(|m| m.effect == r.effect) {
-                Some(slot) => *slot = r,
-                None => merged.push(r),
+    crate::registry::load_catalog(
+        texts,
+        |text| serde_json::from_str::<RawFile>(text).map(|f| f.effects),
+        |r| &r.effect,
+        ENGINE_EFFECT_NAMES,
+        "effect",
+        |r, id, names| {
+            let behavior = r.behavior.resolve(&r.effect)?;
+            if r.icon.is_empty() {
+                return Err(format!("effect '{}': icon path is empty", r.effect));
             }
-        }
-    }
-    let names = crate::registry::NameTable::build(ENGINE_EFFECT_NAMES, &layer_keys, "effect")?;
-    let mut rows: Vec<Option<EffectDef>> = (0..names.len()).map(|_| None).collect();
-    for r in merged {
-        let behavior = r.behavior.resolve(&r.effect)?;
-        if r.icon.is_empty() {
-            return Err(format!("effect '{}': icon path is empty", r.effect));
-        }
-        let id = names
-            .id(&r.effect)
-            .ok_or_else(|| format!("unregistered effect '{}'", r.effect))?;
-        rows[id as usize] = Some(EffectDef {
-            effect: Effect(id),
-            name: names.name(id).expect("id resolved from this table"),
-            display: Box::leak(r.display.into_boxed_str()),
-            icon: Box::leak(r.icon.into_boxed_str()),
-            behavior,
-        });
-    }
-    rows.into_iter()
-        .enumerate()
-        .map(|(id, row)| {
-            row.ok_or_else(|| {
-                format!(
-                    "missing row for effect '{}'",
-                    names.name(id as u8).unwrap_or("?")
-                )
+            Ok(EffectDef {
+                effect: Effect(id),
+                name: names.name(id).expect("id resolved from this table"),
+                display: Box::leak(r.display.into_boxed_str()),
+                icon: Box::leak(r.icon.into_boxed_str()),
+                behavior,
             })
-        })
-        .collect()
+        },
+    )
 }
 
 #[cfg(test)]

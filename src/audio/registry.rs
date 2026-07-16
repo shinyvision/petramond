@@ -196,17 +196,8 @@ pub(crate) fn by_name(name: &str) -> Option<Sound> {
 /// a missing or inconsistent `sounds.json` fails loudly at startup.
 pub(crate) fn defs() -> &'static [SoundDef] {
     static TABLE: LazyLock<&'static [SoundDef]> = LazyLock::new(|| {
-        let layers = crate::assets::read_layers("sounds.json");
-        if layers.is_empty() {
-            panic!(
-                "sounds.json not found (searched {:?}); the game cannot run without its sound table",
-                crate::assets::candidate_paths("sounds.json")
-            );
-        }
-        let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
         Box::leak(
-            parse_layers(&texts)
-                .unwrap_or_else(|e| panic!("sounds.json: {e}"))
+            crate::registry::read_catalog("sounds.json", "sound", parse_layers)
                 .into_boxed_slice(),
         )
     });
@@ -214,60 +205,35 @@ pub(crate) fn defs() -> &'static [SoundDef] {
 }
 
 fn parse_layers(texts: &[&str]) -> Result<Vec<SoundDef>, String> {
-    // Merge layers by sound key, then assign ids: engine names hold their
-    // frozen ids, namespaced keys register after them (bare unknowns error) —
-    // the same contract as the block/item catalogs.
-    let mut merged: Vec<RawSoundDef> = Vec::new();
-    let mut layer_keys: Vec<Vec<String>> = Vec::new();
-    for (li, text) in texts.iter().enumerate() {
-        let raw: RawFile =
-            serde_json::from_str(text).map_err(|e| format!("layer #{li}: invalid JSON: {e}"))?;
-        layer_keys.push(raw.sounds.iter().map(|r| r.sound.clone()).collect());
-        for r in raw.sounds {
-            match merged.iter_mut().find(|m| m.sound == r.sound) {
-                Some(slot) => *slot = r,
-                None => merged.push(r),
+    crate::registry::load_catalog(
+        texts,
+        |text| serde_json::from_str::<RawFile>(text).map(|f| f.sounds),
+        |r| &r.sound,
+        ENGINE_SOUND_NAMES,
+        "sound",
+        |r, id, names| {
+            if !(r.attenuation_distance.is_finite() && r.attenuation_distance > 0.0) {
+                return Err(format!(
+                    "sound '{}': attenuation_distance must be finite and > 0",
+                    r.sound
+                ));
             }
-        }
-    }
-    let names = crate::registry::NameTable::build(ENGINE_SOUND_NAMES, &layer_keys, "sound")?;
-    let mut rows: Vec<Option<SoundDef>> = (0..names.len()).map(|_| None).collect();
-    for r in merged {
-        if !(r.attenuation_distance.is_finite() && r.attenuation_distance > 0.0) {
-            return Err(format!(
-                "sound '{}': attenuation_distance must be finite and > 0",
-                r.sound
-            ));
-        }
-        let id = names
-            .id(&r.sound)
-            .ok_or_else(|| format!("unregistered sound '{}'", r.sound))?;
-        let variants: Vec<&'static str> = r
-            .variants
-            .into_iter()
-            .map(|v| &*Box::leak(v.into_boxed_str()))
-            .collect();
-        rows[id as usize] = Some(SoundDef {
-            sound: Sound(id),
-            name: names.name(id).expect("id resolved from this table"),
-            variants: Box::leak(variants.into_boxed_slice()),
-            gain: r.gain as f32,
-            pitch_variation: r.pitch_variation as f32,
-            attenuation_distance: r.attenuation_distance as f32,
-            category: r.category,
-        });
-    }
-    rows.into_iter()
-        .enumerate()
-        .map(|(id, row)| {
-            row.ok_or_else(|| {
-                format!(
-                    "missing row for sound '{}'",
-                    names.name(id as u8).unwrap_or("?")
-                )
+            let variants: Vec<&'static str> = r
+                .variants
+                .into_iter()
+                .map(|v| &*Box::leak(v.into_boxed_str()))
+                .collect();
+            Ok(SoundDef {
+                sound: Sound(id),
+                name: names.name(id).expect("id resolved from this table"),
+                variants: Box::leak(variants.into_boxed_slice()),
+                gain: r.gain as f32,
+                pitch_variation: r.pitch_variation as f32,
+                attenuation_distance: r.attenuation_distance as f32,
+                category: r.category,
             })
-        })
-        .collect()
+        },
+    )
 }
 
 fn distance_gain(distance: f32, attenuation_distance: f32) -> f32 {
@@ -290,8 +256,15 @@ mod tests {
             crate::assets::read_base_text("sounds.json").expect("assets/sounds.json must ship");
         let table = parse_layers(&[&text]).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         assert_eq!(table.len(), ENGINE_SOUND_NAMES.len());
-        for (id, def) in table.iter().enumerate() {
-            assert_eq!(def.sound, Sound(id as u8), "table is id-ordered");
+        for name in ENGINE_SOUND_NAMES {
+            let def = table
+                .iter()
+                .find(|d| d.name == *name)
+                .unwrap_or_else(|| panic!("engine sound '{name}' has a row"));
+            assert_eq!(
+                table[def.sound.0 as usize].name, *name,
+                "name → id → def → name round-trips"
+            );
         }
     }
 

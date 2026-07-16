@@ -39,6 +39,14 @@ pub(super) fn game() -> TestGame {
     game_with_camera(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0))
 }
 
+/// [`game`] with the world already reduced to one empty chunk at (0,0) — the
+/// standard blank stage for placement/interaction tests.
+pub(super) fn game_on_empty_chunk() -> TestGame {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game
+}
+
 /// The fixture with an explicit camera (the WASM child tests spawn near their
 /// build site).
 pub(super) fn game_with_camera(cam: Camera) -> TestGame {
@@ -267,6 +275,15 @@ pub(super) fn filled_inventory() -> Inventory {
     inv
 }
 
+/// Replace the session inventory with a fresh one holding `n` of `item` in
+/// hotbar slot 0 (a new inventory's active slot) — the standard "put X in the
+/// player's hand" setup.
+pub(super) fn give(game: &mut TestGame, item: ItemType, n: u8) {
+    let mut inv = Inventory::new();
+    inv.add(ItemStack::new(item, n));
+    game.server.sessions[0].player.inventory = inv;
+}
+
 pub(super) fn apply_drop_actions(game: &mut TestGame) -> TickEvents {
     // The action methods queue MESSAGES now; hand them to the server the way
     // `Game::tick` would before applying the drop stage.
@@ -287,6 +304,40 @@ pub(super) fn install_empty_chunk(game: &mut TestGame) {
     game.server
         .world
         .insert_chunk_for_test(pos, crate::chunk::Chunk::new(0, 0));
+}
+
+/// Clear the world and install one chunk at (0,0) with a solid one-block
+/// floor of `floor` at y=63 — the flat island the mod child tests stand on.
+/// Takes the `World` directly so tests driving a bare world can use it too.
+pub(super) fn flat_floor(world: &mut crate::world::World, floor: crate::block::Block) {
+    install_flat_floor(world, floor, false);
+}
+
+/// [`flat_floor`], but with the whole column pre-inserted as empty sections
+/// first, so the air ABOVE the floor reads as LOADED — mod ground scans and
+/// sim reads treat unloaded air as absent.
+pub(super) fn flat_floor_loaded_air(world: &mut crate::world::World, floor: crate::block::Block) {
+    install_flat_floor(world, floor, true);
+}
+
+fn install_flat_floor(
+    world: &mut crate::world::World,
+    floor: crate::block::Block,
+    loaded_air: bool,
+) {
+    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    let pos = ChunkPos::new(0, 0);
+    world.clear_world();
+    if loaded_air {
+        world.insert_empty_column_for_test(pos);
+    }
+    let mut chunk = Chunk::new(0, 0);
+    for z in 0..CHUNK_SZ {
+        for x in 0..CHUNK_SX {
+            chunk.set_block(x, 63, z, floor);
+        }
+    }
+    world.insert_chunk_for_test(pos, chunk);
 }
 
 /// Put the authoritative session eye at `eye`, looking along `dir`, with an

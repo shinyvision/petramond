@@ -39,7 +39,6 @@ fn a_dry_solid_lands_on_a_solid_peer_and_can_drive_next_tick() {
 #[ignore = "spawned with the vehicles fixture before registry initialization"]
 fn solid_peer_landing_inner() {
     use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
     let boat = crate::mob::defs()
         .iter()
@@ -47,15 +46,7 @@ fn solid_peer_landing_inner() {
         .map(|index| crate::mob::Mob(index as u8))
         .expect("vehicles:boat registered from the fixture pack");
     let mut world = crate::world::World::new(0, 1);
-    world.clear_world();
-    world.insert_empty_column_for_test(ChunkPos::new(0, 0));
-    let mut chunk = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            chunk.set_block(x, 63, z, Block::Stone);
-        }
-    }
-    world.insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
+    super::common::flat_floor_loaded_air(&mut world, Block::Stone);
 
     let mut mobs = crate::mob::Mobs::new(0);
     let lower_pos = Vec3::new(8.0, 64.0, 8.0);

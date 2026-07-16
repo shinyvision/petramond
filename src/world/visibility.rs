@@ -27,17 +27,10 @@
 use std::collections::VecDeque;
 
 use crate::chunk::SectionPos;
+use crate::mathh::FACE_NEIGHBORS;
 
 use super::store::World;
 
-const FACES: [(i32, i32, i32); 6] = [
-    (1, 0, 0),
-    (-1, 0, 0),
-    (0, 1, 0),
-    (0, -1, 0),
-    (0, 0, 1),
-    (0, 0, -1),
-];
 const NEAR_LOAD_RADIUS: i32 = 2;
 
 impl World {
@@ -116,7 +109,8 @@ impl World {
                 }
                 continue;
             }
-            for &(dx, dy, dz) in &FACES {
+            for d in FACE_NEIGHBORS {
+                let (dx, dy, dz) = (d.x, d.y, d.z);
                 let n = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
                 if self.deep_sections.contains(&n) {
                     continue;
@@ -149,7 +143,8 @@ impl World {
             let Some(s) = self.sections.get(&pos) else {
                 continue;
             };
-            for &(dx, dy, dz) in &FACES {
+            for d in FACE_NEIGHBORS {
+                let (dx, dy, dz) = (d.x, d.y, d.z);
                 if !s.face_plane_open(dx, dy, dz) {
                     continue;
                 }

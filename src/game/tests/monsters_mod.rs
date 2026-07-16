@@ -27,7 +27,6 @@ fn zombie_melee_uses_engine_global_iframes() {
 #[ignore = "spawned by zombie_melee_uses_engine_global_iframes with a fixture pack env"]
 fn zombie_combat_inner() {
     use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
     let zombie = crate::mob::defs()
         .iter()
@@ -41,16 +40,7 @@ fn zombie_combat_inner() {
     // The mod spawner needs loaded dark cells in the 32-128 ring; this tiny
     // fixture has neither, so this test owns its zombies. Flat floor, player
     // standing on it.
-    game.server.world.clear_world();
-    let mut chunk = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            chunk.set_block(x, 63, z, Block::Grass);
-        }
-    }
-    game.server
-        .world
-        .insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
+    super::common::flat_floor(&mut game.server.world, Block::Grass);
     game.server.sessions[0].player.pos = Vec3::new(8.0, 64.0, 8.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;
@@ -275,7 +265,7 @@ fn zombie_burn_escalates_in_sun_and_cools_in_darkness_via_wasm() {
 #[ignore = "spawned by zombie_burn_escalates_in_sun_and_cools_in_darkness_via_wasm with a fixture pack env"]
 fn zombie_burn_cool_inner() {
     use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ, SECTION_VOLUME, SKY_FULL};
+    use crate::chunk::{SECTION_VOLUME, SKY_FULL};
 
     let zombie = crate::mob::defs()
         .iter()
@@ -292,22 +282,13 @@ fn zombie_burn_cool_inner() {
     let mut game =
         super::common::game_with_camera(Camera::new(Vec3::new(30.0, 66.0, 8.0), 16.0 / 9.0));
     assert_eq!(game.mods_for_test().loaded(), 1, "monsters loaded");
-    game.server.world.clear_world();
     game.server.sessions[0].player.pos = Vec3::new(30.0, 64.0, 8.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;
 
     // One full-skylight chunk; the zombie burns under the open sky until the
     // CLOCK, not the terrain, takes the sun away.
-    let pos = ChunkPos::new(0, 0);
-    game.server.world.insert_empty_column_for_test(pos);
-    let mut chunk = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            chunk.set_block(x, 63, z, Block::Grass);
-        }
-    }
-    game.server.world.insert_chunk_for_test(pos, chunk);
+    super::common::flat_floor_loaded_air(&mut game.server.world, Block::Grass);
     let section = game
         .server
         .world
@@ -537,7 +518,6 @@ fn hushjaw_bites_a_silent_player_that_touches_it_via_wasm() {
 #[ignore = "spawned by hushjaw_bites_a_silent_player_that_touches_it_via_wasm with a fixture pack env"]
 fn hushjaw_bump_inner() {
     use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
     let hushjaw = crate::mob::defs()
         .iter()
@@ -547,16 +527,7 @@ fn hushjaw_bump_inner() {
 
     let mut game =
         super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
-    game.server.world.clear_world();
-    let mut chunk = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            chunk.set_block(x, 63, z, Block::Grass);
-        }
-    }
-    game.server
-        .world
-        .insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
+    super::common::flat_floor(&mut game.server.world, Block::Grass);
     game.server.sessions[0].player.pos = Vec3::new(8.0, 64.0, 8.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;
@@ -614,7 +585,6 @@ fn hushjaw_hunts_footsteps_by_sound_and_ignores_a_silent_player_via_wasm() {
 #[ignore = "spawned by hushjaw_hunts_footsteps_by_sound_and_ignores_a_silent_player_via_wasm with a fixture pack env"]
 fn hushjaw_hearing_inner() {
     use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
     let hushjaw = crate::mob::defs()
         .iter()
@@ -627,16 +597,7 @@ fn hushjaw_hearing_inner() {
     // One 16×16 floor island: every point on it is within the hushjaw's
     // 12-block hearing of the centred player, and wander never leaves it
     // (destinations must be standable footholds).
-    game.server.world.clear_world();
-    let mut chunk = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            chunk.set_block(x, 63, z, Block::Grass);
-        }
-    }
-    game.server
-        .world
-        .insert_chunk_for_test(ChunkPos::new(0, 0), chunk);
+    super::common::flat_floor(&mut game.server.world, Block::Grass);
     game.server.sessions[0].player.pos = Vec3::new(8.0, 64.0, 8.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;

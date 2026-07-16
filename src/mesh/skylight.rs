@@ -256,17 +256,10 @@ fn compute_chunk_skylight_inner<'a>(
             let rem = i / sx as u32;
             let z = (rem % sz as u32) as i32;
             let ay = (rem / sz as u32) as i32;
-            for (dx, dy, dz) in [
-                (1, 0, 0),
-                (-1, 0, 0),
-                (0, 1, 0),
-                (0, -1, 0),
-                (0, 0, 1),
-                (0, 0, -1),
-            ] {
-                let nx = x + dx;
-                let ny = ay + dy;
-                let nz = z + dz;
+            for d in crate::mathh::FACE_NEIGHBORS {
+                let nx = x + d.x;
+                let ny = ay + d.y;
+                let nz = z + d.z;
                 if !(0..sx).contains(&nx) || ny < 0 || ny >= bh || !(0..sz).contains(&nz) {
                     continue;
                 }

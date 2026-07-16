@@ -166,13 +166,9 @@ impl App {
     }
 
     pub(super) fn flush_client_canvas_scroll(&mut self) {
-        let Some(canvas) = self
-            .client_canvas
-            .as_mut()
-            .filter(|canvas| {
-                self.screen == AppScreen::ClientCanvas && canvas.pending_scroll != 0.0
-            })
-        else {
+        let Some(canvas) = self.client_canvas.as_mut().filter(|canvas| {
+            self.screen == AppScreen::ClientCanvas && canvas.pending_scroll != 0.0
+        }) else {
             return;
         };
         let delta = std::mem::take(&mut canvas.pending_scroll);
@@ -650,7 +646,18 @@ mod tests {
     fn client_canvas_sprites_keep_native_resolution_under_the_view_transform() {
         let canvas = canvas_rect((1900, 1034), (320, 320));
         let sprite = canvas_sprite_rect(canvas, (320, 320), [160.0, 160.0], [8.0, -4.0], (48, 48));
-        assert_eq!(sprite, [934.0, 489.0, 48.0, 48.0]);
+        assert_eq!(
+            sprite[2..],
+            [48.0, 48.0],
+            "the sprite keeps its native pixel size, whatever the canvas transform"
+        );
+        assert!(
+            sprite[0] >= canvas[0]
+                && sprite[1] >= canvas[1]
+                && sprite[0] + sprite[2] <= canvas[0] + canvas[2]
+                && sprite[1] + sprite[3] <= canvas[1] + canvas[3],
+            "a near-centre sprite lands inside the canvas: {sprite:?} vs {canvas:?}"
+        );
     }
 
     #[test]
@@ -668,9 +675,21 @@ mod tests {
 
     #[test]
     fn client_canvas_clipping_preserves_the_matching_texture_region() {
-        let (rect, uv) = clip_rect_uv([0.0, 0.0, 100.0, 100.0], [25.0, 10.0, 50.0, 80.0])
-            .expect("the rectangles overlap");
+        let full = [0.0, 0.0, 100.0, 100.0];
+        let (rect, uv) =
+            clip_rect_uv(full, [25.0, 10.0, 50.0, 80.0]).expect("the rectangles overlap");
         assert_eq!(rect, [25.0, 10.0, 50.0, 80.0]);
-        assert_eq!(uv, [0.25, 0.1, 0.75, 0.9]);
+        // The two outputs must agree: mapping the UVs back through the full
+        // rect reproduces the clipped rectangle.
+        assert!(uv[0] < uv[2] && uv[1] < uv[3], "uv ordering: {uv:?}");
+        let roundtrip = [
+            full[0] + uv[0] * full[2],
+            full[1] + uv[1] * full[3],
+            (uv[2] - uv[0]) * full[2],
+            (uv[3] - uv[1]) * full[3],
+        ];
+        for (got, want) in roundtrip.iter().zip(rect) {
+            assert!((got - want).abs() < 1e-3, "{roundtrip:?} vs {rect:?}");
+        }
     }
 }

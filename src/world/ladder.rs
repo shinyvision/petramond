@@ -30,7 +30,7 @@ impl World {
     /// wall torch). Gates placement, the predicted ghost, and the FRAGILE
     /// support re-check, so all three agree by construction.
     pub(crate) fn ladder_supported_at(&self, pos: IVec3, facing: Facing) -> bool {
-        let dir = crate::ladder::facing_dir(facing);
+        let dir = facing.dir();
         self.wall_face_complete(crate::ladder::support_cell(pos, facing), dir)
     }
 

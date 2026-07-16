@@ -8,6 +8,7 @@
 //! exclusively over message channels. Remote (TCP) connections ride the same
 //! loop through [`remote::RemoteHub`] (multiplayer Phase E, "Open to LAN").
 
+pub(crate) mod actions;
 pub(crate) mod bed;
 pub(crate) mod breaking;
 pub(crate) mod chat;

@@ -141,18 +141,11 @@ impl World {
         };
         let v = if old.is_opaque() && new == Block::Air {
             // Opening a cell: whatever enters comes through the six faces.
-            [
-                (1, 0, 0),
-                (-1, 0, 0),
-                (0, 1, 0),
-                (0, -1, 0),
-                (0, 0, 1),
-                (0, 0, -1),
-            ]
-            .into_iter()
-            .map(|(dx, dy, dz)| value_at(wx + dx, wy + dy, wz + dz))
-            .max()
-            .unwrap_or(0)
+            crate::mathh::FACE_NEIGHBORS
+                .into_iter()
+                .map(|d| value_at(wx + d.x, wy + d.y, wz + d.z))
+                .max()
+                .unwrap_or(0)
         } else if old == Block::Air && new.is_opaque() {
             // Closing a cell: only paths that ran through its own value die.
             value_at(wx, wy, wz)

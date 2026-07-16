@@ -77,7 +77,7 @@ pub fn resolved_mask<N>(pos: IVec3, facing: Facing, mut neighbour_stair: N) -> u
 where
     N: FnMut(IVec3) -> Option<Facing>,
 {
-    let high = -facing_offset(facing);
+    let high = -facing.dir();
     if let Some(next) = neighbour_stair(pos + high) {
         if perpendicular(facing, next) {
             return back_mask(facing) & back_mask(next);
@@ -99,7 +99,7 @@ where
     N: FnMut(IVec3) -> Option<StairState>,
 {
     let facing = state.facing;
-    let high = -facing_offset(facing);
+    let high = -facing.dir();
     if let Some(next) = neighbour_stair(pos + high) {
         if next.half == state.half && perpendicular(facing, next.facing) {
             return StairShape {
@@ -348,12 +348,6 @@ pub fn boxes_for_shape(shape: StairShape) -> &'static [Aabb] {
 }
 
 #[inline]
-fn facing_offset(facing: Facing) -> IVec3 {
-    let (x, z) = facing_xz(facing);
-    IVec3::new(x, 0, z)
-}
-
-#[inline]
 fn back_mask(facing: Facing) -> u8 {
     match facing {
         Facing::North => TOP_NORTH,
@@ -385,16 +379,6 @@ pub fn light_side_mask(state: StairState, dx: i32, dy: i32, dz: i32) -> u8 {
         }
     }
     open
-}
-
-#[inline]
-fn facing_xz(facing: Facing) -> (i32, i32) {
-    match facing {
-        Facing::North => (0, -1),
-        Facing::South => (0, 1),
-        Facing::West => (-1, 0),
-        Facing::East => (1, 0),
-    }
 }
 
 #[inline]
@@ -471,7 +455,7 @@ mod tests {
                 }
 
                 let pos = IVec3::ZERO;
-                let high_pos = pos - facing_offset(facing);
+                let high_pos = pos - facing.dir();
                 let mask = resolved_mask(pos, facing, |p| (p == high_pos).then_some(next));
                 let expected = back_mask(facing) & back_mask(next);
 
@@ -493,7 +477,7 @@ mod tests {
                 }
 
                 let pos = IVec3::ZERO;
-                let low_pos = pos + facing_offset(facing);
+                let low_pos = pos + facing.dir();
                 let mask = resolved_mask(pos, facing, |p| (p == low_pos).then_some(next));
                 let expected = back_mask(facing) | back_mask(next);
 
@@ -510,8 +494,8 @@ mod tests {
     fn same_facing_attachments_do_not_cancel_corners() {
         let pos = IVec3::ZERO;
 
-        let outside_turn = pos - facing_offset(Facing::South);
-        let outside_attachment = pos + facing_offset(Facing::East);
+        let outside_turn = pos - Facing::South.dir();
+        let outside_attachment = pos + Facing::East.dir();
         let outside = resolved_mask(pos, Facing::South, |p| match p {
             p if p == outside_turn => Some(Facing::West),
             p if p == outside_attachment => Some(Facing::South),
@@ -519,8 +503,8 @@ mod tests {
         });
         assert_eq!(outside, back_mask(Facing::South) & back_mask(Facing::West));
 
-        let inside_turn = pos + facing_offset(Facing::South);
-        let inside_attachment = pos + facing_offset(Facing::West);
+        let inside_turn = pos + Facing::South.dir();
+        let inside_attachment = pos + Facing::West.dir();
         let inside = resolved_mask(pos, Facing::South, |p| match p {
             p if p == inside_turn => Some(Facing::West),
             p if p == inside_attachment => Some(Facing::South),

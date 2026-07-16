@@ -4,6 +4,7 @@
 //! delivered to currently connected clients and never retained server-side.
 
 use crate::net::protocol::{ChatColor, ChatLine, ChatSpan, MAX_CHAT_CHARS};
+use crate::server::game::ServerGame;
 use crate::server::player::PlayerId;
 
 /// Who should receive one accepted chat line on the next pump.
@@ -30,6 +31,67 @@ impl ChatTargets {
 pub(crate) struct PendingChat {
     pub line: ChatLine,
     pub targets: ChatTargets,
+}
+
+/// The enqueue seams: every accepted line — whatever authored it — takes its
+/// seq from the one server counter and joins the pending list here.
+impl ServerGame {
+    /// Queue one accepted chat line for the next pump. Console `say`, player
+    /// chat, and join/leave always use [`ChatTargets::All`]; mods may target a
+    /// player-id list.
+    pub(crate) fn enqueue_chat(&mut self, line: ChatLine, targets: ChatTargets) {
+        self.pending_chat.push(PendingChat { line, targets });
+    }
+
+    /// Ordinary player chat (`<Name> text`). Logged on a headless server,
+    /// where no local client would otherwise show it.
+    pub(crate) fn enqueue_player_chat(&mut self, name: &str, text: &str) {
+        let seq = self.alloc_chat_seq();
+        if let Some(line) = player_line(seq, name, text) {
+            if !self.has_local_session {
+                log::info!("chat: {}", display_text(&line));
+            }
+            self.enqueue_chat(line, ChatTargets::All);
+        }
+    }
+
+    pub(crate) fn enqueue_server_chat(&mut self, text: &str) {
+        let seq = self.alloc_chat_seq();
+        self.enqueue_line(server_line(seq, text), ChatTargets::All);
+    }
+
+    /// Mod-/engine-authored helper text (markup allowed; no `[Server]` prefix).
+    pub(crate) fn enqueue_authored_chat(&mut self, text: &str, targets: ChatTargets) {
+        let seq = self.alloc_chat_seq();
+        self.enqueue_line(authored_line(seq, text), targets);
+    }
+
+    pub(crate) fn enqueue_plain_chat(&mut self, text: &str, color: ChatColor, targets: ChatTargets) {
+        let seq = self.alloc_chat_seq();
+        self.enqueue_line(plain_line(seq, text, color), targets);
+    }
+
+    pub(crate) fn enqueue_join_chat(&mut self, name: &str) {
+        let seq = self.alloc_chat_seq();
+        self.enqueue_chat(joined_line(seq, name), ChatTargets::All);
+    }
+
+    pub(crate) fn enqueue_leave_chat(&mut self, name: &str) {
+        let seq = self.alloc_chat_seq();
+        self.enqueue_chat(left_line(seq, name), ChatTargets::All);
+    }
+
+    fn enqueue_line(&mut self, line: Option<ChatLine>, targets: ChatTargets) {
+        if let Some(line) = line {
+            self.enqueue_chat(line, targets);
+        }
+    }
+
+    fn alloc_chat_seq(&mut self) -> u64 {
+        let seq = self.next_chat_seq;
+        self.next_chat_seq = self.next_chat_seq.wrapping_add(1);
+        seq
+    }
 }
 
 pub(crate) fn player_line(seq: u64, name: &str, text: &str) -> Option<ChatLine> {

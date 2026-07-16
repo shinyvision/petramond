@@ -2,6 +2,19 @@
 
 pub use glam::{IVec3, Mat4, Vec3, Vec4};
 
+/// The six axis-aligned face-neighbour offsets in canonical face order
+/// (`+X, -X, +Y, -Y, +Z, -Z`) — the one shared cardinal-direction table.
+/// `mesh::Face::ALL` lists faces in this same order and `Face::dir` indexes
+/// into this table, so face/offset correspondence holds by construction.
+pub const FACE_NEIGHBORS: [IVec3; 6] = [
+    IVec3::new(1, 0, 0),
+    IVec3::new(-1, 0, 0),
+    IVec3::new(0, 1, 0),
+    IVec3::new(0, -1, 0),
+    IVec3::new(0, 0, 1),
+    IVec3::new(0, 0, -1),
+];
+
 pub const MAX_SELECTION_BOXES: usize = 3;
 
 #[derive(Copy, Clone, Debug, PartialEq)]

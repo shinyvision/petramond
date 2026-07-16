@@ -26,15 +26,12 @@ impl Face {
         Face::NegZ,
     ];
 
+    /// The face's outward unit offset — row `self` of the shared
+    /// [`FACE_NEIGHBORS`](crate::mathh::FACE_NEIGHBORS) table (variant order
+    /// matches the table by construction).
     pub(crate) fn dir(self) -> (i32, i32, i32) {
-        match self {
-            Face::PosX => (1, 0, 0),
-            Face::NegX => (-1, 0, 0),
-            Face::PosY => (0, 1, 0),
-            Face::NegY => (0, -1, 0),
-            Face::PosZ => (0, 0, 1),
-            Face::NegZ => (0, 0, -1),
-        }
+        let d = crate::mathh::FACE_NEIGHBORS[self as usize];
+        (d.x, d.y, d.z)
     }
 
     /// Index into `SHADES` (and the shader's mirror) for this face -- packed into
@@ -214,14 +211,7 @@ pub(super) fn crop_quads(x: f32, y: f32, z: f32) -> [[[f32; 3]; 4]; 4] {
     ]
 }
 
-pub(super) const FACES: [Face; 6] = [
-    Face::PosX,
-    Face::NegX,
-    Face::PosY,
-    Face::NegY,
-    Face::PosZ,
-    Face::NegZ,
-];
+pub(super) const FACES: [Face; 6] = Face::ALL;
 
 /// Per-vertex AO occlusion level: 0 = darkest (corner buried in a
 /// crevice), 3 = no occlusion. `side1`/`side2` are the two edge-adjacent

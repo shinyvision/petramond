@@ -38,7 +38,6 @@ pub(crate) struct IdRemap {
 impl IdRemap {
     /// Build the LUTs from the server's tables against THIS process's loaded
     /// registries.
-    #[allow(dead_code)] // first production caller: the Phase E2 connect worker
     pub(crate) fn build(tables: &NameTables) -> IdRemap {
         let names = crate::registry::names();
         let blocks: Vec<u8> = tables

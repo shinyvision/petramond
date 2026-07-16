@@ -9,6 +9,7 @@
 //! ([`render`](crate::render)) build from — so the outline traces the rendered
 //! pole exactly, by construction.
 
+use crate::facing::Facing;
 use crate::mathh::{IVec3, Mat4, Vec3};
 
 /// Half-width of the square pole, in cell units (the pole is `2/16` across).
@@ -101,14 +102,12 @@ impl TorchPlacement {
     /// wall torch leaning that way. A `-Y` normal (the underside of a block) or a
     /// zero normal yields `None` — torches don't hang from ceilings.
     pub fn from_place_normal(normal: IVec3) -> Option<Self> {
-        match (normal.x, normal.y, normal.z) {
-            (0, 1, 0) => Some(Self::Floor),
-            (1, 0, 0) => Some(Self::East),
-            (-1, 0, 0) => Some(Self::West),
-            (0, 0, 1) => Some(Self::South),
-            (0, 0, -1) => Some(Self::North),
-            _ => None,
+        // The torch's extra arm over the shared wall mapping: a `+Y` normal
+        // (the top face) mounts a floor torch.
+        if normal == IVec3::new(0, 1, 0) {
+            return Some(Self::Floor);
         }
+        Facing::from_horizontal_normal(normal).map(Self::from_wall_facing)
     }
 
     /// Whether this is a wall mount (vs a floor torch).
@@ -137,12 +136,27 @@ impl TorchPlacement {
     /// The horizontal unit direction a wall torch leans toward (away from its wall);
     /// `None` for a floor torch.
     fn lean(self) -> Option<IVec3> {
+        self.wall_facing().map(Facing::dir)
+    }
+
+    /// The [`Facing`] naming a wall mount's lean direction; `None` for a floor torch.
+    fn wall_facing(self) -> Option<Facing> {
         match self {
             Self::Floor => None,
-            Self::North => Some(IVec3::new(0, 0, -1)),
-            Self::South => Some(IVec3::new(0, 0, 1)),
-            Self::West => Some(IVec3::new(-1, 0, 0)),
-            Self::East => Some(IVec3::new(1, 0, 0)),
+            Self::North => Some(Facing::North),
+            Self::South => Some(Facing::South),
+            Self::West => Some(Facing::West),
+            Self::East => Some(Facing::East),
+        }
+    }
+
+    /// The wall mount leaning toward `facing`.
+    fn from_wall_facing(facing: Facing) -> Self {
+        match facing {
+            Facing::North => Self::North,
+            Facing::South => Self::South,
+            Facing::West => Self::West,
+            Facing::East => Self::East,
         }
     }
 

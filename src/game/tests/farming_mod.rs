@@ -732,7 +732,6 @@ fn farming_cultivation_inner() {
 #[ignore = "spawned by farming_processing_and_well_fed_via_wasm with a fixture pack env"]
 fn farming_processing_inner() {
     use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     use crate::events::DamageSource;
     use crate::item::{ItemStack, ItemType};
 
@@ -768,16 +767,7 @@ fn farming_processing_inner() {
 
     let mut game =
         super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
-    game.server.world.clear_world();
-    let cp = ChunkPos::new(0, 0);
-    game.server.world.insert_empty_column_for_test(cp);
-    let mut chunk = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            chunk.set_block(x, 63, z, Block::Stone);
-        }
-    }
-    game.server.world.insert_chunk_for_test(cp, chunk);
+    super::common::flat_floor_loaded_air(&mut game.server.world, Block::Stone);
     game.server.sessions[0].player.pos = Vec3::new(4.0, 64.0, 4.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;

@@ -145,18 +145,9 @@ pub(super) struct RawPose {
 /// packs replacing rows by item), panicking with a precise message if the
 /// table is missing or inconsistent.
 pub(super) fn table() -> &'static [ItemDef] {
-    let layers = crate::assets::read_layers("items.json");
-    if layers.is_empty() {
-        panic!(
-            "items.json not found (searched {:?}); the game cannot run without its item table",
-            crate::assets::candidate_paths("items.json")
-        );
-    }
-    for (_, path) in &layers {
-        log::info!("item defs layer: {}", path.display());
-    }
-    let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
-    parse_layers(&texts, crate::registry::names()).unwrap_or_else(|e| panic!("items.json: {e}"))
+    crate::registry::read_catalog("items.json", "item", |texts| {
+        parse_layers(texts, crate::registry::names())
+    })
 }
 
 #[cfg(test)]
@@ -179,45 +170,24 @@ pub(super) fn parse_layers(
     texts: &[&str],
     names: &ContentNames,
 ) -> Result<&'static [ItemDef], String> {
-    // Merge layers by item key: a later layer's row REPLACES the earlier one.
-    let mut merged: Vec<RawItemDef> = Vec::new();
-    for (li, text) in texts.iter().enumerate() {
-        let raw: RawFile =
-            serde_json::from_str(text).map_err(|e| format!("layer #{li}: invalid JSON: {e}"))?;
-        for r in raw.items {
-            match merged.iter_mut().find(|m| m.item == r.item) {
-                Some(slot) => *slot = r,
-                None => merged.push(r),
-            }
-        }
-    }
-    let expected = names.items.len();
-    let mut rows: Vec<Option<ItemDef>> = (0..expected).map(|_| None).collect();
     let mut keys = std::collections::HashSet::new();
-    for r in merged {
-        let id = names
-            .items
-            .id(&r.item)
-            .ok_or_else(|| format!("unregistered item '{}'", r.item))?;
-        if !keys.insert(r.key.clone()) {
-            return Err(format!(
-                "item '{}': duplicate key '{}' — recipes resolve by key, so keys must be unique",
-                r.item, r.key
-            ));
-        }
-        let name = r.item.clone();
-        rows[id as usize] =
-            Some(convert(r, ItemType(id), names).map_err(|e| format!("item '{name}': {e}"))?);
-    }
-    let mut defs = Vec::with_capacity(expected);
-    for (id, row) in rows.into_iter().enumerate() {
-        defs.push(row.ok_or_else(|| {
-            format!(
-                "missing row for item '{}'",
-                names.items.name(id as u8).unwrap_or("?")
-            )
-        })?);
-    }
+    let defs = crate::registry::resolve_catalog(
+        texts,
+        |text| serde_json::from_str::<RawFile>(text).map(|f| f.items),
+        |r| &r.item,
+        &names.items,
+        "item",
+        |r, id, _| {
+            if !keys.insert(r.key.clone()) {
+                return Err(format!(
+                    "item '{}': duplicate key '{}' — recipes resolve by key, so keys must be unique",
+                    r.item, r.key
+                ));
+            }
+            let name = r.item.clone();
+            convert(r, ItemType(id), names).map_err(|e| format!("item '{name}': {e}"))
+        },
+    )?;
     Ok(Box::leak(defs.into_boxed_slice()))
 }
 

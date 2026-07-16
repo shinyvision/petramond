@@ -61,7 +61,6 @@ fn kitchen_oven_cooks_food_not_ore_through_the_container_api_via_wasm() {
 #[ignore = "spawned by kitchen_oven_cooks_food_not_ore_through_the_container_api_via_wasm with a fixture pack env"]
 fn kitchen_oven_inner() {
     use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     use crate::controls::PointerButton;
     use crate::gui::{GuiValue, MenuSlot};
     use crate::item::{ItemStack, ItemType};
@@ -83,16 +82,7 @@ fn kitchen_oven_inner() {
     let mut game =
         super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
     assert_eq!(game.mods_for_test().loaded(), 1, "the kitchen wasm loaded");
-    game.server.world.clear_world();
-    let cp = ChunkPos::new(0, 0);
-    game.server.world.insert_empty_column_for_test(cp);
-    let mut chunk = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            chunk.set_block(x, 63, z, Block::Stone);
-        }
-    }
-    game.server.world.insert_chunk_for_test(cp, chunk);
+    super::common::flat_floor_loaded_air(&mut game.server.world, Block::Stone);
     game.server.sessions[0].player.pos = Vec3::new(4.0, 64.0, 4.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;
@@ -389,7 +379,6 @@ fn kitchen_oven_stays_usable_after_a_full_cook_and_burnout_via_wasm() {
 #[ignore = "spawned by kitchen_oven_stays_usable_after_a_full_cook_and_burnout_via_wasm with a fixture pack env"]
 fn kitchen_reuse_inner() {
     use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     use crate::controls::PointerButton;
     use crate::gui::MenuSlot;
     use crate::item::{ItemStack, ItemType};
@@ -417,16 +406,7 @@ fn kitchen_reuse_inner() {
 
     let mut game =
         super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
-    game.server.world.clear_world();
-    let cp = ChunkPos::new(0, 0);
-    game.server.world.insert_empty_column_for_test(cp);
-    let mut chunk = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            chunk.set_block(x, 63, z, Block::Stone);
-        }
-    }
-    game.server.world.insert_chunk_for_test(cp, chunk);
+    super::common::flat_floor_loaded_air(&mut game.server.world, Block::Stone);
     game.server.sessions[0].player.pos = Vec3::new(4.0, 64.0, 4.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;
@@ -670,6 +650,7 @@ fn kitchen_mutton_chain_sheep_loot_then_eating_grants_regen_via_wasm() {
 #[test]
 #[ignore = "spawned by kitchen_mutton_chain_sheep_loot_then_eating_grants_regen_via_wasm with a fixture pack env"]
 fn kitchen_mutton_inner() {
+    use crate::block::Block;
     use crate::item::{ItemStack, ItemType};
     use crate::mathh::Vec3 as V;
 
@@ -685,20 +666,7 @@ fn kitchen_mutton_inner() {
 
     let mut game =
         super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
-    game.server.world.clear_world();
-    {
-        use crate::block::Block;
-        use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
-        let cp = ChunkPos::new(0, 0);
-        game.server.world.insert_empty_column_for_test(cp);
-        let mut chunk = Chunk::new(0, 0);
-        for z in 0..CHUNK_SZ {
-            for x in 0..CHUNK_SX {
-                chunk.set_block(x, 63, z, Block::Stone);
-            }
-        }
-        game.server.world.insert_chunk_for_test(cp, chunk);
-    }
+    super::common::flat_floor_loaded_air(&mut game.server.world, Block::Stone);
     game.server.sessions[0].player.pos = Vec3::new(4.0, 64.0, 4.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;
@@ -889,7 +857,6 @@ fn kitchen_miller_grinds_the_milling_class_via_wasm() {
 #[ignore = "spawned by kitchen_miller_grinds_the_milling_class_via_wasm with a fixture pack env"]
 fn kitchen_miller_inner() {
     use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     use crate::controls::PointerButton;
     use crate::gui::{GuiValue, MenuSlot};
     use crate::item::{ItemStack, ItemType};
@@ -917,16 +884,7 @@ fn kitchen_miller_inner() {
 
     let mut game =
         super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
-    game.server.world.clear_world();
-    let cp = ChunkPos::new(0, 0);
-    game.server.world.insert_empty_column_for_test(cp);
-    let mut chunk = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            chunk.set_block(x, 63, z, Block::Stone);
-        }
-    }
-    game.server.world.insert_chunk_for_test(cp, chunk);
+    super::common::flat_floor_loaded_air(&mut game.server.world, Block::Stone);
     game.server.sessions[0].player.pos = Vec3::new(6.0, 64.0, 8.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;

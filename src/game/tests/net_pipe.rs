@@ -4,7 +4,7 @@
 //! roundtrip. These drive the message path directly, below `Game::tick`.
 
 use super::super::tick::TickEvents;
-use super::common::{self, filled_inventory, game, install_empty_chunk};
+use super::common::{self, filled_inventory, game, game_on_empty_chunk};
 use crate::block::Block;
 use crate::gui::MenuSlot;
 use crate::item::{ItemStack, ItemType};
@@ -37,8 +37,7 @@ fn apply_update(game: &mut super::common::TestGame, u: crate::net::protocol::Pla
 
 #[test]
 fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.world.set_block_world(8, 63, 8, Block::Stone);
     game.server.sessions[0].player.inventory = filled_inventory(); // Dirt in slot 0
 
@@ -113,8 +112,7 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
 
 #[test]
 fn a_reported_fall_deals_the_same_damage_the_physics_fall_would() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     // Anchor the session at the drop point: claims must stay NEAR the server's
     // integrated position to be accepted (the F1 anti-teleport bound). A
     // cliff-edge topology — a ledge to stand on and a landing floor one
@@ -164,8 +162,7 @@ fn a_reported_fall_deals_the_same_damage_the_physics_fall_would() {
 
 #[test]
 fn landing_in_water_resets_the_fall_and_deals_no_damage() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     // A pool at the landing point: the swim probe (feet + 0.6) reads water.
     game.server.world.set_block_world(8, 70, 8, Block::Water);
     // Anchor at the drop point so every claim passes the F1 closeness bound.
@@ -202,8 +199,7 @@ fn landing_in_water_resets_the_fall_and_deals_no_damage() {
 
 #[test]
 fn attack_clicks_resolve_the_stable_mob_id_after_indices_shifted() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let mobs = game.server.world.mobs_mut();
     assert!(mobs.spawn(Mob::Owl, Vec3::new(4.0, 64.0, 4.0), 0.0));
     assert!(mobs.spawn(Mob::Owl, Vec3::new(10.0, 64.0, 10.0), 0.0));
@@ -385,8 +381,7 @@ fn craft_after_close_is_denied_once_without_consuming() {
 
 #[test]
 fn close_then_table_interact_recovers_output_before_opening_the_new_menu() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     install_test_crafting_recipe(&mut game);
     game.server.sessions[0]
         .player

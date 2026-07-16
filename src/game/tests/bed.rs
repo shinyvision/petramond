@@ -2,7 +2,7 @@
 //! bed), cancelling, and death respawn — at the bed or the surface fallback.
 
 use super::super::tick::TickEvents;
-use super::common::{game, hit, install_empty_chunk};
+use super::common::{game_on_empty_chunk, hit};
 use crate::block::Block;
 use crate::events::DamageSource;
 use crate::mathh::IVec3;
@@ -13,8 +13,7 @@ const CLOCK_KEY: &str = "petramond:clock";
 
 /// A game with a flat stone floor at y=63 and a bed at (7, 64, 7).
 fn game_with_bed() -> (super::common::TestGame, IVec3) {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     for x in 0..16 {
         for z in 0..16 {
             game.server.world.set_block_world(x, 63, z, Block::Stone);

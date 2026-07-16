@@ -1,5 +1,5 @@
 use super::super::tick::TickEvents;
-use super::common::{game, install_empty_chunk};
+use super::common::game_on_empty_chunk;
 use crate::block::Block;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
@@ -72,8 +72,7 @@ fn run_water_ticks(game: &mut super::common::TestGame, n: u32) {
 
 #[test]
 fn filling_the_bucket_scoops_the_source_and_swaps_the_held_item() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = holding(ItemType::WoodenBucket);
 
     // A still source right under the eye. The normal look ray sees through
@@ -111,8 +110,7 @@ fn filling_the_bucket_scoops_the_source_and_swaps_the_held_item() {
 
 #[test]
 fn filling_while_aiming_at_flowing_water_does_nothing() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = holding(ItemType::WoodenBucket);
 
     // A source spread into a flowing ring on a stone shelf. Flowing water is
@@ -157,8 +155,7 @@ fn filling_while_aiming_at_flowing_water_does_nothing() {
 
 #[test]
 fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = holding(ItemType::WoodenBucket);
 
     // The bug this pins: a spread sheet or thin film renders exactly like still
@@ -206,8 +203,7 @@ fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
 
 #[test]
 fn filling_needs_a_source_within_reach() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = holding(ItemType::WoodenBucket);
 
     // Water well below REACH (eye ~9 blocks above the surface).
@@ -240,8 +236,7 @@ fn filling_needs_a_source_within_reach() {
 
 #[test]
 fn pouring_places_a_source_against_the_clicked_face_and_empties_the_bucket() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = holding(ItemType::WaterBucket);
 
     let floor = IVec3::new(3, 64, 3);
@@ -276,8 +271,7 @@ fn pouring_places_a_source_against_the_clicked_face_and_empties_the_bucket() {
 
 #[test]
 fn pouring_onto_flowing_water_firms_it_into_a_source() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = holding(ItemType::WaterBucket);
 
     stone_shelf(&mut game, 77);
@@ -315,8 +309,7 @@ fn pouring_onto_flowing_water_firms_it_into_a_source() {
 
 #[test]
 fn pouring_onto_a_source_still_empties_the_bucket() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = holding(ItemType::WaterBucket);
 
     // Pouring into already-still water changes nothing in the world, but the
@@ -344,8 +337,7 @@ fn pouring_onto_a_source_still_empties_the_bucket() {
 
 #[test]
 fn pouring_with_nothing_in_reach_keeps_the_water() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = holding(ItemType::WaterBucket);
 
     // Nothing but air below the eye: the pour ray finds no cell to fill.
@@ -369,8 +361,7 @@ fn pouring_with_nothing_in_reach_keeps_the_water() {
 
 #[test]
 fn shearing_the_targeted_sheep_drops_wool_and_strips_the_coat() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = holding(ItemType::Shears);
     assert!(game.server.world.mobs_mut().spawn(
         crate::mob::Mob::Sheep,
@@ -414,8 +405,7 @@ fn shearing_the_targeted_sheep_drops_wool_and_strips_the_coat() {
 
 #[test]
 fn shearing_needs_the_shears_in_hand() {
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = holding(ItemType::Dirt);
     assert!(game.server.world.mobs_mut().spawn(
         crate::mob::Mob::Sheep,
@@ -436,8 +426,7 @@ fn a_forged_out_of_reach_mob_id_cannot_interact_or_shear() {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.inventory = holding(ItemType::Shears);
     assert!(game.server.world.mobs_mut().spawn(
         crate::mob::Mob::Sheep,

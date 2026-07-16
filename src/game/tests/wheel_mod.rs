@@ -25,7 +25,6 @@ fn wheel_mod_spin_delivers_exactly_one_reward_via_wasm() {
 #[ignore = "spawned by wheel_mod_spin_delivers_exactly_one_reward_via_wasm with a fixture pack env"]
 fn wheel_spin_inner() {
     use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     use crate::controls::PointerButton;
     use crate::gui::{GuiValue, MenuSlot};
     use crate::item::ItemType;
@@ -44,18 +43,9 @@ fn wheel_spin_inner() {
         super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
     assert_eq!(game.mods_for_test().loaded(), 1, "the wheel wasm loaded");
     // A STONE platform: no mob species natural-spawns on stone, so a sheep
-    // party is countable. Empty columns first (the fixture gotcha: the air
-    // above the floor must read as loaded for the mod's ground scans).
-    game.server.world.clear_world();
-    let pos = ChunkPos::new(0, 0);
-    game.server.world.insert_empty_column_for_test(pos);
-    let mut chunk = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            chunk.set_block(x, 63, z, Block::Stone);
-        }
-    }
-    game.server.world.insert_chunk_for_test(pos, chunk);
+    // party is countable. Loaded air above the floor for the mod's ground
+    // scans.
+    super::common::flat_floor_loaded_air(&mut game.server.world, Block::Stone);
     game.server.sessions[0].player.pos = Vec3::new(8.0, 64.0, 8.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;

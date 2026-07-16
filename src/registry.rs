@@ -93,6 +93,116 @@ impl NameTable {
     }
 }
 
+/// The shared layered-catalog load frame the content registries
+/// (`effects.json`, `sounds.json`, `models.json`, `blocks.json`, ...) speak:
+/// parse each layer's row list, merge rows by registry key (a later layer's
+/// row REPLACES the earlier one, so a pack states only the rows it changes or
+/// adds), build the name table from the compiled engine names plus the
+/// layers' own keys (engine names hold their frozen ids, namespaced keys
+/// register after them in load order — see [`NameTable::build`]), then
+/// `convert` every merged row and demand a dense table: every registered
+/// name covered exactly once, ids contiguous with no holes.
+///
+/// `convert` gets the row, its resolved id, and the name table (for the
+/// interned `&'static` name and cross-row references).
+pub(crate) fn load_catalog<R, D>(
+    texts: &[&str],
+    parse_layer: fn(&str) -> Result<Vec<R>, serde_json::Error>,
+    row_key: fn(&R) -> &str,
+    engine: &[&'static str],
+    what: &str,
+    convert: impl FnMut(R, u8, &NameTable) -> Result<D, String>,
+) -> Result<Vec<D>, String> {
+    let (merged, layer_keys) = parse_and_merge(texts, parse_layer, row_key)?;
+    let names = NameTable::build(engine, &layer_keys, what)?;
+    resolve_merged(merged, row_key, &names, what, convert)
+}
+
+/// [`load_catalog`] against a PREBUILT name table — for the catalogs whose
+/// names bootstrap elsewhere (blocks and items share [`names`], so their id
+/// assignment already happened there).
+pub(crate) fn resolve_catalog<R, D>(
+    texts: &[&str],
+    parse_layer: fn(&str) -> Result<Vec<R>, serde_json::Error>,
+    row_key: fn(&R) -> &str,
+    names: &NameTable,
+    what: &str,
+    convert: impl FnMut(R, u8, &NameTable) -> Result<D, String>,
+) -> Result<Vec<D>, String> {
+    let (merged, _) = parse_and_merge(texts, parse_layer, row_key)?;
+    resolve_merged(merged, row_key, names, what, convert)
+}
+
+fn parse_and_merge<R>(
+    texts: &[&str],
+    parse_layer: fn(&str) -> Result<Vec<R>, serde_json::Error>,
+    row_key: fn(&R) -> &str,
+) -> Result<(Vec<R>, Vec<Vec<String>>), String> {
+    let mut merged: Vec<R> = Vec::new();
+    let mut layer_keys: Vec<Vec<String>> = Vec::new();
+    for (li, text) in texts.iter().enumerate() {
+        let rows = parse_layer(text).map_err(|e| format!("layer #{li}: invalid JSON: {e}"))?;
+        layer_keys.push(rows.iter().map(|r| row_key(r).to_owned()).collect());
+        for r in rows {
+            match merged.iter().position(|m| row_key(m) == row_key(&r)) {
+                Some(i) => merged[i] = r,
+                None => merged.push(r),
+            }
+        }
+    }
+    Ok((merged, layer_keys))
+}
+
+fn resolve_merged<R, D>(
+    merged: Vec<R>,
+    row_key: fn(&R) -> &str,
+    names: &NameTable,
+    what: &str,
+    mut convert: impl FnMut(R, u8, &NameTable) -> Result<D, String>,
+) -> Result<Vec<D>, String> {
+    let mut rows: Vec<Option<D>> = (0..names.len()).map(|_| None).collect();
+    for r in merged {
+        let id = names
+            .id(row_key(&r))
+            .ok_or_else(|| format!("unregistered {what} '{}'", row_key(&r)))?;
+        rows[id as usize] = Some(convert(r, id, names)?);
+    }
+    rows.into_iter()
+        .enumerate()
+        .map(|(id, row)| {
+            row.ok_or_else(|| {
+                format!(
+                    "missing row for {what} '{}'",
+                    names.name(id as u8).unwrap_or("?")
+                )
+            })
+        })
+        .collect()
+}
+
+/// The catalog FILE frame around [`load_catalog`]/[`resolve_catalog`]: read
+/// every layer of `file` (base assets + packs), then run `parse` over the
+/// layer texts. These tables are load-bearing, so a missing file or a parse
+/// error panics with a precise message instead of limping on.
+pub(crate) fn read_catalog<T>(
+    file: &str,
+    what: &str,
+    parse: impl FnOnce(&[&str]) -> Result<T, String>,
+) -> T {
+    let layers = crate::assets::read_layers(file);
+    if layers.is_empty() {
+        panic!(
+            "{file} not found (searched {:?}); the game cannot run without its {what} table",
+            crate::assets::candidate_paths(file)
+        );
+    }
+    for (_, path) in &layers {
+        log::info!("{what} defs layer: {}", path.display());
+    }
+    let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
+    parse(&texts).unwrap_or_else(|e| panic!("{file}: {e}"))
+}
+
 /// Whether `key` carries a `namespace:` prefix.
 pub(crate) fn is_namespaced(key: &str) -> bool {
     namespace(key).is_some()

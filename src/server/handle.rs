@@ -51,9 +51,6 @@ pub(crate) enum ControlMsg {
         port: u16,
         reply: Sender<std::io::Result<u16>>,
     },
-    /// Drop the LAN listener + any un-joined connections (joined players
-    /// stay connected).
-    CloseLan,
     /// Panic the server loop, for the crash-policy tests.
     #[cfg(test)]
     PanicForTest,
@@ -168,12 +165,6 @@ impl ServerHandle {
         result
             .recv_timeout(Duration::from_secs(5))
             .map_err(|_| Error::new(ErrorKind::TimedOut, "the server did not answer"))?
-    }
-
-    /// Stop accepting LAN connections (joined players stay connected).
-    #[allow(dead_code)] // first production consumer: the Phase E2 pause menu
-    pub(crate) fn close_lan(&self) {
-        let _ = self.control.send(ControlMsg::CloseLan);
     }
 
     /// Send one gameplay message. `Err` = the server is gone (crashed or shut
@@ -317,7 +308,6 @@ fn server_main(
                     }
                     let _ = reply.send(result);
                 }
-                Ok(ControlMsg::CloseLan) => hub.close_lan(),
                 #[cfg(test)]
                 Ok(ControlMsg::PanicForTest) => panic!("server loop panic injected by test"),
                 Err(TryRecvError::Empty) => break,

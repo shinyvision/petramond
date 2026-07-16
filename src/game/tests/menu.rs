@@ -1,4 +1,4 @@
-use super::common::{apply_drop_actions, filled_inventory, game};
+use super::common::{apply_drop_actions, filled_inventory, game, game_on_empty_chunk};
 use crate::gui::MenuSlot;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
@@ -243,11 +243,9 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
 
 #[test]
 fn chest_lids_follow_the_viewer_count_not_the_local_menu() {
-    use super::common::install_empty_chunk;
     use crate::block::Block;
     use crate::mathh::IVec3;
-    let mut game = game();
-    install_empty_chunk(&mut game);
+    let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);
     game.server.world.set_block_world(8, 64, 8, Block::Chest);
     game.server
