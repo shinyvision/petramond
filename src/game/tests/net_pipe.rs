@@ -1,4 +1,4 @@
-//! Contract tests for the client→server action pipe (multiplayer Phase C2b):
+//! Contract tests for the client→server action pipe:
 //! `ServerGame::apply_message` latching semantics — reach validation, the
 //! server-side fall tracker, stable-id mob targeting, and the menu-click
 //! roundtrip. These drive the message path directly, below `Game::tick`.

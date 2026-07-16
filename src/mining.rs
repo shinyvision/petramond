@@ -157,8 +157,8 @@ impl MiningState {
     }
 
     /// True while a block is actively being mined (a target with accrued time).
-    /// The client-side hand/dust now key on the REPLICATED `overlay()` state
-    /// (multiplayer C2c-i), so this is a test-only readout of the raw latch.
+    /// The client-side hand/dust key on the REPLICATED `overlay()` state, so
+    /// this is a test-only readout of the raw latch.
     #[cfg(test)]
     #[inline]
     pub fn is_mining(&self) -> bool {

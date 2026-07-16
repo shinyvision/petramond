@@ -1,5 +1,5 @@
-//! Contract tests for the entity + self replication batches (multiplayer
-//! Phase C2c-i): the pump emits `TickUpdate`s, the client's replicated stores
+//! Contract tests for the entity + self replication batches:
+//! the pump emits `TickUpdate`s, the client's replicated stores
 //! feed presentation with prev/curr interpolation pairs, absent ids drop, the
 //! inventory rides a `SelfState` only when its revision moved, and the HUD
 //! read models mirror session truth through the batch — never by direct read.
@@ -696,7 +696,7 @@ fn self_state_ships_the_inventory_only_when_the_revision_moved() {
     );
 }
 
-// ---- C2c-iii session-boundary contracts: events + menu sync on the wire ----
+// ---- Session-boundary contracts: events + menu sync on the wire ----
 
 /// Chest viewer-count transitions emit `ChestOpened`/`ChestClosed` world
 /// events ONLY at the 0↔1 boundaries — a second overlapping viewer opens and
@@ -1179,7 +1179,7 @@ fn hud_health_matches_session_truth_after_a_damage_tick() {
     assert_eq!(hud.current, crate::player::MAX_HEALTH - 3);
 }
 
-/// Phase D: the server thread can outpace a slow frame, so several
+/// The self-clocked server thread can outpace a slow frame, so several
 /// `TickUpdate`s may drain in ONE client frame. The buffered `ClientEvents`
 /// must ACCUMULATE across them — one-shot booleans OR, event queues append in
 /// order — never keep only the last batch.
@@ -1230,7 +1230,7 @@ fn multiple_tick_updates_in_one_frame_accumulate_not_overwrite() {
     assert_eq!(game.current_tick(), 11, "latest state wins for the clock");
 }
 
-// ---- Phase F: remote-player replication ----
+// ---- Remote-player replication ----
 
 /// Every connected session's player row rides every recipient's batch: a
 /// second (remote-shaped) session's transform reaches session 0's

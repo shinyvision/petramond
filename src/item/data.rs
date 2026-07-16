@@ -186,13 +186,27 @@ pub(super) fn def(item: ItemType) -> &'static ItemDef {
     &TABLE[item.id() as usize]
 }
 
-/// The item whose row links it to `block` (`"block"` in `items.json`) — how a
-/// pack-registered block finds its inventory item. Engine rows carry no link
-/// (their mapping is the compiled prefix/match in `ItemType::from_block`), so
-/// this only ever matches dynamic rows.
-pub(super) fn item_for_block(block: Block) -> Option<ItemType> {
-    TABLE
-        .iter()
-        .find(|d| d.block == Some(block))
-        .map(|d| d.item)
+/// Dense block-id → item LUT, inverted once from the rows' `block` links
+/// (`"block"` in `items.json`). A block no row links to maps to `Air`
+/// (nothing to hold); if several rows link one block, the lowest item id
+/// wins (the growth-stage pattern: only the planting item links the stage-0
+/// block, later stages link nothing).
+static BLOCK_TO_ITEM: LazyLock<[ItemType; 256]> = LazyLock::new(|| {
+    let mut lut = [ItemType::Air; 256];
+    let mut set = [false; 256];
+    for d in TABLE.iter() {
+        if let Some(b) = d.block {
+            if !set[b.id() as usize] {
+                lut[b.id() as usize] = d.item;
+                set[b.id() as usize] = true;
+            }
+        }
+    }
+    lut
+});
+
+/// The item whose row links it to `block`, or `Air` if none does.
+#[inline]
+pub(super) fn item_for_block(block: Block) -> ItemType {
+    BLOCK_TO_ITEM[block.id() as usize]
 }

@@ -4,7 +4,9 @@
 //! Gen is off-thread: see `worker` module. The facade keeps the public `World`
 //! API stable while the implementation is split by responsibility.
 
+mod block_deltas;
 pub(crate) mod chest;
+mod column_heightmaps;
 mod container;
 pub(crate) mod door;
 mod edit;
@@ -12,11 +14,14 @@ mod entities;
 pub(crate) mod environment;
 pub(crate) mod fragile;
 mod furnace;
+mod invalidation;
 mod kv;
 mod ladder;
 mod light;
+mod load_targets;
 mod mesh_pool;
 mod mesh_queue;
+mod mobs;
 mod model;
 mod pane;
 mod particle_emitters;
@@ -27,9 +32,11 @@ mod render_handoff;
 pub(crate) mod sapling;
 mod sim_guard;
 mod slab;
+mod snapshot;
 mod stair;
 mod store;
 mod stream;
+mod surface_tint;
 mod tick;
 mod torch;
 mod visibility;

@@ -124,27 +124,17 @@ impl Minimap {
 
 fn hud_player_arrow_rgba() -> Vec<u8> {
     let mut rgba = vec![0; HUD_PLAYER_ARROW_WIDTH * HUD_PLAYER_ARROW_HEIGHT * 4];
-    let mut arrow = vec![0; HUD_PLAYER_ARROW_WIDTH * HUD_PLAYER_ARROW_HEIGHT * 4];
     let tip = [8.0, -0.5];
     let left = [2.0, 18.5];
     let seam = [8.0, 14.5];
     let right = [14.0, 18.5];
 
-    fill_player_pointer_faces(
-        &mut arrow,
+    stamp_arrow_with_shadow(
+        &mut rgba,
         HUD_PLAYER_ARROW_WIDTH,
         [tip, left, seam],
         [tip, seam, right],
     );
-    composite_alpha_mask(
-        &mut rgba,
-        HUD_PLAYER_ARROW_WIDTH,
-        &arrow,
-        player_arrow_shadow_offset(),
-        [0, 0, 0],
-        128,
-    );
-    composite_rgba(&mut rgba, HUD_PLAYER_ARROW_WIDTH, &arrow);
     rgba
 }
 

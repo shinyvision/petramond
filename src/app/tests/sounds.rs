@@ -1,4 +1,4 @@
-//! World-anchored sounds are event-driven and POSITIONAL since C2c-iii: the
+//! World-anchored sounds are event-driven and POSITIONAL: the
 //! app buffers a spatial cue per world event and plays NOTHING immediately
 //! off the `GameEvents` one-shots that used to drive local plays — so an
 //! action can never sound twice (once locally, once via its broadcast event).

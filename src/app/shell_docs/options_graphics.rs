@@ -2,11 +2,11 @@
 //! applied live on release — replica, streaming request, and fog together)
 //! and the particles cycle button (Full → Reduced → Off).
 
-use crate::app::{App, AppScreen};
+use crate::app::App;
 use petramond_ui::{UiEvent, UiState, UiValue};
 
 pub(super) fn populate(app: &App, state: &mut UiState) {
-    state.set("show_backdrop", UiValue::Bool(app.game.is_none()));
+    super::populate_options_chrome(app, state);
     let vd = app.settings.render_dist;
     state.set("view_distance", UiValue::F32(vd as f32));
     state.set("vd_label", UiValue::Str(format!("{vd} chunks")));
@@ -17,17 +17,16 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
 }
 
 pub(super) fn handle(app: &mut App, ev: UiEvent) {
+    if super::options_category_back(app, &ev) {
+        return;
+    }
     match ev {
-        UiEvent::Click { id, .. } => match id.as_str() {
-            "back" => app.screen = AppScreen::Options,
-            "particles" => {
-                let next = app.settings.particles.next();
-                app.settings.particles = next;
-                app.apply_particles();
-                app.persist_settings();
-            }
-            _ => {}
-        },
+        UiEvent::Click { id, .. } if id == "particles" => {
+            let next = app.settings.particles.next();
+            app.settings.particles = next;
+            app.apply_particles();
+            app.persist_settings();
+        }
         UiEvent::SliderChange {
             id,
             value,

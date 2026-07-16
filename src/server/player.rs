@@ -3,9 +3,9 @@
 //! Everything the sim tracks *per player* lives here — the fields that used to
 //! sit directly on `Game` when the game was single-player. The tick stages
 //! (`src/game/*.rs`) loop the sessions in id order; the client-facing session
-//! is always index 0 until remote connections exist (multiplayer Phase C+).
+//! is always index 0 until remote connections exist.
 //!
-//! Since Phase C2b input reaches a session only through `net::protocol`
+//! Input reaches a session only through `net::protocol`
 //! messages (`ServerGame::apply_message`): `PlayerUpdate` latches the
 //! transform, targeting, and held intents; `PlayerAction`/menu actions latch the
 //! one-shot edges. The tick stages consume the latches exactly as before.
@@ -470,7 +470,7 @@ pub(crate) struct ConnectedPlayer {
     pub respawn_requested: bool,
     // --- One-shot outbox: screen/effect requests the tick queues for this
     // player's client, consumed into its `SelfEvents` per replication batch
-    // (INTERNAL since C2c-iii — the client only sees `OpenScreen`). ---
+    // (INTERNAL — the client only sees `OpenScreen`). ---
     pub request_open_inventory: bool,
     pub request_open_table: bool,
     pub request_open_furnace: Option<IVec3>,

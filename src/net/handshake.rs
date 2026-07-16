@@ -1,4 +1,4 @@
-//! The client's join handshake (multiplayer Phase E), pure over any
+//! The client's join handshake, pure over any
 //! `Read + Write` stream so it unit-tests over an in-memory transcript.
 //!
 //! Exact sequence:

@@ -4,7 +4,7 @@
 //! Protocol messages are plain Rust values; SERIALIZATION IS A TRANSPORT
 //! CONCERN. The in-process (singleplayer / listen-host) connection passes them
 //! over channels untouched — `Arc<[u8]>` section buffers are refcount bumps —
-//! while the TCP transport (Phase E) encodes length-prefixed postcard frames on
+//! while the TCP transport encodes length-prefixed postcard frames on
 //! its own reader/writer threads.
 
 pub(crate) mod address;

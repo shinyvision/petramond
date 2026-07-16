@@ -1,4 +1,4 @@
-//! Client-side REMOTE-PLAYER store (multiplayer Phase F): every OTHER
+//! Client-side REMOTE-PLAYER store: every OTHER
 //! connected player's replicated rows plus the per-remote presentation state
 //! that animates their body.
 //!

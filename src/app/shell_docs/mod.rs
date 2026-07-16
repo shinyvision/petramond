@@ -30,7 +30,121 @@ mod world_settings;
 use super::{App, AppScreen};
 use crate::audio::Sound;
 use crate::gui::GuiKind;
-use petramond_ui::UiState;
+use petramond_ui::{UiEvent, UiState, UiValue};
+
+/// The flat dim shell menus draw over a live world.
+const MENU_DIM: [f32; 4] = [0.0, 0.0, 0.0, 0.6];
+
+/// One document-backed shell screen, named once: how to bind its state, how
+/// to dispatch its events, and what dims the world behind it.
+struct ShellController {
+    /// Bespoke per-frame prep before binding (worker polls, extra images).
+    /// Returning false means the prep switched screens — skip the frame
+    /// rather than draw the stale document.
+    prepare: Option<fn(&mut App) -> bool>,
+    populate: fn(&App, &mut UiState),
+    handle: fn(&mut App, UiEvent),
+    dim: fn(&App) -> Option<[f32; 4]>,
+}
+
+impl ShellController {
+    fn screen(populate: fn(&App, &mut UiState), handle: fn(&mut App, UiEvent)) -> Self {
+        ShellController {
+            prepare: None,
+            populate,
+            handle,
+            dim: |_| None,
+        }
+    }
+
+    fn with_prepare(mut self, prepare: fn(&mut App) -> bool) -> Self {
+        self.prepare = Some(prepare);
+        self
+    }
+
+    fn with_dim(mut self, dim: fn(&App) -> Option<[f32; 4]>) -> Self {
+        self.dim = dim;
+        self
+    }
+}
+
+/// Options screens over a paused/running game dim like the pause menu; from
+/// the title flow the document's own backdrop shows.
+fn options_dim(app: &App) -> Option<[f32; 4]> {
+    app.game.is_some().then_some(MENU_DIM)
+}
+
+/// Shared options-family chrome: the title flow shows the document's
+/// screenshot backdrop; over a live game the host dim does the work instead.
+fn populate_options_chrome(app: &App, state: &mut UiState) {
+    state.set("show_backdrop", UiValue::Bool(app.game.is_none()));
+}
+
+/// Shared Back handling for the options CATEGORY screens (Sound / Controls /
+/// Graphics): Back returns to the Options root through the same path ESC
+/// takes. Returns true when the event was consumed.
+fn options_category_back(app: &mut App, ev: &UiEvent) -> bool {
+    if matches!(ev, UiEvent::Click { id, .. } if id.as_str() == "back") {
+        app.close_options_category();
+        return true;
+    }
+    false
+}
+
+fn controller_for(kind: GuiKind) -> ShellController {
+    use ShellController as C;
+    match kind {
+        GuiKind::Demo => C::screen(
+            |_, state| super::ui_runtime::demo::populate(state),
+            |app, ev| super::ui_runtime::demo::apply_one(app.ui.state_mut(), &ev),
+        ),
+        GuiKind::Title => C::screen(title::populate, title::handle),
+        GuiKind::WorldSelect => C::screen(world_select::populate, world_select::handle),
+        GuiKind::WorldSettings => C::screen(world_settings::populate, world_settings::handle)
+            .with_prepare(|app| {
+                let icons = world_settings::extra_images(app);
+                app.ui.set_extra_images(&icons);
+                true
+            }),
+        GuiKind::CreateWorld => C::screen(create_world::populate, create_world::handle),
+        GuiKind::DeleteWorld => C::screen(delete_world::populate, delete_world::handle),
+        GuiKind::ConnectServer => C::screen(connect_server::populate, connect_server::handle)
+            .with_prepare(|app| {
+                // Consume the connect worker's outcomes BEFORE binding. A
+                // terminal outcome switches screens — skip the rest of this
+                // frame rather than draw the stale connect UI.
+                app.poll_connect_worker();
+                matches!(app.screen, AppScreen::ConnectServer)
+            }),
+        GuiKind::ModsMissing => C::screen(mods_missing::populate, mods_missing::handle),
+        GuiKind::ConnectionLost => C::screen(connection_lost::populate, connection_lost::handle),
+        GuiKind::Options => C::screen(options::populate, options::handle).with_dim(options_dim),
+        GuiKind::OptionsSound => {
+            C::screen(options_sound::populate, options_sound::handle).with_dim(options_dim)
+        }
+        GuiKind::OptionsControls => {
+            C::screen(options_controls::populate, options_controls::handle).with_dim(options_dim)
+        }
+        GuiKind::OptionsGraphics => {
+            C::screen(options_graphics::populate, options_graphics::handle).with_dim(options_dim)
+        }
+        GuiKind::Pause => C::screen(pause::populate, pause::handle).with_dim(|_| Some(MENU_DIM)),
+        // The tick-driven darkening fade behind the sleep overlay.
+        GuiKind::Sleep => C::screen(sleep::populate, sleep::handle).with_dim(|app| {
+            let progress = app
+                .game
+                .as_ref()
+                .and_then(|g| g.sleep_progress01())
+                .unwrap_or(1.0);
+            Some([0.0, 0.0, 0.0, 0.25 + 0.75 * progress])
+        }),
+        GuiKind::Death => {
+            C::screen(death::populate, death::handle).with_dim(|_| Some([0.35, 0.02, 0.02, 0.40]))
+        }
+        // Unrouted kinds still run an inert frame, as before.
+        _ => C::screen(|_, _| {}, |_, _| {}),
+    }
+}
 
 /// Test support: the controls-list row index of an action id (category
 /// headers count), resolved through the controller's own row builder.
@@ -64,91 +178,20 @@ impl App {
     /// events to the screen's controller.
     pub(super) fn drive_doc_ui(&mut self, kind: GuiKind, screen: (u32, u32), now: f64) {
         self.ui.ensure_active(kind);
-        match kind {
-            GuiKind::Demo => super::ui_runtime::demo::populate(self.ui.state_mut()),
-            GuiKind::Title => with_state(self, title::populate),
-            GuiKind::WorldSelect => with_state(self, world_select::populate),
-            GuiKind::WorldSettings => {
-                let icons = world_settings::extra_images(self);
-                self.ui.set_extra_images(&icons);
-                with_state(self, world_settings::populate);
+        let ctl = controller_for(kind);
+        if let Some(prepare) = ctl.prepare {
+            if !prepare(self) {
+                return;
             }
-            GuiKind::CreateWorld => with_state(self, create_world::populate),
-            GuiKind::DeleteWorld => with_state(self, delete_world::populate),
-            GuiKind::ConnectServer => {
-                // Per-frame prep: consume the connect worker's outcomes BEFORE
-                // binding. A terminal outcome switches screens — skip the rest
-                // of this frame rather than draw the stale connect UI.
-                self.poll_connect_worker();
-                if !matches!(self.screen, AppScreen::ConnectServer) {
-                    return;
-                }
-                with_state(self, connect_server::populate);
-            }
-            GuiKind::ModsMissing => with_state(self, mods_missing::populate),
-            GuiKind::ConnectionLost => with_state(self, connection_lost::populate),
-            GuiKind::Options => with_state(self, options::populate),
-            GuiKind::OptionsSound => with_state(self, options_sound::populate),
-            GuiKind::OptionsControls => with_state(self, options_controls::populate),
-            GuiKind::OptionsGraphics => with_state(self, options_graphics::populate),
-            GuiKind::Pause => with_state(self, pause::populate),
-            GuiKind::Sleep => with_state(self, sleep::populate),
-            GuiKind::Death => with_state(self, death::populate),
-            _ => {}
         }
-        // Screens over live gameplay dim the world behind them: a flat menu
-        // dim for pause, the tick-driven darkening fade for sleep, and a
-        // subtle red tint for death.
-        let dim = match kind {
-            GuiKind::Pause => Some([0.0, 0.0, 0.0, 0.6]),
-            // Options screens over a paused/running game dim like the pause
-            // menu; from the title flow the document's own backdrop shows.
-            GuiKind::Options
-            | GuiKind::OptionsSound
-            | GuiKind::OptionsControls
-            | GuiKind::OptionsGraphics
-                if self.game.is_some() =>
-            {
-                Some([0.0, 0.0, 0.0, 0.6])
-            }
-            GuiKind::Sleep => {
-                let progress = self
-                    .game
-                    .as_ref()
-                    .and_then(|g| g.sleep_progress01())
-                    .unwrap_or(1.0);
-                Some([0.0, 0.0, 0.0, 0.25 + 0.75 * progress])
-            }
-            GuiKind::Death => Some([0.35, 0.02, 0.02, 0.40]),
-            _ => None,
-        };
+        with_state(self, ctl.populate);
+        let dim = (ctl.dim)(self);
         self.ui.frame(kind, screen, now, dim);
-        let events = self.ui.take_events();
-        for ev in events {
+        for ev in self.ui.take_events() {
             if is_shell_activation(&ev) {
                 self.audio.play(Sound::UiClick);
             }
-            match kind {
-                GuiKind::Demo => {
-                    super::ui_runtime::demo::apply_one(self.ui.state_mut(), &ev);
-                }
-                GuiKind::Title => title::handle(self, ev),
-                GuiKind::WorldSelect => world_select::handle(self, ev),
-                GuiKind::WorldSettings => world_settings::handle(self, ev),
-                GuiKind::CreateWorld => create_world::handle(self, ev),
-                GuiKind::DeleteWorld => delete_world::handle(self, ev),
-                GuiKind::ConnectServer => connect_server::handle(self, ev),
-                GuiKind::ModsMissing => mods_missing::handle(self, ev),
-                GuiKind::ConnectionLost => connection_lost::handle(self, ev),
-                GuiKind::Options => options::handle(self, ev),
-                GuiKind::OptionsSound => options_sound::handle(self, ev),
-                GuiKind::OptionsControls => options_controls::handle(self, ev),
-                GuiKind::OptionsGraphics => options_graphics::handle(self, ev),
-                GuiKind::Pause => pause::handle(self, ev),
-                GuiKind::Sleep => sleep::handle(self, ev),
-                GuiKind::Death => death::handle(self, ev),
-                _ => {}
-            }
+            (ctl.handle)(self, ev);
         }
     }
 

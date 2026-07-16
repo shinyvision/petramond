@@ -2,12 +2,10 @@
 //! plus Back (to the title or the pause menu — wherever the flow began).
 
 use crate::app::{App, AppScreen};
-use petramond_ui::{UiEvent, UiState, UiValue};
+use petramond_ui::{UiEvent, UiState};
 
 pub(super) fn populate(app: &App, state: &mut UiState) {
-    // Title flow shows the screenshot backdrop; over a paused game the host
-    // dim does the work instead.
-    state.set("show_backdrop", UiValue::Bool(app.game.is_none()));
+    super::populate_options_chrome(app, state);
 }
 
 pub(super) fn handle(app: &mut App, ev: UiEvent) {

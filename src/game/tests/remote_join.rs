@@ -1,4 +1,4 @@
-//! Contract tests for the remote client's entry point (multiplayer Phase E):
+//! Contract tests for the remote client's entry point:
 //! `Game::new_remote` seeds the whole client from `JoinData` alone (no save,
 //! no `ServerGame`), and the roster tracks join/leave broadcasts.
 

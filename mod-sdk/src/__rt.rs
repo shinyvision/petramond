@@ -86,6 +86,61 @@ pub fn expect_unit(what: &str, ret: HostRet) {
     }
 }
 
+/// Declare a public host-call wrapper: build the [`HostCall`](crate::HostCall),
+/// dispatch it, and decode the one reply shape the call contract allows (any
+/// other reply is a protocol break — panic = trap = mod disabled).
+///
+/// Three reply forms:
+/// - no `->` return: the call must reply `Unit` (registrations, actions);
+/// - `=> Variant`: a single-payload reply variant, returned as-is;
+/// - `=> pattern => expr`: a one-off reply shape mapped by hand.
+///
+/// The call body `{ ... }` holds ordinary struct-literal fields, so argument
+/// conversions (`key: key.into()`) happen right there.
+macro_rules! host_fn {
+    (
+        $(#[$meta:meta])*
+        $vis:vis fn $name:ident($($arg:ident: $aty:ty),* $(,)?)
+            => $call:ident $({ $($field:tt)* })?
+    ) => {
+        $(#[$meta])*
+        $vis fn $name($($arg: $aty),*) {
+            $crate::__rt::expect_unit(
+                stringify!($call),
+                $crate::__rt::host_call(&$crate::HostCall::$call $({ $($field)* })?),
+            );
+        }
+    };
+    (
+        $(#[$meta:meta])*
+        $vis:vis fn $name:ident($($arg:ident: $aty:ty),* $(,)?) -> $ret:ty
+            => $call:ident $({ $($field:tt)* })?
+            => $retvar:ident
+    ) => {
+        $crate::__rt::host_fn! {
+            $(#[$meta])*
+            $vis fn $name($($arg: $aty),*) -> $ret
+                => $call $({ $($field)* })?
+                => $crate::HostRet::$retvar(__value) => __value
+        }
+    };
+    (
+        $(#[$meta:meta])*
+        $vis:vis fn $name:ident($($arg:ident: $aty:ty),* $(,)?) -> $ret:ty
+            => $call:ident $({ $($field:tt)* })?
+            => $retpat:pat => $map:expr
+    ) => {
+        $(#[$meta])*
+        $vis fn $name($($arg: $aty),*) -> $ret {
+            match $crate::__rt::host_call(&$crate::HostCall::$call $({ $($field)* })?) {
+                $retpat => $map,
+                other => panic!("{} returned {other:?}", stringify!($call)),
+            }
+        }
+    };
+}
+pub(crate) use host_fn;
+
 pub fn init<T: crate::Mod>(slot: &ModSlot<T>) {
     // Panics abort the guest (a trap); surface the message through the
     // host log first so the disable line has a cause next to it.

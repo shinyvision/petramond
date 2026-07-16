@@ -1,5 +1,4 @@
-//! Server-side world streaming + per-connection terrain replication
-//! (multiplayer Phase C2c-ii).
+//! Server-side world streaming + per-connection terrain replication.
 //!
 //! Each pump the server streams its OWN world around every session's player
 //! (`update_load_multi` + `poll` + `pump_light_bakes` — the drive that used to

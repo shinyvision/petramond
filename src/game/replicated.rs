@@ -1,16 +1,16 @@
-//! Client-side REPLICATED entity/self stores (multiplayer Phase C2c-i).
+//! Client-side REPLICATED entity/self stores.
 //!
 //! The client renders mobs, dropped items, and its own HUD state from these
 //! stores, fed by the per-tick [`TickUpdate`] batches the server emits — the
-//! sim itself is unreachable (its own thread since Phase D). Locally the
-//! batches are plain values over channels; over TCP (Phase E) the identical
-//! messages arrive remapped, so nothing here changes.
+//! sim itself is unreachable (it lives on its own thread). Locally the
+//! batches are plain values over channels; over TCP the identical messages
+//! arrive remapped, so nothing here changes.
 //!
 //! Each store keeps the PREVIOUS and CURRENT batch row per stable id — the
 //! interpolation-ready pair `collect_mobs`/`collect_item_entities` blend at
 //! `tick_alpha`, exactly as the renderer used to blend `Instance::prev_*`.
 //! Light is deliberately absent from the rows: the client samples it at the
-//! entity position from its REPLICA world (C2c-ii).
+//! entity position from its REPLICA world.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

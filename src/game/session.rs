@@ -29,7 +29,7 @@ struct OpenedSession {
 
 /// Everything `Game` needs beyond the [`ServerHandle`]: the client replica +
 /// the join-time seeds mirrored off the freshly-built server (the in-process
-/// stand-in for the Phase E join handshake's `JoinData`/`SelfRestore`).
+/// stand-in for the remote join handshake's `JoinData`/`SelfRestore`).
 pub(crate) struct ClientBootstrap {
     replica: World,
     client_player: Player,
@@ -44,7 +44,7 @@ pub(crate) struct ClientBootstrap {
 impl Game {
     pub fn new(cam: Camera, world_name: &str, new_seed: u32, render_dist: i32) -> Self {
         let (server, bootstrap) = build_session(world_name, new_seed, render_dist);
-        // The sim moves to its own self-clocked thread (multiplayer Phase D);
+        // The sim moves to its own self-clocked thread;
         // from here the client owns only the message handle.
         let handle = ServerHandle::spawn(server);
         let mut game = Self::assemble(cam, handle, bootstrap);
@@ -57,10 +57,10 @@ impl Game {
         game
     }
 
-    /// The REMOTE client session (multiplayer Phase E): no save, no
+    /// The REMOTE client session: no save, no
     /// `ServerGame` — `handle` fronts a TCP connection
     /// ([`ServerHandle::from_remote`]) and `join` came from
-    /// [`crate::net::handshake::client_handshake`]. The E2 connect worker
+    /// [`crate::net::handshake::client_handshake`]. The connect worker
     /// runs the handshake off-thread, spawns the connection (which installs
     /// the id remap), and hands both here; everything after this constructor
     /// is the ordinary replicated-client path.
@@ -191,7 +191,7 @@ impl Game {
 /// attachment, player restore/fresh spawn, recipes/loot/mods, mod init — plus
 /// the client bootstrap mirrored off it. `Game::new` hands the server to
 /// [`ServerHandle::spawn`]; the test harness keeps it in-process and pumps it
-/// synchronously; the Phase D handle tests spawn it bare.
+/// synchronously; the `server/handle.rs` tests spawn it bare.
 pub(crate) fn build_session(
     world_name: &str,
     new_seed: u32,

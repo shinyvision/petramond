@@ -268,8 +268,8 @@ impl Player {
     }
 
     /// Take and clear the pending fall distance (blocks) latched by the last landing.
-    /// Physics still measures falls per frame (for the `track_fall` tests), but since
-    /// multiplayer Phase C2b the server converts its own replicated-transform fall
+    /// Physics still measures falls per frame (for the `track_fall` tests), but
+    /// the server converts its own replicated-transform fall
     /// tracking into damage instead (`ConnectedPlayer::fall`) — nothing consumes this
     /// latch in the game anymore.
     #[cfg(test)]

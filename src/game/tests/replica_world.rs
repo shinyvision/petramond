@@ -1,5 +1,5 @@
-//! End-to-end contract tests for the replica-world cutover (multiplayer
-//! C2c-ii): the in-process pipe streams the server world into `Game.replica`
+//! End-to-end contract tests for the client's replica world:
+//! the in-process pipe streams the server world into `Game.replica`
 //! (columns before sections), per-tick deltas keep it converged (door toggles
 //! included), the open-chest set replicates, and terrain leaving the keep
 //! shape unloads from the replica.

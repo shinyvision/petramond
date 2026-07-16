@@ -458,7 +458,10 @@ impl Renderer {
                             light,
                         );
                     }
-                    crate::render::player_model::transform_positions(&mut block_verts, start, m);
+                    crate::render::player_model::transform_positions(
+                        block_verts[start..].iter_mut().map(|v| &mut v.pos),
+                        m,
+                    );
                 }
                 Some(crate::item::ItemRenderKind::Sprite(tile)) => {
                     // The extrusion clears its buffer and emits a non-indexed
@@ -471,9 +474,8 @@ impl Renderer {
                         env,
                         &mut sprite_scratch,
                     );
-                    crate::render::player_model::transform_item_positions(
-                        &mut sprite_scratch,
-                        0,
+                    crate::render::player_model::transform_positions(
+                        sprite_scratch.iter_mut().map(|v| &mut v.pos),
                         m,
                     );
                     let base = sprite_verts.len() as u32;

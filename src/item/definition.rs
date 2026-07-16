@@ -33,11 +33,16 @@ pub(super) struct ItemDef {
     /// [`ItemType::has_tag`](super::ItemType::has_tag). Most items carry none
     /// (`&[]`); a member lists each tag it belongs to.
     pub tags: &'static [ItemTag],
-    /// The block a PACK-registered item places (`"block"` in `items.json`) —
-    /// the data-side counterpart of the compiled `from_block`/`as_block`
-    /// mapping engine rows keep. `None` for every engine row and for dynamic
-    /// item-only items.
+    /// The block this item places (`"block"` in `items.json`) — the one
+    /// source of the block↔item mapping, engine and pack rows alike (see
+    /// [`ItemType::as_block`](super::ItemType::as_block) and the reverse LUT
+    /// in `data`). `None` for item-only items (tools, raw drops, ingots).
     pub block: Option<Block>,
+    /// The bbmodel an ITEM-ONLY item renders as — held, dropped, and as its
+    /// slot icon (`"model"` in `items.json`, a `models.json` key like
+    /// `petramond:bucket`). `None` for sprite items; block-items carry their
+    /// model on their block's render shape instead.
+    pub model: Option<crate::block_model::BlockModelKind>,
     /// The engine use handler this item's row declares (`"use"` in
     /// `items.json`) — see [`ItemUse`]. `None` = no use of its own.
     pub item_use: Option<ItemUse>,

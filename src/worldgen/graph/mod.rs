@@ -343,122 +343,75 @@ impl Clone for ScalarGraph {
     }
 }
 
+/// Declares `ScalarGraph` node-builder methods. Every argument tagged
+/// `=> "context"` is a `NodeId` input asserted to belong to this graph before
+/// the constructed node is pushed; untagged arguments pass through as plain
+/// parameters. Only the construction scaffold lives here — evaluation is
+/// `Node::sample`.
+macro_rules! node_builders {
+    ($(
+        $(#[$meta:meta])*
+        fn $name:ident($($arg:ident: $ty:ty $(=> $context:literal)?),* $(,)?) -> $node:expr;
+    )*) => {
+        $(
+            $(#[$meta])*
+            pub(crate) fn $name(&mut self $(, $arg: $ty)*) -> NodeId {
+                $($(self.assert_existing_node($arg, $context);)?)*
+                self.push($node)
+            }
+        )*
+    };
+}
+
 impl ScalarGraph {
     pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    pub(crate) fn constant(&mut self, value: f64) -> NodeId {
-        self.push(Node::Constant(value))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn axis(&mut self, axis: Axis) -> NodeId {
-        self.push(Node::Axis(axis))
-    }
-
-    pub(crate) fn sampled_field(&mut self, field: impl SampledScalarField + 'static) -> NodeId {
-        self.push(Node::SampledField(Arc::new(field)))
-    }
-
-    pub(crate) fn add(&mut self, a: NodeId, b: NodeId) -> NodeId {
-        self.assert_existing_node(a, "add left input");
-        self.assert_existing_node(b, "add right input");
-        self.push(Node::Add(a, b))
-    }
-
-    pub(crate) fn multiply(&mut self, a: NodeId, b: NodeId) -> NodeId {
-        self.assert_existing_node(a, "multiply left input");
-        self.assert_existing_node(b, "multiply right input");
-        self.push(Node::Multiply(a, b))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn min(&mut self, a: NodeId, b: NodeId) -> NodeId {
-        self.assert_existing_node(a, "min left input");
-        self.assert_existing_node(b, "min right input");
-        self.push(Node::Min(a, b))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn max(&mut self, a: NodeId, b: NodeId) -> NodeId {
-        self.assert_existing_node(a, "max left input");
-        self.assert_existing_node(b, "max right input");
-        self.push(Node::Max(a, b))
-    }
-
-    pub(crate) fn abs(&mut self, input: NodeId) -> NodeId {
-        self.assert_existing_node(input, "abs input");
-        self.push(Node::Abs(input))
-    }
-
-    pub(crate) fn ridge_fold(&mut self, input: NodeId) -> NodeId {
-        self.assert_existing_node(input, "ridge fold input");
-        self.push(Node::RidgeFold(input))
-    }
-
-    pub(crate) fn terrace(&mut self, input: NodeId, step: f64) -> NodeId {
-        self.assert_existing_node(input, "terrace input");
-        self.push(Node::Terrace { input, step })
-    }
-
-    pub(crate) fn clamp(&mut self, input: NodeId, min: f64, max: f64) -> NodeId {
-        self.assert_existing_node(input, "clamp input");
-        self.push(Node::Clamp { input, min, max })
-    }
-
-    pub(crate) fn lerp(&mut self, a: NodeId, b: NodeId, t: NodeId) -> NodeId {
-        self.assert_existing_node(a, "lerp first input");
-        self.assert_existing_node(b, "lerp second input");
-        self.assert_existing_node(t, "lerp selector input");
-        self.push(Node::Lerp { a, b, t })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn vertical_ramp(&mut self, y_min: f64, y_max: f64) -> NodeId {
-        self.push(Node::VerticalRamp { y_min, y_max })
-    }
-
-    pub(crate) fn vertical_bias(&mut self, base_height: NodeId) -> NodeId {
-        self.assert_existing_node(base_height, "vertical bias base height input");
-        self.push(Node::VerticalBias { base_height })
-    }
-
-    pub(crate) fn floor_clamp(
-        &mut self,
-        input: NodeId,
-        floor_y: f64,
-        fade_height: f64,
-        solid_density: f64,
-    ) -> NodeId {
-        self.assert_existing_node(input, "floor clamp input");
-        self.push(Node::FloorClamp {
-            input,
-            floor_y,
-            fade_height,
-            solid_density,
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn range_select(
-        &mut self,
-        selector: NodeId,
-        min: f64,
-        max: f64,
-        inside: NodeId,
-        outside: NodeId,
-    ) -> NodeId {
-        self.assert_existing_node(selector, "range selector input");
-        self.assert_existing_node(inside, "range inside input");
-        self.assert_existing_node(outside, "range outside input");
-        self.push(Node::RangeSelect {
-            selector,
-            min,
-            max,
-            inside,
-            outside,
-        })
+    node_builders! {
+        fn constant(value: f64) -> Node::Constant(value);
+        #[cfg(test)]
+        fn axis(axis: Axis) -> Node::Axis(axis);
+        fn sampled_field(field: impl SampledScalarField + 'static)
+            -> Node::SampledField(Arc::new(field));
+        fn add(a: NodeId => "add left input", b: NodeId => "add right input")
+            -> Node::Add(a, b);
+        fn multiply(a: NodeId => "multiply left input", b: NodeId => "multiply right input")
+            -> Node::Multiply(a, b);
+        #[cfg(test)]
+        fn min(a: NodeId => "min left input", b: NodeId => "min right input")
+            -> Node::Min(a, b);
+        #[cfg(test)]
+        fn max(a: NodeId => "max left input", b: NodeId => "max right input")
+            -> Node::Max(a, b);
+        fn abs(input: NodeId => "abs input") -> Node::Abs(input);
+        fn ridge_fold(input: NodeId => "ridge fold input") -> Node::RidgeFold(input);
+        fn terrace(input: NodeId => "terrace input", step: f64) -> Node::Terrace { input, step };
+        fn clamp(input: NodeId => "clamp input", min: f64, max: f64)
+            -> Node::Clamp { input, min, max };
+        fn lerp(
+            a: NodeId => "lerp first input",
+            b: NodeId => "lerp second input",
+            t: NodeId => "lerp selector input",
+        ) -> Node::Lerp { a, b, t };
+        #[cfg(test)]
+        fn vertical_ramp(y_min: f64, y_max: f64) -> Node::VerticalRamp { y_min, y_max };
+        fn vertical_bias(base_height: NodeId => "vertical bias base height input")
+            -> Node::VerticalBias { base_height };
+        fn floor_clamp(
+            input: NodeId => "floor clamp input",
+            floor_y: f64,
+            fade_height: f64,
+            solid_density: f64,
+        ) -> Node::FloorClamp { input, floor_y, fade_height, solid_density };
+        #[cfg(test)]
+        fn range_select(
+            selector: NodeId => "range selector input",
+            min: f64,
+            max: f64,
+            inside: NodeId => "range inside input",
+            outside: NodeId => "range outside input",
+        ) -> Node::RangeSelect { selector, min, max, inside, outside };
     }
 
     pub(crate) fn spline(

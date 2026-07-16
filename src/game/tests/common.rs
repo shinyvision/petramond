@@ -12,7 +12,7 @@ use crate::server::handle::LoopbackServer;
 /// The game test fixture: the client [`Game`] wired to a LOOPBACK
 /// [`ServerHandle`](crate::server::handle::ServerHandle) — the REAL message
 /// channels, serviced synchronously by this harness instead of the server
-/// thread (deterministic; the thread itself is covered by the Phase D handle
+/// thread (deterministic; the thread itself is covered by the handle
 /// tests in `server/handle.rs`). The `ServerGame` is held here so tests keep
 /// driving sim stages and asserting server state directly (`game.server.…`),
 /// while every client read/method resolves through `Deref` to [`Game`].

@@ -168,7 +168,7 @@ fn hushjaw_admits(candidate: &HostileSpawnCandidate) -> bool {
     if candidate.nearest_player_dist < HUSHJAW_MIN_PLAYER_DIST {
         return false;
     }
-    if mix(rng_u64("hushjaw_claim")) % 100 >= HUSHJAW_CLAIM_PER_100 {
+    if splitmix64_mix(rng_u64("hushjaw_claim")) % 100 >= HUSHJAW_CLAIM_PER_100 {
         return false;
     }
     mobs_in_radius(candidate.pos, HUSHJAW_SPACING)
@@ -195,7 +195,7 @@ impl Monsters {
                 // Not burning. Roll before the light query, so the per-zombie
                 // host crossings happen only on the 5% of ticks that might
                 // actually ignite.
-                if mix(roll ^ mob.id) % 100 < SUNBURN_CHANCE_PER_100
+                if splitmix64_mix(roll ^ mob.id) % 100 < SUNBURN_CHANCE_PER_100
                     && in_sunlight(mob.pos, daylight)
                     && mob_emitter_set(mob.index, LIGHT_FIRE_EMITTER, true)
                 {
@@ -261,13 +261,6 @@ impl Monsters {
     }
 }
 
-/// SplitMix64 finalizer: spreads one host RNG draw into per-zombie rolls.
-fn mix(mut x: u64) -> u64 {
-    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    x ^ (x >> 31)
-}
-
 fn in_sunlight(pos: [f32; 3], daylight: f32) -> bool {
     let cell = [
         pos[0].floor() as i32,
@@ -287,8 +280,7 @@ fn effective_light(sky: u8, block: u8, daylight: f32) -> f32 {
 
 fn daylight_factor_from_daynight() -> Option<f32> {
     let bytes = world_kv_get(TIME_KEY)?;
-    let raw: [u8; 4] = bytes.as_slice().try_into().ok()?;
-    let t = f32::from_le_bytes(raw);
+    let t = ByteReader::new(&bytes).f32()?;
     if !t.is_finite() || !(0.0..=1.0).contains(&t) {
         return None;
     }

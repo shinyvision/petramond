@@ -2,8 +2,8 @@
 //! `mob::behavior::wasm`'s nodes resolve through.
 //!
 //! Mirrors `gen::install` in spirit but stays THREAD-LOCAL: mob AI runs only
-//! on the SIM thread (the deterministic game tick — the server thread since
-//! multiplayer Phase D). Keeping the registry per-thread (instead of a
+//! on the SIM thread (the deterministic game tick — the server
+//! thread). Keeping the registry per-thread (instead of a
 //! process-wide map) preserves test isolation: parallel test sessions each
 //! install into their own thread. The server thread re-installs the session's
 //! map on startup via [`ModHost::install_thread_ai_nodes`]. A dispatch from

@@ -3,7 +3,7 @@
 //! These methods expose neutral animation, activity, light, and mesh-budget policy
 //! to sibling game modules without moving renderer DTOs into `Game`. Only
 //! REPLICATED state is read here (the stores + the replica world — the sim
-//! lives on the server thread since Phase D); everything mutated is
+//! lives on the server thread); everything mutated is
 //! client-owned (particles, lids, swings, the mesh pump).
 
 use crate::block::{Block, RenderShape};
@@ -100,8 +100,8 @@ impl Game {
 
     /// A small dust fleck every [`MINING_DUST_INTERVAL`] while the LOCAL player
     /// is actively mining, gated on the REPLICATED mining state (`SelfView`).
-    /// Presentation only; remote players' dust becomes client-derived from
-    /// their replicated mining state (multiplayer Phase F). Per frame — the
+    /// Presentation only; remote players' dust is client-derived the same
+    /// way, from their replicated mining state. Per frame — the
     /// cadence is paced on REAL frame time now, where it used to accumulate
     /// TICK_DT inside the fixed tick; both tick over every 0.1 s, so the fleck
     /// rate is visually identical.

@@ -213,7 +213,7 @@ async fn new_renderer_inner(
     // the shared mob pipeline), plus three held-item draws attached to the
     // posed hands: an extruded-sprite stream (2D atlas), a bbmodel-item stream
     // (model atlas), and a packed block-vertex stream (held mini-cube on the
-    // opaque pipeline). Since Phase F EVERY connected player's body appends
+    // opaque pipeline). EVERY connected player's body appends
     // into the one stream, so the caps cover a full LAN party of bodies
     // (~300 verts each), not just the local one.
     const PLAYER_ITEM_VERTICES: u64 = 16384;

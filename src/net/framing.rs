@@ -1,4 +1,4 @@
-//! TCP frame codec (multiplayer Phase E): `[u32 LE len][u8 flags][body]`,
+//! TCP frame codec: `[u32 LE len][u8 flags][body]`,
 //! body = postcard. Flag bit 0 marks a zlib-compressed body — applied when the
 //! serialized body exceeds [`COMPRESS_MIN`] and compression actually shrinks
 //! it (terrain `SectionData`/`ColumnData` mainly; tick batches stay raw).

@@ -18,6 +18,7 @@
 //!   cargo run --quiet --bin genmap -- 42 /tmp/biome.png biome
 //!   cargo run --quiet --bin genmap -- 42 /tmp/cut.png side 0
 
+use petramond::tooling::atlas::TileTint;
 use petramond::tooling::biome::Biome;
 use petramond::tooling::block::Block;
 use petramond::tooling::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
@@ -34,65 +35,24 @@ fn top_block(c: &Chunk, x: usize, z: usize) -> (u8, i32) {
     (0, 0)
 }
 
+/// Top-down colour for a block, derived from its data row: the top tile's
+/// cartography average ([`Tile::map_rgb`](petramond::tooling::atlas::Tile::map_rgb)),
+/// with tinted tiles (grass/foliage/water) multiplied by a fixed Plains biome
+/// colour — the previewer has no per-column tint blend and doesn't need one.
 fn block_color(block: u8) -> [u8; 3] {
-    match Block::from_id(block) {
-        Block::OakLeaves => [44, 110, 40],
-        Block::SpruceLeaves => [40, 78, 52],
-        Block::BirchLeaves => [108, 150, 78],
-        Block::JungleLeaves => [48, 124, 28],
-        Block::AcaciaLeaves => [104, 130, 40],
-        Block::RedwoodLeaves => [38, 86, 46],
-        Block::AzaleaLeaves => [88, 124, 56],
-        Block::OakLog => [104, 74, 40],
-        Block::SpruceLog => [70, 50, 32],
-        Block::BirchLog => [206, 206, 198],
-        Block::JungleLog | Block::AcaciaLog => [120, 90, 54],
-        Block::RedwoodLog => [127, 60, 51],
-        Block::Grass => [86, 140, 60],
-        Block::Sand => [216, 204, 152],
-        Block::RedSand => [190, 110, 56],
-        Block::Sandstone => [222, 208, 156],
-        Block::RedSandstone => [188, 108, 54],
-        Block::Snow | Block::SnowBlock => [238, 242, 248],
-        Block::PackedIce | Block::Ice => [160, 192, 232],
-        Block::Stone => [128, 128, 132],
-        Block::Marble => [200, 200, 202],
-        Block::Tuff => [98, 102, 96],
-        Block::Calcite => [224, 226, 222],
-        Block::Water => [44, 96, 176],
-        Block::Dirt | Block::CoarseDirt => [122, 92, 62],
-        Block::Podzol => [92, 64, 32],
-        Block::Mycelium => [126, 110, 120],
-        Block::Gravel => [128, 122, 118],
-        Block::Clay => [160, 166, 178],
-        Block::Mud => [60, 52, 50],
-        Block::MossBlock => [88, 110, 56],
-        Block::Terracotta => [150, 92, 66],
-        Block::WhiteTerracotta => [210, 186, 168],
-        Block::OrangeTerracotta => [162, 84, 40],
-        Block::YellowTerracotta => [186, 138, 50],
-        Block::BrownTerracotta => [110, 76, 54],
-        Block::RedTerracotta => [142, 70, 52],
-        Block::LightGrayTerracotta => [150, 122, 110],
-        Block::CoalOre => [54, 54, 56],
-        Block::IronOre => [190, 160, 132],
-        Block::CopperOre => [166, 120, 92],
-        Block::GoldOre => [206, 184, 90],
-        Block::DiamondOre => [110, 200, 206],
-        Block::Cactus => [70, 120, 56],
-        Block::Pumpkin => [200, 120, 40],
-        Block::Melon => [90, 150, 60],
-        Block::ShortGrass | Block::Fern => [86, 150, 58],
-        Block::Dandelion => [220, 210, 70],
-        Block::Poppy | Block::RedTulip => [200, 60, 50],
-        Block::Cornflower => [90, 110, 210],
-        Block::Allium => [170, 120, 200],
-        Block::AzureBluet | Block::OxeyeDaisy => [225, 225, 220],
-        Block::DeadBush => [150, 110, 60],
-        Block::BrownMushroom => [150, 110, 80],
-        Block::RedMushroom => [200, 70, 60],
-        _ => [12, 12, 14],
+    let b = Block::from_id(block);
+    if b == Block::Air {
+        return [12, 12, 14];
     }
+    let tile = b.tiles()[0];
+    let base = tile.map_rgb();
+    let tint = match tile.world_tint() {
+        None => return base,
+        Some(TileTint::Grass) => Biome::Plains.grass_color(),
+        Some(TileTint::Foliage) => Biome::Plains.foliage_color(),
+        Some(TileTint::Water) => Biome::Plains.water_color(),
+    };
+    std::array::from_fn(|c| (base[c] as f32 * tint[c]).round().clamp(0.0, 255.0) as u8)
 }
 
 /// Distinct top-down colour per biome id.

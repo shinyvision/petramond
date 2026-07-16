@@ -264,21 +264,13 @@ pub(super) fn held_model_transform(hand: Mat4, kind: crate::block_model::BlockMo
         * crate::block_model::instance(kind).display_from_unit
 }
 
-/// CPU-transform the vertex positions appended at `start..` by `m` — the packed
-/// block-vertex counterpart of baking in model space then placing in the world
-/// (the opaque pipeline has no per-draw model matrix).
-pub(super) fn transform_positions(verts: &mut [crate::mesh::Vertex], start: usize, m: Mat4) {
-    for v in verts[start..].iter_mut() {
-        let p = m.transform_point3(Vec3::from(v.pos));
-        v.pos = p.to_array();
-    }
-}
-
-/// As [`transform_positions`] but for the explicit-UV [`ItemVertex`] stream.
-pub(super) fn transform_item_positions(verts: &mut [ItemVertex], start: usize, m: Mat4) {
-    for v in verts[start..].iter_mut() {
-        let p = m.transform_point3(Vec3::from(v.pos));
-        v.pos = p.to_array();
+/// CPU-transform the given vertex positions by `m` — baking in model space then
+/// placing in the world on the CPU, since the opaque pipeline has no per-draw
+/// model matrix. Takes a position iterator so both vertex layouts (packed
+/// [`crate::mesh::Vertex`] and explicit-UV [`ItemVertex`]) share it.
+pub(super) fn transform_positions<'a>(pos: impl Iterator<Item = &'a mut [f32; 3]>, m: Mat4) {
+    for p in pos {
+        *p = m.transform_point3(Vec3::from(*p)).to_array();
     }
 }
 

@@ -1,18 +1,17 @@
 //! Item model: the inventory-space counterpart of `Block`.
 //!
-//! Item ids mirror block ids for the original block-items: every early `Block`
-//! has an `ItemType` of the SAME id (both start at `Air = 0`), so `from_block` /
-//! `as_block` are plain id conversions over that range. Beyond it live the
-//! item-only items (tools, raw drops) that have NO block — `as_block` returns
-//! `None` and they render as flat sprites. Engine ids stay append-only; pack
-//! items register past them and link to a block through their row's `block`
-//! field (see [`crate::registry`]).
+//! An item that places a block declares it in its `items.json` row (`"block":
+//! "<registry name>"`, engine and pack rows alike): `as_block` reads that row
+//! field and `from_block` reads the dense reverse LUT inverted from it at load
+//! (see `data`). Item-only items (tools, raw drops) carry no link — `as_block`
+//! returns `None` and they render as flat sprites (or their row's `"model"`
+//! bbmodel). Engine ids stay append-only; pack items register past them (see
+//! [`crate::registry`]).
 //!
 //! Per-item static data (`key`, `name`, `max_stack_size`) lives in an id-ordered
 //! table loaded from `assets/items.json`, mirroring `block/data.rs`. The `key` is
 //! the stable recipe identity; `name` is display-only. Behaviour derivable from the
-//! underlying `Block` (`render_kind` for block-items) is computed via `Block`;
-//! item-only sprites + pickaxe tiers are small matches, not table columns.
+//! underlying `Block` (`render_kind` for block-items) is computed via `Block`.
 
 use crate::atlas::Tile;
 use crate::block::{Block, RenderShape};
@@ -79,10 +78,8 @@ impl ItemUse {
 /// additional ids at load through namespaced `items.json` rows (see
 /// [`crate::registry`]). Serde carries an item as its registered NAME string.
 ///
-/// The engine block-item prefix mirrors [`Block`] ids (both start at
-/// `Air = 0`), so `from_block` / `as_block` are plain id conversions over that
-/// range; later engine block-items map explicitly, and DYNAMIC items link to
-/// their block through their row's `block` field.
+/// An item links to the block it places through its row's `block` field;
+/// `from_block` / `as_block` are table lookups over those links.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct ItemType(pub u8);
 
@@ -524,12 +521,6 @@ impl ItemType {
         data::all()
     }
 
-    /// Size of the original 0.1 block-item prefix: item ids `[0, LEGACY_BLOCK_ITEMS)`
-    /// are block-items that share their block's id (`Air..=CraftingTable`). Block-items
-    /// added afterwards are appended past the item-only range and mapped explicitly in
-    /// [`from_block`](Self::from_block)/[`as_block`](Self::as_block).
-    const LEGACY_BLOCK_ITEMS: usize = Block::CraftingTable.id() as usize + 1;
-
     /// Stable numeric id.
     #[inline]
     pub const fn id(self) -> u8 {
@@ -542,131 +533,20 @@ impl ItemType {
         data::from_id(id)
     }
 
-    /// The block-item for a block, or `None` if the block has no inventory item.
-    /// The original 0.1 block-items (`[0, LEGACY_BLOCK_ITEMS)`) share their block's
-    /// id, so for them this is a plain id conversion; block-items added later are
-    /// appended past the item-only range and mapped explicitly here, so adding a
-    /// block never shifts an existing item id. `Air -> Air`.
+    /// The block-item for a block: the item whose `items.json` row links it
+    /// via the row's `block` field, read from the dense reverse LUT built at
+    /// load (see `data`). A block no item links to (a machine's lit variant,
+    /// a late crop growth stage) maps to `Air` — nothing to hold. `Air -> Air`.
     #[inline]
     pub fn from_block(b: Block) -> ItemType {
-        match b {
-            Block::Furnace => ItemType::Furnace,
-            Block::Chest => ItemType::Chest,
-            Block::Torch => ItemType::Torch,
-            Block::FurnitureWorkbench => ItemType::FurnitureWorkbench,
-            Block::OakSapling => ItemType::OakSapling,
-            Block::SpruceSapling => ItemType::SpruceSapling,
-            Block::BirchSapling => ItemType::BirchSapling,
-            Block::JungleSapling => ItemType::JungleSapling,
-            Block::AcaciaSapling => ItemType::AcaciaSapling,
-            Block::OakDoor => ItemType::OakDoor,
-            Block::SpruceDoor => ItemType::SpruceDoor,
-            Block::BirchDoor => ItemType::BirchDoor,
-            Block::JungleDoor => ItemType::JungleDoor,
-            Block::AcaciaDoor => ItemType::AcaciaDoor,
-            Block::RedwoodLog => ItemType::RedwoodLog,
-            Block::RedwoodLeaves => ItemType::RedwoodLeaves,
-            Block::RedwoodPlanks => ItemType::RedwoodPlanks,
-            Block::RedwoodDoor => ItemType::RedwoodDoor,
-            Block::OakStairs => ItemType::OakStairs,
-            Block::SpruceStairs => ItemType::SpruceStairs,
-            Block::BirchStairs => ItemType::BirchStairs,
-            Block::JungleStairs => ItemType::JungleStairs,
-            Block::AcaciaStairs => ItemType::AcaciaStairs,
-            Block::RedwoodStairs => ItemType::RedwoodStairs,
-            Block::CobblestoneStairs => ItemType::CobblestoneStairs,
-            Block::StoneStairs => ItemType::StoneStairs,
-            Block::DirtStairs => ItemType::DirtStairs,
-            Block::BedFrame => ItemType::BedFrame,
-            Block::Bed => ItemType::Bed,
-            Block::OakSlab => ItemType::OakSlab,
-            Block::SpruceSlab => ItemType::SpruceSlab,
-            Block::BirchSlab => ItemType::BirchSlab,
-            Block::JungleSlab => ItemType::JungleSlab,
-            Block::AcaciaSlab => ItemType::AcaciaSlab,
-            Block::RedwoodSlab => ItemType::RedwoodSlab,
-            Block::CobblestoneSlab => ItemType::CobblestoneSlab,
-            Block::StoneSlab => ItemType::StoneSlab,
-            Block::DirtSlab => ItemType::DirtSlab,
-            Block::Glass => ItemType::Glass,
-            Block::GlassPane => ItemType::GlassPane,
-            Block::WoolBlock => ItemType::WoolBlock,
-            Block::WoolStairs => ItemType::WoolStairs,
-            Block::WoolSlab => ItemType::WoolSlab,
-            Block::PolishedMarble => ItemType::PolishedMarble,
-            Block::MarbleStairs => ItemType::MarbleStairs,
-            Block::MarbleSlab => ItemType::MarbleSlab,
-            Block::PolishedMarbleStairs => ItemType::PolishedMarbleStairs,
-            Block::PolishedMarbleSlab => ItemType::PolishedMarbleSlab,
-            Block::Ladder => ItemType::Ladder,
-            _ if (b.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Self::from_id(b.id()),
-            // A pack-registered block: its item declares the link via its
-            // row's `block` field. No linked item -> Air (nothing to hold).
-            _ => data::item_for_block(b).unwrap_or(ItemType::Air),
-        }
+        data::item_for_block(b)
     }
 
-    /// The block this item places, or `None` for an item-only item (tools, raw
-    /// drops, ingots). The frozen id-equal prefix `[0, LEGACY_BLOCK_ITEMS)` maps by
-    /// id; later block-items (appended past the item-only items) are matched
-    /// explicitly so their item id need not equal their block id.
+    /// The block this item places (its row's `block` field in `items.json`),
+    /// or `None` for an item-only item (tools, raw drops, ingots).
     #[inline]
     pub fn as_block(self) -> Option<Block> {
-        match self {
-            ItemType::Furnace => Some(Block::Furnace),
-            ItemType::Chest => Some(Block::Chest),
-            ItemType::Torch => Some(Block::Torch),
-            ItemType::FurnitureWorkbench => Some(Block::FurnitureWorkbench),
-            ItemType::OakSapling => Some(Block::OakSapling),
-            ItemType::SpruceSapling => Some(Block::SpruceSapling),
-            ItemType::BirchSapling => Some(Block::BirchSapling),
-            ItemType::JungleSapling => Some(Block::JungleSapling),
-            ItemType::AcaciaSapling => Some(Block::AcaciaSapling),
-            ItemType::OakDoor => Some(Block::OakDoor),
-            ItemType::SpruceDoor => Some(Block::SpruceDoor),
-            ItemType::BirchDoor => Some(Block::BirchDoor),
-            ItemType::JungleDoor => Some(Block::JungleDoor),
-            ItemType::AcaciaDoor => Some(Block::AcaciaDoor),
-            ItemType::RedwoodLog => Some(Block::RedwoodLog),
-            ItemType::RedwoodLeaves => Some(Block::RedwoodLeaves),
-            ItemType::RedwoodPlanks => Some(Block::RedwoodPlanks),
-            ItemType::RedwoodDoor => Some(Block::RedwoodDoor),
-            ItemType::OakStairs => Some(Block::OakStairs),
-            ItemType::SpruceStairs => Some(Block::SpruceStairs),
-            ItemType::BirchStairs => Some(Block::BirchStairs),
-            ItemType::JungleStairs => Some(Block::JungleStairs),
-            ItemType::AcaciaStairs => Some(Block::AcaciaStairs),
-            ItemType::RedwoodStairs => Some(Block::RedwoodStairs),
-            ItemType::CobblestoneStairs => Some(Block::CobblestoneStairs),
-            ItemType::StoneStairs => Some(Block::StoneStairs),
-            ItemType::DirtStairs => Some(Block::DirtStairs),
-            ItemType::BedFrame => Some(Block::BedFrame),
-            ItemType::Bed => Some(Block::Bed),
-            ItemType::OakSlab => Some(Block::OakSlab),
-            ItemType::SpruceSlab => Some(Block::SpruceSlab),
-            ItemType::BirchSlab => Some(Block::BirchSlab),
-            ItemType::JungleSlab => Some(Block::JungleSlab),
-            ItemType::AcaciaSlab => Some(Block::AcaciaSlab),
-            ItemType::RedwoodSlab => Some(Block::RedwoodSlab),
-            ItemType::CobblestoneSlab => Some(Block::CobblestoneSlab),
-            ItemType::StoneSlab => Some(Block::StoneSlab),
-            ItemType::DirtSlab => Some(Block::DirtSlab),
-            ItemType::Glass => Some(Block::Glass),
-            ItemType::GlassPane => Some(Block::GlassPane),
-            ItemType::WoolBlock => Some(Block::WoolBlock),
-            ItemType::WoolStairs => Some(Block::WoolStairs),
-            ItemType::WoolSlab => Some(Block::WoolSlab),
-            ItemType::PolishedMarble => Some(Block::PolishedMarble),
-            ItemType::MarbleStairs => Some(Block::MarbleStairs),
-            ItemType::MarbleSlab => Some(Block::MarbleSlab),
-            ItemType::PolishedMarbleStairs => Some(Block::PolishedMarbleStairs),
-            ItemType::PolishedMarbleSlab => Some(Block::PolishedMarbleSlab),
-            ItemType::Ladder => Some(Block::Ladder),
-            _ if (self.id() as usize) < Self::LEGACY_BLOCK_ITEMS => Some(Block::from_id(self.id())),
-            // Engine item-only items carry no link; a pack item's row may
-            // (`"block": "mod:key"` in items.json).
-            _ => self.def().block,
-        }
+        self.def().block
     }
 
     /// This item as a mining [`Tool`] (kind + material tier), or `None` if it
@@ -844,16 +724,13 @@ impl ItemType {
     }
 
     /// The bbmodel an ITEM-ONLY item renders as — held, dropped, and as its slot
-    /// icon — or `None` for the flat-sprite item-only items. The model counterpart
-    /// of [`item_sprite`](Self::item_sprite); block-items carry their model on
+    /// icon — or `None` for the flat-sprite item-only items. Read from the
+    /// item's data row (`model` in `items.json`); the model counterpart of
+    /// [`item_sprite`](Self::item_sprite). Block-items carry their model on
     /// their block's render shape and never consult this.
     #[inline]
     fn item_model(self) -> Option<crate::block_model::BlockModelKind> {
-        match self {
-            ItemType::WoodenBucket => Some(crate::block_model::BlockModelKind::Bucket),
-            ItemType::WaterBucket => Some(crate::block_model::BlockModelKind::WaterBucket),
-            _ => None,
-        }
+        self.def().model
     }
 
     #[inline]
@@ -1221,5 +1098,23 @@ mod tests {
     #[test]
     fn drop_spec_none_is_empty() {
         assert!(DropSpec::NONE.drops.is_empty());
+    }
+
+    /// Every placeable item's block maps back to it: a row accidentally
+    /// linking a block some other item already links (a copy-paste in
+    /// `items.json`) would silently make the later item's placed block
+    /// hand back the wrong item when broken.
+    #[test]
+    fn block_item_links_round_trip() {
+        for &it in ItemType::all() {
+            if let Some(b) = it.as_block() {
+                assert_eq!(
+                    ItemType::from_block(b),
+                    it,
+                    "{it:?} links {b:?}, but that block's item is {:?}",
+                    ItemType::from_block(b)
+                );
+            }
+        }
     }
 }

@@ -1,5 +1,5 @@
 //! World replication: the server-side payload builders and the client-side
-//! replica install path (Phase B2).
+//! replica install path.
 //!
 //! The server serializes nothing here — payloads carry `Arc` handles to the
 //! live section buffers ([`SectionBytes`]), so the in-process connection ships
@@ -18,8 +18,8 @@
 //! summaries (`World::column_summaries`), mirroring how `column_gen` answers
 //! for the combined world.
 //!
-//! Deliberately absent from section payloads (they replicate elsewhere,
-//! Phase C/F): container slot contents, furnace machine counters (only the
+//! Deliberately absent from section payloads (they replicate
+//! elsewhere): container slot contents, furnace machine counters (only the
 //! lit face ships — the replica installs a minimal lit stand-in so the mesher
 //! renders it), mobs, and dropped items.
 
@@ -255,7 +255,7 @@ impl World {
         let s = &payload.states;
         // Lit furnaces install a minimal lit stand-in: the mesher keys the lit
         // face off `Furnace::is_lit`; the real counters are sim state and stay
-        // server-side (progress reaches clients through menu sync, Phase C).
+        // server-side (progress reaches clients through menu sync).
         let furnaces: HashMap<u16, Furnace> = s
             .furnaces_lit
             .iter()
@@ -285,7 +285,7 @@ impl World {
             payload.blocks.0,
             payload.water.map(|w| w.0),
             furnaces,
-            HashMap::new(), // container slots replicate via menu sync (Phase C)
+            HashMap::new(), // container slots replicate via menu sync
             map_entries(&s.entity_facings, Facing::from_u8),
             map_entries(&s.torches, TorchPlacement::from_u8),
             map_entries(&s.model_cells, |off| off),
@@ -784,7 +784,7 @@ mod tests {
 
     /// A flat-floored source world (Combined runs the same content paths the
     /// headless server will) and a fresh replica, sharing ONE job pool — the
-    /// Phase C in-process topology.
+    /// in-process (singleplayer / listen-host) topology.
     fn server_and_replica() -> (World, World) {
         let pool = Arc::new(JobPool::new(2));
         let mut server = World::new_with_pool(0, 1, WorldRole::Combined, pool.clone());
@@ -803,7 +803,7 @@ mod tests {
         (server, replica)
     }
 
-    /// The Phase B2 convergence contract: everything a client can SEE —
+    /// The replica convergence contract: everything a client can SEE —
     /// A furnace lighting (or going out) after join must flip the replica's
     /// front texture: the lit state rides the facing delta's high bit — a
     /// full section payload only ships at join/stream time.
@@ -1077,7 +1077,7 @@ mod tests {
         );
     }
 
-    /// Deliverable C2c-ii(1): deltas carry the cell's sparse block STATE using
+    /// Deltas carry the cell's sparse block STATE using
     /// the save-codec encodings, and a fresh replica applying them converges
     /// on every state map — placements whose state lands AFTER the announcing
     /// block write (chest facing, torch placement) included, because the drain
@@ -1213,7 +1213,7 @@ mod tests {
         );
     }
 
-    /// Deliverable C2c-ii(2): a door TOGGLE flips the door map with no
+    /// A door TOGGLE flips the door map with no
     /// block-id write — it must still log deltas (state carries the open bit)
     /// and the replica's door map must follow, so collision + the resting
     /// swing angle are right.

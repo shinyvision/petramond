@@ -150,45 +150,26 @@ impl Minimap {
 }
 
 fn encode_waypoints(waypoints: &[Waypoint]) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.extend((waypoints.len() as u32).to_le_bytes());
+    let mut w = ByteWriter::new();
+    w.u32(waypoints.len() as u32);
     for waypoint in waypoints {
-        for coord in waypoint.pos {
-            out.extend(coord.to_le_bytes());
-        }
-        out.extend(waypoint.color);
-        let name = waypoint.name.as_bytes();
-        out.extend((name.len().min(u16::MAX as usize) as u16).to_le_bytes());
-        out.extend(&name[..name.len().min(u16::MAX as usize)]);
+        w.i32x3(waypoint.pos);
+        w.raw(&waypoint.color);
+        w.blob(waypoint.name.as_bytes());
     }
-    out
+    w.finish()
 }
 
 fn decode_waypoints(bytes: &[u8]) -> Vec<Waypoint> {
-    let mut at = 0usize;
-    let take = |at: &mut usize, n: usize| -> Option<&[u8]> {
-        let value = bytes.get(*at..*at + n)?;
-        *at += n;
-        Some(value)
-    };
-    let Some(count) = take(&mut at, 4) else {
+    let mut r = ByteReader::new(bytes);
+    let Some(count) = r.u32() else {
         return Vec::new();
     };
-    let count = u32::from_le_bytes(count.try_into().unwrap()).min(4096);
     let mut out = Vec::new();
-    for _ in 0..count {
-        let Some(raw) = take(&mut at, 12) else { break };
-        let pos = [
-            i32::from_le_bytes(raw[0..4].try_into().unwrap()),
-            i32::from_le_bytes(raw[4..8].try_into().unwrap()),
-            i32::from_le_bytes(raw[8..12].try_into().unwrap()),
-        ];
-        let Some(color) = take(&mut at, 3) else { break };
-        let Some(len) = take(&mut at, 2) else { break };
-        let len = u16::from_le_bytes(len.try_into().unwrap()) as usize;
-        let Some(name) = take(&mut at, len) else {
-            break;
-        };
+    for _ in 0..count.min(4096) {
+        let Some(pos) = r.i32x3() else { break };
+        let Some(color) = r.take(3) else { break };
+        let Some(name) = r.blob() else { break };
         let Ok(name) = std::str::from_utf8(name) else {
             continue;
         };

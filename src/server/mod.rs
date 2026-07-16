@@ -1,12 +1,12 @@
-//! The internal game server (multiplayer Phase A+).
+//! The internal game server.
 //!
 //! Owns the authoritative simulation ([`game::ServerGame`]: world, sessions,
 //! recipes/loot, mod host, and the 20 TPS fixed-tick stage ladder) plus the
-//! per-connected-player state ([`player::ConnectedPlayer`]). Since multiplayer
-//! Phase D the `ServerGame` runs on its OWN self-clocked thread
+//! per-connected-player state ([`player::ConnectedPlayer`]). The
+//! `ServerGame` runs on its OWN self-clocked thread
 //! ([`handle::ServerHandle`]); the client (`crate::game::Game`) talks to it
 //! exclusively over message channels. Remote (TCP) connections ride the same
-//! loop through [`remote::RemoteHub`] (multiplayer Phase E, "Open to LAN").
+//! loop through [`remote::RemoteHub`] ("Open to LAN").
 
 pub(crate) mod actions;
 pub(crate) mod bed;

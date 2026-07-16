@@ -1,10 +1,138 @@
-//! Shared machine plumbing: the persisted anchor registry every placed
-//! machine kind keeps in world KV, and the session-stable registry caches
-//! (item info, per-class recipe results) machine steps read every tick.
+//! Shared machine plumbing: the generic placed-machine driver ([`Machine`]
+//! over a [`MachineSpec`]), the persisted anchor registry every machine kind
+//! keeps in world KV, and the session-stable registry caches (item info,
+//! per-class recipe results) machine steps read every tick.
 
 use std::collections::HashMap;
 
 use mod_sdk::*;
+
+/// One machine KIND's identity plus its per-tick step. Everything a placed
+/// machine shares — the persisted anchor registry, container-session
+/// tracking, and the batched prune/read tick preamble — is [`Machine`];
+/// a spec only says which rows are its and what one machine does per tick.
+pub trait MachineSpec: Default {
+    /// The mod GUI container kind (`ContainerKind::Mod` key).
+    const KIND_KEY: &'static str;
+    /// The placeable base block row; unresolvable = this kind stays idle.
+    const BLOCK_KEY: &'static str;
+    /// The same-footprint visual-variant row (lit oven, full miller);
+    /// unresolvable degrades the visual flip, never the machine.
+    const VARIANT_KEY: &'static str;
+    /// World-KV key of the persisted anchor list.
+    const ANCHORS_KEY: &'static str;
+
+    /// One machine's game tick. `slots` is `None` while no container exists
+    /// at the anchor (never opened, never written). Write back only what
+    /// changed — container writes, cell KV, and block flips all cross the ABI.
+    fn step(
+        &mut self,
+        ctx: &StepCtx,
+        caches: &mut Caches,
+        slots: Option<Vec<Option<ItemStackData>>>,
+    );
+}
+
+/// One live machine's tick context: where it is, what its anchor currently
+/// decodes to, the resolved rows, and whether its GUI session is open (the
+/// gauge publish gate).
+pub struct StepCtx {
+    pub pos: [i32; 3],
+    /// The anchor's current block this tick (base or variant).
+    pub current: BlockId,
+    pub block: BlockId,
+    pub variant: Option<BlockId>,
+    pub gui_open: bool,
+}
+
+/// The shared driver for one placed-machine kind: resolved rows, the anchor
+/// registry, and the open GUI session, stepped through the spec each tick.
+pub struct Machine<S: MachineSpec> {
+    block: Option<BlockId>,
+    /// `None` degrades to working with no visual flip, never to not working.
+    variant: Option<BlockId>,
+    anchors: AnchorRegistry,
+    /// The machine whose GUI session is open, if any (gauge publish gate).
+    open_session: Option<[i32; 3]>,
+    spec: S,
+}
+
+impl<S: MachineSpec> Default for Machine<S> {
+    fn default() -> Self {
+        Machine {
+            block: None,
+            variant: None,
+            anchors: AnchorRegistry::new(S::ANCHORS_KEY),
+            open_session: None,
+            spec: S::default(),
+        }
+    }
+}
+
+impl<S: MachineSpec> Machine<S> {
+    /// Resolve blocks + restore the anchor list; `false` = the pack's rows
+    /// are missing and this machine kind stays idle.
+    pub fn init(&mut self) -> bool {
+        self.block = resolve_block_logged(S::BLOCK_KEY);
+        if self.block.is_none() {
+            return false;
+        }
+        self.variant = resolve_block_logged(S::VARIANT_KEY);
+        self.anchors.load();
+        true
+    }
+
+    /// `block_placed.pos` is the multi-cell anchor — the same cell the engine
+    /// keys the container at.
+    pub fn on_placed(&mut self, pos: [i32; 3], block: BlockId) {
+        if Some(block) == self.block {
+            self.anchors.record(pos);
+        }
+    }
+
+    /// Container session tracking; opening also self-heals a lost anchor.
+    pub fn on_container(&mut self, kind: &ContainerKind, pos: Option<[i32; 3]>, opened: bool) {
+        if !matches!(kind, ContainerKind::Mod { key } if key == S::KIND_KEY) {
+            return;
+        }
+        if opened {
+            self.open_session = pos;
+            if let Some(anchor) = pos {
+                self.anchors.record(anchor);
+            }
+        } else {
+            self.open_session = None;
+        }
+    }
+
+    /// Prune stale anchors, read every live machine's container in ONE
+    /// batched call (never `container_get` in a loop), and step each one.
+    pub fn tick(&mut self, caches: &mut Caches) {
+        let Some(block) = self.block else {
+            return;
+        };
+        if self.anchors.anchors.is_empty() {
+            return;
+        }
+        let variant = self.variant;
+        let live = self.anchors.prune_live(|b| b == block || Some(b) == variant);
+        if live.is_empty() {
+            return;
+        }
+        let positions: Vec<[i32; 3]> = live.iter().map(|(p, _)| *p).collect();
+        let containers = container_get_many(positions);
+        for ((pos, current), slots) in live.into_iter().zip(containers) {
+            let ctx = StepCtx {
+                pos,
+                current,
+                block,
+                variant,
+                gui_open: self.open_session == Some(pos),
+            };
+            self.spec.step(&ctx, caches, slots);
+        }
+    }
+}
 
 /// The placed-anchor list for one machine kind, persisted in world KV as
 /// 12-byte LE cell records, in placement order (the deterministic tick
@@ -26,21 +154,19 @@ impl AnchorRegistry {
     pub fn load(&mut self) {
         self.anchors.clear();
         if let Some(bytes) = world_kv_get(self.kv_key) {
-            for rec in bytes.chunks_exact(12) {
-                let word = |i: usize| i32::from_le_bytes(rec[i * 4..i * 4 + 4].try_into().unwrap());
-                self.anchors.push([word(0), word(1), word(2)]);
+            let mut r = ByteReader::new(&bytes);
+            while let Some(pos) = r.i32x3() {
+                self.anchors.push(pos);
             }
         }
     }
 
     fn store(&self) {
-        let mut bytes = Vec::with_capacity(self.anchors.len() * 12);
+        let mut w = ByteWriter::with_capacity(self.anchors.len() * 12);
         for pos in &self.anchors {
-            for c in pos {
-                bytes.extend(c.to_le_bytes());
-            }
+            w.i32x3(*pos);
         }
-        world_kv_set(self.kv_key, bytes);
+        world_kv_set(self.kv_key, w.finish());
     }
 
     /// Record a newly placed (or GUI-self-healed) anchor.
@@ -155,5 +281,20 @@ pub fn consume_one(slot: &mut Option<ItemStackData>) {
             key: s.key,
             count: s.count - 1,
         });
+    }
+}
+
+/// Write back only the slots that changed, as one batched call.
+pub fn write_changed_slots(
+    pos: [i32; 3],
+    before: &[Option<ItemStackData>],
+    after: &[Option<ItemStackData>],
+) {
+    if after != before {
+        let writes = (0..after.len())
+            .filter(|&i| after[i] != before[i])
+            .map(|i| (i as u32, after[i].clone()))
+            .collect();
+        container_set(pos, writes);
     }
 }

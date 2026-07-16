@@ -1,11 +1,11 @@
-//! The server thread and its client-side handle (multiplayer Phase D).
+//! The server thread and its client-side handle.
 //!
 //! [`ServerHandle::spawn`] moves a fully-constructed [`ServerGame`] onto its
 //! OWN thread ("petramond-server", NORMAL priority — it IS the sim, not a
 //! background worker), self-clocked at 20 TPS. The client talks to it
 //! exclusively over std::sync::mpsc channels of protocol MESSAGE VALUES — no
-//! serialization; `Arc` payloads are refcount bumps (the same messages Phase E
-//! ships over TCP).
+//! serialization; `Arc` payloads are refcount bumps (the same messages a
+//! remote connection ships over TCP).
 //!
 //! Lifecycle:
 //! - [`ControlMsg::Shutdown`] (sent by [`ServerHandle::shutdown_and_join`])
@@ -112,7 +112,7 @@ impl ServerHandle {
 
     /// A handle whose server end is a REMOTE server over TCP: the connection's
     /// reader/writer threads present the same channel pair the server thread
-    /// does. Built by the Phase E2 connect worker after `client_handshake`
+    /// does. Built by the connect worker after `client_handshake`
     /// succeeded and `TcpClientConn::spawn` installed the id remap.
     pub(crate) fn from_remote(mut conn: TcpClientConn) -> ServerHandle {
         ServerHandle {
@@ -432,8 +432,8 @@ mod tests {
     }
 
     /// Spawn → exchange messages with the self-clocked thread → clean
-    /// shutdown joins. The full Phase D lifecycle over the real thread and
-    /// channels.
+    /// shutdown joins. The full server-thread lifecycle over the real thread
+    /// and channels.
     #[test]
     fn spawned_server_ticks_answers_and_shuts_down_cleanly() {
         let server = server_game();

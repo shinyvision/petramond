@@ -16,6 +16,7 @@
 
 pub use mod_api::*;
 
+mod bytes;
 mod client;
 mod containers;
 mod core_calls;
@@ -30,6 +31,7 @@ mod worldgen;
 #[doc(hidden)]
 pub mod __rt;
 
+pub use bytes::*;
 pub use client::*;
 pub use containers::*;
 pub use core_calls::*;

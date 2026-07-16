@@ -33,7 +33,7 @@ pub(super) fn row_entries(table: &crate::controls::ActionTable) -> Vec<RowEntry>
 }
 
 pub(super) fn populate(app: &App, state: &mut UiState) {
-    state.set("show_backdrop", UiValue::Bool(app.game.is_none()));
+    super::populate_options_chrome(app, state);
     let remapping = app.remap.as_deref();
     let items: Vec<UiMap> = row_entries(&app.action_table)
         .into_iter()
@@ -76,12 +76,11 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
 }
 
 pub(super) fn handle(app: &mut App, ev: UiEvent) {
+    // Back also disarms any pending remap (`close_options_category`).
+    if super::options_category_back(app, &ev) {
+        return;
+    }
     if let UiEvent::Click { id, item, .. } = ev {
-        if id == "back" {
-            app.cancel_remap();
-            app.close_options_category();
-            return;
-        }
         if id != "bind" {
             return;
         }

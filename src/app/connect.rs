@@ -1,4 +1,4 @@
-//! The Connect to Server flow (multiplayer Phase E2): the screen's session
+//! The Connect to Server flow: the screen's session
 //! state and the ONE background thread that resolves the address, opens the
 //! TCP connection, and runs the join handshake. The worker reports back over
 //! an mpsc channel the ConnectServer screen drains each frame

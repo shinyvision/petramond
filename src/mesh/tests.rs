@@ -1,18 +1,253 @@
 use super::face::{should_flip, vertex_ao};
 use super::*;
 use crate::block::Block;
-use crate::block_state::{LogAxis, SlabSplit, SlabState, StairHalf, StairState};
+use crate::block_state::{LogAxis, SlabSplit, SlabState, StairState};
 use crate::chunk::{Chunk, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_SIZE, SKY_FULL};
+use crate::facing::Facing;
 use crate::section::Section;
+
+// --- Fixtures ---------------------------------------------------------------
+//
+// Packed-vertex decoders, scene builders, and `build_section_mesh` wrappers
+// shared by the tests below. The wrappers answer every voxel lookup from the
+// section itself (air / no water / default stair+slab state outside it);
+// skylight and loadedness default to uniform full sky and everything-loaded
+// unless a test overrides them.
+
+fn shade_idx(v: &Vertex) -> u32 {
+    (v.packed >> 10) & 0x3
+}
+
+/// Word 1's light bits (23..29) — SKY-ONLY since the channel split; every scene
+/// in these tests is sky-lit (no emitters), so it also equals the total light.
+fn light6(v: &Vertex) -> u32 {
+    (v.packed >> 23) & 0x3F
+}
+
+/// AO bits (word 1, 21..23).
+fn ao_idx(v: &Vertex) -> u32 {
+    (v.packed >> 21) & 0x3
+}
+
+/// Tile id bits (word 1, 0..8).
+fn tile_idx(v: &Vertex) -> u32 {
+    v.packed & 0xFF
+}
+
+fn uv_mode(v: &Vertex) -> u32 {
+    (v.packed >> super::vertex::UV_MODE_SHIFT) & 0x7
+}
+
+/// The cell-local UV bits (packed2 6..11 / 11..16), only meaningful on
+/// UV_MODE_CELL_LOCAL vertices.
+fn cell_uv16(v: &Vertex) -> (u32, u32) {
+    ((v.packed2 >> 6) & 0x1F, (v.packed2 >> 11) & 0x1F)
+}
+
+/// The vertex of face kind `shade` sitting exactly at `pos`, or panic.
+fn vert_at(verts: &[Vertex], shade: u32, pos: [f32; 3]) -> &Vertex {
+    verts
+        .iter()
+        .find(|v| {
+            shade_idx(v) == shade
+                && v.pos
+                    .iter()
+                    .zip(pos.iter())
+                    .all(|(a, b)| (a - b).abs() < 1e-3)
+        })
+        .unwrap_or_else(|| panic!("no face-kind-{shade} vertex at {pos:?}"))
+}
+
+fn in_section(wx: i32, wy: i32, wz: i32) -> bool {
+    let r = 0..SECTION_SIZE as i32;
+    r.contains(&wx) && r.contains(&wy) && r.contains(&wz)
+}
+
+/// A section at (0, 0, 0) with the given blocks set on empty air.
+fn section_with(blocks: &[((usize, usize, usize), Block)]) -> Section {
+    let mut section = Section::new(0, 0, 0);
+    for &((x, y, z), b) in blocks {
+        section.set_block(x, y, z, b);
+    }
+    section
+}
+
+/// A section whose whole y=0 layer is `block` — a flat 16×16 floor.
+fn floor_section(block: Block) -> Section {
+    let mut section = Section::new(0, 0, 0);
+    for z in 0..SECTION_SIZE {
+        for x in 0..SECTION_SIZE {
+            section.set_block(x, 0, z, block);
+        }
+    }
+    section
+}
+
+/// Mesh `section` standalone with overridable skylight and loadedness; all
+/// other lookups answer from the section itself.
+fn mesh_with(
+    section: &Section,
+    sky: impl Fn(i32, i32, i32) -> u8,
+    loaded: impl Fn(i32, i32, i32) -> bool,
+) -> ChunkMesh {
+    build_section_mesh(
+        section,
+        SectionPos::new(0, 0, 0),
+        |wx, wy, wz| {
+            if in_section(wx, wy, wz) {
+                section.block_raw(wx as usize, wy as usize, wz as usize)
+            } else {
+                Block::Air.id()
+            }
+        },
+        |wx, wy, wz| {
+            if in_section(wx, wy, wz) {
+                section.stair_state(wx as usize, wy as usize, wz as usize)
+            } else {
+                StairState::default()
+            }
+        },
+        |wx, wy, wz| {
+            if in_section(wx, wy, wz) {
+                section.slab_state(wx as usize, wy as usize, wz as usize)
+            } else {
+                SlabState::EMPTY
+            }
+        },
+        |wx, wy, wz| {
+            if in_section(wx, wy, wz) {
+                section.water_meta(wx as usize, wy as usize, wz as usize)
+            } else {
+                0
+            }
+        },
+        |_, _| 0,
+        sky,
+        |_, _, _| 0,
+        loaded,
+    )
+}
+
+/// Mesh `section` standalone under uniform full skylight, everything loaded.
+fn mesh(section: &Section) -> ChunkMesh {
+    mesh_with(section, |_, _, _| SKY_FULL, |_, _, _| true)
+}
+
+/// Mesh `section` standalone with a custom baked-skylight shape.
+fn mesh_with_sky(section: &Section, sky: impl Fn(i32, i32, i32) -> u8) -> ChunkMesh {
+    mesh_with(section, sky, |_, _, _| true)
+}
+
+/// Mesh one section of a multi-section scene: blocks and skylight answer from
+/// world-coordinate closures (no stairs/slabs/water anywhere, all loaded).
+fn mesh_in_scene(
+    section: &Section,
+    pos: SectionPos,
+    block: impl Fn(i32, i32, i32) -> u8,
+    sky: impl Fn(i32, i32, i32) -> u8,
+) -> ChunkMesh {
+    build_section_mesh(
+        section,
+        pos,
+        block,
+        |_, _, _| StairState::default(),
+        |_, _, _| SlabState::EMPTY,
+        |_, _, _| 0,
+        |_, _| 0,
+        sky,
+        |_, _, _| 0,
+        |_, _, _| true,
+    )
+}
+
+/// A section holding bottom-half stairs (plus companion blocks), meshed
+/// standalone under uniform full skylight.
+fn mesh_stairs(
+    blocks: &[((usize, usize, usize), Block)],
+    facings: &[((usize, usize, usize), Facing)],
+) -> ChunkMesh {
+    let mut section = section_with(blocks);
+    for &((x, y, z), f) in facings {
+        section.set_stair_facing(x, y, z, f);
+    }
+    mesh(&section)
+}
+
+/// Sampler over a computed skylight band, for the skylight unit tests.
+struct TestSky {
+    band: Box<[u8]>,
+    ylo: i32,
+    yhi: i32,
+}
+
+impl TestSky {
+    fn at(&self, x: i32, y: i32, z: i32) -> u8 {
+        if y > self.yhi {
+            return SKY_FULL;
+        }
+        if y < self.ylo {
+            return 0;
+        }
+        let ay = y - self.ylo;
+        self.band[((ay * CHUNK_SZ as i32 + z) * CHUNK_SX as i32 + x) as usize]
+    }
+}
+
+fn solo_skylight(c: &Chunk) -> TestSky {
+    let (band, ylo, yhi) = compute_chunk_skylight(c);
+    TestSky { band, ylo, yhi }
+}
+
+/// Fill the chunk's whole 16×16 footprint with `block` for every y in `ys`.
+fn fill_chunk_layers(c: &mut Chunk, ys: std::ops::RangeInclusive<usize>, block: Block) {
+    for y in ys {
+        for z in 0..CHUNK_SZ {
+            for x in 0..CHUNK_SX {
+                c.set_block(x, y, z, block);
+            }
+        }
+    }
+}
+
+/// Stone floor (y=0..=4) over the whole chunk, so test columns are not open
+/// below -- keeps the volumetric descent the only thing under study.
+fn floored_chunk() -> Chunk {
+    let mut c = Chunk::new(0, 0);
+    fill_chunk_layers(&mut c, 0..=4, Block::Stone);
+    c
+}
+
+/// Build an opaque-walled vertical shaft of `fill` from y=1..=8 over a floor,
+/// so the only light path is straight down through `fill`.
+fn walled_shaft(fill: Block) -> Chunk {
+    let mut c = Chunk::new(0, 0);
+    fill_chunk_layers(&mut c, 0..=0, Block::Stone);
+    for y in 1..=8 {
+        c.set_block(8, y, 8, fill);
+        for (x, z) in [(7, 8), (9, 8), (8, 7), (8, 9)] {
+            c.set_block(x, y, z, Block::Stone);
+        }
+    }
+    c
+}
+
+/// `roof` across the whole chunk at y=10 over a floored chunk, with one open
+/// shaft cell at (8, 10, 8).
+fn roof_with_open_shaft(roof: Block) -> Chunk {
+    let mut c = floored_chunk();
+    fill_chunk_layers(&mut c, 10..=10, roof);
+    c.set_block(8, 10, 8, Block::Air);
+    c
+}
+
+// --- Tests ------------------------------------------------------------------
 
 /// A cross-model plant adds a two-plane X billboard to the OPAQUE (cutout) pass,
 /// drawn in both windings, and does NOT cull its supporting block's faces.
 #[test]
 fn cross_plant_emits_double_sided_billboards() {
     // Bare stone cube at an interior voxel: all 6 faces drawn (air neighbours).
-    let mut bare = Section::new(0, 0, 0);
-    bare.set_block(8, 8, 8, Block::Stone);
-    let m0 = mesh_section_standalone(&bare);
+    let m0 = mesh(&section_with(&[((8, 8, 8), Block::Stone)]));
     assert_eq!(
         m0.opaque.len(),
         24,
@@ -20,10 +255,10 @@ fn cross_plant_emits_double_sided_billboards() {
     );
 
     // Same, plus a short-grass plant on top.
-    let mut withplant = Section::new(0, 0, 0);
-    withplant.set_block(8, 8, 8, Block::Stone);
-    withplant.set_block(8, 9, 8, Block::ShortGrass);
-    let m1 = mesh_section_standalone(&withplant);
+    let m1 = mesh(&section_with(&[
+        ((8, 8, 8), Block::Stone),
+        ((8, 9, 8), Block::ShortGrass),
+    ]));
 
     // Plant adds exactly 2 planes x 4 verts = 8 verts, and 2 planes x (6 front +
     // 6 back) = 24 indices. The stone's faces are untouched (plant is non-opaque).
@@ -48,16 +283,13 @@ fn cross_plant_emits_double_sided_billboards() {
 /// (only water feeds it now) and a non-empty opaque buffer.
 #[test]
 fn leaves_go_to_opaque_pass() {
-    let mut section = Section::new(0, 0, 0);
-    section.set_block(8, 8, 8, Block::OakLeaves);
-
-    let mesh = mesh_section_standalone(&section);
+    let m = mesh(&section_with(&[((8, 8, 8), Block::OakLeaves)]));
     assert!(
-        mesh.transparent_idx.is_empty(),
+        m.transparent_idx.is_empty(),
         "leaves+no-water section should have an empty transparent buffer"
     );
     assert!(
-        !mesh.opaque_idx.is_empty(),
+        !m.opaque_idx.is_empty(),
         "leaves should fill the opaque buffer"
     );
 }
@@ -67,15 +299,13 @@ fn leaves_go_to_opaque_pass() {
 /// wall reads as one sheet. Glass↔air and glass↔stone faces still draw.
 #[test]
 fn adjacent_glass_blocks_cull_their_shared_faces() {
-    let mut solo = Section::new(0, 0, 0);
-    solo.set_block(8, 8, 8, Block::Glass);
-    let m_solo = mesh_section_standalone(&solo);
+    let m_solo = mesh(&section_with(&[((8, 8, 8), Block::Glass)]));
     assert_eq!(m_solo.opaque.len(), 24, "lone glass emits all 6 faces");
 
-    let mut pair = Section::new(0, 0, 0);
-    pair.set_block(8, 8, 8, Block::Glass);
-    pair.set_block(9, 8, 8, Block::Glass);
-    let m_pair = mesh_section_standalone(&pair);
+    let m_pair = mesh(&section_with(&[
+        ((8, 8, 8), Block::Glass),
+        ((9, 8, 8), Block::Glass),
+    ]));
     assert_eq!(
         m_pair.opaque.len(),
         40,
@@ -89,17 +319,15 @@ fn adjacent_glass_blocks_cull_their_shared_faces() {
 /// `no_pane_connect` block (the inset cactus) stays a bare post.
 #[test]
 fn pane_arms_connect_and_bury_shared_end_faces() {
-    let mut lone = Section::new(0, 0, 0);
-    lone.set_block(8, 8, 8, Block::GlassPane);
-    let m_lone = mesh_section_standalone(&lone);
+    let m_lone = mesh(&section_with(&[((8, 8, 8), Block::GlassPane)]));
     assert_eq!(m_lone.opaque.len(), 24, "bare post: 4 sides + 2 caps");
 
     // Two connected panes: per pane an east/west run (2 broad faces + 1 free-end
     // edge strip) + post and arm caps (4) = 7 quads; nothing on the shared plane.
-    let mut pair = Section::new(0, 0, 0);
-    pair.set_block(8, 8, 8, Block::GlassPane);
-    pair.set_block(9, 8, 8, Block::GlassPane);
-    let m_pair = mesh_section_standalone(&pair);
+    let m_pair = mesh(&section_with(&[
+        ((8, 8, 8), Block::GlassPane),
+        ((9, 8, 8), Block::GlassPane),
+    ]));
     assert_eq!(
         m_pair.opaque.len(),
         56,
@@ -125,10 +353,10 @@ fn pane_arms_connect_and_bury_shared_end_faces() {
     // The cactus carries no_pane_connect: the pane beside it stays a bare post.
     // Every pane vertex lives in the post's thin span (x < 9), every cactus
     // vertex at x >= 9, so the pane's share of the mesh is cleanly separable.
-    let mut beside_cactus = Section::new(0, 0, 0);
-    beside_cactus.set_block(8, 8, 8, Block::GlassPane);
-    beside_cactus.set_block(9, 8, 8, Block::Cactus);
-    let m = mesh_section_standalone(&beside_cactus);
+    let m = mesh(&section_with(&[
+        ((8, 8, 8), Block::GlassPane),
+        ((9, 8, 8), Block::Cactus),
+    ]));
     let pane_verts = m.opaque.iter().filter(|v| v.pos[0] < 9.0).count();
     assert_eq!(
         pane_verts, 24,
@@ -136,36 +364,14 @@ fn pane_arms_connect_and_bury_shared_end_faces() {
     );
 }
 
+/// A water source cell at the section's +X face, meshed with the east
+/// neighbour either loaded (air) or not yet streamed in.
 fn edge_water_mesh(east_section_loaded: bool) -> ChunkMesh {
     let mut section = Section::new(0, 0, 0);
     section.set_water(SECTION_SIZE - 1, 8, 8, Block::Water, 0);
-    let in_bounds = |wx: i32, wy: i32, wz: i32| {
-        (0..SECTION_SIZE as i32).contains(&wx)
-            && (0..SECTION_SIZE as i32).contains(&wy)
-            && (0..SECTION_SIZE as i32).contains(&wz)
-    };
-    build_section_mesh(
+    mesh_with(
         &section,
-        SectionPos::new(0, 0, 0),
-        |wx, wy, wz| {
-            if in_bounds(wx, wy, wz) {
-                section.block_raw(wx as usize, wy as usize, wz as usize)
-            } else {
-                Block::Air.id()
-            }
-        },
-        |_, _, _| StairState::default(),
-        |_, _, _| SlabState::EMPTY,
-        |wx, wy, wz| {
-            if in_bounds(wx, wy, wz) {
-                section.water_meta(wx as usize, wy as usize, wz as usize)
-            } else {
-                0
-            }
-        },
-        |_, _| 0,
         |_, _, _| SKY_FULL,
-        |_, _, _| 0,
         |wx, _, _| wx < SECTION_SIZE as i32 || east_section_loaded,
     )
 }
@@ -213,7 +419,7 @@ fn water_meshing_picks_still_vs_flow_tiles_and_varies_height() {
     section.set_block(11, 4, 8, Block::Stone);
     section.set_water(11, 5, 8, Block::Water, 4); // flowing, opens east onto air
 
-    let mesh = mesh_section_standalone(&section);
+    let m = mesh(&section);
 
     // Decode the upward-facing tile for each top vertex (those raised above the
     // cell floor). Collect tile ids and the lowest/highest surface heights.
@@ -221,8 +427,8 @@ fn water_meshing_picks_still_vs_flow_tiles_and_varies_height() {
     let mut saw_flow = false;
     let mut min_top = f32::INFINITY;
     let mut max_top: f32 = 0.0;
-    for v in &mesh.transparent {
-        let tile = v.packed & 0xFFu32;
+    for v in &m.transparent {
+        let tile = tile_idx(v);
         // Top vertices sit above the cell base (y=5); skip the side/bottom ones.
         if v.pos[1] > 5.05 {
             min_top = min_top.min(v.pos[1]);
@@ -256,16 +462,14 @@ fn water_meshing_picks_still_vs_flow_tiles_and_varies_height() {
 /// down doesn't show the floor through the height gap.
 #[test]
 fn submerged_water_renders_exposed_step_toward_a_shorter_neighbour() {
-    let mut section = Section::new(0, 0, 0);
-    section.set_block(8, 3, 8, Block::Stone);
-    section.set_block(9, 3, 8, Block::Stone);
+    let mut section = section_with(&[((8, 3, 8), Block::Stone), ((9, 3, 8), Block::Stone)]);
     // 2-deep column at x=8 -> the y=4 cell is capped (water above) and full.
     section.set_water(8, 4, 8, Block::Water, 0);
     section.set_water(8, 5, 8, Block::Water, 0);
     // Shorter open-surface flowing cell next door (air above it).
     section.set_water(9, 4, 8, Block::Water, 3);
 
-    let mesh = mesh_section_standalone(&section);
+    let m = mesh(&section);
 
     // The capped cell's east face lives on the x=9 plane. It is rendered (not
     // culled water<->water) as a BAND: trimmed at the bottom to the neighbour's
@@ -273,7 +477,7 @@ fn submerged_water_renders_exposed_step_toward_a_shorter_neighbour() {
     // (water behind water) isn't drawn. The trimmed bottom edge is the only water
     // vertex on that plane strictly inside (4, 5); a culled or full-height face
     // would have none there.
-    let band_bottom = mesh.transparent.iter().any(|v| {
+    let band_bottom = m.transparent.iter().any(|v| {
         (v.pos[0] - 9.0).abs() < 1e-3 && shade_idx(v) == 2 && v.pos[1] > 4.05 && v.pos[1] < 4.95
     });
     assert!(
@@ -289,15 +493,13 @@ fn submerged_water_renders_exposed_step_toward_a_shorter_neighbour() {
 fn falling_water_renders_exposed_step_toward_a_shorter_neighbour() {
     const FALLING_META: u8 = 0x80;
 
-    let mut section = Section::new(0, 0, 0);
-    section.set_block(8, 3, 8, Block::Stone);
-    section.set_block(9, 3, 8, Block::Stone);
+    let mut section = section_with(&[((8, 3, 8), Block::Stone), ((9, 3, 8), Block::Stone)]);
     section.set_water(8, 4, 8, Block::Water, FALLING_META);
     section.set_water(9, 4, 8, Block::Water, 3);
 
-    let mesh = mesh_section_standalone(&section);
+    let m = mesh(&section);
 
-    let step = mesh
+    let step = m
         .transparent
         .iter()
         .filter(|v| (v.pos[0] - 9.0).abs() < 1e-3 && shade_idx(v) == 2)
@@ -313,54 +515,11 @@ fn falling_water_renders_exposed_step_toward_a_shorter_neighbour() {
     );
 }
 
-fn shade_idx(v: &Vertex) -> u32 {
-    (v.packed >> 10) & 0x3
-}
-
-/// Word 1's light bits (23..29) — SKY-ONLY since the channel split; every scene
-/// in these tests is sky-lit (no emitters), so it also equals the total light.
-fn light6(v: &Vertex) -> u32 {
-    (v.packed >> 23) & 0x3F
-}
-
-fn uv_mode(v: &Vertex) -> u32 {
-    (v.packed >> super::vertex::UV_MODE_SHIFT) & 0x7
-}
-
-/// Sampler over a computed skylight band, for the skylight unit tests.
-struct TestSky {
-    band: Box<[u8]>,
-    ylo: i32,
-    yhi: i32,
-}
-
-impl TestSky {
-    fn at(&self, x: i32, y: i32, z: i32) -> u8 {
-        if y > self.yhi {
-            return SKY_FULL;
-        }
-        if y < self.ylo {
-            return 0;
-        }
-        let ay = y - self.ylo;
-        self.band[((ay * CHUNK_SZ as i32 + z) * CHUNK_SX as i32 + x) as usize]
-    }
-}
-
-fn solo_skylight(c: &Chunk) -> TestSky {
-    let (band, ylo, yhi) = compute_chunk_skylight(c);
-    TestSky { band, ylo, yhi }
-}
-
 /// Open columns are full sky (15 = 30 on the x2 scale), and nothing exceeds it.
 #[test]
 fn skylight_open_column_is_full() {
     let mut c = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            c.set_block(x, 0, z, Block::Stone);
-        }
-    }
+    fill_chunk_layers(&mut c, 0..=0, Block::Stone);
     let sky = solo_skylight(&c);
     // Air directly above the floor, open to the sky -> full light.
     assert_eq!(sky.at(8, 1, 8), SKY_FULL);
@@ -374,13 +533,7 @@ fn skylight_open_column_is_full() {
 #[test]
 fn skylight_dug_vertical_shaft_stays_lit_below_old_surface_margin() {
     let mut c = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            for y in 0..=80 {
-                c.set_block(x, y, z, Block::Stone);
-            }
-        }
-    }
+    fill_chunk_layers(&mut c, 0..=80, Block::Stone);
     for y in (1..=80).rev() {
         c.set_block(8, y, 8, Block::Air);
     }
@@ -399,13 +552,7 @@ fn skylight_dug_vertical_shaft_stays_lit_below_old_surface_margin() {
 fn skylight_tunnel_falls_off_by_one_per_block() {
     let mut c = Chunk::new(0, 0);
     // Solid stone slab y=0..=6 across the whole chunk.
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            for y in 0..=6 {
-                c.set_block(x, y, z, Block::Stone);
-            }
-        }
-    }
+    fill_chunk_layers(&mut c, 0..=6, Block::Stone);
     // Vertical shaft open to the sky at (8,*,8).
     for y in 1..=6 {
         c.set_block(8, y, 8, Block::Air);
@@ -429,13 +576,7 @@ fn skylight_flood_crosses_loaded_chunk_border() {
     let mut west = Chunk::new(0, 0);
     let mut east = Chunk::new(1, 0);
     for c in [&mut west, &mut east] {
-        for z in 0..CHUNK_SZ {
-            for x in 0..CHUNK_SX {
-                for y in 0..=6 {
-                    c.set_block(x, y, z, Block::Stone);
-                }
-            }
-        }
+        fill_chunk_layers(c, 0..=6, Block::Stone);
     }
 
     // The light source is an open shaft at the east edge of the west chunk.
@@ -470,49 +611,27 @@ fn skylight_flood_crosses_loaded_chunk_border() {
     assert_eq!(sky.at(2, 3, 8), SKY_FULL - 6);
 }
 
-/// Build an opaque-walled vertical shaft of `fill` from y=1..=8 over a floor,
-/// so the only light path is straight down through `fill`.
-fn walled_shaft(fill: Block) -> Chunk {
-    let mut c = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            c.set_block(x, 0, z, Block::Stone);
+/// Straight-down attenuation through a filtering medium, per layer: water costs
+/// a FULL level per layer (2 on the x2 scale, the same rate as air) so light
+/// drops off quickly underwater, while leaves cost HALF (1 on the x2 scale =
+/// 0.5 real) — light reaches deeper into a canopy than into water.
+#[test]
+fn skylight_water_and_leaves_attenuate_per_layer_at_their_rates() {
+    for (fill, per_layer) in [(Block::Water, 2), (Block::OakLeaves, 1)] {
+        let sky = solo_skylight(&walled_shaft(fill));
+        assert_eq!(
+            sky.at(8, 9, 8),
+            SKY_FULL,
+            "air above the {fill:?} shaft is full sky"
+        );
+        for layer in 1..=3u8 {
+            assert_eq!(
+                sky.at(8, 9 - layer as i32, 8),
+                SKY_FULL - layer * per_layer,
+                "{fill:?} attenuation {layer} layer(s) deep"
+            );
         }
     }
-    for y in 1..=8 {
-        c.set_block(8, y, 8, fill);
-        c.set_block(7, y, 8, Block::Stone);
-        c.set_block(9, y, 8, Block::Stone);
-        c.set_block(8, y, 7, Block::Stone);
-        c.set_block(8, y, 9, Block::Stone);
-    }
-    c
-}
-
-/// Water attenuates a FULL light level per layer (2 on the x2 scale = 1 real),
-/// the same rate as air -- so light drops off quickly underwater.
-#[test]
-fn skylight_water_attenuates_one_level_per_layer() {
-    let sky = solo_skylight(&walled_shaft(Block::Water));
-    assert_eq!(sky.at(8, 9, 8), SKY_FULL, "air above the water is full sky");
-    assert_eq!(sky.at(8, 8, 8), SKY_FULL - 2);
-    assert_eq!(sky.at(8, 7, 8), SKY_FULL - 4);
-    assert_eq!(sky.at(8, 6, 8), SKY_FULL - 6);
-}
-
-/// Leaves still attenuate at HALF rate (1 on the x2 scale = 0.5 real), so
-/// light reaches deeper into a canopy than into water.
-#[test]
-fn skylight_leaves_attenuate_half() {
-    let sky = solo_skylight(&walled_shaft(Block::OakLeaves));
-    assert_eq!(
-        sky.at(8, 9, 8),
-        SKY_FULL,
-        "air above the leaves is full sky"
-    );
-    assert_eq!(sky.at(8, 8, 8), SKY_FULL - 1);
-    assert_eq!(sky.at(8, 7, 8), SKY_FULL - 2);
-    assert_eq!(sky.at(8, 6, 8), SKY_FULL - 3);
 }
 
 /// Leaves occlude AO onto/within themselves: a solid leaf cluster floating in
@@ -532,17 +651,12 @@ fn leaves_self_occlude() {
             }
         }
     }
-    let mesh = mesh_section_standalone(&section);
+    let m = mesh(&section);
     assert!(
-        !mesh.opaque.is_empty(),
+        !m.opaque.is_empty(),
         "leaf cluster should mesh (cutout opaque pass)"
     );
-    let min_ao = mesh
-        .opaque
-        .iter()
-        .map(|v| (v.packed >> 21) & 0x3)
-        .min()
-        .unwrap();
+    let min_ao = m.opaque.iter().map(ao_idx).min().unwrap();
     assert!(
         min_ao < 3,
         "leaves in a cluster must self-occlude (some ao < 3)"
@@ -570,20 +684,6 @@ fn flip_runs_along_darker_diagonal() {
     assert!(!should_flip([2, 1, 1, 2])); // equal sums (3 == 3) -> no flip
 }
 
-/// Stone floor (y=0..=4) over the whole chunk, so test columns are not open
-/// below -- keeps the volumetric descent the only thing under study.
-fn floored_chunk() -> Chunk {
-    let mut c = Chunk::new(0, 0);
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            for y in 0..=4 {
-                c.set_block(x, y, z, Block::Stone);
-            }
-        }
-    }
-    c
-}
-
 /// Volumetric depth darkening: the air BELOW a leaf canopy keeps losing 0.5 a
 /// level (1 on the x2 scale) per block of descent, not just at the leaf -- so it
 /// gets darker the deeper you go under cover (and digging down stays dark, see
@@ -592,11 +692,7 @@ fn floored_chunk() -> Chunk {
 fn skylight_air_below_canopy_darkens_with_depth() {
     let mut c = floored_chunk();
     // A leaf roof at y=10 over the whole chunk; open air pocket y=5..=9 below.
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            c.set_block(x, 10, z, Block::OakLeaves);
-        }
-    }
+    fill_chunk_layers(&mut c, 10..=10, Block::OakLeaves);
     let sky = solo_skylight(&c);
     assert_eq!(
         sky.at(8, 11, 8),
@@ -622,13 +718,7 @@ fn skylight_air_below_canopy_darkens_with_depth() {
 fn skylight_under_water_darkens_with_depth() {
     let mut c = floored_chunk();
     // Water body y=6..=10 over the whole chunk; open air pocket at y=5.
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            for y in 6..=10 {
-                c.set_block(x, y, z, Block::Water);
-            }
-        }
-    }
+    fill_chunk_layers(&mut c, 6..=10, Block::Water);
     let sky = solo_skylight(&c);
     assert_eq!(
         sky.at(8, 11, 8),
@@ -646,11 +736,7 @@ fn skylight_under_water_darkens_with_depth() {
 #[test]
 fn skylight_digging_down_under_cover_keeps_darkening() {
     let mut c = floored_chunk();
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            c.set_block(x, 10, z, Block::OakLeaves);
-        }
-    }
+    fill_chunk_layers(&mut c, 10..=10, Block::OakLeaves);
     for y in 0..=4 {
         c.set_block(8, y, 8, Block::Air);
     } // dig the floor out at (8,*,8)
@@ -679,13 +765,7 @@ fn skylight_digging_down_under_cover_keeps_darkening() {
 #[test]
 fn skylight_depth_gradient_survives_adjacent_open_shaft() {
     let mut c = floored_chunk();
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            for y in 6..=10 {
-                c.set_block(x, y, z, Block::Water);
-            }
-        }
-    }
+    fill_chunk_layers(&mut c, 6..=10, Block::Water);
     // Dig a 1-wide shaft straight through the water at (8,8): re-opens to sky.
     for y in 6..=10 {
         c.set_block(8, y, 8, Block::Air);
@@ -706,17 +786,6 @@ fn skylight_depth_gradient_survives_adjacent_open_shaft() {
             SKY_FULL - 10,
         ]
     );
-}
-
-fn roof_with_open_shaft(roof: Block) -> Chunk {
-    let mut c = floored_chunk();
-    for z in 0..CHUNK_SZ {
-        for x in 0..CHUNK_SX {
-            c.set_block(x, 10, z, roof);
-        }
-    }
-    c.set_block(8, 10, 8, Block::Air);
-    c
 }
 
 /// Leaf-covered light bleeds from an adjacent open skylight the same way
@@ -747,30 +816,18 @@ fn skylight_leaf_covered_side_bleed_is_half_opaque_falloff() {
 /// `vertex_ao_levels`; this proves the builder feeds it the right neighbourhood.
 #[test]
 fn ao_exact_at_concave_step_corner() {
-    let mut section = Section::new(0, 0, 0);
-    // The step block.
-    section.set_block(8, 8, 8, Block::Stone);
-    // The 2-tall pillar one cell over in +X; its upper cube (9,9,8) is the
-    // single edge-occluder of the step block's top (+Y) face.
-    section.set_block(9, 8, 8, Block::Stone);
-    section.set_block(9, 9, 8, Block::Stone);
-    let mesh = mesh_section_standalone(&section);
+    let m = mesh(&section_with(&[
+        // The step block.
+        ((8, 8, 8), Block::Stone),
+        // The 2-tall pillar one cell over in +X; its upper cube (9,9,8) is the
+        // single edge-occluder of the step block's top (+Y) face.
+        ((9, 8, 8), Block::Stone),
+        ((9, 9, 8), Block::Stone),
+    ]));
 
     // The step block's top face is the only +Y (PosY -> shade idx 0) quad whose
     // four corners lie at y == 9 over the step cell x in [8,9], z in [8,9].
-    let ao_at = |wx: f32, wz: f32| -> u32 {
-        let v = mesh
-            .opaque
-            .iter()
-            .find(|v| {
-                (v.packed >> 10) & 0x3 == 0 // PosY
-                    && (v.pos[1] - 9.0).abs() < 1e-3
-                    && (v.pos[0] - wx).abs() < 1e-3
-                    && (v.pos[2] - wz).abs() < 1e-3
-            })
-            .unwrap_or_else(|| panic!("no top-face vertex at ({wx}, 9, {wz})"));
-        (v.packed >> 21) & 0x3
-    };
+    let ao_at = |wx: f32, wz: f32| ao_idx(vert_at(&m.opaque, 0, [wx, 9.0, wz]));
 
     // The two corners on the shared +X edge (x == 9), adjacent to the pillar:
     // one solid edge neighbour each -> ao == 2.
@@ -783,37 +840,19 @@ fn ao_exact_at_concave_step_corner() {
 
 #[test]
 fn stair_bottom_face_uses_the_dark_cell_below_not_smooth_sky_leak() {
-    let pos = crate::chunk::SectionPos::new(0, 0, 0);
-    let mut section = crate::section::Section::new(0, 0, 0);
-    section.set_block(8, 8, 8, Block::OakStairs);
-    section.set_stair_facing(8, 8, 8, crate::facing::Facing::East);
+    let mut section = section_with(&[((8, 8, 8), Block::OakStairs)]);
+    section.set_stair_facing(8, 8, 8, Facing::East);
 
-    let mesh = super::build_section_mesh(
-        &section,
-        pos,
-        |wx, wy, wz| {
-            if (wx, wy, wz) == (8, 8, 8) {
-                Block::OakStairs.id()
-            } else {
-                Block::Air.id()
-            }
-        },
-        |_, _, _| StairState::default(),
-        |_, _, _| SlabState::EMPTY,
-        |_, _, _| 0,
-        |_, _| 0,
-        |wx, wy, wz| {
-            if wy == 7 && (wx, wz) != (8, 8) {
-                SKY_FULL
-            } else {
-                0
-            }
-        },
-        |_, _, _| 0,
-        |_, _, _| true,
-    );
+    // The layer below is fully sky-lit EXCEPT the cell directly under the stair.
+    let m = mesh_with_sky(&section, |wx, wy, wz| {
+        if wy == 7 && (wx, wz) != (8, 8) {
+            SKY_FULL
+        } else {
+            0
+        }
+    });
 
-    let bottom = mesh
+    let bottom = m
         .opaque
         .iter()
         .filter(|v| shade_idx(v) == 3 && (v.pos[1] - 8.0).abs() < 1.0e-3)
@@ -825,52 +864,6 @@ fn stair_bottom_face_uses_the_dark_cell_below_not_smooth_sky_leak() {
     );
 }
 
-/// Mesh a section standalone: all lookups answer from the section itself, air /
-/// full sky / no block light outside it.
-fn mesh_section_standalone(section: &crate::section::Section) -> ChunkMesh {
-    let in_bounds = |wx: i32, wy: i32, wz: i32| {
-        (0..SECTION_SIZE as i32).contains(&wx)
-            && (0..SECTION_SIZE as i32).contains(&wy)
-            && (0..SECTION_SIZE as i32).contains(&wz)
-    };
-    super::build_section_mesh(
-        section,
-        crate::chunk::SectionPos::new(0, 0, 0),
-        |wx, wy, wz| {
-            if in_bounds(wx, wy, wz) {
-                section.block_raw(wx as usize, wy as usize, wz as usize)
-            } else {
-                Block::Air.id()
-            }
-        },
-        |wx, wy, wz| {
-            if in_bounds(wx, wy, wz) {
-                section.stair_state(wx as usize, wy as usize, wz as usize)
-            } else {
-                StairState::default()
-            }
-        },
-        |wx, wy, wz| {
-            if in_bounds(wx, wy, wz) {
-                section.slab_state(wx as usize, wy as usize, wz as usize)
-            } else {
-                SlabState::EMPTY
-            }
-        },
-        |wx, wy, wz| {
-            if in_bounds(wx, wy, wz) {
-                section.water_meta(wx as usize, wy as usize, wz as usize)
-            } else {
-                0
-            }
-        },
-        |_, _| 0,
-        |_, _, _| SKY_FULL,
-        |_, _, _| 0,
-        |_, _, _| true,
-    )
-}
-
 /// A full slab stack of ONE material must mesh exactly like the full cube block:
 /// same quads, same culling (the floor face under it disappears), same AO onto
 /// the surrounding floor, same greedy merging — the tile id is the only thing
@@ -878,12 +871,7 @@ fn mesh_section_standalone(section: &crate::section::Section) -> ChunkMesh {
 #[test]
 fn uniform_full_slab_stack_meshes_like_the_full_cube_block() {
     let build = |cube: bool| {
-        let mut section = crate::section::Section::new(0, 0, 0);
-        for z in 0..SECTION_SIZE {
-            for x in 0..SECTION_SIZE {
-                section.set_block(x, 0, z, Block::Dirt);
-            }
-        }
+        let mut section = floor_section(Block::Dirt);
         if cube {
             section.set_block(5, 1, 5, Block::Stone);
         } else {
@@ -898,7 +886,7 @@ fn uniform_full_slab_stack_meshes_like_the_full_cube_block() {
                 },
             );
         }
-        mesh_section_standalone(&section)
+        mesh(&section)
     };
     let scrub_tile = |mesh: &ChunkMesh| -> Vec<Vertex> {
         mesh.opaque
@@ -926,8 +914,7 @@ fn uniform_full_slab_stack_meshes_like_the_full_cube_block() {
 /// side faces carrying both materials' side tiles.
 #[test]
 fn mixed_full_slab_stack_covers_the_cell_with_both_layer_tiles() {
-    let mut section = crate::section::Section::new(0, 0, 0);
-    section.set_block(8, 8, 8, Block::StoneSlab);
+    let mut section = section_with(&[((8, 8, 8), Block::StoneSlab)]);
     section.set_slab_state(
         8,
         8,
@@ -937,15 +924,15 @@ fn mixed_full_slab_stack_covers_the_cell_with_both_layer_tiles() {
             layers: [Block::StoneSlab, Block::DirtSlab],
         },
     );
-    let mesh = mesh_section_standalone(&section);
+    let m = mesh(&section);
 
     // Full-cell cover: 2 full caps + 4 sides x 2 half quads = 10 quads.
-    assert_eq!(mesh.opaque.len(), 40, "mixed stack should emit 10 quads");
+    assert_eq!(m.opaque.len(), 40, "mixed stack should emit 10 quads");
     let tiles_at = |pred: &dyn Fn(&Vertex) -> bool| -> std::collections::HashSet<u32> {
-        mesh.opaque
+        m.opaque
             .iter()
             .filter(|v| pred(v))
-            .map(|v| v.packed & 0xFF)
+            .map(tile_idx)
             .collect()
     };
     let top = tiles_at(&|v| shade_idx(v) == 0);
@@ -976,8 +963,7 @@ fn mixed_full_slab_stack_covers_the_cell_with_both_layer_tiles() {
 /// a full (mixed) stack and an adjacent opaque cube must emit no quad at all.
 #[test]
 fn faces_between_a_full_slab_stack_and_an_opaque_cube_are_culled() {
-    let mut section = crate::section::Section::new(0, 0, 0);
-    section.set_block(8, 8, 8, Block::StoneSlab);
+    let mut section = section_with(&[((8, 8, 8), Block::StoneSlab), ((9, 8, 8), Block::Stone)]);
     section.set_slab_state(
         8,
         8,
@@ -987,10 +973,9 @@ fn faces_between_a_full_slab_stack_and_an_opaque_cube_are_culled() {
             layers: [Block::StoneSlab, Block::DirtSlab],
         },
     );
-    section.set_block(9, 8, 8, Block::Stone);
-    let mesh = mesh_section_standalone(&section);
+    let m = mesh(&section);
 
-    for quad in mesh.opaque.chunks(4) {
+    for quad in m.opaque.chunks(4) {
         assert!(
             !quad.iter().all(|v| (v.pos[0] - 9.0).abs() < 1e-3),
             "no quad may sit on the stack/cube boundary plane (stack side {:?})",
@@ -1006,7 +991,7 @@ fn faces_between_a_full_slab_stack_and_an_opaque_cube_are_culled() {
 /// exactly like one standing on full blocks.
 #[test]
 fn wall_face_above_a_top_slab_floor_ignores_under_slab_darkness() {
-    let mut section = crate::section::Section::new(0, 0, 0);
+    let mut section = Section::new(0, 0, 0);
     // A stone wall along z=7 rising one block above a top-slab floor that
     // fills z=8..=10, with a solid base under the wall.
     for x in 6..=10 {
@@ -1024,48 +1009,20 @@ fn wall_face_above_a_top_slab_floor_ignores_under_slab_darkness() {
         }
     }
 
-    let in_bounds = |wx: i32, wy: i32, wz: i32| {
-        (0..SECTION_SIZE as i32).contains(&wx)
-            && (0..SECTION_SIZE as i32).contains(&wy)
-            && (0..SECTION_SIZE as i32).contains(&wz)
-    };
-    let mesh = super::build_section_mesh(
-        &section,
-        crate::chunk::SectionPos::new(0, 0, 0),
-        |wx, wy, wz| {
-            if in_bounds(wx, wy, wz) {
-                section.block_raw(wx as usize, wy as usize, wz as usize)
-            } else {
-                Block::Air.id()
-            }
-        },
-        |_, _, _| StairState::default(),
-        |wx, wy, wz| {
-            if in_bounds(wx, wy, wz) {
-                section.slab_state(wx as usize, wy as usize, wz as usize)
-            } else {
-                SlabState::EMPTY
-            }
-        },
-        |_, _, _| 0,
-        |_, _| 0,
-        // Baked-light shape: the slab cells and the space below them carry the
-        // dark under-floor light; everything above and beside is fully sky-lit.
-        |wx, wy, wz| {
-            if wy <= 8 && (6..=10).contains(&wx) && (8..=10).contains(&wz) {
-                0
-            } else {
-                SKY_FULL
-            }
-        },
-        |_, _, _| 0,
-        |_, _, _| true,
-    );
+    // Baked-light shape: the slab cells and the space below them carry the
+    // dark under-floor light; everything above and beside is fully sky-lit.
+    let m = mesh_with_sky(&section, |wx, wy, wz| {
+        if wy <= 8 && (6..=10).contains(&wx) && (8..=10).contains(&wz) {
+            0
+        } else {
+            SKY_FULL
+        }
+    });
 
     // The wall's face over the floor: quads on the z=8 plane wholly above the
     // slab tops (the buried faces below the floor surface keep their darkness).
     let mut checked = 0;
-    for quad in mesh.opaque.chunks(4) {
+    for quad in m.opaque.chunks(4) {
         if !quad
             .iter()
             .all(|v| (v.pos[2] - 8.0).abs() < 1e-3 && v.pos[1] >= 9.0 - 1e-3)
@@ -1088,41 +1045,15 @@ fn wall_face_above_a_top_slab_floor_ignores_under_slab_darkness() {
     );
 }
 
-/// The cell-local UV bits (packed2 6..11 / 11..16), only meaningful on
-/// UV_MODE_CELL_LOCAL vertices.
-fn cell_uv16(v: &Vertex) -> (u32, u32) {
-    ((v.packed2 >> 6) & 0x1F, (v.packed2 >> 11) & 0x1F)
-}
-
 #[test]
 fn horizontal_log_bark_faces_use_axis_aligned_cell_local_uvs() {
     use super::vertex::{UV_MODE_CELL_LOCAL, UV_MODE_NONE};
 
-    let pos = crate::chunk::SectionPos::new(0, 0, 0);
-    let mut section = crate::section::Section::new(0, 0, 0);
-    section.set_block(8, 8, 8, Block::OakLog);
+    let mut section = section_with(&[((8, 8, 8), Block::OakLog)]);
     section.set_log_axis(8, 8, 8, LogAxis::X);
+    let m = mesh(&section);
 
-    let mesh = super::build_section_mesh(
-        &section,
-        pos,
-        |wx, wy, wz| {
-            if (wx, wy, wz) == (8, 8, 8) {
-                Block::OakLog.id()
-            } else {
-                Block::Air.id()
-            }
-        },
-        |_, _, _| StairState::default(),
-        |_, _, _| SlabState::EMPTY,
-        |_, _, _| 0,
-        |_, _| 0,
-        |_, _, _| SKY_FULL,
-        |_, _, _| 0,
-        |_, _, _| true,
-    );
-
-    let top_bark = mesh
+    let top_bark = m
         .opaque
         .iter()
         .filter(|v| shade_idx(v) == 0 && (v.pos[1] - 9.0).abs() < 1.0e-3)
@@ -1140,7 +1071,7 @@ fn horizontal_log_bark_faces_use_axis_aligned_cell_local_uvs() {
         "the rotated bark face must still span the full tile"
     );
 
-    let end_caps = mesh
+    let end_caps = m
         .opaque
         .iter()
         .filter(|v| {
@@ -1159,63 +1090,20 @@ fn horizontal_log_bark_faces_use_axis_aligned_cell_local_uvs() {
     );
 }
 
-/// Mesh a lone stair (with optional extra blocks) through the section path with
-/// uniform full skylight, so tests can probe stair-only geometry.
-fn mesh_stair_fixture(
-    blocks: &[((i32, i32, i32), Block)],
-    facings: &[((i32, i32, i32), crate::facing::Facing)],
-) -> ChunkMesh {
-    let pos = crate::chunk::SectionPos::new(0, 0, 0);
-    let mut section = crate::section::Section::new(0, 0, 0);
-    for &((x, y, z), b) in blocks {
-        section.set_block(x as usize, y as usize, z as usize, b);
-    }
-    for &((x, y, z), f) in facings {
-        section.set_stair_facing(x as usize, y as usize, z as usize, f);
-    }
-    let blocks = blocks.to_vec();
-    let facings = facings.to_vec();
-    super::build_section_mesh(
-        &section,
-        pos,
-        move |wx, wy, wz| {
-            blocks
-                .iter()
-                .find(|(p, _)| *p == (wx, wy, wz))
-                .map_or(Block::Air.id(), |(_, b)| b.id())
-        },
-        move |wx, wy, wz| {
-            facings
-                .iter()
-                .find(|(p, _)| *p == (wx, wy, wz))
-                .map_or(StairState::default(), |(_, f)| {
-                    StairState::new(*f, StairHalf::Bottom)
-                })
-        },
-        |_, _, _| SlabState::EMPTY,
-        |_, _, _| 0,
-        |_, _| 0,
-        |_, _, _| SKY_FULL,
-        |_, _, _| 0,
-        |_, _, _| true,
-    )
-}
-
 /// Every stair face carries cell-local UVs, and the exposed full bottom plane
 /// merges into ONE quad spanning one full tile — the underside must read as an
 /// uncut block face, not four restarted quadrants.
 #[test]
 fn stair_underside_is_one_full_tile_quad_with_cell_local_uvs() {
     use super::vertex::UV_MODE_CELL_LOCAL;
-    use crate::facing::Facing;
 
-    let mesh = mesh_stair_fixture(
+    let m = mesh_stairs(
         &[((8, 8, 8), Block::RedwoodStairs)],
         &[((8, 8, 8), Facing::South)],
     );
 
-    assert!(!mesh.opaque.is_empty());
-    for v in &mesh.opaque {
+    assert!(!m.opaque.is_empty());
+    for v in &m.opaque {
         assert_eq!(
             uv_mode(v),
             UV_MODE_CELL_LOCAL,
@@ -1223,7 +1111,7 @@ fn stair_underside_is_one_full_tile_quad_with_cell_local_uvs() {
         );
     }
 
-    let bottom: Vec<_> = mesh
+    let bottom: Vec<_> = m
         .opaque
         .iter()
         .filter(|v| shade_idx(v) == 3 && (v.pos[1] - 8.0).abs() < 1.0e-3)
@@ -1249,9 +1137,7 @@ fn stair_underside_is_one_full_tile_quad_with_cell_local_uvs() {
 /// planes must darken toward the wall (the AO gradient survives, continuously).
 #[test]
 fn stair_plane_lighting_is_continuous_beside_a_wall() {
-    use crate::facing::Facing;
-
-    let mesh = mesh_stair_fixture(
+    let m = mesh_stairs(
         &[
             ((8, 8, 8), Block::OakStairs),
             ((7, 8, 8), Block::Stone),
@@ -1264,7 +1150,7 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
     // both packed words (AO + sky light + block light + cell UV).
     let mut seen: std::collections::HashMap<([u32; 3], u32), (u32, u32)> =
         std::collections::HashMap::new();
-    for v in &mesh.opaque {
+    for v in &m.opaque {
         let key = (v.pos.map(f32::to_bits), shade_idx(v));
         // Ignore the per-quad corner index (bits 8..10); everything else —
         // tile, AO, sky light, block light, cell UV — must agree.
@@ -1278,7 +1164,7 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
         }
     }
 
-    let tread: Vec<_> = mesh
+    let tread: Vec<_> = m
         .opaque
         .iter()
         .filter(|v| shade_idx(v) == 0 && (v.pos[1] - 8.5).abs() < 1.0e-3)
@@ -1289,9 +1175,8 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
         "the tread top must merge into a single quad (no mid-face seam)"
     );
 
-    let ao = |v: &&Vertex| (v.packed >> 21) & 0x3;
     for plane_y in [8.5, 9.0] {
-        let plane: Vec<_> = mesh
+        let plane: Vec<_> = m
             .opaque
             .iter()
             .filter(|v| shade_idx(v) == 0 && (v.pos[1] - plane_y).abs() < 1.0e-3)
@@ -1299,13 +1184,13 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
         let wall_side = plane
             .iter()
             .filter(|v| (v.pos[0] - 8.0).abs() < 1.0e-3)
-            .map(ao)
+            .map(|v| ao_idx(v))
             .max()
             .unwrap();
         let open_side = plane
             .iter()
             .filter(|v| (v.pos[0] - 9.0).abs() < 1.0e-3)
-            .map(ao)
+            .map(|v| ao_idx(v))
             .min()
             .unwrap();
         assert!(
@@ -1320,9 +1205,7 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
 /// full cube in an identical neighbourhood.
 #[test]
 fn stair_underside_shades_like_a_full_block_bottom() {
-    use crate::facing::Facing;
-
-    let mesh = mesh_stair_fixture(
+    let m = mesh_stairs(
         &[
             ((8, 8, 8), Block::OakStairs),
             ((7, 7, 8), Block::Stone),
@@ -1332,19 +1215,7 @@ fn stair_underside_shades_like_a_full_block_bottom() {
         &[((8, 8, 8), Facing::East)],
     );
 
-    let ao_at = |x: f32, z: f32| -> u32 {
-        let v = mesh
-            .opaque
-            .iter()
-            .find(|v| {
-                shade_idx(v) == 3
-                    && (v.pos[1] - 8.0).abs() < 1.0e-3
-                    && (v.pos[0] - x).abs() < 1.0e-3
-                    && (v.pos[2] - z).abs() < 1.0e-3
-            })
-            .unwrap_or_else(|| panic!("no bottom-face vertex at ({x}, 8, {z})"));
-        (v.packed >> 21) & 0x3
-    };
+    let ao_at = |x: f32, z: f32| ao_idx(vert_at(&m.opaque, 3, [x, 8.0, z]));
 
     for dz in [0.0, 1.0] {
         for (stair_x, cube_x) in [(8.0, 12.0), (9.0, 13.0)] {
@@ -1363,36 +1234,12 @@ fn stair_underside_shades_like_a_full_block_bottom() {
 
 #[test]
 fn stair_mesh_uses_resolved_outside_corner_shape() {
-    use crate::facing::Facing;
-
-    let pos = crate::chunk::SectionPos::new(0, 0, 0);
-    let mut section = crate::section::Section::new(0, 0, 0);
-    section.set_block(8, 8, 8, Block::OakStairs);
-    section.set_stair_facing(8, 8, 8, Facing::East);
-    section.set_block(7, 8, 8, Block::OakStairs);
-    section.set_stair_facing(7, 8, 8, Facing::South);
-
-    let mesh = super::build_section_mesh(
-        &section,
-        pos,
-        |wx, wy, wz| match (wx, wy, wz) {
-            (8, 8, 8) | (7, 8, 8) => Block::OakStairs.id(),
-            _ => Block::Air.id(),
-        },
-        |wx, wy, wz| match (wx, wy, wz) {
-            (8, 8, 8) => StairState::new(Facing::East, StairHalf::Bottom),
-            (7, 8, 8) => StairState::new(Facing::South, StairHalf::Bottom),
-            _ => StairState::default(),
-        },
-        |_, _, _| SlabState::EMPTY,
-        |_, _, _| 0,
-        |_, _| 0,
-        |_, _, _| SKY_FULL,
-        |_, _, _| 0,
-        |_, _, _| true,
+    let m = mesh_stairs(
+        &[((8, 8, 8), Block::OakStairs), ((7, 8, 8), Block::OakStairs)],
+        &[((8, 8, 8), Facing::East), ((7, 8, 8), Facing::South)],
     );
 
-    let target_high_top = mesh
+    let target_high_top = m
         .opaque
         .iter()
         .filter(|v| {
@@ -1591,23 +1438,21 @@ mod parallel_parity_tests {
 #[test]
 fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
     use crate::atlas::Tile;
-    use crate::facing::Facing;
     use crate::furnace::Furnace;
 
-    let mut section = Section::new(0, 0, 0);
-    section.set_block(8, 8, 8, Block::Furnace);
+    let mut section = section_with(&[((8, 8, 8), Block::Furnace)]);
     section.insert_furnace(8, 8, 8, Furnace::default());
     section.insert_entity_facing(8, 8, 8, Facing::East);
 
     let count = |mesh: &ChunkMesh, tile: Tile| {
         mesh.opaque
             .iter()
-            .filter(|v| v.packed & 0xFF == tile.index() as u32)
+            .filter(|v| tile_idx(v) == tile.index() as u32)
             .count()
     };
 
     // Unlit: 6 faces × 4 verts — 1 front, 3 sides, 2 top/bottom.
-    let m = mesh_section_standalone(&section);
+    let m = mesh(&section);
     assert_eq!(
         count(&m, Tile::named("furnace_front")),
         4,
@@ -1635,7 +1480,7 @@ fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
             ..Default::default()
         },
     );
-    let lit = mesh_section_standalone(&section);
+    let lit = mesh(&section);
     assert_eq!(
         count(&lit, Tile::named("furnace_front_on")),
         4,
@@ -1656,39 +1501,10 @@ fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
 /// per-cell face count. Pins the merge condition + the (W-1,H-1) packing the shader decodes.
 #[test]
 fn greedy_merges_flat_floor_into_tiled_quads() {
-    use crate::chunk::SectionPos;
-    use crate::section::Section;
-
-    let pos = SectionPos::new(0, 0, 0);
-    let mut section = Section::new(0, 0, 0);
-    for lz in 0..CHUNK_SZ {
-        for lx in 0..CHUNK_SX {
-            section.set_block(lx, 0, lz, Block::Stone);
-        }
-    }
-    section.recompute_opaque_count();
-
-    let mesh = super::build_section_mesh(
-        &section,
-        pos,
-        |wx, wy, wz| {
-            if wy == 0 && (0..16).contains(&wx) && (0..16).contains(&wz) {
-                Block::Stone.id()
-            } else {
-                Block::Air.id()
-            }
-        },
-        |_, _, _| StairState::default(),
-        |_, _, _| SlabState::EMPTY,
-        |_, _, _| 0,
-        |_, _| 0,
-        |_, _, _| SKY_FULL,
-        |_, _, _| 0,
-        |_, _, _| true,
-    );
+    let m = mesh(&floor_section(Block::Stone));
 
     // The 16×16 top (+Y, shade idx 0) at y=1 collapses to a single 4-vertex quad.
-    let top: Vec<&Vertex> = mesh
+    let top: Vec<&Vertex> = m
         .opaque
         .iter()
         .filter(|v| shade_idx(v) == 0 && (v.pos[1] - 1.0).abs() < 1e-3)
@@ -1714,9 +1530,9 @@ fn greedy_merges_flat_floor_into_tiled_quads() {
     // Per cell this floor would emit 256 top + 256 bottom + 4×16 side faces = 576 quads
     // (2304 verts); greedy collapses it to a handful.
     assert!(
-        mesh.opaque.len() < 64,
+        m.opaque.len() < 64,
         "greedy should collapse the flat floor, got {} verts",
-        mesh.opaque.len()
+        m.opaque.len()
     );
 }
 
@@ -1749,22 +1565,8 @@ fn cross_section_seam_culls_faces_and_samples_neighbour_ao_and_light() {
     // light on a seam face can only have been sampled from the other section.
     let light_at = |_: i32, wy: i32, _: i32| -> u8 { if wy >= 16 { SKY_FULL } else { 0 } };
 
-    let build = |section: &Section, pos: SectionPos| {
-        build_section_mesh(
-            section,
-            pos,
-            block_at,
-            |_, _, _| StairState::default(),
-            |_, _, _| SlabState::EMPTY,
-            |_, _, _| 0,
-            |_, _| 0,
-            light_at,
-            |_, _, _| 0,
-            |_, _, _| true,
-        )
-    };
-    let lower_mesh = build(&lower, SectionPos::new(0, 0, 0));
-    let upper_mesh = build(&upper, SectionPos::new(0, 1, 0));
+    let lower_mesh = mesh_in_scene(&lower, SectionPos::new(0, 0, 0), block_at, light_at);
+    let upper_mesh = mesh_in_scene(&upper, SectionPos::new(0, 1, 0), block_at, light_at);
 
     // 1) Cull across the seam: the pillar's two cubes meet at y=16. Neither
     // mesh may emit a horizontal quad over that cell's footprint — the lower
@@ -1787,23 +1589,11 @@ fn cross_section_seam_culls_faces_and_samples_neighbour_ao_and_light() {
 
     // 2) AO across the seam: the step's kept top face lies ON the seam plane;
     // its +X edge corners are edge-occluded by the UPPER section's pillar cube.
-    let step_top_at = |wx: f32, wz: f32| -> &Vertex {
-        lower_mesh
-            .opaque
-            .iter()
-            .find(|v| {
-                shade_idx(v) == 0
-                    && (v.pos[1] - 16.0).abs() < 1e-3
-                    && (v.pos[0] - wx).abs() < 1e-3
-                    && (v.pos[2] - wz).abs() < 1e-3
-            })
-            .unwrap_or_else(|| panic!("no step top-face vertex at ({wx}, 16, {wz})"))
-    };
-    let ao = |v: &Vertex| (v.packed >> 21) & 0x3;
-    assert_eq!(ao(step_top_at(9.0, 8.0)), 2, "seam corner occluded from above");
-    assert_eq!(ao(step_top_at(9.0, 9.0)), 2, "seam corner occluded from above");
-    assert_eq!(ao(step_top_at(8.0, 8.0)), 3, "open corner fully lit");
-    assert_eq!(ao(step_top_at(8.0, 9.0)), 3, "open corner fully lit");
+    let step_top_at = |wx: f32, wz: f32| vert_at(&lower_mesh.opaque, 0, [wx, 16.0, wz]);
+    assert_eq!(ao_idx(step_top_at(9.0, 8.0)), 2, "seam corner occluded from above");
+    assert_eq!(ao_idx(step_top_at(9.0, 9.0)), 2, "seam corner occluded from above");
+    assert_eq!(ao_idx(step_top_at(8.0, 8.0)), 3, "open corner fully lit");
+    assert_eq!(ao_idx(step_top_at(8.0, 9.0)), 3, "open corner fully lit");
 
     // 3) Light across the seam, upward: the step's top face samples the sky-lit
     // cells at wy=16 in the upper section — the lower section holds no light.
@@ -1843,10 +1633,7 @@ fn cross_section_seam_culls_faces_and_samples_neighbour_ao_and_light() {
 
 #[test]
 fn pad_local_section_mesher_matches_closure_mesher() {
-    use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL};
-    use crate::facing::Facing;
     use crate::furnace::Furnace;
-    use crate::section::Section;
 
     const PAD: usize = SECTION_SIZE + 2;
     const PAD_VOL: usize = PAD * PAD * PAD;
@@ -1856,12 +1643,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     let bidx = |x: usize, z: usize| z * BIOME_PAD + x;
 
     let pos = SectionPos::new(0, 0, 0);
-    let mut section = Section::new(0, 0, 0);
-    for z in 0..SECTION_SIZE {
-        for x in 0..SECTION_SIZE {
-            section.set_block(x, 0, z, Block::Stone);
-        }
-    }
+    let mut section = floor_section(Block::Stone);
     section.set_block(2, 1, 2, Block::Grass);
     section.set_block(3, 1, 2, Block::OakLeaves);
     section.set_block(4, 1, 2, Block::ShortGrass);
@@ -1912,10 +1694,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     section.set_block(3, 1, 4, Block::GlassPane);
 
     let block_at = |wx: i32, wy: i32, wz: i32| -> u8 {
-        if (0..SECTION_SIZE as i32).contains(&wx)
-            && (0..SECTION_SIZE as i32).contains(&wy)
-            && (0..SECTION_SIZE as i32).contains(&wz)
-        {
+        if in_section(wx, wy, wz) {
             section.block_raw(wx as usize, wy as usize, wz as usize)
         } else if wy == 0
             && (-1..=SECTION_SIZE as i32).contains(&wx)
@@ -1927,30 +1706,21 @@ fn pad_local_section_mesher_matches_closure_mesher() {
         }
     };
     let water_at = |wx: i32, wy: i32, wz: i32| -> u8 {
-        if (0..SECTION_SIZE as i32).contains(&wx)
-            && (0..SECTION_SIZE as i32).contains(&wy)
-            && (0..SECTION_SIZE as i32).contains(&wz)
-        {
+        if in_section(wx, wy, wz) {
             section.water_meta(wx as usize, wy as usize, wz as usize)
         } else {
             0
         }
     };
     let stair_at = |wx: i32, wy: i32, wz: i32| -> StairState {
-        if (0..SECTION_SIZE as i32).contains(&wx)
-            && (0..SECTION_SIZE as i32).contains(&wy)
-            && (0..SECTION_SIZE as i32).contains(&wz)
-        {
+        if in_section(wx, wy, wz) {
             section.stair_state(wx as usize, wy as usize, wz as usize)
         } else {
             StairState::default()
         }
     };
     let slab_at = |wx: i32, wy: i32, wz: i32| -> SlabState {
-        if (0..SECTION_SIZE as i32).contains(&wx)
-            && (0..SECTION_SIZE as i32).contains(&wy)
-            && (0..SECTION_SIZE as i32).contains(&wz)
-        {
+        if in_section(wx, wy, wz) {
             section.slab_state(wx as usize, wy as usize, wz as usize)
         } else {
             SlabState::EMPTY

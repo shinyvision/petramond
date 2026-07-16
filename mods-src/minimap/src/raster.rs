@@ -47,17 +47,30 @@ pub(crate) fn draw_diamond(rgba: &mut [u8], width: usize, x: i32, y: i32, color:
     fill_diamond_rgba(rgba, width, x, y, 7.0, color);
 }
 
-pub(crate) fn fill_player_pointer_faces(
+/// Stamp the two-facet player pointer plus its drop shadow into an RGBA
+/// buffer of the pointer sprite's size: fill the dark/light faces, composite
+/// the shadow at the shared offset, then the pointer over it.
+pub(crate) fn stamp_arrow_with_shadow(
     rgba: &mut [u8],
     width: usize,
     dark: [[f32; 2]; 3],
     light: [[f32; 2]; 3],
 ) {
-    fill_triangle_rgba(rgba, width, dark, [0xBF, 0xBF, 0xBF], 255);
-    fill_triangle_rgba(rgba, width, light, [0xFF, 0xFF, 0xFF], 255);
+    let mut arrow = vec![0; rgba.len()];
+    fill_triangle_rgba(&mut arrow, width, dark, [0xBF, 0xBF, 0xBF], 255);
+    fill_triangle_rgba(&mut arrow, width, light, [0xFF, 0xFF, 0xFF], 255);
+    composite_alpha_mask(
+        rgba,
+        width,
+        &arrow,
+        player_arrow_shadow_offset(),
+        [0, 0, 0],
+        128,
+    );
+    composite_rgba(rgba, width, &arrow);
 }
 
-pub(crate) fn player_arrow_shadow_offset() -> [i32; 2] {
+fn player_arrow_shadow_offset() -> [i32; 2] {
     let angle = 120.0f32.to_radians();
     [
         (angle.cos() * 3.0).round() as i32,
@@ -65,7 +78,7 @@ pub(crate) fn player_arrow_shadow_offset() -> [i32; 2] {
     ]
 }
 
-pub(crate) fn composite_alpha_mask(
+fn composite_alpha_mask(
     dst: &mut [u8],
     width: usize,
     mask: &[u8],
@@ -84,7 +97,7 @@ pub(crate) fn composite_alpha_mask(
     }
 }
 
-pub(crate) fn composite_rgba(dst: &mut [u8], width: usize, src: &[u8]) {
+fn composite_rgba(dst: &mut [u8], width: usize, src: &[u8]) {
     for (i, pixel) in src.chunks_exact(4).enumerate() {
         if pixel[3] == 0 {
             continue;

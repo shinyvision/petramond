@@ -40,7 +40,7 @@ impl App {
             if !pause_runs_sim {
                 // Shell screens (pause menu) skip Game::tick, but the server
                 // thread keeps streaming: keep consuming its output so nothing
-                // backs up and resume is instant (multiplayer Phase D).
+                // backs up and resume is instant.
                 self.pump_network_and_watch();
                 return;
             }

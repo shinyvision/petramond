@@ -9,9 +9,11 @@
 //! - [`miller`] — the miller: grinds one input into its `kitchen:milling`
 //!   product every 200 ticks, no fuel. While the output slot holds anything
 //!   it flips to the `kitchen:miller_full` row (the authored `flour` cube).
-//! - [`machine`] — what they share: the persisted world-KV anchor registries
-//!   (self-healingly pruned each tick from ONE batched block read), the
-//!   session registry caches, and the slot arithmetic.
+//! - [`machine`] — what they share: the generic `Machine` driver (a machine
+//!   kind is a `MachineSpec` — its block/kind/anchor keys plus one `step`),
+//!   the persisted world-KV anchor registries (self-healingly pruned each
+//!   tick from ONE batched block read), the session registry caches, and the
+//!   slot arithmetic.
 //!
 //! Content is pack data (blocks/items/recipes/models/GUI documents); this
 //! crate is only the machine logic. Both machines follow the same

@@ -2,7 +2,7 @@
 //! Slider drags apply LIVE (the mixer re-reads volumes every frame); the
 //! release commit persists `client.json`.
 
-use crate::app::{App, AppScreen};
+use crate::app::App;
 use petramond_ui::{UiEvent, UiState, UiValue};
 
 fn bind_volume(state: &mut UiState, key: &str, pct_key: &str, value: f32) {
@@ -12,7 +12,7 @@ fn bind_volume(state: &mut UiState, key: &str, pct_key: &str, value: f32) {
 }
 
 pub(super) fn populate(app: &App, state: &mut UiState) {
-    state.set("show_backdrop", UiValue::Bool(app.game.is_none()));
+    super::populate_options_chrome(app, state);
     bind_volume(
         state,
         "master_vol",
@@ -24,28 +24,26 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
 }
 
 pub(super) fn handle(app: &mut App, ev: UiEvent) {
-    match ev {
-        UiEvent::Click { id, .. } if id == "back" => {
-            app.screen = AppScreen::Options;
+    if super::options_category_back(app, &ev) {
+        return;
+    }
+    if let UiEvent::SliderChange {
+        id,
+        value,
+        committed,
+        ..
+    } = ev
+    {
+        let volume = (value / 100.0).clamp(0.0, 1.0);
+        match id.as_str() {
+            "master_vol" => app.settings.master_volume = volume,
+            "sound_vol" => app.settings.sound_volume = volume,
+            "music_vol" => app.settings.music_volume = volume,
+            _ => return,
         }
-        UiEvent::SliderChange {
-            id,
-            value,
-            committed,
-            ..
-        } => {
-            let volume = (value / 100.0).clamp(0.0, 1.0);
-            match id.as_str() {
-                "master_vol" => app.settings.master_volume = volume,
-                "sound_vol" => app.settings.sound_volume = volume,
-                "music_vol" => app.settings.music_volume = volume,
-                _ => return,
-            }
-            app.apply_volumes();
-            if committed {
-                app.persist_settings();
-            }
+        app.apply_volumes();
+        if committed {
+            app.persist_settings();
         }
-        _ => {}
     }
 }

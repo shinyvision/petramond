@@ -183,17 +183,12 @@ impl Game {
         ))
     }
 
-    /// Push the player out of any soft entity body it overlaps — mobs and remote
-    /// players — per frame. The bodies sit at their last-batch positions (fixed between
-    /// ticks), so as the player moves each frame the overlap - and the push - track the
-    /// player smoothly; applied as a small collision-resolved displacement (the push
-    /// *velocity* over this frame's `dt`), it never accumulates or fights the movement
-    /// controller. A noclip spectator has no body to jostle. The mobs' own half of the
-    /// push runs on the tick (`game_tick_step`); a remote PLAYER's half runs on that
-    /// player's own client through this same rule against ITS replicated rows — each
-    /// client only ever shoves itself, and the shove reaches the server in the next
-    /// `PlayerUpdate`, so player↔player separation is symmetric without any server-side
-    /// push step.
+    /// Per-frame push of the player out of overlapping soft bodies (mobs +
+    /// remote players). Applied as a push *velocity* over this frame's `dt` so
+    /// it never accumulates or fights the movement controller. Each client
+    /// only ever shoves ITSELF (the shove rides its next `PlayerUpdate`), so
+    /// player↔player separation stays symmetric with no server-side push step;
+    /// the mobs' own half runs on the tick (`game_tick_step`).
     pub(super) fn apply_entity_push(&mut self, dt: f32) {
         // A mounted body is slaved to its seat: nothing may jostle it (its
         // own mount overlaps it every frame).
@@ -287,8 +282,7 @@ impl Game {
     }
 
     /// Keep the REPLICA's view centre (mesh/light priority ordering + the
-    /// always-mesh near ring) on the camera, where the streaming target used
-    /// to live. Streaming itself is server-side since C2c-ii
+    /// always-mesh near ring) on the camera. Streaming itself is server-side
     /// (`ServerGame::pump_streaming`); the replica never generates.
     pub(super) fn tick_replica_view(&mut self) {
         let cam_cx = (self.cam.pos.x.floor() as i32).div_euclid(16);

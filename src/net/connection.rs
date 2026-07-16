@@ -1,4 +1,4 @@
-//! Per-connection TCP reader/writer threads (multiplayer Phase E).
+//! Per-connection TCP reader/writer threads.
 //!
 //! Both sides present the SAME shape the in-process pipe does — mpsc channels
 //! of protocol message values — so nothing above the transport knows whether

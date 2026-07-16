@@ -126,8 +126,8 @@ struct Vehicles {
 
 impl Mod for Vehicles {
     fn init(&mut self) {
-        self.boat_item = resolve_item(BOAT_KEY);
-        self.water = resolve_block("petramond:water");
+        self.boat_item = resolve_item_logged(BOAT_KEY);
+        self.water = resolve_block_logged("petramond:water");
         register_event_handler(EventKind::ItemUsePre, 0, ON_ITEM_USE);
         register_event_handler(EventKind::MobInteract, 0, ON_MOB_INTERACT);
         register_event_handler(EventKind::PlayerDismounted, 0, ON_DISMOUNTED);

@@ -186,10 +186,10 @@ pub struct GameEvents {
     /// honours it only while a mod GUI screen is actually up.
     pub close_mod_gui: bool,
     /// The player right-clicked a door this frame. Carries the door's NEW open
-    /// state (after the toggle applied). The open/close SOUND is event-driven
-    /// since C2c-iii (the positional [`WorldEvent::DoorToggled`] every
-    /// observer receives); this one-shot remains for the toggler's own
-    /// presentation. `None` = no door toggle this frame.
+    /// state (after the toggle applied). The open/close SOUND is driven by the
+    /// positional [`WorldEvent::DoorToggled`] every observer receives; this
+    /// one-shot remains for the toggler's own presentation. `None` = no door
+    /// toggle this frame.
     pub toggled_door: Option<bool>,
     /// The player right-clicked a bed this frame. This fires even in daytime,
     /// when the click sets the spawn point but does not start sleep.
@@ -226,8 +226,8 @@ pub struct GameEvents {
     /// break bursts, door swings), in emission order. NON-lossy.
     pub world_events: Vec<WorldEvent>,
     /// The server became unreachable (thread crashed / channel closed) —
-    /// reported EXACTLY ONCE, on the frame the loss is detected. The app
-    /// grows a proper "world stopped" screen for it in Phase E; until then it
+    /// reported EXACTLY ONCE, on the frame the loss is detected. Until the app
+    /// grows a proper "world stopped" screen for it, it
     /// is logged and the (frozen) world keeps rendering.
     pub connection_lost: Option<String>,
 }
@@ -267,7 +267,7 @@ pub(crate) struct PlayerTickEvents {
 /// A block the sim destroyed this tick (player-mined or natural), with
 /// everything a CLIENT needs to present it: break-burst particles at `pos`,
 /// sampled against the post-tick world. Position-carrying and broadcastable —
-/// the wire replicates these to every client in range (multiplayer Phase C).
+/// the wire replicates these to every client in range.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct BlockBrokenEvent {
     pub(crate) pos: IVec3,

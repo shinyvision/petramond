@@ -41,12 +41,17 @@ pub(super) struct RawItemDef {
     /// from their block or bbmodel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sprite: Option<String>,
+    /// `models.json` key of the bbmodel an ITEM-ONLY item renders as (held /
+    /// dropped / icon — e.g. the bucket). Absent for sprite items and for
+    /// block-items (their look follows their block).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<crate::block_model::BlockModelKind>,
     /// Tag names: bare engine tags or namespaced `mod_id:name` pack tags
     /// (interned at load — see [`ItemTag::resolve`]).
     pub tags: Vec<String>,
-    /// Registry name of the block a DYNAMIC item places — the data-side link
-    /// that replaces the compiled `from_block`/`as_block` match for pack
-    /// content. Engine rows omit it (their mapping stays compiled).
+    /// Registry name of the block this item places — the ONE source of the
+    /// block↔item mapping (`ItemType::from_block`/`as_block`), engine and
+    /// pack rows alike. Absent for item-only items.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block: Option<String>,
     /// Use-handler key (see [`ItemUse::from_name`]): an engine handler by bare
@@ -305,6 +310,7 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
             roll: r.held_pose.roll as f32,
         },
         sprite,
+        model: r.model,
         tags: Box::leak(tags.into_boxed_slice()),
         block,
         item_use,

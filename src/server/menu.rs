@@ -23,8 +23,8 @@ use crate::game::tick::TickEvents;
 use crate::net::protocol::ActionDenyReason;
 use crate::server::player::PendingMenuAction;
 
-/// Read-only menu state consumed by the app's UI snapshot builder. Since
-/// C2c-iii the CLIENT assembles this entirely from its replicated stores
+/// Read-only menu state consumed by the app's UI snapshot builder. The
+/// CLIENT assembles this entirely from its replicated stores
 /// (`SelfView.inventory` + the `MenuView` fed by `MenuSyncMsg`) — see
 /// `Game::menu_read_model`; nothing here reads a server session.
 pub struct MenuReadModel<'a> {

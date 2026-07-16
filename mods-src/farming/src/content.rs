@@ -47,20 +47,8 @@ pub struct Content {
 
 impl Content {
     pub fn resolve() -> Option<Content> {
-        let block = |key: &str| {
-            let id = resolve_block(key);
-            if id.is_none() {
-                log(&format!("farming: block '{key}' is not registered"));
-            }
-            id
-        };
-        let item = |key: &str| {
-            let id = resolve_item(key);
-            if id.is_none() {
-                log(&format!("farming: item '{key}' is not registered"));
-            }
-            id
-        };
+        let block = resolve_block_logged;
+        let item = resolve_item_logged;
         Some(Content {
             farmland_dry: block("farming:farmland_dry")?,
             farmland_wet: block("farming:farmland_wet")?,

@@ -64,7 +64,7 @@ use instance::ModInstance;
 
 // `Arc<Mutex<…>>` (not `Rc<RefCell<…>>`) because the whole `ServerGame` —
 // including every registration's shared instance handle — moves to the server
-// thread (multiplayer Phase D); the mutex is uncontended (one sim thread).
+// thread; the mutex is uncontended (one sim thread).
 type SharedInstance = Arc<Mutex<ModInstance>>;
 
 /// A loaded mod's identity + compiled module (kept for the worldgen hook
@@ -315,8 +315,8 @@ impl ModHost {
     }
 
     /// Install the session's scripted AI-node map into THIS thread's dispatch
-    /// registry. The server thread calls it once at startup (multiplayer
-    /// Phase D): `initialize` installed on the constructing thread, and the
+    /// registry. The server thread calls it once at startup:
+    /// `initialize` installed on the constructing thread, and the
     /// registry is deliberately thread-local (test isolation — see `ai.rs`).
     pub(crate) fn install_thread_ai_nodes(&self) {
         ai::install(self.ai_nodes.clone());

@@ -2,7 +2,7 @@
 //! look, mode, health, bed spawn, full inventory, and active status effects.
 //!
 //! Split out of `level.dat` at v7 so every connected player saves and restores
-//! independently (multiplayer Phase C). The file name is the player name run
+//! independently. The file name is the player name run
 //! through the same sanitize routine world save directories use (see
 //! `save::mod.rs`); this module owns only the codec.
 

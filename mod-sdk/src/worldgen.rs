@@ -2,56 +2,57 @@
 //! registration, the per-dispatch [`GenCtx`], and the positional [`GenRng`]
 //! mirroring the engine's frozen seeding contract.
 
-use mod_api::{BlockId, HostCall, HostRet, WorldgenStage};
+use mod_api::{BlockId, WorldgenStage};
 
 // Imported for intra-doc links only.
 #[allow(unused_imports)]
 use crate::Mod;
 
-use crate::__rt;
+use crate::__rt::host_fn;
 
-/// Resolve a block registry key (`"petramond:stone"`, `"mymod:gadget"`) to its
-/// session-scoped runtime id. Works everywhere, worldgen instances included —
-/// resolve once in [`Mod::init`] and keep the id in mod state (but NEVER
-/// persist it: ids can change between sessions; names are the stable identity).
-pub fn resolve_block(key: &str) -> Option<BlockId> {
-    match __rt::host_call(&HostCall::ResolveBlock { key: key.into() }) {
-        HostRet::Block(b) => b,
-        other => panic!("ResolveBlock returned {other:?}"),
+host_fn! {
+    /// Resolve a block registry key (`"petramond:stone"`, `"mymod:gadget"`) to its
+    /// session-scoped runtime id. Works everywhere, worldgen instances included —
+    /// resolve once in [`Mod::init`] and keep the id in mod state (but NEVER
+    /// persist it: ids can change between sessions; names are the stable identity).
+    pub fn resolve_block(key: &str) -> Option<BlockId> => ResolveBlock { key: key.into() } => Block
+}
+
+/// [`resolve_block`] that also logs a "not registered" line on `None` — the
+/// standard init-time shape: resolution failure is worth one log line, then
+/// the mod degrades on the `None`.
+pub fn resolve_block_logged(key: &str) -> Option<BlockId> {
+    let id = resolve_block(key);
+    if id.is_none() {
+        crate::log(&format!("block '{key}' is not registered"));
     }
+    id
 }
 
-/// Register a worldgen feature that runs after `stage` (use
-/// [`WorldgenStage::Trees`] — the end of the pipeline — unless the feature
-/// must see pre-vegetation ground). Only legal during [`Mod::init`];
-/// `Climate` is not a valid attach point. `feature_id` is echoed to
-/// [`Mod::gen_feature`].
-pub fn register_worldgen_feature(stage: WorldgenStage, feature_id: u32) {
-    __rt::expect_unit(
-        "RegisterWorldgenFeature",
-        __rt::host_call(&HostCall::RegisterWorldgenFeature { feature_id, stage }),
-    );
+host_fn! {
+    /// Register a worldgen feature that runs after `stage` (use
+    /// [`WorldgenStage::Trees`] — the end of the pipeline — unless the feature
+    /// must see pre-vegetation ground). Only legal during [`Mod::init`];
+    /// `Climate` is not a valid attach point. `feature_id` is echoed to
+    /// [`Mod::gen_feature`].
+    pub fn register_worldgen_feature(stage: WorldgenStage, feature_id: u32)
+        => RegisterWorldgenFeature { feature_id, stage }
 }
 
-/// Replace one engine worldgen stage. Only legal during [`Mod::init`];
-/// `callback_id` is echoed to [`Mod::gen_climate`] / [`Mod::gen_terrain`] /
-/// [`Mod::gen_stage`] depending on the stage. Last mod in load order wins a
-/// conflict; a failing replacement falls back to the engine stage.
-pub fn register_stage_replacement(stage: WorldgenStage, callback_id: u32) {
-    __rt::expect_unit(
-        "RegisterStageReplacement",
-        __rt::host_call(&HostCall::RegisterStageReplacement { stage, callback_id }),
-    );
+host_fn! {
+    /// Replace one engine worldgen stage. Only legal during [`Mod::init`];
+    /// `callback_id` is echoed to [`Mod::gen_climate`] / [`Mod::gen_terrain`] /
+    /// [`Mod::gen_stage`] depending on the stage. Last mod in load order wins a
+    /// conflict; a failing replacement falls back to the engine stage.
+    pub fn register_stage_replacement(stage: WorldgenStage, callback_id: u32)
+        => RegisterStageReplacement { stage, callback_id }
 }
 
-/// Replace the whole generator: every stage dispatches to `callback_id` (your
-/// `gen_climate`/`gen_terrain`/`gen_stage` switch on the stage). Same rules as
-/// [`register_stage_replacement`], applied per stage.
-pub fn register_generator(callback_id: u32) {
-    __rt::expect_unit(
-        "RegisterGenerator",
-        __rt::host_call(&HostCall::RegisterGenerator { callback_id }),
-    );
+host_fn! {
+    /// Replace the whole generator: every stage dispatches to `callback_id` (your
+    /// `gen_climate`/`gen_terrain`/`gen_stage` switch on the stage). Same rules as
+    /// [`register_stage_replacement`], applied per stage.
+    pub fn register_generator(callback_id: u32) => RegisterGenerator { callback_id }
 }
 
 /// One worldgen dispatch's inputs, with the accessors a well-behaved feature
@@ -180,6 +181,16 @@ impl GenCtx {
     }
 }
 
+/// The SplitMix64 finalizer — the engine's frozen bit-mixing primitive (the
+/// `entity::hash01` finalizer, the [`GenRng::positional`] seed mix). Use it to
+/// spread correlated inputs (one shared RNG draw XOR a stable id, packed
+/// coordinates) into decorrelated u64s without a host call per input.
+pub fn splitmix64_mix(mut z: u64) -> u64 {
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 /// Deterministic positional RNG for worldgen hooks — the guest-side mirror of
 /// the engine's frozen positional seeding contract (same SplitMix64 finalizer,
 /// same xorshift64 stepper), so mod features get engine-grade order
@@ -196,14 +207,13 @@ impl GenRng {
     /// Seed from `(seed, salt, world coords)` — a pure function of the inputs,
     /// bit-identical across platforms.
     pub fn positional(seed: u32, salt: u64, wx: i32, wy: i32, wz: i32) -> Self {
-        let mut z = (seed as u64)
-            ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15)
-            ^ (wx as i64 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
-            ^ (wy as i64 as u64).wrapping_mul(0x1656_67B1_9E37_79F9)
-            ^ (wz as i64 as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93);
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^= z >> 31;
+        let z = splitmix64_mix(
+            (seed as u64)
+                ^ salt.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                ^ (wx as i64 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+                ^ (wy as i64 as u64).wrapping_mul(0x1656_67B1_9E37_79F9)
+                ^ (wz as i64 as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
+        );
         Self {
             state: if z == 0 { 0xDEAD_BEEF } else { z },
         }

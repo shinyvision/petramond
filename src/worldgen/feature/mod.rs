@@ -95,108 +95,107 @@ pub trait VoxelSink {
     fn set(&mut self, p: IVec3, b: Block);
 }
 
-/// Worldgen voxel sink: writes into one [`Chunk`], in WORLD coords clipped to the
-/// chunk's own `[0,16)×[0,16)×[0,256)` footprint. Out-of-footprint writes are
-/// dropped and out-of-footprint reads return `Air`. That clipping IS the seam
-/// mechanism: because every retained write only reads in-chunk cells, a feature
-/// rooted in a neighbour materialises its overlapping voxels here identically to
-/// how the owner chunk does — seam-consistent cross-chunk features with no shared
-/// buffer.
-pub struct ChunkSink<'a> {
-    chunk: &'a mut Chunk,
-    ox: i32,
-    oz: i32,
+/// Bulk voxel storage a [`ClippedSink`] clips into: a world-anchored writable
+/// box plus raw local-index accessors.
+pub trait SinkTarget {
+    /// `(min world corner, size in blocks)` of the writable footprint.
+    fn world_box(&self) -> (IVec3, IVec3);
+    fn block(&self, x: usize, y: usize, z: usize) -> Block;
+    fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8);
 }
 
-impl<'a> ChunkSink<'a> {
-    pub fn new(chunk: &'a mut Chunk) -> Self {
-        let (ox, oz) = chunk.chunk_origin_world();
-        Self { chunk, ox, oz }
-    }
-
-    /// Map a world position to in-chunk local indices, or `None` if outside.
-    #[inline]
-    fn local(&self, p: IVec3) -> Option<(usize, usize, usize)> {
-        let lx = p.x - self.ox;
-        let lz = p.z - self.oz;
-        if !(0..16).contains(&lx) || !(0..16).contains(&lz) || p.y < 0 || p.y >= CHUNK_SY as i32 {
-            return None;
-        }
-        Some((lx as usize, p.y as usize, lz as usize))
-    }
+/// Worldgen voxel sink: writes into one [`SinkTarget`], in WORLD coords clipped to
+/// the target's own footprint. Out-of-footprint writes are dropped and
+/// out-of-footprint reads return `Air`. That clipping IS the seam mechanism:
+/// every retained write predicates only on the cell it writes (`set_leaf`/
+/// `set_branch` read `get(p)` at the same `p`), never a neighbour, so a feature
+/// rooted anywhere materialises its overlapping voxels identically whether they
+/// land in the owner target or a neighbour — seam-consistent cross-boundary
+/// features with no shared buffer.
+pub struct ClippedSink<'a, T: SinkTarget> {
+    target: &'a mut T,
+    origin: IVec3,
+    size: IVec3,
 }
 
-impl VoxelSink for ChunkSink<'_> {
-    #[inline]
-    fn get(&self, p: IVec3) -> Block {
-        match self.local(p) {
-            Some((x, y, z)) => self.chunk.block(x, y, z),
-            None => Block::Air,
-        }
-    }
-    #[inline]
-    fn set(&mut self, p: IVec3, b: Block) {
-        if let Some((x, y, z)) = self.local(p) {
-            self.chunk.set_block_raw(x, y, z, b.id());
-        }
-    }
-}
-
-/// Worldgen voxel sink for the cubic path: writes into one 16³ [`Section`], in WORLD
-/// coords clipped to the section's `[0,16)³` footprint — the per-section analogue of
-/// [`ChunkSink`]. The clipping is the SAME seam mechanism, now in 3D: every retained
-/// write predicates only on the cell it writes (`set_leaf`/`set_branch` read `get(p)`
-/// at the same `p`), never a neighbour, so a feature rooted anywhere materialises its
-/// in-section voxels identically whether the section is generated alone or as part of
-/// a whole column — across VERTICAL seams as well as horizontal ones.
-pub struct SectionSink<'a> {
-    section: &'a mut Section,
-    ox: i32,
-    oy: i32,
-    oz: i32,
-}
-
-impl<'a> SectionSink<'a> {
-    pub fn new(section: &'a mut Section) -> Self {
-        let (ox, oy, oz) = section.origin_world();
+impl<'a, T: SinkTarget> ClippedSink<'a, T> {
+    pub fn new(target: &'a mut T) -> Self {
+        let (origin, size) = target.world_box();
         Self {
-            section,
-            ox,
-            oy,
-            oz,
+            target,
+            origin,
+            size,
         }
     }
 
-    /// Map a world position to in-section local indices, or `None` if outside.
+    /// Map a world position to in-footprint local indices, or `None` if outside.
     #[inline]
     fn local(&self, p: IVec3) -> Option<(usize, usize, usize)> {
-        let lx = p.x - self.ox;
-        let ly = p.y - self.oy;
-        let lz = p.z - self.oz;
-        let n = SECTION_SIZE as i32;
-        if (0..n).contains(&lx) && (0..n).contains(&ly) && (0..n).contains(&lz) {
-            Some((lx as usize, ly as usize, lz as usize))
+        let l = p - self.origin;
+        if l.cmpge(IVec3::ZERO).all() && l.cmplt(self.size).all() {
+            Some((l.x as usize, l.y as usize, l.z as usize))
         } else {
             None
         }
     }
 }
 
-impl VoxelSink for SectionSink<'_> {
+impl<T: SinkTarget> VoxelSink for ClippedSink<'_, T> {
     #[inline]
     fn get(&self, p: IVec3) -> Block {
         match self.local(p) {
-            Some((x, y, z)) => self.section.block(x, y, z),
+            Some((x, y, z)) => self.target.block(x, y, z),
             None => Block::Air,
         }
     }
     #[inline]
     fn set(&mut self, p: IVec3, b: Block) {
         if let Some((x, y, z)) = self.local(p) {
-            self.section.set_block_raw(x, y, z, b.id());
+            self.target.set_block_raw(x, y, z, b.id());
         }
     }
 }
+
+impl SinkTarget for Chunk {
+    fn world_box(&self) -> (IVec3, IVec3) {
+        let (ox, oz) = self.chunk_origin_world();
+        let size = IVec3::new(CHUNK_SX as i32, CHUNK_SY as i32, CHUNK_SZ as i32);
+        (IVec3::new(ox, 0, oz), size)
+    }
+    #[inline]
+    fn block(&self, x: usize, y: usize, z: usize) -> Block {
+        Chunk::block(self, x, y, z)
+    }
+    #[inline]
+    fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8) {
+        Chunk::set_block_raw(self, x, y, z, id);
+    }
+}
+
+impl SinkTarget for Section {
+    fn world_box(&self) -> (IVec3, IVec3) {
+        let (ox, oy, oz) = self.origin_world();
+        (IVec3::new(ox, oy, oz), IVec3::splat(SECTION_SIZE as i32))
+    }
+    #[inline]
+    fn block(&self, x: usize, y: usize, z: usize) -> Block {
+        Section::block(self, x, y, z)
+    }
+    #[inline]
+    fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8) {
+        Section::set_block_raw(self, x, y, z, id);
+    }
+}
+
+/// [`ClippedSink`] over one [`Chunk`]'s `[0,16)×[0,256)×[0,16)` footprint —
+/// seam-consistent cross-chunk features with no shared buffer.
+pub type ChunkSink<'a> = ClippedSink<'a, Chunk>;
+
+/// [`ClippedSink`] over one 16³ [`Section`] for the cubic path — the same seam
+/// mechanism in 3D, so a feature materialises its in-section voxels identically
+/// whether the section is generated alone or as part of a whole column, across
+/// VERTICAL seams as well as horizontal ones.
+pub type SectionSink<'a> = ClippedSink<'a, Section>;
 
 /// Apply a mod worldgen hook's write list (world position, registered block
 /// id) to one section through the SAME clipping sink engine features use —

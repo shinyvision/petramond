@@ -10,7 +10,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:air"
     },
     {
       "item": "petramond:grass",
@@ -22,7 +23,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:grass"
     },
     {
       "item": "petramond:dirt",
@@ -34,7 +36,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:dirt"
     },
     {
       "item": "petramond:stone",
@@ -46,7 +49,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:stone"
     },
     {
       "item": "petramond:sand",
@@ -60,7 +64,8 @@
       },
       "tags": [
         "smeltable"
-      ]
+      ],
+      "block": "petramond:sand"
     },
     {
       "item": "petramond:snow",
@@ -72,7 +77,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:snow"
     },
     {
       "item": "petramond:water",
@@ -84,7 +90,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:water"
     },
     {
       "item": "petramond:oak_log",
@@ -98,7 +105,8 @@
       },
       "tags": [
         "logs"
-      ]
+      ],
+      "block": "petramond:oak_log"
     },
     {
       "item": "petramond:oak_leaves",
@@ -110,7 +118,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:oak_leaves"
     },
     {
       "item": "petramond:spruce_log",
@@ -124,7 +133,8 @@
       },
       "tags": [
         "logs"
-      ]
+      ],
+      "block": "petramond:spruce_log"
     },
     {
       "item": "petramond:birch_log",
@@ -138,7 +148,8 @@
       },
       "tags": [
         "logs"
-      ]
+      ],
+      "block": "petramond:birch_log"
     },
     {
       "item": "petramond:jungle_log",
@@ -152,7 +163,8 @@
       },
       "tags": [
         "logs"
-      ]
+      ],
+      "block": "petramond:jungle_log"
     },
     {
       "item": "petramond:acacia_log",
@@ -166,7 +178,8 @@
       },
       "tags": [
         "logs"
-      ]
+      ],
+      "block": "petramond:acacia_log"
     },
     {
       "item": "petramond:spruce_leaves",
@@ -178,7 +191,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:spruce_leaves"
     },
     {
       "item": "petramond:birch_leaves",
@@ -190,7 +204,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:birch_leaves"
     },
     {
       "item": "petramond:jungle_leaves",
@@ -202,7 +217,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:jungle_leaves"
     },
     {
       "item": "petramond:acacia_leaves",
@@ -214,7 +230,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:acacia_leaves"
     },
     {
       "item": "petramond:azalea_leaves",
@@ -226,7 +243,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:azalea_leaves"
     },
     {
       "item": "petramond:red_sand",
@@ -238,7 +256,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:red_sand"
     },
     {
       "item": "petramond:sandstone",
@@ -250,7 +269,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:sandstone"
     },
     {
       "item": "petramond:red_sandstone",
@@ -262,7 +282,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:red_sandstone"
     },
     {
       "item": "petramond:terracotta",
@@ -274,7 +295,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:terracotta"
     },
     {
       "item": "petramond:white_terracotta",
@@ -286,7 +308,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:white_terracotta"
     },
     {
       "item": "petramond:orange_terracotta",
@@ -298,7 +321,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:orange_terracotta"
     },
     {
       "item": "petramond:yellow_terracotta",
@@ -310,7 +334,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:yellow_terracotta"
     },
     {
       "item": "petramond:brown_terracotta",
@@ -322,7 +347,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:brown_terracotta"
     },
     {
       "item": "petramond:red_terracotta",
@@ -334,7 +360,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:red_terracotta"
     },
     {
       "item": "petramond:light_gray_terracotta",
@@ -346,7 +373,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:light_gray_terracotta"
     },
     {
       "item": "petramond:podzol",
@@ -358,7 +386,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:podzol"
     },
     {
       "item": "petramond:mycelium",
@@ -370,7 +399,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:mycelium"
     },
     {
       "item": "petramond:coarse_dirt",
@@ -382,7 +412,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:coarse_dirt"
     },
     {
       "item": "petramond:gravel",
@@ -394,7 +425,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:gravel"
     },
     {
       "item": "petramond:clay",
@@ -406,7 +438,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:clay"
     },
     {
       "item": "petramond:mud",
@@ -418,7 +451,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:mud"
     },
     {
       "item": "petramond:moss_block",
@@ -430,7 +464,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:moss_block"
     },
     {
       "item": "petramond:snow_block",
@@ -442,7 +477,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:snow_block"
     },
     {
       "item": "petramond:packed_ice",
@@ -454,7 +490,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:packed_ice"
     },
     {
       "item": "petramond:ice",
@@ -466,7 +503,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:ice"
     },
     {
       "item": "petramond:calcite",
@@ -478,7 +516,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:calcite"
     },
     {
       "item": "petramond:marble",
@@ -490,7 +529,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:marble"
     },
     {
       "item": "petramond:tuff",
@@ -502,7 +542,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:tuff"
     },
     {
       "item": "petramond:coal_ore",
@@ -514,7 +555,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:coal_ore"
     },
     {
       "item": "petramond:iron_ore",
@@ -526,7 +568,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:iron_ore"
     },
     {
       "item": "petramond:copper_ore",
@@ -538,7 +581,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:copper_ore"
     },
     {
       "item": "petramond:gold_ore",
@@ -550,7 +594,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:gold_ore"
     },
     {
       "item": "petramond:diamond_ore",
@@ -562,7 +607,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:diamond_ore"
     },
     {
       "item": "petramond:pumpkin",
@@ -574,7 +620,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:pumpkin"
     },
     {
       "item": "petramond:melon",
@@ -586,7 +633,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:melon"
     },
     {
       "item": "petramond:cactus",
@@ -598,7 +646,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:cactus"
     },
     {
       "item": "petramond:short_grass",
@@ -610,7 +659,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:short_grass"
     },
     {
       "item": "petramond:fern",
@@ -622,7 +672,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:fern"
     },
     {
       "item": "petramond:dandelion",
@@ -634,7 +685,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:dandelion"
     },
     {
       "item": "petramond:poppy",
@@ -646,7 +698,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:poppy"
     },
     {
       "item": "petramond:cornflower",
@@ -658,7 +711,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:cornflower"
     },
     {
       "item": "petramond:allium",
@@ -670,7 +724,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:allium"
     },
     {
       "item": "petramond:azure_bluet",
@@ -682,7 +737,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:azure_bluet"
     },
     {
       "item": "petramond:oxeye_daisy",
@@ -694,7 +750,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:oxeye_daisy"
     },
     {
       "item": "petramond:red_tulip",
@@ -706,7 +763,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:red_tulip"
     },
     {
       "item": "petramond:dead_bush",
@@ -718,7 +776,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:dead_bush"
     },
     {
       "item": "petramond:brown_mushroom",
@@ -730,7 +789,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:brown_mushroom"
     },
     {
       "item": "petramond:red_mushroom",
@@ -742,7 +802,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:red_mushroom"
     },
     {
       "item": "petramond:cobblestone",
@@ -756,7 +817,8 @@
       },
       "tags": [
         "smeltable"
-      ]
+      ],
+      "block": "petramond:cobblestone"
     },
     {
       "item": "petramond:oak_planks",
@@ -770,7 +832,8 @@
       },
       "tags": [
         "planks"
-      ]
+      ],
+      "block": "petramond:oak_planks"
     },
     {
       "item": "petramond:spruce_planks",
@@ -784,7 +847,8 @@
       },
       "tags": [
         "planks"
-      ]
+      ],
+      "block": "petramond:spruce_planks"
     },
     {
       "item": "petramond:birch_planks",
@@ -798,7 +862,8 @@
       },
       "tags": [
         "planks"
-      ]
+      ],
+      "block": "petramond:birch_planks"
     },
     {
       "item": "petramond:jungle_planks",
@@ -812,7 +877,8 @@
       },
       "tags": [
         "planks"
-      ]
+      ],
+      "block": "petramond:jungle_planks"
     },
     {
       "item": "petramond:acacia_planks",
@@ -826,7 +892,8 @@
       },
       "tags": [
         "planks"
-      ]
+      ],
+      "block": "petramond:acacia_planks"
     },
     {
       "item": "petramond:crafting_table",
@@ -838,7 +905,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:crafting_table"
     },
     {
       "item": "petramond:stick",
@@ -969,7 +1037,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:furnace"
     },
     {
       "item": "petramond:chest",
@@ -981,7 +1050,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:chest"
     },
     {
       "item": "petramond:torch",
@@ -994,7 +1064,8 @@
         "roll": 0
       },
       "sprite": "torch",
-      "tags": []
+      "tags": [],
+      "block": "petramond:torch"
     },
     {
       "item": "petramond:diamond",
@@ -1225,7 +1296,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:furniture_workbench"
     },
     {
       "item": "petramond:oak_sapling",
@@ -1237,7 +1309,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:oak_sapling"
     },
     {
       "item": "petramond:spruce_sapling",
@@ -1249,7 +1322,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:spruce_sapling"
     },
     {
       "item": "petramond:birch_sapling",
@@ -1261,7 +1335,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:birch_sapling"
     },
     {
       "item": "petramond:jungle_sapling",
@@ -1273,7 +1348,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:jungle_sapling"
     },
     {
       "item": "petramond:acacia_sapling",
@@ -1285,7 +1361,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:acacia_sapling"
     },
     {
       "item": "petramond:oak_door",
@@ -1298,7 +1375,8 @@
         "roll": 0
       },
       "sprite": "oak_door_item",
-      "tags": []
+      "tags": [],
+      "block": "petramond:oak_door"
     },
     {
       "item": "petramond:spruce_door",
@@ -1311,7 +1389,8 @@
         "roll": 0
       },
       "sprite": "spruce_door_item",
-      "tags": []
+      "tags": [],
+      "block": "petramond:spruce_door"
     },
     {
       "item": "petramond:birch_door",
@@ -1324,7 +1403,8 @@
         "roll": 0
       },
       "sprite": "birch_door_item",
-      "tags": []
+      "tags": [],
+      "block": "petramond:birch_door"
     },
     {
       "item": "petramond:jungle_door",
@@ -1337,7 +1417,8 @@
         "roll": 0
       },
       "sprite": "jungle_door_item",
-      "tags": []
+      "tags": [],
+      "block": "petramond:jungle_door"
     },
     {
       "item": "petramond:acacia_door",
@@ -1350,7 +1431,8 @@
         "roll": 0
       },
       "sprite": "acacia_door_item",
-      "tags": []
+      "tags": [],
+      "block": "petramond:acacia_door"
     },
     {
       "item": "petramond:redwood_log",
@@ -1364,7 +1446,8 @@
       },
       "tags": [
         "logs"
-      ]
+      ],
+      "block": "petramond:redwood_log"
     },
     {
       "item": "petramond:redwood_leaves",
@@ -1376,7 +1459,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:redwood_leaves"
     },
     {
       "item": "petramond:redwood_planks",
@@ -1390,7 +1474,8 @@
       },
       "tags": [
         "planks"
-      ]
+      ],
+      "block": "petramond:redwood_planks"
     },
     {
       "item": "petramond:redwood_door",
@@ -1403,7 +1488,8 @@
         "roll": 0
       },
       "sprite": "redwood_door_item",
-      "tags": []
+      "tags": [],
+      "block": "petramond:redwood_door"
     },
     {
       "item": "petramond:oak_stairs",
@@ -1415,7 +1501,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:oak_stairs"
     },
     {
       "item": "petramond:spruce_stairs",
@@ -1427,7 +1514,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:spruce_stairs"
     },
     {
       "item": "petramond:birch_stairs",
@@ -1439,7 +1527,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:birch_stairs"
     },
     {
       "item": "petramond:jungle_stairs",
@@ -1451,7 +1540,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:jungle_stairs"
     },
     {
       "item": "petramond:acacia_stairs",
@@ -1463,7 +1553,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:acacia_stairs"
     },
     {
       "item": "petramond:redwood_stairs",
@@ -1475,7 +1566,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:redwood_stairs"
     },
     {
       "item": "petramond:cobblestone_stairs",
@@ -1487,7 +1579,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:cobblestone_stairs"
     },
     {
       "item": "petramond:stone_stairs",
@@ -1499,7 +1592,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:stone_stairs"
     },
     {
       "item": "petramond:dirt_stairs",
@@ -1511,7 +1605,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:dirt_stairs"
     },
     {
       "item": "petramond:wooden_bucket",
@@ -1523,6 +1618,7 @@
         "yaw": 1.8,
         "roll": 0
       },
+      "model": "petramond:bucket",
       "tags": [],
       "use": "bucket_fill"
     },
@@ -1536,6 +1632,7 @@
         "yaw": 1.8,
         "roll": 0
       },
+      "model": "petramond:water_bucket",
       "tags": [],
       "use": "bucket_pour"
     },
@@ -1580,7 +1677,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:bed_frame"
     },
     {
       "item": "petramond:bed",
@@ -1592,7 +1690,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:bed"
     },
     {
       "item": "petramond:oak_slab",
@@ -1604,7 +1703,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:oak_slab"
     },
     {
       "item": "petramond:spruce_slab",
@@ -1616,7 +1716,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:spruce_slab"
     },
     {
       "item": "petramond:birch_slab",
@@ -1628,7 +1729,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:birch_slab"
     },
     {
       "item": "petramond:jungle_slab",
@@ -1640,7 +1742,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:jungle_slab"
     },
     {
       "item": "petramond:acacia_slab",
@@ -1652,7 +1755,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:acacia_slab"
     },
     {
       "item": "petramond:redwood_slab",
@@ -1664,7 +1768,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:redwood_slab"
     },
     {
       "item": "petramond:cobblestone_slab",
@@ -1676,7 +1781,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:cobblestone_slab"
     },
     {
       "item": "petramond:stone_slab",
@@ -1688,7 +1794,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:stone_slab"
     },
     {
       "item": "petramond:dirt_slab",
@@ -1700,7 +1807,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:dirt_slab"
     },
     {
       "item": "petramond:glass",
@@ -1712,7 +1820,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:glass"
     },
     {
       "item": "petramond:glass_pane",
@@ -1725,7 +1834,8 @@
         "roll": 0
       },
       "sprite": "glass",
-      "tags": []
+      "tags": [],
+      "block": "petramond:glass_pane"
     },
     {
       "item": "petramond:wool_block",
@@ -1737,7 +1847,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:wool_block"
     },
     {
       "item": "petramond:wool_stairs",
@@ -1749,7 +1860,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:wool_stairs"
     },
     {
       "item": "petramond:wool_slab",
@@ -1761,7 +1873,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:wool_slab"
     },
     {
       "item": "petramond:polished_marble",
@@ -1773,7 +1886,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:polished_marble"
     },
     {
       "item": "petramond:marble_stairs",
@@ -1785,7 +1899,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:marble_stairs"
     },
     {
       "item": "petramond:marble_slab",
@@ -1797,7 +1912,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:marble_slab"
     },
     {
       "item": "petramond:polished_marble_stairs",
@@ -1809,7 +1925,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:polished_marble_stairs"
     },
     {
       "item": "petramond:polished_marble_slab",
@@ -1821,7 +1938,8 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": []
+      "tags": [],
+      "block": "petramond:polished_marble_slab"
     },
     {
       "item": "petramond:ladder",
@@ -1834,7 +1952,8 @@
         "roll": 0
       },
       "sprite": "ladder",
-      "tags": []
+      "tags": [],
+      "block": "petramond:ladder"
     }
   ]
 }

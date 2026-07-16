@@ -393,7 +393,7 @@ impl Default for UiSnapshot {
 mod state_tests {
     use super::*;
 
-    /// The GUI state session contract (per player session since C2c-iii):
+    /// The GUI state session contract (one state map per player session):
     /// set/get round-trips, clear resets to the shared empty map, and a held
     /// snapshot is a refcount bump that tick-side writes never mutate in place
     /// (copy-on-write) — which is also what makes the menu-sync `Arc`

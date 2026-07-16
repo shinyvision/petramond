@@ -720,7 +720,6 @@ pub(crate) fn zoomed_pan(pan: [f32; 2], from: i8, to: i8, x: f32, y: f32) -> [f3
 
 fn player_arrow_rgba(yaw: f32) -> Vec<u8> {
     let mut rgba = vec![0; PLAYER_ARROW_SIZE * PLAYER_ARROW_SIZE * 4];
-    let mut arrow = vec![0; PLAYER_ARROW_SIZE * PLAYER_ARROW_SIZE * 4];
     let center = PLAYER_ARROW_SIZE as f32 * 0.5;
     let forward = [yaw.sin(), yaw.cos()];
     let right = [-forward[1], forward[0]];
@@ -735,21 +734,12 @@ fn player_arrow_rgba(yaw: f32) -> Vec<u8> {
     let seam = point(0.0, -2.0);
     let right = point(10.0, -7.0);
 
-    fill_player_pointer_faces(
-        &mut arrow,
+    stamp_arrow_with_shadow(
+        &mut rgba,
         PLAYER_ARROW_SIZE,
         [tip, seam, right],
         [tip, left, seam],
     );
-    composite_alpha_mask(
-        &mut rgba,
-        PLAYER_ARROW_SIZE,
-        &arrow,
-        player_arrow_shadow_offset(),
-        [0, 0, 0],
-        128,
-    );
-    composite_rgba(&mut rgba, PLAYER_ARROW_SIZE, &arrow);
     rgba
 }
 

@@ -34,8 +34,8 @@ pub(crate) enum Outcome {
 pub(crate) struct SimCtx<'a> {
     pub world: &'a mut World,
     pub player: &'a mut Player,
-    /// The ACTING session's mod-GUI state map (per-session since multiplayer
-    /// C2c-iii): `GuiStateSet/Get` HostCalls read/write it here.
+    /// The ACTING session's mod-GUI state map (one map per player session):
+    /// `GuiStateSet/Get` HostCalls read/write it here.
     pub gui_state: &'a mut std::sync::Arc<crate::gui::GuiStateMap>,
     pub feed: &'a mut TickEvents,
     pub queue: &'a mut PostQueue,

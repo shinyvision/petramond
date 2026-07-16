@@ -43,7 +43,7 @@ impl GuiKind {
     pub const Sleep: GuiKind = GuiKind(13);
     /// The death screen ("You died": respawn / save-and-quit).
     pub const Death: GuiKind = GuiKind(14);
-    /// The "Connect to Server" screen (multiplayer Phase E2).
+    /// The "Connect to Server" screen.
     pub const ConnectServer: GuiKind = GuiKind(15);
     /// The refused-join screen listing the server mods this client lacks.
     pub const ModsMissing: GuiKind = GuiKind(16);

@@ -31,6 +31,12 @@ pub mod block {
     pub use crate::block::Block;
 }
 
+// Tile colour data, re-exported so dev tools (genmap) can derive block map
+// colours from the block rows' top tiles instead of a hand-maintained palette.
+pub mod atlas {
+    pub use crate::atlas::{Tile, TileTint};
+}
+
 pub mod chunk {
     pub use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 }

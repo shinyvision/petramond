@@ -130,7 +130,7 @@ impl App {
         let Some(game) = self.game.as_mut() else {
             return;
         };
-        // Pause is a protocol message since multiplayer Phase D: the server
+        // Pause is a protocol message: the server
         // thread keeps streaming/autosaving but skips the fixed ticks. The
         // screen switch below is what stops App::update calling Game::tick
         // (it still pumps the network — see update.rs).

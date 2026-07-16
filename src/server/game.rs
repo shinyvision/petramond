@@ -1,8 +1,8 @@
 //! The server-side simulation: the authoritative world, the connected player
-//! sessions, and the fixed-tick stage ladder (multiplayer Phase C2a).
+//! sessions, and the fixed-tick stage ladder.
 //!
-//! [`ServerGame`] owns everything the deterministic 20 TPS tick mutates. Since
-//! multiplayer Phase D it runs on its OWN thread (see [`super::handle`]),
+//! [`ServerGame`] owns everything the deterministic 20 TPS tick mutates.
+//! It runs on its OWN thread (see [`super::handle`]),
 //! self-clocked, talking to the client purely over message channels — it must
 //! stay `Send` (asserted below). Presentation (camera, particles, lid/swing
 //! animation) stays on the client side in `src/game/`.
@@ -30,13 +30,13 @@ pub(crate) const MAX_TICKS_PER_FRAME: u32 = 4;
 
 /// One pump's ordered server→client messages PER RECIPIENT — terrain payloads
 /// first (column before its sections), then at most one `Tick(TickUpdate)`.
-/// Each recipient applies its list in order and consumes NOTHING else (since
-/// C2c-iii the tick's events ride the `TickUpdate` itself).
+/// Each recipient applies its list in order and consumes NOTHING else (the
+/// tick's events ride the `TickUpdate` itself).
 pub(crate) struct PumpOutput {
     /// The LOCAL session's (index 0) messages, for the in-process pipe.
     pub(crate) msgs: Vec<ServerToClient>,
     /// Each REMOTE session's messages, tagged by `PlayerId` — the server
-    /// thread routes them to the matching TCP connection (Phase E).
+    /// thread routes them to the matching TCP connection.
     pub(crate) remote: Vec<(PlayerId, Vec<ServerToClient>)>,
 }
 
@@ -117,7 +117,7 @@ pub(crate) struct ServerGame {
     pub(crate) paused: bool,
     /// Set (permanently, for the session) when "Open to LAN" first succeeds:
     /// the server force-unpauses and `Pause` messages are ignored from then
-    /// on — remote players may exist (or reappear) at any time (Phase E).
+    /// on — remote players may exist (or reappear) at any time.
     pub(crate) lan_ever_opened: bool,
     /// World-anchored wire events produced OUTSIDE a tick window (a leaving
     /// session's menu close, e.g. its chest 1→0 transition), shipped with the
@@ -615,7 +615,7 @@ impl ServerGame {
 
     /// Session `s`'s per-tick one-shots: the lossy `PlayerTickEvents` slice
     /// plus the session's screen-request outbox (taken here — the request
-    /// fields are internal since C2c-iii; the client only sees `OpenScreen`).
+    /// fields are internal; the client only sees `OpenScreen`).
     fn build_self_events(&mut self, s: usize, events: &TickEvents) -> SelfEvents {
         let p = events.player_at(s);
         let sess = &mut self.sessions[s];

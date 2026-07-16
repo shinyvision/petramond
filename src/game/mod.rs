@@ -1,20 +1,20 @@
 //! Voxel game CLIENT session and scene state.
 //!
-//! `Game` is the client half of the split (multiplayer Phase C2a/C2b): the
+//! `Game` is the client half of the client/server split: the
 //! camera, the locally-predicted player ([`Game::player`] — movement physics
 //! and the camera source), per-frame targeting ([`Game::look`]/
 //! [`Game::targeted_mob`]), particles, transient animation state, and the
 //! app-facing API. The SIMULATION — world, player sessions, entities, the
 //! fixed-tick stage ladder — lives in [`crate::server::game::ServerGame`].
 //!
-//! Since Phase C2b input reaches the sim ONLY as [`crate::net::protocol`]
+//! Input reaches the sim ONLY as [`crate::net::protocol`]
 //! messages: every frame the client translates its input + targeting into a
 //! `PlayerUpdate` (+ one-shot `Action`s/menu actions queued in
-//! [`Game::outbox`]) and sends them to the server. Since Phase D the server
+//! [`Game::outbox`]) and sends them to the server. The server
 //! (`ServerGame`) runs on its OWN self-clocked thread behind a
 //! [`ServerHandle`] — the handoff is std::sync::mpsc channels of message
-//! VALUES (Arc payloads are refcount bumps); Phase E swaps TCP under the
-//! identical messages.
+//! VALUES (Arc payloads are refcount bumps); a remote join swaps TCP under
+//! the identical messages.
 //!
 //! The server replies with ordered server→client MESSAGES (terrain payloads +
 //! `TickUpdate`s): the client installs terrain into its own REPLICA world
@@ -136,7 +136,7 @@ pub struct Game {
     /// `third_person.rs`.
     third_person: third_person::ThirdPerson,
     /// The handle to the SIMULATION — `ServerGame` on its own self-clocked
-    /// thread (multiplayer Phase D). Input reaches it only as messages
+    /// thread. Input reaches it only as messages
     /// ([`ServerHandle::send`]); state comes back only as drained
     /// server→client messages. The client holds NO direct sim state.
     handle: ServerHandle,
@@ -148,7 +148,7 @@ pub struct Game {
     /// send/drain hit a closed channel). Latched once, surfaced through
     /// `GameEvents::connection_lost` on the frame it is detected; the app
     /// keeps running the (frozen) world until it consumes the event with a
-    /// proper screen in Phase E.
+    /// proper connection-lost screen.
     connection_lost: Option<String>,
     /// Whether `connection_lost` was already surfaced (log + event) — the
     /// error is reported exactly once.
@@ -217,7 +217,7 @@ pub struct Game {
     /// `JoinData::players` on a remote join, then maintained by
     /// `PlayerJoined`/`PlayerLeft` broadcasts on every connection kind.
     player_roster: HashMap<crate::server::player::PlayerId, String>,
-    /// REPLICATED remote-player store (Phase F): every OTHER session's
+    /// REPLICATED remote-player store: every OTHER session's
     /// prev/curr row pair plus its body-pose / held-item animation state —
     /// what `collect_remote_players` renders bodies from. The local player
     /// is never in it.
@@ -300,7 +300,7 @@ impl Game {
     }
 
     /// The OTHER connected players (id → name). Empty in singleplayer.
-    #[allow(dead_code)] // first consumers: Phase E2 (player list) / Phase F (rendering)
+    #[allow(dead_code)] // first consumers: a player-list screen / remote-player rendering
     pub(crate) fn player_roster(&self) -> &HashMap<crate::server::player::PlayerId, String> {
         &self.player_roster
     }
@@ -390,9 +390,9 @@ impl Game {
     }
 
     // --- App-facing action methods. The pub surface `Game` exposed before the
-    // client/server split stays intact, but since Phase C2b these PUSH
+    // client/server split stays intact, but these PUSH
     // MESSAGES into `outbox` (consumed by `ServerGame::pump` inside
-    // `Game::tick`) instead of touching server state. Since C2c-iii the menu
+    // `Game::tick`) instead of touching server state. The menu
     // read model renders from the REPLICATED `MenuView` and the screen-open
     // calls are requests/acks (menus open server-side on the tick).
 

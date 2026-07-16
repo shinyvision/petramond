@@ -7,8 +7,8 @@ pub(super) enum AppScreen {
     WorldSettings,
     CreateWorld,
     DeleteWorld,
-    /// The "Connect to Server" screen (address + player name; multiplayer
-    /// Phase E2). The connect worker runs while this screen is up.
+    /// The "Connect to Server" screen (address + player name).
+    /// The connect worker runs while this screen is up.
     ConnectServer,
     /// The refused-join screen listing the server mods this client lacks;
     /// Back returns to [`ConnectServer`](AppScreen::ConnectServer).

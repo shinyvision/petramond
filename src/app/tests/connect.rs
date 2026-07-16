@@ -1,4 +1,4 @@
-//! Multiplayer Phase E2 UI flows: the Connect to Server screen, the
+//! Multiplayer UI flows: the Connect to Server screen, the
 //! ModsMissing refusal, the Disconnected screen, and the pause menu's
 //! host/remote split — all driven through the real documents (rects resolved
 //! from the solved frame, never pinned pixels).

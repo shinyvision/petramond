@@ -1,4 +1,4 @@
-//! Server-side LAN transport (multiplayer Phase E1): the TCP acceptor, the
+//! Server-side LAN transport: the TCP acceptor, the
 //! pre-join handshake state machine, joined remote connections, and the
 //! session join/leave paths. Driven by the server thread's loop
 //! (`server::handle::server_main`) between its message drain and the pump.
@@ -669,7 +669,7 @@ mod tests {
         );
     }
 
-    /// The full Phase E loop over real TCP on 127.0.0.1: open to LAN on an
+    /// The full remote-join loop over real TCP on 127.0.0.1: open to LAN on an
     /// ephemeral port, handshake + join a remote client (restored from a
     /// pre-seeded player file), stream it terrain, place a block from the
     /// remote side and see the delta come back, dedupe a duplicate name,

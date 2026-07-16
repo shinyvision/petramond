@@ -4,15 +4,11 @@
 
 use mod_sdk::*;
 
-use crate::machine::{consume_one, merge_output, output_accepts, AnchorRegistry, Caches};
+use crate::machine::{
+    consume_one, merge_output, output_accepts, write_changed_slots, Caches, Machine, MachineSpec,
+    StepCtx,
+};
 
-pub const KIND_KEY: &str = "kitchen:oven";
-const OVEN_BLOCK_KEY: &str = "kitchen:oven";
-/// The lit variant: the same authored model with the `fire` cube visible,
-/// block-light emission, and the underside fire particle emitter — all pack
-/// data on its rows. The mod's only job is swapping the placed block between
-/// the two on burn transitions (`swap_model_block` keeps container + state).
-const LIT_BLOCK_KEY: &str = "kitchen:oven_lit";
 const STATE_KEY: &str = "kitchen:state";
 
 /// The oven's machine-processing recipe class (see pack recipes.json rows).
@@ -37,117 +33,53 @@ struct OvenState {
 
 impl OvenState {
     fn decode(bytes: &[u8]) -> OvenState {
-        let word = |i: usize| -> u32 {
-            bytes
-                .get(i * 4..i * 4 + 4)
-                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                .unwrap_or(0)
-        };
+        let mut r = ByteReader::new(bytes);
         OvenState {
-            cook_progress: word(0),
-            burn_remaining: word(1),
-            burn_max: word(2),
+            cook_progress: r.u32().unwrap_or(0),
+            burn_remaining: r.u32().unwrap_or(0),
+            burn_max: r.u32().unwrap_or(0),
         }
     }
 
     fn encode(self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(12);
-        out.extend(self.cook_progress.to_le_bytes());
-        out.extend(self.burn_remaining.to_le_bytes());
-        out.extend(self.burn_max.to_le_bytes());
-        out
+        let mut w = ByteWriter::with_capacity(12);
+        w.u32(self.cook_progress);
+        w.u32(self.burn_remaining);
+        w.u32(self.burn_max);
+        w.finish()
     }
 }
 
-pub struct Oven {
-    block: Option<BlockId>,
-    /// `None` degrades to cooking with no visual flip, never to not cooking.
-    lit_block: Option<BlockId>,
-    anchors: AnchorRegistry,
-    /// The oven whose GUI session is open, if any (gauge publish gate).
-    open_session: Option<[i32; 3]>,
-}
+pub type Oven = Machine<OvenSpec>;
 
-impl Default for Oven {
-    fn default() -> Self {
-        Oven {
-            block: None,
-            lit_block: None,
-            anchors: AnchorRegistry::new("kitchen:ovens"),
-            open_session: None,
-        }
-    }
-}
+#[derive(Default)]
+pub struct OvenSpec;
 
-impl Oven {
-    /// Resolve blocks + restore the anchor list; `false` = the pack's oven
-    /// rows are missing and this machine stays idle.
-    pub fn init(&mut self) -> bool {
-        self.block = resolve_block(OVEN_BLOCK_KEY);
-        if self.block.is_none() {
-            log("kitchen: oven block not registered; ovens stay idle");
-            return false;
-        }
-        self.lit_block = resolve_block(LIT_BLOCK_KEY);
-        if self.lit_block.is_none() {
-            log("kitchen: lit oven block not registered; ovens cook without the visual flip");
-        }
-        self.anchors.load();
-        true
-    }
-
-    /// `block_placed.pos` is the multi-cell anchor — the same cell the engine
-    /// keys the container at.
-    pub fn on_placed(&mut self, pos: [i32; 3], block: BlockId) {
-        if Some(block) == self.block {
-            self.anchors.record(pos);
-        }
-    }
-
-    /// Container session tracking; opening also self-heals a lost anchor.
-    pub fn on_container(&mut self, kind: &ContainerKind, pos: Option<[i32; 3]>, opened: bool) {
-        if !matches!(kind, ContainerKind::Mod { key } if key == KIND_KEY) {
-            return;
-        }
-        if opened {
-            self.open_session = pos;
-            if let Some(anchor) = pos {
-                self.anchors.record(anchor);
-            }
-        } else {
-            self.open_session = None;
-        }
-    }
-
-    pub fn tick(&mut self, caches: &mut Caches) {
-        let Some(block) = self.block else {
-            return;
-        };
-        if self.anchors.anchors.is_empty() {
-            return;
-        }
-        let lit = self.lit_block;
-        let live = self.anchors.prune_live(|b| b == block || Some(b) == lit);
-        if live.is_empty() {
-            return;
-        }
-        // One batched container read for every live oven (never container_get
-        // in a loop). A `None` container = never opened, never written: an
-        // empty oven has nothing to do.
-        let positions: Vec<[i32; 3]> = live.iter().map(|(p, _)| *p).collect();
-        let containers = container_get_many(positions);
-        for ((pos, _), slots) in live.into_iter().zip(containers) {
-            if let Some(slots) = slots {
-                self.step(caches, pos, slots);
-            }
-        }
-    }
+impl MachineSpec for OvenSpec {
+    const KIND_KEY: &'static str = "kitchen:oven";
+    const BLOCK_KEY: &'static str = "kitchen:oven";
+    /// The lit variant: the same authored model with the `fire` cube visible,
+    /// block-light emission, and the underside fire particle emitter — all
+    /// pack data on its rows. The spec's only visual job is swapping the
+    /// placed block between the two on burn transitions (`swap_model_block`
+    /// keeps container + state).
+    const VARIANT_KEY: &'static str = "kitchen:oven_lit";
+    const ANCHORS_KEY: &'static str = "kitchen:ovens";
 
     /// One oven's game tick: the engine furnace algorithm over its container
-    /// slots. Writes back only what changed.
-    fn step(&mut self, caches: &mut Caches, pos: [i32; 3], mut slots: Vec<Option<ItemStackData>>) {
+    /// slots. Writes back only what changed. A `None` container = never
+    /// opened, never written: an empty oven has nothing to do.
+    fn step(
+        &mut self,
+        ctx: &StepCtx,
+        caches: &mut Caches,
+        slots: Option<Vec<Option<ItemStackData>>>,
+    ) {
+        let Some(mut slots) = slots else {
+            return;
+        };
         slots.resize(3, None);
-        let mut state = OvenState::decode(&section_kv_get(pos, STATE_KEY).unwrap_or_default());
+        let mut state = OvenState::decode(&section_kv_get(ctx.pos, STATE_KEY).unwrap_or_default());
         let before_state = state;
         let before_slots = slots.clone();
 
@@ -192,15 +124,9 @@ impl Oven {
             state.cook_progress = state.cook_progress.saturating_sub(COOK_REGRESS);
         }
 
-        if slots != before_slots {
-            let writes = (0..3)
-                .filter(|&i| slots[i] != before_slots[i])
-                .map(|i| (i as u32, slots[i].clone()))
-                .collect();
-            container_set(pos, writes);
-        }
+        write_changed_slots(ctx.pos, &before_slots, &slots);
         if state != before_state {
-            section_kv_set(pos, STATE_KEY, state.encode());
+            section_kv_set(ctx.pos, STATE_KEY, state.encode());
         }
         // Flip the placed block between the unlit/lit rows on burn transitions
         // only (the swap is engine-idempotent, but there is no reason to cross
@@ -208,11 +134,11 @@ impl Oven {
         // all data on the lit row.
         let now_lit = state.burn_remaining > 0;
         if was_lit != now_lit {
-            if let (Some(oven), Some(lit)) = (self.block, self.lit_block) {
-                swap_model_block(pos, if now_lit { lit } else { oven });
+            if let Some(lit) = ctx.variant {
+                swap_model_block(ctx.pos, if now_lit { lit } else { ctx.block });
             }
         }
-        if self.open_session == Some(pos) {
+        if ctx.gui_open {
             gui_state_set(
                 "kitchen:cook01",
                 GuiValue::F32(state.cook_progress as f32 / COOK_TICKS as f32),
