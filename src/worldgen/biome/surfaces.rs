@@ -29,17 +29,23 @@ pub(super) static FOOTHILLS_TOP: SurfaceRule = SurfaceRule::Sequence(&[
     SurfaceRule::Block(Block::Stone),
 ]);
 
+/// Column height above which a mountain column is snow-covered: the surface
+/// rule caps it with grass (rendered snowy under the layer) straight over
+/// stone, and the vegetation pass lays the snow layer on top (the biome spec's
+/// [`SnowCover::AboveSurfaceY`](super::SnowCover) carries the same line).
+pub(super) const MOUNTAIN_SNOW_LINE: i32 = 143;
+
 static SNOW_CAP: SurfaceRule = SurfaceRule::Sequence(&[
     SurfaceRule::Condition {
         when: SurfaceCond::DepthFromTop(0),
-        then: &SurfaceRule::Block(Block::Snow),
+        then: &SurfaceRule::Block(Block::Grass),
     },
     SurfaceRule::Block(Block::Stone),
 ]);
 
 pub(super) static MOUNTAIN_TOP: SurfaceRule = SurfaceRule::Sequence(&[
     SurfaceRule::Condition {
-        when: SurfaceCond::SurfaceAboveY(143),
+        when: SurfaceCond::SurfaceAboveY(MOUNTAIN_SNOW_LINE),
         then: &SNOW_CAP,
     },
     SurfaceRule::Condition {
@@ -53,14 +59,6 @@ pub(super) static MOUNTAIN_TOP: SurfaceRule = SurfaceRule::Sequence(&[
     SurfaceRule::Condition {
         when: SurfaceCond::DepthFromTop(2),
         then: &SurfaceRule::Block(Block::Dirt),
-    },
-    SurfaceRule::Block(Block::Stone),
-]);
-
-pub(super) static SNOW_TOP: SurfaceRule = SurfaceRule::Sequence(&[
-    SurfaceRule::Condition {
-        when: SurfaceCond::DepthFromTop(1),
-        then: &SurfaceRule::Block(Block::Snow),
     },
     SurfaceRule::Block(Block::Stone),
 ]);

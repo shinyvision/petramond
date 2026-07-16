@@ -224,12 +224,17 @@ impl Player {
             let block = block_at(ix, iy, iz);
             let t_exit = next_boundary_t(t_max);
             // The "solid body" selection branch: genuinely solid blocks plus the
-            // torch and the ladder — not solid, but still selectable by their thin
-            // shapes (the cross-plant case is handled separately below, like its
-            // render shape). Resolve the shape once: the def-table read is per
-            // stepped ray cell.
+            // torch, the ladder, and the lowered cube (a walk-through thin cover
+            // like the snow layer is not solid, but still selectable by its
+            // visible box — the cross-plant case is handled separately below,
+            // like its render shape). Resolve the shape once: the def-table read
+            // is per stepped ray cell.
             let shape = block.render_shape();
-            if block.is_solid() || shape == RenderShape::Torch || shape == RenderShape::Ladder {
+            if block.is_solid()
+                || shape == RenderShape::Torch
+                || shape == RenderShape::Ladder
+                || matches!(shape, RenderShape::LoweredCube(_))
+            {
                 // A full cube fills its cell, so it stops the ray on entry. A
                 // custom-shaped block (the inset chest, the thin/tilted torch pole,
                 // the ladder panel) only registers when the ray actually crosses its

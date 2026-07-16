@@ -25,6 +25,48 @@ fn spawn_drops_dirt_yields_one_drop() {
     assert!((d.pos.z - 4.5).abs() < 1e-5);
 }
 
+/// The natural-break drop gate: a sim-destroyed block yields what a BARE-HAND
+/// break would. A tool-gated fragile block (the snow layer's shovel-only
+/// snowball) therefore shatters empty when undermined, while a hand-harvestable
+/// fragile block (a poppy) still yields itself.
+#[test]
+fn an_undermined_snow_layer_shatters_without_a_drop() {
+    use super::super::tick::TickEvents;
+    use super::common::game_on_empty_chunk;
+
+    let mut game = game_on_empty_chunk();
+    let cases = [
+        (Block::SnowLayer, 0usize),
+        (Block::Poppy, 1usize),
+    ];
+    for (i, (block, expected_drops)) in cases.into_iter().enumerate() {
+        // Keep both sites ≥ SIM_READ_REACH cells from the lone chunk's borders,
+        // or the streaming-finality guard drops the scheduled break.
+        let ground = IVec3::new(7 + 2 * i as i32, 64, 8);
+        let cell = ground + IVec3::new(0, 1, 0);
+        let w = &mut game.server.world;
+        w.set_block_world(ground.x, ground.y, ground.z, Block::Grass);
+        w.set_block_world(cell.x, cell.y, cell.z, block);
+        // Undermine it: the fragile block schedules, then breaks next tick.
+        w.set_block_world(ground.x, ground.y, ground.z, Block::Air);
+        let mut feed = TickEvents::default();
+        for _ in 0..3 {
+            game.server.game_tick_step(&mut feed);
+        }
+        assert_eq!(
+            Block::from_id(game.server.world.chunk_block(cell.x, cell.y, cell.z)),
+            Block::Air,
+            "{block:?} must shatter once unsupported"
+        );
+        assert_eq!(
+            game.server.world.item_entities().len(),
+            expected_drops,
+            "{block:?} natural break drops exactly its hand-break yield"
+        );
+        game.server.world.item_entities_mut().clear();
+    }
+}
+
 #[test]
 fn dropped_item_is_picked_up_near_player() {
     let mut game = game();

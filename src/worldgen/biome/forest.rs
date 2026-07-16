@@ -1,7 +1,7 @@
 use crate::biome::Biome;
 use crate::block::Block;
 
-use super::{surfaces, trees, BiomeSpec, TreeProfile, VegetationProfile};
+use super::{BiomeSpec, SnowCover, TreeProfile, VegetationProfile, surfaces, trees};
 
 const FLOWERS: &[Block] = &[Block::Poppy, Block::Dandelion, Block::OxeyeDaisy];
 
@@ -15,4 +15,5 @@ pub(super) static SPEC: BiomeSpec = BiomeSpec {
         .with_spacing(10)
         .with_height_clearance(30),
     vegetation: VegetationProfile::grass(Block::ShortGrass, 0.11).with_flowers(FLOWERS, 0.16, 0.22),
+    snow_cover: SnowCover::None,
 };

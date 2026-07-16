@@ -68,17 +68,17 @@
       "block": "petramond:sand"
     },
     {
-      "item": "petramond:snow",
-      "key": "petramond:snow",
-      "name": "Snow",
+      "item": "petramond:snowball",
+      "key": "petramond:snowball",
+      "name": "Snowball",
       "max_stack_size": 64,
       "held_pose": {
         "pitch": 0,
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
-      "block": "petramond:snow"
+      "sprite": "snowball",
+      "tags": []
     },
     {
       "item": "petramond:water",

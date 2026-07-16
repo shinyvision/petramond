@@ -2,7 +2,7 @@
 //!
 //! The driver's skin pass walks each contiguous solid run top-down and calls
 //! `skin_block` with the voxel's `depth_from_top`. The biome's layered
-//! `SurfaceRule` stack resolves the grass/dirt/stone/sand/snow bands by depth and
+//! `SurfaceRule` stack resolves the grass/dirt/stone/sand bands by depth and
 //! altitude.
 
 pub mod rule;
@@ -21,7 +21,7 @@ impl SurfaceSystem {
     #[inline]
     pub fn skin_block(&self, c: &SurfaceCtx, rule: &SurfaceRule) -> Block {
         let block = rule.resolve(c).unwrap_or(Block::Stone);
-        if c.y < SEA_LEVEL && matches!(block, Block::Grass | Block::Snow) {
+        if c.y < SEA_LEVEL && block == Block::Grass {
             Block::Dirt
         } else {
             block
@@ -79,10 +79,13 @@ mod tests {
             Block::Grass
         );
 
+        // Snowy biomes cap with ordinary grass — the snow layer above it (and
+        // the snowy side rendering) comes from the vegetation pass, not the
+        // skin.
         let snowy = ctx(SEA_LEVEL + 1, 0, Biome::SnowyTundra);
         assert_eq!(
             surface.skin_block(&snowy, spec(Biome::SnowyTundra).surface),
-            Block::Snow
+            Block::Grass
         );
     }
 }

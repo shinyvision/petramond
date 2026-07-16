@@ -1,6 +1,6 @@
 use crate::biome::Biome;
 
-use super::{surfaces, BiomeSpec, TreeProfile, VegetationProfile};
+use super::{BiomeSpec, SnowCover, TreeProfile, VegetationProfile, surfaces};
 
 // Beaches are barren sand in the reference generator: no trees and no sand
 // cover. Cactus and dead bush belong to the arid biomes (desert / desert lakes),
@@ -10,4 +10,5 @@ pub(super) static SPEC: BiomeSpec = BiomeSpec {
     surface: &surfaces::SAND_DEEP,
     trees: TreeProfile::NONE,
     vegetation: VegetationProfile::NONE,
+    snow_cover: SnowCover::None,
 };

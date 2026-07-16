@@ -648,12 +648,16 @@ pub fn decode_section(
         cell_kv,
     );
     // Persisted clean light: seed the cache and clear `light_dirty`, so the
-    // streamer's settle flush skips the bake for this section entirely.
+    // streamer's settle flush skips the bake for this section entirely. The
+    // `light_from_persist` flag records that these cubes are the settled
+    // persisted bake — the streamer's cover-change invalidation spares them
+    // when the change's source is itself persisted content.
     if let Some(sky) = skylight {
         section.set_skylight(std::sync::Arc::from(sky));
         if let Some(bl) = blocklight {
             section.set_blocklight(std::sync::Arc::from(bl));
         }
+        section.light_from_persist = true;
     }
     Some((section, entities, mobs))
 }

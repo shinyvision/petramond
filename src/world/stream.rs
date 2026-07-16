@@ -1185,7 +1185,24 @@ impl World {
         // escape normal ingest invalidation dirty their dependent vertical band:
         // the planner's Full/Dark shortcut depends on the 2D map, not just the
         // ingested section's 3×3×3.
-        let mut sky_cover_changed: FxHashMap<ChunkPos, SkyCoverChange> = FxHashMap::default();
+        // Each change carries whether it was raised purely by PERSISTED record
+        // content (disk-primary / overlay) — such changes spare sections still
+        // holding their untouched persisted bake (see
+        // `mark_sky_cover_light_dirty_around_many`), so reloading explored
+        // terrain re-queues no bakes.
+        let mut sky_cover_changed: FxHashMap<ChunkPos, (SkyCoverChange, bool)> =
+            FxHashMap::default();
+        let note_change = |map: &mut FxHashMap<ChunkPos, (SkyCoverChange, bool)>,
+                               cp: ChunkPos,
+                               change: SkyCoverChange,
+                               from_persist: bool| {
+            map.entry(cp)
+                .and_modify(|(all, fp)| {
+                    all.merge(change);
+                    *fp &= from_persist;
+                })
+                .or_insert((change, from_persist));
+        };
         for &sp in &ingested {
             let cp = sp.chunk_pos();
             if !heightmap_recompute.contains(&cp) {
@@ -1194,20 +1211,26 @@ impl World {
                     // Normal terrain/tree cover moves fit that band; only a
                     // larger vertical jump needs this extra map-wide pass.
                     if change.escapes_section_neighborhood(sp) {
-                        sky_cover_changed
-                            .entry(cp)
-                            .and_modify(|all| all.merge(change))
-                            .or_insert(change);
+                        note_change(
+                            &mut sky_cover_changed,
+                            cp,
+                            change,
+                            !gen_ingested.contains(&sp),
+                        );
                     }
                 }
             }
         }
+        let gen_columns: FxHashSet<ChunkPos> =
+            gen_ingested.iter().map(|sp| sp.chunk_pos()).collect();
         for cp in heightmap_recompute {
             if let Some(change) = self.recompute_column_heightmaps(cp) {
-                sky_cover_changed
-                    .entry(cp)
-                    .and_modify(|all| all.merge(change))
-                    .or_insert(change);
+                note_change(
+                    &mut sky_cover_changed,
+                    cp,
+                    change,
+                    !gen_columns.contains(&cp),
+                );
             }
         }
         self.mark_sky_cover_light_dirty_around_many(sky_cover_changed);

@@ -2,7 +2,7 @@ use crate::biome::Biome;
 use crate::block::Block;
 use crate::worldgen::rng::FeatureRng;
 
-use super::{surfaces, BiomeSpec, TreeProfile, VegetationProfile};
+use super::{BiomeSpec, SnowCover, TreeProfile, VegetationProfile, surfaces};
 
 fn sand_cover(rng: &mut FeatureRng) -> Option<Block> {
     if !rng.chance(0.007) {
@@ -20,4 +20,5 @@ pub(super) static SPEC: BiomeSpec = BiomeSpec {
     surface: &surfaces::SAND_DEEP,
     trees: TreeProfile::NONE,
     vegetation: VegetationProfile::NONE.with_sand_cover(sand_cover),
+    snow_cover: SnowCover::None,
 };

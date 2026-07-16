@@ -794,6 +794,12 @@ fn section_geometry(
 
                 let is_water = block == Block::Water;
                 let block_tiles = block.tiles();
+                // Grass sides swap to the untinted snowy texture while a
+                // snow-cover block (snow layer / snow block) sits directly on
+                // top — derived from the neighbour above at mesh time, so it
+                // heals itself the moment the cover is placed or dug.
+                let grass_snow_covered =
+                    block == Block::Grass && block_at(wx, wy + 1, wz).is_snow_cover();
                 let log_axis = if block.is_log() {
                     section.log_axis(lx, ly, lz)
                 } else {
@@ -827,8 +833,10 @@ fn section_geometry(
                                 matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
                             let (base_tile, overlay_tile, tint) =
                                 if block == Block::Grass && is_side {
-                                    {
-                                        let e = crate::atlas::engine();
+                                    let e = crate::atlas::engine();
+                                    if grass_snow_covered {
+                                        (e.grass_snow, None, tint_tile(e.grass_snow.world_tint(), ci))
+                                    } else {
                                         (e.dirt, Some(e.grass_side_overlay), tint_grass(ci))
                                     }
                                 } else {
@@ -983,8 +991,10 @@ fn section_geometry(
                         };
                         (t, None, tint_water(ci))
                     } else if block == Block::Grass && is_side {
-                        {
-                            let e = crate::atlas::engine();
+                        let e = crate::atlas::engine();
+                        if grass_snow_covered {
+                            (e.grass_snow, None, tint_tile(e.grass_snow.world_tint(), ci))
+                        } else {
                             (e.dirt, Some(e.grass_side_overlay), tint_grass(ci))
                         }
                     } else {

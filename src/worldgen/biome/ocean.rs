@@ -1,10 +1,11 @@
 use crate::biome::Biome;
 
-use super::{surfaces, BiomeSpec, TreeProfile, VegetationProfile};
+use super::{BiomeSpec, SnowCover, TreeProfile, VegetationProfile, surfaces};
 
 pub(super) static SPEC: BiomeSpec = BiomeSpec {
     biome: Biome::Ocean,
     surface: &surfaces::OCEAN_FLOOR,
     trees: TreeProfile::NONE,
     vegetation: VegetationProfile::NONE,
+    snow_cover: SnowCover::None,
 };

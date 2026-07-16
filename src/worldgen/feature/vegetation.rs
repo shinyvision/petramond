@@ -50,6 +50,12 @@ pub fn place_vegetation(chunk: &mut Chunk, seed: u32) {
             let mut rng = FeatureRng::positional(seed, VEG_SALT, wx, 0, wz);
             if let Some(p) = pick_plant(biome, surf, seed, wx, wz, &mut rng) {
                 chunk.set_block_raw(x, above, z, p.id());
+            } else if spec(biome).snow_cover.covers(top) && surf.is_solid() {
+                // Snow-covered columns blanket the bare ground with a snow
+                // layer; a column that rolled a plant keeps it (ferns poke
+                // through the snow). The solid-surface guard skips water tops
+                // (a submerged column's heightmap ends at the waterline).
+                chunk.set_block_raw(x, above, z, Block::SnowLayer.id());
             }
         }
     }
@@ -114,6 +120,11 @@ pub fn place_vegetation_section(
             let mut rng = FeatureRng::positional(seed, VEG_SALT, wx, 0, wz);
             if let Some(p) = pick_plant(biome, surf_block, seed, wx, wz, &mut rng) {
                 section.set_block_raw(lx, ly, lz, p.id());
+            } else if spec(biome).snow_cover.covers(anchor) && surf_block.is_solid() {
+                // Mirrors the chunk path's snow-layer branch — the analytic
+                // skin block stands in for the chunk read, exactly like the
+                // plant pick above, so the two paths stay byte-identical.
+                section.set_block_raw(lx, ly, lz, Block::SnowLayer.id());
             }
         }
     }

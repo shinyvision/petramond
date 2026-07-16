@@ -2,9 +2,7 @@ use crate::biome::Biome;
 use crate::block::Block;
 use crate::worldgen::rng::FeatureRng;
 
-use super::{
-    surfaces, trees, BiomeSpec, CoverCluster, TreeProfile, TreeSupport, VegetationProfile,
-};
+use super::{BiomeSpec, CoverCluster, SnowCover, TreeProfile, TreeSupport, VegetationProfile, surfaces, trees};
 
 const FLOWERS: &[Block] = &[Block::OxeyeDaisy, Block::Poppy];
 
@@ -43,4 +41,5 @@ pub(super) static SPEC: BiomeSpec = BiomeSpec {
             period: 9.0,
             coverage: 0.5,
         }),
+    snow_cover: SnowCover::None,
 };

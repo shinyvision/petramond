@@ -24,7 +24,7 @@ pub(crate) const ENGINE_BLOCK_NAMES: &[&str] = &[
     "petramond:dirt",
     "petramond:stone",
     "petramond:sand",
-    "petramond:snow",
+    "petramond:snow_layer",
     "petramond:water",
     "petramond:oak_log",
     "petramond:oak_leaves",

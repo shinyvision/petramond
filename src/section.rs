@@ -108,6 +108,14 @@ pub struct Section {
     blocklight: Option<Arc<[u8]>>,
     /// Set when blocks change; cleared when light is recomputed.
     pub light_dirty: bool,
+    /// This section's light cubes are the UNTOUCHED persisted bake seeded at
+    /// decode — no live bake or invalidation has touched them since load.
+    /// Records only persist light captured in a globally settled state, so all
+    /// such cubes (and all persisted content) are mutually consistent: a
+    /// sky-cover change sourced from another persisted record landing cannot
+    /// stale them (see the streamer's cover-change invalidation). Cleared by
+    /// [`mark_light_dirty`](Self::mark_light_dirty).
+    pub light_from_persist: bool,
     /// Bumped whenever cached light needs a new bake; async workers echo it back so
     /// stale results can be discarded.
     pub light_revision: u64,
@@ -200,6 +208,7 @@ impl Section {
             skylight: None,
             blocklight: None,
             light_dirty: true,
+            light_from_persist: false,
             light_revision: 0,
             mesh_revision: 0,
             random_tick_count: 0,
@@ -359,6 +368,7 @@ impl Section {
 
     pub fn mark_light_dirty(&mut self) {
         self.light_dirty = true;
+        self.light_from_persist = false;
         self.light_revision = self.light_revision.wrapping_add(1);
     }
 
@@ -1209,6 +1219,7 @@ impl Section {
             skylight: None,
             blocklight: None,
             light_dirty: true,
+            light_from_persist: false,
             light_revision: 0,
             mesh_revision: 0,
             random_tick_count: 0,

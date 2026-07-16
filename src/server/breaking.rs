@@ -393,15 +393,20 @@ impl ServerGame {
                 normal: None,
             });
             let (sky, blk, _warm) = self.world.dynamic_light_at_world(pos.x, pos.y, pos.z);
-            // Fragile blocks are all tier-0 hand-harvestable, so they drop exactly as a
-            // hand-break would (short grass yields nothing, a flower/torch yields itself).
-            self.spawn_drops(pos, block, (sky, blk));
+            // A natural break yields exactly what a bare-hand break would: most
+            // fragile blocks are tier-0 (short grass yields nothing, a
+            // flower/torch yields itself), while a tool-gated drop (the snow
+            // layer's shovel-only snowball) is lost — nobody dug it.
+            let harvested = crate::mining::harvests(block, None);
+            if harvested {
+                self.spawn_drops(pos, block, (sky, blk));
+            }
             // Sim-destroyed blocks are not cancellable (no pre event);
             // observers still hear about them.
             self.bus.emit(PostEvent::BlockBroken {
                 pos,
                 block,
-                harvested: true,
+                harvested,
                 natural: true,
             });
         }

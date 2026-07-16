@@ -1,7 +1,7 @@
 use crate::biome::Biome;
 use crate::block::Block;
 
-use super::{surfaces, trees, BiomeSpec, TreeProfile, VegetationProfile};
+use super::{BiomeSpec, SnowCover, TreeProfile, VegetationProfile, surfaces, trees};
 
 const FLOWERS: &[Block] = &[
     Block::Dandelion,
@@ -18,4 +18,5 @@ pub(super) static SPEC: BiomeSpec = BiomeSpec {
     // tuned oaks are big enough that more would crowd the open plain.
     trees: TreeProfile::new(0.0002, trees::plains_oak).with_height_clearance(30),
     vegetation: VegetationProfile::grass(Block::ShortGrass, 0.14).with_flowers(FLOWERS, 0.1, 0.15),
+    snow_cover: SnowCover::None,
 };

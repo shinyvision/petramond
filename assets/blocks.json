@@ -205,44 +205,31 @@
       ]
     },
     {
-      "block": "petramond:snow",
-      "shape": "cube",
-      "flags": [
-        "solid",
-        "opaque",
-        "ao_occluder"
-      ],
+      "block": "petramond:snow_layer",
+      "shape": {
+        "lowered_cube": 1
+      },
+      "flags": [],
       "tags": [
-        "terrain"
+        "fragile",
+        "replaceable",
+        "snow_cover"
       ],
-      "behavior": "inert",
+      "behavior": "fragile",
       "interaction": "none",
-      "collision": [
-        {
-          "min": [
-            0,
-            0,
-            0
-          ],
-          "max": [
-            1,
-            1,
-            1
-          ]
-        }
-      ],
+      "collision": [],
       "emission": 0,
       "tiles": [
         "snow",
-        "dirt",
-        "grass_snow"
+        "snow",
+        "snow"
       ],
       "material": "sand",
-      "harvest_tier": 0,
-      "hardness": 0.5,
+      "harvest_tier": 1,
+      "hardness": 0.1,
       "drops": [
         {
-          "item": "petramond:snow",
+          "item": "petramond:snowball",
           "min": 1,
           "max": 1,
           "chance": 1
@@ -1507,7 +1494,10 @@
         "opaque",
         "ao_occluder"
       ],
-      "tags": [],
+      "tags": [
+        "snow_cover",
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [

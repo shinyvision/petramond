@@ -2,7 +2,7 @@ use crate::biome::Biome;
 use crate::block::Block;
 use crate::worldgen::rng::FeatureRng;
 
-use super::{surfaces, trees, BiomeSpec, TreeProfile, VegetationProfile};
+use super::{BiomeSpec, SnowCover, TreeProfile, VegetationProfile, surfaces, trees};
 
 fn podzol_cover(rng: &mut FeatureRng) -> Option<Block> {
     if !rng.chance(0.10) {
@@ -25,4 +25,5 @@ pub(super) static SPEC: BiomeSpec = BiomeSpec {
     surface: &surfaces::PODZOL_TOP,
     trees: TreeProfile::new(0.035, trees::spruce),
     vegetation: VegetationProfile::grass(Block::Fern, 0.12).with_podzol_cover(podzol_cover),
+    snow_cover: SnowCover::None,
 };

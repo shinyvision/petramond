@@ -67,9 +67,18 @@ impl World {
     /// Streaming cover changes arrive in contiguous batches, so each loaded
     /// section is invalidated only once even when several changed columns'
     /// dependent footprints overlap.
+    ///
+    /// A change whose `from_persist` flag is set was raised purely by PERSISTED
+    /// record content landing (disk-primary / overlay, no fresh generation in
+    /// the column). Records only persist light captured in a globally settled
+    /// state, so every section still holding its untouched persisted bake
+    /// (`Section::light_from_persist`) already saw that content — such sections
+    /// are spared, which is what keeps a reload of explored terrain bake-free.
+    /// Sections baked live this session may have read the pre-landing cover and
+    /// are marked regardless.
     pub(super) fn mark_sky_cover_light_dirty_around_many(
         &mut self,
-        changes: impl IntoIterator<Item = (ChunkPos, SkyCoverChange)>,
+        changes: impl IntoIterator<Item = (ChunkPos, (SkyCoverChange, bool))>,
     ) {
         self.mark_sky_cover_light_dirty_around_impl(changes, false);
     }
@@ -111,18 +120,21 @@ impl World {
 
     fn mark_sky_cover_light_dirty_around_impl(
         &mut self,
-        changes: impl IntoIterator<Item = (ChunkPos, SkyCoverChange)>,
+        changes: impl IntoIterator<Item = (ChunkPos, (SkyCoverChange, bool))>,
         edited: bool,
     ) {
         let mut affected = Vec::new();
         let mut seen = FxHashSet::default();
-        for (center, change) in changes {
+        for (center, (change, from_persist)) in changes {
             for dz in -1..=1 {
                 for dx in -1..=1 {
                     for cy in Self::column_section_range() {
                         let pos = SectionPos::new(center.cx + dx, cy, center.cz + dz);
                         if change.affects(pos)
-                            && self.sections.contains_key(&pos)
+                            && self
+                                .sections
+                                .get(&pos)
+                                .is_some_and(|s| !(from_persist && s.light_from_persist))
                             && seen.insert(pos)
                         {
                             affected.push(pos);

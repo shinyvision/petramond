@@ -147,9 +147,19 @@ mod tests {
     fn per_section_generation_matches_whole_column_above_ground() {
         use crate::chunk::{SectionPos, CHUNK_SY, SECTION_SIZE};
 
-        let seed = 0x1234_5678;
-        let generator = driver::ChunkGenerator::new(seed);
-        for &(cx, cz) in &[(0, 0), (1, -1), (-3, 5), (12, -7), (4, -3)] {
+        // Seed 31337's origin sits in a snowy region, so the snow-layer
+        // placement (vegetation stage) is exercised across the seam too.
+        for &(seed, cx, cz) in &[
+            (0x1234_5678u32, 0, 0),
+            (0x1234_5678, 1, -1),
+            (0x1234_5678, -3, 5),
+            (0x1234_5678, 12, -7),
+            (0x1234_5678, 4, -3),
+            (31337, 0, 0),
+            (31337, 2, 3),
+            (31337, -1, -2),
+        ] {
+            let generator = driver::ChunkGenerator::new(seed);
             let chunk = generate_chunk(seed, cx, cz);
             let col = generator.generate_column_gen(cx, cz);
 
@@ -256,8 +266,8 @@ mod tests {
                             for y in 0..SEA_LEVEL as usize {
                                 let block = chunk.block(x, y, z);
                                 assert!(
-                                    !matches!(block, Block::Grass | Block::Snow),
-                                    "grass variant {block:?} below sea level at chunk ({cx},{cz}) local ({x},{y},{z}) seed {seed:#x}"
+                                    block != Block::Grass,
+                                    "grass below sea level at chunk ({cx},{cz}) local ({x},{y},{z}) seed {seed:#x}"
                                 );
                             }
                         }

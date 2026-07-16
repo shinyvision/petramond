@@ -104,6 +104,7 @@
     {"name": "crafting_table_top", "file": "crafting_table_top.png"},
     {"name": "crafting_table_front", "file": "crafting_table_front.png"},
     {"name": "stick", "file": "stick.png"},
+    {"name": "snowball", "file": "snowball.png"},
     {"name": "wooden_pickaxe", "file": "wooden_pickaxe.png"},
     {"name": "stone_pickaxe", "file": "stone_pickaxe.png"},
     {"name": "raw_iron", "file": "raw_iron.png"},

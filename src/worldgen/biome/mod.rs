@@ -175,11 +175,40 @@ impl VegetationProfile {
     }
 }
 
+/// Where a biome lays a snow layer on the bare ground (one cell above the
+/// column's post-cave surface, placed by the ground-vegetation pass). The
+/// grass underneath renders its snowy sides while the layer sits on it.
+#[derive(Copy, Clone)]
+pub(crate) enum SnowCover {
+    /// Never — the default for temperate biomes.
+    None,
+    /// Every dry land column — the snowy biomes.
+    Always,
+    /// Only columns whose bare-ground surface is strictly above this Y — the
+    /// altitude snow caps (mountains). Keep the line in lockstep with the
+    /// biome's `SurfaceAboveY` cap band so the cap material and the layer
+    /// appear together.
+    AboveSurfaceY(i32),
+}
+
+impl SnowCover {
+    /// Whether a column whose bare-ground surface sits at `surf_y` is covered.
+    #[inline]
+    pub fn covers(self, surf_y: i32) -> bool {
+        match self {
+            SnowCover::None => false,
+            SnowCover::Always => true,
+            SnowCover::AboveSurfaceY(line) => surf_y > line,
+        }
+    }
+}
+
 pub(crate) struct BiomeSpec {
     pub biome: Biome,
     pub surface: &'static SurfaceRule,
     pub trees: TreeProfile,
     pub vegetation: VegetationProfile,
+    pub snow_cover: SnowCover,
 }
 
 pub(crate) const MAX_TREE_SPACING_RADIUS: i32 = 10;

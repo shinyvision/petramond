@@ -990,6 +990,21 @@
         "item": "petramond:ladder",
         "count": 3
       }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:snow_block",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:snowball",
+          "count": 4
+        }
+      ],
+      "result": {
+        "item": "petramond:snow_block",
+        "count": 1
+      }
     }
   ]
 }

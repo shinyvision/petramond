@@ -92,7 +92,7 @@ impl ItemType {
     pub const Dirt: ItemType = ItemType(2);
     pub const Stone: ItemType = ItemType(3);
     pub const Sand: ItemType = ItemType(4);
-    pub const Snow: ItemType = ItemType(5);
+    pub const Snowball: ItemType = ItemType(5);
     pub const Water: ItemType = ItemType(6);
     pub const OakLog: ItemType = ItemType(7);
     pub const OakLeaves: ItemType = ItemType(8);

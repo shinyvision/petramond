@@ -43,7 +43,7 @@ impl Block {
     pub const Dirt: Block = Block(2);
     pub const Stone: Block = Block(3);
     pub const Sand: Block = Block(4);
-    pub const Snow: Block = Block(5);
+    pub const SnowLayer: Block = Block(5);
     pub const Water: Block = Block(6);
     pub const OakLog: Block = Block(7);
     pub const OakLeaves: Block = Block(8);
@@ -240,6 +240,7 @@ static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
     "roots_in_stone",
     "no_pane_connect",
     "climbable",
+    "snow_cover",
 ]);
 
 impl BlockTag {
@@ -248,7 +249,7 @@ impl BlockTag {
     pub const LEAVES: BlockTag = BlockTag(0);
     /// Any tree-log block: counts as support that keeps adjacent leaves alive.
     pub const LOG: BlockTag = BlockTag(1);
-    /// Natural ground surface — the bare-terrain set (stone/dirt/grass/sand/snow),
+    /// Natural ground surface — the bare-terrain set (stone/dirt/grass/sand),
     /// excluding tree parts and built blocks. Worldgen audits measure overhangs /
     /// floating debris against it (see `worldgen::audit`).
     pub const TERRAIN: BlockTag = BlockTag(2);
@@ -303,6 +304,11 @@ impl BlockTag {
     /// it through [`World::climbable_facing_at`](crate::world::World); the climb
     /// speed and feel live in `player::movement`, never per-block.
     pub const CLIMBABLE: BlockTag = BlockTag(12);
+    /// A blanket of snow covering the cell — the snow layer and the snow block.
+    /// Grass renders its snowy side texture while a snow-cover block sits
+    /// directly on top of it (see the mesher's grass-side branch); the look is
+    /// derived from the cell above at mesh time, never stored per cell.
+    pub const SNOW_COVER: BlockTag = BlockTag(13);
 
     /// Resolve a `blocks.json` row tag name (see [`crate::registry::TagTable`]).
     pub(crate) fn resolve(name: &str) -> Result<BlockTag, String> {
@@ -428,9 +434,18 @@ impl Block {
         match self.def().shape {
             RenderShape::Stair => BlockLightShape::Stair,
             RenderShape::Slab => BlockLightShape::Slab,
-            // A hair shorter than a block visually, but a full light blocker
-            // — the deliberate simplification (no partial-cell light shape).
-            RenderShape::LoweredCube(_) => BlockLightShape::OpaqueCube,
+            // No partial-cell light shape for lowered cubes — the deliberate
+            // simplification, rounded to the nearer full case: a mostly-full
+            // cube (farmland, 15/16) blocks like a full cube, a thin cover
+            // (the snow layer, 1/16) blocks nothing. Anything else would
+            // darken the cell an entity standing ON a thin cover occupies.
+            RenderShape::LoweredCube(h) => {
+                if h >= 8 {
+                    BlockLightShape::OpaqueCube
+                } else {
+                    BlockLightShape::Open
+                }
+            }
             _ => BlockLightShape::Open,
         }
     }
@@ -513,6 +528,12 @@ impl Block {
         if let RenderShape::Model(kind) = self.def().shape {
             return crate::block_model::selection_aabb(kind, [0, 0, 0]);
         }
+        // A lowered cube's visible box IS its shape, independent of collision —
+        // so a walk-through thin cover (the snow layer) is still selectable,
+        // like a no-collision model block.
+        if let RenderShape::LoweredCube(h) = self.def().shape {
+            return Some(([0.0, 0.0, 0.0], [1.0, h as f32 / 16.0, 1.0]));
+        }
         let boxes = self.collision_boxes();
         if boxes.is_empty() {
             return None;
@@ -566,7 +587,7 @@ impl Block {
     }
 
     /// Whether this is a natural terrain-solid block: the bare-ground set
-    /// (`Stone`, `Dirt`, `Grass`, `Sand`, `Snow`) that makes up the land surface,
+    /// (`Stone`, `Dirt`, `Grass`, `Sand`) that makes up the land surface,
     /// EXCLUDING tree logs/leaves and built blocks. Worldgen audits use this to
     /// measure terrain overhangs/floating debris without tree canopy swamping the
     /// signal (see `worldgen::audit`). Narrower than [`is_solid`](Self::is_solid).
@@ -681,6 +702,14 @@ impl Block {
         self.has_tag(BlockTag::REPLACEABLE)
     }
 
+    /// Whether this block blankets the cell below in snow (see
+    /// [`BlockTag::SNOW_COVER`]) — the mesher renders grass directly beneath
+    /// such a block with its snowy side texture.
+    #[inline]
+    pub fn is_snow_cover(self) -> bool {
+        self.has_tag(BlockTag::SNOW_COVER)
+    }
+
     /// Whether this block is [`Fragile`](BlockTag::FRAGILE) — it shatters when it
     /// loses support or water enters its cell. Read by the water sim (a fragile cell
     /// is one water may flow into) and paired with the [`FRAGILE`](behavior) break
@@ -764,12 +793,14 @@ impl Block {
         ItemType::from_block(self)
     }
 
-    /// Whether this block cannot be hand-harvested (Stone/Ore yield nothing
-    /// without a pickaxe). It still breaks — it just drops nothing. Equivalent to
-    /// `harvest_tier() >= 1`; mirrors the harvest gate in `crate::mining`.
+    /// Whether this block cannot be hand-harvested — it still breaks, it just
+    /// drops nothing without a sufficient tool of its preferred kind (Stone/Ore
+    /// without a pickaxe, the snow layer without a shovel). This IS the harvest
+    /// gate's condition (`harvest_tier() >= 1`, see `crate::mining::harvests`),
+    /// read from the row rather than inferred from the material class.
     #[inline]
     pub fn requires_tool(self) -> bool {
-        matches!(self.material(), BlockMaterial::Stone | BlockMaterial::Ore)
+        self.harvest_tier() >= 1
     }
 
     /// The tool kind that mines this block efficiently — a [`Pickaxe`](ToolKind::Pickaxe)
@@ -886,15 +917,17 @@ mod tests {
                     d.max
                 );
             }
-            // requires_tool() is exactly the Stone/Ore material set, and matches
-            // "needs at least a wooden pickaxe" (harvest_tier >= 1).
-            let by_material = matches!(block.material(), BlockMaterial::Stone | BlockMaterial::Ore);
-            assert_eq!(block.requires_tool(), by_material, "{block:?}");
+            // requires_tool() is the harvest gate's condition. Every Stone/Ore
+            // material block is tool-gated (needs at least a wooden pickaxe);
+            // soft blocks may opt in too (the snow layer's shovel-gated drop).
             assert_eq!(
                 block.requires_tool(),
                 block.harvest_tier() >= 1,
                 "{block:?}"
             );
+            if matches!(block.material(), BlockMaterial::Stone | BlockMaterial::Ore) {
+                assert!(block.requires_tool(), "{block:?}");
+            }
         }
     }
 
@@ -922,7 +955,9 @@ mod tests {
             assert_eq!(b.preferred_tool(), Some(ToolKind::Axe), "{b:?}");
         }
         // Dirt & sand want a shovel — the soft cover blocks (grass, podzol, gravel,
-        // clay, snow), all hand-harvestable so the shovel is a pure speed bonus.
+        // clay, snow). All but the snow layer are hand-harvestable, so the shovel
+        // is a pure speed bonus there; the snow layer's snowball drop is
+        // shovel-gated (harvest tier 1).
         for b in [
             Block::Dirt,
             Block::Grass,
@@ -930,7 +965,7 @@ mod tests {
             Block::Sand,
             Block::Gravel,
             Block::Clay,
-            Block::Snow,
+            Block::SnowLayer,
         ] {
             assert!(
                 matches!(b.material(), BlockMaterial::Dirt | BlockMaterial::Sand),
@@ -959,13 +994,10 @@ mod tests {
     fn is_terrain_solid_is_the_bare_ground_set() {
         // Exactly the natural ground blocks — the set the genmap audits treat as
         // terrain (excludes logs/leaves and built blocks).
-        let terrain = [
-            Block::Stone,
-            Block::Dirt,
-            Block::Grass,
-            Block::Sand,
-            Block::Snow,
-        ];
+        // The snow layer is deliberately NOT in the set: it is decorative cover
+        // above the surface, not load-bearing ground, so the debris audits
+        // ignore it.
+        let terrain = [Block::Stone, Block::Dirt, Block::Grass, Block::Sand];
         for &b in &terrain {
             assert!(b.is_terrain_solid(), "{b:?} should be terrain-solid");
         }
