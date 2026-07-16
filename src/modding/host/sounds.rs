@@ -7,7 +7,7 @@ use crate::mathh::Vec3;
 
 use super::guards::{finite3, sim_call, sim_query};
 
-/// Phase 3b: sound (one-shots plus the handle-based spatial commands; the sim
+/// Sound calls (one-shots plus the handle-based spatial commands; the sim
 /// never touches audio — everything rides `TickEvents` to the app layer).
 pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {

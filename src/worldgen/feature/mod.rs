@@ -800,9 +800,7 @@ mod tests {
     /// silently rot after generation.
     #[test]
     fn configured_trees_place_only_orthogonally_supported_leaves() {
-        use crate::worldgen::data::features::{
-            ACACIA, OAK_BIG, OAK_SMALL, OAK_YOUNG, REDWOOD, SPRUCE,
-        };
+        use crate::worldgen::data::features;
         use std::collections::{HashSet, VecDeque};
 
         const MAX_LOG_DISTANCE: i32 = 6; // mirrors block::behavior::leaves
@@ -816,12 +814,12 @@ mod tests {
         ];
 
         for (name, feat) in [
-            ("acacia", &ACACIA),
-            ("oak_young", &OAK_YOUNG),
-            ("oak_small", &OAK_SMALL),
-            ("oak_big", &OAK_BIG),
-            ("spruce", &SPRUCE),
-            ("redwood", &REDWOOD),
+            ("acacia", features::acacia()),
+            ("oak_young", features::oak_young()),
+            ("oak_small", features::oak_small()),
+            ("oak_big", features::oak_big()),
+            ("spruce", features::spruce()),
+            ("redwood", features::redwood()),
         ] {
             for seed in [1u32, 7, 42, 99, 1000, 31337] {
                 let map = generate_into_map(feat, seed);
@@ -871,12 +869,12 @@ mod tests {
     /// hold a leaf above the log.
     #[test]
     fn oak_crowns_bury_the_trunk_top() {
-        use crate::worldgen::data::features::{OAK_BIG, OAK_SMALL, OAK_YOUNG};
+        use crate::worldgen::data::features;
 
         for (name, feat) in [
-            ("oak_young", &OAK_YOUNG),
-            ("oak_small", &OAK_SMALL),
-            ("oak_big", &OAK_BIG),
+            ("oak_young", features::oak_young()),
+            ("oak_small", features::oak_small()),
+            ("oak_big", features::oak_big()),
         ] {
             for seed in [1u32, 7, 42, 99, 1000, 31337] {
                 let map = generate_into_map(feat, seed);
@@ -908,13 +906,13 @@ mod tests {
     #[test]
     fn oaks_refuse_sites_where_roots_would_hang() {
         use crate::mathh::IVec3;
-        use crate::worldgen::data::features::{OAK_BIG, OAK_SMALL, OAK_YOUNG};
+        use crate::worldgen::data::features;
         use crate::worldgen::rng::FeatureRng;
 
         for (name, feat) in [
-            ("oak_young", &OAK_YOUNG),
-            ("oak_small", &OAK_SMALL),
-            ("oak_big", &OAK_BIG),
+            ("oak_young", features::oak_young()),
+            ("oak_small", features::oak_small()),
+            ("oak_big", features::oak_big()),
         ] {
             for seed in [1u32, 7, 42, 99, 1000, 31337] {
                 let origin = IVec3::new(0, 64, 0);

@@ -1,4 +1,4 @@
-//! Worldgen hooks (modding Phase 4): the registered feature/stage-replacement
+//! Worldgen hooks: the registered feature/stage-replacement
 //! config, its process-wide installation, and the per-thread guest dispatch.
 //!
 //! # Shape

@@ -1,6 +1,7 @@
-//! The runtime GUI-kind registry (Phase 5).
+//! The runtime GUI-kind registry.
 //!
-//! [`GuiKind`] follows the Phase 2a newtype pattern: engine kinds are frozen
+//! [`GuiKind`] follows the same newtype-over-registry pattern as
+//! `Block`/`ItemType`: engine kinds are frozen
 //! low ids behind consts named exactly like the old enum variants, so existing
 //! expressions and const match patterns still compile; mod packs ADD kinds by
 //! declaring a namespaced `kind: "mod_id:name"` in a GUI document (or an

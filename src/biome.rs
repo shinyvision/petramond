@@ -36,7 +36,7 @@ pub enum Biome {
     DesertLakes,
 }
 
-pub const BIOME_COUNT: usize = data::BIOME_DEFS.len();
+pub const BIOME_COUNT: usize = data::ENGINE_BIOME_COUNT;
 
 /// Radius, in blocks, used when blending the above-water sky/fog colour across
 /// neighbouring biome columns.

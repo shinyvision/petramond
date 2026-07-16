@@ -39,7 +39,7 @@ pub(super) enum AppScreen {
     /// The furniture-workbench screen (one input block + a grid of craftable results),
     /// opened by right-clicking a placed workbench.
     FurnitureWorkbench,
-    /// A mod-defined GUI screen (widgets-only in Phase 5), opened by a block's
+    /// A mod-defined GUI screen (widgets only), opened by a block's
     /// `open_gui` interaction or a mod's `GuiOpen` call. Carries which
     /// registered kind it draws.
     ModGui(crate::gui::GuiKind),

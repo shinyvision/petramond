@@ -72,7 +72,7 @@ pub enum ContainerKind {
     Furnace,
     Chest,
     FurnitureWorkbench,
-    /// A mod-defined GUI (Phase 5); `key` is its registered kind key
+    /// A mod-defined GUI; `key` is its registered kind key
     /// (`"wheel:wheel"`).
     Mod {
         key: String,

@@ -207,7 +207,7 @@ pub enum BlockInteraction {
     /// Right-click puts the player to sleep in this block (a bed): sets the
     /// spawn point beside it and starts the sleep fade (see `game::bed`).
     Sleep,
-    /// Right-click opens the mod GUI registered under this kind (Phase 5).
+    /// Right-click opens the mod GUI registered under this kind.
     OpenModGui(crate::gui::GuiKind),
 }
 

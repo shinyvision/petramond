@@ -1,6 +1,6 @@
 //! Engine ↔ ABI type conversions (`crate::events` types to `mod_api` mirrors).
 //!
-//! One total function per direction actually used in Phase 2b: engine payloads
+//! One total function per direction actually used: engine payloads
 //! flow OUT to guests; only `Outcome` and the taxonomy's mutable fields flow
 //! back (handled at the wiring site, not here). Every match is exhaustive on
 //! purpose — adding an engine event/stage without its ABI mirror must not

@@ -343,6 +343,8 @@ fn grow_branch(
 /// Leaf-decay support: every clump box carries hidden support wood
 /// (`clump_support`) and erosion never strands a corner (`leaf_box_eroded`),
 /// so no leaf exceeds the decay flood's log distance.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BlockyOakFeature {
     pub log: Block,
     pub leaf: Block,
@@ -619,6 +621,8 @@ impl Feature for BlockyOakFeature {
 /// `reach.1 + tip_radius.1` — keep that ≤ `proto::MARGIN`. Leaf-decay support:
 /// every clump is centred on its limb's tip log, so no leaf exceeds the decay
 /// flood's log distance.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CanopyTreeFeature {
     pub log: Block,
     pub leaf: Block,
@@ -697,6 +701,8 @@ impl Feature for CanopyTreeFeature {
 /// Huge redwood: a flared multi-block trunk that tapers upward, long upper limbs
 /// with leaf masses, and a narrow high crown. Materials are placeholders (oak
 /// log/leaf) until dedicated redwood assets exist.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RedwoodFeature {
     pub log: Block,
     pub leaf: Block,

@@ -5,7 +5,7 @@ use mod_api::{HostCall, HostRet};
 
 use super::{ModStoreData, Registration};
 
-/// Phase 4: worldgen hooks (block-name resolution plus the gen registrations).
+/// Worldgen-hook calls (block-name resolution plus the gen registrations).
 pub(super) fn handle_worldgen_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
     match call {
         // ResolveBlock reads only the process-wide registry, so it is legal on

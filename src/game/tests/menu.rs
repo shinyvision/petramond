@@ -157,7 +157,7 @@ fn collect_to_cursor_tops_up_from_hotbar_and_grid() {
     );
 }
 
-/// The Phase 5 mod-GUI session contract on the Game side: opening clears the
+/// The mod-GUI session contract on the Game side: opening clears the
 /// state map, a button click LATCHES (per-frame pure) and only the tick
 /// dispatches a `gui_click` to the OWNING mod (namespace prefix == pack id),
 /// a secondary click over a button triggers nothing, and closing the session

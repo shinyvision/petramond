@@ -1,4 +1,4 @@
-//! Game-level contracts of the Phase 1 event bus + tick-stage scheduler: the
+//! Game-level contracts of the event bus + tick-stage scheduler: the
 //! stage seam ordering, same-tick post drains, and the player-death one-shot.
 
 use std::sync::{Arc, Mutex};

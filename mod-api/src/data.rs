@@ -15,7 +15,7 @@ pub const MAX_MOB_ANIM_PHASE_MAGNITUDE: f32 = 1_000_000.0;
 /// in authored animation seconds per real second.
 pub const MAX_MOB_ANIM_RATE_MAGNITUDE: f32 = 1_000.0;
 
-/// One value of the open GUI session's state map (Phase 5). Written by mods
+/// One value of the open GUI session's state map. Written by mods
 /// on the tick ([`HostCall::GuiStateSet`]); read per frame by the renderer to
 /// drive `label` text, `rotimage` angles (radians, `F32`), and mod overlay
 /// fractions. Keys are mod-local: the map belongs to one GUI session (cleared

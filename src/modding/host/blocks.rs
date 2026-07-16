@@ -7,7 +7,7 @@ use crate::mathh::IVec3;
 
 use super::guards::{checked_block, key_owned_by_namespace, sim_call, sim_query};
 
-/// Phase 3b: blocks (all sim-scoped, delegating to World).
+/// Block calls (all sim-scoped, delegating to World).
 pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
         HostCall::SwapModelBlock { pos, block } => match checked_block(block) {

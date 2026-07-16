@@ -22,7 +22,7 @@ pub struct LevelData {
     /// tick-anchored state (the `petramond:clock` day cycle) continue across
     /// sessions instead of restarting at 0.
     pub tick: u64,
-    /// The mod world KV map (`mod_id:key` → bytes; Phase 3b).
+    /// The mod world KV map (`mod_id:key` → bytes).
     pub world_kv: BTreeMap<String, Vec<u8>>,
     /// Chunk columns whose one-time worldgen herd already spawned. Restored
     /// through [`crate::world::World::set_populated_columns`] so the stock

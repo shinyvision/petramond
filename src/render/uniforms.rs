@@ -33,7 +33,7 @@ pub struct Uniforms {
     pub fog: [f32; 4],     // (start, end, time, underwater)
     /// `xyz` = fog colour; `w` = the sim-owned sky scale (1.0 = noon/identity),
     /// read by `block.wgsl`, `model3d.wgsl`, and `sky.wgsl` to dim skylight,
-    /// the held item, and the sky-gradient zenith at draw time (Phase 2c).
+    /// the held item, and the sky-gradient zenith at draw time.
     pub fog_color: [f32; 4],
     pub inv_view_proj: [[f32; 4]; 4],
     /// World-space origin subtracted by world shaders before applying `view_proj`.

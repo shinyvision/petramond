@@ -40,7 +40,7 @@ fn magnitude_guard(call: &str, field: &str, value: f32, max: f32) -> Result<(), 
     }
 }
 
-/// Phase 3b: entities (mob spawn/query/hurt/despawn, item drops).
+/// Entity calls (mob spawn/query/hurt/despawn, item drops).
 pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
         HostCall::SpawnMob { key, pos, yaw } => match finite3(pos, "SpawnMob.pos") {

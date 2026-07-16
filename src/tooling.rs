@@ -155,18 +155,14 @@ pub mod worldgen {
         name: &str,
     ) -> Option<&'static crate::worldgen::feature::ConfiguredFeature> {
         let key = name.trim().to_ascii_lowercase().replace('-', "_");
-        Some(match key.as_str() {
-            "redwood" => &crate::worldgen::data::features::REDWOOD,
-            "oak_young" | "young_oak" => &crate::worldgen::data::features::OAK_YOUNG,
-            "oak_small" | "oak" => &crate::worldgen::data::features::OAK_SMALL,
-            "oak_swamp" | "swamp_oak" => &crate::worldgen::data::features::OAK_SWAMP,
-            "oak_big" | "giant_oak" | "fancy_oak" => &crate::worldgen::data::features::OAK_BIG,
-            "spruce" => &crate::worldgen::data::features::SPRUCE,
-            "birch" => &crate::worldgen::data::features::BIRCH,
-            "jungle" => &crate::worldgen::data::features::JUNGLE,
-            "acacia" => &crate::worldgen::data::features::ACACIA,
-            _ => return None,
-        })
+        let key = match key.as_str() {
+            "young_oak" => "oak_young",
+            "oak" => "oak_small",
+            "swamp_oak" => "oak_swamp",
+            "giant_oak" | "fancy_oak" => "oak_big",
+            other => other,
+        };
+        crate::worldgen::data::features::by_name(&format!("petramond:{key}"))
     }
 
     #[derive(Clone, Debug)]

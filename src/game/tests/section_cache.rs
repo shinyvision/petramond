@@ -17,6 +17,11 @@ use crate::game::GameInput;
 use crate::mathh::{IVec3, Vec3};
 use crate::net::protocol::{SectionCacheClaim, SectionPayload, ServerToClient};
 
+/// Wall-clock give-up bound for the pump loops. Generous on purpose: gen and
+/// light run on the shared job pool, and a workspace-parallel test run can
+/// starve it for tens of seconds without anything being wrong.
+const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+
 const HOME: Vec3 = Vec3::new(8.5, 80.0, 8.5);
 const FAR: Vec3 = Vec3::new(328.5, 80.0, 328.5);
 const HOME_COLUMN: ChunkPos = ChunkPos { cx: 0, cz: 0 };
@@ -41,7 +46,7 @@ fn frames_until(
     what: &str,
     done: impl Fn(&TestGame) -> bool,
 ) -> Vec<ServerToClient> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + DEADLINE;
     let mut recorded = Vec::new();
     while !done(game) {
         if std::time::Instant::now() >= deadline {
@@ -78,7 +83,7 @@ fn kind(m: &ServerToClient) -> &'static str {
 /// terrain of an initial load (or a re-entry) has landed. Light rebakes and
 /// tick deltas may keep trickling (water settling); they don't gate this.
 fn settle(game: &mut TestGame, what: &str) -> Vec<ServerToClient> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + DEADLINE;
     let mut recorded = Vec::new();
     let mut quiet = 0;
     loop {
@@ -221,7 +226,15 @@ fn a_moved_belief_hash_resends_the_full_payload() {
             hash: hash.wrapping_add(1),
         }]);
 
-    let msgs = return_home(&mut game);
+    // Return home, gating on the OBSERVABLE end of the resend flow: the
+    // replica holds the section live again. The quiet-frame `settle` is a
+    // scheduling assumption — under load the home column's base can land and
+    // 30 frames pass while this section's regen job is still starved, ending
+    // the recording window before the payload ever shipped.
+    place_player(&mut game, HOME);
+    let msgs = frames_until(&mut game, "the mismatched section streamed back in", |g| {
+        g.replica.section_payload(sp).is_some()
+    });
     let (cached, full) = (
         msgs.iter()
             .filter(|m| matches!(m, ServerToClient::SectionCached { pos, .. } if *pos == sp))

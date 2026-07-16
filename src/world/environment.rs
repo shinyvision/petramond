@@ -3,7 +3,7 @@
 //! Neutral data only — no render types. Mods write this on the tick through
 //! HostCalls; `game::environment` snapshots it per frame for the renderer.
 //! NOT persisted: it resets to defaults every time a world opens — the owning
-//! mod re-applies it (its persistence is the Phase 3 world KV).
+//! mod re-applies it (its persistence is the mod world KV).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

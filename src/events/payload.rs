@@ -1,13 +1,13 @@
-//! Typed event payloads — the Phase 1 taxonomy.
+//! Typed event payloads — the mod-facing event taxonomy.
 //!
 //! Fields mirror today's hardcoded data flows. Pre-event payloads are handed to
 //! handlers as `&mut`, but the engine only reads back the fields the taxonomy
 //! marks mutable (`MobDamagePre::amount`, `MobDamagePre::feedback`,
-//! `PlayerDamagePre::amount`); everything else is observational in Phase 1.
+//! `PlayerDamagePre::amount`); everything else is observational.
 
-// The payloads are the mod-facing API: the engine constructs them and only
-// handlers read them, and no engine handlers exist until Phase 2 — so dead-code
-// analysis cannot see the reads yet.
+// The payloads are the mod-facing API: the engine constructs them and handlers
+// read them; fields no engine handler touches are still part of the surface
+// mod closures see through `modding::convert`.
 #![allow(dead_code)]
 
 use crate::block::Block;
@@ -30,7 +30,7 @@ pub(crate) struct BlockPlacePre {
 
 /// `block_break_pre` — cancel = unbreakable (the block stays; the spent mining
 /// progress is the cost). Fires only for player mining; sim-destroyed blocks
-/// (natural breaks) are not cancellable in Phase 1.
+/// (natural breaks) are not cancellable.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct BlockBreakPre {
     pub pos: IVec3,
@@ -180,7 +180,7 @@ pub(crate) enum ContainerKind {
     Furnace,
     Chest,
     FurnitureWorkbench,
-    /// A mod-defined GUI session (Phase 5); the ABI mirror carries the kind's
+    /// A mod-defined GUI session; the ABI mirror carries the kind's
     /// registered key string.
     Mod(crate::gui::GuiKind),
 }

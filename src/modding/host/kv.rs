@@ -21,7 +21,7 @@ fn guarded_write(
     }
 }
 
-/// Phase 3b: persistent KV (world / section-cell / mob surfaces; writes pass
+/// Persistent-KV calls (world / section-cell / mob surfaces; writes pass
 /// [`kv_write_guard`]).
 pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {

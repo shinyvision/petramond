@@ -422,7 +422,7 @@ impl ChunkGenerator {
         // Mod climate replacement: substitute the column's OWN biome map (what the
         // terrain skin, vegetation, and every later hook read). The candidate-window
         // biomes stay the engine's — the tree stage keeps engine climate unless it is
-        // itself replaced (documented, Phase 4 notes).
+        // itself replaced.
         if let Some(hooks) = &self.hooks {
             if hooks.replaces(WorldgenStage::Climate) {
                 let inputs = GenInputs {

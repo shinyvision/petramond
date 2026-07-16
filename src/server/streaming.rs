@@ -598,6 +598,19 @@ mod tests {
         )
     }
 
+    /// The first air cell carrying skylight inside section `sp` — an edit
+    /// target where a stone fill genuinely changes the section's light.
+    /// `None` for a section with no lit air (ocean/cave-band interiors).
+    fn find_lit_air(world: &crate::world::World, sp: SectionPos) -> Option<(i32, i32, i32)> {
+        let (ox, oy, oz) = sp.origin_world();
+        (0..16)
+            .flat_map(|y| (0..16).flat_map(move |z| (0..16).map(move |x| (x, y, z))))
+            .map(|(x, y, z)| (ox + x, oy + y, oz + z))
+            .find(|&(x, y, z)| {
+                world.chunk_block(x, y, z) == 0 && world.skylight_at_world(x, y, z) > 0
+            })
+    }
+
     /// The allowance shuts off below the reserve and the section budget never
     /// exceeds the flat cap (the local pipe's `usize::MAX` room included) —
     /// the two edges that keep pacing from either starving a healthy client
@@ -789,23 +802,31 @@ mod tests {
         let remote_id = server.sessions[s].id;
 
         // Stream normally (acking like a live client) until the remote
-        // session holds a lit section.
+        // session holds a section with an editable LIT AIR cell. Which
+        // section ships first is gen/light job completion order — load
+        // scheduling — and a skylight-carrying payload can hold no lit air
+        // at all (an ocean or cave-band interior), so selection must keep
+        // streaming until a usable edit target shipped, not grab the first
+        // skylit payload.
         let deadline = Instant::now() + Duration::from_secs(120);
-        let mut lit: Option<SectionPos> = None;
+        let mut lit: Option<(SectionPos, (i32, i32, i32))> = None;
         let mut inbox: Vec<(PlayerId, ClientToServer)> = Vec::new();
         while lit.is_none() {
-            assert!(Instant::now() < deadline, "no lit section streamed");
+            assert!(Instant::now() < deadline, "no editable lit section streamed");
             let out = server.pump_tagged(0.01, &mut inbox, &[(remote_id, SERVER_QUEUE_MSGS)]);
             lit = out.remote.iter().flat_map(|(_, msgs)| msgs).find_map(|m| {
                 let ServerToClient::SectionData(p) = m else {
                     return None;
                 };
-                p.skylight.is_some().then_some(p.pos)
+                if p.skylight.is_none() {
+                    return None;
+                }
+                find_lit_air(&server.world, p.pos).map(|cell| (p.pos, cell))
             });
             inbox = acks(&out);
             std::thread::sleep(Duration::from_millis(2));
         }
-        let lit = lit.unwrap();
+        let (lit, lit_air) = lit.unwrap();
 
         // Dirty the section's light (a solid block changes the sky column),
         // then pump the remote at ZERO headroom until the rebake lands in its
@@ -813,15 +834,6 @@ mod tests {
         // message for it. The edit must genuinely change light: filling a lit
         // AIR cell with stone (a stone-onto-stone swap is light-equivalent
         // and correctly rebakes nothing).
-        let (ox, oy, oz) = lit.origin_world();
-        let lit_air = (0..16)
-            .flat_map(|y| (0..16).flat_map(move |z| (0..16).map(move |x| (x, y, z))))
-            .map(|(x, y, z)| (ox + x, oy + y, oz + z))
-            .find(|&(x, y, z)| {
-                server.world.chunk_block(x, y, z) == 0
-                    && server.world.skylight_at_world(x, y, z) > 0
-            })
-            .expect("a skylight-carrying section holds a lit air cell");
         assert!(
             server.world.set_block_world(
                 lit_air.0,

@@ -9,7 +9,7 @@ use super::entities::give_item;
 use super::guards::{finite3, item_by_key, sim_call, sim_query};
 use super::intern_mod_id;
 
-/// Phase 3b: player (snapshot, damage/kill through the funnel, inventory,
+/// Player calls (snapshot, damage/kill through the funnel, inventory,
 /// movement primitives).
 pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {

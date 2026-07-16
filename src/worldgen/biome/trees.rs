@@ -6,8 +6,8 @@ use crate::worldgen::rng::FeatureRng;
 
 pub(crate) fn oak_small(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
     match rng.next_i32(0, 99) {
-        0..=39 => &features::OAK_YOUNG,
-        _ => &features::OAK_SMALL,
+        0..=39 => features::oak_young(),
+        _ => features::oak_small(),
     }
 }
 
@@ -15,41 +15,41 @@ pub(crate) fn oak_small(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
 /// them, and the occasional grand landmark oak.
 pub(crate) fn forest_oak(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
     match rng.next_i32(0, 99) {
-        0..=11 => &features::OAK_BIG,
-        12..=41 => &features::OAK_YOUNG,
-        _ => &features::OAK_SMALL,
+        0..=11 => features::oak_big(),
+        12..=41 => features::oak_young(),
+        _ => features::oak_small(),
     }
 }
 
 pub(crate) fn plains_oak(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
     match rng.next_i32(0, 99) {
-        0..=19 => &features::OAK_BIG,
-        20..=44 => &features::OAK_YOUNG,
-        _ => &features::OAK_SMALL,
+        0..=19 => features::oak_big(),
+        20..=44 => features::oak_young(),
+        _ => features::oak_small(),
     }
 }
 
 pub(crate) fn acacia(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
     let _ = rng.next_i32(0, 99);
-    &features::ACACIA
+    features::acacia()
 }
 
 pub(crate) fn spruce(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
     let _ = rng.next_i32(0, 99);
-    &features::SPRUCE
+    features::spruce()
 }
 
 pub(crate) fn swamp_oak(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
     match rng.next_i32(0, 99) {
-        0..=14 => &features::OAK_BIG,
-        _ => &features::OAK_SWAMP,
+        0..=14 => features::oak_big(),
+        _ => features::oak_swamp(),
     }
 }
 
 pub(crate) fn wetland_oak(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
     match rng.next_i32(0, 99) {
-        0..=29 => &features::OAK_SMALL,
-        _ => &features::OAK_SWAMP,
+        0..=29 => features::oak_small(),
+        _ => features::oak_swamp(),
     }
 }
 
@@ -58,9 +58,8 @@ pub(crate) fn wetland_oak(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
 /// geometry stream they'd have if the species were never rolled.
 pub(crate) fn redwood_grove(rng: &mut FeatureRng) -> &'static ConfiguredFeature {
     if rng.next_i32(0, 99) < 25 {
-        &features::SPRUCE
+        features::spruce()
     } else {
-        &features::REDWOOD
+        features::redwood()
     }
 }
-

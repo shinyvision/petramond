@@ -1,0 +1,137 @@
+{
+  "features": [
+    {
+      "feature": "petramond:oak_young",
+      "shape": {
+        "blocky_oak": {
+          "log": "petramond:oak_log",
+          "leaf": "petramond:oak_leaves",
+          "height": [10, 13],
+          "levels": [2, 3],
+          "reach_min": 3,
+          "reach_max": [4, 6],
+          "roots": [3, 5],
+          "root_reach": [2, 4],
+          "leaf_radius": 2
+        }
+      }
+    },
+    {
+      "feature": "petramond:oak_small",
+      "shape": {
+        "blocky_oak": {
+          "log": "petramond:oak_log",
+          "leaf": "petramond:oak_leaves",
+          "height": [14, 18],
+          "levels": [3, 4],
+          "reach_min": 4,
+          "reach_max": [6, 8],
+          "roots": [4, 6],
+          "root_reach": [3, 5],
+          "leaf_radius": 2
+        }
+      }
+    },
+    {
+      "feature": "petramond:oak_swamp",
+      "shape": {
+        "tree": {
+          "trunk": "straight",
+          "foliage": { "droopy": { "radius": 2, "ragged": 0.15, "drip_skip": 0.45 } },
+          "log": "petramond:oak_log",
+          "leaf": "petramond:oak_leaves",
+          "height": [5, 7]
+        }
+      }
+    },
+    {
+      "feature": "petramond:oak_big",
+      "shape": {
+        "blocky_oak": {
+          "log": "petramond:oak_log",
+          "leaf": "petramond:oak_leaves",
+          "height": [20, 26],
+          "levels": [4, 6],
+          "reach_min": 5,
+          "reach_max": [8, 11],
+          "roots": [5, 8],
+          "root_reach": [5, 7],
+          "leaf_radius": 2
+        }
+      }
+    },
+    {
+      "feature": "petramond:redwood",
+      "shape": {
+        "redwood": {
+          "log": "petramond:redwood_log",
+          "leaf": "petramond:redwood_leaves",
+          "height": [38, 52]
+        }
+      }
+    },
+    {
+      "feature": "petramond:spruce",
+      "shape": {
+        "tree": {
+          "trunk": "straight",
+          "foliage": { "conifer": { "radius": 2, "skirt_ragged": 0.25 } },
+          "log": "petramond:spruce_log",
+          "leaf": "petramond:spruce_leaves",
+          "height": [6, 10]
+        }
+      }
+    },
+    {
+      "feature": "petramond:birch",
+      "shape": {
+        "canopy": {
+          "log": "petramond:birch_log",
+          "leaf": "petramond:birch_leaves",
+          "height": [7, 10],
+          "split": 0.62,
+          "limbs": [2, 3],
+          "reach": [1, 2],
+          "tip_radius": [2, 2],
+          "crown_radius": 2,
+          "round": 0.65
+        }
+      }
+    },
+    {
+      "feature": "petramond:jungle",
+      "shape": {
+        "canopy": {
+          "log": "petramond:jungle_log",
+          "leaf": "petramond:jungle_leaves",
+          "height": [9, 13],
+          "split": 0.60,
+          "limbs": [3, 5],
+          "reach": [2, 4],
+          "tip_radius": [2, 3],
+          "crown_radius": 3,
+          "round": 0.50
+        }
+      }
+    },
+    {
+      "feature": "petramond:acacia",
+      "shape": {
+        "tree": {
+          "trunk": "leaning",
+          "foliage": {
+            "flat_sparse": {
+              "upper_radius": 3,
+              "upper_skip": 0.30,
+              "lower_radius": 2,
+              "lower_skip": 0.40
+            }
+          },
+          "log": "petramond:acacia_log",
+          "leaf": "petramond:acacia_leaves",
+          "height": [5, 8]
+        }
+      }
+    }
+  ]
+}

@@ -6,7 +6,7 @@ use crate::events::ModAction;
 
 use super::guards::{sim_call, sim_query};
 
-/// Phase 5: mod GUIs (session state map plus open/close).
+/// Mod-GUI calls (session state map plus open/close).
 /// State keys are mod-local: the map belongs to one GUI session (cleared
 /// on open/close), so unlike the persistent KV no prefix is enforced.
 pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {

@@ -17,10 +17,13 @@
 //! compiled [`Model`](crate::bbmodel::Model) (via [`model`]) that the renderer and
 //! the simulation both read — the renderer also reads `scale` off the table.
 
+mod anim;
 mod behavior;
 mod body_geometry;
 mod brain;
+mod damage;
 mod instance;
+mod kinematics;
 mod load;
 mod loot;
 mod manager;

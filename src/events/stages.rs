@@ -61,7 +61,7 @@ struct SystemEntry {
 
 /// The systems attached between the engine's fixed-tick stages. Per slot they run
 /// in `(priority ascending, registration order)` — kept by sorted insertion, same
-/// determinism contract as the event bus. Empty in Phase 1.
+/// determinism contract as the event bus.
 #[derive(Default)]
 pub(crate) struct TickSystems {
     slots: [Vec<SystemEntry>; Stage::COUNT * 2],
@@ -69,7 +69,6 @@ pub(crate) struct TickSystems {
 
 impl TickSystems {
     /// Attach a system at `at`; runs every fixed tick.
-    #[allow(dead_code)] // Phase 2+ mod surface; exercised by tests today.
     pub(crate) fn attach(
         &mut self,
         at: Attach,

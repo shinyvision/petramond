@@ -23,10 +23,9 @@ pub(super) use super::column_heightmaps::SkyCoverChange;
 pub(super) use super::load_targets::LoadTarget;
 pub use super::load_targets::{LoadAnchor, RENDER_DIST, VERTICAL_LOAD_RADIUS};
 
-/// Which half of the client/server split this `World` instance plays
-/// Until Phase C flips the split on, the one live world
-/// is [`Combined`](WorldRole::Combined): it runs the sim AND meshes for the
-/// renderer, exactly as before.
+/// Which half of the client/server split this `World` instance plays.
+/// A single-player session without the split uses [`Combined`](WorldRole::Combined):
+/// one world runs the sim AND meshes for the renderer.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum WorldRole {
     /// Today's single world: gen + sim + light + mesh.
@@ -286,10 +285,10 @@ pub struct World {
     pub(super) stream_events_enabled: bool,
     /// Sim-owned visual shader parameters.
     /// Mutated on the tick only (mod HostCalls); NOT persisted — resets to
-    /// defaults on world open, the owning mod re-applies it (Phase 3 world KV).
+    /// defaults on world open, the owning mod re-applies it (mod world KV).
     pub(super) environment: WorldEnvironment,
     /// Persistent mod world KV (`mod_id:key` → bytes) — the cross-mod interop
-    /// surface (Phase 3b). BTreeMap so the save encoding (it
+    /// surface. BTreeMap so the save encoding (it
     /// rides `level.dat`) iterates in one deterministic order. Mutated on the
     /// tick only (mod HostCalls); restored at session open.
     pub(super) mod_kv: BTreeMap<String, Vec<u8>>,
@@ -318,8 +317,8 @@ impl World {
     }
 
     /// Construct over a caller-owned job pool, so the server world and the
-    /// local client's replica can share one pool instead of each spawning a
-    /// machine-sized thread set (Phase C runs both in one process).
+    /// local client's replica — which run in one process — can share one pool
+    /// instead of each spawning a machine-sized thread set.
     pub fn new_with_pool(
         seed: u32,
         render_dist: i32,

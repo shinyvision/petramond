@@ -62,6 +62,8 @@ fn plus_ring(ctx: &mut FeatureCtx, cx: i32, y: i32, cz: i32, leaf: Block) {
 /// block above (`radius - 1`), and leaves that hang one block down from the outer
 /// ring (the swamp "drip"). `ragged` trims the main layer's edge; `drip_skip` is
 /// the chance to omit each individual hanging drip.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DroopyFoliage {
     pub radius: i32,
     pub ragged: f32,
@@ -101,6 +103,8 @@ impl FoliagePlacer for DroopyFoliage {
 /// the canonical drooping evergreen silhouette. `radius` controls how wide/tall the
 /// skirts grow (clamped to ≥2 so the pointed top stays intact); `skirt_ragged`
 /// is the outer-ring trim chance per skirt.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConiferFoliage {
     pub radius: i32,
     pub skirt_ragged: f32,
@@ -136,6 +140,8 @@ impl FoliagePlacer for ConiferFoliage {
 /// Flat sparse savanna canopy (acacia-like silhouette): a thin diamond umbrella
 /// spread above a tall trunk, with gaps so it reads as airy. `upper_*` is the
 /// raised umbrella disc; `lower_*` is a sparser ring one block below it.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FlatSparseFoliage {
     pub upper_radius: i32,
     pub upper_skip: f32,

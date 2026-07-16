@@ -19,8 +19,8 @@ use crate::ids::{BlockId, ItemId};
 use crate::sched::{AttachSide, Stage, WorldgenStage};
 
 /// Guest → host: what a mod asks the engine for through `host_dispatch`.
-/// Phase 2b surface + the Phase 3b world/entity/player/KV calls (one match on
-/// the host).
+/// One exhaustive match on the host routes each variant to its domain
+/// handler (`src/modding/host/`).
 ///
 /// The world-touching calls are sim-scoped: legal wherever a `SimCtx` is
 /// published (`mod_init`, tick systems, event handlers), [`HostRet::Error`]
@@ -53,7 +53,7 @@ pub enum HostCall {
         priority: i32,
         handler_id: u32,
     },
-    // --- Phase 3b: blocks -------------------------------------------------
+    // --- blocks -------------------------------------------------------------
     /// The block at a world cell: `Some` (air included) when its section is
     /// loaded, `None` when unloaded / outside the vertical range.
     /// → [`HostRet::Block`].
@@ -97,7 +97,7 @@ pub enum HostCall {
         pos: [i32; 3],
     },
 
-    // --- Phase 3b: entities -----------------------------------------------
+    // --- entities -----------------------------------------------------------
     /// Spawn a mob by species key at `pos` (feet) facing `yaw`.
     /// `false` = unknown key or the mob cap is reached. → [`HostRet::Bool`].
     SpawnMob {
@@ -137,7 +137,7 @@ pub enum HostCall {
         pos: [f32; 3],
     },
 
-    // --- Phase 3b: player ---------------------------------------------------
+    // --- player ---------------------------------------------------------------
     /// The player's current state. → [`HostRet::Player`].
     PlayerState,
     /// Damage the player through the single engine funnel. The victim's global
@@ -180,7 +180,7 @@ pub enum HostCall {
         pos: [f32; 3],
     },
 
-    // --- Phase 3b: sound ----------------------------------------------------
+    // --- sound ----------------------------------------------------------------
     /// Play a sound by `sounds.json` key (namespaced for pack sounds), routed
     /// through the tick→presentation channel — the sim never touches audio.
     /// `pos` attenuates by the sound row's `attenuation_distance`; `None`
@@ -190,7 +190,7 @@ pub enum HostCall {
         pos: Option<[f32; 3]>,
     },
 
-    // --- Phase 3b: persistent KV -------------------------------------------
+    // --- persistent KV --------------------------------------------------------
     // Keys are namespaced. WRITES (set/delete) must use the calling mod's own
     // prefix or an exposed engine `petramond:*` key; READS may cross namespaces —
     // that is the cross-mod interop surface (core day/night publishes, zombies
@@ -247,7 +247,7 @@ pub enum HostCall {
         key: String,
     },
 
-    // --- Phase 4: worldgen hooks ---------------------------------------------
+    // --- worldgen hooks --------------------------------------------------------
     /// Resolve a block registry key (`"petramond:stone"`, `"kitchen:oven"`) to its
     /// session-scoped runtime id. Needs no simulation context — legal anywhere,
     /// including on worldgen instances. `None` = not registered (a typo'd or
@@ -283,7 +283,7 @@ pub enum HostCall {
         callback_id: u32,
     },
 
-    // --- Phase 5: mod GUIs ----------------------------------------------------
+    // --- mod GUIs ---------------------------------------------------------------
     /// Write a key of the open GUI session's state map (tick-owned; the
     /// renderer reads a snapshot per frame). Keys are mod-local — the map
     /// belongs to one GUI session and is cleared on open/close. Sim-scoped.
@@ -383,7 +383,7 @@ pub enum HostCall {
         priority: i32,
     },
 
-    // --- Block behaviors (Phase 2b, landed 2026-07-06) ---------------------
+    // --- block behaviors --------------------------------------------------------
     /// Register the reactive behavior for block rows whose `blocks.json`
     /// `behavior` field is `key` — a `mod_id:name` owned by THIS pack. The
     /// engine then dispatches [`GuestCall::BlockBehavior`] with `callback_id`
@@ -877,7 +877,7 @@ pub enum GuestCall {
         payload: EventPayload,
     },
 
-    // --- Phase 4: worldgen hooks ---------------------------------------------
+    // --- worldgen hooks --------------------------------------------------------
     /// Generate one registered feature's writes for one 16³ section.
     /// → [`GuestRet::GenWrites`].
     ///
@@ -925,7 +925,7 @@ pub enum GuestCall {
         sea_level: i32,
     },
 
-    // --- Phase 5: mod GUIs ----------------------------------------------------
+    // --- mod GUIs ---------------------------------------------------------------
     /// A button of the mod's own GUI was clicked (dispatched on the tick, in
     /// click order, to the mod whose namespace `kind_key` carries). `pos` is
     /// the block the GUI was opened from (`None` for a programmatic
@@ -944,7 +944,7 @@ pub enum GuestCall {
         candidate: HostileSpawnCandidate,
     },
 
-    // --- Block behaviors (Phase 2b, landed 2026-07-06) ---------------------
+    // --- block behaviors --------------------------------------------------------
     /// A hook fired on a block whose row's `behavior` the mod registered via
     /// [`HostCall::RegisterBlockBehavior`]. Dispatched on the game tick, in
     /// hook-fire order, right after the world's own scheduled/random ticks —

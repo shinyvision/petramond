@@ -28,9 +28,8 @@ pub(crate) enum Outcome {
 /// available at every dispatch site. `feed` is the lossy tick→presentation
 /// channel ([`TickEvents`]) — the bus feeds it, never the other way around.
 /// `queue` lets a handler enqueue follow-up post events. Seeded RNG streams and
-/// the tick counter are reachable through `world` until the Phase 3 host API
-/// carries dedicated per-mod streams.
-#[allow(dead_code)] // only handlers read the fields; none registered until Phase 2.
+/// the tick counter are reachable through `world`; WASM mods use their dedicated
+/// per-mod `RngU64` host streams instead.
 pub(crate) struct SimCtx<'a> {
     pub world: &'a mut World,
     pub player: &'a mut Player,
@@ -123,7 +122,6 @@ macro_rules! pre_events {
             $(
                 /// Register a handler; runs in `(priority ascending, registration
                 /// order)`.
-                #[allow(dead_code)] // Phase 2+ mod surface; exercised by tests today.
                 pub(crate) fn $on(
                     &mut self,
                     priority: i32,
@@ -208,7 +206,6 @@ pre_events!(
 impl EventBus {
     /// Register a post-event handler for `kind`; runs in `(priority ascending,
     /// registration order)` when the queue drains.
-    #[allow(dead_code)] // Phase 2+ mod surface; exercised by tests today.
     pub(crate) fn on_post(
         &mut self,
         kind: PostEventKind,

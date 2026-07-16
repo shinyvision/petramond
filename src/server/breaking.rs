@@ -396,7 +396,7 @@ impl ServerGame {
             // Fragile blocks are all tier-0 hand-harvestable, so they drop exactly as a
             // hand-break would (short grass yields nothing, a flower/torch yields itself).
             self.spawn_drops(pos, block, (sky, blk));
-            // Sim-destroyed blocks are not cancellable (no pre event) in Phase 1;
+            // Sim-destroyed blocks are not cancellable (no pre event);
             // observers still hear about them.
             self.bus.emit(PostEvent::BlockBroken {
                 pos,

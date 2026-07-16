@@ -1,8 +1,8 @@
-//! WASM mod host — modding system Phase 2b.
+//! WASM mod host.
 //!
 //! Loads each pack's `mod.wasm` (core module, built by `make mods` from
 //! `mods-src/`), runs its `mod_init` registration window, and wires the
-//! registered tick systems / event handlers into the Phase 1 seams
+//! registered tick systems / event handlers into the engine seams
 //! ([`crate::events`]) as closures that postcard-dispatch into the guest.
 //!
 //! Ownership: `Game` owns the [`ModHost`]; each registered closure holds an
@@ -323,7 +323,7 @@ impl ModHost {
     }
 
     /// Dispatch a GUI button click to the OWNING mod — the pack whose
-    /// namespace `kind_key` carries (Phase 5). Runs on the tick, from the
+    /// namespace `kind_key` carries. Runs on the tick, from the
     /// menu stage's click drain. Engine kinds carry the reserved `petramond`
     /// namespace but are not mod kinds, and a content-only pack may ship a GUI
     /// with no wasm: both simply dispatch nothing.

@@ -44,7 +44,8 @@ pub use world::*;
 pub use worldgen::*;
 
 /// A mod's logic. One instance lives for the whole session (state persists
-/// between dispatches — in-memory only; persistent storage is Phase 3).
+/// between dispatches — in-memory only; persistent storage is the
+/// world/section/mob KV host calls).
 ///
 /// # Worldgen instances are separate
 ///

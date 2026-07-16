@@ -91,15 +91,15 @@ pub(crate) struct ServerGame {
     /// Mob loot tables (from `assets/loot_tables.json`), rolled when a mob dies to
     /// spawn its dropped items. Loaded once at world load, like [`recipes`](Self::recipes).
     pub(crate) loot: LootTables,
-    /// The modding event bus (Phase 1): pre events dispatch at their decision sites,
-    /// post events queue and drain at tick-stage boundaries. The engine registers no
-    /// handlers yet — the seams exist for mods.
+    /// The modding event bus: pre events dispatch at their decision sites,
+    /// post events queue and drain at tick-stage boundaries. Engine handlers
+    /// register before any mod's.
     pub(crate) bus: EventBus,
-    /// Systems attached between the fixed-tick stages (Phase 1 seam).
+    /// Systems attached between the fixed-tick stages.
     pub(crate) systems: TickSystems,
-    /// The WASM mod instances (Phase 2b). Their registered closures (held by
+    /// The WASM mod instances. Their registered closures (held by
     /// `bus`/`systems`) share ownership; the host keeps the canonical handles
-    /// for GUI click dispatch (Phase 5) and diagnostics.
+    /// for GUI click dispatch and diagnostics.
     pub(crate) mods: ModHost,
     pub(crate) spawn_counter: u32,
     /// Next deterministic session handle for mod-owned spatial sounds. The app
@@ -1237,8 +1237,8 @@ impl ServerGame {
         }
     }
 
-    /// Run the systems attached at `at` — the mod seam. Nothing is attached in
-    /// Phase 1, so this is a bounds-checked array read per stage edge.
+    /// Run the systems attached at `at` — the mod seam. A slot with nothing
+    /// attached costs one bounds-checked array read per stage edge.
     fn run_systems(&mut self, at: Attach, events: &mut TickEvents) {
         if self.systems.is_empty_at(at) {
             return;

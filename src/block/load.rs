@@ -526,7 +526,7 @@ mod tests {
         );
     }
 
-    /// Phase 5: `interaction: {"open_gui": "mod:kind"}` resolves to
+    /// `interaction: {"open_gui": "mod:kind"}` resolves to
     /// `OpenModGui` with a registered kind; a bare (un-namespaced) open_gui
     /// key and an unknown named interaction are load errors.
     #[test]
