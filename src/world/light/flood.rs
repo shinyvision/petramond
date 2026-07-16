@@ -5,7 +5,7 @@ use crate::chunk::{section_idx, SectionPos, SECTION_SIZE, SECTION_VOLUME, SKY_FU
 use crate::mathh::{IVec3, FACE_NEIGHBORS};
 
 use super::shape::LightCells;
-use super::{nbhd_idx, NBHD, NBHD_VOLUME};
+use super::{NBHD, NBHD_VOLUME};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum FloodKind {
@@ -16,28 +16,38 @@ enum FloodKind {
 /// Light value an emitter seeds at its own cell (x2 scale). One torch is level 14.
 pub(super) const EMITTER_LIGHT: u8 = 28;
 
-/// Reusable flood scratch: the 48³ working light cube plus the BFS queue. One per
+/// Reusable flood scratch: the working light cube plus the BFS queue. One per
 /// light worker thread (see `queue::run_light_bake`) so streaming bakes don't
 /// allocate ~110 KB per flood; the flood functions reset it on entry, and the
-/// clipped centre result is allocated fresh since it outlives the bake.
+/// clipped per-section results are allocated fresh since they outlive the bake.
+/// The cube grows on demand: per-section bakes flood 48³, batch bakes 64³.
 pub(super) struct FloodScratch {
-    light: Box<[u8]>,
+    light: Vec<u8>,
     queue: VecDeque<(usize, usize, usize)>,
 }
 
 impl FloodScratch {
     pub(super) fn new() -> Self {
         Self {
-            light: vec![0u8; NBHD_VOLUME].into_boxed_slice(),
+            light: vec![0u8; NBHD_VOLUME],
             queue: VecDeque::new(),
         }
     }
 
-    fn reset(&mut self) -> (&mut [u8], &mut VecDeque<(usize, usize, usize)>) {
-        self.light.fill(0);
+    fn reset(&mut self, volume: usize) -> (&mut [u8], &mut VecDeque<(usize, usize, usize)>) {
+        if self.light.len() < volume {
+            self.light.resize(volume, 0);
+        }
+        let light = &mut self.light[..volume];
+        light.fill(0);
         self.queue.clear();
-        (&mut self.light, &mut self.queue)
+        (light, &mut self.queue)
     }
+}
+
+#[inline]
+fn cube_idx(dim: usize, x: usize, y: usize, z: usize) -> usize {
+    (y * dim + z) * dim + x
 }
 
 /// Flood skylight across the 3x3x3 section neighbourhood, then clip to the centre.
@@ -48,17 +58,31 @@ pub(super) fn skylight(
     scratch: &mut FloodScratch,
 ) -> Arc<[u8]> {
     let noy = pos.origin_world().1 - SECTION_SIZE as i32;
+    let light = skylight_cube(noy, NBHD, cells, surface, scratch);
+    clip_cube(light, NBHD, (SECTION_SIZE, SECTION_SIZE, SECTION_SIZE))
+}
 
-    let (light, queue) = scratch.reset();
+/// Flood skylight over a `dim`³ cube whose world origin Y is `cube_oy`, leaving the
+/// fixpoint in the returned scratch slice for the caller to clip per section.
+/// `surface` is the `dim`² sky-cover map, row-major `[z][x]`.
+pub(super) fn skylight_cube<'s>(
+    cube_oy: i32,
+    dim: usize,
+    cells: LightCells<'_>,
+    surface: &[i32],
+    scratch: &'s mut FloodScratch,
+) -> &'s [u8] {
+    debug_assert_eq!(surface.len(), dim * dim);
+    let (light, queue) = scratch.reset(dim * dim * dim);
 
     // Every above-surface cell reads as full sky (the flood relaxations and the
     // clipped output both read these) ...
-    for y in 0..NBHD {
-        let wy = noy + y as i32;
-        for z in 0..NBHD {
-            for x in 0..NBHD {
-                if wy > surface[z * NBHD + x] {
-                    light[nbhd_idx(x, y, z)] = SKY_FULL;
+    for y in 0..dim {
+        let wy = cube_oy + y as i32;
+        for z in 0..dim {
+            for x in 0..dim {
+                if wy > surface[z * dim + x] {
+                    light[cube_idx(dim, x, y, z)] = SKY_FULL;
                 }
             }
         }
@@ -72,38 +96,38 @@ pub(super) fn skylight(
     // for nothing. Per column the frontier is the band from the cell directly
     // above the surface up to the highest of the four horizontal neighbours'
     // surfaces (cells beside terrain), clamped to the cube.
-    let cube_y_lo = noy;
-    let cube_y_hi = noy + NBHD as i32 - 1;
-    for z in 0..NBHD {
-        for x in 0..NBHD {
-            let s = surface[z * NBHD + x];
+    let cube_y_lo = cube_oy;
+    let cube_y_hi = cube_oy + dim as i32 - 1;
+    for z in 0..dim {
+        for x in 0..dim {
+            let s = surface[z * dim + x];
             if s >= cube_y_hi {
                 continue;
             }
             let mut band_top = s + 1;
             if x > 0 {
-                band_top = band_top.max(surface[z * NBHD + x - 1]);
+                band_top = band_top.max(surface[z * dim + x - 1]);
             }
-            if x + 1 < NBHD {
-                band_top = band_top.max(surface[z * NBHD + x + 1]);
+            if x + 1 < dim {
+                band_top = band_top.max(surface[z * dim + x + 1]);
             }
             if z > 0 {
-                band_top = band_top.max(surface[(z - 1) * NBHD + x]);
+                band_top = band_top.max(surface[(z - 1) * dim + x]);
             }
-            if z + 1 < NBHD {
-                band_top = band_top.max(surface[(z + 1) * NBHD + x]);
+            if z + 1 < dim {
+                band_top = band_top.max(surface[(z + 1) * dim + x]);
             }
             let y_lo = if s < cube_y_lo {
                 0
             } else {
-                (s + 1 - noy) as usize
+                (s + 1 - cube_oy) as usize
             };
             let y_hi = if band_top < cube_y_lo {
                 continue;
             } else if band_top >= cube_y_hi {
-                NBHD - 1
+                dim - 1
             } else {
-                (band_top - noy) as usize
+                (band_top - cube_oy) as usize
             };
             if y_lo > y_hi {
                 continue;
@@ -114,8 +138,8 @@ pub(super) fn skylight(
         }
     }
 
-    propagate(cells, light, queue, FloodKind::Skylight);
-    clip_center(light)
+    propagate(dim, cells, light, queue, FloodKind::Skylight);
+    light
 }
 
 /// Flood block light from every emitter in the neighbourhood, then clip to the centre.
@@ -126,45 +150,58 @@ pub(super) fn block_light(
     scratch: &mut FloodScratch,
 ) -> Arc<[u8]> {
     let (cox, coy, coz) = pos.origin_world();
-    let (nox, noy, noz) = (
+    let origin = (
         cox - SECTION_SIZE as i32,
         coy - SECTION_SIZE as i32,
         coz - SECTION_SIZE as i32,
     );
-    let n = NBHD as i32;
+    let light = block_light_cube(origin, NBHD, cells, emitters, scratch);
+    clip_cube(light, NBHD, (SECTION_SIZE, SECTION_SIZE, SECTION_SIZE))
+}
 
-    let (light, queue) = scratch.reset();
+/// Flood block light over a `dim`³ cube at world `origin`, leaving the fixpoint in
+/// the returned scratch slice for the caller to clip per section.
+pub(super) fn block_light_cube<'s>(
+    origin: (i32, i32, i32),
+    dim: usize,
+    cells: LightCells<'_>,
+    emitters: &[IVec3],
+    scratch: &'s mut FloodScratch,
+) -> &'s [u8] {
+    let n = dim as i32;
+    let (light, queue) = scratch.reset(dim * dim * dim);
     for e in emitters {
-        let (x, y, z) = (e.x - nox, e.y - noy, e.z - noz);
+        let (x, y, z) = (e.x - origin.0, e.y - origin.1, e.z - origin.2);
         if !(0..n).contains(&x) || !(0..n).contains(&y) || !(0..n).contains(&z) {
             continue;
         }
         let (x, y, z) = (x as usize, y as usize, z as usize);
-        let i = nbhd_idx(x, y, z);
+        let i = cube_idx(dim, x, y, z);
         if light[i] < EMITTER_LIGHT {
             light[i] = EMITTER_LIGHT;
             queue.push_back((x, y, z));
         }
     }
 
-    propagate(cells, light, queue, FloodKind::BlockLight);
-    clip_center(light)
+    propagate(dim, cells, light, queue, FloodKind::BlockLight);
+    light
 }
 
 fn propagate(
+    dim: usize,
     cells: LightCells<'_>,
     light: &mut [u8],
     queue: &mut VecDeque<(usize, usize, usize)>,
     kind: FloodKind,
 ) {
     while let Some(from) = queue.pop_front() {
-        let level = light[nbhd_idx(from.0, from.1, from.2)];
+        let level = light[cube_idx(dim, from.0, from.1, from.2)];
         if level <= 2 {
             continue;
         }
         for d in FACE_NEIGHBORS {
             let dir = (d.x, d.y, d.z);
-            let Some(to) = step(from, dir) else {
+            let Some(to) = step(from, dir, dim) else {
                 continue;
             };
             if !cells.can_cross(from, to, dir) {
@@ -179,7 +216,7 @@ fn propagate(
             } else {
                 level - 2
             };
-            let ni = nbhd_idx(to.0, to.1, to.2);
+            let ni = cube_idx(dim, to.0, to.1, to.2);
             if light[ni] < next {
                 light[ni] = next;
                 queue.push_back(to);
@@ -188,21 +225,26 @@ fn propagate(
     }
 }
 
-fn step(from: (usize, usize, usize), dir: (i32, i32, i32)) -> Option<(usize, usize, usize)> {
+fn step(
+    from: (usize, usize, usize),
+    dir: (i32, i32, i32),
+    dim: usize,
+) -> Option<(usize, usize, usize)> {
     let x = from.0.checked_add_signed(dir.0 as isize)?;
     let y = from.1.checked_add_signed(dir.1 as isize)?;
     let z = from.2.checked_add_signed(dir.2 as isize)?;
-    (x < NBHD && y < NBHD && z < NBHD).then_some((x, y, z))
+    (x < dim && y < dim && z < dim).then_some((x, y, z))
 }
 
-fn clip_center(light: &[u8]) -> Arc<[u8]> {
+/// Copy one 16³ section out of a flooded `dim`³ cube; `off` is the section's cell
+/// offset inside the cube.
+pub(super) fn clip_cube(light: &[u8], dim: usize, off: (usize, usize, usize)) -> Arc<[u8]> {
     let mut out = vec![0u8; SECTION_VOLUME];
     for ly in 0..SECTION_SIZE {
         for lz in 0..SECTION_SIZE {
-            for lx in 0..SECTION_SIZE {
-                out[section_idx(lx, ly, lz)] =
-                    light[nbhd_idx(lx + SECTION_SIZE, ly + SECTION_SIZE, lz + SECTION_SIZE)];
-            }
+            let src = cube_idx(dim, off.0, ly + off.1, lz + off.2);
+            let dst = section_idx(0, ly, lz);
+            out[dst..dst + SECTION_SIZE].copy_from_slice(&light[src..src + SECTION_SIZE]);
         }
     }
     out.into()
@@ -217,14 +259,14 @@ mod tests {
     use crate::facing::Facing;
 
     use super::super::shape::{ShapeStateSnapshot, SparseCellState};
-    use super::super::NBHD_AREA;
+    use super::super::{nbhd_idx, NBHD_AREA};
 
     fn default_states() -> ShapeStateSnapshot {
         ShapeStateSnapshot::default()
     }
 
     fn cells<'a>(blocks: &'a [u8], states: &'a ShapeStateSnapshot) -> LightCells<'a> {
-        LightCells::new(blocks, states)
+        LightCells::new(blocks, states, NBHD)
     }
 
     fn full_seed_skylight(pos: SectionPos, cells: LightCells<'_>, surface: &[i32]) -> Arc<[u8]> {
@@ -242,8 +284,8 @@ mod tests {
                 }
             }
         }
-        propagate(cells, &mut light, &mut queue, FloodKind::Skylight);
-        clip_center(&light)
+        propagate(NBHD, cells, &mut light, &mut queue, FloodKind::Skylight);
+        clip_cube(&light, NBHD, (SECTION_SIZE, SECTION_SIZE, SECTION_SIZE))
     }
 
     fn stair_states(entries: &[(usize, Facing)]) -> ShapeStateSnapshot {
@@ -254,7 +296,7 @@ mod tests {
                 state: StairState::new(facing, StairHalf::Bottom),
             })
             .collect::<Vec<_>>();
-        ShapeStateSnapshot::from_sparse(&states)
+        ShapeStateSnapshot::from_sparse(&states, NBHD_VOLUME)
     }
 
     #[test]

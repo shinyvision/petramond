@@ -31,15 +31,21 @@ const TERRAIN_SECTIONS_PER_PUMP: usize = 128;
 /// section reconstruction is expensive. Several may be in flight to cover RTT.
 const MAX_BATCH_MSGS: usize = 96;
 
-/// Loopback has no RTT to hide, so one smaller batch is enough. The single
-/// in-flight window is the hard bound on the unbounded process-local channel.
-const LOCAL_MAX_BATCH_MSGS: usize = 64;
+/// Loopback has no RTT to hide; the two-deep window exists so the server can
+/// bank the NEXT batch while the client applies the current one (acks land
+/// once per client frame). One 64-message batch per frame capped loopback
+/// delivery at ~3.8k sections/s — below RD32 sprint-flight demand (~5k/s) —
+/// and the replica's coverage collapsed while the server sat loaded; the
+/// widened window keeps the ceiling above demand and leaves pacing to the
+/// client-measured apply rate. The window remains the hard bound on the
+/// unbounded process-local channel.
+const LOCAL_MAX_BATCH_MSGS: usize = 96;
 
 /// Unacknowledged batches allowed in flight after the FIRST ack proves the
 /// client speaks the ack loop; exactly one before it (vanilla-verified
 /// 1.20.2 values).
 const MAX_UNACKED_BATCHES: u32 = 4;
-const LOCAL_MAX_UNACKED_BATCHES: u32 = 1;
+const LOCAL_MAX_UNACKED_BATCHES: u32 = 2;
 
 /// The assumed client apply rate (streaming messages/second) before the
 /// first ack reports a measured one. Modest on purpose: it sizes only the
@@ -81,6 +87,12 @@ pub(crate) struct TerrainSync {
     sent_columns: FxHashSet<ChunkPos>,
     sent_column_revisions: FxHashMap<ChunkPos, u64>,
     sent_sections: FxHashSet<SectionPos>,
+    /// Per-column index over `sent_sections` (the cys sent for each column).
+    /// Column unloads used to scan the WHOLE sent set twice per dropped column
+    /// — at RD32 flight that is hundreds of drops/s over ~36k entries, real
+    /// server-thread time. Maintained only through `sent_insert`/`sent_remove`/
+    /// `sent_take_column`.
+    sent_by_column: FxHashMap<ChunkPos, Vec<i32>>,
     /// Sent sections whose fresh server bake is still unshipped — the
     /// per-connection carryover when a pump's allowance ran out (the ship log
     /// itself is drained once, globally). Payloads are fetched at SHIP time,
@@ -131,6 +143,7 @@ impl Default for TerrainSync {
             sent_columns: FxHashSet::default(),
             sent_column_revisions: FxHashMap::default(),
             sent_sections: FxHashSet::default(),
+            sent_by_column: FxHashMap::default(),
             pending_light: FxHashSet::default(),
             last_send_key: None,
             backlog: false,
@@ -156,6 +169,41 @@ impl TerrainSync {
     pub(crate) fn covers(&self, pos: IVec3) -> bool {
         SectionPos::from_world(pos.x, pos.y, pos.z)
             .is_some_and(|sp| self.sent_sections.contains(&sp))
+    }
+
+    fn sent_insert(&mut self, sp: SectionPos) {
+        if self.sent_sections.insert(sp) {
+            self.sent_by_column
+                .entry(sp.chunk_pos())
+                .or_default()
+                .push(sp.cy);
+        }
+    }
+
+    fn sent_remove(&mut self, sp: SectionPos) -> bool {
+        if !self.sent_sections.remove(&sp) {
+            return false;
+        }
+        if let Some(cys) = self.sent_by_column.get_mut(&sp.chunk_pos()) {
+            cys.retain(|&cy| cy != sp.cy);
+            if cys.is_empty() {
+                self.sent_by_column.remove(&sp.chunk_pos());
+            }
+        }
+        true
+    }
+
+    /// Remove and return every sent section of `cp`, cy-ascending — the order
+    /// the client parks unloads in.
+    fn sent_take_column(&mut self, cp: ChunkPos) -> Vec<SectionPos> {
+        let mut cys = self.sent_by_column.remove(&cp).unwrap_or_default();
+        cys.sort_unstable();
+        cys.iter().for_each(|&cy| {
+            self.sent_sections.remove(&SectionPos::new(cp.cx, cy, cp.cz));
+        });
+        cys.into_iter()
+            .map(|cy| SectionPos::new(cp.cx, cy, cp.cz))
+            .collect()
     }
 
     /// Apply one `StreamBatchAck`: retire a batch from the window, widen it to
@@ -207,7 +255,7 @@ impl TerrainSync {
     /// send on the next pump.
     pub(crate) fn handle_cache_miss(&mut self, pos: SectionPos) {
         self.client_cache.remove(&pos);
-        if self.sent_sections.remove(&pos) {
+        if self.sent_remove(pos) {
             self.pending_light.remove(&pos);
             self.planned_sections.push_back(pos);
         }
@@ -447,13 +495,7 @@ impl ServerGame {
             // section the server world already evicted (nothing to hash) or
             // with an unshipped rebake in `pending_light` (the client's
             // light is stale; a re-promotion would resurrect it as current).
-            let mut dropped: Vec<SectionPos> = sync
-                .sent_sections
-                .iter()
-                .filter(|sp| sp.chunk_pos() == cp)
-                .copied()
-                .collect();
-            dropped.sort_unstable_by_key(|sp| sp.cy);
+            let dropped = sync.sent_take_column(cp);
             let mut cache_hashes = Vec::new();
             for sp in dropped {
                 if sync.pending_light.contains(&sp) {
@@ -465,7 +507,6 @@ impl ServerGame {
                     cache_hashes.push((sp.cy, hash));
                 }
             }
-            sync.sent_sections.retain(|sp| sp.chunk_pos() != cp);
             sync.pending_light.retain(|sp| sp.chunk_pos() != cp);
             msgs.push(ServerToClient::ColumnUnload {
                 pos: cp,
@@ -492,7 +533,7 @@ impl ServerGame {
             }
             sync.planned_drop_sections.pop_front();
             *allowance -= 1;
-            sync.sent_sections.remove(&sp);
+            sync.sent_remove(sp);
             // Same vouching rules as the column-drop loop above.
             let cache_hash = (!sync.pending_light.remove(&sp))
                 .then(|| self.world.section_payload(sp).map(|p| p.content_hash()))
@@ -530,7 +571,7 @@ impl ServerGame {
             let Some(section) = self.world.section_payload(sp) else {
                 continue;
             };
-            sync.sent_sections.insert(sp);
+            sync.sent_insert(sp);
             *allowance -= 1;
             // A section the client holds cached with unmoved content ships
             // as a tiny re-promotion instead of the full payload. Either
@@ -757,10 +798,9 @@ mod tests {
         let mut awaiting: FxHashSet<SectionPos> = (0..3000)
             .map(|i| SectionPos::new(1000 + i, 0, 1000))
             .collect();
-        server.sessions[s]
-            .terrain
-            .sent_sections
-            .extend(awaiting.iter().copied());
+        for sp in awaiting.iter().copied() {
+            server.sessions[s].terrain.sent_insert(sp);
+        }
         server.sessions[s].terrain.backlog = true;
 
         let room = STREAM_QUEUE_RESERVE + 100;

@@ -247,7 +247,10 @@ impl Game {
         // what actually protects the frame; a small count here just frame-quantized
         // streaming bursts into a multi-second trickle. Pumps the REPLICA's
         // mesh + light queues (the server world never meshes).
-        const MESH_BUDGET: usize = 64;
+        // High enough that the real per-frame limits are the mesh pump's
+        // in-flight window and its submit-time budget, not this count: 64
+        // admission-limited RD32 flight meshing while the workers sat idle.
+        const MESH_BUDGET: usize = 256;
         self.replica.tick_mesh_budget(MESH_BUDGET);
     }
 }

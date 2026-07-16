@@ -3,7 +3,7 @@ use rustc_hash::FxHashMap;
 use crate::chunk::{ChunkPos, SectionPos, SECTION_SIZE, SKY_FULL};
 use crate::column::Column;
 
-use super::{NBHD, NBHD_AREA};
+use super::NBHD_AREA;
 
 /// How a section's skylight resolves, decided cheaply from the 3x3 column
 /// direct-sky cover maps.
@@ -37,19 +37,36 @@ pub(in crate::world) fn cover_change_affects_section(
     top >= affected_min && oy <= max_cover
 }
 
+/// [`SkyPlan`] without the flood's gathered surface payload — how a section's
+/// skylight resolves, classified from the 3x3 column sky-cover maps alone.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum SkyClass {
+    Full,
+    Dark,
+    Flood,
+}
+
 /// Decide how `pos`'s skylight resolves from the 3x3 column sky-cover maps alone.
-pub(super) fn plan(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> SkyPlan {
+pub(super) fn classify(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> SkyClass {
     let (hmin, hmax) = cover_range(pos, columns);
     let oy = pos.origin_world().1;
     let top = oy + SECTION_SIZE as i32 - 1;
     if oy > hmax {
-        SkyPlan::Full
+        SkyClass::Full
     } else if top < hmin + 1 - SKY_SEEP_REACH {
-        SkyPlan::Dark
+        SkyClass::Dark
     } else {
-        SkyPlan::Flood {
+        SkyClass::Flood
+    }
+}
+
+pub(super) fn plan(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> SkyPlan {
+    match classify(pos, columns) {
+        SkyClass::Full => SkyPlan::Full,
+        SkyClass::Dark => SkyPlan::Dark,
+        SkyClass::Flood => SkyPlan::Flood {
             surface: gather_surface(pos, columns),
-        }
+        },
     }
 }
 
@@ -74,19 +91,33 @@ fn cover_range(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> (i32, 
 }
 
 fn gather_surface(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> Box<[i32]> {
-    let mut surface = vec![COVERED; NBHD_AREA].into_boxed_slice();
-    for dcz in -1..=1 {
-        for dcx in -1..=1 {
-            let cp = ChunkPos::new(pos.cx + dcx, pos.cz + dcz);
+    let surface = gather_surface_span(ChunkPos::new(pos.cx - 1, pos.cz - 1), 3, columns);
+    debug_assert_eq!(surface.len(), NBHD_AREA);
+    surface
+}
+
+/// Gather a `span`×`span` column window of sky cover, `base` at the low corner,
+/// into a `(span*16)`² map. Absent columns read as fully covered so they seed no
+/// phantom skylight.
+pub(super) fn gather_surface_span(
+    base: ChunkPos,
+    span: usize,
+    columns: &FxHashMap<ChunkPos, Column>,
+) -> Box<[i32]> {
+    let dim = span * SECTION_SIZE;
+    let mut surface = vec![COVERED; dim * dim].into_boxed_slice();
+    for dcz in 0..span {
+        for dcx in 0..span {
+            let cp = ChunkPos::new(base.cx + dcx as i32, base.cz + dcz as i32);
             let Some(col) = columns.get(&cp) else {
                 continue;
             };
             let hm = col.sky_cover_slice();
-            let bx = ((dcx + 1) as usize) * SECTION_SIZE;
-            let bz = ((dcz + 1) as usize) * SECTION_SIZE;
+            let bx = dcx * SECTION_SIZE;
+            let bz = dcz * SECTION_SIZE;
             for lz in 0..SECTION_SIZE {
                 for lx in 0..SECTION_SIZE {
-                    surface[(bz + lz) * NBHD + (bx + lx)] = hm[lz * SECTION_SIZE + lx];
+                    surface[(bz + lz) * dim + (bx + lx)] = hm[lz * SECTION_SIZE + lx];
                 }
             }
         }

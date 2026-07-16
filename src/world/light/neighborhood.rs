@@ -109,7 +109,7 @@ pub(super) fn collect_emitters(
     emitters
 }
 
-fn collect_section_emitters(pos: SectionPos, section: &Section, out: &mut Vec<IVec3>) {
+pub(super) fn collect_section_emitters(pos: SectionPos, section: &Section, out: &mut Vec<IVec3>) {
     let (ox, oy, oz) = pos.origin_world();
     let world_of = |key: u16| {
         IVec3::new(

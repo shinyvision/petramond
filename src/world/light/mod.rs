@@ -4,6 +4,7 @@
 //! `neighborhood` owns snapshot assembly, `skylight` owns sky-cover planning,
 //! `flood` owns propagation, and `shape` owns per-block boundary rules.
 
+mod batch;
 mod flood;
 mod neighborhood;
 mod queue;
@@ -12,6 +13,7 @@ mod skylight;
 
 use crate::chunk::SECTION_SIZE;
 
+pub(super) use batch::group_positions;
 pub(super) use queue::{run_light_bake, LightBakeJob, LightBakeQueue, LightBakeResult};
 pub(super) use skylight::cover_change_affects_section;
 

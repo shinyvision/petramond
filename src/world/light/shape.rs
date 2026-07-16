@@ -1,8 +1,6 @@
 use crate::block::{Block, BlockLightShape};
 use crate::block_state::{SlabState, StairState};
 
-use super::{nbhd_idx, NBHD_VOLUME};
-
 pub(super) enum SparseCellState {
     Stair { idx: usize, state: StairState },
     Slab { idx: usize, state: SlabState },
@@ -15,27 +13,28 @@ pub(super) struct ShapeStateSnapshot {
 }
 
 impl ShapeStateSnapshot {
-    pub(super) fn from_sparse(states: &[SparseCellState]) -> Self {
+    /// `volume` is the flood cube's cell count (48³ for a per-section bake, 64³ for
+    /// a 2×2×2 batch bake); sparse indices are already in that cube's coordinates.
+    pub(super) fn from_sparse(states: &[SparseCellState], volume: usize) -> Self {
         let mut stair_states: Option<Box<[u8]>> = None;
         let mut slab_states: Option<Box<[SlabState]>> = None;
         for state in states {
             match *state {
                 SparseCellState::Stair { idx, state } => {
-                    if idx >= NBHD_VOLUME {
+                    if idx >= volume {
                         continue;
                     }
                     let states = stair_states.get_or_insert_with(|| {
-                        vec![StairState::default().encode(); NBHD_VOLUME].into_boxed_slice()
+                        vec![StairState::default().encode(); volume].into_boxed_slice()
                     });
                     states[idx] = state.encode();
                 }
                 SparseCellState::Slab { idx, state } => {
-                    if idx >= NBHD_VOLUME {
+                    if idx >= volume {
                         continue;
                     }
-                    let states = slab_states.get_or_insert_with(|| {
-                        vec![SlabState::EMPTY; NBHD_VOLUME].into_boxed_slice()
-                    });
+                    let states = slab_states
+                        .get_or_insert_with(|| vec![SlabState::EMPTY; volume].into_boxed_slice());
                     states[idx] = state;
                 }
             }
@@ -67,11 +66,23 @@ impl ShapeStateSnapshot {
 pub(super) struct LightCells<'a> {
     blocks: &'a [u8],
     states: &'a ShapeStateSnapshot,
+    /// Cube side length in cells (48 per-section, 64 for a 2×2×2 batch).
+    dim: usize,
 }
 
 impl<'a> LightCells<'a> {
-    pub(super) fn new(blocks: &'a [u8], states: &'a ShapeStateSnapshot) -> Self {
-        Self { blocks, states }
+    pub(super) fn new(blocks: &'a [u8], states: &'a ShapeStateSnapshot, dim: usize) -> Self {
+        debug_assert_eq!(blocks.len(), dim * dim * dim);
+        Self {
+            blocks,
+            states,
+            dim,
+        }
+    }
+
+    #[inline]
+    fn idx(self, x: usize, y: usize, z: usize) -> usize {
+        (y * self.dim + z) * self.dim + x
     }
 
     pub(super) fn can_cross(
@@ -80,15 +91,15 @@ impl<'a> LightCells<'a> {
         to: (usize, usize, usize),
         dir: (i32, i32, i32),
     ) -> bool {
-        let fi = nbhd_idx(from.0, from.1, from.2);
-        let ti = nbhd_idx(to.0, to.1, to.2);
+        let fi = self.idx(from.0, from.1, from.2);
+        let ti = self.idx(to.0, to.1, to.2);
         let from_mask = self.side_aperture(fi, dir);
         let to_mask = self.side_aperture(ti, (-dir.0, -dir.1, -dir.2));
         from_mask & to_mask != 0
     }
 
     pub(super) fn transmits_direct_skylight(self, at: (usize, usize, usize)) -> bool {
-        Block::from_id(self.blocks[nbhd_idx(at.0, at.1, at.2)]).transmits_direct_skylight()
+        Block::from_id(self.blocks[self.idx(at.0, at.1, at.2)]).transmits_direct_skylight()
     }
 
     fn side_aperture(self, idx: usize, dir: (i32, i32, i32)) -> u8 {

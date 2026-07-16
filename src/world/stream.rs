@@ -36,10 +36,34 @@ const MAX_COLUMN_GEN_SUBMITS_PER_TARGET: usize = 64;
 /// insert + classify), so a fixed count frame-quantized big bursts (a whole r=20
 /// disc took ~100 frames just to drain at 128/frame), while the budget still keeps
 /// one frame from installing an unbounded burst and starving rendering.
+///
+/// The budget is ROLE-aware: on a Combined world `poll` runs on the render
+/// thread, so it stays tight; the headless server world's poll runs on the
+/// ~200 Hz server pump with no frame to protect, and 750 µs there capped
+/// install throughput (~150 ms/s of drain time) right at RD32 sprint-flight
+/// demand — the server's own loaded set fell to half the wanted disc.
 const GEN_DRAIN_MIN_PER_POLL: usize = 16;
 const GEN_DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(750);
+const SERVER_GEN_DRAIN_TIME_BUDGET: std::time::Duration =
+    std::time::Duration::from_micros(2_500);
 const DISK_DRAIN_MIN_PER_POLL: usize = 16;
 const DISK_DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(750);
+
+impl World {
+    fn gen_drain_time_budget(&self) -> std::time::Duration {
+        match self.role {
+            WorldRole::ServerHeadless => SERVER_GEN_DRAIN_TIME_BUDGET,
+            _ => GEN_DRAIN_TIME_BUDGET,
+        }
+    }
+
+    fn disk_drain_time_budget(&self) -> std::time::Duration {
+        match self.role {
+            WorldRole::ServerHeadless => SERVER_GEN_DRAIN_TIME_BUDGET,
+            _ => DISK_DRAIN_TIME_BUDGET,
+        }
+    }
+}
 
 /// A saved section read back from disk, awaiting overlay over its generated column:
 /// the decoded `Section` plus the item entities and mobs that rode in its record.
@@ -946,7 +970,7 @@ impl World {
         // 1. Drain worker outputs: column data, then the sections generated from it.
         self.drain_budgeted(
             GEN_DRAIN_MIN_PER_POLL,
-            GEN_DRAIN_TIME_BUDGET,
+            self.gen_drain_time_budget(),
             |w| w.worker.try_recv(),
             |w, out| match out {
                 GenOutput::Column { pos, col } => {
@@ -1008,7 +1032,7 @@ impl World {
         //     stays set so the existing `GenOutput::Column` arm resolves it.
         self.drain_budgeted(
             DISK_DRAIN_MIN_PER_POLL,
-            DISK_DRAIN_TIME_BUDGET,
+            self.disk_drain_time_budget(),
             |w| w.save.as_ref().and_then(|s| s.poll_loaded_column_gen()),
             |w, loaded| {
                 let pos = loaded.pos;
@@ -1057,7 +1081,7 @@ impl World {
         //    blocks win over the generated base.
         self.drain_budgeted(
             DISK_DRAIN_MIN_PER_POLL,
-            DISK_DRAIN_TIME_BUDGET,
+            self.disk_drain_time_budget(),
             |w| w.save.as_ref().and_then(|s| s.poll_loaded()),
             |w, loaded| {
                 let sp = loaded.pos;
@@ -1415,6 +1439,7 @@ impl World {
                     && self.gen_neighborhood_settled(*sp, target)
             })
             .collect();
+        let mut bakes: Vec<SectionPos> = Vec::new();
         for sp in ready {
             let Some(section) = self.sections.get(&sp) else {
                 self.light_deferred.remove(&sp);
@@ -1432,11 +1457,30 @@ impl World {
             // Fully-opaque sections skip baking on both sides of the mesh pump's
             // light gate (their faces cull against solid cells and never sample light).
             if needs_bake {
-                let key = target.section_priority_key(sp);
-                self.light_bakes
-                    .request(key, sp, &self.sections, &self.columns);
+                bakes.push(sp);
             }
             self.queue_dirty_mesh(sp);
+        }
+        // Streaming first-bakes coalesce into 2×2×2 batch bakes (one shared 64³
+        // flood, ~2× less light worker CPU). Below three members the shared
+        // 64³ cube costs more cells than separate 48³ floods, so small groups
+        // keep the per-section path.
+        for (base, members) in super::light::group_positions(&bakes) {
+            if members.len() >= 3 {
+                let key = members
+                    .iter()
+                    .map(|&sp| target.section_priority_key(sp))
+                    .min()
+                    .unwrap_or(0);
+                self.light_bakes
+                    .request_batch(key, base, &members, &self.sections, &self.columns);
+            } else {
+                for sp in members {
+                    let key = target.section_priority_key(sp);
+                    self.light_bakes
+                        .request(key, sp, &self.sections, &self.columns);
+                }
+            }
         }
     }
 

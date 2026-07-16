@@ -26,9 +26,17 @@ const RESULT_DRAIN_MIN: usize = 24;
 /// Cap on mesh jobs in flight in the shared pool. The pool queue is priority-ordered
 /// (nearest first), so a fresh edit no longer queues behind the streaming backlog the
 /// way it did with the old FIFO channel — this cap only bounds snapshot memory held
-/// by queued jobs. The backlog beyond it stays in `dirty_meshes`, re-sorted
-/// NEAREST-FIRST every frame.
-const MAX_MESH_JOBS_IN_FLIGHT: usize = 16;
+/// by queued jobs and stale-priority momentum after a target move. The backlog beyond
+/// it stays in `dirty_meshes`, re-sorted NEAREST-FIRST every frame.
+///
+/// Sized to keep the worker pool FED for a frame of bulk streaming (~4 jobs/worker at
+/// ~1 ms/job, 60 fps). The old fixed 16 admission-limited streaming to ~16 meshes per
+/// frame while workers idled: RD32 flight grew a ~10k dirty backlog and the meshed
+/// frontier visibly lagged the player.
+fn max_mesh_jobs_in_flight() -> usize {
+    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| (crate::worker::JobPool::default_threads() * 4).clamp(16, 256))
+}
 /// Soft main-thread budget for mesh-job snapshot submission. One useful submission is
 /// always allowed; after that, the pump yields to rendering once it burns this much CPU.
 const MESH_SUBMIT_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(2_000);
@@ -133,19 +141,23 @@ impl World {
     /// snapshots a section + its neighbourhood (cheap) and drains results — so a heavy
     /// streaming frame can't stall it.
     pub fn tick_mesh_budget(&mut self, max_per_frame: usize) {
-        let frame_start = std::time::Instant::now();
         self.mesh_pump_frame += 1;
         self.drain_prediction_terrain();
         self.pump_light_bakes();
         self.drain_finished_meshes();
         self.release_settled_column_meshes();
-        if max_per_frame == 0 || frame_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
+        if max_per_frame == 0 {
             return;
         }
+        // The submit budget anchors AFTER the drains: each drain bounds its own
+        // time, and letting their cost count against submission starved meshing
+        // to a trickle exactly when ingest churn was heaviest (RD32 sprint
+        // flight: 14k dirty backlog, sub-500 installed meshes, idle workers).
+        let submit_start = std::time::Instant::now();
 
         // Never let the pool's FIFO channel outgrow the cap: leave the rest of the backlog in
         // the nearest-first `dirty_meshes` so a just-edited section isn't stuck behind it.
-        let in_flight_room = MAX_MESH_JOBS_IN_FLIGHT.saturating_sub(self.mesh_jobs_in_flight);
+        let in_flight_room = max_mesh_jobs_in_flight().saturating_sub(self.mesh_jobs_in_flight);
         if in_flight_room == 0 {
             return;
         }
@@ -159,14 +171,14 @@ impl World {
         if self.vis_dirty && self.mesh_pump_frame.is_multiple_of(8) {
             self.refresh_deep_visibility();
         }
-        if frame_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
+        if submit_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
             return;
         }
         let target = self.last_load_target;
         let candidates = self.dirty_meshes.pop_nearest_batch(candidate_cap, target);
         let mut submitted = 0usize;
         for (i, &pos) in candidates.iter().enumerate() {
-            if submitted > 0 && frame_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
+            if submitted > 0 && submit_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
                 for &rest in &candidates[i..] {
                     self.dirty_meshes.push(rest);
                 }
@@ -195,7 +207,7 @@ impl World {
             // All-air sections emit nothing: settle them (dropping any ghost mesh)
             // instead of meshing.
             if self.clear_mesh_if_section_produces_no_mesh(pos) {
-                if frame_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
+                if submit_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
                     for &rest in &candidates[i + 1..] {
                         self.dirty_meshes.push(rest);
                     }
@@ -219,7 +231,7 @@ impl World {
             // yet parks outside the hot dirty queue, so the snapshot always carries final light.
             if self.request_light_dependencies(pos) {
                 self.light_blocked_meshes.insert(pos);
-                if frame_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
+                if submit_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
                     for &rest in &candidates[i + 1..] {
                         self.dirty_meshes.push(rest);
                     }
@@ -234,7 +246,7 @@ impl World {
                 self.mesh_jobs_in_flight += 1;
                 submitted += 1;
                 if submitted >= target_jobs
-                    || (submitted > 0 && frame_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET)
+                    || (submitted > 0 && submit_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET)
                 {
                     for &rest in &candidates[i + 1..] {
                         self.dirty_meshes.push(rest);
@@ -659,7 +671,7 @@ impl World {
     /// the mesh pool can build with no access to the live world. Reads match the live
     /// neighbour accessors exactly (air / open-sky / not-loaded fallbacks), so the
     /// off-thread mesh is byte-identical to an inline one.
-    fn build_mesh_job(&self, pos: SectionPos) -> Option<super::mesh_pool::MeshJob> {
+    pub(in crate::world) fn build_mesh_job(&self, pos: SectionPos) -> Option<super::mesh_pool::MeshJob> {
         use super::mesh_pool::{
             biome_pad_idx, empty_biome, nbhd_idx27, MeshJob, NeighborSnap, BIOME_PAD,
             BIOME_PAD_RADIUS,
@@ -884,21 +896,39 @@ impl World {
     pub fn pump_light_bakes(&mut self) {
         if !self.relight_demand.is_empty() {
             let target = self.last_load_target;
-            for pos in std::mem::take(&mut self.relight_demand) {
-                let bakeable = self
-                    .sections
-                    .get(&pos)
-                    .is_some_and(|s| s.light_dirty && !s.all_opaque());
-                // Deferred first-timers bake once their gen neighbourhood
-                // settles (streamer-owned), and a prediction bundle bakes its
-                // own snapshot — requesting here would double-bake either.
-                if bakeable
-                    && !self.light_deferred.contains(&pos)
-                    && !self.prediction_terrain.owns_light(pos)
-                {
-                    let key = target.map_or(0, |t| t.section_priority_key(pos));
+            let bakes: Vec<SectionPos> = std::mem::take(&mut self.relight_demand)
+                .into_iter()
+                .filter(|pos| {
+                    let bakeable = self
+                        .sections
+                        .get(pos)
+                        .is_some_and(|s| s.light_dirty && !s.all_opaque());
+                    // Deferred first-timers bake once their gen neighbourhood
+                    // settles (streamer-owned), and a prediction bundle bakes its
+                    // own snapshot — requesting here would double-bake either.
+                    bakeable
+                        && !self.light_deferred.contains(pos)
+                        && !self.prediction_terrain.owns_light(*pos)
+                })
+                .collect();
+            // Streaming seam rebakes arrive in adjacent bursts; groups of 3+
+            // share one 64³ batch flood (see `light::batch`), smaller groups
+            // keep the per-section 48³ bake.
+            for (base, members) in super::light::group_positions(&bakes) {
+                if members.len() >= 3 {
+                    let key = members
+                        .iter()
+                        .map(|&sp| target.map_or(0, |t| t.section_priority_key(sp)))
+                        .min()
+                        .unwrap_or(0);
                     self.light_bakes
-                        .request(key, pos, &self.sections, &self.columns);
+                        .request_batch(key, base, &members, &self.sections, &self.columns);
+                } else {
+                    for pos in members {
+                        let key = target.map_or(0, |t| t.section_priority_key(pos));
+                        self.light_bakes
+                            .request(key, pos, &self.sections, &self.columns);
+                    }
                 }
             }
         }

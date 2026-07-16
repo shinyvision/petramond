@@ -10,7 +10,12 @@ use super::*;
 /// Max terrain columns uploaded to the GPU per frame. CPU meshes stay section-owned, but
 /// render-side buffers are packed per XZ column, so one upload can refresh many vertical
 /// section ranges. Excess stays dirty and rolls onto later frames.
-const MESH_COLUMN_UPLOADS_PER_FRAME: usize = 6;
+///
+/// The TIME budget below is the real frame guard; this count is a backstop against a
+/// burst of individually-cheap uploads. The old cap of 6 (~360 columns/s) admission-
+/// limited fresh-terrain visibility during RD32 flight (~200 fresh columns/s plus 2–3
+/// re-uploads each while filling) with most of the time budget unspent.
+const MESH_COLUMN_UPLOADS_PER_FRAME: usize = 24;
 /// Soft render-thread budget for packing/writing terrain columns. One upload is always
 /// allowed so terrain keeps making progress; after that, leave time for the actual frame.
 const MESH_COLUMN_UPLOAD_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(1_750);

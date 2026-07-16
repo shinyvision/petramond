@@ -70,6 +70,45 @@ impl LightBakeQueue {
         self.pending.insert(pos, PendingLightBake { id, cancel });
     }
 
+    /// Request one 2×2×2 batch bake (streaming first-bakes: one shared 64³ flood,
+    /// see `light::batch`). Members already pending are skipped; every member gets
+    /// its own pending slot and cancel token, so cancelling one section only drops
+    /// that member from the batch instead of killing its siblings' bakes.
+    pub fn request_batch(
+        &mut self,
+        key: i64,
+        base: SectionPos,
+        members: &[SectionPos],
+        sections: &FxHashMap<SectionPos, Arc<Section>>,
+        columns: &FxHashMap<ChunkPos, Column>,
+    ) {
+        let fresh: Vec<SectionPos> = members
+            .iter()
+            .copied()
+            .filter(|p| !self.pending.contains_key(p))
+            .collect();
+        if fresh.is_empty() {
+            return;
+        }
+        let Some(job) = super::batch::snapshot_batch(base, &fresh, sections, columns) else {
+            return;
+        };
+        // Pending slots only for members the snapshot actually carries — an
+        // absent-section member would otherwise wedge a slot no result clears.
+        let mut cancels: Vec<(SectionPos, u64, crate::worker::JobCancel)> = Vec::new();
+        for pos in job.member_positions() {
+            let id = self.next_id;
+            self.next_id = self.next_id.wrapping_add(1).max(1);
+            let cancel = crate::worker::JobCancel::new();
+            self.pending.insert(pos, PendingLightBake {
+                id,
+                cancel: cancel.clone(),
+            });
+            cancels.push((pos, id, cancel));
+        }
+        self.backend.submit_batch(key, job, cancels);
+    }
+
     pub fn cancel(&mut self, pos: SectionPos) {
         if let Some(pending) = self.pending.remove(&pos) {
             pending.cancel.cancel();
@@ -105,6 +144,18 @@ impl LightBakeJob {
         if !section.light_dirty {
             return None;
         }
+        Self::snapshot_unchecked(id, pos, sections, columns)
+    }
+
+    /// [`Self::snapshot`] without the dirty gate — the batch parity test
+    /// rebakes settled sections to compare against the batched bake.
+    pub(in crate::world) fn snapshot_unchecked(
+        id: u64,
+        pos: SectionPos,
+        sections: &FxHashMap<SectionPos, Arc<Section>>,
+        columns: &FxHashMap<ChunkPos, Column>,
+    ) -> Option<Self> {
+        let section = sections.get(&pos)?;
         let revision = section.light_revision;
         let sky = skylight::plan(pos, columns);
         let emitters = neighborhood::collect_emitters(pos, sections);
@@ -170,7 +221,7 @@ pub(in crate::world) fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
         });
         let states = nbhd
             .as_ref()
-            .map(|n| ShapeStateSnapshot::from_sparse(n.states()))
+            .map(|n| ShapeStateSnapshot::from_sparse(n.states(), super::NBHD_VOLUME))
             .unwrap_or_default();
 
         let skylight = match sky {
@@ -179,7 +230,12 @@ pub(in crate::world) fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
             SkyPlan::Flood { surface } => {
                 let blocks =
                     blocks.expect("a flooding skylight bake carries its neighbourhood blocks");
-                flood::skylight(pos, LightCells::new(blocks, &states), &surface, flood)
+                flood::skylight(
+                    pos,
+                    LightCells::new(blocks, &states, super::NBHD),
+                    &surface,
+                    flood,
+                )
             }
         };
 
@@ -187,7 +243,12 @@ pub(in crate::world) fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
             vec![0u8; SECTION_VOLUME].into()
         } else {
             let blocks = blocks.expect("a block-light bake carries its neighbourhood blocks");
-            flood::block_light(pos, LightCells::new(blocks, &states), &emitters, flood)
+            flood::block_light(
+                pos,
+                LightCells::new(blocks, &states, super::NBHD),
+                &emitters,
+                flood,
+            )
         };
 
         LIGHT_STAGE_NS.fetch_add(
@@ -234,6 +295,40 @@ impl Backend {
             let _ = tx.send(run_light_bake(job));
         });
         cancel
+    }
+
+    /// One pool job bakes the whole batch and emits one [`LightBakeResult`] per
+    /// surviving member through the ordinary result channel, so the pump's
+    /// freshness/stale handling is identical to per-section bakes.
+    fn submit_batch(
+        &self,
+        key: i64,
+        mut job: super::batch::LightBatchJob,
+        cancels: Vec<(SectionPos, u64, crate::worker::JobCancel)>,
+    ) {
+        let tx = self.tx_res.clone();
+        self.pool.submit(key, move || {
+            job.retain_members(|pos| {
+                cancels
+                    .iter()
+                    .any(|(p, _, c)| *p == pos && !c.is_cancelled())
+            });
+            if job.is_empty() {
+                return;
+            }
+            for out in super::batch::run_light_bake_batch(job) {
+                let Some((_, id, _)) = cancels.iter().find(|(p, _, _)| *p == out.pos) else {
+                    continue;
+                };
+                let _ = tx.send(LightBakeResult {
+                    id: *id,
+                    pos: out.pos,
+                    revision: out.revision,
+                    skylight: out.skylight,
+                    blocklight: out.blocklight,
+                });
+            }
+        });
     }
 
     fn try_recv(&mut self) -> Option<LightBakeResult> {
