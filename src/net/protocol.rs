@@ -240,6 +240,14 @@ pub(crate) struct TargetRef {
     pub normal: IVec3,
 }
 
+/// How much a cursor throw takes off the held stack: the whole stack
+/// (primary click outside the panel) or a single item (secondary click).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum ThrowAmount {
+    All,
+    One,
+}
+
 /// One-shot player actions, applied in arrival order on the next server tick.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum PlayerAction {
@@ -286,10 +294,10 @@ pub(crate) enum PlayerAction {
         all: bool,
         request_id: ClientRequestId,
     },
-    ThrowCursorStack {
-        request_id: ClientRequestId,
-    },
-    ThrowCursorOne {
+    /// Throw from the cursor-held GUI stack out into the world (click outside
+    /// the panel while dragging).
+    ThrowCursor {
+        amount: ThrowAmount,
         request_id: ClientRequestId,
     },
     /// Client finished mining locally; server validates tool/reach and the

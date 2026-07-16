@@ -34,21 +34,11 @@ impl ServerGame {
                 let slot = sess.player.inventory.active_slot();
                 sess.drop_queue.queue_selected(slot, all, Some(request_id));
             }
-            PlayerAction::ThrowCursorStack { request_id } => {
+            PlayerAction::ThrowCursor { amount, request_id } => {
                 let sess = &mut self.sessions[s];
                 if !sess
                     .drop_queue
-                    .queue_cursor_stack(&sess.player.inventory, Some(request_id))
-                {
-                    sess.pending_action_outcomes
-                        .push(deny(request_id, ActionDenyReason::Denied));
-                }
-            }
-            PlayerAction::ThrowCursorOne { request_id } => {
-                let sess = &mut self.sessions[s];
-                if !sess
-                    .drop_queue
-                    .queue_cursor_one(&sess.player.inventory, Some(request_id))
+                    .queue_cursor(&sess.player.inventory, amount, Some(request_id))
                 {
                     sess.pending_action_outcomes
                         .push(deny(request_id, ActionDenyReason::Denied));

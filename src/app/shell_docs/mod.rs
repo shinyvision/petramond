@@ -260,10 +260,11 @@ impl App {
                 petramond_ui::UiEvent::ClickOutside { button } => {
                     self.gui_router.reset_click_streak();
                     if let Some(game) = self.game.as_mut() {
-                        match to_button(button) {
-                            crate::controls::PointerButton::Primary => game.throw_cursor_stack(),
-                            crate::controls::PointerButton::Secondary => game.throw_cursor_one(),
-                        }
+                        use crate::net::protocol::ThrowAmount;
+                        game.throw_cursor(match to_button(button) {
+                            crate::controls::PointerButton::Primary => ThrowAmount::All,
+                            crate::controls::PointerButton::Secondary => ThrowAmount::One,
+                        });
                     }
                 }
                 _ => {}

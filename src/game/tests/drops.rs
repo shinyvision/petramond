@@ -6,6 +6,7 @@ use crate::entity::DroppedItem;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::{IVec3, Vec3};
+use crate::net::protocol::ThrowAmount;
 use crate::world::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 
 #[test]
@@ -390,8 +391,8 @@ fn cursor_throw_and_drop_selected_cases() {
         };
 
         match (case.source, case.all) {
-            (Source::Cursor, true) => game.throw_cursor_stack(),
-            (Source::Cursor, false) => game.throw_cursor_one(),
+            (Source::Cursor, true) => game.throw_cursor(ThrowAmount::All),
+            (Source::Cursor, false) => game.throw_cursor(ThrowAmount::One),
             (Source::Selected, all) => game.drop_selected_item(all),
         }
         assert_eq!(
@@ -453,7 +454,7 @@ fn queued_cursor_stack_throw_survives_menu_close_before_tick() {
         0,
     );
 
-    game.throw_cursor_stack();
+    game.throw_cursor(ThrowAmount::All);
     assert!(
         game.server.sessions[0].player.inventory.cursor().is_some(),
         "throwing does not mutate the cursor until another tick/close action"
@@ -491,7 +492,7 @@ fn queued_cursor_one_throw_stashes_only_remainder_on_menu_close() {
         0,
     );
 
-    game.throw_cursor_one();
+    game.throw_cursor(ThrowAmount::One);
     assert_eq!(
         game.server.sessions[0]
             .player
@@ -567,14 +568,11 @@ fn applying_a_real_throw_arms_the_hand_place_jab() {
         );
     }
     // Both inventory drag-outs throw from the cursor-held stack.
-    for throw in [
-        super::common::TestGame::throw_cursor_stack as fn(&mut super::common::TestGame),
-        super::common::TestGame::throw_cursor_one,
-    ] {
+    for amount in [ThrowAmount::All, ThrowAmount::One] {
         let mut game = game();
         game.server.sessions[0].player.inventory = filled_inventory();
         game.server.sessions[0].player.inventory.click_slot(0); // pick the stack onto the cursor
-        throw(&mut game);
+        game.throw_cursor(amount);
         let events = apply_drop_actions(&mut game);
         assert!(
             events.player_at(0).threw_item,
@@ -595,8 +593,8 @@ fn a_noop_throw_does_not_arm_the_place_jab() {
             .decrement_selected();
     }
     game.drop_selected_item(false);
-    game.throw_cursor_stack();
-    game.throw_cursor_one();
+    game.throw_cursor(ThrowAmount::All);
+    game.throw_cursor(ThrowAmount::One);
     let events = apply_drop_actions(&mut game);
     assert!(
         !events.player_at(0).threw_item,

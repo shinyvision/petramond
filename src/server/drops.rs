@@ -1,6 +1,7 @@
 use crate::entity::DroppedItem;
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
+use crate::net::protocol::ThrowAmount;
 
 use super::entities::light_at_pos;
 use super::game::ServerGame;
@@ -33,32 +34,23 @@ impl DropQueue {
             .push((PendingDropAction::Selected { slot, all }, id));
     }
 
-    /// Queue a whole-cursor throw. `false` when there is nothing throwable —
-    /// the caller must answer the request id itself.
-    pub(crate) fn queue_cursor_stack(
+    /// Queue a cursor throw of the whole available stack or a single item per
+    /// `amount`. `false` when there is nothing throwable — the caller must
+    /// answer the request id itself.
+    pub(crate) fn queue_cursor(
         &mut self,
         inventory: &Inventory,
+        amount: ThrowAmount,
         id: Option<RequestId>,
     ) -> bool {
         let Some(stack) = self.available_cursor_throw_stack(inventory) else {
             return false;
+        };
+        let stack = match amount {
+            ThrowAmount::All => stack,
+            ThrowAmount::One => ItemStack::new(stack.item, 1),
         };
         self.pending.push((PendingDropAction::Cursor(stack), id));
-        true
-    }
-
-    /// Queue a single-item cursor throw. `false` when there is nothing
-    /// throwable — the caller must answer the request id itself.
-    pub(crate) fn queue_cursor_one(
-        &mut self,
-        inventory: &Inventory,
-        id: Option<RequestId>,
-    ) -> bool {
-        let Some(stack) = self.available_cursor_throw_stack(inventory) else {
-            return false;
-        };
-        self.pending
-            .push((PendingDropAction::Cursor(ItemStack::new(stack.item, 1)), id));
         true
     }
 

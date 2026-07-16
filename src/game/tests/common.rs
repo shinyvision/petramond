@@ -119,13 +119,8 @@ impl TestGame {
         self.flush_outbox_for_test();
     }
 
-    pub(super) fn throw_cursor_stack(&mut self) {
-        self.game.throw_cursor_stack();
-        self.flush_outbox_for_test();
-    }
-
-    pub(super) fn throw_cursor_one(&mut self) {
-        self.game.throw_cursor_one();
+    pub(super) fn throw_cursor(&mut self, amount: crate::net::protocol::ThrowAmount) {
+        self.game.throw_cursor(amount);
         self.flush_outbox_for_test();
     }
 

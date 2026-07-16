@@ -10,7 +10,7 @@
 //! to almost nothing.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::sync::Arc;
 
 use crate::block_state::{LogAxis, SlabState, StairState};
@@ -220,6 +220,30 @@ pub(crate) fn put_u64(buf: &mut Vec<u8>, v: u64) {
 
 pub(crate) fn put_f32(buf: &mut Vec<u8>, v: f32) {
     buf.extend_from_slice(&v.to_le_bytes());
+}
+
+// Io-stream counterparts of [`Reader`] / `put_*`, for container files (regions)
+// that seek past record bodies instead of slurping the whole file into a slice.
+// Same widths, same little-endian order — keep them paired with the above.
+
+pub(crate) fn read_u16(r: &mut impl Read) -> io::Result<u16> {
+    let mut bytes = [0u8; 2];
+    r.read_exact(&mut bytes)?;
+    Ok(u16::from_le_bytes(bytes))
+}
+
+pub(crate) fn read_u32(r: &mut impl Read) -> io::Result<u32> {
+    let mut bytes = [0u8; 4];
+    r.read_exact(&mut bytes)?;
+    Ok(u32::from_le_bytes(bytes))
+}
+
+pub(crate) fn write_u16(w: &mut impl Write, v: u16) -> io::Result<()> {
+    w.write_all(&v.to_le_bytes())
+}
+
+pub(crate) fn write_u32(w: &mut impl Write, v: u32) -> io::Result<()> {
+    w.write_all(&v.to_le_bytes())
 }
 
 /// Encode one inventory/container slot as `[item id, count]`, with `[0, 0]` for an

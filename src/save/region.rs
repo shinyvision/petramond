@@ -16,6 +16,7 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use super::codec::{read_u16, read_u32, write_u16, write_u32};
 use crate::chunk::{SectionPos, SECTION_MIN_CY};
 
 /// Columns per region edge (32 → 1024 columns per region, each a vertical stack).
@@ -139,18 +140,6 @@ fn corrupt_region() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "corrupt region file")
 }
 
-fn read_u16(r: &mut impl Read) -> io::Result<u16> {
-    let mut bytes = [0u8; 2];
-    r.read_exact(&mut bytes)?;
-    Ok(u16::from_le_bytes(bytes))
-}
-
-fn read_u32(r: &mut impl Read) -> io::Result<u32> {
-    let mut bytes = [0u8; 4];
-    r.read_exact(&mut bytes)?;
-    Ok(u32::from_le_bytes(bytes))
-}
-
 /// The present local indices only (for building the load manifest cheaply).
 pub fn read_region_indices(path: &Path) -> io::Result<Vec<u16>> {
     let mut indices: Vec<_> = RegionReader::open(path)?.indices().collect();
@@ -184,18 +173,18 @@ pub(super) fn merge_region(
 
     let tmp = path.with_extension("tmp");
     let mut out = BufWriter::new(File::create(&tmp)?);
-    out.write_all(&MAGIC.to_le_bytes())?;
-    out.write_all(&VERSION.to_le_bytes())?;
-    out.write_all(&(keys.len() as u16).to_le_bytes())?;
+    write_u32(&mut out, MAGIC)?;
+    write_u16(&mut out, VERSION)?;
+    write_u16(&mut out, keys.len() as u16)?;
     for lidx in keys {
-        out.write_all(&lidx.to_le_bytes())?;
+        write_u16(&mut out, lidx)?;
         if let Some(record) = replacements.remove(&lidx) {
-            out.write_all(&(record.len() as u32).to_le_bytes())?;
+            write_u32(&mut out, record.len() as u32)?;
             out.write_all(&record)?;
             continue;
         }
         let loc = old.records.get(&lidx).copied().ok_or_else(corrupt_region)?;
-        out.write_all(&loc.len.to_le_bytes())?;
+        write_u32(&mut out, loc.len)?;
         let file = old.file.as_mut().ok_or_else(corrupt_region)?;
         file.seek(SeekFrom::Start(loc.offset))?;
         let copied = io::copy(&mut file.take(loc.len as u64), &mut out)?;

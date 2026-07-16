@@ -544,7 +544,10 @@ fn each_queued_drop_in_one_tick_window_gets_its_own_outcome() {
     // Nothing on the cursor: the throw cannot even queue, denied immediately.
     game.server.apply_message(
         0,
-        ClientToServer::Action(PlayerAction::ThrowCursorOne { request_id: 13 }),
+        ClientToServer::Action(PlayerAction::ThrowCursor {
+            amount: crate::net::protocol::ThrowAmount::One,
+            request_id: 13,
+        }),
     );
     let mut ev = TickEvents::default();
     game.server.tick_drops(0, &mut ev);

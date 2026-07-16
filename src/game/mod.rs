@@ -46,6 +46,7 @@ pub(crate) mod session;
 mod terrain_render;
 mod third_person;
 pub(crate) mod tick;
+mod world_prediction;
 
 use std::collections::{HashMap, VecDeque};
 
@@ -53,7 +54,9 @@ use crate::block_state::HeldBlockState;
 use crate::camera::Camera;
 use crate::entity::ParticleSystem;
 use crate::mathh::IVec3;
-use crate::net::protocol::{ChatLine, ClientToServer, MenuSlotWire, PlayerAction, SelfTransform};
+use crate::net::protocol::{
+    ChatLine, ClientToServer, MenuSlotWire, PlayerAction, SelfTransform, ThrowAmount,
+};
 #[cfg(test)]
 use crate::player::PlayerMode;
 use crate::player::{Player, RaycastHit};
@@ -647,35 +650,29 @@ impl Game {
         }));
     }
 
-    /// Throw the whole cursor-held stack out into the world (inventory drag-out
-    /// then click outside the panel). No-op when the cursor is empty.
-    pub fn throw_cursor_stack(&mut self) {
+    /// Throw from the cursor-held stack out into the world (inventory drag-out
+    /// then click outside the panel): the whole stack or a single item per
+    /// `amount`. No-op when the cursor is empty.
+    pub fn throw_cursor(&mut self, amount: ThrowAmount) {
         self.local_hand_threw |= self.self_view.inventory.cursor().is_some();
         let (can, request_id) = self.begin_inventory_prediction();
         if can {
-            *self.self_view.inventory.cursor_mut() = None;
-        }
-        self.outbox
-            .push(ClientToServer::Action(PlayerAction::ThrowCursorStack {
-                request_id,
-            }));
-    }
-
-    /// Throw a single item off the cursor-held stack (right-click outside the
-    /// panel while dragging). No-op when the cursor is empty.
-    pub fn throw_cursor_one(&mut self) {
-        self.local_hand_threw |= self.self_view.inventory.cursor().is_some();
-        let (can, request_id) = self.begin_inventory_prediction();
-        if can {
-            if let Some(cur) = self.self_view.inventory.cursor_mut().as_mut() {
-                cur.count = cur.count.saturating_sub(1);
-                if cur.count == 0 {
-                    *self.self_view.inventory.cursor_mut() = None;
+            let cursor = self.self_view.inventory.cursor_mut();
+            match amount {
+                ThrowAmount::All => *cursor = None,
+                ThrowAmount::One => {
+                    if let Some(cur) = cursor.as_mut() {
+                        cur.count = cur.count.saturating_sub(1);
+                        if cur.count == 0 {
+                            *cursor = None;
+                        }
+                    }
                 }
             }
         }
         self.outbox
-            .push(ClientToServer::Action(PlayerAction::ThrowCursorOne {
+            .push(ClientToServer::Action(PlayerAction::ThrowCursor {
+                amount,
                 request_id,
             }));
     }
