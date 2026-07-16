@@ -27,6 +27,7 @@ mod redwood_forest;
 mod river;
 mod savanna;
 mod snowy_peaks;
+mod snowy_plains;
 mod snowy_slopes;
 mod snowy_taiga;
 mod snowy_tundra;
@@ -240,6 +241,7 @@ pub(crate) static SPECS: [&BiomeSpec; BIOME_COUNT] = [
     &wooded_hills::SPEC,
     &mountain_edge::SPEC,
     &desert_lakes::SPEC,
+    &snowy_plains::SPEC,
 ];
 
 #[inline]

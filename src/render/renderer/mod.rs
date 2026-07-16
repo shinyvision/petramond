@@ -113,6 +113,8 @@ pub(in crate::render) struct VisibleSection {
     far_opaque_idx_count: u32,
     transparent_index_start: u32,
     transparent_idx_count: u32,
+    translucent_index_start: u32,
+    translucent_idx_count: u32,
     model_index_start: u32,
     model_idx_count: u32,
 }
@@ -177,6 +179,7 @@ pub struct Renderer {
     /// `sky_color` uniform lane — applied to the SKY term only.
     sky_color: [f32; 3],
     opaque_pipe: wgpu::RenderPipeline,
+    translucent_pipe: wgpu::RenderPipeline,
     transparent_pipe: wgpu::RenderPipeline,
     /// Offscreen scene-colour target the world passes render into; the grade
     /// pass reads it and writes the swapchain. Recreated with `depth` on resize.

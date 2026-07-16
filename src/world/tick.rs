@@ -336,7 +336,10 @@ impl World {
             return;
         }
         self.note_block_destroyed(pos, block);
-        self.set_block_world(pos.x, pos.y, pos.z, Block::Air);
+        // Natural breaks leave the same residue a player break would (air for
+        // almost everything; melting ice leaves water — `Block::break_residue`).
+        let below = Block::from_id(self.chunk_block(pos.x, pos.y - 1, pos.z));
+        self.set_block_world(pos.x, pos.y, pos.z, block.break_residue(below));
     }
 
     /// Generic ANNOUNCE step: a neighbour of `pos` changed. Read the block there

@@ -121,44 +121,85 @@ fn flowing(level: u8) -> u8 {
 
 const FLOW_DIR_EPS_SQ: f32 = 1e-4;
 
-/// Rendered surface height (0..1) of a water cell with the given metadata, given
-/// whether water sits directly above it (a capped cell fills to the top). The
-/// canonical meta->height mapping, shared with the mesher so flow geometry and
-/// simulation stay in lockstep: `amount / 9`, so a source's top sits slightly
-/// recessed (8/9) and reads as liquid, and each level steps down from there.
-pub(crate) fn fluid_height(meta: u8, water_above: bool) -> f32 {
-    if fills_cell(meta, water_above) {
+/// Rendered/contact surface height (0..1) of a water cell — `1.0` when
+/// [`fills_cell`] says the cell presents no open surface, else the canonical
+/// meta->height mapping shared with the mesher so flow geometry and simulation
+/// stay in lockstep: `amount / 9`, so a source's top sits slightly recessed
+/// (8/9) and reads as liquid, and each level steps down from there.
+pub(crate) fn fluid_height(meta: u8, above: Block) -> f32 {
+    if fills_cell(meta, above) {
         return 1.0;
     }
     amount(meta) as f32 / 9.0
 }
 
-/// True when this water cell should render as a full block-height volume rather
-/// than an open, recessed/sloped surface: capped by water above, or a falling
-/// stream (a full column that joins seamlessly to the cell above and to the
-/// water it lands in — no mid-waterfall step).
-pub(crate) fn fills_cell(meta: u8, water_above: bool) -> bool {
-    water_above || is_falling(meta)
+/// True when this water cell renders (and contact-probes) as a full
+/// block-height volume rather than an open, recessed/sloped surface: more
+/// WATER directly above (a mid-column cell), or a FALLING stream cell (a full
+/// column that joins seamlessly to the cell above and to the water it lands
+/// in — no mid-waterfall step).
+///
+/// SOLID lids deliberately do NOT cap: water under ANY block — ice, stone, a
+/// placed block — keeps the same recessed 8/9 pocket under it, uniformly
+/// (three lid variants were tried on 2026-07-16 and all rejected by playtest:
+/// any-solid seals, still-source-under-solid seals, still-source-under-ice
+/// seals). The calm look of those pockets comes from the STILL-SOURCE flow
+/// rules instead ([`surface_flow_dir`] + the mesher's still side tiles), not
+/// from faking the height. The flow SIM is untouched by all of this; the
+/// mesher, buoyancy/contact probes, and the underwater-camera test share this
+/// one rule.
+pub(crate) fn fills_cell(meta: u8, above: Block) -> bool {
+    above == Block::Water || is_falling(meta)
+}
+
+/// Whether this water meta is a STILL SOURCE — exposed for the mesher's flow
+/// probe (see [`surface_flow_dir`]): two adjacent still sources never flow
+/// into each other, whatever their rendered heights.
+#[inline]
+pub(crate) fn is_still_source(meta: u8) -> bool {
+    is_source(meta)
 }
 
 /// Horizontal direction of the rendered water flow at a cell, using the same
 /// surface-gradient rule that rotates the flowing-water top texture. Returns
 /// zero for still/flat water and for non-water cells.
-pub(crate) fn surface_flow_dir<B, F>(wx: i32, wy: i32, wz: i32, block_at: &B, fluid_at: &F) -> Vec3
+///
+/// Flow direction is a statement about the SIM STATE, not about rendered
+/// heights: between two STILL SOURCES there is no flow — period — so their
+/// height difference contributes nothing. Without that rule, the recessed
+/// 8/9 cell under any block sitting in the sea slopes against its full
+/// mid-column neighbours and the whole neighbourhood grows animated flow
+/// streaks plus a phantom current, on water that is entirely still. Real
+/// gradients survive: flowing/falling metas, and the pull toward an open
+/// air edge (where a source genuinely will spread).
+pub(crate) fn surface_flow_dir<B, F, S>(
+    wx: i32,
+    wy: i32,
+    wz: i32,
+    block_at: &B,
+    fluid_at: &F,
+    still_at: &S,
+) -> Vec3
 where
     B: Fn(i32, i32, i32) -> Block,
     F: Fn(i32, i32, i32) -> Option<f32>,
+    S: Fn(i32, i32, i32) -> bool,
 {
     let Some(my_h) = fluid_at(wx, wy, wz) else {
         return Vec3::ZERO;
     };
+    let i_am_still = still_at(wx, wy, wz);
 
     let mut fvx = 0.0f32;
     let mut fvz = 0.0f32;
     for d in CARDINALS {
-        let nb = block_at(wx + d.x, wy, wz + d.z);
+        let (nx, nz) = (wx + d.x, wz + d.z);
+        let nb = block_at(nx, wy, nz);
         let nh = if nb == Block::Water {
-            fluid_at(wx + d.x, wy, wz + d.z).unwrap_or(my_h)
+            if i_am_still && still_at(nx, wy, nz) {
+                continue; // still source ↔ still source: no flow between them
+            }
+            fluid_at(nx, wy, nz).unwrap_or(my_h)
         } else if nb == Block::Air {
             0.0
         } else {
@@ -245,10 +286,12 @@ impl World {
             if block_at(p.x, p.y, p.z) != Block::Water {
                 return None;
             }
-            let water_above = block_at(p.x, p.y + 1, p.z) == Block::Water;
-            Some(fluid_height(meta_at(self, p), water_above))
+            Some(fluid_height(meta_at(self, p), block_at(p.x, p.y + 1, p.z)))
         };
-        surface_flow_dir(wx, wy, wz, &block_at, &fluid_at)
+        let still_at = |x: i32, y: i32, z: i32| {
+            block_at(x, y, z) == Block::Water && is_source(meta_at(self, IVec3::new(x, y, z)))
+        };
+        surface_flow_dir(wx, wy, wz, &block_at, &fluid_at, &still_at)
     }
 
     /// Absolute Y of the water surface over `cell`, when `cell` holds water:
@@ -265,7 +308,8 @@ impl World {
         while block_at(self, IVec3::new(top.x, top.y + 1, top.z)) == Block::Water {
             top.y += 1;
         }
-        Some(top.y as f32 + fluid_height(meta_at(self, top), false))
+        let above = block_at(self, IVec3::new(top.x, top.y + 1, top.z));
+        Some(top.y as f32 + fluid_height(meta_at(self, top), above))
     }
 
     /// The current acting on a body PROBE POINT: the cell's flow direction only
@@ -280,8 +324,8 @@ impl World {
         if block_at(self, c) != Block::Water {
             return Vec3::ZERO;
         }
-        let water_above = block_at(self, IVec3::new(c.x, c.y + 1, c.z)) == Block::Water;
-        if p.y - c.y as f32 >= fluid_height(meta_at(self, c), water_above) {
+        let above = block_at(self, IVec3::new(c.x, c.y + 1, c.z));
+        if p.y - c.y as f32 >= fluid_height(meta_at(self, c), above) {
             return Vec3::ZERO;
         }
         self.water_flow_dir_at(c.x, c.y, c.z)

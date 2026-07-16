@@ -67,6 +67,12 @@ impl Sound {
     pub const WaterSplashSmall: Sound = Sound(18);
     /// Something plunged into water from height (the loud splash tier).
     pub const WaterSplashBig: Sound = Sound(19);
+    /// Mining hit on a glass-family block (glass, panes, ice) — the punch loop.
+    pub const GlassPunch: Sound = Sound(20);
+    /// A glass-family block shattered (broke or was destroyed).
+    pub const GlassBreak: Sound = Sound(21);
+    /// A glass-family block was placed into the world.
+    pub const GlassPlace: Sound = Sound(22);
 }
 
 /// Engine sound names in frozen id order (`ENGINE_SOUND_NAMES[id]` names
@@ -92,6 +98,9 @@ const ENGINE_SOUND_NAMES: &[&str] = &[
     "petramond:sheep_hurt",
     "petramond:water_splash_small",
     "petramond:water_splash_big",
+    "petramond:glass_punch",
+    "petramond:glass_break",
+    "petramond:glass_place",
 ];
 
 impl std::fmt::Debug for Sound {

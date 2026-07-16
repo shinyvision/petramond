@@ -117,7 +117,8 @@ impl Renderer {
                 column_has_opaque |= section.opaque_idx_count > 0;
                 column_has_model |= section.model_idx_count > 0;
                 any_model_visible |= section.model_idx_count > 0;
-                any_transparent_visible |= section.transparent_idx_count > 0;
+                any_transparent_visible |=
+                    section.transparent_idx_count > 0 || section.translucent_idx_count > 0;
                 let was_far_lod_active = far_leaf_lod_state.get(&sp).copied().unwrap_or(false);
                 let use_far_leaf_lod = far_leaf_lod_active(
                     dist_sq,
@@ -143,6 +144,8 @@ impl Renderer {
                     far_opaque_idx_count: section.far_opaque_idx_count,
                     transparent_index_start: section.transparent_index_start,
                     transparent_idx_count: section.transparent_idx_count,
+                    translucent_index_start: section.translucent_index_start,
+                    translucent_idx_count: section.translucent_idx_count,
                     model_index_start: section.model_index_start,
                     model_idx_count: section.model_idx_count,
                 });
@@ -430,10 +433,51 @@ impl Renderer {
                 self.player_block_item_draw.draw(&mut pass);
             }
         }
+        // TRANSLUCENT-BLOCK PASS: ice — alpha-blended but depth-WRITING, so a
+        // sheet of translucent cubes resolves its own face order through the
+        // depth buffer. Encoded BEFORE the break overlay so a crack decal on a
+        // mined ice block draws ON TOP of the ice (the decal's biased
+        // LessEqual wins on the depth the ice just wrote) instead of being
+        // washed out by the ice blending over it.
+        if any_transparent_visible {
+            let mut pass = color_depth_pass(
+                enc,
+                view,
+                &self.depth,
+                "translucent block pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+            );
+            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(1, &self.atlas_array_bind, &[]);
+            pass.set_pipeline(&self.translucent_pipe);
+            for item in order.iter() {
+                if item.translucent_idx_count == 0 {
+                    continue;
+                }
+                let Some(col) = self.terrain_columns.get(&item.column_pos) else {
+                    continue;
+                };
+                // near -> far: depth-writing, so early-Z applies like opaque.
+                if let (Some(vb), Some(ib)) = (&col.translucent_vbuf, &col.translucent_ibuf) {
+                    pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                    stats.transparent_draws += 1;
+                    stats.transparent_indices += item.translucent_idx_count as u64;
+                    pass.draw_indexed(
+                        item.translucent_index_start
+                            ..item.translucent_index_start + item.translucent_idx_count,
+                        0,
+                        0..1,
+                    );
+                }
+            }
+        }
         // BREAK-OVERLAY PASS: the destroy crack over the targeted block. Drawn
-        // BEFORE the transparent water pass — it is a decal on the OPAQUE block, so
-        // water must be able to blend in front of it (a crack on a submerged block
-        // shows THROUGH the water, not over it). MULTIPLY blend; depth LessEqual /
+        // AFTER translucent blocks (the crack must sit on mined ice) but BEFORE
+        // the transparent water pass — it is a decal on the block, so water must
+        // be able to blend in front of it (a crack on a submerged block shows
+        // THROUGH the water, not over it). MULTIPLY blend; depth LessEqual /
         // no-write over a cube built COINCIDENT with the block faces (no inflation,
         // so the decal never misaligns), with a small polygon offset toward the
         // camera (BREAK_DEPTH_BIAS) so it wins the depth tie cleanly. Reuses
@@ -493,8 +537,11 @@ impl Renderer {
                 );
             }
         }
-        // TRANSPARENT PASS: water, far→near for correct back-to-front alpha. Loads
-        // color + depth; depth test (no write) so it sorts behind solids.
+        // TRANSPARENT (WATER) PASS: far→near back-to-front, depth test only
+        // (water must never occlude terrain behind it). Translucent BLOCKS
+        // drew earlier (their own depth-writing pass, before the break
+        // overlay), so water behind ice depth-fails against the ice's written
+        // depth instead of double-blending over it.
         if any_transparent_visible {
             let mut pass = color_depth_pass(
                 enc,

@@ -123,6 +123,7 @@ pub(super) enum RawFlag {
     AoOccluder,
     Transparent,
     DirectionalView,
+    Translucent,
 }
 
 impl RawFlag {
@@ -133,6 +134,7 @@ impl RawFlag {
             RawFlag::AoOccluder => BlockFlags::AO_OCCLUDER,
             RawFlag::Transparent => BlockFlags::TRANSPARENT,
             RawFlag::DirectionalView => BlockFlags::DIRECTIONAL_VIEW,
+            RawFlag::Translucent => BlockFlags::TRANSLUCENT,
         }
     }
 }
@@ -252,10 +254,13 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
         .iter()
         .map(|t| BlockTag::resolve(t))
         .collect::<Result<_, String>>()?;
-    // Derived, not row-listed: the physics climb probe needs this as a dense
-    // flag (see `BlockFlags::CLIMBABLE`).
+    // Derived, not row-listed: the physics climb/grip probes need these as
+    // dense flags (see `BlockFlags::CLIMBABLE` / `BlockFlags::SLIPPERY`).
     if tags.contains(&BlockTag::CLIMBABLE) {
         flags = flags.with(BlockFlags::CLIMBABLE);
+    }
+    if tags.contains(&BlockTag::SLIPPERY) {
+        flags = flags.with(BlockFlags::SLIPPERY);
     }
     let particle_emitter: Option<&'static [ParticleEmitter]> = match &r.particle_emitter {
         None => None,

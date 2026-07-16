@@ -53,7 +53,9 @@ fn vs_item(in: VsIn) -> VsOut {
 fn fs_item(in: VsOut) -> @location(0) vec4<f32> {
     let tex = textureSample(atlas, samp, in.uv);
     // Cutout: drop transparent texels so the stepped silhouette stays crisp.
-    if (tex.a < 0.5) { discard; }
+    // 0.25, not 0.5: translucent block art (ice, ~0.49) must stay visible
+    // on cutout-only presentation surfaces. See block.wgsl's fs_opaque.
+    if (tex.a < 0.25) { discard; }
     // Full-bright * per-face directional shade * foliage tint (grass-green for a
     // held fern / short grass; white = no-op for flowers / tools / blocks).
     return vec4<f32>(tex.rgb * in.shade * in.tint, tex.a);

@@ -85,8 +85,8 @@ enum DepthPreset {
     /// Depth test `Less` + WRITE. Opaque geometry, particles, and the hand
     /// variants that self-sort against a cleared depth buffer.
     WriteLess,
-    /// Depth test `Less`, NO write. Transparent water: sorts behind solid
-    /// geometry without occluding the surfaces drawn after it.
+    /// Depth test `Less`, NO write. Transparent water and emitter particles:
+    /// sort behind solid geometry without occluding the surfaces drawn after.
     ReadLess,
     /// Depth test `LessEqual`, NO write, with the break-overlay polygon offset.
     /// The crack decal is coincident with the block faces; the bias wins the tie.
@@ -406,6 +406,7 @@ pub(super) struct PipelineResources {
     pub sky_shader_param_keys: Vec<String>,
     pub sky_light_param_key: Option<String>,
     pub opaque_pipe: wgpu::RenderPipeline,
+    pub translucent_pipe: wgpu::RenderPipeline,
     pub transparent_pipe: wgpu::RenderPipeline,
     /// Full-screen colour-grade pass: reads the offscreen scene texture, writes
     /// the swapchain (see `grade.wgsl`). The bind group over the scene view is
@@ -615,7 +616,7 @@ pub(super) fn create_pipeline_resources(
         attributes: &item3d_vbuf_attrs,
     };
 
-    let (opaque_pipe, transparent_pipe) = create_terrain_pipelines(
+    let (opaque_pipe, translucent_pipe, transparent_pipe) = create_terrain_pipelines(
         device,
         format,
         sample_count,
@@ -681,6 +682,7 @@ pub(super) fn create_pipeline_resources(
         sky_shader_param_keys: sky.shader_param_keys,
         sky_light_param_key: sky.light_param_key,
         opaque_pipe,
+        translucent_pipe,
         transparent_pipe,
         grade_pipe,
         grade_bgl,
@@ -823,8 +825,9 @@ fn create_shared_bindings(
     }
 }
 
-/// The opaque + transparent (water) terrain pipelines: the packed 32-byte
-/// block vertex over the tile-array pipeline layout.
+/// The opaque + translucent-block (ice) + transparent (water) terrain
+/// pipelines: the packed 32-byte block vertex over the tile-array pipeline
+/// layout.
 fn create_terrain_pipelines(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -832,7 +835,11 @@ fn create_terrain_pipelines(
     shader: &wgpu::ShaderModule,
     array_layout: &wgpu::PipelineLayout,
     vbuf_layout: &wgpu::VertexBufferLayout,
-) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
+) -> (
+    wgpu::RenderPipeline,
+    wgpu::RenderPipeline,
+    wgpu::RenderPipeline,
+) {
     let opaque_targets = color_target(
         format,
         Some(wgpu::BlendState::REPLACE),
@@ -875,7 +882,26 @@ fn create_terrain_pipelines(
         Some(DepthPreset::ReadLess),
         sample_count,
     );
-    (opaque_pipe, transparent_pipe)
+    // Translucent BLOCKS (ice) blend like water but WRITE depth and draw
+    // before it: a 3D sheet of translucent cubes must resolve its own face
+    // order through the depth buffer (within a section the buffer order is
+    // arbitrary), and water behind/under the sheet then depth-fails instead
+    // of double-blending over it. Shares `fs_transparent`, whose authored-
+    // alpha split gives these tiles their own alpha (see block.wgsl).
+    let translucent_pipe = world_pipeline(
+        device,
+        "translucent pipe",
+        array_layout,
+        shader,
+        "vs_main",
+        "fs_transparent",
+        std::slice::from_ref(vbuf_layout),
+        &transparent_targets,
+        cull_back(),
+        Some(DepthPreset::WriteLess),
+        sample_count,
+    );
+    (opaque_pipe, translucent_pipe, transparent_pipe)
 }
 
 /// The values the sky pass hands back to [`PipelineResources`].

@@ -22,7 +22,7 @@ use crate::save::region::{REGION_SHIFT, REGION_SIZE};
 /// above it shifted): older records describe surfaces the current generator no
 /// longer produces, so they are rejected and regenerated. No upgrade path —
 /// this is a disposable cache.
-pub(crate) const VERSION: u8 = 4;
+pub(crate) const VERSION: u8 = 5;
 const CELLS: usize = SECTION_SIZE * SECTION_SIZE;
 const MESH_BIOME_SIDE: usize = SECTION_SIZE + 4;
 const MESH_BIOME_CELLS: usize = MESH_BIOME_SIDE * MESH_BIOME_SIDE;

@@ -244,11 +244,17 @@ pub(crate) enum BlockMaterial {
     Wool,
     Foliage,
     Plant,
+    /// Brittle vitreous blocks — glass and panes. Hand-mined (no preferred
+    /// tool), shatters with the glass sound set.
+    Glass,
+    /// Frozen water — ice and packed ice. Pickaxe-classed like stone, but
+    /// shatters with the glass sound set.
+    Ice,
     Other,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(super) struct BlockFlags(u8);
+pub(super) struct BlockFlags(u16);
 
 impl BlockFlags {
     /// No material properties at all (air). Replaceability is no longer a flag —
@@ -268,6 +274,17 @@ impl BlockFlags {
     /// and needs the answer without a `def()` big-table read, same rationale
     /// as [`SLAB`](Self::SLAB).
     pub const CLIMBABLE: BlockFlags = BlockFlags(1 << 6);
+    /// Derived by the loader from the `slippery` tag, never listed in a data
+    /// row. The player physics probes the support block's grip every sub-step,
+    /// same rationale as [`CLIMBABLE`](Self::CLIMBABLE).
+    pub const SLIPPERY: BlockFlags = BlockFlags(1 << 7);
+    /// Row-listed: this block renders ALPHA-BLENDED in the transparent pass
+    /// with its texture's own authored alpha (ice) — unlike `transparent`
+    /// cutout blocks (glass), whose texels are all-or-nothing and render in
+    /// the opaque pass. A translucent row must not be `opaque` (faces behind
+    /// it stay visible) and its texture must sit BELOW the cutout threshold
+    /// (see `block_tiles_match_their_render_pass_alpha_contract`'s translucent half).
+    pub const TRANSLUCENT: BlockFlags = BlockFlags(1 << 8);
 
     #[inline]
     pub const fn with(self, flag: BlockFlags) -> BlockFlags {
@@ -307,6 +324,16 @@ impl BlockFlags {
     #[inline]
     pub const fn is_climbable(self) -> bool {
         self.contains(BlockFlags::CLIMBABLE)
+    }
+
+    #[inline]
+    pub const fn is_slippery(self) -> bool {
+        self.contains(BlockFlags::SLIPPERY)
+    }
+
+    #[inline]
+    pub const fn is_translucent(self) -> bool {
+        self.contains(BlockFlags::TRANSLUCENT)
     }
 
     #[inline]

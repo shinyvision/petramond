@@ -1005,6 +1005,21 @@
         "item": "petramond:snow_block",
         "count": 1
       }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:packed_ice",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:ice",
+          "count": 4
+        }
+      ],
+      "result": {
+        "item": "petramond:packed_ice",
+        "count": 1
+      }
     }
   ]
 }

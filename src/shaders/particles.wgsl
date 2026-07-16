@@ -78,7 +78,8 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
     // nearly-faded cube cuts out. Depth-WRITING (set in the pipeline) keeps the
     // solid cubes correctly occluded and self-sorting.
     let a = tex.a * in.alpha;
-    if (a < 0.5) { discard; }
+    // 0.25, not 0.5: ice break-burst texels (~0.49 alpha) must survive.
+    if (a < 0.25) { discard; }
     // shade = per-face directional shading; tint multiplies the atlas colour
     // (white = no change; foliage-green greens a grass/leaf fleck).
     var color = tex.rgb * in.tint * in.shade;

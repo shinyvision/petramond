@@ -40,8 +40,10 @@ fn vs_model_icon(in: VsIn) -> VsOut {
 @fragment
 fn fs_model_icon(in: VsOut) -> @location(0) vec4<f32> {
     let c = textureSample(atlas_tex, atlas_samp, in.uv);
-    // Alpha cutout: transparent texels of the model texture leave the slot background.
-    if (c.a < 0.5) {
+    // Alpha cutout: transparent texels of the model texture leave the slot
+    // background. 0.25, not 0.5: translucent block art (ice, ~0.49) must stay
+    // visible as an icon. See block.wgsl's fs_opaque.
+    if (c.a < 0.25) {
         discard;
     }
     return vec4<f32>(c.rgb * in.shade * in.tint, 1.0);

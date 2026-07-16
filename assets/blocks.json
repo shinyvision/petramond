@@ -1540,7 +1540,9 @@
         "opaque",
         "ao_occluder"
       ],
-      "tags": [],
+      "tags": [
+        "slippery"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [
@@ -1563,7 +1565,7 @@
         "packed_ice",
         "packed_ice"
       ],
-      "material": "stone",
+      "material": "ice",
       "harvest_tier": 1,
       "hardness": 0.5,
       "drops": [
@@ -1580,10 +1582,13 @@
       "shape": "cube",
       "flags": [
         "solid",
-        "opaque",
-        "ao_occluder"
+        "transparent",
+        "translucent"
       ],
-      "tags": [],
+      "tags": [
+        "slippery",
+        "melts"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [
@@ -1606,7 +1611,7 @@
         "ice",
         "ice"
       ],
-      "material": "stone",
+      "material": "ice",
       "harvest_tier": 1,
       "hardness": 0.5,
       "drops": [
@@ -4089,7 +4094,7 @@
         "glass",
         "glass"
       ],
-      "material": "none",
+      "material": "glass",
       "harvest_tier": 0,
       "hardness": 0.3,
       "drops": []
@@ -4113,7 +4118,7 @@
         "glass_pane_top",
         "glass"
       ],
-      "material": "none",
+      "material": "glass",
       "harvest_tier": 0,
       "hardness": 0.3,
       "drops": []

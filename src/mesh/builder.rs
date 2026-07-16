@@ -254,9 +254,12 @@ fn mask_has(masks: &ExposedMasks, face: Face, cell: usize) -> bool {
 fn pad_cube_fast_candidate(block: Block) -> bool {
     // Glass stays on the per-face path: its glass-vs-glass cull (interior faces
     // of a glass wall) isn't representable in the opaque-rows exposure masks.
+    // Translucent blocks (ice) stay there too — same-block cull plus the
+    // alpha-blended buffer, neither of which the fast path emits.
     block != Block::Water
         && block != Block::Cactus
         && block != Block::Glass
+        && !block.is_translucent()
         && block.render_shape() == RenderShape::Cube
         && block != Block::Chest
 }
@@ -508,6 +511,8 @@ fn section_geometry(
     let mut opaque_idx = vec![];
     let mut transparent = vec![];
     let mut transparent_idx = vec![];
+    let mut translucent = vec![];
+    let mut translucent_idx = vec![];
     let mut model: Vec<ModelVertex> = vec![];
     let mut model_idx: Vec<u32> = vec![];
 
@@ -536,18 +541,22 @@ fn section_geometry(
         if block_at(wx, wy, wz) != Block::Water {
             return None;
         }
-        let above = block_at(wx, wy + 1, wz) == Block::Water;
         Some(crate::world::water::fluid_height(
             water_at(wx, wy, wz),
-            above,
+            block_at(wx, wy + 1, wz),
         ))
     };
     let water_fills_cell = |wx: i32, wy: i32, wz: i32| -> bool {
         if block_at(wx, wy, wz) != Block::Water {
             return false;
         }
-        let above = block_at(wx, wy + 1, wz) == Block::Water;
-        crate::world::water::fills_cell(water_at(wx, wy, wz), above)
+        crate::world::water::fills_cell(water_at(wx, wy, wz), block_at(wx, wy + 1, wz))
+    };
+    // Still-source probe for the flow gradient: two adjacent still sources
+    // never flow into each other (see `water::surface_flow_dir`).
+    let water_still_at = |wx: i32, wy: i32, wz: i32| -> bool {
+        block_at(wx, wy, wz) == Block::Water
+            && crate::world::water::is_still_source(water_at(wx, wy, wz))
     };
 
     // Reused per-thread greedy scratch: flat opaque cube faces are deferred here during the
@@ -819,7 +828,7 @@ fn section_geometry(
 
                 let water_surface = is_water.then(|| {
                     let full = water_fills_cell(wx, wy, wz);
-                    WaterSurface::new(wx, wy, wz, full, &block_at, &fluid_at)
+                    WaterSurface::new(wx, wy, wz, full, &block_at, &fluid_at, &water_still_at)
                 });
 
                 if let (Some(pad), Some(exposed)) = (pad, exposed_masks.as_ref()) {
@@ -965,6 +974,12 @@ fn section_geometry(
                     if block == Block::Glass && nb == Block::Glass {
                         continue;
                     }
+                    // Same rule for a translucent block against itself (ice
+                    // against ice): interior faces would double-blend, so the
+                    // frozen sheet reads as one volume, not stacked slabs.
+                    if block.is_translucent() && nb == block {
+                        continue;
+                    }
                     // Two flush lowered cubes share no visible side either: the
                     // neighbour's body covers my whole (equally short) face.
                     if let (Some(h), RenderShape::LoweredCube(nh)) = (lowered, nb.render_shape()) {
@@ -987,6 +1002,13 @@ fn section_geometry(
                         let t = match face {
                             Face::PosY => ws.top_tile(),
                             Face::NegY => crate::atlas::engine().water_still,
+                            // A STILL SOURCE's side faces are calm water — the
+                            // step walls of the recessed pocket under a block
+                            // sitting in the sea must not stream. Flowing and
+                            // falling cells keep the animated flow sides.
+                            _ if water_still_at(wx, wy, wz) => {
+                                crate::atlas::engine().water_still
+                            }
                             _ => crate::atlas::engine().water_flow,
                         };
                         (t, None, tint_water(ci))
@@ -1095,8 +1117,15 @@ fn section_geometry(
                         let s = [lx, ly, lz][face_axes(face).0];
                         greedy.slice_counts[fi * SECTION_SIZE + s] += 1;
                     } else {
+                        // Translucent blocks (ice) blend in their own
+                        // depth-writing pass; their texels sit below the
+                        // opaque pass's cutout and would discard to nothing
+                        // there, and water's read-only depth cannot resolve a
+                        // translucent cube sheet's own face order.
                         let (vbuf, ibuf) = if is_water {
                             (&mut transparent, &mut transparent_idx)
+                        } else if block.is_translucent() {
+                            (&mut translucent, &mut translucent_idx)
                         } else {
                             (&mut opaque, &mut opaque_idx)
                         };
@@ -1135,6 +1164,8 @@ fn section_geometry(
         opaque_idx,
         transparent,
         transparent_idx,
+        translucent,
+        translucent_idx,
         model,
         model_idx,
         mesh_dirty: true,

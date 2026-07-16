@@ -54,6 +54,7 @@ const ENGINE_BIOMES: &[(Biome, &str)] = &[
     (Biome::WoodedHills, "petramond:wooded_hills"),
     (Biome::MountainEdge, "petramond:mountain_edge"),
     (Biome::DesertLakes, "petramond:desert_lakes"),
+    (Biome::SnowyPlains, "petramond:snowy_plains"),
 ];
 
 pub(super) const ENGINE_BIOME_COUNT: usize = ENGINE_BIOMES.len();

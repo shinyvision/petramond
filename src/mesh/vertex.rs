@@ -158,8 +158,16 @@ pub struct ModelVertex {
 pub struct ChunkMesh {
     pub opaque: Vec<Vertex>,
     pub opaque_idx: Vec<u32>,
+    /// WATER geometry: alpha-blended, depth-READ-only (water must not occlude
+    /// the terrain behind it), drawn last, farthest section first.
     pub transparent: Vec<Vertex>,
     pub transparent_idx: Vec<u32>,
+    /// TRANSLUCENT-BLOCK geometry (ice): alpha-blended but depth-WRITING and
+    /// drawn between opaque and water — a 3D sheet of translucent cubes needs
+    /// depth to resolve its own face order (buffer order is arbitrary within
+    /// a section), which water's read-only convention cannot give it.
+    pub translucent: Vec<Vertex>,
+    pub translucent_idx: Vec<u32>,
     /// Optional opaque LOD used for far chunks. This keeps the normal mesh
     /// byte-identical nearby while allowing far foliage to cull leaf-to-leaf
     /// internals once texture mips make the cutouts read as a dense canopy.
@@ -195,6 +203,8 @@ impl ChunkMesh {
             opaque_idx: vec![],
             transparent: vec![],
             transparent_idx: vec![],
+            translucent: vec![],
+            translucent_idx: vec![],
             far_opaque: vec![],
             far_opaque_idx: vec![],
             model: vec![],
@@ -211,7 +221,10 @@ impl ChunkMesh {
         }
         // A chunk holding ONLY a bbmodel block (empty packed buffers) is NOT empty —
         // its geometry lives in the model stream, which must still upload + draw.
-        self.opaque_idx.is_empty() && self.transparent_idx.is_empty() && self.model_idx.is_empty()
+        self.opaque_idx.is_empty()
+            && self.transparent_idx.is_empty()
+            && self.translucent_idx.is_empty()
+            && self.model_idx.is_empty()
     }
 
     pub fn is_released(&self) -> bool {
@@ -228,6 +241,8 @@ impl ChunkMesh {
         self.opaque_idx = Vec::new();
         self.transparent = Vec::new();
         self.transparent_idx = Vec::new();
+        self.translucent = Vec::new();
+        self.translucent_idx = Vec::new();
         self.far_opaque = Vec::new();
         self.far_opaque_idx = Vec::new();
         self.model = Vec::new();

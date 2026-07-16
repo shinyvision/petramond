@@ -283,7 +283,11 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
         let ov = textureSample(atlas, samp, in.uv2, i32(in.overlay_layer));
         rgb = mix(base.rgb, ov.rgb * in.tint, ov.a);
     } else {
-        if (base.a < 0.5) { discard; } // leaf/cutout
+        // Cutout: no asset authors texels in the 0.25..0.5 alpha band —
+        // leaf fringes sit below 0.25, opaque art at 1.0, and TRANSLUCENT
+        // art (ice, world-rendered in fs_transparent) at ~0.49, so item
+        // cubes riding this pass draw it solid instead of vanishing.
+        if (base.a < 0.25) { discard; }
         rgb = base.rgb * in.tint;
     }
     var color = rgb * cel_shaded_light(in);
@@ -310,12 +314,14 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
     let tex = textureSample(atlas, samp, in.uv, i32(in.layer));
-    // Only water uses this alpha-blended pass; water tiles are full-alpha so the
-    // discard is a no-op for them.
-    if (tex.a < 0.5) { discard; }
+    // Two tenants share this alpha-blended pass, split by authored alpha:
+    // water tiles are full-alpha and take the water constant below, while a
+    // TRANSLUCENT block tile (ice) is authored under the opaque pass's 0.5
+    // cutout and keeps its own texture alpha. Only near-zero texels discard.
+    if (tex.a < 0.03) { discard; }
     var color = tex.rgb * in.tint * cel_shaded_light(in);
     // Water blue tint + slight transparency.
-    let alpha = 0.78;
+    let alpha = select(tex.a, 0.78, tex.a >= 0.5);
     // Tint the water volume itself when submerged so the surface seen from below
     // blends into the murk rather than glowing.
     if (u.fog.w > 0.5) {

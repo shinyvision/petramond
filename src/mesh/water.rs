@@ -40,17 +40,19 @@ impl WaterSurface {
     /// is the cell's `fills_cell` result (passed in since the caller already has the
     /// `water_fills_cell` lookup); `block_at`/`fluid_at` sample the world for the
     /// corner-height average and the flow gradient.
-    pub(super) fn new<B, F>(
+    pub(super) fn new<B, F, S>(
         wx: i32,
         wy: i32,
         wz: i32,
         full: bool,
         block_at: &B,
         fluid_at: &F,
+        still_at: &S,
     ) -> Self
     where
         B: Fn(i32, i32, i32) -> Block,
         F: Fn(i32, i32, i32) -> Option<f32>,
+        S: Fn(i32, i32, i32) -> bool,
     {
         // 2x2 corner heights, indexed [cx][cz]: average the up-to-4 water cells
         // meeting at each corner.
@@ -75,7 +77,7 @@ impl WaterSurface {
         // current push matches the texture heading.
         let mut top_tile = crate::atlas::engine().water_still;
         let mut top_angle = 0u32;
-        let flow = crate::world::water::surface_flow_dir(wx, wy, wz, block_at, fluid_at);
+        let flow = crate::world::water::surface_flow_dir(wx, wy, wz, block_at, fluid_at, still_at);
         if flow.length_squared() > 0.0 {
             top_tile = crate::atlas::engine().water_flow;
             // Continuous flow heading: the shader rotates the flow tile by this

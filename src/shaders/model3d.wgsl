@@ -193,6 +193,7 @@ fn fs_model(in: VsOut) -> @location(0) vec4<f32> {
     let tex = textureSample(atlas, samp, clamp_uv(in.uv, in.uv_bounds));
     // Flat sprite items (flowers) and leaf cutouts: drop transparent texels so the
     // billboard cuts out cleanly. Block cubes are full-alpha so this is a no-op.
-    if (tex.a < 0.5) { discard; }
+    // 0.25, not 0.5 — matches the other cutout passes (see block.wgsl).
+    if (tex.a < 0.25) { discard; }
     return vec4<f32>(tex.rgb * in.tint * in.light, tex.a);
 }

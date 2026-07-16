@@ -119,6 +119,16 @@ impl Tile {
     pub fn map_rgb(self) -> [u8; 3] {
         data().map_rgb[self.index()]
     }
+
+    /// Lowest alpha across this tile's texels — the asset↔render-pass
+    /// contract's input: an OPAQUE block row's tiles must be genuinely opaque
+    /// (≥ 128), a TRANSLUCENT row's tiles must author alpha in the 0.25..0.5
+    /// band (above the cutout passes' `a < 0.25` discard, below water's 0.5
+    /// split in `fs_transparent`). Pinned by
+    /// `block_tiles_match_their_render_pass_alpha_contract`.
+    pub fn min_alpha(self) -> u8 {
+        data().min_alpha[self.index()]
+    }
 }
 
 /// Tiles the ENGINE itself references (shader uniforms, the custom chest model,
@@ -198,6 +208,11 @@ struct AtlasData {
     icon_tint: Vec<Option<TileTint>>,
     fill_cutout_mips: Vec<bool>,
     map_rgb: Vec<[u8; 3]>,
+    /// Lowest alpha across the tile's texels — the asset↔shader contract
+    /// check: an OPAQUE block row's tiles must survive the block shader's
+    /// cutout (`block.wgsl` discards `a < 0.5`), or the block renders as a
+    /// hole (the invisible-ice bug, 2026-07-16).
+    min_alpha: Vec<u8>,
     /// Composed base atlas, `cols*TILE × rows*TILE` RGBA.
     rgba: Vec<u8>,
     engine: EngineTiles,
@@ -344,16 +359,20 @@ fn build(manifests: &[&str]) -> Result<AtlasData, String> {
     let mut icon_tint = Vec::with_capacity(count);
     let mut fill_cutout_mips = Vec::with_capacity(count);
     let mut map_rgb = Vec::with_capacity(count);
+    let mut min_alpha = Vec::with_capacity(count);
     for (i, cell) in cells.iter().enumerate() {
         let base_x = (i as u32 % cols) * TILE;
         let base_y = (i as u32 / cols) * TILE;
+        let mut tile_min_alpha = u8::MAX;
         for y in 0..TILE {
             for x in 0..TILE {
                 let px = cell.pixels.get_pixel(x, y);
                 let dst = ((base_y + y) * atlas_w + base_x + x) as usize * 4;
                 rgba[dst..dst + 4].copy_from_slice(&px.0);
+                tile_min_alpha = tile_min_alpha.min(px.0[3]);
             }
         }
+        min_alpha.push(tile_min_alpha);
         let name: &'static str = Box::leak(cell.name.clone().into_boxed_str());
         if by_name.insert(name, Tile(i as u16)).is_some() {
             return Err(format!("duplicate tile name '{name}'"));
@@ -407,6 +426,7 @@ fn build(manifests: &[&str]) -> Result<AtlasData, String> {
         icon_tint,
         fill_cutout_mips,
         map_rgb,
+        min_alpha,
         rgba,
         engine,
     })

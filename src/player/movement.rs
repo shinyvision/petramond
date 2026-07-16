@@ -20,6 +20,15 @@ pub(crate) const TERMINAL: f32 = 30.0;
 /// residual speed skids to a *gradual* halt (~0.7 m, ~0.5 s from walk speed)
 /// rather than stopping dead — firmer than the air, but still a slide, not a snap.
 pub(super) const GROUND_FRICTION: f32 = 0.2;
+/// Horizontal friction while idle on SLIPPERY ground (ice, packed ice — the
+/// [`BlockTag::SLIPPERY`](crate::block::BlockTag::SLIPPERY) rows): a tenth of
+/// the ordinary ground decay, so momentum carries and a walk-off glides.
+pub(super) const ICE_FRICTION: f32 = 0.02;
+/// Ground acceleration on slippery ground: the whole "walking on ice" feel is
+/// this one reduced snap rate — starts, stops, and turns all smear while top
+/// speed stays the ordinary walk/sprint speed (`move_toward` still aims at
+/// the same wish velocity).
+pub(super) const ICE_ACCEL: f32 = 9.0;
 /// Horizontal friction in the air — the decay rate while coasting (no input).
 /// Very low, so after a jump the player keeps almost all of its horizontal
 /// momentum and drifts a long way before stopping (retains ~99 % per frame, so
@@ -202,7 +211,10 @@ impl Player {
         let water = |x: i32, y: i32, z: i32| world.water_cell_at(x, y, z);
         let water_flow = |p: Vec3| world.water_flow_at_point(p);
         let climb = |x: i32, y: i32, z: i32| world.climbable_facing_at(x, y, z);
-        self.update_core_with_current(dt, &boxes, &water, &water_flow, &climb, input, obstacles);
+        let slippery = |x: i32, y: i32, z: i32| world.physics_block(x, y, z).is_slippery();
+        self.update_core_with_current(
+            dt, &boxes, &water, &water_flow, &climb, &slippery, input, obstacles,
+        );
     }
 
     /// Physics integration against arbitrary solidity + water predicates, so the
@@ -214,6 +226,24 @@ impl Player {
         W: Fn(i32, i32, i32) -> bool,
     {
         self.update_core_climb(dt, solid, water, &|_, _, _| None, input);
+    }
+
+    /// [`update_core`](Self::update_core) with a slippery-support predicate,
+    /// for the ice-glide physics tests.
+    #[cfg(test)]
+    pub(super) fn update_core_slippery<F, W, S>(
+        &mut self,
+        dt: f32,
+        solid: &F,
+        water: &W,
+        slippery: &S,
+        input: Input,
+    ) where
+        F: Fn(i32, i32, i32) -> bool,
+        W: Fn(i32, i32, i32) -> bool,
+        S: Fn(i32, i32, i32) -> bool,
+    {
+        self.update_core_env(dt, solid, water, &|_, _, _| None, slippery, input);
     }
 
     /// [`update_core`](Self::update_core) with a climbable-cell predicate, for
@@ -231,9 +261,28 @@ impl Player {
         W: Fn(i32, i32, i32) -> bool,
         L: Fn(i32, i32, i32) -> Option<crate::facing::Facing>,
     {
+        self.update_core_env(dt, solid, water, climb, &|_, _, _| false, input);
+    }
+
+    /// The one test shim behind the `update_core*` helpers: adapts the test's
+    /// bool solidity to the general collision-box predicate (a solid cell is
+    /// one full cube, an empty cell no box) with still water and no obstacles.
+    #[cfg(test)]
+    fn update_core_env<F, W, L, S>(
+        &mut self,
+        dt: f32,
+        solid: &F,
+        water: &W,
+        climb: &L,
+        slippery: &S,
+        input: Input,
+    ) where
+        F: Fn(i32, i32, i32) -> bool,
+        W: Fn(i32, i32, i32) -> bool,
+        L: Fn(i32, i32, i32) -> Option<crate::facing::Facing>,
+        S: Fn(i32, i32, i32) -> bool,
+    {
         let still_water = |_: Vec3| Vec3::ZERO;
-        // Adapt the test's bool solidity to the general collision-box predicate: a
-        // solid cell is one full cube, an empty cell no box.
         let boxes = |x: i32, y: i32, z: i32| {
             if solid(x, y, z) {
                 crate::block::Block::Stone
@@ -242,17 +291,27 @@ impl Player {
             }
             .collision_boxes()
         };
-        self.update_core_with_current(dt, &boxes, water, &still_water, climb, input, &[]);
+        self.update_core_with_current(
+            dt,
+            &boxes,
+            water,
+            &still_water,
+            climb,
+            slippery,
+            input,
+            &[],
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn update_core_with_current<F, W, C, L>(
+    pub(super) fn update_core_with_current<F, W, C, L, S>(
         &mut self,
         dt: f32,
         boxes: &F,
         water: &W,
         water_flow: &C,
         climb: &L,
+        slippery: &S,
         input: Input,
         obstacles: &[crate::collision::DynBox],
     ) where
@@ -260,6 +319,7 @@ impl Player {
         W: Fn(i32, i32, i32) -> bool,
         C: Fn(Vec3) -> Vec3,
         L: Fn(i32, i32, i32) -> Option<crate::facing::Facing>,
+        S: Fn(i32, i32, i32) -> bool,
     {
         if self.is_spectator() {
             self.update_spectator(dt, input);
@@ -428,6 +488,12 @@ impl Player {
         // no longer subject to the grippy ground friction. A landing flips it
         // straight back, so a touchdown stops you promptly.
         let grounded = self.on_ground;
+        // The support block's grip, sampled at the centre column just below the
+        // feet — the same one-column simplification as the water/ladder probes.
+        // Slippery support (ice) swaps the grounded friction + snap constants;
+        // airborne and swimming handling are untouched.
+        let on_slippery =
+            grounded && slippery(water_x, (self.pos.y - 0.05).floor() as i32, water_z);
         if in_water {
             // Swim: accelerate toward the (slow) swim speed; heavy drag when idle.
             // Ground/air friction and the air speed-cap are bypassed — water has its
@@ -473,7 +539,9 @@ impl Player {
             // the slowdown per second is the same at any frame rate or sub-step
             // length. friction 0 → retain 1 (coast forever); 1 → retain 0 (stop).
             let retain = friction_retain(
-                if grounded {
+                if on_slippery {
+                    ICE_FRICTION
+                } else if grounded {
                     GROUND_FRICTION
                 } else {
                     AIR_FRICTION
@@ -487,13 +555,15 @@ impl Player {
             // — responsive starts, stops, and reversals, with no stray momentum
             // (move_toward redirects the whole velocity vector, so turning leaves no
             // leftover speed on the axis you stopped steering). Friction is not read
-            // here: speeding up is fully decoupled from it.
+            // here: speeding up is fully decoupled from it. On slippery support the
+            // snap rate collapses, so starts/stops/turns smear into a slide.
+            let accel = if on_slippery { ICE_ACCEL } else { GROUND_ACCEL };
             let (vx, vz) = move_toward(
                 self.vel.x,
                 self.vel.z,
                 wish.x * speed,
                 wish.z * speed,
-                GROUND_ACCEL * dt,
+                accel * dt,
             );
             self.vel.x = vx;
             self.vel.z = vz;

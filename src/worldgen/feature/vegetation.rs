@@ -50,11 +50,18 @@ pub fn place_vegetation(chunk: &mut Chunk, seed: u32) {
             let mut rng = FeatureRng::positional(seed, VEG_SALT, wx, 0, wz);
             if let Some(p) = pick_plant(biome, surf, seed, wx, wz, &mut rng) {
                 chunk.set_block_raw(x, above, z, p.id());
-            } else if spec(biome).snow_cover.covers(top) && surf.is_solid() {
+            } else if spec(biome).snow_cover.covers(top) && surf.is_solid() && !surf.is_slippery()
+            {
                 // Snow-covered columns blanket the bare ground with a snow
                 // layer; a column that rolled a plant keeps it (ferns poke
                 // through the snow). The solid-surface guard skips water tops
-                // (a submerged column's heightmap ends at the waterline).
+                // (a submerged column's heightmap ends at the waterline), and
+                // the slippery guard skips SEA ICE tops — snow never rides the
+                // ice. That last exclusion is also what keeps this path
+                // byte-identical to `place_vegetation_section`, which skips
+                // every submerged column outright (`column_surf < SEA_LEVEL`):
+                // a frozen pond inside a snowy biome is exactly a submerged
+                // column whose heightmap ends at solid waterline ice.
                 chunk.set_block_raw(x, above, z, Block::SnowLayer.id());
             }
         }

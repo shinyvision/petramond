@@ -19,6 +19,8 @@ use crate::worldgen::biome::climate::{
     CLIMATE_SAMPLE_CELL_X, CLIMATE_SAMPLE_CELL_Z,
 };
 use crate::worldgen::biome::spec;
+use crate::worldgen::biome::surface_table::FROZEN_TEMPERATURE_MAX;
+use crate::worldgen::feature::vegetation::patch_field;
 use crate::worldgen::proto::ProtoChunk;
 use crate::worldgen::region::RegionCells;
 use crate::worldgen::surface::rule::SurfaceCtx;
@@ -33,6 +35,17 @@ const BEACH_MAX_SURFACE_Y: i32 = SEA_LEVEL + 5;
 const BEACH_MAX_CONTINENTALITY: f32 = 0.14;
 const BEACH_SCAN_RADIUS: i32 = 16;
 const BEACH_SCAN_STEP: i32 = 8;
+
+/// Sea ice: frozen (`temperature < FROZEN_TEMPERATURE_MAX`) shallow water caps
+/// its waterline cell with ice — the ice sheet along cold coasts and frozen
+/// rivers. `MIN`/`MAX` bound the capped water depth; a low-frequency cluster
+/// field picks each column's effective threshold in between, so the sheet's
+/// deep-water edge breaks into organic lobes and floes instead of tracing a
+/// bathymetry contour.
+const SEA_ICE_MIN_DEPTH: i32 = 2;
+const SEA_ICE_MAX_DEPTH: i32 = 6;
+const SEA_ICE_EDGE_SALT: u64 = 0x0000_5EA1_CE00_0001;
+const SEA_ICE_EDGE_PERIOD: f32 = 24.0;
 
 #[derive(Clone, Debug)]
 pub(crate) struct SurfaceDensitySystem {
@@ -91,14 +104,25 @@ impl SurfaceDensitySystem {
         let bounds = DensityLatticeBounds::chunk(proto.cx(), proto.cz());
         let lattice = self.master_density_lattice(bounds);
         let (ox, oz) = proto.chunk_origin_world();
+        let mut cells = self.climate_cells();
 
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
                 let wx = ox + x as i32;
                 let wz = oz + z as i32;
-                let (_, biome) = region.at(wx, wz);
+                let (surf_y, biome) = region.at(wx, wz);
                 proto.set_biome(x, z, biome.id());
-                self.fill_column(proto.terrain_blocks_mut(), &lattice, x, z, wx, wz, biome);
+                let waterline = self.waterline_block(&mut cells, wx, wz, surf_y);
+                self.fill_column(
+                    proto.terrain_blocks_mut(),
+                    &lattice,
+                    x,
+                    z,
+                    wx,
+                    wz,
+                    biome,
+                    waterline,
+                );
             }
         }
     }
@@ -121,7 +145,17 @@ impl SurfaceDensitySystem {
                 let surf_y = lattice.top_solid_surface(x, z).unwrap_or(-1);
                 let biome = self.biome_at_cell(&mut cells, wx, wz, surf_y);
                 proto.set_biome(x, z, biome.id());
-                self.fill_column(proto.terrain_blocks_mut(), &lattice, x, z, wx, wz, biome);
+                let waterline = self.waterline_block(&mut cells, wx, wz, surf_y);
+                self.fill_column(
+                    proto.terrain_blocks_mut(),
+                    &lattice,
+                    x,
+                    z,
+                    wx,
+                    wz,
+                    biome,
+                    waterline,
+                );
             }
         }
     }
@@ -138,6 +172,8 @@ impl SurfaceDensitySystem {
         debug_assert_eq!(surf.len(), CHUNK_SX * CHUNK_SZ);
         let (ox, oz) = proto.chunk_origin_world();
         let seed = self.seed;
+        // Lazy: only frozen-candidate columns (shallow submerged) touch climate.
+        let mut cells: Option<ClimateCellCache<'_>> = None;
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
                 let i = z * CHUNK_SX + x;
@@ -146,12 +182,22 @@ impl SurfaceDensitySystem {
                 let s = surf[i];
                 let rule = spec(biome).surface;
                 let (wx, wz) = (ox + x as i32, oz + z as i32);
-                let blocks = proto.terrain_blocks_mut();
 
-                // Water fills non-solid cells at/below sea level; air stays
-                // zeroed.
+                // Water fills non-solid cells at/below sea level (the
+                // waterline cell may freeze to sea ice); air stays zeroed.
+                let waterline = if s < SEA_LEVEL && SEA_LEVEL - s <= SEA_ICE_MAX_DEPTH {
+                    let cells = cells.get_or_insert_with(|| self.climate_cells());
+                    self.waterline_block(cells, wx, wz, s)
+                } else {
+                    Block::Water
+                };
+                let blocks = proto.terrain_blocks_mut();
                 for y in (s + 1).max(0)..=SEA_LEVEL {
-                    blocks[idx(x, y as usize, z)] = Block::Water.id();
+                    blocks[idx(x, y as usize, z)] = if y == SEA_LEVEL {
+                        waterline.id()
+                    } else {
+                        Block::Water.id()
+                    };
                 }
                 if s < 0 {
                     continue;
@@ -210,6 +256,9 @@ impl SurfaceDensitySystem {
         let (ox, oy, oz) = section.origin_world();
         let section_top = oy + SECTION_SIZE as i32 - 1;
         let seed = self.seed;
+        // Lazy: only the waterline section's frozen-candidate columns touch climate.
+        let mut cells: Option<ClimateCellCache<'_>> = None;
+        let holds_waterline = oy <= SEA_LEVEL && SEA_LEVEL <= section_top;
         let blocks = section.blocks_slice_mut();
         for z in 0..SECTION_SIZE {
             for x in 0..SECTION_SIZE {
@@ -219,6 +268,13 @@ impl SurfaceDensitySystem {
                 let rule = spec(biome).surface;
                 let wx = ox + x as i32;
                 let wz = oz + z as i32;
+                let waterline =
+                    if holds_waterline && s < SEA_LEVEL && SEA_LEVEL - s <= SEA_ICE_MAX_DEPTH {
+                        let cells = cells.get_or_insert_with(|| self.climate_cells());
+                        self.waterline_block(cells, wx, wz, s)
+                    } else {
+                        Block::Water
+                    };
 
                 // Deep fast path: the entire section column is solid and below the
                 // deepest depth-gated skin band, so every voxel resolves to the SAME
@@ -256,7 +312,9 @@ impl SurfaceDensitySystem {
                             depth_from_top: (s - wy) as u32,
                         };
                         self.surface.skin_block(&ctx, rule).id()
-                    } else if wy <= SEA_LEVEL {
+                    } else if wy == SEA_LEVEL {
+                        waterline.id()
+                    } else if wy < SEA_LEVEL {
                         Block::Water.id()
                     } else {
                         continue; // air — section starts zeroed.
@@ -268,6 +326,7 @@ impl SurfaceDensitySystem {
     }
 
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     fn fill_column(
         &self,
         blocks: &mut [u8],
@@ -277,6 +336,7 @@ impl SurfaceDensitySystem {
         wx: i32,
         wz: i32,
         biome: Biome,
+        waterline: Block,
     ) {
         let surface_rule = spec(biome).surface;
         let mut run_top: Option<i32> = None;
@@ -287,7 +347,9 @@ impl SurfaceDensitySystem {
             if !lattice.solid_at_local(x, y, z) {
                 run_top = None;
                 depth_from_top = 0;
-                if wy <= SEA_LEVEL {
+                if wy == SEA_LEVEL {
+                    blocks[idx(x, y, z)] = waterline.id();
+                } else if wy < SEA_LEVEL {
                     blocks[idx(x, y, z)] = Block::Water.id();
                 }
                 continue;
@@ -321,6 +383,44 @@ impl SurfaceDensitySystem {
     /// stays a pure function of `(seed, cell)`, independent of call order.
     fn climate_cells(&self) -> ClimateCellCache<'_> {
         ClimateCellCache::new(ClimateSampler::new(self.density.graph()), &self.climate, self.seed)
+    }
+
+    /// The block a submerged column's waterline cell (`y == SEA_LEVEL`) takes:
+    /// ice over frozen shallow water, else water. A pure per-column function of
+    /// `(seed, wx, wz, surf)` — every fill path routes its waterline cell
+    /// through this one rule, so they stay byte-identical.
+    fn waterline_block(
+        &self,
+        cells: &mut ClimateCellCache<'_>,
+        wx: i32,
+        wz: i32,
+        surf: i32,
+    ) -> Block {
+        // Not submerged (or too deep): plain water. The lower bound lives HERE,
+        // not only in the callers' fast-path gates, so the rule alone is
+        // correct for any caller — a frozen land column must never resolve to
+        // ice at a sub-surface pocket.
+        let depth = SEA_LEVEL - surf;
+        if !(1..=SEA_ICE_MAX_DEPTH).contains(&depth) {
+            return Block::Water;
+        }
+        // The same bilinear per-column temperature the biome classifier reads,
+        // so the ice sheet and the snowy shoreline agree on where winter is.
+        let temperature = cells
+            .climate_at(wx, wz)
+            .get(ClimateAxis::Temperature)
+            .unwrap_or(0.0);
+        if temperature >= FROZEN_TEMPERATURE_MAX {
+            return Block::Water;
+        }
+        let field = patch_field(self.seed, SEA_ICE_EDGE_SALT, wx, wz, SEA_ICE_EDGE_PERIOD);
+        let threshold =
+            SEA_ICE_MIN_DEPTH + (field * (SEA_ICE_MAX_DEPTH - SEA_ICE_MIN_DEPTH + 1) as f32) as i32;
+        if depth <= threshold {
+            Block::Ice
+        } else {
+            Block::Water
+        }
     }
 
     fn biome_at_cell(

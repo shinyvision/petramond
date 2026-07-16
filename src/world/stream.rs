@@ -2577,3 +2577,37 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, feature = "worldgen-tests"))]
+mod sea_ice_streaming {
+    use super::*;
+    use crate::block::Block;
+    use std::time::Duration;
+
+    /// The frozen sea exists in the LIVE streamed world, not just the one-shot
+    /// generator: a waterline ice cell must survive the per-section pipeline
+    /// AND the analytic section summaries (a section wrongly classified
+    /// `FullWater` would never materialize and serve virtual water instead of
+    /// its ice — the failure mode this pins). Seed 34 chunk (6,-1) local
+    /// (15,15) holds sea ice at y = SEA_LEVEL.
+    #[test]
+    fn sea_ice_streams_into_the_live_world() {
+        let mut world = World::new(34, 2);
+        world.update_load(6, 3, -1);
+        let (wx, wy, wz) = (6 * 16 + 15, 63, -16 + 15);
+        // Give-up bound only (generous per WIKI/testing-and-verification.md —
+        // a starved shared JobPool can stretch quiet stretches far past any
+        // tight window; passing runs never wait this long).
+        let mut spun = 0;
+        while !world.section_loaded_at(wx, wy, wz) && spun < 30_000 {
+            world.poll();
+            std::thread::sleep(Duration::from_millis(2));
+            spun += 1;
+        }
+        let live = Block::from_id(world.chunk_block(wx, wy, wz));
+        let oneshot = crate::worldgen::generate_chunk(34, 6, -1);
+        let expected = oneshot.block(15, 63, 15);
+        assert_eq!(expected, Block::Ice, "the pinned column still freezes");
+        assert_eq!(live, expected, "streamed world must match one-shot generation");
+    }
+}

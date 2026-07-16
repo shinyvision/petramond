@@ -174,6 +174,8 @@ pub struct GpuSectionMesh {
     pub far_opaque_idx_count: u32,
     pub transparent_index_start: u32,
     pub transparent_idx_count: u32,
+    pub translucent_index_start: u32,
+    pub translucent_idx_count: u32,
     pub model_index_start: u32,
     pub model_idx_count: u32,
 }
@@ -186,6 +188,8 @@ pub struct GpuColumnMesh {
     pub far_opaque_ibuf: Option<wgpu::Buffer>,
     pub transparent_vbuf: Option<wgpu::Buffer>,
     pub transparent_ibuf: Option<wgpu::Buffer>,
+    pub translucent_vbuf: Option<wgpu::Buffer>,
+    pub translucent_ibuf: Option<wgpu::Buffer>,
     pub model_vbuf: Option<wgpu::Buffer>,
     pub model_ibuf: Option<wgpu::Buffer>,
     pub model_idx_count: u32,
@@ -200,6 +204,8 @@ pub(super) struct ColumnUploadScratch {
     far_opaque_idx: Vec<u32>,
     transparent: Vec<Vertex>,
     transparent_idx: Vec<u32>,
+    translucent: Vec<Vertex>,
+    translucent_idx: Vec<u32>,
     model: Vec<ModelVertex>,
     model_idx: Vec<u32>,
 }
@@ -212,6 +218,8 @@ impl ColumnUploadScratch {
         self.far_opaque_idx.clear();
         self.transparent.clear();
         self.transparent_idx.clear();
+        self.translucent.clear();
+        self.translucent_idx.clear();
         self.model.clear();
         self.model_idx.clear();
     }
@@ -235,6 +243,14 @@ impl ColumnUploadScratch {
             meshes
                 .iter()
                 .map(|(_, mesh)| mesh.transparent_idx.len())
+                .sum(),
+        );
+        self.translucent
+            .reserve(meshes.iter().map(|(_, mesh)| mesh.translucent.len()).sum());
+        self.translucent_idx.reserve(
+            meshes
+                .iter()
+                .map(|(_, mesh)| mesh.translucent_idx.len())
                 .sum(),
         );
         self.model
@@ -479,7 +495,8 @@ pub(super) fn upload_column_mesh(
     prev: Option<GpuColumnMesh>,
     scratch: &mut ColumnUploadScratch,
 ) -> GpuColumnMesh {
-    let (p_ov, p_oi, p_fov, p_foi, p_tv, p_ti, p_mv, p_mi, mut sections) = match prev {
+    let (p_ov, p_oi, p_fov, p_foi, p_tv, p_ti, p_lv, p_li, p_mv, p_mi, mut sections) = match prev
+    {
         Some(g) => (
             g.opaque_vbuf,
             g.opaque_ibuf,
@@ -487,11 +504,25 @@ pub(super) fn upload_column_mesh(
             g.far_opaque_ibuf,
             g.transparent_vbuf,
             g.transparent_ibuf,
+            g.translucent_vbuf,
+            g.translucent_ibuf,
             g.model_vbuf,
             g.model_ibuf,
             g.sections,
         ),
-        None => (None, None, None, None, None, None, None, None, Vec::new()),
+        None => (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+        ),
     };
 
     scratch.clear();
@@ -518,6 +549,12 @@ pub(super) fn upload_column_mesh(
             &mesh.transparent,
             &mesh.transparent_idx,
         );
+        let (translucent_index_start, translucent_idx_count) = append_indexed_layer(
+            &mut scratch.translucent,
+            &mut scratch.translucent_idx,
+            &mesh.translucent,
+            &mesh.translucent_idx,
+        );
         let (model_index_start, model_idx_count) = append_indexed_layer(
             &mut scratch.model,
             &mut scratch.model_idx,
@@ -534,6 +571,8 @@ pub(super) fn upload_column_mesh(
                 far_opaque_idx_count,
                 transparent_index_start,
                 transparent_idx_count,
+                translucent_index_start,
+                translucent_idx_count,
                 model_index_start,
                 model_idx_count,
             },
@@ -584,6 +623,20 @@ pub(super) fn upload_column_mesh(
             queue,
             p_ti,
             bytemuck::cast_slice(&scratch.transparent_idx),
+            idx,
+        ),
+        translucent_vbuf: upload_layer(
+            device,
+            queue,
+            p_lv,
+            bytemuck::cast_slice(&scratch.translucent),
+            vtx,
+        ),
+        translucent_ibuf: upload_layer(
+            device,
+            queue,
+            p_li,
+            bytemuck::cast_slice(&scratch.translucent_idx),
             idx,
         ),
         model_vbuf: upload_layer(

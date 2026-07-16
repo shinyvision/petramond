@@ -16,7 +16,8 @@ pub(crate) const CLIMATE_SAMPLE_CELL_Z: i32 = 4;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ClimateAxis {
-    #[cfg(test)]
+    /// Read by the sea-ice pass (`density::surface::waterline_block`), besides
+    /// the classifier's rectangle machinery.
     Temperature,
     #[cfg(test)]
     Humidity,
@@ -30,7 +31,6 @@ pub(crate) enum ClimateAxis {
 impl ClimateAxis {
     const fn index(self) -> usize {
         match self {
-            #[cfg(test)]
             Self::Temperature => 0,
             #[cfg(test)]
             Self::Humidity => 1,

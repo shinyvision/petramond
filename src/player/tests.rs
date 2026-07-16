@@ -20,6 +20,10 @@ fn no_ladder(_x: i32, _y: i32, _z: i32) -> Option<crate::facing::Facing> {
     None
 }
 
+fn no_slip(_x: i32, _y: i32, _z: i32) -> bool {
+    false
+}
+
 fn p(feet: Vec3) -> Player {
     Player::new(feet)
 }
@@ -107,6 +111,7 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
             &dry,
             &still,
             &no_ladder,
+            &no_slip,
             walk_x,
             &[],
         );
@@ -139,6 +144,7 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
             &dry,
             &still,
             &no_ladder,
+            &no_slip,
             walk_x,
             &[],
         );
@@ -1288,6 +1294,7 @@ fn flowing_water_pushes_idle_player_along_current() {
         &water,
         &flow,
         &no_ladder,
+        &no_slip,
         Input::default(),
         &[],
     );
@@ -1558,6 +1565,7 @@ fn sneaking_still_steps_down_a_half_block() {
             &dry,
             &still,
             &no_ladder,
+            &no_slip,
             sneak_walk,
             &[],
         );
@@ -1614,7 +1622,7 @@ fn sneak_step_down_is_instant_so_diagonal_descent_cannot_fall_off() {
     let mut min_y = f32::MAX;
     let mut airborne_frames = 0;
     for i in 0..600 {
-        pl.update_core_with_current(1.0 / 60.0, &world, &dry, &still, &no_ladder, diag, &[]);
+        pl.update_core_with_current(1.0 / 60.0, &world, &dry, &still, &no_ladder, &no_slip, diag, &[]);
         min_y = min_y.min(pl.pos.y);
         // Skip the first frames: a fresh Player spawns with on_ground unset.
         if i > 2 && !pl.on_ground {
@@ -1644,4 +1652,49 @@ fn sneak_step_down_is_instant_so_diagonal_descent_cannot_fall_off() {
         "still slides along the lip meanwhile: z={}",
         pl.pos.z
     );
+}
+
+/// Slippery support (ice): a coasting body glides far beyond what ordinary
+/// ground friction allows, and steering input redirects it sluggishly. Pins
+/// the grounded friction/snap swap in `update_core_with_current`, not the
+/// exact constants.
+#[test]
+fn ice_glides_far_beyond_ordinary_ground() {
+    let solid = |_x: i32, y: i32, _z: i32| y < 64;
+    let coast = |ice_floor: bool| {
+        let mut pl = p(Vec3::new(0.5, 64.0, 0.5));
+        pl.vel = Vec3::new(6.0, 0.0, 0.0); // launched at walk speed, then no input
+        let slippery = move |_x: i32, y: i32, _z: i32| ice_floor && y == 63;
+        let x0 = pl.pos.x;
+        for _ in 0..120 {
+            pl.update_core_slippery(1.0 / 60.0, &solid, &dry, &slippery, Input::default());
+        }
+        pl.pos.x - x0
+    };
+    let ground = coast(false);
+    let ice = coast(true);
+    assert!(
+        ice > 3.0 * ground,
+        "ice coast ({ice:.2}m) should far exceed ground coast ({ground:.2}m)"
+    );
+
+    // Steering: from a +X slide, full -X input for a quarter second reverses a
+    // grounded body but only BRAKES an ice-borne one — the slide smears.
+    let steer = |ice_floor: bool| {
+        let mut pl = p(Vec3::new(0.5, 64.0, 0.5));
+        pl.vel = Vec3::new(6.0, 0.0, 0.0);
+        let slippery = move |_x: i32, y: i32, _z: i32| ice_floor && y == 63;
+        let back = Input {
+            wishdir: Vec3::new(-1.0, 0.0, 0.0),
+            jump: false,
+            sprint: false,
+            sneak: false,
+        };
+        for _ in 0..15 {
+            pl.update_core_slippery(1.0 / 60.0, &solid, &dry, &slippery, back);
+        }
+        pl.vel.x
+    };
+    assert!(steer(false) < 0.0, "ordinary ground reverses within the window");
+    assert!(steer(true) > 0.0, "ice keeps sliding forward through the same input");
 }

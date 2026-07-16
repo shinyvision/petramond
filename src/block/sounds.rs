@@ -86,3 +86,13 @@ pub static DIRT: BlockSoundSet = BlockSoundSet {
     place: Some(Sound::DirtPlace),
     step: None,
 };
+
+/// Glass-family: glass, panes (`BlockMaterial::Glass`) and ice
+/// (`BlockMaterial::Ice`). Mining loops the glass "punch"; breaking shatters.
+/// The step slot awaits its asset.
+pub static GLASS: BlockSoundSet = BlockSoundSet {
+    dig: Some(Sound::GlassPunch),
+    break_: Some(Sound::GlassBreak),
+    place: Some(Sound::GlassPlace),
+    step: None,
+};

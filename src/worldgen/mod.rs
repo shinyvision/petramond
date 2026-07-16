@@ -148,7 +148,10 @@ mod tests {
         use crate::chunk::{SectionPos, CHUNK_SY, SECTION_SIZE};
 
         // Seed 31337's origin sits in a snowy region, so the snow-layer
-        // placement (vegetation stage) is exercised across the seam too.
+        // placement (vegetation stage) is exercised across the seam too; seed
+        // 34's chunks hold FROZEN PONDS (snowy-biome columns submerged under
+        // waterline sea ice), the case where the chunk path must skip the
+        // snow layer exactly like the section path skips the whole column.
         for &(seed, cx, cz) in &[
             (0x1234_5678u32, 0, 0),
             (0x1234_5678, 1, -1),
@@ -158,6 +161,9 @@ mod tests {
             (31337, 0, 0),
             (31337, 2, 3),
             (31337, -1, -2),
+            (34, 6, -1),
+            (34, 7, -1),
+            (34, 8, -1),
         ] {
             let generator = driver::ChunkGenerator::new(seed);
             let chunk = generate_chunk(seed, cx, cz);
@@ -253,6 +259,42 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Frozen ponds carry bare sea ice: a snowy-biome column submerged under a
+    /// waterline ice cap must NOT grow a snow layer above the ice (the
+    /// per-section vegetation pass never visits submerged columns, so a layer
+    /// here would be a chunk-vs-section parity break — the exact bug the
+    /// slippery-top guard in `place_vegetation` exists to prevent). Seed 34's
+    /// scanned coast holds thousands of such columns; assert on real ones so
+    /// the guard cannot silently rot.
+    #[test]
+    fn frozen_ponds_carry_bare_sea_ice_without_a_snow_layer() {
+        let seed = 34;
+        let mut cases = 0;
+        for &(cx, cz) in &[(6, -1), (7, -1), (8, -1)] {
+            let chunk = generate_chunk(seed, cx, cz);
+            for z in 0..CHUNK_SZ {
+                for x in 0..CHUNK_SX {
+                    let biome = crate::biome::Biome::from_id(chunk.biome_at(x, z));
+                    let snowy = matches!(
+                        biome,
+                        crate::biome::Biome::SnowyPlains
+                            | crate::biome::Biome::SnowyTundra
+                            | crate::biome::Biome::SnowyTaiga
+                    );
+                    if snowy && chunk.block(x, SEA_LEVEL as usize, z) == Block::Ice {
+                        cases += 1;
+                        assert_eq!(
+                            chunk.block(x, SEA_LEVEL as usize + 1, z),
+                            Block::Air,
+                            "snow layer on sea ice at ({cx},{cz}) local ({x},{z})"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(cases > 0, "the scanned chunks must still hold frozen ponds");
     }
 
     #[test]

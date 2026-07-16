@@ -111,10 +111,9 @@ fn fluid_height_at(world: &World, wx: i32, wy: i32, wz: i32) -> Option<f32> {
     if Block::from_id(world.chunk_block(wx, wy, wz)) != Block::Water {
         return None;
     }
-    let water_above = Block::from_id(world.chunk_block(wx, wy + 1, wz)) == Block::Water;
     Some(crate::world::water::fluid_height(
         world.water_meta_world(wx, wy, wz),
-        water_above,
+        Block::from_id(world.chunk_block(wx, wy + 1, wz)),
     ))
 }
 
@@ -122,8 +121,10 @@ fn water_fills_cell_at(world: &World, wx: i32, wy: i32, wz: i32) -> bool {
     if Block::from_id(world.chunk_block(wx, wy, wz)) != Block::Water {
         return false;
     }
-    let water_above = Block::from_id(world.chunk_block(wx, wy + 1, wz)) == Block::Water;
-    crate::world::water::fills_cell(world.water_meta_world(wx, wy, wz), water_above)
+    crate::world::water::fills_cell(
+        world.water_meta_world(wx, wy, wz),
+        Block::from_id(world.chunk_block(wx, wy + 1, wz)),
+    )
 }
 
 #[cfg(test)]
@@ -174,7 +175,7 @@ mod tests {
         game.cam.pos = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.5, p.z as f32 + 0.5);
         assert!(!game.environment(0.0).underwater);
 
-        let surface = p.y as f32 + crate::world::water::fluid_height(7, false);
+        let surface = p.y as f32 + crate::world::water::fluid_height(7, Block::Air);
         game.cam.pos = Vec3::new(
             p.x as f32 + 0.5,
             surface - UNDERWATER_SURFACE_MARGIN - 0.01,
@@ -190,7 +191,7 @@ mod tests {
         let p = IVec3::new(5, 64, 5);
         set_test_water(&mut game, p, 0);
 
-        let surface = p.y as f32 + crate::world::water::fluid_height(0, false);
+        let surface = p.y as f32 + crate::world::water::fluid_height(0, Block::Air);
         game.cam.pos = Vec3::new(p.x as f32 + 0.5, surface + 0.01, p.z as f32 + 0.5);
         assert!(!game.environment(0.0).underwater);
 

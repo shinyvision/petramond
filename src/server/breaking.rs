@@ -332,8 +332,20 @@ impl ServerGame {
             // in `Game::apply_world_effects` (client-owned state).
             self.world.remove_door(event.pos);
         } else {
-            self.world
-                .set_block_world(event.pos.x, event.pos.y, event.pos.z, Block::Air);
+            // Plain-cube clears leave the block's break residue (air for
+            // almost everything; melting ice leaves water — see
+            // `Block::break_residue`). The predicted clear applies the same
+            // rule (`World::clear_broken_block`).
+            let below = Block::from_id(
+                self.world
+                    .chunk_block(event.pos.x, event.pos.y - 1, event.pos.z),
+            );
+            self.world.set_block_world(
+                event.pos.x,
+                event.pos.y,
+                event.pos.z,
+                event.block.break_residue(below),
+            );
         }
         // Forget the broken block's other entity records (machine state,
         // facing, torch orientation) in one generic sweep — no per-block

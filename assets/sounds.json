@@ -30,6 +30,35 @@
       "category": "block"
     },
     {
+      "sound": "petramond:glass_punch",
+      "variants": [
+        "sounds/glass_punch_1.ogg",
+        "sounds/glass_punch_2.ogg",
+        "sounds/glass_punch_3.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:glass_break",
+      "variants": [
+        "sounds/glass_break.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:glass_place",
+      "variants": [
+        "sounds/glass_place.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
       "sound": "petramond:item_pickup",
       "variants": [
         "sounds/item_pickup.ogg"

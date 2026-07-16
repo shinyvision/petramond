@@ -241,6 +241,8 @@ static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
     "no_pane_connect",
     "climbable",
     "snow_cover",
+    "slippery",
+    "melts",
 ]);
 
 impl BlockTag {
@@ -309,6 +311,15 @@ impl BlockTag {
     /// directly on top of it (see the mesher's grass-side branch); the look is
     /// derived from the cell above at mesh time, never stored per cell.
     pub const SNOW_COVER: BlockTag = BlockTag(13);
+    /// Low-grip footing — ice and packed ice. A body standing on it glides:
+    /// idle friction and directional snap both drop (the feel constants live
+    /// in `player::movement`, never per-block, like the climb feel).
+    pub const SLIPPERY: BlockTag = BlockTag(14);
+    /// Frozen water — plain ice, NOT packed ice. Breaking it leaves a water
+    /// source behind when something below can hold it (see
+    /// [`Block::break_residue`]), so mining the frozen sea never leaves a dry
+    /// pocket the water sim cannot refill.
+    pub const MELTS: BlockTag = BlockTag(15);
 
     /// Resolve a `blocks.json` row tag name (see [`crate::registry::TagTable`]).
     pub(crate) fn resolve(name: &str) -> Result<BlockTag, String> {
@@ -672,6 +683,16 @@ impl Block {
         data::flags(self.id()).is_transparent()
     }
 
+    /// Whether this block renders ALPHA-BLENDED in the transparent pass with
+    /// its texture's authored alpha (ice) instead of the opaque pass's
+    /// all-or-nothing cutout (glass, leaves). The mesher routes its faces
+    /// into the water buffer, culls same-block shared faces (an ice sheet
+    /// reads as one volume), and keeps it off the fast/greedy opaque paths.
+    #[inline]
+    pub fn is_translucent(self) -> bool {
+        data::flags(self.id()).is_translucent()
+    }
+
     /// Block-light this block radiates when ACTIVE, on the SAME x2 integer scale the
     /// skylight flood-fill uses (`SKY_FULL` = 30 = full daylight = level 15). `0` for
     /// non-emitters. A torch is always active at level 14 (`28` on the x2 scale):
@@ -725,6 +746,32 @@ impl Block {
     #[inline]
     pub fn is_climbable(self) -> bool {
         data::flags(self.id()).is_climbable()
+    }
+
+    /// Whether a body standing on this block glides (see [`BlockTag::SLIPPERY`]
+    /// — ice, packed ice). Reads the dense loader-derived flag, not the tag
+    /// list — the physics probe asks every sub-step.
+    #[inline]
+    pub fn is_slippery(self) -> bool {
+        data::flags(self.id()).is_slippery()
+    }
+
+
+    /// What the cell becomes when this block is BROKEN: air, except a
+    /// [`MELTS`](BlockTag::MELTS) block (ice) leaves a water source when the
+    /// cell below can hold it — solid ground or more water. Mining the frozen
+    /// sea therefore refills instead of leaving a dry pocket (water never
+    /// flows upward, so nothing else could); breaking ice suspended over air
+    /// leaves air, never floating water. Every break path — the server break,
+    /// the client's predicted break, and natural sim breaks — routes the
+    /// plain-cube clear through this one rule so prediction cannot diverge.
+    #[inline]
+    pub fn break_residue(self, below: Block) -> Block {
+        if self.has_tag(BlockTag::MELTS) && (below.is_solid() || below.is_water()) {
+            Block::Water
+        } else {
+            Block::Air
+        }
     }
 
     /// Whether `ground` (the block directly below) is a surface this block may be PLACED
@@ -815,7 +862,9 @@ impl Block {
     #[inline]
     pub fn preferred_tool(self) -> Option<ToolKind> {
         match self.material() {
-            BlockMaterial::Stone | BlockMaterial::Ore => Some(ToolKind::Pickaxe),
+            BlockMaterial::Stone | BlockMaterial::Ore | BlockMaterial::Ice => {
+                Some(ToolKind::Pickaxe)
+            }
             BlockMaterial::Wood => Some(ToolKind::Axe),
             BlockMaterial::Dirt | BlockMaterial::Sand => Some(ToolKind::Shovel),
             BlockMaterial::Wool => Some(ToolKind::Shears),
@@ -855,6 +904,9 @@ impl Block {
             BlockMaterial::Wood => &sounds::WOOD,
             BlockMaterial::Stone | BlockMaterial::Ore => &sounds::STONE,
             BlockMaterial::Dirt => &sounds::DIRT,
+            // Ice mines like stone (see `preferred_tool`) but SOUNDS like
+            // glass — the sound follows the shatter, not the pickaxe.
+            BlockMaterial::Glass | BlockMaterial::Ice => &sounds::GLASS,
             _ => &sounds::SILENT,
         }
     }
@@ -988,6 +1040,56 @@ mod tests {
         ] {
             assert_eq!(b.preferred_tool(), None, "{b:?}");
         }
+    }
+
+    /// Asset↔shader contract, both directions. OPAQUE rows: every referenced
+    /// tile must be genuinely opaque (min alpha ≥ 128, comfortably above the
+    /// cutout passes' 0.25 discard) or the block renders as an invisible
+    /// x-ray hole — the mesher culled the faces behind it, then the shader
+    /// discarded every texel of its own (the 2026-07-16 ice bug: `ice.png` at
+    /// uniform alpha 126). TRANSLUCENT rows: tiles must sit in the 0.25..0.5
+    /// band — at or above the cutout discard so item cubes/icons/particles
+    /// still draw them solid, and below 0.5 so `fs_transparent`'s water/ice
+    /// split hands them their own authored alpha instead of water's constant.
+    #[test]
+    fn block_tiles_match_their_render_pass_alpha_contract() {
+        for &b in Block::all() {
+            for tile in b.tiles() {
+                if b.is_opaque() {
+                    assert!(
+                        tile.min_alpha() >= 128,
+                        "opaque {b:?} tile '{}' has sub-opaque texels (min alpha {})",
+                        tile.name(),
+                        tile.min_alpha(),
+                    );
+                } else if b.is_translucent() {
+                    assert!(
+                        (64..128).contains(&tile.min_alpha()),
+                        "translucent {b:?} tile '{}' must author alpha in 0.25..0.5 \
+                         (min alpha {})",
+                        tile.name(),
+                        tile.min_alpha(),
+                    );
+                }
+            }
+        }
+    }
+
+    /// The melt rule: broken ice leaves water wherever something below can
+    /// hold it, air over a void; nothing else ever leaves residue. Mining the
+    /// frozen sea must refill (water cannot flow back upward into the hole).
+    #[test]
+    fn broken_ice_melts_to_water_only_over_support() {
+        assert_eq!(Block::Ice.break_residue(Block::Water), Block::Water);
+        assert_eq!(Block::Ice.break_residue(Block::Stone), Block::Water);
+        assert_eq!(
+            Block::Ice.break_residue(Block::Air),
+            Block::Air,
+            "no floating water over a void"
+        );
+        // Packed ice is a crafted building block: it breaks clean.
+        assert_eq!(Block::PackedIce.break_residue(Block::Water), Block::Air);
+        assert_eq!(Block::Stone.break_residue(Block::Water), Block::Air);
     }
 
     #[test]

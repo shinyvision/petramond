@@ -34,6 +34,7 @@ pub enum Biome {
     WoodedHills,
     MountainEdge,
     DesertLakes,
+    SnowyPlains,
 }
 
 pub const BIOME_COUNT: usize = data::ENGINE_BIOME_COUNT;

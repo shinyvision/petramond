@@ -41,6 +41,7 @@ pub const BIOME_NAMES: &[&str] = &[
     "wooded_hills",
     "mountain_edge",
     "desert_lakes",
+    "snowy_plains",
 ];
 
 pub const OCEAN: u8 = 1;
@@ -69,6 +70,7 @@ pub const STONY_PEAKS: u8 = 23;
 pub const WOODED_HILLS: u8 = 24;
 pub const MOUNTAIN_EDGE: u8 = 25;
 pub const DESERT_LAKES: u8 = 26;
+pub const SNOWY_PLAINS: u8 = 27;
 
 /// The stable snake_case name for a biome id, `None` for an unknown id.
 pub fn name(id: u8) -> Option<&'static str> {

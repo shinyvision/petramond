@@ -84,6 +84,7 @@ fn biome_color(id: u8) -> [u8; 3] {
         Biome::WoodedHills => [64, 132, 56],
         Biome::MountainEdge => [148, 158, 132],
         Biome::DesertLakes => [214, 178, 92],
+        Biome::SnowyPlains => [222, 230, 226],
     }
 }
 

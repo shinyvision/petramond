@@ -1819,3 +1819,153 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     assert_eq!(serial.model_idx, pad.model_idx);
     assert_eq!(serial.mesh_dirty, pad.mesh_dirty);
 }
+
+/// The frozen-sea sheet — an ice layer capping water at the section's top row
+/// — must emit its geometry into the TRANSPARENT (alpha-blended) buffer: ice
+/// is a translucent block, and a routing regression in either direction is
+/// invisible or wrongly-solid ice.
+#[test]
+fn sea_ice_sheet_over_water_emits_translucent_geometry() {
+    let mut section = Section::new(0, 0, 0);
+    for z in 0..SECTION_SIZE {
+        for x in 0..SECTION_SIZE {
+            section.set_block(x, 0, z, Block::Stone);
+            for y in 1..15 {
+                section.set_block(x, y, z, Block::Water);
+            }
+            section.set_block(x, 15, z, Block::Ice);
+        }
+    }
+    let m = mesh(&section);
+    let ice_tile = Block::Ice.tiles()[0].index() as u32;
+    let blended = m
+        .translucent
+        .iter()
+        .filter(|v| tile_idx(v) == ice_tile)
+        .count();
+    let cutout = m.opaque.iter().filter(|v| tile_idx(v) == ice_tile).count();
+    let water_pass = m
+        .transparent
+        .iter()
+        .filter(|v| tile_idx(v) == ice_tile)
+        .count();
+    assert!(blended > 0, "the ice sheet must emit translucent-pass geometry");
+    assert_eq!(cutout, 0, "no ice face may leak into the cutout pass");
+    assert_eq!(water_pass, 0, "no ice face may leak into the water pass");
+
+    // Water under ice looks like water under ANY block: the ordinary recessed
+    // 8/9 source surface, never pulled flush to the ice underside. (Flush
+    // sealing under ice was tried and reverted — consistency won.)
+    let top_water = 14.0 + 8.0 / 9.0;
+    assert!(
+        m.transparent
+            .iter()
+            .any(|v| (v.pos[1] - top_water).abs() < 1e-4),
+        "water under the sheet keeps the ordinary recessed source surface"
+    );
+    assert!(
+        !m.transparent.iter().any(|v| v.pos[1] == 15.0),
+        "water must not press flush against the ice underside"
+    );
+}
+
+/// Water never climbs to meet a block above it — ANY block: a FLOWING
+/// trickle under a stone bridge keeps its own recessed surface, a STILL
+/// SOURCE under stone keeps the classic 8/9 gap, and a source under ICE
+/// keeps the exact same gap (flush "sealing" lids were tried in three
+/// variants and all reverted — `world::water::fills_cell`).
+#[test]
+fn water_under_ordinary_blocks_keeps_its_own_surface() {
+    let mut section = Section::new(0, 0, 0);
+    for z in 0..SECTION_SIZE {
+        for x in 0..SECTION_SIZE {
+            section.set_block(x, 0, z, Block::Stone);
+        }
+    }
+    // A flowing cell (level 4 → amount 4 → surface 4/9) and a still SOURCE,
+    // each under a stone "bridge" block; a source under ICE must match stone.
+    section.set_water(4, 1, 8, Block::Water, 4);
+    section.set_block(4, 2, 8, Block::Stone);
+    section.set_water(8, 1, 8, Block::Water, 0);
+    section.set_block(8, 2, 8, Block::Stone);
+    section.set_water(12, 1, 8, Block::Water, 0);
+    section.set_block(12, 2, 8, Block::Ice);
+
+    let m = mesh(&section);
+    let in_col = |v: &&Vertex, x: usize| v.pos[0] >= x as f32 && v.pos[0] <= x as f32 + 1.0;
+    let flowing_top = 1.0 + 4.0 / 9.0;
+    let source_top = 1.0 + 8.0 / 9.0;
+    assert!(
+        m.transparent
+            .iter()
+            .any(|v| in_col(&v, 4) && (v.pos[1] - flowing_top).abs() < 1e-4),
+        "the flowing trickle keeps its 4/9 surface under the bridge"
+    );
+    assert!(
+        m.transparent
+            .iter()
+            .any(|v| in_col(&v, 8) && (v.pos[1] - source_top).abs() < 1e-4),
+        "a still source under ordinary stone keeps the 8/9 gap"
+    );
+    assert!(
+        m.transparent
+            .iter()
+            .any(|v| in_col(&v, 12) && (v.pos[1] - source_top).abs() < 1e-4),
+        "a still source under ice keeps the exact same 8/9 gap"
+    );
+    assert!(
+        !m.transparent.iter().any(|v| in_col(&v, 12) && v.pos[1] == 2.0),
+        "no flush sealing under ice"
+    );
+}
+
+/// Still sources never wear the FLOW look, whatever sits in the water: a
+/// block submerged in a still sea makes the recessed cell under/around it
+/// slope against its full mid-column neighbours, but two adjacent still
+/// sources never flow into each other — so no flow tile and no flow heading
+/// anywhere (`water::surface_flow_dir`). A genuinely FLOWING cell beside
+/// sources keeps its flow look.
+#[test]
+fn blocks_sitting_in_still_water_grow_no_flow_streaks() {
+    let flow_tile = crate::atlas::engine().water_flow.index() as u32;
+
+    // A still walled pool (all sources, meta 0) with a block resting in it —
+    // walled because out-of-section reads are air, which would otherwise put
+    // a genuine waterfall edge on the section border.
+    let mut sea = Section::new(0, 0, 0);
+    for z in 0..SECTION_SIZE {
+        for x in 0..SECTION_SIZE {
+            let rim = x == 0 || z == 0 || x == SECTION_SIZE - 1 || z == SECTION_SIZE - 1;
+            sea.set_block(x, 0, z, Block::Stone);
+            for y in 1..4 {
+                if rim {
+                    sea.set_block(x, y, z, Block::Stone);
+                } else {
+                    sea.set_water(x, y, z, Block::Water, 0);
+                }
+            }
+        }
+    }
+    sea.set_block(8, 3, 8, Block::Stone); // at the surface row
+    sea.set_block(8, 2, 8, Block::Stone); // fully submerged
+    let m = mesh(&sea);
+    assert!(
+        !m.transparent.iter().any(|v| tile_idx(v) == flow_tile),
+        "still sources around a submerged block must not render as flowing"
+    );
+
+    // Contrast: one genuinely flowing cell in the open keeps the flow tile.
+    let mut stream = Section::new(0, 0, 0);
+    for z in 0..SECTION_SIZE {
+        for x in 0..SECTION_SIZE {
+            stream.set_block(x, 0, z, Block::Stone);
+        }
+    }
+    stream.set_water(8, 1, 8, Block::Water, 0);
+    stream.set_water(9, 1, 8, Block::Water, 3); // flowing neighbour
+    let m = mesh(&stream);
+    assert!(
+        m.transparent.iter().any(|v| tile_idx(v) == flow_tile),
+        "genuinely flowing water keeps its flow look"
+    );
+}

@@ -24,10 +24,20 @@ type Row = (ClimateRect, Biome);
 
 const FULL: AxisRange = AxisRange::new(-1.0, 1.0);
 
+/// Upper edge of the FROZEN temperature band (`T[0]`): everything colder is
+/// snowy-family land, frozen shallow water (see the sea-ice pass in
+/// `density::surface`), and river-instead-of-swamp behaviour. The reference
+/// partition put this at -0.45; widened to -0.3 (2026-07-16, a deliberate
+/// stylization like the spines/terraces) so snowy biomes are a meaningful
+/// share of the world — measured 10.6% → 15.0% of land over a 40-seed census.
+/// Do not push much further: the cool-temperate band `T[1]` above it is
+/// already down to (-0.3, -0.15).
+pub(crate) const FROZEN_TEMPERATURE_MAX: f32 = -0.3;
+
 /// Temperature bands, cold (index 0) to hot (index 4).
 const T: [AxisRange; 5] = [
-    AxisRange::new(-1.0, -0.45),
-    AxisRange::new(-0.45, -0.15),
+    AxisRange::new(-1.0, FROZEN_TEMPERATURE_MAX),
+    AxisRange::new(FROZEN_TEMPERATURE_MAX, -0.15),
     AxisRange::new(-0.15, 0.2),
     AxisRange::new(0.2, 0.55),
     AxisRange::new(0.55, 1.0),
@@ -96,7 +106,9 @@ fn is_low(variance: AxisRange) -> bool {
 // --- Palette grids (temperature row, humidity column) ---------------------
 
 const CORE: [[Biome; 5]; 5] = [
-    [SnowyTundra, SnowyTundra, SnowyTundra, SnowyTaiga, Taiga],
+    // Cold row, dry → wet: open treeless snowfield, scattered-spruce tundra,
+    // then the spruce forests.
+    [SnowyPlains, SnowyPlains, SnowyTundra, SnowyTaiga, Taiga],
     [Plains, Plains, Forest, Taiga, OldGrowthTaiga],
     [Forest, Plains, Forest, Forest, Forest],
     [Savanna, Savanna, Forest, Forest, Forest],

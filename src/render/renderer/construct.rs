@@ -507,6 +507,7 @@ async fn new_renderer_inner(
         sky_scale: 1.0,
         sky_color: [1.0, 1.0, 1.0],
         opaque_pipe: pipelines.opaque_pipe,
+        translucent_pipe: pipelines.translucent_pipe,
         transparent_pipe: pipelines.transparent_pipe,
         scene_color,
         grade_pipe: pipelines.grade_pipe,

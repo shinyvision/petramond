@@ -48,7 +48,10 @@ impl World {
                 let _ = self.remove_door(pos);
             }
             _ => {
-                let _ = self.set_block_world(pos.x, pos.y, pos.z, Block::Air);
+                // Same residue rule as the server's authoritative break, so a
+                // predicted ice break leaves the same water the server will.
+                let below = Block::from_id(self.chunk_block(pos.x, pos.y - 1, pos.z));
+                let _ = self.set_block_world(pos.x, pos.y, pos.z, block.break_residue(below));
             }
         }
         Some((block, cells))
