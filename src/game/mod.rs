@@ -304,7 +304,7 @@ impl Game {
     ) {
         let frame = mod_api::ClientFrameData {
             dt: dt.max(0.0),
-            player_pos: [self.player.pos.x, self.player.pos.y, self.player.pos.z],
+            player_pos: self.player.pos.to_array(),
             yaw: self.player.yaw,
             pitch: self.player.pitch,
             screen: [screen.0, screen.1],

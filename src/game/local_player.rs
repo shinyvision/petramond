@@ -391,15 +391,12 @@ impl Game {
             if !row.visible || !row.alive {
                 continue;
             }
-            let min = Vec3::new(
-                row.pos.x - player::HALF_W,
-                row.pos.y,
-                row.pos.z - player::HALF_W,
-            );
+            let pos = row.transform.pos;
+            let min = Vec3::new(pos.x - player::HALF_W, pos.y, pos.z - player::HALF_W);
             let max = Vec3::new(
-                row.pos.x + player::HALF_W,
-                row.pos.y + player::HEIGHT,
-                row.pos.z + player::HALF_W,
+                pos.x + player::HALF_W,
+                pos.y + player::HEIGHT,
+                pos.z + player::HALF_W,
             );
             if let Some(t) = player::ray_vs_aabb(eye, dir, min, max) {
                 if t <= limit && best.is_none_or(|(_, bt)| t < bt) {

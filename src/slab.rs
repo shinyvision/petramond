@@ -28,23 +28,13 @@ pub struct SlabSlot {
     pub index: usize,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum SlabRotation {
-    #[default]
-    Bottom,
-    Top,
-    Vertical,
-}
-
-impl SlabRotation {
-    #[inline]
-    pub fn from_index(index: u8) -> Self {
-        match index % 3 {
-            1 => Self::Top,
-            2 => Self::Vertical,
-            _ => Self::Bottom,
-        }
+crate::wire_enum::wire_enum! {
+    pub enum SlabRotation: u8 {
+        Bottom = 0,
+        Top = 1,
+        Vertical = 2,
     }
+    default Bottom with from_index
 }
 
 #[inline]

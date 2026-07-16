@@ -997,59 +997,124 @@ fn sweep_does_not_skip_flush_wall_at_far_coordinates() {
     }
 }
 
+/// DDA target selection: full cubes stop the ray on cell entry with the
+/// entered face's normal (zero when the eye starts inside one), precise
+/// shapes report their own surface normal, and a plant's trimmed selection
+/// box is shorter than its cell. The plant OUTLINE shape is pinned separately
+/// by `raycast_hits_a_plants_selection_box_without_pixel_precision`.
 #[test]
-fn raycast_hits_block_ahead_with_back_normal() {
-    // Single solid block at (4, 64, 0): entered at x=4.0, i.e. 3.5 from the
-    // eye — within REACH (4.0). (A block at x=5 would be 4.5 away → a miss.)
-    let solid = |x: i32, y: i32, z: i32| x == 4 && y == 64 && z == 0;
-    // Eye centred in cell (0,64,0) looking +x.
-    let eye = Vec3::new(0.5, 64.5, 0.5);
-    let hit = Player::raycast_core(eye, Vec3::new(1.0, 0.0, 0.0), &solid).unwrap();
-    assert_eq!(hit.block, IVec3::new(4, 64, 0));
-    assert_eq!(hit.normal, IVec3::new(-1, 0, 0)); // face toward the eye
-}
+fn raycast_target_selection_cases() {
+    struct Case {
+        label: &'static str,
+        eye: Vec3,
+        /// Normalized before the cast.
+        dir: Vec3,
+        blocks: fn(i32, i32, i32) -> Block,
+        /// Probe precise shapes (the half-height slab AABB) instead of only
+        /// full-cube cell entry.
+        precise: bool,
+        /// `Some((hit block, hit normal))` or a miss.
+        expect: Option<(IVec3, IVec3)>,
+    }
+    let cases = [
+        Case {
+            // Single solid block at (4, 64, 0): entered at x=4.0, i.e. 3.5
+            // from the eye — within REACH (4.0). (A block at x=5 would be 4.5
+            // away → a miss.)
+            label: "solid block ahead hits with the face-toward-eye normal",
+            eye: Vec3::new(0.5, 64.5, 0.5),
+            dir: Vec3::new(1.0, 0.0, 0.0),
+            blocks: |x, y, z| {
+                if (x, y, z) == (4, 64, 0) {
+                    Block::Stone
+                } else {
+                    Block::Air
+                }
+            },
+            precise: false,
+            expect: Some((IVec3::new(4, 64, 0), IVec3::new(-1, 0, 0))),
+        },
+        Case {
+            label: "solid block out of reach misses",
+            eye: Vec3::new(0.5, 64.5, 0.5),
+            dir: Vec3::new(1.0, 0.0, 0.0),
+            blocks: |x, _, _| if x == 100 { Block::Stone } else { Block::Air },
+            precise: false,
+            expect: None,
+        },
+        Case {
+            label: "eye inside solid hits its own cell with a zero normal",
+            eye: Vec3::new(0.5, 64.5, 0.5),
+            dir: Vec3::new(1.0, 0.0, 0.0),
+            blocks: |_, _, _| Block::Stone,
+            precise: false,
+            expect: Some((IVec3::new(0, 64, 0), IVec3::ZERO)),
+        },
+        Case {
+            // Placement should use the slab top face, not the full voxel side.
+            label: "precise shape reports the shape surface normal",
+            eye: Vec3::new(1.9, 64.75, 0.5),
+            dir: Vec3::new(1.0, -0.5, 0.0),
+            blocks: |x, y, z| {
+                if (x, y, z) == (2, 64, 0) {
+                    Block::DirtSlab
+                } else {
+                    Block::Air
+                }
+            },
+            precise: true,
+            expect: Some((IVec3::new(2, 64, 0), IVec3::Y)),
+        },
+        Case {
+            // The plant's selection box is trimmed to the sprite: a ray near
+            // the cell's top passes clean over it.
+            label: "ray over a short plant box misses it",
+            eye: Vec3::new(0.5, 64.95, 0.5),
+            dir: Vec3::new(1.0, 0.0, 0.0),
+            blocks: |x, y, z| {
+                if (x, y, z) == (2, 64, 0) {
+                    Block::Poppy
+                } else {
+                    Block::Air
+                }
+            },
+            precise: false,
+            expect: None,
+        },
+        Case {
+            label: "ray over a short plant box hits the block behind",
+            eye: Vec3::new(0.5, 64.95, 0.5),
+            dir: Vec3::new(1.0, 0.0, 0.0),
+            blocks: |x, y, z| match (x, y, z) {
+                (2, 64, 0) => Block::Poppy,
+                (3, 64, 0) => Block::Stone,
+                _ => Block::Air,
+            },
+            precise: false,
+            expect: Some((IVec3::new(3, 64, 0), IVec3::new(-1, 0, 0))),
+        },
+    ];
 
-#[test]
-fn raycast_out_of_reach_misses() {
-    let solid = |x: i32, _y: i32, _z: i32| x == 100;
-    let eye = Vec3::new(0.5, 64.5, 0.5);
-    assert!(Player::raycast_core(eye, Vec3::new(1.0, 0.0, 0.0), &solid).is_none());
-}
-
-#[test]
-fn raycast_eye_inside_solid_returns_zero_normal() {
-    let solid = |_x: i32, _y: i32, _z: i32| true;
-    let eye = Vec3::new(0.5, 64.5, 0.5);
-    let hit = Player::raycast_core(eye, Vec3::new(1.0, 0.0, 0.0), &solid).unwrap();
-    assert_eq!(hit.normal, IVec3::ZERO);
-}
-
-#[test]
-fn raycast_precise_shape_uses_the_shape_surface_normal() {
-    let blocks = |x: i32, y: i32, z: i32| {
-        if (x, y, z) == (2, 64, 0) {
-            Block::DirtSlab
+    for case in cases {
+        let dir = case.dir.normalize();
+        let result = if case.precise {
+            Player::raycast_blocks_core(case.eye, dir, &case.blocks, &|e, d, pos, block| {
+                if block != Block::DirtSlab {
+                    return None;
+                }
+                let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+                interaction::ray_vs_aabb_hit(e, d, base, base + Vec3::new(1.0, 0.5, 1.0))
+            })
         } else {
-            Block::Air
-        }
-    };
-    let eye = Vec3::new(1.9, 64.75, 0.5);
-    let dir = Vec3::new(1.0, -0.5, 0.0).normalize();
-    let (hit, _) = Player::raycast_blocks_core(eye, dir, &blocks, &|e, d, pos, block| {
-        if block != Block::DirtSlab {
-            return None;
-        }
-        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-        interaction::ray_vs_aabb_hit(e, d, base, base + Vec3::new(1.0, 0.5, 1.0))
-    })
-    .unwrap();
-
-    assert_eq!(hit.block, IVec3::new(2, 64, 0));
-    assert_eq!(
-        hit.normal,
-        IVec3::Y,
-        "placement should use the slab top face, not the full voxel side"
-    );
+            Player::raycast_blocks_core(case.eye, dir, &case.blocks, &|_, _, _, _| None)
+        };
+        let got = result.map(|(hit, _)| (hit.block, hit.normal));
+        assert_eq!(
+            got, case.expect,
+            "[{}] (block, normal) of the raycast result",
+            case.label
+        );
+    }
 }
 
 #[test]
@@ -1082,37 +1147,6 @@ fn raycast_hits_a_plants_selection_box_without_pixel_precision() {
         min.x,
         max.x
     );
-}
-
-#[test]
-fn raycast_over_a_short_plants_box_misses_it() {
-    let blocks = |x: i32, y: i32, z: i32| {
-        if (x, y, z) == (2, 64, 0) {
-            Block::Poppy
-        } else {
-            Block::Air
-        }
-    };
-    let eye = Vec3::new(0.5, 64.95, 0.5);
-    assert!(
-        Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None)
-            .is_none()
-    );
-}
-
-#[test]
-fn raycast_over_a_short_plants_box_hits_the_block_behind() {
-    let blocks = |x: i32, y: i32, z: i32| match (x, y, z) {
-        (2, 64, 0) => Block::Poppy,
-        (3, 64, 0) => Block::Stone,
-        _ => Block::Air,
-    };
-    let eye = Vec3::new(0.5, 64.95, 0.5);
-    let (hit, _) =
-        Player::raycast_blocks_core(eye, Vec3::new(1.0, 0.0, 0.0), &blocks, &|_, _, _, _| None)
-            .unwrap();
-    assert_eq!(hit.block, IVec3::new(3, 64, 0));
-    assert_eq!(hit.normal, IVec3::new(-1, 0, 0));
 }
 
 #[test]

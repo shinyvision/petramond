@@ -373,7 +373,7 @@ impl ModHost {
             let call = GuestCall::BlockBehavior {
                 callback_id: reg.callback_id,
                 kind: hook.kind,
-                pos: [hook.pos.x, hook.pos.y, hook.pos.z],
+                pos: hook.pos.to_array(),
             };
             let reply = reg.instance.lock().unwrap().call_guest(ctx, &call);
             match reply {
@@ -453,7 +453,7 @@ fn hostile_kind_for_key(
     if crate::registry::namespace(def.name).is_some_and(|ns| world.disabled_mods().contains(ns)) {
         return None;
     }
-    let feet = IVec3::new(candidate.cell[0], candidate.cell[1], candidate.cell[2]);
+    let feet = IVec3::from(candidate.cell);
     crate::mob::spawn_body_fits_at(world, kind, feet).then_some(kind)
 }
 

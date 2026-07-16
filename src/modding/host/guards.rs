@@ -7,7 +7,6 @@ use crate::block::Block;
 use crate::events::SimCtx;
 use crate::item::ItemType;
 use crate::mathh::Vec3;
-use crate::modding::convert::to_vec;
 use crate::modding::scope;
 
 /// Per-entry limits for the mod KV surfaces (world / section-cell / mob).
@@ -86,7 +85,7 @@ pub(super) fn checked_block(block: mod_api::BlockId) -> Result<Block, HostRet> {
 /// canonicalized by wasmtime but still NaN; infinities pass through).
 pub(super) fn finite3(v: [f32; 3], what: &str) -> Result<Vec3, HostRet> {
     if v.iter().all(|c| c.is_finite()) {
-        Ok(to_vec(v))
+        Ok(v.into())
     } else {
         Err(HostRet::Error(format!("{what}: non-finite component")))
     }

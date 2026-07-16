@@ -118,26 +118,8 @@ impl TestApp {
     /// into the replica with one frame of latency. The app clock is backdated
     /// one fixed tick so each headless frame banks a real tick (streaming
     /// requests and acks ride ticks).
-    /// Returns (client→server, server→client) message counts for
-    /// stream-health diagnostics.
-    fn frame_and_pump(&mut self, screen: (u32, u32)) -> (usize, usize) {
-        self.app.last -= 0.05;
-        self.app.update_frame(screen);
-        let mut inbox: Vec<crate::net::protocol::ClientToServer> = Vec::new();
-        while let Ok(msg) = self.pipe.inbox.try_recv() {
-            inbox.push(msg);
-        }
-        let sent = inbox.len();
-        let out = self.server.pump(0.05, &mut inbox);
-        let received = out.msgs.len();
-        for msg in out.msgs {
-            let _ = self.pipe.outbox.send(msg);
-        }
-        (sent, received)
-    }
-
-    /// [`frame_and_pump`](Self::frame_and_pump) that also tallies the
-    /// server→client message variants — stream-health diagnostics.
+    /// Returns (client→server, server→client) message counts and tallies the
+    /// message variants — stream-health diagnostics.
     fn frame_and_pump_recorded(
         &mut self,
         screen: (u32, u32),

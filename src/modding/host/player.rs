@@ -16,8 +16,8 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::PlayerState => sim_query(|ctx| {
             let p = &*ctx.player;
             HostRet::Player(PlayerSnapshot {
-                pos: [p.pos.x, p.pos.y, p.pos.z],
-                vel: [p.vel.x, p.vel.y, p.vel.z],
+                pos: p.pos.to_array(),
+                vel: p.vel.to_array(),
                 yaw: p.yaw,
                 pitch: p.pitch,
                 health: p.health(),

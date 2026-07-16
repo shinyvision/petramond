@@ -195,7 +195,7 @@ fn world_map_zoom_out_frame_profile() {
     );
 
     let screen = (1280u32, 720u32);
-    let mut frame = |app: &mut TestApp| {
+    let frame = |app: &mut TestApp| {
         let started = Instant::now();
         app.app.update_frame(screen);
         started.elapsed().as_secs_f64() * 1e3

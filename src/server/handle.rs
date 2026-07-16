@@ -396,10 +396,12 @@ mod tests {
     fn player_update(server: &crate::server::game::ServerGame) -> PlayerUpdate {
         let p = &server.sessions[0].player;
         PlayerUpdate {
-            pos: p.pos,
-            vel: Vec3::ZERO,
-            yaw: 0.0,
-            pitch: 0.0,
+            transform: crate::net::protocol::Transform {
+                pos: p.pos,
+                vel: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
             on_ground: true,
             sneak: false,
             gameplay: true,

@@ -188,29 +188,6 @@ impl Player {
         )
     }
 
-    #[cfg(test)]
-    pub(super) fn raycast_core<F: Fn(i32, i32, i32) -> bool>(
-        eye: Vec3,
-        dir: Vec3,
-        solid: &F,
-    ) -> Option<RaycastHit> {
-        // The stub world is only full cubes, so the precise-shape closure is never
-        // consulted (full cubes hit on cell entry).
-        Self::raycast_blocks_core(
-            eye,
-            dir,
-            &|x, y, z| {
-                if solid(x, y, z) {
-                    Block::Stone
-                } else {
-                    Block::Air
-                }
-            },
-            &|_, _, _, _| None,
-        )
-        .map(|(hit, _)| hit)
-    }
-
     /// The DDA core, returning the hit and its distance from `eye` (the entry
     /// parameter — `t_enter` for a full cube, the precise crossing `t` for a
     /// custom-shaped block / cross-plant).
@@ -333,8 +310,8 @@ fn outline_shape(block_pos: IVec3, block: Block) -> SelectionShape {
     if let Some((mn, mx)) = block.visual_aabb() {
         let base = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32);
         return SelectionShape::Box {
-            min: base + Vec3::new(mn[0], mn[1], mn[2]),
-            max: base + Vec3::new(mx[0], mx[1], mx[2]),
+            min: base + Vec3::from(mn),
+            max: base + Vec3::from(mx),
         };
     }
     // Plant shapes outline the same square box the raycast targets.
@@ -443,8 +420,8 @@ fn precise_shape_hit(
                 ray_vs_aabb_hit(
                     eye,
                     dir,
-                    base + Vec3::new(b.min[0], b.min[1], b.min[2]),
-                    base + Vec3::new(b.max[0], b.max[1], b.max[2]),
+                    base + Vec3::from(b.min),
+                    base + Vec3::from(b.max),
                 )
             })
             .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
@@ -458,8 +435,8 @@ fn precise_shape_hit(
                 ray_vs_aabb_hit(
                     eye,
                     dir,
-                    base + Vec3::new(b.min[0], b.min[1], b.min[2]),
-                    base + Vec3::new(b.max[0], b.max[1], b.max[2]),
+                    base + Vec3::from(b.min),
+                    base + Vec3::from(b.max),
                 )
             })
             .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
@@ -475,8 +452,8 @@ fn precise_shape_hit(
                 ray_vs_aabb_hit(
                     eye,
                     dir,
-                    base + Vec3::new(b.min[0], b.min[1], b.min[2]),
-                    base + Vec3::new(b.max[0], b.max[1], b.max[2]),
+                    base + Vec3::from(b.min),
+                    base + Vec3::from(b.max),
                 )
             })
             .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));

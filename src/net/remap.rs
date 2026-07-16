@@ -52,12 +52,15 @@ impl IdRemap {
             })
             .collect();
         let items = build_u16(&tables.items, "item", |n| names.items.id(n));
-        let mobs = build_u16(&tables.mobs, "mob", |n| {
-            crate::mob::Mob::all()
-                .iter()
-                .find(|m| crate::mob::def(**m).key == n)
-                .map(|m| m.0)
-        });
+        // The mob wire vocabulary is `MobDef::key` (not the registry name), so
+        // the mob name table can't answer it; a one-shot hash join keeps this
+        // O(server ids + species) instead of a per-id linear scan.
+        let mob_ids: std::collections::HashMap<&str, u8> = crate::mob::defs()
+            .iter()
+            .enumerate()
+            .map(|(id, d)| (d.key, id as u8))
+            .collect();
+        let mobs = build_u16(&tables.mobs, "mob", |n| mob_ids.get(n).copied());
         let sounds = build_u16(&tables.sounds, "sound", |n| {
             crate::audio::sound_by_name(n).map(|s| s.0)
         });
@@ -625,10 +628,12 @@ mod tests {
         };
         let player_row = |held_item: Option<u8>| crate::net::protocol::PlayerStateRow {
             id: crate::server::player::PlayerId(1),
-            pos: crate::mathh::Vec3::ZERO,
-            vel: crate::mathh::Vec3::ZERO,
-            yaw: 0.0,
-            pitch: 0.0,
+            transform: crate::net::protocol::Transform {
+                pos: crate::mathh::Vec3::ZERO,
+                vel: crate::mathh::Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
             on_ground: true,
             sneaking: false,
             sleeping: false,

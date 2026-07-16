@@ -32,10 +32,12 @@ fn join_data() -> Box<JoinData> {
         clock: 6000,
         tables: crate::net::remap::local_name_tables(),
         self_restore: SelfRestore {
-            pos: Vec3::new(2.5, 80.0, 2.5),
-            vel: Vec3::ZERO,
-            yaw: 0.0,
-            pitch: 0.0,
+            transform: crate::net::protocol::Transform {
+                pos: Vec3::new(2.5, 80.0, 2.5),
+                vel: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
             mode: 0,
             health: 20,
             bed_spawn: None,

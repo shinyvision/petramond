@@ -97,7 +97,7 @@ pub(crate) struct RemotePlayer {
 impl RemotePlayer {
     fn new(row: PlayerStateRow) -> Self {
         let mut pose = BodyPose::default();
-        pose.reset_facing(row.yaw);
+        pose.reset_facing(row.transform.yaw);
         Self {
             name: String::new(),
             prev: row,
@@ -126,7 +126,11 @@ impl RemotePlayer {
     /// mobs use.
     pub(crate) fn push_body(&self) -> Option<crate::body::Body> {
         (self.curr.visible && !self.curr.sleeping && self.curr.mount.is_none()).then(|| {
-            crate::body::Body::new(self.curr.pos, crate::player::HALF_W, crate::player::HEIGHT)
+            crate::body::Body::new(
+                self.curr.transform.pos,
+                crate::player::HALF_W,
+                crate::player::HEIGHT,
+            )
         })
     }
 }
@@ -162,7 +166,7 @@ impl RemotePlayers {
                 .unwrap_or_else(|| RemotePlayer::new(*row));
             entry.prev = if row.snap { *row } else { entry.curr };
             if row.snap {
-                entry.pose.reset_facing(row.yaw);
+                entry.pose.reset_facing(row.transform.yaw);
             }
             entry.curr = *row;
             if row.hurt_recent {
@@ -191,11 +195,11 @@ impl RemotePlayers {
             if p.curr.sleeping {
                 // Lying body: head toward the pillow, walk cycle rested —
                 // mirrors the local sleep branch.
-                p.pose.lie(p.curr.sleep_yaw.unwrap_or(p.curr.yaw));
+                p.pose.lie(p.curr.sleep_yaw.unwrap_or(p.curr.transform.yaw));
             } else {
-                let vel = p.prev.vel.lerp(p.curr.vel, alpha);
+                let vel = p.prev.transform.vel.lerp(p.curr.transform.vel, alpha);
                 let hspeed = Vec3::new(vel.x, 0.0, vel.z).length();
-                let yaw = lerp_angle(p.prev.yaw, p.curr.yaw, alpha);
+                let yaw = lerp_angle(p.prev.transform.yaw, p.curr.transform.yaw, alpha);
                 p.pose
                     .advance(dt, hspeed, yaw, p.curr.visible, p.curr.sneaking);
             }
@@ -246,24 +250,28 @@ pub(crate) fn interpolate(
     curr: &PlayerStateRow,
     alpha: f32,
 ) -> (Vec3, f32, f32) {
+    let (p, c) = (&prev.transform, &curr.transform);
     (
-        prev.pos.lerp(curr.pos, alpha),
-        lerp_angle(prev.yaw, curr.yaw, alpha),
-        prev.pitch + (curr.pitch - prev.pitch) * alpha,
+        p.pos.lerp(c.pos, alpha),
+        lerp_angle(p.yaw, c.yaw, alpha),
+        p.pitch + (c.pitch - p.pitch) * alpha,
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::protocol::Transform;
 
     fn row(id: u8, pos: Vec3) -> PlayerStateRow {
         PlayerStateRow {
             id: PlayerId(id),
-            pos,
-            vel: Vec3::ZERO,
-            yaw: 0.0,
-            pitch: 0.0,
+            transform: Transform {
+                pos,
+                vel: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
             on_ground: true,
             sneaking: false,
             sleeping: false,
@@ -293,13 +301,13 @@ mod tests {
         apply(&mut store, &[row(0, p1), row(1, p1), row(2, p1)]);
         assert_eq!(store.len(), 2, "the recipient's own row is never stored");
         let fresh = store.iter().next().expect("id 1 stored");
-        assert_eq!(fresh.prev.pos, p1, "a fresh id interpolates from itself");
+        assert_eq!(fresh.prev.transform.pos, p1, "a fresh id interpolates from itself");
 
         apply(&mut store, &[row(1, p2)]);
         assert_eq!(store.len(), 1, "id 2 absent from the batch: dropped");
         let paired = store.iter().next().unwrap();
-        assert_eq!(paired.prev.pos, p1, "previous batch became the prev row");
-        assert_eq!(paired.curr.pos, p2);
+        assert_eq!(paired.prev.transform.pos, p1, "previous batch became the prev row");
+        assert_eq!(paired.curr.transform.pos, p2);
         // Midpoint interpolation over the pair.
         let (mid, _, _) = interpolate(&paired.prev, &paired.curr, 0.5);
         assert_eq!(mid, Vec3::new(1.5, 70.0, 1.0));
@@ -309,9 +317,9 @@ mod tests {
     fn interpolation_lerps_yaw_across_the_wrap_seam() {
         use std::f32::consts::PI;
         let mut a = row(1, Vec3::ZERO);
-        a.yaw = PI - 0.1;
+        a.transform.yaw = PI - 0.1;
         let mut b = row(1, Vec3::ZERO);
-        b.yaw = -PI + 0.1;
+        b.transform.yaw = -PI + 0.1;
         let (_, yaw, _) = interpolate(&a, &b, 0.5);
         assert!(
             super::super::body_pose::wrap_angle(yaw - PI).abs() < 1e-5,
@@ -329,7 +337,7 @@ mod tests {
         tp.snap = true;
         apply(&mut store, &[tp]);
         let p = store.iter().next().unwrap();
-        assert_eq!(p.prev.pos, far, "a snap row adopts into BOTH pair slots");
+        assert_eq!(p.prev.transform.pos, far, "a snap row adopts into BOTH pair slots");
         let (pos, _, _) = interpolate(&p.prev, &p.curr, 0.25);
         assert_eq!(pos, far, "no frame lerps across the teleport");
     }

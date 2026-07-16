@@ -189,22 +189,22 @@ struct RawFile {
 /// The runtime [`Sound`] registered under `name` (engine `petramond:*` and pack
 /// `mod_id:name` keys alike), or `None` when no such row is loaded.
 pub(crate) fn by_name(name: &str) -> Option<Sound> {
-    defs().iter().find(|d| d.name == name).map(|d| d.sound)
+    catalog().id(name).map(Sound)
 }
 
 /// The loaded sound table, id-ordered (`defs()[sound.0]`). Loads exactly once;
 /// a missing or inconsistent `sounds.json` fails loudly at startup.
 pub(crate) fn defs() -> &'static [SoundDef] {
-    static TABLE: LazyLock<&'static [SoundDef]> = LazyLock::new(|| {
-        Box::leak(
-            crate::registry::read_catalog("sounds.json", "sound", parse_layers)
-                .into_boxed_slice(),
-        )
-    });
+    catalog().rows()
+}
+
+fn catalog() -> &'static crate::registry::Catalog<SoundDef> {
+    static TABLE: LazyLock<crate::registry::Catalog<SoundDef>> =
+        LazyLock::new(|| crate::registry::read_catalog("sounds.json", "sound", parse_layers));
     &TABLE
 }
 
-fn parse_layers(texts: &[&str]) -> Result<Vec<SoundDef>, String> {
+fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<SoundDef>, String> {
     crate::registry::load_catalog(
         texts,
         |text| serde_json::from_str::<RawFile>(text).map(|f| f.sounds),
@@ -254,7 +254,9 @@ mod tests {
     fn shipped_sounds_json_loads_fully() {
         let (text, path) =
             crate::assets::read_base_text("sounds.json").expect("assets/sounds.json must ship");
-        let table = parse_layers(&[&text]).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let table = parse_layers(&[&text])
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+            .rows();
         assert_eq!(table.len(), ENGINE_SOUND_NAMES.len());
         for name in ENGINE_SOUND_NAMES {
             let def = table
@@ -276,7 +278,9 @@ mod tests {
             {"sound": "petramond:wood_punch", "variants": ["sounds/wood_punch_1.ogg"], "gain": 0.5, "pitch_variation": 0.0, "category": "block"},
             {"sound": "mymod:zap", "variants": ["sounds/zap.ogg"], "gain": 1.0, "pitch_variation": 0.1, "attenuation_distance": 48.0, "category": "ui"}
         ]}"#;
-        let table = parse_layers(&[&base, layer]).expect("layered table loads");
+        let table = parse_layers(&[&base, layer])
+            .expect("layered table loads")
+            .rows();
         let engine = ENGINE_SOUND_NAMES.len();
         assert_eq!(table.len(), engine + 1, "the namespaced row registered");
         assert_eq!(

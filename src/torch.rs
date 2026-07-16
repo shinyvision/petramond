@@ -55,47 +55,29 @@ pub fn warm_amount(sky01: f32, block01: f32) -> f32 {
     block01 * (1.0 - sky01) * TORCH_WARM_STRENGTH
 }
 
-/// How a placed torch is oriented in its cell. A `Floor` torch stands vertical and
-/// centered on the block below it; a wall torch is mounted on one side of the cell
-/// and leans away from that wall. The four wall variants name the horizontal
-/// direction the torch LEANS toward — equal to the face normal of the block it was
-/// placed against (pointing away from the wall) — matching the cardinal convention
-/// [`Facing`](crate::facing::Facing) uses. Stored per-cell in the
-/// owning chunk's torch map.
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum TorchPlacement {
-    #[default]
-    Floor = 0,
-    /// Leans toward `-Z` (mounted on the `+Z` wall).
-    North = 1,
-    /// Leans toward `+Z`.
-    South = 2,
-    /// Leans toward `-X`.
-    West = 3,
-    /// Leans toward `+X`.
-    East = 4,
+crate::wire_enum::wire_enum! {
+    /// How a placed torch is oriented in its cell. A `Floor` torch stands vertical and
+    /// centered on the block below it; a wall torch is mounted on one side of the cell
+    /// and leans away from that wall. The four wall variants name the horizontal
+    /// direction the torch LEANS toward — equal to the face normal of the block it was
+    /// placed against (pointing away from the wall) — matching the cardinal convention
+    /// [`Facing`](crate::facing::Facing) uses. Stored per-cell in the
+    /// owning chunk's torch map.
+    pub enum TorchPlacement: u8 {
+        Floor = 0,
+        /// Leans toward `-Z` (mounted on the `+Z` wall).
+        North = 1,
+        /// Leans toward `+Z`.
+        South = 2,
+        /// Leans toward `-X`.
+        West = 3,
+        /// Leans toward `+X`.
+        East = 4,
+    }
+    default Floor
 }
 
 impl TorchPlacement {
-    /// Stable byte for the save codec.
-    #[inline]
-    pub fn to_u8(self) -> u8 {
-        self as u8
-    }
-
-    /// Inverse of [`to_u8`](Self::to_u8); unknown bytes fall back to `Floor`.
-    #[inline]
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            1 => Self::North,
-            2 => Self::South,
-            3 => Self::West,
-            4 => Self::East,
-            _ => Self::Floor,
-        }
-    }
-
     /// The placement for a torch put against the face whose outward normal (pointing
     /// back toward the player, as [`RaycastHit`](crate::player) reports it) is
     /// `normal`: `+Y` → a `Floor` torch on the block below, a horizontal normal → a

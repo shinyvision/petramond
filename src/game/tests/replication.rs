@@ -172,10 +172,12 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
             }],
             players: vec![PlayerStateRow {
                 id: remote_id,
-                pos: Vec3::new(x, 68.0, 0.0),
-                vel: Vec3::ZERO,
-                yaw: 0.0,
-                pitch: 0.0,
+                transform: crate::net::protocol::Transform {
+                    pos: Vec3::new(x, 68.0, 0.0),
+                    vel: Vec3::ZERO,
+                    yaw: 0.0,
+                    pitch: 0.0,
+                },
                 on_ground: true,
                 sneaking: false,
                 sleeping: false,
@@ -253,7 +255,7 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
     assert_eq!((item.prev.pos.x, item.curr.pos.x), (resync_x, resync_x));
     let remote = game.game.remote_players.iter().next().unwrap();
     assert_eq!(
-        (remote.prev.pos.x, remote.curr.pos.x),
+        (remote.prev.transform.pos.x, remote.curr.transform.pos.x),
         (resync_x, resync_x),
         "the boundary-only resync snaps every replicated row kind"
     );
@@ -1258,9 +1260,9 @@ fn every_sessions_player_row_reaches_the_local_batch() {
     // Server integrates movement on the tick (F2); without a fresh claim the
     // idle session may fall a little under gravity — still the same session.
     assert!(
-        (row.pos - s1_pos).length() < 1.0,
+        (row.transform.pos - s1_pos).length() < 1.0,
         "second session stays near its spawn (got {:?}, want near {:?})",
-        row.pos,
+        row.transform.pos,
         s1_pos
     );
     assert!(row.alive && row.visible);
@@ -1383,10 +1385,12 @@ fn break_overlays_collect_own_and_visible_remote_miners() {
     fn row(id: u8, mining: Option<(IVec3, u8)>, visible: bool) -> PlayerStateRow {
         PlayerStateRow {
             id: PlayerId(id),
-            pos: Vec3::new(4.0, 64.0, 4.0),
-            vel: Vec3::ZERO,
-            yaw: 0.0,
-            pitch: 0.0,
+            transform: crate::net::protocol::Transform {
+                pos: Vec3::new(4.0, 64.0, 4.0),
+                vel: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
             on_ground: true,
             sneaking: false,
             sleeping: false,

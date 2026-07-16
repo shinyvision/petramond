@@ -1693,7 +1693,7 @@ fn boundary_cell(dx: i32, dy: i32, dz: i32, a: usize, b: usize) -> (usize, usize
 /// (`ChunkGenerator::generate_section`), never via a 256-tall intermediate. Retained so
 /// the many column-era test fixtures (`insert_chunk_for_test`) keep working.
 #[cfg(test)]
-pub(super) fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Section)>) {
+pub(crate) fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Section)>) {
     let cx = chunk.cx;
     let cz = chunk.cz;
     let mut column = Column::new();

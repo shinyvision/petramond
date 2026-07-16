@@ -28,10 +28,10 @@ impl AiBehavior for WasmNodeAi {
     fn tick(&mut self, ctx: &mut AiCtx) -> BehaviorOutput {
         let snapshot = AiNodeCtx {
             mob_id: ctx.mob_id,
-            pos: [ctx.pos.x, ctx.pos.y, ctx.pos.z],
-            cell: [ctx.cell.x, ctx.cell.y, ctx.cell.z],
+            pos: ctx.pos.to_array(),
+            cell: ctx.cell.to_array(),
             yaw: ctx.yaw,
-            player_pos: [ctx.player_pos.x, ctx.player_pos.y, ctx.player_pos.z],
+            player_pos: ctx.player_pos.to_array(),
             nav_idle: ctx.nav_idle,
             in_water: ctx.in_water,
         };
@@ -39,7 +39,7 @@ impl AiBehavior for WasmNodeAi {
             return BehaviorOutput::default();
         };
         BehaviorOutput {
-            goal: d.goal.map(|g| IVec3::new(g[0], g[1], g[2])),
+            goal: d.goal.map(IVec3::from),
             head_look: d.head_look.map(|[yaw, pitch]| HeadLook { yaw, pitch }),
             idle_anim: d.idle_anim,
             // A scripted strike targets the nearest player — the only target

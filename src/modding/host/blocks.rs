@@ -3,7 +3,7 @@
 
 use mod_api::{HostCall, HostRet};
 
-use crate::modding::convert::to_ivec;
+use crate::mathh::IVec3;
 
 use super::guards::{checked_block, key_owned_by_namespace, sim_call, sim_query};
 
@@ -24,7 +24,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 }
                 let mod_id = mod_id.to_owned();
                 sim_query(move |ctx| {
-                    let p = to_ivec(pos);
+                    let p = IVec3::from(pos);
                     // Stream-final read: while a saved overlay is in flight
                     // the cell shows the generated base — a foreign block —
                     // which must read as "unloaded", not as a namespace
@@ -50,7 +50,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         // content is not final — a half-streamed read would show the
         // generated base where the player's saved record is about to land.
         HostCall::GetBlock { pos } => sim_query(|ctx| {
-            let p = to_ivec(pos);
+            let p = IVec3::from(pos);
             HostRet::Block(
                 ctx.world
                     .block_if_stream_final(p.x, p.y, p.z)
@@ -62,7 +62,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 positions
                     .iter()
                     .map(|&pos| {
-                        let p = to_ivec(pos);
+                        let p = IVec3::from(pos);
                         ctx.world
                             .block_if_stream_final(p.x, p.y, p.z)
                             .map(|b| mod_api::BlockId(b.id()))
@@ -73,7 +73,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::SetBlock { pos, block } => match checked_block(block) {
             Err(e) => e,
             Ok(b) => sim_query(|ctx| {
-                let p = to_ivec(pos);
+                let p = IVec3::from(pos);
                 HostRet::Bool(ctx.world.set_block_world(p.x, p.y, p.z, b))
             }),
         },
@@ -83,7 +83,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 let Ok(b) = checked_block(block) else {
                     return HostRet::Error(format!("SetBlocks: unregistered block id {}", block.0));
                 };
-                let p = to_ivec(pos);
+                let p = IVec3::from(pos);
                 if ctx.world.set_block_world(p.x, p.y, p.z, b) {
                     set += 1;
                 }
@@ -91,14 +91,14 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
             HostRet::U64(set)
         }),
         HostCall::ScheduleTick { pos, delay } => {
-            sim_call(|ctx| ctx.world.schedule_tick(to_ivec(pos), delay))
+            sim_call(|ctx| ctx.world.schedule_tick(pos.into(), delay))
         }
         HostCall::IsLoaded { pos } => sim_query(|ctx| {
-            let p = to_ivec(pos);
+            let p = IVec3::from(pos);
             HostRet::Bool(ctx.world.section_stream_final_at(p.x, p.y, p.z))
         }),
         HostCall::LightAt { pos } => sim_query(|ctx| {
-            let p = to_ivec(pos);
+            let p = IVec3::from(pos);
             HostRet::Light {
                 combined: ctx.world.combined_light6_at_world(p.x, p.y, p.z),
                 sky: ctx.world.skylight6_at_world(p.x, p.y, p.z),
@@ -106,7 +106,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
             }
         }),
         HostCall::BlockIsFullSpawnSupport { pos } => sim_query(|ctx| {
-            let p = to_ivec(pos);
+            let p = IVec3::from(pos);
             HostRet::Bool(ctx.world.block_is_full_spawn_support(p.x, p.y, p.z))
         }),
         other => HostRet::Error(format!(

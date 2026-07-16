@@ -371,63 +371,138 @@ fn break_finished_after_the_observed_mining_window_is_accepted() {
     assert!(outcomes.iter().any(|o| o.id == 6 && o.accepted));
 }
 
+/// F1 movement-claim validation: every case sends ONE `PlayerUpdate` claim
+/// from the same airborne start, ticks movement, and asserts the claim was
+/// soft-accepted verbatim or rejected (the integrated result stays near the
+/// start). Claims that assert other quantities — anti-noclip geometry, reach,
+/// fall-damage tracking — keep their own tests.
 #[test]
-fn impossible_speed_claim_is_rejected_for_integrated_pos() {
-    let mut game = game_on_empty_chunk();
-    let start = game.server.sessions[0].player.pos;
-    let mut u = player_update(&game, true);
-    u.pos = start + Vec3::new(50.0, 0.0, 0.0);
-    u.vel = Vec3::new(200.0, 0.0, 0.0);
-    u.wishdir = Vec3::ZERO;
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u));
-    game.server.tick_movement(0);
-    let after = game.server.sessions[0].player.pos;
-    assert!(
-        (after - start).length() < 5.0,
-        "server must not adopt an impossible speed claim (start={start:?} after={after:?})"
-    );
-}
+fn movement_claim_validation_cases() {
+    enum Expect {
+        /// The claim transform is adopted exactly (velocity too when flagged).
+        Accepted { adopts_vel: bool },
+        /// The claim is refused: the kept position stays within this distance
+        /// of the start.
+        RejectedWithin(f32),
+    }
+    struct Case {
+        label: &'static str,
+        /// Free-run ticks between an at-rest claim and the claim under test
+        /// (a slow client's report gap widens the drift ring).
+        gap_ticks: usize,
+        claim_offset: Vec3,
+        claim_vel: Vec3,
+        /// `Some` overrides the claim's grounded flag.
+        on_ground: Option<bool>,
+        expect: Expect,
+    }
+    let cases = [
+        Case {
+            label: "impossible speed claim keeps the integrated pos",
+            gap_ticks: 0,
+            claim_offset: Vec3::new(50.0, 0.0, 0.0),
+            claim_vel: Vec3::new(200.0, 0.0, 0.0),
+            on_ground: None,
+            expect: Expect::RejectedWithin(5.0),
+        },
+        Case {
+            // A position jump under an innocent velocity must not teleport.
+            label: "teleport claim with a plausible velocity",
+            gap_ticks: 0,
+            claim_offset: Vec3::new(50.0, 0.0, 0.0),
+            claim_vel: Vec3::ZERO,
+            on_ground: None,
+            expect: Expect::RejectedWithin(5.0),
+        },
+        Case {
+            // A sideways hop far beyond any legitimate horizontal speed,
+            // under an innocent velocity — the old isotropic (terminal-speed)
+            // ring accepted this; the per-axis ring must not.
+            label: "horizontal teleport inside the old isotropic ring",
+            gap_ticks: 0,
+            claim_offset: Vec3::new(3.5, 0.0, 0.0),
+            claim_vel: Vec3::new(5.0, 0.0, 0.0),
+            on_ground: None,
+            expect: Expect::RejectedWithin(2.0),
+        },
+        Case {
+            // Take-off frame of a sprint jump: horizontal sprint + full jump
+            // speed. The caps are per-axis, so the combined magnitude must
+            // still pass.
+            label: "sprint-jump take-off frame",
+            gap_ticks: 0,
+            claim_offset: Vec3::new(0.2, 0.0, 0.0),
+            claim_vel: Vec3::new(5.6, 8.4, 0.0),
+            on_ground: Some(false),
+            expect: Expect::Accepted { adopts_vel: true },
+        },
+        Case {
+            // A slow client free-runs several server ticks with no fresh
+            // claim, so its next report legitimately drifted further than one
+            // frame's worth. The closeness ring scales with the claim gap —
+            // no rubber-banding.
+            label: "claim after a slow-client gap",
+            gap_ticks: 4,
+            claim_offset: Vec3::new(3.5, 0.0, 0.0),
+            claim_vel: Vec3::new(5.6, 0.0, 0.0),
+            on_ground: None,
+            expect: Expect::Accepted { adopts_vel: false },
+        },
+    ];
 
-#[test]
-fn teleport_claim_with_plausible_velocity_is_rejected() {
-    let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 70.0, 8.5);
-    let start = game.server.sessions[0].player.pos;
-    let mut u = player_update(&game, true);
-    u.pos = start + Vec3::new(50.0, 0.0, 0.0);
-    u.vel = Vec3::ZERO;
-    u.wishdir = Vec3::ZERO;
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u));
-    game.server.tick_movement(0);
-    let after = game.server.sessions[0].player.pos;
-    assert!(
-        (after - start).length() < 5.0,
-        "a position jump under an innocent velocity must not teleport (after={after:?})"
-    );
-}
+    for case in cases {
+        let mut game = game_on_empty_chunk();
+        let start = Vec3::new(8.5, 70.0, 8.5);
+        game.server.sessions[0].player.pos = start;
+        if case.gap_ticks > 0 {
+            let mut u = player_update(&game, true);
+            u.transform.pos = start;
+            u.transform.vel = Vec3::ZERO;
+            game.server
+                .apply_message(0, ClientToServer::PlayerUpdate(u));
+            game.server.tick_movement(0);
+            for _ in 0..case.gap_ticks {
+                game.server.tick_movement(0);
+            }
+        }
 
-#[test]
-fn sprint_jump_claim_is_accepted() {
-    let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 70.0, 8.5);
-    let start = game.server.sessions[0].player.pos;
-    let mut u = player_update(&game, true);
-    // Take-off frame of a sprint jump: horizontal sprint + full jump speed.
-    // The caps are per-axis, so the combined magnitude must still pass.
-    u.pos = start + Vec3::new(0.2, 0.0, 0.0);
-    u.vel = Vec3::new(5.6, 8.4, 0.0);
-    u.on_ground = false;
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u.clone()));
-    game.server.tick_movement(0);
-    let sess = &game.server.sessions[0];
-    assert_eq!(
-        sess.player.pos, u.pos,
-        "a legitimate sprint-jump claim must be soft-accepted"
-    );
-    assert_eq!(sess.player.vel, u.vel);
+        let mut u = player_update(&game, true);
+        u.transform.pos = start + case.claim_offset;
+        u.transform.vel = case.claim_vel;
+        if let Some(on_ground) = case.on_ground {
+            u.on_ground = on_ground;
+        }
+        let claim = u.clone();
+        game.server
+            .apply_message(0, ClientToServer::PlayerUpdate(u));
+        game.server.tick_movement(0);
+
+        let sess = &game.server.sessions[0];
+        let after = sess.player.pos;
+        match case.expect {
+            Expect::Accepted { adopts_vel } => {
+                assert_eq!(
+                    after, claim.transform.pos,
+                    "[{}] a legitimate claim must be soft-accepted",
+                    case.label
+                );
+                if adopts_vel {
+                    assert_eq!(
+                        sess.player.vel, claim.transform.vel,
+                        "[{}] the accepted claim's velocity is adopted",
+                        case.label
+                    );
+                }
+            }
+            Expect::RejectedWithin(max_drift) => {
+                assert!(
+                    (after - start).length() < max_drift,
+                    "[{}] the claim must not be adopted (start={start:?} after={after:?})",
+                    case.label
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -436,8 +511,8 @@ fn claim_inside_solid_geometry_is_rejected() {
     assert!(game.server.world.set_block_world(8, 64, 8, Block::Stone));
     game.server.sessions[0].player.pos = Vec3::new(8.5, 66.0, 8.5);
     let mut u = player_update(&game, true);
-    u.pos = Vec3::new(8.5, 64.3, 8.5); // feet well inside the stone cell
-    u.vel = Vec3::ZERO;
+    u.transform.pos = Vec3::new(8.5, 64.3, 8.5); // feet well inside the stone cell
+    u.transform.vel = Vec3::ZERO;
     game.server
         .apply_message(0, ClientToServer::PlayerUpdate(u));
     game.server.tick_movement(0);
@@ -643,34 +718,6 @@ fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
 }
 
 #[test]
-fn claim_after_a_slow_client_gap_is_accepted() {
-    let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 70.0, 8.5);
-    let start = game.server.sessions[0].player.pos;
-    let mut u = player_update(&game, true);
-    u.pos = start;
-    u.vel = Vec3::ZERO;
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u));
-    game.server.tick_movement(0);
-    // A slow client: four ticks free-run with no fresh claim.
-    for _ in 0..4 {
-        game.server.tick_movement(0);
-    }
-    // Its next report legitimately drifted further than one frame's worth.
-    let mut u2 = player_update(&game, true);
-    u2.pos = start + Vec3::new(3.5, 0.0, 0.0);
-    u2.vel = Vec3::new(5.6, 0.0, 0.0);
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u2.clone()));
-    game.server.tick_movement(0);
-    assert_eq!(
-        game.server.sessions[0].player.pos, u2.pos,
-        "the closeness ring scales with the claim gap — no rubber-banding"
-    );
-}
-
-#[test]
 fn transform_corrections_ship_only_on_real_divergence() {
     let mut game = game_on_empty_chunk();
     let sess = &mut game.server.sessions[0];
@@ -679,10 +726,12 @@ fn transform_corrections_ship_only_on_real_divergence() {
     // The server free-ran a little past the client's last claim: small pos
     // phase drift, one tick of gravity — time-phase, not divergence.
     sess.last_reported_transform = Some(SelfTransform {
-        pos: sess.player.pos + Vec3::new(0.4, 0.5, 0.0),
-        vel: Vec3::ZERO,
-        yaw: sess.player.yaw,
-        pitch: sess.player.pitch,
+        transform: crate::net::protocol::Transform {
+            pos: sess.player.pos + Vec3::new(0.4, 0.5, 0.0),
+            vel: Vec3::ZERO,
+            yaw: sess.player.yaw,
+            pitch: sess.player.pitch,
+        },
         on_ground: sess.player.on_ground,
     });
     assert!(
@@ -1092,8 +1141,8 @@ fn far_claim_does_not_grant_reach() {
     // A fabricated claim right next to the far block: outside the drift ring
     // of the server's own integration, so it must not become the reach eye.
     let mut u = player_update(&game, true);
-    u.pos = Vec3::new(13.5, 65.0, 13.5);
-    u.vel = Vec3::ZERO;
+    u.transform.pos = Vec3::new(13.5, 65.0, 13.5);
+    u.transform.vel = Vec3::ZERO;
     u.target = Some(hit(far, IVec3::Y));
     game.server
         .apply_message(0, ClientToServer::PlayerUpdate(u));
@@ -1127,28 +1176,6 @@ fn far_claim_does_not_grant_reach() {
 }
 
 #[test]
-fn horizontal_teleport_claim_is_rejected() {
-    let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(8.5, 70.0, 8.5);
-    let start = game.server.sessions[0].player.pos;
-
-    // A sideways hop far beyond any legitimate horizontal speed, under an
-    // innocent velocity — the old isotropic (terminal-speed) ring accepted
-    // this; the per-axis ring must not.
-    let mut u = player_update(&game, true);
-    u.pos = start + Vec3::new(3.5, 0.0, 0.0);
-    u.vel = Vec3::new(5.0, 0.0, 0.0);
-    game.server
-        .apply_message(0, ClientToServer::PlayerUpdate(u));
-    game.server.tick_movement(0);
-    let after = game.server.sessions[0].player.pos;
-    assert!(
-        (after - start).length() < 2.0,
-        "a horizontal jump beyond the sprint envelope must not be adopted (after={after:?})"
-    );
-}
-
-#[test]
 fn fake_on_ground_claims_do_not_evade_fall_damage() {
     let mut game = game_on_empty_chunk();
     assert!(game.server.world.set_block_world(8, 64, 8, Block::Stone));
@@ -1160,8 +1187,8 @@ fn fake_on_ground_claims_do_not_evade_fall_damage() {
     // (no support under the feet), so the peak must survive to the landing.
     for y in [80.0, 76.0, 72.0, 68.0, 65.0] {
         let mut u = player_update(&game, true);
-        u.pos = Vec3::new(8.5, y, 8.5);
-        u.vel = Vec3::new(0.0, -20.0, 0.0);
+        u.transform.pos = Vec3::new(8.5, y, 8.5);
+        u.transform.vel = Vec3::new(0.0, -20.0, 0.0);
         u.on_ground = true;
         game.server
             .apply_message(0, ClientToServer::PlayerUpdate(u));
@@ -1220,8 +1247,8 @@ fn sprint_descent_down_steps_is_not_one_tall_fall() {
         }
         let (pos, vel, on_ground) = report.unwrap();
         let mut u = player_update(&game, true);
-        u.pos = pos;
-        u.vel = vel;
+        u.transform.pos = pos;
+        u.transform.vel = vel;
         u.on_ground = on_ground;
         u.wishdir = input.wishdir;
         u.sprint = true;
@@ -1242,8 +1269,8 @@ fn sprint_descent_down_steps_is_not_one_tall_fall() {
     // descent into damage).
     for _ in 0..3 {
         let mut u = player_update(&game, true);
-        u.pos = client.pos;
-        u.vel = client.vel;
+        u.transform.pos = client.pos;
+        u.transform.vel = client.vel;
         u.on_ground = true;
         game.server
             .apply_message(0, ClientToServer::PlayerUpdate(u));

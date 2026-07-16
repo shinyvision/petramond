@@ -460,10 +460,12 @@ impl ServerGame {
 /// player (wire ids are raw server ids; effects travel by name).
 fn self_restore_from(player: &crate::player::Player) -> SelfRestore {
     SelfRestore {
-        pos: player.pos,
-        vel: player.vel,
-        yaw: player.yaw,
-        pitch: player.pitch,
+        transform: crate::net::protocol::Transform {
+            pos: player.pos,
+            vel: player.vel,
+            yaw: player.yaw,
+            pitch: player.pitch,
+        },
         mode: match player.mode() {
             crate::player::PlayerMode::Survival => 0,
             crate::player::PlayerMode::Spectator => 1,
@@ -728,7 +730,7 @@ mod tests {
             .join;
         assert_eq!(join.player_id, PlayerId(1));
         assert_eq!(join.seed, 7);
-        assert_eq!(join.self_restore.pos, visitor_feet);
+        assert_eq!(join.self_restore.transform.pos, visitor_feet);
         assert_eq!(
             join.self_restore.inventory[0],
             Some(crate::net::protocol::ItemSlotWire {
@@ -774,7 +776,7 @@ mod tests {
                 }
                 ServerToClient::Tick(update) => {
                     if let Some(row) = update.players.iter().find(|r| r.id == PlayerId(1)) {
-                        self_row = Some((row.pos, row.vel));
+                        self_row = Some((row.transform.pos, row.transform.vel));
                     }
                 }
                 _ => {}
@@ -793,10 +795,12 @@ mod tests {
         // server saw this body settle, aim at a nearby ground cell's top
         // face, use-click.
         let update = PlayerUpdate {
-            pos: own_pos,
-            vel: Vec3::ZERO,
-            yaw: 0.0,
-            pitch: 0.0,
+            transform: crate::net::protocol::Transform {
+                pos: own_pos,
+                vel: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
             on_ground: true,
             sneak: false,
             gameplay: true,

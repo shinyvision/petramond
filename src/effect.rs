@@ -140,22 +140,22 @@ struct RawFile {
 /// The runtime [`Effect`] registered under `name` (engine `petramond:*` and pack
 /// `mod_id:name` keys alike), or `None` when no such row is loaded.
 pub fn by_name(name: &str) -> Option<Effect> {
-    defs().iter().find(|d| d.name == name).map(|d| d.effect)
+    catalog().id(name).map(Effect)
 }
 
 /// The loaded effect table, id-ordered (`defs()[effect.0]`). Loads exactly
 /// once; a missing or inconsistent `effects.json` fails loudly at startup.
 pub fn defs() -> &'static [EffectDef] {
-    static TABLE: LazyLock<&'static [EffectDef]> = LazyLock::new(|| {
-        Box::leak(
-            crate::registry::read_catalog("effects.json", "effect", parse_layers)
-                .into_boxed_slice(),
-        )
-    });
+    catalog().rows()
+}
+
+fn catalog() -> &'static crate::registry::Catalog<EffectDef> {
+    static TABLE: LazyLock<crate::registry::Catalog<EffectDef>> =
+        LazyLock::new(|| crate::registry::read_catalog("effects.json", "effect", parse_layers));
     &TABLE
 }
 
-fn parse_layers(texts: &[&str]) -> Result<Vec<EffectDef>, String> {
+fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EffectDef>, String> {
     crate::registry::load_catalog(
         texts,
         |text| serde_json::from_str::<RawFile>(text).map(|f| f.effects),
@@ -182,7 +182,7 @@ fn parse_layers(texts: &[&str]) -> Result<Vec<EffectDef>, String> {
 mod tests {
     use super::*;
 
-    fn table(json: &str) -> Result<Vec<EffectDef>, String> {
+    fn table(json: &str) -> Result<crate::registry::Catalog<EffectDef>, String> {
         parse_layers(&[json])
     }
 
@@ -193,7 +193,7 @@ mod tests {
             "behavior": {"regen": {"interval": 100, "amount": 1}}}]}"#;
         let pack = r#"{"effects": [{"effect": "mymod:haste", "display": "Haste",
             "icon": "textures/haste.png", "behavior": "none"}]}"#;
-        let defs = parse_layers(&[base, pack]).expect("loads");
+        let defs = parse_layers(&[base, pack]).expect("loads").rows();
         assert_eq!(defs[0].name, "petramond:regeneration");
         assert_eq!(defs[0].effect, Effect::Regeneration);
         assert_eq!(

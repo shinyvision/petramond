@@ -239,10 +239,12 @@ mod tests {
             clock: 6000,
             tables: NameTables::default(),
             self_restore: SelfRestore {
-                pos: crate::mathh::Vec3::new(1.0, 70.0, 2.0),
-                vel: crate::mathh::Vec3::ZERO,
-                yaw: 0.5,
-                pitch: -0.25,
+                transform: crate::net::protocol::Transform {
+                    pos: crate::mathh::Vec3::new(1.0, 70.0, 2.0),
+                    vel: crate::mathh::Vec3::ZERO,
+                    yaw: 0.5,
+                    pitch: -0.25,
+                },
                 mode: 0,
                 health: 18,
                 bed_spawn: None,

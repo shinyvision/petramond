@@ -580,15 +580,12 @@ struct RawModelFile {
 /// inconsistent `models.json` fails loudly at startup.
 fn defs() -> &'static [BlockModelDef] {
     static DEFS: LazyLock<&'static [BlockModelDef]> = LazyLock::new(|| {
-        Box::leak(
-            crate::registry::read_catalog("models.json", "block model", parse_layers)
-                .into_boxed_slice(),
-        )
+        crate::registry::read_catalog("models.json", "block model", parse_layers).rows()
     });
     &DEFS
 }
 
-fn parse_layers(texts: &[&str]) -> Result<Vec<BlockModelDef>, String> {
+fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef>, String> {
     crate::registry::load_catalog(
         texts,
         |text| serde_json::from_str::<RawModelFile>(text).map(|f| f.models),

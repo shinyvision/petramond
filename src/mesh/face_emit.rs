@@ -3,14 +3,10 @@
 //! AO/smooth-light gather over the section pad, and the packed-vertex face pushes.
 
 use crate::atlas::Tile;
-#[cfg(test)]
-use crate::block::Block;
 use crate::block_state::SlabState;
 use crate::chunk::SKY_FULL;
 use crate::torch::{warm_amount, warm_tint};
 
-#[cfg(test)]
-use super::builder::cube_face_lighting;
 use super::builder::{mesh_pad_idx, SectionMeshPad};
 use super::face::{should_flip, vertex_ao, Face};
 use super::vertex::{
@@ -85,73 +81,6 @@ pub(super) fn fold_light_smooth(sum_sky: u32, sum_block: u32, cnt: u32) -> (u32,
         )
     };
     (sky6, block6, warm)
-}
-
-/// Emit one resolved cube face: gather the shared 3×3 tangent-plane ring around the
-/// front voxel F once, derive each corner's AO + smooth light from it, push the four
-/// packed vertices, and append the (AO-symmetric, possibly flipped) triangulation.
-/// Returns the two triangles' six indices so the caller can add water's reverse winding
-/// before closing the section. The `corners` are already in world space (and
-/// water-warped); `face` drives shade + the AO neighbourhood; `(fx,fy,fz)`/`f_l`/`f_bl`
-/// are the front voxel and its pre-sampled light.
-///
-/// Only the legacy chunk mesher composes lighting + push this way; the section
-/// path calls `cube_face_lighting` / `push_cube_face` separately.
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-pub(super) fn emit_cube_face<B, L, K>(
-    vbuf: &mut Vec<Vertex>,
-    ibuf: &mut Vec<u32>,
-    corners: [[f32; 3]; 4],
-    base_tile: Tile,
-    overlay: u32,
-    has_overlay: bool,
-    uv_mode: u32,
-    tint: [f32; 3],
-    face: Face,
-    fx: i32,
-    fy: i32,
-    fz: i32,
-    f_l: u32,
-    f_bl: u32,
-    smooth_light: bool,
-    block_at: &B,
-    neighbour_light: &L,
-    neighbour_blocklight: &K,
-) -> [u32; 6]
-where
-    B: Fn(i32, i32, i32) -> Block,
-    L: Fn(i32, i32, i32) -> u8,
-    K: Fn(i32, i32, i32) -> u8,
-{
-    let (ao, light6, block6, warm) = cube_face_lighting(
-        face,
-        fx,
-        fy,
-        fz,
-        f_l,
-        f_bl,
-        smooth_light,
-        block_at,
-        &|_, _, _| None,
-        neighbour_light,
-        neighbour_blocklight,
-    );
-    push_cube_face(
-        vbuf,
-        ibuf,
-        corners,
-        base_tile,
-        overlay,
-        has_overlay,
-        uv_mode,
-        tint,
-        face,
-        ao,
-        light6,
-        block6,
-        warm,
-    )
 }
 
 /// Whether ring cell `(a, b)` (tangent offsets from the front voxel) lends its
@@ -277,44 +206,6 @@ pub(super) fn cube_face_lighting_pad(
         (light6[corner], block6[corner], warm[corner]) = fold_light_smooth(sum, sum_block, cnt);
     }
     (ao, light6, block6, warm)
-}
-
-/// Push one resolved cube face's four packed vertices (given precomputed per-corner
-/// lighting) + its (AO-symmetric, possibly flipped) triangulation. Returns the six indices
-/// so the caller can add water's reverse winding.
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-fn push_cube_face(
-    vbuf: &mut Vec<Vertex>,
-    ibuf: &mut Vec<u32>,
-    corners: [[f32; 3]; 4],
-    base_tile: Tile,
-    overlay: u32,
-    has_overlay: bool,
-    uv_mode: u32,
-    tint: [f32; 3],
-    face: Face,
-    ao: [u32; 4],
-    light6: [u32; 4],
-    block6: [u32; 4],
-    warm: [f32; 4],
-) -> [u32; 6] {
-    push_cube_face_with_cell_uvs(
-        vbuf,
-        ibuf,
-        corners,
-        base_tile,
-        overlay,
-        has_overlay,
-        uv_mode,
-        None,
-        tint,
-        face,
-        ao,
-        light6,
-        block6,
-        warm,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]

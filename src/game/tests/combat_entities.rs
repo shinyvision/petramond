@@ -840,10 +840,12 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
     fn remote_row(pos: Vec3, visible: bool, sleeping: bool) -> PlayerStateRow {
         PlayerStateRow {
             id: PlayerId(1),
-            pos,
-            vel: Vec3::ZERO,
-            yaw: 0.0,
-            pitch: 0.0,
+            transform: crate::net::protocol::Transform {
+                pos,
+                vel: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
             on_ground: true,
             sneaking: false,
             sleeping,
@@ -1176,10 +1178,12 @@ fn pvp_knockback_ships_the_victims_vel_echo() {
     let reported = {
         let p = &game.server.sessions[t].player;
         crate::net::protocol::SelfTransform {
-            pos: p.pos,
-            vel: p.vel,
-            yaw: p.yaw,
-            pitch: p.pitch,
+            transform: crate::net::protocol::Transform {
+                pos: p.pos,
+                vel: p.vel,
+                yaw: p.yaw,
+                pitch: p.pitch,
+            },
             on_ground: p.on_ground,
         }
     };
@@ -1193,13 +1197,16 @@ fn pvp_knockback_ships_the_victims_vel_echo() {
     let echo = state
         .transform
         .expect("a vel-only knockback still ships the transform correction");
-    assert_eq!(echo.pos, reported.pos, "the tick moved no position");
+    assert_eq!(
+        echo.transform.pos, reported.transform.pos,
+        "the tick moved no position"
+    );
     assert_ne!(
-        echo.vel, reported.vel,
+        echo.transform.vel, reported.transform.vel,
         "the echo carries the knocked velocity"
     );
     assert_eq!(
-        echo.vel, game.server.sessions[t].player.vel,
+        echo.transform.vel, game.server.sessions[t].player.vel,
         "the echoed velocity is the session's post-knockback one"
     );
 }
@@ -1216,10 +1223,12 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     fn remote_row(id: u8, pos: Vec3, visible: bool) -> PlayerStateRow {
         PlayerStateRow {
             id: PlayerId(id),
-            pos,
-            vel: Vec3::ZERO,
-            yaw: 0.0,
-            pitch: 0.0,
+            transform: crate::net::protocol::Transform {
+                pos,
+                vel: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+            },
             on_ground: true,
             sneaking: false,
             sleeping: false,

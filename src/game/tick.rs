@@ -500,10 +500,7 @@ impl Game {
         // `SelfState::transform` correction diffs against (fields the server
         // merely echoes back must not stomp newer local values).
         self.last_sent_transform = Some(crate::net::protocol::SelfTransform {
-            pos: update.pos,
-            vel: update.vel,
-            yaw: update.yaw,
-            pitch: update.pitch,
+            transform: update.transform,
             on_ground: update.on_ground,
         });
         let mut lost = false;
@@ -735,10 +732,12 @@ impl Game {
         // wire intent from the prediction.
         let intent = self.predicted_input;
         PlayerUpdate {
-            pos: self.player.pos,
-            vel: self.player.vel,
-            yaw: self.player.yaw,
-            pitch: self.player.pitch,
+            transform: crate::net::protocol::Transform {
+                pos: self.player.pos,
+                vel: self.player.vel,
+                yaw: self.player.yaw,
+                pitch: self.player.pitch,
+            },
             on_ground: self.player.on_ground,
             // Sneak is part of the F2 movement intent now: ship EXACTLY what the
             // local physics consumed (gameplay-gated), so the server integrates
@@ -1212,8 +1211,11 @@ impl Game {
             if !row.visible || !row.alive {
                 continue;
             }
-            let body =
-                crate::body::Body::new(row.pos, crate::player::HALF_W, crate::player::HEIGHT);
+            let body = crate::body::Body::new(
+                row.transform.pos,
+                crate::player::HALF_W,
+                crate::player::HEIGHT,
+            );
             if body.overlaps_block_boxes(cell, boxes) {
                 return true;
             }
@@ -1235,17 +1237,17 @@ impl Game {
         t: &crate::net::protocol::SelfTransform,
     ) {
         let sent = self.last_sent_transform;
-        if sent.is_none_or(|s| s.pos != t.pos) {
-            self.player.teleport(t.pos);
+        if sent.is_none_or(|s| s.transform.pos != t.transform.pos) {
+            self.player.teleport(t.transform.pos);
         }
-        if sent.is_none_or(|s| s.vel != t.vel) {
-            self.player.vel = t.vel;
+        if sent.is_none_or(|s| s.transform.vel != t.transform.vel) {
+            self.player.vel = t.transform.vel;
         }
-        if sent.is_none_or(|s| s.yaw != t.yaw) {
-            self.player.yaw = t.yaw;
+        if sent.is_none_or(|s| s.transform.yaw != t.transform.yaw) {
+            self.player.yaw = t.transform.yaw;
         }
-        if sent.is_none_or(|s| s.pitch != t.pitch) {
-            self.player.pitch = t.pitch;
+        if sent.is_none_or(|s| s.transform.pitch != t.transform.pitch) {
+            self.player.pitch = t.transform.pitch;
         }
         if sent.is_none_or(|s| s.on_ground != t.on_ground) {
             self.player.on_ground = t.on_ground;

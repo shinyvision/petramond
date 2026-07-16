@@ -396,7 +396,7 @@ fn hostile_candidate_at(
     }
     Some(HostileSpawnSite {
         candidate: HostileSpawnCandidate {
-            pos: [pos.x, pos.y, pos.z],
+            pos: pos.to_array(),
             cell: [wx, y, wz],
             combined_light: world.combined_light6_at_world(wx, y, wz),
             sky_light: world.skylight6_at_world(wx, y, wz),

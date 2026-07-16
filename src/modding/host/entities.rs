@@ -100,7 +100,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                         .map(|(i, m)| MobSnapshot {
                             index: i as u32,
                             key: crate::mob::def(m.kind).key.to_owned(),
-                            pos: [m.pos.x, m.pos.y, m.pos.z],
+                            pos: m.pos.to_array(),
                             health: m.health(),
                             id: m.id(),
                             yaw: m.yaw,

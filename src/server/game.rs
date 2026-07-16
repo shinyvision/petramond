@@ -17,8 +17,8 @@ use crate::mob::LootTables;
 use crate::modding::ModHost;
 use crate::net::protocol::{
     BlockDelta, ClientToServer, ItemSlotWire, ItemStateRow, MobStateRow, ModSpatialSoundMsg,
-    OpenScreen, PlayerActionKind, PlayerStateRow, PlayerUpdate, SelfEvents,
-    SelfState, SelfTransform, ServerToClient, TickUpdate, WorldEventMsg,
+    OpenScreen, PlayerActionKind, PlayerStateRow, PlayerUpdate, SelfEvents, SelfState,
+    SelfTransform, ServerToClient, TickUpdate, Transform, WorldEventMsg,
 };
 use crate::player;
 use crate::server::player::{ConnectedPlayer, PendingMenuAction, PlayerId};
@@ -450,10 +450,12 @@ impl ServerGame {
                 let alive = sess.player.health() > 0;
                 PlayerStateRow {
                     id: sess.id,
-                    pos: sess.player.pos,
-                    vel: sess.player.vel,
-                    yaw: sess.player.yaw,
-                    pitch: sess.player.pitch,
+                    transform: Transform {
+                        pos: sess.player.pos,
+                        vel: sess.player.vel,
+                        yaw: sess.player.yaw,
+                        pitch: sess.player.pitch,
+                    },
                     on_ground: sess.player.on_ground,
                     sneaking: sess.sneaking(),
                     sleeping: sess.sleep.is_some(),
@@ -680,10 +682,12 @@ impl ServerGame {
         // claim, so plain inequality is just time-phase drift — correcting it
         // rubber-bands the client. The deadbands scale with the claim gap.
         let current = SelfTransform {
-            pos: player.pos,
-            vel: player.vel,
-            yaw: player.yaw,
-            pitch: player.pitch,
+            transform: Transform {
+                pos: player.pos,
+                vel: player.vel,
+                yaw: player.yaw,
+                pitch: player.pitch,
+            },
             on_ground: player.on_ground,
         };
         let diverged = match &sess.last_reported_transform {
@@ -691,6 +695,7 @@ impl ServerGame {
             Some(r) => {
                 let spectator = player.is_spectator();
                 let gap = sess.ticks_since_claim;
+                let r = &r.transform;
                 !crate::server::movement::claim_within_drift(spectator, gap, player.pos - r.pos)
                     || (player.vel - r.vel).length()
                         > crate::server::movement::vel_correction_eps(gap)
@@ -867,10 +872,11 @@ impl ServerGame {
     /// drops queued edges, exactly as the old `capture_intent` did), the
     /// reach-validated look target, and the fall tracker.
     fn apply_player_update(&mut self, s: usize, u: &PlayerUpdate) {
-        if !(u.pos.is_finite()
-            && u.vel.is_finite()
-            && u.yaw.is_finite()
-            && u.pitch.is_finite()
+        let t = u.transform;
+        if !(t.pos.is_finite()
+            && t.vel.is_finite()
+            && t.yaw.is_finite()
+            && t.pitch.is_finite()
             && u.wishdir.is_finite())
         {
             log::warn!("dropping PlayerUpdate with non-finite transform/intent");
@@ -881,22 +887,19 @@ impl ServerGame {
         sess.move_wishdir = u.wishdir;
         sess.move_jump = u.jump;
         sess.move_sprint = u.sprint;
-        sess.claim_pos = u.pos;
-        sess.claim_vel = u.vel;
+        sess.claim_pos = t.pos;
+        sess.claim_vel = t.vel;
         sess.claim_on_ground = u.on_ground;
         sess.claim_fresh = true;
         // What the client last claimed — after the ticks, a session transform
         // that drifted from this means the server rejected the claim or a
         // tick-side teleport/knockback moved the player.
         sess.last_reported_transform = Some(SelfTransform {
-            pos: u.pos,
-            vel: u.vel,
-            yaw: u.yaw,
-            pitch: u.pitch,
+            transform: t,
             on_ground: u.on_ground,
         });
-        sess.player.yaw = u.yaw;
-        sess.player.pitch = u.pitch;
+        sess.player.yaw = t.yaw;
+        sess.player.pitch = t.pitch;
         sess.player.inventory.set_active(u.hotbar_slot);
         let selected = sess.selected_item();
         sess.held_rotation.apply_wire(u.held_rotation, selected);

@@ -263,7 +263,7 @@ impl ServerGame {
             feed: events,
             queue: bus.queue_mut(),
         };
-        mods.dispatch_gui_click(&mut ctx, kind_key, widget_id, pos.map(|p| [p.x, p.y, p.z]));
+        mods.dispatch_gui_click(&mut ctx, kind_key, widget_id, pos.map(|p| p.to_array()));
     }
 
     /// Begin a fresh player-crafting session for the requested station.

@@ -270,17 +270,21 @@ pub struct WanderTuning {
     pub cohesion: Option<WanderCohesion>,
 }
 
-/// The semantic reason a mob sound is played. The sound clip itself stays in
-/// `sounds.json`; this category maps a species to a row in that catalog.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MobSoundCategory {
-    /// Periodic ambient call while the mob is alive and present to the client.
-    Idle,
-    /// A non-lethal hit landed on the mob.
-    Hurt,
-    /// The killing hit landed on the mob.
-    Death,
+crate::wire_enum::wire_enum! {
+    /// The semantic reason a mob sound is played. The sound clip itself stays in
+    /// `sounds.json`; this category maps a species to a row in that catalog.
+    /// The byte form is the net protocol's (`WorldEventMsg::MobSound`).
+    #[derive(Hash, serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum MobSoundCategory: u8 {
+        /// Periodic ambient call while the mob is alive and present to the client.
+        Idle = 0,
+        /// A non-lethal hit landed on the mob.
+        Hurt = 1,
+        /// The killing hit landed on the mob.
+        Death = 2,
+    }
+    default Idle
 }
 
 pub(crate) const DEFAULT_DAMAGE_FLASH_SECS: f32 = 0.3;
@@ -352,25 +356,6 @@ impl Default for MobDamageFeedback {
                 },
                 MobDamageFeedbackComponent::Ragdoll,
             ],
-        }
-    }
-}
-
-impl MobSoundCategory {
-    /// Wire discriminant (net protocol `WorldEventMsg::MobSound`).
-    pub(crate) fn to_u8(self) -> u8 {
-        match self {
-            Self::Idle => 0,
-            Self::Hurt => 1,
-            Self::Death => 2,
-        }
-    }
-
-    pub(crate) fn from_u8(v: u8) -> Self {
-        match v {
-            1 => Self::Hurt,
-            2 => Self::Death,
-            _ => Self::Idle,
         }
     }
 }

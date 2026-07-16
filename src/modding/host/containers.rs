@@ -3,8 +3,6 @@
 
 use mod_api::{HostCall, HostRet};
 
-use crate::modding::convert::to_ivec;
-
 use super::guards::{item_by_key, item_stack_data, key_owned_by_namespace, sim_query};
 
 /// Mod container slots + the item/recipe registry reads that make furnace-like
@@ -15,7 +13,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
             // Multi-cell blocks keep ONE container at the group anchor;
             // canonicalize so any footprint cell reads the same slots the GUI
             // and break-scatter use.
-            let p = ctx.world.container_anchor(to_ivec(pos));
+            let p = ctx.world.container_anchor(pos.into());
             HostRet::ContainerSlots(ctx.world.container_at(p).map(|c| {
                 c.slots
                     .iter()
@@ -28,7 +26,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 positions
                     .iter()
                     .map(|&pos| {
-                        let p = ctx.world.container_anchor(to_ivec(pos));
+                        let p = ctx.world.container_anchor(pos.into());
                         ctx.world.container_at(p).map(|c| {
                             c.slots
                                 .iter()
@@ -75,7 +73,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 // Same anchor rule as ContainerGet: writing through a
                 // non-anchor footprint cell must not mint a second container
                 // the GUI and break-scatter would never see.
-                let p = ctx.world.container_anchor(to_ivec(pos));
+                let p = ctx.world.container_anchor(pos.into());
                 // A mod owns only its own blocks' containers: the block at
                 // `pos` must be registered to the caller's namespace.
                 // Stream-final read: a half-streamed cell shows the generated
@@ -210,7 +208,7 @@ mod tests {
             let set = handle_host_call(
                 &mut store,
                 HostCall::ContainerSet {
-                    pos: [far.x, far.y, far.z],
+                    pos: far.to_array(),
                     slots: vec![(
                         0,
                         Some(mod_api::ItemStackData {
@@ -225,7 +223,7 @@ mod tests {
             let got = handle_host_call(
                 &mut store,
                 HostCall::ContainerGet {
-                    pos: [anchor.x, anchor.y, anchor.z],
+                    pos: anchor.to_array(),
                 },
             );
             let HostRet::ContainerSlots(Some(slots)) = got else {

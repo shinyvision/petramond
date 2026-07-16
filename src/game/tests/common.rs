@@ -249,10 +249,12 @@ impl TestGame {
 pub(super) fn player_update(game: &TestGame, gameplay: bool) -> PlayerUpdate {
     let p = &game.server.sessions[0].player;
     PlayerUpdate {
-        pos: p.pos,
-        vel: p.vel,
-        yaw: p.yaw,
-        pitch: p.pitch,
+        transform: crate::net::protocol::Transform {
+            pos: p.pos,
+            vel: p.vel,
+            yaw: p.yaw,
+            pitch: p.pitch,
+        },
         on_ground: p.on_ground,
         sneak: false,
         gameplay,

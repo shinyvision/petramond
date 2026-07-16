@@ -46,7 +46,7 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
     // drift ring of the server's own integration.
     game.server.sessions[0].player.pos = Vec3::new(8.5, 64.0, 8.5);
     let mut u = common::player_update(&game, true);
-    u.pos = Vec3::new(8.5, 64.0, 8.5);
+    u.transform.pos = Vec3::new(8.5, 64.0, 8.5);
     u.target = Some(TargetRef {
         block: IVec3::new(8, 63, 8),
         normal: IVec3::Y,
@@ -60,7 +60,7 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
     // The same target reported from far away is silently dropped...
     game.server.sessions[0].player.pos = Vec3::new(20.0, 64.0, 20.0);
     let mut far = common::player_update(&game, true);
-    far.pos = Vec3::new(20.0, 64.0, 20.0);
+    far.transform.pos = Vec3::new(20.0, 64.0, 20.0);
     far.target = Some(TargetRef {
         block: IVec3::new(8, 63, 8),
         normal: IVec3::Y,
@@ -129,7 +129,7 @@ fn a_reported_fall_deals_the_same_damage_the_physics_fall_would() {
     // landing at y=70 one column over: a 10-block fall.
     let at = |game: &super::common::TestGame, x: f32, y: f32, on_ground: bool| {
         let mut u = common::player_update(game, true);
-        u.pos = Vec3::new(x, y, 8.5);
+        u.transform.pos = Vec3::new(x, y, 8.5);
         u.on_ground = on_ground;
         u
     };
@@ -171,7 +171,7 @@ fn landing_in_water_resets_the_fall_and_deals_no_damage() {
 
     let at = |game: &super::common::TestGame, y: f32, on_ground: bool| {
         let mut u = common::player_update(game, true);
-        u.pos = Vec3::new(8.5, y, 8.5);
+        u.transform.pos = Vec3::new(8.5, y, 8.5);
         u.on_ground = on_ground;
         u
     };

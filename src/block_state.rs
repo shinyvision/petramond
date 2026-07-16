@@ -13,26 +13,16 @@ use crate::chunk::SECTION_VOLUME;
 use crate::door::DoorState;
 use crate::facing::Facing;
 use crate::torch::TorchPlacement;
+use crate::wire_enum::wire_enum;
 
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum StairHalf {
-    /// Right-side-up stair: full lower slab plus upper back half.
-    #[default]
-    Bottom = 0,
-    /// Upside-down stair: full upper slab plus lower back half.
-    Top = 1,
-}
-
-impl StairHalf {
-    #[inline]
-    pub fn from_u8(v: u8) -> Self {
-        if v & 0b1 != 0 {
-            Self::Top
-        } else {
-            Self::Bottom
-        }
+wire_enum! {
+    pub enum StairHalf: u8 {
+        /// Right-side-up stair: full lower slab plus upper back half.
+        Bottom = 0,
+        /// Upside-down stair: full upper slab plus lower back half.
+        Top = 1,
     }
+    default Bottom
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -50,7 +40,7 @@ impl StairState {
 
     #[inline]
     pub fn encode(self) -> u8 {
-        self.facing.to_u8() | ((self.half as u8) << 2)
+        self.facing.to_u8() | (self.half.to_u8() << 2)
     }
 
     #[inline]
@@ -62,29 +52,13 @@ impl StairState {
     }
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum SlabSplit {
-    X = 0,
-    #[default]
-    Y = 1,
-    Z = 2,
-}
-
-impl SlabSplit {
-    #[inline]
-    pub fn to_u8(self) -> u8 {
-        self as u8
+wire_enum! {
+    pub enum SlabSplit: u8 {
+        X = 0,
+        Y = 1,
+        Z = 2,
     }
-
-    #[inline]
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            0 => Self::X,
-            2 => Self::Z,
-            _ => Self::Y,
-        }
-    }
+    default Y
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -164,29 +138,13 @@ impl SlabState {
     }
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum LogAxis {
-    X = 0,
-    #[default]
-    Y = 1,
-    Z = 2,
-}
-
-impl LogAxis {
-    #[inline]
-    pub fn to_u8(self) -> u8 {
-        self as u8
+wire_enum! {
+    pub enum LogAxis: u8 {
+        X = 0,
+        Y = 1,
+        Z = 2,
     }
-
-    #[inline]
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            0 => Self::X,
-            2 => Self::Z,
-            _ => Self::Y,
-        }
-    }
+    default Y
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]

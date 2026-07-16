@@ -15,26 +15,16 @@ use crate::facing::Facing;
 use crate::mathh::{IVec3, Vec3};
 use mod_api as api;
 
+/// Engine → ABI world-cell position (a plain-fn `IVec3::to_array` for `.map`).
 #[inline]
 fn ivec(v: IVec3) -> [i32; 3] {
-    [v.x, v.y, v.z]
+    v.to_array()
 }
 
+/// Engine → ABI vector (a plain-fn `Vec3::to_array` for `.map`).
 #[inline]
 fn vec(v: Vec3) -> [f32; 3] {
-    [v.x, v.y, v.z]
-}
-
-/// ABI → engine world-cell position.
-#[inline]
-pub(super) fn to_ivec(p: [i32; 3]) -> IVec3 {
-    IVec3::new(p[0], p[1], p[2])
-}
-
-/// ABI → engine vector.
-#[inline]
-pub(super) fn to_vec(p: [f32; 3]) -> Vec3 {
-    Vec3::new(p[0], p[1], p[2])
+    v.to_array()
 }
 
 #[inline]

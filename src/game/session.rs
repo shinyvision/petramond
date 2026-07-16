@@ -428,15 +428,15 @@ fn open_session(world_name: &str) -> OpenedSession {
 /// the wire twin of `save::player::PlayerData::restore` (wire ids arrived
 /// remapped to local ids at the transport; effects travel by name).
 fn player_from_restore(r: &crate::net::protocol::SelfRestore) -> Player {
-    let mut player = Player::new(r.pos);
+    let mut player = Player::new(r.transform.pos);
     player.set_mode(match r.mode {
         1 => crate::player::PlayerMode::Spectator,
         _ => crate::player::PlayerMode::Survival,
     });
     // `set_mode` clears velocity; restore motion after it.
-    player.vel = r.vel;
-    player.yaw = r.yaw;
-    player.pitch = r.pitch;
+    player.vel = r.transform.vel;
+    player.yaw = r.transform.yaw;
+    player.pitch = r.transform.pitch;
     player.set_health(r.health);
     player.bed_spawn = r
         .bed_spawn

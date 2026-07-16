@@ -21,13 +21,17 @@ use crate::furnace::Furnace;
 use crate::item::{ItemStack, ItemType};
 use crate::torch::TorchPlacement;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum SectionSummary {
-    Unknown,
-    Empty,
-    FullOpaque,
-    FullWater,
-    Mixed,
+crate::wire_enum::wire_enum! {
+    // The byte form rides the wire (`ColumnPayload::summaries`); the `Unknown`
+    // fallback is the conservative "reads lie" answer.
+    pub enum SectionSummary: u8 {
+        Unknown = 0,
+        Empty = 1,
+        FullOpaque = 2,
+        FullWater = 3,
+        Mixed = 4,
+    }
+    default Unknown
 }
 
 impl SectionSummary {
@@ -37,31 +41,6 @@ impl SectionSummary {
             SectionSummary::FullOpaque => Block::Stone,
             SectionSummary::FullWater => Block::Water,
             _ => Block::Air,
-        }
-    }
-
-    /// Stable byte for the wire (`ColumnPayload::summaries`).
-    #[inline]
-    pub fn to_u8(self) -> u8 {
-        match self {
-            SectionSummary::Unknown => 0,
-            SectionSummary::Empty => 1,
-            SectionSummary::FullOpaque => 2,
-            SectionSummary::FullWater => 3,
-            SectionSummary::Mixed => 4,
-        }
-    }
-
-    /// Inverse of [`to_u8`](Self::to_u8); unknown bytes read as `Unknown`
-    /// (the conservative "reads lie" answer).
-    #[inline]
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            1 => SectionSummary::Empty,
-            2 => SectionSummary::FullOpaque,
-            3 => SectionSummary::FullWater,
-            4 => SectionSummary::Mixed,
-            _ => SectionSummary::Unknown,
         }
     }
 }

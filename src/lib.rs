@@ -61,6 +61,7 @@ mod stair;
 mod texture_mips;
 pub mod tooling;
 mod torch;
+mod wire_enum;
 mod worker;
 mod world;
 mod worldgen;

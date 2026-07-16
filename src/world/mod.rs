@@ -37,6 +37,8 @@ pub(crate) mod water;
 
 #[cfg(test)]
 pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
+#[cfg(test)]
+pub(crate) use stream::split_generated_column;
 
 pub(crate) use render_handoff::TerrainRenderHandoff;
 pub(crate) use store::VERTICAL_LOAD_RADIUS;

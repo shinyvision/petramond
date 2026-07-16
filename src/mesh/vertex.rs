@@ -170,7 +170,7 @@ pub struct ChunkMesh {
     /// of the chunk; empty for the common chunk with no bbmodel blocks.
     pub model: Vec<ModelVertex>,
     pub model_idx: Vec<u32>,
-    /// True until GPU upload has happened. Set by `build_mesh`, cleared by
+    /// True until GPU upload has happened. Set by the mesh builder, cleared by
     /// renderer after a successful upload so we don't re-upload every frame.
     pub mesh_dirty: bool,
     /// True once the CPU vertex/index buffers were released after a settled GPU

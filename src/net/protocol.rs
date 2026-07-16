@@ -123,6 +123,18 @@ pub(crate) struct NameTables {
     pub emitters: Vec<String>,
 }
 
+/// The kinematic transform every player-shaped wire row carries: feet
+/// position, velocity, and look angles. Embedded, not flattened — postcard
+/// encodes a nested struct as its fields in order, so the wire bytes equal the
+/// four fields spelled inline.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Transform {
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
 /// One inventory slot on the wire. `item_id` is a wire item id.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ItemSlotWire {
@@ -133,10 +145,7 @@ pub(crate) struct ItemSlotWire {
 /// The joining player's own restored state.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SelfRestore {
-    pub pos: Vec3,
-    pub vel: Vec3,
-    pub yaw: f32,
-    pub pitch: f32,
+    pub transform: Transform,
     /// `PlayerMode` as its discriminant (tiny closed enum).
     pub mode: u8,
     pub health: i32,
@@ -202,10 +211,8 @@ pub(crate) struct ActionOutcome {
 /// bookkeeping until a hard correct ships via [`SelfTransform`]).
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct PlayerUpdate {
-    pub pos: Vec3,
-    pub vel: Vec3,
-    pub yaw: f32,
-    pub pitch: f32,
+    /// The client's predicted transform (see the struct doc).
+    pub transform: Transform,
     pub on_ground: bool,
     /// Sneak held — movement intent (half speed + edge guard, integrated
     /// server-side like `wishdir`) AND the interact-vs-place gate; gameplay-
@@ -482,11 +489,8 @@ pub(crate) struct ItemStateRow {
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct PlayerStateRow {
     pub id: PlayerId,
-    /// Feet position (the body model's `y = 0`).
-    pub pos: Vec3,
-    pub vel: Vec3,
-    pub yaw: f32,
-    pub pitch: f32,
+    /// `pos` is the feet position (the body model's `y = 0`).
+    pub transform: Transform,
     pub on_ground: bool,
     pub sneaking: bool,
     pub sleeping: bool,
@@ -549,10 +553,7 @@ pub(crate) enum PlayerActionKind {
 /// per-frame look/movement is not stomped by an echo of an older frame).
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SelfTransform {
-    pub pos: Vec3,
-    pub vel: Vec3,
-    pub yaw: f32,
-    pub pitch: f32,
+    pub transform: Transform,
     pub on_ground: bool,
 }
 
@@ -1216,10 +1217,12 @@ mod tests {
             craftable_only: true,
         });
         roundtrip(&ClientToServer::PlayerUpdate(PlayerUpdate {
-            pos: Vec3::new(1.5, 80.0, -3.25),
-            vel: Vec3::ZERO,
-            yaw: 1.25,
-            pitch: -0.5,
+            transform: Transform {
+                pos: Vec3::new(1.5, 80.0, -3.25),
+                vel: Vec3::ZERO,
+                yaw: 1.25,
+                pitch: -0.5,
+            },
             on_ground: true,
             sneak: false,
             gameplay: true,
@@ -1407,10 +1410,12 @@ mod tests {
             }],
             players: vec![PlayerStateRow {
                 id: PlayerId(1),
-                pos: Vec3::new(4.5, 71.0, -2.25),
-                vel: Vec3::new(0.0, -0.5, 1.0),
-                yaw: 0.75,
-                pitch: -0.25,
+                transform: Transform {
+                    pos: Vec3::new(4.5, 71.0, -2.25),
+                    vel: Vec3::new(0.0, -0.5, 1.0),
+                    yaw: 0.75,
+                    pitch: -0.25,
+                },
                 on_ground: true,
                 sneaking: false,
                 sleeping: true,
@@ -1444,10 +1449,12 @@ mod tests {
                 sleeping: None,
                 sleep_bed: None,
                 transform: Some(SelfTransform {
-                    pos: Vec3::new(1.5, 80.0, -3.25),
-                    vel: Vec3::ZERO,
-                    yaw: 1.25,
-                    pitch: -0.5,
+                    transform: Transform {
+                        pos: Vec3::new(1.5, 80.0, -3.25),
+                        vel: Vec3::ZERO,
+                        yaw: 1.25,
+                        pitch: -0.5,
+                    },
                     on_ground: true,
                 }),
             }),

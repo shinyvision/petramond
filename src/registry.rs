@@ -20,6 +20,7 @@
 //! field names a block) — resolving through one table pair avoids any lazy-init
 //! cycle between the two loaders.
 
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use serde::Deserialize;
@@ -29,16 +30,19 @@ pub(crate) const ENGINE_NAMESPACE: &str = "petramond";
 
 /// An id-ordered list of registered names: the compiled engine names first
 /// (index == frozen engine id), then pack-registered namespaced names in load
-/// order. Ids are `u8` — content tables stay 256 entries max.
+/// order. Ids are `u8` — content tables stay 256 entries max. Carries a
+/// name→id hash index built once here, so every name lookup (serde, palette,
+/// net remap, host calls) is O(1).
 #[derive(Debug)]
 pub(crate) struct NameTable {
     names: Vec<&'static str>,
+    ids: HashMap<&'static str, u8>,
 }
 
 impl NameTable {
     /// The runtime id of `name`, or `None` if it is not registered.
     pub fn id(&self, name: &str) -> Option<u8> {
-        self.names.iter().position(|&n| n == name).map(|i| i as u8)
+        self.ids.get(name).copied()
     }
 
     /// The registered name for `id`, or `None` if out of range.
@@ -48,6 +52,11 @@ impl NameTable {
 
     pub fn len(&self) -> usize {
         self.names.len()
+    }
+
+    fn push(&mut self, name: &'static str) {
+        self.ids.insert(name, self.names.len() as u8);
+        self.names.push(name);
     }
 
     /// Build a table from the compiled engine names plus every layer's row
@@ -60,10 +69,16 @@ impl NameTable {
         layer_keys: &[Vec<String>],
         what: &str,
     ) -> Result<NameTable, String> {
-        let mut names: Vec<&'static str> = engine.to_vec();
+        let mut table = NameTable {
+            names: Vec::with_capacity(engine.len()),
+            ids: HashMap::with_capacity(engine.len()),
+        };
+        for &name in engine {
+            table.push(name);
+        }
         for keys in layer_keys {
             for key in keys {
-                if names.iter().any(|n| n == key) {
+                if table.ids.contains_key(key.as_str()) {
                     continue; // engine override or dynamic re-statement
                 }
                 if !is_namespaced(key) {
@@ -78,18 +93,42 @@ impl NameTable {
                          for engine-owned keys"
                     ));
                 }
-                names.push(Box::leak(key.clone().into_boxed_str()));
+                table.push(Box::leak(key.clone().into_boxed_str()));
             }
         }
-        if names.len() > 256 {
+        if table.names.len() > 256 {
             return Err(format!(
                 "{} {what}s registered, but ids are one byte: the registry caps at 256 \
                  (engine uses {}; remove or merge pack content)",
-                names.len(),
+                table.names.len(),
                 engine.len()
             ));
         }
-        Ok(NameTable { names })
+        Ok(table)
+    }
+}
+
+/// A loaded content registry: the id-ordered definition rows plus the
+/// [`NameTable`] that assigned their ids. The table is DENSE (every registered
+/// name covered exactly once), so `id(name)` always indexes a valid row — the
+/// one uniform name→id lookup for every catalog consumer; an unknown name is
+/// `None`, and what that degrades to (air, MISSING, skip) stays the caller's
+/// policy.
+pub(crate) struct Catalog<D: 'static> {
+    rows: &'static [D],
+    names: NameTable,
+}
+
+impl<D> Catalog<D> {
+    /// The id-ordered definition rows (`rows()[id]` is `id`'s row).
+    pub fn rows(&self) -> &'static [D] {
+        self.rows
+    }
+
+    /// The runtime id registered under `name` (engine `petramond:*` and pack
+    /// `mod_id:name` keys alike), or `None` when no such row is loaded.
+    pub fn id(&self, name: &str) -> Option<u8> {
+        self.names.id(name)
     }
 }
 
@@ -112,10 +151,14 @@ pub(crate) fn load_catalog<R, D>(
     engine: &[&'static str],
     what: &str,
     convert: impl FnMut(R, u8, &NameTable) -> Result<D, String>,
-) -> Result<Vec<D>, String> {
+) -> Result<Catalog<D>, String> {
     let (merged, layer_keys) = parse_and_merge(texts, parse_layer, row_key)?;
     let names = NameTable::build(engine, &layer_keys, what)?;
-    resolve_merged(merged, row_key, &names, what, convert)
+    let rows = resolve_merged(merged, row_key, &names, what, convert)?;
+    Ok(Catalog {
+        rows: Box::leak(rows.into_boxed_slice()),
+        names,
+    })
 }
 
 /// [`load_catalog`] against a PREBUILT name table — for the catalogs whose

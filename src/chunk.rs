@@ -12,17 +12,10 @@
 //! - **Test fixture**: column-era tests hand-build a `Chunk` and install it via
 //!   `World::insert_chunk_for_test`, which splits it into sections like the old
 //!   streamer did (`world::stream::split_generated_column`); `mesh`'s legacy
-//!   whole-column meshing/skylight paths also still run against it under
-//!   `cfg(test)`.
-
-#[cfg(test)]
-use std::collections::HashMap;
+//!   whole-column skylight bake (`mesh::skylight`, `cfg(test)`) also still runs
+//!   against it.
 
 use crate::block::Block;
-#[cfg(test)]
-use crate::facing::Facing;
-#[cfg(test)]
-use crate::furnace::Furnace;
 
 pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SZ: usize = 16;
@@ -92,8 +85,8 @@ pub fn section_local(idx: usize) -> (usize, usize, usize) {
 /// A legacy voxel column: the worldgen transfer format + column-era test
 /// fixture (see the module doc). Blocks stored as `Box<[u8; VOLUME]>`
 /// (64 KiB / chunk). Carries only what worldgen produces — blocks, water
-/// metadata, heightmap, biome — plus a test-only furnace map for the legacy
-/// mesh tests. Live world storage is [`crate::section::Section`].
+/// metadata, heightmap, biome — never block entities. Live world storage is
+/// [`crate::section::Section`].
 pub struct Chunk {
     pub cx: i32,
     pub cz: i32,
@@ -105,26 +98,13 @@ pub struct Chunk {
     /// water is all-source (meta 0), so worldgen output never allocates it;
     /// only test fixtures with flowing water do.
     water: Option<Box<[u8]>>,
-    /// Furnace fixtures `(state, facing)`, keyed by local block index
-    /// (`idx(x,y,z)` fits a u16). Worldgen never produces block entities; this
-    /// survives solely for the legacy whole-column mesh tests (front texture).
-    #[cfg(test)]
-    furnaces: HashMap<u16, (Furnace, Facing)>,
     /// Highest non-air Y per (x,z) column for fast surface queries.
     pub heightmap: Box<[u16; CHUNK_SX * CHUNK_SZ]>,
     /// Biome id per (x,z) column (Biome::from_id).
     pub biomes: Box<[u8; CHUNK_SX * CHUNK_SZ]>,
     pub dirty: bool,
-    /// Cached skylight (x2 scale), a `16 x 16 x (sky_yhi-sky_ylo+1)` band
-    /// indexed like `blocks` but with Y offset by `sky_ylo`. Only the legacy
-    /// `mesh::skylight` tests compute/read it.
-    #[cfg(test)]
-    skylight: Box<[u8]>,
-    #[cfg(test)]
-    sky_ylo: i32,
-    #[cfg(test)]
-    sky_yhi: i32,
-    /// Set when blocks change; cleared when the skylight band is recomputed.
+    /// Set when blocks change. Nothing on the column clears it any more (live
+    /// light lives on `Section`); worldgen fixture asserts still read it.
     pub light_dirty: bool,
     /// Count of blocks in this column that receive random ticks (see
     /// [`Block::has_random_tick`]). Maintained incrementally by every setter and
@@ -143,45 +123,11 @@ impl Chunk {
             blocks,
             water: None,
             random_tick_count: 0,
-            #[cfg(test)]
-            furnaces: HashMap::new(),
             heightmap,
             biomes,
             dirty: true,
-            #[cfg(test)]
-            skylight: Vec::new().into_boxed_slice(),
-            #[cfg(test)]
-            sky_ylo: 0,
-            #[cfg(test)]
-            sky_yhi: 0,
             light_dirty: true,
         }
-    }
-
-    /// Skylight (x2 scale) at a local voxel. Above the cached band reads as open
-    /// sky, below as dark; an uncomputed band reads as open sky (so a not-yet-lit
-    /// chunk renders bright rather than black for the brief moment before its
-    /// light is baked).
-    #[cfg(test)]
-    #[inline]
-    pub fn skylight_at(&self, x: usize, y: i32, z: usize) -> u8 {
-        if self.skylight.is_empty() || y > self.sky_yhi {
-            return SKY_FULL;
-        }
-        if y < self.sky_ylo {
-            return 0;
-        }
-        let ay = y - self.sky_ylo;
-        self.skylight[((ay * CHUNK_SZ as i32 + z as i32) * CHUNK_SX as i32 + x as i32) as usize]
-    }
-
-    /// Install a freshly computed skylight band and clear the dirty flag.
-    #[cfg(test)]
-    pub fn set_skylight(&mut self, band: Box<[u8]>, ylo: i32, yhi: i32) {
-        self.skylight = band;
-        self.sky_ylo = ylo;
-        self.sky_yhi = yhi;
-        self.light_dirty = false;
     }
 
     #[inline]
@@ -360,51 +306,6 @@ impl Chunk {
         self.mark_light_dirty();
     }
 
-    // --- Furnace block-entities (test fixture only) -------------------------------
-    //
-    // Worldgen never emits block entities, and the live world keeps them on
-    // `Section`. These survive solely for the legacy whole-column mesh tests.
-
-    /// Local block-index key for the furnace map (`idx` fits a u16).
-    #[cfg(test)]
-    #[inline]
-    fn block_entity_key(x: usize, y: usize, z: usize) -> u16 {
-        idx(x, y, z) as u16
-    }
-
-    /// Install a furnace fixture (state + facing) at a local voxel.
-    #[cfg(test)]
-    pub fn insert_furnace(
-        &mut self,
-        x: usize,
-        y: usize,
-        z: usize,
-        furnace: Furnace,
-        facing: Facing,
-    ) {
-        self.furnaces
-            .insert(Self::block_entity_key(x, y, z), (furnace, facing));
-    }
-
-    /// Whether the furnace at a local voxel is currently lit — read by the legacy
-    /// chunk mesher to pick the burning front texture.
-    #[cfg(test)]
-    #[inline]
-    pub fn is_furnace_lit(&self, x: usize, y: usize, z: usize) -> bool {
-        self.furnaces
-            .get(&Self::block_entity_key(x, y, z))
-            .is_some_and(|(f, _)| f.is_lit())
-    }
-
-    /// The facing of the furnace at a local voxel (which way its front points), or
-    /// `North` if there is no furnace there.
-    #[cfg(test)]
-    #[inline]
-    pub fn furnace_facing(&self, x: usize, y: usize, z: usize) -> Facing {
-        self.furnaces
-            .get(&Self::block_entity_key(x, y, z))
-            .map_or(Facing::default(), |(_, facing)| *facing)
-    }
 }
 
 /// 2D column coordinate `(cx, cz)` — the key for per-column [`crate::column::Column`]

@@ -3,7 +3,7 @@
 
 use mod_api::{HostCall, HostRet};
 
-use crate::modding::convert::to_vec;
+use crate::mathh::Vec3;
 
 use super::guards::{finite3, sim_call, sim_query};
 
@@ -47,7 +47,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             // queue on `TickEvents` and the app layer plays it next frame.
             ctx.feed.world.sounds.push(crate::game::ModSound {
                 sound,
-                pos: pos.map(to_vec),
+                pos: pos.map(Vec3::from),
             });
             HostRet::Bool(true)
         }),
@@ -72,7 +72,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                 .push(crate::game::ModSpatialSoundCommand::PlayAt {
                     handle,
                     sound,
-                    pos: to_vec(pos),
+                    pos: pos.into(),
                     volume,
                     pitch,
                 });

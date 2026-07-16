@@ -3,7 +3,7 @@
 
 use mod_api::{HostCall, HostRet};
 
-use crate::modding::convert::to_ivec;
+use crate::mathh::IVec3;
 
 use super::guards::{kv_write_guard, sim_call, sim_query};
 
@@ -23,7 +23,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
             None => sim_query(|ctx| HostRet::Bool(ctx.world.mod_kv_remove(&key))),
         },
         HostCall::SectionKvGet { pos, key } => sim_query(|ctx| {
-            let p = to_ivec(pos);
+            let p = IVec3::from(pos);
             HostRet::Bytes(
                 ctx.world
                     .cell_kv_get(p.x, p.y, p.z, &key)
@@ -34,7 +34,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
             match kv_write_guard(mod_id, &key, value.len()) {
                 Some(err) => err,
                 None => sim_query(|ctx| {
-                    let p = to_ivec(pos);
+                    let p = IVec3::from(pos);
                     HostRet::Bool(ctx.world.cell_kv_set(p.x, p.y, p.z, key, value))
                 }),
             }
@@ -42,7 +42,7 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::SectionKvDelete { pos, key } => match kv_write_guard(mod_id, &key, 0) {
             Some(err) => err,
             None => sim_query(|ctx| {
-                let p = to_ivec(pos);
+                let p = IVec3::from(pos);
                 HostRet::Bool(ctx.world.cell_kv_remove(p.x, p.y, p.z, &key))
             }),
         },

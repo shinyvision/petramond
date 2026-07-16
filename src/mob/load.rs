@@ -216,8 +216,8 @@ pub(super) fn parse_layers(texts: &[&str]) -> Result<&'static [MobDef], String> 
             let name = r.mob.clone();
             convert(r, Mob(id), names).map_err(|e| format!("mob '{name}': {e}"))
         },
-    )?;
-    let defs: &'static [MobDef] = Box::leak(defs.into_boxed_slice());
+    )?
+    .rows();
 
     // Brain validation needs the leaked `&'static MobDef` rows (node factories read
     // row data), so it runs last: every factory must accept its params NOW, failing

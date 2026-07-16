@@ -512,116 +512,120 @@ fn slabs_stack_vertically_with_mixed_materials() {
     assert_eq!(state.layers, [Block::StoneSlab, Block::DirtSlab]);
 }
 
+/// A wall torch mounts only on a FULL support face: a stair's flat back
+/// qualifies, its stepped open side does not; a lone slab layer's side does
+/// not, a completed two-layer stack's side does.
 #[test]
-fn torch_places_on_the_flat_side_of_a_stair() {
-    let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
-    let stair = IVec3::new(4, 64, 4);
-    assert!(game.server.world.place_stair(
-        stair,
-        Block::OakStairs,
-        StairState::new(Facing::East, StairHalf::Bottom)
-    ));
-
-    give(&mut game, ItemType::Torch, 1);
-    game.server.sessions[0].look = Some(hit(stair, -IVec3::X));
-    assert!(
-        game.server.try_place_for_test(),
-        "torch places on stair back"
-    );
-
-    let torch = stair - IVec3::X;
-    assert_eq!(
-        Block::from_id(game.server.world.chunk_block(torch.x, torch.y, torch.z)),
-        Block::Torch
-    );
-    assert_eq!(
-        game.server.world.torch_placement(torch),
-        crate::torch::TorchPlacement::West
-    );
-}
-
-#[test]
-fn torch_does_not_place_on_the_open_side_of_a_stair() {
-    let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
-    let stair = IVec3::new(4, 64, 4);
-    assert!(game.server.world.place_stair(
-        stair,
-        Block::OakStairs,
-        StairState::new(Facing::East, StairHalf::Bottom)
-    ));
-
-    give(&mut game, ItemType::Torch, 1);
-    game.server.sessions[0].look = Some(hit(stair, IVec3::X));
-    assert!(
-        !game.server.try_place_for_test(),
-        "stair open side is not a full torch support face"
-    );
-
-    let torch = stair + IVec3::X;
-    assert_eq!(
-        Block::from_id(game.server.world.chunk_block(torch.x, torch.y, torch.z)),
-        Block::Air
-    );
-}
-
-#[test]
-fn torch_does_not_place_on_the_side_of_a_single_slab() {
-    let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
-    let slab = IVec3::new(4, 64, 4);
-    assert!(game.server.world.place_slab_layer(
-        slab,
-        Block::DirtSlab,
-        crate::slab::SlabSlot {
-            split: SlabSplit::Y,
-            index: 0,
-        }
-    ));
-
-    give(&mut game, ItemType::Torch, 1);
-    game.server.sessions[0].look = Some(hit(slab, IVec3::X));
-    assert!(
-        !game.server.try_place_for_test(),
-        "single slab side is not a full torch support face"
-    );
-
-    let torch = slab + IVec3::X;
-    assert_eq!(
-        Block::from_id(game.server.world.chunk_block(torch.x, torch.y, torch.z)),
-        Block::Air
-    );
-}
-
-#[test]
-fn torch_places_on_the_side_of_a_full_slab_stack() {
-    let mut game = game_on_empty_chunk();
-    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
-    let slab = IVec3::new(4, 64, 4);
-    for (block, index) in [(Block::DirtSlab, 0), (Block::CobblestoneSlab, 1)] {
-        assert!(game.server.world.place_slab_layer(
-            slab,
-            block,
-            crate::slab::SlabSlot {
-                split: SlabSplit::Y,
-                index,
-            }
-        ));
+fn torch_support_face_cases() {
+    struct Case {
+        label: &'static str,
+        /// Install the support block at the given cell; false = setup failed.
+        setup: fn(&mut super::common::TestGame, IVec3) -> bool,
+        /// The clicked face (torch cell = support + normal).
+        normal: IVec3,
+        expect_place: bool,
+        expected_block: Block,
+        expected_mount: Option<crate::torch::TorchPlacement>,
     }
+    fn stair(game: &mut super::common::TestGame, support: IVec3) -> bool {
+        game.server.world.place_stair(
+            support,
+            Block::OakStairs,
+            StairState::new(Facing::East, StairHalf::Bottom),
+        )
+    }
+    let cases = [
+        Case {
+            label: "stair flat back supports a wall torch",
+            setup: stair,
+            normal: -IVec3::X,
+            expect_place: true,
+            expected_block: Block::Torch,
+            expected_mount: Some(crate::torch::TorchPlacement::West),
+        },
+        Case {
+            label: "stair open side is not a full support face",
+            setup: stair,
+            normal: IVec3::X,
+            expect_place: false,
+            expected_block: Block::Air,
+            expected_mount: None,
+        },
+        Case {
+            label: "single slab side is not a full support face",
+            setup: |game, support| {
+                game.server.world.place_slab_layer(
+                    support,
+                    Block::DirtSlab,
+                    crate::slab::SlabSlot {
+                        split: SlabSplit::Y,
+                        index: 0,
+                    },
+                )
+            },
+            normal: IVec3::X,
+            expect_place: false,
+            expected_block: Block::Air,
+            expected_mount: None,
+        },
+        Case {
+            label: "full slab stack side supports a wall torch",
+            setup: |game, support| {
+                [(Block::DirtSlab, 0), (Block::CobblestoneSlab, 1)]
+                    .into_iter()
+                    .all(|(block, index)| {
+                        game.server.world.place_slab_layer(
+                            support,
+                            block,
+                            crate::slab::SlabSlot {
+                                split: SlabSplit::Y,
+                                index,
+                            },
+                        )
+                    })
+            },
+            normal: IVec3::X,
+            expect_place: true,
+            expected_block: Block::Torch,
+            expected_mount: None,
+        },
+    ];
 
-    give(&mut game, ItemType::Torch, 1);
-    game.server.sessions[0].look = Some(hit(slab, IVec3::X));
-    assert!(
-        game.server.try_place_for_test(),
-        "full slab stack supports wall torch"
-    );
+    for case in cases {
+        let mut game = game_on_empty_chunk();
+        game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+        let support = IVec3::new(4, 64, 4);
+        assert!(
+            (case.setup)(&mut game, support),
+            "[{}] support setup must succeed",
+            case.label
+        );
 
-    let torch = slab + IVec3::X;
-    assert_eq!(
-        Block::from_id(game.server.world.chunk_block(torch.x, torch.y, torch.z)),
-        Block::Torch
-    );
+        give(&mut game, ItemType::Torch, 1);
+        game.server.sessions[0].look = Some(hit(support, case.normal));
+        assert_eq!(
+            game.server.try_place_for_test(),
+            case.expect_place,
+            "[{}] torch placement verdict",
+            case.label
+        );
+
+        let torch = support + case.normal;
+        assert_eq!(
+            Block::from_id(game.server.world.chunk_block(torch.x, torch.y, torch.z)),
+            case.expected_block,
+            "[{}] the clicked face's adjacent cell",
+            case.label
+        );
+        if let Some(mount) = case.expected_mount {
+            assert_eq!(
+                game.server.world.torch_placement(torch),
+                mount,
+                "[{}] the recorded wall mount",
+                case.label
+            );
+        }
+    }
 }
 
 #[test]

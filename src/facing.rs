@@ -3,32 +3,19 @@
 //! blocks. A neutral leaf module — nothing block-specific belongs here.
 
 use crate::mathh::IVec3;
+use crate::wire_enum::wire_enum;
 
-#[repr(u8)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum Facing {
-    #[default]
-    North = 0, // front faces -Z
-    South = 1, // +Z
-    West = 2,  // -X
-    East = 3,  // +X
+wire_enum! {
+    pub enum Facing: u8 {
+        North = 0, // front faces -Z
+        South = 1, // +Z
+        West = 2,  // -X
+        East = 3,  // +X
+    }
+    default North
 }
 
 impl Facing {
-    #[inline]
-    pub fn to_u8(self) -> u8 {
-        self as u8
-    }
-    #[inline]
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            1 => Facing::South,
-            2 => Facing::West,
-            3 => Facing::East,
-            _ => Facing::North,
-        }
-    }
-
     /// The horizontal unit direction this facing points toward.
     #[inline]
     pub fn dir(self) -> IVec3 {

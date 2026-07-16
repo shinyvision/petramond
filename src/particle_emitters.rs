@@ -116,7 +116,7 @@ struct RawFile {
 
 /// The bundle registered under `key`, or `None` when no such row is loaded.
 pub fn by_key(key: &str) -> Option<&'static EmitterBundle> {
-    defs().iter().find(|d| d.key == key)
+    catalog().id(key).map(|id| &catalog().rows()[id as usize])
 }
 
 /// The bundle with session id `id`, or `None` for an unregistered id.
@@ -127,16 +127,17 @@ pub fn def(id: u8) -> Option<&'static EmitterBundle> {
 /// The loaded bundle table, id-ordered. Loads exactly once; a missing or
 /// inconsistent `particle_emitters.json` fails loudly at startup.
 pub fn defs() -> &'static [EmitterBundle] {
-    static TABLE: LazyLock<&'static [EmitterBundle]> = LazyLock::new(|| {
-        Box::leak(
-            crate::registry::read_catalog("particle_emitters.json", "emitter", parse_layers)
-                .into_boxed_slice(),
-        )
+    catalog().rows()
+}
+
+fn catalog() -> &'static crate::registry::Catalog<EmitterBundle> {
+    static TABLE: LazyLock<crate::registry::Catalog<EmitterBundle>> = LazyLock::new(|| {
+        crate::registry::read_catalog("particle_emitters.json", "emitter", parse_layers)
     });
     &TABLE
 }
 
-fn parse_layers(texts: &[&str]) -> Result<Vec<EmitterBundle>, String> {
+fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EmitterBundle>, String> {
     crate::registry::load_catalog(
         texts,
         |text| serde_json::from_str::<RawFile>(text).map(|f| f.emitters),
@@ -239,7 +240,9 @@ mod tests {
     /// The shipped catalog must load fully — the startup gate as a test.
     #[test]
     fn shipped_particle_emitters_json_loads_fully() {
-        let defs = parse_layers(&[&base()]).unwrap_or_else(|e| panic!("shipped catalog: {e}"));
+        let defs = parse_layers(&[&base()])
+            .unwrap_or_else(|e| panic!("shipped catalog: {e}"))
+            .rows();
         assert_eq!(defs.len(), ENGINE_EMITTER_NAMES.len());
         for (i, d) in defs.iter().enumerate() {
             assert_eq!(d.id, i as u8);
@@ -269,7 +272,9 @@ mod tests {
             )
         };
         let ok = splash("3.0", "24", "[1.0, 2.0]", "2.0");
-        let defs = parse_layers(&[&base(), ok.as_str()]).expect("burst bundle loads");
+        let defs = parse_layers(&[&base(), ok.as_str()])
+            .expect("burst bundle loads")
+            .rows();
         let d = defs.last().unwrap();
         assert!(d.burst.is_some() && d.rows.is_empty());
 
@@ -309,7 +314,9 @@ mod tests {
             {"rate": 2.0, "lifetime": [0.4, 0.8], "size": [0.05, 0.1],
              "color": [[0.9, 0.9, 0.2], [1.0, 1.0, 0.6]], "alpha": [0.5, 0.8]}]}"#;
         let pack = format!(r#"{{"emitters": [{glow}]}}"#);
-        let defs = parse_layers(&[&base(), pack.as_str()]).expect("pack bundle loads");
+        let defs = parse_layers(&[&base(), pack.as_str()])
+            .expect("pack bundle loads")
+            .rows();
         let d = defs.last().unwrap();
         assert_eq!(d.key, "mymod:glow");
         assert_eq!(d.tint, Some([1.0, 0.9, 0.6]));

@@ -273,37 +273,175 @@ fn stale_dropped_item_despawns_on_the_lifetime_tick() {
     assert!(game.server.world.item_entities().is_empty());
 }
 
+/// Cursor throws and hotbar drops: each case queues one intent, checks the
+/// source stack stays untouched until the tick, then asserts what the tick
+/// spawned and what remained at the source. The queued-throw-survives-menu-
+/// close variants add ordering assertions and keep their own tests.
 #[test]
-fn throwing_cursor_stack_spawns_a_dropped_item() {
-    let mut game = game();
-    game.server.sessions[0].player.inventory = filled_inventory();
-    // Drag a stack onto the cursor first.
-    game.server.sessions[0].player.inventory.click_slot(0);
-    let held = game.server.sessions[0]
-        .player
-        .inventory
-        .cursor()
-        .expect("cursor holds a stack")
-        .count;
-    assert!(game.server.world.item_entities().is_empty());
-    game.throw_cursor_stack();
-    assert!(
-        game.server.sessions[0].player.inventory.cursor().is_some(),
-        "cursor is not mutated until the tick"
-    );
-    let events = apply_drop_actions(&mut game);
-    assert!(events.player_at(0).threw_item);
-    assert!(
-        game.server.sessions[0].player.inventory.cursor().is_none(),
-        "cursor emptied"
-    );
-    assert_eq!(game.server.world.item_entities().len(), 1);
-    assert_eq!(game.server.world.item_entities()[0].stack.count, held);
-    assert_eq!(
-        game.server.world.item_entities()[0].ticks_lived,
-        0,
-        "thrown item starts the pickup delay"
-    );
+fn cursor_throw_and_drop_selected_cases() {
+    #[derive(Clone, Copy)]
+    enum Source {
+        Cursor,
+        Selected,
+    }
+    struct Case {
+        label: &'static str,
+        /// Whether the source holds a stack of `STACK` dirt (false = empty).
+        held: bool,
+        source: Source,
+        /// Throw/drop the whole stack (true) or a single item (false).
+        all: bool,
+        /// `Some(count)`: exactly one fresh drop of that size spawns on the
+        /// tick. `None`: the action is a no-op, nothing spawns.
+        dropped: Option<u8>,
+        /// What the source holds after the tick (`None` = emptied).
+        remainder: Option<u8>,
+    }
+    const STACK: u8 = 12;
+    let cases = [
+        Case {
+            label: "throwing the cursor stack drops the whole stack",
+            held: true,
+            source: Source::Cursor,
+            all: true,
+            dropped: Some(STACK),
+            remainder: None,
+        },
+        Case {
+            label: "throwing one from the cursor drops a single item",
+            held: true,
+            source: Source::Cursor,
+            all: false,
+            dropped: Some(1),
+            remainder: Some(STACK - 1),
+        },
+        Case {
+            label: "throwing the stack with an empty cursor is a noop",
+            held: false,
+            source: Source::Cursor,
+            all: true,
+            dropped: None,
+            remainder: None,
+        },
+        Case {
+            label: "throwing one with an empty cursor is a noop",
+            held: false,
+            source: Source::Cursor,
+            all: false,
+            dropped: None,
+            remainder: None,
+        },
+        Case {
+            label: "drop-selected one throws a single held item",
+            held: true,
+            source: Source::Selected,
+            all: false,
+            dropped: Some(1),
+            remainder: Some(STACK - 1),
+        },
+        Case {
+            label: "drop-selected all throws the whole held stack",
+            held: true,
+            source: Source::Selected,
+            all: true,
+            dropped: Some(STACK),
+            remainder: None,
+        },
+        Case {
+            label: "drop one with an empty hand is a noop",
+            held: false,
+            source: Source::Selected,
+            all: false,
+            dropped: None,
+            remainder: None,
+        },
+        Case {
+            label: "drop all with an empty hand is a noop",
+            held: false,
+            source: Source::Selected,
+            all: true,
+            dropped: None,
+            remainder: None,
+        },
+    ];
+
+    fn source_count(game: &super::common::TestGame, source: Source) -> Option<u8> {
+        let inv = &game.server.sessions[0].player.inventory;
+        match source {
+            Source::Cursor => inv.cursor().map(|s| s.count),
+            Source::Selected => inv.selected().map(|s| s.count),
+        }
+    }
+
+    for case in cases {
+        let mut game = game();
+        game.server.sessions[0].player.inventory = match (case.held, case.source) {
+            (false, _) => Inventory::new(),
+            (true, Source::Cursor) => Inventory::from_parts(
+                [None; crate::inventory::TOTAL_SLOTS],
+                Some(ItemStack::new(ItemType::Dirt, STACK)),
+                0,
+            ),
+            (true, Source::Selected) => {
+                let mut slots = [None; crate::inventory::TOTAL_SLOTS];
+                slots[0] = Some(ItemStack::new(ItemType::Dirt, STACK));
+                Inventory::from_parts(slots, None, 0)
+            }
+        };
+
+        match (case.source, case.all) {
+            (Source::Cursor, true) => game.throw_cursor_stack(),
+            (Source::Cursor, false) => game.throw_cursor_one(),
+            (Source::Selected, all) => game.drop_selected_item(all),
+        }
+        assert_eq!(
+            source_count(&game, case.source),
+            case.held.then_some(STACK),
+            "[{}] the source stack must not mutate until the tick",
+            case.label
+        );
+
+        let events = apply_drop_actions(&mut game);
+        assert_eq!(
+            events.player_at(0).threw_item,
+            case.dropped.is_some(),
+            "[{}] the hand throw animation fires iff something dropped",
+            case.label
+        );
+        match case.dropped {
+            Some(count) => {
+                assert_eq!(
+                    game.server.world.item_entities().len(),
+                    1,
+                    "[{}] exactly one drop spawns on the tick",
+                    case.label
+                );
+                let drop = &game.server.world.item_entities()[0];
+                assert_eq!(
+                    drop.stack,
+                    ItemStack::new(ItemType::Dirt, count),
+                    "[{}] the dropped stack",
+                    case.label
+                );
+                assert_eq!(
+                    drop.ticks_lived, 0,
+                    "[{}] a thrown item starts the pickup delay",
+                    case.label
+                );
+            }
+            None => assert!(
+                game.server.world.item_entities().is_empty(),
+                "[{}] a noop throw must spawn nothing",
+                case.label
+            ),
+        }
+        assert_eq!(
+            source_count(&game, case.source),
+            case.remainder,
+            "[{}] the remainder at the source",
+            case.label
+        );
+    }
 }
 
 #[test]
@@ -341,43 +479,6 @@ fn queued_cursor_stack_throw_survives_menu_close_before_tick() {
     assert_eq!(
         game.server.world.item_entities()[0].stack,
         ItemStack::new(ItemType::Dirt, 12)
-    );
-}
-
-#[test]
-fn throwing_one_from_cursor_drops_a_single_item() {
-    let mut game = game();
-    game.server.sessions[0].player.inventory = filled_inventory();
-    game.server.sessions[0].player.inventory.click_slot(0);
-    let held = game.server.sessions[0]
-        .player
-        .inventory
-        .cursor()
-        .unwrap()
-        .count;
-    game.throw_cursor_one();
-    assert_eq!(
-        game.server.sessions[0]
-            .player
-            .inventory
-            .cursor()
-            .unwrap()
-            .count,
-        held,
-        "cursor count is unchanged until the tick"
-    );
-    let events = apply_drop_actions(&mut game);
-    assert!(events.player_at(0).threw_item);
-    assert_eq!(game.server.world.item_entities().len(), 1);
-    assert_eq!(game.server.world.item_entities()[0].stack.count, 1);
-    assert_eq!(
-        game.server.sessions[0]
-            .player
-            .inventory
-            .cursor()
-            .unwrap()
-            .count,
-        held - 1
     );
 }
 
@@ -423,58 +524,6 @@ fn queued_cursor_one_throw_stashes_only_remainder_on_menu_close() {
 }
 
 #[test]
-fn throwing_with_empty_cursor_is_a_noop() {
-    let mut game = game();
-    game.server.sessions[0].player.inventory = crate::inventory::Inventory::new();
-    assert!(game.server.sessions[0].player.inventory.cursor().is_none());
-    game.throw_cursor_stack();
-    game.throw_cursor_one();
-    assert!(game.server.world.item_entities().is_empty());
-}
-
-#[test]
-fn drop_selected_one_throws_a_single_held_item() {
-    let mut game = game();
-    game.server.sessions[0].player.inventory = filled_inventory();
-    game.server.sessions[0].player.inventory.set_active(0);
-    let before = game.server.sessions[0]
-        .player
-        .inventory
-        .selected()
-        .unwrap()
-        .count;
-    game.drop_selected_item(false);
-    assert_eq!(
-        game.server.sessions[0]
-            .player
-            .inventory
-            .selected()
-            .unwrap()
-            .count,
-        before,
-        "selected stack is not mutated until the tick"
-    );
-    let events = apply_drop_actions(&mut game);
-    assert!(events.player_at(0).threw_item);
-    assert_eq!(game.server.world.item_entities().len(), 1);
-    assert_eq!(game.server.world.item_entities()[0].stack.count, 1);
-    assert_eq!(
-        game.server.world.item_entities()[0].ticks_lived,
-        0,
-        "dropped item starts the pickup delay"
-    );
-    assert_eq!(
-        game.server.sessions[0]
-            .player
-            .inventory
-            .selected()
-            .unwrap()
-            .count,
-        before - 1
-    );
-}
-
-#[test]
 fn queued_q_drop_uses_the_action_time_hotbar_slot() {
     let mut game = game();
     let mut slots = [None; crate::inventory::TOTAL_SLOTS];
@@ -501,57 +550,6 @@ fn queued_q_drop_uses_the_action_time_hotbar_slot() {
         game.server.world.item_entities()[0].stack,
         ItemStack::new(ItemType::Dirt, 1)
     );
-}
-
-#[test]
-fn drop_selected_all_throws_the_whole_held_stack() {
-    let mut game = game();
-    game.server.sessions[0].player.inventory = filled_inventory();
-    game.server.sessions[0].player.inventory.set_active(0);
-    let before = game.server.sessions[0]
-        .player
-        .inventory
-        .selected()
-        .unwrap()
-        .count;
-    game.drop_selected_item(true);
-    assert_eq!(
-        game.server.sessions[0]
-            .player
-            .inventory
-            .selected()
-            .unwrap()
-            .count,
-        before,
-        "selected stack is not mutated until the tick"
-    );
-    let events = apply_drop_actions(&mut game);
-    assert!(events.player_at(0).threw_item);
-    assert_eq!(game.server.world.item_entities().len(), 1);
-    assert_eq!(game.server.world.item_entities()[0].stack.count, before);
-    assert!(
-        game.server.sessions[0]
-            .player
-            .inventory
-            .selected()
-            .is_none(),
-        "held slot emptied"
-    );
-}
-
-#[test]
-fn drop_with_empty_hand_is_a_noop() {
-    let mut game = game();
-    game.server.sessions[0].player.inventory = crate::inventory::Inventory::new();
-    game.server.sessions[0].player.inventory.set_active(0);
-    assert!(game.server.sessions[0]
-        .player
-        .inventory
-        .selected()
-        .is_none());
-    game.drop_selected_item(false);
-    game.drop_selected_item(true);
-    assert!(game.server.world.item_entities().is_empty());
 }
 
 #[test]
