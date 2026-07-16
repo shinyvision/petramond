@@ -449,11 +449,7 @@ impl Instance {
         if name.len() > MAX_MOB_ANIM_NAME_BYTES {
             return false;
         }
-        match (
-            self.active_anims
-                .binary_search_by(|a| a.name.as_str().cmp(name)),
-            active,
-        ) {
+        match (self.anim_search(name), active) {
             (Ok(_), true) | (Err(_), false) => true,
             (Ok(at), false) => {
                 self.active_anims.remove(at);
@@ -487,17 +483,12 @@ impl Instance {
         {
             return false;
         }
-        match self
-            .active_anims
-            .binary_search_by(|a| a.name.as_str().cmp(name))
-        {
-            Ok(at) => {
-                self.active_anims[at].rate = rate;
-                self.active_anims[at].seek = None;
-                true
-            }
-            Err(_) => false,
-        }
+        let Some(layer) = self.active_anim_mut(name) else {
+            return false;
+        };
+        layer.rate = rate;
+        layer.seek = None;
+        true
     }
 
     /// Seek an active layer's phase to the absolute `target` at `|rate|`/s
@@ -511,17 +502,12 @@ impl Instance {
         {
             return false;
         }
-        match self
-            .active_anims
-            .binary_search_by(|a| a.name.as_str().cmp(name))
-        {
-            Ok(at) => {
-                self.active_anims[at].rate = rate.abs();
-                self.active_anims[at].seek = Some(target);
-                true
-            }
-            Err(_) => false,
-        }
+        let Some(layer) = self.active_anim_mut(name) else {
+            return false;
+        };
+        layer.rate = rate.abs();
+        layer.seek = Some(target);
+        true
     }
 
     /// Authoritative state of one active named animation.
@@ -529,10 +515,22 @@ impl Instance {
         if name.len() > MAX_MOB_ANIM_NAME_BYTES {
             return None;
         }
-        self.active_anims
-            .binary_search_by(|a| a.name.as_str().cmp(name))
+        self.anim_search(name)
             .ok()
             .map(|at| &self.active_anims[at])
+    }
+
+    /// Position of one named layer in the sorted `active_anims` (`Ok` =
+    /// active at that index, `Err` = the insertion point).
+    fn anim_search(&self, name: &str) -> Result<usize, usize> {
+        self.active_anims
+            .binary_search_by(|a| a.name.as_str().cmp(name))
+    }
+
+    /// The active layer named `name`, if any.
+    fn active_anim_mut(&mut self, name: &str) -> Option<&mut AnimLayer> {
+        let at = self.anim_search(name).ok()?;
+        Some(&mut self.active_anims[at])
     }
 
     /// Latch a mod's locomotion intent for this tick (see [`DriveIntent`] and

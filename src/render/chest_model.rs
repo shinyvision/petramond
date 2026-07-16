@@ -17,10 +17,9 @@
 
 use glam::Vec3;
 
-use super::item_cube::push_box_faces_lit;
+use super::item_cube::{orient_faces_to_block, push_box_faces_lit};
 use super::ChestInstance;
 use crate::atlas::Tile;
-use crate::facing::Facing;
 use crate::mesh::Vertex;
 
 /// Inset (m) of the body/lid from the block edges — the chest is 14/16 wide & deep.
@@ -102,10 +101,7 @@ pub fn build_chests(
 /// Append one placed chest (body + hinged lid + latch) for `inst`, lit by its
 /// skylight, oriented to its `facing` at the world block `pos`.
 fn push_chest_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &ChestInstance) {
-    let sky = super::lighting::DynLight {
-        sky: inst.skylight,
-        block: inst.blocklight,
-    };
+    let sky = super::lighting::DynLight::new(inst.skylight, inst.blocklight);
     let start = verts.len();
     push_box_faces_lit(verts, indices, body_faces(), BODY_MIN, BODY_MAX, sky);
 
@@ -125,18 +121,8 @@ fn push_chest_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &Ches
         }
     }
 
-    // Orient the whole model to `facing` (rotate about the block's vertical centre),
-    // then translate to the world block origin. CPU vertex transform since the opaque
-    // pipeline has no per-draw model matrix (same as item entities).
-    let (ys, yc) = facing_yaw(inst.facing).sin_cos();
-    for v in verts[start..].iter_mut() {
-        let [x, y, z] = v.pos;
-        let dx = x - 0.5;
-        let dz = z - 0.5;
-        let rx = 0.5 + dx * yc + dz * ys;
-        let rz = 0.5 - dx * ys + dz * yc;
-        v.pos = [inst.pos.x + rx, inst.pos.y + y, inst.pos.z + rz];
-    }
+    // Orient the whole model to `facing` and translate to the world block origin.
+    orient_faces_to_block(verts, start, inst.facing, inst.pos);
 }
 
 /// Build a CLOSED chest (inset body + latch + lid) centred in the cube
@@ -199,20 +185,10 @@ pub(super) fn push_chest_item_full(
     );
 }
 
-/// Yaw (radians) that rotates the canonical front (`+Z`, South) to `facing`'s front.
-fn facing_yaw(facing: Facing) -> f32 {
-    use std::f32::consts::{FRAC_PI_2, PI};
-    match facing {
-        Facing::South => 0.0,
-        Facing::North => PI,
-        Facing::East => FRAC_PI_2,
-        Facing::West => -FRAC_PI_2,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::facing::Facing;
 
     fn inst(facing: Facing, lid01: f32) -> ChestInstance {
         ChestInstance {

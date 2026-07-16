@@ -183,10 +183,7 @@ pub fn build_item_model_entities(
 
 #[inline]
 fn inst_light(inst: &ItemEntityInstance) -> DynLight {
-    DynLight {
-        sky: inst.skylight,
-        block: inst.blocklight,
-    }
+    DynLight::new(inst.skylight, inst.blocklight)
 }
 
 /// A gentle sinusoidal bob derived from the per-instance spin phase so it needs no

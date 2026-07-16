@@ -19,9 +19,9 @@
 use glam::{Mat4, Vec3};
 
 use super::item_model::ItemVertex;
-use super::lighting::{light_rgb, DynLight, LightEnv};
+use super::lighting::{fold_tint, mul3, DynLight, LightEnv};
 use super::MobRenderInstance;
-use crate::bbmodel::{euler_quat, face_corners, Animation, Model};
+use crate::bbmodel::{euler_quat, face_corners, Animation, Cube, Model};
 use crate::mesh::face::Face;
 use crate::mesh::SHADES;
 
@@ -136,38 +136,53 @@ pub fn build_mob_instances(
             * Mat4::from_scale(Vec3::splat(scale));
         // Two-channel RGB light folds into the tint (shade keeps the directional
         // term), so a mob standing in torch light stays lit at night.
-        let rgb = light_rgb(
-            DynLight {
-                sky: inst.skylight,
-                block: inst.blocklight,
-            },
+        let tint = fold_tint(
+            mul3(hurt_tint(inst.hurt), inst.emitter_tint),
+            DynLight::new(inst.skylight, inst.blocklight),
             env,
         );
-        let hurt = hurt_tint(inst.hurt);
-        let emitter = inst.emitter_tint;
-        let tint = [
-            hurt[0] * emitter[0] * rgb[0],
-            hurt[1] * emitter[1] * rgb[1],
-            hurt[2] * emitter[2] * rgb[2],
-        ];
-
-        for cube in &model.cubes {
-            if inst.shorn && cube.name == COAT_CUBE_NAME {
-                continue;
-            }
-            let bone = pose.get(cube.bone).copied().unwrap_or(Mat4::IDENTITY);
-            let s_cube = Mat4::from_translation(cube.origin)
-                * Mat4::from_quat(euler_quat(cube.rotation))
-                * Mat4::from_translation(-cube.origin);
-            let m = global * bone * s_cube;
-
-            for (slot, face) in Face::ALL.into_iter().enumerate() {
-                let Some(uv) = cube.faces[slot] else { continue };
-                push_face(verts, indices, m, face, cube.from, cube.to, uv, tint);
-            }
-        }
+        bake_model_cubes(
+            model,
+            &pose,
+            global,
+            tint,
+            |cube| inst.shorn && cube.name == COAT_CUBE_NAME,
+            verts,
+            indices,
+        );
     }
     indices.len() as u32
+}
+
+/// Emit every cube of the posed model under `global`, tinted by `tint`, skipping
+/// cubes where `skip` returns true (per-instance part hiding like a shorn sheep's
+/// `wool` cubes; pass `|_| false` for none). Per cube the transform is
+/// `global · pose[bone] · S_cube` (see the module doc). Shared with the
+/// third-person player bake ([`super::player_model`]).
+pub(super) fn bake_model_cubes(
+    model: &Model,
+    pose: &[Mat4],
+    global: Mat4,
+    tint: [f32; 3],
+    skip: impl Fn(&Cube) -> bool,
+    verts: &mut Vec<ItemVertex>,
+    indices: &mut Vec<u32>,
+) {
+    for cube in &model.cubes {
+        if skip(cube) {
+            continue;
+        }
+        let bone = pose.get(cube.bone).copied().unwrap_or(Mat4::IDENTITY);
+        let s_cube = Mat4::from_translation(cube.origin)
+            * Mat4::from_quat(euler_quat(cube.rotation))
+            * Mat4::from_translation(-cube.origin);
+        let m = global * bone * s_cube;
+
+        for (slot, face) in Face::ALL.into_iter().enumerate() {
+            let Some(uv) = cube.faces[slot] else { continue };
+            push_face(verts, indices, m, face, cube.from, cube.to, uv, tint);
+        }
+    }
 }
 
 /// Append one textured cube face (4 verts / 6 indices) transformed by `m`. Skips

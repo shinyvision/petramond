@@ -723,7 +723,7 @@ impl Mobs {
         attacker: Option<EntityRef>,
         feedback: &MobDamageFeedback,
     ) -> Option<DeathDrop> {
-        let mob = self.list.get_mut(index)?;
+        let mob = self.mob_mut(index)?;
         if mob.damage(amount, origin, attack, attacker, feedback) {
             Some(DeathDrop {
                 kind: mob.kind,
@@ -761,14 +761,18 @@ impl Mobs {
         out
     }
 
+    /// The live mob at `index` — the shared guard behind every by-index
+    /// setter, so `list` stays private and `Game` never holds a
+    /// `&mut Instance`.
+    fn mob_mut(&mut self, index: usize) -> Option<&mut Instance> {
+        self.list.get_mut(index)
+    }
+
     /// Toggle the particle-emitter bundle registered under `key` (a
     /// `particle_emitters.json` row, any namespace) on the mob at `index`.
     /// `false` for a bad index, an unregistered key, or an activation past the
     /// per-mob cap. Keeps `list` private, like [`damage_mob`](Self::damage_mob).
     pub fn set_mob_emitter(&mut self, index: usize, key: &str, active: bool) -> bool {
-        let Some(mob) = self.list.get_mut(index) else {
-            return false;
-        };
         let Some(bundle) = crate::particle_emitters::by_key(key) else {
             return false;
         };
@@ -776,7 +780,8 @@ impl Mobs {
         if bundle.burst.is_some() {
             return false;
         }
-        mob.set_emitter_active(bundle.id, active)
+        self.mob_mut(index)
+            .is_some_and(|m| m.set_emitter_active(bundle.id, active))
     }
 
     /// Toggle a NAMED model animation on the mob at `index` — the animation
@@ -785,20 +790,15 @@ impl Mobs {
     /// validated against the model (the sim never loads models); the renderer
     /// skips unknown names.
     pub fn set_mob_anim(&mut self, index: usize, name: &str, active: bool) -> bool {
-        let Some(mob) = self.list.get_mut(index) else {
-            return false;
-        };
-        mob.set_anim_active(name, active)
+        self.mob_mut(index)
+            .is_some_and(|m| m.set_anim_active(name, active))
     }
 
     /// Set an ACTIVE named animation's playback rate on the mob at `index`
     /// (see `Instance::set_anim_rate`): `0` freezes the layer mid-stroke,
     /// negative reverses. `false` for a bad index or an inactive anim.
     pub fn set_mob_anim_rate(&mut self, index: usize, name: &str, rate: f32) -> bool {
-        let Some(mob) = self.list.get_mut(index) else {
-            return false;
-        };
-        mob.set_anim_rate(name, rate)
+        self.mob_mut(index).is_some_and(|m| m.set_anim_rate(name, rate))
     }
 
     /// Seek an ACTIVE named animation's phase on the mob at `index` toward
@@ -806,10 +806,8 @@ impl Mobs {
     /// `Instance::set_anim_seek`). `false` for a bad index or an inactive
     /// anim.
     pub fn set_mob_anim_seek(&mut self, index: usize, name: &str, target: f32, rate: f32) -> bool {
-        let Some(mob) = self.list.get_mut(index) else {
-            return false;
-        };
-        mob.set_anim_seek(name, target, rate)
+        self.mob_mut(index)
+            .is_some_and(|m| m.set_anim_seek(name, target, rate))
     }
 
     /// Authoritative playback state of an ACTIVE named animation on the mob
@@ -830,17 +828,15 @@ impl Mobs {
         vel_z: f32,
         yaw: Option<f32>,
     ) -> bool {
-        let Some(mob) = self.list.get_mut(index) else {
-            return false;
-        };
-        mob.set_drive(vel_x, vel_z, yaw)
+        self.mob_mut(index)
+            .is_some_and(|m| m.set_drive(vel_x, vel_z, yaw))
     }
 
     /// Shear the mob at `index`: `Some` drop when it is a coated shearable species
     /// (its coat is hidden and the regrow countdown starts), else `None`. Keeps
     /// `list` private, like [`damage_mob`](Self::damage_mob).
     pub fn shear_mob(&mut self, index: usize) -> Option<ShearDrop> {
-        let mob = self.list.get_mut(index)?;
+        let mob = self.mob_mut(index)?;
         let spec = super::def(mob.kind).shear?;
         let count = mob.shear()?;
         Some(ShearDrop {

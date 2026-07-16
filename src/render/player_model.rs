@@ -21,11 +21,10 @@
 use glam::{Mat4, Quat, Vec3};
 
 use super::item_model::ItemVertex;
-use super::lighting::{light_rgb, DynLight, LightEnv};
-use super::mob_model::{hurt_tint, push_face};
+use super::lighting::{fold_tint, DynLight, LightEnv};
+use super::mob_model::{bake_model_cubes, hurt_tint};
 use super::PlayerRenderInstance;
-use crate::bbmodel::{euler_quat, Model};
-use crate::mesh::face::Face;
+use crate::bbmodel::Model;
 use crate::player::model::PLAYER_MODEL_SCALE;
 
 /// The grip point in model pixels, in the visual-right arm's rest frame: centred
@@ -200,27 +199,12 @@ fn bake_cubes(
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
 ) -> (u32, Mat4) {
-    let rgb = light_rgb(
-        DynLight {
-            sky: inst.skylight,
-            block: inst.blocklight,
-        },
+    let tint = fold_tint(
+        hurt_tint(inst.hurt),
+        DynLight::new(inst.skylight, inst.blocklight),
         env,
     );
-    let hurt = hurt_tint(inst.hurt);
-    let tint = [hurt[0] * rgb[0], hurt[1] * rgb[1], hurt[2] * rgb[2]];
-
-    for cube in &model.cubes {
-        let bone = pose.get(cube.bone).copied().unwrap_or(Mat4::IDENTITY);
-        let s_cube = Mat4::from_translation(cube.origin)
-            * Mat4::from_quat(euler_quat(cube.rotation))
-            * Mat4::from_translation(-cube.origin);
-        let m = global * bone * s_cube;
-        for (slot, face) in Face::ALL.into_iter().enumerate() {
-            let Some(uv) = cube.faces[slot] else { continue };
-            push_face(verts, indices, m, face, cube.from, cube.to, uv, tint);
-        }
-    }
+    bake_model_cubes(model, pose, global, tint, |_| false, verts, indices);
 
     let hand_bone = model
         .bone_named(HELD_ELBOW_BONE)

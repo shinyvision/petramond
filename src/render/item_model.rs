@@ -62,9 +62,8 @@ pub fn build_block_model_item(
         transform * Mat4::from_scale(Vec3::splat(1.0 / span)) * Mat4::from_translation(-fp * 0.5);
     // RGB light (sky channel dims/tints with the env; block channel is night-
     // invariant) folds into the tint; `shade` keeps the directional term only.
-    let rgb = lighting::light_rgb(light, env);
     let warm = crate::torch::warm_tint([1.0, 1.0, 1.0], warm as f32 / 255.0);
-    let tint = [warm[0] * rgb[0], warm[1] * rgb[1], warm[2] * rgb[2]];
+    let tint = lighting::fold_tint(warm, light, env);
 
     // Draw order (far→near for the depthless icon; natural otherwise).
     let mut order: Vec<usize> = (0..inst.cubes.len()).collect();
@@ -322,9 +321,7 @@ pub(super) fn build_extruded_item_lit(
     // (both via `foliage_tint::face_material`).
     // RGB light folds into the tint (see `build_block_model_item`); `shade` keeps
     // the front/back/side directional terms only.
-    let rgb = lighting::light_rgb(light, env);
-    let base = foliage_tint::face_material(tile).tint;
-    let tint = [base[0] * rgb[0], base[1] * rgb[1], base[2] * rgb[2]];
+    let tint = lighting::fold_tint(foliage_tint::face_material(tile).tint, light, env);
     let zf = DEPTH * 0.5;
     let zb = -DEPTH * 0.5;
     let [fu0, fv0, fu1, fv1] = tile_uv(tile);

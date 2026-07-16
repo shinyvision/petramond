@@ -41,6 +41,7 @@ use super::lighting::{self, DynLight};
 use crate::atlas::Tile;
 use crate::block::Block;
 use crate::block_state::{HeldBlockState, LogAxis, SlabState, StairState};
+use crate::facing::Facing;
 use crate::mesh::face::Face;
 use crate::mesh::{pack_cell_uv, pack_tint, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT};
 
@@ -81,6 +82,23 @@ fn face_bits_solid_lit(face: Face, skylight: u8) -> u32 {
     (face.shade_idx() << 10) | FULL_AO | lighting::skylight_bits(skylight) | SOLID_COLOR_FLAG
 }
 
+/// The base quad emitter: append 4 verts (one per corner via `vertex(corner,
+/// pos)`) + the standard 6 indices. Every quad variant below differs only in
+/// its per-corner bit packing.
+#[inline]
+fn push_quad_with(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    corners: [[f32; 3]; 4],
+    mut vertex: impl FnMut(usize, [f32; 3]) -> Vertex,
+) {
+    let start = verts.len() as u32;
+    for (corner, pos) in corners.into_iter().enumerate() {
+        verts.push(vertex(corner, pos));
+    }
+    indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+}
+
 /// Append a textured quad (4 verts, 6 indices) to `verts`/`indices`. `packed2`
 /// carries the second vertex word (block light in bits 0..6).
 #[inline]
@@ -92,16 +110,12 @@ fn push_quad(
     base_bits: u32,
     packed2: u32,
 ) {
-    let start = verts.len() as u32;
-    for (corner, pos) in corners.into_iter().enumerate() {
-        verts.push(Vertex {
-            pos,
-            tint: pack_tint(tint),
-            packed: base_bits | ((corner as u32) << 8),
-            packed2,
-        });
-    }
-    indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+    push_quad_with(verts, indices, corners, |corner, pos| Vertex {
+        pos,
+        tint: pack_tint(tint),
+        packed: base_bits | ((corner as u32) << 8),
+        packed2,
+    });
 }
 
 #[inline]
@@ -133,17 +147,15 @@ fn push_quad_cell_uvs(
     base_bits: u32,
     packed2: u32,
 ) {
-    let start = verts.len() as u32;
-    for (corner, pos) in corners.into_iter().enumerate() {
+    push_quad_with(verts, indices, corners, |corner, pos| {
         let (u, v) = cell_uvs[corner];
-        verts.push(Vertex {
+        Vertex {
             pos,
             tint: pack_tint(tint),
             packed: base_bits | ((corner as u32) << 8),
             packed2: packed2 | pack_cell_uv(u, v),
-        });
-    }
-    indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+        }
+    });
 }
 
 /// Append a full-bright textured cube spanning `[origin, origin + size]`, per-face
@@ -300,6 +312,40 @@ fn push_log_cube_faces_lit(
     }
 }
 
+/// Yaw (radians) that rotates the canonical front / closed edge (`+Z`, South) to
+/// `facing`'s — the shared convention for dynamic blocks modelled south-facing
+/// (chests, doors).
+pub(super) fn facing_yaw(facing: Facing) -> f32 {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    match facing {
+        Facing::South => 0.0,
+        Facing::North => PI,
+        Facing::East => FRAC_PI_2,
+        Facing::West => -FRAC_PI_2,
+    }
+}
+
+/// Rotate the verts appended at `start..` about the cell's vertical centre by
+/// [`facing_yaw`] (canonical = South), then translate to the world block origin
+/// `pos`. CPU vertex transform since the opaque pipeline has no per-draw model
+/// matrix (chests, doors, item entities all place geometry this way).
+pub(super) fn orient_faces_to_block(
+    verts: &mut [Vertex],
+    start: usize,
+    facing: Facing,
+    pos: Vec3,
+) {
+    let (ys, yc) = facing_yaw(facing).sin_cos();
+    for v in verts[start..].iter_mut() {
+        let [x, y, z] = v.pos;
+        let dx = x - 0.5;
+        let dz = z - 0.5;
+        let rx = 0.5 + dx * yc + dz * ys;
+        let rz = 0.5 - dx * ys + dz * yc;
+        v.pos = [pos.x + rx, pos.y + y, pos.z + rz];
+    }
+}
+
 /// Packed bit shift for the UV mode field (bits 29..32, above the 6-bit skylight
 /// that tops out at bit 28). Dynamic thin geometry uses 1 = crop U and 2 = crop V;
 /// chunk-meshed stairs use the remaining modes for cell-local side UVs.
@@ -355,16 +401,12 @@ fn push_quad_uflip(
     packed2: u32,
 ) {
     const MIRROR: [u32; 4] = [1, 0, 3, 2];
-    let start = verts.len() as u32;
-    for (i, pos) in corners.into_iter().enumerate() {
-        verts.push(Vertex {
-            pos,
-            tint: pack_tint(tint),
-            packed: base_bits | (MIRROR[i] << 8),
-            packed2,
-        });
-    }
-    indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+    push_quad_with(verts, indices, corners, |corner, pos| Vertex {
+        pos,
+        tint: pack_tint(tint),
+        packed: base_bits | (MIRROR[corner] << 8),
+        packed2,
+    });
 }
 
 /// As [`push_box_faces_lit`] but recessing the four side faces 1/16 inward (via
@@ -546,17 +588,15 @@ pub(super) fn push_cell_local_face(
     let word2 = lighting::blocklight_word(light.block);
     let corners = face.quad_box(mn.to_array(), mx.to_array());
     let local = face.quad_box(min, max);
-    let start = verts.len() as u32;
-    for (corner, pos) in corners.into_iter().enumerate() {
+    push_quad_with(verts, indices, corners, |corner, pos| {
         let [u, v] = crate::mesh::plane::cell_uv(face, local[corner]);
-        verts.push(Vertex {
+        Vertex {
             pos,
             tint: pack_tint(mat.tint),
             packed: bits | ((corner as u32) << 8),
             packed2: word2 | pack_cell_uv((u * 16.0).round() as u32, (v * 16.0).round() as u32),
-        });
-    }
-    indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+        }
+    });
 }
 
 /// A full-bright textured cube spanning `[origin, origin + size]`, per-face tiles

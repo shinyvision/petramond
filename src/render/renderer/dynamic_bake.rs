@@ -16,6 +16,13 @@ impl Renderer {
         }
     }
 
+    /// The two-channel light sampled at the local player, lighting every
+    /// held-item variant.
+    #[inline]
+    fn held_item_light(&self) -> crate::render::lighting::DynLight {
+        crate::render::lighting::DynLight::new(self.held_item_skylight, self.held_item_blocklight)
+    }
+
     /// Refresh the crosshair + selection-outline vertex buffers when their
     /// inputs changed (resize / new target). Extracted from `render`'s prologue.
     pub(super) fn refresh_overlay_buffers(&mut self) {
@@ -93,10 +100,7 @@ impl Renderer {
                 * build_hand_lit(
                     &self.held_item,
                     aspect,
-                    crate::render::lighting::DynLight {
-                        sky: self.held_item_skylight,
-                        block: self.held_item_blocklight,
-                    },
+                    self.held_item_light(),
                     self.held_item_warm,
                     &mut hv,
                     &mut hi,
@@ -145,10 +149,7 @@ impl Renderer {
                 crate::render::item_model::build_block_model_item(
                     kind,
                     glam::Mat4::IDENTITY,
-                    crate::render::lighting::DynLight {
-                        sky: self.held_item_skylight,
-                        block: self.held_item_blocklight,
-                    },
+                    self.held_item_light(),
                     self.light_env(),
                     self.held_item_warm,
                     None,
@@ -178,10 +179,7 @@ impl Renderer {
                 let mut iv = std::mem::take(&mut self.item3d_verts);
                 let count = crate::render::item_model::build_extruded_item_lit(
                     tile,
-                    crate::render::lighting::DynLight {
-                        sky: self.held_item_skylight,
-                        block: self.held_item_blocklight,
-                    },
+                    self.held_item_light(),
                     self.light_env(),
                     &mut iv,
                 );
@@ -434,10 +432,7 @@ impl Renderer {
             body_verts.extend_from_slice(&scratch_verts);
             body_indices.extend(scratch_indices.iter().map(|&i| i + base));
 
-            let light = crate::render::lighting::DynLight {
-                sky: inst.skylight,
-                block: inst.blocklight,
-            };
+            let light = crate::render::lighting::DynLight::new(inst.skylight, inst.blocklight);
             // A sleeper's hands are empty — the held item would poke through the bed.
             let held_item = (!inst.sleeping).then_some(held.item).flatten();
             match held_item.map(|it| it.render_kind()) {

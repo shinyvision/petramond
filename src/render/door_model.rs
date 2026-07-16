@@ -15,7 +15,7 @@
 
 use glam::Vec3;
 
-use super::item_cube::push_box_faces_lit_mirrored;
+use super::item_cube::{orient_faces_to_block, push_box_faces_lit_mirrored};
 use super::DoorInstance;
 use crate::door::{self, THICKNESS};
 use crate::facing::Facing;
@@ -43,10 +43,7 @@ pub fn build_doors(
 /// Append one placed door (lower + upper slab halves) for `inst`, swung by its angle,
 /// oriented to its `facing`, lit by its skylight, at the world lower-cell `pos`.
 fn push_door_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &DoorInstance) {
-    let sky = super::lighting::DynLight {
-        sky: inst.skylight,
-        block: inst.blocklight,
-    };
+    let sky = super::lighting::DynLight::new(inst.skylight, inst.blocklight);
     let start = verts.len();
     // Per-face tiles in `ALL_FACES` order [PosX, NegX, PosY, NegY, PosZ, NegZ]: the
     // canonical door's front + back are the ±Z faces (the wide faces the player sees),
@@ -113,30 +110,9 @@ fn push_door_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &DoorI
         }
     }
 
-    // Orient the whole slab to `facing` (canonical = South) about the cell's vertical
-    // centre, then translate to the world lower-cell origin. CPU vertex transform since
-    // the opaque pipeline has no per-draw model matrix (same as chests/item entities).
-    let (ys, yc) = facing_yaw(inst.facing).sin_cos();
-    for v in verts[start..].iter_mut() {
-        let [x, y, z] = v.pos;
-        let dx = x - 0.5;
-        let dz = z - 0.5;
-        let rx = 0.5 + dx * yc + dz * ys;
-        let rz = 0.5 - dx * ys + dz * yc;
-        v.pos = [inst.pos.x + rx, inst.pos.y + y, inst.pos.z + rz];
-    }
-}
-
-/// Yaw (radians) rotating the canonical closed edge (`+Z`, South) to `facing`'s edge —
-/// the same convention as [`chest_model::facing_yaw`](super::chest_model).
-fn facing_yaw(facing: Facing) -> f32 {
-    use std::f32::consts::{FRAC_PI_2, PI};
-    match facing {
-        Facing::South => 0.0,
-        Facing::North => PI,
-        Facing::East => FRAC_PI_2,
-        Facing::West => -FRAC_PI_2,
-    }
+    // Orient the whole slab to `facing` (canonical = South) and translate to the world
+    // lower-cell origin.
+    orient_faces_to_block(verts, start, inst.facing, inst.pos);
 }
 
 #[cfg(test)]

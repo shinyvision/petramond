@@ -40,6 +40,13 @@ impl DynLight {
         sky: FULL_SKYLIGHT,
         block: 0,
     };
+
+    /// A sampled `(skylight, blocklight)` pair — the instance-field constructor
+    /// every dynamic bake uses.
+    #[inline]
+    pub(super) fn new(sky: u8, block: u8) -> Self {
+        Self { sky, block }
+    }
 }
 
 /// The per-frame environment inputs to the CPU light mirror: the sim's sky
@@ -85,6 +92,20 @@ pub(super) fn light_rgb(light: DynLight, env: LightEnv) -> [f32; 3] {
         *o = (sky_term * c).max(block_term).max(FINAL_MIN);
     }
     out
+}
+
+/// Component-wise RGB multiply.
+#[inline]
+pub(super) fn mul3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] * b[0], a[1] * b[1], a[2] * b[2]]
+}
+
+/// The standard dynamic-bake tint fold: `base * light_rgb(light, env)` per
+/// channel — the sampled two-channel light rides the vertex TINT while the
+/// vertex `shade` keeps only the directional term.
+#[inline]
+pub(super) fn fold_tint(base: [f32; 3], light: DynLight, env: LightEnv) -> [f32; 3] {
+    mul3(base, light_rgb(light, env))
 }
 
 #[cfg(test)]

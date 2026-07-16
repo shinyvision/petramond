@@ -7,6 +7,20 @@ use crate::mathh::IVec3;
 
 use super::guards::{kv_write_guard, sim_call, sim_query};
 
+/// Run one KV write behind [`kv_write_guard`], handing the key back to the
+/// operation when the guard passes (deletes guard with `value_len` 0).
+fn guarded_write(
+    mod_id: &str,
+    key: String,
+    value_len: usize,
+    op: impl FnOnce(String) -> HostRet,
+) -> HostRet {
+    match kv_write_guard(mod_id, &key, value_len) {
+        Some(err) => err,
+        None => op(key),
+    }
+}
+
 /// Phase 3b: persistent KV (world / section-cell / mob surfaces; writes pass
 /// [`kv_write_guard`]).
 pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
@@ -14,14 +28,12 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::WorldKvGet { key } => {
             sim_query(|ctx| HostRet::Bytes(ctx.world.mod_kv_get(&key).map(<[u8]>::to_vec)))
         }
-        HostCall::WorldKvSet { key, value } => match kv_write_guard(mod_id, &key, value.len()) {
-            Some(err) => err,
-            None => sim_call(|ctx| ctx.world.mod_kv_set(key, value)),
-        },
-        HostCall::WorldKvDelete { key } => match kv_write_guard(mod_id, &key, 0) {
-            Some(err) => err,
-            None => sim_query(|ctx| HostRet::Bool(ctx.world.mod_kv_remove(&key))),
-        },
+        HostCall::WorldKvSet { key, value } => guarded_write(mod_id, key, value.len(), |key| {
+            sim_call(|ctx| ctx.world.mod_kv_set(key, value))
+        }),
+        HostCall::WorldKvDelete { key } => guarded_write(mod_id, key, 0, |key| {
+            sim_query(|ctx| HostRet::Bool(ctx.world.mod_kv_remove(&key)))
+        }),
         HostCall::SectionKvGet { pos, key } => sim_query(|ctx| {
             let p = IVec3::from(pos);
             HostRet::Bytes(
@@ -31,21 +43,19 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
             )
         }),
         HostCall::SectionKvSet { pos, key, value } => {
-            match kv_write_guard(mod_id, &key, value.len()) {
-                Some(err) => err,
-                None => sim_query(|ctx| {
+            guarded_write(mod_id, key, value.len(), |key| {
+                sim_query(|ctx| {
                     let p = IVec3::from(pos);
                     HostRet::Bool(ctx.world.cell_kv_set(p.x, p.y, p.z, key, value))
-                }),
-            }
+                })
+            })
         }
-        HostCall::SectionKvDelete { pos, key } => match kv_write_guard(mod_id, &key, 0) {
-            Some(err) => err,
-            None => sim_query(|ctx| {
+        HostCall::SectionKvDelete { pos, key } => guarded_write(mod_id, key, 0, |key| {
+            sim_query(|ctx| {
                 let p = IVec3::from(pos);
                 HostRet::Bool(ctx.world.cell_kv_remove(p.x, p.y, p.z, &key))
-            }),
-        },
+            })
+        }),
         HostCall::MobKvGet { mob_index, key } => sim_query(|ctx| {
             HostRet::Bytes(
                 ctx.world
@@ -58,22 +68,20 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
             mob_index,
             key,
             value,
-        } => match kv_write_guard(mod_id, &key, value.len()) {
-            Some(err) => err,
-            None => sim_query(|ctx| {
+        } => guarded_write(mod_id, key, value.len(), |key| {
+            sim_query(|ctx| {
                 HostRet::Bool(
                     ctx.world
                         .mobs_mut()
                         .mod_kv_set(mob_index as usize, key, value),
                 )
-            }),
-        },
-        HostCall::MobKvDelete { mob_index, key } => match kv_write_guard(mod_id, &key, 0) {
-            Some(err) => err,
-            None => sim_query(|ctx| {
+            })
+        }),
+        HostCall::MobKvDelete { mob_index, key } => guarded_write(mod_id, key, 0, |key| {
+            sim_query(|ctx| {
                 HostRet::Bool(ctx.world.mobs_mut().mod_kv_remove(mob_index as usize, &key))
-            }),
-        },
+            })
+        }),
         other => HostRet::Error(format!(
             "non-KV call {other:?} mis-routed to handle_kv_call (host bug)"
         )),

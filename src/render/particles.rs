@@ -223,20 +223,9 @@ pub fn build_transparent_emitter_particles(
         if s.alpha <= 0.001 || s.size <= 0.001 {
             continue;
         }
-        let light = lighting::light_rgb(
-            DynLight {
-                sky: s.skylight,
-                block: s.blocklight,
-            },
-            env,
-        );
         scratch.push(TransparentParticleCube {
             pos: s.pos,
-            color: [
-                s.color[0] * light[0],
-                s.color[1] * light[1],
-                s.color[2] * light[2],
-            ],
+            color: lighting::fold_tint(s.color, DynLight::new(s.skylight, s.blocklight), env),
             alpha: s.alpha,
             size: s.size,
             dist_sq: (cam_pos - s.pos).length_squared(),
@@ -279,13 +268,7 @@ fn append_emitter_particles(
     let light = if e.fullbright {
         [1.0, 1.0, 1.0]
     } else {
-        lighting::light_rgb(
-            DynLight {
-                sky: inst.skylight,
-                block: inst.blocklight,
-            },
-            env,
-        )
+        lighting::light_rgb(DynLight::new(inst.skylight, inst.blocklight), env)
     };
     for back in 0..active {
         if out.len() >= MAX_PARTICLE_CUBES {
@@ -364,7 +347,7 @@ fn append_emitter_particles(
             // The loader guarantees one of the two; render defensively.
             (None, None) => [1.0, 1.0, 1.0],
         };
-        let color = [base[0] * light[0], base[1] * light[1], base[2] * light[2]];
+        let color = lighting::mul3(base, light);
         out.push(TransparentParticleCube {
             pos,
             color,
@@ -399,70 +382,73 @@ fn emitter_birth_time(seed: u64, schedule: EmitterSchedule, seq: i64) -> f32 {
 /// particle's absolute atlas patch (`uv_min` + `uv_size`) tinted by `inst.tint` and
 /// shaded per-face. The caller does the capacity + alpha gating.
 fn push_particle_cube(inst: &ParticleInstance, env: LightEnv, verts: &mut Vec<ParticleVertex>) {
-    let h = inst.size * 0.5;
-    let c = Vec3::from(inst.pos.to_array());
     let [u0, v0] = inst.uv_min;
     let s = inst.uv_size;
     let u1 = u0 + s;
     let v1 = v0 + s;
     // Two-channel RGB light folds into the tint (shade keeps the directional
     // term), so a fleck drifting through torch light stays lit at night.
-    let rgb = lighting::light_rgb(
-        DynLight {
-            sky: inst.skylight,
-            block: inst.blocklight,
-        },
+    let tint = lighting::fold_tint(
+        inst.tint,
+        DynLight::new(inst.skylight, inst.blocklight),
         env,
     );
-    let tint = [
-        inst.tint[0] * rgb[0],
-        inst.tint[1] * rgb[1],
-        inst.tint[2] * rgb[2],
-    ];
-    let alpha = inst.alpha;
     // UV per face: bl=(u0,v1), br=(u1,v1), tr=(u1,v0), tl=(u0,v0) to match the
     // block pipeline (v grows downward in the atlas). The four corners follow
     // the same CCW order as the uv corners: bl, br, tr, tl.
+    let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
+    push_cube_faces(
+        Vec3::from(inst.pos.to_array()),
+        inst.size,
+        corner_uv,
+        tint,
+        inst.alpha,
+        verts,
+    );
+}
+
+fn push_colored_particle_cube(inst: &TransparentParticleCube, verts: &mut Vec<ParticleVertex>) {
+    push_cube_faces(
+        inst.pos,
+        inst.size,
+        [[0.0, 0.0]; 4],
+        inst.color,
+        inst.alpha,
+        verts,
+    );
+}
+
+/// Emit the six shaded faces (24 verts) of one particle cube of side `size`
+/// centred at `c`, with per-corner UVs (bl, br, tr, tl order) shared by every
+/// face. The textured and solid-colour builders differ only in what they feed in.
+fn push_cube_faces(
+    c: Vec3,
+    size: f32,
+    corner_uv: [[f32; 2]; 4],
+    tint: [f32; 3],
+    alpha: f32,
+    verts: &mut Vec<ParticleVertex>,
+) {
+    let h = size * 0.5;
     for face in &FACES {
         let r = face.right * h;
         let up = face.up * h;
         // Offset the face plane outward along its normal (right x up points
         // out) so each face sits on the cube SURFACE, not through the centre.
         let fc = c + face.right.cross(face.up) * h;
-        let shade = face.shade;
         let corners = [
-            (fc - r - up, [u0, v1]),
-            (fc + r - up, [u1, v1]),
-            (fc + r + up, [u1, v0]),
-            (fc - r + up, [u0, v0]),
+            (fc - r - up, corner_uv[0]),
+            (fc + r - up, corner_uv[1]),
+            (fc + r + up, corner_uv[2]),
+            (fc - r + up, corner_uv[3]),
         ];
         for (pos, uv) in corners {
             verts.push(ParticleVertex {
                 pos: pos.to_array(),
                 uv,
                 tint,
-                shade,
-                alpha,
-            });
-        }
-    }
-}
-
-fn push_colored_particle_cube(inst: &TransparentParticleCube, verts: &mut Vec<ParticleVertex>) {
-    let h = inst.size * 0.5;
-    let c = inst.pos;
-    for face in &FACES {
-        let r = face.right * h;
-        let up = face.up * h;
-        let fc = c + face.right.cross(face.up) * h;
-        let corners = [fc - r - up, fc + r - up, fc + r + up, fc - r + up];
-        for pos in corners {
-            verts.push(ParticleVertex {
-                pos: pos.to_array(),
-                uv: [0.0, 0.0],
-                tint: inst.color,
                 shade: face.shade,
-                alpha: inst.alpha,
+                alpha,
             });
         }
     }

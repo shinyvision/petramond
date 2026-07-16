@@ -142,6 +142,175 @@ fn color_target(
     })]
 }
 
+/// One labelled WGSL shader module (source from `include_str!`/`concat!`, or
+/// the shader pack's owned string).
+fn shader_module(
+    device: &wgpu::Device,
+    label: &str,
+    wgsl: impl Into<std::borrow::Cow<'static, str>>,
+) -> wgpu::ShaderModule {
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(label),
+        source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+    })
+}
+
+/// A pipeline layout over `bind_group_layouts`; no pass in this module uses
+/// push constants.
+fn pipeline_layout(
+    device: &wgpu::Device,
+    label: &str,
+    bind_group_layouts: &[&wgpu::BindGroupLayout],
+) -> wgpu::PipelineLayout {
+    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts,
+        push_constant_ranges: &[],
+    })
+}
+
+/// A whole-buffer uniform layout entry (no dynamic offset).
+fn uniform_entry(
+    binding: u32,
+    visibility: wgpu::ShaderStages,
+    min_size: u64,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: NonZeroU64::new(min_size),
+        },
+        count: None,
+    }
+}
+
+/// The dynamic-offset per-draw MVP uniform entry: one mat4 (64 bytes) per
+/// draw, selected by a 256-aligned dynamic offset (see
+/// [`MODEL3D_MVP_SLOT_SIZE`]).
+fn mvp_slot_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::VERTEX,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: true,
+            min_binding_size: NonZeroU64::new(64),
+        },
+        count: None,
+    }
+}
+
+/// The matching MVP resource: a 64-byte mat4 window over the slot buffer; the
+/// per-draw dynamic offset selects the slot.
+fn mvp_slot_binding(buf: &wgpu::Buffer) -> wgpu::BindingResource<'_> {
+    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+        buffer: buf,
+        offset: 0,
+        size: NonZeroU64::new(64),
+    })
+}
+
+/// A bind group binding each buffer whole, at bindings `0..buffers.len()` in
+/// order.
+fn buffer_bind_group(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &wgpu::BindGroupLayout,
+    buffers: &[&wgpu::Buffer],
+) -> wgpu::BindGroup {
+    let entries: Vec<wgpu::BindGroupEntry> = buffers
+        .iter()
+        .enumerate()
+        .map(|(i, buf)| wgpu::BindGroupEntry {
+            binding: i as u32,
+            resource: buf.as_entire_binding(),
+        })
+        .collect();
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(label),
+        layout,
+        entries: &entries,
+    })
+}
+
+/// The layout-entry pair of a fragment-sampled float texture (at `binding`)
+/// plus its filtering sampler (at `binding + 1`).
+fn texture_sampler_layout_entries(
+    binding: u32,
+    dim: wgpu::TextureViewDimension,
+) -> [wgpu::BindGroupLayoutEntry; 2] {
+    [
+        wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: dim,
+                multisampled: false,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: binding + 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        },
+    ]
+}
+
+/// The bind-group entry pair matching [`texture_sampler_layout_entries`].
+fn texture_sampler_bind_entries<'a>(
+    binding: u32,
+    view: &'a wgpu::TextureView,
+    sampler: &'a wgpu::Sampler,
+) -> [wgpu::BindGroupEntry<'a>; 2] {
+    [
+        wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(view),
+        },
+        wgpu::BindGroupEntry {
+            binding: binding + 1,
+            resource: wgpu::BindingResource::Sampler(sampler),
+        },
+    ]
+}
+
+/// A single texture+sampler bind-group layout (bindings 0/1).
+fn texture_sampler_bgl(
+    device: &wgpu::Device,
+    label: &str,
+    dim: wgpu::TextureViewDimension,
+) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &texture_sampler_layout_entries(0, dim),
+    })
+}
+
+/// Layout + bind group over one texture view + sampler; labels derive from
+/// `label` (`"<label> bgl"` / `"<label> bg"`).
+fn texture_sampler_bgl_bind(
+    device: &wgpu::Device,
+    label: &str,
+    view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+    dim: wgpu::TextureViewDimension,
+) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
+    let bgl = texture_sampler_bgl(device, &format!("{label} bgl"), dim);
+    let bg_label = format!("{label} bg");
+    let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(&bg_label),
+        layout: &bgl,
+        entries: &texture_sampler_bind_entries(0, view, sampler),
+    });
+    (bgl, bind)
+}
+
 /// Build a render pipeline, filling the fields that are constant across every
 /// pass in this module (`compilation_options`, the shared `sample_count`
 /// multisample state, `multiview: None`, `cache: None`) exactly once. Callers
@@ -359,21 +528,20 @@ pub(super) fn create_pipeline_resources(
     array_view: &wgpu::TextureView,
     array_sampler: &wgpu::Sampler,
 ) -> PipelineResources {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("block shader"),
-        source: wgpu::ShaderSource::Wgsl(
-            concat!(
-                include_str!("../shaders/cel.wgsl"),
-                include_str!("../shaders/atmosphere.wgsl"),
-                include_str!("../shaders/block.wgsl")
-            )
-            .into(),
+    let shader = shader_module(
+        device,
+        "block shader",
+        concat!(
+            include_str!("../shaders/cel.wgsl"),
+            include_str!("../shaders/atmosphere.wgsl"),
+            include_str!("../shaders/block.wgsl")
         ),
-    });
-    let crosshair_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("crosshair shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/crosshair.wgsl").into()),
-    });
+    );
+    let crosshair_shader = shader_module(
+        device,
+        "crosshair shader",
+        include_str!("../shaders/crosshair.wgsl"),
+    );
 
     let shared = create_shared_bindings(
         device,
@@ -605,132 +773,44 @@ fn create_shared_bindings(
         usage: wgpu::BufferUsages::UNIFORM,
     });
 
-    let uniform_bind_layout = wgpu::BindGroupLayoutDescriptor {
+    let uniform_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("uniform bgl"),
         entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new((UV_RECTS_LEN * 16) as u64),
-                },
-                count: None,
-            },
-        ],
-    };
-    let uniform_bgl = device.create_bind_group_layout(&uniform_bind_layout);
-    let uniform_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("uniform bg"),
-        layout: &uniform_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: uv_rects_buf.as_entire_binding(),
-            },
+            uniform_entry(
+                0,
+                wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                std::mem::size_of::<Uniforms>() as u64,
+            ),
+            uniform_entry(1, wgpu::ShaderStages::VERTEX, (UV_RECTS_LEN * 16) as u64),
         ],
     });
+    let uniform_bind = buffer_bind_group(
+        device,
+        "uniform bg",
+        &uniform_bgl,
+        &[uniform_buf, &uv_rects_buf],
+    );
 
-    let atlas_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("atlas bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
-    let atlas_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("atlas bg"),
-        layout: &atlas_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(atlas_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(atlas_sampler),
-            },
-        ],
-    });
-
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("pipe layout"),
-        bind_group_layouts: &[&uniform_bgl, &atlas_bgl],
-        push_constant_ranges: &[],
-    });
+    let (atlas_bgl, atlas_bind) = texture_sampler_bgl_bind(
+        device,
+        "atlas",
+        atlas_view,
+        atlas_sampler,
+        wgpu::TextureViewDimension::D2,
+    );
+    let layout = pipeline_layout(device, "pipe layout", &[&uniform_bgl, &atlas_bgl]);
 
     // Terrain-only tile ARRAY (group 1 for the opaque/transparent block pipelines): one
     // layer per tile with REPEAT wrapping, so a greedy-meshed quad tiles its layer. The 2D
     // `atlas_bgl`/`atlas_bind` above stay for the model/break/particle/mob passes.
-    let array_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("atlas array bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2Array,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
-    let atlas_array_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("atlas array bg"),
-        layout: &array_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(array_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(array_sampler),
-            },
-        ],
-    });
-    let array_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("array pipe layout"),
-        bind_group_layouts: &[&uniform_bgl, &array_bgl],
-        push_constant_ranges: &[],
-    });
+    let (array_bgl, atlas_array_bind) = texture_sampler_bgl_bind(
+        device,
+        "atlas array",
+        array_view,
+        array_sampler,
+        wgpu::TextureViewDimension::D2Array,
+    );
+    let array_layout = pipeline_layout(device, "array pipe layout", &[&uniform_bgl, &array_bgl]);
 
     SharedBindings {
         uv_rects_buf,
@@ -823,61 +903,30 @@ fn create_sky_pipeline(
     let sky_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("sky bgl"),
         entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(std::mem::size_of::<ShaderParams>() as u64),
-                },
-                count: None,
-            },
+            uniform_entry(
+                0,
+                wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                std::mem::size_of::<Uniforms>() as u64,
+            ),
+            uniform_entry(
+                1,
+                wgpu::ShaderStages::FRAGMENT,
+                std::mem::size_of::<ShaderParams>() as u64,
+            ),
         ],
     });
-    let sky_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("sky bg"),
-        layout: &sky_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: shader_params_buf.as_entire_binding(),
-            },
-        ],
-    });
+    let sky_bind = buffer_bind_group(
+        device,
+        "sky bg",
+        &sky_bgl,
+        &[uniform_buf, shader_params_buf],
+    );
     let mut sky_texture_bgl_entries = Vec::with_capacity(super::shader_pack::SKY_TEXTURE_SLOTS * 2);
     for slot in 0..super::shader_pack::SKY_TEXTURE_SLOTS {
-        let binding = (slot * 2) as u32;
-        sky_texture_bgl_entries.push(wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        });
-        sky_texture_bgl_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: binding + 1,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            count: None,
-        });
+        sky_texture_bgl_entries.extend(texture_sampler_layout_entries(
+            (slot * 2) as u32,
+            wgpu::TextureViewDimension::D2,
+        ));
     }
     let sky_texture_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("sky texture bgl"),
@@ -918,42 +967,32 @@ fn create_sky_pipeline(
     }
     let mut sky_texture_entries = Vec::with_capacity(super::shader_pack::SKY_TEXTURE_SLOTS * 2);
     for (slot, (_, view, sampler)) in sky_texture_slots.iter().enumerate() {
-        let binding = (slot * 2) as u32;
-        sky_texture_entries.push(wgpu::BindGroupEntry {
-            binding,
-            resource: wgpu::BindingResource::TextureView(view),
-        });
-        sky_texture_entries.push(wgpu::BindGroupEntry {
-            binding: binding + 1,
-            resource: wgpu::BindingResource::Sampler(sampler),
-        });
+        sky_texture_entries.extend(texture_sampler_bind_entries(
+            (slot * 2) as u32,
+            view,
+            sampler,
+        ));
     }
     let sky_texture_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("sky texture bg"),
         layout: &sky_texture_bgl,
         entries: &sky_texture_entries,
     });
-    let sky_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("sky layout"),
-        bind_group_layouts: &[&sky_bgl, &sky_texture_bgl],
-        push_constant_ranges: &[],
-    });
+    let sky_layout = pipeline_layout(device, "sky layout", &[&sky_bgl, &sky_texture_bgl]);
     let sky_targets = color_target(
         format,
         Some(wgpu::BlendState::REPLACE),
         wgpu::ColorWrites::ALL,
     );
-    let builtin_sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("built-in sky shader"),
-        source: wgpu::ShaderSource::Wgsl(
-            concat!(
-                include_str!("../shaders/cel.wgsl"),
-                include_str!("../shaders/atmosphere.wgsl"),
-                include_str!("../shaders/sky.wgsl")
-            )
-            .into(),
+    let builtin_sky_shader = shader_module(
+        device,
+        "built-in sky shader",
+        concat!(
+            include_str!("../shaders/cel.wgsl"),
+            include_str!("../shaders/atmosphere.wgsl"),
+            include_str!("../shaders/sky.wgsl")
         ),
-    });
+    );
     let sky_pipe_for = |shader: &wgpu::ShaderModule| {
         world_pipeline(
             device,
@@ -974,10 +1013,7 @@ fn create_sky_pipeline(
     };
     let sky_pipe = if let Some(spec) = sky_spec.as_ref() {
         device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let custom = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("pack sky shader"),
-            source: wgpu::ShaderSource::Wgsl(spec.source.clone().into()),
-        });
+        let custom = shader_module(device, "pack sky shader", spec.source.clone());
         let pipe = sky_pipe_for(&custom);
         match pollster::block_on(device.pop_error_scope()) {
             Some(err) => {
@@ -1020,66 +1056,29 @@ fn create_grade_pipeline(
     format: wgpu::TextureFormat,
     sample_count: u32,
 ) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("grade shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/grade.wgsl").into()),
-    });
-    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("grade bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    // Filterable: the grade pass bilinearly upscales when the
-                    // scene renders below swapchain resolution (render_scale).
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("grade layout"),
-        bind_group_layouts: &[&bgl],
-        push_constant_ranges: &[],
-    });
-    let pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("grade pipeline"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_grade"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_grade"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState {
-            count: sample_count,
-            ..Default::default()
-        },
-        multiview: None,
-        cache: None,
-    });
+    let shader = shader_module(
+        device,
+        "grade shader",
+        include_str!("../shaders/grade.wgsl"),
+    );
+    // Filterable texture: the grade pass bilinearly upscales when the scene
+    // renders below swapchain resolution (render_scale).
+    let bgl = texture_sampler_bgl(device, "grade bgl", wgpu::TextureViewDimension::D2);
+    let layout = pipeline_layout(device, "grade layout", &[&bgl]);
+    let grade_targets = color_target(format, None, wgpu::ColorWrites::ALL);
+    let pipe = world_pipeline(
+        device,
+        "grade pipeline",
+        &layout,
+        &shader,
+        "vs_grade",
+        "fs_grade",
+        &[],
+        &grade_targets,
+        wgpu::PrimitiveState::default(),
+        None,
+        sample_count,
+    );
     (pipe, bgl)
 }
 
@@ -1101,16 +1100,7 @@ pub(super) fn create_grade_bind(
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("grade bind"),
         layout: bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(scene_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(&sampler),
-            },
-        ],
+        entries: &texture_sampler_bind_entries(0, scene_view, &sampler),
     })
 }
 
@@ -1124,36 +1114,21 @@ fn create_selection_pipeline(
     sample_count: u32,
     uniform_buf: &wgpu::Buffer,
 ) -> (wgpu::RenderPipeline, wgpu::BindGroup, wgpu::Buffer) {
-    let outline_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("outline shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/outline.wgsl").into()),
-    });
+    let outline_shader = shader_module(
+        device,
+        "outline shader",
+        include_str!("../shaders/outline.wgsl"),
+    );
     let outline_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("outline bgl"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
-            },
-            count: None,
-        }],
+        entries: &[uniform_entry(
+            0,
+            wgpu::ShaderStages::VERTEX,
+            std::mem::size_of::<Uniforms>() as u64,
+        )],
     });
-    let outline_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("outline bg"),
-        layout: &outline_bgl,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform_buf.as_entire_binding(),
-        }],
-    });
-    let outline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("outline layout"),
-        bind_group_layouts: &[&outline_bgl],
-        push_constant_ranges: &[],
-    });
+    let outline_bind = buffer_bind_group(device, "outline bg", &outline_bgl, &[uniform_buf]);
+    let outline_layout = pipeline_layout(device, "outline layout", &[&outline_bgl]);
     let outline_vbuf_layout = wgpu::VertexBufferLayout {
         array_stride: 12, // vec3<f32>
         step_mode: wgpu::VertexStepMode::Vertex,
@@ -1207,11 +1182,7 @@ fn create_crosshair_pipeline(
     sample_count: u32,
     crosshair_shader: &wgpu::ShaderModule,
 ) -> (wgpu::RenderPipeline, wgpu::Buffer) {
-    let crosshair_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("crosshair layout"),
-        bind_group_layouts: &[],
-        push_constant_ranges: &[],
-    });
+    let crosshair_layout = pipeline_layout(device, "crosshair layout", &[]);
     let crosshair_vbuf_layout = wgpu::VertexBufferLayout {
         array_stride: 8, // vec2<f32>
         step_mode: wgpu::VertexStepMode::Vertex,
@@ -1286,46 +1257,23 @@ fn create_model3d_pipelines(
     atlas_bgl: &wgpu::BindGroupLayout,
     vbuf_layout: &wgpu::VertexBufferLayout,
 ) -> Model3dResources {
-    let model3d_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("model3d shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/model3d.wgsl").into()),
-    });
+    let model3d_shader = shader_module(
+        device,
+        "model3d shader",
+        include_str!("../shaders/model3d.wgsl"),
+    );
     let model3d_mvp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("model3d mvp bgl"),
         entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    // One mat4 per draw (64 bytes); slots are 256-aligned.
-                    min_binding_size: NonZeroU64::new(64),
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new((UV_RECTS_LEN * 16) as u64),
-                },
-                count: None,
-            },
+            mvp_slot_entry(0),
+            uniform_entry(1, wgpu::ShaderStages::VERTEX, (UV_RECTS_LEN * 16) as u64),
             // The frame `Uniforms` buffer: model3d reads only fog_color.w (the
             // sim's sky scale) so the held block dims in step with terrain.
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: NonZeroU64::new(std::mem::size_of::<Uniforms>() as u64),
-                },
-                count: None,
-            },
+            uniform_entry(
+                2,
+                wgpu::ShaderStages::VERTEX,
+                std::mem::size_of::<Uniforms>() as u64,
+            ),
         ],
     });
     let model3d_mvp_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1340,12 +1288,7 @@ fn create_model3d_pipelines(
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                // Bound as a 64-byte mat4 window; the per-draw offset selects the slot.
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &model3d_mvp_buf,
-                    offset: 0,
-                    size: NonZeroU64::new(64),
-                }),
+                resource: mvp_slot_binding(&model3d_mvp_buf),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -1357,11 +1300,7 @@ fn create_model3d_pipelines(
             },
         ],
     });
-    let model3d_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("model3d layout"),
-        bind_group_layouts: &[&model3d_mvp_bgl, atlas_bgl],
-        push_constant_ranges: &[],
-    });
+    let model3d_layout = pipeline_layout(device, "model3d layout", &[&model3d_mvp_bgl, atlas_bgl]);
     let model3d_targets = color_target(
         format,
         Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -1438,41 +1377,24 @@ fn create_item3d_pipeline(
     model3d_mvp_buf: &wgpu::Buffer,
     item3d_vbuf_layout: &wgpu::VertexBufferLayout,
 ) -> (wgpu::RenderPipeline, wgpu::BindGroup, wgpu::Buffer) {
-    let item3d_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("item3d shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/item3d.wgsl").into()),
-    });
+    let item3d_shader = shader_module(
+        device,
+        "item3d shader",
+        include_str!("../shaders/item3d.wgsl"),
+    );
     let item3d_mvp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("item3d mvp bgl"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: true,
-                // One mat4 per draw (64 bytes); slots are 256-aligned.
-                min_binding_size: NonZeroU64::new(64),
-            },
-            count: None,
-        }],
+        entries: &[mvp_slot_entry(0)],
     });
     let item3d_mvp_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("item3d mvp bg"),
         layout: &item3d_mvp_bgl,
         entries: &[wgpu::BindGroupEntry {
             binding: 0,
-            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                buffer: model3d_mvp_buf,
-                offset: 0,
-                size: NonZeroU64::new(64),
-            }),
+            resource: mvp_slot_binding(model3d_mvp_buf),
         }],
     });
-    let item3d_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("item3d layout"),
-        bind_group_layouts: &[&item3d_mvp_bgl, atlas_bgl],
-        push_constant_ranges: &[],
-    });
+    let item3d_layout = pipeline_layout(device, "item3d layout", &[&item3d_mvp_bgl, atlas_bgl]);
     let item3d_targets = color_target(
         format,
         Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -1530,17 +1452,15 @@ fn create_mob_pipeline(
         Some(wgpu::BlendState::REPLACE),
         wgpu::ColorWrites::ALL,
     );
-    let mob_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("mob shader"),
-        source: wgpu::ShaderSource::Wgsl(
-            concat!(
-                include_str!("../shaders/cel.wgsl"),
-                include_str!("../shaders/atmosphere.wgsl"),
-                include_str!("../shaders/mob.wgsl")
-            )
-            .into(),
+    let mob_shader = shader_module(
+        device,
+        "mob shader",
+        concat!(
+            include_str!("../shaders/cel.wgsl"),
+            include_str!("../shaders/atmosphere.wgsl"),
+            include_str!("../shaders/mob.wgsl")
         ),
-    });
+    );
     let mob_pipe = world_pipeline(
         device,
         "mob pipe",
@@ -1635,17 +1555,15 @@ fn create_break_overlay_pipeline(
     layout: &wgpu::PipelineLayout,
     vbuf_layout: &wgpu::VertexBufferLayout,
 ) -> (wgpu::RenderPipeline, wgpu::Buffer, wgpu::Buffer) {
-    let break_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("break overlay shader"),
-        source: wgpu::ShaderSource::Wgsl(
-            concat!(
-                include_str!("../shaders/cel.wgsl"),
-                include_str!("../shaders/atmosphere.wgsl"),
-                include_str!("../shaders/break_overlay.wgsl")
-            )
-            .into(),
+    let break_shader = shader_module(
+        device,
+        "break overlay shader",
+        concat!(
+            include_str!("../shaders/cel.wgsl"),
+            include_str!("../shaders/atmosphere.wgsl"),
+            include_str!("../shaders/break_overlay.wgsl")
         ),
-    });
+    );
     // MULTIPLY blend (result = src.rgb * dst.rgb): the crack fragment outputs WHITE
     // where the destroy tile is transparent (×1 = no change) and dark where the
     // crack texels are, so the cracks darken the block face instead of
@@ -1784,17 +1702,15 @@ fn create_particle_pipeline(
     sample_count: u32,
     layout: &wgpu::PipelineLayout,
 ) -> ParticlePipelineResources {
-    let particle_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("particle shader"),
-        source: wgpu::ShaderSource::Wgsl(
-            concat!(
-                include_str!("../shaders/cel.wgsl"),
-                include_str!("../shaders/atmosphere.wgsl"),
-                include_str!("../shaders/particles.wgsl")
-            )
-            .into(),
+    let particle_shader = shader_module(
+        device,
+        "particle shader",
+        concat!(
+            include_str!("../shaders/cel.wgsl"),
+            include_str!("../shaders/atmosphere.wgsl"),
+            include_str!("../shaders/particles.wgsl")
         ),
-    });
+    );
     let particle_vbuf_attrs = [
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x3,
@@ -1903,36 +1819,9 @@ fn create_ui_pipeline(
     format: wgpu::TextureFormat,
     sample_count: u32,
 ) -> (wgpu::RenderPipeline, wgpu::Buffer) {
-    let ui_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("ui shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/ui.wgsl").into()),
-    });
-    let ui_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("ui bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
-    let ui_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("ui layout"),
-        bind_group_layouts: &[&ui_bgl],
-        push_constant_ranges: &[],
-    });
+    let ui_shader = shader_module(device, "ui shader", include_str!("../shaders/ui.wgsl"));
+    let ui_bgl = texture_sampler_bgl(device, "ui bgl", wgpu::TextureViewDimension::D2);
+    let ui_layout = pipeline_layout(device, "ui layout", &[&ui_bgl]);
     let ui_vbuf_attrs = [
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x2,
@@ -1997,15 +1886,12 @@ fn create_model_icon_pipeline(
     sample_count: u32,
     atlas_bgl: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
-    let model_icon_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("model icon shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/model_icon.wgsl").into()),
-    });
-    let model_icon_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("model icon layout"),
-        bind_group_layouts: &[atlas_bgl],
-        push_constant_ranges: &[],
-    });
+    let model_icon_shader = shader_module(
+        device,
+        "model icon shader",
+        include_str!("../shaders/model_icon.wgsl"),
+    );
+    let model_icon_layout = pipeline_layout(device, "model icon layout", &[atlas_bgl]);
     let model_icon_vbuf_attrs = [
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x3,
