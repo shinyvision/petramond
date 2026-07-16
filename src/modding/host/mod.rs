@@ -424,21 +424,32 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::BlockIsFullSpawnSupport { .. }
         | HostCall::SwapModelBlock { .. } => blocks::handle_block_call(&data.mod_id, call),
         HostCall::SpawnMob { .. }
+        | HostCall::SpawnMobChecked { .. }
         | HostCall::MobsInRadius { .. }
         | HostCall::DamageMob { .. }
         | HostCall::DespawnMob { .. }
         | HostCall::MobEmitterSet { .. }
+        | HostCall::MobAnimSet { .. }
+        | HostCall::MobAnimRate { .. }
+        | HostCall::MobAnimSeek { .. }
+        | HostCall::MobAnimState { .. }
+        | HostCall::MobDrive { .. }
+        | HostCall::MobMount { .. }
+        | HostCall::MobDismount { .. }
+        | HostCall::MobRiders { .. }
         | HostCall::SpawnItem { .. } => entities::handle_entity_call(&data.mod_id, call),
         HostCall::PlayerState
         | HostCall::DamagePlayer { .. }
         | HostCall::ApplyKnockback { .. }
         | HostCall::GiveItem { .. }
+        | HostCall::ConsumeHeld { .. }
         | HostCall::KillPlayer
         | HostCall::SetHealth { .. }
         | HostCall::Teleport { .. }
         | HostCall::EffectApply { .. }
         | HostCall::EffectRemove { .. }
         | HostCall::EffectsActive
+        | HostCall::PlayerInput { .. }
         | HostCall::ChatSend { .. } => player::handle_player_call(&data.mod_id, call),
         HostCall::EmitSound { .. }
         | HostCall::SoundPlayAt { .. }

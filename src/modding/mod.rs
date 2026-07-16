@@ -592,6 +592,12 @@ fn wire_event_handler(
                 None => Outcome::Continue,
             }
         }),
+        EventKind::MobInteract => bus.on_mob_interact(priority, move |ctx, ev| {
+            match call_event(&inst, ctx, handler_id, convert::mob_interact(ev)) {
+                Some((outcome, _)) => convert::outcome(outcome),
+                None => Outcome::Continue,
+            }
+        }),
         EventKind::MobDamagePre => {
             bus.on_mob_damage_pre(priority, move |ctx, ev| {
                 match call_event(&inst, ctx, handler_id, convert::mob_damage_pre(ev)) {

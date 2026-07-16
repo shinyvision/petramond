@@ -241,7 +241,12 @@ pub(crate) enum PlayerAction {
     /// `AttackClick`'s. `target` is the block under the crosshair AT CLICK
     /// TIME: the server resolves the interact/place against THIS cell, never
     /// a fresher look latch — otherwise a click racing the crosshair places
-    /// somewhere the client's ghost isn't. `request_id` is set when the
+    /// somewhere the client's ghost isn't. The server still validates reach,
+    /// and items declaring a water-stopping ray must match its authoritative
+    /// first hit. The authoritative selected slot/item is captured with the
+    /// click; a hotbar change before tick consumption denies the whole
+    /// attempt instead of changing which item receives the target.
+    /// `request_id` is set when the
     /// client opened a ledger entry (place ghost or track-only);
     /// presentation-only jabs may omit it. `predicted` says whether the
     /// client actually PRESENTED a full place (ghost + sound) — it gates the
@@ -443,6 +448,14 @@ pub(crate) struct MobStateRow {
     /// particle rows and any body tint from its own catalog after the remap,
     /// so a few bytes replicate the whole effect.
     pub emitters: Vec<u8>,
+    /// ACTIVE named model animations as `(name, phase)` pairs
+    /// (`Instance::active_anims`, ≤ 4, sorted by name): each layer's phase is
+    /// SELF-CLOCKED server-side (mods drive the rate), so a paused oar's
+    /// phase simply stops advancing and the client interpolates phases
+    /// between rows like positions. Names are MODEL-LOCAL (no registry, no
+    /// numeric id) — no remap; unknown names draw nothing. Empty for every
+    /// mob without mod animations, so the common row pays one length byte.
+    pub anims: Vec<(String, f32)>,
     /// Per-bone ragdoll pose (pivot position, orientation quaternion) as of
     /// this tick — present only while the death ragdoll plays (bounded), so
     /// live mobs pay nothing for it.
@@ -504,6 +517,12 @@ pub(crate) struct PlayerStateRow {
     /// `SelfState::transform`): the client snaps interpolation instead of
     /// lerping across the jump.
     pub snap: bool,
+    /// The mob this player is riding — `(stable mob id, seat index)` — or
+    /// `None`. Clients GLUE a mounted body (their own included) to the
+    /// interpolated mob presentation at the species' seat offset instead of
+    /// lerping the row transform, so rider and mount can never visibly
+    /// separate.
+    pub mount: Option<(u64, u8)>,
 }
 
 /// One-shot remote-player animation events, broadcast alongside the state
@@ -1376,6 +1395,7 @@ mod tests {
                 dead: false,
                 shorn: true,
                 emitters: vec![1],
+                anims: Vec::new(),
                 ragdoll: Some(vec![([1.0, 2.0, 3.0], [0.0, 0.0, 0.0, 1.0])]),
             }],
             items: vec![ItemStateRow {
@@ -1402,6 +1422,7 @@ mod tests {
                 eating: false,
                 hurt_recent: true,
                 snap: true,
+                mount: None,
             }],
             player_actions: vec![
                 (PlayerId(1), PlayerActionKind::Broke),

@@ -265,6 +265,11 @@ pub struct MobRenderInstance {
     /// none) — e.g. the faint warm cast of a burning mob. Composed with the
     /// hurt flash and sampled light.
     pub emitter_tint: [f32; 3],
+    /// Named model animations (mod-driven, replicated) as
+    /// `(name, phase, weight)` — each is layered over the walk/idle/rest
+    /// base pose at its OWN phase (seconds into the clip), scaled by its
+    /// blend weight; names the model doesn't have are skipped.
+    pub anims: Vec<(String, f32, f32)>,
     /// When the mob is dying, its per-bone ragdoll pose — `(rest-pivot position,
     /// rotation delta)` per bone in model space, already interpolated for this frame —
     /// used over the authored rest pose. `None` for a live mob. `Arc` so cloning a
@@ -299,6 +304,10 @@ pub struct PlayerRenderInstance {
     /// Asleep in a bed: render lying on the back, feet at `pos`, head toward
     /// `body_yaw`; head-look and the arm swing are suppressed.
     pub sleeping: bool,
+    /// Seated on a mob seat (mounted): thighs swing forward and shins hang
+    /// from the knees, anchored at `pos` (the seat), walk/sneak layers rest;
+    /// head-look and the arm swing stay live so a rider can look and punch.
+    pub seated: bool,
     /// Hurt-flash intensity `[0, 1]` — tints the body red like a hurt mob.
     pub hurt: f32,
     /// 6-bit two-channel light sampled at the player.

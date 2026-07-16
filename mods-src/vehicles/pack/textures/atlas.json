@@ -1,0 +1,5 @@
+{
+  "tiles": [
+    { "name": "vehicles:boat", "file": "boat.png" }
+  ]
+}

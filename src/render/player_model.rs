@@ -3,7 +3,7 @@
 //! pass with the player's own skin texture bound).
 //!
 //! Pose composition, in order: the authored `walk` animation blended by
-//! `walk_weight` (so starts/stops ease instead of snapping — [`Model::pose_scaled`]),
+//! `walk_weight` (so starts/stops ease instead of snapping — [`Model::pose_layers`]),
 //! the swing's body twist on the `body` bone, the head-look override on the
 //! `head` bone (compensated for the twist so the gaze stays put), then the
 //! held-arm attack swing COMPOSED onto the visual-right shoulder via
@@ -71,12 +71,12 @@ pub(super) fn build_player_body(
     // it fades walk↔rest when upright. Weights sum to ≤ 1; the remainder is the
     // rest pose (`pose_layers` scales toward rest).
     let sneak = model.animation("sneak");
-    let sw = if inst.sleeping || sneak.is_none() {
+    let sw = if inst.sleeping || inst.seated || sneak.is_none() {
         0.0
     } else {
         inst.sneak_weight.clamp(0.0, 1.0)
     };
-    let ww = if inst.sleeping {
+    let ww = if inst.sleeping || inst.seated {
         0.0
     } else {
         inst.walk_weight.clamp(0.0, 1.0)
@@ -111,6 +111,27 @@ pub(super) fn build_player_body(
             * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2)
             * Mat4::from_scale(Vec3::splat(PLAYER_MODEL_SCALE));
         return bake_cubes(model, &pose, global, inst, env, verts, indices);
+    }
+
+    // Seated (riding a mob seat): thighs swing forward at the hip and the
+    // shins hang back down from the knees — composed over the rest pose about
+    // each bone's own pivot, so the exact leg geometry stays authored data.
+    // The body, head-look, and arm channels below stay live: a rider looks
+    // around and punches like anyone else. The bend is deliberately SHORT of
+    // 90°: at a right angle the rotated thigh's top face lands coplanar with
+    // the body cube's bottom and the pants z-fight (2026-07-15 playtest).
+    const SEATED_HIP_BEND: f32 = 1.35; // ≈ 77°
+    if inst.seated {
+        for (hip, knee) in [("leftLeg", "left_knee"), ("rightLeg", "right_knee")] {
+            if let Some(bone) = model.bone_named(hip) {
+                // +X is limb-forward for the −Z-front biped (the zombie's
+                // arms-forward rest pose uses the same sign).
+                model.apply_bone_rotation(&mut pose, bone, Quat::from_rotation_x(SEATED_HIP_BEND));
+            }
+            if let Some(bone) = model.bone_named(knee) {
+                model.apply_bone_rotation(&mut pose, bone, Quat::from_rotation_x(-SEATED_HIP_BEND));
+            }
+        }
     }
 
     // Reference biped attack swing, mirrored for this model's −Z front: the body
@@ -292,6 +313,7 @@ mod tests {
             walk_weight: 0.0,
             sneak_weight: 0.0,
             sleeping: false,
+            seated: false,
             hurt: 0.0,
             skylight: 63,
             blocklight: 0,
@@ -385,7 +407,10 @@ mod tests {
         crouched.anim_time = 0.4;
         let stance_later = bake(&crouched, 0.0);
         assert!(
-            stance.iter().zip(&stance_later).all(|(a, b)| a.pos == b.pos),
+            stance
+                .iter()
+                .zip(&stance_later)
+                .all(|(a, b)| a.pos == b.pos),
             "standing sneak freezes on the sneak clip's frame 0"
         );
 
@@ -408,6 +433,50 @@ mod tests {
         assert!(
             walking.iter().zip(&step_a).any(|(a, b)| a.pos != b.pos),
             "sneak-walking is a different cycle than the upright walk"
+        );
+    }
+
+    #[test]
+    fn seated_swings_the_thighs_forward_and_hangs_the_shins() {
+        // Seated (mounted): the height shrinks by roughly a thigh (the legs
+        // fold), the lowest geometry rises off the anchor (no foot at y=0 —
+        // the shins hang from the forward knees), and the knees stick out
+        // toward the FACING (+Z at engine yaw 0), while the torso stays
+        // upright (still much taller than a lying body).
+        let standing = bake(&instance(), 0.0);
+        let mut riding = instance();
+        riding.seated = true;
+        let seated = bake(&riding, 0.0);
+        let span = |v: &[ItemVertex], axis: usize| {
+            let lo = v.iter().map(|x| x.pos[axis]).fold(f32::MAX, f32::min);
+            let hi = v.iter().map(|x| x.pos[axis]).fold(f32::MIN, f32::max);
+            (lo, hi)
+        };
+        let (stand_lo, stand_hi) = span(&standing, 1);
+        let (sit_lo, sit_hi) = span(&seated, 1);
+        assert!(
+            (stand_hi - stand_lo) - (sit_hi - sit_lo) > 0.25,
+            "sitting folds the legs: {} vs {}",
+            stand_hi - stand_lo,
+            sit_hi - sit_lo
+        );
+        assert!(
+            sit_lo > stand_lo + 0.2,
+            "the shins hang above the anchor: {sit_lo} vs {stand_lo}"
+        );
+        assert!(
+            sit_hi - sit_lo > 1.0,
+            "the torso stays upright (not lying): {}",
+            sit_hi - sit_lo
+        );
+        // Direction proof, not a reach pin: the folded legs must extend the
+        // body's FACING side (+Z at yaw 0 — the head already reaches part of
+        // the way there, so the margin is what the knees add past it).
+        let (_, stand_z_hi) = span(&standing, 2);
+        let (_, sit_z_hi) = span(&seated, 2);
+        assert!(
+            sit_z_hi > stand_z_hi + 0.05,
+            "the knees extend toward the facing: {sit_z_hi} vs {stand_z_hi}"
         );
     }
 

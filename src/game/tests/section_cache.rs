@@ -88,14 +88,15 @@ fn settle(game: &mut TestGame, what: &str) -> Vec<ServerToClient> {
             .any(|m| matches!(kind(m), "SectionData" | "SectionCached"));
         quiet = if sections { 0 } else { quiet + 1 };
         recorded.extend(msgs);
-        if quiet >= 30
-            && game.replica.chunk_loaded(0, 0)
-            && !home_column_payloads(game).is_empty()
+        if quiet >= 30 && game.replica.chunk_loaded(0, 0) && !home_column_payloads(game).is_empty()
         {
             return recorded;
         }
         if std::time::Instant::now() >= deadline {
-            panic!("timed out settling: {what}; recorded {:?}", kind_counts(&recorded));
+            panic!(
+                "timed out settling: {what}; recorded {:?}",
+                kind_counts(&recorded)
+            );
         }
     }
 }
@@ -132,9 +133,11 @@ fn unmoved_sections_repromote_from_the_cache_byte_identically() {
     let vouched: Vec<SectionPos> = unloads
         .iter()
         .filter_map(|m| match m {
-            ServerToClient::ColumnUnload { pos, cache_hashes } if *pos == HOME_COLUMN => {
-                Some(cache_hashes.iter().map(|&(cy, _)| SectionPos::new(pos.cx, cy, pos.cz)))
-            }
+            ServerToClient::ColumnUnload { pos, cache_hashes } if *pos == HOME_COLUMN => Some(
+                cache_hashes
+                    .iter()
+                    .map(|&(cy, _)| SectionPos::new(pos.cx, cy, pos.cz)),
+            ),
             _ => None,
         })
         .flatten()
@@ -166,9 +169,9 @@ fn unmoved_sections_repromote_from_the_cache_byte_identically() {
     );
     for sp in &cached {
         assert!(
-            !msgs.iter().any(
-                |m| matches!(m, ServerToClient::SectionData(s) if s.pos == *sp)
-            ),
+            !msgs
+                .iter()
+                .any(|m| matches!(m, ServerToClient::SectionData(s) if s.pos == *sp)),
             "a re-promoted section {sp:?} was not also re-streamed"
         );
         // The contract: the re-promoted replica copy equals what a full send
@@ -257,14 +260,19 @@ fn a_pending_prediction_declines_parking_and_heals_by_cache_miss() {
     let vouched: Vec<SectionPos> = unloads
         .iter()
         .filter_map(|m| match m {
-            ServerToClient::ColumnUnload { pos, cache_hashes } if *pos == HOME_COLUMN => {
-                Some(cache_hashes.iter().map(|&(cy, _)| SectionPos::new(pos.cx, cy, pos.cz)))
-            }
+            ServerToClient::ColumnUnload { pos, cache_hashes } if *pos == HOME_COLUMN => Some(
+                cache_hashes
+                    .iter()
+                    .map(|&(cy, _)| SectionPos::new(pos.cx, cy, pos.cz)),
+            ),
             _ => None,
         })
         .flatten()
         .collect();
-    assert!(!vouched.is_empty(), "the unload still vouched (server side)");
+    assert!(
+        !vouched.is_empty(),
+        "the unload still vouched (server side)"
+    );
     for sp in &vouched {
         assert!(
             !game.section_cache.contains(*sp),

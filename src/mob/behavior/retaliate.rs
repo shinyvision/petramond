@@ -266,7 +266,14 @@ mod tests {
             let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &biter, grudge));
             assert_eq!(out.target, None, "still warming up at tick {tick}");
         }
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &biter, Some((EntityRef::Mob(9), 11))));
+        let out = ai.tick(&mut ctx(
+            &world,
+            &mut rng,
+            mob,
+            &[],
+            &biter,
+            Some((EntityRef::Mob(9), 11)),
+        ));
         assert_eq!(
             out.target,
             Some(EntityRef::Mob(9)),
@@ -274,7 +281,14 @@ mod tests {
         );
 
         // A DIFFERENT attacker restarts the warmup from zero.
-        let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &biter, Some((EntityRef::Player(PlayerId(4)), 0))));
+        let out = ai.tick(&mut ctx(
+            &world,
+            &mut rng,
+            mob,
+            &[],
+            &biter,
+            Some((EntityRef::Player(PlayerId(4)), 0)),
+        ));
         assert_eq!(out.target, None, "a new attacker starts a new warmup");
     }
 

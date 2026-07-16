@@ -18,6 +18,7 @@
 //! the simulation both read — the renderer also reads `scale` off the table.
 
 mod behavior;
+mod body_geometry;
 mod brain;
 mod instance;
 mod load;
@@ -29,8 +30,15 @@ mod noise;
 mod path;
 mod populate;
 mod ragdoll;
+pub mod riding;
 mod spawn;
 
+pub(crate) use body_geometry::{
+    append_body_supports, body_boxes, body_has_peer_support, body_overlaps_block_boxes,
+    body_pose_fits, body_separation, body_separation_from_body, clamp_body_yaw,
+    closest_body_ray_hit, resolve_body_motion, terrain_safe_motion_prefix, BodyMotion,
+    SolidMotionSolver,
+};
 pub use brain::Brain;
 pub use instance::{hurt_flash01, Instance};
 pub use loot::{load_loot, LootTables};
@@ -377,16 +385,75 @@ pub struct MobSoundSpec {
     pub tick_interval_variance: u32,
 }
 
+pub(crate) const MAX_MOB_BODY_HALF_EXTENT: f32 = 32.0;
+pub(crate) const MAX_MOB_BODY_HEIGHT: f32 = 32.0;
+pub(crate) const MAX_MOB_BODY_SEGMENTS: usize = 64;
+pub(crate) const MAX_MOB_SEAT_OFFSET: f32 = 32.0;
+
 /// A mob's collision/render footprint: a centred AABB `half_width` across and
-/// `height` tall, with the feet at the mob position.
+/// `height` tall, with the feet at the mob position. A LONG body (a hull) may
+/// also declare `half_length` along its FACING axis: its terrain movement,
+/// SOLID-collision presence (see [`MobCollision::Solid`] and [`solid_boxes`]),
+/// and targeting all use the oriented `half_length × half_width` rectangle as
+/// a run of overlapping square boxes, so a boat's bow and stern behave like
+/// its middle.
 #[derive(Copy, Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MobSize {
     pub half_width: f32,
     pub height: f32,
+    #[serde(default)]
+    pub half_length: Option<f32>,
 }
 
 impl MobSize {
+    /// Validate the geometry envelope shared by collision, targeting, and
+    /// riding. Pack rows are untrusted input, and long-body segment count is
+    /// bounded independently of absolute dimensions.
+    pub(crate) fn validate(self) -> Result<(), String> {
+        if !self.half_width.is_finite()
+            || self.half_width <= 0.0
+            || self.half_width > MAX_MOB_BODY_HALF_EXTENT
+        {
+            return Err(format!(
+                "size.half_width must be finite and in (0, {MAX_MOB_BODY_HALF_EXTENT}], got {}",
+                self.half_width
+            ));
+        }
+        if !self.height.is_finite() || self.height <= 0.0 || self.height > MAX_MOB_BODY_HEIGHT {
+            return Err(format!(
+                "size.height must be finite and in (0, {MAX_MOB_BODY_HEIGHT}], got {}",
+                self.height
+            ));
+        }
+        if let Some(half_length) = self.half_length {
+            if !half_length.is_finite()
+                || half_length < self.half_width
+                || half_length > MAX_MOB_BODY_HALF_EXTENT
+            {
+                return Err(format!(
+                    "size.half_length must be finite and in [{}, {MAX_MOB_BODY_HALF_EXTENT}], got {half_length}",
+                    self.half_width
+                ));
+            }
+            let segments = (half_length / self.half_width).ceil() as usize;
+            if segments > MAX_MOB_BODY_SEGMENTS {
+                return Err(format!(
+                    "long body requires {segments} segments; maximum is {MAX_MOB_BODY_SEGMENTS}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn body_segments(self) -> usize {
+        if self.validate().is_err() {
+            return 0;
+        }
+        let half_length = self.half_length.unwrap_or(self.half_width);
+        (half_length / self.half_width).ceil().max(1.0) as usize
+    }
+
     /// Whole cells of vertical clearance the body needs (for standable/pathfinding
     /// tests): the height rounded up, at least one.
     #[inline]
@@ -536,6 +603,12 @@ pub struct MobDef {
     /// behavior). Crossing water en route is always allowed; this is only about where
     /// the mob chooses to head.
     pub avoid_water: bool,
+    /// How this species behaves in water (`"buoyancy"` row, default `swim`) —
+    /// see [`Buoyancy`].
+    pub buoyancy: Buoyancy,
+    /// This species' body collision role (`"collision"` row, default `soft`) —
+    /// see [`MobCollision`].
+    pub collision: MobCollision,
     /// What shearing this species yields, or `None` for species that can't be shorn.
     pub shear: Option<ShearSpec>,
     /// Damage feedback components resolved from this species' `damage_feedback` row.
@@ -546,6 +619,13 @@ pub struct MobDef {
     /// The species' AI as data: priority-ordered node rows resolved against the
     /// engine AI-node registry at load (see [`behavior`] and [`build_brain`]).
     pub brain: &'static [BrainNode],
+    /// Rider seat offsets in mob-local blocks — `+z` toward the mob's facing,
+    /// `+x` to its right, `y` up from the feet. Empty = not rideable. The seat
+    /// INDEX is the stable seat identity (mount calls and the replicated rider
+    /// rows both speak it); the riding mechanism rotates the offset by the
+    /// mob's live yaw each tick. Mount/dismount POLICY (who may sit where)
+    /// stays with mods — the engine only owns the attachment.
+    pub seats: &'static [[f32; 3]],
 }
 
 impl MobDef {
@@ -555,9 +635,69 @@ impl MobDef {
     }
 }
 
+/// How a species behaves in water (`mobs.json` `"buoyancy"`, default `swim`).
+/// Creatures SWIM: they stroke toward air and bob through the waterline (see
+/// the swim constants in [`instance`]). A hull FLOATS: it levels off at the
+/// water surface (feet a small draft below it) and holds there — no bob.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Buoyancy {
+    #[default]
+    Swim,
+    Surface,
+}
+
+/// A species' body collision role (`mobs.json` `"collision"`, default
+/// `soft`). SOFT bodies interact through the overlap push only (every
+/// creature — bodies jostle apart but never block). A SOLID body's AABB is
+/// ALSO a rigid obstacle in the shared swept resolver: players and mobs walk
+/// into it and stop, land on it and stand, and solid peers propose motion for
+/// one deterministic pairwise solve before committing together (a hull). A
+/// solid body never receives soft push and never soft-pushes a
+/// player, because that would fight rigid contact; it still pushes overlapping
+/// SOFT mobs through their own separation pass.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobCollision {
+    #[default]
+    Soft,
+    Solid,
+}
+
+/// Emit the SOLID-collision boxes for one live body into `out`: the square
+/// `half_width` box, or — when the species declares `half_length` — a run of
+/// overlapping square boxes whose centres march along the FACING axis so the
+/// union covers the oriented hull rectangle (axis-aligned staircase under a
+/// diagonal yaw; exact on the axes). One shared emitter so the server's live
+/// instances and the client's interpolated rows produce identical geometry.
+pub fn solid_boxes(
+    id: u64,
+    pos: Vec3,
+    yaw: f32,
+    size: MobSize,
+    out: &mut Vec<crate::collision::DynBox>,
+) {
+    for (min, max) in body_boxes(pos, yaw, size) {
+        out.push(crate::collision::DynBox {
+            id,
+            min: min.to_array(),
+            max: max.to_array(),
+        });
+    }
+}
+
 /// Most particle-emitter bundles active on one mob at a time — bounds the
 /// per-mob replicated id list.
 pub const MAX_ACTIVE_MOB_EMITTERS: usize = 4;
+
+/// Most named animations active on one mob at a time — bounds the per-mob
+/// replicated name list exactly like [`MAX_ACTIVE_MOB_EMITTERS`] bounds
+/// emitters.
+pub const MAX_ACTIVE_MOB_ANIMS: usize = 4;
+
+/// Most rider seats one species may declare — bounds the `seats` row list and
+/// keeps the wire-facing seat index an honest small integer.
+pub const MAX_MOB_SEATS: usize = 8;
 
 /// The loaded, id-ordered mob def table (engine rows first, then pack rows in load
 /// order). Loads exactly once, on first access; a missing or inconsistent

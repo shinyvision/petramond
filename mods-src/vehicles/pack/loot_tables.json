@@ -1,0 +1,7 @@
+{
+  "tables": {
+    "vehicles:boat": [
+      { "item": "vehicles:boat", "min": 1, "max": 1 }
+    ]
+  }
+}

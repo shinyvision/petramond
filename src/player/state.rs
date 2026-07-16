@@ -31,6 +31,29 @@ pub struct Input {
     pub sneak: bool,
 }
 
+/// One player's movement intent for the current tick, decomposed into the
+/// player's OWN yaw frame and published on the world (`World::player_inputs`)
+/// by the server before the tick stages run — the read model behind the
+/// `PlayerInput` HostCall, so mods (vehicles, mounts, machines a player
+/// stands on) can react to what a player is pressing without touching the
+/// world-space wish plumbing. Derived from the same session intent latches
+/// `tick_movement` integrates.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct PlayerInputSnapshot {
+    /// Session player id.
+    pub id: u8,
+    /// Forward(+)/back(−) component of the wish direction along the player's
+    /// facing, in `[-1, 1]`.
+    pub forward: f32,
+    /// Right(+)/left(−) strafe component, in `[-1, 1]`.
+    pub strafe: f32,
+    pub jump: bool,
+    pub sneak: bool,
+    /// The player's look, for mods that steer by it.
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PlayerMode {
     Survival,

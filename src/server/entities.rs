@@ -55,11 +55,12 @@ impl ServerGame {
     /// Apply one attack swing: damage the targeted mob or PLAYER (rolling the held
     /// weapon's damage; a mob kill spawns loot), or — looking at nothing — punch the air.
     /// Returns whether the hand swung (a mob/player hit or an air punch); a click on a
-    /// block doesn't swing (mining is the held action). `mob_target` is the STABLE id the
-    /// click carried, resolved to a live index only now — a despawn between the click and
-    /// this tick shifts indices, and a vanished mob degrades to an air punch. A click
-    /// carries at most one of mob/player; a player target that fails validation (gone,
-    /// dead, spectator, out of reach) degrades to an air punch the same way.
+    /// block doesn't swing (mining is the held action). `mob_target` is only the STABLE
+    /// id the click claimed: the authoritative view-ray validator must resolve it to the
+    /// nearest live, unoccluded body now. A forged or vanished mob degrades to an air
+    /// punch. A click carries at most one of mob/player; a player target that fails
+    /// validation (gone, dead, spectator, out of reach) degrades to an air punch the same
+    /// way.
     fn resolve_attack(
         &mut self,
         s: usize,
@@ -72,23 +73,23 @@ impl ServerGame {
             // the vanished-mob air punch (and arm the cooldown either way).
             self.resolve_player_attack(s, PlayerId(target), events);
             true
-        } else if let Some(idx) = mob_target.and_then(|id| self.world.mobs().index_of_id(id)) {
-            let damage = self.roll_attack_damage(s);
-            let from = self.sessions[s].player.body_center();
-            // The pipeline may cancel the damage; the swing still happened and
-            // still arms the cooldown.
-            self.damage_mob_through_pipeline(
-                s,
-                idx,
-                damage,
-                DamageSource::PlayerAttack(self.sessions[s].id),
-                Some(from),
-                events,
-            );
-            true
-        } else if mob_target.is_some() {
-            // The clicked mob vanished before the tick: the swing still
-            // happened — punch the air it stood in.
+        } else if let Some(target) = mob_target {
+            if let Some(idx) = self.authoritative_mob_target(s, Some(target)) {
+                let damage = self.roll_attack_damage(s);
+                let from = self.sessions[s].player.body_center();
+                // The pipeline may cancel the damage; the swing still happened and
+                // still arms the cooldown.
+                self.damage_mob_through_pipeline(
+                    s,
+                    idx,
+                    damage,
+                    DamageSource::PlayerAttack(self.sessions[s].id),
+                    Some(from),
+                    events,
+                );
+            }
+            // A claimed target always swings, even when authority rejects it:
+            // the click becomes the same air punch as a vanished target.
             true
         } else {
             // No mob: a punch swing only when looking at nothing.
@@ -172,15 +173,7 @@ impl ServerGame {
             .mobs()
             .instances()
             .get(idx)
-            .map(|m| {
-                (
-                    m.kind,
-                    m.id(),
-                    m.pos,
-                    m.is_dead(),
-                    m.is_damage_immune(),
-                )
-            })
+            .map(|m| (m.kind, m.id(), m.pos, m.is_dead(), m.is_damage_immune()))
         else {
             return false;
         };
@@ -218,8 +211,7 @@ impl ServerGame {
         if !pre.feedback.has_any_component() {
             return false;
         }
-        let soundable_hit =
-            pre.feedback.plays_sound(MobDamageSound::Hurt) && pre.amount > 0.0;
+        let soundable_hit = pre.feedback.plays_sound(MobDamageSound::Hurt) && pre.amount > 0.0;
         if let Some(death) = self.world.mobs_mut().damage_mob(
             idx,
             pre.amount,

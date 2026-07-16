@@ -87,15 +87,13 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
         Vec3::ZERO,
         "an immune player receives no attack knockback"
     );
-    assert!(!game.server.damage_mob_through_pipeline(
-        0,
-        0,
-        1.0,
-        DamageSource::Fall,
-        None,
-        &mut ev,
-    ));
-    assert_eq!(game.server.world.mobs().instances()[0].health(), mob_health - 1.0);
+    assert!(!game
+        .server
+        .damage_mob_through_pipeline(0, 0, 1.0, DamageSource::Fall, None, &mut ev,));
+    assert_eq!(
+        game.server.world.mobs().instances()[0].health(),
+        mob_health - 1.0
+    );
 
     for _ in 1..MOB_DAMAGE_IFRAME_TICKS {
         game.server.game_tick_step(&mut ev);
@@ -116,14 +114,9 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
     assert!(!game
         .server
         .damage_player(0, 1, DamageSource::Mod("test"), None, &mut ev));
-    assert!(game.server.damage_mob_through_pipeline(
-        0,
-        0,
-        1.0,
-        DamageSource::Fall,
-        None,
-        &mut ev,
-    ));
+    assert!(game
+        .server
+        .damage_mob_through_pipeline(0, 0, 1.0, DamageSource::Fall, None, &mut ev,));
 
     for _ in (MOB_DAMAGE_IFRAME_TICKS + 1)..PLAYER_DAMAGE_IFRAME_TICKS {
         game.server.game_tick_step(&mut ev);
@@ -141,7 +134,10 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
         &mut ev,
     ));
     assert_eq!(game.server.sessions[0].player.health(), player_health - 3);
-    assert_eq!(game.server.world.mobs().instances()[0].health(), mob_health - 2.0);
+    assert_eq!(
+        game.server.world.mobs().instances()[0].health(),
+        mob_health - 2.0
+    );
 }
 
 #[test]
@@ -343,6 +339,7 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
                 dead: m.is_dead(),
                 shorn: false,
                 emitters: Vec::new(),
+                anims: Vec::new(),
                 ragdoll: None,
             })
             .collect()
@@ -367,7 +364,14 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
         .server
         .world
         .mobs_mut()
-        .damage_mob(0, 100.0, Some(cam_pos), true, None, &MobDamageFeedback::default())
+        .damage_mob(
+            0,
+            100.0,
+            Some(cam_pos),
+            true,
+            None,
+            &MobDamageFeedback::default()
+        )
         .is_some());
     let batch = rows(&game);
     game.replicated_mobs.apply(batch);
@@ -375,6 +379,50 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
         game.closest_mob(game.cam.pos, dir, player::REACH),
         None,
         "a dead mob isn't targeted"
+    );
+}
+
+#[test]
+fn closest_mob_targets_the_interpolated_render_pose_not_the_future_row() {
+    use crate::net::protocol::MobStateRow;
+
+    fn row(id: u64, pos: Vec3) -> MobStateRow {
+        MobStateRow {
+            id,
+            kind_id: Mob::Owl.0,
+            pos,
+            yaw: 0.0,
+            anim_time: 0.0,
+            moving: true,
+            idle_anim: None,
+            head_yaw: 0.0,
+            head_pitch: 0.0,
+            hurt_timer: 0.0,
+            dead: false,
+            shorn: false,
+            emitters: Vec::new(),
+            anims: Vec::new(),
+            ragdoll: None,
+        }
+    }
+
+    let mut game = game();
+    let eye = Vec3::new(8.0, 66.0, 8.0);
+    let dir = Vec3::Z;
+    let feet_y = eye.y - 0.35;
+    let previous = eye + dir * 2.0;
+    let future = eye + dir * 6.0;
+    game.replicated_mobs
+        .apply(vec![row(42, Vec3::new(previous.x, feet_y, previous.z))]);
+    game.replicated_mobs
+        .apply(vec![row(42, Vec3::new(future.x, feet_y, future.z))]);
+    game.replica_clock.start();
+    game.replica_clock.advance(TICK_DT * 0.5);
+
+    assert_eq!(
+        game.closest_mob(eye, dir, player::REACH).map(|(id, _)| id),
+        Some(42),
+        "the halfway rendered body is still in reach even though curr is not"
     );
 }
 
@@ -390,7 +438,14 @@ fn fist_takes_four_hits_to_kill_an_owl() {
             game.server
                 .world
                 .mobs_mut()
-                .damage_mob(0, 1.0, Some(from), true, None, &MobDamageFeedback::default())
+                .damage_mob(
+                    0,
+                    1.0,
+                    Some(from),
+                    true,
+                    None,
+                    &MobDamageFeedback::default()
+                )
                 .is_none(),
             "fist hit {i} isn't lethal"
         );
@@ -402,7 +457,14 @@ fn fist_takes_four_hits_to_kill_an_owl() {
         game.server
             .world
             .mobs_mut()
-            .damage_mob(0, 1.0, Some(from), true, None, &MobDamageFeedback::default())
+            .damage_mob(
+                0,
+                1.0,
+                Some(from),
+                true,
+                None,
+                &MobDamageFeedback::default()
+            )
             .is_some(),
         "the 4th fist hit kills"
     );
@@ -412,6 +474,7 @@ fn fist_takes_four_hits_to_kill_an_owl() {
 /// `Action(AttackClick)` message does — carrying the STABLE id.
 fn click_attack_at(game: &mut super::common::TestGame, index: usize) {
     let id = game.server.world.mobs().instances()[index].id();
+    common::aim_server_at_mob(game, index);
     game.server.sessions[0].pending_attack = true;
     game.server.sessions[0].pending_attack_mob = Some(id);
 }
@@ -458,6 +521,114 @@ fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
         !game.server.world.mobs().instances()[0].is_dead(),
         "rate-limited, so the owl survives the burst"
     );
+}
+
+#[test]
+fn dead_and_spectator_players_cannot_attack_mobs() {
+    for spectator in [false, true] {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        assert!(game
+            .server
+            .world
+            .mobs_mut()
+            .spawn(Mob::Owl, Vec3::new(8.0, 200.0, 8.0), 0.0));
+        click_attack_at(&mut game, 0);
+        if spectator {
+            game.server.sessions[0]
+                .player
+                .set_mode(crate::player::PlayerMode::Spectator);
+        } else {
+            game.server.sessions[0].player.set_health(0);
+        }
+        let health = game.server.world.mobs().instances()[0].health();
+        let mut ev = TickEvents::default();
+
+        game.server.tick_attack(0, &mut ev);
+
+        assert_eq!(
+            game.server.world.mobs().instances()[0].health(),
+            health,
+            "{} actor cannot authorize a mob hit",
+            if spectator { "spectator" } else { "dead" }
+        );
+        assert!(
+            ev.player_at(0).swung_hand,
+            "a rejected claimed target still degrades to an air punch"
+        );
+    }
+}
+
+#[test]
+fn a_newly_boarded_player_cannot_attack_their_mount_before_mirror_reconciliation() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    assert!(game
+        .server
+        .world
+        .mobs_mut()
+        .spawn(Mob::Owl, Vec3::new(8.0, 200.0, 8.0), 0.0));
+    click_attack_at(&mut game, 0);
+    let mob_id = game.server.world.mobs().instances()[0].id();
+    let player_id = game.server.sessions[0].id.0;
+    let health = game.server.world.mobs().instances()[0].health();
+
+    // Placement runs before Attack. A successful board therefore updates the
+    // authoritative registry while the session mirror remains stale until
+    // the later Riding pass.
+    assert!(game.server.world.riding_mut().mount(player_id, mob_id, 0));
+    assert!(game.server.sessions[0].mount.is_none());
+    let mut events = TickEvents::default();
+
+    game.server.tick_attack(0, &mut events);
+
+    assert_eq!(game.server.world.mobs().instances()[0].health(), health);
+    assert!(
+        events.player_at(0).swung_hand,
+        "the rejected own-mount claim degrades to an air punch"
+    );
+}
+
+#[test]
+fn a_forged_mob_id_cannot_redirect_an_attack_past_the_nearest_body() {
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    assert!(game
+        .server
+        .world
+        .mobs_mut()
+        .spawn(Mob::Owl, Vec3::new(8.0, 200.0, 8.0), 0.0));
+    assert!(game
+        .server
+        .world
+        .mobs_mut()
+        .spawn(Mob::Owl, Vec3::new(8.0, 200.0, 9.0), 0.0));
+    common::aim_server_at_mob(&mut game, 0);
+    let forged = game.server.world.mobs().instances()[1].id();
+    let health: Vec<_> = game
+        .server
+        .world
+        .mobs()
+        .instances()
+        .iter()
+        .map(|mob| mob.health())
+        .collect();
+    game.server.sessions[0].pending_attack = true;
+    game.server.sessions[0].pending_attack_mob = Some(forged);
+    let mut ev = TickEvents::default();
+
+    game.server.tick_attack(0, &mut ev);
+
+    let after: Vec<_> = game
+        .server
+        .world
+        .mobs()
+        .instances()
+        .iter()
+        .map(|mob| mob.health())
+        .collect();
+    assert_eq!(after, health, "authority never redirects the claimed id");
+    assert!(ev.player_at(0).swung_hand, "the rejected click air-punches");
 }
 
 #[test]
@@ -519,7 +690,8 @@ fn a_killed_mob_ragdolls_then_despawns() {
             0,
             100.0,
             Some(pos + Vec3::X),
-            true, None,
+            true,
+            None,
             &MobDamageFeedback::default()
         )
         .is_some());
@@ -646,6 +818,7 @@ fn a_mob_pushes_the_player_per_frame() {
             dead: false,
             shorn: false,
             emitters: Vec::new(),
+            anims: Vec::new(),
             ragdoll: None,
         }]);
     let x0 = game.player.pos.x;
@@ -689,6 +862,7 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
             eating: false,
             hurt_recent: false,
             snap: false,
+            mount: None,
         }
     }
 
@@ -1066,6 +1240,7 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
             eating: false,
             hurt_recent: false,
             snap: false,
+            mount: None,
         }
     }
 
@@ -1110,6 +1285,7 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
             dead: false,
             shorn: false,
             emitters: Vec::new(),
+            anims: Vec::new(),
             ragdoll: None,
         }]);
     game.refresh_target();

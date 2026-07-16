@@ -426,7 +426,9 @@ fn hushjaw_spawn_rules_inner() {
     let mut game =
         super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
     game.server.world.clear_world();
-    game.server.world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+    game.server
+        .world
+        .insert_empty_column_for_test(ChunkPos::new(0, 0));
     // Standable floors under the deep and shallow candidate cells (the engine
     // re-validates body fit on whatever key the mod returns).
     assert!(game.server.world.set_block_world(8, -41, 8, Block::Stone));
@@ -513,7 +515,10 @@ fn hushjaw_spawn_rules_inner() {
         );
     }
     let (disabled, _, _) = game.mods_for_test().probe(0);
-    assert!(!disabled, "the monsters mod stayed healthy through the asks");
+    assert!(
+        !disabled,
+        "the monsters mod stayed healthy through the asks"
+    );
 }
 
 #[test]
@@ -584,7 +589,10 @@ fn hushjaw_bump_inner() {
         "the touch takes the perception round-trip (contact → lock → strike), never tick 0"
     );
     let (disabled, _, _) = game.mods_for_test().probe(0);
-    assert!(!disabled, "the monsters mod stayed healthy through the bump");
+    assert!(
+        !disabled,
+        "the monsters mod stayed healthy through the bump"
+    );
 }
 
 #[test]
@@ -686,5 +694,8 @@ fn hushjaw_hearing_inner() {
         "the hunt takes time — the hushjaw crossed the island first"
     );
     let (disabled, _, _) = game.mods_for_test().probe(0);
-    assert!(!disabled, "the monsters mod stayed healthy through the hunt");
+    assert!(
+        !disabled,
+        "the monsters mod stayed healthy through the hunt"
+    );
 }

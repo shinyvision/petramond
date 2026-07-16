@@ -41,6 +41,9 @@ pub(super) struct ItemDef {
     /// The engine use handler this item's row declares (`"use"` in
     /// `items.json`) — see [`ItemUse`]. `None` = no use of its own.
     pub item_use: Option<ItemUse>,
+    /// Which raycast this item's use click targets with (`"use_ray"`) — see
+    /// [`super::UseRay`].
+    pub use_ray: super::UseRay,
     /// Game ticks this item burns as furnace fuel (`"fuel_burn_ticks"`;
     /// `0` = not a fuel).
     pub fuel_burn_ticks: u16,

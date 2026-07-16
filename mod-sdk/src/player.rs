@@ -1,15 +1,44 @@
-//! Sim-scoped player calls: state, the damage funnel, knockback, items,
-//! health, teleports, status effects, and chat delivery.
+//! Sim-scoped player calls: state, input, the damage funnel, knockback,
+//! items, health, teleports, status effects, and chat delivery.
 
-use mod_api::{EffectStateData, HostCall, HostRet, PlayerSnapshot};
+use mod_api::{EffectStateData, HostCall, HostRet, PlayerInputData, PlayerSnapshot};
 
 use crate::__rt;
+
+/// The horizontal direction a player yaw faces — PLAYER convention: yaw `0`
+/// faces `+Z` (π apart from the mob convention, [`crate::mob_facing_xz`]);
+/// a mount aligned with its rider takes `player_yaw + π` as its mob yaw.
+pub fn player_facing_xz(yaw: f32) -> [f32; 2] {
+    let (s, c) = yaw.sin_cos();
+    [s, c]
+}
 
 /// The player's current state (position, velocity, look, health, flags).
 pub fn player_state() -> PlayerSnapshot {
     match __rt::host_call(&HostCall::PlayerState) {
         HostRet::Player(p) => p,
         other => panic!("PlayerState returned {other:?}"),
+    }
+}
+
+/// One player's movement intent this tick (forward/strafe in their own yaw
+/// frame, jump/sneak, look) — how a vehicle mod reads what its driver is
+/// pressing. `None` = no such player connected.
+pub fn player_input(player_id: u8) -> Option<PlayerInputData> {
+    match __rt::host_call(&HostCall::PlayerInput { player_id }) {
+        HostRet::PlayerInput(input) => input,
+        other => panic!("PlayerInput returned {other:?}"),
+    }
+}
+
+/// Consume `count` units of the ACTING player's held stack, atomically, only
+/// when it holds `item` with at least `count` — the spend primitive for item
+/// uses that place no block (spawning an entity from an `item_use_pre`
+/// handler). `false` = consumed nothing.
+pub fn consume_held(item: mod_api::ItemId, count: u32) -> bool {
+    match __rt::host_call(&HostCall::ConsumeHeld { item, count }) {
+        HostRet::Bool(ok) => ok,
+        other => panic!("ConsumeHeld returned {other:?}"),
     }
 }
 

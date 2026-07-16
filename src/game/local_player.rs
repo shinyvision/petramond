@@ -103,19 +103,84 @@ impl Game {
         // input the local physics consumed this frame.
         self.predicted_input = player_input;
 
+        // Mounted: no local physics — the body slaves to the interpolated
+        // mount at the seat offset, the same glue observers apply to mounted
+        // remotes, so rider and mount can never visibly separate. The intent
+        // stashed above still rides `PlayerUpdate` (that IS the steering
+        // input the driving mod reads server-side).
+        if let Some(seat_pos) = self.self_mount.and_then(|m| self.mount_seat_pos(m)) {
+            self.player.pos = seat_pos;
+            self.player.vel = Vec3::ZERO;
+            self.player.on_ground = true;
+            self.sync_camera_to_player_eye(dt);
+            return;
+        }
+
         // Physics gates on the REPLICA's loaded columns: until the spawn area's
         // payloads land, the player holds still (exactly the fresh-world
         // stream-in wait; absent-Mixed sections would read as air and lie).
         if spectator || self.player.columns_loaded(&self.replica) {
+            // Solid entities (a boat's hull) block the predicted body exactly
+            // like the server's integration does — sourced from the
+            // interpolated replicated rows, the same transform they render at.
+            let obstacles = self.solid_entity_obstacles();
             let mut remaining = dt.min(0.25);
             while remaining > 0.0 {
                 let step = remaining.min(player::DT_MAX);
-                self.player.update(step, &self.replica, player_input);
+                self.player
+                    .update_with_obstacles(step, &self.replica, player_input, &obstacles);
                 remaining -= step;
             }
         }
 
         self.sync_camera_to_player_eye(dt);
+    }
+
+    /// Dynamic collision boxes for the local player's physics this frame:
+    /// every live SOLID entity (see `MobCollision::Solid`) at its
+    /// interpolated replicated transform — except the own mount, whose box
+    /// the slaved rider sits inside.
+    pub(super) fn solid_entity_obstacles(&self) -> Vec<crate::collision::DynBox> {
+        let alpha = self.tick_alpha();
+        let own_mount = self.self_mount.map(|(id, _)| id);
+        let mut out = Vec::new();
+        for entry in self.replicated_mobs.iter() {
+            let row = &entry.curr;
+            if row.dead || Some(row.id) == own_mount {
+                continue;
+            }
+            let d = crate::mob::def(crate::mob::Mob(row.kind_id));
+            if d.collision != crate::mob::MobCollision::Solid {
+                continue;
+            }
+            let (pos, yaw) = entry.interpolated_pose(alpha);
+            crate::mob::solid_boxes(row.id, pos, yaw, d.size, &mut out);
+        }
+        out
+    }
+
+    /// The world-space seat position of `(mob id, seat)` on the INTERPOLATED
+    /// replicated mount this frame, or `None` when the mob isn't replicated
+    /// (yet) or the seat isn't declared — the caller keeps its current
+    /// transform and waits for the rows to agree.
+    fn mount_seat_pos(&self, (mob_id, seat): (u64, u8)) -> Option<Vec3> {
+        self.replicated_mobs
+            .interpolated_seat_pose(mob_id, seat, self.tick_alpha())
+            .map(|(pos, _)| pos)
+    }
+
+    /// The BODY yaw a seated local player renders with: the interpolated
+    /// mount's facing in player-yaw space (mob yaw 0 faces `-Z`, player body
+    /// yaw 0 faces `+Z` — π apart). A rider sits square in its seat; only the
+    /// head follows the look (see `collect_player`).
+    pub(super) fn mount_body_yaw(&self) -> Option<f32> {
+        let (mob_id, seat) = self.self_mount?;
+        let (_, yaw) =
+            self.replicated_mobs
+                .interpolated_seat_pose(mob_id, seat, self.tick_alpha())?;
+        Some(crate::game::body_pose::wrap_angle(
+            yaw + std::f32::consts::PI,
+        ))
     }
 
     /// Push the player out of any soft entity body it overlaps — mobs and remote
@@ -130,7 +195,9 @@ impl Game {
     /// `PlayerUpdate`, so player↔player separation is symmetric without any server-side
     /// push step.
     pub(super) fn apply_entity_push(&mut self, dt: f32) {
-        if self.player.is_spectator() {
+        // A mounted body is slaved to its seat: nothing may jostle it (its
+        // own mount overlaps it every frame).
+        if self.player.is_spectator() || self.self_mount.is_some() {
             return;
         }
         let body = self.player.body();
@@ -139,8 +206,13 @@ impl Game {
             if entry.curr.dead {
                 continue; // a ragdolling corpse doesn't push
             }
-            let size = crate::mob::def(crate::mob::Mob(entry.curr.kind_id)).size;
-            let mob = crate::body::Body::new(entry.curr.pos, size.half_width, size.height);
+            let d = crate::mob::def(crate::mob::Mob(entry.curr.kind_id));
+            if d.collision == crate::mob::MobCollision::Solid {
+                // Rigid geometry in the player's own resolver — a soft push
+                // on top would fight the contact (skating a deck-stander).
+                continue;
+            }
+            let mob = crate::body::Body::new(entry.curr.pos, d.size.half_width, d.size.height);
             if let Some(p) = crate::body::separation(body, mob) {
                 push += p;
             }
@@ -162,8 +234,7 @@ impl Game {
     pub(super) fn sync_camera_to_player_eye(&mut self, dt: f32) {
         let target = self.player.eye();
         let eye_dy = target.y - self.last_player_eye_y;
-        let grounded_still =
-            self.player.on_ground && self.player.vel.y.abs() <= STEP_CAMERA_EPS;
+        let grounded_still = self.player.on_ground && self.player.vel.y.abs() <= STEP_CAMERA_EPS;
         if self.player.is_spectator() {
             self.camera_step_y_offset = 0.0;
         } else if grounded_still
@@ -236,6 +307,23 @@ impl Game {
     pub(super) fn refresh_target(&mut self) {
         let block_hit = Player::raycast_with_dist(self.cam.pos, self.cam.forward(), &self.replica);
         self.look = block_hit.map(|(h, _)| h);
+        // The use-click target: the held item may declare a water-stopping
+        // use ray (a boat item targets the water surface); everything else
+        // keeps the selection hit. Mining/selection never read this. The held
+        // item comes from the REPLICATED inventory view like every other
+        // client held-item decision — `player.inventory` only tracks the
+        // active slot index client-side, never contents.
+        let held_water_ray = self
+            .self_view
+            .inventory
+            .selected()
+            .is_some_and(|st| st.item.use_ray() == crate::item::UseRay::Water);
+        self.use_look = if held_water_ray {
+            Player::raycast_including_water(self.cam.pos, self.cam.forward(), &self.replica)
+                .map(|(h, _)| h)
+        } else {
+            self.look
+        };
         let block_dist = block_hit.map(|(_, d)| d).unwrap_or(player::REACH);
         let mob = self.closest_mob(self.cam.pos, self.cam.forward(), block_dist);
         let remote = self.closest_remote_player(self.cam.pos, self.cam.forward(), block_dist);
@@ -249,6 +337,7 @@ impl Game {
         }
         if self.targeted_mob.is_some() || self.targeted_player.is_some() {
             self.look = None;
+            self.use_look = None;
         }
     }
 
@@ -258,37 +347,27 @@ impl Game {
         self.targeted_mob
     }
 
-    /// The closest replicated mob in front of the eye whose AABB (row position
-    /// plus species size) the ray enters within `max_dist` (and within reach),
-    /// with its ray distance; skips dead corpses. `max_dist` is the block hit
-    /// distance, so a mob *behind* the block isn't targeted (the block
-    /// occludes it).
+    /// The closest replicated mob in front of the eye whose shared body boxes
+    /// the ray enters within `max_dist` (and within reach), with its ray
+    /// distance; skips dead corpses. `max_dist` is the block hit distance, so
+    /// a mob *behind* the block isn't targeted (the block occludes it).
     pub(super) fn closest_mob(&self, eye: Vec3, dir: Vec3, max_dist: f32) -> Option<(u64, f32)> {
         let limit = max_dist.min(player::REACH);
-        let mut best: Option<(u64, f32)> = None;
-        for entry in self.replicated_mobs.iter() {
+        let own_mount = self.self_mount.map(|(id, _)| id);
+        let alpha = self.tick_alpha();
+        let bodies = self.replicated_mobs.iter().filter_map(|entry| {
             let row = &entry.curr;
-            if row.dead {
-                continue; // a corpse can't be targeted
-            }
-            let size = crate::mob::def(crate::mob::Mob(row.kind_id)).size;
-            let min = Vec3::new(
-                row.pos.x - size.half_width,
-                row.pos.y,
-                row.pos.z - size.half_width,
-            );
-            let max = Vec3::new(
-                row.pos.x + size.half_width,
-                row.pos.y + size.height,
-                row.pos.z + size.half_width,
-            );
-            if let Some(t) = player::ray_vs_aabb(eye, dir, min, max) {
-                if t <= limit && best.is_none_or(|(_, bt)| t < bt) {
-                    best = Some((row.id, t));
-                }
-            }
-        }
-        best
+            (!row.dead && Some(row.id) != own_mount).then(|| {
+                let (pos, yaw) = entry.interpolated_pose(alpha);
+                (
+                    row.id,
+                    pos,
+                    yaw,
+                    crate::mob::def(crate::mob::Mob(row.kind_id)).size,
+                )
+            })
+        });
+        crate::mob::closest_body_ray_hit(eye, dir, limit, bodies)
     }
 
     /// The closest VISIBLE, alive remote player whose body AABB (row feet

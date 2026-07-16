@@ -208,6 +208,29 @@ fn samples() -> Samples {
         keys: vec!["m:k".into()],
     });
     s.pin("HostCall::ClientStorageReadPoll", &HostCall::ClientStorageReadPoll { ticket: 7 });
+    s.pin("HostCall::ConsumeHeld", &HostCall::ConsumeHeld { item: ItemId(3), count: 1 });
+    s.pin("HostCall::MobMount", &HostCall::MobMount { mob_id: 7, player_id: 1, seat: 0 });
+    s.pin("HostCall::MobDismount", &HostCall::MobDismount { player_id: 1 });
+    s.pin("HostCall::MobRiders", &HostCall::MobRiders { mob_id: 7 });
+    s.pin("HostCall::MobDrive", &HostCall::MobDrive {
+        mob_id: 7, vel: [1.0, 2.0], yaw: Some(0.5),
+    });
+    s.pin("HostCall::MobAnimSet", &HostCall::MobAnimSet {
+        mob_id: 7, anim: "row".into(), active: true,
+    });
+    s.pin("HostCall::MobAnimRate", &HostCall::MobAnimRate {
+        mob_id: 7, anim: "row".into(), rate: -1.0,
+    });
+    s.pin("HostCall::MobAnimSeek", &HostCall::MobAnimSeek {
+        mob_id: 7, anim: "row".into(), phase: 1.5, rate: 0.75,
+    });
+    s.pin("HostCall::PlayerInput", &HostCall::PlayerInput { player_id: 1 });
+    s.pin("HostCall::MobAnimState", &HostCall::MobAnimState {
+        mob_id: 7, anim: "row".into(),
+    });
+    s.pin("HostCall::SpawnMobChecked", &HostCall::SpawnMobChecked {
+        key: "m:k".into(), pos: [1.0, 2.0, 3.0], yaw: 0.5,
+    });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -219,6 +242,7 @@ fn samples() -> Samples {
     s.pin("HostRet::Light", &HostRet::Light { combined: 1, sky: 2, block: 3 });
     s.pin("HostRet::Mobs", &HostRet::Mobs(vec![MobSnapshot {
         index: 1, key: "m:k".into(), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
+        yaw: 0.5, vel: [1.0, 0.0, 2.0],
     }]));
     s.pin("HostRet::Player", &HostRet::Player(PlayerSnapshot {
         pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, 0.0], yaw: 0.5, pitch: 0.25,
@@ -249,6 +273,15 @@ fn samples() -> Samples {
     s.pin("HostRet::ClientStorageValues", &HostRet::ClientStorageValues(vec![None, Some(ByteBuf::from(vec![1]))]));
     s.pin("HostRet::Item", &HostRet::Item(Some(ItemId(1))));
     s.pin("HostRet::ClientStorageRead", &HostRet::ClientStorageRead(Some(vec![None, Some(ByteBuf::from(vec![1]))])));
+    s.pin("HostRet::Riders", &HostRet::Riders(Some(MobRidersData {
+        capacity: 2, riders: vec![MobRiderData { seat: 0, player_id: 1 }],
+    })));
+    s.pin("HostRet::PlayerInput", &HostRet::PlayerInput(Some(PlayerInputData {
+        forward: 1.0, strafe: -1.0, jump: true, sneak: false, yaw: 0.5, pitch: 0.25,
+    })));
+    s.pin("HostRet::MobAnimState", &HostRet::MobAnimState(Some(MobAnimStateData {
+        phase: 1.5, rate: 0.75, seek: Some(2.0),
+    })));
 
     // --- GuestCall: every variant, declaration order -------------------------
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
@@ -369,6 +402,12 @@ fn samples() -> Samples {
     });
     s.pin("EventPayload::SectionGenerated", &EventPayload::SectionGenerated { pos: [1, 2, 3] });
     s.pin("EventPayload::SectionLoaded", &EventPayload::SectionLoaded { pos: [1, 2, 3] });
+    s.pin("EventPayload::MobInteract", &EventPayload::MobInteract {
+        mob: 1, id: 7, key: "m:k".into(), player_id: 0,
+    });
+    s.pin("EventPayload::PlayerDismounted", &EventPayload::PlayerDismounted {
+        player_id: 0, mob_id: 7,
+    });
 
     // --- Auxiliary enums: ALL variants of each, encoded as one Vec ----------
     s.pin("Outcome::*", &vec![Outcome::Continue, Outcome::Cancel]);
@@ -388,7 +427,8 @@ fn samples() -> Samples {
         EventKind::BlockPlaced, EventKind::BlockBroken, EventKind::ItemUsed,
         EventKind::MobDied, EventKind::MobSpawned, EventKind::PlayerDamaged,
         EventKind::PlayerDied, EventKind::ContainerOpened, EventKind::ContainerClosed,
-        EventKind::SectionGenerated, EventKind::SectionLoaded,
+        EventKind::SectionGenerated, EventKind::SectionLoaded, EventKind::MobInteract,
+        EventKind::PlayerDismounted,
     ]);
     s.pin("DamageSource::*", &vec![
         DamageSource::Fall,
@@ -529,6 +569,17 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::ClientImageBlit", "50036d3a69010201010401020304"),
     ("HostCall::ClientStorageReadBegin", "5101036d3a6b"),
     ("HostCall::ClientStorageReadPoll", "5207"),
+    ("HostCall::ConsumeHeld", "530301"),
+    ("HostCall::MobMount", "54070100"),
+    ("HostCall::MobDismount", "5501"),
+    ("HostCall::MobRiders", "5607"),
+    ("HostCall::MobDrive", "57070000803f00000040010000003f"),
+    ("HostCall::MobAnimSet", "580703726f7701"),
+    ("HostCall::MobAnimRate", "590703726f77000080bf"),
+    ("HostCall::MobAnimSeek", "5a0703726f770000c03f0000403f"),
+    ("HostCall::PlayerInput", "5b01"),
+    ("HostCall::MobAnimState", "5c0703726f77"),
+    ("HostCall::SpawnMobChecked", "5d036d3a6b0000803f00000040000040400000003f"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -536,7 +587,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Block", "040101"),
     ("HostRet::Blocks", "0502000102"),
     ("HostRet::Light", "06010203"),
-    ("HostRet::Mobs", "070101036d3a6b0000803f00000040000040400000804005"),
+    ("HostRet::Mobs", "070101036d3a6b0000803f000000400000404000008040050000003f0000803f0000000000000040"),
     ("HostRet::Player", "080000803f00000040000040400000000000000000000000000000003f0000803e280100"),
     ("HostRet::Bytes", "09010101"),
     ("HostRet::GuiValue", "0a01000000803f"),
@@ -551,6 +602,9 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::ClientStorageValues", "130200010101"),
     ("HostRet::Item", "140101"),
     ("HostRet::ClientStorageRead", "15010200010101"),
+    ("HostRet::Riders", "160102010001"),
+    ("HostRet::PlayerInput", "17010000803f000080bf01000000003f0000803e"),
+    ("HostRet::MobAnimState", "18010000c03f0000403f0100000040"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c0c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
@@ -588,11 +642,13 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::ContainerClosed", "0e05036d3a6700"),
     ("EventPayload::SectionGenerated", "0f020406"),
     ("EventPayload::SectionLoaded", "10020406"),
+    ("EventPayload::MobInteract", "110107036d3a6b00"),
+    ("EventPayload::PlayerDismounted", "120007"),
     ("Outcome::*", "020001"),
     ("Stage::*", "0c000102030405060708090a0b"),
     ("AttachSide::*", "020001"),
     ("WorldgenStage::*", "050001020304"),
-    ("EventKind::*", "11000102030405060708090a0b0c0d0e0f10"),
+    ("EventKind::*", "13000102030405060708090a0b0c0d0e0f101112"),
     ("DamageSource::*", "0400010102036d3a6b03016d"),
     ("ContainerKind::*", "06000102030405036d3a67"),
     ("Facing::*", "0400010203"),

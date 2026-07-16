@@ -110,6 +110,7 @@ impl Scene {
             walk_weight: p.walk_weight,
             sneak_weight: p.sneak_weight,
             sleeping: p.sleeping,
+            seated: p.seated,
             hurt: player_hurt,
             skylight: p.skylight,
             blocklight: p.blocklight,
@@ -207,6 +208,7 @@ fn bake_mobs(mobs: &[MobPresentation], alpha: f32, out: &mut Vec<MobRenderInstan
         hurt: m.hurt_flash,
         shorn: m.shorn,
         emitter_tint: m.emitter_tint,
+        anims: m.anims.clone(),
         ragdoll: m.ragdoll_pose.clone(),
     }));
 }

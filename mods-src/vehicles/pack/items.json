@@ -1,0 +1,18 @@
+{
+  "items": [
+    {
+      "item": "vehicles:boat",
+      "key": "vehicles:boat",
+      "name": "Boat",
+      "max_stack_size": 1,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": -0.6,
+        "roll": 0
+      },
+      "sprite": "vehicles:boat",
+      "tags": [],
+      "use_ray": "water"
+    }
+  ]
+}

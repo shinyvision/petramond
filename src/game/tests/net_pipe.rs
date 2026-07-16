@@ -209,6 +209,7 @@ fn attack_clicks_resolve_the_stable_mob_id_after_indices_shifted() {
     assert!(mobs.spawn(Mob::Owl, Vec3::new(10.0, 64.0, 10.0), 0.0));
     let second_id = mobs.instances()[1].id();
     let h_before = mobs.instances()[1].health();
+    common::aim_server_at_mob(&mut game, 1);
 
     // Click the second owl, then despawn the FIRST before the tick —
     // swap_remove renumbers the second owl into index 0.

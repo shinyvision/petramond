@@ -47,7 +47,7 @@ mod terrain_render;
 mod third_person;
 pub(crate) mod tick;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use crate::block_state::HeldBlockState;
 use crate::camera::Camera;
@@ -87,6 +87,12 @@ pub struct Game {
     /// mining dust) + the `PlayerUpdate.target` message source. `None` when a
     /// mob is the closer target.
     look: Option<RaycastHit>,
+    /// The USE-click target this frame: equal to [`look`](Self::look) unless
+    /// the held item declares a water-stopping use ray (`use_ray: water` in
+    /// `items.json`), in which case the first water cell in reach can be the
+    /// target. Rides `UseClick.target` only — selection outline, mining, and
+    /// the look latch keep the normal water-transparent ray.
+    use_look: Option<RaycastHit>,
     /// The mob under the crosshair this frame (STABLE replicated id), nearer
     /// than any block. Refreshed per frame from the replicated rows; the click
     /// actions carry it on the wire.
@@ -95,6 +101,12 @@ pub struct Game {
     /// nearer than any block or mob — the PvP attack target. At most one of
     /// `targeted_mob`/`targeted_player` is set; `AttackClick` carries it.
     targeted_player: Option<u8>,
+    /// The authoritative mount from the own replicated player row —
+    /// `(stable mob id, seat index)`. While `Some`, local player physics and
+    /// entity push are suspended and the body slaves per frame to the
+    /// interpolated mount at the species' seat offset; movement INTENT keeps
+    /// riding `PlayerUpdate` so the driving mod reads it server-side.
+    self_mount: Option<(u64, u8)>,
     /// The client-owned R-key placement-rotation cycle; its raw counter rides
     /// `PlayerUpdate.held_rotation` (the session keeps its own latched copy).
     held_rotation: HeldRotation,
@@ -145,6 +157,9 @@ pub struct Game {
     /// Client-side tick clock over RECEIVED `TickUpdate`s — the `tick_alpha`
     /// source now that the server accumulator lives on another thread.
     replica_clock: tick::ReplicaClock,
+    /// Bounded FIFO of `TickUpdate` entity rows waiting for crossed render-time
+    /// segment boundaries (see `ReplicaClock` / `StagedRows`).
+    staged_rows: VecDeque<replicated::StagedRows>,
     /// When the currently-open streaming batch's `StreamBatchStart` was
     /// applied; `StreamBatchEnd` closes it into a rate sample and an ack.
     stream_batch_started: Option<std::time::Instant>,
@@ -341,7 +356,13 @@ impl Game {
             .canvas_event(&self.replica, canvas_key, event);
     }
 
-    pub(crate) fn client_mod_canvas_scroll(&mut self, canvas_key: &str, x: f32, y: f32, delta: f32) {
+    pub(crate) fn client_mod_canvas_scroll(
+        &mut self,
+        canvas_key: &str,
+        x: f32,
+        y: f32,
+        delta: f32,
+    ) {
         self.client_mods
             .canvas_scroll(&self.replica, canvas_key, x, y, delta);
     }

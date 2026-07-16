@@ -18,6 +18,6 @@ pub(crate) use bus::{EventBus, Outcome};
 pub(crate) use bus::{PostQueue, SimCtx};
 pub(crate) use payload::{
     BlockBreakPre, BlockInteract, BlockPlacePre, ContainerKind, DamageSource, ItemUsePre,
-    MobDamagePre, ModAction, PlayerDamagePre, PostEvent, PostEventKind,
+    MobDamagePre, MobInteract, ModAction, PlayerDamagePre, PostEvent, PostEventKind,
 };
 pub(crate) use stages::{Attach, Stage, TickSystems};

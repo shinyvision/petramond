@@ -450,21 +450,18 @@ mod tests {
         };
         let mobs = [
             AiMob {
-
                 id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(0.5, 64.0, 0.5),
                 active: true,
             },
             AiMob {
-
                 id: 0,
                 kind: Mob::Owl,
                 pos: Vec3::new(2.5, 64.0, 0.5),
                 active: true,
             },
             AiMob {
-
                 id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(3.5, 64.0, 0.5),
@@ -480,7 +477,6 @@ mod tests {
         let mobs = [
             mobs[0],
             AiMob {
-
                 id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(4.5, 64.0, 0.5),
@@ -505,14 +501,12 @@ mod tests {
         };
         let mobs = [
             AiMob {
-
                 id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(0.5, 64.0, 0.5),
                 active: true,
             },
             AiMob {
-
                 id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(2.5, 64.0, 0.5),
@@ -545,14 +539,12 @@ mod tests {
         };
         let mobs = [
             AiMob {
-
                 id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(0.5, 64.0, 0.5),
                 active: true,
             },
             AiMob {
-
                 id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(15.5, 64.0, 0.5),

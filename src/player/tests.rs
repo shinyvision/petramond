@@ -101,7 +101,15 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
     };
     let mut pl = p(Vec3::new(0.5, 1.0, 0.5)); // feet on the floor top, walking +X into the ledge
     for _ in 0..180 {
-        pl.update_core_with_current(1.0 / 60.0, &half_step, &dry, &still, &no_ladder, walk_x);
+        pl.update_core_with_current(
+            1.0 / 60.0,
+            &half_step,
+            &dry,
+            &still,
+            &no_ladder,
+            walk_x,
+            &[],
+        );
     }
     assert!(
         pl.pos.x > 1.2,
@@ -125,7 +133,15 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
     };
     let mut pl2 = p(Vec3::new(0.5, 1.0, 0.5));
     for _ in 0..180 {
-        pl2.update_core_with_current(1.0 / 60.0, &full_block, &dry, &still, &no_ladder, walk_x);
+        pl2.update_core_with_current(
+            1.0 / 60.0,
+            &full_block,
+            &dry,
+            &still,
+            &no_ladder,
+            walk_x,
+            &[],
+        );
     }
     assert!(
         pl2.pos.y < 1.1,
@@ -367,7 +383,10 @@ fn health_damage_and_restore_clamp_to_the_valid_range() {
     assert_eq!(pl.health(), MAX_HEALTH - 3);
     assert!(!pl.apply_damage(0)); // non-positive is a no-op
     assert_eq!(pl.health(), MAX_HEALTH - 3);
-    assert!(!pl.apply_damage(1000), "the active i-frame window rejects damage");
+    assert!(
+        !pl.apply_damage(1000),
+        "the active i-frame window rejects damage"
+    );
     for _ in 0..crate::damage::PLAYER_DAMAGE_IFRAME_TICKS {
         pl.tick_damage_immunity();
     }
@@ -1229,7 +1248,15 @@ fn flowing_water_pushes_idle_player_along_current() {
     let no_boxes = |_x: i32, _y: i32, _z: i32| Block::Air.collision_boxes();
     let mut pl = p(Vec3::new(0.5, 64.0, 0.5));
 
-    pl.update_core_with_current(0.05, &no_boxes, &water, &flow, &no_ladder, Input::default());
+    pl.update_core_with_current(
+        0.05,
+        &no_boxes,
+        &water,
+        &flow,
+        &no_ladder,
+        Input::default(),
+        &[],
+    );
 
     assert!(
         pl.vel.x > 0.0,
@@ -1491,7 +1518,15 @@ fn sneaking_still_steps_down_a_half_block() {
     };
     let mut pl = p(Vec3::new(0.5, 1.0, 0.5));
     for _ in 0..300 {
-        pl.update_core_with_current(1.0 / 60.0, &step_down, &dry, &still, &no_ladder, sneak_walk);
+        pl.update_core_with_current(
+            1.0 / 60.0,
+            &step_down,
+            &dry,
+            &still,
+            &no_ladder,
+            sneak_walk,
+            &[],
+        );
     }
     assert!(
         pl.pos.x > 1.5,
@@ -1545,7 +1580,7 @@ fn sneak_step_down_is_instant_so_diagonal_descent_cannot_fall_off() {
     let mut min_y = f32::MAX;
     let mut airborne_frames = 0;
     for i in 0..600 {
-        pl.update_core_with_current(1.0 / 60.0, &world, &dry, &still, &no_ladder, diag);
+        pl.update_core_with_current(1.0 / 60.0, &world, &dry, &still, &no_ladder, diag, &[]);
         min_y = min_y.min(pl.pos.y);
         // Skip the first frames: a fresh Player spawns with on_ground unset.
         if i > 2 && !pl.on_ground {

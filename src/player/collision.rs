@@ -62,6 +62,21 @@ impl Player {
     where
         F: Fn(i32, i32, i32) -> &'static [Aabb],
     {
+        self.sweep_boxes_dyn(axis, delta, boxes, &[])
+    }
+
+    /// [`sweep_boxes`](Self::sweep_boxes) that also resolves against dynamic
+    /// boxes (solid entities). Returns true if movement was blocked.
+    pub(super) fn sweep_boxes_dyn<F>(
+        &mut self,
+        axis: Axis,
+        delta: f32,
+        boxes: &F,
+        obstacles: &[crate::collision::DynBox],
+    ) -> bool
+    where
+        F: Fn(i32, i32, i32) -> &'static [Aabb],
+    {
         let mn = self.aabb_min();
         let mx = self.aabb_max();
         let ai = match axis {
@@ -72,8 +87,15 @@ impl Player {
         // The swept-AABB itself is the shared, model-aware primitive — every moving entity
         // resolves against the same `collision::sweep_axis`; the player just applies the
         // travel to its body and reports whether it was clamped short.
-        let travel =
-            crate::collision::sweep_axis([mn.x, mn.y, mn.z], [mx.x, mx.y, mx.z], ai, delta, boxes);
+        let travel = crate::collision::sweep_axis_dyn(
+            [mn.x, mn.y, mn.z],
+            [mx.x, mx.y, mx.z],
+            ai,
+            delta,
+            boxes,
+            obstacles,
+            crate::collision::NOT_AN_ENTITY,
+        );
         match axis {
             Axis::X => self.pos.x += travel,
             Axis::Y => self.pos.y += travel,

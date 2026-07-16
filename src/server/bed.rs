@@ -61,6 +61,15 @@ impl ServerGame {
         if !super::daynight::is_night(&self.world) {
             return;
         }
+        // A rider already has an authoritative physical owner. Starting a
+        // second body state here would let the later riding pass pull the
+        // sleeping body back onto its moving seat while the sleep timer kept
+        // advancing. Keep the spawn update above, but reject night sleep until
+        // the player dismounts.
+        let player_id = self.sessions[s].id.0;
+        if self.world.riding().mount_of(player_id).is_some() {
+            return;
+        }
         // Tuck the player into the bed for the sleep; physics settles them onto
         // the mattress (movement input is off while the sleep screen is up).
         let sess = &mut self.sessions[s];

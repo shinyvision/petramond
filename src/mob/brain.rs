@@ -71,6 +71,14 @@ pub struct TickInputs<'a> {
     pub noises: &'a [Noise],
     /// Snapshot of live mobs at the start of this tick.
     pub mobs: &'a [AiMob],
+    /// Rigid movement obstacles for this mob. Soft bodies receive the complete
+    /// start-of-tick solid snapshot; a moving solid receives only exact peer
+    /// supports, with every other solid handled by the simultaneous solver.
+    pub solid: &'a [crate::collision::DynBox],
+    /// Complete start-of-tick solid snapshot used only to clamp the mandatory
+    /// shallow-foot healing lift. Moving solids otherwise receive just their
+    /// exact supports here and meet all other peers in the simultaneous solve.
+    pub solid_heal: &'a [crate::collision::DynBox],
 }
 
 /// Per-tick context a behavior reads to decide what the mob should do. Behaviors

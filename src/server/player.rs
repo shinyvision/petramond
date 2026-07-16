@@ -187,6 +187,53 @@ pub(crate) struct PendingBreakFinished {
     pub predicted: bool,
 }
 
+/// One buffered secondary-button press. The click-time selection is part of
+/// the intent: receipt-time targeting and tick-time mutation must describe the
+/// same held slot/item, even when a newer `PlayerUpdate` changes the hotbar
+/// before the Placement stage consumes the click.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct PendingUseClick {
+    pub mob: Option<u64>,
+    pub target: Option<TargetRef>,
+    pub request_id: Option<crate::net::protocol::ClientRequestId>,
+    pub predicted: bool,
+    pub jabbed: bool,
+    held_slot: u8,
+    held_item: Option<ItemType>,
+}
+
+impl PendingUseClick {
+    pub(crate) fn capture(
+        player: &Player,
+        mob: Option<u64>,
+        target: Option<TargetRef>,
+        request_id: Option<crate::net::protocol::ClientRequestId>,
+        predicted: bool,
+        jabbed: bool,
+    ) -> Self {
+        Self {
+            mob,
+            target,
+            request_id,
+            predicted,
+            jabbed,
+            held_slot: player.inventory.active_slot(),
+            held_item: player.inventory.selected().map(|stack| stack.item),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn held_item(self) -> Option<ItemType> {
+        self.held_item
+    }
+
+    #[inline]
+    pub(crate) fn selection_still_matches(self, player: &Player) -> bool {
+        player.inventory.active_slot() == self.held_slot
+            && player.inventory.selected().map(|stack| stack.item) == self.held_item
+    }
+}
+
 /// Server-side fall measurement from the per-tick transform samples of
 /// `tick_movement` — the replicated-transform mirror of `Player::track_fall`
 /// (the client physics still measures its own falls, but the server no longer
@@ -327,15 +374,11 @@ pub(crate) struct ConnectedPlayer {
     /// most one of mob/player rides a click). Validated at consume time —
     /// exists, alive, non-spectator, within reach.
     pub pending_attack_player: Option<u8>,
-    pub pending_place: bool,
-    /// The stable id of the mob under the crosshair when the use click fired —
-    /// the shear target.
-    pub pending_use_mob: Option<u64>,
-    /// The block target the use click carried (crosshair AT CLICK TIME,
-    /// reach-validated at the latch). The interact/place ladder resolves
-    /// against THIS cell, never the fresher look latch — a click racing the
-    /// crosshair must land where the client's ghost is.
-    pub pending_place_target: Option<TargetRef>,
+    /// The complete buffered use click, including its click-time held
+    /// slot/item. Keeping the fields together makes supersede, menu-drop, and
+    /// tick consumption atomic: no target/request/selection fragment can
+    /// survive after the click itself is gone.
+    pub pending_use_click: Option<PendingUseClick>,
     /// Cells whose CURRENT authoritative state ships to this recipient in the
     /// next batch (a use click that resolved to nothing, a denied place, or a
     /// denied break): the reconcile channel for a client whose replica disagreed.
@@ -393,20 +436,20 @@ pub(crate) struct ConnectedPlayer {
     /// `BREAK_ACK_TTL_TICKS` (a hold-path break whose finish never arrives
     /// must not grow the set forever).
     pub pending_break_ack: rustc_hash::FxHashMap<IVec3, u64>,
-    /// Optional request id on the pending use/place click (place ghost ack).
-    pub pending_place_request_id: Option<crate::net::protocol::ClientRequestId>,
-    /// Whether the latched place click PRESENTED client-side (full ghost) —
-    /// gates the initiator's `BlockPlaced` echo strip, never validation.
-    pub pending_place_predicted: bool,
-    /// Whether the latched use click already played its own P0 hand jab
-    /// client-side — gates the `SelfEvents::used_unpredicted` echo for
-    /// consumed clicks the client's replica could not foresee (mod-cancelled
-    /// uses/interacts), never validation.
-    pub pending_place_jabbed: bool,
     /// Movement intent from the latest `PlayerUpdate` (F2 server integrate).
     pub move_wishdir: crate::mathh::Vec3,
     pub move_jump: bool,
     pub move_sprint: bool,
+    /// SESSION MIRROR of this player's entry in the world riding registry,
+    /// maintained by the riding pass (`server::riding`) — the mirror drives
+    /// physical placement on a detach and what per-session consumers read
+    /// (movement skip, replication row). Detach events are recorded at the
+    /// authoritative registry transition, not inferred from this mirror.
+    pub mount: Option<crate::mob::riding::Mount>,
+    /// Last tick's sneak level — the rising edge while mounted is the
+    /// dismount gesture (there is deliberately no other server-side sneak
+    /// edge state; see `ConnectedPlayer::sneaking`).
+    pub prev_sneak: bool,
     /// Client-predicted transform from the latest `PlayerUpdate` (F1 soft accept).
     pub claim_pos: crate::mathh::Vec3,
     pub claim_vel: crate::mathh::Vec3,
@@ -490,9 +533,7 @@ impl ConnectedPlayer {
             pending_attack: false,
             pending_attack_mob: None,
             pending_attack_player: None,
-            pending_place: false,
-            pending_use_mob: None,
-            pending_place_target: None,
+            pending_use_click: None,
             pending_corrective_cells: Vec::new(),
             presented_places: Vec::new(),
             presented_breaks: Vec::new(),
@@ -509,12 +550,11 @@ impl ConnectedPlayer {
             pending_break_finished: None,
             deferred_break_finished: None,
             pending_break_ack: Default::default(),
-            pending_place_request_id: None,
-            pending_place_predicted: false,
-            pending_place_jabbed: false,
             move_wishdir: crate::mathh::Vec3::ZERO,
             move_jump: false,
             move_sprint: false,
+            mount: None,
+            prev_sneak: false,
             claim_pos: pos_before_ticks,
             claim_vel: crate::mathh::Vec3::ZERO,
             claim_on_ground: false,

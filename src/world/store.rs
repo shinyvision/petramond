@@ -393,6 +393,15 @@ pub struct World {
     pub(super) dropped_items: DroppedItems,
     /// Active mobs in currently-loaded sections.
     pub(super) mobs: Mobs,
+    /// Player-on-mob riding attachments (see `mob::riding`). On `World` so the
+    /// mount HostCalls reach it through `SimCtx`; the server's riding pass
+    /// reconciles sessions against it each tick. Never persisted.
+    pub(super) riding: crate::mob::riding::Riding,
+    /// Every connected player's movement intent this tick, decomposed into
+    /// its own yaw frame (see [`crate::player::PlayerInputSnapshot`]) —
+    /// published by the server before the tick stages so the `PlayerInput`
+    /// HostCall can answer from the world. Replaced wholesale each tick.
+    pub(super) player_inputs: Vec<crate::player::PlayerInputSnapshot>,
     /// Behavior hooks fired on mod-behavior blocks this tick (see
     /// `block::behavior::wasm`), in fire order. Drained by the game right
     /// after the world tick and dispatched to the owning mods; only blocks
@@ -506,6 +515,8 @@ impl World {
             pending_colgen_records: Vec::new(),
             dropped_items: DroppedItems::default(),
             mobs: Mobs::new(seed as u64),
+            riding: Default::default(),
+            player_inputs: Vec::new(),
             mod_block_hooks: Vec::new(),
             stream_events: Vec::new(),
             stream_events_enabled: false,
@@ -1075,6 +1086,30 @@ impl World {
         self.mobs.spawn_lit(kind, pos, yaw, sky, block)
     }
 
+    /// Atomically spawn a mob only when its complete collision body fits in
+    /// loaded, stream-final world state and does not overlap another live solid mob.
+    /// This is the programmatic-placement counterpart to [`spawn_mob`]: mods
+    /// can create vehicles and other player-placed solid entities without a
+    /// racy centre-cell approximation.
+    pub fn spawn_mob_checked(&mut self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> bool {
+        if !self.mob_spawn_pose_clear(kind, pos, yaw) {
+            return false;
+        }
+        self.spawn_mob(kind, pos, yaw)
+    }
+
+    pub(crate) fn mob_spawn_pose_clear(&self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> bool {
+        let obstacles = self.mobs.solid_obstacles();
+        crate::mob::body_pose_fits(
+            pos,
+            yaw,
+            crate::mob::def(kind).size,
+            &|x, y, z| self.collision_boxes_at(x, y, z),
+            &|x, y, z| self.section_stream_final_at(x, y, z),
+            &obstacles,
+        )
+    }
+
     pub(crate) fn restore_mobs(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
         for mob in mobs {
             let (sky, block) = self.mob_render_light_at(mob.pos);
@@ -1094,6 +1129,47 @@ impl World {
     /// funnels: player steps, block place/break.
     pub fn push_noise(&mut self, noise: crate::mob::Noise) {
         self.mobs.push_noise(noise);
+    }
+
+    /// The riding registry (see `mob::riding`).
+    #[inline]
+    pub fn riding(&self) -> &crate::mob::riding::Riding {
+        &self.riding
+    }
+
+    /// Mutable riding registry — the server's riding pass and the engine
+    /// safety valves (death, leave) detach through this.
+    #[inline]
+    pub fn riding_mut(&mut self) -> &mut crate::mob::riding::Riding {
+        &mut self.riding
+    }
+
+    /// Attach `player` to `seat` of the LIVE mob `mob_id`, validating what the
+    /// registry itself cannot: the mob exists and is alive, and the species
+    /// row declares that seat. The seat-occupancy and one-mount-per-player
+    /// rules live in [`crate::mob::riding::Riding::mount`]. This is the
+    /// `MobMount` HostCall's engine seam; the riding pass slaves the player to
+    /// the seat starting this same tick.
+    pub fn try_mount_player(&mut self, player: u8, mob_id: u64, seat: u8) -> bool {
+        let Some(index) = self.mobs.index_of_id(mob_id) else {
+            return false;
+        };
+        let mob = &self.mobs.instances()[index];
+        if mob.is_dead() || seat as usize >= crate::mob::def(mob.kind).seats.len() {
+            return false;
+        }
+        self.riding.mount(player, mob_id, seat)
+    }
+
+    /// Replace the published per-player input snapshots for this tick (see
+    /// [`crate::player::PlayerInputSnapshot`]).
+    pub fn set_player_inputs(&mut self, inputs: Vec<crate::player::PlayerInputSnapshot>) {
+        self.player_inputs = inputs;
+    }
+
+    /// The published input snapshot for `player`, if connected this tick.
+    pub fn player_input(&self, player: u8) -> Option<crate::player::PlayerInputSnapshot> {
+        self.player_inputs.iter().find(|i| i.id == player).copied()
     }
 
     /// Advance the mobs one fixed game tick against an immutable view of the rest of

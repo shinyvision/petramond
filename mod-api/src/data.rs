@@ -2,6 +2,19 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Maximum UTF-8 byte length of a named mob animation crossing the mod API.
+/// The simulation stores and replicates active names, so the mechanism bounds
+/// them independently of whether the mob's model recognizes the name.
+pub const MAX_MOB_ANIM_NAME_BYTES: usize = 64;
+
+/// Largest absolute named-animation phase accepted from a mod, in authored
+/// animation seconds.
+pub const MAX_MOB_ANIM_PHASE_MAGNITUDE: f32 = 1_000_000.0;
+
+/// Largest absolute named-animation playback/seek rate accepted from a mod,
+/// in authored animation seconds per real second.
+pub const MAX_MOB_ANIM_RATE_MAGNITUDE: f32 = 1_000.0;
+
 /// One value of the open GUI session's state map (Phase 5). Written by mods
 /// on the tick ([`HostCall::GuiStateSet`]); read per frame by the renderer to
 /// drive `label` text, `rotimage` angles (radians, `F32`), and mod overlay
@@ -36,6 +49,76 @@ pub struct MobSnapshot {
     /// unrelated `swap_remove` renumbering; it is not a species id and is not
     /// promised stable across save/load.
     pub id: u64,
+    /// Body facing, radians about +Y. MOB convention: yaw `0` faces `-Z`,
+    /// so the facing direction is `(-sin yaw, 0, -cos yaw)` — the same frame
+    /// [`HostCall::MobDrive`] yaws speak.
+    ///
+    /// [`HostCall::MobDrive`]: crate::HostCall::MobDrive
+    pub yaw: f32,
+    /// Current velocity (m/s). Read-only; steer through
+    /// [`HostCall::MobDrive`].
+    ///
+    /// [`HostCall::MobDrive`]: crate::HostCall::MobDrive
+    pub vel: [f32; 3],
+}
+
+/// One rider of a mob, for [`HostCall::MobRiders`].
+///
+/// [`HostCall::MobRiders`]: crate::HostCall::MobRiders
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub struct MobRiderData {
+    /// Seat index into the species' `seats` row list.
+    pub seat: u8,
+    /// The riding session's player id.
+    pub player_id: u8,
+}
+
+/// Seat declaration and current occupants of one live mob, for
+/// [`HostCall::MobRiders`].
+///
+/// [`HostCall::MobRiders`]: crate::HostCall::MobRiders
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct MobRidersData {
+    /// Number of seats declared by the mob's species row. Valid seat indices
+    /// are `0..capacity`.
+    pub capacity: u8,
+    /// Current occupants, in player-id order.
+    pub riders: Vec<MobRiderData>,
+}
+
+/// Authoritative playback state of one active named mob animation, for
+/// [`HostCall::MobAnimState`].
+///
+/// [`HostCall::MobAnimState`]: crate::HostCall::MobAnimState
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
+pub struct MobAnimStateData {
+    /// Absolute authored-animation phase in seconds.
+    pub phase: f32,
+    /// Current playback rate. While seeking this is the non-negative approach
+    /// rate; after landing it is `0`.
+    pub rate: f32,
+    /// Absolute seek target, or `None` during ordinary rate-driven playback.
+    pub seek: Option<f32>,
+}
+
+/// One player's movement intent this tick, for [`HostCall::PlayerInput`] —
+/// decomposed into the player's own yaw frame so a driving mod never touches
+/// the world-space wish plumbing.
+///
+/// [`HostCall::PlayerInput`]: crate::HostCall::PlayerInput
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
+pub struct PlayerInputData {
+    /// Forward(+)/back(−) along the player's facing, `[-1, 1]`.
+    pub forward: f32,
+    /// Right(+)/left(−) strafe, `[-1, 1]`.
+    pub strafe: f32,
+    pub jump: bool,
+    pub sneak: bool,
+    /// The player's look. PLAYER convention: yaw `0` faces `+Z` (facing
+    /// `(sin yaw, 0, cos yaw)`) — π apart from the mob yaw convention; a mod
+    /// aligning a mount to its rider adds π.
+    pub yaw: f32,
+    pub pitch: f32,
 }
 
 /// The player's state for [`HostCall::PlayerState`].

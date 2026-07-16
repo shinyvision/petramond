@@ -65,6 +65,9 @@ pub fn build_mob_instances(
     indices.clear();
     let head_bone = model.head_bone();
     let walk = model.animation("walk");
+    // Animation layers for the instance being posed (base + active named
+    // anims), reused across instances.
+    let mut layers: Vec<(&Animation, f32, f32)> = Vec::new();
     for inst in instances {
         // Pose each bone. A dying mob uses a physics delta over the authored rest pose,
         // so static Blockbench group rotations are still present as it goes limp. A live
@@ -88,21 +91,36 @@ pub fn build_mob_instances(
                 })
                 .collect()
         } else {
-            let anim: Option<&Animation> = if inst.moving {
+            // Base animation (walk while moving, a playing idle_*, else none)
+            // plus every active NAMED animation at its replicated self-clocked
+            // phase. Names the model lacks are skipped, like disabled pack
+            // content.
+            let base: Option<&Animation> = if inst.moving {
                 walk
             } else if let Some(i) = inst.idle_anim {
                 model.idle_animation(i as usize)
             } else {
                 None
             };
-            let mut pose = match anim {
-                Some(a) => model.pose(a, inst.anim_time),
-                None => model.rest_pose(),
+            layers.clear();
+            layers.extend(base.map(|a| (a, inst.anim_time, 1.0)));
+            layers.extend(
+                inst.anims
+                    .iter()
+                    .filter(|(_, _, weight)| *weight > 0.001)
+                    .filter_map(|(name, phase, weight)| {
+                        model.animation(name).map(|a| (a, *phase, *weight))
+                    }),
+            );
+            let mut pose = if layers.is_empty() {
+                model.rest_pose()
+            } else {
+                model.pose_layers(&layers)
             };
-            // Head-look: drive the head bone toward the AI's target unless the active
+            // Head-look: drive the head bone toward the AI's target unless an active
             // animation already moves the head (then it wins) or there's no head bone.
             if let Some(hb) = head_bone {
-                let anim_drives_head = anim.is_some_and(|a| a.affects_bone(hb));
+                let anim_drives_head = layers.iter().any(|(a, _, _)| a.affects_bone(hb));
                 if !anim_drives_head {
                     model.apply_head_look(&mut pose, hb, inst.head_yaw, inst.head_pitch);
                 }
@@ -224,6 +242,7 @@ mod tests {
             hurt: 0.0,
             shorn: false,
             emitter_tint: [1.0, 1.0, 1.0],
+            anims: Vec::new(),
             ragdoll: None,
         }
     }

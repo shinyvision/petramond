@@ -41,8 +41,11 @@ fn right_click(game: &mut super::common::TestGame) -> TickEvents {
 /// `Action(UseClick { mob })` message does — carrying the STABLE id.
 fn right_click_at_mob(game: &mut super::common::TestGame, index: usize) -> TickEvents {
     let id = game.server.world.mobs().instances()[index].id();
-    game.server.sessions[0].pending_use_mob = Some(id);
-    right_click(game)
+    super::common::aim_server_at_mob(game, index);
+    game.server.queue_mob_use_click_for_test(0, id);
+    let mut events = TickEvents::default();
+    game.server.tick_place(0, &mut events);
+    events
 }
 
 /// A stone shelf at `y` so poured water can spread a flowing ring on it. Wide
@@ -425,5 +428,50 @@ fn shearing_needs_the_shears_in_hand() {
     assert!(
         !game.server.world.mobs().instances()[0].is_shorn(),
         "a bare right-click leaves the coat alone"
+    );
+}
+
+#[test]
+fn a_forged_out_of_reach_mob_id_cannot_interact_or_shear() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let mut game = game();
+    install_empty_chunk(&mut game);
+    game.server.sessions[0].player.inventory = holding(ItemType::Shears);
+    assert!(game.server.world.mobs_mut().spawn(
+        crate::mob::Mob::Sheep,
+        Vec3::new(8.0, 200.0, 8.0),
+        0.0
+    ));
+    let mob = &game.server.world.mobs().instances()[0];
+    let size = crate::mob::def(mob.kind).size;
+    let target = mob.pos + Vec3::Y * (size.height * 0.5);
+    let half_length = size.half_length.unwrap_or(size.half_width);
+    super::common::set_server_view(
+        &mut game,
+        target - Vec3::Z * (crate::player::REACH + half_length + 2.0),
+        Vec3::Z,
+    );
+
+    let dispatched = Arc::new(AtomicBool::new(false));
+    let observed = dispatched.clone();
+    game.server.bus.on_mob_interact(0, move |_, _| {
+        observed.store(true, Ordering::Relaxed);
+        crate::events::Outcome::Cancel
+    });
+    let id = game.server.world.mobs().instances()[0].id();
+    game.server.queue_mob_use_click_for_test(0, id);
+    let mut events = TickEvents::default();
+    game.server.tick_place(0, &mut events);
+
+    assert!(
+        !dispatched.load(Ordering::Relaxed),
+        "authority rejects the forged id before mob_interact dispatch"
+    );
+    assert!(!events.player_at(0).interacted);
+    assert!(
+        !game.server.world.mobs().instances()[0].is_shorn(),
+        "the same validator protects the engine mob-use fallback"
     );
 }

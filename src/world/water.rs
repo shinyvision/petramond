@@ -251,6 +251,23 @@ impl World {
         surface_flow_dir(wx, wy, wz, &block_at, &fluid_at)
     }
 
+    /// Absolute Y of the water surface over `cell`, when `cell` holds water:
+    /// the topmost contiguous water cell of the column plus its rendered
+    /// surface height (a source top sits at 8/9). `None` for a non-water
+    /// cell. The read model behind surface-floating bodies (mob `buoyancy:
+    /// "surface"`) — the walk up the column is bounded by water depth and a
+    /// floating body starts it at the surface anyway.
+    pub fn water_surface_y_world(&self, cell: IVec3) -> Option<f32> {
+        if block_at(self, cell) != Block::Water {
+            return None;
+        }
+        let mut top = cell;
+        while block_at(self, IVec3::new(top.x, top.y + 1, top.z)) == Block::Water {
+            top.y += 1;
+        }
+        Some(top.y as f32 + fluid_height(meta_at(self, top), false))
+    }
+
     /// The current acting on a body PROBE POINT: the cell's flow direction only
     /// while the point sits below the fluid's actual surface. An uncapped cell
     /// tops out at 8/9, so a probe skimming the cell's top sliver — feet

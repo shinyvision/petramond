@@ -109,6 +109,33 @@ fn interacting_with_a_bed_at_night_sets_the_spawn_and_starts_the_sleep() {
 }
 
 #[test]
+fn a_mounted_player_sets_spawn_but_cannot_start_sleeping() {
+    let (mut game, base) = game_with_bed();
+    make_night(&mut game);
+    let player_id = game.server.sessions[0].id.0;
+    let before = game.server.sessions[0].player.pos;
+    assert!(game.server.world.riding_mut().mount(player_id, 77, 0));
+
+    let events = interact_with_bed(&mut game, base);
+
+    assert!(events.player_at(0).bed_interacted);
+    assert!(
+        game.server.sessions[0].player.bed_spawn.is_some(),
+        "the bed still updates the respawn point"
+    );
+    assert!(game.server.sessions[0].sleep.is_none());
+    assert!(!game.server.sessions[0].request_open_sleep);
+    assert_eq!(
+        game.server.sessions[0].player.pos, before,
+        "sleep never creates a second transform while the seat owns the body"
+    );
+    assert!(
+        game.server.world.riding().mount_of(player_id).is_some(),
+        "the rejected sleep does not silently dismount the player"
+    );
+}
+
+#[test]
 fn daytime_bed_interaction_sets_the_spawn_but_never_sleeps() {
     let (mut game, base) = game_with_bed();
     // Fresh world = early morning: it is day, so no night flag is set.

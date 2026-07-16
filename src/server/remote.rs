@@ -423,9 +423,10 @@ impl ServerGame {
 
     /// The leave path, in order: close the open menu (cursor/craft returns,
     /// chest-viewer release), flush the drop queue into the world (overflow
-    /// from those returns must not vanish), persist `players/<name>.dat`,
-    /// remove the session, and bank the close's world events for the next
-    /// tick batch. Returns the leaver's name (`None` = no such session).
+    /// from those returns must not vanish), prepare a safe detached snapshot,
+    /// detach riding state, persist that snapshot, remove the session, and bank
+    /// the close's world events for the next tick batch. Returns the leaver's
+    /// name (`None` = no such session).
     ///
     /// `swap_remove` keeps a LISTEN server's local session at index 0 (only
     /// `s >= 1` is ever removed there; a headless server may remove any
@@ -445,11 +446,21 @@ impl ServerGame {
         self.next_mod_sound_handle = events.next_spatial_sound_handle();
         self.pending_wire_events
             .extend(wire_world_events(&mut events.world));
+        let obstacles = self.world.mobs().solid_obstacles();
+        let snapshot = self.player_snapshot_for_save(s, &obstacles);
+        self.detach_departing_session(s);
         if let Some(save) = self.world.save() {
-            save.save_player(
-                &self.sessions[s].name,
-                crate::save::player::encode(&self.sessions[s].player),
-            );
+            if let Some(snapshot) = snapshot {
+                save.save_player(
+                    &self.sessions[s].name,
+                    crate::save::player::encode(&snapshot),
+                );
+            } else {
+                log::debug!(
+                    "deferring final player save for '{}': no stream-final detached riding position",
+                    self.sessions[s].name
+                );
+            }
         }
         Some(self.sessions.swap_remove(s).name)
     }
@@ -507,6 +518,7 @@ mod tests {
     use crate::server::handle::ServerHandle;
     use std::collections::HashMap;
     use std::net::TcpStream;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
     fn connect(port: u16) -> TcpStream {
         let stream = TcpStream::connect(("127.0.0.1", port)).expect("connect to loopback");
@@ -615,6 +627,54 @@ mod tests {
         assert_eq!(third, "RACHEL3", "the lowest FREE suffix (2 is taken)");
         let names: Vec<&str> = server.sessions.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"Rachel") && names.contains(&"rachel2"));
+    }
+
+    #[test]
+    fn headless_disconnect_detaches_before_player_id_reuse() {
+        let mut server = crate::game::session::build_headless_session("", 3, 2);
+        let dismounts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&dismounts);
+        server.bus.on_post(
+            crate::events::PostEventKind::PlayerDismounted,
+            0,
+            move |_, event| {
+                if matches!(
+                    event,
+                    crate::events::PostEvent::PlayerDismounted {
+                        player: PlayerId(0),
+                        mob_id: 77
+                    }
+                ) {
+                    observed.fetch_add(1, AtomicOrdering::SeqCst);
+                }
+            },
+        );
+
+        let (first, _) = server.admit_remote_player("First", 16, &[]);
+        assert_eq!(first.player_id, PlayerId(0));
+        assert!(server.world.riding_mut().mount(0, 77, 0));
+        server.sessions[0].mount = server.world.riding().mount_of(0);
+
+        assert_eq!(
+            server.remove_remote_session(PlayerId(0)).as_deref(),
+            Some("First")
+        );
+        assert!(server.sessions.is_empty());
+        assert_eq!(server.world.riding().mount_of(0), None);
+
+        let (second, _) = server.admit_remote_player("Second", 16, &[]);
+        assert_eq!(second.player_id, PlayerId(0), "the freed id recycles");
+        assert_eq!(server.world.riding().mount_of(0), None);
+        assert_eq!(server.sessions[0].mount, None);
+
+        server.pump_tagged(crate::game::tick::TICK_DT * 1.01, &mut Vec::new(), &[]);
+        assert_eq!(dismounts.load(AtomicOrdering::SeqCst), 1);
+        server.pump_tagged(crate::game::tick::TICK_DT * 1.01, &mut Vec::new(), &[]);
+        assert_eq!(
+            dismounts.load(AtomicOrdering::SeqCst),
+            1,
+            "one detach transition emits exactly once"
+        );
     }
 
     /// The full Phase E loop over real TCP on 127.0.0.1: open to LAN on an

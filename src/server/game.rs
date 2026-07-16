@@ -21,7 +21,7 @@ use crate::net::protocol::{
     SelfState, SelfTransform, ServerToClient, TickUpdate, WorldEventMsg,
 };
 use crate::player;
-use crate::server::player::{ConnectedPlayer, PendingMenuAction, PlayerId};
+use crate::server::player::{ConnectedPlayer, PendingMenuAction, PendingUseClick, PlayerId};
 use crate::world::{StreamEvent, World};
 
 /// Most fixed ticks run in a single frame before the leftover is dropped. Caps
@@ -168,18 +168,29 @@ impl ServerGame {
     /// Persist everything: flush modified chunks to the save thread, then write
     /// `level.dat` (seed + world tick + mod world KV), one `players/<name>.dat`
     /// per connected session, and the save's mod-set record (`mods.json`). A
+    /// mounted session is encoded from a safely dismounted clone because the
+    /// attachment itself is transient; the live autosave state stays mounted,
+    /// and a player write defers if no detached position is provably safe. A
     /// no-op without an attached save.
     pub(crate) fn save_all(&mut self) {
         self.world.flush_modified_chunks();
-        if let Some(save) = self.world.save() {
-            save.save_level(crate::save::level::encode(
-                self.world.seed,
-                self.world.current_tick(),
-                self.world.mod_kv(),
-                self.world.populated_columns(),
-            ));
-            for session in &self.sessions {
-                let mut snapshot = session.player.clone();
+        if self.world.save().is_none() {
+            return;
+        }
+
+        let obstacles = self.world.mobs().solid_obstacles();
+        let players: Vec<_> = self
+            .sessions
+            .iter()
+            .enumerate()
+            .filter_map(|(s, session)| {
+                let Some(mut snapshot) = self.player_snapshot_for_save(s, &obstacles) else {
+                    log::debug!(
+                        "deferring player save for '{}': no stream-final detached riding position",
+                        session.name
+                    );
+                    return None;
+                };
                 let complete = session
                     .menu
                     .unpersisted_items()
@@ -191,9 +202,21 @@ impl ServerGame {
                         "deferring player save for '{}': transient menu items do not fit",
                         session.name
                     );
-                    continue;
+                    return None;
                 }
-                save.save_player(&session.name, crate::save::player::encode(&snapshot));
+                Some((session.name.clone(), crate::save::player::encode(&snapshot)))
+            })
+            .collect();
+
+        if let Some(save) = self.world.save() {
+            save.save_level(crate::save::level::encode(
+                self.world.seed,
+                self.world.current_tick(),
+                self.world.mod_kv(),
+                self.world.populated_columns(),
+            ));
+            for (name, bytes) in players {
+                save.save_player(&name, bytes);
             }
             save.save_mods_json(crate::modding::modset::encode_active(
                 self.world.disabled_mods(),
@@ -389,6 +412,11 @@ impl ServerGame {
                 dead: m.is_dead(),
                 shorn: m.is_shorn(),
                 emitters: m.active_emitters().to_vec(),
+                anims: m
+                    .active_anims()
+                    .iter()
+                    .map(|l| (l.name.clone(), l.phase))
+                    .collect(),
                 // Present only while the death ragdoll plays (bounded): the
                 // pose as of this tick (alpha 1.0); the client interpolates
                 // consecutive batches.
@@ -440,6 +468,7 @@ impl ServerGame {
                     eating: sess.eating.is_some(),
                     hurt_recent: events.player_at(s).player_damaged,
                     snap: sess.tick_teleported,
+                    mount: sess.mount.map(|m| (m.mob_id, m.seat)),
                 }
             })
             .collect();
@@ -671,7 +700,11 @@ impl ServerGame {
                     || player.pitch != r.pitch
             }
         };
-        let transform = diverged.then_some(current);
+        // A mounted player never receives corrections: the server slaves them
+        // to the mount every tick (always "diverged" from the claim), and the
+        // client slaves itself to the same replicated mount row. The dismount
+        // tick clears `mount`, so the first free tick corrects any residue.
+        let transform = (sess.mount.is_none() && diverged).then_some(current);
         let revision = player.inventory.revision();
         let inventory = (sess.last_sent_inventory_revision != Some(revision)).then(|| {
             player
@@ -949,13 +982,13 @@ impl ServerGame {
             sess.pending_attack = false;
             sess.pending_attack_mob = None;
             sess.pending_attack_player = None;
-            sess.pending_place = false;
-            sess.pending_use_mob = None;
-            sess.pending_place_target = None;
-            sess.pending_place_predicted = false;
             // The dropped click still owes its outcome: deny, so the client
             // rolls its place ghost back instead of leaking the ledger entry.
-            if let Some(id) = sess.pending_place_request_id.take() {
+            if let Some(id) = sess
+                .pending_use_click
+                .take()
+                .and_then(|click| click.request_id)
+            {
                 sess.pending_action_outcomes
                     .push(crate::net::protocol::ActionOutcome {
                         id,
@@ -993,21 +1026,27 @@ impl ServerGame {
                 predicted,
                 jabbed,
             } => {
+                let mut click = PendingUseClick::capture(
+                    &self.sessions[s].player,
+                    mob,
+                    target,
+                    request_id,
+                    predicted,
+                    jabbed,
+                );
+                // A water-stopping ray is gameplay authority, not merely a
+                // client presentation choice. The SAME captured item that
+                // selects this ray must still occupy the captured slot when
+                // Placement consumes the click.
+                click.target = self.authoritative_use_target(s, click.held_item(), click.target);
                 let sess = &mut self.sessions[s];
-                if let Some(old) = sess.pending_place_request_id.take() {
+                if let Some(old) = sess
+                    .pending_use_click
+                    .replace(click)
+                    .and_then(|old| old.request_id)
+                {
                     sess.pending_action_outcomes.push(deny(old));
                 }
-                sess.pending_place = true;
-                sess.pending_use_mob = mob;
-                // Reach-validate the CLICK's target against the same bounded
-                // eye as the look latch. The placement stage resolves against
-                // this cell, never a fresher look.
-                let eye = crate::server::movement::reach_eye(sess);
-                sess.pending_place_target =
-                    target.filter(|t| player::block_within_reach(eye, t.block));
-                sess.pending_place_request_id = request_id;
-                sess.pending_place_predicted = predicted;
-                sess.pending_place_jabbed = jabbed;
             }
             PlayerAction::AttackClick { mob, player } => {
                 let sess = &mut self.sessions[s];
@@ -1149,16 +1188,18 @@ impl ServerGame {
         // actions still queued from the previous tick's final drain (or from
         // mod_init) apply here first.
         self.pump_stream_events();
+        self.publish_dismounted();
         self.apply_mod_actions(events);
         self.drain_post_events(events);
 
         // Keep action intent before world/entity simulation so inputs resolve
         // on the tick. Per-player stages loop the sessions in id order INSIDE
         // the stage, so the mod seams (`begin_stage`/`end_stage`) still run
-        // once per stage per tick.
-        for s in 0..self.sessions.len() {
-            self.tick_movement(s);
-        }
+        // once per stage per tick. The published input snapshots (the
+        // `PlayerInput` HostCall's read model) capture the same intents the
+        // movement integration consumes.
+        self.publish_player_inputs();
+        self.tick_movements();
 
         self.begin_stage(Stage::Mining, events);
         for s in 0..self.sessions.len() {
@@ -1256,7 +1297,11 @@ impl ServerGame {
             .map(|sess| crate::mob::PlayerAnchor {
                 id: sess.id,
                 pos: sess.player.body_center(),
-                body: (!sess.player.is_spectator()).then(|| sess.player.body()),
+                // A mounted rider contributes no push body — its body sits
+                // inside the mount, and the soft push would shove the mount
+                // out from under its own rider every tick.
+                body: (!sess.player.is_spectator() && sess.mount.is_none())
+                    .then(|| sess.player.body()),
                 sneaking: sess.sneaking(),
             })
             .collect();
@@ -1280,6 +1325,10 @@ impl ServerGame {
         // through the engine-owned global i-frame + `player_damage_pre`
         // pipeline, and an applied strike knocks the player back.
         self.apply_mob_attacks(mob_events.attacks, events);
+        // Riding shares the stage: dismount valves, detach publication,
+        // session-mirror consequences, and slaving every rider to its seat on
+        // the mounts' post-tick poses (see `server::riding`).
+        self.tick_riding();
         self.end_stage(Stage::Mobs, events);
 
         self.begin_stage(Stage::ItemPhysics, events);

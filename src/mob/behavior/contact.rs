@@ -234,7 +234,10 @@ mod tests {
             },
         ];
         let first = [EntityRef::Player(PlayerId(3))];
-        let both = [EntityRef::Player(PlayerId(4)), EntityRef::Player(PlayerId(3))];
+        let both = [
+            EntityRef::Player(PlayerId(4)),
+            EntityRef::Player(PlayerId(3)),
+        ];
 
         let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &first, &[]));
         assert_eq!(out.target, Some(EntityRef::Player(PlayerId(3))));

@@ -289,6 +289,27 @@ pub(super) fn install_empty_chunk(game: &mut TestGame) {
         .insert_chunk_for_test(pos, crate::chunk::Chunk::new(0, 0));
 }
 
+/// Put the authoritative session eye at `eye`, looking along `dir`, with an
+/// exact matching movement claim so reach validation uses that position.
+pub(super) fn set_server_view(game: &mut TestGame, eye: Vec3, dir: Vec3) {
+    let dir = dir.normalize();
+    let sess = &mut game.server.sessions[0];
+    sess.player.pos = eye - Vec3::Y * crate::player::EYE;
+    sess.player.yaw = dir.x.atan2(dir.z);
+    sess.player.pitch = dir.y.clamp(-1.0, 1.0).asin();
+    sess.claim_pos = sess.player.pos;
+    sess.ticks_since_claim = 0;
+}
+
+/// Aim the authoritative session through the centre segment of mob `index`,
+/// close enough for an honest target click.
+pub(super) fn aim_server_at_mob(game: &mut TestGame, index: usize) {
+    let mob = &game.server.world.mobs().instances()[index];
+    let size = crate::mob::def(mob.kind).size;
+    let target = mob.pos + Vec3::Y * (size.height * 0.5);
+    set_server_view(game, target - Vec3::Z * 2.0, Vec3::Z);
+}
+
 pub(super) fn count_item(inv: &Inventory, item: ItemType) -> u32 {
     (0..crate::inventory::TOTAL_SLOTS)
         .filter_map(|i| inv.slot(i))

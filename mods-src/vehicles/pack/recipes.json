@@ -1,0 +1,19 @@
+{
+  "recipes": [
+    {
+      "type": "crafting",
+      "recipe": "vehicles:boat",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "tag": "petramond:planks",
+          "count": 5
+        }
+      ],
+      "result": {
+        "item": "vehicles:boat",
+        "count": 1
+      }
+    }
+  ]
+}

@@ -53,6 +53,10 @@ pub(super) struct RawItemDef {
     /// name (`bucket_fill`, `bucket_pour`, `shear`) or a namespaced pending one.
     #[serde(default, rename = "use", skip_serializing_if = "Option::is_none")]
     pub use_: Option<String>,
+    /// Which raycast this item's use click targets with (see
+    /// [`UseRay`](super::UseRay)); absent = the normal water-transparent ray.
+    #[serde(default, skip_serializing_if = "is_default_use_ray")]
+    pub use_ray: super::UseRay,
     /// Game ticks this item burns as furnace fuel; absent = not a fuel.
     #[serde(default, skip_serializing_if = "u16_is_zero")]
     pub fuel_burn_ticks: u16,
@@ -114,6 +118,10 @@ fn default_eat_ticks() -> u32 {
 
 fn u16_is_zero(v: &u16) -> bool {
     *v == 0
+}
+
+fn is_default_use_ray(v: &super::UseRay) -> bool {
+    *v == super::UseRay::default()
 }
 
 /// A tool declaration in `items.json`: family + material tier (1 = wooden,
@@ -330,6 +338,7 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
         tags: Box::leak(tags.into_boxed_slice()),
         block,
         item_use,
+        use_ray: r.use_ray,
         fuel_burn_ticks: r.fuel_burn_ticks,
         tool,
         food,

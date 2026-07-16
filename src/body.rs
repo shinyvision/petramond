@@ -80,12 +80,18 @@ pub fn separation(a: Body, b: Body) -> Option<Vec3> {
     let dx = a.x - b.x;
     let dz = a.z - b.z;
     let reach = a.hw + b.hw;
-    let dist_sq = dx * dx + dz * dz;
-    if dist_sq >= reach * reach {
+    let overlap_x = reach - dx.abs();
+    let overlap_z = reach - dz.abs();
+    if overlap_x <= EPS || overlap_z <= EPS {
         return None;
     }
+
+    // The bodies are AABBs, so diagonal corner overlap is still contact. Keep
+    // the established centre-line shove direction, but scale it by the
+    // shallowest axis penetration so segment depth remains comparable.
+    let dist_sq = dx * dx + dz * dz;
     let dist = dist_sq.sqrt();
-    let overlap = reach - dist;
+    let overlap = overlap_x.min(overlap_z);
     // Exactly coincident centres have no defined direction. Split along +X so
     // perfectly stacked bodies still separate deterministically.
     let (nx, nz) = if dist > EPS {

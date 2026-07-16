@@ -101,12 +101,10 @@ impl AiBehavior for MeleeAttackAi {
         // historical body-centre rule.
         let (target, target_pos, pad) = match ctx.target {
             None => return BehaviorOutput::default(),
-            Some(EntityRef::Player(pid)) => {
-                match ctx.players.iter().find(|a| a.id == pid) {
-                    Some(a) => (EntityRef::Player(pid), a.pos, 0.0),
-                    None => return BehaviorOutput::default(),
-                }
-            }
+            Some(EntityRef::Player(pid)) => match ctx.players.iter().find(|a| a.id == pid) {
+                Some(a) => (EntityRef::Player(pid), a.pos, 0.0),
+                None => return BehaviorOutput::default(),
+            },
             Some(EntityRef::Mob(id)) => {
                 if id == ctx.mob_id {
                     return BehaviorOutput::default();

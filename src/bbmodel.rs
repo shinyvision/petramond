@@ -351,25 +351,18 @@ impl Model {
     }
 
     /// Per-bone world-within-model transforms posed by `anim` at `time` seconds
-    /// (looped over the animation length). Index by `Cube::bone`. Apply to a
+    /// (looped over the animation length) — the single-animation form of
+    /// [`pose_layers`](Self::pose_layers). Index by `Cube::bone`. Apply to a
     /// model-space cube vertex to get its posed model-space position (before the
     /// caller's scale/yaw/translate to the world).
+    #[cfg(test)]
     pub fn pose(&self, anim: &Animation, time: f32) -> Vec<Mat4> {
-        self.pose_scaled(anim, time, 1.0)
-    }
-
-    /// [`pose`](Self::pose) with the sampled animation rotations scaled by
-    /// `weight` (`1.0` = the full animation, `0.0` = exactly the rest pose) —
-    /// the blend a body uses to ease between standing and its walk cycle
-    /// instead of snapping. Scaling the euler track is exact for the same
-    /// reason the loader's XYZ order is: the authored tracks are per-axis.
-    pub fn pose_scaled(&self, anim: &Animation, time: f32, weight: f32) -> Vec<Mat4> {
-        self.pose_layers(&[(anim, time, weight)])
+        self.pose_layers(&[(anim, time, 1.0)])
     }
 
     /// Pose blended from several `(animation, time, weight)` layers at once: each
     /// bone rotates by the weight-scaled SUM of the layers' sampled eulers (the
-    /// multi-layer generalization of [`pose_scaled`](Self::pose_scaled) — summing
+    /// multi-layer generalization of a single weighted animation — summing
     /// weighted per-axis euler tracks is the same exactness argument). Weights
     /// clamp to `[0, 1]` individually; layers totalling 1 cross-fade (the player
     /// walk↔sneak blend), and an empty/zero-weight set is exactly the rest pose.

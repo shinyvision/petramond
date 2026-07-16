@@ -103,6 +103,17 @@ impl World {
             .is_some_and(|sp| self.sections.contains_key(&sp) && self.stream_writable(sp))
     }
 
+    /// Whether [`World::physics_block`](Self::physics_block) is a truthful,
+    /// final read at this cell. Unlike [`Self::section_stream_final_at`], this
+    /// accepts absent sections whose generated summary proves their uniform
+    /// contents. Collision-driven snapshots use this before treating an
+    /// apparent air cell as safe; unresolved or still-streaming terrain must
+    /// defer instead of being persisted as though it were empty.
+    pub(crate) fn physics_cell_final_at(&self, wx: i32, wy: i32, wz: i32) -> bool {
+        SectionPos::from_world(wx, wy, wz)
+            .is_some_and(|sp| self.section_stream_state(sp, false) == StreamState::Final)
+    }
+
     /// `quiet` short-circuits the three in-flight probes when the caller
     /// already knows all in-flight sets are empty (the steady-state fast path).
     fn section_stream_state(&self, sp: SectionPos, quiet: bool) -> StreamState {
@@ -187,7 +198,8 @@ impl World {
 mod tests {
     use crate::block::Block;
     use crate::chunk::{Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_SIZE};
-    use crate::mathh::IVec3;
+    use crate::mathh::{IVec3, Vec3};
+    use crate::mob::Mob;
     use crate::world::testutil::flat_world;
 
     use super::super::store::World;
@@ -251,6 +263,31 @@ mod tests {
         assert!(!w.set_block_world(8, 70, 8, Block::Stone));
         w.awaited_overlays.remove(&awaited);
         assert!(w.set_block_world(8, 70, 8, Block::Stone));
+    }
+
+    #[test]
+    fn checked_mob_spawn_requires_loaded_stream_final_body_cells() {
+        let mut w = World::new(0, 0);
+        let column = ChunkPos::new(0, 0);
+        w.ensure_column(column);
+        let pos = Vec3::new(8.5, 64.0, 8.5);
+
+        assert!(w.physics_cell_final_at(8, 64, 8));
+        assert!(!w.section_stream_final_at(8, 64, 8));
+        assert!(
+            !w.spawn_mob_checked(Mob::Owl, pos, 0.0),
+            "a truthful absent-air summary is not a loaded entity destination"
+        );
+
+        w.insert_empty_column_for_test(column);
+        let section = SectionPos::new(0, 4, 0);
+        w.awaited_overlays.insert(section);
+        assert!(
+            !w.spawn_mob_checked(Mob::Owl, pos, 0.0),
+            "a loaded base with an in-flight save overlay is not final"
+        );
+        w.awaited_overlays.remove(&section);
+        assert!(w.spawn_mob_checked(Mob::Owl, pos, 0.0));
     }
 
     #[test]

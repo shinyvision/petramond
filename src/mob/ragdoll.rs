@@ -952,7 +952,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn hushjaw_corpse_collapses_to_the_ground_and_neither_freezes_nor_flips() {
         // The real hushjaw at its in-game scale: a huge geometry-bearing skull under a

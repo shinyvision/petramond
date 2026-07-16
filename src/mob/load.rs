@@ -26,9 +26,9 @@ use crate::registry::NameTable;
 
 use super::brain::AiBehavior;
 use super::{
-    behavior, BrainNode, Habitat, Mob, MobCategory, MobDamageFeedback, MobDamageFeedbackComponent,
-    MobDamageSound, MobDef, MobSize, MobSoundCategory, MobSoundSpec, ShearSpec, SpawnGroup,
-    SpawnRule, WanderCohesion, WanderTuning, DEFAULT_DAMAGE_FLASH_SECS,
+    behavior, BrainNode, Buoyancy, Habitat, Mob, MobCategory, MobCollision, MobDamageFeedback,
+    MobDamageFeedbackComponent, MobDamageSound, MobDef, MobSize, MobSoundCategory, MobSoundSpec,
+    ShearSpec, SpawnGroup, SpawnRule, WanderCohesion, WanderTuning, DEFAULT_DAMAGE_FLASH_SECS,
     DEFAULT_DAMAGE_KNOCKBACK_SECS, ENGINE_MOB_NAMES,
 };
 
@@ -81,6 +81,12 @@ struct RawMobDef {
     wander: RawWander,
     habitat: RawHabitat,
     avoid_water: bool,
+    /// Water behavior (see [`Buoyancy`]); omitted = `swim`.
+    #[serde(default)]
+    buoyancy: Buoyancy,
+    /// Body collision role (see [`MobCollision`]); omitted = `soft`.
+    #[serde(default)]
+    collision: MobCollision,
     #[serde(default)]
     shear: Option<ShearSpec>,
     #[serde(default)]
@@ -88,6 +94,10 @@ struct RawMobDef {
     #[serde(default)]
     sounds: Vec<RawMobSound>,
     brain: Vec<RawBrainNode>,
+    /// Rider seat offsets in mob-local blocks (`+z` = facing, `+x` = right,
+    /// `y` = up from the feet). Empty/omitted = not rideable.
+    #[serde(default)]
+    seats: Vec<[f64; 3]>,
 }
 
 #[derive(Deserialize)]
@@ -257,6 +267,7 @@ pub(super) fn parse_layers(texts: &[&str]) -> Result<&'static [MobDef], String> 
 }
 
 fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> {
+    r.size.validate()?;
     let cohesion = match r.wander.cohesion {
         Some(c) => Some(WanderCohesion {
             companion: names
@@ -278,6 +289,27 @@ fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> 
         }
         None => r.category.default_despawn_radius(),
     };
+    if r.seats.len() > super::MAX_MOB_SEATS {
+        return Err(format!(
+            "at most {} seats per species, got {}",
+            super::MAX_MOB_SEATS,
+            r.seats.len()
+        ));
+    }
+    let mut seats = Vec::with_capacity(r.seats.len());
+    for (i, s) in r.seats.iter().enumerate() {
+        let seat = [s[0] as f32, s[1] as f32, s[2] as f32];
+        if !seat
+            .iter()
+            .all(|c| c.is_finite() && c.abs() <= super::MAX_MOB_SEAT_OFFSET)
+        {
+            return Err(format!(
+                "seat #{i} offsets must remain finite f32 values within ±{}, got {s:?}",
+                super::MAX_MOB_SEAT_OFFSET
+            ));
+        }
+        seats.push(seat);
+    }
 
     Ok(MobDef {
         mob,
@@ -309,10 +341,13 @@ fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> 
             prefer: resolve_biomes(r.habitat.prefer)?,
         },
         avoid_water: r.avoid_water,
+        buoyancy: r.buoyancy,
+        collision: r.collision,
         shear: r.shear,
         damage_feedback: convert_damage_feedback(r.damage_feedback)?,
         sounds: convert_sounds(r.sounds)?,
         brain: convert_brain(r.brain)?,
+        seats: Box::leak(seats.into_boxed_slice()),
     })
 }
 
@@ -467,6 +502,41 @@ mod tests {
             assert_eq!(d.mob, Mob(i as u8));
             assert_eq!(d.name, ENGINE_MOB_NAMES[i]);
         }
+    }
+
+    #[test]
+    fn loader_rejects_geometry_that_is_non_finite_or_unbounded() {
+        let invalid = |edit: fn(&mut serde_json::Value)| {
+            let mut value: serde_json::Value = serde_json::from_str(&base()).unwrap();
+            edit(&mut value["mobs"][0]);
+            let text = serde_json::to_string(&value).unwrap();
+            parse_layers(&[&text])
+                .map(|_| ())
+                .expect_err("invalid geometry must fail during catalog load")
+        };
+
+        let zero_width = invalid(|row| row["size"]["half_width"] = serde_json::json!(0.0));
+        assert!(zero_width.contains("half_width"), "{zero_width}");
+
+        let excessive_segments = invalid(|row| {
+            row["size"] = serde_json::json!({
+                "half_width": 0.01,
+                "height": 1.0,
+                "half_length": 1.0
+            });
+        });
+        assert!(
+            excessive_segments.contains("segments"),
+            "{excessive_segments}"
+        );
+
+        let narrowed_infinite_seat = invalid(|row| {
+            row["seats"] = serde_json::json!([[1e300, 0.0, 0.0]]);
+        });
+        assert!(
+            narrowed_infinite_seat.contains("finite f32"),
+            "{narrowed_infinite_seat}"
+        );
     }
 
     #[test]

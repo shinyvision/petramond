@@ -139,6 +139,11 @@ pub(crate) struct MobPresentation {
     /// Replicated active particle-emitter bundle ids (client-local
     /// `particle_emitters.json` catalog ids).
     pub(crate) emitters: Vec<u8>,
+    /// Named model animations as `(name, phase, weight)` — each layered by
+    /// the renderer over the walk/idle/rest base pose at its own
+    /// tick-interpolated PHASE (seconds into the clip; a paused oar's phase
+    /// holds) and CLIENT-side blend weight (fading in toward 1, out toward 0).
+    pub(crate) anims: Vec<(String, f32, f32)>,
     /// Body tint composed from the active bundles' `tint` values (white when
     /// none) — multiplied into the render tint like the hurt flash.
     pub(crate) emitter_tint: [f32; 3],
@@ -159,6 +164,8 @@ pub(crate) struct PlayerPresentation {
     pub(crate) head_pitch: f32,
     /// Seconds into the walk animation.
     pub(crate) anim_time: f32,
+    /// Mounted on a mob seat — the body renders seated (legs forward).
+    pub(crate) seated: bool,
     /// Walk-pose blend weight (`0` standing … `1` full walk cycle).
     pub(crate) walk_weight: f32,
     /// Sneak-stance blend weight (`0` upright … `1` fully crouched).
@@ -368,6 +375,23 @@ impl GamePresentationScratch {
                 shorn: curr.shorn,
                 emitters: curr.emitters.clone(),
                 emitter_tint: emitter_tint(&curr.emitters),
+                // Each layer at its tick-interpolated phase (prev→curr by
+                // name; fading-out layers hold the blend's last phase).
+                anims: entry
+                    .anim_blend
+                    .iter()
+                    .map(|(name, weight, held)| {
+                        let phase = match (
+                            prev.anims.iter().find(|(n, _)| n == name),
+                            curr.anims.iter().find(|(n, _)| n == name),
+                        ) {
+                            (Some((_, a)), Some((_, b))) => a + (b - a) * tick_alpha,
+                            (_, Some((_, b))) => *b,
+                            _ => *held,
+                        };
+                        (name.clone(), phase, *weight)
+                    })
+                    .collect(),
                 ragdoll_pose: curr.ragdoll.as_ref().map(|pose| {
                     crate::game::replicated::lerp_ragdoll(prev.ragdoll.as_ref(), pose, tick_alpha)
                         .into()
@@ -427,7 +451,28 @@ impl GamePresentationScratch {
             }
             let (mut pos, yaw, pitch) = remote_players::interpolate(&p.prev, &p.curr, tick_alpha);
             let sleeping = p.curr.sleeping;
-            let body_yaw = p.pose.body_yaw;
+            let mut body_yaw = p.pose.body_yaw;
+            let mut head_yaw = yaw - body_yaw;
+            // A mounted body GLUES to the interpolated mount: position at the
+            // seat offset instead of the row lerp (a turning mount rotates
+            // the seat along an arc the lerp would cut across), and the BODY
+            // sits square in the seat — its yaw is the mount's facing, only
+            // the clamped head follows the look. If the referenced mount row
+            // is not available yet, keep the rider row's own interpolation.
+            if let Some((seat_pos, mount_yaw)) = p.curr.mount.and_then(|(mob_id, seat)| {
+                let (seat_pos, mob_yaw) = game
+                    .replicated_mobs
+                    .interpolated_seat_pose(mob_id, seat, tick_alpha)?;
+                Some((
+                    seat_pos,
+                    crate::game::body_pose::wrap_angle(mob_yaw + std::f32::consts::PI),
+                ))
+            }) {
+                pos = seat_pos;
+                body_yaw = mount_yaw;
+                head_yaw = crate::game::body_pose::wrap_angle(yaw - body_yaw)
+                    .clamp(-SEATED_HEAD_YAW_LIMIT, SEATED_HEAD_YAW_LIMIT);
+            }
             if sleeping {
                 // Mirror of `collect_player`'s sleeping branch: the sleeper
                 // stands at the bed-group centre; the lying model's feet
@@ -441,15 +486,16 @@ impl GamePresentationScratch {
                 body: PlayerRenderInstance {
                     pos,
                     body_yaw,
-                    // The follow rule keeps `yaw - body_yaw` within the head
-                    // limit, so the relative head yaw needs no re-wrapping
-                    // (same contract as the local body).
-                    head_yaw: yaw - body_yaw,
+                    // Walking bodies: the follow rule keeps `yaw - body_yaw`
+                    // within the head limit, no re-wrapping needed. Seated
+                    // bodies clamped it against the seat facing above.
+                    head_yaw,
                     head_pitch: pitch,
                     anim_time: p.pose.anim_time,
                     walk_weight: p.pose.walk_weight,
                     sneak_weight: p.pose.sneak_weight,
                     sleeping,
+                    seated: p.curr.mount.is_some(),
                     hurt: p.hurt_flash01(),
                     skylight: world.skylight6_at_world(c.x, c.y, c.z),
                     blocklight: world.blocklight6_at_world(c.x, c.y, c.z),
@@ -511,6 +557,12 @@ fn emitter_tint(ids: &[u8]) -> [f32; 3] {
     tint
 }
 
+/// How far a SEATED body's head may swivel off the seat facing (radians).
+/// The body itself sits square in the seat (its yaw is the mount's), so the
+/// look must not drag it around — and an unclamped relative head yaw would
+/// owl the neck when the rider looks backward.
+const SEATED_HEAD_YAW_LIMIT: f32 = 1.2;
+
 fn collect_player(game: &Game) -> Option<PlayerPresentation> {
     // The body draws only once the boom camera is actually placed — never on a
     // frame whose render camera is still the first-person eye (inside the head).
@@ -533,12 +585,28 @@ fn collect_player(game: &Game) -> Option<PlayerPresentation> {
         pos.x -= head_yaw.sin() * 0.925;
         pos.z -= head_yaw.cos() * 0.925;
     }
+    // Seated: the body sits SQUARE in the seat — its yaw is the mount's
+    // facing, never the look-follow (which would spin the whole body, legs
+    // through the hull); only the head follows the look, clamped.
+    let seated = game.self_mount.is_some();
+    let (body_yaw, head_yaw) = match game.mount_body_yaw() {
+        Some(mount_yaw) => (
+            mount_yaw,
+            crate::game::body_pose::wrap_angle(game.player.yaw - mount_yaw)
+                .clamp(-SEATED_HEAD_YAW_LIMIT, SEATED_HEAD_YAW_LIMIT),
+        ),
+        None => (
+            game.third_person.pose.body_yaw,
+            game.player.yaw - game.third_person.pose.body_yaw,
+        ),
+    };
     Some(PlayerPresentation {
         pos,
-        body_yaw: game.third_person.pose.body_yaw,
-        head_yaw: game.player.yaw - game.third_person.pose.body_yaw,
+        body_yaw,
+        head_yaw,
         head_pitch: game.player.pitch,
         anim_time: game.third_person.pose.anim_time,
+        seated,
         walk_weight: game.third_person.pose.walk_weight,
         sneak_weight: game.third_person.pose.sneak_weight,
         sleeping,

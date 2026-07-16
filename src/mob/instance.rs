@@ -10,6 +10,8 @@
 
 use std::f32::consts::{PI, TAU};
 
+use mod_api::{MAX_MOB_ANIM_NAME_BYTES, MAX_MOB_ANIM_PHASE_MAGNITUDE, MAX_MOB_ANIM_RATE_MAGNITUDE};
+
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
@@ -68,6 +70,13 @@ const SWIM_CLIMB_MAX_LEDGE_DELTA: f32 = 1.25;
 /// player's so a mob and the player ride the same current at the same pace. Below walk
 /// speed, so a current carries an idle mob but never overpowers a mob that's swimming.
 const WATER_CURRENT_SPEED: f32 = 0.75;
+/// How far below the waterline a surface-floating body's feet settle
+/// (`Buoyancy::Surface`) — a hull rides with its keel wetted, not skimming.
+const SURFACE_DRAFT: f32 = 0.1;
+/// First-order approach rate (per second) toward the float line for
+/// `Buoyancy::Surface`: velocity proportional to the depth error (capped at
+/// [`SWIM_RISE`]), so a hull settles level with no overshoot and NO bob.
+const SURFACE_FLOAT_RATE: f32 = 6.0;
 /// How fast the head turns toward its look target (rad/s) — deliberately slow so the
 /// head pans rather than snaps.
 const HEAD_TURN_RATE: f32 = 4.0;
@@ -122,10 +131,10 @@ pub struct Instance {
     /// Highest feet Y reached since the mob last stood/swum. A landing compares this
     /// peak to the landed feet Y to produce deterministic fall damage.
     fall_peak_y: f32,
-    /// Landing distance latched by [`track_fall`](Self::track_fall) and drained by the
+    /// Landing distance latched by [`finish_motion`](Self::finish_motion) and drained by the
     /// manager after the tick so `ServerGame` can route damage through `mob_damage_pre`.
     fall_distance: f32,
-    /// Fall-INTO-WATER distance latched by [`track_fall`](Self::track_fall) and drained
+    /// Fall-INTO-WATER distance latched by [`finish_motion`](Self::finish_motion) and drained
     /// by the manager — `ServerGame` turns it into the water-splash burst.
     splash_drop: f32,
     /// True once this mob is beyond its row-level despawn radius this tick. The manager
@@ -156,6 +165,25 @@ pub struct Instance {
     /// like its other transient decisions). It survives death so a corpse keeps
     /// its effect through the ragdoll.
     active_emitters: Vec<u8>,
+    /// ACTIVE named model animations, sorted by name, at most
+    /// [`super::MAX_ACTIVE_MOB_ANIMS`] — the animation sibling of
+    /// [`active_emitters`](Self::active_emitters): presentation-only state
+    /// controlled by mods through the `MobAnimSet`/`MobAnimRate` HostCalls,
+    /// replicated per tick (name + phase), never persisted. Each layer is
+    /// SELF-CLOCKED: its phase advances by `rate` per second on the tick —
+    /// rate 0 freezes it mid-stroke (an oar pauses in place, never snaps
+    /// home), negative reverses. Names are the mob model's own animation
+    /// names; the renderer layers every active one over the walk/idle/rest
+    /// base pose and silently skips names the model doesn't have.
+    active_anims: Vec<AnimLayer>,
+    /// A mod's kinematic locomotion intent for THIS tick (the `MobDrive`
+    /// HostCall), consumed by [`integrate_with_flow`](Self::integrate_with_flow):
+    /// while present it replaces the brain's wish-velocity overwrite, so a mod
+    /// can drive a mob directly (a vehicle) with the engine still owning
+    /// vertical physics (gravity/buoyancy) and collision. Like the brain's
+    /// wish it must be re-set every tick — a disabled mod's vehicle simply
+    /// stops. Never persisted.
+    drive: Option<DriveIntent>,
     /// Per-mob mod KV (`mod_id:key` → bytes) — opaque to the engine, written
     /// by mod HostCalls on the tick, persisted with the mob's save record
     /// (see [`super::SavedMob`]). BTreeMap so the save encoding is deterministic.
@@ -196,6 +224,29 @@ enum AnimKind {
     Rest,
 }
 
+/// One tick's mod-issued locomotion: a horizontal velocity (m/s, world space)
+/// and optionally an absolute facing. See [`Instance::set_drive`].
+#[derive(Copy, Clone)]
+pub(super) struct DriveIntent {
+    pub vel_x: f32,
+    pub vel_z: f32,
+    pub yaw: Option<f32>,
+}
+
+/// One active named model animation: its self-clocked playback state. The
+/// phase is SECONDS into the authored clip (the renderer wraps looping clips
+/// by their length) and is what replicates; the rate and seek target are
+/// server-side control state only. While `seek` is set, the phase approaches
+/// it directly at `|rate|`/s and lands EXACTLY on it (then holds at rate 0)
+/// — how an oar settles back onto its authored pose.
+#[derive(Clone, Debug)]
+pub struct AnimLayer {
+    pub name: String,
+    pub phase: f32,
+    pub rate: f32,
+    pub seek: Option<f32>,
+}
+
 enum DeathState {
     Alive,
     NoPresentation,
@@ -215,6 +266,64 @@ impl DeathState {
             Self::NoPresentation => true,
             Self::Ragdoll(ragdoll) => ragdoll.is_done(),
         }
+    }
+}
+
+/// Advance one named animation without ever publishing non-finite or
+/// unbounded control state. Host guards make this defensive in normal play;
+/// keeping the invariant here also contains corrupted/internally-produced
+/// state before it reaches replication.
+fn step_anim_layer(layer: &mut AnimLayer, dt: f32) {
+    if !layer.phase.is_finite() {
+        layer.phase = 0.0;
+        layer.rate = 0.0;
+        layer.seek = None;
+        return;
+    }
+    if layer.phase.abs() > MAX_MOB_ANIM_PHASE_MAGNITUDE {
+        layer.phase = layer
+            .phase
+            .clamp(-MAX_MOB_ANIM_PHASE_MAGNITUDE, MAX_MOB_ANIM_PHASE_MAGNITUDE);
+        layer.rate = 0.0;
+        layer.seek = None;
+        return;
+    }
+    if !dt.is_finite()
+        || dt < 0.0
+        || !layer.rate.is_finite()
+        || layer.rate.abs() > MAX_MOB_ANIM_RATE_MAGNITUDE
+        || layer.seek.is_some_and(|target| {
+            !target.is_finite() || target.abs() > MAX_MOB_ANIM_PHASE_MAGNITUDE
+        })
+    {
+        layer.rate = 0.0;
+        layer.seek = None;
+        return;
+    }
+
+    let next = match layer.seek {
+        Some(target) => {
+            let step = layer.rate.abs() * dt;
+            if !step.is_finite() {
+                layer.rate = 0.0;
+                layer.seek = None;
+                return;
+            }
+            if (target - layer.phase).abs() <= step {
+                layer.rate = 0.0;
+                layer.seek = None;
+                target
+            } else {
+                layer.phase + step * (target - layer.phase).signum()
+            }
+        }
+        None => layer.phase + layer.rate * dt,
+    };
+    if next.is_finite() && next.abs() <= MAX_MOB_ANIM_PHASE_MAGNITUDE {
+        layer.phase = next;
+    } else {
+        layer.rate = 0.0;
+        layer.seek = None;
     }
 }
 
@@ -255,6 +364,8 @@ impl Instance {
             push: Vec3::ZERO,
             shear_regrow: 0,
             active_emitters: Vec::new(),
+            active_anims: Vec::new(),
+            drive: None,
             mod_kv: std::collections::BTreeMap::new(),
             death: DeathState::Alive,
             anim_kind: AnimKind::Rest,
@@ -319,6 +430,139 @@ impl Instance {
                 true
             }
         }
+    }
+
+    /// The active named model animations, sorted by name.
+    #[inline]
+    pub fn active_anims(&self) -> &[AnimLayer] {
+        &self.active_anims
+    }
+
+    /// Toggle one named model animation — the animation sibling of
+    /// [`set_emitter_active`](Self::set_emitter_active). Activation starts
+    /// the layer at phase 0, rate 1 (see [`set_anim_rate`](Self::set_anim_rate)).
+    /// Returns `false` only when an activation would exceed
+    /// [`super::MAX_ACTIVE_MOB_ANIMS`]. The name is NOT validated against the
+    /// model (the sim does not load models); the renderer skips names the
+    /// model lacks, like a disabled pack's content.
+    pub(super) fn set_anim_active(&mut self, name: &str, active: bool) -> bool {
+        if name.len() > MAX_MOB_ANIM_NAME_BYTES {
+            return false;
+        }
+        match (
+            self.active_anims
+                .binary_search_by(|a| a.name.as_str().cmp(name)),
+            active,
+        ) {
+            (Ok(_), true) | (Err(_), false) => true,
+            (Ok(at), false) => {
+                self.active_anims.remove(at);
+                true
+            }
+            (Err(at), true) => {
+                if self.active_anims.len() >= super::MAX_ACTIVE_MOB_ANIMS {
+                    return false;
+                }
+                self.active_anims.insert(
+                    at,
+                    AnimLayer {
+                        name: name.to_owned(),
+                        phase: 0.0,
+                        rate: 1.0,
+                        seek: None,
+                    },
+                );
+                true
+            }
+        }
+    }
+
+    /// Set an active layer's playback rate (phase advance per second): `0`
+    /// freezes it mid-stroke, negative reverses. Cancels an in-flight seek.
+    /// `false` when the anim isn't active.
+    pub(super) fn set_anim_rate(&mut self, name: &str, rate: f32) -> bool {
+        if name.len() > MAX_MOB_ANIM_NAME_BYTES
+            || !rate.is_finite()
+            || rate.abs() > MAX_MOB_ANIM_RATE_MAGNITUDE
+        {
+            return false;
+        }
+        match self
+            .active_anims
+            .binary_search_by(|a| a.name.as_str().cmp(name))
+        {
+            Ok(at) => {
+                self.active_anims[at].rate = rate;
+                self.active_anims[at].seek = None;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Seek an active layer's phase to the absolute `target` at `|rate|`/s
+    /// (see [`AnimLayer`]). `false` when the anim isn't active.
+    pub(super) fn set_anim_seek(&mut self, name: &str, target: f32, rate: f32) -> bool {
+        if name.len() > MAX_MOB_ANIM_NAME_BYTES
+            || !target.is_finite()
+            || target.abs() > MAX_MOB_ANIM_PHASE_MAGNITUDE
+            || !rate.is_finite()
+            || rate.abs() > MAX_MOB_ANIM_RATE_MAGNITUDE
+        {
+            return false;
+        }
+        match self
+            .active_anims
+            .binary_search_by(|a| a.name.as_str().cmp(name))
+        {
+            Ok(at) => {
+                self.active_anims[at].rate = rate.abs();
+                self.active_anims[at].seek = Some(target);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Authoritative state of one active named animation.
+    pub(super) fn anim_state(&self, name: &str) -> Option<&AnimLayer> {
+        if name.len() > MAX_MOB_ANIM_NAME_BYTES {
+            return None;
+        }
+        self.active_anims
+            .binary_search_by(|a| a.name.as_str().cmp(name))
+            .ok()
+            .map(|at| &self.active_anims[at])
+    }
+
+    /// Latch a mod's locomotion intent for this tick (see [`DriveIntent`] and
+    /// the consumption in [`integrate_with_flow`](Self::integrate_with_flow)).
+    /// Refused on a dead mob.
+    pub(super) fn set_drive(&mut self, vel_x: f32, vel_z: f32, yaw: Option<f32>) -> bool {
+        if self.death.is_dead() {
+            return false;
+        }
+        self.drive = Some(DriveIntent { vel_x, vel_z, yaw });
+        true
+    }
+
+    /// Discard an unconsumed per-tick drive intent. Frozen/skipped mobs call
+    /// this explicitly because they never reach locomotion integration.
+    #[inline]
+    pub(super) fn clear_drive(&mut self) {
+        self.drive = None;
+    }
+
+    #[cfg(test)]
+    pub(super) fn drive_pending(&self) -> bool {
+        self.drive.is_some()
+    }
+
+    /// Current velocity (m/s) — read-only; mods steer through
+    /// [`set_drive`](Self::set_drive), never by writing velocity directly.
+    #[inline]
+    pub fn vel(&self) -> Vec3 {
+        self.vel
     }
 
     /// Apply a damage request with row/hook-composed feedback. Returns `true` if this
@@ -407,6 +651,7 @@ impl Instance {
             }
             self.knockback = Vec3::ZERO;
             self.stagger_timer = 0.0;
+            self.drive = None;
             self.moving = false;
             self.idle_anim = None;
             return true;
@@ -414,8 +659,8 @@ impl Instance {
         false
     }
 
-    /// The mob's collision/selection AABB: feet at `pos`, extending up by the body
-    /// height and out by its half-width. The single source of truth for ray-vs-mob.
+    /// The mob's centre-square body projection. Systems that need the complete
+    /// long-body footprint use `mob::body_geometry` instead.
     pub fn aabb(&self) -> (Vec3, Vec3) {
         self.body().aabb()
     }
@@ -424,6 +669,36 @@ impl Instance {
     pub(super) fn body(&self) -> crate::body::Body {
         let s = def(self.kind).size;
         crate::body::Body::new(self.pos, s.half_width, s.height)
+    }
+
+    /// Commit the collision-free prefix selected for a solid body's proposed
+    /// transform. The manager has already constrained the prefix against both
+    /// terrain and peer solids.
+    pub(super) fn commit_solid_motion(&mut self, motion: super::BodyMotion, fraction: f32) {
+        if fraction >= 1.0 - 1e-6 {
+            return;
+        }
+        debug_assert_eq!(self.id, motion.id);
+        let proposed_delta = motion.end_pos - motion.start_pos;
+        (self.pos, self.yaw) = motion.pose_at(fraction);
+        if proposed_delta.x.abs() > 1e-6 {
+            self.vel.x = 0.0;
+        }
+        if proposed_delta.z.abs() > 1e-6 {
+            self.vel.z = 0.0;
+        }
+        if proposed_delta.y.abs() > 1e-6 {
+            self.vel.y = 0.0;
+            self.on_ground = false;
+        }
+    }
+
+    /// Promote a downward peer contact to ground after every solid has
+    /// committed. The final-pose support query lives in the manager, where all
+    /// peer transforms are available simultaneously.
+    pub(super) fn land_on_solid_peer(&mut self) {
+        self.vel.y = 0.0;
+        self.on_ground = true;
     }
 
     /// Set this tick's soft entity-push velocity (the sum of the pushes from every
@@ -491,7 +766,7 @@ impl Instance {
 
     /// Update fall bookkeeping after a tick's movement has resolved `on_ground` and
     /// feet position. Water breaks falls by re-anchoring the peak while submerged.
-    fn track_fall(&mut self, was_on_ground: bool, in_water: bool) {
+    pub(super) fn finish_motion(&mut self, was_on_ground: bool, in_water: bool) {
         if in_water {
             // The un-latched drop at the first wet tick is the fall INTO the
             // water; while swimming the per-tick re-anchor keeps it near zero
@@ -603,7 +878,7 @@ impl Instance {
         despawn_radius: Option<f32>,
         idle_anims: &[IdleAnimMeta],
         skeleton: &Skeleton,
-    ) {
+    ) -> Option<(bool, Vec3)> {
         let world: &World = inputs.world;
         let player_pos = anchor.pos;
         self.prev_pos = self.pos;
@@ -622,12 +897,13 @@ impl Instance {
         // advance only the physics ragdoll. No brain, no locomotion. The kill's red flash
         // still fades out over these first ticks.
         if self.death.is_dead() {
+            self.drive = None;
             self.hurt_timer = (self.hurt_timer - dt).max(0.0);
             self.stagger_timer = (self.stagger_timer - dt).max(0.0);
             if matches!(self.death, DeathState::Ragdoll(_)) {
                 self.tick_ragdoll(dt, world, d, skeleton);
             }
-            return;
+            return None;
         }
 
         // Hurt flash and knockback stagger count down independently on the fixed tick
@@ -725,22 +1001,25 @@ impl Instance {
             (Vec3::ZERO, false)
         };
         let water_flow = |p: Vec3| world.water_flow_at_point(p);
+        let water_surface = |c: IVec3| world.water_surface_y_world(c);
         let was_on_ground = self.on_ground;
-        self.integrate_with_flow(
+        let motion_start = self.pos;
+        let healed = self.integrate_with_flow(
             dt,
             d,
             wish,
             jump,
             can_steer,
             &boxes,
+            inputs.solid,
+            inputs.solid_heal,
             &solid,
             &water,
+            &water_surface,
             &water_flow,
         );
-        let feet = voxel_at(self.pos);
-        let in_water_after = water(feet) || water(feet - IVec3::Y);
-        self.track_fall(was_on_ground, in_water_after);
         self.apply_expression(dt, d, &decision);
+        Some((was_on_ground, motion_start + Vec3::Y * healed))
     }
 
     /// Advance the death ragdoll. On its first dead tick the ragdoll is initialised;
@@ -769,7 +1048,9 @@ impl Instance {
     /// velocity carries through the fall; the upward phase of a navigation jump keeps
     /// steering so the mob can clear a one-block ledge. The mob faces its **wish**
     /// direction — where it wants to go — so it keeps facing forward even when pressed
-    /// against a wall (where its actual velocity would be zero).
+    /// against a wall (where its actual velocity would be zero). Returns the mandatory
+    /// shallow-foot healing lift separately for the peer-motion proposal.
+    #[allow(clippy::too_many_arguments)]
     fn integrate_with_flow(
         &mut self,
         dt: f32,
@@ -778,31 +1059,58 @@ impl Instance {
         jump: bool,
         can_steer: bool,
         boxes: &impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
+        obstacles: &[crate::collision::DynBox],
+        healing_obstacles: &[crate::collision::DynBox],
         solid: &impl Fn(IVec3) -> bool,
         water: &impl Fn(IVec3) -> bool,
+        water_surface: &impl Fn(IVec3) -> Option<f32>,
         water_flow: &impl Fn(Vec3) -> Vec3,
-    ) {
+    ) -> f32 {
         if jump && self.on_ground {
             self.vel.y = d.jump_speed;
             self.on_ground = false;
         }
         // During the knockback stagger the decaying knockback drives horizontal motion
-        // (so a hit shoves the mob even against where it wants to go); otherwise the
-        // wish velocity drives normal locomotion. Keeping knockback separate from `vel`
-        // is why this overwrite can't wipe it.
+        // (so a hit shoves the mob even against where it wants to go); otherwise a
+        // mod's drive intent (a vehicle) or the wish velocity drives locomotion.
+        // Keeping knockback separate from `vel` is why these overwrites can't wipe it.
+        // The drive is consumed even when stagger owns the tick — like the wish, it is
+        // a this-tick intent, never a queue.
+        let drive = self.drive.take();
+        let mut requested_yaw = None;
         if self.stagger_timer > 0.0 {
             self.vel.x = self.knockback.x;
             self.vel.z = self.knockback.z;
             self.knockback *= KNOCKBACK_DAMP;
+            self.moving = false;
+        } else if let Some(drive) = drive {
+            // A driven mob is deliberately not `moving`: drive is not a walk —
+            // no walk animation, no footstep noise, no wish-facing. Gated on
+            // `can_steer` like the wish so a driven body has no more air or
+            // stagger control than a walking one. Long-body yaw is clamped by
+            // the same segmented geometry that resolves its translation.
+            if can_steer {
+                self.vel.x = drive.vel_x;
+                self.vel.z = drive.vel_z;
+                requested_yaw = drive.yaw;
+            }
             self.moving = false;
         } else {
             if can_steer {
                 self.vel.x = wish.x * d.walk_speed;
                 self.vel.z = wish.z * d.walk_speed;
                 self.moving = wish.length_squared() > 1e-6;
+                if self.moving {
+                    let target = heading_yaw(wish);
+                    requested_yaw = Some(turn_toward(self.yaw, target, d.turn_rate * dt));
+                }
             } else {
                 self.moving = false;
             }
+        }
+        if let Some(yaw) = requested_yaw {
+            self.yaw =
+                super::clamp_body_yaw(self.pos, self.yaw, yaw, d.size, boxes, obstacles, self.id);
         }
         let preserve_air_carry = self.stagger_timer <= 0.0 && !can_steer;
         let carried_x = self.vel.x;
@@ -827,45 +1135,63 @@ impl Instance {
         let flow = flow_at_body(self.pos, d.size.height, water_flow);
         self.vel = add_flow_push(self.vel, flow, WATER_CURRENT_SPEED, WATER_CURRENT_SPEED);
 
-        // Vertical. In water the mob always swims toward the surface (no jump key, so
-        // it behaves like a player holding jump): vel eases up to `SWIM_RISE` until the
-        // probe — a fraction up the body — clears the water; then it's airborne, so
-        // gravity pulls it back, it re-enters, and rises again. The result is a bob
-        // through the waterline, identical in feel to the player. Out of water: gravity.
-        let probe = voxel_at(self.pos + Vec3::new(0.0, d.size.height * SWIM_PROBE_FRAC, 0.0));
-        if water(probe) {
-            // Climbing out: when steering toward a 1-block ledge it can get onto (and
-            // not already falling back), a firm boost crests the waterline and lands it
-            // on the block instead of hugging the shore forever — else the swim bob.
-            let climbing_out = self.vel.y >= 0.0
-                && can_steer
-                && wish.length_squared() > 1e-12
-                && self.ledge_ahead(wish, d.size.half_width, solid);
-            if climbing_out {
-                self.vel.y = self.vel.y.max(SWIM_CLIMB);
-            } else {
-                self.vel.y = approach(self.vel.y, SWIM_RISE, SWIM_VACCEL * dt);
-            }
+        // Vertical, by the species' water behavior (`Buoyancy`):
+        //
+        // SURFACE (a hull): level off AT the waterline — velocity proportional
+        // to the depth error toward `surface − draft`, capped at swim speed.
+        // First-order, so it settles flat with NO overshoot and no bob, and a
+        // submerged hull rises smoothly. No ledge-climb boost: a hull noses
+        // against the shore instead of hopping onto it.
+        //
+        // SWIM (a creature): always stroke toward the surface (no jump key, so
+        // it behaves like a player holding jump): vel eases up to `SWIM_RISE`
+        // until the probe — a fraction up the body — clears the water; then
+        // it's airborne, gravity pulls it back, it re-enters, and rises again.
+        // The result is a bob through the waterline, identical in feel to the
+        // player.
+        //
+        // Out of water either way: gravity.
+        let feet = voxel_at(self.pos);
+        if d.buoyancy == super::Buoyancy::Surface {
+            let surface = water_surface(feet).or_else(|| water_surface(feet - IVec3::Y));
+            self.vel.y = surface_vertical_velocity(self.vel.y, self.pos.y, surface, dt);
         } else {
-            self.vel.y += GRAVITY * dt;
+            let probe = voxel_at(self.pos + Vec3::new(0.0, d.size.height * SWIM_PROBE_FRAC, 0.0));
+            if water(probe) {
+                // Climbing out: when steering toward a 1-block ledge it can get onto (and
+                // not already falling back), a firm boost crests the waterline and lands it
+                // on the block instead of hugging the shore forever — else the swim bob.
+                let climbing_out = self.vel.y >= 0.0
+                    && can_steer
+                    && wish.length_squared() > 1e-12
+                    && self.ledge_ahead(wish, d.size.half_width, solid);
+                if climbing_out {
+                    self.vel.y = self.vel.y.max(SWIM_CLIMB);
+                } else {
+                    self.vel.y = approach(self.vel.y, SWIM_RISE, SWIM_VACCEL * dt);
+                }
+            } else {
+                self.vel.y += GRAVITY * dt;
+            }
         }
         // Body collision via the shared swept-AABB resolver (the same one the player and
         // dropped items use) against the block's REAL collision shape — so a mob stops at a
         // bbmodel block's legs/top, not its full cube. Navigation (foothold/pathfinding/
         // `ledge_ahead`) stays cell-based (`solid`): that's "is this cell an obstacle", a
         // separate concern from "does my body hit the shape".
-        let hw = d.size.half_width;
-        let min = [self.pos.x - hw, self.pos.y, self.pos.z - hw];
-        let max = [self.pos.x + hw, self.pos.y + d.size.height, self.pos.z + hw];
         // A grounded mob auto-steps up a half-block ledge (a slab / a model block's low
         // edge) without jumping — same `STEP_HEIGHT` the player uses.
-        let (moved, grounded, hit) = crate::collision::resolve_body(
-            min,
-            max,
+        let (moved, grounded, hit, healed) = super::resolve_body_motion(
+            self.pos,
+            self.yaw,
+            d.size,
             self.vel.to_array(),
             dt,
             crate::collision::STEP_HEIGHT,
             boxes,
+            obstacles,
+            healing_obstacles,
+            self.id,
         );
         self.pos += Vec3::from(moved);
         if hit[0] {
@@ -889,11 +1215,7 @@ impl Instance {
         if grounded && self.vel.y < 0.0 {
             self.vel.y = 0.0;
         }
-
-        if self.moving {
-            let target = heading_yaw(wish);
-            self.yaw = turn_toward(self.yaw, target, d.turn_rate * dt);
-        }
+        healed
     }
 
     /// [`integrate_with_flow`](Self::integrate_with_flow) in still water — the unit tests
@@ -908,6 +1230,19 @@ impl Instance {
         solid: &impl Fn(IVec3) -> bool,
         water: &impl Fn(IVec3) -> bool,
     ) {
+        // Surface height derived from the stubbed water cells: topmost
+        // contiguous cell + the source top (8/9) — engine species are all
+        // swimmers, so only the Surface-buoyancy tests consult it.
+        let water_surface = |c: IVec3| {
+            if !water(c) {
+                return None;
+            }
+            let mut top = c;
+            while water(top + IVec3::Y) {
+                top += IVec3::Y;
+            }
+            Some(top.y as f32 + 8.0 / 9.0)
+        };
         self.integrate_with_flow(
             dt,
             d,
@@ -915,8 +1250,11 @@ impl Instance {
             jump,
             true,
             &boxes_of(solid),
+            &[],
+            &[],
             solid,
             water,
+            &water_surface,
             &|_| Vec3::ZERO,
         );
     }
@@ -946,12 +1284,18 @@ impl Instance {
             self.anim_time = 0.0;
             self.prev_anim_time = 0.0;
         }
-        // Advance the active animation: walk at the species' rate, idle at its natural
-        // rate, rest frozen (the renderer shows the static rest pose).
+        // Advance the active animation: walk at the species' rate, idle at its
+        // natural rate, rest frozen (the renderer shows the static rest pose).
+        // Named mod layers do NOT ride this clock — each advances its own
+        // phase at its own mod-set rate below, so one layer can pause
+        // mid-stroke while another plays.
         match kind {
             AnimKind::Walk => self.anim_time += d.walk_anim_rate * dt,
             AnimKind::Idle(_) => self.anim_time += dt,
             AnimKind::Rest => {}
+        }
+        for layer in &mut self.active_anims {
+            step_anim_layer(layer, dt);
         }
 
         // Head-look: ease toward the requested orientation, or recentre when none.
@@ -993,7 +1337,7 @@ impl Instance {
     }
 
     #[cfg(test)]
-    pub(super) fn on_ground(&self) -> bool {
+    pub(crate) fn on_ground(&self) -> bool {
         self.on_ground
     }
 }
@@ -1015,6 +1359,16 @@ fn turn_toward(yaw: f32, target: f32, max_step: f32) -> f32 {
 /// Wrap an angle into `[-PI, PI]`.
 fn wrap_angle(a: f32) -> f32 {
     (a + PI).rem_euclid(TAU) - PI
+}
+
+fn surface_vertical_velocity(current: f32, feet_y: f32, surface: Option<f32>, dt: f32) -> f32 {
+    match surface {
+        Some(surface) => {
+            let target = surface - SURFACE_DRAFT;
+            ((target - feet_y) * SURFACE_FLOAT_RATE).clamp(-SWIM_RISE, SWIM_RISE)
+        }
+        None => current + GRAVITY * dt,
+    }
 }
 
 /// Move `cur` toward `target` by at most `step` (linear, no wrapping).
@@ -1171,8 +1525,11 @@ mod tests {
                 false,
                 true,
                 &boxes,
+                &[],
+                &[],
                 &solid,
                 &dry,
+                &|_| None,
                 &still,
             );
         }
@@ -1213,8 +1570,11 @@ mod tests {
                 false,
                 true,
                 &half_step,
+                &[],
+                &[],
                 &solid,
                 &dry,
+                &|_| None,
                 &still,
             );
         }
@@ -1245,8 +1605,11 @@ mod tests {
             false,
             true,
             &boxes_of(&solid),
+            &[],
+            &[],
             &solid,
             &dry,
+            &|_| None,
             &still,
         );
         assert!(sheep.on_ground(), "test starts from the lower floor");
@@ -1262,8 +1625,11 @@ mod tests {
                 jump,
                 can_steer,
                 &boxes_of(&solid),
+                &[],
+                &[],
                 &solid,
                 &dry,
+                &|_| None,
                 &still,
             );
             left_ground |= !sheep.on_ground();
@@ -1338,8 +1704,11 @@ mod tests {
             false,
             false,
             &empty_boxes,
+            &[],
+            &[],
             &dry,
             &dry,
+            &|_| None,
             &still,
         );
 
@@ -1357,6 +1726,35 @@ mod tests {
             !sheep.moving,
             "unsupported falling should not play the walk animation"
         );
+    }
+
+    #[test]
+    fn an_airborne_drive_cannot_replace_carry_or_yaw() {
+        let empty_boxes = |_x: i32, _y: i32, _z: i32| -> &'static [crate::block::Aabb] { &[] };
+        let dry = |_: IVec3| false;
+        let still = |_: Vec3| Vec3::ZERO;
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.25, 1);
+        owl.vel.x = 1.0;
+        assert!(owl.set_drive(-5.0, 0.0, Some(1.5)));
+
+        owl.integrate_with_flow(
+            1.0 / 20.0,
+            owl_def(),
+            Vec3::ZERO,
+            false,
+            false,
+            &empty_boxes,
+            &[],
+            &[],
+            &dry,
+            &dry,
+            &|_| None,
+            &still,
+        );
+
+        assert!(owl.pos.x > 0.5, "airborne carry wins over driven -X");
+        assert_eq!(owl.yaw, 0.25, "airborne drive yaw is ignored too");
+        assert!(owl.drive.is_none(), "the rejected intent still expires");
     }
 
     #[test]
@@ -1477,6 +1875,207 @@ mod tests {
     }
 
     #[test]
+    fn a_drive_intent_moves_the_mob_for_one_tick_then_expires() {
+        // A mod's kinematic drive replaces the wish overwrite for exactly the
+        // tick it was issued: the mob moves at the driven velocity with its
+        // yaw set, does not read as walking, and — like the brain's wish —
+        // the intent must be re-issued or the next tick's overwrite parks it.
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        assert!(owl.set_drive(2.0, 0.0, Some(1.0)));
+        owl.integrate(
+            1.0 / 20.0,
+            owl_def(),
+            Vec3::ZERO,
+            false,
+            &floor_at_zero,
+            &|_| false,
+        );
+        assert!(owl.pos.x > 0.5, "the drive velocity moved the mob");
+        assert!(
+            (owl.yaw - 1.0).abs() < 1e-5,
+            "the drive yaw is absolute: {}",
+            owl.yaw
+        );
+        assert!(!owl.moving, "driven is not walking (no walk anim/noise)");
+
+        let x = owl.pos.x;
+        owl.integrate(
+            1.0 / 20.0,
+            owl_def(),
+            Vec3::ZERO,
+            false,
+            &floor_at_zero,
+            &|_| false,
+        );
+        assert_eq!(owl.pos.x, x, "an un-renewed drive expires — the mob parks");
+        assert!(
+            (owl.yaw - 1.0).abs() < 1e-5,
+            "nothing fights the driven yaw while idle: {}",
+            owl.yaw
+        );
+    }
+
+    #[test]
+    fn knockback_stagger_overrides_a_drive_intent() {
+        // A punched vehicle takes its knockback: the decaying knockback owns
+        // horizontal velocity for the stagger, the drive is consumed unused.
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        let from = Vec3::new(2.0, 0.0, 0.5); // hit from +X: knockback pushes -X
+        owl.damage(1.0, Some(from), true, None, &default_feedback());
+        assert!(owl.set_drive(5.0, 0.0, Some(1.0)));
+        owl.integrate(
+            1.0 / 20.0,
+            owl_def(),
+            Vec3::ZERO,
+            false,
+            &floor_at_zero,
+            &|_| false,
+        );
+        assert!(
+            owl.pos.x < 0.5,
+            "knockback wins over the drive during the stagger: x {}",
+            owl.pos.x
+        );
+        assert_eq!(owl.yaw, 0.0, "stagger rejects the drive yaw as well");
+        assert!(owl.drive.is_none(), "the rejected intent still expires");
+    }
+
+    #[test]
+    fn named_anim_set_is_sorted_capped_and_idempotent() {
+        let names = |owl: &Instance| -> Vec<String> {
+            owl.active_anims().iter().map(|l| l.name.clone()).collect()
+        };
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        assert!(owl.set_anim_active("row_right", true));
+        assert!(owl.set_anim_active("row_left", true));
+        assert!(
+            owl.set_anim_active("row_left", true),
+            "re-activate is a no-op"
+        );
+        assert_eq!(names(&owl), ["row_left", "row_right"]);
+        assert!(owl.set_anim_active("c", true));
+        assert!(owl.set_anim_active("d", true));
+        assert!(
+            !owl.set_anim_active("e", true),
+            "a fifth activation refuses (cap {})",
+            crate::mob::MAX_ACTIVE_MOB_ANIMS
+        );
+        assert!(
+            owl.set_anim_active("missing", false),
+            "deactivate absent = ok"
+        );
+        assert!(owl.set_anim_active("row_left", false));
+        assert_eq!(names(&owl), ["c", "d", "row_right"]);
+    }
+
+    #[test]
+    fn named_anim_layers_self_clock_by_their_rates() {
+        // Each layer's phase advances by ITS OWN rate — rate 0 freezes a
+        // layer mid-stroke (an oar pauses in place, never snaps home),
+        // negative reverses — independent of the walk/idle clock.
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        assert!(owl.set_anim_active("a", true));
+        assert!(owl.set_anim_active("b", true));
+        assert!(
+            !owl.set_anim_rate("missing", 2.0),
+            "a rate on an inactive anim refuses"
+        );
+        let step = |owl: &mut Instance| {
+            owl.apply_expression(0.5, def(Mob::Owl), &Default::default());
+        };
+        step(&mut owl); // both at default rate 1
+        let phase = |owl: &Instance, n: &str| {
+            owl.active_anims()
+                .iter()
+                .find(|l| l.name == n)
+                .unwrap()
+                .phase
+        };
+        assert_eq!((phase(&owl, "a"), phase(&owl, "b")), (0.5, 0.5));
+        assert!(owl.set_anim_rate("a", 0.0));
+        assert!(owl.set_anim_rate("b", -1.0));
+        step(&mut owl);
+        assert_eq!(phase(&owl, "a"), 0.5, "rate 0 freezes the layer in place");
+        assert_eq!(phase(&owl, "b"), 0.0, "negative rate plays in reverse");
+    }
+
+    #[test]
+    fn named_anim_seek_lands_exactly_holds_and_yields_to_rate() {
+        // A seek approaches its target DIRECTLY at |rate|/s, lands EXACTLY on
+        // it (no overshoot, then holds at rate 0) — the settle-to-pose
+        // contract an oar's gentle return depends on. A rate call cancels it.
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        assert!(owl.set_anim_active("a", true));
+        assert!(
+            !owl.set_anim_seek("missing", 0.0, 1.0),
+            "a seek on an inactive anim refuses"
+        );
+        let step = |owl: &mut Instance| {
+            owl.apply_expression(0.5, def(Mob::Owl), &Default::default());
+        };
+        let phase = |owl: &Instance| owl.active_anims()[0].phase;
+        step(&mut owl); // free-runs to 0.5 at the default rate 1
+        assert!(owl.set_anim_seek("a", 1.7, 1.0));
+        step(&mut owl);
+        assert_eq!(phase(&owl), 1.0, "seeking toward the target at |rate|");
+        step(&mut owl);
+        step(&mut owl);
+        assert_eq!(
+            phase(&owl),
+            1.7,
+            "lands EXACTLY on the target, no overshoot"
+        );
+        step(&mut owl);
+        assert_eq!(phase(&owl), 1.7, "then holds (rate 0)");
+        assert!(owl.set_anim_seek("a", 0.7, -1.0), "rate sign is ignored");
+        step(&mut owl);
+        assert_eq!(phase(&owl), 1.2, "seeks BACKWARD toward a lower target");
+        assert!(owl.set_anim_rate("a", 1.0));
+        step(&mut owl);
+        assert_eq!(phase(&owl), 1.7, "a rate call cancels the seek");
+    }
+
+    #[test]
+    fn named_anim_controls_are_bounded_and_phase_stepping_stays_finite() {
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        assert!(!owl.set_anim_active(&"a".repeat(mod_api::MAX_MOB_ANIM_NAME_BYTES + 1), true));
+        assert!(owl.set_anim_active("a", true));
+        assert!(!owl.set_anim_rate("a", mod_api::MAX_MOB_ANIM_RATE_MAGNITUDE * 2.0));
+        assert!(!owl.set_anim_seek("a", mod_api::MAX_MOB_ANIM_PHASE_MAGNITUDE * 2.0, 1.0));
+
+        let layer = &mut owl.active_anims[0];
+        layer.phase = f32::INFINITY;
+        layer.rate = 1.0;
+        layer.seek = Some(2.0);
+        step_anim_layer(layer, 0.05);
+        assert!(layer.phase.is_finite());
+        assert_eq!(layer.rate, 0.0);
+        assert_eq!(layer.seek, None);
+
+        layer.phase = mod_api::MAX_MOB_ANIM_PHASE_MAGNITUDE;
+        layer.rate = mod_api::MAX_MOB_ANIM_RATE_MAGNITUDE;
+        step_anim_layer(layer, 0.05);
+        assert!(layer.phase.is_finite());
+        assert!(layer.phase.abs() <= mod_api::MAX_MOB_ANIM_PHASE_MAGNITUDE);
+        assert_eq!(layer.rate, 0.0, "a step past the phase envelope parks");
+    }
+
+    #[test]
+    fn lethal_damage_discards_a_pending_drive_intent() {
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        assert!(owl.set_drive(2.0, 0.0, Some(1.0)));
+        assert!(owl.drive_pending());
+        assert!(owl.damage(
+            100.0,
+            Some(Vec3::new(2.0, 0.0, 0.5)),
+            true,
+            None,
+            &default_feedback()
+        ));
+        assert!(!owl.drive_pending());
+    }
+
+    #[test]
     fn damage_reduces_health_and_dies_at_zero() {
         // A 4-health owl: three 1-damage hits don't kill; the fourth does.
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
@@ -1507,7 +2106,8 @@ mod tests {
         assert!(!owl.damage(
             100.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
-            true, None,
+            true,
+            None,
             &MobDamageFeedback::none()
         ));
         assert_eq!(owl.health(), health);
@@ -1543,8 +2143,13 @@ mod tests {
                 MobDamageFeedbackComponent::Ragdoll,
             ],
         };
-        assert!(dead_with_ragdoll.damage(100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &health_and_ragdoll));
+        assert!(dead_with_ragdoll.damage(
+            100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            true,
+            None,
+            &health_and_ragdoll
+        ));
         assert!(dead_with_ragdoll.is_dead());
         assert!(
             !dead_with_ragdoll.is_despawned(),
@@ -1555,8 +2160,13 @@ mod tests {
         let health_only = MobDamageFeedback {
             components: vec![MobDamageFeedbackComponent::DecreaseHealth],
         };
-        assert!(dead_without_ragdoll.damage(100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &health_only));
+        assert!(dead_without_ragdoll.damage(
+            100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            true,
+            None,
+            &health_only
+        ));
         assert!(dead_without_ragdoll.is_dead());
         assert!(
             dead_without_ragdoll.is_despawned(),
@@ -1568,13 +2178,23 @@ mod tests {
     fn a_dead_mob_ignores_further_damage() {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(
-            owl.damage(100.0,
-                Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &default_feedback()),
+            owl.damage(
+                100.0,
+                Some(Vec3::new(5.0, 0.0, 0.5)),
+                true,
+                None,
+                &default_feedback()
+            ),
             "one big hit kills"
         );
         // A corpse takes no more damage and reports no further lethal hits.
-        assert!(!owl.damage(100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &default_feedback()));
+        assert!(!owl.damage(
+            100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            true,
+            None,
+            &default_feedback()
+        ));
         assert!(owl.is_dead());
     }
 
@@ -1588,8 +2208,13 @@ mod tests {
         let x0 = owl.pos.x;
         // Hit from the +X side → knockback toward -X. This is the key invariant: the
         // knockback survives `integrate`'s per-tick wish-velocity overwrite.
-        assert!(!owl.damage(1.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &default_feedback()));
+        assert!(!owl.damage(
+            1.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            true,
+            None,
+            &default_feedback()
+        ));
         // Wish toward +X (toward the attacker); the knockback must win during the stagger.
         for _ in 0..4 {
             owl.integrate(
@@ -1616,8 +2241,13 @@ mod tests {
             false
         });
         let x0 = owl.pos.x;
-        assert!(!owl.damage(1.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)), false, None, &default_feedback()));
+        assert!(!owl.damage(
+            1.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            false,
+            None,
+            &default_feedback()
+        ));
         owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
             false
         });
@@ -1642,8 +2272,13 @@ mod tests {
 
         // The killing blow flashes red too (so it looks like any other hit).
         let mut dead = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-        assert!(dead.damage(100.0,
-            Some(Vec3::new(5.0, 0.0, 0.5)), true, None, &default_feedback()));
+        assert!(dead.damage(
+            100.0,
+            Some(Vec3::new(5.0, 0.0, 0.5)),
+            true,
+            None,
+            &default_feedback()
+        ));
         assert!(
             dead.hurt_flash(1.0) > 0.0,
             "the kill flashes red like a normal hit"
@@ -1670,6 +2305,43 @@ mod tests {
             "a submerged mob rises toward the surface: {y0} -> {}",
             owl.pos.y
         );
+    }
+
+    #[test]
+    fn surface_buoyancy_converges_from_both_sides_without_overshoot() {
+        let surface = 6.0;
+        let target = surface - SURFACE_DRAFT;
+        for start in [target - 2.0, target + 1.0] {
+            let mut y = start;
+            for _ in 0..200 {
+                let before = target - y;
+                let velocity = surface_vertical_velocity(0.0, y, Some(surface), 0.05);
+                y += velocity * 0.05;
+                let after = target - y;
+                assert!(
+                    before == 0.0 || before.signum() == after.signum() || after.abs() < 1e-6,
+                    "surface float crossed its target: {before} -> {after}"
+                );
+                assert!(
+                    after.abs() <= before.abs() + 1e-6,
+                    "surface float must converge monotonically: {before} -> {after}"
+                );
+            }
+            assert!(
+                (y - target).abs() < 1e-4,
+                "surface float settles at the waterline from {start}: {y}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_surface_body_out_of_water_falls_under_gravity() {
+        let mut velocity = 0.0;
+        for _ in 0..3 {
+            let next = surface_vertical_velocity(velocity, 10.0, None, 0.05);
+            assert!(next < velocity, "gravity accelerates the dry hull downward");
+            velocity = next;
+        }
     }
 
     #[test]
@@ -1799,8 +2471,11 @@ mod tests {
                 false,
                 true,
                 &boxes_of(&solid),
+                &[],
+                &[],
                 &solid,
                 &water,
+                &|_| None,
                 &flow,
             );
         }
@@ -1822,8 +2497,11 @@ mod tests {
                 false,
                 true,
                 &boxes_of(&solid),
+                &[],
+                &[],
                 &solid,
                 &water,
+                &|_| None,
                 &still,
             );
         }

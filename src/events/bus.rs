@@ -12,7 +12,7 @@ use crate::player::Player;
 use crate::world::World;
 
 use super::payload::{
-    BlockBreakPre, BlockInteract, BlockPlacePre, ItemUsePre, MobDamagePre, ModAction,
+    BlockBreakPre, BlockInteract, BlockPlacePre, ItemUsePre, MobDamagePre, MobInteract, ModAction,
     PlayerDamagePre, PostEvent, PostEventKind,
 };
 
@@ -110,6 +110,7 @@ pub(crate) struct EventBus {
     pre_block_break: Vec<PreHandler<BlockBreakPre>>,
     pre_block_interact: Vec<PreHandler<BlockInteract>>,
     pre_item_use: Vec<PreHandler<ItemUsePre>>,
+    pre_mob_interact: Vec<PreHandler<MobInteract>>,
     pre_mob_damage: Vec<PreHandler<MobDamagePre>>,
     pre_player_damage: Vec<PreHandler<PlayerDamagePre>>,
     post: [Vec<PostHandler>; PostEventKind::COUNT],
@@ -189,6 +190,7 @@ pre_events!(
         BlockInteract
     ),
     (on_item_use_pre, item_use_pre, pre_item_use, ItemUsePre),
+    (on_mob_interact, mob_interact, pre_mob_interact, MobInteract),
     (
         on_mob_damage_pre,
         mob_damage_pre,

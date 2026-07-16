@@ -11,7 +11,8 @@ use crate::client::{
 };
 use crate::data::{
     AiNodeCtx, AiNodeDecision, BlockHookKind, EffectStateData, GuiValue, HostileSpawnCandidate,
-    ItemInfoData, ItemStackData, MobSnapshot, PlayerSnapshot, RuntimeSide,
+    ItemInfoData, ItemStackData, MobAnimStateData, MobRidersData, MobSnapshot, PlayerInputData,
+    PlayerSnapshot, RuntimeSide,
 };
 use crate::events::{EventKind, EventPayload, Outcome};
 use crate::ids::{BlockId, ItemId};
@@ -672,6 +673,128 @@ pub enum HostCall {
     ClientStorageReadPoll {
         ticket: u64,
     },
+    /// Consume `count` units of the ACTING player's selected (held) stack,
+    /// atomically, only when it holds `item` with at least `count` units —
+    /// the consumption primitive for item uses that spend the item without
+    /// placing a block (spawning an entity from `item_use_pre`). `false`
+    /// consumed nothing (wrong/empty hand, short stack).
+    /// → [`HostRet::Bool`].
+    ConsumeHeld {
+        item: ItemId,
+        count: u32,
+    },
+    /// Seat player `player_id` in `seat` of the live mob `mob_id` (stable
+    /// id). Validated by the engine: the mob is alive and its species row
+    /// declares that seat (`seats` in `mobs.json`), the seat is free, and the
+    /// player is not already mounted. WHO may sit WHERE is the calling mod's
+    /// policy — usually decided in its `mob_interact` handler. From this tick
+    /// the engine slaves the rider to the seat; every detach path announces
+    /// [`EventKind::PlayerDismounted`]. → [`HostRet::Bool`].
+    ///
+    /// [`EventKind::PlayerDismounted`]: crate::EventKind::PlayerDismounted
+    MobMount {
+        mob_id: u64,
+        player_id: u8,
+        seat: u8,
+    },
+    /// Unseat `player_id` from whatever they ride (the mod-initiated detach;
+    /// the engine's own valves — sneak gesture, death, despawn — detach
+    /// without this call). `false` = they were not mounted.
+    /// → [`HostRet::Bool`].
+    MobDismount {
+        player_id: u8,
+    },
+    /// The declared seat capacity and every rider of the live mob `mob_id`,
+    /// in player-id order. `None` = no such live mob, which is distinct from
+    /// a live mob with zero seats or riders. → [`HostRet::Riders`].
+    MobRiders {
+        mob_id: u64,
+    },
+    /// Drive the live mob `mob_id` kinematically for THIS tick: `vel` is a
+    /// horizontal world-space velocity (m/s) that replaces the brain's wish
+    /// locomotion (vertical physics — gravity, water buoyancy — and collision
+    /// stay engine-owned), and `yaw`, when present, sets the absolute facing
+    /// (mob convention: yaw `0` faces `-Z`, facing `(-sin yaw, 0, -cos yaw)`).
+    /// Like the wish it is an intent, not a state: re-issue it every tick
+    /// (friction, steering feel, and control policy are the driving mod's) —
+    /// a mod that stops calling leaves the mob to its brain. Knockback
+    /// stagger overrides the drive for its duration. `false` = unknown or
+    /// dead mob. → [`HostRet::Bool`].
+    MobDrive {
+        mob_id: u64,
+        vel: [f32; 2],
+        yaw: Option<f32>,
+    },
+    /// Toggle a NAMED model animation on the live mob `mob_id` — the
+    /// animation sibling of [`HostCall::MobEmitterSet`]: presentation-only,
+    /// at most 4 active per mob, replicated, never persisted (the owning mod
+    /// re-derives it). Each active animation LAYERS over the walk/idle/rest
+    /// base pose with its OWN self-clocked phase (activation starts it at
+    /// phase 0, rate 1) — drive the playback with
+    /// [`HostCall::MobAnimRate`]. `anim` is an animation name from the mob's
+    /// own `.bbmodel`; unknown names are accepted and draw nothing (the sim
+    /// never loads models — same forgiveness as a disabled pack). `false` =
+    /// unknown mob or the per-mob cap. → [`HostRet::Bool`].
+    MobAnimSet {
+        mob_id: u64,
+        anim: String,
+        active: bool,
+    },
+    /// Set the PLAYBACK RATE of an active named animation on the live mob
+    /// `mob_id` (see [`HostCall::MobAnimSet`]): its phase advances by
+    /// `rate` animation-seconds per real second — `1.0` plays, `0.0` FREEZES
+    /// mid-stroke exactly where it is (an oar pauses in place, never snaps
+    /// home), negative plays in reverse. Cancels an in-flight
+    /// [`HostCall::MobAnimSeek`]. Code-driven playback over an authored
+    /// clip: the motion's SHAPE stays tunable in Blockbench, the mod owns
+    /// play/pause/reverse/speed. `false` = unknown mob or the anim is not
+    /// active. → [`HostRet::Bool`].
+    MobAnimRate {
+        mob_id: u64,
+        anim: String,
+        rate: f32,
+    },
+    /// SEEK an active named animation to the absolute `phase` at `|rate|`
+    /// animation-seconds per second: the layer's phase approaches the target
+    /// DIRECTLY (no modulo — the caller picks the nearest-cycle target for a
+    /// shortest-path return), lands on it EXACTLY, and holds (rate 0). How
+    /// an oar settles gently back onto its authored pose from wherever the
+    /// stroke stopped. A [`HostCall::MobAnimRate`] cancels the seek. `false`
+    /// = unknown mob or the anim is not active. → [`HostRet::Bool`].
+    MobAnimSeek {
+        mob_id: u64,
+        anim: String,
+        phase: f32,
+        rate: f32,
+    },
+    /// One player's movement intent this tick, decomposed into the player's
+    /// own yaw frame — how a vehicle mod reads what its driver is pressing.
+    /// `None` = no such player connected. → [`HostRet::PlayerInput`].
+    PlayerInput {
+        player_id: u8,
+    },
+    /// Read the authoritative playback state of active named animation
+    /// `anim` on live mob `mob_id`. `None` = missing/dead mob or inactive
+    /// animation. This is the source of truth for control policy that needs
+    /// the current phase (for example, choosing a nearest-cycle seek target).
+    /// → [`HostRet::MobAnimState`].
+    MobAnimState {
+        mob_id: u64,
+        anim: String,
+    },
+    /// Spawn a mob only when its COMPLETE declared body fits at `pos`/`yaw`:
+    /// every covered section is loaded and stream-final, no terrain collision
+    /// shape overlaps, and no live solid mob overlaps. The validation and
+    /// insertion are one atomic sim operation. `false` = unknown key, blocked,
+    /// unloaded or unresolved pose, or the mob cap is reached. → [`HostRet::Bool`].
+    ///
+    /// Appended for wire compatibility; conceptually this is the checked
+    /// sibling of [`HostCall::SpawnMob`].
+    SpawnMobChecked {
+        key: String,
+        pos: [f32; 3],
+        yaw: f32,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -725,6 +848,12 @@ pub enum HostRet {
     /// [`HostCall::ClientStorageReadPoll`]: `None` = still in flight (poll
     /// again next frame); `Some` consumes the ticket.
     ClientStorageRead(Option<Vec<Option<serde_bytes::ByteBuf>>>),
+    /// [`HostCall::MobRiders`]: `None` = no such live mob.
+    Riders(Option<MobRidersData>),
+    /// [`HostCall::PlayerInput`]: `None` = no such player connected.
+    PlayerInput(Option<PlayerInputData>),
+    /// [`HostCall::MobAnimState`]: `None` = missing/dead mob or inactive anim.
+    MobAnimState(Option<MobAnimStateData>),
 }
 
 /// One worldgen block write: `(world position, block)`. Applied by the engine
@@ -955,6 +1084,11 @@ mod tests {
         roundtrip(HostCall::LightAt { pos: [8, 64, 8] });
         roundtrip(HostCall::SpawnMob {
             key: "zombies:zombie".into(),
+            pos: [0.5, 64.0, 0.5],
+            yaw: 1.5,
+        });
+        roundtrip(HostCall::SpawnMobChecked {
+            key: "vehicles:boat".into(),
             pos: [0.5, 64.0, 0.5],
             yaw: 1.5,
         });
@@ -1344,6 +1478,8 @@ mod tests {
             pos: [1.5, 64.0, -3.5],
             health: 4.0,
             id: 123,
+            yaw: 0.5,
+            vel: [1.0, 0.0, -2.0],
         }]));
         roundtrip(HostRet::Player(PlayerSnapshot {
             pos: [0.5, 80.0, 0.5],

@@ -87,6 +87,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::IsLoaded { .. }
         | HostCall::LightAt { .. }
         | HostCall::SpawnMob { .. }
+        | HostCall::SpawnMobChecked { .. }
         | HostCall::MobsInRadius { .. }
         | HostCall::DamageMob { .. }
         | HostCall::DespawnMob { .. }
@@ -136,6 +137,16 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::SwapModelBlock { .. }
         | HostCall::ContainerGetMany { .. }
         | HostCall::MobEmitterSet { .. }
+        | HostCall::MobAnimSet { .. }
+        | HostCall::MobAnimRate { .. }
+        | HostCall::MobAnimSeek { .. }
+        | HostCall::MobAnimState { .. }
+        | HostCall::MobDrive { .. }
+        | HostCall::MobMount { .. }
+        | HostCall::MobDismount { .. }
+        | HostCall::MobRiders { .. }
+        | HostCall::ConsumeHeld { .. }
+        | HostCall::PlayerInput { .. }
         | HostCall::EmitterBurst { .. } => false,
     }
 }
@@ -257,11 +268,10 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                         if !world.client_surface_column(pos, &mut cells) {
                             return None;
                         }
-                        let mut packed =
-                            Vec::with_capacity(mod_api::CLIENT_SURFACE_COLUMN_BYTES);
+                        let mut packed = Vec::with_capacity(mod_api::CLIENT_SURFACE_COLUMN_BYTES);
                         for cell in &cells {
-                            let (height, rgb) = cell
-                                .unwrap_or((mod_api::CLIENT_SURFACE_UNKNOWN_HEIGHT, [0; 3]));
+                            let (height, rgb) =
+                                cell.unwrap_or((mod_api::CLIENT_SURFACE_UNKNOWN_HEIGHT, [0; 3]));
                             packed.extend_from_slice(&height.to_le_bytes());
                             packed.extend_from_slice(&rgb);
                         }
@@ -588,17 +598,15 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 Err(error) => HostRet::Error(error),
             }
         }
-        HostCall::ClientStorageReadPoll { ticket } => {
-            match client.storage.read_poll(ticket) {
-                Ok(values) => HostRet::ClientStorageRead(values.map(|values| {
-                    values
-                        .into_iter()
-                        .map(|value| value.map(mod_api::ByteBuf::from))
-                        .collect()
-                })),
-                Err(error) => HostRet::Error(error),
-            }
-        }
+        HostCall::ClientStorageReadPoll { ticket } => match client.storage.read_poll(ticket) {
+            Ok(values) => HostRet::ClientStorageRead(values.map(|values| {
+                values
+                    .into_iter()
+                    .map(|value| value.map(mod_api::ByteBuf::from))
+                    .collect()
+            })),
+            Err(error) => HostRet::Error(error),
+        },
         HostCall::ClientStorageSetMany { entries } => {
             for (key, value) in &entries {
                 if !key_owned_by_namespace(&mod_id, key) {
@@ -814,7 +822,10 @@ mod tests {
             );
         }
         let image = &data.client.as_ref().unwrap().images["map:tile"];
-        assert_eq!(image.recent_blits.len(), super::super::state::IMAGE_BLIT_WINDOW);
+        assert_eq!(
+            image.recent_blits.len(),
+            super::super::state::IMAGE_BLIT_WINDOW
+        );
         assert!(
             image.recent_blits.windows(2).all(|w| w[1].0 == w[0].0 + 1),
             "window entries stay consecutive"

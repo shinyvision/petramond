@@ -35,6 +35,8 @@ pub enum EventKind {
     ContainerClosed,
     SectionGenerated,
     SectionLoaded,
+    MobInteract,
+    PlayerDismounted,
 }
 
 /// Why an entity is taking damage.
@@ -220,6 +222,35 @@ pub enum EventPayload {
     SectionLoaded {
         pos: [i32; 3],
     },
+    /// PRE — a use click whose crosshair target was a live mob, dispatched
+    /// before any engine mob use (shears). Cancel = the click was consumed:
+    /// this is how a mod makes a mob interactable (mounting a vehicle,
+    /// trading). Carries both addresses: the tick-local `mob` index for
+    /// immediate calls and the stable `id` for cross-tick mod state.
+    MobInteract {
+        /// Index into the live mob set, valid this tick only.
+        mob: u32,
+        /// Stable mob session id.
+        id: u64,
+        /// Species key (`"vehicles:boat"`) — self-describing, no resolver
+        /// needed.
+        key: String,
+        /// The interacting session's player id.
+        player_id: u8,
+    },
+    /// POST — a player left a mob seat, however it happened (the engine's
+    /// sneak gesture, the mount or rider dying, the rider leaving or turning
+    /// spectator, or a mod's [`HostCall::MobDismount`]). The mounting mod
+    /// uses it to update rider policy (who controls the vehicle). Mounting
+    /// has no event: only a mod's own [`HostCall::MobMount`] starts a ride.
+    ///
+    /// [`HostCall::MobMount`]: crate::HostCall::MobMount
+    /// [`HostCall::MobDismount`]: crate::HostCall::MobDismount
+    PlayerDismounted {
+        player_id: u8,
+        /// Stable id of the mob that was ridden (it may already be gone).
+        mob_id: u64,
+    },
 }
 
 impl EventPayload {
@@ -242,6 +273,8 @@ impl EventPayload {
             EventPayload::ContainerClosed { .. } => EventKind::ContainerClosed,
             EventPayload::SectionGenerated { .. } => EventKind::SectionGenerated,
             EventPayload::SectionLoaded { .. } => EventKind::SectionLoaded,
+            EventPayload::MobInteract { .. } => EventKind::MobInteract,
+            EventPayload::PlayerDismounted { .. } => EventKind::PlayerDismounted,
         }
     }
 }

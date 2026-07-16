@@ -517,47 +517,66 @@ mod tests {
 
     #[test]
     fn params_are_validated_at_load() {
+        assert!(ChaseSoundAi::from_params(
+            &serde_json::json!({"radius": 12.0, "memory_ticks": 40}),
+            crate::mob::defs()
+        )
+        .is_ok());
         assert!(
-            ChaseSoundAi::from_params(&serde_json::json!({"radius": 12.0, "memory_ticks": 40}), crate::mob::defs())
-                .is_ok()
-        );
-        assert!(
-            ChaseSoundAi::from_params(&serde_json::json!({"radius": 0.0, "memory_ticks": 40}), crate::mob::defs())
-                .is_err(),
+            ChaseSoundAi::from_params(
+                &serde_json::json!({"radius": 0.0, "memory_ticks": 40}),
+                crate::mob::defs()
+            )
+            .is_err(),
             "zero radius is refused"
         );
         assert!(
-            ChaseSoundAi::from_params(&serde_json::json!({"radius": 12.0, "memory_ticks": 0}), crate::mob::defs())
-                .is_err(),
+            ChaseSoundAi::from_params(
+                &serde_json::json!({"radius": 12.0, "memory_ticks": 0}),
+                crate::mob::defs()
+            )
+            .is_err(),
             "zero memory is refused"
         );
         assert!(
-            ChaseSoundAi::from_params(&serde_json::json!({
-                "radius": 12.0, "memory_ticks": 40, "mob_chance": 1.5
-            }), crate::mob::defs())
+            ChaseSoundAi::from_params(
+                &serde_json::json!({
+                    "radius": 12.0, "memory_ticks": 40, "mob_chance": 1.5
+                }),
+                crate::mob::defs()
+            )
             .is_err(),
             "an out-of-range chance is refused"
         );
         assert!(
-            ChaseSoundAi::from_params(&serde_json::json!({
-                "radius": 12.0, "memory_ticks": 40, "mob_chance": 0.5,
-                "mob_targets": ["petramond:sheep"]
-            }), crate::mob::defs())
+            ChaseSoundAi::from_params(
+                &serde_json::json!({
+                    "radius": 12.0, "memory_ticks": 40, "mob_chance": 0.5,
+                    "mob_targets": ["petramond:sheep"]
+                }),
+                crate::mob::defs()
+            )
             .is_ok(),
             "a real species key resolves"
         );
         assert!(
-            ChaseSoundAi::from_params(&serde_json::json!({
-                "radius": 12.0, "memory_ticks": 40, "mob_chance": 0.5,
-                "mob_targets": ["nope:missing"]
-            }), crate::mob::defs())
+            ChaseSoundAi::from_params(
+                &serde_json::json!({
+                    "radius": 12.0, "memory_ticks": 40, "mob_chance": 0.5,
+                    "mob_targets": ["nope:missing"]
+                }),
+                crate::mob::defs()
+            )
             .is_err(),
             "an unknown species key fails the load"
         );
         assert!(
-            ChaseSoundAi::from_params(&serde_json::json!({
-                "radius": 12.0, "memory_ticks": 40, "bogus": 1
-            }), crate::mob::defs())
+            ChaseSoundAi::from_params(
+                &serde_json::json!({
+                    "radius": 12.0, "memory_ticks": 40, "bogus": 1
+                }),
+                crate::mob::defs()
+            )
             .is_err(),
             "unknown params are refused"
         );

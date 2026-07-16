@@ -7,11 +7,12 @@ use super::game::ServerGame;
 use super::placement::facing_from_forward;
 use crate::block::Block;
 use crate::entity::DroppedItem;
-use crate::events::{BlockPlacePre, ItemUsePre, Outcome, PostEvent};
+use crate::events::{BlockPlacePre, ItemUsePre, MobInteract, Outcome, PostEvent};
 use crate::game::tick::TickEvents;
-use crate::item::{ItemStack, ItemType, ItemUse};
+use crate::item::{ItemStack, ItemType, ItemUse, UseRay};
 use crate::mathh::Vec3;
 use crate::mob::ShearDrop;
+use crate::net::protocol::TargetRef;
 use crate::player::Player;
 
 /// The in-progress eat: which hotbar slot and food item are being eaten and
@@ -27,6 +28,41 @@ pub(crate) struct EatingState {
 }
 
 impl ServerGame {
+    /// Validate a use click's claimed block at message receipt, preserving its
+    /// click-time latch. `held_item` is the item captured into the same
+    /// `PendingUseClick`, so the ray decision and the later selection guard
+    /// share one identity. Ordinary solid-ray items retain the bounded target
+    /// convention used by placement prediction. An item that explicitly asks
+    /// for a water-stopping ray must additionally match the first hit of that
+    /// same ray in the authoritative world; otherwise a client could name a
+    /// different in-reach water cell behind an occluder.
+    pub(crate) fn authoritative_use_target(
+        &self,
+        s: usize,
+        held_item: Option<ItemType>,
+        claimed: Option<TargetRef>,
+    ) -> Option<TargetRef> {
+        let sess = &self.sessions[s];
+        let eye = super::movement::reach_eye(sess);
+        let claimed = claimed.filter(|target| crate::player::block_within_reach(eye, target.block));
+        if held_item.is_none_or(|item| item.use_ray() != UseRay::Water) {
+            return claimed;
+        }
+
+        let authoritative =
+            Player::raycast_including_water(eye, sess.player.forward(), &self.world).map(
+                |(hit, _)| TargetRef {
+                    block: hit.block,
+                    normal: hit.normal,
+                },
+            );
+        if claimed == authoritative {
+            claimed
+        } else {
+            None
+        }
+    }
+
     /// Start eating the held food item on a consumed secondary click. Returns
     /// `true` when the click belonged to food (whether the eat started, was
     /// cancelled by a mod, or was already running) so placement never fires
@@ -168,12 +204,51 @@ impl ServerGame {
         used
     }
 
+    /// Dispatch `mob_interact` for a use click whose crosshair target was a
+    /// live mob — mods see the interaction before any engine mob use
+    /// (shears), mirroring how `block_interact` precedes engine block
+    /// capabilities. Returns `true` when a handler consumed the click.
+    /// `target` is only the stable mob id the `UseClick` claimed. It must
+    /// resolve through the authoritative view-ray validator before the event
+    /// can observe it; a forged, vanished, dead, or occluded target is a
+    /// no-op.
+    pub(crate) fn mob_interact(
+        &mut self,
+        s: usize,
+        target: Option<u64>,
+        events: &mut TickEvents,
+    ) -> bool {
+        let Some(idx) = self.authoritative_mob_target(s, target) else {
+            return false;
+        };
+        let inst = &self.world.mobs().instances()[idx];
+        let mut pre = MobInteract {
+            mob: idx,
+            id: inst.id(),
+            kind: inst.kind,
+            player: self.sessions[s].id,
+        };
+        let Self {
+            world,
+            sessions,
+            bus,
+            ..
+        } = self;
+        let sess = &mut sessions[s];
+        bus.mob_interact(
+            world,
+            &mut sess.player,
+            &mut sess.gui_state,
+            events,
+            &mut pre,
+        ) == Outcome::Cancel
+    }
+
     /// Shear the targeted mob with the held shears: the mob's coat comes off (and
     /// starts regrowing) and its rolled drop pops at its body, like death loot.
     /// Returns `true` when the click was consumed. `target` is the stable mob id
-    /// the `UseClick` carried (resolved client-side at click time, already
-    /// reach-limited by the client's target pick, exactly like an attack);
-    /// a mob vanished before this tick is a no-op.
+    /// the `UseClick` claimed; the authoritative view-ray validator resolves
+    /// it before mutation. A forged or vanished target is a no-op.
     pub(crate) fn try_shear_mob(&mut self, s: usize, target: Option<u64>) -> bool {
         if self.sessions[s]
             .selected_item()
@@ -182,7 +257,7 @@ impl ServerGame {
         {
             return false;
         }
-        let Some(idx) = target.and_then(|id| self.world.mobs().index_of_id(id)) else {
+        let Some(idx) = self.authoritative_mob_target(s, target) else {
             return false;
         };
         let Some(ShearDrop {

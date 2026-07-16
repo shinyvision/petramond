@@ -1,0 +1,50 @@
+{
+  "mobs": [
+    {
+      "mob": "vehicles:boat",
+      "key": "vehicles:boat",
+      "model": "models/boat.bbmodel",
+      "scale": 0.095,
+      "size": {
+        "half_width": 0.68,
+        "height": 0.76,
+        "half_length": 1.35
+      },
+      "max_health": 4.0,
+      "walk_speed": 0.0,
+      "jump_speed": 0.0,
+      "turn_rate": 0.0,
+      "walk_anim_rate": 0.0,
+      "category": "passive",
+      "cap": 0,
+      "spawn": {
+        "biomes": [],
+        "ground": []
+      },
+      "spawn_group": {
+        "min": 1,
+        "max": 1
+      },
+      "wander": {
+        "chance_per_tick": 0.0,
+        "radius": 0
+      },
+      "habitat": {
+        "avoid": [],
+        "prefer": []
+      },
+      "avoid_water": false,
+      "buoyancy": "surface",
+      "collision": "solid",
+      "damage_feedback": [
+        { "component": "petramond:decrease_health" },
+        { "component": "petramond:knockback", "scale": 0.6 }
+      ],
+      "brain": [],
+      "seats": [
+        [0.0, -0.1, 0.16],
+        [0.0, -0.1, -0.81]
+      ]
+    }
+  ]
+}

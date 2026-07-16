@@ -614,6 +614,7 @@ mod tests {
             dead: false,
             shorn: false,
             emitters: Vec::new(),
+            anims: Vec::new(),
             ragdoll: None,
         };
         let item_row = |item_id: u8| ItemStateRow {
@@ -640,6 +641,7 @@ mod tests {
             eating: false,
             hurt_recent: false,
             snap: false,
+            mount: None,
         };
         let mut msg = ServerToClient::Tick(Box::new(crate::net::protocol::TickUpdate {
             mobs: vec![mob_row(0), mob_row(unknown_mob)],

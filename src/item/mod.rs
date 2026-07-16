@@ -40,6 +40,25 @@ pub enum ItemUse {
     Shear,
 }
 
+/// How this item's USE CLICK resolves its block target — which raycast the
+/// crosshair runs against the world while the item is held (`"use_ray"` in
+/// `items.json`). Selection/mining stay on the normal water-transparent ray
+/// either way; this only changes the target a use click (and `item_use_pre`)
+/// carries. Water hits are recomputed authoritatively when the server latches
+/// the click, and the same selected slot/item must still hold at tick
+/// consumption.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UseRay {
+    /// The normal selection ray: water is transparent.
+    #[default]
+    Solid,
+    /// Any water cell stops the ray as a full cube (solids still stop it
+    /// first) — for items that act ON water (placing a boat; the bucket
+    /// handlers run their own server-side water rays and don't need this).
+    Water,
+}
+
 impl ItemUse {
     /// Resolve an `items.json` `use` key to an engine handler. There is no
     /// namespaced (`mod_id:key`) form: a mod reacts to its item's use through
@@ -677,6 +696,13 @@ impl ItemType {
     #[inline]
     pub fn item_use(self) -> Option<ItemUse> {
         self.def().item_use
+    }
+
+    /// How this item's use click resolves its block target (`"use_ray"` in
+    /// `items.json`) — see [`UseRay`].
+    #[inline]
+    pub fn use_ray(self) -> UseRay {
+        self.def().use_ray
     }
 
     /// This item's edible data (`"food"` in `items.json`), or `None` for

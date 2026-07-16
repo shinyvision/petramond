@@ -9,7 +9,7 @@
 use crate::chunk::SectionPos;
 use crate::events::{
     self, BlockBreakPre, BlockInteract, BlockPlacePre, ItemUsePre, MobDamageFeedbackComponent,
-    MobDamagePre, MobDamageSound, PlayerDamagePre, PostEvent, PostEventKind,
+    MobDamagePre, MobDamageSound, MobInteract, PlayerDamagePre, PostEvent, PostEventKind,
 };
 use crate::facing::Facing;
 use crate::mathh::{IVec3, Vec3};
@@ -78,6 +78,7 @@ pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
         | K::BlockBreakPre
         | K::BlockInteract
         | K::ItemUsePre
+        | K::MobInteract
         | K::MobDamagePre
         | K::PlayerDamagePre => return None,
         K::BlockPlaced => PostEventKind::BlockPlaced,
@@ -91,6 +92,7 @@ pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
         K::ContainerClosed => PostEventKind::ContainerClosed,
         K::SectionGenerated => PostEventKind::SectionGenerated,
         K::SectionLoaded => PostEventKind::SectionLoaded,
+        K::PlayerDismounted => PostEventKind::PlayerDismounted,
     })
 }
 
@@ -174,6 +176,15 @@ pub(super) fn item_use_pre(ev: &ItemUsePre) -> api::EventPayload {
     api::EventPayload::ItemUsePre {
         item: api::ItemId(ev.item.id()),
         target: ev.target.map(ivec),
+    }
+}
+
+pub(super) fn mob_interact(ev: &MobInteract) -> api::EventPayload {
+    api::EventPayload::MobInteract {
+        mob: ev.mob as u32,
+        id: ev.id,
+        key: crate::mob::def(ev.kind).key.to_owned(),
+        player_id: ev.player.0,
     }
 }
 
@@ -271,5 +282,9 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
             api::EventPayload::SectionGenerated { pos: section(pos) }
         }
         PostEvent::SectionLoaded { pos } => api::EventPayload::SectionLoaded { pos: section(pos) },
+        PostEvent::PlayerDismounted { player, mob_id } => api::EventPayload::PlayerDismounted {
+            player_id: player.0,
+            mob_id,
+        },
     }
 }

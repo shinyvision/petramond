@@ -100,9 +100,10 @@ fn disabled_packs_contribute_no_wasm_instance() {
     assert_eq!(ids, ["alpha"], "the disabled pack's wasm is never selected");
 }
 
-/// Build a `mods-src/` crate exactly like `make mods` and return the wasm
-/// path, or `None` (with a visible message) when the wasm target isn't
-/// installed so plain `cargo test` never hard-fails on machines without it.
+/// Build a `mods-src/` crate for test with the `playtest` profile and return
+/// the wasm path, or `None` (with a visible message) when the wasm target
+/// isn't installed so plain `cargo test` never hard-fails on machines without
+/// it. Shipped `make mods` builds remain release-profile work, never tests.
 pub(crate) fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
     let mods_src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mods-src");
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
@@ -112,7 +113,8 @@ pub(crate) fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
         .env_remove("CARGO_TARGET_DIR")
         .args([
             "build",
-            "--release",
+            "--profile",
+            "playtest",
             "--target",
             "wasm32-unknown-unknown",
             "-p",
@@ -132,7 +134,7 @@ pub(crate) fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
         panic!("building the '{krate}' mod failed:\n{stderr}");
     }
     Some(mods_src.join(format!(
-        "target/wasm32-unknown-unknown/release/{krate}.wasm"
+        "target/wasm32-unknown-unknown/playtest/{krate}.wasm"
     )))
 }
 

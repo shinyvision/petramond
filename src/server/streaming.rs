@@ -819,13 +819,17 @@ mod tests {
             .flat_map(|y| (0..16).flat_map(move |z| (0..16).map(move |x| (x, y, z))))
             .map(|(x, y, z)| (ox + x, oy + y, oz + z))
             .find(|&(x, y, z)| {
-                server.world.chunk_block(x, y, z) == 0 && server.world.skylight_at_world(x, y, z) > 0
+                server.world.chunk_block(x, y, z) == 0
+                    && server.world.skylight_at_world(x, y, z) > 0
             })
             .expect("a skylight-carrying section holds a lit air cell");
         assert!(
-            server
-                .world
-                .set_block_world(lit_air.0, lit_air.1, lit_air.2, crate::block::Block::Stone),
+            server.world.set_block_world(
+                lit_air.0,
+                lit_air.1,
+                lit_air.2,
+                crate::block::Block::Stone
+            ),
             "edit lands inside the streamed section"
         );
         while !server.sessions[s].terrain.pending_light.contains(&lit) {

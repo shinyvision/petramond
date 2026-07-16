@@ -123,6 +123,38 @@ impl Player {
         step_at(base) || step_at(base + 1)
     }
 
+    /// The solid-entity twin of [`ledge_ahead`](Self::ledge_ahead): the TOP of
+    /// a dynamic box (a hull's deck) just ahead in `dir` at a crest-able
+    /// height, or `None`. Lets a swimmer holding jump toward a floating boat
+    /// take a climb-out boost like a block ledge grants — and since a deck
+    /// sits higher above the waterline than a block ledge, the caller derives
+    /// the boost from this returned height.
+    fn deck_ahead(&self, dir: Vec3, obstacles: &[crate::collision::DynBox]) -> Option<f32> {
+        let d = Vec3::new(dir.x, 0.0, dir.z);
+        if d.length_squared() <= 1e-12 {
+            return None;
+        }
+        let d = d.normalize();
+        let probe = self.pos + d * (HALF_W + 0.35);
+        obstacles
+            .iter()
+            .filter(|b| {
+                probe.x > b.min[0] - HALF_W
+                    && probe.x < b.max[0] + HALF_W
+                    && probe.z > b.min[2] - HALF_W
+                    && probe.z < b.max[2] + HALF_W
+                    // A deck ABOVE the feet (not a floor already underfoot),
+                    // low enough to crest — the same ceiling the block ledge
+                    // probe implies (feet-relative one block and a bit).
+                    && b.max[1] > self.pos.y + 0.05
+                    && b.max[1] <= self.pos.y + 1.25
+            })
+            .map(|b| b.max[1])
+            .fold(None, |acc: Option<f32>, top| {
+                Some(acc.map_or(top, |a| a.max(top)))
+            })
+    }
+
     /// Shove the player horizontally by `delta` — the soft push from a mob it overlaps
     /// (mobs and the player push each other apart, but neither has a solid collision box).
     /// Applied per frame as a small collision-resolved displacement (the per-frame push
@@ -141,17 +173,36 @@ impl Player {
         self.sweep_boxes(Axis::Z, delta.z, &boxes);
     }
 
-    /// Advance the player by `dt` seconds against the world's solid voxels.
-    /// The caller must ensure the overlapped columns are loaded (see
-    /// [`Player::columns_loaded`]) before stepping survival physics. Spectator
-    /// mode ignores world solidity and may move through unloaded columns.
+    /// Advance the player by `dt` seconds against the world's solid voxels
+    /// only — production drivers always pass the solid-entity boxes through
+    /// [`update_with_obstacles`](Self::update_with_obstacles), so this stays
+    /// a test entry. The caller must ensure the overlapped columns are
+    /// loaded (see [`Player::columns_loaded`]) before stepping survival
+    /// physics. Spectator mode ignores world solidity and may move through
+    /// unloaded columns.
+    #[cfg(test)]
     pub fn update(&mut self, dt: f32, world: &World, input: Input) {
+        self.update_with_obstacles(dt, world, input, &[]);
+    }
+
+    /// [`update`](Self::update) that also resolves against dynamic collision
+    /// boxes — solid entities (a boat's hull): the body walks into them and
+    /// stops, lands on them and stands. The DRIVERS supply the boxes because
+    /// the sources differ by side: the server reads its live mob instances,
+    /// the client its interpolated replicated rows.
+    pub fn update_with_obstacles(
+        &mut self,
+        dt: f32,
+        world: &World,
+        input: Input,
+        obstacles: &[crate::collision::DynBox],
+    ) {
         // Position-aware so a multi-cell bbmodel block collides per its own cell shape.
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
         let water = |x: i32, y: i32, z: i32| world.water_cell_at(x, y, z);
         let water_flow = |p: Vec3| world.water_flow_at_point(p);
         let climb = |x: i32, y: i32, z: i32| world.climbable_facing_at(x, y, z);
-        self.update_core_with_current(dt, &boxes, &water, &water_flow, &climb, input);
+        self.update_core_with_current(dt, &boxes, &water, &water_flow, &climb, input, obstacles);
     }
 
     /// Physics integration against arbitrary solidity + water predicates, so the
@@ -191,9 +242,10 @@ impl Player {
             }
             .collision_boxes()
         };
-        self.update_core_with_current(dt, &boxes, water, &still_water, climb, input);
+        self.update_core_with_current(dt, &boxes, water, &still_water, climb, input, &[]);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn update_core_with_current<F, W, C, L>(
         &mut self,
         dt: f32,
@@ -202,6 +254,7 @@ impl Player {
         water_flow: &C,
         climb: &L,
         input: Input,
+        obstacles: &[crate::collision::DynBox],
     ) where
         F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
         W: Fn(i32, i32, i32) -> bool,
@@ -270,12 +323,23 @@ impl Player {
             //     `max` below and relaunching you instantly. You sink back down
             //     once — the harder you fell in, the deeper — before the boost can
             //     fire again.
+            let deck = self.deck_ahead(input.wishdir, obstacles);
             let climbing_out = input.jump
                 && self.vel.y >= 0.0
                 && input.wishdir.length_squared() > 1e-12
-                && self.ledge_ahead(input.wishdir, &solid);
+                && (deck.is_some() || self.ledge_ahead(input.wishdir, &solid));
             if climbing_out {
-                self.vel.y = self.vel.y.max(SWIM_CLIMB);
+                // Block ledges take the tuned boost; an entity deck sits
+                // higher over the waterline, so its boost derives from the
+                // actual rise (+ margin), capped inside the movement-claim
+                // envelope — boarding must crest reliably, not marginally.
+                let boost = match deck {
+                    Some(top) => SWIM_CLIMB
+                        .max((2.0 * GRAVITY * (top - self.pos.y + 0.2)).sqrt())
+                        .min(JUMP_V0 * 1.2),
+                    None => SWIM_CLIMB,
+                };
+                self.vel.y = self.vel.y.max(boost);
                 self.jumping = true;
             } else {
                 // Ease toward a rise (holding jump) or a gentle buoyant sink.
@@ -321,16 +385,18 @@ impl Player {
         {
             let mn = self.aabb_min();
             let mx = self.aabb_max();
-            let lift = crate::collision::depenetrate_up(
+            let lift = crate::collision::depenetrate_up_dyn(
                 [mn.x, mn.y, mn.z],
                 [mx.x, mx.y, mx.z],
                 crate::collision::STEP_HEIGHT,
                 boxes,
+                obstacles,
+                crate::collision::NOT_AN_ENTITY,
             );
             self.pos.y += lift;
         }
         let dy = self.vel.y * dt;
-        let blocked_y = self.sweep_boxes(Axis::Y, dy, boxes);
+        let blocked_y = self.sweep_boxes_dyn(Axis::Y, dy, boxes, obstacles);
         if blocked_y {
             // Landed if we were moving down; bonked head if moving up. Either way
             // the jump arc is over, so stop easing gravity.
@@ -479,13 +545,15 @@ impl Player {
         if sneak_guard {
             let mn = self.aabb_min();
             let mx = self.aabb_max();
-            let (cx, cz) = crate::collision::clamp_to_supported(
+            let (cx, cz) = crate::collision::clamp_to_supported_dyn(
                 [mn.x, mn.y, mn.z],
                 [mx.x, mx.y, mx.z],
                 dx,
                 dz,
                 crate::collision::STEP_HEIGHT,
                 boxes,
+                obstacles,
+                crate::collision::NOT_AN_ENTITY,
             );
             if cx != dx {
                 self.vel.x = 0.0;
@@ -506,13 +574,15 @@ impl Player {
         };
         let mn = self.aabb_min();
         let mx = self.aabb_max();
-        let (moved, hit_x, hit_z) = crate::collision::step_horizontal(
+        let (moved, hit_x, hit_z) = crate::collision::step_horizontal_dyn(
             [mn.x, mn.y, mn.z],
             [mx.x, mx.y, mx.z],
             dx,
             dz,
             step,
             boxes,
+            obstacles,
+            crate::collision::NOT_AN_ENTITY,
         );
         self.pos.x += moved[0];
         self.pos.y += moved[1];
@@ -538,12 +608,14 @@ impl Player {
             let probe = -(crate::collision::STEP_HEIGHT + crate::collision::SUPPORT_PROBE_MARGIN);
             let mn = self.aabb_min();
             let mx = self.aabb_max();
-            let down = crate::collision::sweep_axis(
+            let down = crate::collision::sweep_axis_dyn(
                 [mn.x, mn.y, mn.z],
                 [mx.x, mx.y, mx.z],
                 1,
                 probe,
                 boxes,
+                obstacles,
+                crate::collision::NOT_AN_ENTITY,
             );
             if down > probe {
                 // Blocked within a step: rest on it (0 while anything is still

@@ -155,7 +155,9 @@ pub fn skeleton(model: &Model) -> Skeleton {
     // children so its render pose stays defined.
     let anchor_root = {
         let topmost: Vec<usize> = (0..n)
-            .filter(|&i| has_geom[i] && geom_ancestor(i).is_none() && !is_weld_name(&model.bones[i].name))
+            .filter(|&i| {
+                has_geom[i] && geom_ancestor(i).is_none() && !is_weld_name(&model.bones[i].name)
+            })
             .collect();
         topmost
             .iter()

@@ -38,10 +38,45 @@ const CLAIM_H_SPEED: f32 = player::SPRINT * 1.5;
 const PENETRATION_TOL: f32 = 0.1;
 
 impl ServerGame {
+    /// Integrate every session against one immutable pre-mob obstacle
+    /// snapshot. Building segmented solid-body geometry once keeps movement
+    /// cost proportional to players + solid mobs, rather than their product
+    /// just for snapshot construction.
+    pub(crate) fn tick_movements(&mut self) {
+        let obstacles = self.world.mobs().solid_obstacles();
+        for s in 0..self.sessions.len() {
+            self.tick_movement_with_obstacles(s, &obstacles);
+        }
+    }
+
+    /// Focused tests often advance one session without running the whole
+    /// stage; production uses [`tick_movements`](Self::tick_movements).
+    #[cfg(test)]
+    pub(crate) fn tick_movement(&mut self, s: usize) {
+        let obstacles = self.world.mobs().solid_obstacles();
+        self.tick_movement_with_obstacles(s, &obstacles);
+    }
+
     /// Integrate one session's movement on the fixed tick from latched intent
     /// (F2), then soft-accept a validated client claim when it is close (F1).
-    pub(crate) fn tick_movement(&mut self, s: usize) {
-        let (wishdir, jump, sprint, sneak, claimed_pos, claimed_vel, claimed_on_ground, spectator, fresh) = {
+    ///
+    /// A MOUNTED session skips all of it: the riding pass owns the transform
+    /// (the player is slaved to its seat after the mobs move), claims are
+    /// neither integrated nor adopted (the client slaves itself to the same
+    /// replicated mount), and no fall accrues. Claim staleness bookkeeping
+    /// still runs so the drift ring is honest on the dismount tick.
+    fn tick_movement_with_obstacles(&mut self, s: usize, obstacles: &[crate::collision::DynBox]) {
+        let (
+            wishdir,
+            jump,
+            sprint,
+            sneak,
+            claimed_pos,
+            claimed_vel,
+            claimed_on_ground,
+            spectator,
+            fresh,
+        ) = {
             let sess = &self.sessions[s];
             (
                 sess.move_wishdir,
@@ -69,6 +104,9 @@ impl ServerGame {
             }
         };
         self.sessions[s].claim_fresh = false;
+        if self.sessions[s].mount.is_some() {
+            return; // the riding pass owns a mounted transform (see above)
+        }
 
         let input = Input {
             wishdir,
@@ -85,7 +123,8 @@ impl ServerGame {
             } = self;
             let sess = &mut sessions[s];
             if spectator || sess.player.columns_loaded(world) {
-                sess.player.update(TICK_DT, world, input);
+                sess.player
+                    .update_with_obstacles(TICK_DT, world, input, obstacles);
                 (!spectator && sess.player.on_ground).then(|| sess.player.pos.y)
             } else {
                 None
@@ -97,7 +136,7 @@ impl ServerGame {
         let accept_claim = fresh
             && claim_velocity_plausible(claimed_vel, spectator)
             && claim_within_drift(spectator, gap, claimed_pos - self.sessions[s].player.pos)
-            && claim_not_deeply_penetrating(claimed_pos, &self.world, spectator);
+            && claim_not_deeply_penetrating(claimed_pos, &self.world, obstacles, spectator);
 
         let sess = &mut self.sessions[s];
         if accept_claim {
@@ -138,7 +177,7 @@ impl ServerGame {
         let grounded_for_fall = on_ground
             && (!accept_claim
                 || !self.sessions[s].player.columns_loaded(&self.world)
-                || feet_supported(pos, &self.world));
+                || feet_supported(pos, &self.world, obstacles));
         let sess = &mut self.sessions[s];
         if spectator {
             sess.fall.reset(pos.y);
@@ -251,7 +290,12 @@ pub(crate) fn vel_correction_eps(gap_ticks: u32) -> f32 {
 /// Whether the claimed body position overlaps solid collision geometry deeper
 /// than [`PENETRATION_TOL`] — the anti-noclip check, over every cell the
 /// player AABB spans.
-fn claim_not_deeply_penetrating(pos: Vec3, world: &crate::world::World, spectator: bool) -> bool {
+fn claim_not_deeply_penetrating(
+    pos: Vec3,
+    world: &crate::world::World,
+    obstacles: &[crate::collision::DynBox],
+    spectator: bool,
+) -> bool {
     if spectator {
         return true;
     }
@@ -266,6 +310,12 @@ fn claim_not_deeply_penetrating(pos: Vec3, world: &crate::world::World, spectato
         pos.z + player::HALF_W - PENETRATION_TOL,
     );
     !aabb_hits_collision(world, min, max)
+        && !crate::collision::aabb_hits_dynamic(
+            min.to_array(),
+            max.to_array(),
+            obstacles,
+            crate::collision::NOT_AN_ENTITY,
+        )
 }
 
 /// How far below the feet the ground-support probe reaches. Generous: any
@@ -274,10 +324,15 @@ fn claim_not_deeply_penetrating(pos: Vec3, world: &crate::world::World, spectato
 const GROUND_PROBE_DEPTH: f32 = 0.25;
 const GROUND_PROBE_UP: f32 = 0.05;
 
-/// Whether solid collision geometry sits directly under the feet at `pos` —
-/// the verification behind an accepted claim's `on_ground` flag (fall
+/// Whether solid collision geometry — world cells OR a solid entity's box
+/// (standing on a boat deck) — sits directly under the feet at `pos`: the
+/// verification behind an accepted claim's `on_ground` flag (fall
 /// measurement only; the flag itself is still adopted for physics).
-fn feet_supported(pos: Vec3, world: &crate::world::World) -> bool {
+fn feet_supported(
+    pos: Vec3,
+    world: &crate::world::World,
+    obstacles: &[crate::collision::DynBox],
+) -> bool {
     let min = Vec3::new(
         pos.x - player::HALF_W,
         pos.y - GROUND_PROBE_DEPTH,
@@ -289,37 +344,18 @@ fn feet_supported(pos: Vec3, world: &crate::world::World) -> bool {
         pos.z + player::HALF_W,
     );
     aabb_hits_collision(world, min, max)
+        || crate::collision::aabb_hits_dynamic(
+            min.to_array(),
+            max.to_array(),
+            obstacles,
+            crate::collision::NOT_AN_ENTITY,
+        )
 }
 
 /// Whether the world AABB `[min, max]` overlaps any collision box of any cell
 /// it spans.
-fn aabb_hits_collision(world: &crate::world::World, min: Vec3, max: Vec3) -> bool {
-    for x in (min.x.floor() as i32)..=(max.x.floor() as i32) {
-        for y in (min.y.floor() as i32)..=(max.y.floor() as i32) {
-            for z in (min.z.floor() as i32)..=(max.z.floor() as i32) {
-                for b in world.collision_boxes_at(x, y, z) {
-                    let bmin = Vec3::new(
-                        x as f32 + b.min[0],
-                        y as f32 + b.min[1],
-                        z as f32 + b.min[2],
-                    );
-                    let bmax = Vec3::new(
-                        x as f32 + b.max[0],
-                        y as f32 + b.max[1],
-                        z as f32 + b.max[2],
-                    );
-                    if min.x < bmax.x
-                        && max.x > bmin.x
-                        && min.y < bmax.y
-                        && max.y > bmin.y
-                        && min.z < bmax.z
-                        && max.z > bmin.z
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
+pub(crate) fn aabb_hits_collision(world: &crate::world::World, min: Vec3, max: Vec3) -> bool {
+    crate::collision::aabb_hits_cells(min.to_array(), max.to_array(), |x, y, z| {
+        world.collision_boxes_at(x, y, z)
+    })
 }

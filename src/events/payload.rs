@@ -56,6 +56,22 @@ pub(crate) struct ItemUsePre {
     pub target: Option<IVec3>,
 }
 
+/// `mob_interact` — a use click whose crosshair target was a live mob, before
+/// any engine mob use (shears). Cancel = the click was consumed; this is how
+/// mods make mobs interactable (mounting a vehicle, trading). Carries both
+/// addresses a handler may need: the tick-local `mob` index for immediate
+/// calls and the stable `id` for state a mod keeps across ticks.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct MobInteract {
+    /// Index into the live mob set, valid this tick only.
+    pub mob: usize,
+    /// Stable mob session id.
+    pub id: u64,
+    pub kind: Mob,
+    /// The interacting session.
+    pub player: crate::server::player::PlayerId,
+}
+
 /// `mob_damage_pre` — `amount` and `feedback` are mutable; cancel = no damage.
 #[derive(Clone, Debug)]
 pub(crate) struct MobDamagePre {
@@ -92,7 +108,10 @@ pub(crate) enum DamageSource {
     /// stable mob id — the source names WHO caused the damage, and for a mob
     /// that identity is the instance (the struck target's retaliation memory
     /// needs the biter, not just its species).
-    MobAttack { kind: Mob, id: u64 },
+    MobAttack {
+        kind: Mob,
+        id: u64,
+    },
     /// A mod's `DamagePlayer`/`KillPlayer` HostCall; carries the mod's pack id
     /// (interned for the process lifetime — see `modding::host`), so handlers
     /// can filter by origin.
@@ -214,6 +233,15 @@ pub(crate) enum PostEvent {
     SectionLoaded {
         pos: SectionPos,
     },
+    /// A player left a mob seat — however it happened (sneak gesture, the
+    /// mount died/despawned/unloaded, the rider died, left, or turned
+    /// spectator, or a mod's `MobDismount`). The mounting mod uses this to
+    /// clean up its rider policy (who controls the vehicle); mounting itself
+    /// has no event — only a mod's own `MobMount` call starts a ride.
+    PlayerDismounted {
+        player: crate::server::player::PlayerId,
+        mob_id: u64,
+    },
 }
 
 /// Registration key for post handlers; one bit per kind gates enqueueing so an
@@ -231,10 +259,11 @@ pub(crate) enum PostEventKind {
     ContainerClosed,
     SectionGenerated,
     SectionLoaded,
+    PlayerDismounted,
 }
 
 impl PostEventKind {
-    pub(crate) const COUNT: usize = 11;
+    pub(crate) const COUNT: usize = 12;
 }
 
 impl PostEvent {
@@ -251,6 +280,7 @@ impl PostEvent {
             PostEvent::ContainerClosed { .. } => PostEventKind::ContainerClosed,
             PostEvent::SectionGenerated { .. } => PostEventKind::SectionGenerated,
             PostEvent::SectionLoaded { .. } => PostEventKind::SectionLoaded,
+            PostEvent::PlayerDismounted { .. } => PostEventKind::PlayerDismounted,
         }
     }
 }

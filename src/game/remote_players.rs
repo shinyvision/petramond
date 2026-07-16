@@ -118,12 +118,14 @@ impl RemotePlayer {
 
     /// This remote's soft push body at its last-batch position, or `None` when
     /// there is nothing to jostle: spectators and the dead ship
-    /// `visible = false`, and a sleeping body is tucked in a bed it must not
-    /// be shoved off. Consumed by the local player's per-frame entity push
+    /// `visible = false`, a sleeping body is tucked in a bed it must not
+    /// be shoved off, and a MOUNTED body is slaved to its seat (shoving it —
+    /// or being shoved by it — would fight the mount glue every frame).
+    /// Consumed by the local player's per-frame entity push
     /// (`Game::apply_entity_push`) through the same body separation rule
     /// mobs use.
     pub(crate) fn push_body(&self) -> Option<crate::body::Body> {
-        (self.curr.visible && !self.curr.sleeping).then(|| {
+        (self.curr.visible && !self.curr.sleeping && self.curr.mount.is_none()).then(|| {
             crate::body::Body::new(self.curr.pos, crate::player::HALF_W, crate::player::HEIGHT)
         })
     }
@@ -194,7 +196,8 @@ impl RemotePlayers {
                 let vel = p.prev.vel.lerp(p.curr.vel, alpha);
                 let hspeed = Vec3::new(vel.x, 0.0, vel.z).length();
                 let yaw = lerp_angle(p.prev.yaw, p.curr.yaw, alpha);
-                p.pose.advance(dt, hspeed, yaw, p.curr.visible, p.curr.sneaking);
+                p.pose
+                    .advance(dt, hspeed, yaw, p.curr.visible, p.curr.sneaking);
             }
             p.eat_t = if p.curr.eating {
                 (p.eat_t + dt / EAT_RAMP_SECS).min(1.0)
@@ -272,6 +275,7 @@ mod tests {
             eating: false,
             hurt_recent: false,
             snap: false,
+            mount: None,
         }
     }
 

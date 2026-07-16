@@ -44,6 +44,35 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             give_item(ctx, item, count);
             HostRet::Bool(true)
         }),
+        // Atomic: only a selected stack holding at least `count` of `item`
+        // consumes — the held stack IS the validation, so no registry check.
+        HostCall::ConsumeHeld { item, count } => sim_query(|ctx| {
+            let holds = count > 0
+                && ctx
+                    .player
+                    .inventory
+                    .selected()
+                    .is_some_and(|st| st.item.0 == item.0 && st.count as u32 >= count);
+            if !holds {
+                return HostRet::Bool(false);
+            }
+            for _ in 0..count {
+                ctx.player.inventory.decrement_selected();
+            }
+            HostRet::Bool(true)
+        }),
+        HostCall::PlayerInput { player_id } => sim_query(|ctx| {
+            HostRet::PlayerInput(ctx.world.player_input(player_id).map(|i| {
+                mod_api::PlayerInputData {
+                    forward: i.forward,
+                    strafe: i.strafe,
+                    jump: i.jump,
+                    sneak: i.sneak,
+                    yaw: i.yaw,
+                    pitch: i.pitch,
+                }
+            }))
+        }),
         HostCall::KillPlayer => {
             let mod_id = intern_mod_id(mod_id);
             sim_call(|ctx| ctx.queue.push_action(ModAction::KillPlayer { mod_id }))

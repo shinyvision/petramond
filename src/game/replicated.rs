@@ -23,18 +23,66 @@ use crate::item::{ItemStack, ItemType};
 use crate::mathh::IVec3;
 use crate::net::protocol::{
     ItemSlotWire, ItemStateRow, MenuSyncMsg, MenuTargetWire, MobStateRow, ModSpatialSoundMsg,
-    SelfState, TickUpdate, WorldEventMsg,
+    PlayerActionKind, PlayerStateRow, SelfState, TickUpdate, WorldEventMsg,
 };
 use crate::player::{Player, PlayerMode};
+use crate::server::player::PlayerId;
 
 use super::tick::WorldEvent;
 use super::Game;
+
+/// One `TickUpdate`'s entity rows, STAGED until render time crosses into
+/// their segment (see [`ReplicaClock`](super::tick::ReplicaClock)): the
+/// committed prev→curr pair under the render never shifts mid-segment, which
+/// is what keeps interpolated motion — and a rider's camera glued to it —
+/// free of arrival-jitter rubber-banding.
+pub(crate) struct StagedRows {
+    pub(crate) mobs: Vec<MobStateRow>,
+    pub(crate) items: Vec<ItemStateRow>,
+    pub(crate) players: Vec<PlayerStateRow>,
+    pub(crate) actions: Vec<(PlayerId, PlayerActionKind)>,
+    /// An overflow collapsed older pending snapshots into this newest one.
+    /// Its first boundary commit must seed prev == curr rather than lerp over
+    /// the dropped gap.
+    resync: bool,
+}
+
+/// Normal scheduling jitter needs only a few pending ticks. If a stalled
+/// client exceeds this depth, staging collapses deterministically to the
+/// newest snapshot instead of either growing without bound or mutating the
+/// committed interpolation pair mid-segment.
+pub(crate) const MAX_STAGED_ROW_BATCHES: usize = 4;
+
+/// How fast a named mob animation blends in/out (weight per second): ~0.17 s
+/// to full — an oar picks up and settles instead of snapping between poses.
+const ANIM_BLEND_PER_SEC: f32 = 6.0;
 
 /// One replicated mob: the previous and current batch rows, keyed by the
 /// mob's stable id in [`ReplicatedMobs`].
 pub(crate) struct ReplicatedMob {
     pub(crate) prev: MobStateRow,
     pub(crate) curr: MobStateRow,
+    /// CLIENT-side blend state over the replicated named animations
+    /// (`curr.anims` names are the target set): `(name, weight, phase)` —
+    /// the weight eases per frame toward 1 for active names and 0 for
+    /// dropped ones (layers fade instead of snapping), and `phase` holds the
+    /// last replicated phase so a fading-OUT layer keeps its pose.
+    /// Presentation state only, advanced by
+    /// [`ReplicatedMobs::advance_anim_blends`].
+    pub(crate) anim_blend: Vec<(String, f32, f32)>,
+}
+
+impl ReplicatedMob {
+    /// The feet pose this replicated row presents at `alpha`. Picking,
+    /// collision, seats, and rendering all speak this same prev→curr blend;
+    /// keeping the shortest-arc yaw rule here prevents interaction geometry
+    /// from drifting onto the future tick while the model is still between.
+    pub(crate) fn interpolated_pose(&self, alpha: f32) -> (Vec3, f32) {
+        (
+            self.prev.pos.lerp(self.curr.pos, alpha),
+            crate::game::body_pose::lerp_angle(self.prev.yaw, self.curr.yaw, alpha),
+        )
+    }
 }
 
 /// The client's replicated mob set. `BTreeMap` so presentation iterates in a
@@ -51,16 +99,86 @@ impl ReplicatedMobs {
     pub(crate) fn apply(&mut self, batch: Vec<MobStateRow>) {
         let mut old = std::mem::take(&mut self.rows);
         for row in batch {
-            let prev = match old.remove(&row.id) {
-                Some(entry) => entry.curr,
-                None => row.clone(),
+            // A fresh id starts its animations at FULL weight (a mob streamed
+            // in mid-row must not fade in from rest); a known id keeps its
+            // blend state and eases toward the new target set.
+            let (prev, anim_blend) = match old.remove(&row.id) {
+                Some(entry) => (entry.curr, entry.anim_blend),
+                None => (
+                    row.clone(),
+                    row.anims
+                        .iter()
+                        .map(|(n, phase)| (n.clone(), 1.0, *phase))
+                        .collect(),
+                ),
             };
-            self.rows.insert(row.id, ReplicatedMob { prev, curr: row });
+            self.rows.insert(
+                row.id,
+                ReplicatedMob {
+                    prev,
+                    curr: row,
+                    anim_blend,
+                },
+            );
+        }
+    }
+
+    /// Replace a discontinuous backlog with one fresh interpolation seed.
+    fn resync(&mut self, batch: Vec<MobStateRow>) {
+        self.rows.clear();
+        self.apply(batch);
+    }
+
+    /// Ease every entry's animation blend weights toward its replicated
+    /// target set (in → 1, out → 0, dropped at 0), refreshing each active
+    /// layer's held phase from the row (a fading-out layer keeps its last
+    /// pose). Runs once per frame.
+    pub(crate) fn advance_anim_blends(&mut self, dt: f32) {
+        let step = ANIM_BLEND_PER_SEC * dt;
+        for entry in self.rows.values_mut() {
+            for (name, phase) in &entry.curr.anims {
+                if !entry.anim_blend.iter().any(|(n, _, _)| n == name) {
+                    entry.anim_blend.push((name.clone(), 0.0, *phase));
+                }
+            }
+            let target = &entry.curr.anims;
+            for (name, weight, phase) in entry.anim_blend.iter_mut() {
+                match target.iter().find(|(n, _)| n == name) {
+                    Some((_, row_phase)) => {
+                        *weight = (*weight + step).min(1.0);
+                        *phase = *row_phase;
+                    }
+                    None => *weight -= step,
+                }
+            }
+            entry.anim_blend.retain(|(_, w, _)| *w > 0.0);
         }
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = &ReplicatedMob> {
         self.rows.values()
+    }
+
+    /// The replicated mob with stable id `id`, if present this batch — how
+    /// rider glue finds its mount.
+    pub(crate) fn get(&self, id: u64) -> Option<&ReplicatedMob> {
+        self.rows.get(&id)
+    }
+
+    /// Interpolate one declared seat on a replicated mount. Local slaving and
+    /// remote presentation share this lookup so row pairing, yaw interpolation,
+    /// and seat projection cannot drift apart.
+    pub(crate) fn interpolated_seat_pose(
+        &self,
+        mob_id: u64,
+        seat: u8,
+        alpha: f32,
+    ) -> Option<(Vec3, f32)> {
+        let entry = self.get(mob_id)?;
+        let def = crate::mob::def(crate::mob::Mob(entry.curr.kind_id));
+        let offset = *def.seats.get(seat as usize)?;
+        let (pos, yaw) = entry.interpolated_pose(alpha);
+        Some((crate::mob::riding::seat_world_pos(pos, yaw, offset), yaw))
     }
 
     #[cfg(test)]
@@ -92,6 +210,12 @@ impl ReplicatedItems {
             };
             self.rows.insert(row.id, ReplicatedItem { prev, curr: row });
         }
+    }
+
+    /// Replace a discontinuous backlog with one fresh interpolation seed.
+    fn resync(&mut self, batch: Vec<ItemStateRow>) {
+        self.rows.clear();
+        self.apply(batch);
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = &ReplicatedItem> {
@@ -478,24 +602,151 @@ impl Game {
         }
     }
 
-    /// Adopt one replication batch: block deltas into the replica world, then
-    /// the entity stores, self view, chest-lid set, the replicated clock, the
-    /// menu-session view, and this window's events (translated to LOCAL types
-    /// and buffered for the frame's `GameEvents`).
+    /// Adopt entity rows into the committed stores. Ordinary callers shift
+    /// curr→prev; an overflow resync seeds prev == curr for every entity so a
+    /// dropped backlog cannot become one segment of extreme-speed motion.
+    /// The own row's mount adopts HERE — the local body slaves to the same
+    /// committed pair every observer renders.
+    fn apply_committed_rows(&mut self, staged: StagedRows) {
+        let StagedRows {
+            mobs,
+            items,
+            mut players,
+            actions,
+            resync,
+        } = staged;
+        let was_mounted = self.self_mount.is_some();
+        if let Some(own) = players.iter().find(|row| row.id == self.self_id) {
+            self.self_mount = own.mount;
+        }
+        if resync {
+            self.replicated_mobs.resync(mobs);
+            self.replicated_items.resync(items);
+            for row in &mut players {
+                row.snap = true;
+            }
+        } else {
+            self.replicated_mobs.apply(mobs);
+            self.replicated_items.apply(items);
+        }
+        self.remote_players
+            .apply(&players, &actions, self.self_id, &self.player_roster);
+        if was_mounted && self.self_mount.is_none() {
+            self.predict_dismount_placement();
+        }
+    }
+
+    /// Queue one post-bootstrap row snapshot. Overflow is a declared resync:
+    /// retain only the newest state, but prepend every dropped batch's player
+    /// actions in arrival order so one-shot animation triggers are not lost.
+    fn stage_rows(&mut self, mut staged: StagedRows) {
+        if self.staged_rows.len() >= MAX_STAGED_ROW_BATCHES {
+            let action_count = self
+                .staged_rows
+                .iter()
+                .map(|rows| rows.actions.len())
+                .sum::<usize>()
+                + staged.actions.len();
+            let mut actions = Vec::with_capacity(action_count);
+            for mut rows in self.staged_rows.drain(..) {
+                actions.append(&mut rows.actions);
+            }
+            actions.append(&mut staged.actions);
+            staged.actions = actions;
+            staged.resync = true;
+        }
+        self.staged_rows.push_back(staged);
+        debug_assert!(self.staged_rows.len() <= MAX_STAGED_ROW_BATCHES);
+    }
+
+    /// Mount→None edge: predict the SAME side-of-the-hull landing spot the
+    /// server's riding pass chose, from the replica + interpolated rows. The
+    /// local body was slaved INSIDE the hull's solid box; left there it keeps
+    /// claiming that position, claim adoption keeps accepting it, and the
+    /// body swims out through the boat. Prediction and authority run the one
+    /// shared `dismount_spot`, so they converge without a visible correction.
+    fn predict_dismount_placement(&mut self) {
+        if self.player.is_spectator() {
+            return;
+        }
+        let obstacles = self.solid_entity_obstacles();
+        let spot = crate::mob::riding::dismount_spot(
+            self.player.pos,
+            self.player.yaw,
+            |feet| crate::mob::riding::player_body_free(&self.replica, feet, &obstacles),
+            |feet| {
+                let c = crate::mathh::voxel_at(feet);
+                !self.replica.water_cell_at(c.x, c.y, c.z)
+                    && !self.replica.water_cell_at(c.x, c.y - 1, c.z)
+            },
+        );
+        if let Some(feet) = spot {
+            self.player.teleport(feet);
+        }
+    }
+
+    /// Turn the interpolation window when render time crossed the current
+    /// segment: commit queued rows FIFO and consume exactly one crossed segment
+    /// per batch; starved queues hold at the segment end. Outside the first
+    /// bootstrap, this is the ONLY path that shifts committed prev/curr rows.
+    /// Runs each frame right after the batches drained (`tick_receive`), before
+    /// presentation samples `tick_alpha`.
+    pub(crate) fn advance_interp_window(&mut self) {
+        while self.replica_clock.overdue() {
+            let Some(staged) = self.staged_rows.pop_front() else {
+                break;
+            };
+            self.apply_committed_rows(staged);
+            self.replica_clock.consume_segment();
+        }
+        if self.staged_rows.is_empty() {
+            self.replica_clock.hold();
+        }
+    }
+
+    /// Test-only: advance render time one full tick and turn the window —
+    /// how row-assertion tests step the staged interpolation deterministically.
+    #[cfg(test)]
+    pub(crate) fn commit_replication_window_for_test(&mut self) {
+        self.replica_clock
+            .advance(crate::game::tick::TICK_DT * 1.001);
+        self.advance_interp_window();
+    }
+
+    /// Adopt one replication batch: block deltas and client read models apply
+    /// immediately, entity rows enter the interpolation FIFO, and this
+    /// window's events translate to LOCAL types and buffer for `GameEvents`.
     pub(crate) fn apply_tick_update(&mut self, update: Box<TickUpdate>) {
         let update = *update;
         self.replicated_tick = update.tick;
         for delta in &update.block_deltas {
             self.replica.apply_remote_delta(*delta);
         }
-        self.replicated_mobs.apply(update.mobs);
-        self.replicated_items.apply(update.items);
-        self.remote_players.apply(
-            &update.players,
-            &update.player_actions,
-            self.self_id,
-            &self.player_roster,
-        );
+        // Entity ROWS are STAGED, not applied: the committed prev→curr pair
+        // under the render must never shift mid-segment (see `ReplicaClock`).
+        // A bounded FIFO absorbs ordinary bursts; overflow collapses pending
+        // state into the newest snapshot and preserves all player actions for
+        // a boundary-only resync. Everything else in this update — deltas,
+        // self state, events, menu — applies immediately: it is either an
+        // authoritative correction or one-shot presentation, not interpolated
+        // motion.
+        let staged = StagedRows {
+            mobs: update.mobs,
+            items: update.items,
+            players: update.players,
+            actions: update.player_actions,
+            resync: false,
+        };
+        if !self.replica_clock.started() {
+            // Bootstrap: the first batch renders directly (prev == curr —
+            // there is nothing to interpolate from), without pretending a
+            // render-time segment was crossed, and starts the timeline.
+            debug_assert!(self.staged_rows.is_empty());
+            self.apply_committed_rows(staged);
+            self.replica_clock.start();
+        } else {
+            self.stage_rows(staged);
+        }
         if let Some(state) = &update.self_state {
             self.self_view.apply(state);
             if self.player.mode() != self.self_view.mode {
@@ -602,7 +853,6 @@ impl Game {
                 self.replica.set_shader_param(key, value);
             }
         }
-        self.replica_clock.note_update();
         self.open_chests = update.open_chests.into_iter().collect();
         if let Some(sync) = update.menu_sync {
             self.menu_view.apply(sync);

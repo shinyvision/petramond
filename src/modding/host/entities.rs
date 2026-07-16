@@ -1,7 +1,10 @@
 //! Entity calls: mob spawn/query/damage/despawn, keyed particle emitters,
 //! and deterministic dropped-item spawns.
 
-use mod_api::{HostCall, HostRet, MobSnapshot};
+use mod_api::{
+    HostCall, HostRet, MobAnimStateData, MobRiderData, MobRidersData, MobSnapshot,
+    MAX_MOB_ANIM_NAME_BYTES, MAX_MOB_ANIM_PHASE_MAGNITUDE, MAX_MOB_ANIM_RATE_MAGNITUDE,
+};
 
 use crate::entity::DroppedItem;
 use crate::events::{ModAction, PostEvent, SimCtx};
@@ -10,6 +13,32 @@ use crate::mathh::Vec3;
 
 use super::guards::{finite3, item_by_key, sim_call, sim_query};
 use super::intern_mod_id;
+
+/// Maximum horizontal speed accepted from `MobDrive`, derived from the
+/// collision resolver's bounded external sweep and the fixed simulation tick.
+const MAX_MOB_DRIVE_SPEED: f32 =
+    crate::collision::MAX_SAFE_EXTERNAL_SWEEP_DISTANCE / crate::game::tick::TICK_DT;
+
+fn anim_name_guard(call: &str, anim: &str) -> Result<(), HostRet> {
+    if anim.len() <= MAX_MOB_ANIM_NAME_BYTES {
+        Ok(())
+    } else {
+        Err(HostRet::Error(format!(
+            "{call}: animation name is {} bytes; the limit is {MAX_MOB_ANIM_NAME_BYTES}",
+            anim.len()
+        )))
+    }
+}
+
+fn magnitude_guard(call: &str, field: &str, value: f32, max: f32) -> Result<(), HostRet> {
+    if value.is_finite() && value.abs() <= max {
+        Ok(())
+    } else {
+        Err(HostRet::Error(format!(
+            "{call}: {field} must be finite with magnitude <= {max}"
+        )))
+    }
+}
 
 /// Phase 3b: entities (mob spawn/query/hurt/despawn, item drops).
 pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
@@ -26,6 +55,27 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                     return HostRet::Bool(false);
                 };
                 let spawned = ctx.world.spawn_mob(kind, pos, yaw);
+                if spawned {
+                    ctx.queue.emit(PostEvent::MobSpawned { kind, pos });
+                }
+                HostRet::Bool(spawned)
+            }),
+        },
+        HostCall::SpawnMobChecked { key, pos, yaw } => match finite3(pos, "SpawnMobChecked.pos") {
+            Err(e) => e,
+            Ok(_) if !yaw.is_finite() => {
+                HostRet::Error("SpawnMobChecked.yaw must be finite".into())
+            }
+            Ok(pos) => sim_query(|ctx| {
+                let Some(kind) = crate::mob::defs()
+                    .iter()
+                    .position(|d| d.key == key)
+                    .map(|i| crate::mob::Mob(i as u8))
+                else {
+                    log::warn!("[mod {mod_id}] SpawnMobChecked: unknown species '{key}'");
+                    return HostRet::Bool(false);
+                };
+                let spawned = ctx.world.spawn_mob_checked(kind, pos, yaw);
                 if spawned {
                     ctx.queue.emit(PostEvent::MobSpawned { kind, pos });
                 }
@@ -53,6 +103,8 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                             pos: [m.pos.x, m.pos.y, m.pos.z],
                             health: m.health(),
                             id: m.id(),
+                            yaw: m.yaw,
+                            vel: m.vel().to_array(),
                         })
                         .collect(),
                 )
@@ -88,6 +140,138 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                     .set_mob_emitter(index as usize, &key, active),
             )
         }),
+        // The animation sibling of MobEmitterSet — addressed by STABLE id
+        // (mods hold vehicle ids across ticks; indices shift).
+        HostCall::MobAnimSet {
+            mob_id,
+            anim,
+            active,
+        } => match anim_name_guard("MobAnimSet", &anim) {
+            Err(e) => e,
+            Ok(()) => sim_query(|ctx| {
+                let Some(index) = ctx.world.mobs().index_of_id(mob_id) else {
+                    return HostRet::Bool(false);
+                };
+                HostRet::Bool(ctx.world.mobs_mut().set_mob_anim(index, &anim, active))
+            }),
+        },
+        HostCall::MobAnimRate { mob_id, anim, rate } => {
+            if let Err(e) = anim_name_guard("MobAnimRate", &anim) {
+                return e;
+            }
+            if let Err(e) =
+                magnitude_guard("MobAnimRate", "rate", rate, MAX_MOB_ANIM_RATE_MAGNITUDE)
+            {
+                return e;
+            }
+            sim_query(move |ctx| {
+                let Some(index) = ctx.world.mobs().index_of_id(mob_id) else {
+                    return HostRet::Bool(false);
+                };
+                HostRet::Bool(ctx.world.mobs_mut().set_mob_anim_rate(index, &anim, rate))
+            })
+        }
+        HostCall::MobAnimSeek {
+            mob_id,
+            anim,
+            phase,
+            rate,
+        } => {
+            if let Err(e) = anim_name_guard("MobAnimSeek", &anim) {
+                return e;
+            }
+            if let Err(e) =
+                magnitude_guard("MobAnimSeek", "phase", phase, MAX_MOB_ANIM_PHASE_MAGNITUDE)
+            {
+                return e;
+            }
+            if let Err(e) =
+                magnitude_guard("MobAnimSeek", "rate", rate, MAX_MOB_ANIM_RATE_MAGNITUDE)
+            {
+                return e;
+            }
+            sim_query(move |ctx| {
+                let Some(index) = ctx.world.mobs().index_of_id(mob_id) else {
+                    return HostRet::Bool(false);
+                };
+                HostRet::Bool(
+                    ctx.world
+                        .mobs_mut()
+                        .set_mob_anim_seek(index, &anim, phase, rate),
+                )
+            })
+        }
+        // Kinematic drive intent for this tick (see `Instance::set_drive`);
+        // immediate like every presentation/locomotion primitive.
+        HostCall::MobDrive { mob_id, vel, yaw } => {
+            if !vel.iter().all(|c| c.is_finite()) || yaw.is_some_and(|y| !y.is_finite()) {
+                return HostRet::Error("MobDrive: non-finite velocity/yaw".into());
+            }
+            if vel[0].hypot(vel[1]) > MAX_MOB_DRIVE_SPEED {
+                return HostRet::Error(format!(
+                    "MobDrive: horizontal speed exceeds {MAX_MOB_DRIVE_SPEED} m/s"
+                ));
+            }
+            sim_query(move |ctx| {
+                let Some(index) = ctx.world.mobs().index_of_id(mob_id) else {
+                    return HostRet::Bool(false);
+                };
+                HostRet::Bool(
+                    ctx.world
+                        .mobs_mut()
+                        .set_mob_drive(index, vel[0], vel[1], yaw),
+                )
+            })
+        }
+        HostCall::MobMount {
+            mob_id,
+            player_id,
+            seat,
+        } => sim_query(|ctx| HostRet::Bool(ctx.world.try_mount_player(player_id, mob_id, seat))),
+        HostCall::MobDismount { player_id } => {
+            sim_query(|ctx| HostRet::Bool(ctx.world.riding_mut().dismount(player_id).is_some()))
+        }
+        HostCall::MobRiders { mob_id } => sim_query(|ctx| {
+            let Some(index) = ctx.world.mobs().index_of_id(mob_id) else {
+                return HostRet::Riders(None);
+            };
+            let mob = &ctx.world.mobs().instances()[index];
+            if mob.is_dead() {
+                return HostRet::Riders(None);
+            }
+            let capacity = crate::mob::def(mob.kind).seats.len() as u8;
+            let riders = ctx
+                .world
+                .riding()
+                .riders_of(mob_id)
+                .into_iter()
+                .map(|(seat, player_id)| MobRiderData { seat, player_id })
+                .collect();
+            HostRet::Riders(Some(MobRidersData { capacity, riders }))
+        }),
+        HostCall::MobAnimState { mob_id, anim } => {
+            if let Err(e) = anim_name_guard("MobAnimState", &anim) {
+                return e;
+            }
+            sim_query(move |ctx| {
+                let Some(index) = ctx.world.mobs().index_of_id(mob_id) else {
+                    return HostRet::MobAnimState(None);
+                };
+                let Some(mob) = ctx.world.mobs().instances().get(index) else {
+                    return HostRet::MobAnimState(None);
+                };
+                if mob.is_dead() {
+                    return HostRet::MobAnimState(None);
+                }
+                HostRet::MobAnimState(ctx.world.mobs().mob_anim_state(index, &anim).map(|state| {
+                    MobAnimStateData {
+                        phase: state.phase,
+                        rate: state.rate,
+                        seek: state.seek,
+                    }
+                }))
+            })
+        }
         HostCall::SpawnItem {
             item_key,
             count,
@@ -166,7 +350,10 @@ pub(super) fn give_item(ctx: &mut SimCtx<'_>, item: ItemType, count: u8) {
 
 #[cfg(test)]
 mod tests {
-    use mod_api::{HostCall, HostRet};
+    use mod_api::{
+        HostCall, HostRet, MobAnimStateData, MobRidersData, MAX_MOB_ANIM_NAME_BYTES,
+        MAX_MOB_ANIM_PHASE_MAGNITUDE, MAX_MOB_ANIM_RATE_MAGNITUDE,
+    };
 
     use crate::chunk::{ChunkPos, SECTION_VOLUME};
     use crate::events::{PostQueue, SimCtx};
@@ -216,6 +403,66 @@ mod tests {
         let mob = &world.mobs().instances()[0];
         assert_eq!(mob.skylight, 0);
         assert_eq!(mob.blocklight, 0);
+    }
+
+    #[test]
+    fn checked_spawn_requires_a_loaded_clear_body_pose() {
+        let mut data = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 1);
+        world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+        world.set_block_world(8, 64, 8, crate::block::Block::Stone);
+        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut gui = crate::gui::empty_gui_state();
+        let mut ctx = SimCtx {
+            world: &mut world,
+            player: &mut player,
+            gui_state: &mut gui,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+        scope::enter(&mut ctx, || {
+            let checked = |pos| HostCall::SpawnMobChecked {
+                key: "petramond:owl".into(),
+                pos,
+                yaw: 0.0,
+            };
+            assert_eq!(
+                handle_host_call(&mut data, checked([8.5, 64.0, 8.5])),
+                HostRet::Bool(false),
+                "terrain overlap rejects without spawning"
+            );
+            assert_eq!(
+                handle_host_call(&mut data, checked([32.5, 64.0, 8.5])),
+                HostRet::Bool(false),
+                "unknown unloaded space is never treated as clear"
+            );
+        });
+        assert!(world.mobs().instances().is_empty());
+
+        world.set_block_world(8, 64, 8, crate::block::Block::Air);
+        let mut ctx = SimCtx {
+            world: &mut world,
+            player: &mut player,
+            gui_state: &mut gui,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+        scope::enter(&mut ctx, || {
+            assert_eq!(
+                handle_host_call(
+                    &mut data,
+                    HostCall::SpawnMobChecked {
+                        key: "petramond:owl".into(),
+                        pos: [8.5, 64.0, 8.5],
+                        yaw: 0.0,
+                    },
+                ),
+                HostRet::Bool(true)
+            );
+        });
+        assert_eq!(world.mobs().instances().len(), 1);
     }
 
     #[test]
@@ -279,6 +526,126 @@ mod tests {
             assert_eq!(after[0].index, 0, "swap_remove shifted the remaining mob");
             assert_eq!(after[0].id, shifted_id, "stable id survived the shift");
             assert_eq!(after[0].pos, [2.0, 80.0, 2.0]);
+        });
+    }
+
+    #[test]
+    fn mob_animation_and_drive_calls_reject_unbounded_guest_control_state() {
+        let rejected = |call| {
+            assert!(
+                matches!(super::handle_entity_call("alpha", call), HostRet::Error(_)),
+                "out-of-envelope call must be a protocol error"
+            );
+        };
+
+        rejected(HostCall::MobAnimSet {
+            mob_id: 1,
+            anim: "a".repeat(MAX_MOB_ANIM_NAME_BYTES + 1),
+            active: true,
+        });
+        rejected(HostCall::MobAnimRate {
+            mob_id: 1,
+            anim: "row".into(),
+            rate: MAX_MOB_ANIM_RATE_MAGNITUDE * 2.0,
+        });
+        rejected(HostCall::MobAnimSeek {
+            mob_id: 1,
+            anim: "row".into(),
+            phase: MAX_MOB_ANIM_PHASE_MAGNITUDE * 2.0,
+            rate: 1.0,
+        });
+        rejected(HostCall::MobAnimSeek {
+            mob_id: 1,
+            anim: "row".into(),
+            phase: 0.0,
+            rate: MAX_MOB_ANIM_RATE_MAGNITUDE * 2.0,
+        });
+        rejected(HostCall::MobDrive {
+            mob_id: 1,
+            vel: [super::MAX_MOB_DRIVE_SPEED * 2.0, 0.0],
+            yaw: None,
+        });
+    }
+
+    #[test]
+    fn mob_queries_distinguish_missing_mobs_and_expose_authoritative_anim_state() {
+        let mut data = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 1);
+        assert!(world
+            .mobs_mut()
+            .spawn(crate::mob::Mob::Owl, Vec3::new(1.0, 80.0, 1.0), 0.0));
+        let mob_id = world.mobs().instances()[0].id();
+        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut gui = crate::gui::empty_gui_state();
+        let mut ctx = SimCtx {
+            world: &mut world,
+            player: &mut player,
+            gui_state: &mut gui,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+
+        scope::enter(&mut ctx, || {
+            assert_eq!(
+                handle_host_call(&mut data, HostCall::MobRiders { mob_id: u64::MAX }),
+                HostRet::Riders(None)
+            );
+            assert_eq!(
+                handle_host_call(&mut data, HostCall::MobRiders { mob_id }),
+                HostRet::Riders(Some(MobRidersData {
+                    capacity: crate::mob::def(crate::mob::Mob::Owl).seats.len() as u8,
+                    riders: Vec::new(),
+                }))
+            );
+            assert_eq!(
+                handle_host_call(
+                    &mut data,
+                    HostCall::MobAnimState {
+                        mob_id,
+                        anim: "row".into(),
+                    }
+                ),
+                HostRet::MobAnimState(None)
+            );
+            assert_eq!(
+                handle_host_call(
+                    &mut data,
+                    HostCall::MobAnimSet {
+                        mob_id,
+                        anim: "row".into(),
+                        active: true,
+                    }
+                ),
+                HostRet::Bool(true)
+            );
+            assert_eq!(
+                handle_host_call(
+                    &mut data,
+                    HostCall::MobAnimSeek {
+                        mob_id,
+                        anim: "row".into(),
+                        phase: 1.5,
+                        rate: -0.75,
+                    }
+                ),
+                HostRet::Bool(true)
+            );
+            assert_eq!(
+                handle_host_call(
+                    &mut data,
+                    HostCall::MobAnimState {
+                        mob_id,
+                        anim: "row".into(),
+                    }
+                ),
+                HostRet::MobAnimState(Some(MobAnimStateData {
+                    phase: 0.0,
+                    rate: 0.75,
+                    seek: Some(1.5),
+                }))
+            );
         });
     }
 }

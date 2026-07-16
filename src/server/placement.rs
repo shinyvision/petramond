@@ -6,6 +6,7 @@ use crate::facing::Facing;
 use crate::game::tick::TickEvents;
 use crate::mathh::{IVec3, Vec3};
 use crate::net::protocol::TargetRef;
+use crate::server::player::PendingUseClick;
 use crate::torch::TorchPlacement;
 
 /// Hold-to-interact repeat cadence: a HELD use button re-runs the use-click
@@ -19,14 +20,16 @@ impl ServerGame {
     /// player can still build against it. An in-progress EAT (held button on a food
     /// item) advances every tick, click or not.
     pub(crate) fn tick_place(&mut self, s: usize, events: &mut TickEvents) {
-        // The mob and block target under the crosshair at click time ride the
-        // click; consume them with the press so a stale (or FRESHER — the
-        // crosshair keeps moving while the click is queued) target can't
-        // resolve the press somewhere the client's prediction isn't.
-        let use_mob = std::mem::take(&mut self.sessions[s].pending_use_mob);
-        let target = std::mem::take(&mut self.sessions[s].pending_place_target);
-        if std::mem::take(&mut self.sessions[s].pending_place) {
-            self.place_click(s, use_mob, target, events, false);
+        // Taking the whole click clears its target, request, presentation
+        // verdict, and held-selection guard together. A newer hotbar
+        // selection invalidates the attempt before any rung can observe or
+        // mutate through a different item than receipt-time targeting used.
+        if let Some(click) = self.sessions[s].pending_use_click.take() {
+            if click.selection_still_matches(&self.sessions[s].player) {
+                self.place_click(s, click, events, false);
+            } else {
+                self.reject_selection_changed_use_click(s, click);
+            }
             // A real click paces the hold-repeat: the first repeat comes one
             // full interval after it (and spam clicks never compound rates).
             self.sessions[s].use_repeat_cooldown = USE_REPEAT_TICKS;
@@ -67,7 +70,8 @@ impl ServerGame {
         }
         sess.use_repeat_cooldown = USE_REPEAT_TICKS;
         let look = sess.look;
-        self.place_click(s, None, look, events, true);
+        let click = PendingUseClick::capture(&sess.player, None, look, None, false, false);
+        self.place_click(s, click, events, true);
     }
 
     /// Resolve one consumed secondary-button press against the CLICK's block
@@ -81,20 +85,28 @@ impl ServerGame {
     fn place_click(
         &mut self,
         s: usize,
-        use_mob: Option<u64>,
-        target: Option<TargetRef>,
+        click: PendingUseClick,
         events: &mut TickEvents,
         repeat: bool,
     ) {
-        let request_id = self.sessions[s].pending_place_request_id.take();
-        let predicted = std::mem::take(&mut self.sessions[s].pending_place_predicted);
-        let jabbed = std::mem::take(&mut self.sessions[s].pending_place_jabbed);
+        let PendingUseClick {
+            mob: use_mob,
+            target,
+            request_id,
+            predicted,
+            jabbed,
+            ..
+        } = click;
         let mut consumed = false;
         let mut placed_at = None;
-        // Using the held item ON the targeted mob (shears on a sheep) comes first:
-        // while a mob is targeted `look` is None, so the block paths below
-        // would no-op anyway.
-        if self.try_shear_mob(s, use_mob) {
+        // A targeted mob resolves first: mods get the interaction before any
+        // engine mob use (`mob_interact`, cancel = consumed — how a mod makes
+        // a mob mountable/tradeable), then shears. While a mob is targeted
+        // `look` is None, so the block paths below would no-op anyway.
+        if self.mob_interact(s, use_mob, events) {
+            events.player(s).interacted = true;
+            consumed = true;
+        } else if self.try_shear_mob(s, use_mob) {
             events.player(s).used_item = true;
             consumed = true;
         } else {
@@ -163,12 +175,35 @@ impl ServerGame {
         if let Some(t) = target.filter(|_| !repeat) {
             let disputed = !consumed || (request_id.is_some() && !accepted);
             if disputed {
-                let sess = &mut self.sessions[s];
-                sess.pending_corrective_cells.push(t.block);
-                if t.normal != IVec3::ZERO {
-                    sess.pending_corrective_cells.push(t.block + t.normal);
-                }
+                self.queue_use_corrective_cells(s, t);
             }
+        }
+    }
+
+    /// Refuse a real click whose selected slot/item changed after receipt.
+    /// This is the same no-op contract as any other denied use: answer its
+    /// prediction request and correct the disputed cells, but dispatch no
+    /// gameplay rung and emit no action presentation.
+    fn reject_selection_changed_use_click(&mut self, s: usize, click: PendingUseClick) {
+        if let Some(id) = click.request_id {
+            self.push_action_outcome(
+                s,
+                id,
+                false,
+                Some(crate::net::protocol::ActionDenyReason::Denied),
+            );
+        }
+        if let Some(target) = click.target {
+            self.queue_use_corrective_cells(s, target);
+        }
+    }
+
+    fn queue_use_corrective_cells(&mut self, s: usize, target: TargetRef) {
+        let sess = &mut self.sessions[s];
+        sess.pending_corrective_cells.push(target.block);
+        if target.normal != IVec3::ZERO {
+            sess.pending_corrective_cells
+                .push(target.block + target.normal);
         }
     }
 
@@ -644,11 +679,31 @@ impl ServerGame {
     #[cfg(test)]
     pub(crate) fn queue_place_click_for_test(&mut self, s: usize) {
         let sess = &mut self.sessions[s];
-        sess.pending_place_target = sess.look;
-        sess.pending_place = true;
         // The hook models a client that ran its full place prediction (the
         // common case), so the echo strip applies like production.
-        sess.pending_place_predicted = true;
+        sess.pending_use_click = Some(PendingUseClick::capture(
+            &sess.player,
+            None,
+            sess.look,
+            None,
+            true,
+            false,
+        ));
+    }
+
+    /// Test-only variant of [`queue_place_click_for_test`] carrying a claimed
+    /// stable mob id instead of a block target.
+    #[cfg(test)]
+    pub(crate) fn queue_mob_use_click_for_test(&mut self, s: usize, mob: u64) {
+        let sess = &mut self.sessions[s];
+        sess.pending_use_click = Some(PendingUseClick::capture(
+            &sess.player,
+            Some(mob),
+            None,
+            None,
+            true,
+            false,
+        ));
     }
 }
 

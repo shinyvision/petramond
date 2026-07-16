@@ -371,30 +371,81 @@ impl TickEvents {
     }
 }
 
-/// Client-side tick clock: `tick_alpha` used to read the server accumulator,
-/// which now lives on the server thread. Instead, note the arrival `Instant`
-/// of each applied `TickUpdate` and measure into the current tick from there.
-/// Simple and monotonic per interval; thread-scheduling jitter shows up as
-/// small alpha noise — smoothing (e.g. an EMA over update spacing) can layer
-/// on later if interpolation visibly judders.
+/// Client-side PHASE-ACCUMULATOR clock over a STAGED interpolation window.
+/// `tick_alpha` used to read the server accumulator, which now lives on the
+/// server thread; tying it to each update's arrival time instead makes batch
+/// arrivals quantized to frame boundaries
+/// and jittered by thread scheduling; the old timestamp-reset clock aliased
+/// that into a stall/lurch cycle — every early batch shifted the pair under a
+/// mid-segment render (a forward jump), every late one pinned alpha at 1 (a
+/// stall). Invisible on a walking sheep; violent rubber-banding with the
+/// camera glued to a 4.5 m/s boat (the 2026-07-15 riding bug).
+///
+/// Now fresh batches enter a small bounded FIFO (`Game::staged_rows`): render
+/// time advances by the frame's real `dt` ([`advance`](Self::advance)) and
+/// queued rows COMMIT only when the phase crosses segment boundaries
+/// (`Game::advance_interp_window` → [`consume_segment`](Self::consume_segment)),
+/// so the pair under the render never shifts mid-segment and steady batches
+/// render at constant velocity no matter how arrivals alias against the frame
+/// rate. The timeline self-centres by a one-sided ratchet: only a genuinely
+/// late batch slips it ([`hold`](Self::hold) drops the starved excess). If the
+/// queue overflows, pending snapshots collapse to the newest state (all player
+/// actions retained in order) and snap prev == curr at the NEXT crossed
+/// boundary; even emergency catch-up never mutates a live segment.
 #[derive(Default)]
 pub(crate) struct ReplicaClock {
-    last_update: Option<std::time::Instant>,
+    /// Render-time phase in fixed ticks past the committed pair: `advance`
+    /// adds real time, `consume_segment` subtracts a committed batch,
+    /// [`alpha`](Self::alpha) clamps into the pair's interpolation range.
+    phase: f32,
+    started: bool,
 }
 
 impl ReplicaClock {
-    /// Note that a `TickUpdate` was just applied.
-    pub(crate) fn note_update(&mut self) {
-        self.last_update = Some(std::time::Instant::now());
+    /// Advance render time by one frame of real `dt` (called once per frame,
+    /// before anything samples [`alpha`](Self::alpha)).
+    pub(crate) fn advance(&mut self, dt: f32) {
+        if self.started {
+            self.phase += dt / TICK_DT;
+        }
     }
 
-    /// Fraction (0..1) into the current fixed tick since the last update.
-    /// `1.0` before the first update (render current state, no interpolation)
-    /// and while updates stall (pause, hitches) — poses hold rather than snap.
+    /// The first batch bootstrapped the stores (prev == curr): start the
+    /// render timeline at the segment origin.
+    pub(crate) fn start(&mut self) {
+        self.started = true;
+        self.phase = 0.0;
+    }
+
+    pub(crate) fn started(&self) -> bool {
+        self.started
+    }
+
+    /// Render time has crossed the current segment — the next staged batch
+    /// (if any) is due to commit.
+    pub(crate) fn overdue(&self) -> bool {
+        self.started && self.phase >= 1.0
+    }
+
+    /// A staged batch committed: the render window moved one segment forward.
+    pub(crate) fn consume_segment(&mut self) {
+        self.phase = (self.phase - 1.0).max(0.0);
+    }
+
+    /// Nothing staged while overdue (a late batch, a pause): hold at the
+    /// segment end instead of extrapolating, dropping the starved excess —
+    /// the ratchet that keeps the timeline just far enough behind arrivals.
+    pub(crate) fn hold(&mut self) {
+        self.phase = self.phase.min(1.0);
+    }
+
+    /// Fraction (0..1) into the committed prev→curr pair. `1.0` before the
+    /// first update (render current state, no interpolation).
     pub(crate) fn alpha(&self) -> f32 {
-        match self.last_update {
-            Some(at) => (at.elapsed().as_secs_f32() / TICK_DT).clamp(0.0, 1.0),
-            None => 1.0,
+        if self.started {
+            self.phase.clamp(0.0, 1.0)
+        } else {
+            1.0
         }
     }
 }
@@ -425,6 +476,14 @@ impl Game {
     /// service the pipe synchronously between the halves (production runs
     /// them back-to-back; the thread answers asynchronously).
     pub(crate) fn tick_send(&mut self, dt: f32, input: &GameInput) {
+        // Render time advances by real frame dt FIRST, and the interpolation
+        // window turns HERE too — a batch staged last frame whose segment the
+        // phase just crossed must commit BEFORE the mount slaving below
+        // samples it, or the rider's camera clamps at the segment end for one
+        // frame every tick (a 20 Hz stutter) while the world glides on. The
+        // receive half turns it again for batches that arrive already overdue.
+        self.replica_clock.advance(dt);
+        self.advance_interp_window();
         // Per-frame exceptions kept for local feel: look, hotbar, local player, entity push.
         self.apply_camera_input(input);
         self.apply_hotbar_input(input);
@@ -467,8 +526,16 @@ impl Game {
         // client applies off the wire. Everything below consumes ONLY what
         // those messages carried (`ClientEvents`), never sim state. More than
         // one `TickUpdate` may have landed since last frame; `ClientEvents`
-        // accumulates them (one-shots OR, queues append, latest state wins).
+        // accumulates their immediate payloads (one-shots OR, queues append,
+        // latest read-model state wins), while entity rows enter their bounded
+        // interpolation FIFO.
         self.pump_network();
+        // Turn the staged interpolation window now that the batches drained,
+        // so presentation below samples committed pairs + a settled alpha —
+        // then ease the named-animation blend weights toward the committed
+        // target sets (oars pick up / settle instead of snapping).
+        self.advance_interp_window();
+        self.replicated_mobs.advance_anim_blends(dt);
 
         // Presentation/infra after fixed simulation; no gameplay mutation here.
         // Remote players' per-frame animation state (shared body pose,
@@ -720,7 +787,9 @@ impl Game {
                 // The click's block target rides the wire: the server resolves
                 // the interact/place against THIS cell, never a fresher look —
                 // a click racing the crosshair must land where the ghost is.
-                let target = self.look.map(|h| TargetRef {
+                // `use_look` == `look` unless the held item declares a
+                // water-stopping use ray (see `refresh_target`).
+                let target = self.use_look.map(|h| TargetRef {
                     block: h.block,
                     normal: h.normal,
                 });
@@ -1112,7 +1181,11 @@ impl Game {
 
     /// Client mirror of the server's `placement_occupied_by_body`: the own
     /// predicted body plus every replicated mob / remote-player row.
-    fn placement_blocked_by_body(&self, cell: IVec3, boxes: &[crate::block::Aabb]) -> bool {
+    pub(super) fn placement_blocked_by_body(
+        &self,
+        cell: IVec3,
+        boxes: &[crate::block::Aabb],
+    ) -> bool {
         if boxes.is_empty() {
             return false; // collisionless blocks (torch, grass) trap nothing
         }
@@ -1124,8 +1197,13 @@ impl Game {
                 continue;
             }
             let size = crate::mob::def(crate::mob::Mob(entry.curr.kind_id)).size;
-            let body = crate::body::Body::new(entry.curr.pos, size.half_width, size.height);
-            if body.overlaps_block_boxes(cell, boxes) {
+            if crate::mob::body_overlaps_block_boxes(
+                entry.curr.pos,
+                entry.curr.yaw,
+                size,
+                cell,
+                boxes,
+            ) {
                 return true;
             }
         }
