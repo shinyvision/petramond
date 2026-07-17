@@ -57,9 +57,15 @@ fn weather_params_inner() {
     assert!(sky[2] > 0.0, "feature size {}", sky[2]);
     assert!(sky[3] >= 0.0 && sky[3] == sky[3].trunc(), "seed {}", sky[3]);
 
-    // The cross-mod KV mirror rides the same tick.
-    assert!(game.server.world.mod_kv_get("weather:wind").is_some());
-    assert!(game.server.world.mod_kv_get("weather:storm").is_some());
+    // The cross-mod KV mirror rides the same tick: one `weather:field` row.
+    // Its layout is owned by weather-core's `FieldRow` (foreign mods decode
+    // through that crate), so only presence and shape are pinned here.
+    let field = game
+        .server
+        .world
+        .mod_kv_get("weather:field")
+        .expect("the weather tick publishes the weather:field interop row");
+    assert_eq!(field.len(), 40, "FieldRow::ENCODED_LEN bytes");
 
     // The offset advances with the wind: a later tick moves it.
     let before = wind[0];

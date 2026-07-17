@@ -371,6 +371,191 @@ fn zombie_burn_cool_inner() {
 }
 
 #[test]
+fn zombie_burn_douses_in_water_and_rain_via_wasm() {
+    let Some(root) = crate::modding::tests::stage_monsters_fixture("douse") else {
+        return;
+    };
+    crate::modding::tests::run_child_test(&root, "game::tests::monsters_mod::zombie_douse_inner");
+}
+
+/// Hand-encode a `weather:field` row (layout owned by weather-core's
+/// `FieldRow`; the monsters mod is a READER — this test plays the weather
+/// mod's role as the writer). Storm 2.0 saturates both cloud sheets, so
+/// coverage — and rain — is 1 at EVERY column regardless of seed, offset,
+/// or epoch; storm 0.0 leaves both sheets empty, a guaranteed clear sky.
+/// Neither depends on field values, which stay deliberately unpinned.
+fn field_row(storm: f32, clock: u64) -> Vec<u8> {
+    let mut b = vec![0u8; 40];
+    b[0..8].copy_from_slice(&clock.to_le_bytes());
+    b[16..20].copy_from_slice(&storm.to_le_bytes());
+    b
+}
+
+/// Runs ONLY in the child process spawned above. The weather interop end to
+/// end through the real installed wasm: a rain-band deck overhead blocks
+/// ignition (the same clouds that rain occlude the sun), rain winds a burn
+/// down much faster than shade but not instantly, and water snuffs it on
+/// contact — with the zombie alive after both douses.
+#[test]
+#[ignore = "spawned by zombie_burn_douses_in_water_and_rain_via_wasm with a fixture pack env"]
+fn zombie_douse_inner() {
+    use crate::block::Block;
+    use crate::chunk::{SECTION_VOLUME, SKY_FULL};
+
+    let zombie = crate::mob::defs()
+        .iter()
+        .position(|d| d.name == "monsters:zombie")
+        .map(|i| crate::mob::Mob(i as u8))
+        .expect("monsters:zombie registered from the fixture pack");
+    let light_id = crate::particle_emitters::by_key("petramond:burn_light")
+        .expect("core bundle registered")
+        .id;
+
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(30.0, 66.0, 8.0), 16.0 / 9.0));
+    assert_eq!(game.mods_for_test().loaded(), 1, "monsters loaded");
+    game.server.sessions[0].player.pos = Vec3::new(30.0, 64.0, 8.0);
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions[0].player.on_ground = true;
+    super::common::flat_floor_loaded_air(&mut game.server.world, Block::Grass);
+    let section = game
+        .server
+        .world
+        .section_at_world_mut_for_test(0, 64, 0)
+        .expect("feet section is loaded");
+    section.set_skylight(vec![SKY_FULL; SECTION_VOLUME].into());
+
+    assert!(game
+        .server
+        .world
+        .mobs_mut()
+        .spawn(zombie, Vec3::new(8.5, 64.0, 8.5), 0.0));
+    let id = game.server.world.mobs().instances()[0].id();
+
+    let emitters = |game: &super::common::TestGame| -> Vec<u8> {
+        game.server
+            .world
+            .mobs()
+            .instances()
+            .iter()
+            .find(|m| m.id() == id)
+            .map(|m| m.active_emitters().to_vec())
+            .unwrap_or_default()
+    };
+    // One tick so core day/night publishes `petramond:clock`; the row's
+    // freshness stamp must track it (a stale stamp reads as "no weather"),
+    // so every phase rewrites the row with the current clock each tick.
+    let mut ev = TickEvents::default();
+    game.server.game_tick_step(&mut ev);
+    let set_weather = |game: &mut super::common::TestGame, storm: f32| {
+        let clock = game
+            .server
+            .world
+            .mod_kv_get("petramond:clock")
+            .and_then(|b| b.try_into().ok().map(u64::from_le_bytes))
+            .expect("core day/night publishes petramond:clock");
+        game.server
+            .world
+            .mod_kv_set("weather:field".to_owned(), field_row(storm, clock));
+    };
+
+    // Phase 1 — the rain deck blocks ignition: 150 full-sun ticks under a
+    // saturated storm row and the zombie never catches fire (clear-sky
+    // ignition is 5%/tick — the same seeded rolls ignite all but
+    // immediately in phase 2).
+    for _ in 0..150 {
+        set_weather(&mut game, 2.0);
+        game.server.game_tick_step(&mut ev);
+    }
+    assert!(
+        emitters(&game).is_empty(),
+        "no ignition under a rain-band deck — the clouds that rain occlude the sun"
+    );
+
+    // Phase 2 — clear the sky, ignite, then rain the burn out: a full
+    // downpour counts 4 dark ticks per tick, so the light burn dies in ~15
+    // ticks — well under shade's 60, but a wind-down, not a snuff.
+    let mut lit = false;
+    for _ in 0..400 {
+        set_weather(&mut game, 0.0);
+        game.server.game_tick_step(&mut ev);
+        if emitters(&game).contains(&light_id) {
+            lit = true;
+            break;
+        }
+    }
+    assert!(lit, "light fire ignites under the cleared sky");
+    let mut out_at = None;
+    for t in 0..40i32 {
+        set_weather(&mut game, 2.0);
+        game.server.game_tick_step(&mut ev);
+        if emitters(&game).is_empty() {
+            out_at = Some(t);
+            break;
+        }
+    }
+    let out = out_at.expect("rain douses a light burn well before shade's 60 ticks");
+    assert!(
+        out >= 5,
+        "rain is a gradual wind-down, not water's instant snuff (out at tick {out})"
+    );
+
+    // Phase 3 — re-ignite, then dunk: water at the feet snuffs the fire on
+    // the next mod tick. The water follows the wandering zombie's feet cell
+    // so a mid-tick step can't dodge the dunk.
+    let mut relit = false;
+    for _ in 0..400 {
+        set_weather(&mut game, 0.0);
+        game.server.game_tick_step(&mut ev);
+        if emitters(&game).contains(&light_id) {
+            relit = true;
+            break;
+        }
+    }
+    assert!(relit, "light fire re-ignites for the water phase");
+    let mut snuffed_at = None;
+    for t in 0..10i32 {
+        let feet = game
+            .server
+            .world
+            .mobs()
+            .instances()
+            .iter()
+            .find(|m| m.id() == id)
+            .expect("the zombie is alive")
+            .pos;
+        assert!(game.server.world.set_block_world(
+            feet.x.floor() as i32,
+            feet.y.floor() as i32,
+            feet.z.floor() as i32,
+            Block::Water,
+        ));
+        set_weather(&mut game, 0.0);
+        game.server.game_tick_step(&mut ev);
+        if emitters(&game).is_empty() {
+            snuffed_at = Some(t);
+            break;
+        }
+    }
+    let snuffed = snuffed_at.expect("water snuffs the burn");
+    assert!(
+        snuffed <= 2,
+        "the water snuff is immediate, not a wind-down (out at tick {snuffed})"
+    );
+    assert!(
+        game.server
+            .world
+            .mobs()
+            .instances()
+            .iter()
+            .any(|m| m.id() == id && !m.is_dead()),
+        "the twice-doused zombie survived"
+    );
+    let (disabled, _, _) = game.mods_for_test().probe(0);
+    assert!(!disabled, "the monsters mod stayed healthy through the douses");
+}
+
+#[test]
 fn hushjaw_spawn_rules_gate_on_depth_distance_and_spacing_via_wasm() {
     let Some(root) = crate::modding::tests::stage_monsters_fixture("hushjaw-spawn") else {
         return;

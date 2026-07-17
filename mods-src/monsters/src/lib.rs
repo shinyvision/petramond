@@ -38,6 +38,19 @@
 //!   damage deliberately uses the engine pipeline, so `mob_damage_pre`,
 //!   `mob_died`, loot, and the ragdoll all happen. A zombie that burns to
 //!   death keeps its flames through the ragdoll, engine-side.
+//! - **Water and rain douse the burn** (weather is OPTIONAL): a burning
+//!   zombie whose feet cell is water snuffs out instantly, and water blocks
+//!   ignition outright. Rain is soft interop: when a weather mod publishes
+//!   the `weather:field` world-KV row (see `weather-core`), each zombie
+//!   evaluates the field at its own column. Rain reaching the zombie (raw
+//!   direct sky, daylight-independent — night rain wets too) cools the burn
+//!   like darkness but FASTER, scaling with intensity (a downpour counts
+//!   several dark ticks per tick), and any rain-band cloud overhead blocks
+//!   ignition and escalation — the same deck that rains is the deck that
+//!   occludes the sun, which engine skylight cannot know. No weather mod (or
+//!   a stale row whose clock stamp fell behind `petramond:clock` — world KV
+//!   persists past an uninstall) means a permanently clear sky: sunburn is
+//!   exactly the standalone behavior above.
 //! - **Sounds**: groan/hurt/death calls are data-driven by the zombie mob row.
 //!   The mod does not start audio directly; the engine presentation layer plays
 //!   those semantic mob sound hooks.
@@ -46,8 +59,12 @@
 //!
 //! - reads `petramond:time` (4-byte LE f32 day fraction) — the sanctioned
 //!   interop surface published by core day/night.
+//! - reads `weather:field` (a `weather_core::FieldRow`) and `petramond:clock`
+//!   (8-byte LE u64, the row's freshness reference) — both OPTIONAL; absent
+//!   or stale means "clear sky".
 
 use mod_sdk::*;
+use weather_core::{FieldParams, FieldRow};
 
 const MONSTERS_TICK_SYSTEM: u32 = 1;
 const MONSTERS_HOSTILE_SPAWNER: u32 = 1;
@@ -55,6 +72,8 @@ const MONSTERS_HOSTILE_SPAWNER: u32 = 1;
 const ZOMBIE_KEY: &str = "monsters:zombie";
 const HUSHJAW_KEY: &str = "monsters:hushjaw";
 const TIME_KEY: &str = "petramond:time";
+const CLOCK_KEY: &str = "petramond:clock";
+const WATER_BLOCK: &str = "petramond:water";
 
 /// Hushjaw spawn rules — a deep-cave apex predator, deliberately never near
 /// the surface, the player, or its own kind:
@@ -84,6 +103,17 @@ const LIGHT_FIRE_TICKS: u32 = 200;
 /// Consecutive DARK ticks that cool the burn one stage (great → light →
 /// out).
 const DARK_COOL_TICKS: u32 = 60;
+/// Rain cools faster than shade, scaling with how hard it pours: a
+/// rained-on tick counts as `1 + rain_intensity * this` dark ticks, so a
+/// full downpour winds a stage down in ~15 ticks where shade takes 60,
+/// while a drizzle only takes the sun away. Snow douses identically — the
+/// field is phase-agnostic here, and smothering a fire is what snow does.
+const RAIN_COOL_BOOST: f32 = 3.0;
+/// A `weather:field` row whose clock stamp trails `petramond:clock` by more
+/// than this is a leftover from an uninstalled weather mod (world KV
+/// persists) and reads as "no weather". Weather republishes every tick, so
+/// a live row is at most one tick behind; 2 s of slack is generous.
+const FIELD_STALE_TICKS: u64 = 40;
 /// Light fire: 1 damage every 40 ticks.
 const LIGHT_FIRE_DAMAGE: f32 = 1.0;
 const LIGHT_FIRE_DAMAGE_INTERVAL: u32 = 40;
@@ -113,12 +143,18 @@ struct Monsters {
     /// Burn state per burning zombie (by stable mob id). In-memory only:
     /// a sunlit zombie re-rolls ignition next session.
     burning: std::collections::HashMap<u64, Burn>,
+    /// The engine water block, resolved once — a burning zombie standing in
+    /// it snuffs out instantly.
+    water: Option<BlockId>,
 }
 
 impl Mod for Monsters {
     fn init(&mut self) {
-        register_tick_system(Stage::Spawning, AttachSide::After, 0, MONSTERS_TICK_SYSTEM);
+        // Priority 20: behind the weather mod's 10 in the same stage window,
+        // so the `weather:field` row read each tick is THIS tick's publish.
+        register_tick_system(Stage::Spawning, AttachSide::After, 20, MONSTERS_TICK_SYSTEM);
         register_hostile_spawner(0, MONSTERS_HOSTILE_SPAWNER);
+        self.water = resolve_block_logged(WATER_BLOCK);
         log("initialized: hostile spawner (zombie + hushjaw) + sunburn");
     }
 
@@ -130,9 +166,10 @@ impl Mod for Monsters {
         let Some(daylight) = daylight_factor_from_daynight() else {
             return;
         };
+        let field = weather_field();
         let player = player_state();
         let near = mobs_in_radius(player.pos, SUNBURN_RADIUS);
-        self.tick_fire(daylight, &near);
+        self.tick_fire(daylight, field.as_ref(), &near);
     }
 
     fn hostile_spawn_candidate(
@@ -178,7 +215,7 @@ fn hushjaw_admits(candidate: &HostileSpawnCandidate) -> bool {
 
 impl Monsters {
     /// Ignite sunlit zombies and advance every burning one by one tick.
-    fn tick_fire(&mut self, daylight: f32, near: &[MobSnapshot]) {
+    fn tick_fire(&mut self, daylight: f32, field: Option<&FieldParams>, near: &[MobSnapshot]) {
         // Forget burns whose zombie is gone from the live snapshot: it died
         // (the engine keeps the corpse's flames through the ragdoll on its
         // own) or despawned. One radius covers every live zombie — hostile
@@ -189,14 +226,19 @@ impl Monsters {
         // stable mob id, so ignition stays deterministic without a host call
         // per zombie per tick.
         let roll = rng_u64("sunburn");
+        let water = self.water;
         let mut extinguished: Vec<u64> = Vec::new();
         for mob in near.iter().filter(|m| m.key == ZOMBIE_KEY) {
             let Some(burn) = self.burning.get_mut(&mob.id) else {
-                // Not burning. Roll before the light query, so the per-zombie
-                // host crossings happen only on the 5% of ticks that might
-                // actually ignite.
+                // Not burning. Roll first, then the pure rain check (any
+                // rain-band cloud overhead occludes the sun — engine
+                // skylight can't know that), so the per-zombie host
+                // crossings happen only on the few ticks that might
+                // actually ignite. Standing in water blocks ignition too.
                 if splitmix64_mix(roll ^ mob.id) % 100 < SUNBURN_CHANCE_PER_100
+                    && rain_at(field, mob.pos) == 0.0
                     && in_sunlight(mob.pos, daylight)
+                    && !in_water(water, cell_of(mob.pos))
                     && mob_emitter_set(mob.index, LIGHT_FIRE_EMITTER, true)
                 {
                     self.burning.insert(
@@ -211,12 +253,41 @@ impl Monsters {
                 continue;
             };
 
-            let sunlit = in_sunlight(mob.pos, daylight);
+            let cell = cell_of(mob.pos);
+            // Dunked: water snuffs the fire outright, whatever the stage.
+            if in_water(water, cell) {
+                match burn.stage {
+                    BurnStage::Light => {
+                        mob_emitter_set(mob.index, LIGHT_FIRE_EMITTER, false);
+                    }
+                    BurnStage::Great => {
+                        mob_emitter_set(mob.index, GREAT_FIRE_EMITTER, false);
+                    }
+                }
+                extinguished.push(mob.id);
+                continue;
+            }
+
+            let sky = sky_light(cell);
+            let rain_i = rain_at(field, mob.pos);
+            // Rain reaches the zombie only under direct sky (raw sky light,
+            // daylight-independent: night rain wets too). When it does, the
+            // same deck that rains occludes the sun, so a rained-on zombie
+            // is never "sunlit" — its burn only winds down.
+            let rained_on = rain_i > 0.0 && sky.is_some_and(|s| s >= SUNBURN_SKY_THRESHOLD);
+            let sunlit =
+                !rained_on && sky.is_some_and(|s| s * daylight >= SUNBURN_SKY_THRESHOLD);
             burn.stage_ticks += 1;
-            burn.dark_ticks = if sunlit { 0 } else { burn.dark_ticks + 1 };
+            burn.dark_ticks = if sunlit {
+                0
+            } else if rained_on {
+                burn.dark_ticks + 1 + (rain_i * RAIN_COOL_BOOST) as u32
+            } else {
+                burn.dark_ticks + 1
+            };
 
             if burn.dark_ticks >= DARK_COOL_TICKS {
-                // Out of the sun long enough: cool one stage.
+                // Out of the sun (or rained on) long enough: cool one stage.
                 burn.dark_ticks = 0;
                 match burn.stage {
                     BurnStage::Light => {
@@ -259,19 +330,57 @@ impl Monsters {
             self.burning.remove(&id);
         }
     }
+
 }
 
-fn in_sunlight(pos: [f32; 3], daylight: f32) -> bool {
-    let cell = [
+/// The cell holds engine water. `get_block`'s stream-finality gate
+/// (`None`) reads as "not water" — never act on frozen state.
+fn in_water(water: Option<BlockId>, cell: [i32; 3]) -> bool {
+    water.is_some() && get_block(cell) == water
+}
+
+fn cell_of(pos: [f32; 3]) -> [i32; 3] {
+    [
         pos[0].floor() as i32,
         pos[1].floor() as i32,
         pos[2].floor() as i32,
-    ];
+    ]
+}
+
+/// Raw sky light at the cell; `None` while the section is unloaded or its
+/// streamed content is not final.
+fn sky_light(cell: [i32; 3]) -> Option<f32> {
     if !is_loaded(cell) {
-        return false;
+        return None;
     }
     let (_, sky, _) = light_at(cell);
-    sky as f32 * daylight >= SUNBURN_SKY_THRESHOLD
+    Some(sky as f32)
+}
+
+fn in_sunlight(pos: [f32; 3], daylight: f32) -> bool {
+    sky_light(cell_of(pos)).is_some_and(|sky| sky * daylight >= SUNBURN_SKY_THRESHOLD)
+}
+
+/// Rain intensity of the weather field at the mob's column; 0 with no field.
+fn rain_at(field: Option<&FieldParams>, pos: [f32; 3]) -> f32 {
+    field.map_or(0.0, |p| weather_core::rain(pos[0], pos[2], p))
+}
+
+/// The weather mod's published field row, verified FRESH. `None` = clear
+/// sky: no weather mod installed, or a stale row a removed weather mod left
+/// in the persistent world KV. The stamp is checked against
+/// `petramond:clock` when core publishes one; without a shared clock the
+/// stamp is unverifiable and the row is trusted (matching the weather mod's
+/// own session-tick clock fallback in clockless harnesses).
+fn weather_field() -> Option<FieldParams> {
+    let row = FieldRow::decode(&world_kv_get(weather_core::KV_FIELD)?)?;
+    let clock = world_kv_get(CLOCK_KEY).and_then(|b| b.try_into().ok().map(u64::from_le_bytes));
+    if let Some(clock) = clock {
+        if clock.abs_diff(row.clock) > FIELD_STALE_TICKS {
+            return None;
+        }
+    }
+    Some(row.params)
 }
 
 fn effective_light(sky: u8, block: u8, daylight: f32) -> f32 {

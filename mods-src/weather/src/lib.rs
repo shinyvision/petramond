@@ -27,10 +27,6 @@ const TICK_WEATHER: u32 = 1;
 
 /// World-KV key persisting the advection offset (two LE f64).
 const KV_OFF: &str = "weather:off";
-/// Cross-mod read surface: current `[off_x, off_z, wind_x, wind_z]` and
-/// `[storm, 0, 0, 0]`, raw LE f32s, refreshed every tick.
-const KV_WIND: &str = "weather:wind";
-const KV_STORM: &str = "weather:storm";
 
 /// Snow-accumulation probes per tick, round-robin over connected players.
 const SNOW_PROBES_PER_TICK: u32 = 8;
@@ -168,13 +164,18 @@ impl Weather {
             [params.epoch as f32, params.epoch_frac, 0.0, 0.0],
         );
 
-        // Cross-mod interop mirror (server mods read KV, not shader params).
-        let mut wind_bytes = Vec::with_capacity(16);
-        for v in [params.off[0], params.off[1], w[0], w[1]] {
-            wind_bytes.extend_from_slice(&v.to_le_bytes());
-        }
-        world_kv_set(KV_WIND, wind_bytes);
-        world_kv_set(KV_STORM, params.storm.to_le_bytes().to_vec());
+        // Cross-mod interop mirror (server mods read KV, not shader params):
+        // the COMPLETE field in one row, so a foreign mod evaluates
+        // weather-core locally from one read. The clock stamp is the row's
+        // freshness lane — world KV persists, and a reader must be able to
+        // tell a live sky from the frozen row an uninstalled weather mod
+        // leaves behind.
+        let row = weather_core::FieldRow {
+            params,
+            wind: w,
+            clock,
+        };
+        world_kv_set(weather_core::KV_FIELD, row.encode().to_vec());
 
         // Persist every tick: the offset moves up to 0.3 blocks/tick, and a
         // reload must not visibly rewind the deck (world KV rides the normal

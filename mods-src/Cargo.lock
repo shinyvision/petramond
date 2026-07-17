@@ -65,6 +65,7 @@ name = "monsters"
 version = "0.1.0"
 dependencies = [
  "mod-sdk",
+ "weather-core",
 ]
 
 [[package]]

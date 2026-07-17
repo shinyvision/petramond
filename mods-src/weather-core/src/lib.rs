@@ -253,6 +253,85 @@ pub fn rain(x: f32, z: f32, p: &FieldParams) -> f32 {
     rain_from_coverage(coverage(x, z, p))
 }
 
+/// The cross-mod world-KV interop key. The weather server mod publishes a
+/// [`FieldRow`] under it every tick; any other server mod evaluates the
+/// field locally from that one read plus this crate — no dependency on the
+/// weather mod itself, and a missing key simply means "no weather".
+pub const KV_FIELD: &str = "weather:field";
+
+/// Everything a foreign server mod needs from the weather mod, in one row:
+/// the field parameters, the wind velocity, and the weather clock the row
+/// was published at. The clock is the row's FRESHNESS stamp — world KV
+/// persists in the save, so a row left behind by an uninstalled weather mod
+/// would otherwise read as an eternal frozen sky; a reader that can see
+/// `petramond:clock` must treat a row whose stamp has fallen behind it as
+/// absent.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FieldRow {
+    pub params: FieldParams,
+    /// Wind velocity in blocks/s.
+    pub wind: [f32; 2],
+    /// The weather clock value (`petramond:clock`, or the session tick in
+    /// clockless harnesses) this row was published at.
+    pub clock: u64,
+}
+
+impl FieldRow {
+    pub const ENCODED_LEN: usize = 40;
+
+    /// LE layout: clock u64, off_x f32, off_z f32, storm f32, seed u32,
+    /// epoch u32, epoch_frac f32, wind_x f32, wind_z f32.
+    pub fn encode(&self) -> [u8; Self::ENCODED_LEN] {
+        let mut out = [0u8; Self::ENCODED_LEN];
+        out[0..8].copy_from_slice(&self.clock.to_le_bytes());
+        let lanes: [u32; 8] = [
+            self.params.off[0].to_bits(),
+            self.params.off[1].to_bits(),
+            self.params.storm.to_bits(),
+            self.params.seed,
+            self.params.epoch,
+            self.params.epoch_frac.to_bits(),
+            self.wind[0].to_bits(),
+            self.wind[1].to_bits(),
+        ];
+        for (i, lane) in lanes.into_iter().enumerate() {
+            out[8 + i * 4..12 + i * 4].copy_from_slice(&lane.to_le_bytes());
+        }
+        out
+    }
+
+    /// `None` on a wrong-length row or non-finite floats (a corrupt or
+    /// foreign value must read as "no weather", never as NaN rain).
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != Self::ENCODED_LEN {
+            return None;
+        }
+        let clock = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+        let lane = |i: usize| u32::from_le_bytes(bytes[8 + i * 4..12 + i * 4].try_into().unwrap());
+        let f = |i: usize| f32::from_bits(lane(i));
+        let row = FieldRow {
+            params: FieldParams {
+                off: [f(0), f(1)],
+                storm: f(2),
+                seed: lane(3),
+                epoch: lane(4),
+                epoch_frac: f(5),
+            },
+            wind: [f(6), f(7)],
+            clock,
+        };
+        let floats = [
+            row.params.off[0],
+            row.params.off[1],
+            row.params.storm,
+            row.params.epoch_frac,
+            row.wind[0],
+            row.wind[1],
+        ];
+        floats.iter().all(|v| v.is_finite()).then_some(row)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -412,5 +491,26 @@ mod tests {
     fn wrap_coord_reduces_exactly() {
         assert_eq!(wrap_coord(65536.0 * 3.0 + 12.25), 12.25);
         assert_eq!(wrap_coord(-1.5), WRAP as f32 - 1.5);
+    }
+
+    #[test]
+    fn field_row_roundtrips_and_rejects_junk() {
+        let row = FieldRow {
+            params: params([12345.5, 60000.25], 0.61),
+            wind: [-1.25, 0.75],
+            clock: u64::MAX - 17,
+        };
+        let bytes = row.encode();
+        assert_eq!(bytes.len(), FieldRow::ENCODED_LEN);
+        assert_eq!(FieldRow::decode(&bytes), Some(row), "exact roundtrip");
+        assert_eq!(FieldRow::decode(&bytes[..39]), None, "wrong length");
+        assert_eq!(FieldRow::decode(&[]), None, "empty");
+        let mut nan = row;
+        nan.params.storm = f32::NAN;
+        assert_eq!(
+            FieldRow::decode(&nan.encode()),
+            None,
+            "non-finite floats must read as no-weather, never as NaN rain"
+        );
     }
 }
