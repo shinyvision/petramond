@@ -193,10 +193,3 @@ dependencies = [
 [[package]]
 name = "weather-core"
 version = "0.1.0"
-
-[[package]]
-name = "wheel"
-version = "0.1.0"
-dependencies = [
- "mod-sdk",
-]

@@ -3,7 +3,7 @@
   "id": "vehicles",
   "version": "0.1.0",
   "description": "Rideable vehicles, starting with a craftable wooden boat: place it on water, climb aboard with up to two players, and row it around — the first player in steers.",
-  "summary": "Adds craftable, rideable vehicles.",
+  "summary": "Adds rideable vehicles.",
   "icon": "icon.png",
   "wasm": "mod.wasm"
 }
