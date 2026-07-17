@@ -337,11 +337,13 @@ fn zombie_burn_cool_inner() {
         emitters(g).contains(&great_id)
     });
 
-    // Midnight: the core clock is authoritative for daylight, so the mod's
-    // sunlight test goes dark everywhere from the next tick.
+    // Midnight (cycle fraction 0.75): the core clock is authoritative for
+    // daylight, so the mod's sunlight test goes dark everywhere from the
+    // next tick.
+    let midnight = game.server.world.day_cycle_ticks() * 3 / 4;
     game.server.world.mod_kv_set(
         "petramond:clock".to_owned(),
-        9_000u64.to_le_bytes().to_vec(),
+        midnight.to_le_bytes().to_vec(),
     );
     tick_until(
         &mut game,

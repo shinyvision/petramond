@@ -8,7 +8,7 @@
 /// One second of player damage immunity at the fixed 20 TPS simulation rate.
 pub(crate) const PLAYER_DAMAGE_IFRAME_TICKS: u32 = 20;
 /// Mob immunity is tuned separately because its combat feel is different.
-pub(crate) const MOB_DAMAGE_IFRAME_TICKS: u32 = 15;
+pub(crate) const MOB_DAMAGE_IFRAME_TICKS: u32 = 10;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DamageImmunity {

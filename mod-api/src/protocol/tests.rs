@@ -69,6 +69,11 @@ fn abi_roundtrip_host_and_guest_calls() {
         index: 3,
         amount: 2.5,
         origin: Some([1.0, 64.0, 1.0]),
+        feedback: Some(crate::events::MobDamageFeedback {
+            components: vec![crate::events::MobDamageFeedbackComponent::Immunity {
+                ticks: 10,
+            }],
+        }),
     });
     roundtrip(HostCall::DespawnMob { index: 7 });
     roundtrip(HostCall::MobEmitterSet {

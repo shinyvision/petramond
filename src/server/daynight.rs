@@ -6,11 +6,31 @@
 use crate::events::{Attach, Stage, TickSystems};
 use crate::world::World;
 
-/// Full day-night cycle length in game ticks (10 minutes at 20 TPS).
-pub(crate) const CYCLE_TICKS: u64 = 12_000;
+/// Full day-night cycle ticks for the DEFAULT day length (15-minute day +
+/// 15-minute night at 20 TPS). The actual cycle is per-world: see
+/// [`cycle_ticks_for_day_minutes`] and `World::day_cycle_ticks`.
+pub(crate) const DEFAULT_CYCLE_TICKS: u64 =
+    cycle_ticks_for_day_minutes(crate::save::settings::DEFAULT_DAY_MINUTES);
+
+/// The world's full cycle ticks for a "day length" setting in real minutes:
+/// the night lasts as long as the day, so a 15-minute day is 18 000 day ticks
+/// + 18 000 night ticks at 20 TPS. Clamps to the slider range (10..=30 min).
+pub(crate) const fn cycle_ticks_for_day_minutes(minutes: u32) -> u64 {
+    let m = if minutes < 10 {
+        10
+    } else if minutes > 30 {
+        30
+    } else {
+        minutes
+    };
+    m as u64 * 60 * 20 * 2
+}
+
 /// Clock offset of "early morning" within a day (fraction 0.05, just after
 /// sunrise) — both the fresh-world start and where sleeping skips to.
-const FRESH_CLOCK: u64 = 600;
+const fn fresh_clock(cycle: u64) -> u64 {
+    cycle / 20
+}
 const TRANSITION: f32 = 0.04;
 const NIGHT_SKY_SCALE: f32 = 0.04;
 const NIGHT_SKY_COLOR: [f32; 3] = [0.52, 0.62, 1.0];
@@ -36,6 +56,9 @@ pub(crate) fn install_core(world: &mut World, systems: &mut TickSystems) {
 
 #[derive(Debug)]
 struct DayNightCycle {
+    /// The world's full day+night cycle length in ticks (per-world setting,
+    /// fixed for the session — set before core systems install).
+    cycle: u64,
     clock: u64,
     last_tick: u64,
     frozen: bool,
@@ -45,10 +68,14 @@ struct DayNightCycle {
 
 impl DayNightCycle {
     fn from_world(world: &World) -> Self {
+        let cycle = world.day_cycle_ticks();
         Self {
+            cycle,
             clock: read_clock(world)
-                .or_else(|| read_time(world).map(|t| clock_from_fraction(t, FRESH_CLOCK)))
-                .unwrap_or(FRESH_CLOCK),
+                .or_else(|| {
+                    read_time(world).map(|t| clock_from_fraction(t, fresh_clock(cycle), cycle))
+                })
+                .unwrap_or(fresh_clock(cycle)),
             last_tick: world.current_tick(),
             frozen: read_frozen(world),
             published_clock: None,
@@ -66,7 +93,7 @@ impl DayNightCycle {
         }
         if let Some(raw) = world.mod_kv_get(TIME_KEY).and_then(read_time_bytes) {
             if Some(raw) != self.published_time {
-                self.clock = clock_from_fraction(f32::from_le_bytes(raw), self.clock);
+                self.clock = clock_from_fraction(f32::from_le_bytes(raw), self.clock, self.cycle);
             }
         }
     }
@@ -81,10 +108,10 @@ impl DayNightCycle {
     }
 
     fn publish(&mut self, world: &mut World) {
-        let t = day_fraction(self.clock);
+        let t = day_fraction(self.clock, self.cycle);
         let t_bytes = t.to_le_bytes();
         let day = daylight(t);
-        let phase = ((self.clock / CYCLE_TICKS) % MOON_PHASES) as f32;
+        let phase = ((self.clock / self.cycle) % MOON_PHASES) as f32;
         let sky_scale = NIGHT_SKY_SCALE + (1.0 - NIGHT_SKY_SCALE) * day;
         let sky_color = [
             lerp(NIGHT_SKY_COLOR[0], 1.0, day),
@@ -132,14 +159,15 @@ pub(crate) enum TimePreset {
 /// Set the named point within the current absolute day. The core cycle adopts
 /// this ordinary clock write on its next deterministic tick.
 pub(crate) fn set_time(world: &mut World, preset: TimePreset) {
+    let cycle = world.day_cycle_ticks();
     let within_day = match preset {
-        TimePreset::Day => FRESH_CLOCK,
-        TimePreset::Noon => CYCLE_TICKS / 4,
-        TimePreset::Night => CYCLE_TICKS / 2,
-        TimePreset::Midnight => CYCLE_TICKS * 3 / 4,
+        TimePreset::Day => fresh_clock(cycle),
+        TimePreset::Noon => cycle / 4,
+        TimePreset::Night => cycle / 2,
+        TimePreset::Midnight => cycle * 3 / 4,
     };
-    let current = read_clock(world).unwrap_or(FRESH_CLOCK);
-    let clock = current / CYCLE_TICKS * CYCLE_TICKS + within_day;
+    let current = read_clock(world).unwrap_or(fresh_clock(cycle));
+    let clock = current / cycle * cycle + within_day;
     world.mod_kv_set(CLOCK_KEY.into(), clock.to_le_bytes().to_vec());
 }
 
@@ -153,14 +181,15 @@ pub(crate) fn set_frozen(world: &mut World, frozen: bool) {
 /// night — or the day). Written as a `petramond:clock` KV like any external write;
 /// the core cycle adopts it on its next tick (clock writes win exactly).
 pub(super) fn skip_to_morning(world: &mut World) {
-    let clock = read_clock(world).unwrap_or(FRESH_CLOCK);
-    let next = morning_after(clock);
+    let cycle = world.day_cycle_ticks();
+    let clock = read_clock(world).unwrap_or(fresh_clock(cycle));
+    let next = morning_after(clock, cycle);
     world.mod_kv_set(CLOCK_KEY.into(), next.to_le_bytes().to_vec());
 }
 
 /// The first early-morning clock strictly after `clock`.
-fn morning_after(clock: u64) -> u64 {
-    (clock / CYCLE_TICKS + 1) * CYCLE_TICKS + FRESH_CLOCK
+fn morning_after(clock: u64, cycle: u64) -> u64 {
+    (clock / cycle + 1) * cycle + fresh_clock(cycle)
 }
 
 fn read_clock(world: &World) -> Option<u64> {
@@ -189,14 +218,14 @@ fn read_time_bytes(bytes: &[u8]) -> Option<[u8; 4]> {
     f32::from_le_bytes(raw).is_finite().then_some(raw)
 }
 
-fn clock_from_fraction(t: f32, current_clock: u64) -> u64 {
-    let day = current_clock / CYCLE_TICKS;
-    let tick = (t.rem_euclid(1.0) * CYCLE_TICKS as f32).round() as u64 % CYCLE_TICKS;
-    day * CYCLE_TICKS + tick
+fn clock_from_fraction(t: f32, current_clock: u64, cycle: u64) -> u64 {
+    let day = current_clock / cycle;
+    let tick = (t.rem_euclid(1.0) * cycle as f32).round() as u64 % cycle;
+    day * cycle + tick
 }
 
-fn day_fraction(clock: u64) -> f32 {
-    (clock % CYCLE_TICKS) as f32 / CYCLE_TICKS as f32
+fn day_fraction(clock: u64, cycle: u64) -> f32 {
+    (clock % cycle) as f32 / cycle as f32
 }
 
 fn daylight(t: f32) -> f32 {
@@ -218,22 +247,51 @@ mod tests {
     use super::*;
     use crate::crafting::Recipes;
 
+    const C: u64 = DEFAULT_CYCLE_TICKS;
+
+    #[test]
+    fn day_minutes_map_to_cycle_ticks_and_clamp() {
+        // The spec point: a 15-minute day is 18 000 day ticks (36 000 cycle).
+        assert_eq!(cycle_ticks_for_day_minutes(15), 36_000);
+        assert_eq!(C, 36_000, "default day length is 15 minutes");
+        assert_eq!(cycle_ticks_for_day_minutes(10), 24_000);
+        assert_eq!(cycle_ticks_for_day_minutes(30), 72_000);
+        assert_eq!(cycle_ticks_for_day_minutes(5), 24_000, "clamped low");
+        assert_eq!(cycle_ticks_for_day_minutes(99), 72_000, "clamped high");
+        // "Early morning" stays the same fraction at every length.
+        assert_eq!(fresh_clock(C) as f32 / C as f32, 0.05);
+    }
+
     #[test]
     fn sleeping_skips_to_the_next_early_morning() {
         // Mid-night (t = 0.75 of day 0) → morning of day 1; already-morning
         // still skips a whole day forward (strictly after).
-        assert_eq!(morning_after(9_000), CYCLE_TICKS + FRESH_CLOCK);
-        assert_eq!(morning_after(FRESH_CLOCK), CYCLE_TICKS + FRESH_CLOCK);
+        assert_eq!(morning_after(C * 3 / 4, C), C + fresh_clock(C));
+        assert_eq!(morning_after(fresh_clock(C), C), C + fresh_clock(C));
         // The target is always "early morning": same day fraction as fresh.
-        assert!((day_fraction(morning_after(123_456)) - day_fraction(FRESH_CLOCK)).abs() < 1e-6);
+        assert!(
+            (day_fraction(morning_after(123_456, C), C) - day_fraction(fresh_clock(C), C)).abs()
+                < 1e-6
+        );
 
         let mut world = World::new(1, 1);
-        world.mod_kv_set(CLOCK_KEY.into(), 9_000u64.to_le_bytes().to_vec());
+        world.mod_kv_set(CLOCK_KEY.into(), (C * 3 / 4).to_le_bytes().to_vec());
         skip_to_morning(&mut world);
         assert_eq!(
             world.mod_kv_get(CLOCK_KEY),
-            Some(&(CYCLE_TICKS + FRESH_CLOCK).to_le_bytes()[..]),
+            Some(&(C + fresh_clock(C)).to_le_bytes()[..]),
             "the skip writes the adopted petramond:clock format"
+        );
+
+        // A shorter per-world day skips by ITS cycle, not the default.
+        let mut world = World::new(1, 1);
+        world.set_day_cycle_ticks(cycle_ticks_for_day_minutes(10));
+        let c10 = world.day_cycle_ticks();
+        world.mod_kv_set(CLOCK_KEY.into(), (c10 * 3 / 4).to_le_bytes().to_vec());
+        skip_to_morning(&mut world);
+        assert_eq!(
+            world.mod_kv_get(CLOCK_KEY),
+            Some(&(c10 + fresh_clock(c10)).to_le_bytes()[..])
         );
     }
 
@@ -250,7 +308,7 @@ mod tests {
     #[test]
     fn core_daynight_restores_publishes_and_advances_on_tick_stage() {
         let mut world = World::new(1, 1);
-        world.mod_kv_set(CLOCK_KEY.into(), 9000u64.to_le_bytes().to_vec());
+        world.mod_kv_set(CLOCK_KEY.into(), (C * 3 / 4).to_le_bytes().to_vec());
         let mut systems = TickSystems::default();
 
         install_core(&mut world, &mut systems);
@@ -287,7 +345,7 @@ mod tests {
 
         assert_eq!(
             world.mod_kv_get(CLOCK_KEY),
-            Some(&9001u64.to_le_bytes()[..]),
+            Some(&(C * 3 / 4 + 1).to_le_bytes()[..]),
             "clock advances by the elapsed engine tick"
         );
         assert!(
@@ -306,11 +364,11 @@ mod tests {
             bus.queue_mut(),
         );
         assert!(
-            (published_time(&world) - (3001.0 / CYCLE_TICKS as f32)).abs() < 1e-6,
+            (published_time(&world) - ((C / 4 + 1) as f32 / C as f32)).abs() < 1e-6,
             "external petramond:time write is adopted on the next core tick"
         );
 
-        world.mod_kv_set(CLOCK_KEY.into(), 6000u64.to_le_bytes().to_vec());
+        world.mod_kv_set(CLOCK_KEY.into(), (C / 2).to_le_bytes().to_vec());
         world.game_tick(&Recipes::default());
         systems.run(
             Attach::After(Stage::Spawning),
@@ -322,7 +380,7 @@ mod tests {
         );
         assert_eq!(
             world.mod_kv_get(CLOCK_KEY),
-            Some(&6001u64.to_le_bytes()[..]),
+            Some(&(C / 2 + 1).to_le_bytes()[..]),
             "external petramond:clock write wins exactly"
         );
     }
@@ -330,16 +388,16 @@ mod tests {
     #[test]
     fn named_times_and_frozen_cycle_are_deterministic() {
         let mut world = World::new(1, 1);
-        world.mod_kv_set(CLOCK_KEY.into(), (CYCLE_TICKS + 123).to_le_bytes().to_vec());
+        world.mod_kv_set(CLOCK_KEY.into(), (C + 123).to_le_bytes().to_vec());
 
         set_time(&mut world, TimePreset::Day);
-        assert_eq!(read_clock(&world), Some(CYCLE_TICKS + FRESH_CLOCK));
+        assert_eq!(read_clock(&world), Some(C + fresh_clock(C)));
         set_time(&mut world, TimePreset::Noon);
-        assert_eq!(read_clock(&world), Some(CYCLE_TICKS + CYCLE_TICKS / 4));
+        assert_eq!(read_clock(&world), Some(C + C / 4));
         set_time(&mut world, TimePreset::Night);
-        assert_eq!(read_clock(&world), Some(CYCLE_TICKS + CYCLE_TICKS / 2));
+        assert_eq!(read_clock(&world), Some(C + C / 2));
         set_time(&mut world, TimePreset::Midnight);
-        assert_eq!(read_clock(&world), Some(CYCLE_TICKS + CYCLE_TICKS * 3 / 4));
+        assert_eq!(read_clock(&world), Some(C + C * 3 / 4));
 
         set_frozen(&mut world, true);
         let frozen_at = read_clock(&world).unwrap();

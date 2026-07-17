@@ -22,6 +22,24 @@ struct OpenedSession {
     level: Option<LevelData>,
     /// Per-world disabled mod ids (`settings.json`; empty without a save).
     disabled_mods: BTreeSet<String>,
+    /// Keep the inventory on death (`settings.json`; default without a save).
+    keep_inventory: bool,
+    /// Day length in real minutes (`settings.json`; default without a save).
+    day_minutes: u32,
+}
+
+impl Default for OpenedSession {
+    /// No save (or an unopenable one): world rules take the settings defaults.
+    fn default() -> Self {
+        let defaults = crate::save::settings::WorldSettings::default();
+        OpenedSession {
+            save: None,
+            level: None,
+            disabled_mods: defaults.disabled_mods,
+            keep_inventory: defaults.keep_inventory,
+            day_minutes: defaults.day_minutes,
+        }
+    }
 }
 
 /// Everything `Game` needs beyond the [`ServerHandle`]: the client replica +
@@ -337,6 +355,11 @@ fn build_server(
     // Editing settings for a world that is NOT open only takes effect on
     // the next open — nothing re-reads settings.json mid-session.
     world.set_disabled_mods(disabled_mods.clone());
+    world.set_keep_inventory(opened.keep_inventory);
+    // BEFORE core systems install below — the day/night cycle captures it.
+    world.set_day_cycle_ticks(crate::server::daynight::cycle_ticks_for_day_minutes(
+        opened.day_minutes,
+    ));
     // The mod world KV and the world tick ride level.dat: restore both
     // before core systems and mod init below, so core day/night, scheduled
     // ticks, and init-time HostCalls (CurrentTick) see the persisted state.
@@ -496,11 +519,7 @@ impl JoinPerf {
 
 fn open_session(world_name: &str) -> OpenedSession {
     if world_name.is_empty() {
-        return OpenedSession {
-            save: None,
-            level: None,
-            disabled_mods: BTreeSet::new(),
-        };
+        return OpenedSession::default();
     }
 
     match crate::save::open(world_name) {
@@ -508,14 +527,12 @@ fn open_session(world_name: &str) -> OpenedSession {
             save: Some(opened.save),
             level: opened.level,
             disabled_mods: opened.disabled_mods,
+            keep_inventory: opened.keep_inventory,
+            day_minutes: opened.day_minutes,
         },
         Err(e) => {
             log::warn!("save disabled: could not open world '{world_name}': {e}");
-            OpenedSession {
-                save: None,
-                level: None,
-                disabled_mods: BTreeSet::new(),
-            }
+            OpenedSession::default()
         }
     }
 }

@@ -114,16 +114,19 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             index,
             amount,
             origin,
+            feedback,
         } => match origin.map(|p| finite3(p, "DamageMob.origin")).transpose() {
             Err(e) => e,
             Ok(origin) => {
                 let mod_id = intern_mod_id(mod_id);
+                let feedback = feedback.map(crate::modding::mob_damage_feedback);
                 sim_call(|ctx| {
                     ctx.queue.push_action(ModAction::DamageMob {
                         index: index as usize,
                         amount,
                         mod_id,
                         origin,
+                        feedback,
                     })
                 })
             }

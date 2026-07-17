@@ -700,6 +700,13 @@ fn mob_damage_feedback_component(
             }
         }
         mod_api::MobDamageFeedbackComponent::Ragdoll => MobDamageFeedbackComponent::Ragdoll,
+        mod_api::MobDamageFeedbackComponent::Immunity { ticks } => {
+            // A minute-long window is already absurd; cap so a bad mod can't
+            // make a mob effectively invulnerable with one hit.
+            MobDamageFeedbackComponent::Immunity {
+                ticks: ticks.min(1200),
+            }
+        }
     }
 }
 

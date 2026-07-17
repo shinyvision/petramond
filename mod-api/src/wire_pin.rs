@@ -61,6 +61,12 @@ fn samples() -> Samples {
     s.pin("HostCall::MobsInRadius", &HostCall::MobsInRadius { pos: [1.0, 2.0, 3.0], radius: 4.0 });
     s.pin("HostCall::DamageMob", &HostCall::DamageMob {
         index: 1, amount: 2.0, origin: Some([1.0, 2.0, 3.0]),
+        feedback: Some(crate::events::MobDamageFeedback {
+            components: vec![
+                crate::events::MobDamageFeedbackComponent::DecreaseHealth,
+                crate::events::MobDamageFeedbackComponent::Immunity { ticks: 10 },
+            ],
+        }),
     });
     s.pin("HostCall::DespawnMob", &HostCall::DespawnMob { index: 2 });
     s.pin("HostCall::SpawnItem", &HostCall::SpawnItem {
@@ -404,6 +410,7 @@ fn samples() -> Samples {
                 MobDamageFeedbackComponent::Knockback { scale: 1.0, duration: 0.5 },
                 MobDamageFeedbackComponent::Sound { category: MobDamageSound::Hurt },
                 MobDamageFeedbackComponent::Ragdoll,
+                MobDamageFeedbackComponent::Immunity { ticks: 10 },
             ],
         },
     });
@@ -479,6 +486,7 @@ fn samples() -> Samples {
         MobDamageFeedbackComponent::Knockback { scale: 1.0, duration: 0.5 },
         MobDamageFeedbackComponent::Sound { category: MobDamageSound::Hurt },
         MobDamageFeedbackComponent::Ragdoll,
+        MobDamageFeedbackComponent::Immunity { ticks: 10 },
     ]);
     s.pin("MobDamageSound::*", &vec![MobDamageSound::Hurt, MobDamageSound::Death]);
     s.pin("GuiValue::*", &vec![GuiValue::F32(1.0), GuiValue::I32(-1), GuiValue::Str("s".into())]);
@@ -531,7 +539,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::LightAt", "0b020406"),
     ("HostCall::SpawnMob", "0c036d3a6b0000803f00000040000040400000003f"),
     ("HostCall::MobsInRadius", "0d0000803f000000400000404000008040"),
-    ("HostCall::DamageMob", "0e0100000040010000803f0000004000004040"),
+    ("HostCall::DamageMob", "0e0100000040010000803f0000004000004040010200050a"),
     ("HostCall::DespawnMob", "0f02"),
     ("HostCall::SpawnItem", "10036d3a69030000803f0000004000004040"),
     ("HostCall::PlayerState", "11"),
@@ -675,7 +683,7 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::BlockBreakPre", "010204060101"),
     ("EventPayload::BlockInteract", "0202040601"),
     ("EventPayload::ItemUsePre", "030101020406"),
-    ("EventPayload::MobDamagePre", "0401020000404000010000803f00000040000040400500010000003f020000803f0000003f030004"),
+    ("EventPayload::MobDamagePre", "0401020000404000010000803f00000040000040400600010000003f020000803f0000003f030004050a"),
     ("EventPayload::PlayerDamagePre", "0502010100"),
     ("EventPayload::BlockPlaced", "0602040601"),
     ("EventPayload::BlockBroken", "07020406010001"),
@@ -698,7 +706,7 @@ const PINS: &[(&str, &str)] = &[
     ("DamageSource::*", "0400010102036d3a6b03016d"),
     ("ContainerKind::*", "06000102030405036d3a67"),
     ("Facing::*", "0400010203"),
-    ("MobDamageFeedbackComponent::*", "0500010000003f020000803f0000003f030004"),
+    ("MobDamageFeedbackComponent::*", "0600010000003f020000803f0000003f030004050a"),
     ("MobDamageSound::*", "020001"),
     ("GuiValue::*", "03000000803f0101020173"),
     ("RuntimeSide::*", "03000102"),

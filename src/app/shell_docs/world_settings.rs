@@ -1,12 +1,27 @@
-//! World Settings controller: a tabbed screen — the World tab (per-world
-//! options; currently empty) and the Mods tab (per-world pack toggles, each
-//! writing `settings.json` immediately; applies on next world open) — plus
-//! the header's inline world-rename editor and the shared Back/Delete footer.
+//! World Settings controller: a tabbed screen — the World tab (seed + copy,
+//! world size, day length, keep inventory, auto-LAN; every change writes
+//! `settings.json` immediately, applied on next world open) and the Mods tab
+//! (per-world pack toggles, same write policy) — plus the header's inline
+//! world-rename editor and the shared Back/Delete footer.
 
 use super::mods_tab;
 use crate::app::shell::SettingsTab;
 use crate::app::{App, AppScreen};
 use petramond_ui::{NavKey, UiEvent, UiState, UiValue};
+
+/// Per-frame prep: adopt the off-thread save-dir size once it lands, then the
+/// shared pack-icon registration.
+pub(super) fn prepare(app: &mut App) -> bool {
+    if let Some(session) = app.world_settings.as_mut() {
+        if let Some(rx) = &session.size_rx {
+            if let Ok(bytes) = rx.try_recv() {
+                session.size_bytes = Some(bytes);
+                session.size_rx = None;
+            }
+        }
+    }
+    super::pack_icon_prepare(app)
+}
 
 pub(super) fn populate(app: &App, state: &mut UiState) {
     let Some(session) = app.world_settings.as_ref() else {
@@ -15,8 +30,50 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
     state.set("world_name", UiValue::Str(session.world_name.clone()));
     state.set("renaming", UiValue::Bool(session.renaming));
     state.set("not_renaming", UiValue::Bool(!session.renaming));
+    state.set("has_seed", UiValue::Bool(session.seed.is_some()));
+    state.set(
+        "seed_text",
+        UiValue::Str(session.seed.map(|s| s.to_string()).unwrap_or_default()),
+    );
+    state.set(
+        "world_size",
+        UiValue::Str(
+            session
+                .size_bytes
+                .map(format_size)
+                .unwrap_or_else(|| "...".into()),
+        ),
+    );
+    state.set(
+        "day_minutes",
+        UiValue::F32(session.settings.day_minutes as f32),
+    );
+    state.set(
+        "day_minutes_text",
+        UiValue::Str(format!("{} min", session.settings.day_minutes)),
+    );
+    state.set(
+        "keep_inventory",
+        UiValue::Bool(session.settings.keep_inventory),
+    );
+    state.set("auto_lan", UiValue::Bool(session.settings.auto_open_lan));
     mods_tab::populate_tabs(session.tab, state);
     mods_tab::populate(&session.rows, &session.settings, session.selected, state);
+}
+
+/// Human size on the KB/MB/GB ladder ("412 KB", "38.2 MB", "1.24 GB").
+fn format_size(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let b = bytes as f64;
+    if b >= GB {
+        format!("{:.2} GB", b / GB)
+    } else if b >= MB {
+        format!("{:.1} MB", b / MB)
+    } else {
+        format!("{:.0} KB", (b / KB).ceil())
+    }
 }
 
 pub(super) fn handle(app: &mut App, ev: UiEvent) {
@@ -31,6 +88,16 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
             item: Some(row),
             ..
         } if id == "mod_on" => app.toggle_world_settings_row(row as usize),
+        UiEvent::Toggle { id, .. } if id == "keep_inventory" => app.toggle_keep_inventory(),
+        UiEvent::Toggle { id, .. } if id == "auto_lan" => app.toggle_auto_open_lan(),
+        UiEvent::SliderChange {
+            id,
+            value,
+            committed,
+            ..
+        } if id == "day_minutes" => {
+            app.set_day_minutes(value.round() as u32, committed);
+        }
         UiEvent::ListSelect { id, index } if id == "mods" => {
             if let Some(session) = app.world_settings.as_mut() {
                 session.selected = index as usize;
@@ -41,6 +108,11 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
         }
         UiEvent::Submit { id, text } if id == "rename_input" => apply_rename(app, &text),
         UiEvent::Click { id, .. } => match id.as_str() {
+            "copy_seed" => {
+                if let Some(seed) = app.world_settings.as_ref().and_then(|s| s.seed) {
+                    app.ui.clipboard_mut().set_text(&seed.to_string());
+                }
+            }
             "rename" => {
                 let name = app
                     .world_settings

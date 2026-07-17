@@ -416,13 +416,10 @@ fn knockback_pushes_away_and_overrides_the_wish() {
     let x0 = owl.pos.x;
     // Hit from the +X side → knockback toward -X. This is the key invariant: the
     // knockback survives `integrate`'s per-tick wish-velocity overwrite.
-    assert!(!owl.damage(
-        1.0,
+    assert!(!owl.damage(1.0,
         Some(Vec3::new(5.0, 0.0, 0.5)),
         true,
-        None,
-        &default_feedback()
-    ));
+        None, &default_feedback()));
     // Wish toward +X (toward the attacker); the knockback must win during the stagger.
     for _ in 0..4 {
         owl.integrate(

@@ -94,6 +94,34 @@
     "tab_mods": {
      "type": "bool",
      "doc": "Mods tab page visibility"
+    },
+    "has_seed": {
+     "type": "bool",
+     "doc": "the world has a level.dat (seed known)"
+    },
+    "seed_text": {
+     "type": "str",
+     "doc": "the world's seed as text"
+    },
+    "world_size": {
+     "type": "str",
+     "doc": "save-directory size (KB/MB/GB; '...' while scanning)"
+    },
+    "day_minutes": {
+     "type": "f32",
+     "doc": "day length slider value (10..=30 real minutes)"
+    },
+    "day_minutes_text": {
+     "type": "str",
+     "doc": "day length as a label ('15 min')"
+    },
+    "keep_inventory": {
+     "type": "bool",
+     "doc": "keep-inventory-on-death world rule"
+    },
+    "auto_lan": {
+     "type": "bool",
+     "doc": "open-to-LAN-on-load world rule"
     }
    },
    "handles": {
@@ -105,7 +133,11 @@
     "rename": "click: open the inline rename editor (pencil)",
     "rename_input": "text_input: new world name; Enter applies",
     "rename_confirm": "click: apply the rename",
-    "tabs": "tab select: switch between the World and Mods pages"
+    "tabs": "tab select: switch between the World and Mods pages",
+    "copy_seed": "click: copy the seed to the clipboard",
+    "day_minutes": "slider: day length in minutes (writes settings.json on release)",
+    "keep_inventory": "toggle: keep inventory on death (writes settings.json)",
+    "auto_lan": "toggle: open to LAN on load (writes settings.json)"
    }
   },
   "petramond:create_world": {

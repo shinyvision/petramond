@@ -57,6 +57,13 @@ pub(super) struct WorldSettingsSession {
     /// The header's inline rename editor is open.
     pub(super) renaming: bool,
     pub(super) tab: SettingsTab,
+    /// The world's seed (`level.dat` header); `None` before the first open.
+    pub(super) seed: Option<u32>,
+    /// Save-directory size, reported by the scan thread below.
+    pub(super) size_bytes: Option<u64>,
+    /// The off-thread size scan (region stores can hold many files); the
+    /// controller's prepare polls it, then drops it.
+    pub(super) size_rx: Option<std::sync::mpsc::Receiver<u64>>,
 }
 
 /// The open Create World screen's state: the installed pack rows and the
@@ -339,6 +346,11 @@ impl App {
         let Some(world) = self.selected_world.and_then(|index| self.worlds.get(index)) else {
             return;
         };
+        let (size_tx, size_rx) = std::sync::mpsc::channel();
+        let size_dir = world.dir_name.clone();
+        std::thread::spawn(move || {
+            let _ = size_tx.send(crate::save::world_size_bytes(&size_dir));
+        });
         self.world_settings = Some(WorldSettingsSession {
             dir_name: world.dir_name.clone(),
             world_name: world.name.clone(),
@@ -347,6 +359,9 @@ impl App {
             selected: 0,
             renaming: false,
             tab: SettingsTab::World,
+            seed: crate::save::read_world_seed(&world.dir_name),
+            size_bytes: None,
+            size_rx: Some(size_rx),
         });
         self.screen = AppScreen::WorldSettings;
         self.pointer.release_for_menu();
@@ -379,11 +394,47 @@ impl App {
         if !toggle_pack_row(&session.rows, &mut session.settings, row) {
             return; // content-only packs are always on
         }
+        self.write_world_settings_session();
+    }
+
+    /// Write the open World Settings session's settings.json (the toggles'
+    /// crash-can't-lose-it policy: every change writes immediately).
+    fn write_world_settings_session(&mut self) {
+        let Some(session) = self.world_settings.as_ref() else {
+            return;
+        };
         if let Err(e) = crate::save::write_world_settings(&session.dir_name, &session.settings) {
             log::warn!(
                 "could not write settings.json for world '{}': {e}",
                 session.world_name
             );
+        }
+    }
+
+    /// Flip the keep-inventory-on-death world rule. Takes effect next open.
+    pub(super) fn toggle_keep_inventory(&mut self) {
+        if let Some(session) = self.world_settings.as_mut() {
+            session.settings.keep_inventory = !session.settings.keep_inventory;
+            self.write_world_settings_session();
+        }
+    }
+
+    /// Flip the open-to-LAN-on-load world rule.
+    pub(super) fn toggle_auto_open_lan(&mut self) {
+        if let Some(session) = self.world_settings.as_mut() {
+            session.settings.auto_open_lan = !session.settings.auto_open_lan;
+            self.write_world_settings_session();
+        }
+    }
+
+    /// Slide the world's day length (minutes). Live drags update the session
+    /// (the label follows); only the committed release writes the file.
+    pub(super) fn set_day_minutes(&mut self, minutes: u32, committed: bool) {
+        if let Some(session) = self.world_settings.as_mut() {
+            session.settings.day_minutes = minutes.clamp(10, 30);
+            if committed {
+                self.write_world_settings_session();
+            }
         }
     }
 
@@ -441,6 +492,11 @@ impl App {
             seed,
             self.render_dist,
         ));
+        // The per-world auto-LAN rule: host straight from load. Failure shows
+        // inline on the pause menu like a manual Open to LAN.
+        if crate::save::read_world_settings(world_dir_name).auto_open_lan {
+            self.open_lan();
+        }
     }
 
     /// Install a freshly-built game session and enter gameplay — the shared

@@ -242,6 +242,50 @@ fn damage_while_sleeping_cancels_the_sleep_immediately() {
 }
 
 #[test]
+fn keep_inventory_rule_skips_the_death_spill() {
+    use crate::item::{ItemStack, ItemType};
+
+    // Default rule: death spills every stack as item entities and empties
+    // the inventory (the classic corpse pile).
+    let (mut game, _) = game_with_bed();
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::Stick, 5));
+    kill_player(&mut game);
+    assert!(
+        !game.server.world.item_entities().is_empty(),
+        "default death spills the inventory at the body"
+    );
+    assert!(
+        game.server.sessions[0].player.inventory.slot(0).is_none(),
+        "spilled slots are empty"
+    );
+
+    // Keep-inventory ON: no corpse pile, the stacks stay where they were.
+    let (mut game, _) = game_with_bed();
+    game.server.world.set_keep_inventory(true);
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(ItemType::Stick, 5));
+    kill_player(&mut game);
+    assert!(
+        game.server.world.item_entities().is_empty(),
+        "keep-inventory death spawns no drops"
+    );
+    assert_eq!(
+        game.server.sessions[0]
+            .player
+            .inventory
+            .slot(0)
+            .map(|s| (s.item, s.count)),
+        Some((ItemType::Stick, 5)),
+        "the inventory survives the death untouched"
+    );
+}
+
+#[test]
 fn respawning_with_a_bed_restores_health_beside_it() {
     let (mut game, base) = game_with_bed();
     make_night(&mut game);

@@ -156,6 +156,10 @@ pub(crate) enum ModAction {
         amount: f32,
         mod_id: &'static str,
         origin: Option<Vec3>,
+        /// The request's composed damage pipeline; `None` = the species'
+        /// resolved `damage_feedback`. No `Immunity` component = DoT (burn):
+        /// neither blocked by an active i-frame window nor granting one.
+        feedback: Option<crate::mob::MobDamageFeedback>,
     },
     /// A mod's `GuiOpen` HostCall: request the app shell open this mod GUI
     /// (honoured only from gameplay, like a block-interact open request).

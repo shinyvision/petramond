@@ -113,10 +113,16 @@ pub enum HostCall {
     /// knockback is not applied; `origin` is only spatial context for
     /// feedback/handlers. Applied at the next action drain point (same tick),
     /// so a handler cannot re-enter the bus. → [`HostRet::Unit`].
+    ///
+    /// `feedback` composes the damage pipeline for THIS request; `None` uses
+    /// the species' resolved `damage_feedback`. A pipeline without the
+    /// `Immunity` component is damage-over-time (burn): neither blocked by
+    /// the victim's active i-frame window nor granting one.
     DamageMob {
         index: u32,
         amount: f32,
         origin: Option<[f32; 3]>,
+        feedback: Option<crate::events::MobDamageFeedback>,
     },
     /// Remove the mob at `index` from the live world immediately (not saved,
     /// no death/loot). Renumbers later indices — re-query after use.

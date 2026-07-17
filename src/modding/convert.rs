@@ -204,6 +204,9 @@ fn mob_damage_feedback_component(
         MobDamageFeedbackComponent::DecreaseHealth => {
             api::MobDamageFeedbackComponent::DecreaseHealth
         }
+        MobDamageFeedbackComponent::Immunity { ticks } => {
+            api::MobDamageFeedbackComponent::Immunity { ticks }
+        }
         MobDamageFeedbackComponent::Flash { duration } => {
             api::MobDamageFeedbackComponent::Flash { duration }
         }

@@ -306,6 +306,13 @@ pub struct World {
     /// and the mod-set record consult it. The palette/mod-host gates take it
     /// separately at session construction.
     pub(super) disabled_mods: std::collections::BTreeSet<String>,
+    /// Keep the inventory on death instead of spilling it (per-world
+    /// `settings.json` rule). Session-fixed, set once at open.
+    pub(super) keep_inventory: bool,
+    /// The full day+night cycle length in ticks (per-world `settings.json`
+    /// "day length"). Session-fixed, set once at open BEFORE core systems
+    /// install — the day/night cycle captures it.
+    pub(super) day_cycle_ticks: u64,
     /// Chunk columns whose one-time worldgen herd actually spawned (see
     /// `mob::populate`) — the fact that keeps the initial animal stock from
     /// re-minting every session. Persisted in `level.dat`; BTreeSet so the
@@ -402,6 +409,8 @@ impl World {
             environment: WorldEnvironment::default(),
             mod_kv: BTreeMap::new(),
             disabled_mods: std::collections::BTreeSet::new(),
+            keep_inventory: false,
+            day_cycle_ticks: crate::server::daynight::DEFAULT_CYCLE_TICKS,
             populated_columns: BTreeSet::new(),
         }
     }
@@ -415,6 +424,29 @@ impl World {
     /// Install the world's disabled-mod set — once, at session open.
     pub fn set_disabled_mods(&mut self, disabled: std::collections::BTreeSet<String>) {
         self.disabled_mods = disabled;
+    }
+
+    /// Keep the inventory on death (per-world `settings.json` rule).
+    #[inline]
+    pub fn keep_inventory(&self) -> bool {
+        self.keep_inventory
+    }
+
+    /// Install the keep-inventory rule — once, at session open.
+    pub fn set_keep_inventory(&mut self, keep: bool) {
+        self.keep_inventory = keep;
+    }
+
+    /// The full day+night cycle length in ticks (per-world "day length").
+    #[inline]
+    pub fn day_cycle_ticks(&self) -> u64 {
+        self.day_cycle_ticks
+    }
+
+    /// Install the world's cycle length — once, at session open, BEFORE core
+    /// systems install (the day/night cycle captures it).
+    pub fn set_day_cycle_ticks(&mut self, ticks: u64) {
+        self.day_cycle_ticks = ticks.max(1);
     }
 
     /// The sim-owned visual shader parameter state (see [`WorldEnvironment`]).

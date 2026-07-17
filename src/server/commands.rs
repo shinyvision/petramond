@@ -287,7 +287,7 @@ mod tests {
         );
         assert_eq!(
             super::super::daynight::current_clock(&server.world),
-            super::super::daynight::CYCLE_TICKS * 3 / 4
+            server.world.day_cycle_ticks() * 3 / 4
         );
 
         server.apply_message(
@@ -298,7 +298,7 @@ mod tests {
         );
         assert_eq!(
             super::super::daynight::current_clock(&server.world),
-            super::super::daynight::CYCLE_TICKS * 3 / 4,
+            server.world.day_cycle_ticks() * 3 / 4,
             "leading whitespace makes the slash ordinary chat"
         );
         assert!(server.pending_chat.iter().any(|pending| {

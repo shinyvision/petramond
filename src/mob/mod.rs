@@ -308,6 +308,12 @@ pub enum MobDamageFeedbackComponent {
     Knockback { scale: f32, duration: f32 },
     Sound { category: MobDamageSound },
     Ragdoll,
+    /// Engine damage immunity: while present, a hit that decreases health
+    /// grants `ticks` of the victim-global i-frame window, and the request is
+    /// REJECTED while a window is active. A pipeline without this component
+    /// neither grants nor is blocked — steady damage-over-time (burn) simply
+    /// omits it.
+    Immunity { ticks: u32 },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -326,6 +332,15 @@ impl MobDamageFeedback {
     #[inline]
     pub fn has_any_component(&self) -> bool {
         !self.components.is_empty()
+    }
+
+    /// Whether this pipeline participates in the engine i-frame window
+    /// (granting on a hit, blocked while one is active).
+    #[inline]
+    pub fn has_immunity(&self) -> bool {
+        self.components
+            .iter()
+            .any(|c| matches!(c, MobDamageFeedbackComponent::Immunity { .. }))
     }
 
     #[inline]
@@ -358,6 +373,9 @@ impl Default for MobDamageFeedback {
                     category: MobDamageSound::Death,
                 },
                 MobDamageFeedbackComponent::Ragdoll,
+                MobDamageFeedbackComponent::Immunity {
+                    ticks: crate::damage::MOB_DAMAGE_IFRAME_TICKS,
+                },
             ],
         }
     }

@@ -170,6 +170,15 @@ enum RawMobDamageFeedback {
     Sound { when: RawMobDamageSound },
     #[serde(rename = "petramond:ragdoll")]
     Ragdoll,
+    #[serde(rename = "petramond:immunity")]
+    Immunity {
+        #[serde(default = "default_immunity_ticks")]
+        ticks: u32,
+    },
+}
+
+fn default_immunity_ticks() -> u32 {
+    crate::damage::MOB_DAMAGE_IFRAME_TICKS
 }
 
 #[derive(Copy, Clone, Debug, Deserialize)]
@@ -369,6 +378,9 @@ fn convert_damage_feedback(rows: Vec<RawMobDamageFeedback>) -> Result<MobDamageF
                 },
             },
             RawMobDamageFeedback::Ragdoll => MobDamageFeedbackComponent::Ragdoll,
+            RawMobDamageFeedback::Immunity { ticks } => {
+                MobDamageFeedbackComponent::Immunity { ticks }
+            }
         });
     }
     Ok(MobDamageFeedback { components })

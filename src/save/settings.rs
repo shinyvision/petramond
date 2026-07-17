@@ -18,11 +18,38 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorldSettings {
     /// Mod pack ids disabled for this world. Everything else is enabled.
     #[serde(default)]
     pub disabled_mods: BTreeSet<String>,
+    /// Keep the inventory on death instead of spilling it at the body.
+    #[serde(default)]
+    pub keep_inventory: bool,
+    /// Open the world to LAN automatically when it loads (host sessions).
+    #[serde(default)]
+    pub auto_open_lan: bool,
+    /// Day length in real minutes (the night lasts as long; the player only
+    /// ever sees "day length"). Clamped to 10..=30 at consumption.
+    #[serde(default = "default_day_minutes")]
+    pub day_minutes: u32,
+}
+
+pub const DEFAULT_DAY_MINUTES: u32 = 15;
+
+fn default_day_minutes() -> u32 {
+    DEFAULT_DAY_MINUTES
+}
+
+impl Default for WorldSettings {
+    fn default() -> Self {
+        Self {
+            disabled_mods: BTreeSet::new(),
+            keep_inventory: false,
+            auto_open_lan: false,
+            day_minutes: DEFAULT_DAY_MINUTES,
+        }
+    }
 }
 
 /// Read the world's settings. Absent file = defaults (all mods enabled); an
@@ -66,11 +93,15 @@ mod tests {
         assert_eq!(load(&dir), WorldSettings::default());
         assert!(load(&dir).disabled_mods.is_empty());
 
-        // Roundtrip, with deterministic (sorted) serialization.
+        // Roundtrip, with deterministic (sorted) serialization. The world
+        // rules ride along non-default to prove they persist.
         let settings = WorldSettings {
             disabled_mods: ["zeta".to_owned(), "alpha".to_owned()]
                 .into_iter()
                 .collect(),
+            keep_inventory: true,
+            auto_open_lan: true,
+            day_minutes: 30,
         };
         store(&dir, &settings).expect("settings write");
         assert_eq!(load(&dir), settings);

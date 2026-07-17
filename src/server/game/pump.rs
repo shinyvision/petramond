@@ -44,10 +44,9 @@ impl ServerGame {
                 self.apply_message(s, msg);
             }
         }
-        // A tick that moves a session's player (bed tuck, wake, respawn, a mod
-        // Teleport) is a teleport, never a fall: player physics runs only
-        // client-side, so no tick-side position write can be movement. Snapshot
-        // and re-anchor the fall tracker across the ticks.
+        // Snapshot for the teleport detector below (bed tuck, wake, respawn,
+        // a mod Teleport): those tick-side position WRITES are teleports,
+        // never falls, so the tracker re-anchors across them.
         for sess in &mut self.sessions {
             sess.pos_before_ticks = sess.player.pos;
         }
@@ -66,12 +65,19 @@ impl ServerGame {
         } else {
             self.run_fixed_ticks(dt)
         };
+        // Observers skip interpolating across a tick-side TELEPORT (bed,
+        // respawn, mod teleport). Ordinary F2/F1 movement must still lerp —
+        // and since the server integrates real player physics on the tick,
+        // the discontinuity bound must scale with the ticks THIS pump ran: a
+        // frame hitch (menu open, pause transition) pumps several ticks at
+        // once, and a terminal-speed fall legitimately covers 1.5 blocks per
+        // tick. A fixed bound wiped the fall tracker mid-fall — flashing the
+        // inventory while falling cancelled the landing's damage.
+        let legit_motion =
+            ticks_ran as f32 * crate::player::TERMINAL * crate::game::tick::TICK_DT;
         for sess in &mut self.sessions {
-            // Observers skip interpolating across a tick-side TELEPORT (bed,
-            // respawn, mod teleport, hard knockback). Ordinary F2 physics
-            // motion must still lerp — only large discontinuities snap.
             let delta = (sess.player.pos - sess.pos_before_ticks).length();
-            sess.tick_teleported = delta > 2.0;
+            sess.tick_teleported = delta > 2.0 + legit_motion;
             if sess.tick_teleported {
                 sess.fall.reset(sess.player.pos.y);
                 sess.pending_fall = 0.0;

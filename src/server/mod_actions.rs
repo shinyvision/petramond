@@ -39,6 +39,7 @@ impl ServerGame {
                     amount,
                     mod_id,
                     origin,
+                    feedback,
                 } => {
                     self.damage_mob_through_pipeline(
                         s,
@@ -46,6 +47,7 @@ impl ServerGame {
                         amount,
                         DamageSource::Mod(mod_id),
                         origin,
+                        feedback,
                         events,
                     );
                 }

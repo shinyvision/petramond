@@ -154,7 +154,14 @@ impl ServerGame {
         // (or the zero-damage fall drain) can never re-fire it.
         if was_alive && new_health == 0 {
             events.player(s).player_died = true;
-            self.spill_inventory_on_death(s, events);
+            if self.world.keep_inventory() {
+                // The per-world keep-inventory rule skips the corpse pile —
+                // but an open menu session still returns its transient
+                // contents (craft grid, cursor stack) to the kept inventory.
+                self.close_open_menu_for(s, events);
+            } else {
+                self.spill_inventory_on_death(s, events);
+            }
             self.bus.emit(PostEvent::PlayerDied);
         }
         true

@@ -41,12 +41,26 @@ host_fn! {
 }
 
 host_fn! {
-    /// Damage a mob through its global engine-owned i-frames and the
-    /// `mob_damage_pre` pipeline (applied at the next in-tick drain point). Mod
-    /// damage is not an attack, so the default engine knockback is not applied;
-    /// `origin` is spatial context for handlers/feedback.
+    /// Damage a mob through the `mob_damage_pre` pipeline with the species'
+    /// resolved `damage_feedback` (applied at the next in-tick drain point).
+    /// Mod damage is not an attack, so the default engine knockback is not
+    /// applied; `origin` is spatial context for handlers/feedback.
     pub fn damage_mob(index: u32, amount: f32, origin: Option<[f32; 3]>)
-        => DamageMob { index, amount, origin }
+        => DamageMob { index, amount, origin, feedback: None }
+}
+
+host_fn! {
+    /// [`damage_mob`] with an explicitly composed damage pipeline for THIS
+    /// request. Compose from [`crate::MobDamageFeedbackComponent`]; a pipeline
+    /// without the `Immunity` component is damage-over-time (burn ticks):
+    /// neither blocked by the victim's active i-frame window nor granting one.
+    pub fn damage_mob_with_feedback(
+        index: u32,
+        amount: f32,
+        origin: Option<[f32; 3]>,
+        feedback: crate::MobDamageFeedback,
+    )
+        => DamageMob { index, amount, origin, feedback: Some(feedback) }
 }
 
 host_fn! {

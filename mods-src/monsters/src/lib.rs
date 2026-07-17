@@ -323,7 +323,12 @@ impl Monsters {
                 BurnStage::Great => (GREAT_FIRE_DAMAGE_INTERVAL, GREAT_FIRE_DAMAGE),
             };
             if burn.stage_ticks > 0 && burn.stage_ticks % interval == 0 {
-                damage_mob(mob.index, amount, None);
+                // Burn is steady damage-over-time: its pipeline carries the
+                // usual flash/sound/death presentation but NO knockback and
+                // NO `Immunity` — burn ticks are neither blocked by the
+                // engine i-frame window nor grant one, so a burning zombie
+                // can still be meleed at full cadence.
+                damage_mob_with_feedback(mob.index, amount, None, burn_feedback());
             }
         }
         for id in extinguished {
@@ -331,6 +336,26 @@ impl Monsters {
         }
     }
 
+}
+
+/// The burn tick's damage pipeline: the default presentation (flash, hurt /
+/// death sounds, ragdoll on a lethal tick) minus knockback — fire doesn't
+/// shove — and minus `Immunity`, so burn damage neither respects nor grants
+/// the engine i-frame window.
+fn burn_feedback() -> MobDamageFeedback {
+    MobDamageFeedback {
+        components: vec![
+            MobDamageFeedbackComponent::DecreaseHealth,
+            MobDamageFeedbackComponent::Flash { duration: 0.3 },
+            MobDamageFeedbackComponent::Sound {
+                category: MobDamageSound::Hurt,
+            },
+            MobDamageFeedbackComponent::Sound {
+                category: MobDamageSound::Death,
+            },
+            MobDamageFeedbackComponent::Ragdoll,
+        ],
+    }
 }
 
 /// The cell holds engine water. `get_block`'s stream-finality gate

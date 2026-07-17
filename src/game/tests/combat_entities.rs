@@ -52,6 +52,74 @@ fn a_mob_strike_damages_and_knocks_back_the_player_through_the_funnel() {
     );
 }
 
+/// The mob i-frame window is a pipeline COMPONENT (`petramond:immunity`): a
+/// request whose composed pipeline omits it (burn-style DoT) is neither
+/// blocked by an active window nor grants one, while the default pipeline
+/// both grants and is blocked.
+#[test]
+fn immunity_is_a_composable_pipeline_component() {
+    use crate::mob::{MobDamageFeedback, MobDamageFeedbackComponent};
+
+    let dot = MobDamageFeedback {
+        components: vec![
+            MobDamageFeedbackComponent::DecreaseHealth,
+            MobDamageFeedbackComponent::Flash { duration: 0.3 },
+        ],
+    };
+    let mut game = game();
+    let mut ev = TickEvents::default();
+    let pos = Vec3::new(8.0, 64.0, 8.0);
+    assert!(game.server.world.mobs_mut().spawn(Mob::Sheep, pos, 0.0));
+    let health = game.server.world.mobs().instances()[0].health();
+
+    // A default-pipeline hit opens the window…
+    assert!(game.server.damage_mob_through_pipeline(
+        0,
+        0,
+        1.0,
+        DamageSource::PlayerAttack(game.server.sessions[0].id),
+        Some(pos + Vec3::X),
+        None,
+        &mut ev,
+    ));
+    // …which blocks a second default hit, but NOT the DoT pipeline: it
+    // applies inside the window and grants nothing.
+    assert!(!game.server.damage_mob_through_pipeline(
+        0,
+        0,
+        1.0,
+        DamageSource::Mod("test"),
+        None,
+        None,
+        &mut ev,
+    ));
+    for _ in 0..3 {
+        assert!(game.server.damage_mob_through_pipeline(
+            0,
+            0,
+            1.0,
+            DamageSource::Mod("test"),
+            None,
+            Some(dot.clone()),
+            &mut ev,
+        ));
+    }
+    assert_eq!(
+        game.server.world.mobs().instances()[0].health(),
+        health - 4.0,
+        "one default hit + three DoT ticks all landed"
+    );
+    // The DoT hits granted no window: once the original expires, the next
+    // default hit lands on schedule.
+    for _ in 1..crate::damage::MOB_DAMAGE_IFRAME_TICKS {
+        game.server.game_tick_step(&mut ev);
+    }
+    game.server.game_tick_step(&mut ev);
+    assert!(game
+        .server
+        .damage_mob_through_pipeline(0, 0, 1.0, DamageSource::Fall, None, None, &mut ev,));
+}
+
 #[test]
 fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
     use crate::damage::{MOB_DAMAGE_IFRAME_TICKS, PLAYER_DAMAGE_IFRAME_TICKS};
@@ -72,6 +140,7 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
         1.0,
         DamageSource::PlayerAttack(game.server.sessions[0].id),
         Some(pos + Vec3::X),
+        None,
         &mut ev,
     ));
 
@@ -89,7 +158,7 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
     );
     assert!(!game
         .server
-        .damage_mob_through_pipeline(0, 0, 1.0, DamageSource::Fall, None, &mut ev,));
+        .damage_mob_through_pipeline(0, 0, 1.0, DamageSource::Fall, None, None, &mut ev,));
     assert_eq!(
         game.server.world.mobs().instances()[0].health(),
         mob_health - 1.0
@@ -107,6 +176,7 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
         1.0,
         DamageSource::Mod("test"),
         None,
+        None,
         &mut ev,
     ));
 
@@ -116,7 +186,7 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
         .damage_player(0, 1, DamageSource::Mod("test"), None, &mut ev));
     assert!(game
         .server
-        .damage_mob_through_pipeline(0, 0, 1.0, DamageSource::Fall, None, &mut ev,));
+        .damage_mob_through_pipeline(0, 0, 1.0, DamageSource::Fall, None, None, &mut ev,));
 
     for _ in (MOB_DAMAGE_IFRAME_TICKS + 1)..PLAYER_DAMAGE_IFRAME_TICKS {
         game.server.game_tick_step(&mut ev);
@@ -1300,5 +1370,45 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     assert!(
         game.targeted_player.is_none(),
         "hidden bodies are untargetable"
+    );
+}
+
+/// A frame hitch (opening the inventory, the ESC pause transition) pumps
+/// SEVERAL fixed ticks at once, and a fast fall legitimately covers more
+/// than two blocks across them. The pump's teleport detector must scale its
+/// discontinuity bound with the ticks it actually ran — a fixed bound reset
+/// the fall tracker mid-fall, so flashing a menu while falling landed
+/// without damage.
+#[test]
+fn multi_tick_pumps_never_eat_fall_damage() {
+    let mut game = game();
+    common::flat_floor_loaded_air(&mut game.server.world, Block::Stone);
+    let sess = &mut game.server.sessions[0];
+    sess.player.pos = Vec3::new(8.5, 79.0, 8.5);
+    sess.player.vel = Vec3::ZERO;
+    sess.player.on_ground = false;
+    sess.fall.reset(79.0);
+    let start = sess.player.health();
+
+    // Every "frame" runs three fixed ticks — the hitchy cadence a menu
+    // open produces. The fall is pure server F2 integration (no claims).
+    for _ in 0..300 {
+        game.pump_server(3.0 * TICK_DT);
+        if game.server.sessions[0].player.on_ground {
+            break;
+        }
+    }
+    assert!(
+        game.server.sessions[0].player.on_ground,
+        "the drop lands on the floor"
+    );
+    // One more hitchy frame so the landing tick's pending fall drains even
+    // if it straddled the pump boundary.
+    game.pump_server(3.0 * TICK_DT);
+
+    let lost = start - game.server.sessions[0].player.health();
+    assert!(
+        lost >= 8,
+        "a ~15-block fall through multi-tick pumps lands its damage (lost {lost} half-hearts)"
     );
 }

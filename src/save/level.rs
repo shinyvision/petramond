@@ -49,6 +49,16 @@ pub fn encode(
     b
 }
 
+/// Decode only the header's seed (same version gate as [`decode`]) — the
+/// World Settings screen shows it without opening the save.
+pub fn read_seed(bytes: &[u8]) -> Option<u32> {
+    let mut r = Reader::new(bytes);
+    if r.u32()? != VERSION {
+        return None;
+    }
+    r.u32()
+}
+
 /// Decode a CURRENT-version `level.dat`. Any other version returns `None` —
 /// the world starts fresh (pre-release, breaking saves is free).
 pub fn decode(bytes: &[u8]) -> Option<LevelData> {

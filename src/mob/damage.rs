@@ -46,6 +46,11 @@ impl Instance {
     /// `attacker` is the entity that caused the hit, when the source names one —
     /// recorded as this mob's retaliation memory (see the `retaliate` brain node).
     /// Whether the species reacts is brain data; the record itself is generic.
+    ///
+    /// The i-frame window is a pipeline component (`petramond:immunity`): a
+    /// pipeline carrying it is blocked while a window is active and grants
+    /// its `ticks` on a real health decrease; a pipeline without it (DoT —
+    /// burn ticks) neither blocks nor grants.
     pub fn damage(
         &mut self,
         amount: f32,
@@ -54,7 +59,7 @@ impl Instance {
         attacker: Option<EntityRef>,
         feedback: &MobDamageFeedback,
     ) -> bool {
-        if self.death.is_dead() || self.damage_immunity.is_active() {
+        if self.death.is_dead() || (self.damage_immunity.is_active() && feedback.has_immunity()) {
             return false;
         }
         let decreases_health = feedback
@@ -63,8 +68,11 @@ impl Instance {
             .any(|c| matches!(c, MobDamageFeedbackComponent::DecreaseHealth));
         let lethal = if decreases_health && amount > 0.0 {
             self.health -= amount;
-            self.damage_immunity
-                .grant_for(crate::damage::MOB_DAMAGE_IFRAME_TICKS);
+            for component in &feedback.components {
+                if let MobDamageFeedbackComponent::Immunity { ticks } = component {
+                    self.damage_immunity.grant_for(*ticks);
+                }
+            }
             self.health <= 0.0
         } else {
             false
@@ -81,6 +89,8 @@ impl Instance {
 
         for component in &feedback.components {
             match *component {
+                // Applied above with the health decrease (grant-on-hit).
+                MobDamageFeedbackComponent::Immunity { .. } => {}
                 MobDamageFeedbackComponent::DecreaseHealth => {}
                 MobDamageFeedbackComponent::Flash { duration } => {
                     self.hurt_timer = self.hurt_timer.max(duration.max(0.0));
@@ -239,13 +249,10 @@ mod tests {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(owl.set_drive(2.0, 0.0, Some(1.0)));
         assert!(owl.drive_pending());
-        assert!(owl.damage(
-            100.0,
+        assert!(owl.damage(100.0,
             Some(Vec3::new(2.0, 0.0, 0.5)),
             true,
-            None,
-            &default_feedback()
-        ));
+            None, &default_feedback()));
         assert!(!owl.drive_pending());
     }
 
@@ -317,13 +324,10 @@ mod tests {
                 MobDamageFeedbackComponent::Ragdoll,
             ],
         };
-        assert!(dead_with_ragdoll.damage(
-            100.0,
+        assert!(dead_with_ragdoll.damage(100.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
             true,
-            None,
-            &health_and_ragdoll
-        ));
+            None, &health_and_ragdoll));
         assert!(dead_with_ragdoll.is_dead());
         assert!(
             !dead_with_ragdoll.is_despawned(),
@@ -334,13 +338,10 @@ mod tests {
         let health_only = MobDamageFeedback {
             components: vec![MobDamageFeedbackComponent::DecreaseHealth],
         };
-        assert!(dead_without_ragdoll.damage(
-            100.0,
+        assert!(dead_without_ragdoll.damage(100.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
             true,
-            None,
-            &health_only
-        ));
+            None, &health_only));
         assert!(dead_without_ragdoll.is_dead());
         assert!(
             dead_without_ragdoll.is_despawned(),
@@ -352,23 +353,17 @@ mod tests {
     fn a_dead_mob_ignores_further_damage() {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(
-            owl.damage(
-                100.0,
+            owl.damage(100.0,
                 Some(Vec3::new(5.0, 0.0, 0.5)),
                 true,
-                None,
-                &default_feedback()
-            ),
+                None, &default_feedback()),
             "one big hit kills"
         );
         // A corpse takes no more damage and reports no further lethal hits.
-        assert!(!owl.damage(
-            100.0,
+        assert!(!owl.damage(100.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
             true,
-            None,
-            &default_feedback()
-        ));
+            None, &default_feedback()));
         assert!(owl.is_dead());
     }
 
@@ -379,13 +374,10 @@ mod tests {
             false
         });
         let x0 = owl.pos.x;
-        assert!(!owl.damage(
-            1.0,
+        assert!(!owl.damage(1.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
             false,
-            None,
-            &default_feedback()
-        ));
+            None, &default_feedback()));
         owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
             false
         });
@@ -410,13 +402,10 @@ mod tests {
 
         // The killing blow flashes red too (so it looks like any other hit).
         let mut dead = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-        assert!(dead.damage(
-            100.0,
+        assert!(dead.damage(100.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
             true,
-            None,
-            &default_feedback()
-        ));
+            None, &default_feedback()));
         assert!(
             dead.hurt_flash(1.0) > 0.0,
             "the kill flashes red like a normal hit"

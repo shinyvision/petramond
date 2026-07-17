@@ -1,7 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use super::io::write_atomic;
-use super::settings;
+use super::{level, settings};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorldInfo {
@@ -166,6 +166,42 @@ pub fn read_world_settings(dir_name: &str) -> settings::WorldSettings {
         return settings::WorldSettings::default();
     }
     settings::load(&saves_dir().join(dir_name))
+}
+
+/// The world's seed from `level.dat`, by save-directory name — `None` for a
+/// world that has never been opened (or a stale-version header). Decodes only
+/// the header, so the World Settings screen shows it without opening the save.
+pub fn read_world_seed(dir_name: &str) -> Option<u32> {
+    if !is_single_path_component(dir_name) {
+        return None;
+    }
+    let bytes = std::fs::read(saves_dir().join(dir_name).join("level.dat")).ok()?;
+    level::read_seed(&bytes)
+}
+
+/// Total bytes of the world's save directory (recursive walk; unreadable
+/// entries count 0). The World Settings screen runs this off-thread — region
+/// stores can hold many files.
+pub fn world_size_bytes(dir_name: &str) -> u64 {
+    fn walk(dir: &Path) -> u64 {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .map(|entry| match entry.file_type() {
+                Ok(kind) if kind.is_dir() => walk(&entry.path()),
+                Ok(kind) if kind.is_file() => {
+                    entry.metadata().map(|m| m.len()).unwrap_or(0)
+                }
+                _ => 0,
+            })
+            .sum()
+    }
+    if !is_single_path_component(dir_name) {
+        return 0;
+    }
+    walk(&saves_dir().join(dir_name))
 }
 
 /// Write a world's per-world settings by its save-directory name.

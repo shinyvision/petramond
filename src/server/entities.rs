@@ -85,6 +85,7 @@ impl ServerGame {
                     damage,
                     DamageSource::PlayerAttack(self.sessions[s].id),
                     Some(from),
+                    None,
                     events,
                 );
             }
@@ -159,6 +160,12 @@ impl ServerGame {
     /// cancellable), apply what survives through
     /// [`Mobs::damage_mob`](crate::mob::Mobs::damage_mob), and on a kill queue
     /// `mob_died` + roll the loot. Returns whether the request was applied.
+    ///
+    /// `feedback` composes THIS request's damage pipeline; `None` = the
+    /// species' resolved `damage_feedback`. A pipeline without the `Immunity`
+    /// component is DoT (burn ticks): neither blocked by an active i-frame
+    /// window nor granting one.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn damage_mob_through_pipeline(
         &mut self,
         s: usize,
@@ -166,6 +173,7 @@ impl ServerGame {
         amount: f32,
         source: DamageSource,
         origin: Option<Vec3>,
+        feedback: Option<crate::mob::MobDamageFeedback>,
         events: &mut TickEvents,
     ) -> bool {
         let Some(snapshot) = self
@@ -178,7 +186,12 @@ impl ServerGame {
             return false;
         };
         let (kind, mob_id, pos, was_dead, damage_immune) = snapshot;
-        if was_dead || damage_immune {
+        let feedback = feedback.unwrap_or_else(|| mob_def(kind).damage_feedback.clone());
+        // The i-frame window is itself a pipeline component: only requests
+        // whose pipeline participates (`petramond:immunity`) are blocked by
+        // an active window. Blocking happens before `mob_damage_pre` — a
+        // blocked attempt stays a complete non-event.
+        if was_dead || (damage_immune && feedback.has_immunity()) {
             return false;
         }
         let mut pre = MobDamagePre {
@@ -187,7 +200,7 @@ impl ServerGame {
             amount,
             source,
             origin,
-            feedback: mob_def(kind).damage_feedback.clone(),
+            feedback,
         };
         let cancelled = {
             let Self {
@@ -288,6 +301,7 @@ impl ServerGame {
                             id: a.mob_id,
                         },
                         Some(a.origin),
+                        None,
                         events,
                     );
                 }
@@ -307,7 +321,7 @@ impl ServerGame {
             let Some(idx) = self.world.mobs().index_of_id(fall.mob_id) else {
                 continue;
             };
-            self.damage_mob_through_pipeline(0, idx, amount, DamageSource::Fall, None, events);
+            self.damage_mob_through_pipeline(0, idx, amount, DamageSource::Fall, None, None, events);
         }
     }
 

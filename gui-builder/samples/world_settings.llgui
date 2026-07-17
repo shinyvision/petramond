@@ -296,7 +296,7 @@
                   0,
                   0
                 ],
-                "gap": 4,
+                "gap": 6,
                 "dir": "column",
                 "align": "stretch",
                 "justify": "start"
@@ -305,6 +305,420 @@
                 "visible": "tab_world"
               },
               "children": [
+                {
+                  "type": "row",
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      3,
+                      1,
+                      3,
+                      1
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 8,
+                    "dir": "column",
+                    "align": "center",
+                    "justify": "start"
+                  },
+                  "bind": {
+                    "visible": "has_seed"
+                  },
+                  "children": [
+                    {
+                      "type": "label",
+                      "text": "Seed",
+                      "style": "label.muted"
+                    },
+                    {
+                      "type": "spacer",
+                      "layout": {
+                        "w": {
+                          "grow": 1
+                        },
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      }
+                    },
+                    {
+                      "type": "label",
+                      "bind": {
+                        "text": "seed_text"
+                      }
+                    },
+                    {
+                      "id": "copy_seed",
+                      "type": "button",
+                      "icon": "icon.copy",
+                      "layout": {
+                        "w": 16,
+                        "h": 16,
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "row",
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      3,
+                      1,
+                      3,
+                      1
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 8,
+                    "dir": "column",
+                    "align": "center",
+                    "justify": "start"
+                  },
+                  "children": [
+                    {
+                      "type": "label",
+                      "text": "World size",
+                      "style": "label.muted"
+                    },
+                    {
+                      "type": "spacer",
+                      "layout": {
+                        "w": {
+                          "grow": 1
+                        },
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      }
+                    },
+                    {
+                      "type": "label",
+                      "bind": {
+                        "text": "world_size"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "row",
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      3,
+                      1,
+                      3,
+                      1
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 8,
+                    "dir": "column",
+                    "align": "center",
+                    "justify": "start"
+                  },
+                  "children": [
+                    {
+                      "type": "label",
+                      "text": "Day length"
+                    },
+                    {
+                      "type": "spacer",
+                      "layout": {
+                        "w": {
+                          "grow": 1
+                        },
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      }
+                    },
+                    {
+                      "type": "label",
+                      "style": "label.muted",
+                      "bind": {
+                        "text": "day_minutes_text"
+                      }
+                    },
+                    {
+                      "id": "day_minutes",
+                      "type": "slider",
+                      "min": 10.0,
+                      "max": 30.0,
+                      "step": 1.0,
+                      "layout": {
+                        "w": 90,
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      },
+                      "bind": {
+                        "value": "day_minutes"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "row",
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      3,
+                      1,
+                      3,
+                      1
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 8,
+                    "dir": "column",
+                    "align": "center",
+                    "justify": "start"
+                  },
+                  "children": [
+                    {
+                      "type": "column",
+                      "layout": {
+                        "w": "auto",
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 2,
+                        "dir": "column",
+                        "justify": "start"
+                      },
+                      "children": [
+                        {
+                          "type": "label",
+                          "text": "Keep inventory on death"
+                        },
+                        {
+                          "type": "label",
+                          "text": "Your items stay with you when you die",
+                          "style": "label.muted"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "spacer",
+                      "layout": {
+                        "w": {
+                          "grow": 1
+                        },
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      }
+                    },
+                    {
+                      "id": "keep_inventory",
+                      "type": "checkbox",
+                      "bind": {
+                        "value": "keep_inventory"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "row",
+                  "layout": {
+                    "w": "auto",
+                    "h": "auto",
+                    "pad": [
+                      3,
+                      1,
+                      3,
+                      1
+                    ],
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "gap": 8,
+                    "dir": "column",
+                    "align": "center",
+                    "justify": "start"
+                  },
+                  "children": [
+                    {
+                      "type": "column",
+                      "layout": {
+                        "w": "auto",
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 2,
+                        "dir": "column",
+                        "justify": "start"
+                      },
+                      "children": [
+                        {
+                          "type": "label",
+                          "text": "Open to LAN on load"
+                        },
+                        {
+                          "type": "label",
+                          "text": "Host on the local network automatically",
+                          "style": "label.muted"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "spacer",
+                      "layout": {
+                        "w": {
+                          "grow": 1
+                        },
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 0,
+                        "dir": "column",
+                        "justify": "start"
+                      }
+                    },
+                    {
+                      "id": "auto_lan",
+                      "type": "checkbox",
+                      "bind": {
+                        "value": "auto_lan"
+                      }
+                    }
+                  ]
+                },
                 {
                   "type": "spacer",
                   "layout": {
@@ -699,6 +1113,21 @@
   },
   "editor": {
     "sample_state": {
+      "auto_lan": {
+        "bool": true
+      },
+      "day_minutes": {
+        "f32": 0.5
+      },
+      "day_minutes_text": {
+        "str": "Sample text"
+      },
+      "has_seed": {
+        "bool": true
+      },
+      "keep_inventory": {
+        "bool": true
+      },
       "mod_rows": {
         "list": [
           {
@@ -805,6 +1234,9 @@
       "renaming": {
         "bool": true
       },
+      "seed_text": {
+        "str": "Sample text"
+      },
       "tab_mods": {
         "bool": true
       },
@@ -815,6 +1247,9 @@
         "bool": true
       },
       "world_name": {
+        "str": "Sample text"
+      },
+      "world_size": {
         "str": "Sample text"
       }
     },
