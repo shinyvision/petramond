@@ -43,6 +43,27 @@ pub(crate) fn active_recipes() -> Option<std::sync::Arc<crate::crafting::Recipes
     ACTIVE_RECIPES.read().unwrap().clone()
 }
 
+/// Warm the compiled-module cache for every installed pack module (server and
+/// client wasm alike) on background threads. Call once at app startup: pack
+/// discovery and any cold compiles happen behind the shell menu, so opening a
+/// world finds every module ready (or blocks only on the tail of an in-flight
+/// compile) instead of paying cranelift on the click.
+pub(crate) fn prewarm_modules() {
+    let spawned = std::thread::Builder::new()
+        .name("mod-prewarm".into())
+        .spawn(|| {
+            let paths: Vec<PathBuf> = crate::assets::packs()
+                .iter()
+                .flat_map(|p| [p.wasm.clone(), p.client_wasm.clone()])
+                .flatten()
+                .collect();
+            host::module_cache::prewarm(paths);
+        });
+    if let Err(e) = spawned {
+        log::warn!("mod prewarm thread failed to spawn: {e}");
+    }
+}
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -122,6 +143,10 @@ impl ModHost {
     /// tests use. A module that fails to compile/instantiate is skipped with a
     /// logged error (= disabled at load).
     pub(crate) fn from_wasm_list(world_seed: u32, mods: &[(String, PathBuf)]) -> Self {
+        // Fan the cold compiles out before the sequential load loop: each
+        // `module_for` below then blocks only on its own module's slot, so an
+        // unwarmed session pays the slowest compile, not the sum.
+        host::module_cache::prewarm(mods.iter().map(|(_, wasm)| wasm.clone()));
         let mut instances = Vec::new();
         let mut metas = Vec::new();
         for (id, wasm) in mods {
@@ -228,6 +253,7 @@ impl ModHost {
             // Init runs outside any tick; give host calls a real context
             // anyway (CurrentTick is legal during init) via a scratch feed.
             let mut feed = TickEvents::with_next_spatial_sound_handle(*next_spatial_sound_handle);
+            let t_init = std::time::Instant::now();
             let registrations = {
                 let mut inst = shared.lock().unwrap();
                 let mut ctx = SimCtx {
@@ -240,6 +266,12 @@ impl ModHost {
                 inst.call_init(&mut ctx);
                 inst.take_registrations()
             };
+            log::debug!(
+                target: "petramond::modding::perf",
+                "mod '{}' init in {:.1} ms",
+                meta.id,
+                t_init.elapsed().as_secs_f64() * 1e3
+            );
             *next_spatial_sound_handle = feed.next_spatial_sound_handle();
             for registration in registrations {
                 match registration {

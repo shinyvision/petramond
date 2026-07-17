@@ -343,16 +343,23 @@ struct RegionTile {
     biomes: [Biome; 256],
 }
 
-/// Tile count of the per-thread window memo (direct-mapped, ~5 MB/thread).
+/// Tile count of the window memo (direct-mapped, ~5 MB process-wide).
 /// A streaming row touches a few hundred live tiles; 2048 keeps row-to-row
 /// revisits hitting.
 const TILE_MEMO_BITS: u32 = 11;
 
-thread_local! {
-    static TILE_MEMO: std::cell::RefCell<Box<[RegionTile]>> =
-        std::cell::RefCell::new(
-            vec![
-                RegionTile {
+/// SHARED across worker threads (per-slot locks, compute-under-lock =
+/// single-flight): tiles are pure functions of `(seed, tile coords)`, so any
+/// worker's computation serves every other. The previous per-thread memos
+/// made every pool worker redundantly recompute the same nearby tiles — at
+/// world open ~20 cold workers each paid the whole spawn area's tile bill
+/// (~10–30 ms per first column) before their memos warmed, and the pool held
+/// ~5 MB × threads of duplicate tiles.
+static TILE_MEMO: std::sync::LazyLock<Box<[std::sync::Mutex<RegionTile>]>> =
+    std::sync::LazyLock::new(|| {
+        (0..1usize << TILE_MEMO_BITS)
+            .map(|_| {
+                std::sync::Mutex::new(RegionTile {
                     init: false,
                     seed: 0,
                     tcx: 0,
@@ -360,12 +367,10 @@ thread_local! {
                     raw: [0; 256],
                     adj: [0; 256],
                     biomes: [Biome::Ocean; 256],
-                };
-                1 << TILE_MEMO_BITS
-            ]
-            .into_boxed_slice(),
-        );
-}
+                })
+            })
+            .collect()
+    });
 
 fn tile_memo_idx(seed: u32, tcx: i32, tcz: i32) -> usize {
     let key = (((tcx as u32 as u64) << 32) | (tcz as u32 as u64)) ^ ((seed as u64) << 16);
@@ -403,43 +408,49 @@ pub(crate) fn cached_feature_region(
     let mut raw = vec![0i32; w * h];
     let (x1, z1) = (x0 + w as i32, z0 + h as i32);
 
-    TILE_MEMO.with(|memo| {
-        let mut memo = memo.borrow_mut();
-        for tcz in z0.div_euclid(T)..=(z1 - 1).div_euclid(T) {
-            for tcx in x0.div_euclid(T)..=(x1 - 1).div_euclid(T) {
-                let tile = &mut memo[tile_memo_idx(seed, tcx, tcz)];
-                if !(tile.init && tile.seed == seed && tile.tcx == tcx && tile.tcz == tcz) {
-                    let (tx0, tz0) = (tcx * T, tcz * T);
-                    let bulk = surface.region(tx0, tz0, T as usize, T as usize);
-                    tile.init = true;
-                    tile.seed = seed;
-                    tile.tcx = tcx;
-                    tile.tcz = tcz;
-                    for i in 0..(T * T) as usize {
-                        let wx = tx0 + (i % T as usize) as i32;
-                        let wz = tz0 + (i / T as usize) as i32;
-                        tile.raw[i] = bulk.surf[i];
-                        tile.adj[i] = caves.feature_surface_after_caves(wx, wz, bulk.surf[i]);
-                        tile.biomes[i] = bulk.biomes[i];
-                    }
+    for tcz in z0.div_euclid(T)..=(z1 - 1).div_euclid(T) {
+        for tcx in x0.div_euclid(T)..=(x1 - 1).div_euclid(T) {
+            // Holding the slot lock across the miss computation is the
+            // single-flight: a second worker needing this tile blocks until
+            // the bytes exist instead of recomputing them. A poisoned slot
+            // (a panicked gen job) is safe to adopt — `init` is published
+            // only after the locals below are fully computed.
+            let mut tile = TILE_MEMO[tile_memo_idx(seed, tcx, tcz)]
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !(tile.init && tile.seed == seed && tile.tcx == tcx && tile.tcz == tcz) {
+                let (tx0, tz0) = (tcx * T, tcz * T);
+                let bulk = surface.region(tx0, tz0, T as usize, T as usize);
+                let mut adj = [0i32; 256];
+                for (i, slot) in adj.iter_mut().enumerate() {
+                    let wx = tx0 + (i % T as usize) as i32;
+                    let wz = tz0 + (i / T as usize) as i32;
+                    *slot = caves.feature_surface_after_caves(wx, wz, bulk.surf[i]);
                 }
-                // Copy the tile ∩ window intersection.
-                let (ix0, ix1) = (x0.max(tcx * T), x1.min(tcx * T + T));
-                let (iz0, iz1) = (z0.max(tcz * T), z1.min(tcz * T + T));
-                for wz in iz0..iz1 {
-                    let trow = ((wz - tcz * T) * T) as usize;
-                    let rrow = (wz - z0) as usize * w;
-                    for wx in ix0..ix1 {
-                        let ti = trow + (wx - tcx * T) as usize;
-                        let ri = rrow + (wx - x0) as usize;
-                        region.surf[ri] = tile.adj[ti];
-                        region.biomes[ri] = tile.biomes[ti];
-                        raw[ri] = tile.raw[ti];
-                    }
+                tile.seed = seed;
+                tile.tcx = tcx;
+                tile.tcz = tcz;
+                tile.raw.copy_from_slice(&bulk.surf);
+                tile.adj = adj;
+                tile.biomes.copy_from_slice(&bulk.biomes);
+                tile.init = true;
+            }
+            // Copy the tile ∩ window intersection.
+            let (ix0, ix1) = (x0.max(tcx * T), x1.min(tcx * T + T));
+            let (iz0, iz1) = (z0.max(tcz * T), z1.min(tcz * T + T));
+            for wz in iz0..iz1 {
+                let trow = ((wz - tcz * T) * T) as usize;
+                let rrow = (wz - z0) as usize * w;
+                for wx in ix0..ix1 {
+                    let ti = trow + (wx - tcx * T) as usize;
+                    let ri = rrow + (wx - x0) as usize;
+                    region.surf[ri] = tile.adj[ti];
+                    region.biomes[ri] = tile.biomes[ti];
+                    raw[ri] = tile.raw[ti];
                 }
             }
         }
-    });
+    }
 
     (region, raw)
 }

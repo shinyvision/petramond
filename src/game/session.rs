@@ -43,6 +43,7 @@ pub(crate) struct ClientBootstrap {
 
 impl Game {
     pub fn new(cam: Camera, world_name: &str, new_seed: u32, render_dist: i32) -> Self {
+        let t0 = std::time::Instant::now();
         let (server, bootstrap) = build_session(world_name, new_seed, render_dist);
         // The sim moves to its own self-clocked thread;
         // from here the client owns only the message handle.
@@ -54,6 +55,11 @@ impl Game {
         game.section_cache.adopt_session(section_cache_registry_key(
             &crate::net::remap::local_name_tables(),
         ));
+        log::debug!(
+            target: "petramond::join::perf",
+            "Game::new: {:.1} ms",
+            t0.elapsed().as_secs_f64() * 1e3
+        );
         game
     }
 
@@ -202,6 +208,7 @@ pub(crate) fn build_session(
     let player_name = crate::save::client::resolve_player_name(&crate::save::client::load());
     let (server, pool, fallback_world) =
         build_server(world_name, new_seed, render_dist, Some(player_name));
+    let t_client = std::time::Instant::now();
 
     // The CLIENT's replica world: fed by the server's terrain payloads and
     // deltas, it lights + meshes for the renderer and answers the client's
@@ -237,6 +244,11 @@ pub(crate) fn build_session(
         server.world.seed,
         &crate::modding::client::local_session_key(world_name),
         &enabled_mods,
+    );
+    log::debug!(
+        target: "petramond::join::perf",
+        "client bootstrap (replica + client mods): {:.1} ms",
+        t_client.elapsed().as_secs_f64() * 1e3
     );
 
     (
@@ -282,7 +294,9 @@ fn build_server(
     render_dist: i32,
     local_player_name: Option<String>,
 ) -> (ServerGame, Arc<JobPool>, SurfaceDensitySystem) {
+    let mut perf = JoinPerf::start();
     let opened = open_session(world_name);
+    perf.mark("save_open");
     let seed = opened.level.as_ref().map(|l| l.seed).unwrap_or(new_seed);
     let fallback_world = SurfaceDensitySystem::new(seed);
     let local = local_player_name.map(|name| {
@@ -292,15 +306,33 @@ fn build_server(
         // through `SetViewDistance` like any connection.
         ConnectedPlayer::new(PlayerId(0), name, player, render_dist)
     });
+    perf.mark("player_restore_or_spawn");
     let disabled_mods = opened.disabled_mods;
 
     // ONE background pool shared by the server world (gen/light) and the
     // client replica (light/mesh) — two machine-sized thread sets in one
     // process would oversubscribe every core.
     let pool = Arc::new(JobPool::new(JobPool::default_threads()));
+    // Warm the spawn area's surface tiles across the pool while the rest of
+    // construction runs: the stream kick below then finds them hot, instead
+    // of the first column job deriving the whole neighbourhood serially.
+    // (Tiles are pure `(seed, tile)` functions — mod hooks don't affect them,
+    // so warming before mod init is safe.)
+    if let Some(local) = &local {
+        let feet = local.player.pos;
+        let (pcx, pcz) = (
+            (feet.x.floor() as i32).div_euclid(16),
+            (feet.z.floor() as i32).div_euclid(16),
+        );
+        let tiles = (-2..=2)
+            .flat_map(|dz| (-2..=2).map(move |dx| (pcx + dx, pcz + dz)))
+            .collect::<Vec<_>>();
+        crate::worker::warm_surface_tiles(&pool, seed, tiles);
+    }
     // The SERVER world: sim + gen + light, no meshing (a replica draws).
     let mut world =
         World::new_with_pool(seed, render_dist, WorldRole::ServerHeadless, pool.clone());
+    perf.mark("pool_and_world");
     attach_save(&mut world, opened.save);
     // Per-world mod enablement: the palette already applied it in
     // `save::open_at`; the world carries it for the natural spawner and
@@ -318,6 +350,7 @@ fn build_server(
         world.set_populated_columns(level.populated_columns.clone());
     }
     let operators = crate::server::permissions::load(&world);
+    perf.mark("save_attach");
 
     let has_local_session = local.is_some();
     let mut server = ServerGame {
@@ -331,12 +364,21 @@ fn build_server(
             // (the process-wide pattern gen hooks use).
             let recipes = load_recipes_for(&disabled_mods);
             crate::modding::install_recipes(std::sync::Arc::new(recipes.clone()));
+            perf.mark("recipes");
             recipes
         },
-        loot: crate::mob::load_loot(),
+        loot: {
+            let loot = crate::mob::load_loot();
+            perf.mark("loot");
+            loot
+        },
         bus: crate::events::EventBus::default(),
         systems: crate::events::TickSystems::default(),
-        mods: crate::modding::ModHost::load(seed, &disabled_mods),
+        mods: {
+            let mods = crate::modding::ModHost::load(seed, &disabled_mods);
+            perf.mark("mod_wasm_load");
+            mods
+        },
         spawn_counter: 0,
         next_mod_sound_handle: 1,
         tick_accumulator: 0.0,
@@ -391,8 +433,69 @@ fn build_server(
             next_mod_sound_handle,
         );
     }
+    perf.mark("mod_init");
+    // Kick the first streaming wave NOW — after mod init, so the session's
+    // worldgen hooks are installed before any gen job runs. The spawn area's
+    // column jobs generate on the pool while the rest of session construction
+    // (replica world, client mods, server-thread spawn) finishes, instead of
+    // idling until the server thread's first pump.
+    if let Some(sess) = server.sessions.first() {
+        let eye = sess.player.eye();
+        server.world.update_load(
+            (eye.x.floor() as i32).div_euclid(16),
+            (eye.y.floor() as i32).div_euclid(16),
+            (eye.z.floor() as i32).div_euclid(16),
+        );
+    }
+    perf.mark("stream_kick");
+    perf.finish("build_server");
 
     (server, pool, fallback_world)
+}
+
+/// Wall-clock phase marks for the session build, logged under the
+/// `petramond::join::perf` debug target — the first stop for any
+/// click-to-spawn latency diagnosis.
+struct JoinPerf {
+    t0: std::time::Instant,
+    last: std::time::Instant,
+    phases: Vec<(&'static str, f64)>,
+}
+
+impl JoinPerf {
+    fn start() -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            t0: now,
+            last: now,
+            phases: Vec::new(),
+        }
+    }
+
+    fn mark(&mut self, phase: &'static str) {
+        let now = std::time::Instant::now();
+        self.phases
+            .push((phase, (now - self.last).as_secs_f64() * 1e3));
+        self.last = now;
+    }
+
+    fn finish(mut self, what: &str) {
+        if !log::log_enabled!(target: "petramond::join::perf", log::Level::Debug) {
+            return;
+        }
+        self.mark("rest");
+        let total = self.t0.elapsed().as_secs_f64() * 1e3;
+        let breakdown: Vec<String> = self
+            .phases
+            .iter()
+            .map(|(phase, ms)| format!("{phase} {ms:.1}"))
+            .collect();
+        log::debug!(
+            target: "petramond::join::perf",
+            "{what}: {total:.1} ms ({})",
+            breakdown.join(", ")
+        );
+    }
 }
 
 fn open_session(world_name: &str) -> OpenedSession {

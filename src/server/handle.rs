@@ -265,7 +265,11 @@ pub(crate) struct LoopbackServer {
 /// Max sleep between loop iterations: bounds the latency of message drains
 /// and streaming installs between tick edges (a frame is ~16 ms; 5 ms keeps
 /// input latching well under one frame).
-const POLL_INTERVAL: Duration = Duration::from_millis(5);
+// 2 ms (was 5): each stage boundary of the streaming ladder (gen result →
+// section jobs → light bake → light drain → ship) waits for the next pump,
+// so the interval multiplies directly into world-join latency. The extra
+// idle wakeups (~500/s) cost nothing measurable.
+const POLL_INTERVAL: Duration = Duration::from_millis(2);
 
 /// The server thread's main loop: self-clocked 20 TPS over the wall clock.
 /// Every iteration drains control + gameplay messages (local pipe + any

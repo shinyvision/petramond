@@ -11,7 +11,9 @@
 //! vertical range is `[SECTION_MIN_CY, SECTION_MAX_CY]` (20 sections), so the
 //! biased `cy` fits in 5 bits and the whole index in a `u16`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+
+use rustc_hash::FxHashMap;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -70,38 +72,47 @@ struct RecordLocation {
 /// unrelated record. The save thread keeps several of these readers in an LRU.
 pub(super) struct RegionReader {
     file: Option<File>,
-    records: HashMap<u16, RecordLocation>,
+    records: FxHashMap<u16, RecordLocation>,
 }
 
 impl RegionReader {
     /// Missing files are valid empty regions. Every recorded body is bounds-checked
     /// while indexing so a later targeted read cannot seek outside the container.
+    ///
+    /// The header walk is BUFFERED with arithmetic record offsets: the naïve
+    /// per-record `read`/`stream_position`/`seek` syscall pattern cost a real
+    /// explored save ~0.5 s of world-open manifest scanning (≈5 syscalls ×
+    /// hundreds of thousands of records); `seek_relative` skips most bodies
+    /// inside the buffer.
     pub(super) fn open(path: &Path) -> io::Result<Self> {
-        let mut file = match File::open(path) {
+        let file = match File::open(path) {
             Ok(file) => file,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 return Ok(Self {
                     file: None,
-                    records: HashMap::new(),
+                    records: FxHashMap::default(),
                 });
             }
             Err(e) => return Err(e),
         };
         let file_len = file.metadata()?.len();
-        let magic = read_u32(&mut file)?;
-        let version = read_u16(&mut file)?;
+        let mut r = io::BufReader::with_capacity(64 << 10, file);
+        let magic = read_u32(&mut r)?;
+        let version = read_u16(&mut r)?;
         if magic != MAGIC || version != VERSION {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unsupported region file",
             ));
         }
-        let count = read_u16(&mut file)? as usize;
-        let mut records = HashMap::with_capacity(count);
+        let count = read_u16(&mut r)? as usize;
+        let mut pos: u64 = 8; // magic + version + count
+        let mut records =
+            FxHashMap::with_capacity_and_hasher(count, rustc_hash::FxBuildHasher);
         for _ in 0..count {
-            let lidx = read_u16(&mut file)?;
-            let len = read_u32(&mut file)?;
-            let offset = file.stream_position()?;
+            let lidx = read_u16(&mut r)?;
+            let len = read_u32(&mut r)?;
+            let offset = pos + 6;
             let end = offset.checked_add(len as u64).ok_or_else(corrupt_region)?;
             if end > file_len
                 || records
@@ -110,10 +121,11 @@ impl RegionReader {
             {
                 return Err(corrupt_region());
             }
-            file.seek(SeekFrom::Start(end))?;
+            r.seek_relative(len as i64)?;
+            pos = end;
         }
         Ok(Self {
-            file: Some(file),
+            file: Some(r.into_inner()),
             records,
         })
     }
@@ -158,7 +170,7 @@ pub(super) fn merge_region(
     let mut replacements: BTreeMap<u16, Vec<u8>> = replacements.into_iter().collect();
     let mut old = RegionReader::open(path).unwrap_or_else(|_| RegionReader {
         file: None,
-        records: HashMap::new(),
+        records: FxHashMap::default(),
     });
     let mut keys: Vec<u16> = old.indices().collect();
     keys.extend(replacements.keys().copied());

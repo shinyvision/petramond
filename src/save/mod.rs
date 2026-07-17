@@ -106,18 +106,18 @@ pub struct WorldSave {
     /// Section coords present on disk: seeded at open from region headers, grown
     /// as we save. The load path consults it to choose overlay-from-disk vs
     /// regenerate.
-    manifest: HashSet<SectionPos>,
+    manifest: rustc_hash::FxHashSet<SectionPos>,
     /// Per-column view of `manifest`, so the streamer's per-column wanted-section
     /// scans don't walk the whole manifest for every column (that made vertical
     /// crossings O(columns × manifest) on a lived-in save).
-    manifest_columns: HashMap<ChunkPos, Vec<i32>>,
+    manifest_columns: rustc_hash::FxHashMap<ChunkPos, Vec<i32>>,
     /// Disposable full-section records created by Optimize explored terrain.
     /// They accelerate normal wanted windows but never widen them vertically.
-    explored_manifest: HashSet<SectionPos>,
+    explored_manifest: rustc_hash::FxHashSet<SectionPos>,
     /// Columns with a column-gen cache record on disk ("Optimize explored
     /// terrain"): seeded at open from `colgen/` headers, grown as we save.
     /// Presence only — a hit still validates seed/version at decode.
-    colgen_manifest: HashSet<ChunkPos>,
+    colgen_manifest: rustc_hash::FxHashSet<ChunkPos>,
     /// Section coords whose written record currently carries live entities — dropped
     /// items OR mobs. A section leaves the set when re-saved with neither. The persist
     /// decision consults it so a section whose drops were picked up / despawned (or whose
@@ -620,6 +620,7 @@ pub fn open(name: &str) -> std::io::Result<OpenedWorld> {
 /// Open (or create) a world at an explicit directory. Backs [`open`]; tests use
 /// it directly against a temp dir so they never touch the real data dir.
 pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
+    let t0 = std::time::Instant::now();
     let region_dir = dir.join("region");
     let explored_dir = dir.join("explored");
     std::fs::create_dir_all(&region_dir)?;
@@ -643,50 +644,104 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let level = std::fs::read(dir.join("level.dat"))
         .ok()
         .and_then(|b| level::decode(&b));
+    let t_meta = t0.elapsed();
 
-    // Build the load manifest from existing region headers.
-    let mut manifest = HashSet::new();
-    if let Ok(rd) = std::fs::read_dir(&region_dir) {
-        for ent in rd.flatten() {
-            let path = ent.path();
-            if let Some((rx, rz)) = region::parse_region_name(&path) {
-                if let Ok(indices) = region::read_region_indices(&path) {
-                    for lidx in indices {
-                        manifest.insert(region::section_pos(rx, rz, lidx));
+    // Build the load manifests from existing region/cache headers. The record
+    // headers interleave with the (small) compressed bodies, so an index scan
+    // effectively streams the whole store through the page cache — a real
+    // explored save is hundreds of MB across hundreds of files. The per-file
+    // scans are independent, so ALL files of all three stores fan out over one
+    // batch of scoped threads (short-lived; no persistent pool exists this
+    // early in a session build).
+    let t1 = std::time::Instant::now();
+    let colgen_dir = dir.join("colgen");
+    let list_files = |dir: &std::path::Path| -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .map(|rd| rd.flatten().map(|ent| ent.path()).collect())
+            .unwrap_or_default()
+    };
+    #[derive(Copy, Clone)]
+    enum Store {
+        Authoritative,
+        Explored,
+        Colgen,
+    }
+    let mut files: Vec<(Store, PathBuf)> = Vec::new();
+    files.extend(list_files(&region_dir).into_iter().map(|p| (Store::Authoritative, p)));
+    files.extend(list_files(&explored_dir).into_iter().map(|p| (Store::Explored, p)));
+    files.extend(list_files(&colgen_dir).into_iter().map(|p| (Store::Colgen, p)));
+
+    enum ScanResult {
+        Sections(Store, i32, i32, Vec<u16>),
+        Columns(i32, i32, Vec<u16>),
+    }
+    let next_file = std::sync::atomic::AtomicUsize::new(0);
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(files.len())
+        .max(1);
+    let scanned: Vec<ScanResult> = std::thread::scope(|s| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut out = Vec::new();
+                    loop {
+                        let i = next_file.fetch_add(1, Ordering::Relaxed);
+                        let Some((store, path)) = files.get(i) else {
+                            break out;
+                        };
+                        match store {
+                            Store::Authoritative | Store::Explored => {
+                                if let Some((rx, rz)) = region::parse_region_name(path) {
+                                    if let Ok(indices) = region::read_region_indices(path) {
+                                        out.push(ScanResult::Sections(*store, rx, rz, indices));
+                                    }
+                                }
+                            }
+                            Store::Colgen => {
+                                if let Some((rx, rz)) = colgen::parse_cache_name(path) {
+                                    if let Ok(indices) = colgen::read_cache_indices(path) {
+                                        out.push(ScanResult::Columns(rx, rz, indices));
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().expect("manifest scan worker"))
+            .collect()
+    });
+    let mut manifest = rustc_hash::FxHashSet::default();
+    let mut explored_manifest = rustc_hash::FxHashSet::default();
+    let mut colgen_manifest = rustc_hash::FxHashSet::default();
+    for result in scanned {
+        match result {
+            ScanResult::Sections(Store::Authoritative, rx, rz, indices) => {
+                manifest.extend(indices.iter().map(|&l| region::section_pos(rx, rz, l)));
+            }
+            ScanResult::Sections(_, rx, rz, indices) => {
+                explored_manifest
+                    .extend(indices.iter().map(|&l| region::section_pos(rx, rz, l)));
+            }
+            ScanResult::Columns(rx, rz, indices) => {
+                colgen_manifest.extend(indices.iter().map(|&l| colgen::column_pos(rx, rz, l)));
             }
         }
     }
-
-    let mut explored_manifest = HashSet::new();
-    if let Ok(rd) = std::fs::read_dir(&explored_dir) {
-        for ent in rd.flatten() {
-            let path = ent.path();
-            if let Some((rx, rz)) = region::parse_region_name(&path) {
-                if let Ok(indices) = region::read_region_indices(&path) {
-                    for lidx in indices {
-                        explored_manifest.insert(region::section_pos(rx, rz, lidx));
-                    }
-                }
-            }
-        }
-    }
-
-    // The column-gen cache manifest ("Optimize explored terrain"), same shape.
-    let mut colgen_manifest = HashSet::new();
-    if let Ok(rd) = std::fs::read_dir(dir.join("colgen")) {
-        for ent in rd.flatten() {
-            let path = ent.path();
-            if let Some((rx, rz)) = colgen::parse_cache_name(&path) {
-                if let Ok(indices) = colgen::read_cache_indices(&path) {
-                    for lidx in indices {
-                        colgen_manifest.insert(colgen::column_pos(rx, rz, lidx));
-                    }
-                }
-            }
-        }
-    }
+    log::debug!(
+        target: "petramond::join::perf",
+        "save open: meta {:.1} ms, manifests {:.1} ms ({} auth, {} explored, {} colgen)",
+        t_meta.as_secs_f64() * 1e3,
+        t1.elapsed().as_secs_f64() * 1e3,
+        manifest.len(),
+        explored_manifest.len(),
+        colgen_manifest.len()
+    );
 
     let players_dir = dir.join("players");
     let (tx, rx) = std::sync::mpsc::channel::<(u64, IoMsg)>();
@@ -705,7 +760,8 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
         .spawn(move || read_thread(dir, read_rx, load_tx, colgen_tx, completed))
         .expect("spawn save reader");
 
-    let mut manifest_columns: HashMap<ChunkPos, Vec<i32>> = HashMap::new();
+    let mut manifest_columns: rustc_hash::FxHashMap<ChunkPos, Vec<i32>> =
+        rustc_hash::FxHashMap::default();
     for sp in &manifest {
         manifest_columns
             .entry(sp.chunk_pos())

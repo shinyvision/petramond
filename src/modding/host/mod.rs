@@ -13,20 +13,23 @@
 //! one. The client-instance surface lives in [`super::client`].
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use mod_api::{HostCall, HostRet, RuntimeSide};
 use wasmtime::{
-    AsContextMut, Caller, Config, Engine, Linker, Memory, Module, StoreLimits, StoreLimitsBuilder,
+    AsContextMut, Caller, Config, Engine, Linker, Memory, StoreLimits, StoreLimitsBuilder,
     TypedFunc,
 };
 
 use super::client::ClientStoreData;
 
 pub(in crate::modding) mod guards;
+pub(in crate::modding) mod module_cache;
+
+pub(in crate::modding) use module_cache::module_for;
 
 mod blocks;
 mod containers;
@@ -119,23 +122,6 @@ pub(in crate::modding) fn engine() -> &'static Engine {
         engine
     });
     &ENGINE
-}
-
-/// Compile (or fetch the cached compilation of) the module at `path`. Cached
-/// per path for the process lifetime: tests and repeated `Game::new` calls pay
-/// the cranelift compile once.
-pub(in crate::modding) fn module_for(path: &Path) -> Result<Module, String> {
-    static CACHE: LazyLock<Mutex<HashMap<PathBuf, Module>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
-    let mut cache = CACHE.lock().unwrap();
-    if let Some(module) = cache.get(path) {
-        return Ok(module.clone());
-    }
-    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let module =
-        Module::new(engine(), &bytes).map_err(|e| format!("compile {}: {e:#}", path.display()))?;
-    cache.insert(path.to_path_buf(), module.clone());
-    Ok(module)
 }
 
 /// Whether the store is inside its registration window (`mod_init`).

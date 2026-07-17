@@ -276,6 +276,23 @@ impl ChunkGenerator {
         self.surface_density.region(x0, z0, w, h)
     }
 
+    /// Warm one 16×16 world tile of the shared feature-window memo — a pure
+    /// cache fill (the memo is keyed by `(seed, tile)`, so any thread's
+    /// computation serves every later reader). Session bootstrap fans the
+    /// spawn area's tiles across the pool with this so the first column jobs
+    /// find them hot instead of computing them serially inside one job.
+    pub(crate) fn warm_surface_tile(&self, tcx: i32, tcz: i32) {
+        let _ = cached_feature_region(
+            &self.surface_density,
+            &self.caves,
+            self.seed,
+            tcx * CHUNK_SX as i32,
+            tcz * CHUNK_SZ as i32,
+            CHUNK_SX,
+            CHUNK_SZ,
+        );
+    }
+
     pub fn biome_at(&self, wx: i32, wz: i32) -> crate::biome::Biome {
         self.surface_density.biome_at(wx, wz)
     }

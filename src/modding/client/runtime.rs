@@ -68,7 +68,11 @@ impl ClientModRuntime {
     /// server does not run therefore never activates.
     pub(crate) fn load(world_seed: u32, session_key: &str, enabled: &BTreeSet<String>) -> Self {
         let mut mods = Vec::new();
-        for (id, path) in session_client_mods(crate::assets::packs(), enabled) {
+        let session = session_client_mods(crate::assets::packs(), enabled);
+        crate::modding::host::module_cache::prewarm(
+            session.iter().map(|(_, path)| path.clone()),
+        );
+        for (id, path) in session {
             let module = match crate::modding::host::module_for(&path) {
                 Ok(module) => module,
                 Err(e) => {

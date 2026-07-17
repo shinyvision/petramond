@@ -8,6 +8,7 @@ mod drops;
 mod events;
 mod farming_mod;
 mod item_use;
+mod joinprofile;
 mod kitchen_mod;
 mod menu;
 mod monsters_mod;

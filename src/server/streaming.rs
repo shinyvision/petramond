@@ -39,7 +39,13 @@ const MAX_BATCH_MSGS: usize = 96;
 /// widened window keeps the ceiling above demand and leaves pacing to the
 /// client-measured apply rate. The window remains the hard bound on the
 /// unbounded process-local channel.
-const LOCAL_MAX_BATCH_MSGS: usize = 96;
+///
+/// 192 (was 96): loopback installs adopt `Arc` payloads, so a batch is cheap
+/// to apply and the remote "apply inside one client frame" sizing does not
+/// bind here. At world join the spawn's 3×3 columns are ~2×96 messages —
+/// the wider batch lands them in the client's first receiving frame instead
+/// of trickling batch-per-frame.
+const LOCAL_MAX_BATCH_MSGS: usize = 192;
 
 /// Unacknowledged batches allowed in flight after the FIRST ack proves the
 /// client speaks the ack loop; exactly one before it (vanilla-verified
@@ -132,6 +138,10 @@ pub(crate) struct TerrainSync {
     client_rate: f32,
     /// Fractional message budget banked from `client_rate × dt` each pump
     /// (capped at one max batch); a batch spends its message count from it.
+    /// Starts FULL: a joining connection gets one max-size opening batch
+    /// (still window-bounded to a single in-flight batch until the first
+    /// ack) instead of trickling `INITIAL_CLIENT_RATE × dt` messages per
+    /// pump while the player stares at an empty spawn.
     batch_quota: f32,
     batch_limit: usize,
     window_limit: u32,
@@ -156,7 +166,7 @@ impl Default for TerrainSync {
             unacked_batches: 0,
             max_unacked: 1,
             client_rate: INITIAL_CLIENT_RATE,
-            batch_quota: 0.0,
+            batch_quota: MAX_BATCH_MSGS as f32,
             batch_limit: MAX_BATCH_MSGS,
             window_limit: MAX_UNACKED_BATCHES,
         }

@@ -251,6 +251,28 @@ fn run_gen_job(job: GenJob) -> GenOutput {
     })
 }
 
+/// Fan a set of 16×16 surface-tile warmups across the pool at maximum
+/// priority: each job fills one tile of the shared feature-window memo
+/// through the worker's thread-local generator. Fire-and-forget — the memo
+/// is the output. Session bootstrap uses this to compute the spawn area's
+/// tiles in parallel while the rest of construction runs, instead of the
+/// first column job deriving them serially on one worker.
+pub fn warm_surface_tiles(pool: &JobPool, seed: u32, tiles: impl IntoIterator<Item = (i32, i32)>) {
+    for (tcx, tcz) in tiles {
+        pool.submit(i64::MIN, move || {
+            GENERATOR.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                let key = (seed, crate::modding::gen::installed_epoch());
+                if slot.as_ref().is_none_or(|(k, _)| *k != key) {
+                    *slot = Some((key, ChunkGenerator::new(seed)));
+                }
+                let (_, generator) = slot.as_mut().expect("generator installed above");
+                generator.warm_surface_tile(tcx, tcz);
+            });
+        });
+    }
+}
+
 /// Gen-stage adapter over the shared [`JobPool`]: `submit` queues generation at a
 /// distance priority, `try_recv` drains finished outputs on the main thread.
 pub struct WorkerPool {

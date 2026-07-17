@@ -22,6 +22,9 @@ fn frame_period(fps: u32) -> Duration {
 
 pub fn run() {
     super::init_logging();
+    // Pack discovery + any cold wasm compiles happen behind the shell menu,
+    // so the first world open finds every mod module ready.
+    crate::modding::prewarm_modules();
     let seed: u32 = std::env::var("PETRAMOND_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
