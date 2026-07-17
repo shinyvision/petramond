@@ -102,6 +102,9 @@ wasmtime = { version = "46", default-features = false, features = ["cranelift", 
 # Tests hand-build hostile guest modules from WAT text (trap/registration-window
 # contracts); the shipped binary never parses wat.
 wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime", "wat"] }
+# Pack WGSL parse/validate tests (the same naga wgpu embeds): a shader typo
+# fails `cargo test`, not the first windowed launch.
+naga = { version = "27", default-features = false, features = ["wgsl-in"] }
 
 [profile.release]
 opt-level = 3

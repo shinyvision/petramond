@@ -182,6 +182,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "weather"
+version = "0.1.0"
+dependencies = [
+ "mod-sdk",
+ "weather-core",
+]
+
+[[package]]
+name = "weather-core"
+version = "0.1.0"
+
+[[package]]
 name = "wheel"
 version = "0.1.0"
 dependencies = [

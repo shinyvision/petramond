@@ -422,6 +422,8 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::IsLoaded { .. }
         | HostCall::LightAt { .. }
         | HostCall::BlockIsFullSpawnSupport { .. }
+        | HostCall::BiomeAt { .. }
+        | HostCall::SurfaceYAt { .. }
         | HostCall::SwapModelBlock { .. } => blocks::handle_block_call(&data.mod_id, call),
         HostCall::SpawnMob { .. }
         | HostCall::SpawnMobChecked { .. }
@@ -450,6 +452,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::EffectRemove { .. }
         | HostCall::EffectsActive
         | HostCall::PlayerInput { .. }
+        | HostCall::Players
         | HostCall::ChatSend { .. } => player::handle_player_call(&data.mod_id, call),
         HostCall::EmitSound { .. }
         | HostCall::SoundPlayAt { .. }
@@ -497,7 +500,12 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ClientStorageGetMany { .. }
         | HostCall::ClientStorageSetMany { .. }
         | HostCall::ClientStorageReadBegin { .. }
-        | HostCall::ClientStorageReadPoll { .. } => super::client::handle_client_call(data, call),
+        | HostCall::ClientStorageReadPoll { .. }
+        | HostCall::ClientEnvParams { .. }
+        | HostCall::ClientBiomeAt { .. }
+        | HostCall::ClientAmbientSet { .. }
+        | HostCall::ClientLoopSet { .. }
+        | HostCall::ClientMoodSet { .. } => super::client::handle_client_call(data, call),
     }
 }
 

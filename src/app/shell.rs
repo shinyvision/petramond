@@ -225,6 +225,11 @@ impl App {
         self.rebuild_action_table();
         self.pointer.release_for_menu();
         self.audio.set_loop(None, now_seconds());
+        // Mod-driven presentation state is session-scoped: the title screen
+        // (or the next world) must never inherit this session's rain bed or
+        // precipitation volumes.
+        self.audio.stop_mod_loops();
+        self.presentation.ambient.clear();
         self.scene.clear();
         self.client_canvas = None;
         self.client_overlay_images.clear();

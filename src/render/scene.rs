@@ -255,6 +255,7 @@ fn bake_particles(
                 color: p.tint,
                 alpha: p.alpha,
                 size: p.size,
+                stretch: p.stretch,
                 skylight: p.skylight,
                 blocklight: p.blocklight,
             });
@@ -321,6 +322,7 @@ mod tests {
             warm: 0,
             alpha: 1.0,
             size: 0.1,
+            stretch: 1.0,
             skylight: 0,
             blocklight: 0,
         }

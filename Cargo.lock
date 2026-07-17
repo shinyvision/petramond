@@ -2281,6 +2281,7 @@ dependencies = [
  "log",
  "mimalloc",
  "mod-api",
+ "naga",
  "noise",
  "petramond-text",
  "petramond-ui",

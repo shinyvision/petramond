@@ -54,6 +54,24 @@ pub struct PlayerInputSnapshot {
     pub pitch: f32,
 }
 
+/// One connected player's per-tick state snapshot, published on the world
+/// beside the inputs — the read model behind the `Players` HostCall
+/// (multiplayer-aware spawn/ambience/weather policy).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct PlayerRosterSnapshot {
+    /// Session player id.
+    pub id: u8,
+    /// Feet position.
+    pub pos: [f32; 3],
+    pub vel: [f32; 3],
+    pub yaw: f32,
+    pub pitch: f32,
+    /// Half-heart points.
+    pub health: i32,
+    pub on_ground: bool,
+    pub spectator: bool,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PlayerMode {
     Survival,

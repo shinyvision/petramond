@@ -381,6 +381,9 @@ impl ServerGame {
         });
         let mut session = ConnectedPlayer::new(id, name.clone(), player, view_distance);
         session.terrain.seed_client_cache(cached_sections);
+        // Reseed the env params for the newcomer (see the local-join twin in
+        // game.rs): a static param map would otherwise never reach them.
+        self.last_shipped_env = None;
         self.sessions.push(session);
         (data, name)
     }

@@ -231,6 +231,22 @@ fn samples() -> Samples {
     s.pin("HostCall::SpawnMobChecked", &HostCall::SpawnMobChecked {
         key: "m:k".into(), pos: [1.0, 2.0, 3.0], yaw: 0.5,
     });
+    s.pin("HostCall::BiomeAt", &HostCall::BiomeAt { pos: [1, -2] });
+    s.pin("HostCall::SurfaceYAt", &HostCall::SurfaceYAt { pos: [1, -2] });
+    s.pin("HostCall::Players", &HostCall::Players);
+    s.pin("HostCall::ClientEnvParams", &HostCall::ClientEnvParams {
+        keys: vec!["m:k".into()],
+    });
+    s.pin("HostCall::ClientBiomeAt", &HostCall::ClientBiomeAt { pos: [1, -2] });
+    s.pin("HostCall::ClientAmbientSet", &HostCall::ClientAmbientSet {
+        key: "m:rain".into(), intensity: 0.5, wind: [1.0, -2.0],
+    });
+    s.pin("HostCall::ClientLoopSet", &HostCall::ClientLoopSet {
+        key: "m:loop".into(), gain: 0.5,
+    });
+    s.pin("HostCall::ClientMoodSet", &HostCall::ClientMoodSet {
+        darken: 0.25, desaturate: 0.5,
+    });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -282,6 +298,16 @@ fn samples() -> Samples {
     s.pin("HostRet::MobAnimState", &HostRet::MobAnimState(Some(MobAnimStateData {
         phase: 1.5, rate: 0.75, seek: Some(2.0),
     })));
+    s.pin("HostRet::MaybeByte", &HostRet::MaybeByte(Some(4)));
+    s.pin("HostRet::MaybeI32", &HostRet::MaybeI32(Some(-7)));
+    s.pin("HostRet::Players", &HostRet::Players(vec![PlayerListEntry {
+        id: 1,
+        state: PlayerSnapshot {
+            pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, 0.0], yaw: 0.5, pitch: 0.25,
+            health: 20, on_ground: true, spectator: false,
+        },
+    }]));
+    s.pin("HostRet::EnvParams", &HostRet::EnvParams(vec![None, Some([1.0, 2.0, 3.0, 4.0])]));
 
     // --- GuestCall: every variant, declaration order -------------------------
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
@@ -580,6 +606,14 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::PlayerInput", "5b01"),
     ("HostCall::MobAnimState", "5c0703726f77"),
     ("HostCall::SpawnMobChecked", "5d036d3a6b0000803f00000040000040400000003f"),
+    ("HostCall::BiomeAt", "5e0203"),
+    ("HostCall::SurfaceYAt", "5f0203"),
+    ("HostCall::Players", "60"),
+    ("HostCall::ClientEnvParams", "6101036d3a6b"),
+    ("HostCall::ClientBiomeAt", "620203"),
+    ("HostCall::ClientAmbientSet", "63066d3a7261696e0000003f0000803f000000c0"),
+    ("HostCall::ClientLoopSet", "64066d3a6c6f6f700000003f"),
+    ("HostCall::ClientMoodSet", "650000803e0000003f"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -605,6 +639,10 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Riders", "160102010001"),
     ("HostRet::PlayerInput", "17010000803f000080bf01000000003f0000803e"),
     ("HostRet::MobAnimState", "18010000c03f0000403f0100000040"),
+    ("HostRet::MaybeByte", "190104"),
+    ("HostRet::MaybeI32", "1a010d"),
+    ("HostRet::Players", "1b01010000803f00000040000040400000000000000000000000000000003f0000803e280100"),
+    ("HostRet::EnvParams", "1c0200010000803f000000400000404000008040"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c0c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),

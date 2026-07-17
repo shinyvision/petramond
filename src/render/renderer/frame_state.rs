@@ -45,6 +45,25 @@ pub(super) fn sun_uniform(
     [dir.x, dir.y, dir.z, daylight]
 }
 
+/// Fill a 16-slot params block from a shader's declared key list.
+fn fill_shader_params(
+    keys: &[String],
+    shader_params: Option<&crate::world::environment::ShaderParamMap>,
+) -> super::super::uniforms::ShaderParams {
+    let mut values = [[0.0f32; 4]; super::super::uniforms::SHADER_PARAM_SLOTS];
+    if let Some(shader_params) = shader_params {
+        for (i, key) in keys.iter().enumerate() {
+            if i >= values.len() {
+                break;
+            }
+            if let Some(value) = shader_params.get(key) {
+                values[i] = *value;
+            }
+        }
+    }
+    super::super::uniforms::ShaderParams { values }
+}
+
 #[inline]
 fn render_origin_for_camera(pos: glam::Vec3) -> glam::Vec3 {
     (pos / RENDER_ORIGIN_GRID).floor() * RENDER_ORIGIN_GRID
@@ -140,23 +159,50 @@ impl Renderer {
     }
 
     fn update_shader_params(
-        &self,
+        &mut self,
         shader_params: Option<&crate::world::environment::ShaderParamMap>,
     ) {
-        let mut values = [[0.0f32; 4]; super::super::uniforms::SHADER_PARAM_SLOTS];
-        if let Some(shader_params) = shader_params {
-            for (i, key) in self.sky_shader_param_keys.iter().enumerate() {
-                if i >= values.len() {
-                    break;
-                }
-                if let Some(value) = shader_params.get(key) {
-                    values[i] = *value;
-                }
+        self.queue.write_buffer(
+            &self.shader_params_buf,
+            0,
+            bytemuck::cast_slice(&[fill_shader_params(
+                &self.sky_shader_param_keys,
+                shader_params,
+            )]),
+        );
+        // Each environment pass declares its own key list over its own
+        // buffer. A pass whose declared params are ALL absent goes dormant
+        // (skipped in encode) — the title screen and servers without the
+        // owning mod pay nothing for it.
+        for pass in &mut self.env_passes {
+            let any_present = shader_params.is_some_and(|params| {
+                pass.res.param_keys.iter().any(|key| params.contains_key(key))
+            });
+            pass.dormant = !pass.res.param_keys.is_empty() && !any_present;
+            if pass.dormant {
+                continue;
             }
+            self.queue.write_buffer(
+                &pass.res.params_buf,
+                0,
+                bytemuck::cast_slice(&[fill_shader_params(&pass.res.param_keys, shader_params)]),
+            );
         }
-        let params = super::super::uniforms::ShaderParams { values };
-        self.queue
-            .write_buffer(&self.shader_params_buf, 0, bytemuck::cast_slice(&[params]));
+    }
+
+    /// Ease the post mood toward the mods' combined target and upload it for
+    /// the grade pass. `[0, 0]` = the untouched image; the ease (~2 s) makes
+    /// weather moods breathe in and out instead of popping.
+    pub fn set_mood(&mut self, target: [f32; 2], dt: f32) {
+        const MOOD_EASE_SECONDS: f32 = 2.0;
+        let ease = 1.0 - (-dt.clamp(0.0, 0.25) / MOOD_EASE_SECONDS).exp();
+        self.mood[0] += (target[0].clamp(0.0, 0.5) - self.mood[0]) * ease;
+        self.mood[1] += (target[1].clamp(0.0, 0.5) - self.mood[1]) * ease;
+        self.queue.write_buffer(
+            &self.mood_buf,
+            0,
+            bytemuck::cast_slice(&[self.mood[0], self.mood[1], 0.0, 0.0]),
+        );
     }
 
     /// Set (or clear) the target highlighted by the selection outline. Cheap: the

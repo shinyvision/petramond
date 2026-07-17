@@ -132,8 +132,32 @@ async fn new_renderer_inner(
     );
     let depth = create_depth(&device, width, height);
     let scene_color = create_scene_color(&device, width, height, format);
-    let grade_bind =
-        super::super::pipeline::create_grade_bind(&device, &pipelines.grade_bgl, &scene_color);
+    let mood_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("grade mood"),
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let grade_bind = super::super::pipeline::create_grade_bind(
+        &device,
+        &pipelines.grade_bgl,
+        &scene_color,
+        &mood_buf,
+    );
+    let env_passes = pipelines
+        .env_passes
+        .into_iter()
+        .map(|res| {
+            let bind = super::super::pipeline::create_environment_bind(
+                &device,
+                &res.bgl,
+                &uniform_buf,
+                &res.params_buf,
+                &depth,
+            );
+            super::EnvPass { res, bind, dormant: false }
+        })
+        .collect();
 
     // Item entities + chests draw through the EXISTING opaque pipeline; clone its
     // (Arc-backed) handle so each `DynamicDraw` issues a byte-identical draw while
@@ -498,6 +522,7 @@ async fn new_renderer_inner(
         sky_bind: pipelines.sky_bind,
         sky_texture_bind: pipelines.sky_texture_bind,
         sky_shader_param_keys: pipelines.sky_shader_param_keys,
+        env_passes,
         sky_light_param_key: pipelines.sky_light_param_key,
         underwater: false,
         fog_start: default_fog.0,
@@ -513,6 +538,8 @@ async fn new_renderer_inner(
         grade_pipe: pipelines.grade_pipe,
         grade_bgl: pipelines.grade_bgl,
         grade_bind,
+        mood_buf,
+        mood: [0.0, 0.0],
         outline_pipe: pipelines.outline_pipe,
         outline_bind: pipelines.outline_bind,
         outline_vbuf: pipelines.outline_vbuf,
@@ -729,6 +756,17 @@ impl Renderer {
             &self.device,
             &self.grade_bgl,
             &self.scene_color,
+            &self.mood_buf,
         );
+        // Environment binds reference the depth view recreated above.
+        for pass in &mut self.env_passes {
+            pass.bind = super::super::pipeline::create_environment_bind(
+                &self.device,
+                &pass.res.bgl,
+                &self.uniform_buf,
+                &pass.res.params_buf,
+                &self.depth,
+            );
+        }
     }
 }

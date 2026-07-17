@@ -18,7 +18,7 @@ pub(crate) const DEFAULT_ATTENUATION_DISTANCE: f32 = 32.0;
 /// A sound effect the game can play, identified by its opaque runtime id (the
 /// row index in the loaded table). Engine sounds own the low ids in the frozen
 /// const order below; pack sounds register after them.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Sound(pub u8);
 
 /// Engine sound consts, named like the enum variants they replaced.

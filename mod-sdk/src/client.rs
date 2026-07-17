@@ -157,3 +157,48 @@ host_fn! {
                 .collect()
         })
 }
+
+host_fn! {
+    /// CLIENT: read named shader params from the replica's replicated visual
+    /// environment — the same values the renderer sees (a sim-side mod
+    /// publishes them with [`crate::shader_set_param`]). At most 16 keys per
+    /// call; the reply is parallel (`None` = param not present).
+    pub fn client_env_params(keys: &[&str]) -> Vec<Option<[f32; 4]>>
+        => ClientEnvParams { keys: keys.iter().map(|k| (*k).into()).collect() }
+        => EnvParams
+}
+
+host_fn! {
+    /// CLIENT: the replica column's biome id at world `pos = [x, z]`
+    /// (vocabulary: [`mod_api::biome`]), or `None` when the column is unknown
+    /// to the replica.
+    pub fn client_biome_at(pos: [i32; 2]) -> Option<u8> => ClientBiomeAt { pos } => MaybeByte
+}
+
+host_fn! {
+    /// CLIENT: drive an `ambient` particle bundle (a camera-following
+    /// precipitation/ambience volume from `particle_emitters.json`) at
+    /// `intensity` (clamped to `0..=1`; `0` retires it; changes are eased
+    /// engine-side so weather never pops), advected by `wind` blocks/s.
+    /// Per-client presentation only. `false` = unknown key or not an
+    /// ambient bundle (forgiving, like a disabled pack).
+    pub fn client_ambient_set(key: &str, intensity: f32, wind: [f32; 2]) -> bool
+        => ClientAmbientSet { key: key.into(), intensity, wind } => Bool
+}
+
+host_fn! {
+    /// CLIENT: play this mod's looping sound `key` (a `sounds.json` key) at
+    /// `gain` (`0` eases it to silence and stops it). Non-spatial ambience —
+    /// a rain bed, a wind howl. `false` = unknown sound key.
+    pub fn client_loop_set(key: &str, gain: f32) -> bool
+        => ClientLoopSet { key: key.into(), gain } => Bool
+}
+
+host_fn! {
+    /// CLIENT: set this mod's post-process MOOD — a subtle whole-screen
+    /// darken and desaturate (each clamped to `0..=0.5`), applied by the
+    /// grade pass and eased engine-side. Pure presentation: light values
+    /// (and so mob spawning) never change. Mods combine by max.
+    pub fn client_mood_set(darken: f32, desaturate: f32) -> bool
+        => ClientMoodSet { darken, desaturate } => Bool
+}

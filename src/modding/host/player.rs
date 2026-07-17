@@ -25,6 +25,26 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 spectator: p.is_spectator(),
             })
         }),
+        HostCall::Players => sim_query(|ctx| {
+            HostRet::Players(
+                ctx.world
+                    .player_roster()
+                    .iter()
+                    .map(|p| mod_api::PlayerListEntry {
+                        id: p.id,
+                        state: PlayerSnapshot {
+                            pos: p.pos,
+                            vel: p.vel,
+                            yaw: p.yaw,
+                            pitch: p.pitch,
+                            health: p.health,
+                            on_ground: p.on_ground,
+                            spectator: p.spectator,
+                        },
+                    })
+                    .collect(),
+            )
+        }),
         HostCall::DamagePlayer { amount } => {
             let mod_id = intern_mod_id(mod_id);
             sim_call(|ctx| {

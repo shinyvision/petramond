@@ -72,3 +72,20 @@ host_fn! {
     pub fn block_is_full_spawn_support(pos: [i32; 3]) -> bool
         => BlockIsFullSpawnSupport { pos } => Bool
 }
+
+host_fn! {
+    /// The loaded column's biome id at world `pos = [x, z]` (vocabulary:
+    /// [`mod_api::biome`]), or `None` when the chunk is unloaded. Biomes are
+    /// column-level data fixed at generation.
+    pub fn biome_at(pos: [i32; 2]) -> Option<u8> => BiomeAt { pos } => MaybeByte
+}
+
+host_fn! {
+    /// The Y of the topmost movement-blocking block of the loaded column at
+    /// world `pos = [x, z]` — real footing; walk-through cover (tall grass,
+    /// snow layers, water) is skipped. `None` = unloaded, all-air, or the
+    /// footing is not yet stream-final (treat as "retry later"). A saved
+    /// build higher in the column that has not streamed in yet is invisible
+    /// to this scan — answers are provisional during join streaming.
+    pub fn surface_y_at(pos: [i32; 2]) -> Option<i32> => SurfaceYAt { pos } => MaybeI32
+}

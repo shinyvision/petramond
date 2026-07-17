@@ -47,9 +47,12 @@ pub const VERTS_PER_CUBE: usize = 24;
 /// Indices per particle cube (6 faces * 2 triangles * 3).
 pub const INDICES_PER_CUBE: usize = 36;
 
-/// Max particle cubes baked per frame. Matches the particle system's pool so a
-/// fully saturated pool still draws; the dynamic vbuf is sized to this once.
-pub const MAX_PARTICLE_CUBES: usize = crate::entity::PARTICLE_CAPACITY;
+/// Max particle cubes baked per frame: the simulated pool PLUS equal headroom
+/// for the derived ambient volumes (precipitation) that join the same bake at
+/// full particle settings. Deliberately on the high end — geometry budgets
+/// have bitten before and tiny cubes are cheap; the dynamic vbufs grow on
+/// demand up to this, so idle scenes never pay for it.
+pub const MAX_PARTICLE_CUBES: usize = crate::entity::PARTICLE_CAPACITY * 2;
 /// Vertices in the reusable particle vbuf (24 per cube).
 pub const MAX_PARTICLE_VERTICES: usize = MAX_PARTICLE_CUBES * VERTS_PER_CUBE;
 /// Indices in the reusable particle ibuf (36 per cube).
@@ -178,13 +181,15 @@ pub(in crate::render) struct TransparentParticleCube {
     color: [f32; 3],
     alpha: f32,
     size: f32,
+    /// Vertical elongation around the centre (1 = a cube).
+    stretch: f32,
     dist_sq: f32,
 }
 
 /// Max active translucent particles one emitter row may contribute in a frame.
 /// The row's rate/lifetime control the normal count; this clamp prevents a malformed
 /// or intentionally huge mod row from consuming the whole fixed vertex buffer
-/// (48 = ~1% of [`MAX_PARTICLE_CUBES`]; dense fire columns need more than the
+/// (a sliver of [`MAX_PARTICLE_CUBES`]; dense fire columns need more than the
 /// original 32).
 const MAX_ACTIVE_PER_EMITTER: usize = 48;
 
@@ -228,6 +233,7 @@ pub fn build_transparent_emitter_particles(
             color: lighting::fold_tint(s.color, DynLight::new(s.skylight, s.blocklight), env),
             alpha: s.alpha,
             size: s.size,
+            stretch: s.stretch,
             dist_sq: (cam_pos - s.pos).length_squared(),
         });
     }
@@ -353,6 +359,7 @@ fn append_emitter_particles(
             color,
             alpha,
             size,
+            stretch: 1.0,
             dist_sq: (cam_pos - pos).length_squared(),
         });
     }
@@ -408,9 +415,10 @@ fn push_particle_cube(inst: &ParticleInstance, env: LightEnv, verts: &mut Vec<Pa
 }
 
 fn push_colored_particle_cube(inst: &TransparentParticleCube, verts: &mut Vec<ParticleVertex>) {
-    push_cube_faces(
+    push_stretched_cube_faces(
         inst.pos,
         inst.size,
+        inst.stretch,
         [[0.0, 0.0]; 4],
         inst.color,
         inst.alpha,
@@ -429,6 +437,22 @@ fn push_cube_faces(
     alpha: f32,
     verts: &mut Vec<ParticleVertex>,
 ) {
+    push_stretched_cube_faces(c, size, 1.0, corner_uv, tint, alpha, verts);
+}
+
+/// [`push_cube_faces`] with a vertical elongation: each vertex's y is scaled
+/// by `stretch` around the centre, turning the cube into a tall box (rain
+/// streaks) while faces stay planar.
+#[allow(clippy::too_many_arguments)]
+fn push_stretched_cube_faces(
+    c: Vec3,
+    size: f32,
+    stretch: f32,
+    corner_uv: [[f32; 2]; 4],
+    tint: [f32; 3],
+    alpha: f32,
+    verts: &mut Vec<ParticleVertex>,
+) {
     let h = size * 0.5;
     for face in &FACES {
         let r = face.right * h;
@@ -442,7 +466,8 @@ fn push_cube_faces(
             (fc + r + up, corner_uv[2]),
             (fc - r + up, corner_uv[3]),
         ];
-        for (pos, uv) in corners {
+        for (mut pos, uv) in corners {
+            pos.y = c.y + (pos.y - c.y) * stretch;
             verts.push(ParticleVertex {
                 pos: pos.to_array(),
                 uv,

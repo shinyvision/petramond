@@ -1,0 +1,13 @@
+{
+  "sounds": [
+    {
+      "sound": "weather:rain_loop",
+      "category": "block",
+      "gain": 0.55,
+      "variants": [
+        "sounds/rain_loop.ogg"
+      ],
+      "pitch_variation": 0.0
+    }
+  ]
+}

@@ -406,6 +406,9 @@ pub struct SolidParticleInstance {
     pub color: [f32; 3],
     pub alpha: f32,
     pub size: f32,
+    /// Vertical elongation of the cube around its centre (1 = a cube; rain
+    /// streaks stretch tall).
+    pub stretch: f32,
     /// 6-bit light sampled at the particle, folded into the color.
     pub skylight: u8,
     pub blocklight: u8,

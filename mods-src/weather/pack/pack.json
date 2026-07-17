@@ -1,0 +1,9 @@
+{
+  "name": "Weather",
+  "id": "weather",
+  "version": "0.1.0",
+  "description": "Localized weather: wind-advected clouds that darken as they gather and rain where they peak, with real raindrops, splashes, snowfall, and settling snow.",
+  "summary": "Clouds, wind, rain, and snow.",
+  "wasm": "mod.wasm",
+  "client_wasm": "mod.wasm"
+}

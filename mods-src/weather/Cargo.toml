@@ -1,0 +1,13 @@
+[package]
+name = "weather"
+version = "0.1.0"
+edition = "2021"
+description = "Localized weather: a wind-advected cloud field that darkens as it accumulates and rains where it peaks; volumetric clouds, rain/snow precipitation with splashes, and snow-layer accumulation. All policy lives here — the engine only provides generic shader/particle/event seams."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mod-sdk = { path = "../../mod-sdk" }
+weather-core = { path = "../weather-core" }

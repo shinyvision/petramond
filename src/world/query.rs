@@ -204,6 +204,30 @@ impl World {
             .find(|&y| self.blocks_movement_at(wx, y, wz))
     }
 
+    /// The loaded column's biome id at world `(wx, wz)`, or `None` when the
+    /// chunk is unloaded. Biomes are column-level data fixed at generation.
+    pub fn biome_at_world(&self, wx: i32, wz: i32) -> Option<u8> {
+        let col = self.columns.get(&ChunkPos::new(wx >> 4, wz >> 4))?;
+        Some(col.biome_at(chunk::lx(wx) as usize, chunk::lz(wz) as usize))
+    }
+
+    /// The Y of the topmost cell precipitation lands on in the loaded column
+    /// at `(wx, wz)` — the first movement-blocking OR water cell scanning
+    /// down from the column top — or `None` if the chunk is unloaded or the
+    /// column is all air. Walk-through cover (tall grass, snow layers,
+    /// flowers) lets rain fall THROUGH to the ground under it, while a lake
+    /// surface stops it like a roof does.
+    pub fn precipitation_ceiling_y(&self, wx: i32, wz: i32) -> Option<i32> {
+        let col = self.columns.get(&ChunkPos::new(wx >> 4, wz >> 4))?;
+        let top = col.surface_y(chunk::lx(wx), chunk::lz(wz));
+        (WORLD_MIN_Y..=top).rev().find(|&y| {
+            self.blocks_movement_at(wx, y, wz)
+                || self
+                    .block_if_loaded(wx, y, wz)
+                    .is_some_and(|b| b.is_water())
+        })
+    }
+
     /// Whether this loaded block is valid full-cube support for programmatic
     /// mob spawns. This is stricter than movement collision: leaves are solid
     /// for collision but remain canopy, and partial shapes such as stairs or

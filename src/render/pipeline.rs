@@ -405,6 +405,10 @@ pub(super) struct PipelineResources {
     pub sky_texture_bind: wgpu::BindGroup,
     pub sky_shader_param_keys: Vec<String>,
     pub sky_light_param_key: Option<String>,
+    /// Pack-supplied environment (volumetric) passes in pack load order,
+    /// minus their depth-coupled group-0 binds (built by the renderer, which
+    /// owns the depth view lifecycle).
+    pub env_passes: Vec<EnvPassResources>,
     pub opaque_pipe: wgpu::RenderPipeline,
     pub translucent_pipe: wgpu::RenderPipeline,
     pub transparent_pipe: wgpu::RenderPipeline,
@@ -632,6 +636,7 @@ pub(super) fn create_pipeline_resources(
         uniform_buf,
         shader_params_buf,
     );
+    let env_passes = create_environment_pipelines(device, queue, format, sample_count);
     let (outline_pipe, outline_bind, outline_vbuf) =
         create_selection_pipeline(device, format, sample_count, uniform_buf);
     let (crosshair_pipe, crosshair_vbuf) =
@@ -681,6 +686,7 @@ pub(super) fn create_pipeline_resources(
         sky_texture_bind: sky.texture_bind,
         sky_shader_param_keys: sky.shader_param_keys,
         sky_light_param_key: sky.light_param_key,
+        env_passes,
         opaque_pipe,
         translucent_pipe,
         transparent_pipe,
@@ -904,6 +910,57 @@ fn create_terrain_pipelines(
     (opaque_pipe, translucent_pipe, transparent_pipe)
 }
 
+/// Load a pack shader row's declared texture paths into the four fixed
+/// slots, blank-filling missing/undecodable slots, and bind them at
+/// `slot*2`/`slot*2+1`. Shared by the sky and environment hooks.
+fn create_shader_texture_bind(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture_bgl: &wgpu::BindGroupLayout,
+    kind: &str,
+    paths: &[String],
+) -> wgpu::BindGroup {
+    let mut slots = Vec::with_capacity(super::shader_pack::SKY_TEXTURE_SLOTS);
+    for slot in 0..super::shader_pack::SKY_TEXTURE_SLOTS {
+        let loaded = paths.get(slot).and_then(|rel| {
+            let Some((bytes, path)) = crate::assets::read_bytes(rel) else {
+                log::warn!("{kind} texture slot {slot} asset '{rel}' not found; using blank slot");
+                return None;
+            };
+            match super::resources::create_sky_texture(device, queue, &bytes) {
+                Some(texture) => {
+                    log::info!("{kind} texture slot {slot} loaded from {}", path.display());
+                    Some(texture)
+                }
+                None => {
+                    log::warn!(
+                        "{kind} texture slot {slot} asset '{}' is not a decodable PNG; using blank slot",
+                        path.display()
+                    );
+                    None
+                }
+            }
+        });
+        slots.push(loaded.unwrap_or_else(|| {
+            super::resources::create_solid_rgba_texture(
+                device,
+                queue,
+                [0, 0, 0, 0],
+                "blank shader texture",
+            )
+        }));
+    }
+    let mut entries = Vec::with_capacity(super::shader_pack::SKY_TEXTURE_SLOTS * 2);
+    for (slot, (_, view, sampler)) in slots.iter().enumerate() {
+        entries.extend(texture_sampler_bind_entries((slot * 2) as u32, view, sampler));
+    }
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("pack shader texture bg"),
+        layout: texture_bgl,
+        entries: &entries,
+    })
+}
+
 /// The values the sky pass hands back to [`PipelineResources`].
 struct SkyResources {
     pipe: wgpu::RenderPipeline,
@@ -961,49 +1018,13 @@ fn create_sky_pipeline(
     let sky_texture_paths: &[String] = sky_spec
         .as_ref()
         .map_or(&[], |spec| spec.textures.as_slice());
-    let mut sky_texture_slots = Vec::with_capacity(super::shader_pack::SKY_TEXTURE_SLOTS);
-    for slot in 0..super::shader_pack::SKY_TEXTURE_SLOTS {
-        let loaded = sky_texture_paths.get(slot).and_then(|rel| {
-            let Some((bytes, path)) = crate::assets::read_bytes(rel) else {
-                log::warn!("sky texture slot {slot} asset '{rel}' not found; using blank slot");
-                return None;
-            };
-            match super::resources::create_sky_texture(device, queue, &bytes) {
-                Some(texture) => {
-                    log::info!("sky texture slot {slot} loaded from {}", path.display());
-                    Some(texture)
-                }
-                None => {
-                    log::warn!(
-                        "sky texture slot {slot} asset '{}' is not a decodable PNG; using blank slot",
-                        path.display()
-                    );
-                    None
-                }
-            }
-        });
-        sky_texture_slots.push(loaded.unwrap_or_else(|| {
-            super::resources::create_solid_rgba_texture(
-                device,
-                queue,
-                [0, 0, 0, 0],
-                "blank sky texture",
-            )
-        }));
-    }
-    let mut sky_texture_entries = Vec::with_capacity(super::shader_pack::SKY_TEXTURE_SLOTS * 2);
-    for (slot, (_, view, sampler)) in sky_texture_slots.iter().enumerate() {
-        sky_texture_entries.extend(texture_sampler_bind_entries(
-            (slot * 2) as u32,
-            view,
-            sampler,
-        ));
-    }
-    let sky_texture_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("sky texture bg"),
-        layout: &sky_texture_bgl,
-        entries: &sky_texture_entries,
-    });
+    let sky_texture_bind = create_shader_texture_bind(
+        device,
+        queue,
+        &sky_texture_bgl,
+        "sky",
+        sky_texture_paths,
+    );
     let sky_layout = pipeline_layout(device, "sky layout", &[&sky_bgl, &sky_texture_bgl]);
     let sky_targets = color_target(
         format,
@@ -1073,6 +1094,161 @@ fn create_sky_pipeline(
     }
 }
 
+/// One pack-supplied environment (volumetric) pass, minus its depth-coupled
+/// group-0 bind: the frame depth view is recreated on resize, so the bind is
+/// built by [`create_environment_bind`] at construction AND on every scene-
+/// target rebuild.
+pub(super) struct EnvPassResources {
+    pub pipe: wgpu::RenderPipeline,
+    pub bgl: wgpu::BindGroupLayout,
+    /// This pass's own 16-slot params buffer, filled per frame from its
+    /// declared param keys (each pass has an independent key list).
+    pub params_buf: wgpu::Buffer,
+    pub texture_bind: wgpu::BindGroup,
+    pub param_keys: Vec<String>,
+}
+
+/// The group-0 bind of an environment pass: frame uniforms, the pass's own
+/// shader params, and the frame DEPTH as a sampled texture (the pass attaches
+/// no depth, so sampling it is legal — volumetrics occlude themselves against
+/// scene depth per fragment).
+pub(super) fn create_environment_bind(
+    device: &wgpu::Device,
+    bgl: &wgpu::BindGroupLayout,
+    uniform_buf: &wgpu::Buffer,
+    params_buf: &wgpu::Buffer,
+    depth_view: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("environment bg"),
+        layout: bgl,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: params_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(depth_view),
+            },
+        ],
+    })
+}
+
+/// Pack `environment` rows → composed full-screen volumetric pipelines, in
+/// pack load order. Shader ABI: `vs_env` emits a fullscreen triangle,
+/// `fs_env` returns PREMULTIPLIED rgba blended over the scene; group 0 =
+/// Uniforms (b0) + ShaderParams (b1) + frame depth (b2, `texture_depth_2d`,
+/// read with `textureLoad`); group 1 = the four fixed texture slots. A row
+/// whose WGSL fails validation is SKIPPED with one warning — there is no
+/// builtin fallback (a missing volumetric is safe; a missing sky is not).
+fn create_environment_pipelines(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+) -> Vec<EnvPassResources> {
+    let specs = super::shader_pack::environment_shaders();
+    if specs.is_empty() {
+        return Vec::new();
+    }
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("environment bgl"),
+        entries: &[
+            uniform_entry(
+                0,
+                wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                std::mem::size_of::<Uniforms>() as u64,
+            ),
+            uniform_entry(
+                1,
+                wgpu::ShaderStages::FRAGMENT,
+                std::mem::size_of::<ShaderParams>() as u64,
+            ),
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ],
+    });
+    let mut texture_bgl_entries = Vec::with_capacity(super::shader_pack::SKY_TEXTURE_SLOTS * 2);
+    for slot in 0..super::shader_pack::SKY_TEXTURE_SLOTS {
+        texture_bgl_entries.extend(texture_sampler_layout_entries(
+            (slot * 2) as u32,
+            wgpu::TextureViewDimension::D2,
+        ));
+    }
+    let texture_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("environment texture bgl"),
+        entries: &texture_bgl_entries,
+    });
+    let layout = pipeline_layout(device, "environment layout", &[&bgl, &texture_bgl]);
+    // Premultiplied output: a volumetric emits (radiance * alpha, alpha) and
+    // composes over the scene without double-multiplying its own coverage.
+    let targets = color_target(
+        format,
+        Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+        wgpu::ColorWrites::ALL,
+    );
+    let mut passes = Vec::with_capacity(specs.len());
+    for spec in specs {
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let module = shader_module(device, "pack environment shader", spec.source.clone());
+        let pipe = world_pipeline(
+            device,
+            "environment pipe",
+            &layout,
+            &module,
+            "vs_env",
+            "fs_env",
+            &[],
+            &targets,
+            wgpu::PrimitiveState::default(),
+            None,
+            sample_count,
+        );
+        if let Some(err) = pollster::block_on(device.pop_error_scope()) {
+            log::warn!(
+                "skipping pack environment shader {}: validation failed: {err}",
+                spec.path.display()
+            );
+            continue;
+        }
+        log::info!("using pack environment shader {}", spec.path.display());
+        let params_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("environment shader params"),
+            size: std::mem::size_of::<ShaderParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let texture_bind = create_shader_texture_bind(
+            device,
+            queue,
+            &texture_bgl,
+            "environment",
+            &spec.textures,
+        );
+        passes.push(EnvPassResources {
+            pipe,
+            bgl: bgl.clone(),
+            params_buf,
+            texture_bind,
+            param_keys: spec.params,
+        });
+    }
+    passes
+}
+
 /// Full-screen colour-grade pipeline (`grade.wgsl`): one texture binding (the
 /// offscreen scene target, read with `textureLoad` — no sampler), no vertex
 /// buffers, no depth. Draws AFTER the world's hand pass and BEFORE the
@@ -1087,9 +1263,15 @@ fn create_grade_pipeline(
         "grade shader",
         include_str!("../shaders/grade.wgsl"),
     );
-    // Filterable texture: the grade pass bilinearly upscales when the scene
-    // renders below swapchain resolution (render_scale).
-    let bgl = texture_sampler_bgl(device, "grade bgl", wgpu::TextureViewDimension::D2);
+    // Filterable texture (the grade pass bilinearly upscales when the scene
+    // renders below swapchain resolution) + the mod-mood uniform vec4.
+    let mut entries =
+        texture_sampler_layout_entries(0, wgpu::TextureViewDimension::D2).to_vec();
+    entries.push(uniform_entry(2, wgpu::ShaderStages::FRAGMENT, 16));
+    let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("grade bgl"),
+        entries: &entries,
+    });
     let layout = pipeline_layout(device, "grade layout", &[&bgl]);
     let grade_targets = color_target(format, None, wgpu::ColorWrites::ALL);
     let pipe = world_pipeline(
@@ -1114,6 +1296,7 @@ pub(super) fn create_grade_bind(
     device: &wgpu::Device,
     bgl: &wgpu::BindGroupLayout,
     scene_view: &wgpu::TextureView,
+    mood_buf: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("grade sampler"),
@@ -1123,10 +1306,15 @@ pub(super) fn create_grade_bind(
         min_filter: wgpu::FilterMode::Linear,
         ..Default::default()
     });
+    let mut entries = texture_sampler_bind_entries(0, scene_view, &sampler).to_vec();
+    entries.push(wgpu::BindGroupEntry {
+        binding: 2,
+        resource: mood_buf.as_entire_binding(),
+    });
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("grade bind"),
         layout: bgl,
-        entries: &texture_sampler_bind_entries(0, scene_view, &sampler),
+        entries: &entries,
     })
 }
 

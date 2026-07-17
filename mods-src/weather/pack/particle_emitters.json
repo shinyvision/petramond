@@ -1,0 +1,136 @@
+{
+  "emitters": [
+    {
+      "emitter": "weather:rain",
+      "ambient": {
+        "count_per_intensity": 1800,
+        "max_count": 2600,
+        "radius": 22,
+        "height": [
+          5,
+          18
+        ],
+        "fall_speed": [
+          17,
+          23
+        ],
+        "drift_wind": 1.0,
+        "size": [
+          0.028,
+          0.045
+        ],
+        "stretch": 8.0,
+        "alpha": [
+          0.32,
+          0.55
+        ],
+        "color": [
+          [
+            0.58,
+            0.65,
+            0.78
+          ],
+          [
+            0.72,
+            0.79,
+            0.9
+          ]
+        ],
+        "hit": {
+          "burst": "weather:rain_splash"
+        },
+        "exclude_biomes": [
+          "snowy_plains",
+          "snowy_tundra",
+          "snowy_taiga",
+          "snowy_peaks",
+          "snowy_slopes"
+        ]
+      }
+    },
+    {
+      "emitter": "weather:snow",
+      "ambient": {
+        "count_per_intensity": 1000,
+        "max_count": 1600,
+        "radius": 24,
+        "height": [
+          5,
+          16
+        ],
+        "fall_speed": [
+          1.6,
+          3.2
+        ],
+        "drift_wind": 0.55,
+        "flutter": [
+          0.8,
+          0.35
+        ],
+        "size": [
+          0.06,
+          0.1
+        ],
+        "alpha": [
+          0.75,
+          0.95
+        ],
+        "color": [
+          [
+            0.92,
+            0.94,
+            0.98
+          ],
+          [
+            1.0,
+            1.0,
+            1.0
+          ]
+        ],
+        "biomes": [
+          "snowy_plains",
+          "snowy_tundra",
+          "snowy_taiga",
+          "snowy_peaks",
+          "snowy_slopes"
+        ]
+      }
+    },
+    {
+      "emitter": "weather:rain_splash",
+      "burst": {
+        "count_per_intensity": 3.0,
+        "max_count": 8,
+        "up_speed": [
+          0.9,
+          1.9
+        ],
+        "radial_speed": [
+          0.4,
+          1.2
+        ],
+        "lifetime": [
+          0.18,
+          0.3
+        ],
+        "size": [
+          0.03,
+          0.05
+        ],
+        "color": [
+          [
+            0.6,
+            0.68,
+            0.82
+          ],
+          [
+            0.78,
+            0.85,
+            0.95
+          ]
+        ],
+        "color_bias": 1.6
+      }
+    }
+  ]
+}

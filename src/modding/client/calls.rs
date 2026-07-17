@@ -44,6 +44,11 @@ const CLIENT_COMMAND_MAX: usize = 64;
 const CLIENT_CANVAS_SIDE_MAX: u16 = 2048;
 const CLIENT_CANVAS_MAX: usize = 8;
 const CLIENT_CANVAS_ELEMENT_MAX: usize = 64;
+/// Named shader params one `ClientEnvParams` call may read (the GPU slot
+/// budget — no shader can consume more anyway).
+const CLIENT_ENV_PARAM_MAX: usize = 16;
+/// Largest per-axis ambient wind magnitude, blocks/s.
+const CLIENT_AMBIENT_WIND_MAX: f32 = 64.0;
 
 /// Whether a `client_wasm` instance may issue this call.
 ///
@@ -74,7 +79,12 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::ClientStorageGetMany { .. }
         | HostCall::ClientStorageSetMany { .. }
         | HostCall::ClientStorageReadBegin { .. }
-        | HostCall::ClientStorageReadPoll { .. } => true,
+        | HostCall::ClientStorageReadPoll { .. }
+        | HostCall::ClientEnvParams { .. }
+        | HostCall::ClientBiomeAt { .. }
+        | HostCall::ClientAmbientSet { .. }
+        | HostCall::ClientLoopSet { .. }
+        | HostCall::ClientMoodSet { .. } => true,
         // Simulation, registration, and registry surfaces: server-side only.
         HostCall::CurrentTick
         | HostCall::RegisterTickSystem { .. }
@@ -147,7 +157,10 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::MobRiders { .. }
         | HostCall::ConsumeHeld { .. }
         | HostCall::PlayerInput { .. }
-        | HostCall::EmitterBurst { .. } => false,
+        | HostCall::EmitterBurst { .. }
+        | HostCall::BiomeAt { .. }
+        | HostCall::SurfaceYAt { .. }
+        | HostCall::Players => false,
     }
 }
 
@@ -241,6 +254,69 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 action_id,
             });
             HostRet::Unit
+        }
+        HostCall::ClientEnvParams { keys } => {
+            if keys.len() > CLIENT_ENV_PARAM_MAX {
+                return HostRet::Error(format!(
+                    "ClientEnvParams key count {} exceeds {CLIENT_ENV_PARAM_MAX}",
+                    keys.len()
+                ));
+            }
+            client_scope::with_active(|world| {
+                let params = world.environment().shader_params().clone();
+                HostRet::EnvParams(keys.iter().map(|k| params.get(k).copied()).collect())
+            })
+            .unwrap_or_else(|| HostRet::Error("no client replica is active".into()))
+        }
+        HostCall::ClientBiomeAt { pos } => client_scope::with_active(|world| {
+            HostRet::MaybeByte(world.biome_at_world(pos[0], pos[1]))
+        })
+        .unwrap_or_else(|| HostRet::Error("no client replica is active".into())),
+        HostCall::ClientAmbientSet {
+            key,
+            intensity,
+            wind,
+        } => {
+            if !intensity.is_finite()
+                || !wind
+                    .iter()
+                    .all(|w| w.is_finite() && w.abs() <= CLIENT_AMBIENT_WIND_MAX)
+            {
+                return HostRet::Error(
+                    "ClientAmbientSet: intensity and wind must be finite (|wind| ≤ 64)".into(),
+                );
+            }
+            // Unknown keys and non-ambient bundles are forgiving `false`
+            // (a disabled pack's bundle is not a protocol break).
+            let Some(bundle) = crate::particle_emitters::by_key(&key) else {
+                return HostRet::Bool(false);
+            };
+            if bundle.ambient.is_none() {
+                return HostRet::Bool(false);
+            }
+            client
+                .ambient_sets
+                .insert(bundle.id, (intensity.clamp(0.0, 1.0), wind));
+            HostRet::Bool(true)
+        }
+        HostCall::ClientLoopSet { key, gain } => {
+            if !gain.is_finite() {
+                return HostRet::Error("ClientLoopSet: gain must be finite".into());
+            }
+            let Some(sound) = crate::audio::sound_by_name(&key) else {
+                return HostRet::Bool(false);
+            };
+            client.sound_loops.insert(sound, gain.clamp(0.0, 4.0));
+            HostRet::Bool(true)
+        }
+        HostCall::ClientMoodSet { darken, desaturate } => {
+            if !darken.is_finite() || !desaturate.is_finite() {
+                return HostRet::Error("ClientMoodSet: values must be finite".into());
+            }
+            // The clamp IS the safety contract: no mod can black the screen
+            // out; it can only be moody about it.
+            client.mood = [darken.clamp(0.0, 0.5), desaturate.clamp(0.0, 0.5)];
+            HostRet::Bool(true)
         }
         HostCall::ClientSurfaceColumns { queries } => {
             if queries.len() > CLIENT_SURFACE_QUERY_MAX {
@@ -658,6 +734,124 @@ mod tests {
     use mod_api::{HostCall, HostRet, RuntimeSide};
 
     use crate::modding::host::{handle_host_call, ModStoreData};
+
+    fn client_data(tag: &str) -> ModStoreData {
+        ModStoreData::new_for_side(
+            "weathertest",
+            7,
+            RuntimeSide::Client,
+            Some(std::env::temp_dir().join(format!("petramond-client-calls-{tag}"))),
+        )
+    }
+
+    /// The weather-era client calls: unknown keys are FORGIVING `false`
+    /// (a disabled pack is not a protocol break), malformed values are hard
+    /// errors, and the env-param read is capped at the GPU slot budget.
+    #[test]
+    fn weather_era_client_calls_validate_and_forgive() {
+        let mut data = client_data("weather-era");
+        // Unknown bundle key / unknown sound key: forgiving false.
+        assert_eq!(
+            handle_host_call(
+                &mut data,
+                HostCall::ClientAmbientSet {
+                    key: "nope:rain".into(),
+                    intensity: 1.0,
+                    wind: [0.0, 0.0],
+                },
+            ),
+            HostRet::Bool(false)
+        );
+        // A real bundle that is NOT ambient (the engine water splash burst):
+        // also forgiving false.
+        assert_eq!(
+            handle_host_call(
+                &mut data,
+                HostCall::ClientAmbientSet {
+                    key: crate::particle_emitters::WATER_SPLASH_KEY.into(),
+                    intensity: 1.0,
+                    wind: [0.0, 0.0],
+                },
+            ),
+            HostRet::Bool(false)
+        );
+        assert_eq!(
+            handle_host_call(
+                &mut data,
+                HostCall::ClientLoopSet {
+                    key: "nope:loop".into(),
+                    gain: 1.0,
+                },
+            ),
+            HostRet::Bool(false)
+        );
+        // Non-finite / out-of-envelope values are hard errors.
+        for bad in [
+            HostCall::ClientAmbientSet {
+                key: "m:x".into(),
+                intensity: f32::NAN,
+                wind: [0.0, 0.0],
+            },
+            HostCall::ClientAmbientSet {
+                key: "m:x".into(),
+                intensity: 1.0,
+                wind: [65.0, 0.0],
+            },
+            HostCall::ClientLoopSet {
+                key: "m:x".into(),
+                gain: f32::INFINITY,
+            },
+            HostCall::ClientMoodSet {
+                darken: f32::NAN,
+                desaturate: 0.0,
+            },
+        ] {
+            let ret = handle_host_call(&mut data, bad.clone());
+            assert!(
+                matches!(ret, HostRet::Error(_)),
+                "malformed values must be a hard error: {bad:?} -> {ret:?}"
+            );
+        }
+        // The mood clamps into its subtle envelope and always succeeds.
+        assert_eq!(
+            handle_host_call(
+                &mut data,
+                HostCall::ClientMoodSet {
+                    darken: 9.0,
+                    desaturate: -3.0,
+                },
+            ),
+            HostRet::Bool(true)
+        );
+        assert_eq!(data.client.as_ref().unwrap().mood, [0.5, 0.0]);
+        // Env-param reads cap at the 16-slot GPU budget.
+        assert!(matches!(
+            handle_host_call(
+                &mut data,
+                HostCall::ClientEnvParams {
+                    keys: (0..17).map(|i| format!("m:k{i}")).collect(),
+                },
+            ),
+            HostRet::Error(_)
+        ));
+    }
+
+    /// The weather-era SERVER calls are rejected on a client instance by the
+    /// capability gate, like every sim-facing call.
+    #[test]
+    fn weather_era_server_calls_stay_server_side() {
+        let mut data = client_data("server-side");
+        for call in [
+            HostCall::BiomeAt { pos: [0, 0] },
+            HostCall::SurfaceYAt { pos: [0, 0] },
+            HostCall::Players,
+        ] {
+            assert!(
+                matches!(handle_host_call(&mut data, call), HostRet::Error(_)),
+                "sim queries must be rejected on client instances"
+            );
+        }
+    }
 
     #[test]
     fn client_instances_are_capability_isolated_and_namespace_their_state() {

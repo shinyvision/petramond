@@ -185,6 +185,12 @@ impl ParticleSystem {
         self.count_scale = scale.clamp(0.0, 1.0);
     }
 
+    /// The particles graphics option's density (0 = off, 0.5 = reduced,
+    /// 1 = full) — ambient volumes scale by the same knob.
+    pub fn count_scale(&self) -> f32 {
+        self.count_scale
+    }
+
     /// Apply the particles-option multiplier to a spawn count. Full keeps
     /// `count`, reduced halves it (rounding up so small effects survive), off
     /// silences the spawn entirely.

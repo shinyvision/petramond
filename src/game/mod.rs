@@ -30,6 +30,7 @@
 //! third-person pose) reads `self.player`. The LOCAL player is always
 //! session 0 server-side.
 
+pub(crate) mod ambient;
 pub(crate) mod body_pose;
 mod client_mods;
 mod client_presentation;

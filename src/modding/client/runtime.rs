@@ -334,6 +334,58 @@ impl ClientModRuntime {
         })
     }
 
+    /// Push every mod's current ambient-volume targets into `drives`
+    /// (per-(mod, bundle) keyed — two mods driving one bundle stay
+    /// independent). The drives ease and derive; this only syncs targets.
+    pub(crate) fn sync_ambient_targets(&self, drives: &mut crate::game::ambient::AmbientDrives) {
+        for m in &self.mods {
+            // A disabled (trapped/watchdogged) mod must not freeze its last
+            // weather on for the rest of the session: zero its targets so
+            // the drives ease out and retire (mirrors `take_commands`).
+            let disabled = m.instance.disabled();
+            let Some(data) = m.instance.client_data() else {
+                continue;
+            };
+            for (&bundle, &(intensity, wind)) in &data.ambient_sets {
+                let intensity = if disabled { 0.0 } else { intensity };
+                drives.set(&m.id, bundle, intensity, wind);
+            }
+        }
+    }
+
+    /// Every mod's looping-sound gains: `(sound, gain)`, mods in load order.
+    /// The audio side keys its loop table on the resolved sound, so two mods
+    /// driving one sound key resolve last-writer-wins there. Disabled mods
+    /// contribute nothing — their loops sweep to silence.
+    pub(crate) fn sound_loops(&self, out: &mut Vec<(crate::audio::Sound, f32)>) {
+        out.clear();
+        for m in &self.mods {
+            if m.instance.disabled() {
+                continue;
+            }
+            let Some(data) = m.instance.client_data() else {
+                continue;
+            };
+            out.extend(data.sound_loops.iter().map(|(&s, &g)| (s, g)));
+        }
+    }
+
+    /// The combined post-process mood: component-wise MAX over enabled mods
+    /// (disabled mods contribute nothing — their mood dies with them).
+    pub(crate) fn mood(&self) -> [f32; 2] {
+        let mut mood = [0.0f32, 0.0];
+        for m in &self.mods {
+            if m.instance.disabled() {
+                continue;
+            }
+            if let Some(data) = m.instance.client_data() {
+                mood[0] = mood[0].max(data.mood[0]);
+                mood[1] = mood[1].max(data.mood[1]);
+            }
+        }
+        mood
+    }
+
     pub(crate) fn take_commands(&mut self) -> Vec<ClientCommand> {
         let mut out = Vec::new();
         for loaded in &mut self.mods {

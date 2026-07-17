@@ -138,6 +138,18 @@ pub struct PlayerSnapshot {
     pub spectator: bool,
 }
 
+/// One entry of [`HostCall::Players`]: a connected player's session id plus
+/// their state snapshot.
+///
+/// [`HostCall::Players`]: crate::HostCall::Players
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct PlayerListEntry {
+    /// The session's player id — the value per-player calls
+    /// (`PlayerInput`, `MobMount`) address.
+    pub id: u8,
+    pub state: PlayerSnapshot,
+}
+
 /// One core-selected candidate for programmatic hostile spawning. The engine
 /// owns physical site selection; registered hostile spawners decide whether a
 /// specific hostile species admits this site.

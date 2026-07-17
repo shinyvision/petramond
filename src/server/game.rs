@@ -156,6 +156,11 @@ impl ServerGame {
     pub(crate) fn add_session_for_test(&mut self, player: crate::player::Player) -> usize {
         let id = crate::server::player::PlayerId(self.sessions.len() as u8);
         let radius = self.world.render_dist;
+        // A fresh session must receive the CURRENT env params even when the
+        // map is static (a frozen clock freezes day/night AND weather params;
+        // without this reseed a late joiner would render a default sky until
+        // anything changed).
+        self.last_shipped_env = None;
         self.sessions.push(ConnectedPlayer::new(
             id,
             format!("Player{}", id.0),

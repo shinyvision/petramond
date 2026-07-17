@@ -46,6 +46,22 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 })
             }
         },
+        // Biomes are column-level data fixed at generation (saved overlays
+        // never change them), so a loaded-column read cannot lie: no
+        // stream-final gate needed.
+        HostCall::BiomeAt { pos } => sim_query(move |ctx| {
+            HostRet::MaybeByte(ctx.world.biome_at_world(pos[0], pos[1]))
+        }),
+        // The SURFACE can lie mid-stream (the generated base shows where a
+        // saved overlay is about to land), so the found footing must be
+        // stream-final like every block read — else a mod builds on terrain
+        // the player's save is about to replace.
+        HostCall::SurfaceYAt { pos } => sim_query(move |ctx| {
+            let y = ctx.world.surface_collision_y(pos[0], pos[1]).filter(|&y| {
+                ctx.world.block_if_stream_final(pos[0], y, pos[1]).is_some()
+            });
+            HostRet::MaybeI32(y)
+        }),
         // Mod reads report None ("unloaded") while a section's streamed
         // content is not final — a half-streamed read would show the
         // generated base where the player's saved record is about to land.

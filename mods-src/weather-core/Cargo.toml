@@ -1,0 +1,6 @@
+[package]
+name = "weather-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared closed-form weather field: periodic wind-advected coverage noise evaluated identically by the weather mod's server and client sides. clouds.wgsl in the weather pack is this crate's visual twin."
+license = "MIT"

@@ -272,6 +272,11 @@ pub struct World {
     /// published by the server before the tick stages so the `PlayerInput`
     /// HostCall can answer from the world. Replaced wholesale each tick.
     pub(super) player_inputs: Vec<crate::player::PlayerInputSnapshot>,
+    /// Every connected player's state snapshot this tick (see
+    /// [`crate::player::PlayerRosterSnapshot`]) — published beside the
+    /// inputs; the read model behind the `Players` HostCall. Replaced
+    /// wholesale each tick.
+    pub(super) player_roster: Vec<crate::player::PlayerRosterSnapshot>,
     /// Behavior hooks fired on mod-behavior blocks this tick (see
     /// `block::behavior::wasm`), in fire order. Drained by the game right
     /// after the world tick and dispatched to the owning mods; only blocks
@@ -387,6 +392,7 @@ impl World {
             mobs: Mobs::new(seed as u64),
             riding: Default::default(),
             player_inputs: Vec::new(),
+            player_roster: Vec::new(),
             mod_block_hooks: Vec::new(),
             stream_events: Vec::new(),
             stream_events_enabled: false,
@@ -447,6 +453,17 @@ impl World {
     /// The published input snapshot for `player`, if connected this tick.
     pub fn player_input(&self, player: u8) -> Option<crate::player::PlayerInputSnapshot> {
         self.player_inputs.iter().find(|i| i.id == player).copied()
+    }
+
+    /// Replace the published per-player roster for this tick (see
+    /// [`crate::player::PlayerRosterSnapshot`]).
+    pub fn set_player_roster(&mut self, roster: Vec<crate::player::PlayerRosterSnapshot>) {
+        self.player_roster = roster;
+    }
+
+    /// Every connected player's published snapshot this tick, session-id order.
+    pub fn player_roster(&self) -> &[crate::player::PlayerRosterSnapshot] {
+        &self.player_roster
     }
 
     #[inline]

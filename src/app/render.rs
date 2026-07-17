@@ -79,6 +79,9 @@ impl App {
             self.prev_heart_health = None;
             self.heart_wiggle = None;
             self.audio.clear_spatial();
+            // The mood eases back to the untouched image once no session
+            // exists (its owner died with the world).
+            renderer.set_mood([0.0, 0.0], dt);
             self.spatial_sound_commands.clear();
             self.spatial_mob_positions.clear();
             self.mob_sound_events.clear();
@@ -175,7 +178,9 @@ impl App {
         // Build the neutral read snapshot, then bake it into render wire structs.
         {
             let current_tick = game.current_tick();
-            let presentation = self.presentation.snapshot(game);
+            // The same hourly-wrapped clock `GameEnvironment::time` carries, so
+            // ambient volumes animate on the exact clock looping emitters do.
+            let presentation = self.presentation.snapshot(game, (now % 3600.0) as f32);
             renderer.set_break_overlays(presentation.break_overlays);
             self.spatial_mob_positions.clear();
             self.spatial_mob_positions.extend(
@@ -262,6 +267,11 @@ impl App {
             }
             self.audio
                 .update_spatial(listener, &self.spatial_mob_positions);
+            // Client-mod looping ambience (rain beds, wind): sync desired
+            // gains, ease audio-side.
+            game.client_mod_sound_loops(&mut self.mod_loop_scratch);
+            self.audio.update_mod_loops(&self.mod_loop_scratch, dt);
+            renderer.set_mood(game.client_mod_mood(), dt);
             // The hurt vignette envelope doubles as the body's red hurt flash.
             self.scene.bake(&presentation, shake.flash);
         }

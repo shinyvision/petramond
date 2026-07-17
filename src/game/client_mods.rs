@@ -107,4 +107,14 @@ impl Game {
     pub(crate) fn take_client_mod_commands(&mut self) -> Vec<crate::modding::ClientCommand> {
         self.client_mods.take_commands()
     }
+
+    /// Every client mod's desired looping-sound gains this frame.
+    pub(crate) fn client_mod_sound_loops(&self, out: &mut Vec<(crate::audio::Sound, f32)>) {
+        self.client_mods.sound_loops(out);
+    }
+
+    /// The combined client-mod post mood `[darken, desaturate]`.
+    pub(crate) fn client_mod_mood(&self) -> [f32; 2] {
+        self.client_mods.mood()
+    }
 }

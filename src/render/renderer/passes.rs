@@ -473,6 +473,29 @@ impl Renderer {
                 }
             }
         }
+        // ENVIRONMENT (VOLUMETRIC) PASSES: pack-supplied full-screen shaders
+        // (clouds, auroras, fog volumes), composed in pack load order. Drawn
+        // after ALL depth-writing world geometry so each shader can occlude
+        // itself per-fragment against the frame depth, which it SAMPLES
+        // (group 0 binding 2) — the pass attaches no depth, which is what
+        // makes sampling it legal. Water draws later and blends over them
+        // (a lake in front of a cloudy horizon); output is premultiplied.
+        if self.env_passes.iter().any(|env| !env.dormant) {
+            let mut pass = color_depth_pass(
+                enc,
+                view,
+                &self.depth,
+                "environment pass",
+                wgpu::LoadOp::Load,
+                None,
+            );
+            for env in self.env_passes.iter().filter(|env| !env.dormant) {
+                pass.set_pipeline(&env.res.pipe);
+                pass.set_bind_group(0, &env.bind, &[]);
+                pass.set_bind_group(1, &env.res.texture_bind, &[]);
+                pass.draw(0..3, 0..1);
+            }
+        }
         // BREAK-OVERLAY PASS: the destroy crack over the targeted block. Drawn
         // AFTER translucent blocks (the crack must sit on mined ice) but BEFORE
         // the transparent water pass — it is a decal on the block, so water must

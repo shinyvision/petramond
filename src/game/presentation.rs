@@ -102,6 +102,9 @@ pub(crate) struct ParticlePresentation {
     pub(crate) warm: u8,
     pub(crate) alpha: f32,
     pub(crate) size: f32,
+    /// Vertical cube elongation (1 = a cube; ambient rain streaks stretch).
+    /// Only the Solid atlas path honors it.
+    pub(crate) stretch: f32,
     pub(crate) skylight: u8,
     pub(crate) blocklight: u8,
 }
@@ -204,6 +207,9 @@ const MAX_BREAK_OVERLAYS: usize = 8;
 
 #[derive(Default)]
 pub(crate) struct GamePresentationScratch {
+    /// Ambient (precipitation) volume drives — presentation-owned state,
+    /// targets set from client mods each frame; see [`super::ambient`].
+    pub(crate) ambient: super::ambient::AmbientDrives,
     item_entities: Vec<DroppedItemPresentation>,
     particles: Vec<ParticlePresentation>,
     particle_emitter_rows: Vec<(Vec3, ParticleEmitter, u64, u8, u8)>,
@@ -222,10 +228,13 @@ impl GamePresentationScratch {
         Self::default()
     }
 
-    pub(crate) fn snapshot<'a>(&'a mut self, game: &Game) -> GamePresentation<'a> {
+    /// `now` is the app render clock — the same seconds looping emitters
+    /// animate on; the ambient volumes derive against it.
+    pub(crate) fn snapshot<'a>(&'a mut self, game: &Game, now: f32) -> GamePresentation<'a> {
         let tick_alpha = game.tick_alpha();
         self.collect_item_entities(game);
         self.collect_particles(game);
+        self.collect_ambient(game, now);
         self.collect_particle_emitters(game);
         self.collect_chests(game);
         self.collect_doors(game);
@@ -290,10 +299,26 @@ impl GamePresentationScratch {
                     warm: particle.warm,
                     alpha: particle.alpha(),
                     size: particle.render_size(),
+                    stretch: 1.0,
                     skylight: particle.skylight,
                     blocklight: particle.blocklight,
                 }
             }));
+    }
+
+    /// Sync ambient drive targets from the client-mod runtime, then append
+    /// this frame's derived precipitation rows to `particles` (they ride the
+    /// same Solid-atlas path as burst droplets). The particles graphics
+    /// option governs the derive like every other particle producer.
+    fn collect_ambient(&mut self, game: &Game, now: f32) {
+        game.client_mods.sync_ambient_targets(&mut self.ambient);
+        self.ambient.collect(
+            &game.replica,
+            game.listener_position(),
+            now,
+            game.particles.count_scale(),
+            &mut self.particles,
+        );
     }
 
     fn collect_particle_emitters(&mut self, game: &Game) {

@@ -21,6 +21,10 @@
 
 @group(0) @binding(0) var scene: texture_2d<f32>;
 @group(0) @binding(1) var scene_samp: sampler;
+// Mod-driven post mood: x = darken, y = desaturate (each 0..=0.5, eased
+// app-side). zw reserved. Pure post-process — light values never change,
+// so light-driven gameplay (mob spawning) is untouched by ANY mood.
+@group(0) @binding(2) var<uniform> mood: vec4<f32>;
 
 // Rec.709 luma weights.
 const GRADE_LUMA_W: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
@@ -76,5 +80,8 @@ fn fs_grade(in: VsOut) -> @location(0) vec4<f32> {
     c *= mix(GRADE_SHADOW_TINT, GRADE_HIGHLIGHT_TINT, tone);
     // Lifted blacks, applied last so the floor is absolute.
     c = c * (1.0 - GRADE_LIFT) + vec3<f32>(GRADE_LIFT);
+    // The mood sits ON the graded look: gray out, then dim.
+    c = mix(c, vec3<f32>(dot(c, GRADE_LUMA_W)), mood.y);
+    c *= 1.0 - mood.x;
     return vec4<f32>(c, 1.0);
 }

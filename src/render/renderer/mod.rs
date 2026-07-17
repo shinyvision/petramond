@@ -35,7 +35,7 @@ use super::item_entity::build_item_entities;
 use super::item_model::ItemVertex;
 use super::mob_model::build_mob_instances;
 use super::particles::{build_particles_split, build_transparent_emitter_particles};
-use super::pipeline::create_pipeline_resources;
+use super::pipeline::{create_pipeline_resources, EnvPassResources};
 use super::resources::{
     create_atlas, create_atlas_array, create_depth, create_gui_panel, create_model_texture,
     create_scene_color, upload_column_mesh, ColumnUploadScratch, GpuColumnMesh, GpuSectionMesh,
@@ -149,6 +149,19 @@ struct PlayerGpu {
     indices: Vec<u32>,
 }
 
+/// One pack environment (volumetric) pass: its pipeline resources plus the
+/// depth-coupled group-0 bind, rebuilt whenever the scene targets are (the
+/// bind references the frame depth view).
+struct EnvPass {
+    res: EnvPassResources,
+    bind: wgpu::BindGroup,
+    /// True while NONE of the pass's declared params are published (no
+    /// session, or the owning mod isn't running): the pass is skipped
+    /// entirely — a volumetric with no inputs must cost nothing. A pass
+    /// declaring zero params always draws (the author's explicit choice).
+    dormant: bool,
+}
+
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -165,6 +178,10 @@ pub struct Renderer {
     sky_texture_bind: wgpu::BindGroup,
     sky_shader_param_keys: Vec<String>,
     sky_light_param_key: Option<String>,
+    /// Pack-supplied environment (volumetric) passes in pack load order,
+    /// drawn full-screen after all depth-writing world geometry. Usually
+    /// empty (zero cost).
+    env_passes: Vec<EnvPass>,
     underwater: bool,
     /// Above-water fog band, derived from the streaming render distance
     /// (`uniforms::fog_range`) via [`Renderer::set_render_distance`] so the fade
@@ -194,6 +211,10 @@ pub struct Renderer {
     grade_pipe: wgpu::RenderPipeline,
     grade_bgl: wgpu::BindGroupLayout,
     grade_bind: wgpu::BindGroup,
+    /// Mod-mood uniform (grade pass binding 2): `[darken, desat, 0, 0]`.
+    mood_buf: wgpu::Buffer,
+    /// The eased mood the buffer currently holds.
+    mood: [f32; 2],
     /// Pipeline for the targeted-block wireframe (LineList, black, view_proj only).
     outline_pipe: wgpu::RenderPipeline,
     outline_bind: wgpu::BindGroup,

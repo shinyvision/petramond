@@ -68,6 +68,8 @@ pub struct App {
     world_sound_cues: Vec<(crate::audio::Sound, crate::mathh::Vec3)>,
     /// Client-owned idle sound scheduling per live mob session id.
     mob_sound_state: HashMap<u64, MobSoundState>,
+    /// Reused per-frame scratch for client-mod loop gains (rain/wind beds).
+    mod_loop_scratch: Vec<(crate::audio::Sound, f32)>,
     next_mob_sound_handle: u64,
     /// Client-side sound engine. Drains the sim's per-tick [`crate::audio::SoundEvent`]s
     /// each frame and plays them; never part of the deterministic simulation.
@@ -223,6 +225,7 @@ impl App {
             mob_sound_events: Vec::new(),
             world_sound_cues: Vec::new(),
             mob_sound_state: HashMap::new(),
+            mod_loop_scratch: Vec::new(),
             next_mob_sound_handle: MOB_SOUND_HANDLE_START,
             audio,
             last: now_seconds(),

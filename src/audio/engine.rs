@@ -94,6 +94,17 @@ pub struct Audio {
     loop_sound: Option<Sound>,
     loop_next: f64,
     spatial: HashMap<u64, ActiveSpatialSound>,
+    /// Gain-controlled continuous loops driven by client mods
+    /// (`ClientLoopSet`): resolved sound → its infinite sink + eased gain.
+    mod_loops: HashMap<Sound, ActiveModLoop>,
+}
+
+/// One continuous mod-driven loop: an infinite repeating sink whose volume
+/// eases toward the mod's requested gain (ambience must never pop).
+struct ActiveModLoop {
+    sink: rodio::Player,
+    gain: f32,
+    target: f32,
 }
 
 impl Audio {
@@ -153,6 +164,7 @@ impl Audio {
             loop_sound: None,
             loop_next: 0.0,
             spatial: HashMap::new(),
+            mod_loops: HashMap::new(),
         }
     }
 
@@ -198,6 +210,86 @@ impl Audio {
                     self.loop_next = now + MINING_REPEAT_INTERVAL;
                 }
             }
+        }
+    }
+
+    /// Sync the client-mod continuous loops to `desired` `(sound, gain)`
+    /// rows and ease every active loop's volume over `dt` seconds. A sound
+    /// absent from `desired` (or at gain 0) eases to silence and stops. The
+    /// clip repeats seamlessly (variant 0 — loop assets are single-variant);
+    /// mixer sliders apply live like every other sound.
+    pub fn update_mod_loops(&mut self, desired: &[(Sound, f32)], dt: f32) {
+        /// Seconds for a gain change to close ~63% of its gap.
+        const LOOP_EASE_SECONDS: f32 = 1.0;
+        /// Below this eased gain a silenced loop stops and is dropped.
+        const LOOP_DEAD_GAIN: f32 = 0.005;
+        let Some(sink) = self.sink.as_ref() else {
+            return;
+        };
+        for &(sound, gain) in desired {
+            let gain = gain.clamp(0.0, 4.0);
+            if let Some(active) = self.mod_loops.get_mut(&sound) {
+                active.target = gain;
+                continue;
+            }
+            if gain <= 0.0 {
+                continue;
+            }
+            let Some(buf) = self
+                .buffers
+                .get(sound.0 as usize)
+                .and_then(|variants| variants.first())
+            else {
+                continue;
+            };
+            let loop_sink = rodio::Player::connect_new(sink.mixer());
+            loop_sink.set_volume(0.0);
+            loop_sink.append(
+                SamplesBuffer::new(buf.channels, buf.sample_rate, buf.samples.clone())
+                    .repeat_infinite(),
+            );
+            self.mod_loops.insert(
+                sound,
+                ActiveModLoop {
+                    sink: loop_sink,
+                    gain: 0.0,
+                    target: gain,
+                },
+            );
+        }
+        // Any active loop no longer desired eases to silence.
+        for (sound, active) in self.mod_loops.iter_mut() {
+            if !desired.iter().any(|(s, _)| s == sound) {
+                active.target = 0.0;
+            }
+        }
+        let ease = 1.0 - (-dt.clamp(0.0, 0.25) / LOOP_EASE_SECONDS).exp();
+        let master = self.master_gain;
+        let sound_gain = self.sound_gain;
+        let music_gain = self.music_gain;
+        self.mod_loops.retain(|sound, active| {
+            active.gain += (active.target - active.gain) * ease;
+            if active.target <= 0.0 && active.gain < LOOP_DEAD_GAIN {
+                active.sink.stop();
+                return false;
+            }
+            let def = sound.def();
+            let group = match def.category {
+                SoundCategory::Music => music_gain,
+                _ => sound_gain,
+            };
+            active
+                .sink
+                .set_volume(master * group * def.gain * active.gain);
+            true
+        });
+    }
+
+    /// Stop every mod loop immediately (session teardown — no ease; the
+    /// world the loops belonged to is gone).
+    pub fn stop_mod_loops(&mut self) {
+        for (_, active) in self.mod_loops.drain() {
+            active.sink.stop();
         }
     }
 
@@ -470,6 +562,7 @@ mod tests {
             loop_sound: None,
             loop_next: 0.0,
             spatial: HashMap::new(),
+            mod_loops: HashMap::new(),
         }
     }
 

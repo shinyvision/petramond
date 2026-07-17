@@ -23,6 +23,8 @@ impl Audio {
     pub fn set_volumes(&mut self, _master: f32, _sound: f32, _music: f32) {}
 
     pub fn set_loop(&mut self, _sound: Option<Sound>, _now: f64) {}
+    pub fn update_mod_loops(&mut self, _desired: &[(Sound, f32)], _dt: f32) {}
+    pub fn stop_mod_loops(&mut self) {}
 
     pub fn play(&mut self, _sound: Sound) {}
 

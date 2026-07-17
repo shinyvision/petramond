@@ -1,0 +1,10 @@
+{
+  "environment": {
+    "shader": "shaders/clouds.wgsl",
+    "params": [
+      "weather:wind",
+      "weather:sky",
+      "weather:flux"
+    ]
+  }
+}

@@ -76,6 +76,18 @@ pub(in crate::modding) struct ClientStoreData {
     pub ui_state: Arc<BTreeMap<String, mod_api::GuiValue>>,
     pub images: BTreeMap<String, ClientImageData>,
     pub canvas_scenes: BTreeMap<String, ClientCanvasSceneData>,
+    /// Ambient particle-volume targets this mod drives: bundle id →
+    /// (intensity, wind). Read by the game's presentation each frame; the
+    /// engine eases intensity changes there. A zero-intensity entry stays (it
+    /// is the ease-out request); the map is bounded by the bundle catalog.
+    pub ambient_sets: BTreeMap<u8, (f32, [f32; 2])>,
+    /// Looping-sound gains this mod drives: resolved sound → gain. Read by
+    /// the app each frame; gain changes are eased audio-side. Zero-gain
+    /// entries stay (the ease-to-silence request); bounded by sounds.json.
+    pub sound_loops: BTreeMap<crate::audio::Sound, f32>,
+    /// This mod's post-process mood `[darken, desaturate]` (each `0..=0.5`).
+    /// Mods combine by max; eased app-side before it reaches the grade pass.
+    pub mood: [f32; 2],
     pub commands: Vec<ClientCommand>,
     pub(super) next_image_revision: u64,
 }
@@ -89,6 +101,9 @@ impl ClientStoreData {
             ui_state: Arc::new(BTreeMap::new()),
             images: BTreeMap::new(),
             canvas_scenes: BTreeMap::new(),
+            ambient_sets: BTreeMap::new(),
+            sound_loops: BTreeMap::new(),
+            mood: [0.0, 0.0],
             commands: Vec::new(),
             next_image_revision: 1,
         }

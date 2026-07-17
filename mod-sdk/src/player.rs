@@ -105,3 +105,10 @@ host_fn! {
             targets: targets.map(|ids| ids.to_vec()),
         } => Bool
 }
+
+host_fn! {
+    /// Every connected player this tick, in session-id order (single player =
+    /// one entry) — the multiplayer-aware roster for spawn/ambience/weather
+    /// policy. Address a specific player through the entry's `id`.
+    pub fn players() -> Vec<mod_api::PlayerListEntry> => Players => Players
+}

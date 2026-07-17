@@ -12,7 +12,7 @@ use crate::client::{
 use crate::data::{
     AiNodeCtx, AiNodeDecision, BlockHookKind, EffectStateData, GuiValue, HostileSpawnCandidate,
     ItemInfoData, ItemStackData, MobAnimStateData, MobRidersData, MobSnapshot, PlayerInputData,
-    PlayerSnapshot, RuntimeSide,
+    PlayerListEntry, PlayerSnapshot, RuntimeSide,
 };
 use crate::events::{EventKind, EventPayload, Outcome};
 use crate::ids::{BlockId, ItemId};
@@ -795,6 +795,72 @@ pub enum HostCall {
         pos: [f32; 3],
         yaw: f32,
     },
+    /// The loaded column's biome id at world `pos = [x, z]` (vocabulary:
+    /// [`crate::biome`]). `None` = column unloaded. → [`HostRet::MaybeByte`].
+    BiomeAt {
+        pos: [i32; 2],
+    },
+    /// The Y of the topmost movement-blocking block of the loaded column at
+    /// world `pos = [x, z]` — real footing; walk-through cover (tall grass,
+    /// snow layers, water) is skipped. `None` = unloaded, all-air column, or
+    /// the found footing is not yet STREAM-FINAL (retry later, like a block
+    /// read). Caveat: finality is checked at the found cell — a saved build
+    /// HIGHER in the column that has not streamed in yet is not visible to
+    /// this scan, so treat the answer as provisional during join streaming.
+    /// → [`HostRet::MaybeI32`].
+    SurfaceYAt {
+        pos: [i32; 2],
+    },
+    /// Every connected player this tick, in session-id order (single player =
+    /// one entry) — the multiplayer-aware "where is everyone" for spawn,
+    /// ambience, and weather policy. → [`HostRet::Players`].
+    Players,
+    /// CLIENT: read named shader params from the replica's replicated visual
+    /// environment (the state sim mods publish with
+    /// [`HostCall::ShaderSetParam`]) — how a client instance sees the same
+    /// values the renderer does. At most 16 keys per call; the reply is
+    /// parallel (`None` = param not present). → [`HostRet::EnvParams`].
+    ClientEnvParams {
+        keys: Vec<String>,
+    },
+    /// CLIENT: the replica column's biome id at world `pos = [x, z]`
+    /// (vocabulary: [`crate::biome`]). `None` = column unknown to the
+    /// replica. → [`HostRet::MaybeByte`].
+    ClientBiomeAt {
+        pos: [i32; 2],
+    },
+    /// CLIENT: drive an `ambient` particle bundle (a camera-following
+    /// precipitation/ambience volume from `particle_emitters.json`) at
+    /// `intensity` (clamped to `0..=1` — 1 is the bundle's full `max_count`
+    /// density; `0` retires it; the engine eases changes so weather never
+    /// pops) advected by `wind` (blocks/s). Per-client presentation only —
+    /// never simulated, never replicated. `false` = unknown key or not an
+    /// ambient bundle. → [`HostRet::Bool`].
+    ClientAmbientSet {
+        key: String,
+        intensity: f32,
+        wind: [f32; 2],
+    },
+    /// CLIENT: play this mod's looping sound `key` (a `sounds.json` key) at
+    /// `gain` (`0` stops it; the engine eases changes so ambience never
+    /// pops). Non-spatial, client-local. `false` = unknown sound key.
+    /// → [`HostRet::Bool`].
+    ClientLoopSet {
+        key: String,
+        gain: f32,
+    },
+    /// CLIENT: set this mod's post-process MOOD — a subtle whole-screen
+    /// `darken` and `desaturate` (each clamped to `0..=0.5`; deliberately
+    /// incapable of blacking out the screen) applied by the grade pass and
+    /// EASED engine-side, so weather/ambience moods breathe instead of
+    /// popping. Pure presentation: no light value changes, so light-driven
+    /// gameplay (mob spawning) is untouched. Multiple mods combine by MAX
+    /// per component. Rides the grade pass, so it is invisible in the
+    /// grade-off configuration. → [`HostRet::Bool`] (always `true`).
+    ClientMoodSet {
+        darken: f32,
+        desaturate: f32,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -854,6 +920,15 @@ pub enum HostRet {
     PlayerInput(Option<PlayerInputData>),
     /// [`HostCall::MobAnimState`]: `None` = missing/dead mob or inactive anim.
     MobAnimState(Option<MobAnimStateData>),
+    /// Byte-vocabulary answers (biome ids): `None` = unloaded/unknown.
+    MaybeByte(Option<u8>),
+    /// [`HostCall::SurfaceYAt`]: `None` = unloaded or all-air column.
+    MaybeI32(Option<i32>),
+    /// [`HostCall::Players`]: every connected player, session-id order.
+    Players(Vec<PlayerListEntry>),
+    /// [`HostCall::ClientEnvParams`], parallel to the request keys
+    /// (`None` = param not present in the environment).
+    EnvParams(Vec<Option<[f32; 4]>>),
 }
 
 /// One worldgen block write: `(world position, block)`. Applied by the engine

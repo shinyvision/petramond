@@ -28,11 +28,12 @@ const SAVE_DISMOUNT_RADIUS: i32 = 8;
 const SAVE_DISMOUNT_DY: [i32; 9] = [0, 1, -1, 2, -2, 3, -3, 4, -4];
 
 impl ServerGame {
-    /// Publish every session's movement intent for this tick on the world —
-    /// the read model behind the `PlayerInput` HostCall. Decomposed into the
-    /// player's own yaw frame with the client's exact wish basis (forward =
-    /// `(sin yaw, cos yaw)`, right = `(-cos yaw, sin yaw)`), gameplay-gated
-    /// like the intents `tick_movement` integrates.
+    /// Publish every session's movement intent AND state snapshot for this
+    /// tick on the world — the read models behind the `PlayerInput` and
+    /// `Players` HostCalls. Intents are decomposed into the player's own yaw
+    /// frame with the client's exact wish basis (forward = `(sin yaw, cos
+    /// yaw)`, right = `(-cos yaw, sin yaw)`), gameplay-gated like the intents
+    /// `tick_movement` integrates.
     pub(crate) fn publish_player_inputs(&mut self) {
         let inputs = self
             .sessions
@@ -58,6 +59,24 @@ impl ServerGame {
             })
             .collect();
         self.world.set_player_inputs(inputs);
+        // Session storage order changes with swap_remove joins/leaves; the
+        // roster SORTS by id so the ABI's "session-id order" stays true.
+        let mut roster: Vec<crate::player::PlayerRosterSnapshot> = self
+            .sessions
+            .iter()
+            .map(|sess| crate::player::PlayerRosterSnapshot {
+                id: sess.id.0,
+                pos: sess.player.pos.to_array(),
+                vel: sess.player.vel.to_array(),
+                yaw: sess.player.yaw,
+                pitch: sess.player.pitch,
+                health: sess.player.health(),
+                on_ground: sess.player.on_ground,
+                spectator: sess.player.is_spectator(),
+            })
+            .collect();
+        roster.sort_by_key(|p| p.id);
+        self.world.set_player_roster(roster);
     }
 
     /// The riding pass (see module docs). Order matters: valves first, then
