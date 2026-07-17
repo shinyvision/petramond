@@ -247,6 +247,20 @@ impl UiRuntime {
                 .position(|&c| tree.get(c).enabled && visible_at(c))
                 .map(|row| (i, row as u32))
         });
+        let tab_hover = hover.and_then(|i| match &tree.get(i).node.kind {
+            NodeKind::TabBar { tabs } => {
+                let widths = widget::tab_widths(&self.theme, tabs);
+                widget::tab_hit(
+                    solved.rects[i as usize],
+                    &widths,
+                    self.theme.metrics.tab_gap,
+                    cx,
+                    cy,
+                )
+                .map(|t| (i, t))
+            }
+            _ => None,
+        });
 
         // Paint: dim backdrop (physical fullscreen), then the tree.
         if let Some(color) = args.dim {
@@ -269,6 +283,7 @@ impl UiRuntime {
             hover,
             slot_hover,
             row_hover,
+            tab_hover,
             preview: args.preview,
         };
         ctx.paint(&mut Painter {

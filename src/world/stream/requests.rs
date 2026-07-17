@@ -278,15 +278,14 @@ impl World {
     /// Queue one column's gen job (or its column-gen cache read) and mark it
     /// pending. Shared by the single- and multi-anchor request scans.
     fn submit_column_job(&mut self, priority: i64, pos: ChunkPos) {
-        // "Optimize explored terrain": an explored column's 2D gen data
-        // loads from the column-gen cache instead of running the heavy
-        // noise job; a decode miss falls back to the worker (poll's cache
-        // drain resubmits). Both answers resolve the same `pending` entry.
-        let cached = self.optimize_explored_terrain
-            && self
-                .save
-                .as_ref()
-                .is_some_and(|s| s.colgen_manifest_contains(pos));
+        // An explored column's 2D gen data loads from the column-gen cache
+        // instead of running the heavy noise job; a decode miss falls back
+        // to the worker (poll's cache drain resubmits). Both answers resolve
+        // the same `pending` entry.
+        let cached = self
+            .save
+            .as_ref()
+            .is_some_and(|s| s.colgen_manifest_contains(pos));
         let job = if cached {
             if let Some(save) = self.save.as_ref() {
                 save.request_column_gen(pos, self.seed);
@@ -455,13 +454,12 @@ impl World {
     /// section's saved (player-modified) record if one exists — so the disk overlay
     /// lands after the generated base and wins (`apply_pending_overlays`).
     ///
-    /// With "Optimize explored terrain" on, a section that exists on disk skips the
-    /// gen job entirely: its record is a full section that would have replaced the
-    /// generated base anyway, so it installs as the PRIMARY content when the save
-    /// thread answers (`poll`), and generation runs only as the corrupt-record
-    /// fallback.
+    /// A section that exists on disk skips the gen job entirely: its record is a
+    /// full section that would have replaced the generated base anyway, so it
+    /// installs as the PRIMARY content when the save thread answers (`poll`), and
+    /// generation runs only as the corrupt-record fallback.
     fn submit_section_job(&mut self, key: i64, sp: SectionPos, col: Arc<ColumnGen>) {
-        let disk_primary = self.optimize_explored_terrain && self.saved_section_contains(sp);
+        let disk_primary = self.saved_section_contains(sp);
         if disk_primary {
             self.pending_sections.insert(sp);
             self.disk_primary_sections.insert(sp);

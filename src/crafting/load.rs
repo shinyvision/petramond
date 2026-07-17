@@ -453,25 +453,24 @@ mod tests {
     /// A pack-defined recipe reaches the same catalog/planner as engine data;
     /// its tag selector accepts an engine item without a WASM registration API.
     #[test]
-    fn wheel_mod_crafting_recipe_uses_the_engine_planner() {
-        let Some(root) = crate::modding::tests::stage_mods_fixture("wheel-recipe", &["wheel"])
+    fn pack_crafting_recipe_uses_the_engine_planner() {
+        let Some(root) = crate::modding::tests::stage_mods_fixture("boat-recipe", &["vehicles"])
         else {
             return;
         };
-        crate::modding::tests::run_child_test(&root, "crafting::load::tests::wheel_recipe_inner");
+        crate::modding::tests::run_child_test(&root, "crafting::load::tests::boat_recipe_inner");
     }
 
     #[test]
-    #[ignore = "spawned by wheel_mod_crafting_recipe_uses_the_engine_planner with a fixture pack env"]
-    fn wheel_recipe_inner() {
+    #[ignore = "spawned by pack_crafting_recipe_uses_the_engine_planner with a fixture pack env"]
+    fn boat_recipe_inner() {
         let recipes = load_recipes();
         let recipe = recipes
             .crafting()
-            .get("wheel:wheel_of_fortune")
+            .get("vehicles:boat")
             .expect("pack crafting recipe loaded");
         let mut inventory = crate::inventory::Inventory::new();
-        inventory.add(ItemStack::new(ItemType::Stick, 4));
-        inventory.add(ItemStack::new(ItemType::BirchLog, 1));
+        inventory.add(ItemStack::new(ItemType::BirchPlanks, 5));
         assert!(recipe.craftable_with(&inventory));
     }
 }

@@ -258,15 +258,10 @@ pub struct World {
     pub(super) sim: TickState,
     /// On-disk save handle (`None` if saving is disabled / failed to open).
     pub(super) save: Option<WorldSave>,
-    /// The world's "Optimize explored terrain" setting: persist EVERY explored
-    /// section (not just modified ones) plus the per-column gen cache, so
-    /// revisited terrain loads from disk instead of regenerating. Set once at
-    /// session open from `settings.json`; meaningless without a save.
-    pub(super) optimize_explored_terrain: bool,
-    /// Column-gen cache records awaiting a batched write ("Optimize explored
-    /// terrain"): buffered so the save thread merges many columns per region
-    /// file rewrite instead of read-modify-writing per column. Records are
-    /// pure gen data — a crash losing the buffer only costs a future regen.
+    /// Column-gen cache records awaiting a batched write: buffered so the
+    /// save thread merges many columns per region file rewrite instead of
+    /// read-modify-writing per column. Records are pure gen data — a crash
+    /// losing the buffer only costs a future regen.
     pub(super) pending_colgen_records: Vec<crate::save::colgen::ColumnGenRecord>,
     /// Active dropped item entities resting in currently-loaded sections.
     pub(super) dropped_items: DroppedItems,
@@ -395,7 +390,6 @@ impl World {
             light_edited_since_persist: FxHashSet::default(),
             sim: TickState::new(seed),
             save: None,
-            optimize_explored_terrain: false,
             pending_colgen_records: Vec::new(),
             dropped_items: DroppedItems::default(),
             mobs: Mobs::new(seed as u64),

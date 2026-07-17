@@ -147,6 +147,9 @@ pub struct App {
     /// The World Settings session for the selected world (`None` unless the
     /// screen is open): installed pack rows + the world's disabled set.
     world_settings: Option<shell::WorldSettingsSession>,
+    /// The Create World session (`None` unless the screen is open): installed
+    /// pack rows + the buffered settings the new world is created with.
+    create_world: Option<shell::CreateWorldSession>,
     /// The Connect to Server session: entry fields, the off-thread connect
     /// worker's channel, and the mods a refused join reported missing.
     connect: connect::ConnectSession,
@@ -257,6 +260,7 @@ impl App {
             worlds: Vec::new(),
             selected_world: None,
             world_settings: None,
+            create_world: None,
             connect: connect::ConnectSession::default(),
             lan_port: None,
             lan_error: None,

@@ -123,6 +123,12 @@ pub enum UiEvent {
         id: String,
         index: u32,
     },
+    /// A tab of a `tab_bar` was pressed (fires on pointer down). The host
+    /// rebinds `selected` to accept the change.
+    TabSelect {
+        id: String,
+        index: u32,
+    },
     /// An ordinary pointer activation on a slot cell. The host maps
     /// `(role, index)` to its own slot identity and latches it to the tick.
     SlotClick {

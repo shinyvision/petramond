@@ -17,6 +17,7 @@ mod create_world;
 mod death;
 mod delete_world;
 mod mods_missing;
+mod mods_tab;
 mod options;
 mod options_controls;
 mod options_graphics;
@@ -74,6 +75,13 @@ fn options_dim(app: &App) -> Option<[f32; 4]> {
     app.game.is_some().then_some(MENU_DIM)
 }
 
+/// Shared prepare for the screens whose Mods tab shows per-pack icons.
+fn pack_icon_prepare(app: &mut App) -> bool {
+    let icons = mods_tab::extra_images();
+    app.ui.set_extra_images(&icons);
+    true
+}
+
 /// Shared options-family chrome: the title flow shows the document's
 /// screenshot backdrop; over a live game the host dim does the work instead.
 fn populate_options_chrome(app: &App, state: &mut UiState) {
@@ -101,12 +109,9 @@ fn controller_for(kind: GuiKind) -> ShellController {
         GuiKind::Title => C::screen(title::populate, title::handle),
         GuiKind::WorldSelect => C::screen(world_select::populate, world_select::handle),
         GuiKind::WorldSettings => C::screen(world_settings::populate, world_settings::handle)
-            .with_prepare(|app| {
-                let icons = world_settings::extra_images(app);
-                app.ui.set_extra_images(&icons);
-                true
-            }),
-        GuiKind::CreateWorld => C::screen(create_world::populate, create_world::handle),
+            .with_prepare(pack_icon_prepare),
+        GuiKind::CreateWorld => C::screen(create_world::populate, create_world::handle)
+            .with_prepare(pack_icon_prepare),
         GuiKind::DeleteWorld => C::screen(delete_world::populate, delete_world::handle),
         GuiKind::ConnectServer => C::screen(connect_server::populate, connect_server::handle)
             .with_prepare(|app| {
@@ -168,7 +173,9 @@ fn with_state(app: &mut App, f: impl FnOnce(&App, &mut UiState)) {
 fn is_shell_activation(ev: &petramond_ui::UiEvent) -> bool {
     matches!(
         ev,
-        petramond_ui::UiEvent::Click { .. } | petramond_ui::UiEvent::Toggle { .. }
+        petramond_ui::UiEvent::Click { .. }
+            | petramond_ui::UiEvent::Toggle { .. }
+            | petramond_ui::UiEvent::TabSelect { .. }
     )
 }
 

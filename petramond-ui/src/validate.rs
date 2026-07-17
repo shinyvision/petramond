@@ -205,6 +205,30 @@ fn walk<'a>(
                 issue("label needs static 'text' or a 'text' binding".into());
             }
         }
+        NodeKind::TabBar { tabs } => {
+            if tabs.is_empty() {
+                issue("tab_bar needs at least one tab".into());
+            }
+            if node.bind.selected.is_none() {
+                issue("tab_bar needs a 'selected' binding".into());
+            }
+            let mut keys: HashSet<&str> = HashSet::new();
+            for (i, tab) in tabs.iter().enumerate() {
+                if tab.key.is_empty() {
+                    issue(format!("tab {i} has an empty key"));
+                } else if !keys.insert(tab.key.as_str()) {
+                    issue(format!("duplicate tab key '{}'", tab.key));
+                }
+                if tab.icon.is_none() && tab.label.as_deref().unwrap_or("").is_empty() {
+                    issue(format!("tab '{}' needs an icon or a label", tab.key));
+                }
+                if let (Some(styles), Some(icon)) = (styles, tab.icon.as_deref()) {
+                    if !styles.has_style(icon) {
+                        issue(format!("unknown icon part '{icon}'"));
+                    }
+                }
+            }
+        }
         NodeKind::Slider { min, max, step } => {
             if max <= min {
                 issue(format!("slider range is empty ({min}..{max})"));

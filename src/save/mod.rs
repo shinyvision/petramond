@@ -126,9 +126,6 @@ pub struct OpenedWorld {
     /// enabled). Already applied to the palette here; the session applies it
     /// to the mod host / recipes / spawner.
     pub disabled_mods: std::collections::BTreeSet<String>,
-    /// The world's "Optimize explored terrain" setting (`settings.json`):
-    /// persist all explored terrain + the column-gen cache for faster loads.
-    pub optimize_explored_terrain: bool,
 }
 
 impl WorldSave {
@@ -390,7 +387,6 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     // is read BEFORE the palette so disabled-mod content decodes as unknown.
     let world_settings = settings::load(&dir);
     let disabled_mods = world_settings.disabled_mods;
-    let optimize_explored_terrain = world_settings.optimize_explored_terrain;
 
     // Pin (or load) the save's block/item name palette BEFORE any record is
     // read or written: the codec maps every id through it (see `palette`).
@@ -549,6 +545,5 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
         },
         level,
         disabled_mods,
-        optimize_explored_terrain,
     })
 }

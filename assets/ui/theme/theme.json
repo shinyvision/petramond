@@ -798,6 +798,83 @@
         12,
         12
       ]
+    },
+    "icon.tab_world": {
+      "rect": [
+        32,
+        144,
+        16,
+        16
+      ]
+    },
+    "icon.tab_mods": {
+      "rect": [
+        48,
+        144,
+        16,
+        16
+      ]
+    },
+    "tab": {
+      "states": {
+        "default": {
+          "rect": [
+            95,
+            0,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "hover": {
+          "rect": [
+            128,
+            0,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "selected": {
+          "rect": [
+            161,
+            0,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        },
+        "disabled": {
+          "rect": [
+            194,
+            0,
+            32,
+            20
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
+          ]
+        }
+      },
+      "label_color": "text"
     }
   },
   "metrics": {
@@ -809,6 +886,8 @@
     "scrollbar_w": 8,
     "slider_w": 64,
     "input_w": 64,
-    "badge_pad": 4
+    "badge_pad": 4,
+    "tab_h": 22,
+    "tab_gap": 2
   }
 }

@@ -318,6 +318,19 @@ impl Interact<'_> {
                     }
                     self.blur_editor(fs);
                 }
+                NodeKind::TabBar { tabs } if inst.enabled => {
+                    let widths = widget::tab_widths(self.theme, tabs);
+                    if let (Some(key), Some(index)) = (
+                        self.key_of(i),
+                        widget::tab_hit(rect, &widths, self.theme.metrics.tab_gap, x, y),
+                    ) {
+                        events.push(UiEvent::TabSelect {
+                            id: key.id.clone(),
+                            index,
+                        });
+                    }
+                    self.blur_editor(fs);
+                }
                 _ => {}
             }
             return;

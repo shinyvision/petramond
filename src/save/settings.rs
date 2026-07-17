@@ -6,6 +6,9 @@
 //! consulted once at world open (`save::open_at` / `Game::new`); editing it
 //! for a world that is not open takes effect on the next open (no live
 //! reload). Serialization is deterministic: a `BTreeSet` encodes sorted.
+//! Unknown fields are ignored, so files written by retired knobs (the old
+//! `optimize_explored_terrain` toggle — explored terrain always persists now)
+//! keep loading.
 //!
 //! Ids of packs that are no longer installed stay in the set untouched, so
 //! reinstalling a mod does not silently re-enable it.
@@ -15,30 +18,11 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorldSettings {
     /// Mod pack ids disabled for this world. Everything else is enabled.
     #[serde(default)]
     pub disabled_mods: BTreeSet<String>,
-    /// "Optimize explored terrain": persist every generated section (and a
-    /// per-column gen cache) so revisited terrain loads from disk instead of
-    /// regenerating. Trades save-directory size for load speed; explored
-    /// terrain no longer picks up worldgen changes. Default ON.
-    #[serde(default = "default_true")]
-    pub optimize_explored_terrain: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-impl Default for WorldSettings {
-    fn default() -> Self {
-        Self {
-            disabled_mods: BTreeSet::new(),
-            optimize_explored_terrain: true,
-        }
-    }
 }
 
 /// Read the world's settings. Absent file = defaults (all mods enabled); an
@@ -82,13 +66,11 @@ mod tests {
         assert_eq!(load(&dir), WorldSettings::default());
         assert!(load(&dir).disabled_mods.is_empty());
 
-        // Roundtrip, with deterministic (sorted) serialization. The terrain
-        // flag rides along OFF to prove a non-default value persists.
+        // Roundtrip, with deterministic (sorted) serialization.
         let settings = WorldSettings {
             disabled_mods: ["zeta".to_owned(), "alpha".to_owned()]
                 .into_iter()
                 .collect(),
-            optimize_explored_terrain: false,
         };
         store(&dir, &settings).expect("settings write");
         assert_eq!(load(&dir), settings);
@@ -99,9 +81,13 @@ mod tests {
             "encoding is sorted (deterministic): {text}"
         );
 
-        // A pre-flag settings file (field absent) defaults the flag ON.
-        std::fs::write(dir.join("settings.json"), br#"{ "disabled_mods": [] }"#).unwrap();
-        assert!(load(&dir).optimize_explored_terrain);
+        // A file written by a retired knob (unknown field) still loads.
+        std::fs::write(
+            dir.join("settings.json"),
+            br#"{ "disabled_mods": ["alpha"], "optimize_explored_terrain": false }"#,
+        )
+        .unwrap();
+        assert!(load(&dir).disabled_mods.contains("alpha"));
 
         // A corrupt file degrades to defaults instead of blocking the open.
         std::fs::write(dir.join("settings.json"), b"{ nope").unwrap();

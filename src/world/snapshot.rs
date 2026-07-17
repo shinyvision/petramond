@@ -10,12 +10,6 @@ use crate::save::{SectionSnapshot, WorldSave};
 use super::store::{World, WorldRole};
 
 impl World {
-    /// Install the world's "Optimize explored terrain" setting — once, at
-    /// session open (like [`set_disabled_mods`](Self::set_disabled_mods)).
-    pub fn set_optimize_explored_terrain(&mut self, on: bool) {
-        self.optimize_explored_terrain = on;
-    }
-
     /// Attach an on-disk save: enables section persistence (load-from-disk in the
     /// streamer and flush-on-evict) and gives `Game` a handle for level/entities.
     /// Never on a replica — the server owns persistence; a replica persisting its
@@ -36,12 +30,10 @@ impl World {
         self.save.as_mut()
     }
 
-    /// Whether an authoritative record exists, or an explored cache record is
-    /// active under this world's optimization setting.
+    /// Whether an authoritative record or an explored cache record exists.
     pub(super) fn saved_section_contains(&self, pos: SectionPos) -> bool {
         self.save.as_ref().is_some_and(|save| {
-            save.authoritative_manifest_contains(pos)
-                || (self.optimize_explored_terrain && save.explored_manifest_contains(pos))
+            save.authoritative_manifest_contains(pos) || save.explored_manifest_contains(pos)
         })
     }
 
@@ -80,10 +72,7 @@ impl World {
             .save
             .as_ref()
             .is_some_and(|s| s.explored_manifest_contains(pos));
-        let explored_first_persist = self.optimize_explored_terrain
-            && light_final
-            && !authoritative_exists
-            && !explored_exists;
+        let explored_first_persist = light_final && !authoritative_exists && !explored_exists;
         // A record already on disk whose light rebaked since it was written
         // (a lightless neighbour landed at the explored boundary, or an edit's
         // spill) rewrites, or its saved cubes diverge from its neighbours'.

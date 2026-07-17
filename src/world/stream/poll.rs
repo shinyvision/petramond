@@ -61,11 +61,10 @@ impl World {
                 }
             }
         }
-        if self.optimize_explored_terrain
-            && self
-                .save
-                .as_ref()
-                .is_some_and(|s| !s.colgen_manifest_contains(pos))
+        if self
+            .save
+            .as_ref()
+            .is_some_and(|s| !s.colgen_manifest_contains(pos))
         {
             self.pending_colgen_records
                 .push(col.cache_record(self.seed));

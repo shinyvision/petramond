@@ -83,9 +83,17 @@
      "type": "str",
      "doc": "live rename input text (mirrored from the editor)"
     },
-    "optimize_terrain": {
+    "tab_sel": {
+     "type": "i32",
+     "doc": "active tab index (0 = World, 1 = Mods)"
+    },
+    "tab_world": {
      "type": "bool",
-     "doc": "the world's \"Optimize explored terrain\" setting (persist explored terrain for faster loads)"
+     "doc": "World tab page visibility"
+    },
+    "tab_mods": {
+     "type": "bool",
+     "doc": "Mods tab page visibility"
     }
    },
    "handles": {
@@ -93,11 +101,11 @@
     "mod_on": "toggle (per row): enable/disable that pack for this world",
     "back": "click: back to world select",
     "delete_world": "click: open the delete confirmation",
-    "keys": "Up/Down move, Enter toggles selected, Delete opens delete confirmation",
+    "keys": "Left/Right switch tabs, Up/Down move (Mods tab), Enter toggles selected (Mods tab), Delete opens delete confirmation",
     "rename": "click: open the inline rename editor (pencil)",
     "rename_input": "text_input: new world name; Enter applies",
     "rename_confirm": "click: apply the rename",
-    "optimize_terrain": "toggle: flip Optimize explored terrain for this world (writes settings.json; applies next open)"
+    "tabs": "tab select: switch between the World and Mods pages"
    }
   },
   "petramond:create_world": {
@@ -117,13 +125,52 @@
     "name_exists": {
      "type": "bool",
      "doc": "a world with this name already exists"
+    },
+    "tab_sel": {
+     "type": "i32",
+     "doc": "active tab index (0 = World, 1 = Mods)"
+    },
+    "tab_world": {
+     "type": "bool",
+     "doc": "World tab page visibility"
+    },
+    "tab_mods": {
+     "type": "bool",
+     "doc": "Mods tab page visibility"
+    },
+    "mod_rows": {
+     "type": "list",
+     "item": {
+      "name": "str",
+      "desc": "str",
+      "enabled": "bool",
+      "toggleable": "bool",
+      "content_only": "bool",
+      "icon": "str",
+      "has_icon": "bool",
+      "version": "str",
+      "has_version": "bool"
+     },
+     "doc": "one row per installed mod pack"
+    },
+    "mod_sel": {
+     "type": "i32",
+     "doc": "keyboard-selected row"
+    },
+    "no_mods": {
+     "type": "bool",
+     "doc": "true when no packs are installed"
     }
    },
    "handles": {
     "create_name": "text_input: world name; Enter submits",
     "create_seed": "text_input: seed (blank = random)",
     "create": "click: create + enter the world",
-    "cancel": "click: back to world select"
+    "cancel": "click: back to world select",
+    "tabs": "tab select: switch between the World and Mods pages",
+    "mods": "list select = keyboard selection",
+    "mod_on": "toggle (per row): enable/disable that pack for the new world (buffered; written as settings.json on Create)",
+    "keys": "Left/Right switch tabs, Up/Down move (Mods tab), Enter toggles selected (Mods tab)"
    }
   },
   "petramond:delete_world": {
@@ -191,16 +238,34 @@
   },
   "petramond:inventory": {
    "state": {
-    "craft_search": { "type": "str", "doc": "live result-name recipe filter" },
+    "craft_search": {
+     "type": "str",
+     "doc": "live result-name recipe filter"
+    },
     "craft_recipes": {
      "type": "list",
-     "item": { "name": "str", "enabled": "bool" },
+     "item": {
+      "name": "str",
+      "enabled": "bool"
+     },
      "doc": "inventory-tier recipes after search + craftable-only filtering, craftable rows first"
     },
-    "craft_recipe_sel": { "type": "i32", "doc": "selected filtered row; -1 = none" },
-    "can_craft": { "type": "bool", "doc": "selected recipe is affordable and the result still fits the output slot" },
-    "craft_filter_on": { "type": "bool", "doc": "craftable-only browser filter (persisted in the world's player data)" },
-    "no_craft_results": { "type": "bool", "doc": "search/filter has no matches" }
+    "craft_recipe_sel": {
+     "type": "i32",
+     "doc": "selected filtered row; -1 = none"
+    },
+    "can_craft": {
+     "type": "bool",
+     "doc": "selected recipe is affordable and the result still fits the output slot"
+    },
+    "craft_filter_on": {
+     "type": "bool",
+     "doc": "craftable-only browser filter (persisted in the world's player data)"
+    },
+    "no_craft_results": {
+     "type": "bool",
+     "doc": "search/filter has no matches"
+    }
    },
    "handles": {
     "craft_search": "text_input: filter recipes without firing gameplay bindings",
@@ -212,16 +277,34 @@
   },
   "petramond:crafting_table": {
    "state": {
-    "craft_search": { "type": "str", "doc": "live result-name recipe filter" },
+    "craft_search": {
+     "type": "str",
+     "doc": "live result-name recipe filter"
+    },
     "craft_recipes": {
      "type": "list",
-     "item": { "name": "str", "enabled": "bool" },
+     "item": {
+      "name": "str",
+      "enabled": "bool"
+     },
      "doc": "inventory- and table-tier recipes after search + craftable-only filtering, craftable rows first"
     },
-    "craft_recipe_sel": { "type": "i32", "doc": "selected filtered row; -1 = none" },
-    "can_craft": { "type": "bool", "doc": "selected recipe is affordable and the result still fits the output slot" },
-    "craft_filter_on": { "type": "bool", "doc": "craftable-only browser filter (persisted in the world's player data)" },
-    "no_craft_results": { "type": "bool", "doc": "search/filter has no matches" }
+    "craft_recipe_sel": {
+     "type": "i32",
+     "doc": "selected filtered row; -1 = none"
+    },
+    "can_craft": {
+     "type": "bool",
+     "doc": "selected recipe is affordable and the result still fits the output slot"
+    },
+    "craft_filter_on": {
+     "type": "bool",
+     "doc": "craftable-only browser filter (persisted in the world's player data)"
+    },
+    "no_craft_results": {
+     "type": "bool",
+     "doc": "search/filter has no matches"
+    }
    },
    "handles": {
     "craft_search": "text_input: filter recipes without firing gameplay bindings",
@@ -310,7 +393,7 @@
     },
     "connect_phase": {
      "type": "str",
-     "doc": "worker progress: \"Connecting…\" then \"Joining world…\""
+     "doc": "worker progress: \"Connecting\u2026\" then \"Joining world\u2026\""
     },
     "connecting": {
      "type": "bool",

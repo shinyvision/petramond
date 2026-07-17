@@ -79,6 +79,9 @@ pub struct Metrics {
     pub slider_w: i32,
     pub input_w: i32,
     pub badge_pad: i32,
+    /// Tab-bar cell height and gap between tab cells.
+    pub tab_h: i32,
+    pub tab_gap: i32,
 }
 
 impl Default for Metrics {
@@ -93,6 +96,8 @@ impl Default for Metrics {
             slider_w: 64,
             input_w: 64,
             badge_pad: 3,
+            tab_h: 20,
+            tab_gap: 2,
         }
     }
 }
@@ -300,6 +305,7 @@ pub fn default_style_key(kind: &NodeKind) -> Option<&'static str> {
             AlertLevel::Danger => "alert.danger",
         },
         NodeKind::Label { .. } => "label",
+        NodeKind::TabBar { .. } => "tab",
         _ => return None,
     })
 }
@@ -410,6 +416,11 @@ impl LayoutEnv for ThemeEnv<'_> {
                 let text_w = crate::text::width(text.unwrap_or(""));
                 let h = part_natural((0, crate::text::GLYPH_H + m.badge_pad * 2)).1;
                 (text_w + m.badge_pad * 2, h)
+            }
+            NodeKind::TabBar { tabs } => {
+                let widths = crate::widget::tab_widths(self.theme, tabs);
+                let gaps = m.tab_gap * (widths.len() as i32 - 1).max(0);
+                (widths.iter().sum::<i32>() + gaps, m.tab_h)
             }
             NodeKind::Alert { .. } => {
                 // Icon cell + text inside the frame insets; the text wraps
@@ -676,6 +687,20 @@ impl Theme {
                 ("default", [26, 34, 42, 255]),
                 ("hover", [38, 50, 62, 255]),
                 ("selected", [50, 70, 100, 255]),
+            ],
+        );
+        multi(
+            &mut atlas,
+            &mut parts,
+            "tab",
+            24,
+            20,
+            sl4,
+            &[
+                ("default", [34, 44, 54, 255]),
+                ("hover", [50, 64, 78, 255]),
+                ("selected", [24, 32, 40, 255]),
+                ("disabled", [36, 40, 44, 255]),
             ],
         );
         multi(

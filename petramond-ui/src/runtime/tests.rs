@@ -784,6 +784,169 @@ fn compound_button_faces_cover_normal_hover_pressed_selected_and_disabled() {
     assert_ne!(disabled, pressed, "disabled must override selected/hover");
 }
 
+fn tab_doc() -> Arc<Document> {
+    Arc::new(
+        Document::from_json(
+            r#"{
+                "format": 1, "kind": "petramond:tab_screen", "class": "screen",
+                "root": { "type": "column", "layout": { "w": 200, "h": 100, "pad": [10,10,10,10], "gap": 4 },
+                    "children": [
+                        { "type": "tab_bar", "id": "tabs",
+                          "tabs": [ { "key": "world", "label": "WORLD" },
+                                    { "key": "mods", "label": "MODS" } ],
+                          "bind": { "selected": "tab", "enabled": "tabs_on" } },
+                        { "type": "label", "text": "world page", "bind": { "visible": "page_world" } },
+                        { "type": "label", "text": "mods page", "bind": { "visible": "page_mods" } }
+                    ] }
+            }"#,
+        )
+        .unwrap(),
+    )
+}
+
+/// The physical center of tab cell `i` (the bar solves at scale 2).
+fn tab_center(out: &FrameOutput, theme: &Theme, doc: &Document, i: usize) -> (f32, f32) {
+    let phys = out.rect("tabs").unwrap();
+    let logical = RectI {
+        x: phys.x / 2,
+        y: phys.y / 2,
+        w: phys.w / 2,
+        h: phys.h / 2,
+    };
+    let NodeKind::TabBar { tabs } = &doc.root.children[0].kind else {
+        panic!("first child is the tab bar");
+    };
+    let widths = crate::widget::tab_widths(theme, tabs);
+    let cell = crate::widget::tab_cell(logical, &widths, theme.metrics.tab_gap, i);
+    (
+        (cell.x + cell.w / 2) as f32 * 2.0,
+        (cell.y + cell.h / 2) as f32 * 2.0,
+    )
+}
+
+#[test]
+fn tab_bar_fires_on_down_and_respects_enabled_and_gaps() {
+    let doc = tab_doc();
+    let theme = Arc::new(Theme::placeholder());
+    let rt = UiRuntime::new(doc.clone(), theme.clone());
+    let mut fs = FrameState::new();
+    let mut out = FrameOutput::default();
+    let mut state = UiState::new();
+    state.set("tab", UiValue::I32(0));
+    let mut frame = |state: &UiState, fs: &mut FrameState, out: &mut FrameOutput, input: &[InputEvent]| {
+        rt.frame(
+            FrameArgs {
+                screen: (400, 200),
+                scale: 2,
+                now: 0.0,
+                state,
+                input,
+                clipboard: None,
+                images: &NoImages,
+                dim: None,
+                preview: None,
+            },
+            fs,
+            out,
+        );
+        out.events.clone()
+    };
+
+    frame(&state, &mut fs, &mut out, &[]);
+    let (mx, my) = tab_center(&out, &theme, &doc, 1);
+
+    // Fires on pointer DOWN, before any release.
+    let ev = frame(&state, &mut fs, &mut out, &[down(mx, my)]);
+    assert_eq!(
+        ev,
+        vec![UiEvent::TabSelect {
+            id: "tabs".into(),
+            index: 1
+        }]
+    );
+    assert_eq!(frame(&state, &mut fs, &mut out, &[up(mx, my)]), vec![]);
+
+    // The gap between cells hits nothing.
+    let (wx, _) = tab_center(&out, &theme, &doc, 0);
+    let bar = out.rect("tabs").unwrap();
+    let NodeKind::TabBar { tabs } = &doc.root.children[0].kind else {
+        unreachable!()
+    };
+    let w0 = crate::widget::tab_widths(&theme, tabs)[0];
+    let gap_x = bar.x as f32 + (w0 as f32 + theme.metrics.tab_gap as f32 / 2.0) * 2.0;
+    let ev = frame(&state, &mut fs, &mut out, &[down(gap_x, my), up(gap_x, my)]);
+    assert_eq!(ev, vec![], "gap between tabs is inert (x={gap_x}, w0={w0})");
+    let _ = wx;
+
+    // A disabled bar fires nothing.
+    state.set("tabs_on", UiValue::Bool(false));
+    let ev = frame(&state, &mut fs, &mut out, &[down(mx, my), up(mx, my)]);
+    assert_eq!(ev, vec![]);
+}
+
+#[cfg(feature = "raster")]
+#[test]
+fn tab_faces_track_bound_selection_and_hover() {
+    use crate::raster::{rasterize, TextureSet};
+
+    let doc = tab_doc();
+    let theme = Arc::new(Theme::placeholder());
+    let sample = |selected: i32, hover_tab: Option<usize>| -> [u8; 4] {
+        let rt = UiRuntime::new(doc.clone(), theme.clone());
+        let mut fs = FrameState::new();
+        let mut out = FrameOutput::default();
+        let mut state = UiState::new();
+        state.set("tab", UiValue::I32(selected));
+        let mut run = |input: &[InputEvent], fs: &mut FrameState, out: &mut FrameOutput| {
+            rt.frame(
+                FrameArgs {
+                    screen: (400, 200),
+                    scale: 2,
+                    now: 0.0,
+                    state: &state,
+                    input,
+                    clipboard: None,
+                    images: &NoImages,
+                    dim: None,
+                    preview: None,
+                },
+                fs,
+                out,
+            );
+        };
+        run(&[], &mut fs, &mut out);
+        if let Some(t) = hover_tab {
+            let (hx, hy) = tab_center(&out, &theme, &doc, t);
+            run(&[InputEvent::PointerMove { x: hx, y: hy }], &mut fs, &mut out);
+        }
+        let mut rgba = Vec::new();
+        rasterize(
+            &out.draw,
+            &TextureSet {
+                theme_atlas: &theme.atlas,
+                font: &theme.font,
+                doc_images: &[],
+            },
+            (400, 200),
+            [0, 0, 0, 255],
+            &mut rgba,
+        );
+        // Sample inside tab 0's fill, clear of the border and the label rows.
+        let (cx, _) = tab_center(&out, &theme, &doc, 0);
+        let bar = out.rect("tabs").unwrap();
+        let (px, py) = (cx as u32, (bar.y + 10) as u32);
+        let i = ((py * 400 + px) * 4) as usize;
+        [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+    };
+
+    let default = sample(1, None);
+    let selected = sample(0, None);
+    let hovered = sample(1, Some(0));
+    assert_ne!(default, selected, "bound selection changes the tab face");
+    assert_ne!(default, hovered, "cell-level hover changes the tab face");
+    assert_ne!(selected, hovered);
+}
+
 #[test]
 fn draw_list_is_nonempty_and_batched() {
     let mut h = Harness::new();

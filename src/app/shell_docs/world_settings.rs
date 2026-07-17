@@ -1,32 +1,12 @@
-//! World Settings controller: per-world mod pack toggles (each writes
-//! `settings.json` immediately; applies on next world open), the relocated
-//! Delete World entry, and the header's inline world-rename editor.
+//! World Settings controller: a tabbed screen — the World tab (per-world
+//! options; currently empty) and the Mods tab (per-world pack toggles, each
+//! writing `settings.json` immediately; applies on next world open) — plus
+//! the header's inline world-rename editor and the shared Back/Delete footer.
 
+use super::mods_tab;
+use crate::app::shell::SettingsTab;
 use crate::app::{App, AppScreen};
-use petramond_ui::{NavKey, UiEvent, UiMap, UiState, UiValue};
-use std::path::PathBuf;
-use std::sync::Arc;
-
-/// Per-row pack icons for the document's `bind.image` — registered as extra
-/// images on the UI driver before `populate` runs.
-pub(super) fn extra_images(app: &App) -> Vec<(String, PathBuf)> {
-    let Some(session) = app.world_settings.as_ref() else {
-        return Vec::new();
-    };
-    session
-        .rows
-        .iter()
-        .zip(crate::assets::packs())
-        .filter_map(|(_, pack)| {
-            let icon = pack.icon.clone()?;
-            Some((icon_name(pack.id.as_deref(), &pack.name), icon))
-        })
-        .collect()
-}
-
-fn icon_name(id: Option<&str>, name: &str) -> String {
-    format!("pack_icon:{}", id.unwrap_or(name))
-}
+use petramond_ui::{NavKey, UiEvent, UiState, UiValue};
 
 pub(super) fn populate(app: &App, state: &mut UiState) {
     let Some(session) = app.world_settings.as_ref() else {
@@ -35,56 +15,22 @@ pub(super) fn populate(app: &App, state: &mut UiState) {
     state.set("world_name", UiValue::Str(session.world_name.clone()));
     state.set("renaming", UiValue::Bool(session.renaming));
     state.set("not_renaming", UiValue::Bool(!session.renaming));
-    state.set(
-        "optimize_terrain",
-        UiValue::Bool(session.settings.optimize_explored_terrain),
-    );
-    let rows: Vec<UiMap> = session
-        .rows
-        .iter()
-        .zip(crate::assets::packs())
-        .map(|(pack, asset)| {
-            let mut m = UiMap::new();
-            m.insert("name".into(), UiValue::Str(pack.name.clone()));
-            let version = pack.version.as_ref().map(|v| format!("v{v}"));
-            m.insert("has_version".into(), UiValue::Bool(version.is_some()));
-            m.insert("version".into(), UiValue::Str(version.unwrap_or_default()));
-            let desc = pack
-                .summary
-                .clone()
-                .unwrap_or_else(|| pack.description.clone());
-            m.insert("desc".into(), UiValue::Str(desc));
-            let toggleable = pack.id.is_some();
-            let enabled = match &pack.id {
-                Some(id) => !session.settings.disabled_mods.contains(id),
-                None => true,
-            };
-            m.insert("enabled".into(), UiValue::Bool(enabled));
-            m.insert("toggleable".into(), UiValue::Bool(toggleable));
-            m.insert("content_only".into(), UiValue::Bool(!toggleable));
-            m.insert("has_icon".into(), UiValue::Bool(asset.icon.is_some()));
-            m.insert(
-                "icon".into(),
-                UiValue::Str(icon_name(pack.id.as_deref(), &pack.name)),
-            );
-            m
-        })
-        .collect();
-    state.set("no_mods", UiValue::Bool(rows.is_empty()));
-    state.set("mod_rows", UiValue::List(Arc::new(rows)));
-    state.set("mod_sel", UiValue::I32(session.selected as i32));
+    mods_tab::populate_tabs(session.tab, state);
+    mods_tab::populate(&session.rows, &session.settings, session.selected, state);
 }
 
 pub(super) fn handle(app: &mut App, ev: UiEvent) {
     match ev {
+        UiEvent::TabSelect { id, index } if id == "tabs" => {
+            if let Some(session) = app.world_settings.as_mut() {
+                session.tab = SettingsTab::from_index(index);
+            }
+        }
         UiEvent::Toggle {
             id,
             item: Some(row),
             ..
         } if id == "mod_on" => app.toggle_world_settings_row(row as usize),
-        UiEvent::Toggle { id, .. } if id == "optimize_terrain" => {
-            app.toggle_optimize_explored_terrain();
-        }
         UiEvent::ListSelect { id, index } if id == "mods" => {
             if let Some(session) = app.world_settings.as_mut() {
                 session.selected = index as usize;
@@ -135,8 +81,18 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
                     session.renaming = false;
                 }
             }
+            NavKey::Left | NavKey::Right => {
+                if let Some(session) = app.world_settings.as_mut() {
+                    session.tab = match key {
+                        NavKey::Left => SettingsTab::World,
+                        _ => SettingsTab::Mods,
+                    };
+                }
+            }
             NavKey::Enter => {
-                if let Some(row) = app.world_settings.as_ref().map(|s| s.selected) {
+                if let Some((row, SettingsTab::Mods)) =
+                    app.world_settings.as_ref().map(|s| (s.selected, s.tab))
+                {
                     app.toggle_world_settings_row(row);
                 }
             }
@@ -178,9 +134,8 @@ fn move_selection(app: &mut App, step: i32) {
     let Some(session) = app.world_settings.as_mut() else {
         return;
     };
-    if session.rows.is_empty() {
+    if session.tab != SettingsTab::Mods {
         return;
     }
-    session.selected =
-        (session.selected as i32 + step).clamp(0, session.rows.len() as i32 - 1) as usize;
+    mods_tab::move_selection(&mut session.selected, session.rows.len(), step);
 }

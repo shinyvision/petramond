@@ -544,14 +544,16 @@ mod tests {
     }
 
     #[test]
-    fn mod_pack_documents_register_and_resolve_their_images() {
-        // The wheel pack ships ui/documents/wheel.gui.json with a rotimage +
-        // pointer image beside it; loading must register the namespaced kind
-        // and resolve both images (they feed TexId::DocImage by index).
-        let kind = crate::gui::intern_kind("wheel:wheel").expect("namespaced kind interns");
-        let doc = doc_for(kind).expect("wheel pack document loads");
-        assert_eq!(doc.doc.kind, "wheel:wheel");
-        assert_eq!(doc.images.len(), 2, "face + pointer resolve beside the doc");
+    fn documents_resolve_images_beside_the_document() {
+        // create_world references its screenshot backdrop (and pixel.png
+        // divider art elsewhere) relative to the document; loading must
+        // resolve referenced images into the document's image table (they
+        // feed TexId::DocImage by first-reference order).
+        let doc = doc_for(GuiKind::CreateWorld).expect("create_world document loads");
+        assert!(
+            !doc.images.is_empty(),
+            "the screenshot backdrop resolves beside the document"
+        );
     }
 
     #[test]

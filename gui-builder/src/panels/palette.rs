@@ -12,6 +12,7 @@ const PRESETS: &[(&str, &str)] = &[
     ("Labeled slider row", include_str!("../../assets/presets/labeled_slider.json")),
     ("Mod list row template", include_str!("../../assets/presets/mod_list.json")),
     ("Alert", include_str!("../../assets/presets/alert.json")),
+    ("Tab bar with pages", include_str!("../../assets/presets/tab_bar.json")),
 ];
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {

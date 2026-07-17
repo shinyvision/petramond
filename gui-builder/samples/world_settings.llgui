@@ -67,7 +67,7 @@
           "type": "frame",
           "layout": {
             "w": 320,
-            "h": 250,
+            "h": 260,
             "pad": [
               4,
               2,
@@ -90,9 +90,7 @@
             {
               "type": "row",
               "layout": {
-                "w": {
-                  "grow": 1
-                },
+                "w": "auto",
                 "h": "auto",
                 "pad": [
                   0,
@@ -261,41 +259,36 @@
               ]
             },
             {
-              "type": "image",
-              "image": "pixel.png",
-              "layout": {
-                "w": "auto",
-                "h": 1,
-                "pad": [
-                  0,
-                  0,
-                  0,
-                  0
-                ],
-                "margin": [
-                  0,
-                  2,
-                  0,
-                  2
-                ],
-                "gap": 0,
-                "dir": "column",
-                "justify": "start"
-              },
+              "id": "tabs",
+              "type": "tab_bar",
+              "tabs": [
+                {
+                  "key": "world",
+                  "icon": "icon.tab_world",
+                  "label": "World"
+                },
+                {
+                  "key": "mods",
+                  "icon": "icon.tab_mods",
+                  "label": "Mods"
+                }
+              ],
               "bind": {
-                "visible": "not_renaming"
+                "selected": "tab_sel"
               }
             },
             {
-              "type": "row",
+              "type": "frame",
               "layout": {
                 "w": "auto",
-                "h": "auto",
+                "h": {
+                  "grow": 1
+                },
                 "pad": [
-                  3,
-                  1,
-                  3,
-                  1
+                  0,
+                  0,
+                  0,
+                  0
                 ],
                 "margin": [
                   0,
@@ -303,52 +296,22 @@
                   0,
                   0
                 ],
-                "gap": 8,
+                "gap": 4,
                 "dir": "column",
-                "align": "center",
+                "align": "stretch",
                 "justify": "start"
+              },
+              "bind": {
+                "visible": "tab_world"
               },
               "children": [
                 {
-                  "type": "column",
-                  "layout": {
-                    "w": "auto",
-                    "h": "auto",
-                    "pad": [
-                      0,
-                      0,
-                      0,
-                      0
-                    ],
-                    "margin": [
-                      0,
-                      0,
-                      0,
-                      0
-                    ],
-                    "gap": 2,
-                    "dir": "column",
-                    "justify": "start"
-                  },
-                  "children": [
-                    {
-                      "type": "label",
-                      "text": "Optimize explored terrain"
-                    },
-                    {
-                      "type": "label",
-                      "text": "Saves explored terrain so it loads faster",
-                      "style": "label.muted"
-                    }
-                  ]
-                },
-                {
                   "type": "spacer",
                   "layout": {
-                    "w": {
+                    "w": "auto",
+                    "h": {
                       "grow": 1
                     },
-                    "h": "auto",
                     "pad": [
                       0,
                       0,
@@ -365,80 +328,21 @@
                     "dir": "column",
                     "justify": "start"
                   }
-                },
-                {
-                  "id": "optimize_terrain",
-                  "type": "toggle",
-                  "bind": {
-                    "value": "optimize_terrain"
-                  }
                 }
               ]
             },
             {
-              "type": "image",
-              "image": "pixel.png",
-              "layout": {
-                "w": "auto",
-                "h": 1,
-                "pad": [
-                  0,
-                  0,
-                  0,
-                  0
-                ],
-                "margin": [
-                  0,
-                  2,
-                  0,
-                  2
-                ],
-                "gap": 0,
-                "dir": "column",
-                "justify": "start"
-              }
-            },
-            {
-              "type": "label",
-              "text": "Mods",
-              "style": "label"
-            },
-            {
-              "type": "spacer",
-              "layout": {
-                "w": "auto",
-                "h": 1,
-                "pad": [
-                  0,
-                  0,
-                  0,
-                  0
-                ],
-                "margin": [
-                  0,
-                  0,
-                  0,
-                  0
-                ],
-                "gap": 0,
-                "dir": "column",
-                "justify": "start"
-              }
-            },
-            {
-              "id": "mod_scroll",
-              "type": "scroll",
-              "axis": "vertical",
+              "type": "frame",
               "layout": {
                 "w": "auto",
                 "h": {
                   "grow": 1
                 },
                 "pad": [
-                  1,
-                  1,
-                  1,
-                  1
+                  0,
+                  0,
+                  0,
+                  0
                 ],
                 "margin": [
                   0,
@@ -446,24 +350,29 @@
                   0,
                   0
                 ],
-                "gap": 0,
+                "gap": 4,
                 "dir": "column",
-                "justify": "start",
-                "min_h": 36
+                "align": "stretch",
+                "justify": "start"
               },
-              "style": "panel.inset",
+              "bind": {
+                "visible": "tab_mods"
+              },
               "children": [
                 {
-                  "id": "mods",
-                  "type": "list",
+                  "id": "mod_scroll",
+                  "type": "scroll",
+                  "axis": "vertical",
                   "layout": {
                     "w": "auto",
-                    "h": "auto",
+                    "h": {
+                      "grow": 1
+                    },
                     "pad": [
-                      0,
-                      0,
-                      0,
-                      0
+                      1,
+                      1,
+                      1,
+                      1
                     ],
                     "margin": [
                       0,
@@ -471,26 +380,24 @@
                       0,
                       0
                     ],
-                    "gap": 2,
+                    "gap": 0,
                     "dir": "column",
-                    "align": "stretch",
-                    "justify": "start"
+                    "justify": "start",
+                    "min_h": 36
                   },
-                  "bind": {
-                    "items": "mod_rows",
-                    "selected": "mod_sel"
-                  },
+                  "style": "panel.inset",
                   "children": [
                     {
-                      "type": "row",
+                      "id": "mods",
+                      "type": "list",
                       "layout": {
                         "w": "auto",
                         "h": "auto",
                         "pad": [
-                          3,
-                          1,
-                          3,
-                          1
+                          0,
+                          0,
+                          0,
+                          0
                         ],
                         "margin": [
                           0,
@@ -498,50 +405,26 @@
                           0,
                           0
                         ],
-                        "gap": 8,
+                        "gap": 2,
                         "dir": "column",
-                        "align": "center",
+                        "align": "stretch",
                         "justify": "start"
                       },
-                      "style": "list.row",
+                      "bind": {
+                        "items": "mod_rows",
+                        "selected": "mod_sel"
+                      },
                       "children": [
                         {
-                          "type": "image",
-                          "image": "",
-                          "layout": {
-                            "w": 16,
-                            "h": 16,
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          },
-                          "bind": {
-                            "visible": "has_icon",
-                            "image": "icon"
-                          }
-                        },
-                        {
-                          "type": "column",
+                          "type": "row",
                           "layout": {
                             "w": "auto",
                             "h": "auto",
                             "pad": [
-                              0,
-                              0,
-                              0,
-                              0
+                              3,
+                              1,
+                              3,
+                              1
                             ],
                             "margin": [
                               0,
@@ -549,13 +432,42 @@
                               0,
                               0
                             ],
-                            "gap": 2,
+                            "gap": 8,
                             "dir": "column",
+                            "align": "center",
                             "justify": "start"
                           },
+                          "style": "list.row",
                           "children": [
                             {
-                              "type": "row",
+                              "type": "image",
+                              "image": "",
+                              "layout": {
+                                "w": 16,
+                                "h": 16,
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              },
+                              "bind": {
+                                "visible": "has_icon",
+                                "image": "icon"
+                              }
+                            },
+                            {
+                              "type": "column",
                               "layout": {
                                 "w": "auto",
                                 "h": "auto",
@@ -571,115 +483,117 @@
                                   0,
                                   0
                                 ],
-                                "gap": 5,
+                                "gap": 2,
                                 "dir": "column",
-                                "align": "center",
                                 "justify": "start"
                               },
                               "children": [
                                 {
-                                  "type": "label",
-                                  "bind": {
-                                    "text": "name"
-                                  }
+                                  "type": "row",
+                                  "layout": {
+                                    "w": "auto",
+                                    "h": "auto",
+                                    "pad": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "margin": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "gap": 5,
+                                    "dir": "column",
+                                    "align": "center",
+                                    "justify": "start"
+                                  },
+                                  "children": [
+                                    {
+                                      "type": "label",
+                                      "bind": {
+                                        "text": "name"
+                                      }
+                                    },
+                                    {
+                                      "type": "badge",
+                                      "bind": {
+                                        "text": "version",
+                                        "visible": "has_version"
+                                      }
+                                    }
+                                  ]
                                 },
                                 {
-                                  "type": "badge",
+                                  "type": "label",
+                                  "style": "label.muted",
                                   "bind": {
-                                    "text": "version",
-                                    "visible": "has_version"
+                                    "text": "desc"
                                   }
                                 }
                               ]
                             },
                             {
-                              "type": "label",
-                              "style": "label.muted",
+                              "type": "spacer",
+                              "layout": {
+                                "w": {
+                                  "grow": 1
+                                },
+                                "h": "auto",
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              }
+                            },
+                            {
+                              "id": "mod_on",
+                              "type": "toggle",
                               "bind": {
-                                "text": "desc"
+                                "value": "enabled",
+                                "enabled": "toggleable",
+                                "visible": "toggleable"
+                              }
+                            },
+                            {
+                              "type": "badge",
+                              "text": "always on",
+                              "bind": {
+                                "visible": "content_only"
                               }
                             }
                           ]
-                        },
-                        {
-                          "type": "spacer",
-                          "layout": {
-                            "w": {
-                              "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "margin": [
-                              0,
-                              0,
-                              0,
-                              0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                          }
-                        },
-                        {
-                          "id": "mod_on",
-                          "type": "toggle",
-                          "bind": {
-                            "value": "enabled",
-                            "enabled": "toggleable",
-                            "visible": "toggleable"
-                          }
-                        },
-                        {
-                          "type": "badge",
-                          "text": "always on",
-                          "bind": {
-                            "visible": "content_only"
-                          }
                         }
                       ]
                     }
                   ]
+                },
+                {
+                  "type": "label",
+                  "text": "No mod packs installed",
+                  "bind": {
+                    "visible": "no_mods"
+                  }
+                },
+                {
+                  "type": "alert",
+                  "level": "info",
+                  "text": "Changes to mods will apply the next time you load this world."
                 }
               ]
-            },
-            {
-              "type": "label",
-              "text": "No mod packs installed",
-              "bind": {
-                "visible": "no_mods"
-              }
-            },
-            {
-              "type": "alert",
-              "level": "info",
-              "text": "Changes to mods will apply the next time you load this world."
-            },
-            {
-              "type": "spacer",
-              "layout": {
-                "w": "auto",
-                "h": 2,
-                "pad": [
-                  0,
-                  0,
-                  0,
-                  0
-                ],
-                "margin": [
-                  0,
-                  0,
-                  0,
-                  0
-                ],
-                "gap": 0,
-                "dir": "column",
-                "justify": "start"
-              }
             },
             {
               "type": "row",
@@ -885,13 +799,19 @@
       "not_renaming": {
         "bool": true
       },
-      "optimize_terrain": {
-        "bool": true
-      },
       "rename_text": {
         "str": "Sample text"
       },
       "renaming": {
+        "bool": true
+      },
+      "tab_mods": {
+        "bool": true
+      },
+      "tab_sel": {
+        "i32": 0
+      },
+      "tab_world": {
         "bool": true
       },
       "world_name": {

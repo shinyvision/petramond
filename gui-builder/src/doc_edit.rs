@@ -151,6 +151,12 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
         "gauge" => NodeKind::Gauge { mode: petramond_ui::GaugeMode::GrowLr },
         "badge" => NodeKind::Badge { text: Some("badge".into()) },
         "alert" => NodeKind::Alert { level: petramond_ui::AlertLevel::Info, text: Some("Alert text".into()) },
+        "tab_bar" => NodeKind::TabBar {
+            tabs: vec![
+                petramond_ui::TabSpec { key: "one".into(), icon: None, label: Some("One".into()) },
+                petramond_ui::TabSpec { key: "two".into(), icon: None, label: Some("Two".into()) },
+            ],
+        },
         "hook" => NodeKind::Hook,
         _ => return None,
     };
@@ -160,6 +166,9 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
     }
     if let NodeKind::Gauge { .. } | NodeKind::Rotimage { .. } = node.kind {
         node.bind.value = Some("value".into());
+    }
+    if let NodeKind::TabBar { .. } = node.kind {
+        node.bind.selected = Some("tab_sel".into());
     }
     if let NodeKind::List = node.kind {
         node.bind.items = Some("items".into());
@@ -175,8 +184,8 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
 /// Every insertable node type name, palette order.
 pub const NODE_TYPES: &[&str] = &[
     "frame", "row", "column", "spacer", "label", "image", "rotimage", "button", "checkbox",
-    "toggle", "slider", "text_input", "scroll", "list", "slot", "slot_grid", "gauge", "badge",
-    "alert", "hook",
+    "toggle", "slider", "text_input", "scroll", "list", "tab_bar", "slot", "slot_grid", "gauge",
+    "badge", "alert", "hook",
 ];
 
 /// Wrap the node at `path` in a fresh row/column container in place.

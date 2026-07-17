@@ -3,7 +3,7 @@
 //!
 //! Everything here is logical px and pure.
 
-use crate::doc::{NodeKind, ScrollAxis};
+use crate::doc::{NodeKind, ScrollAxis, TabSpec};
 use crate::layout::RectI;
 use crate::theme::Theme;
 use crate::tree::Inst;
@@ -25,7 +25,45 @@ pub(crate) fn pointer_target(inst: &Inst<'_>) -> bool {
             }
             | NodeKind::Slot { .. }
             | NodeKind::SlotGrid { .. }
+            | NodeKind::TabBar { .. }
     )
+}
+
+/// Per-tab widths of a tab bar: icon + label centred with button padding,
+/// like leaf buttons. The same widths feed hit-testing and paint.
+pub(crate) fn tab_widths(theme: &Theme, tabs: &[TabSpec]) -> Vec<i32> {
+    let pad = theme.metrics.button_pad;
+    tabs.iter()
+        .map(|tab| {
+            let icon_w = tab
+                .icon
+                .as_deref()
+                .and_then(|k| theme.part(k))
+                .map(|p| p.natural().0)
+                .unwrap_or(0);
+            let text_w = crate::text::width(tab.label.as_deref().unwrap_or(""));
+            let gap = if icon_w > 0 && text_w > 0 { 4 } else { 0 };
+            icon_w + gap + text_w + pad * 2
+        })
+        .collect()
+}
+
+/// The i-th tab cell of a bar arranged from `rect`'s top-left.
+pub(crate) fn tab_cell(rect: RectI, widths: &[i32], gap: i32, i: usize) -> RectI {
+    let x = rect.x + widths[..i].iter().map(|w| w + gap).sum::<i32>();
+    RectI {
+        x,
+        y: rect.y,
+        w: widths[i],
+        h: rect.h,
+    }
+}
+
+/// The tab index under `(x, y)`, if any.
+pub(crate) fn tab_hit(rect: RectI, widths: &[i32], gap: i32, x: f32, y: f32) -> Option<u32> {
+    (0..widths.len()).find_map(|i| {
+        contains_f(tab_cell(rect, widths, gap, i), x, y).then_some(i as u32)
+    })
 }
 
 /// Float point-in-rect over a logical rect (half-open, like `RectI`).

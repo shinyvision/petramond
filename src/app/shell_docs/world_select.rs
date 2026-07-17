@@ -44,7 +44,7 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
         }
         UiEvent::Click { id, .. } => match id.as_str() {
             "play" => app.play_selected_world(),
-            "create" => open_create(app),
+            "create" => app.open_create_world(),
             "settings" => app.open_world_settings(),
             "back" => {
                 app.screen = AppScreen::Title;
@@ -61,11 +61,6 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
         },
         _ => {}
     }
-}
-
-fn open_create(app: &mut App) {
-    app.screen = AppScreen::CreateWorld;
-    app.pointer.release_for_menu();
 }
 
 fn move_selection(app: &mut App, step: i32) {

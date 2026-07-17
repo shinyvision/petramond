@@ -31,7 +31,8 @@ mod widget;
 
 pub use doc::{
     AbsPos, AlertLevel, Align, Anchor, AnchorEdge, Bindings, Dir, DocClass, DocError, Document,
-    GaugeMode, ImageFit, Justify, LayoutProps, Node, NodeKind, ScrollAxis, Size, FORMAT_VERSION,
+    GaugeMode, ImageFit, Justify, LayoutProps, Node, NodeKind, ScrollAxis, Size, TabSpec,
+    FORMAT_VERSION,
 };
 pub use input::{
     FrameState, InputEvent, NavKey, PointerButton, PointerPhase, PreviewState, UiEvent,

@@ -19,6 +19,32 @@ pub(super) struct ModPackRow {
     pub(super) summary: Option<String>,
 }
 
+/// Which tab of the tabbed World Settings / Create World screens is active.
+/// Purely a shell UI concern; never persisted.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(super) enum SettingsTab {
+    #[default]
+    World,
+    Mods,
+}
+
+impl SettingsTab {
+    pub(super) fn index(self) -> i32 {
+        match self {
+            SettingsTab::World => 0,
+            SettingsTab::Mods => 1,
+        }
+    }
+
+    pub(super) fn from_index(index: u32) -> SettingsTab {
+        if index == 1 {
+            SettingsTab::Mods
+        } else {
+            SettingsTab::World
+        }
+    }
+}
+
 /// The open World Settings screen's state: which world, the installed pack
 /// rows, and the world's disabled set (mirrors `settings.json`; every toggle
 /// writes the file immediately).
@@ -30,6 +56,49 @@ pub(super) struct WorldSettingsSession {
     pub(super) selected: usize,
     /// The header's inline rename editor is open.
     pub(super) renaming: bool,
+    pub(super) tab: SettingsTab,
+}
+
+/// The open Create World screen's state: the installed pack rows and the
+/// settings the new world will be created with. Unlike World Settings there
+/// is no world yet — mod toggles buffer here and `settings.json` is written
+/// once on Create.
+pub(super) struct CreateWorldSession {
+    pub(super) rows: Vec<ModPackRow>,
+    pub(super) settings: crate::save::settings::WorldSettings,
+    pub(super) selected: usize,
+    pub(super) tab: SettingsTab,
+}
+
+/// One row per installed pack, in discovery order (parallel to
+/// `crate::assets::packs()` — the Mods-tab icon binding relies on that).
+fn pack_rows() -> Vec<ModPackRow> {
+    crate::assets::packs()
+        .iter()
+        .map(|p| ModPackRow {
+            name: p.name.clone(),
+            id: p.id.clone(),
+            version: p.version.clone(),
+            description: p.description.clone(),
+            summary: p.summary.clone(),
+        })
+        .collect()
+}
+
+/// Flip one pack row's enabled state in `settings`. Returns false for
+/// content-only packs (no id — always on) and out-of-range rows.
+pub(super) fn toggle_pack_row(
+    rows: &[ModPackRow],
+    settings: &mut crate::save::settings::WorldSettings,
+    row: usize,
+) -> bool {
+    let Some(Some(id)) = rows.get(row).map(|pack| pack.id.clone()) else {
+        return false;
+    };
+    if !settings.disabled_mods.remove(&id) {
+        settings.disabled_mods.insert(id);
+    }
+    true
 }
 
 impl App {
@@ -270,25 +339,28 @@ impl App {
         let Some(world) = self.selected_world.and_then(|index| self.worlds.get(index)) else {
             return;
         };
-        let rows = crate::assets::packs()
-            .iter()
-            .map(|p| ModPackRow {
-                name: p.name.clone(),
-                id: p.id.clone(),
-                version: p.version.clone(),
-                description: p.description.clone(),
-                summary: p.summary.clone(),
-            })
-            .collect();
         self.world_settings = Some(WorldSettingsSession {
             dir_name: world.dir_name.clone(),
             world_name: world.name.clone(),
-            rows,
+            rows: pack_rows(),
             settings: crate::save::read_world_settings(&world.dir_name),
             selected: 0,
             renaming: false,
+            tab: SettingsTab::World,
         });
         self.screen = AppScreen::WorldSettings;
+        self.pointer.release_for_menu();
+    }
+
+    /// Open the Create World screen with a fresh session (all mods enabled).
+    pub(super) fn open_create_world(&mut self) {
+        self.create_world = Some(CreateWorldSession {
+            rows: pack_rows(),
+            settings: crate::save::settings::WorldSettings::default(),
+            selected: 0,
+            tab: SettingsTab::World,
+        });
+        self.screen = AppScreen::CreateWorld;
         self.pointer.release_for_menu();
     }
 
@@ -300,15 +372,12 @@ impl App {
         let Some(session) = self.world_settings.as_mut() else {
             return;
         };
-        let Some(pack) = session.rows.get(row) else {
+        if session.rows.get(row).is_none() {
             return;
-        };
+        }
         session.selected = row;
-        let Some(id) = pack.id.clone() else {
+        if !toggle_pack_row(&session.rows, &mut session.settings, row) {
             return; // content-only packs are always on
-        };
-        if !session.settings.disabled_mods.remove(&id) {
-            session.settings.disabled_mods.insert(id);
         }
         if let Err(e) = crate::save::write_world_settings(&session.dir_name, &session.settings) {
             log::warn!(
@@ -318,20 +387,17 @@ impl App {
         }
     }
 
-    /// Flip the open World Settings world's "Optimize explored terrain" flag
-    /// and write `settings.json` immediately (like the mod toggles). Takes
-    /// effect the next time the world is OPENED — never live.
-    pub(super) fn toggle_optimize_explored_terrain(&mut self) {
-        let Some(session) = self.world_settings.as_mut() else {
+    /// Flip one pack's enabled state for the world being created. Buffered in
+    /// the session only; written as the new world's `settings.json` on Create.
+    pub(super) fn toggle_create_world_row(&mut self, row: usize) {
+        let Some(session) = self.create_world.as_mut() else {
             return;
         };
-        session.settings.optimize_explored_terrain = !session.settings.optimize_explored_terrain;
-        if let Err(e) = crate::save::write_world_settings(&session.dir_name, &session.settings) {
-            log::warn!(
-                "could not write settings.json for world '{}': {e}",
-                session.world_name
-            );
+        if session.rows.get(row).is_none() {
+            return;
         }
+        session.selected = row;
+        toggle_pack_row(&session.rows, &mut session.settings, row);
     }
 
     pub(super) fn delete_selected_world(&mut self) {

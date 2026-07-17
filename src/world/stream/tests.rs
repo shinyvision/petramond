@@ -593,17 +593,17 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// "Optimize explored terrain" end to end: a first visit persists every
+/// Explored-terrain persistence end to end: a first visit persists every
 /// explored section AND the column-gen cache on flush; a reload of the same
 /// area installs everything from disk — every stream event is `Loaded`,
 /// none `Generated` — with content identical to the first visit.
 #[cfg(feature = "worldgen-tests")]
 #[test]
-fn optimize_explored_terrain_reloads_from_disk_without_generating() {
+fn explored_terrain_reloads_from_disk_without_generating() {
     use std::time::Duration;
 
     let dir =
-        std::env::temp_dir().join(format!("petramond-optimize-terrain-{}", std::process::id()));
+        std::env::temp_dir().join(format!("petramond-explored-terrain-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
 
     let stream_settled = |world: &mut World| {
@@ -649,7 +649,6 @@ fn optimize_explored_terrain_reloads_from_disk_without_generating() {
     let opened = crate::save::open_at(dir.clone()).expect("open save");
     let mut world = World::new(0x51EED, 2);
     world.attach_save(opened.save);
-    world.set_optimize_explored_terrain(true);
     stream_settled(&mut world);
     assert!(light_settled(&mut world), "first-visit light bakes settle");
     let first_sections: Vec<SectionPos> = world.sections.keys().copied().collect();
@@ -664,7 +663,7 @@ fn optimize_explored_terrain_reloads_from_disk_without_generating() {
         for sp in &first_sections {
             assert!(
                 save.manifest_contains(*sp),
-                "explored section {sp:?} must persist with the flag on"
+                "explored section {sp:?} must persist"
             );
         }
         assert!(
@@ -678,7 +677,6 @@ fn optimize_explored_terrain_reloads_from_disk_without_generating() {
     let opened = crate::save::open_at(dir.clone()).expect("reopen save");
     let mut world = World::new(0x51EED, 2);
     world.attach_save(opened.save);
-    world.set_optimize_explored_terrain(true);
     world.set_stream_event_capture(true);
     stream_settled(&mut world);
 

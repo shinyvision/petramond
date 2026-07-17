@@ -7,12 +7,9 @@ use crate::app::App;
 use crate::bindings::{field_matches, BindField};
 use crate::doc_edit;
 use eframe::egui::{self, DragValue, Response, Ui};
-// NOTE: `ImageFit` isn't re-exported from the petramond_ui root (unlike its
-// sibling doc types) — pulled from `doc` directly; worth adding upstream.
-use petramond_ui::doc::ImageFit;
 use petramond_ui::{
-    AbsPos, Align, AlertLevel, Anchor, AnchorEdge, Dir, DocClass, GaugeMode, Justify, NodeKind,
-    ScrollAxis, Size,
+    AbsPos, Align, AlertLevel, Anchor, AnchorEdge, Dir, DocClass, GaugeMode, ImageFit, Justify,
+    LayoutProps, NodeKind, ScrollAxis, Size, TabSpec,
 };
 
 /// Catalog-fed options for the binding pickers: per-field global state keys
@@ -147,7 +144,37 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 
     egui::CollapsingHeader::new("Layout")
         .default_open(true)
-        .show(ui, |ui| layout_props(ui, &mut edited, &mut t, is_root));
+        .show(ui, |ui| {
+            let kind = edited.kind.clone();
+            layout_props(ui, &mut edited.layout, &kind, &mut t, is_root)
+        });
+
+    // The document-level breakpoint swaps in `compact_layout` wholesale — a
+    // COMPLETE replacement, so it starts as a copy of the normal layout.
+    egui::CollapsingHeader::new("Compact layout")
+        .default_open(edited.compact_layout.is_some())
+        .show(ui, |ui| {
+            if app.proj.document.compact_below_w.is_none() {
+                ui.label(
+                    egui::RichText::new(
+                        "Set the document's 'compact below' breakpoint (select the root) \
+                         for this to take effect.",
+                    )
+                    .weak()
+                    .small(),
+                );
+            }
+            let mut has = edited.compact_layout.is_some();
+            let r = ui.checkbox(&mut has, "override in compact form");
+            if r.changed() {
+                edited.compact_layout = has.then(|| Box::new(edited.layout.clone()));
+            }
+            t.hit(r);
+            if let Some(compact) = edited.compact_layout.as_deref_mut() {
+                let kind = edited.kind.clone();
+                layout_props(ui, compact, &kind, &mut t, is_root);
+            }
+        });
 
     egui::CollapsingHeader::new("Style")
         .default_open(true)
@@ -229,6 +256,7 @@ fn document_meta(app: &mut App, ui: &mut Ui) {
     ui.label(egui::RichText::new("Document").strong());
     let mut kind = app.proj.document.kind.clone();
     let mut class = app.proj.document.class;
+    let mut compact_below_w = app.proj.document.compact_below_w;
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label("kind");
@@ -247,10 +275,24 @@ fn document_meta(app: &mut App, ui: &mut Ui) {
             }
         }
     });
+    ui.horizontal(|ui| {
+        let mut has = compact_below_w.is_some();
+        let r = ui
+            .checkbox(&mut has, "compact below")
+            .on_hover_text("viewports narrower than this arrange by each node's compact layout");
+        if r.changed() {
+            compact_below_w = has.then_some(360);
+            changed = true;
+        }
+        if let Some(w) = &mut compact_below_w {
+            changed |= ui.add(DragValue::new(w).range(1..=4096).suffix(" px")).changed();
+        }
+    });
     if changed {
         app.mutate(|doc| {
             doc.kind = kind;
             doc.class = class;
+            doc.compact_below_w = compact_below_w;
         });
     }
 }
@@ -367,50 +409,53 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
             text_prop(ui, "text", text, t, focus);
             // Icon = a theme part key (e.g. `icon.edit`), drawn centred when
             // there's no label, else left of it.
-            ui.horizontal(|ui| {
-                ui.label("icon");
-                let current = icon.clone().unwrap_or_default();
-                let shown = if current.is_empty() { "(none)" } else { current.as_str() };
-                egui::ComboBox::from_id_salt("button_icon")
-                    .selected_text(shown)
-                    .width(150.0)
-                    .show_ui(ui, |ui| {
-                        if ui.selectable_label(current.is_empty(), "(none)").clicked() {
-                            *icon = None;
-                            t.changed = true;
-                        }
-                        for key in ctx.style_keys {
-                            if ui.selectable_label(current == *key, key).clicked() {
-                                *icon = Some(key.clone());
-                                t.changed = true;
-                            }
-                        }
-                    });
-            });
+            icon_pick(ui, "button_icon", icon, ctx.style_keys, t);
         }
         NodeKind::Toggle { icon } => {
             // Icon = a theme part key drawn centred on the toggle face
             // (on/off icon buttons like the craftable-only filter).
-            ui.horizontal(|ui| {
-                ui.label("icon");
-                let current = icon.clone().unwrap_or_default();
-                let shown = if current.is_empty() { "(none)" } else { current.as_str() };
-                egui::ComboBox::from_id_salt("toggle_icon")
-                    .selected_text(shown)
-                    .width(150.0)
-                    .show_ui(ui, |ui| {
-                        if ui.selectable_label(current.is_empty(), "(none)").clicked() {
-                            *icon = None;
-                            t.changed = true;
+            icon_pick(ui, "toggle_icon", icon, ctx.style_keys, t);
+        }
+        NodeKind::TabBar { tabs } => {
+            let mut remove: Option<usize> = None;
+            let mut swap: Option<usize> = None;
+            let last = tabs.len().saturating_sub(1);
+            for (i, tab) in tabs.iter_mut().enumerate() {
+                ui.push_id(("tab_spec", i), |ui| {
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(format!("tab {i}")).weak());
+                        if ui.small_button("↑").clicked() && i > 0 {
+                            swap = Some(i - 1);
                         }
-                        for key in ctx.style_keys {
-                            if ui.selectable_label(current == *key, key).clicked() {
-                                *icon = Some(key.clone());
-                                t.changed = true;
-                            }
+                        if ui.small_button("↓").clicked() && i < last {
+                            swap = Some(i);
+                        }
+                        if ui.small_button("✕").clicked() {
+                            remove = Some(i);
                         }
                     });
-            });
+                    string_prop(ui, "key", &mut tab.key, t);
+                    icon_pick(ui, ("tab_icon", i), &mut tab.icon, ctx.style_keys, t);
+                    opt_text(ui, "label", &mut tab.label, t);
+                });
+            }
+            if let Some(i) = swap {
+                tabs.swap(i, i + 1);
+                t.changed = true;
+            }
+            if let Some(i) = remove {
+                tabs.remove(i);
+                t.changed = true;
+            }
+            if ui.button("+ Add tab").clicked() {
+                tabs.push(TabSpec {
+                    key: format!("tab{}", tabs.len() + 1),
+                    icon: None,
+                    label: Some("Tab".into()),
+                });
+                t.changed = true;
+            }
         }
         NodeKind::Badge { text } => {
             text_prop(ui, "text", text, t, focus);
@@ -526,10 +571,11 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
                 }
             });
         }
-        NodeKind::Slot { role, .. } => {
+        NodeKind::Slot { role, accepts, take_only } => {
             string_prop(ui, "role", role, t);
+            slot_semantics(ui, accepts, take_only, t);
         }
-        NodeKind::SlotGrid { role, cols, rows, .. } => {
+        NodeKind::SlotGrid { role, cols, rows, accepts, take_only } => {
             string_prop(ui, "role", role, t);
             ui.horizontal(|ui| {
                 ui.label("cols");
@@ -537,6 +583,7 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
                 ui.label("rows");
                 t.hit(ui.add(DragValue::new(rows).range(1..=32)));
             });
+            slot_semantics(ui, accepts, take_only, t);
         }
         NodeKind::Gauge { mode } => {
             ui.horizontal(|ui| {
@@ -566,8 +613,62 @@ fn string_prop(ui: &mut Ui, label: &str, v: &mut String, t: &mut Track) {
     });
 }
 
-fn layout_props(ui: &mut Ui, node: &mut petramond_ui::Node, t: &mut Track, is_root: bool) {
-    let l = &mut node.layout;
+/// Theme-part icon picker (buttons, toggles, tab specs): the combo offers
+/// every kit part key; `(none)` clears it.
+fn icon_pick(
+    ui: &mut Ui,
+    salt: impl std::hash::Hash,
+    icon: &mut Option<String>,
+    style_keys: &[String],
+    t: &mut Track,
+) {
+    ui.horizontal(|ui| {
+        ui.label("icon");
+        let current = icon.clone().unwrap_or_default();
+        let shown = if current.is_empty() { "(none)" } else { current.as_str() };
+        egui::ComboBox::from_id_salt(salt)
+            .selected_text(shown)
+            .width(150.0)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(current.is_empty(), "(none)").clicked() {
+                    *icon = None;
+                    t.changed = true;
+                }
+                for key in style_keys {
+                    if ui.selectable_label(current == *key, key).clicked() {
+                        *icon = Some(key.clone());
+                        t.changed = true;
+                    }
+                }
+            });
+    });
+}
+
+/// Host-interpreted slot semantics: the `accepts` item-tag list (one text row
+/// per tag, so typing never fights a reparse) and the `take_only` flag.
+fn slot_semantics(ui: &mut Ui, accepts: &mut Vec<String>, take_only: &mut bool, t: &mut Track) {
+    ui.label(egui::RichText::new("accepts (item tags)").weak().small());
+    let mut remove: Option<usize> = None;
+    for (i, tag) in accepts.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            t.hit(ui.add(egui::TextEdit::singleline(tag).desired_width(150.0)));
+            if ui.small_button("✕").clicked() {
+                remove = Some(i);
+            }
+        });
+    }
+    if let Some(i) = remove {
+        accepts.remove(i);
+        t.changed = true;
+    }
+    if ui.small_button("+ tag").clicked() {
+        accepts.push(String::new());
+        t.changed = true;
+    }
+    t.hit(ui.checkbox(take_only, "take only (output slot)"));
+}
+
+fn layout_props(ui: &mut Ui, l: &mut LayoutProps, kind: &NodeKind, t: &mut Track, is_root: bool) {
     size_edit(ui, "w", &mut l.w, t);
     size_edit(ui, "h", &mut l.h, t);
     quad_edit(ui, "pad", &mut l.pad, t);
@@ -576,9 +677,11 @@ fn layout_props(ui: &mut Ui, node: &mut petramond_ui::Node, t: &mut Track, is_ro
         ui.label("gap");
         t.hit(ui.add(DragValue::new(&mut l.gap)));
     });
+    // Every container whose flow direction reads `layout.dir` (row/column fix
+    // their own).
     if matches!(
-        node.kind,
-        NodeKind::Frame | NodeKind::Button { .. } | NodeKind::Scroll { .. }
+        kind,
+        NodeKind::Frame | NodeKind::Button { .. } | NodeKind::Scroll { .. } | NodeKind::List
     ) {
         ui.horizontal(|ui| {
             ui.label("dir");

@@ -247,6 +247,109 @@ fn play_after_rename_opens_the_original_save_directory() {
     let _ = crate::save::delete_world(dir_name);
 }
 
+/// The tabbed World Settings screen: the Mods page is dropped entirely while
+/// the World tab is active and swaps in through the bound selection; the
+/// Back/Delete footer is shared chrome present on both tabs.
+#[test]
+fn world_settings_tabs_swap_pages() {
+    use crate::app::shell::SettingsTab;
+    use crate::gui::GuiKind;
+    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let screen = (1280, 720);
+    app.screen = crate::app::AppScreen::WorldSelect;
+    app.worlds = test_worlds(1);
+    app.selected_world = Some(0);
+    app.open_world_settings();
+
+    app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.0);
+    assert!(app.ui.out().rect("delete_world").is_some());
+    assert!(
+        app.ui.out().rect("mod_scroll").is_none(),
+        "the Mods page is dropped while the World tab is active"
+    );
+
+    // Keyboard Right switches to the Mods tab (no editor focused).
+    app.handle_text_key(TextKey::ArrowRight);
+    app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.1);
+    assert_eq!(
+        app.world_settings.as_ref().map(|s| s.tab),
+        Some(SettingsTab::Mods)
+    );
+    app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.2);
+    assert!(app.ui.out().rect("mod_scroll").is_some());
+    assert!(
+        app.ui.out().rect("delete_world").is_some(),
+        "the footer is shared chrome on every tab"
+    );
+
+    // Pointer: a click inside the FIRST tab cell (cells lay out from the
+    // bar's left edge) selects the World tab again.
+    let bar = app.ui.out().rect("tabs").expect("tab bar solves");
+    app.set_cursor_position((bar.x + 10) as f32, (bar.y + bar.h / 2) as f32);
+    app.set_pointer_button(PointerButton::Primary, true);
+    app.set_pointer_button(PointerButton::Primary, false);
+    app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.3);
+    assert_eq!(
+        app.world_settings.as_ref().map(|s| s.tab),
+        Some(SettingsTab::World)
+    );
+    app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.4);
+    assert!(app.ui.out().rect("mod_scroll").is_none());
+}
+
+/// Mod choices made on the Create World screen are written as the NEW world's
+/// `settings.json` when Create fires — the world's first open must already
+/// see them. (The screen buffers a session; nothing exists on disk before
+/// Create.)
+#[test]
+fn create_world_writes_buffered_settings_at_create() {
+    use crate::gui::GuiKind;
+    let name = "tabbed-create-regress-test";
+    let dir_name = crate::save::dir_name_for(name);
+    let _ = crate::save::delete_world(&dir_name);
+
+    let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
+    let screen = (1280, 720);
+    app.screen = crate::app::AppScreen::WorldSelect;
+    app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.0);
+    click_doc_id(&mut app, "create");
+    app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.1);
+    assert_eq!(app.screen, crate::app::AppScreen::CreateWorld);
+    assert!(app.create_world.is_some(), "create opens with a session");
+
+    // Type the name through the document's focused input, then let the
+    // controller mirror it into bound state so Create enables.
+    app.drive_doc_ui(GuiKind::CreateWorld, screen, 0.2);
+    let r = app.ui.out().rect("create_name").expect("name input rect");
+    app.set_cursor_position((r.x + r.w / 2) as f32, (r.y + r.h / 2) as f32);
+    app.set_pointer_button(PointerButton::Primary, true);
+    app.set_pointer_button(PointerButton::Primary, false);
+    assert!(app.handle_text_input(name));
+    app.drive_doc_ui(GuiKind::CreateWorld, screen, 0.3);
+    app.drive_doc_ui(GuiKind::CreateWorld, screen, 0.4);
+
+    // A disabled pack in the buffered session (the Mods-tab toggles edit this
+    // set; installed packs vary per environment, so seed it directly).
+    app.create_world
+        .as_mut()
+        .expect("session while the screen is open")
+        .settings
+        .disabled_mods
+        .insert("testpack".into());
+
+    click_doc_id(&mut app, "create");
+    app.drive_doc_ui(GuiKind::CreateWorld, screen, 0.5);
+    assert!(app.game.is_some(), "Create started the world");
+    let settings = crate::save::read_world_settings(&dir_name);
+    assert!(
+        settings.disabled_mods.contains("testpack"),
+        "the buffered choices landed in the new world's settings.json"
+    );
+    app.save_on_exit();
+    drop(app);
+    let _ = crate::save::delete_world(&dir_name);
+}
+
 /// In-memory clipboard shared with the app's document UI (tests never touch
 /// the OS clipboard).
 struct SharedClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);

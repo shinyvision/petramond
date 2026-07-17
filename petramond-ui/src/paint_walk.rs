@@ -42,6 +42,8 @@ pub(crate) struct PaintCtx<'a> {
     pub slot_hover: Option<(u32, u32)>,
     /// Hovered list row as `(list inst, row)`.
     pub row_hover: Option<(u32, u32)>,
+    /// Hovered tab cell as `(tab_bar inst, tab)`.
+    pub tab_hover: Option<(u32, u32)>,
     pub preview: Option<&'a PreviewState>,
 }
 
@@ -437,6 +439,67 @@ impl PaintCtx<'_> {
                             atlas,
                             [1.0; 4],
                             Some(fill_clip),
+                        );
+                    }
+                }
+            }
+            NodeKind::TabBar { tabs } => {
+                let widths = widget::tab_widths(self.theme, tabs);
+                let gap = self.theme.metrics.tab_gap;
+                for (t, tab) in tabs.iter().enumerate() {
+                    let cell = widget::tab_cell(rect, &widths, gap, t);
+                    let selected = inst.selected == Some(t as i32);
+                    let state = if !inst.enabled {
+                        "disabled"
+                    } else if selected {
+                        "selected"
+                    } else if self.tab_hover == Some((i, t as u32)) {
+                        "hover"
+                    } else {
+                        "default"
+                    };
+                    if let Some(face) = part.and_then(|p| p.face(state)) {
+                        p.nine_slice(
+                            TexId::ThemeAtlas,
+                            cell,
+                            face.rect,
+                            face.slice.unwrap_or([0; 4]),
+                            atlas,
+                            [1.0; 4],
+                            clip,
+                        );
+                    }
+                    // Icon + label centred as one block, like leaf buttons.
+                    let icon_part = tab.icon.as_deref().and_then(|k| self.theme.part(k));
+                    let (icon_w, icon_h) = icon_part.map(|p| p.natural()).unwrap_or((0, 0));
+                    let text = tab.label.as_deref().unwrap_or("");
+                    let tw = crate::text::width(text);
+                    let igap = if icon_w > 0 && tw > 0 { 4 } else { 0 };
+                    let block_w = icon_w + igap + tw;
+                    let mut cx = cell.x + (cell.w - block_w) / 2;
+                    if let Some(face) = icon_part.and_then(|pt| pt.face("default")) {
+                        p.sprite(
+                            TexId::ThemeAtlas,
+                            RectI {
+                                x: cx,
+                                y: cell.y + (cell.h - icon_h) / 2,
+                                w: icon_w,
+                                h: icon_h,
+                            },
+                            face.rect,
+                            atlas,
+                            [1.0; 4],
+                            clip,
+                        );
+                        cx += icon_w + igap;
+                    }
+                    if !text.is_empty() {
+                        p.text(
+                            text,
+                            cx,
+                            cell.y + (cell.h - crate::text::GLYPH_H) / 2,
+                            label_color(part, inst.enabled),
+                            clip,
                         );
                     }
                 }

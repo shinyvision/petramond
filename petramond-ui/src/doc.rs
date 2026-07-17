@@ -197,9 +197,30 @@ pub enum NodeKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         text: Option<String>,
     },
+    /// A horizontal bar of selectable tabs. Selection is host-bound state
+    /// (`bind.selected`, an `I32` index) — the bar only *requests* a change
+    /// (`UiEvent::TabSelect`, fired on pointer down like list rows); pages are
+    /// plain sibling frames the host shows/hides via `visible` binds.
+    TabBar {
+        tabs: Vec<TabSpec>,
+    },
     /// Layout-reserved, host-drawn region (hearts, item previews). The host
     /// reads its solved rect from the frame output by id.
     Hook,
+}
+
+/// One tab of a [`NodeKind::TabBar`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TabSpec {
+    /// Stable host-facing name for the tab (not displayed).
+    pub key: String,
+    /// Theme part drawn as the tab's icon (e.g. `icon.tab_world`), centred
+    /// alone or left of the label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Text drawn on the tab face (icon-only tabs omit it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 impl NodeKind {
@@ -230,6 +251,7 @@ impl NodeKind {
                     ..
                 }
                 | NodeKind::List
+                | NodeKind::TabBar { .. }
                 | NodeKind::Hook
         )
     }
@@ -256,6 +278,7 @@ impl NodeKind {
             NodeKind::Gauge { .. } => "gauge",
             NodeKind::Badge { .. } => "badge",
             NodeKind::Alert { .. } => "alert",
+            NodeKind::TabBar { .. } => "tab_bar",
             NodeKind::Hook => "hook",
         }
     }

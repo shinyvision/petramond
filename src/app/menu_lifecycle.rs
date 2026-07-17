@@ -207,6 +207,7 @@ impl App {
             }
             true
         } else if matches!(self.screen, AppScreen::CreateWorld | AppScreen::DeleteWorld) {
+            self.create_world = None;
             self.screen = AppScreen::WorldSelect;
             self.pointer.release_for_menu();
             true

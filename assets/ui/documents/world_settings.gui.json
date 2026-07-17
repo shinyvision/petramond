@@ -34,49 +34,24 @@
             },
             {
                 "type": "frame",
+                "style": "panel.large",
                 "layout": {
                     "w": 320,
-                    "h": 250,
+                    "h": 260,
                     "pad": [
                         4,
                         2,
                         4,
                         4
                     ],
-                    "margin": [
-                        0,
-                        0,
-                        0,
-                        0
-                    ],
                     "gap": 4,
-                    "dir": "column",
-                    "align": "stretch",
-                    "justify": "start"
+                    "align": "stretch"
                 },
-                "style": "panel.large",
                 "children": [
                     {
                         "type": "row",
                         "layout": {
-                            "w": {
-                                "grow": 1
-                            },
-                            "h": "auto",
-                            "pad": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "margin": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
                             "gap": 8,
-                            "dir": "column",
                             "align": "center",
                             "justify": "center"
                         },
@@ -90,22 +65,7 @@
                     {
                         "type": "row",
                         "layout": {
-                            "w": "auto",
-                            "h": "auto",
-                            "pad": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "margin": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
                             "gap": 5,
-                            "dir": "column",
                             "align": "center",
                             "justify": "center"
                         },
@@ -124,22 +84,7 @@
                                 "icon": "icon.edit",
                                 "layout": {
                                     "w": 18,
-                                    "h": 16,
-                                    "pad": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "margin": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "gap": 0,
-                                    "dir": "column",
-                                    "justify": "start"
+                                    "h": 16
                                 },
                                 "bind": {
                                     "visible": "not_renaming"
@@ -150,24 +95,8 @@
                     {
                         "type": "row",
                         "layout": {
-                            "w": "auto",
-                            "h": "auto",
-                            "pad": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "margin": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
                             "gap": 5,
-                            "dir": "column",
-                            "align": "center",
-                            "justify": "start"
+                            "align": "center"
                         },
                         "bind": {
                             "visible": "renaming"
@@ -180,23 +109,7 @@
                                 "layout": {
                                     "w": {
                                         "grow": 1
-                                    },
-                                    "h": "auto",
-                                    "pad": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "margin": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "gap": 0,
-                                    "dir": "column",
-                                    "justify": "start"
+                                    }
                                 },
                                 "bind": {
                                     "text": "world_name"
@@ -207,469 +120,208 @@
                                 "type": "button",
                                 "text": "OK",
                                 "layout": {
-                                    "w": 30,
-                                    "h": "auto",
-                                    "pad": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "margin": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "gap": 0,
-                                    "dir": "column",
-                                    "justify": "start"
+                                    "w": 30
                                 },
                                 "style": "button.success"
                             }
                         ]
                     },
                     {
-                        "type": "image",
-                        "image": "pixel.png",
-                        "layout": {
-                            "w": "auto",
-                            "h": 1,
-                            "pad": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "margin": [
-                                0,
-                                2,
-                                0,
-                                2
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                        },
+                        "id": "tabs",
+                        "type": "tab_bar",
+                        "tabs": [
+                            {
+                                "key": "world",
+                                "icon": "icon.tab_world",
+                                "label": "World"
+                            },
+                            {
+                                "key": "mods",
+                                "icon": "icon.tab_mods",
+                                "label": "Mods"
+                            }
+                        ],
                         "bind": {
-                            "visible": "not_renaming"
+                            "selected": "tab_sel"
                         }
                     },
                     {
-                        "type": "row",
+                        "type": "frame",
                         "layout": {
-                            "w": "auto",
-                            "h": "auto",
-                            "pad": [
-                                3,
-                                1,
-                                3,
-                                1
-                            ],
-                            "margin": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "gap": 8,
-                            "dir": "column",
-                            "align": "center",
-                            "justify": "start"
+                            "h": {
+                                "grow": 1
+                            },
+                            "gap": 4,
+                            "align": "stretch"
+                        },
+                        "bind": {
+                            "visible": "tab_world"
                         },
                         "children": [
                             {
-                                "type": "column",
-                                "layout": {
-                                    "w": "auto",
-                                    "h": "auto",
-                                    "pad": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "margin": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "gap": 2,
-                                    "dir": "column",
-                                    "justify": "start"
-                                },
-                                "children": [
-                                    {
-                                        "type": "label",
-                                        "text": "Optimize explored terrain"
-                                    },
-                                    {
-                                        "type": "label",
-                                        "style": "label.muted",
-                                        "text": "Saves explored terrain so it loads faster"
-                                    }
-                                ]
-                            },
-                            {
                                 "type": "spacer",
                                 "layout": {
-                                    "w": {
+                                    "h": {
                                         "grow": 1
-                                    },
-                                    "h": "auto",
-                                    "pad": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "margin": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "gap": 0,
-                                    "dir": "column",
-                                    "justify": "start"
-                                }
-                            },
-                            {
-                                "id": "optimize_terrain",
-                                "type": "toggle",
-                                "bind": {
-                                    "value": "optimize_terrain"
+                                    }
                                 }
                             }
                         ]
                     },
                     {
-                        "type": "image",
-                        "image": "pixel.png",
+                        "type": "frame",
                         "layout": {
-                            "w": "auto",
-                            "h": 1,
-                            "pad": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "margin": [
-                                0,
-                                2,
-                                0,
-                                2
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                        }
-                    },
-                    {
-                        "type": "label",
-                        "text": "Mods",
-                        "style": "label"
-                    },
-                    {
-                        "type": "spacer",
-                        "layout": {
-                            "w": "auto",
-                            "h": 1,
-                            "pad": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "margin": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                        }
-                    },
-                    {
-                        "id": "mod_scroll",
-                        "type": "scroll",
-                        "axis": "vertical",
-                        "layout": {
-                            "w": "auto",
                             "h": {
                                 "grow": 1
                             },
-                            "pad": [
-                                1,
-                                1,
-                                1,
-                                1
-                            ],
-                            "margin": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start",
-                            "min_h": 36
+                            "gap": 4,
+                            "align": "stretch"
                         },
-                        "style": "panel.inset",
+                        "bind": {
+                            "visible": "tab_mods"
+                        },
                         "children": [
                             {
-                                "id": "mods",
-                                "type": "list",
+                                "id": "mod_scroll",
+                                "type": "scroll",
+                                "axis": "vertical",
                                 "layout": {
-                                    "w": "auto",
-                                    "h": "auto",
+                                    "h": {
+                                        "grow": 1
+                                    },
                                     "pad": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
+                                        1,
+                                        1,
+                                        1,
+                                        1
                                     ],
-                                    "margin": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "gap": 2,
-                                    "dir": "column",
-                                    "align": "stretch",
-                                    "justify": "start"
+                                    "min_h": 36
                                 },
-                                "bind": {
-                                    "items": "mod_rows",
-                                    "selected": "mod_sel"
-                                },
+                                "style": "panel.inset",
                                 "children": [
                                     {
-                                        "type": "row",
+                                        "id": "mods",
+                                        "type": "list",
                                         "layout": {
-                                            "w": "auto",
-                                            "h": "auto",
-                                            "pad": [
-                                                3,
-                                                1,
-                                                3,
-                                                1
-                                            ],
-                                            "margin": [
-                                                0,
-                                                0,
-                                                0,
-                                                0
-                                            ],
-                                            "gap": 8,
-                                            "dir": "column",
-                                            "align": "center",
-                                            "justify": "start"
+                                            "gap": 2,
+                                            "align": "stretch"
                                         },
-                                        "style": "list.row",
+                                        "bind": {
+                                            "items": "mod_rows",
+                                            "selected": "mod_sel"
+                                        },
                                         "children": [
                                             {
-                                                "type": "image",
-                                                "image": "",
+                                                "type": "row",
                                                 "layout": {
-                                                    "w": 16,
-                                                    "h": 16,
                                                     "pad": [
-                                                        0,
-                                                        0,
-                                                        0,
-                                                        0
+                                                        3,
+                                                        1,
+                                                        3,
+                                                        1
                                                     ],
-                                                    "margin": [
-                                                        0,
-                                                        0,
-                                                        0,
-                                                        0
-                                                    ],
-                                                    "gap": 0,
-                                                    "dir": "column",
-                                                    "justify": "start"
+                                                    "gap": 8,
+                                                    "align": "center"
                                                 },
-                                                "bind": {
-                                                    "visible": "has_icon",
-                                                    "image": "icon"
-                                                }
-                                            },
-                                            {
-                                                "type": "column",
-                                                "layout": {
-                                                    "w": "auto",
-                                                    "h": "auto",
-                                                    "pad": [
-                                                        0,
-                                                        0,
-                                                        0,
-                                                        0
-                                                    ],
-                                                    "margin": [
-                                                        0,
-                                                        0,
-                                                        0,
-                                                        0
-                                                    ],
-                                                    "gap": 2,
-                                                    "dir": "column",
-                                                    "justify": "start"
-                                                },
+                                                "style": "list.row",
                                                 "children": [
                                                     {
-                                                        "type": "row",
+                                                        "type": "image",
+                                                        "image": "",
                                                         "layout": {
-                                                            "w": "auto",
-                                                            "h": "auto",
-                                                            "pad": [
-                                                                0,
-                                                                0,
-                                                                0,
-                                                                0
-                                                            ],
-                                                            "margin": [
-                                                                0,
-                                                                0,
-                                                                0,
-                                                                0
-                                                            ],
-                                                            "gap": 5,
-                                                            "dir": "column",
-                                                            "align": "center",
-                                                            "justify": "start"
+                                                            "w": 16,
+                                                            "h": 16
+                                                        },
+                                                        "bind": {
+                                                            "visible": "has_icon",
+                                                            "image": "icon"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "column",
+                                                        "layout": {
+                                                            "gap": 2
                                                         },
                                                         "children": [
                                                             {
-                                                                "type": "label",
-                                                                "bind": {
-                                                                    "text": "name"
-                                                                }
+                                                                "type": "row",
+                                                                "layout": {
+                                                                    "gap": 5,
+                                                                    "align": "center"
+                                                                },
+                                                                "children": [
+                                                                    {
+                                                                        "type": "label",
+                                                                        "bind": {
+                                                                            "text": "name"
+                                                                        }
+                                                                    },
+                                                                    {
+                                                                        "type": "badge",
+                                                                        "bind": {
+                                                                            "text": "version",
+                                                                            "visible": "has_version"
+                                                                        }
+                                                                    }
+                                                                ]
                                                             },
                                                             {
-                                                                "type": "badge",
+                                                                "type": "label",
+                                                                "style": "label.muted",
                                                                 "bind": {
-                                                                    "text": "version",
-                                                                    "visible": "has_version"
+                                                                    "text": "desc"
                                                                 }
                                                             }
                                                         ]
                                                     },
                                                     {
-                                                        "type": "label",
-                                                        "style": "label.muted",
+                                                        "type": "spacer",
+                                                        "layout": {
+                                                            "w": {
+                                                                "grow": 1
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "id": "mod_on",
+                                                        "type": "toggle",
                                                         "bind": {
-                                                            "text": "desc"
+                                                            "value": "enabled",
+                                                            "enabled": "toggleable",
+                                                            "visible": "toggleable"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "badge",
+                                                        "text": "always on",
+                                                        "bind": {
+                                                            "visible": "content_only"
                                                         }
                                                     }
                                                 ]
-                                            },
-                                            {
-                                                "type": "spacer",
-                                                "layout": {
-                                                    "w": {
-                                                        "grow": 1
-                                                    },
-                                                    "h": "auto",
-                                                    "pad": [
-                                                        0,
-                                                        0,
-                                                        0,
-                                                        0
-                                                    ],
-                                                    "margin": [
-                                                        0,
-                                                        0,
-                                                        0,
-                                                        0
-                                                    ],
-                                                    "gap": 0,
-                                                    "dir": "column",
-                                                    "justify": "start"
-                                                }
-                                            },
-                                            {
-                                                "id": "mod_on",
-                                                "type": "toggle",
-                                                "bind": {
-                                                    "value": "enabled",
-                                                    "enabled": "toggleable",
-                                                    "visible": "toggleable"
-                                                }
-                                            },
-                                            {
-                                                "type": "badge",
-                                                "text": "always on",
-                                                "bind": {
-                                                    "visible": "content_only"
-                                                }
                                             }
                                         ]
                                     }
                                 ]
+                            },
+                            {
+                                "type": "label",
+                                "text": "No mod packs installed",
+                                "bind": {
+                                    "visible": "no_mods"
+                                }
+                            },
+                            {
+                                "type": "alert",
+                                "level": "info",
+                                "text": "Changes to mods will apply the next time you load this world."
                             }
                         ]
                     },
                     {
-                        "type": "label",
-                        "text": "No mod packs installed",
-                        "bind": {
-                            "visible": "no_mods"
-                        }
-                    },
-                    {
-                        "type": "alert",
-                        "level": "info",
-                        "text": "Changes to mods will apply the next time you load this world."
-                    },
-                    {
-                        "type": "spacer",
-                        "layout": {
-                            "w": "auto",
-                            "h": 2,
-                            "pad": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "margin": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "gap": 0,
-                            "dir": "column",
-                            "justify": "start"
-                        }
-                    },
-                    {
                         "type": "row",
                         "layout": {
-                            "w": "auto",
-                            "h": "auto",
-                            "pad": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "margin": [
-                                0,
-                                0,
-                                0,
-                                0
-                            ],
-                            "gap": 5,
-                            "dir": "column",
-                            "justify": "start"
+                            "gap": 5
                         },
                         "children": [
                             {
@@ -677,23 +329,7 @@
                                 "type": "button",
                                 "text": "Back",
                                 "layout": {
-                                    "w": 90,
-                                    "h": "auto",
-                                    "pad": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "margin": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "gap": 0,
-                                    "dir": "column",
-                                    "justify": "start"
+                                    "w": 90
                                 }
                             },
                             {
@@ -701,23 +337,7 @@
                                 "layout": {
                                     "w": {
                                         "grow": 1
-                                    },
-                                    "h": "auto",
-                                    "pad": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "margin": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "gap": 0,
-                                    "dir": "column",
-                                    "justify": "start"
+                                    }
                                 }
                             },
                             {
@@ -725,23 +345,7 @@
                                 "type": "button",
                                 "text": "Delete World",
                                 "layout": {
-                                    "w": 110,
-                                    "h": "auto",
-                                    "pad": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "margin": [
-                                        0,
-                                        0,
-                                        0,
-                                        0
-                                    ],
-                                    "gap": 0,
-                                    "dir": "column",
-                                    "justify": "start"
+                                    "w": 110
                                 },
                                 "style": "button.danger"
                             }

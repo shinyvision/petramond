@@ -1,0 +1,58 @@
+{
+    "type": "column",
+    "layout": {
+        "gap": 4,
+        "align": "stretch"
+    },
+    "children": [
+        {
+            "type": "tab_bar",
+            "id": "tabs",
+            "tabs": [
+                {
+                    "key": "one",
+                    "label": "One"
+                },
+                {
+                    "key": "two",
+                    "label": "Two"
+                }
+            ],
+            "bind": {
+                "selected": "tab_sel"
+            }
+        },
+        {
+            "type": "frame",
+            "layout": {
+                "gap": 4,
+                "align": "stretch"
+            },
+            "bind": {
+                "visible": "tab_one"
+            },
+            "children": [
+                {
+                    "type": "label",
+                    "text": "Page one"
+                }
+            ]
+        },
+        {
+            "type": "frame",
+            "layout": {
+                "gap": 4,
+                "align": "stretch"
+            },
+            "bind": {
+                "visible": "tab_two"
+            },
+            "children": [
+                {
+                    "type": "label",
+                    "text": "Page two"
+                }
+            ]
+        }
+    ]
+}
