@@ -112,4 +112,11 @@ impl BlockTag {
     pub(crate) fn resolve(name: &str) -> Result<BlockTag, String> {
         BLOCK_TAGS.resolve(name).map(BlockTag)
     }
+
+    /// Look up an already-registered tag name without interning — the QUERY
+    /// path (the mod ABI's `BlocksByTag`): an unknown name is simply a tag no
+    /// block carries, never a new registration.
+    pub(crate) fn lookup(name: &str) -> Option<BlockTag> {
+        BLOCK_TAGS.lookup(name).map(BlockTag)
+    }
 }

@@ -247,6 +247,10 @@ fn samples() -> Samples {
     s.pin("HostCall::ClientMoodSet", &HostCall::ClientMoodSet {
         darken: 0.25, desaturate: 0.5,
     });
+    s.pin("HostCall::ClientBlocksAt", &HostCall::ClientBlocksAt {
+        positions: vec![[1, -2, 3]],
+    });
+    s.pin("HostCall::BlocksByTag", &HostCall::BlocksByTag { tag: "m:t".into() });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -308,6 +312,7 @@ fn samples() -> Samples {
         },
     }]));
     s.pin("HostRet::EnvParams", &HostRet::EnvParams(vec![None, Some([1.0, 2.0, 3.0, 4.0])]));
+    s.pin("HostRet::BlockList", &HostRet::BlockList(vec![BlockId(1), BlockId(9)]));
 
     // --- GuestCall: every variant, declaration order -------------------------
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
@@ -614,6 +619,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::ClientAmbientSet", "63066d3a7261696e0000003f0000803f000000c0"),
     ("HostCall::ClientLoopSet", "64066d3a6c6f6f700000003f"),
     ("HostCall::ClientMoodSet", "650000803e0000003f"),
+    ("HostCall::ClientBlocksAt", "6601020306"),
+    ("HostCall::BlocksByTag", "67036d3a74"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -643,6 +650,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MaybeI32", "1a010d"),
     ("HostRet::Players", "1b01010000803f00000040000040400000000000000000000000000000003f0000803e280100"),
     ("HostRet::EnvParams", "1c0200010000803f000000400000404000008040"),
+    ("HostRet::BlockList", "1d020109"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c0c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),

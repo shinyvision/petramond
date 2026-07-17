@@ -17,6 +17,8 @@ pub(super) fn client_canvas_element_valid(element: &mod_api::ClientCanvasElement
 }
 
 pub(super) const CLIENT_SURFACE_QUERY_MAX: usize = 512;
+/// Positions one `ClientBlocksAt` call may read (the doc'd ABI bound).
+pub(super) const CLIENT_BLOCKS_QUERY_MAX: usize = 512;
 pub(super) const CLIENT_IMAGE_SIDE_MAX: u16 = 640;
 pub(super) const CLIENT_OVERLAY_MAX: usize = 16;
 pub(super) const CLIENT_OVERLAY_DISPLAY_SIDE_MAX: u16 = 2048;

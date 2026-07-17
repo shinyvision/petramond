@@ -10,9 +10,10 @@
 //!   accumulates snow layers on cold-biome surfaces while it snows there.
 //! - **Client** (presentation): reads the same params back
 //!   (`client_env_params`), evaluates the same field at the camera, and
-//!   drives the rain/snow ambient particle volumes plus the rain/wind sound
-//!   beds. The pack's `clouds.wgsl` evaluates the field per pixel from the
-//!   identical params — sim, presentation, and sky always agree.
+//!   drives the rain/snow ambient particle volumes, the rain sound bed, and
+//!   the sky-gated rainy mood grade. The pack's `clouds.wgsl` evaluates the
+//!   field per pixel from the identical params — sim, presentation, and sky
+//!   always agree.
 //!
 //! Weather TIME is the persisted `petramond:clock` (frozen time = frozen
 //! weather); the advection offset persists in world KV, so a storm front
@@ -41,6 +42,17 @@ const CLIENT_BIOME_INTERVAL: u64 = 30;
 const CLIENT_COVER_INTERVAL: u64 = 20;
 /// Audio duck factor while the camera is under cover.
 const COVER_DUCK: f32 = 0.3;
+/// Cells above the head the sky probe scans before calling the overhead mass
+/// a roof without reading it. Must comfortably exceed the tallest canopy so a
+/// giant redwood still reads "under a tree"; anything deeper overhead is a
+/// cave or megastructure.
+const SKY_SCAN_MAX: i32 = 96;
+
+/// Leaf-block policy shared by both sides, keyed off the `leaves` block tag:
+/// the server lets snow rest on canopy tops; the client's sky probe treats
+/// these as TRANSPARENT so a canopy never suppresses the rainy mood. A pack
+/// leaf block joins by tagging its row `leaves` — no list to maintain here.
+const LEAF_TAG: &str = "petramond:leaves";
 
 /// The precipitation visuals this pack ships.
 const RAIN_BUNDLE: &str = "weather:rain";
@@ -77,9 +89,9 @@ struct Weather {
     /// must too.
     ice: Option<BlockId>,
     packed_ice: Option<BlockId>,
-    /// Canopy accumulation policy: snow rests on these despite not being
-    /// full-cube spawn support (per Rachel — snowy treetops). Mod policy, so
-    /// pack-added leaf blocks need a row here to catch snow.
+    /// The [`LEAF_TAG`] member ids, queried at init — both sides use them:
+    /// the server's snow accumulation rests layers on canopy tops, the
+    /// client's sky probe sees through them.
     leaves: Vec<BlockId>,
     /// Round-robin cursor over players for snow probes.
     probe_cursor: u64,
@@ -87,8 +99,12 @@ struct Weather {
     frame: u64,
     /// Cached column biome under the camera (refreshed on an interval).
     cam_biome: Option<u8>,
-    /// Camera is under cover (roofed/underground) — ducks the rain bed.
+    /// Camera is under cover (anything overhead, canopy included) — ducks
+    /// the rain bed.
     covered: bool,
+    /// Camera has no sky access even with leaves transparent (building,
+    /// overhang, cave ceiling) — suppresses the rainy mood grade.
+    roofed: bool,
     /// Which chunk the cover cache describes, its raw cells, and the last
     /// FULLY-KNOWN revision (echoed to skip refetching unchanged bytes).
     cover_chunk: Option<[i32; 2]>,
@@ -288,16 +304,22 @@ impl Weather {
 
         // The rainy-mood grade: a touch darker and greyer exactly where it
         // POURS (the camera's column — snowy columns stay bright), fading
-        // back to the untouched image under clear sky. Pure post-process —
+        // back to the untouched image under clear sky. SKY-GATED: only with
+        // sky access, leaves transparent (`refresh_cover`) — under a tree
+        // stays moody, caves and interiors look normal. Pure post-process —
         // gameplay light (mob spawning!) never changes.
-        client_mood_set(0.1 * rain_i, 0.22 * rain_i);
+        let mood_i = if self.roofed { 0.0 } else { rain_i };
+        client_mood_set(0.1 * mood_i, 0.22 * mood_i);
 
         let duck = if self.covered { COVER_DUCK } else { 1.0 };
         client_loop_set(RAIN_LOOP, rain_i * duck);
     }
 
-    /// Roof probe: the camera column's highest non-air cell from the replica
-    /// surface map. Well above the player = under cover (duck the rain bed).
+    /// Roof probes, two verdicts from one column: `covered` (audio duck) is
+    /// the visible surface — ANYTHING overhead, canopy included, hushes the
+    /// rain bed. `roofed` (mood gate) re-scans the column with leaves
+    /// transparent, so only a real roof — building, overhang, cave ceiling —
+    /// counts as "no sky access".
     fn refresh_cover(&mut self, frame: &ClientFrameData) {
         let wx = frame.player_pos[0].floor() as i32;
         let wz = frame.player_pos[2].floor() as i32;
@@ -337,12 +359,39 @@ impl Weather {
         let h = i16::from_le_bytes([cells[idx], cells[idx + 1]]);
         self.covered =
             h != CLIENT_SURFACE_UNKNOWN_HEIGHT && (h as f32) > frame.player_pos[1] + 2.0;
+        if !self.covered {
+            // Nothing overhead at all — trivially sky access.
+            self.roofed = false;
+            return;
+        }
+        let y0 = frame.player_pos[1].floor() as i32 + 2;
+        if h as i32 - y0 >= SKY_SCAN_MAX {
+            // Deeper overhead mass than any canopy reaches: a cave or
+            // megastructure, roofed without reading the cells.
+            self.roofed = true;
+            return;
+        }
+        let blocks = client_blocks_at((y0..=h as i32).map(|y| [wx, y, wz]).collect());
+        for block in blocks {
+            match block {
+                // Unknown cell (unloaded / streamed content not final): keep
+                // the previous verdict instead of flickering the grade.
+                None => return,
+                Some(b) if b == BlockId::AIR || self.leaves.contains(&b) => {}
+                Some(_) => {
+                    self.roofed = true;
+                    return;
+                }
+            }
+        }
+        self.roofed = false;
     }
 }
 
 impl Mod for Weather {
     fn init(&mut self) {
         self.side_is_client = runtime_side() == RuntimeSide::Client;
+        self.leaves = blocks_by_tag(LEAF_TAG);
         if self.side_is_client {
             // The client never rolls its own seed — it reconstructs the
             // field entirely from the replicated params.
@@ -356,17 +405,6 @@ impl Mod for Weather {
         self.snow_layer = resolve_block_logged("petramond:snow_layer");
         self.ice = resolve_block_logged("petramond:ice");
         self.packed_ice = resolve_block_logged("petramond:packed_ice");
-        for name in [
-            "petramond:oak_leaves",
-            "petramond:spruce_leaves",
-            "petramond:birch_leaves",
-            "petramond:jungle_leaves",
-            "petramond:acacia_leaves",
-            "petramond:azalea_leaves",
-            "petramond:redwood_leaves",
-        ] {
-            self.leaves.extend(resolve_block(name));
-        }
         if let Some(bytes) = world_kv_get(KV_OFF) {
             if bytes.len() == 16 {
                 self.off = [

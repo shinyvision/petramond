@@ -17,6 +17,19 @@ pub(super) fn handle_worldgen_call(data: &mut ModStoreData, call: HostCall) -> H
                 .id(&key)
                 .map(mod_api::BlockId),
         ),
+        // Registry-only like ResolveBlock. The lookup never interns: a name
+        // nothing lists is an empty set, and a query cannot grow the tag
+        // table.
+        HostCall::BlocksByTag { tag } => HostRet::BlockList(
+            match crate::block::BlockTag::lookup(&tag) {
+                Some(t) => crate::block::Block::all()
+                    .iter()
+                    .filter(|b| b.has_tag(t))
+                    .map(|b| mod_api::BlockId(b.id()))
+                    .collect(),
+                None => Vec::new(),
+            },
+        ),
         HostCall::RegisterWorldgenFeature { feature_id, stage } => {
             if stage == mod_api::WorldgenStage::Climate {
                 return HostRet::Error(
@@ -127,5 +140,30 @@ mod tests {
             ),
             HostRet::Block(None)
         );
+    }
+
+    /// `BlocksByTag` is registry-only membership: a tagged block is in, an
+    /// untagged one is not, and an unlisted name — bare or namespaced — is an
+    /// empty set (the query must never intern a new tag).
+    #[test]
+    fn blocks_by_tag_enumerates_members_and_never_registers() {
+        let mut data = ModStoreData::new("alpha", 1);
+        let HostRet::BlockList(leaves) = handle_host_call(
+            &mut data,
+            HostCall::BlocksByTag {
+                tag: "petramond:leaves".into(),
+            },
+        ) else {
+            panic!("block list expected");
+        };
+        assert!(leaves.contains(&mod_api::BlockId(crate::block::Block::OakLeaves.id())));
+        assert!(!leaves.contains(&mod_api::BlockId(crate::block::Block::Stone.id())));
+        for tag in ["no_such_tag", "mymod:no_such_tag"] {
+            assert_eq!(
+                handle_host_call(&mut data, HostCall::BlocksByTag { tag: tag.into() }),
+                HostRet::BlockList(Vec::new()),
+                "unlisted tag '{tag}' must read as an empty set"
+            );
+        }
     }
 }

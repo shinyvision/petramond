@@ -16,7 +16,8 @@ use super::scope as client_scope;
 use super::state::{ClientCommand, ClientImageData, ClientOverlayRegistration};
 use validate::{
     client_canvas_element_image_key, client_canvas_element_valid, valid_client_key,
-    valid_client_key_id, CLIENT_AMBIENT_WIND_MAX, CLIENT_CANVAS_ELEMENT_MAX, CLIENT_CANVAS_MAX,
+    valid_client_key_id, CLIENT_AMBIENT_WIND_MAX, CLIENT_BLOCKS_QUERY_MAX,
+    CLIENT_CANVAS_ELEMENT_MAX, CLIENT_CANVAS_MAX,
     CLIENT_CANVAS_SIDE_MAX, CLIENT_COMMAND_MAX, CLIENT_ENV_PARAM_MAX, CLIENT_IMAGE_MAX,
     CLIENT_IMAGE_SIDE_MAX, CLIENT_KEY_BINDING_MAX, CLIENT_OVERLAY_DISPLAY_SIDE_MAX,
     CLIENT_OVERLAY_MAX, CLIENT_SURFACE_QUERY_MAX, CLIENT_TEXT_BYTES_MAX, CLIENT_TEXT_RUN_MAX,
@@ -31,8 +32,16 @@ use validate::{
 /// simulation, the registries, or the tick scheduler stays `false`.
 pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
     match call {
-        // Instance-neutral basics.
-        HostCall::Log { .. } | HostCall::RuntimeSide | HostCall::RngU64 { .. } => true,
+        // Instance-neutral basics. `ResolveBlock`/`BlocksByTag` are
+        // registry-only (legal on ANY instance, like worldgen workers) — a
+        // client mod interpreting `ClientBlocksAt` ids resolves the block
+        // names and tag sets it compares against the same way the server
+        // side does.
+        HostCall::Log { .. }
+        | HostCall::RuntimeSide
+        | HostCall::RngU64 { .. }
+        | HostCall::ResolveBlock { .. }
+        | HostCall::BlocksByTag { .. } => true,
         // The client presentation surface (handled below).
         HostCall::ClientRegisterOverlay { .. }
         | HostCall::ClientRegisterKey { .. }
@@ -57,7 +66,8 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::ClientBiomeAt { .. }
         | HostCall::ClientAmbientSet { .. }
         | HostCall::ClientLoopSet { .. }
-        | HostCall::ClientMoodSet { .. } => true,
+        | HostCall::ClientMoodSet { .. }
+        | HostCall::ClientBlocksAt { .. } => true,
         // Simulation, registration, and registry surfaces: server-side only.
         HostCall::CurrentTick
         | HostCall::RegisterTickSystem { .. }
@@ -92,7 +102,6 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::MobKvGet { .. }
         | HostCall::MobKvSet { .. }
         | HostCall::MobKvDelete { .. }
-        | HostCall::ResolveBlock { .. }
         | HostCall::ResolveItem { .. }
         | HostCall::RegisterWorldgenFeature { .. }
         | HostCall::RegisterStageReplacement { .. }
@@ -245,6 +254,27 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             HostRet::MaybeByte(world.biome_at_world(pos[0], pos[1]))
         })
         .unwrap_or_else(|| HostRet::Error("no client replica is active".into())),
+        HostCall::ClientBlocksAt { positions } => {
+            if positions.len() > CLIENT_BLOCKS_QUERY_MAX {
+                return HostRet::Error(format!(
+                    "ClientBlocksAt position count {} exceeds {CLIENT_BLOCKS_QUERY_MAX}",
+                    positions.len()
+                ));
+            }
+            client_scope::with_active(|world| {
+                HostRet::Blocks(
+                    positions
+                        .iter()
+                        .map(|&[x, y, z]| {
+                            world
+                                .block_if_stream_final(x, y, z)
+                                .map(|b| mod_api::BlockId(b.id()))
+                        })
+                        .collect(),
+                )
+            })
+            .unwrap_or_else(|| HostRet::Error("no client replica is active".into()))
+        }
         HostCall::ClientAmbientSet {
             key,
             intensity,

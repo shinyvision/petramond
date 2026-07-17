@@ -3,7 +3,7 @@
 //! lifecycle, and sandboxed client storage.
 
 use mod_api::{
-    ClientCanvasElement, ClientOverlayAnchor, ClientSurfaceColumn, ClientSurfaceQuery,
+    BlockId, ClientCanvasElement, ClientOverlayAnchor, ClientSurfaceColumn, ClientSurfaceQuery,
     ClientTextRun, GuiValue, HostRet,
 };
 
@@ -50,6 +50,16 @@ host_fn! {
     /// [`mod_api::ClientSurfaceColumn`]).
     pub fn client_surface_columns(queries: Vec<ClientSurfaceQuery>) -> Vec<Option<ClientSurfaceColumn>>
         => ClientSurfaceColumns { queries } => ClientSurfaceColumns
+}
+
+host_fn! {
+    /// Read replica block ids at world positions, reply parallel to
+    /// `positions` (at most 512 per call). `None` = cell unknown to the
+    /// replica (unloaded, or streamed content not yet final) — treat it like
+    /// an unloaded server-side read: state frozen, retry later. Resolve ids
+    /// to compare against with [`crate::resolve_block`].
+    pub fn client_blocks_at(positions: Vec<[i32; 3]>) -> Vec<Option<BlockId>>
+        => ClientBlocksAt { positions } => Blocks
 }
 
 host_fn! {

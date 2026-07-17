@@ -455,6 +455,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::MobKvSet { .. }
         | HostCall::MobKvDelete { .. } => kv::handle_kv_call(&data.mod_id, call),
         HostCall::ResolveBlock { .. }
+        | HostCall::BlocksByTag { .. }
         | HostCall::RegisterWorldgenFeature { .. }
         | HostCall::RegisterStageReplacement { .. }
         | HostCall::RegisterGenerator { .. } => worldgen::handle_worldgen_call(data, call),
@@ -491,7 +492,8 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ClientBiomeAt { .. }
         | HostCall::ClientAmbientSet { .. }
         | HostCall::ClientLoopSet { .. }
-        | HostCall::ClientMoodSet { .. } => super::client::handle_client_call(data, call),
+        | HostCall::ClientMoodSet { .. }
+        | HostCall::ClientBlocksAt { .. } => super::client::handle_client_call(data, call),
     }
 }
 

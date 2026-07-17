@@ -309,6 +309,24 @@ impl TagTable {
         Ok(id as u8)
     }
 
+    /// Look up an already-registered tag WITHOUT interning: engine names
+    /// (bare or `petramond:`-prefixed) and previously-listed pack tags
+    /// resolve; anything else is `None`. Queries must use this, never
+    /// [`Self::resolve`] — a query for an arbitrary name must not be able to
+    /// fill the 256-entry table.
+    pub(crate) fn lookup(&self, name: &str) -> Option<u8> {
+        let bare = name.strip_prefix("petramond:").unwrap_or(name);
+        if let Some(i) = self.engine.iter().position(|n| *n == bare) {
+            return Some(i as u8);
+        }
+        self.dynamic
+            .read()
+            .unwrap()
+            .iter()
+            .position(|n| *n == name)
+            .map(|i| (self.engine.len() + i) as u8)
+    }
+
     /// The registered name for `id` (diagnostics only).
     #[allow(dead_code)]
     pub(crate) fn name(&self, id: u8) -> &'static str {

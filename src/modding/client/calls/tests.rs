@@ -414,3 +414,72 @@ fn client_surface_columns_gate_on_revision_and_pack_cells() {
     assert_ne!(changed.revision, revision);
     assert!(changed.cells.is_some(), "a moved revision resends cells");
 }
+
+#[test]
+fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
+    let mut data = ModStoreData::new_for_side(
+        "map",
+        7,
+        RuntimeSide::Client,
+        Some(std::env::temp_dir().join("petramond-unused-client-blocks-test")),
+    );
+    let mut world = crate::world::World::new(0, 0);
+    let sp = crate::chunk::SectionPos::new(0, 4, 0);
+    world.insert_section_for_test(sp, crate::section::Section::new(0, 4, 0));
+    assert!(world.set_block_world(3, 64, 5, crate::block::Block::Stone));
+
+    let query = || HostCall::ClientBlocksAt {
+        positions: vec![[3, 64, 5], [3, 65, 5], [150, 64, 5]],
+    };
+    let HostRet::Blocks(blocks) =
+        super::client_scope::enter(&world, || handle_host_call(&mut data, query()))
+    else {
+        panic!("blocks reply expected");
+    };
+    assert_eq!(blocks[0], Some(mod_api::BlockId(crate::block::Block::Stone.id())));
+    assert_eq!(blocks[1], Some(mod_api::BlockId(crate::block::Block::Air.id())));
+    assert_eq!(blocks[2], None, "an unloaded section reads None");
+
+    // A section whose streamed content is not final reads None — the same
+    // "state frozen, retry later" contract as the server-side mod reads.
+    world.mark_overlay_in_flight_for_test(sp);
+    let HostRet::Blocks(blocks) =
+        super::client_scope::enter(&world, || handle_host_call(&mut data, query()))
+    else {
+        panic!("blocks reply expected");
+    };
+    assert_eq!(blocks[0], None, "an in-flight overlay leaked a replica read");
+
+    // Registry-only queries are legal on client instances (a client mod
+    // interpreting block ids has to resolve the names and tag sets it
+    // compares to).
+    assert_eq!(
+        handle_host_call(
+            &mut data,
+            HostCall::ResolveBlock {
+                key: "petramond:stone".into()
+            }
+        ),
+        HostRet::Block(Some(mod_api::BlockId(crate::block::Block::Stone.id())))
+    );
+    let HostRet::BlockList(leaves) = handle_host_call(
+        &mut data,
+        HostCall::BlocksByTag {
+            tag: "petramond:leaves".into(),
+        },
+    ) else {
+        panic!("block list expected");
+    };
+    assert!(!leaves.is_empty());
+
+    // The batch bound is enforced.
+    assert!(matches!(
+        handle_host_call(
+            &mut data,
+            HostCall::ClientBlocksAt {
+                positions: vec![[0, 0, 0]; 513],
+            }
+        ),
+        HostRet::Error(_)
+    ));
+}

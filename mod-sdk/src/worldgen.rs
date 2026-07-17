@@ -18,6 +18,17 @@ host_fn! {
     pub fn resolve_block(key: &str) -> Option<BlockId> => ResolveBlock { key: key.into() } => Block
 }
 
+host_fn! {
+    /// Every registered block carrying `tag`, in id order — engine tags as
+    /// `"petramond:<name>"` (e.g. `"petramond:leaves"`), pack tags as their
+    /// `"mod_id:name"`. Registry-only like [`resolve_block`]: works
+    /// everywhere, any time; a name nothing lists is an empty set. Query once
+    /// in [`Mod::init`] and keep the ids in mod state (never persist them) —
+    /// tag-driven policy picks up pack-added blocks with no code change.
+    pub fn blocks_by_tag(tag: &str) -> Vec<BlockId>
+        => BlocksByTag { tag: tag.into() } => BlockList
+}
+
 /// [`resolve_block`] that also logs a "not registered" line on `None` — the
 /// standard init-time shape: resolution failure is worth one log line, then
 /// the mod degrades on the `None`.

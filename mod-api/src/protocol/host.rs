@@ -856,6 +856,23 @@ pub enum HostCall {
         darken: f32,
         desaturate: f32,
     },
+    /// CLIENT: read replica block ids at world `positions`, reply parallel
+    /// to the request. `None` = cell unknown to the replica (section
+    /// unloaded, or its streamed content not yet final) — treat exactly like
+    /// an unloaded server-side read: state frozen, retry later. Bounded
+    /// batch (512 positions per call). → [`HostRet::Blocks`].
+    ClientBlocksAt {
+        positions: Vec<[i32; 3]>,
+    },
+    /// Every registered block carrying `tag`, in id order. Registry-only
+    /// like [`HostCall::ResolveBlock`] — legal on any instance, any time.
+    /// Engine tags read as `petramond:<name>` (e.g. `petramond:leaves`);
+    /// pack tags as their `mod_id:name`. A name nothing lists is simply an
+    /// empty set, never an error — querying cannot register a tag.
+    /// → [`HostRet::BlockList`].
+    BlocksByTag {
+        tag: String,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -869,7 +886,8 @@ pub enum HostRet {
     Bool(bool),
     /// [`HostCall::GetBlock`]: `None` = section unloaded / out of range.
     Block(Option<BlockId>),
-    /// [`HostCall::GetBlocks`], parallel to the request positions.
+    /// [`HostCall::GetBlocks`] / [`HostCall::ClientBlocksAt`], parallel to
+    /// the request positions.
     Blocks(Vec<Option<BlockId>>),
     /// [`HostCall::LightAt`], all on the 6-bit `0..=63` scale.
     Light {
@@ -924,4 +942,7 @@ pub enum HostRet {
     /// [`HostCall::ClientEnvParams`], parallel to the request keys
     /// (`None` = param not present in the environment).
     EnvParams(Vec<Option<[f32; 4]>>),
+    /// [`HostCall::BlocksByTag`]: the tag's members, id order (empty = no
+    /// block carries it).
+    BlockList(Vec<BlockId>),
 }

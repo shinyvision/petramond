@@ -26,6 +26,13 @@ impl World {
         self.relight_demand.insert(pos);
     }
 
+    /// Mark a section's saved overlay in flight for a test: stream-finality
+    /// gated reads there must report unloaded until it lands.
+    #[cfg(test)]
+    pub(crate) fn mark_overlay_in_flight_for_test(&mut self, pos: SectionPos) {
+        self.awaited_overlays.insert(pos);
+    }
+
     /// Install a whole column [`Chunk`] for a test, splitting it into sections + column
     /// data exactly as the streamer does for a generated column. Lets the many column-era
     /// fixtures (which build a 256-tall `Chunk` and hand it over) keep working against the
