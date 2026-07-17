@@ -65,8 +65,12 @@ impl World {
     }
 
     /// Whether the fragile block at `pos` still has something to stand on: plants use
-    /// the old full-opaque ground rule, while torches and ladders use the same
-    /// mounted-face test as their placement.
+    /// the old full-opaque ground rule, torches and ladders use the same mounted-face
+    /// test as their placement, and lowered-cube covers (the snow layer and any pack
+    /// block shaped like it) rest on ANY full collision cube — a dusting sits on
+    /// leaves or glass just as well as on soil, while stairs, slabs, and model blocks
+    /// still shed it (per Rachel: snow stays on any full block, and canopy snow must
+    /// not shatter the tick after the weather mod lays it).
     fn fragile_supported(&self, pos: IVec3, block: Block) -> bool {
         if block == Block::Torch {
             return self.torch_supported_at(pos, self.torch_placement(pos));
@@ -75,6 +79,9 @@ impl World {
             return self.ladder_supported_at(pos, self.ladder_facing(pos));
         }
         let s = self.fragile_ground_cell(pos);
+        if matches!(block.render_shape(), crate::block::RenderShape::LoweredCube(_)) {
+            return super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z));
+        }
         self.physics_block(s.x, s.y, s.z).is_opaque()
     }
 }
@@ -225,6 +232,39 @@ mod tests {
                 .iter()
                 .any(|&(p, b)| p == ladder && b == Block::Ladder),
             "the broken ladder was recorded for its drop + particle burst",
+        );
+    }
+
+    #[test]
+    fn a_snow_layer_rests_on_any_full_cube_but_sheds_off_partial_shapes() {
+        // Both sites stay >= SIM_READ_REACH cells from the lone chunk's
+        // borders, or the streaming-finality guard drops the scheduled break.
+        let mut w = world();
+        // Leaves are a full collision cube without being opaque: canopy snow
+        // must persist (the weather mod lays it there; it used to shatter on
+        // the placement's own block update).
+        w.set_block_world(7, 64, 8, Block::OakLeaves);
+        w.set_block_world(7, 65, 8, Block::SnowLayer);
+        run_ticks(&mut w, 3);
+        assert_eq!(
+            block(&w, IVec3::new(7, 65, 8)),
+            Block::SnowLayer,
+            "canopy snow must persist on leaves"
+        );
+
+        // A stair is not a full cube: the layer sheds on the next tick.
+        let stair = IVec3::new(9, 64, 8);
+        assert!(w.place_stair(
+            stair,
+            Block::OakStairs,
+            StairState::new(Facing::East, StairHalf::Bottom)
+        ));
+        w.set_block_world(9, 65, 8, Block::SnowLayer);
+        run_ticks(&mut w, 3);
+        assert_eq!(
+            block(&w, IVec3::new(9, 65, 8)),
+            Block::Air,
+            "stair-top snow must shed"
         );
     }
 

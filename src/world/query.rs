@@ -243,7 +243,7 @@ impl World {
     }
 }
 
-fn full_unit_cube(boxes: &[Aabb]) -> bool {
+pub(super) fn full_unit_cube(boxes: &[Aabb]) -> bool {
     if boxes.len() != 1 {
         return false;
     }

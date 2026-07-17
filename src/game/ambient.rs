@@ -14,7 +14,9 @@
 //! the referenced burst bundle's launch data), so splashes need no particle
 //! pool and land exactly where each drop died, roofs included.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+
+use rustc_hash::FxHashMap;
 
 use glam::Vec3;
 
@@ -72,7 +74,7 @@ pub(crate) struct AmbientDrives {
     last_time: Option<f32>,
     /// Per-collect column cache: kill height (cell top face) + column biome
     /// per world column, or `None` for unloaded/all-air columns.
-    ceilings: HashMap<(i32, i32), Option<(f32, u8)>>,
+    ceilings: FxHashMap<(i32, i32), Option<(f32, u8)>>,
 }
 
 impl AmbientDrives {
@@ -211,7 +213,7 @@ fn wrap_center(v: f32, d: f32) -> f32 {
 /// bundle's per-column filter — the rain/snow divide at a border is exact.
 fn column_ceiling(
     world: &World,
-    cache: &mut HashMap<(i32, i32), Option<(f32, u8)>>,
+    cache: &mut FxHashMap<(i32, i32), Option<(f32, u8)>>,
     x: f32,
     z: f32,
 ) -> Option<(f32, u8)> {
@@ -231,7 +233,7 @@ fn derive_volume(
     wind: [f32; 2],
     adv: [f32; 2],
     world: &World,
-    ceilings: &mut HashMap<(i32, i32), Option<(f32, u8)>>,
+    ceilings: &mut FxHashMap<(i32, i32), Option<(f32, u8)>>,
     cam: Vec3,
     time: f32,
     out: &mut Vec<ParticlePresentation>,
@@ -246,11 +248,20 @@ fn derive_volume(
     // age (≤ a couple of seconds), over which the wind is effectively
     // constant — unlike absolute time, this never amplifies wind changes.
     let (adv_x, adv_z) = (adv[0], adv[1]);
+    let has_flutter = spec.flutter[0] != 0.0;
     for i in 0..count {
         let seed = drive_seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03);
         let fall_speed = lerp_range(spec.fall_speed, hash01(seed ^ 0x01));
         let cycle = span / fall_speed;
-        let cycle_pos = time / cycle + hash01(seed ^ 0x02);
+        // The cycle phase and flutter-phase hashes are reused by the splash
+        // anchors below — draw each once.
+        let phase = hash01(seed ^ 0x02);
+        let (fphase_x, fphase_z) = if has_flutter {
+            (hash01(seed ^ 0x05), hash01(seed ^ 0x06))
+        } else {
+            (0.0, 0.0)
+        };
+        let cycle_pos = time / cycle + phase;
         let cycle_idx = cycle_pos.floor();
         let t_cycle = cycle_pos - cycle_idx;
         // Per-cycle reseed: each pass down the band lands in a fresh column,
@@ -263,10 +274,16 @@ fn derive_volume(
         // Flutter is part of the drop's REAL position: applying it before
         // the disc/ceiling checks keeps fluttering flakes out of the walls
         // beside open columns (and inside the disc the tests assert).
-        let flutter_x = spec.flutter[0]
-            * (std::f32::consts::TAU * (spec.flutter[1] * time + hash01(seed ^ 0x05))).sin();
-        let flutter_z = spec.flutter[0]
-            * (std::f32::consts::TAU * (spec.flutter[1] * time + hash01(seed ^ 0x06))).cos();
+        let (flutter_x, flutter_z) = if has_flutter {
+            (
+                spec.flutter[0]
+                    * (std::f32::consts::TAU * (spec.flutter[1] * time + fphase_x)).sin(),
+                spec.flutter[0]
+                    * (std::f32::consts::TAU * (spec.flutter[1] * time + fphase_z)).cos(),
+            )
+        } else {
+            (0.0, 0.0)
+        };
         let x = cam.x + wrap_center(base_x - cam.x, diameter) + flutter_x;
         let z = cam.z + wrap_center(base_z - cam.z, diameter) + flutter_z;
         let (dx, dz) = (x - cam.x, z - cam.z);
@@ -289,7 +306,7 @@ fn derive_volume(
                 // First locate the column at the (approximate) hit time via
                 // the current wrap — one fixed-point step is plenty at
                 // ≤ 6 b/s wind over ≤ a couple of seconds.
-                let t_hit_guess = (idx + 0.85 - hash01(seed ^ 0x02)) * cycle;
+                let t_hit_guess = (idx + 0.85 - phase) * cycle;
                 let adv_hx = adv_x - wind_x * (time - t_hit_guess);
                 let adv_hz = adv_z - wind_z * (time - t_hit_guess);
                 let hx = cam.x + wrap_center(hx_base + adv_hx - cam.x, diameter);
@@ -311,7 +328,7 @@ fn derive_volume(
                 // EXACT hit time (the 0.85 guess can be most of a cycle off,
                 // which at full wind is several blocks) and re-read that
                 // column's ceiling so the crown sits where the drop died.
-                let t_hit = (idx + (y_top - kill_y) / span - hash01(seed ^ 0x02)) * cycle;
+                let t_hit = (idx + (y_top - kill_y) / span - phase) * cycle;
                 let hx = cam.x
                     + wrap_center(hx_base + adv_x - wind_x * (time - t_hit) - cam.x, diameter);
                 let hz = cam.z
@@ -336,19 +353,25 @@ fn derive_volume(
                 if kill_y >= y_top || kill_y <= y_top - span {
                     continue;
                 }
-                let t_hit = (idx + (y_top - kill_y) / span - hash01(seed ^ 0x02)) * cycle;
+                let t_hit = (idx + (y_top - kill_y) / span - phase) * cycle;
                 let age = time - t_hit;
                 if age >= 0.0 {
                     // The crown sits where the flake VISUALLY died: include
                     // its (deterministic) flutter evaluated at the hit time.
-                    let fh_x = spec.flutter[0]
-                        * (std::f32::consts::TAU
-                            * (spec.flutter[1] * t_hit + hash01(seed ^ 0x05)))
-                        .sin();
-                    let fh_z = spec.flutter[0]
-                        * (std::f32::consts::TAU
-                            * (spec.flutter[1] * t_hit + hash01(seed ^ 0x06)))
-                        .cos();
+                    let (fh_x, fh_z) = if has_flutter {
+                        (
+                            spec.flutter[0]
+                                * (std::f32::consts::TAU
+                                    * (spec.flutter[1] * t_hit + fphase_x))
+                                    .sin(),
+                            spec.flutter[0]
+                                * (std::f32::consts::TAU
+                                    * (spec.flutter[1] * t_hit + fphase_z))
+                                    .cos(),
+                        )
+                    } else {
+                        (0.0, 0.0)
+                    };
                     derive_splash(burst, hseed, hx + fh_x, kill_y, hz + fh_z, age, out);
                 }
             }
@@ -369,7 +392,11 @@ fn derive_volume(
         if y <= kill_y {
             continue; // landed: the splash block above already showed it
         }
-        let mix = hash01(seed ^ 0x07).powf(spec.color_bias);
+        let mix = if spec.color_bias == 1.0 {
+            hash01(seed ^ 0x07) // powf(x, 1.0) == x, and powf is not cheap
+        } else {
+            hash01(seed ^ 0x07).powf(spec.color_bias)
+        };
         let mut alpha = lerp_range(spec.alpha, hash01(seed ^ 0x09));
         // Fade in at the band top and out at the band bottom so particles
         // never pop into view — the bottom fade only ever shows when the
@@ -489,7 +516,7 @@ mod tests {
         let world = crate::world::testutil::flat_world();
         let spec = rain_spec(AmbientHit::Die);
         let mut out = Vec::new();
-        let mut ceilings = HashMap::new();
+        let mut ceilings = FxHashMap::default();
         for step in 0..40 {
             let time = step as f32 * 0.05;
             out.clear();
@@ -535,7 +562,7 @@ mod tests {
         }
         let spec = rain_spec(AmbientHit::Die);
         let mut out = Vec::new();
-        let mut ceilings = HashMap::new();
+        let mut ceilings = FxHashMap::default();
         for step in 0..40 {
             out.clear();
             ceilings.clear();
@@ -569,7 +596,7 @@ mod tests {
         let splash = splash_spec();
         let mut splashes_seen = 0;
         let mut out = Vec::new();
-        let mut ceilings = HashMap::new();
+        let mut ceilings = FxHashMap::default();
         for step in 0..200 {
             out.clear();
             ceilings.clear();
@@ -652,7 +679,7 @@ mod tests {
         };
         let diameter = spec.radius * 2.0;
         let mut adv = [0.0f32, 0.0];
-        let mut ceilings = HashMap::new();
+        let mut ceilings = FxHashMap::default();
         let mut prev: Vec<(i32, i32)> = Vec::new();
         let mut prev_falling: Vec<(f32, f32)> = Vec::new();
         let mut crown_frames = 0;
@@ -771,7 +798,7 @@ mod tests {
         // The fixture's columns default to biome 0.
         allowed.biome_allow = Some([1u64, 0, 0, 0]); // bit 0 set
         denied.biome_allow = Some([!1u64, u64::MAX, u64::MAX, u64::MAX]);
-        let mut ceilings = HashMap::new();
+        let mut ceilings = FxHashMap::default();
         for (spec, expect_some) in [(&allowed, true), (&denied, false)] {
             let mut out = Vec::new();
             ceilings.clear();

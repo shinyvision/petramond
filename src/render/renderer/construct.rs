@@ -144,6 +144,25 @@ async fn new_renderer_inner(
         &scene_color,
         &mood_buf,
     );
+    // Half-res environment targets: env passes march at half the scene dims
+    // against a downsampled depth; the composite lifts the result back (see
+    // pipeline::EnvScaler).
+    let (env_w, env_h) = ((width + 1) / 2, (height + 1) / 2);
+    let env_color = create_scene_color(&device, env_w, env_h, format);
+    let env_depth = super::super::resources::create_depth(&device, env_w, env_h);
+    let env_down_bind = super::super::pipeline::create_env_down_bind(
+        &device,
+        &pipelines.env_scaler.down_bgl,
+        &depth,
+    );
+    let env_comp_bind = super::super::pipeline::create_env_comp_bind(
+        &device,
+        &pipelines.env_scaler.comp_bgl,
+        &env_color,
+        &pipelines.env_scaler.samp,
+        &env_depth,
+        &depth,
+    );
     let env_passes = pipelines
         .env_passes
         .into_iter()
@@ -153,7 +172,7 @@ async fn new_renderer_inner(
                 &res.bgl,
                 &uniform_buf,
                 &res.params_buf,
-                &depth,
+                &env_depth,
             );
             super::EnvPass { res, bind, dormant: false }
         })
@@ -523,6 +542,11 @@ async fn new_renderer_inner(
         sky_texture_bind: pipelines.sky_texture_bind,
         sky_shader_param_keys: pipelines.sky_shader_param_keys,
         env_passes,
+        env_scaler: pipelines.env_scaler,
+        env_color,
+        env_depth,
+        env_down_bind,
+        env_comp_bind,
         sky_light_param_key: pipelines.sky_light_param_key,
         underwater: false,
         fog_start: default_fog.0,
@@ -758,14 +782,31 @@ impl Renderer {
             &self.scene_color,
             &self.mood_buf,
         );
-        // Environment binds reference the depth view recreated above.
+        // Environment half-res targets and every bind that references the
+        // recreated views.
+        let (env_w, env_h) = ((w + 1) / 2, (h + 1) / 2);
+        self.env_color = create_scene_color(&self.device, env_w, env_h, self.config.format);
+        self.env_depth = super::super::resources::create_depth(&self.device, env_w, env_h);
+        self.env_down_bind = super::super::pipeline::create_env_down_bind(
+            &self.device,
+            &self.env_scaler.down_bgl,
+            &self.depth,
+        );
+        self.env_comp_bind = super::super::pipeline::create_env_comp_bind(
+            &self.device,
+            &self.env_scaler.comp_bgl,
+            &self.env_color,
+            &self.env_scaler.samp,
+            &self.env_depth,
+            &self.depth,
+        );
         for pass in &mut self.env_passes {
             pass.bind = super::super::pipeline::create_environment_bind(
                 &self.device,
                 &pass.res.bgl,
                 &self.uniform_buf,
                 &pass.res.params_buf,
-                &self.depth,
+                &self.env_depth,
             );
         }
     }

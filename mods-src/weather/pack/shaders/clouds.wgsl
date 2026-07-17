@@ -4,20 +4,26 @@
 // analytic plane hits, clamped against the scene depth, so mountains occlude
 // clouds and cloud banks drift in front of far ridges. Coverage is the SAME
 // closed-form field the weather mod simulates (`weather-core` is this file's
-// twin: fmix32 hash, tiling lattice noise, storm remap — change one, change
-// both), fed by two replicated params:
+// twin: fmix32 hash, tiling lattice noise, storm remap, TWO sheets sliding
+// at different speeds whose saturating sum is the coverage — change one,
+// change both), fed by two replicated params:
 //   params[0] = weather:wind  [off_x, off_z, wind_x, wind_z]
 //   params[1] = weather:sky   [storm, rain_start, feature_size, seed]
 //   params[2] = weather:flux  [epoch, epoch_frac, 0, 0]
 //
 // Lighting: Beer-Lambert extinction with a second wide lobe (multi-scatter
 // hack), dual-lobe Henyey-Greenstein phase (soft silver lining), an
-// in-scatter "powder" term for flat dark bases, energy-conserving per-step
-// integration, and a MENACE-keyed extinction boost that opens a little
-// before the rain band and saturates with the downpour (its ramp end is
-// weather-core's RAIN_RAMP twin) — accumulated cloud is darker cloud, and
-// the color turns before the rain arrives. Distant decks dissolve into the
-// luminous horizon haze (storybook: distance lightens).
+// in-scatter "powder" term for flat dark bases, a SUN-INDEPENDENT top rim
+// (skylight from the open sky above — crowns stay lit in any view
+// direction, even on storm cells) plus a daytime sun CROWN on the very top
+// of the deck (view-independent, menace-ramped: it restores the sunlight
+// the storm darkening steals from crests), energy-conserving per-step
+// integration,
+// and a MENACE-keyed extinction boost that opens a little before the rain
+// band and saturates with the downpour (its ramp end is weather-core's
+// RAIN_RAMP twin) — accumulated cloud is darker cloud, and the color turns
+// before the rain arrives. Distant decks dissolve into the luminous horizon
+// haze (storybook: distance lightens).
 
 struct Uniforms {
     view_proj: mat4x4<f32>,
@@ -51,7 +57,7 @@ const ALBEDO: f32 = 0.97;
 // brilliant white — higher scattering orders do that. Games boost the sun
 // energy instead (Nubis's dual-lobe Beer is the same idea); without this the
 // haze-colored ambient dominates and EVERY cloud reads gray.
-const SUN_BOOST: f32 = 7.0;
+const SUN_BOOST: f32 = 1.0;
 const RAIN_DARKEN: f32 = 1.7;    // extinction boost at full menace — the
                                  // storm-slate knob. The darkening terms
                                  // COMPOUND (extinction × albedo bleed ×
@@ -71,6 +77,30 @@ const AMBIENT_LIFT: f32 = 0.56;  // how much haze light fills the shadow side
 // Global opacity ceiling: a whisper of sky always shows through the deck —
 // clouds read airy, never like a solid painted lid (per Rachel).
 const CLOUD_SKY_BLEND: f32 = 0.1;
+// Coverage keyframe spacing along the march (blocks) — must stay well under
+// the field's smallest feature (~128 blocks: the 512-sheet's third octave).
+const COV_KEY_SPACING: f32 = 40.0;
+// Segment skip: below this keyed coverage nothing can render
+// (cloud_density needs cov > ~0.18; the margin covers between-key peaks).
+const COV_SKIP: f32 = 0.10;
+// Beyond this march distance the billow erosion is skipped (cheap density):
+// the aerial fade toward haze owns the look out there.
+const BILLOW_LOD_T: f32 = 1200.0;
+// Top rim light: skylight scattered down through thin cloud above the
+// sample. DELIBERATELY sun-independent (per Rachel: bright crowns across
+// the whole deck, not only toward the sun) and NOT menace-boosted — a storm
+// cell keeps its slate body but still catches a lit crown, which is what
+// keeps a busy sky from reading as one gloomy lid.
+const RIM_BOOST: f32 = 0.7;
+// Sun crown: direct daylight striking the deck's VERY top, in any view
+// direction (the sun is overhead-ish all day — per Rachel, the tippity top
+// is sunlit whenever it's daytime). Rides the rim visibility SQUARED so it
+// hugs the crest tighter than the broad sky rim, and RAMPS UP with menace:
+// fair-weather tops are already sunlit through the normal scatter path, but
+// the menace extinction boost + albedo bleed steal exactly this light from
+// storm cells, leaving their crests as dark as their bases (screenshot
+// 2026-07-17) — physically a storm cloud's crown is its BRIGHTEST part.
+const CROWN_SUN: f32 = 1.4;
 
 // --- weather-core twins ----------------------------------------------------
 fn fmix32(h_in: u32) -> u32 {
@@ -118,26 +148,42 @@ fn fbm_epoch(q: vec2<f32>, o: vec2<f32>, base: u32, seed: u32) -> f32 {
     return (n0 + 0.5 * n1 + 0.25 * n2) / 1.75;
 }
 
-// Coverage in [0,1] at world xz — the field the sim rains from, cross-faded
-// between two epoch seedings so shapes MORPH while they drift (a rigid
-// translation read as unnaturally uniform; playtest 2026-07-17).
-fn coverage_at(xz: vec2<f32>) -> f32 {
+// Sheet B: weather-core's SHEET_B_* twins. Larger features advected at 2x
+// the wind (INTEGER multiple — wrap-exactness); feature size a power of two
+// dividing WRAP.
+const SHEET_B_FEATURE: f32 = 1024.0;
+const SHEET_B_ADVECT: f32 = 2.0;
+const SHEET_B_SALT: u32 = 0x517CC1B7u;
+
+// One cloud sheet — weather-core's `sheet` twin: epoch-morphed fbm (shapes
+// REFORM while they drift; a rigid translation read as unnaturally uniform,
+// playtest 2026-07-17) remapped by the storm bias to [0,1] coverage.
+fn sheet_at(xz: vec2<f32>, salt: u32, feature: f32, advect: f32) -> f32 {
     let wind = params.values[0];
     let sky = params.values[1];
     let flux = params.values[2];
-    let feature = sky.z;
     let seed = u32(sky.w);
     let q = xz / feature; // lattice units; wrap via the period mask
-    let o = wind.xy / feature;
+    let o = advect * wind.xy / feature;
     let base = u32(WRAP / feature);
     let epoch = u32(flux.x);
     let n = mix(
-        fbm_epoch(q, o, base, seed ^ fmix32(epoch)),
-        fbm_epoch(q, o, base, seed ^ fmix32(epoch + 1u)),
+        fbm_epoch(q, o, base, seed ^ fmix32(epoch) ^ salt),
+        fbm_epoch(q, o, base, seed ^ fmix32(epoch + 1u) ^ salt),
         clamp(flux.y, 0.0, 1.0),
     );
     let lo = 1.0 - sky.x; // storm widens the covered fraction
     return clamp((n - lo) / max(1.0 - lo, 0.001), 0.0, 1.0);
+}
+
+// Coverage in [0,1] at world xz — the field the sim rains from: the
+// SATURATING SUM of two sheets sliding at different speeds. Each sheet
+// alone is thin fair-weather cloud; where they align the sum climbs through
+// the rain band — fronts form by convergence (weather-core `coverage` twin).
+fn coverage_at(xz: vec2<f32>) -> f32 {
+    let ca = sheet_at(xz, 0u, params.values[1].z, 1.0);
+    let cb = sheet_at(xz, SHEET_B_SALT, SHEET_B_FEATURE, SHEET_B_ADVECT);
+    return clamp(ca + cb, 0.0, 1.0);
 }
 
 // How THREATENING a cell reads: 0 = fair-weather white, 1 = storm slate.
@@ -173,7 +219,6 @@ fn haze_color(view_dir: vec3<f32>) -> vec3<f32> {
     return mix(haze, haze * vec3<f32>(1.22, 1.04, 0.84), glow);
 }
 
-// Periodic 3D value noise: the 2D lattice extended with a hashed y layer.
 fn corner3(ix: u32, iy: u32, iz: u32, seed: u32) -> f32 {
     return corner(ix ^ fmix32(iy * 0xC2B2AE35u), iz, seed);
 }
@@ -302,7 +347,10 @@ fn fs_env(in: VsOut) -> @location(0) vec4<f32> {
     }
     t0 = max(t0, 0.0);
     t1 = min(t1, min(scene_dist, CLOUD_FAR));
-    if (t1 <= t0) { return vec4<f32>(0.0); }
+    // Sub-millimeter spans (slab entry grazing the terrain clamp) render
+    // nothing AND their dt can fall below the float ulp at large t — see the
+    // step budget below.
+    if (t1 <= t0 + 1e-3) { return vec4<f32>(0.0); }
 
     let mu = dot(dir, u.sun_dir.xyz);
     let daylight = u.sun_dir.w;
@@ -318,16 +366,52 @@ fn fs_env(in: VsOut) -> @location(0) vec4<f32> {
     let ambient_base = u.fog_color.rgb * u.sky_color.rgb * AMBIENT_LIFT;
     let ambient_white = vec3<f32>(1.0, 1.0, 1.0) * mix(0.12, 0.72, daylight);
 
-    let dt = (t1 - t0) / f32(STEPS);
+    // COVERAGE KEYFRAMES: the coverage field is 2D with >=128-block features,
+    // while the march samples every ~6-120 blocks — evaluating the full
+    // two-sheet lattice per step (and per sun tap) was ~80% of the pass.
+    // The march runs SEGMENT BY SEGMENT: coverage is evaluated once per
+    // <=COV_KEY_SPACING-block key (lazily — an early transmittance break
+    // skips the tail keys) and lerped across each segment; the 3D billow
+    // (per step, as before) carries all the fine detail. A segment whose
+    // BOTH keys sit under COV_SKIP is stepped over without any march body —
+    // cloud_density needs cov > ~0.18 before anything renders, so clear sky
+    // and the gaps BETWEEN clouds cost only their keys. No keys array: a
+    // stored-array variant spilled to scratch and taxed every invocation.
+    let span = t1 - t0;
+    let n_keys = clamp(i32(span / COV_KEY_SPACING) + 1, 1, STEPS);
+    let dt = span / f32(STEPS);
     var t = t0 + dt * bayer4(pixel);
     var transmittance = 1.0;
     var radiance = vec3<f32>(0.0);
     var hit_dist = -1.0;
+    var seg_hi = coverage_at((cam_world + dir * t0).xz);
+    // HARD STEP BUDGET: the march may take at most STEPS lit steps in total,
+    // like the pre-segment for-loop it replaced. The while below is
+    // FLOAT-conditioned; on a sliver span dt can be smaller than the ulp of
+    // t, `t += dt` stops advancing, and without this cap that pixel loops
+    // forever — one such pixel wedges the whole GPU channel (live Xid 109
+    // CTX SWITCH TIMEOUT, 2026-07-17). Never remove the budget.
+    var steps_left = STEPS;
 
-    for (var i = 0; i < STEPS; i++) {
+    for (var k = 0; k < n_keys; k++) {
+        let seg_t0 = t0 + span * f32(k) / f32(n_keys);
+        let seg_t1 = t0 + span * f32(k + 1) / f32(n_keys);
+        let seg_lo = seg_hi;
+        seg_hi = coverage_at((cam_world + dir * seg_t1).xz);
+        if (max(seg_lo, seg_hi) < COV_SKIP) {
+            // Step past the segment on the same dt grid (keeps the dither
+            // phase), paying nothing but the key eval.
+            t += dt * max(0.0, ceil((seg_t1 - t) / dt));
+            continue;
+        }
+        while (t < seg_t1 && steps_left > 0) {
+        steps_left -= 1;
         let p = cam_world + dir * t;
-        let cov = coverage_at(p.xz);
-        let density = cloud_density(p, cov, false);
+        let cov = mix(seg_lo, seg_hi, clamp((t - seg_t0) / (seg_t1 - seg_t0), 0.0, 1.0));
+        // Beyond the LOD line the aerial haze already owns the look: skip
+        // the billow erosion (cheap density) for the sample and its taps.
+        let cheap_lod = t > BILLOW_LOD_T;
+        let density = cloud_density(p, cov, cheap_lod);
         if (density > 0.003) {
             if (hit_dist < 0.0) { hit_dist = t; }
             let menace = menace_at(cov);
@@ -335,13 +419,27 @@ fn fs_env(in: VsOut) -> @location(0) vec4<f32> {
             // Sun occlusion: two full-density taps up the sun ray. The lit
             // dome vs shadowed underbelly contrast is the strongest
             // volumetric cue this shader has.
+            // Sun taps reuse the ray sample's coverage: their 12/34-block
+            // offsets are far below the field's >=128-block feature scale
+            // (the vertical rim taps already reuse it exactly), so the
+            // occlusion detail comes from the billow, not from re-evaluating
+            // the lattice.
             let sp1 = p + u.sun_dir.xyz * 12.0;
             let sp2 = p + u.sun_dir.xyz * 34.0;
-            let s1 = cloud_density(sp1, coverage_at(sp1.xz), false);
-            let s2 = cloud_density(sp2, coverage_at(sp2.xz), true);
+            let s1 = cloud_density(sp1, cov, cheap_lod);
+            let s2 = cloud_density(sp2, cov, true);
             let tau_sun = (s1 * 12.0 + s2 * 26.0) * SIGMA_T * (1.0 + RAIN_DARKEN * menace);
             // Dual-lobe Beer: the wide lobe keeps shadowed flanks readable.
             let t_sun = max(exp(-tau_sun), 0.5 * exp(-0.25 * tau_sun));
+            // Top rim + sun crown: two VERTICAL occlusion taps toward the
+            // open sky. The coverage field is 2D, so the column's `cov` is
+            // reused exactly — these taps cost only billow noise. No menace
+            // boost on the taps: storm crowns stay lit (see RIM_BOOST).
+            let r1 = cloud_density(p + vec3<f32>(0.0, 14.0, 0.0), cov, cheap_lod);
+            let r2 = cloud_density(p + vec3<f32>(0.0, 36.0, 0.0), cov, true);
+            let rim = exp(-(r1 * 14.0 + r2 * 28.0) * SIGMA_T);
+            let rim_light = vec3<f32>(1.0, 0.99, 0.96) * mix(0.10, 1.0, daylight) * (RIM_BOOST * rim);
+            let crown = sun_color * (CROWN_SUN * daylight * rim * rim * mix(0.3, 1.0, menace));
             // In-scatter probability: flat dark bases, bright rounded tops —
             // and a raised floor on LOW-menace cells, so fair-weather wisps
             // read luminous white while storm cells keep their gloom.
@@ -358,14 +456,23 @@ fn fs_env(in: VsOut) -> @location(0) vec4<f32> {
             // darker cloud, and the color says rain before the rain does.
             let sigma_e = SIGMA_T * density * (1.0 + RAIN_DARKEN * menace);
             let sigma_s = ALBEDO * SIGMA_T * density * (1.0 - 0.22 * menace);
-            let src = (sun_color * (t_sun * phase * daylight * SUN_BOOST) + amb) * inscp * sigma_s;
+            // The crown adds OUTSIDE the in-scatter shaping and WITHOUT the
+            // menace albedo bleed: it is a surface-light hack, not
+            // in-scatter — the crest's samples are thin (low density, inscp
+            // near its floor) and menace-bled, which is precisely what kept
+            // storm tops dark. sigma_e still divides it in the integral, so
+            // energy conservation per step is preserved.
+            let src = (sun_color * (t_sun * phase * daylight * SUN_BOOST) + amb + rim_light) * inscp * sigma_s
+                + crown * (ALBEDO * SIGMA_T * density);
             // Energy-conserving step integration (Hillaire/Frostbite).
             let tr = exp(-sigma_e * dt);
             radiance += transmittance * (src - src * tr) / max(sigma_e, 1e-5);
             transmittance *= tr;
-            if (transmittance < 0.012) { break; }
         }
         t += dt;
+        if (transmittance < 0.02) { break; }
+        }
+        if (transmittance < 0.02) { break; }
     }
 
     var alpha = (1.0 - transmittance) * (1.0 - CLOUD_SKY_BLEND);

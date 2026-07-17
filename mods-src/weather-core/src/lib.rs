@@ -16,11 +16,22 @@
 pub const WRAP: f32 = 65536.0;
 /// Base octave feature size in blocks. Power of two dividing [`WRAP`].
 pub const FEATURE_SIZE: f32 = 512.0;
-/// Coverage at or above this starts to rain. Deliberately well inside the
-/// fbm's reachable range: averaged noise concentrates around its middle, so
-/// a high threshold makes rain vanishingly rare (playtest 2026-07-16 —
-/// "thick clouds that never rain").
-pub const RAIN_START: f32 = 0.45;
+/// Sheet B (the second cloud population): larger, independently seeded
+/// features advected at an INTEGER multiple of the wind, so the two sheets
+/// visibly slide over each other and rain organizes where they overlap.
+/// Feature size must stay a power of two dividing [`WRAP`]; the advection
+/// multiple must stay an integer (anything else breaks wrap-exactness when
+/// the published offset reduces modulo the period).
+pub const SHEET_B_FEATURE: f32 = 1024.0;
+pub const SHEET_B_ADVECT: f32 = 2.0;
+/// Seed salt separating sheet B's hash stream from sheet A's octave salts.
+const SHEET_B_SALT: u32 = 0x517C_C1B7;
+/// Coverage at or above this starts to rain. Tuned against the TWO-SHEET
+/// sum distribution (rebalance 2026-07-17, offline stats harness): at a
+/// fixed point it rains ~15% of the time in ~3-min showers grouped into
+/// ~20-min rainy spells, and never blankets outside a storm peak. (The
+/// single-sheet era used 0.45; the saturating sum sits higher.)
+pub const RAIN_START: f32 = 0.55;
 /// Fraction of the remaining coverage range over which rain ramps to a full
 /// downpour: intensity 1 at `RAIN_START + RAIN_RAMP * (1 - RAIN_START)`,
 /// because coverage itself almost never reaches 1. clouds.wgsl's
@@ -34,11 +45,9 @@ const WIND_TURN_PERIOD_S: f32 = 1200.0;
 const WIND_GUST_PERIOD_S: f32 = 420.0;
 /// Global calm/stormy cycle length in seconds.
 const STORM_PERIOD_S: f32 = 2400.0;
-/// Wind speed range in blocks/s. The floor keeps cloud drift ALWAYS
-/// perceptible (0.5 read as a frozen sky at deck altitude — playtest
-/// 2026-07-17); the ceiling keeps rain slant and drift sane.
-const WIND_MIN: f32 = 1.75;
-const WIND_MAX: f32 = 7.0;
+/// Wind speed range in blocks/s. Changed to 0.75 / 2.0 for weather rebalance.
+const WIND_MIN: f32 = 0.75;
+const WIND_MAX: f32 = 2.0;
 
 /// One tick = 1/20 s; the clock is `petramond:clock` absolute ticks.
 const TICKS_PER_S: u64 = 20;
@@ -46,7 +55,10 @@ const TICKS_PER_S: u64 = 20;
 /// itself over this window, so cloud shapes continuously REFORM while they
 /// drift — without it the whole sky translates as one rigid pattern
 /// (playtest 2026-07-17: "clouds move in a uniform straight line").
-pub const EVOLVE_TICKS: u64 = 6000;
+/// 10 min, up from 5: with two sheets sliding over each other the morph is
+/// no longer the only source of shape change, and the faster morph was
+/// measurably capping shower length (rebalance 2026-07-17).
+pub const EVOLVE_TICKS: u64 = 12000;
 
 /// Replicated field parameters. The server mod publishes these as shader
 /// params; the client mod reads them back; the shader receives them directly.
@@ -133,12 +145,13 @@ fn vnoise1(t: f32, period: u32, seed: u32) -> f32 {
 }
 
 /// Three-octave fbm of the periodic noise, normalized to [0, 1). `qx/qz`
-/// are the UNADVECTED lattice coordinates and `ox/oz` the advection offset
-/// in lattice units: the middle octave slides at 2× the wind (an INTEGER
-/// multiple — anything else breaks the wrap-exactness — so structure shears
-/// through the larger shapes instead of riding them rigidly).
-fn fbm2(qx: f32, qz: f32, ox: f32, oz: f32, seed: u32) -> f32 {
-    let base = (WRAP / FEATURE_SIZE) as u32;
+/// are the UNADVECTED lattice coordinates (in `feature`-sized cells) and
+/// `ox/oz` the advection offset in the same units: the middle octave slides
+/// at 2× the wind (an INTEGER multiple — anything else breaks the
+/// wrap-exactness — so structure shears through the larger shapes instead
+/// of riding them rigidly).
+fn fbm2(qx: f32, qz: f32, ox: f32, oz: f32, seed: u32, feature: f32) -> f32 {
+    let base = (WRAP / feature) as u32;
     let n0 = vnoise2(qx - ox, qz - oz, base, seed);
     let n1 = vnoise2(
         (qx - 2.0 * ox) * 2.0,
@@ -146,7 +159,12 @@ fn fbm2(qx: f32, qz: f32, ox: f32, oz: f32, seed: u32) -> f32 {
         base * 2,
         seed ^ 0x9E37_79B9,
     );
-    let n2 = vnoise2((qx - ox) * 4.0, (qz - oz) * 4.0, base * 4, seed ^ 0x3C6E_F372);
+    let n2 = vnoise2(
+        (qx - ox) * 4.0,
+        (qz - oz) * 4.0,
+        base * 4,
+        seed ^ 0x3C6E_F372,
+    );
     (n0 + 0.5 * n1 + 0.25 * n2) / 1.75
 }
 
@@ -182,27 +200,45 @@ pub fn wind(clock_ticks: u64, seed: u32) -> [f32; 2] {
     [speed * angle.cos(), speed * angle.sin()]
 }
 
-/// Global calm↔stormy cycle in [0.35, 0.75].
+/// Global calm↔stormy cycle in [0.35, 0.72]. The ceiling came down from the
+/// single-sheet era's 0.75: under the two-sheet SUM a high storm bias
+/// blankets the whole sky in rain, so the lane now stops a little earlier
+/// (rebalance 2026-07-17).
 pub fn storm(clock_ticks: u64, seed: u32) -> f32 {
-    0.35 + 0.4 * time_lane(clock_ticks, STORM_PERIOD_S, seed ^ 0x94D0_49BB)
+    0.35 + 0.37 * time_lane(clock_ticks, STORM_PERIOD_S, seed ^ 0x94D0_49BB)
 }
 
-/// Cloud coverage in [0, 1] at world xz. Denser = darker = closer to rain.
-/// Cross-fades between two epoch seedings so shapes morph while drifting.
-pub fn coverage(x: f32, z: f32, p: &FieldParams) -> f32 {
-    let qx = x.rem_euclid(WRAP) / FEATURE_SIZE;
-    let qz = z.rem_euclid(WRAP) / FEATURE_SIZE;
-    let ox = p.off[0] / FEATURE_SIZE;
-    let oz = p.off[1] / FEATURE_SIZE;
-    let seed_a = p.seed ^ fmix32(p.epoch);
-    let seed_b = p.seed ^ fmix32(p.epoch.wrapping_add(1));
+/// One cloud sheet: epoch-morphed fbm remapped by the storm bias to a
+/// [0, 1] coverage. `salt` separates the sheet's hash stream, `advect`
+/// scales the wind offset (INTEGER multiples only — wrap-exactness).
+fn sheet(x: f32, z: f32, p: &FieldParams, salt: u32, feature: f32, advect: f32) -> f32 {
+    let qx = x.rem_euclid(WRAP) / feature;
+    let qz = z.rem_euclid(WRAP) / feature;
+    let ox = advect * p.off[0] / feature;
+    let oz = advect * p.off[1] / feature;
+    let seed_a = p.seed ^ fmix32(p.epoch) ^ salt;
+    let seed_b = p.seed ^ fmix32(p.epoch.wrapping_add(1)) ^ salt;
     let n = lerp(
-        fbm2(qx, qz, ox, oz, seed_a),
-        fbm2(qx, qz, ox, oz, seed_b),
+        fbm2(qx, qz, ox, oz, seed_a, feature),
+        fbm2(qx, qz, ox, oz, seed_b, feature),
         p.epoch_frac.clamp(0.0, 1.0),
     );
     let lo = 1.0 - p.storm;
     saturate((n - lo) / (1.0 - lo).max(1e-3))
+}
+
+/// Cloud coverage in [0, 1] at world xz. Denser = darker = closer to rain.
+///
+/// The SATURATING SUM of two independent sheets: sheet A (the original
+/// 512-block puffs, riding the wind) and sheet B (larger 1024-block systems
+/// advected at 2× the wind). Each sheet alone is thin fair-weather cloud;
+/// where the sheets slide into alignment the sum climbs through the rain
+/// band into storm — fronts FORM by convergence and dissolve again, instead
+/// of one static pattern deciding the weather (rebalance 2026-07-17).
+pub fn coverage(x: f32, z: f32, p: &FieldParams) -> f32 {
+    let ca = sheet(x, z, p, 0, FEATURE_SIZE, 1.0);
+    let cb = sheet(x, z, p, SHEET_B_SALT, SHEET_B_FEATURE, SHEET_B_ADVECT);
+    saturate(ca + cb)
 }
 
 /// Rain intensity in [0, 1] from a coverage value: 0 below [`RAIN_START`],
@@ -360,7 +396,10 @@ mod tests {
             let z = i as f32 * 91.7;
             let ca = coverage(x, z, &a);
             let cb = coverage(x, z, &b);
-            assert!((ca - cb).abs() < 1e-5, "epoch seam at {x},{z}: {ca} vs {cb}");
+            assert!(
+                (ca - cb).abs() < 1e-5,
+                "epoch seam at {x},{z}: {ca} vs {cb}"
+            );
         }
         // And epoch_at ticks over exactly at the period.
         assert_eq!(epoch_at(EVOLVE_TICKS * 7), (7, 0.0));

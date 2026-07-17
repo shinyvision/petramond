@@ -280,7 +280,13 @@ mod tests {
         // Standalone ENGINE shaders too (concat-composed ones can't parse
         // alone): grade.wgsl has no fallback path — a typo would panic the
         // renderer at construction, so catch it here instead.
-        for standalone in ["grade.wgsl", "crosshair.wgsl", "ui.wgsl"] {
+        for standalone in [
+            "grade.wgsl",
+            "crosshair.wgsl",
+            "ui.wgsl",
+            "env_downsample.wgsl",
+            "env_composite.wgsl",
+        ] {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("src/shaders")
                 .join(standalone);

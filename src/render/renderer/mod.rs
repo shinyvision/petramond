@@ -182,6 +182,14 @@ pub struct Renderer {
     /// drawn full-screen after all depth-writing world geometry. Usually
     /// empty (zero cost).
     env_passes: Vec<EnvPass>,
+    /// Half-res environment machinery: the offscreen colour + depth the env
+    /// passes render into, the downsample/composite binds around them, and
+    /// the shared scaler pipelines. Rebuilt with the scene targets.
+    env_scaler: super::pipeline::EnvScaler,
+    env_color: wgpu::TextureView,
+    env_depth: wgpu::TextureView,
+    env_down_bind: wgpu::BindGroup,
+    env_comp_bind: wgpu::BindGroup,
     underwater: bool,
     /// Above-water fog band, derived from the streaming render distance
     /// (`uniforms::fog_range`) via [`Renderer::set_render_distance`] so the fade
