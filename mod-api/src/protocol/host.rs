@@ -522,17 +522,13 @@ pub enum HostCall {
     /// Grant the player the status effect registered under `key` (an
     /// `effects.json` row — engine `petramond:*` rows and every pack's rows alike)
     /// for `ticks` game ticks. An already-active effect is OVERWRITTEN with
-    /// the new duration; `ticks == 0` removes it. Like `SetHealth` this is a
-    /// state primitive: no events fire. → [`HostRet::Bool`] (`false` =
-    /// unknown effect key).
+    /// the new duration; `ticks == 0` REMOVES it (there is no separate remove
+    /// call — the SDK's `effect_remove` is a wrapper for `ticks: 0`). Like
+    /// `SetHealth` this is a state primitive: no events fire. →
+    /// [`HostRet::Bool`] (`false` = unknown effect key).
     EffectApply {
         key: String,
         ticks: u32,
-    },
-    /// Remove the status effect `key` from the player if active. →
-    /// [`HostRet::Bool`] (`false` = unknown effect key).
-    EffectRemove {
-        key: String,
     },
     /// Read the player's active status effects, in application order. →
     /// [`HostRet::Effects`].

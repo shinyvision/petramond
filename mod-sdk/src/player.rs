@@ -81,10 +81,11 @@ host_fn! {
         => EffectApply { key: key.into(), ticks } => Bool
 }
 
-host_fn! {
-    /// Remove the status effect `key` from the player if active. `false` =
-    /// unknown effect key.
-    pub fn effect_remove(key: &str) -> bool => EffectRemove { key: key.into() } => Bool
+/// Remove the status effect `key` from the player if active. `false` =
+/// unknown effect key. Sugar for [`effect_apply`] with `ticks: 0` — the
+/// engine has no separate remove call.
+pub fn effect_remove(key: &str) -> bool {
+    effect_apply(key, 0)
 }
 
 host_fn! {

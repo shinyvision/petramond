@@ -128,7 +128,6 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::ContainerSet { .. }
         | HostCall::RecipeResult { .. }
         | HostCall::EffectApply { .. }
-        | HostCall::EffectRemove { .. }
         | HostCall::EffectsActive
         | HostCall::SwapModelBlock { .. }
         | HostCall::ContainerGetMany { .. }

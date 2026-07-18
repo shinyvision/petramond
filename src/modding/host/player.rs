@@ -110,14 +110,6 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             ctx.player.apply_effect(effect, ticks);
             HostRet::Bool(true)
         }),
-        HostCall::EffectRemove { key } => sim_query(|ctx| {
-            let Some(effect) = crate::effect::by_name(&key) else {
-                log::warn!("[mod {mod_id}] EffectRemove: unknown effect '{key}'");
-                return HostRet::Bool(false);
-            };
-            ctx.player.remove_effect(effect);
-            HostRet::Bool(true)
-        }),
         HostCall::EffectsActive => sim_query(|ctx| {
             HostRet::Effects(
                 ctx.player

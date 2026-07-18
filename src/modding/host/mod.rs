@@ -434,7 +434,6 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::SetHealth { .. }
         | HostCall::Teleport { .. }
         | HostCall::EffectApply { .. }
-        | HostCall::EffectRemove { .. }
         | HostCall::EffectsActive
         | HostCall::PlayerInput { .. }
         | HostCall::Players
