@@ -300,7 +300,7 @@ impl IdRemap {
         use super::protocol::MenuTargetWire;
         match &mut sync.target {
             MenuTargetWire::None => {}
-            MenuTargetWire::Inventory { output } | MenuTargetWire::Table { output } => {
+            MenuTargetWire::Crafting { output } => {
                 remap_slot(self, output);
             }
             MenuTargetWire::Furnace { slots, .. } => {
@@ -559,7 +559,7 @@ mod tests {
         let map = IdRemap::build(&tables);
 
         let mut known = MenuSyncMsg {
-            target: MenuTargetWire::Inventory {
+            target: MenuTargetWire::Crafting {
                 output: Some(ItemSlotWire {
                     item_id: 0,
                     count: 4,
@@ -567,13 +567,13 @@ mod tests {
             },
         };
         map.remap_menu_sync(&mut known);
-        let MenuTargetWire::Inventory { output } = known.target else {
+        let MenuTargetWire::Crafting { output } = known.target else {
             unreachable!()
         };
         assert_eq!(output.map(|slot| slot.item_id), Some(1));
 
         let mut missing = MenuSyncMsg {
-            target: MenuTargetWire::Table {
+            target: MenuTargetWire::Crafting {
                 output: Some(ItemSlotWire {
                     item_id: unknown,
                     count: 1,
@@ -581,7 +581,7 @@ mod tests {
             },
         };
         map.remap_menu_sync(&mut missing);
-        let MenuTargetWire::Table { output } = missing.target else {
+        let MenuTargetWire::Crafting { output } = missing.target else {
             unreachable!()
         };
         assert_eq!(output, None);

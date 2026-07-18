@@ -217,9 +217,14 @@ impl ServerGame {
         events: &mut TickEvents,
     ) -> bool {
         use crate::gui::GuiKind;
+        // Any registered crafting station — the engine pair or a pack
+        // workbench kind — opens the ordinary crafting session, never a mod
+        // GUI session.
+        if let Some(station) = CraftingStation::of_kind(kind) {
+            self.open_crafting_for(s, station);
+            return true;
+        }
         match kind {
-            GuiKind::Inventory => self.open_crafting_for(s, CraftingStation::Inventory),
-            GuiKind::CraftingTable => self.open_crafting_for(s, CraftingStation::CraftingTable),
             GuiKind::Furnace => {
                 let Some(pos) = pos else { return false };
                 self.open_furnace_screen_for(s, pos);
@@ -249,8 +254,10 @@ impl ServerGame {
             return;
         };
         // Engine kinds have no owning mod; their buttons are documented dead
-        // ends, exactly like a content-only pack's.
-        if !kind.is_mod() {
+        // ends, exactly like a content-only pack's. Station sessions are
+        // engine-driven even under a pack kind — their buttons belong to the
+        // client crafting browser, never to a mod dispatch.
+        if !kind.is_mod() || CraftingStation::of_kind(kind).is_some() {
             return;
         }
         let Some(kind_key) = crate::gui::kind_key(kind) else {
@@ -451,10 +458,7 @@ impl ServerGame {
         let target = match sess.menu.target() {
             ContainerTarget::None => MenuTargetWire::None,
             ContainerTarget::Gui { kind, pos } => match kind {
-                GuiKind::Inventory => MenuTargetWire::Inventory {
-                    output: slot_wire(sess.menu.craft_output()),
-                },
-                GuiKind::CraftingTable => MenuTargetWire::Table {
+                kind if CraftingStation::of_kind(kind).is_some() => MenuTargetWire::Crafting {
                     output: slot_wire(sess.menu.craft_output()),
                 },
                 GuiKind::Furnace => {

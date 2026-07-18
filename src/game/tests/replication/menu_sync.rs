@@ -167,12 +167,12 @@ fn crafting_outputs_replicate_per_session_and_remain_independent() {
         .expect("remote output changed the session view");
     assert!(matches!(
         local_sync.target,
-        MenuTargetWire::Inventory { output: Some(slot) }
+        MenuTargetWire::Crafting { output: Some(slot) }
             if slot.item_id == ItemType::Stick.0
     ));
     assert!(matches!(
         remote_sync.target,
-        MenuTargetWire::Inventory { output: Some(slot) }
+        MenuTargetWire::Crafting { output: Some(slot) }
             if slot.item_id == ItemType::Glass.0
     ));
 

@@ -26,6 +26,12 @@
       "model_file": "models/composter.bbmodel",
       "cells": [1, 1, 1],
       "orientation": "left_to_right"
+    },
+    {
+      "key": "farming:farmers_workbench",
+      "model_file": "models/farmers_workbench.bbmodel",
+      "cells": [2, 2, 1],
+      "orientation": "left_to_right"
     }
   ]
 }

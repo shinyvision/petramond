@@ -225,6 +225,19 @@
       },
       "tags": [],
       "block": "farming:compost_0"
+    },
+    {
+      "item": "farming:farmers_workbench",
+      "key": "farming:farmers_workbench",
+      "name": "Farmer's Workbench",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "farming:farmers_workbench"
     }
   ]
 }

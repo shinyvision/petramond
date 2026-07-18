@@ -58,8 +58,19 @@ struct Registry {
 
 static REGISTRY: Mutex<Option<Registry>> = Mutex::new(None);
 
-/// The document for `kind`, if one is loaded.
+/// The document for `kind`, if one is loaded. A registered pack CRAFTING
+/// STATION kind without its own document is backed by the crafting table's —
+/// a pack workbench is the ordinary crafting session, so its screen is the
+/// ordinary crafting screen unless the pack ships a replacement.
 pub(crate) fn doc_for(kind: GuiKind) -> Option<DocRef> {
+    doc_entry_for(kind).or_else(|| {
+        (kind.is_mod() && crate::crafting::CraftingStation::of_kind(kind).is_some())
+            .then(|| doc_entry_for(GuiKind::CraftingTable))
+            .flatten()
+    })
+}
+
+fn doc_entry_for(kind: GuiKind) -> Option<DocRef> {
     let mut guard = REGISTRY.lock().unwrap();
     let registry = guard.get_or_insert_with(load);
     if cfg!(debug_assertions) && registry.last_check.elapsed() > Duration::from_secs(1) {
@@ -569,6 +580,19 @@ mod tests {
             let doc = doc_for(kind).unwrap_or_else(|| panic!("{key} document loads"));
             assert_eq!(doc.doc.class, class, "{key}");
         }
+    }
+
+    #[test]
+    fn a_registered_station_kind_falls_back_to_the_crafting_table_document() {
+        let kind = crate::gui::intern_kind("doctest:bench_station").unwrap();
+        assert!(
+            doc_for(kind).is_none(),
+            "an unregistered mod kind has no document"
+        );
+        crate::crafting::CraftingStation::from_key("doctest:bench_station")
+            .expect("station registers");
+        let doc = doc_for(kind).expect("station kinds are backed by the crafting table document");
+        assert_eq!(doc.doc.kind, "petramond:crafting_table");
     }
 
     #[test]

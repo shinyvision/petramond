@@ -120,6 +120,12 @@ impl CraftingBrowser {
             .filter(|row| row.craftable)
             .is_some_and(|row| self.output_accepts(game, &row.key));
 
+        // The station's screen title: its block item's display name (a pack
+        // workbench key is its block item's key), or the engine table's.
+        let title = crate::item::ItemType::by_key(station.key())
+            .map(|item| item.name().to_owned())
+            .unwrap_or_else(|| "Crafting Table".to_owned());
+        state.set("craft_station_title", UiValue::Str(title));
         state.set("craft_search", UiValue::Str(self.search.clone()));
         state.set("craft_recipes", UiValue::List(self.rows.clone()));
         state.set(

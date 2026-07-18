@@ -13,7 +13,7 @@
       "anchor": { "h": "center", "v": "center" }
     },
     "children": [
-      { "type": "label", "text": "Crafting Table" },
+      { "type": "label", "text": "Crafting Table", "bind": { "text": "craft_station_title" } },
       {
         "type": "row",
         "layout": { "gap": 2, "align": "stretch" },

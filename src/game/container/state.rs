@@ -46,22 +46,17 @@ impl ContainerMenu {
     }
 
     pub(crate) fn crafting_station(&self) -> Option<CraftingStation> {
-        match self.target.kind() {
-            Some(GuiKind::Inventory) => Some(CraftingStation::Inventory),
-            Some(GuiKind::CraftingTable) => Some(CraftingStation::CraftingTable),
-            _ => None,
-        }
+        self.target.kind().and_then(CraftingStation::of_kind)
     }
 
     /// Change the admitted player-crafting station. The caller closes an old
     /// session before replacement; preserving the slot here is a final no-loss
     /// guard for direct/test callers.
     pub(crate) fn open_crafting(&mut self, station: CraftingStation) {
-        let kind = match station {
-            CraftingStation::Inventory => GuiKind::Inventory,
-            CraftingStation::CraftingTable => GuiKind::CraftingTable,
+        self.target = ContainerTarget::Gui {
+            kind: station.gui_kind(),
+            pos: None,
         };
-        self.target = ContainerTarget::Gui { kind, pos: None };
     }
 
     /// Begin a furnace-screen session at `pos`: remember which furnace the GUI
@@ -165,7 +160,7 @@ impl ContainerMenu {
                 overflow(leftover);
             }
         }
-        self.close_kind(|kind| kind == GuiKind::Inventory || kind == GuiKind::CraftingTable);
+        self.close_kind(|kind| CraftingStation::of_kind(kind).is_some());
     }
 
     /// Drop the target if the open session's kind matches.

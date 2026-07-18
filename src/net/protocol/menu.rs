@@ -89,12 +89,11 @@ pub(crate) enum MenuTargetWire {
     /// No menu session is open (sent once when a session closes).
     #[default]
     None,
-    /// Player crafting from the inventory screen. The result is transient
-    /// server-owned menu state, not an inventory slot.
-    Inventory { output: Option<ItemSlotWire> },
-    /// Player crafting from a crafting table. Its recipe catalog includes
-    /// both inventory and table recipes.
-    Table { output: Option<ItemSlotWire> },
+    /// A player-crafting session at any station (inventory screen, crafting
+    /// table, or a pack workbench — the open-GUI event already carried the
+    /// station's kind). The result is transient server-owned menu state, not
+    /// an inventory slot.
+    Crafting { output: Option<ItemSlotWire> },
     Furnace {
         pos: IVec3,
         /// `[input, fuel, output]`.

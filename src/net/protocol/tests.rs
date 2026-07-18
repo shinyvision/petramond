@@ -99,7 +99,7 @@ fn representative_messages_roundtrip_through_postcard() {
         request_id: 4,
     });
     roundtrip(&MenuSyncMsg {
-        target: MenuTargetWire::Table {
+        target: MenuTargetWire::Crafting {
             output: Some(ItemSlotWire {
                 item_id: 7,
                 count: 2,

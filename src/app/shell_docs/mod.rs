@@ -210,11 +210,7 @@ impl App {
     /// legacy hit-test used. Off-panel presses throw the cursor stack.
     pub(super) fn drive_doc_menu(&mut self, kind: GuiKind, screen: (u32, u32), now: f64) {
         self.ui.ensure_active(kind);
-        let crafting_station = match kind {
-            GuiKind::Inventory => Some(crate::crafting::CraftingStation::Inventory),
-            GuiKind::CraftingTable => Some(crate::crafting::CraftingStation::CraftingTable),
-            _ => None,
-        };
+        let crafting_station = crate::crafting::CraftingStation::of_kind(kind);
         if let (Some(station), Some(game)) = (crafting_station, self.game.as_ref()) {
             let mut state = std::mem::take(self.ui.state_mut());
             self.crafting_browser.populate(game, station, &mut state);

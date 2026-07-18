@@ -9,9 +9,10 @@ use serde::Deserialize;
 use crate::item::{ItemStack, ItemTag, ItemType};
 
 use super::recipe::{
-    CraftingIngredient, CraftingRecipe, CraftingStation, FurnitureRecipe, IngredientSelector,
-    IngredientUse, ProcessingRecipe, Recipes,
+    CraftingIngredient, CraftingRecipe, FurnitureRecipe, IngredientSelector, IngredientUse,
+    ProcessingRecipe, Recipes,
 };
+use super::station::CraftingStation;
 
 const EMBEDDED: &str = include_str!("../../assets/recipes.json");
 

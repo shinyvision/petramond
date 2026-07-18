@@ -3,7 +3,7 @@
     {
       "type": "crafting",
       "recipe": "farming:iron_hoe",
-      "station": "petramond:crafting_table",
+      "station": "farming:farmers_workbench",
       "ingredients": [
         {
           "item": "petramond:iron_ingot",
@@ -22,7 +22,7 @@
     {
       "type": "crafting",
       "recipe": "farming:dough",
-      "station": "petramond:inventory",
+      "station": "farming:farmers_workbench",
       "ingredients": [
         {
           "item": "farming:wheat",
@@ -42,7 +42,7 @@
     {
       "type": "crafting",
       "recipe": "farming:farmers_lunch",
-      "station": "petramond:inventory",
+      "station": "farming:farmers_workbench",
       "ingredients": [
         {
           "item": "farming:bread",
@@ -73,7 +73,7 @@
     {
       "type": "crafting",
       "recipe": "farming:compost_barrel",
-      "station": "petramond:crafting_table",
+      "station": "farming:farmers_workbench",
       "ingredients": [
         {
           "tag": "petramond:planks",
@@ -90,6 +90,33 @@
       "class": "kitchen:cooking",
       "ingredient": "farming:potato",
       "result": "farming:baked_potato"
+    },
+    {
+      "type": "crafting",
+      "recipe": "farming:farmers_workbench",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "tag": "petramond:logs",
+          "count": 3
+        },
+        {
+          "item": "petramond:crafting_table",
+          "count": 1
+        },
+        {
+          "item": "farming:wheat",
+          "count": 2
+        },
+        {
+          "item": "petramond:iron_ingot",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "farming:farmers_workbench",
+        "count": 1
+      }
     }
   ]
 }

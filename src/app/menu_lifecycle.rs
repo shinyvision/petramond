@@ -94,12 +94,11 @@ impl App {
     /// cursor next tick, and clear any stale click streak so the first click
     /// can't register a phantom double.
     fn enter_menu(&mut self, screen: AppScreen) {
-        // The player-crafting browser is the compound controller behind the
-        // two crafting-station kinds.
+        // The player-crafting browser is the compound controller behind
+        // every crafting-station kind (engine pair or pack workbench).
         if matches!(
             screen,
-            AppScreen::Menu(k) if k == crate::gui::GuiKind::Inventory
-                || k == crate::gui::GuiKind::CraftingTable
+            AppScreen::Menu(k) if crate::crafting::CraftingStation::of_kind(k).is_some()
         ) {
             self.crafting_browser.reset();
         }

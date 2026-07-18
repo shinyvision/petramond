@@ -16,37 +16,7 @@ pub(crate) const MAX_INGREDIENT_UNITS: u32 = crate::inventory::TOTAL_SLOTS as u3
 /// The furnace's processing-recipe class (see [`ProcessingRecipe::class`]).
 pub const SMELTING_CLASS: &str = "petramond:smelting";
 
-/// The minimum context a player-crafting recipe requires.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CraftingStation {
-    Inventory,
-    CraftingTable,
-}
-
-impl CraftingStation {
-    pub const INVENTORY_KEY: &'static str = "petramond:inventory";
-    pub const CRAFTING_TABLE_KEY: &'static str = "petramond:crafting_table";
-
-    pub fn from_key(key: &str) -> Option<Self> {
-        match key {
-            Self::INVENTORY_KEY => Some(Self::Inventory),
-            Self::CRAFTING_TABLE_KEY => Some(Self::CraftingTable),
-            _ => None,
-        }
-    }
-
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::Inventory => Self::INVENTORY_KEY,
-            Self::CraftingTable => Self::CRAFTING_TABLE_KEY,
-        }
-    }
-
-    /// Whether this open context admits a recipe with minimum station `required`.
-    pub fn admits(self, required: Self) -> bool {
-        matches!(self, Self::CraftingTable) || required == Self::Inventory
-    }
-}
+use super::station::CraftingStation;
 
 /// An exact item or an open, item-owned tag selector.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -503,14 +473,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn table_admits_both_recipe_tiers_but_inventory_does_not() {
-        assert!(CraftingStation::Inventory.admits(CraftingStation::Inventory));
-        assert!(!CraftingStation::Inventory.admits(CraftingStation::CraftingTable));
-        assert!(CraftingStation::CraftingTable.admits(CraftingStation::Inventory));
-        assert!(CraftingStation::CraftingTable.admits(CraftingStation::CraftingTable));
-    }
-
-    #[test]
     fn joined_catalog_round_trips_namespaced_selectors_and_stable_keys() {
         let recipe = CraftingRecipe::new(
             "test:sticks".into(),
@@ -522,15 +484,29 @@ mod tests {
             }],
             ItemStack::new(ItemType::Stick, 4),
         );
-        let catalog = CraftingCatalog::new(vec![recipe]);
+        let bench = CraftingStation::from_key("test:bench").expect("mod station registers");
+        let bench_recipe = CraftingRecipe::new(
+            "test:bench_sticks".into(),
+            bench,
+            vec![CraftingIngredient {
+                selector: IngredientSelector::Tag(ItemTag::PLANKS),
+                count: 2,
+                use_mode: IngredientUse::Consume,
+            }],
+            ItemStack::new(ItemType::Stick, 4),
+        );
+        let catalog = CraftingCatalog::new(vec![recipe, bench_recipe]);
         let restored = CraftingCatalog::from_data(catalog.to_data());
-        let restored = restored.get("test:sticks").expect("stable key lookup");
-        assert_eq!(restored.station(), CraftingStation::Inventory);
-        assert_eq!(restored.ingredients()[0].count, 2);
+        let sticks = restored.get("test:sticks").expect("stable key lookup");
+        assert_eq!(sticks.station(), CraftingStation::Inventory);
+        assert_eq!(sticks.ingredients()[0].count, 2);
         assert_eq!(
-            restored.ingredients()[0].selector,
+            sticks.ingredients()[0].selector,
             IngredientSelector::Tag(ItemTag::PLANKS)
         );
+        // A pack station survives the joined round trip by key.
+        let bench_sticks = restored.get("test:bench_sticks").expect("mod station row");
+        assert_eq!(bench_sticks.station(), bench);
     }
 
     #[test]

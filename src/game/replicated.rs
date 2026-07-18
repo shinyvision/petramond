@@ -347,7 +347,7 @@ impl MenuView {
             MenuTargetWire::None => {
                 self.gui_state = None;
             }
-            MenuTargetWire::Inventory { output } | MenuTargetWire::Table { output } => {
+            MenuTargetWire::Crafting { output } => {
                 self.gui_state = None;
                 self.craft_output = stack_from_wire(output);
             }

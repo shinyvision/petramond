@@ -828,12 +828,47 @@ fn farming_processing_inner() {
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;
 
-    // --- Stable-key inventory crafting. The mod's recipes join the same
-    // authoritative catalog as engine recipes; no grid or mod-specific path.
+    // --- Stable-key crafting at the pack's own station. The mod's recipes
+    // join the same authoritative catalog as engine recipes; the farmer's
+    // workbench is a pack-registered crafting station, admitted like the
+    // engine pair — no grid or mod-specific path.
     {
+        let workbench = crate::crafting::CraftingStation::from_key("farming:farmers_workbench")
+            .expect("loading the pack's recipes registered its station");
+        assert!(
+            recipes
+                .crafting()
+                .get_at("farming:dough", crate::crafting::CraftingStation::CraftingTable)
+                .is_none(),
+            "farming craftables left the crafting table for the workbench"
+        );
+        assert!(
+            recipes
+                .crafting()
+                .get_at(
+                    "farming:farmers_workbench",
+                    crate::crafting::CraftingStation::CraftingTable
+                )
+                .is_some(),
+            "the workbench itself is a crafting-table recipe"
+        );
+        assert!(
+            recipes
+                .crafting()
+                .get_at("petramond:oak_planks", workbench)
+                .is_none(),
+            "the workbench admits only its own tier — no inventory recipes (per Rachel)"
+        );
+
         let sess = &mut game.server.sessions[0];
         let (menu, inv) = (&mut sess.menu, &mut sess.player.inventory);
         menu.open_crafting(crate::crafting::CraftingStation::Inventory);
+        assert_eq!(
+            menu.craft_recipe(inv, &recipes, "farming:dough", false),
+            Err(crate::game::container::CraftMenuFailure::InvalidRecipe),
+            "a workbench-tier recipe is refused away from the workbench"
+        );
+        menu.open_crafting(workbench);
 
         // --- Dough: aggregate quantities are consumed from inventory and the
         // water bucket's remainder is safely returned there.
@@ -892,6 +927,27 @@ fn farming_processing_inner() {
             "bread + 2 carrots make the Farmer's Lunch"
         );
         inv.click_slot(3); // park the lunch on the hotbar for the eat below
+    }
+
+    // --- The workbench block's `open_gui` kind runs the ordinary crafting
+    // session (never a mod GUI session): the one seam that makes a pack
+    // station a real station.
+    {
+        let workbench = crate::crafting::CraftingStation::from_key("farming:farmers_workbench")
+            .expect("station registered");
+        let kind = crate::gui::resolve_kind("farming:farmers_workbench")
+            .expect("blocks.json interned the workbench GUI kind");
+        game.server.sessions[0].pending_menu_actions.push(
+            crate::server::player::PendingMenuAction::OpenGui { kind, pos: None },
+        );
+        let mut ev = TickEvents::default();
+        game.server.tick_menu(0, &mut ev);
+        assert_eq!(
+            game.server.sessions[0].menu.crafting_station(),
+            Some(workbench),
+            "opening the workbench kind begins a crafting session at its station"
+        );
+        game.server.close_open_menu_for(0, &mut ev);
     }
 
     // --- Well Fed: eat the lunch, then route damage through the ordinary
