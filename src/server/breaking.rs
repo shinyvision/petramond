@@ -280,15 +280,17 @@ impl ServerGame {
                 bus,
                 ..
             } = self;
-            let sess = &mut sessions[s];
-            if bus.block_break_pre(
-                world,
-                &mut sess.player,
-                &mut sess.gui_state,
-                events,
-                &mut pre,
-            ) == Outcome::Cancel
-            {
+            // The breaking session acts; the sessions view rides the dispatch.
+            let cancelled = Self::with_sessions_view(sessions, s, |sess| {
+                bus.block_break_pre(
+                    world,
+                    &mut sess.player,
+                    &mut sess.gui_state,
+                    events,
+                    &mut pre,
+                ) == Outcome::Cancel
+            });
+            if cancelled {
                 return false;
             }
         }
@@ -307,7 +309,8 @@ impl ServerGame {
         // Breaking a bed takes its spawn point with it — resolved BEFORE the
         // removal below clears the footprint metadata the group lookup needs.
         // Checked for EVERY session: any player can break another's spawn bed.
-        if event.block.interaction() == crate::block::BlockInteraction::Sleep {
+        // Keyed on bed IDENTITY (the tag), not the sleep-interaction capability.
+        if event.block.has_tag(crate::block::BlockTag::BED) {
             self.clear_bed_spawn_at(event.pos);
         }
         let hit_normal = self.sessions[s]
@@ -396,7 +399,7 @@ impl ServerGame {
         for (pos, block) in self.world.take_natural_breaks() {
             // The cell is already cleared, so the group base can't be derived;
             // re-checking the stored spawn bed still exists covers it.
-            if block.interaction() == crate::block::BlockInteraction::Sleep {
+            if block.has_tag(crate::block::BlockTag::BED) {
                 self.validate_bed_spawn();
             }
             events.world.block_broken.push(BlockBrokenEvent {

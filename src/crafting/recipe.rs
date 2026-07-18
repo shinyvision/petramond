@@ -428,7 +428,11 @@ pub struct FurnitureRecipe {
 #[derive(Clone, Default)]
 pub struct Recipes {
     crafting: CraftingCatalog,
-    processing: Vec<ProcessingRecipe>,
+    /// Keyed hash index over the processing rows (class → input → result) —
+    /// `process` runs per machine tick and per mod `RecipeResult` call,
+    /// never a linear scan. First row per `(class, input)` wins, like the
+    /// old scan.
+    processing: std::collections::HashMap<String, std::collections::HashMap<ItemType, ItemStack>>,
     furniture: Vec<FurnitureRecipe>,
 }
 
@@ -438,9 +442,18 @@ impl Recipes {
         processing: Vec<ProcessingRecipe>,
         furniture: Vec<FurnitureRecipe>,
     ) -> Self {
+        let mut index: std::collections::HashMap<String, std::collections::HashMap<_, _>> =
+            std::collections::HashMap::new();
+        for recipe in processing {
+            index
+                .entry(recipe.class)
+                .or_default()
+                .entry(recipe.input)
+                .or_insert(recipe.result);
+        }
         Self {
             crafting: CraftingCatalog::new(crafting),
-            processing,
+            processing: index,
             furniture,
         }
     }
@@ -458,10 +471,7 @@ impl Recipes {
     }
 
     pub fn process(&self, class: &str, input: ItemType) -> Option<ItemStack> {
-        self.processing
-            .iter()
-            .find(|recipe| recipe.class == class && recipe.input == input)
-            .map(|recipe| recipe.result)
+        self.processing.get(class)?.get(&input).copied()
     }
 
     pub fn smelt(&self, input: ItemType) -> Option<ItemStack> {
@@ -476,10 +486,7 @@ impl Recipes {
 }
 
 fn item_by_key(key: &str) -> Option<ItemType> {
-    ItemType::all()
-        .iter()
-        .copied()
-        .find(|item| item.key() == key)
+    ItemType::by_key(key)
 }
 
 fn public_tag_key(tag: ItemTag) -> String {

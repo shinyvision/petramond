@@ -55,10 +55,8 @@ fn solid_peer_landing_inner() {
     assert!(mobs.spawn(boat, Vec3::new(8.0, 68.0, 8.0), 0.0));
     let upper_id = mobs.instances()[1].id();
     let anchor = crate::mob::PlayerAnchor {
-        id: Default::default(),
         pos: Vec3::new(1000.0, 64.0, 1000.0),
-        body: None,
-        sneaking: false,
+        ..Default::default()
     };
 
     let mut landed_fall = None;
@@ -125,9 +123,7 @@ fn boat_inner() {
         .position(|def| def.name == "vehicles:boat")
         .map(|index| crate::mob::Mob(index as u8))
         .expect("vehicles:boat registered from the fixture pack");
-    let boat_item = *crate::item::ItemType::all()
-        .iter()
-        .find(|item| item.key() == "vehicles:boat")
+    let boat_item = crate::item::ItemType::by_key("vehicles:boat")
         .expect("vehicles:boat item registered");
 
     let mut game =
@@ -358,7 +354,8 @@ fn boat_inner() {
     assert!(game
         .server
         .world
-        .spawn_mob(boat_mob, Vec3::new(6.0, pair_y, pair_z), pair_a_yaw,));
+        .spawn_mob(boat_mob, Vec3::new(6.0, pair_y, pair_z), pair_a_yaw,)
+        .is_some());
     let pair_a_id = game
         .server
         .world
@@ -370,7 +367,8 @@ fn boat_inner() {
     assert!(game
         .server
         .world
-        .spawn_mob(boat_mob, Vec3::new(11.0, pair_y, pair_z), pair_b_yaw,));
+        .spawn_mob(boat_mob, Vec3::new(11.0, pair_y, pair_z), pair_b_yaw,)
+        .is_some());
     let pair_b_id = game
         .server
         .world
@@ -441,7 +439,11 @@ fn boat_inner() {
     // A second live solid hull is part of the same atomic fit check.
     let spawn_yaw = game.server.sessions[0].player.yaw + std::f32::consts::PI;
     let spawn_pos = Vec3::new(5.5, 63.9, 8.5);
-    assert!(game.server.world.spawn_mob(boat_mob, spawn_pos, spawn_yaw));
+    assert!(game
+        .server
+        .world
+        .spawn_mob(boat_mob, spawn_pos, spawn_yaw)
+        .is_some());
     let blocker_id = game.server.world.mobs().instances()[0].id();
     game.server.apply_message(0, use_click(water_cell));
     game.server.game_tick_step(&mut events);

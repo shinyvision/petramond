@@ -125,19 +125,31 @@ impl BlockModel {
                 }
             })
             .collect();
-        let (collision, bounds) = bake_collision_bounds(&cubes);
-        BlockModel {
+        let mut model = BlockModel {
             cubes,
             texture_rgba: m.texture_rgba.clone(),
             tex_w: m.tex_w,
             tex_h: m.tex_h,
-            collision,
-            bounds,
+            collision: Vec::new(),
+            bounds: Aabb {
+                min: [0.0; 3],
+                max: [1.0; 3],
+            },
             // `from_model` has only the parsed geometry; `compile` fills the display
             // poses + pivot from the raw JSON (the mob frontend drops them).
             display: BlockDisplay::default(),
             display_pivot: [0.0, 8.0, 0.0],
-        }
+        };
+        model.rebake();
+        model
+    }
+
+    /// Re-bake collision + bounds from the current cubes — required after any
+    /// geometry change (the initial bake, per-row part hiding/posing).
+    fn rebake(&mut self) {
+        let (collision, bounds) = bake_collision_bounds(&self.cubes);
+        self.collision = collision;
+        self.bounds = bounds;
     }
 
     /// Drop the cubes named in `hidden` and re-bake collision + bounds from
@@ -153,9 +165,34 @@ impl BlockModel {
             }
         }
         self.cubes.retain(|c| !hidden.contains(&c.name.as_str()));
-        let (collision, bounds) = bake_collision_bounds(&self.cubes);
-        self.collision = collision;
-        self.bounds = bounds;
+        self.rebake();
+    }
+
+    /// Translate the cubes named in `offsets` (authored pixels) and re-bake
+    /// collision + bounds — the per-ROW `part_offsets` posing, applied after
+    /// the cache load like [`hide_parts`](Self::hide_parts): rows sharing one
+    /// authored file place a part differently per variant (the composter's
+    /// fill surface rising with its stages). `origin` moves with the box so a
+    /// rotated part keeps rotating about its own pivot. A name matching no
+    /// cube warns (a typo must not silently leave the part unposed) — unless
+    /// the same row's `hidden` filter already removed it: hide runs first and
+    /// already validated the name, so offsetting a hidden part is a no-op,
+    /// not a typo.
+    fn offset_parts(&mut self, offsets: &[(&str, [f32; 3])], hidden: &[&str], row_key: &str) {
+        for (name, off) in offsets {
+            let off = Vec3::from_array(*off);
+            let mut hit = false;
+            for c in self.cubes.iter_mut().filter(|c| c.name == *name) {
+                c.from += off;
+                c.to += off;
+                c.origin += off;
+                hit = true;
+            }
+            if !hit && !hidden.contains(name) {
+                log::warn!("block model '{row_key}': offset part '{name}' matches no cube");
+            }
+        }
+        self.rebake();
     }
 }
 
@@ -251,11 +288,15 @@ pub(super) static MODELS: LazyLock<Vec<BlockModel>> = LazyLock::new(|| {
                     log::error!("block model precache failed for {k:?}: {e}");
                     BlockModel::empty()
                 });
-            // The cache always holds the FULL model; the row's part filter is
-            // applied on top so rows sharing one file stay one cache entry each
-            // (the cache is keyed by row key) with independent visibility.
+            // The cache always holds the FULL model; the row's part filter and
+            // part poses are applied on top so rows sharing one file stay one
+            // cache entry each (the cache is keyed by row key) with independent
+            // visibility/pose.
             if !d.hidden_parts.is_empty() {
                 model.hide_parts(d.hidden_parts, d.key);
+            }
+            if !d.part_offsets.is_empty() {
+                model.offset_parts(d.part_offsets, d.hidden_parts, d.key);
             }
             model
         })

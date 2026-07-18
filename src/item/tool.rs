@@ -17,6 +17,17 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
+    /// The snake_case row name (`"pickaxe"`, …) — the same string the
+    /// `items.json` `tool.kind` field carries.
+    pub fn name(self) -> &'static str {
+        match self {
+            ToolKind::Pickaxe => "pickaxe",
+            ToolKind::Axe => "axe",
+            ToolKind::Shovel => "shovel",
+            ToolKind::Shears => "shears",
+        }
+    }
+
     /// How effective this kind of tool is at mining its own block class, as a
     /// multiplier on the shared material-tier speed ladder (see
     /// [`crate::mining::break_time`]). A pickaxe and an axe are the baseline

@@ -129,8 +129,11 @@ fn mod_contract_for(doc: &Document) -> Result<SlotContract, String> {
 }
 
 /// A mod document's `container` slot semantics in in-role index order,
-/// resolving the slot nodes' `accepts` tag names against the item-tag
-/// registry. Unknown tag names are a document error (`Err` skips it loudly).
+/// checking the slot nodes' `accepts` tag names against the item-tag
+/// registry via the non-interning QUERY lookup — the interning resolve
+/// would register a misspelled tag as a fresh empty one and the slot
+/// would silently accept nothing. Unknown tag names are a document error
+/// (`Err` skips it loudly).
 fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
     let mut specs = Vec::new();
     for cell in doc.slot_semantics() {
@@ -146,7 +149,7 @@ fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
         }
         let mut tags = Vec::new();
         for name in &cell.accepts {
-            match crate::item::ItemTag::from_key(name) {
+            match crate::item::ItemTag::lookup(name) {
                 Some(tag) => tags.push(tag),
                 None => return Err(format!("unknown item tag '{name}' in a slot's accepts")),
             }
@@ -566,6 +569,23 @@ mod tests {
             let doc = doc_for(kind).unwrap_or_else(|| panic!("{key} document loads"));
             assert_eq!(doc.doc.class, class, "{key}");
         }
+    }
+
+    #[test]
+    fn a_misspelled_accepts_tag_is_a_document_error() {
+        // The accepts check must stay on the non-interning lookup: the
+        // interning `from_key` registers any namespaced typo as a fresh
+        // empty tag, making this error unreachable.
+        let doc = |accepts: &str| {
+            Document::from_json(&format!(
+                r#"{{ "format": 1, "kind": "doctest:machine", "class": "container",
+                     "root": {{ "type": "slot", "role": "container", "accepts": ["{accepts}"] }} }}"#
+            ))
+            .expect("test document parses")
+        };
+        assert!(doc_container_specs(&doc("petramond:fuel")).is_ok());
+        let err = doc_container_specs(&doc("doctest:no_such_tag")).unwrap_err();
+        assert!(err.contains("unknown item tag"), "{err}");
     }
 
     #[test]

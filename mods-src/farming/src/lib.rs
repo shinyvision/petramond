@@ -5,12 +5,20 @@
 //! crate is only the deterministic gameplay logic, split by subsystem:
 //!
 //! - [`content`] — the pack's registry names resolved to session ids once.
-//! - [`worldgen`] — wild wheat/carrot patch generation after the Trees stage.
+//! - [`worldgen`] — wild wheat/carrot/potato patches after the Trees stage.
 //! - [`tilling`] — the iron hoe turning grass/dirt into farmland.
-//! - [`farmland`] — the shared hydration probe + farmland's dry/wet visual
+//! - [`farmland`] — the shared hydration probe (ground water OR overhead
+//!   rain via the `weather:field` interop row) + farmland's dry/wet visual
 //!   reconciliation (random ticks + neighbor re-arming).
 //! - [`crops`] — planting validation, scheduled four-stage growth with dry
 //!   pause, right-click harvesting, and supporting-soil invalidation.
+//! - [`compost`] — the compost barrel (fill + collect).
+//! - [`fertilize`] — the fertilizer target table (fertile farmland,
+//!   fertilized grass, the sapling boost) behind one apply sequence.
+//! - [`spread`] — fertilized grass spreading its rooted vegetation.
+//! - [`forage`] — the rare wheat-seed forage from broken ground cover.
+//! - [`follow`] — the wheat lure (a scripted AI node composed onto the
+//!   engine sheep through the pack's `brain_extensions` row).
 //! - [`wellfed`] — the Well Fed marker effect's damage consequence.
 //!
 //! Everything mutating runs on the deterministic tick through events, block
@@ -18,9 +26,15 @@
 //! crop list. World reads treat `None` (unloaded / streaming) as "retry
 //! later", never as state to act on.
 
+mod compost;
 mod content;
 mod crops;
 mod farmland;
+mod fertilize;
+mod follow;
+mod forage;
+mod kv_counter;
+mod spread;
 mod tilling;
 mod wellfed;
 mod worldgen;
@@ -29,6 +43,16 @@ use mod_sdk::*;
 
 use content::Content;
 use crops::Growth;
+use follow::Follow;
+
+/// First-Cancel-wins handler composition: run `next` only while the event is
+/// still live. Every multi-link dispatch below chains through this.
+fn chain(first: Outcome, next: impl FnOnce() -> Outcome) -> Outcome {
+    match first {
+        Outcome::Cancel => Outcome::Cancel,
+        Outcome::Continue => next(),
+    }
+}
 
 // Event handler ids (stable registration keys, mod-local).
 const ON_ITEM_USE_PRE: u32 = 1;
@@ -36,13 +60,19 @@ const ON_BLOCK_PLACE_PRE: u32 = 2;
 const ON_BLOCK_PLACED: u32 = 3;
 const ON_BLOCK_INTERACT: u32 = 4;
 const ON_PLAYER_DAMAGE_PRE: u32 = 5;
+const ON_BLOCK_BROKEN: u32 = 6;
+const ON_MOB_DIED: u32 = 7;
 
 // Block-behavior callback ids.
 const HOOK_CROP: u32 = 1;
 const HOOK_FARMLAND: u32 = 2;
+const HOOK_SPREAD: u32 = 3;
 
 // Worldgen feature id.
 const GEN_WILD_PATCHES: u32 = 1;
+
+// AI node callback id.
+const AI_FOLLOW_WHEAT: u32 = 1;
 
 #[derive(Default)]
 struct Farming {
@@ -53,6 +83,8 @@ struct Farming {
     /// Armed growth attempts (crop cell → due tick). Session-scoped by
     /// design: lost scheduling re-arms from random ticks (see [`crops`]).
     growth: Growth,
+    /// Per-sheep wheat-lure state (see [`follow`]).
+    follow: Follow,
 }
 
 impl Mod for Farming {
@@ -68,9 +100,13 @@ impl Mod for Farming {
         register_event_handler(EventKind::BlockPlaced, 0, ON_BLOCK_PLACED);
         register_event_handler(EventKind::BlockInteract, 0, ON_BLOCK_INTERACT);
         register_event_handler(EventKind::PlayerDamagePre, 0, ON_PLAYER_DAMAGE_PRE);
+        register_event_handler(EventKind::BlockBroken, 0, ON_BLOCK_BROKEN);
+        register_event_handler(EventKind::MobDied, 0, ON_MOB_DIED);
         register_block_behavior("farming:crop", HOOK_CROP);
         register_block_behavior("farming:farmland", HOOK_FARMLAND);
+        register_block_behavior("farming:grass_fertilized", HOOK_SPREAD);
         register_worldgen_feature(WorldgenStage::Trees, GEN_WILD_PATCHES);
+        register_ai_node("farming:follow_wheat", AI_FOLLOW_WHEAT);
     }
 
     fn handle_event(&mut self, handler_id: u32, payload: &mut EventPayload) -> Outcome {
@@ -79,7 +115,14 @@ impl Mod for Farming {
         };
         match (handler_id, &mut *payload) {
             (ON_ITEM_USE_PRE, EventPayload::ItemUsePre { item, target }) => {
-                tilling::on_item_use(content, *item, *target)
+                // The hoe first (it consumes eligible clicks), then the
+                // fertilizer targets, then the compostable barrel fill —
+                // each falls through quietly when the held item is not its
+                // business.
+                let first = chain(tilling::on_item_use(content, *item, *target), || {
+                    fertilize::on_item_use(content, *item, *target)
+                });
+                chain(first, || compost::on_item_use(content, *item, *target))
             }
             (ON_BLOCK_PLACE_PRE, EventPayload::BlockPlacePre { pos, block, .. }) => {
                 crops::on_place_pre(content, *pos, *block)
@@ -89,11 +132,30 @@ impl Mod for Farming {
                 farmland::on_block_placed_above(content, *pos, *block);
                 Outcome::Continue
             }
-            (ON_BLOCK_INTERACT, EventPayload::BlockInteract { pos, block }) => {
-                crops::on_interact(content, &mut self.growth, *pos, *block)
-            }
+            (ON_BLOCK_INTERACT, EventPayload::BlockInteract { pos, block }) => chain(
+                crops::on_interact(content, &mut self.growth, *pos, *block),
+                || compost::on_interact(content, *pos, *block),
+            ),
             (ON_PLAYER_DAMAGE_PRE, EventPayload::PlayerDamagePre { amount, .. }) => {
                 wellfed::on_player_damage(amount);
+                Outcome::Continue
+            }
+            (
+                ON_BLOCK_BROKEN,
+                EventPayload::BlockBroken {
+                    pos,
+                    block,
+                    harvested,
+                    natural,
+                },
+            ) => {
+                forage::on_block_broken(content, *pos, *block, *harvested, *natural);
+                Outcome::Continue
+            }
+            (ON_MOB_DIED, EventPayload::MobDied { id, .. }) => {
+                // Release the dead mob's lure state by its stable id (any
+                // non-sheep id is simply absent from the map).
+                follow::release(&mut self.follow, *id);
                 Outcome::Continue
             }
             _ => Outcome::Continue,
@@ -107,7 +169,16 @@ impl Mod for Farming {
         match callback_id {
             HOOK_CROP => crops::on_hook(content, &mut self.growth, kind, pos),
             HOOK_FARMLAND => farmland::on_hook(content, kind, pos),
+            HOOK_SPREAD => spread::on_hook(content, kind, pos),
             _ => {}
+        }
+    }
+
+    fn ai_node(&mut self, callback_id: u32, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
+        let content = self.content.as_ref()?;
+        match callback_id {
+            AI_FOLLOW_WHEAT => follow::decide(content, &mut self.follow, ctx),
+            _ => None,
         }
     }
 

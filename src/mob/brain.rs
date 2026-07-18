@@ -107,6 +107,9 @@ pub struct AiCtx<'a> {
     /// Whether that player is sneaking — sneaking shrinks hostile detection
     /// (see `chase_player`'s `sneak_radius_penalty`).
     pub player_sneaking: bool,
+    /// That player's selected (held) item — the hand fact lure/beg behaviors
+    /// read. `None` for an empty hand or a spectator.
+    pub player_held: Option<crate::item::ItemType>,
     /// EVERY connected player's anchor, for behaviors that track a SPECIFIC
     /// player (a heard target, an attacker) rather than the nearest one.
     pub players: &'a [PlayerAnchor],
@@ -267,6 +270,7 @@ impl Brain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mob::behavior::test_support::ctx;
 
     /// A behavior that always wants a fixed goal.
     struct Goal(IVec3);
@@ -293,33 +297,6 @@ mod tests {
     impl AiBehavior for Yield {
         fn tick(&mut self, _ctx: &mut AiCtx) -> BehaviorOutput {
             BehaviorOutput::default()
-        }
-    }
-
-    fn ctx<'a>(world: &'a World, rng: &'a mut MobRng) -> AiCtx<'a> {
-        AiCtx {
-            mob_id: 1,
-            pos: Vec3::ZERO,
-            cell: IVec3::ZERO,
-            yaw: 0.0,
-            head_height: 0.7,
-            half_width: 0.25,
-            world,
-            player_id: Default::default(),
-            player_pos: Vec3::ZERO,
-            player_sneaking: false,
-            players: &[],
-            noises: &[],
-            contacts: &[],
-            target: None,
-            attacker: None,
-            nav_idle: true,
-            in_water: false,
-            head: 1,
-            idle_anims: &[],
-            mob_index: 0,
-            mobs: &[],
-            rng,
         }
     }
 

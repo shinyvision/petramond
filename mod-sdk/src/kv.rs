@@ -49,21 +49,21 @@ host_fn! {
 }
 
 host_fn! {
-    /// Read a per-mob KV entry (`mob_index` valid this tick only). `None` when
-    /// the key is absent or there is no such mob.
-    pub fn mob_kv_get(mob_index: u32, key: &str) -> Option<Vec<u8>>
-        => MobKvGet { mob_index, key: key.into() } => Bytes
+    /// Read a per-mob KV entry (STABLE mob id). `None` when the key is absent
+    /// or there is no such live mob.
+    pub fn mob_kv_get(mob_id: u64, key: &str) -> Option<Vec<u8>>
+        => MobKvGet { mob_id, key: key.into() } => Bytes
 }
 
 host_fn! {
     /// Write a per-mob KV entry (own-namespace key required); persists with the
-    /// mob's save record. `false` = no such mob.
-    pub fn mob_kv_set(mob_index: u32, key: &str, value: Vec<u8>) -> bool
-        => MobKvSet { mob_index, key: key.into(), value } => Bool
+    /// mob's save record. `false` = no such live mob.
+    pub fn mob_kv_set(mob_id: u64, key: &str, value: Vec<u8>) -> bool
+        => MobKvSet { mob_id, key: key.into(), value } => Bool
 }
 
 host_fn! {
     /// Delete a per-mob KV entry (own-namespace key required); `false` = absent.
-    pub fn mob_kv_delete(mob_index: u32, key: &str) -> bool
-        => MobKvDelete { mob_index, key: key.into() } => Bool
+    pub fn mob_kv_delete(mob_id: u64, key: &str) -> bool
+        => MobKvDelete { mob_id, key: key.into() } => Bool
 }

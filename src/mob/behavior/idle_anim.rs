@@ -78,8 +78,6 @@ impl AiBehavior for IdleAnimAi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mathh::{IVec3, Vec3};
-    use crate::mob::brain::AiCtx;
     use crate::mob::model_meta::IdleAnimMeta;
     use crate::mob::MobRng;
     use crate::world::World;
@@ -90,30 +88,8 @@ mod tests {
         let mut rng = MobRng::new(7);
         for _ in 0..20_000 {
             let out = {
-                let mut ctx = AiCtx {
-                    mob_id: 1,
-                    pos: Vec3::ZERO,
-                    cell: IVec3::ZERO,
-                    yaw: 0.0,
-                    head_height: 0.7,
-                    half_width: 0.25,
-                    world: &world,
-                    player_id: Default::default(),
-                    player_pos: Vec3::ZERO,
-                    player_sneaking: false,
-                    players: &[],
-                    noises: &[],
-                    contacts: &[],
-                    target: None,
-                    attacker: None,
-                    nav_idle: true,
-                    in_water: false,
-                    head: 1,
-                    idle_anims: idle,
-                    mob_index: 0,
-                    mobs: &[],
-                    rng: &mut rng,
-                };
+                let mut ctx = crate::mob::behavior::test_support::ctx(&world, &mut rng);
+                ctx.idle_anims = idle;
                 ai.tick(&mut ctx)
             };
             if out.idle_anim.is_some() {
@@ -163,30 +139,9 @@ mod tests {
         }];
         let mut ai = IdleAnimAi::new();
         for _ in 0..20_000 {
-            let mut ctx = AiCtx {
-                mob_id: 1,
-                pos: Vec3::ZERO,
-                cell: IVec3::ZERO,
-                yaw: 0.0,
-                head_height: 0.7,
-                half_width: 0.25,
-                world: &world,
-                player_id: Default::default(),
-                player_pos: Vec3::ZERO,
-                player_sneaking: false,
-                players: &[],
-                noises: &[],
-                contacts: &[],
-                target: None,
-                attacker: None,
-                nav_idle: true,
-                in_water: true,
-                head: 1,
-                idle_anims: &idle,
-                mob_index: 0,
-                mobs: &[],
-                rng: &mut rng,
-            };
+            let mut ctx = crate::mob::behavior::test_support::ctx(&world, &mut rng);
+            ctx.in_water = true;
+            ctx.idle_anims = &idle;
             assert!(
                 ai.tick(&mut ctx).idle_anim.is_none(),
                 "no idle plays in water"

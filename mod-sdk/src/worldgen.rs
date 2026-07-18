@@ -1,6 +1,7 @@
-//! Worldgen hooks: block-id resolution, feature/stage/generator
-//! registration, the per-dispatch [`GenCtx`], and the positional [`GenRng`]
-//! mirroring the engine's frozen seeding contract.
+//! Worldgen hooks: feature/stage/generator registration, the per-dispatch
+//! [`GenCtx`], and the positional [`GenRng`] mirroring the engine's frozen
+//! seeding contract. (Block/item name resolution lives in
+//! [`crate::registry`].)
 
 use mod_api::{BlockId, WorldgenStage};
 
@@ -9,36 +10,6 @@ use mod_api::{BlockId, WorldgenStage};
 use crate::Mod;
 
 use crate::__rt::host_fn;
-
-host_fn! {
-    /// Resolve a block registry key (`"petramond:stone"`, `"mymod:gadget"`) to its
-    /// session-scoped runtime id. Works everywhere, worldgen instances included —
-    /// resolve once in [`Mod::init`] and keep the id in mod state (but NEVER
-    /// persist it: ids can change between sessions; names are the stable identity).
-    pub fn resolve_block(key: &str) -> Option<BlockId> => ResolveBlock { key: key.into() } => Block
-}
-
-host_fn! {
-    /// Every registered block carrying `tag`, in id order — engine tags as
-    /// `"petramond:<name>"` (e.g. `"petramond:leaves"`), pack tags as their
-    /// `"mod_id:name"`. Registry-only like [`resolve_block`]: works
-    /// everywhere, any time; a name nothing lists is an empty set. Query once
-    /// in [`Mod::init`] and keep the ids in mod state (never persist them) —
-    /// tag-driven policy picks up pack-added blocks with no code change.
-    pub fn blocks_by_tag(tag: &str) -> Vec<BlockId>
-        => BlocksByTag { tag: tag.into() } => BlockList
-}
-
-/// [`resolve_block`] that also logs a "not registered" line on `None` — the
-/// standard init-time shape: resolution failure is worth one log line, then
-/// the mod degrades on the `None`.
-pub fn resolve_block_logged(key: &str) -> Option<BlockId> {
-    let id = resolve_block(key);
-    if id.is_none() {
-        crate::log(&format!("block '{key}' is not registered"));
-    }
-    id
-}
 
 host_fn! {
     /// Register a worldgen feature that runs after `stage` (use

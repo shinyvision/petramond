@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 pub use super::host::HostCall;
 use crate::client::{ClientCanvasEvent, ClientFrameData, ClientUiEvent};
 use crate::data::{AiNodeCtx, AiNodeDecision, BlockHookKind, HostileSpawnCandidate};
-use crate::events::{EventKind, EventPayload, Outcome};
+use crate::events::{EventPayload, Outcome};
 use crate::ids::BlockId;
 use crate::sched::WorldgenStage;
 
@@ -21,10 +21,11 @@ pub enum GuestCall {
         id: u32,
     },
     /// Handle one event with the handler registered under `id`. The guest
-    /// returns the (possibly mutated) payload in [`GuestRet::Event`].
+    /// returns the (possibly mutated) payload in [`GuestRet::Event`]. The
+    /// event's kind is the payload's variant ([`EventPayload::kind`]) — this
+    /// hot dispatch deliberately carries no redundant kind lane.
     HandleEvent {
         id: u32,
-        kind: EventKind,
         payload: EventPayload,
     },
 
@@ -111,9 +112,11 @@ pub enum GuestCall {
     /// One AI decision for one mob, this tick — the node the mod registered
     /// via [`HostCall::RegisterAiNode`]. DECISION-ONLY: the dispatch runs
     /// inside the mob tick with NO simulation scope, so sim host calls
-    /// (world edits, spawns, player state) error here; core calls (RNG, log,
-    /// tick) work. Return desires in [`GuestRet::AiDecision`]; the engine's
-    /// brain arbitration merges them by the brain row's priority.
+    /// (world edits, spawns, player state) error here; the core calls
+    /// (`CurrentTick`, RNG, log) work, and `ctx.tick` already carries the
+    /// tick without a host call. Return desires in
+    /// [`GuestRet::AiDecision`]; the engine's brain arbitration merges them
+    /// by the brain row's priority.
     /// → [`GuestRet::AiDecision`].
     AiNode {
         callback_id: u32,

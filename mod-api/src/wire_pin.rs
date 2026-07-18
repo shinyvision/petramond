@@ -56,11 +56,11 @@ fn samples() -> Samples {
     s.pin("HostCall::IsLoaded", &HostCall::IsLoaded { pos: [1, 2, 3] });
     s.pin("HostCall::LightAt", &HostCall::LightAt { pos: [1, 2, 3] });
     s.pin("HostCall::SpawnMob", &HostCall::SpawnMob {
-        key: "m:k".into(), pos: [1.0, 2.0, 3.0], yaw: 0.5,
+        key: "m:k".into(), pos: [1.0, 2.0, 3.0], yaw: 0.5, checked: true,
     });
     s.pin("HostCall::MobsInRadius", &HostCall::MobsInRadius { pos: [1.0, 2.0, 3.0], radius: 4.0 });
     s.pin("HostCall::DamageMob", &HostCall::DamageMob {
-        index: 1, amount: 2.0, origin: Some([1.0, 2.0, 3.0]),
+        mob_id: 7, amount: 2.0, origin: Some([1.0, 2.0, 3.0]),
         feedback: Some(crate::events::MobDamageFeedback {
             components: vec![
                 crate::events::MobDamageFeedbackComponent::DecreaseHealth,
@@ -68,15 +68,14 @@ fn samples() -> Samples {
             ],
         }),
     });
-    s.pin("HostCall::DespawnMob", &HostCall::DespawnMob { index: 2 });
+    s.pin("HostCall::DespawnMob", &HostCall::DespawnMob { mob_id: 7 });
     s.pin("HostCall::SpawnItem", &HostCall::SpawnItem {
-        item_key: "m:i".into(), count: 3, pos: [1.0, 2.0, 3.0],
+        item: "m:i".into(), count: 3, pos: [1.0, 2.0, 3.0],
     });
     s.pin("HostCall::PlayerState", &HostCall::PlayerState);
     s.pin("HostCall::DamagePlayer", &HostCall::DamagePlayer { amount: 2 });
     s.pin("HostCall::ApplyKnockback", &HostCall::ApplyKnockback { impulse: [1.0, 2.0, 3.0] });
-    s.pin("HostCall::GiveItem", &HostCall::GiveItem { item_key: "m:i".into(), count: 2 });
-    s.pin("HostCall::KillPlayer", &HostCall::KillPlayer);
+    s.pin("HostCall::GiveItem", &HostCall::GiveItem { item: "m:i".into(), count: 2 });
     s.pin("HostCall::SetHealth", &HostCall::SetHealth { value: 20 });
     s.pin("HostCall::Teleport", &HostCall::Teleport { pos: [1.0, 2.0, 3.0] });
     s.pin("HostCall::EmitSound", &HostCall::EmitSound {
@@ -92,12 +91,12 @@ fn samples() -> Samples {
     s.pin("HostCall::SectionKvDelete", &HostCall::SectionKvDelete {
         pos: [1, 2, 3], key: "m:k".into(),
     });
-    s.pin("HostCall::MobKvGet", &HostCall::MobKvGet { mob_index: 1, key: "m:k".into() });
+    s.pin("HostCall::MobKvGet", &HostCall::MobKvGet { mob_id: 7, key: "m:k".into() });
     s.pin("HostCall::MobKvSet", &HostCall::MobKvSet {
-        mob_index: 1, key: "m:k".into(), value: vec![3],
+        mob_id: 7, key: "m:k".into(), value: vec![3],
     });
-    s.pin("HostCall::MobKvDelete", &HostCall::MobKvDelete { mob_index: 1, key: "m:k".into() });
-    s.pin("HostCall::ResolveBlock", &HostCall::ResolveBlock { key: "m:b".into() });
+    s.pin("HostCall::MobKvDelete", &HostCall::MobKvDelete { mob_id: 7, key: "m:k".into() });
+    s.pin("HostCall::ResolveBlock", &HostCall::ResolveBlock { name: "m:b".into() });
     s.pin("HostCall::RegisterWorldgenFeature", &HostCall::RegisterWorldgenFeature {
         feature_id: 1, stage: WorldgenStage::Trees,
     });
@@ -111,7 +110,9 @@ fn samples() -> Samples {
     s.pin("HostCall::GuiStateGet", &HostCall::GuiStateGet { key: "k".into() });
     s.pin("HostCall::GuiOpen", &HostCall::GuiOpen { kind_key: "m:g".into() });
     s.pin("HostCall::GuiClose", &HostCall::GuiClose);
-    s.pin("HostCall::ChatSend", &HostCall::ChatSend { text: "t".into(), targets: Some(vec![1]) });
+    s.pin("HostCall::ChatSend", &HostCall::ChatSend {
+        text: "t".into(), targets: Some(vec![PlayerId(1)]),
+    });
     s.pin("HostCall::SoundPlayAt", &HostCall::SoundPlayAt {
         key: "m:s".into(), pos: [1.0, 2.0, 3.0], volume: 1.0, pitch: 1.0,
     });
@@ -119,9 +120,6 @@ fn samples() -> Samples {
         mob_id: 1, key: "m:s".into(), volume: 1.0, pitch: 1.0,
     });
     s.pin("HostCall::SoundStop", &HostCall::SoundStop { handle: 1 });
-    s.pin("HostCall::BlockIsFullSpawnSupport", &HostCall::BlockIsFullSpawnSupport {
-        pos: [1, 2, 3],
-    });
     s.pin("HostCall::ShaderSetParam", &HostCall::ShaderSetParam {
         key: "m:p".into(), value: [0.0, 0.25, 0.5, 1.0],
     });
@@ -137,11 +135,11 @@ fn samples() -> Samples {
     s.pin("HostCall::ContainerGet", &HostCall::ContainerGet { pos: [1, 2, 3] });
     s.pin("HostCall::ContainerSet", &HostCall::ContainerSet {
         pos: [1, 2, 3],
-        slots: vec![(0, Some(ItemStackData { key: "m:i".into(), count: 1 })), (1, None)],
+        slots: vec![(0, Some(ItemStackData { item: "m:i".into(), count: 1 })), (1, None)],
     });
-    s.pin("HostCall::ItemInfo", &HostCall::ItemInfo { key: "m:i".into() });
+    s.pin("HostCall::ItemInfo", &HostCall::ItemInfo { item: "m:i".into() });
     s.pin("HostCall::RecipeResult", &HostCall::RecipeResult {
-        class: "m:c".into(), key: "m:i".into(),
+        class: "m:c".into(), item: "m:i".into(),
     });
     s.pin("HostCall::EffectApply", &HostCall::EffectApply { key: "m:e".into(), ticks: 5 });
     s.pin("HostCall::EffectRemove", &HostCall::EffectRemove { key: "m:e".into() });
@@ -153,7 +151,7 @@ fn samples() -> Samples {
         positions: vec![[1, 2, 3]],
     });
     s.pin("HostCall::MobEmitterSet", &HostCall::MobEmitterSet {
-        index: 1, key: "m:e".into(), active: true,
+        mob_id: 7, key: "m:e".into(), active: true,
     });
     s.pin("HostCall::EmitterBurst", &HostCall::EmitterBurst {
         key: "m:e".into(), pos: [1.0, 2.0, 3.0], intensity: 2.0,
@@ -206,7 +204,7 @@ fn samples() -> Samples {
     s.pin("HostCall::ClientStorageSetMany", &HostCall::ClientStorageSetMany {
         entries: vec![("m:k".into(), ByteBuf::from(vec![1]))],
     });
-    s.pin("HostCall::ResolveItem", &HostCall::ResolveItem { key: "m:i".into() });
+    s.pin("HostCall::ResolveItem", &HostCall::ResolveItem { name: "m:i".into() });
     s.pin("HostCall::ClientImageBlit", &HostCall::ClientImageBlit {
         key: "m:i".into(), origin: [1, 2], size: [1, 1], rgba: vec![1, 2, 3, 4],
     });
@@ -215,8 +213,10 @@ fn samples() -> Samples {
     });
     s.pin("HostCall::ClientStorageReadPoll", &HostCall::ClientStorageReadPoll { ticket: 7 });
     s.pin("HostCall::ConsumeHeld", &HostCall::ConsumeHeld { item: ItemId(3), count: 1 });
-    s.pin("HostCall::MobMount", &HostCall::MobMount { mob_id: 7, player_id: 1, seat: 0 });
-    s.pin("HostCall::MobDismount", &HostCall::MobDismount { player_id: 1 });
+    s.pin("HostCall::MobMount", &HostCall::MobMount {
+        mob_id: 7, player_id: PlayerId(1), seat: 0,
+    });
+    s.pin("HostCall::MobDismount", &HostCall::MobDismount { player_id: PlayerId(1) });
     s.pin("HostCall::MobRiders", &HostCall::MobRiders { mob_id: 7 });
     s.pin("HostCall::MobDrive", &HostCall::MobDrive {
         mob_id: 7, vel: [1.0, 2.0], yaw: Some(0.5),
@@ -230,12 +230,9 @@ fn samples() -> Samples {
     s.pin("HostCall::MobAnimSeek", &HostCall::MobAnimSeek {
         mob_id: 7, anim: "row".into(), phase: 1.5, rate: 0.75,
     });
-    s.pin("HostCall::PlayerInput", &HostCall::PlayerInput { player_id: 1 });
+    s.pin("HostCall::PlayerInput", &HostCall::PlayerInput { player_id: PlayerId(1) });
     s.pin("HostCall::MobAnimState", &HostCall::MobAnimState {
         mob_id: 7, anim: "row".into(),
-    });
-    s.pin("HostCall::SpawnMobChecked", &HostCall::SpawnMobChecked {
-        key: "m:k".into(), pos: [1.0, 2.0, 3.0], yaw: 0.5,
     });
     s.pin("HostCall::BiomeAt", &HostCall::BiomeAt { pos: [1, -2] });
     s.pin("HostCall::SurfaceYAt", &HostCall::SurfaceYAt { pos: [1, -2] });
@@ -257,6 +254,12 @@ fn samples() -> Samples {
         positions: vec![[1, -2, 3]],
     });
     s.pin("HostCall::BlocksByTag", &HostCall::BlocksByTag { tag: "m:t".into() });
+    s.pin("HostCall::ItemsByTag", &HostCall::ItemsByTag { tag: "m:t".into() });
+    s.pin("HostCall::BlockNames", &HostCall::BlockNames { blocks: vec![BlockId(1), BlockId(9)] });
+    s.pin("HostCall::ItemNames", &HostCall::ItemNames { items: vec![ItemId(1), ItemId(9)] });
+    s.pin("HostCall::ResolveMob", &HostCall::ResolveMob { key: "m:k".into() });
+    s.pin("HostCall::MobNames", &HostCall::MobNames { mobs: vec![MobId(1), MobId(9)] });
+    s.pin("HostCall::CollisionShapeAt", &HostCall::CollisionShapeAt { pos: [1, 2, 3] });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -265,9 +268,9 @@ fn samples() -> Samples {
     s.pin("HostRet::Bool", &HostRet::Bool(true));
     s.pin("HostRet::Block", &HostRet::Block(Some(BlockId(1))));
     s.pin("HostRet::Blocks", &HostRet::Blocks(vec![None, Some(BlockId(2))]));
-    s.pin("HostRet::Light", &HostRet::Light { combined: 1, sky: 2, block: 3 });
+    s.pin("HostRet::Light", &HostRet::Light(Some(LightData { combined: 1, sky: 2, block: 3 })));
     s.pin("HostRet::Mobs", &HostRet::Mobs(vec![MobSnapshot {
-        index: 1, key: "m:k".into(), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
+        index: 1, key: "m:k".into(), kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, vel: [1.0, 0.0, 2.0],
     }]));
     s.pin("HostRet::Player", &HostRet::Player(PlayerSnapshot {
@@ -277,13 +280,20 @@ fn samples() -> Samples {
     s.pin("HostRet::Bytes", &HostRet::Bytes(Some(vec![1])));
     s.pin("HostRet::GuiValue", &HostRet::GuiValue(Some(GuiValue::F32(1.0))));
     s.pin("HostRet::ContainerSlots", &HostRet::ContainerSlots(Some(vec![
-        Some(ItemStackData { key: "m:i".into(), count: 1 }), None,
+        Some(ItemStackData { item: "m:i".into(), count: 1 }), None,
     ])));
     s.pin("HostRet::ItemInfo", &HostRet::ItemInfo(Some(ItemInfoData {
         max_stack: 64, fuel_burn_ticks: 0, tags: vec!["t".into()],
+        display_name: "N".into(), block: Some(BlockId(2)),
+        tool: Some(ToolInfoData { kind: "pickaxe".into(), tier: 1 }),
+        food: Some(FoodInfoData {
+            eat_ticks: 60,
+            effects: vec![FoodEffectData { effect: "m:e".into(), ticks: 100 }],
+        }),
+        item_use: Some("bucket_fill".into()),
     })));
     s.pin("HostRet::ItemStack", &HostRet::ItemStack(Some(ItemStackData {
-        key: "m:i".into(), count: 2,
+        item: "m:i".into(), count: 2,
     })));
     s.pin("HostRet::Effects", &HostRet::Effects(vec![EffectStateData {
         key: "m:e".into(), remaining: 9,
@@ -300,7 +310,7 @@ fn samples() -> Samples {
     s.pin("HostRet::Item", &HostRet::Item(Some(ItemId(1))));
     s.pin("HostRet::ClientStorageRead", &HostRet::ClientStorageRead(Some(vec![None, Some(ByteBuf::from(vec![1]))])));
     s.pin("HostRet::Riders", &HostRet::Riders(Some(MobRidersData {
-        capacity: 2, riders: vec![MobRiderData { seat: 0, player_id: 1 }],
+        capacity: 2, riders: vec![MobRiderData { seat: 0, player_id: PlayerId(1) }],
     })));
     s.pin("HostRet::PlayerInput", &HostRet::PlayerInput(Some(PlayerInputData {
         forward: 1.0, strafe: -1.0, jump: true, sneak: false, yaw: 0.5, pitch: 0.25,
@@ -311,7 +321,7 @@ fn samples() -> Samples {
     s.pin("HostRet::MaybeByte", &HostRet::MaybeByte(Some(4)));
     s.pin("HostRet::MaybeI32", &HostRet::MaybeI32(Some(-7)));
     s.pin("HostRet::Players", &HostRet::Players(vec![PlayerListEntry {
-        id: 1,
+        id: PlayerId(1),
         state: PlayerSnapshot {
             pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, 0.0], yaw: 0.5, pitch: 0.25,
             health: 20, on_ground: true, spectator: false,
@@ -319,11 +329,15 @@ fn samples() -> Samples {
     }]));
     s.pin("HostRet::EnvParams", &HostRet::EnvParams(vec![None, Some([1.0, 2.0, 3.0, 4.0])]));
     s.pin("HostRet::BlockList", &HostRet::BlockList(vec![BlockId(1), BlockId(9)]));
+    s.pin("HostRet::ItemList", &HostRet::ItemList(vec![ItemId(1), ItemId(9)]));
+    s.pin("HostRet::Names", &HostRet::Names(vec![None, Some("m:b".into())]));
+    s.pin("HostRet::MobKind", &HostRet::MobKind(Some(MobId(1))));
+    s.pin("HostRet::CollisionShape", &HostRet::CollisionShape(Some(CollisionShape::Full)));
 
     // --- GuestCall: every variant, declaration order -------------------------
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
     s.pin("GuestCall::HandleEvent", &GuestCall::HandleEvent {
-        id: 1, kind: EventKind::PlayerDied, payload: EventPayload::PlayerDied,
+        id: 1, payload: EventPayload::PlayerDied,
     });
     s.pin("GuestCall::GenFeature", &GuestCall::GenFeature {
         feature_id: 1, section_pos: [1, 2, 3], seed: 4,
@@ -350,7 +364,9 @@ fn samples() -> Samples {
         callback_id: 1,
         ctx: AiNodeCtx {
             mob_id: 1, pos: [1.0, 2.0, 3.0], cell: [1, 2, 3], yaw: 0.5,
+            tick: 9, player_id: PlayerId(2),
             player_pos: [4.0, 5.0, 6.0], nav_idle: true, in_water: false,
+            player_held: Some(ItemId(7)), player_foothold: Some([4, 5, 6]),
         },
     });
     s.pin("GuestCall::ClientFrame", &GuestCall::ClientFrame {
@@ -401,7 +417,7 @@ fn samples() -> Samples {
         item: ItemId(1), target: Some([1, 2, 3]),
     });
     s.pin("EventPayload::MobDamagePre", &EventPayload::MobDamagePre {
-        mob: 1, kind: MobId(2), amount: 3.0, source: DamageSource::Fall,
+        mob_id: 7, kind: MobId(2), amount: 3.0, source: DamageSource::Fall,
         origin: Some([1.0, 2.0, 3.0]),
         feedback: MobDamageFeedback {
             components: vec![
@@ -415,7 +431,7 @@ fn samples() -> Samples {
         },
     });
     s.pin("EventPayload::PlayerDamagePre", &EventPayload::PlayerDamagePre {
-        amount: 1, source: DamageSource::PlayerAttack { id: 1 }, origin: None,
+        amount: 1, source: DamageSource::PlayerAttack { id: PlayerId(1) }, origin: None,
     });
     s.pin("EventPayload::BlockPlaced", &EventPayload::BlockPlaced {
         pos: [1, 2, 3], block: BlockId(1),
@@ -424,9 +440,11 @@ fn samples() -> Samples {
         pos: [1, 2, 3], block: BlockId(1), harvested: false, natural: true,
     });
     s.pin("EventPayload::ItemUsed", &EventPayload::ItemUsed { item: ItemId(2) });
-    s.pin("EventPayload::MobDied", &EventPayload::MobDied { kind: MobId(1), pos: [1.0, 2.0, 3.0] });
+    s.pin("EventPayload::MobDied", &EventPayload::MobDied {
+        id: 7, kind: MobId(1), pos: [1.0, 2.0, 3.0],
+    });
     s.pin("EventPayload::MobSpawned", &EventPayload::MobSpawned {
-        kind: MobId(1), pos: [1.0, 2.0, 3.0],
+        id: 7, kind: MobId(1), pos: [1.0, 2.0, 3.0],
     });
     s.pin("EventPayload::PlayerDamaged", &EventPayload::PlayerDamaged {
         amount: 1, new_health: 19,
@@ -441,10 +459,10 @@ fn samples() -> Samples {
     s.pin("EventPayload::SectionGenerated", &EventPayload::SectionGenerated { pos: [1, 2, 3] });
     s.pin("EventPayload::SectionLoaded", &EventPayload::SectionLoaded { pos: [1, 2, 3] });
     s.pin("EventPayload::MobInteract", &EventPayload::MobInteract {
-        mob: 1, id: 7, key: "m:k".into(), player_id: 0,
+        id: 7, key: "m:k".into(), player_id: PlayerId(0),
     });
     s.pin("EventPayload::PlayerDismounted", &EventPayload::PlayerDismounted {
-        player_id: 0, mob_id: 7,
+        player_id: PlayerId(0), mob_id: 7,
     });
 
     // --- Auxiliary enums: ALL variants of each, encoded as one Vec ----------
@@ -470,7 +488,7 @@ fn samples() -> Samples {
     ]);
     s.pin("DamageSource::*", &vec![
         DamageSource::Fall,
-        DamageSource::PlayerAttack { id: 1 },
+        DamageSource::PlayerAttack { id: PlayerId(1) },
         DamageSource::MobAttack { key: "m:k".into() },
         DamageSource::Mod { mod_id: "m".into() },
     ]);
@@ -537,111 +555,114 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::ScheduleTick", "0902040607"),
     ("HostCall::IsLoaded", "0a020406"),
     ("HostCall::LightAt", "0b020406"),
-    ("HostCall::SpawnMob", "0c036d3a6b0000803f00000040000040400000003f"),
+    ("HostCall::SpawnMob", "0c036d3a6b0000803f00000040000040400000003f01"),
     ("HostCall::MobsInRadius", "0d0000803f000000400000404000008040"),
-    ("HostCall::DamageMob", "0e0100000040010000803f0000004000004040010200050a"),
-    ("HostCall::DespawnMob", "0f02"),
+    ("HostCall::DamageMob", "0e0700000040010000803f0000004000004040010200050a"),
+    ("HostCall::DespawnMob", "0f07"),
     ("HostCall::SpawnItem", "10036d3a69030000803f0000004000004040"),
     ("HostCall::PlayerState", "11"),
     ("HostCall::DamagePlayer", "1204"),
     ("HostCall::ApplyKnockback", "130000803f0000004000004040"),
     ("HostCall::GiveItem", "14036d3a6902"),
-    ("HostCall::KillPlayer", "15"),
-    ("HostCall::SetHealth", "1628"),
-    ("HostCall::Teleport", "170000803f0000004000004040"),
-    ("HostCall::EmitSound", "18036d3a73010000803f0000004000004040"),
-    ("HostCall::WorldKvGet", "19036d3a6b"),
-    ("HostCall::WorldKvSet", "1a036d3a6b0101"),
-    ("HostCall::WorldKvDelete", "1b036d3a6b"),
-    ("HostCall::SectionKvGet", "1c020406036d3a6b"),
-    ("HostCall::SectionKvSet", "1d020406036d3a6b0102"),
-    ("HostCall::SectionKvDelete", "1e020406036d3a6b"),
-    ("HostCall::MobKvGet", "1f01036d3a6b"),
-    ("HostCall::MobKvSet", "2001036d3a6b0103"),
-    ("HostCall::MobKvDelete", "2101036d3a6b"),
-    ("HostCall::ResolveBlock", "22036d3a62"),
-    ("HostCall::RegisterWorldgenFeature", "230104"),
-    ("HostCall::RegisterStageReplacement", "240102"),
-    ("HostCall::RegisterGenerator", "2503"),
-    ("HostCall::GuiStateSet", "26016b0102"),
-    ("HostCall::GuiStateGet", "27016b"),
-    ("HostCall::GuiOpen", "28036d3a67"),
-    ("HostCall::GuiClose", "29"),
-    ("HostCall::ChatSend", "2a0174010101"),
-    ("HostCall::SoundPlayAt", "2b036d3a730000803f00000040000040400000803f0000803f"),
-    ("HostCall::SoundPlayOnMob", "2c01036d3a730000803f0000803f"),
-    ("HostCall::SoundStop", "2d01"),
-    ("HostCall::BlockIsFullSpawnSupport", "2e020406"),
-    ("HostCall::ShaderSetParam", "2f036d3a70000000000000803e0000003f0000803f"),
-    ("HostCall::RegisterHostileSpawner", "300104"),
-    ("HostCall::RegisterBlockBehavior", "31036d3a6201"),
-    ("HostCall::RegisterAiNode", "32036d3a6e02"),
-    ("HostCall::ContainerGet", "33020406"),
-    ("HostCall::ContainerSet", "34020406020001036d3a69010100"),
-    ("HostCall::ItemInfo", "35036d3a69"),
-    ("HostCall::RecipeResult", "36036d3a63036d3a69"),
-    ("HostCall::EffectApply", "37036d3a6505"),
-    ("HostCall::EffectRemove", "38036d3a65"),
-    ("HostCall::EffectsActive", "39"),
-    ("HostCall::SwapModelBlock", "3a02040606"),
-    ("HostCall::ContainerGetMany", "3b01020406"),
-    ("HostCall::MobEmitterSet", "3c01036d3a6501"),
-    ("HostCall::EmitterBurst", "3d036d3a650000803f000000400000404000000040"),
-    ("HostCall::RuntimeSide", "3e"),
-    ("HostCall::ClientRegisterOverlay", "3f036d3a690001020304"),
-    ("HostCall::ClientRegisterKey", "40086f70656e5f6d61700e4f70656e20576f726c64204d6170056b65795f6d01"),
-    ("HostCall::ClientSurfaceColumns", "4101020303"),
-    ("HostCall::ClientUiStateSet", "42036d3a6b020176"),
-    ("HostCall::ClientUiStateGet", "43036d3a6b"),
-    ("HostCall::ClientImageSet", "44036d3a6901010401020304"),
-    ("HostCall::ClientTextMeasure", "45017402"),
-    ("HostCall::ClientImageDrawTexts", "46036d3a6901017402040101020304"),
-    ("HostCall::ClientGuiOpen", "47036d3a67"),
-    ("HostCall::ClientGuiClose", "48"),
-    ("HostCall::ClientCanvasOpen", "49036d3a630102"),
-    ("HostCall::ClientCanvasClose", "4a"),
-    ("HostCall::ClientCanvasSceneSet", "4b036d3a630200036d3a690000803f00000040000040400000804001036d3a690000803f00000040"),
-    ("HostCall::ClientCanvasViewSet", "4c036d3a630000803f00000040"),
-    ("HostCall::ClientStorageGetMany", "4d01036d3a6b"),
-    ("HostCall::ClientStorageSetMany", "4e01036d3a6b0101"),
-    ("HostCall::ResolveItem", "4f036d3a69"),
-    ("HostCall::ClientImageBlit", "50036d3a69010201010401020304"),
-    ("HostCall::ClientStorageReadBegin", "5101036d3a6b"),
-    ("HostCall::ClientStorageReadPoll", "5207"),
-    ("HostCall::ConsumeHeld", "530301"),
-    ("HostCall::MobMount", "54070100"),
-    ("HostCall::MobDismount", "5501"),
-    ("HostCall::MobRiders", "5607"),
-    ("HostCall::MobDrive", "57070000803f00000040010000003f"),
-    ("HostCall::MobAnimSet", "580703726f7701"),
-    ("HostCall::MobAnimRate", "590703726f77000080bf"),
-    ("HostCall::MobAnimSeek", "5a0703726f770000c03f0000403f"),
-    ("HostCall::PlayerInput", "5b01"),
-    ("HostCall::MobAnimState", "5c0703726f77"),
-    ("HostCall::SpawnMobChecked", "5d036d3a6b0000803f00000040000040400000003f"),
-    ("HostCall::BiomeAt", "5e0203"),
-    ("HostCall::SurfaceYAt", "5f0203"),
-    ("HostCall::Players", "60"),
-    ("HostCall::ClientEnvParams", "6101036d3a6b"),
-    ("HostCall::ClientBiomeAt", "620203"),
-    ("HostCall::ClientAmbientSet", "63066d3a7261696e0000003f0000803f000000c0"),
-    ("HostCall::ClientLoopSet", "64066d3a6c6f6f700000003f"),
-    ("HostCall::ClientMoodSet", "650000803e0000003f"),
-    ("HostCall::ClientBlocksAt", "6601020306"),
-    ("HostCall::BlocksByTag", "67036d3a74"),
+    ("HostCall::SetHealth", "1528"),
+    ("HostCall::Teleport", "160000803f0000004000004040"),
+    ("HostCall::EmitSound", "17036d3a73010000803f0000004000004040"),
+    ("HostCall::WorldKvGet", "18036d3a6b"),
+    ("HostCall::WorldKvSet", "19036d3a6b0101"),
+    ("HostCall::WorldKvDelete", "1a036d3a6b"),
+    ("HostCall::SectionKvGet", "1b020406036d3a6b"),
+    ("HostCall::SectionKvSet", "1c020406036d3a6b0102"),
+    ("HostCall::SectionKvDelete", "1d020406036d3a6b"),
+    ("HostCall::MobKvGet", "1e07036d3a6b"),
+    ("HostCall::MobKvSet", "1f07036d3a6b0103"),
+    ("HostCall::MobKvDelete", "2007036d3a6b"),
+    ("HostCall::ResolveBlock", "21036d3a62"),
+    ("HostCall::RegisterWorldgenFeature", "220104"),
+    ("HostCall::RegisterStageReplacement", "230102"),
+    ("HostCall::RegisterGenerator", "2403"),
+    ("HostCall::GuiStateSet", "25016b0102"),
+    ("HostCall::GuiStateGet", "26016b"),
+    ("HostCall::GuiOpen", "27036d3a67"),
+    ("HostCall::GuiClose", "28"),
+    ("HostCall::ChatSend", "290174010101"),
+    ("HostCall::SoundPlayAt", "2a036d3a730000803f00000040000040400000803f0000803f"),
+    ("HostCall::SoundPlayOnMob", "2b01036d3a730000803f0000803f"),
+    ("HostCall::SoundStop", "2c01"),
+    ("HostCall::ShaderSetParam", "2d036d3a70000000000000803e0000003f0000803f"),
+    ("HostCall::RegisterHostileSpawner", "2e0104"),
+    ("HostCall::RegisterBlockBehavior", "2f036d3a6201"),
+    ("HostCall::RegisterAiNode", "30036d3a6e02"),
+    ("HostCall::ContainerGet", "31020406"),
+    ("HostCall::ContainerSet", "32020406020001036d3a69010100"),
+    ("HostCall::ItemInfo", "33036d3a69"),
+    ("HostCall::RecipeResult", "34036d3a63036d3a69"),
+    ("HostCall::EffectApply", "35036d3a6505"),
+    ("HostCall::EffectRemove", "36036d3a65"),
+    ("HostCall::EffectsActive", "37"),
+    ("HostCall::SwapModelBlock", "3802040606"),
+    ("HostCall::ContainerGetMany", "3901020406"),
+    ("HostCall::MobEmitterSet", "3a07036d3a6501"),
+    ("HostCall::EmitterBurst", "3b036d3a650000803f000000400000404000000040"),
+    ("HostCall::RuntimeSide", "3c"),
+    ("HostCall::ClientRegisterOverlay", "3d036d3a690001020304"),
+    ("HostCall::ClientRegisterKey", "3e086f70656e5f6d61700e4f70656e20576f726c64204d6170056b65795f6d01"),
+    ("HostCall::ClientSurfaceColumns", "3f01020303"),
+    ("HostCall::ClientUiStateSet", "40036d3a6b020176"),
+    ("HostCall::ClientUiStateGet", "41036d3a6b"),
+    ("HostCall::ClientImageSet", "42036d3a6901010401020304"),
+    ("HostCall::ClientTextMeasure", "43017402"),
+    ("HostCall::ClientImageDrawTexts", "44036d3a6901017402040101020304"),
+    ("HostCall::ClientGuiOpen", "45036d3a67"),
+    ("HostCall::ClientGuiClose", "46"),
+    ("HostCall::ClientCanvasOpen", "47036d3a630102"),
+    ("HostCall::ClientCanvasClose", "48"),
+    ("HostCall::ClientCanvasSceneSet", "49036d3a630200036d3a690000803f00000040000040400000804001036d3a690000803f00000040"),
+    ("HostCall::ClientCanvasViewSet", "4a036d3a630000803f00000040"),
+    ("HostCall::ClientStorageGetMany", "4b01036d3a6b"),
+    ("HostCall::ClientStorageSetMany", "4c01036d3a6b0101"),
+    ("HostCall::ResolveItem", "4d036d3a69"),
+    ("HostCall::ClientImageBlit", "4e036d3a69010201010401020304"),
+    ("HostCall::ClientStorageReadBegin", "4f01036d3a6b"),
+    ("HostCall::ClientStorageReadPoll", "5007"),
+    ("HostCall::ConsumeHeld", "510301"),
+    ("HostCall::MobMount", "52070100"),
+    ("HostCall::MobDismount", "5301"),
+    ("HostCall::MobRiders", "5407"),
+    ("HostCall::MobDrive", "55070000803f00000040010000003f"),
+    ("HostCall::MobAnimSet", "560703726f7701"),
+    ("HostCall::MobAnimRate", "570703726f77000080bf"),
+    ("HostCall::MobAnimSeek", "580703726f770000c03f0000403f"),
+    ("HostCall::PlayerInput", "5901"),
+    ("HostCall::MobAnimState", "5a0703726f77"),
+    ("HostCall::BiomeAt", "5b0203"),
+    ("HostCall::SurfaceYAt", "5c0203"),
+    ("HostCall::Players", "5d"),
+    ("HostCall::ClientEnvParams", "5e01036d3a6b"),
+    ("HostCall::ClientBiomeAt", "5f0203"),
+    ("HostCall::ClientAmbientSet", "60066d3a7261696e0000003f0000803f000000c0"),
+    ("HostCall::ClientLoopSet", "61066d3a6c6f6f700000003f"),
+    ("HostCall::ClientMoodSet", "620000803e0000003f"),
+    ("HostCall::ClientBlocksAt", "6301020306"),
+    ("HostCall::BlocksByTag", "64036d3a74"),
+    ("HostCall::ItemsByTag", "65036d3a74"),
+    ("HostCall::BlockNames", "66020109"),
+    ("HostCall::ItemNames", "67020109"),
+    ("HostCall::ResolveMob", "68036d3a6b"),
+    ("HostCall::MobNames", "69020109"),
+    ("HostCall::CollisionShapeAt", "6a020406"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
     ("HostRet::Bool", "0301"),
     ("HostRet::Block", "040101"),
     ("HostRet::Blocks", "0502000102"),
-    ("HostRet::Light", "06010203"),
-    ("HostRet::Mobs", "070101036d3a6b0000803f000000400000404000008040050000003f0000803f0000000000000040"),
+    ("HostRet::Light", "0601010203"),
+    ("HostRet::Mobs", "070101036d3a6b020000803f000000400000404000008040050000003f0000803f0000000000000040"),
     ("HostRet::Player", "080000803f00000040000040400000000000000000000000000000003f0000803e280100"),
     ("HostRet::Bytes", "09010101"),
     ("HostRet::GuiValue", "0a01000000803f"),
     ("HostRet::ContainerSlots", "0b010201036d3a690100"),
-    ("HostRet::ItemInfo", "0c014000010174"),
+    ("HostRet::ItemInfo", "0c014000010174014e010201077069636b61786501013c01036d3a6564010b6275636b65745f66696c6c"),
     ("HostRet::ItemStack", "0d01036d3a6902"),
     ("HostRet::Effects", "0e01036d3a6509"),
     ("HostRet::Containers", "0f0201010000"),
@@ -659,14 +680,18 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Players", "1b01010000803f00000040000040400000000000000000000000000000003f0000803e280100"),
     ("HostRet::EnvParams", "1c0200010000803f000000400000404000008040"),
     ("HostRet::BlockList", "1d020109"),
+    ("HostRet::ItemList", "1e020109"),
+    ("HostRet::Names", "1f020001036d3a62"),
+    ("HostRet::MobKind", "200101"),
+    ("HostRet::CollisionShape", "210102"),
     ("GuestCall::TickSystem", "0001"),
-    ("GuestCall::HandleEvent", "01010c0c"),
+    ("GuestCall::HandleEvent", "01010c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
     ("GuestCall::GenStage", "0301020204060401010104010308"),
     ("GuestCall::GuiClick", "04036d3a67017701020406"),
     ("GuestCall::HostileSpawnCandidate", "05010000803f000000400000404002040601020300002042"),
     ("GuestCall::BlockBehavior", "060100020406"),
-    ("GuestCall::AiNode", "0701010000803f00000040000040400204060000003f000080400000a0400000c0400100"),
+    ("GuestCall::AiNode", "0701010000803f00000040000040400204060000003f0902000080400000a0400000c0400100010701080a0c"),
     ("GuestCall::ClientFrame", "08cdcc4c3d0000803f00000040000040400000003f0000803e8005e00301036d3a6700"),
     ("GuestCall::ClientKey", "090101"),
     ("GuestCall::ClientUi", "0a036d3a67000162"),
@@ -683,20 +708,20 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::BlockBreakPre", "010204060101"),
     ("EventPayload::BlockInteract", "0202040601"),
     ("EventPayload::ItemUsePre", "030101020406"),
-    ("EventPayload::MobDamagePre", "0401020000404000010000803f00000040000040400600010000003f020000803f0000003f030004050a"),
+    ("EventPayload::MobDamagePre", "0407020000404000010000803f00000040000040400600010000003f020000803f0000003f030004050a"),
     ("EventPayload::PlayerDamagePre", "0502010100"),
     ("EventPayload::BlockPlaced", "0602040601"),
     ("EventPayload::BlockBroken", "07020406010001"),
     ("EventPayload::ItemUsed", "0802"),
-    ("EventPayload::MobDied", "09010000803f0000004000004040"),
-    ("EventPayload::MobSpawned", "0a010000803f0000004000004040"),
+    ("EventPayload::MobDied", "0907010000803f0000004000004040"),
+    ("EventPayload::MobSpawned", "0a07010000803f0000004000004040"),
     ("EventPayload::PlayerDamaged", "0b0226"),
     ("EventPayload::PlayerDied", "0c"),
     ("EventPayload::ContainerOpened", "0d0301020406"),
     ("EventPayload::ContainerClosed", "0e05036d3a6700"),
     ("EventPayload::SectionGenerated", "0f020406"),
     ("EventPayload::SectionLoaded", "10020406"),
-    ("EventPayload::MobInteract", "110107036d3a6b00"),
+    ("EventPayload::MobInteract", "1107036d3a6b00"),
     ("EventPayload::PlayerDismounted", "120007"),
     ("Outcome::*", "020001"),
     ("Stage::*", "0c000102030405060708090a0b"),

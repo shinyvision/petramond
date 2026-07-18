@@ -259,6 +259,23 @@ pub fn rain(x: f32, z: f32, p: &FieldParams) -> f32 {
 /// weather mod itself, and a missing key simply means "no weather".
 pub const KV_FIELD: &str = "weather:field";
 
+/// The core day/night clock's world-KV key (8-byte LE u64 absolute ticks) —
+/// the freshness reference every [`KV_FIELD`] consumer gates against.
+pub const CLOCK_KEY: &str = "petramond:clock";
+
+/// Decode a [`CLOCK_KEY`] value. `None` on a malformed row — an unreadable
+/// clock means "no verifiable stamp", never a stamp of zero.
+pub fn decode_clock(bytes: &[u8]) -> Option<u64> {
+    Some(u64::from_le_bytes(bytes.try_into().ok()?))
+}
+
+/// Raw skylight (0..=63) at or above which a cell sits under DIRECT SKY for
+/// precipitation and sun purposes — rain lands there, the naked sun reaches
+/// it. Cross-mod interop vocabulary (farming's rain hydration, monsters'
+/// sunburn/douse), not per-mod balance data: retuning it moves every
+/// consumer's "open sky" line together.
+pub const DIRECT_SKY_MIN: u8 = 45;
+
 /// Everything a foreign server mod needs from the weather mod, in one row:
 /// the field parameters, the wind velocity, and the weather clock the row
 /// was published at. The clock is the row's FRESHNESS stamp — world KV
@@ -330,6 +347,28 @@ impl FieldRow {
         ];
         floats.iter().all(|v| v.is_finite()).then_some(row)
     }
+}
+
+/// A row whose clock stamp trails (or leads) the day/night clock by more
+/// than this many ticks is a leftover from an uninstalled weather mod — the
+/// shared consumer tolerance (2 s of slack over the per-tick republish).
+pub const FIELD_STALE_TICKS: u64 = 40;
+
+/// The one consumer-side read: decode a [`KV_FIELD`] row and gate its
+/// freshness against the day/night clock (`petramond:clock`), so a persisted
+/// row from an uninstalled weather mod never reads as an eternal frozen sky.
+/// `clock: None` (a clockless harness) trusts the row — the stamp is
+/// unverifiable, not stale. Every server-side consumer (monsters' burn
+/// douse, farming's rain hydration) goes through this instead of hand-rolling
+/// the gate.
+pub fn fresh_params(row: &[u8], clock: Option<u64>) -> Option<FieldParams> {
+    let row = FieldRow::decode(row)?;
+    if let Some(clock) = clock {
+        if clock.abs_diff(row.clock) > FIELD_STALE_TICKS {
+            return None;
+        }
+    }
+    Some(row.params)
 }
 
 #[cfg(test)]

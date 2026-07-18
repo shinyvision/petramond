@@ -43,6 +43,7 @@ pub(crate) use body_geometry::{
     SolidMotionSolver,
 };
 pub use brain::Brain;
+pub(crate) use load::validate_brain_extensions;
 pub use instance::{hurt_flash01, Instance};
 pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop};
@@ -149,6 +150,12 @@ impl Mob {
 
 /// Compatibility default for hostile rows that omit `despawn_radius`.
 pub(crate) const DEFAULT_HOSTILE_DESPAWN_RADIUS: f32 = 128.0;
+
+/// The outer edge of player-reactive mob AI (blocks): beyond this distance a
+/// mob no longer reacts to a player at all. One design constant, two
+/// consumers: random-despawn eligibility (`instance`) and the scripted-node
+/// foothold scan gate (`behavior::wasm`) — retune it here, never re-literal it.
+pub(crate) const PLAYER_REACTIVE_RANGE: f32 = 32.0;
 
 /// The population group a species belongs to. Natural spawning caps each group
 /// independently across the loaded area (so the world can't fill with one kind),
@@ -526,6 +533,9 @@ pub struct BrainNode {
     pub priority: u8,
     factory: load::NodeFactory,
     params: &'static serde_json::Value,
+    /// The scripted-node facts the row declared it reads (`"inputs"`) — only
+    /// these are computed and shipped per dispatch. Empty for engine nodes.
+    inputs: behavior::ScriptedInputs,
 }
 
 impl BrainNode {
@@ -534,18 +544,26 @@ impl BrainNode {
     /// in-flight def table (validation runs inside the `defs()` initializer, so the
     /// factory must never reach for the LazyLock itself).
     fn validate(&self, def: &'static MobDef, all: &[MobDef]) -> Result<(), String> {
-        (self.factory)(self.node, self.params, def, all).map(|_| ())
+        (self.factory)(self.node, self.params, self.inputs, def, all).map(|_| ())
     }
 }
 
-/// Compose a species' AI [`Brain`] from its resolved brain rows. Called per spawned
-/// mob (behaviors hold per-instance state). Factories were validated at catalog load,
-/// so a failure here is a loader bug, not bad data.
+/// Compose a species' AI [`Brain`] from its resolved brain rows plus any
+/// loaded brain-extension nodes targeting the species (appended after the
+/// row's own, preserving extension order — the "final merged row" a pack's
+/// extension composes onto). Called per spawned mob (behaviors hold
+/// per-instance state). Factories were validated at catalog load, so a
+/// failure here is a loader bug, not bad data.
 pub(crate) fn build_brain(def: &'static MobDef) -> Brain {
     let mut brain = Brain::new();
-    for node in def.brain {
-        let behavior: Box<dyn AiBehavior> = (node.factory)(node.node, node.params, def, defs())
-            .unwrap_or_else(|e| {
+    let extension_nodes = loaded()
+        .extensions
+        .iter()
+        .filter(|(target, _)| *target == def.mob)
+        .flat_map(|(_, nodes)| nodes.iter());
+    for node in def.brain.iter().chain(extension_nodes) {
+        let behavior: Box<dyn AiBehavior> =
+            (node.factory)(node.node, node.params, node.inputs, def, defs()).unwrap_or_else(|e| {
                 panic!(
                     "mob '{}': brain node '{}' failed after load validation: {e}",
                     def.name, node.node
@@ -705,17 +723,37 @@ pub const MAX_ACTIVE_MOB_ANIMS: usize = 4;
 /// keeps the wire-facing seat index an honest small integer.
 pub const MAX_MOB_SEATS: usize = 8;
 
+/// The loaded mob catalog — the def table plus the brain-extension side table
+/// [`build_brain`] appends from. Loads exactly once, on first access; a
+/// missing or inconsistent `mobs.json` fails loudly at startup.
+fn loaded() -> &'static load::LoadedMobs {
+    static LOADED: LazyLock<load::LoadedMobs> = LazyLock::new(load::table);
+    &LOADED
+}
+
 /// The loaded, id-ordered mob def table (engine rows first, then pack rows in load
-/// order). Loads exactly once, on first access; a missing or inconsistent
-/// `mobs.json` fails loudly at startup.
+/// order).
 pub fn defs() -> &'static [MobDef] {
-    static DEFS: LazyLock<&'static [MobDef]> = LazyLock::new(load::table);
-    &DEFS
+    loaded().defs
 }
 
 #[inline]
 pub fn def(mob: Mob) -> &'static MobDef {
     &defs()[mob.0 as usize]
+}
+
+/// The species registered under `key` ([`MobDef::key`] — the mod-facing
+/// species vocabulary), O(1) through a hash index built once. `None` =
+/// unregistered. Never scan `defs()` per call for a key lookup.
+pub fn by_key(key: &str) -> Option<Mob> {
+    static INDEX: LazyLock<rustc_hash::FxHashMap<&'static str, Mob>> = LazyLock::new(|| {
+        defs()
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (d.key, Mob(i as u8)))
+            .collect()
+    });
+    INDEX.get(key).copied()
 }
 
 /// Every species' compiled [`Model`](crate::bbmodel::Model), indexed by `Mob` id —

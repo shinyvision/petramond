@@ -298,17 +298,11 @@ pub(crate) enum ModSpatialSoundMsg {
 /// session is already open server-side; the client shows the matching screen).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum OpenScreen {
-    /// The inventory screen with inventory-tier recipes.
-    Inventory,
-    /// The crafting-table screen with inventory- and table-tier recipes.
-    CraftingTable,
-    Furnace(IVec3),
-    Chest(IVec3),
-    /// The furniture workbench (its session carries no position).
-    Workbench,
-    /// A mod GUI; `kind_key` is the registered kind's stable string key
-    /// (GuiKind ids are process-local, so the wire speaks keys).
-    ModGui {
+    /// A GUI session opened for the recipient — engine containers and mod
+    /// GUIs ride the one lane. `kind_key` is the registered kind's stable
+    /// string key (GuiKind ids are process-local, so the wire speaks keys);
+    /// `pos` is the block the session was opened from, if any.
+    Gui {
         kind_key: String,
         pos: Option<IVec3>,
     },
@@ -318,7 +312,7 @@ pub(crate) enum OpenScreen {
 
 /// The recipient's own lossy per-tick one-shots: hand jabs, hurt/death,
 /// screen opens — everything that used to ride `PlayerTickEvents` plus the
-/// session's `request_open_*` outbox. `broke_block`/`placed_block` carry wire
+/// session's `request_open_gui`/`request_open_sleep` outbox. `broke_block`/`placed_block` carry wire
 /// block ids (they pick the client's hand animation + sound mapping).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SelfEvents {

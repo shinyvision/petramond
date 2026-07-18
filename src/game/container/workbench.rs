@@ -1,12 +1,12 @@
-use super::{ContainerMenu, ContainerTarget};
+use super::ContainerMenu;
 use crate::crafting::Recipes;
-use crate::gui::WorkbenchView;
+use crate::gui::{GuiKind, WorkbenchView};
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
 
 impl ContainerMenu {
     pub(crate) fn open_workbench_view(&self, recipes: &Recipes) -> Option<WorkbenchView> {
-        if !matches!(self.target, ContainerTarget::FurnitureWorkbench) {
+        if self.target.kind() != Some(GuiKind::FurnitureWorkbench) {
             return None;
         }
         Some(WorkbenchView {

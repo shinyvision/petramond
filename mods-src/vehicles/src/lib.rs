@@ -90,7 +90,7 @@ const SETTLE_RATE: f32 = 0.75;
 /// One live boat's transient state, keyed by stable mob id.
 struct Boat {
     /// Riders in boarding order; the first steers.
-    riders: Vec<u8>,
+    riders: Vec<PlayerId>,
     /// Signed speed along the bow (m/s); negative = backing water.
     speed: f32,
     /// Facing in the MOB yaw convention (yaw 0 faces -Z), integrated here and
@@ -207,7 +207,7 @@ impl Vehicles {
 
     /// Seat a clicking player in the first free seat and record boarding
     /// order (the first rider steers).
-    fn board(&mut self, mob_id: u64, player_id: u8) {
+    fn board(&mut self, mob_id: u64, player_id: PlayerId) {
         let Some(seats) = mob_riders(mob_id) else {
             return;
         };

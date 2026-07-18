@@ -195,7 +195,7 @@ impl ServerGame {
             return false;
         }
         let mut pre = MobDamagePre {
-            mob: idx,
+            mob_id,
             kind,
             amount,
             source,
@@ -237,6 +237,7 @@ impl ServerGame {
                 queue_mob_sound(events, mob_id, kind, MobSoundCategory::Death, death.pos);
             }
             self.bus.emit(PostEvent::MobDied {
+                id: mob_id,
                 kind: death.kind,
                 pos: death.pos,
             });

@@ -24,10 +24,13 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
     let Some(block) = get_block(pos) else {
         return Outcome::Continue;
     };
-    if block != content.grass && block != content.dirt {
+    if block != content.grass && block != content.dirt && block != content.grass_fertilized {
         // Mud, sand, slabs, modded soil… all ineligible in 0.1.
         return Outcome::Continue;
     }
+    // Fertilized grass tills like grass — into PLAIN farmland: its fertility
+    // was the spreading kind, not the soil upgrade. The player's choice to
+    // cut a fertilizing lawn short must never brick the block.
     let above = [pos[0], pos[1] + 1, pos[2]];
     let Some(cover) = get_block(above) else {
         return Outcome::Continue;

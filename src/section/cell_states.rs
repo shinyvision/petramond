@@ -41,21 +41,6 @@ impl Section {
     }
 
     #[inline]
-    pub fn sapling_stage(&self, x: usize, y: usize, z: usize) -> u8 {
-        self.states.sapling_stage(x, y, z)
-    }
-
-    pub fn set_sapling_stage(&mut self, x: usize, y: usize, z: usize, stage: u8) {
-        self.states.set_sapling_stage(x, y, z, stage);
-        self.modified = true;
-    }
-
-    #[inline]
-    pub fn sapling_stages(&self) -> &HashMap<u16, u8> {
-        self.states.sapling_stages()
-    }
-
-    #[inline]
     pub fn door_state(&self, x: usize, y: usize, z: usize) -> Option<DoorState> {
         self.states.door_state(x, y, z)
     }

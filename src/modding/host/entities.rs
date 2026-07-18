@@ -11,7 +11,7 @@ use crate::events::{ModAction, PostEvent, SimCtx};
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::Vec3;
 
-use super::guards::{finite3, item_by_key, sim_call, sim_query};
+use super::guards::{finite3, item_by_name, live_mob, sim_call, sim_query};
 use super::intern_mod_id;
 
 /// Maximum horizontal speed accepted from `MobDrive`, derived from the
@@ -43,43 +43,28 @@ fn magnitude_guard(call: &str, field: &str, value: f32, max: f32) -> Result<(), 
 /// Entity calls (mob spawn/query/hurt/despawn, item drops).
 pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
-        HostCall::SpawnMob { key, pos, yaw } => match finite3(pos, "SpawnMob.pos") {
+        HostCall::SpawnMob {
+            key,
+            pos,
+            yaw,
+            checked,
+        } => match finite3(pos, "SpawnMob.pos") {
             Err(e) => e,
+            Ok(_) if !yaw.is_finite() => HostRet::Error("SpawnMob.yaw must be finite".into()),
             Ok(pos) => sim_query(|ctx| {
-                let Some(kind) = crate::mob::defs()
-                    .iter()
-                    .position(|d| d.key == key)
-                    .map(|i| crate::mob::Mob(i as u8))
-                else {
+                let Some(kind) = crate::mob::by_key(&key) else {
                     log::warn!("[mod {mod_id}] SpawnMob: unknown species '{key}'");
                     return HostRet::Bool(false);
                 };
-                let spawned = ctx.world.spawn_mob(kind, pos, yaw);
-                if spawned {
-                    ctx.queue.emit(PostEvent::MobSpawned { kind, pos });
-                }
-                HostRet::Bool(spawned)
-            }),
-        },
-        HostCall::SpawnMobChecked { key, pos, yaw } => match finite3(pos, "SpawnMobChecked.pos") {
-            Err(e) => e,
-            Ok(_) if !yaw.is_finite() => {
-                HostRet::Error("SpawnMobChecked.yaw must be finite".into())
-            }
-            Ok(pos) => sim_query(|ctx| {
-                let Some(kind) = crate::mob::defs()
-                    .iter()
-                    .position(|d| d.key == key)
-                    .map(|i| crate::mob::Mob(i as u8))
-                else {
-                    log::warn!("[mod {mod_id}] SpawnMobChecked: unknown species '{key}'");
-                    return HostRet::Bool(false);
+                let spawned = if checked {
+                    ctx.world.spawn_mob_checked(kind, pos, yaw)
+                } else {
+                    ctx.world.spawn_mob(kind, pos, yaw)
                 };
-                let spawned = ctx.world.spawn_mob_checked(kind, pos, yaw);
-                if spawned {
-                    ctx.queue.emit(PostEvent::MobSpawned { kind, pos });
+                if let Some(id) = spawned {
+                    ctx.queue.emit(PostEvent::MobSpawned { id, kind, pos });
                 }
-                HostRet::Bool(spawned)
+                HostRet::Bool(spawned.is_some())
             }),
         },
         HostCall::MobsInRadius { pos, radius } => match finite3(pos, "MobsInRadius.pos") {
@@ -100,6 +85,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                         .map(|(i, m)| MobSnapshot {
                             index: i as u32,
                             key: crate::mob::def(m.kind).key.to_owned(),
+                            kind: mod_api::MobId(m.kind.0),
                             pos: m.pos.to_array(),
                             health: m.health(),
                             id: m.id(),
@@ -111,7 +97,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             }),
         },
         HostCall::DamageMob {
-            index,
+            mob_id,
             amount,
             origin,
             feedback,
@@ -122,7 +108,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 let feedback = feedback.map(crate::modding::mob_damage_feedback);
                 sim_call(|ctx| {
                     ctx.queue.push_action(ModAction::DamageMob {
-                        index: index as usize,
+                        mob_id,
                         amount,
                         mod_id,
                         origin,
@@ -131,20 +117,25 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 })
             }
         },
-        HostCall::DespawnMob { index } => {
-            sim_query(|ctx| HostRet::Bool(ctx.world.mobs_mut().remove(index as usize)))
-        }
+        HostCall::DespawnMob { mob_id } => sim_query(|ctx| {
+            let Some(index) = live_mob(ctx, mob_id) else {
+                return HostRet::Bool(false);
+            };
+            HostRet::Bool(ctx.world.mobs_mut().remove(index))
+        }),
         // Presentation-only mob state (no bus funnel), so unlike DamageMob it
         // applies immediately instead of queueing a ModAction.
-        HostCall::MobEmitterSet { index, key, active } => sim_query(|ctx| {
-            HostRet::Bool(
-                ctx.world
-                    .mobs_mut()
-                    .set_mob_emitter(index as usize, &key, active),
-            )
+        HostCall::MobEmitterSet {
+            mob_id,
+            key,
+            active,
+        } => sim_query(|ctx| {
+            let Some(index) = live_mob(ctx, mob_id) else {
+                return HostRet::Bool(false);
+            };
+            HostRet::Bool(ctx.world.mobs_mut().set_mob_emitter(index, &key, active))
         }),
-        // The animation sibling of MobEmitterSet — addressed by STABLE id
-        // (mods hold vehicle ids across ticks; indices shift).
+        // The animation sibling of MobEmitterSet.
         HostCall::MobAnimSet {
             mob_id,
             anim,
@@ -152,7 +143,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
         } => match anim_name_guard("MobAnimSet", &anim) {
             Err(e) => e,
             Ok(()) => sim_query(|ctx| {
-                let Some(index) = ctx.world.mobs().index_of_id(mob_id) else {
+                let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
                 HostRet::Bool(ctx.world.mobs_mut().set_mob_anim(index, &anim, active))
@@ -168,7 +159,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 return e;
             }
             sim_query(move |ctx| {
-                let Some(index) = ctx.world.mobs().index_of_id(mob_id) else {
+                let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
                 HostRet::Bool(ctx.world.mobs_mut().set_mob_anim_rate(index, &anim, rate))
@@ -194,7 +185,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 return e;
             }
             sim_query(move |ctx| {
-                let Some(index) = ctx.world.mobs().index_of_id(mob_id) else {
+                let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
                 HostRet::Bool(
@@ -216,7 +207,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 ));
             }
             sim_query(move |ctx| {
-                let Some(index) = ctx.world.mobs().index_of_id(mob_id) else {
+                let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::Bool(false);
                 };
                 HostRet::Bool(
@@ -230,25 +221,25 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             mob_id,
             player_id,
             seat,
-        } => sim_query(|ctx| HostRet::Bool(ctx.world.try_mount_player(player_id, mob_id, seat))),
+        } => sim_query(|ctx| HostRet::Bool(ctx.world.try_mount_player(player_id.0, mob_id, seat))),
         HostCall::MobDismount { player_id } => {
-            sim_query(|ctx| HostRet::Bool(ctx.world.riding_mut().dismount(player_id).is_some()))
+            sim_query(|ctx| HostRet::Bool(ctx.world.riding_mut().dismount(player_id.0).is_some()))
         }
         HostCall::MobRiders { mob_id } => sim_query(|ctx| {
-            let Some(index) = ctx.world.mobs().index_of_id(mob_id) else {
+            let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::Riders(None);
             };
             let mob = &ctx.world.mobs().instances()[index];
-            if mob.is_dead() {
-                return HostRet::Riders(None);
-            }
             let capacity = crate::mob::def(mob.kind).seats.len() as u8;
             let riders = ctx
                 .world
                 .riding()
                 .riders_of(mob_id)
                 .into_iter()
-                .map(|(seat, player_id)| MobRiderData { seat, player_id })
+                .map(|(seat, player_id)| MobRiderData {
+                    seat,
+                    player_id: mod_api::PlayerId(player_id),
+                })
                 .collect();
             HostRet::Riders(Some(MobRidersData { capacity, riders }))
         }),
@@ -257,15 +248,9 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 return e;
             }
             sim_query(move |ctx| {
-                let Some(index) = ctx.world.mobs().index_of_id(mob_id) else {
+                let Some(index) = live_mob(ctx, mob_id) else {
                     return HostRet::MobAnimState(None);
                 };
-                let Some(mob) = ctx.world.mobs().instances().get(index) else {
-                    return HostRet::MobAnimState(None);
-                };
-                if mob.is_dead() {
-                    return HostRet::MobAnimState(None);
-                }
                 HostRet::MobAnimState(ctx.world.mobs().mob_anim_state(index, &anim).map(|state| {
                     MobAnimStateData {
                         phase: state.phase,
@@ -275,15 +260,11 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 }))
             })
         }
-        HostCall::SpawnItem {
-            item_key,
-            count,
-            pos,
-        } => match finite3(pos, "SpawnItem.pos") {
+        HostCall::SpawnItem { item, count, pos } => match finite3(pos, "SpawnItem.pos") {
             Err(e) => e,
             Ok(pos) => sim_query(|ctx| {
-                let Some(item) = item_by_key(&item_key) else {
-                    log::warn!("[mod {mod_id}] SpawnItem: unknown item '{item_key}'");
+                let Some(item) = item_by_name(&item) else {
+                    log::warn!("[mod {mod_id}] SpawnItem: unknown item '{item}'");
                     return HostRet::Bool(false);
                 };
                 if count == 0 {
@@ -397,6 +378,7 @@ mod tests {
                         key: "petramond:owl".into(),
                         pos: [8.5, 64.0, 8.5],
                         yaw: 0.0,
+                        checked: false,
                     },
                 ),
                 HostRet::Bool(true)
@@ -426,10 +408,11 @@ mod tests {
             queue: &mut queue,
         };
         scope::enter(&mut ctx, || {
-            let checked = |pos| HostCall::SpawnMobChecked {
+            let checked = |pos| HostCall::SpawnMob {
                 key: "petramond:owl".into(),
                 pos,
                 yaw: 0.0,
+                checked: true,
             };
             assert_eq!(
                 handle_host_call(&mut data, checked([8.5, 64.0, 8.5])),
@@ -456,10 +439,11 @@ mod tests {
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::SpawnMobChecked {
+                    HostCall::SpawnMob {
                         key: "petramond:owl".into(),
                         pos: [8.5, 64.0, 8.5],
                         yaw: 0.0,
+                        checked: true,
                     },
                 ),
                 HostRet::Bool(true)
@@ -506,12 +490,7 @@ mod tests {
             assert_ne!(before[0].id, shifted_id);
 
             assert_eq!(
-                handle_host_call(
-                    &mut data,
-                    HostCall::DespawnMob {
-                        index: before[0].index
-                    }
-                ),
+                handle_host_call(&mut data, HostCall::DespawnMob { mob_id: before[0].id }),
                 HostRet::Bool(true)
             );
 
@@ -648,6 +627,99 @@ mod tests {
                     rate: 0.75,
                     seek: Some(1.5),
                 }))
+            );
+        });
+    }
+
+    /// The one dead-mob policy (`live_mob`): a ragdolling corpse is GONE to
+    /// every id-addressed call — reads answer `None`/`Bytes(None)` and writes
+    /// answer `false`, uniformly, so state can never be written to a mob no
+    /// read can see.
+    #[test]
+    fn a_dead_mob_is_gone_to_every_id_addressed_call() {
+        let mut data = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 1);
+        assert!(world
+            .mobs_mut()
+            .spawn(crate::mob::Mob::Owl, Vec3::new(1.0, 80.0, 1.0), 0.0));
+        let mob_id = world.mobs().instances()[0].id();
+        assert!(world
+            .mobs_mut()
+            .damage_mob(
+                0,
+                1000.0,
+                None,
+                true,
+                None,
+                &crate::mob::MobDamageFeedback::default(),
+            )
+            .is_some());
+        assert!(world.mobs().instances()[0].is_dead());
+
+        let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut gui = crate::gui::empty_gui_state();
+        let mut ctx = SimCtx {
+            world: &mut world,
+            player: &mut player,
+            gui_state: &mut gui,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+        scope::enter(&mut ctx, || {
+            let refused = |data: &mut ModStoreData, call| {
+                assert_eq!(
+                    handle_host_call(data, call),
+                    HostRet::Bool(false),
+                    "an id-addressed write must refuse a corpse"
+                );
+            };
+            refused(
+                &mut data,
+                HostCall::MobAnimSet {
+                    mob_id,
+                    anim: "row".into(),
+                    active: true,
+                },
+            );
+            refused(
+                &mut data,
+                HostCall::MobDrive {
+                    mob_id,
+                    vel: [1.0, 0.0],
+                    yaw: None,
+                },
+            );
+            refused(
+                &mut data,
+                HostCall::MobEmitterSet {
+                    mob_id,
+                    key: "petramond:burn_light".into(),
+                    active: true,
+                },
+            );
+            refused(
+                &mut data,
+                HostCall::MobKvSet {
+                    mob_id,
+                    key: "alpha:x".into(),
+                    value: vec![1],
+                },
+            );
+            assert_eq!(
+                handle_host_call(
+                    &mut data,
+                    HostCall::MobKvGet {
+                        mob_id,
+                        key: "alpha:x".into(),
+                    }
+                ),
+                HostRet::Bytes(None)
+            );
+            assert_eq!(
+                handle_host_call(&mut data, HostCall::MobRiders { mob_id }),
+                HostRet::Riders(None)
             );
         });
     }

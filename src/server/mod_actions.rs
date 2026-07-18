@@ -28,19 +28,20 @@ impl ServerGame {
                 ModAction::DamagePlayer { amount, mod_id } => {
                     self.damage_player(s, amount, DamageSource::Mod(mod_id), None, events);
                 }
-                ModAction::KillPlayer { mod_id } => {
-                    // Damage = current health, through the same funnel:
-                    // immunity or a cancelling handler still saves the player.
-                    let amount = self.sessions[s].player.health();
-                    self.damage_player(s, amount, DamageSource::Mod(mod_id), None, events);
-                }
                 ModAction::DamageMob {
-                    index,
+                    mob_id,
                     amount,
                     mod_id,
                     origin,
                     feedback,
                 } => {
+                    // Resolve the STABLE id only now: earlier actions in this
+                    // drain may have removed mobs and shifted indices. A mob
+                    // gone by drain time is a silent no-op (the pipeline also
+                    // rejects the dead).
+                    let Some(index) = self.world.mobs().index_of_id(mob_id) else {
+                        continue;
+                    };
                     self.damage_mob_through_pipeline(
                         s,
                         index,
@@ -55,7 +56,7 @@ impl ServerGame {
                 // clicks and closes; this action point precedes that stage.
                 ModAction::OpenGui { kind } => {
                     self.sessions[s].pending_menu_actions.push(
-                        crate::server::player::PendingMenuAction::OpenModGui { kind, pos: None },
+                        crate::server::player::PendingMenuAction::OpenGui { kind, pos: None },
                     );
                 }
                 ModAction::CloseGui => {

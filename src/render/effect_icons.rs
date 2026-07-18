@@ -5,8 +5,10 @@
 //! so the UI can index cells by `Effect(id)`. Each cell is the shared rounded
 //! frame (`textures/gui/effect_frame.png`, the #11191F-with-border chrome every
 //! effect carries) with the row's own `icon` PNG composited inside. Icons are
-//! authored 12×12; other sizes are nearest-resized so a sloppy pack icon still
-//! lands in the frame instead of breaking the strip.
+//! authored [`CELL_PX`]² and fill the cell (transparent pixels show the frame
+//! chrome); smaller icons composite centered un-resized, so legacy 12×12 art
+//! keeps its inset-in-frame look. Oversize icons are nearest-resized so a
+//! sloppy pack icon still lands in the frame instead of breaking the strip.
 //!
 //! This is presentation-only composition of freely-editable textures — no
 //! tests pin its bytes (testing-and-verification.md).
@@ -16,9 +18,6 @@ use image::RgbaImage;
 /// One atlas cell side in texture px; the HUD draws cells at this size in
 /// logical px (so art is 1:1 at `gui_scale` 1).
 pub const CELL_PX: u32 = 16;
-/// The icon area inside the frame.
-const ICON_PX: u32 = 12;
-const ICON_INSET: i64 = 2;
 
 /// Compose the id-ordered effect strip, or `None` when the frame art is
 /// missing (the HUD then simply draws no effect row — never a panic).
@@ -32,8 +31,15 @@ pub fn compose_atlas() -> Option<RgbaImage> {
         image::imageops::overlay(&mut atlas, &frame, x0, 0);
         match load_rgba(def.icon) {
             Some(icon) => {
-                let icon = fit(icon, ICON_PX, ICON_PX);
-                image::imageops::overlay(&mut atlas, &icon, x0 + ICON_INSET, ICON_INSET);
+                let (w, h) = icon.dimensions();
+                let icon = if w <= CELL_PX && h <= CELL_PX {
+                    icon
+                } else {
+                    fit(icon, CELL_PX, CELL_PX)
+                };
+                let (w, h) = icon.dimensions();
+                let (ix, iy) = ((CELL_PX - w) as i64 / 2, (CELL_PX - h) as i64 / 2);
+                image::imageops::overlay(&mut atlas, &icon, x0 + ix, iy);
             }
             // A frame with no icon still marks the effect's presence.
             None => log::warn!(

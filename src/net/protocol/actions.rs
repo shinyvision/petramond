@@ -147,7 +147,8 @@ pub(crate) enum PlayerAction {
     /// authoritative mode flows back via [`SelfState::mode`].
     ToggleMode,
     /// The inventory key (E): the server opens the inventory crafting session
-    /// on the next tick and answers with [`OpenScreen::Inventory`].
+    /// on the next tick and answers with an [`OpenScreen::Gui`] ack carrying
+    /// the inventory kind (the client's screen is already up).
     OpenInventory,
     CloseMenu,
 }

@@ -10,7 +10,9 @@
 //!
 //! What stays code: the `Feature`/placer implementations themselves, the
 //! trunk-placer strategies (zero-sized, keyed by name here), and the
-//! RNG-driven variant pickers (`sapling_tree`, `biome::trees`). A row's
+//! worldgen RNG-driven variant pickers (`biome::trees`; a SAPLING's tree
+//! choices are block-row data — `grows_into`, resolved through [`by_name`]).
+//! A row's
 //! params affect worldgen geometry, so edits to `features.json` change world
 //! bytes — determinism only demands same-input ⇒ same-output.
 
@@ -27,7 +29,6 @@ use crate::worldgen::feature::tree::{
     BlockyOakFeature, CanopyTreeFeature, RedwoodFeature, TreeFeature,
 };
 use crate::worldgen::feature::{ConfiguredFeature, Feature};
-use crate::worldgen::rng::FeatureRng;
 
 /// Engine feature names in frozen id order (the completeness oracle
 /// `features.json` is validated against).
@@ -202,37 +203,10 @@ pub fn redwood() -> &'static ConfiguredFeature {
 pub fn spruce() -> &'static ConfiguredFeature {
     engine(5)
 }
-pub fn birch() -> &'static ConfiguredFeature {
-    engine(6)
-}
-pub fn jungle() -> &'static ConfiguredFeature {
-    engine(7)
-}
+// (birch/jungle have no worldgen picker or code accessor: worldgen never
+// places them and saplings reach them through `by_name` via `grows_into`.)
 pub fn acacia() -> &'static ConfiguredFeature {
     engine(8)
-}
-
-/// Pick the tree a placed sapling grows into when it matures (see
-/// `world::sapling`). An oak sapling becomes the grand oak 20% of the time and
-/// the ordinary standard oak otherwise; every other sapling grows into the
-/// single feature for its species. `rng` is drawn for the oak roll and then
-/// consumed by the chosen feature's own geometry. A non-sapling block can't
-/// reach here from the sapling behaviour; it falls back to the small oak.
-pub fn sapling_tree(sapling: Block, rng: &mut FeatureRng) -> &'static ConfiguredFeature {
-    match sapling {
-        Block::OakSapling => {
-            if rng.chance(0.2) {
-                oak_big()
-            } else {
-                oak_small()
-            }
-        }
-        Block::SpruceSapling => spruce(),
-        Block::BirchSapling => birch(),
-        Block::JungleSapling => jungle(),
-        Block::AcaciaSapling => acacia(),
-        _ => oak_small(),
-    }
 }
 
 #[cfg(test)]

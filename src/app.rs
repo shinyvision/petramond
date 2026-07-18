@@ -444,13 +444,8 @@ impl App {
             AppScreen::Pause => GuiKind::Pause,
             AppScreen::Sleeping => GuiKind::Sleep,
             AppScreen::Dead => GuiKind::Death,
-            AppScreen::ModGui(kind) => kind,
+            AppScreen::Menu(kind) => kind,
             AppScreen::ClientModGui(kind) => kind,
-            AppScreen::Inventory => GuiKind::Inventory,
-            AppScreen::CraftingTable => GuiKind::CraftingTable,
-            AppScreen::Furnace => GuiKind::Furnace,
-            AppScreen::Chest => GuiKind::Chest,
-            AppScreen::FurnitureWorkbench => GuiKind::FurnitureWorkbench,
             _ => return None,
         };
         ui_runtime::AppUi::doc_backed(kind).then_some(kind)

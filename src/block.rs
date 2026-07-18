@@ -160,6 +160,38 @@ impl Block {
     pub const PolishedMarbleStairs: Block = Block(114);
     pub const PolishedMarbleSlab: Block = Block(115);
     pub const Ladder: Block = Block(116);
+    // Sapling growth stages 1..=2 (stage 0 is the base sapling row above).
+    // Visually identical to their species' base row; the `sapling` behaviour
+    // walks the `next_stage` chain and the final row's `grows_into` names the
+    // tree — see `world::sapling`.
+    pub const OakSapling1: Block = Block(117);
+    pub const OakSapling2: Block = Block(118);
+    pub const SpruceSapling1: Block = Block(119);
+    pub const SpruceSapling2: Block = Block(120);
+    pub const BirchSapling1: Block = Block(121);
+    pub const BirchSapling2: Block = Block(122);
+    pub const JungleSapling1: Block = Block(123);
+    pub const JungleSapling2: Block = Block(124);
+    pub const AcaciaSapling1: Block = Block(125);
+    pub const AcaciaSapling2: Block = Block(126);
+    // The furnace's lit SKIN — the sapling-stage pattern applied to a machine:
+    // burning is a row swap (`furnace` ⇄ `furnace_lit`), so the lit face and
+    // its light emission ride ordinary block identity through save/replication.
+    // Machine counters stay in the `Furnace` block-entity; the swap preserves
+    // the sibling entity maps (see `World::tick_furnaces`). Not obtainable —
+    // no item row links it; it drops the furnace item like the unlit row.
+    pub const FurnaceLit: Block = Block(127);
+    // The ladder's non-default wall facings — the sapling-stage pattern
+    // applied to an oriented panel: which wall a ladder hangs on is block
+    // IDENTITY (`petramond:ladder` is the north-facing row; each row's
+    // `panel_facing` names its fixed facing and the base row's `facing_rows`
+    // maps a placement facing to its sibling), so the facing rides the
+    // ordinary block-id save/replication lanes — the ladder is not a block
+    // entity and never touches the entity-facing map. Not obtainable — no
+    // item rows link them; all four rows drop the one ladder item.
+    pub const LadderSouth: Block = Block(128);
+    pub const LadderWest: Block = Block(129);
+    pub const LadderEast: Block = Block(130);
 }
 
 impl std::fmt::Debug for Block {

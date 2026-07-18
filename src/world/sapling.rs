@@ -14,24 +14,26 @@
 //! breaks when its ground is dug, exactly like a flower), while
 //! [`random_tick`](Sapling::random_tick) drives the growth.
 //!
-//! Growth: on each random tick a sapling has a 50% chance to advance one stage;
-//! there are three stages (`0..=2`), and a successful roll at the last stage grows
-//! the sapling into a tree instead of advancing. Oak grows the grand oak 20% of
-//! the time and the ordinary oak otherwise; every other sapling grows its species
-//! tree (see [`sapling_tree`](crate::worldgen::data::features::sapling_tree)). A
-//! tree only grows if its roots are anchored (the feature's `is_anchored` gate —
-//! no floating trees off cliff edges) and every block it would place lands in
-//! air, or passes through a log, leaves, or a fragile plant already in the way
-//! (existing logs are kept; leaves and plants yield, so grass tufts on the
-//! forest floor never block the oak root splay) — any other block in the
-//! footprint refuses growth, and the sapling waits and tries again later.
+//! Growth stages are DISTINCT BLOCK ROWS (visually identical): on each random
+//! tick a sapling has a 50% chance to advance, and advancing swaps the cell to
+//! the row's `next_stage` block. A successful roll on a FINAL stage row (no
+//! `next_stage`) instead grows the tree its row's `grows_into` field names — a
+//! weighted draw over `features.json` keys, so the species→tree link and the
+//! oak's 20% grand-oak split are row data, validated at load (see
+//! `block::load`). A tree only grows if its roots are anchored (the feature's
+//! `is_anchored` gate — no floating trees off cliff edges) and every block it
+//! would place lands in air, or passes through a log, leaves, or a fragile
+//! plant already in the way (existing logs are kept; leaves and plants yield,
+//! so grass tufts on the forest floor never block the oak root splay) — any
+//! other block in the footprint refuses growth, and the sapling waits and
+//! tries again later.
 
 use std::collections::HashMap;
 
 use crate::block::{Block, BlockBehavior};
 use crate::mathh::IVec3;
 use crate::section::SectionSummary;
-use crate::worldgen::feature::{FeatureCtx, VoxelSink};
+use crate::worldgen::feature::{ConfiguredFeature, FeatureCtx, VoxelSink};
 use crate::worldgen::rng::FeatureRng;
 
 use super::fragile::FRAGILE;
@@ -40,10 +42,6 @@ use super::store::World;
 /// Salt for the sapling growth RNG stream — distinct from the worldgen feature salt
 /// so a grown tree and a worldgen tree at the same spot don't share a stream.
 const SAPLING_SALT: u64 = 0x0000_5A91_1A6E_0000;
-
-/// The last growth stage (the "3rd stage"): a sapling here grows into a tree on its
-/// next successful roll instead of advancing. Stages run `0..=FINAL_STAGE`.
-const FINAL_STAGE: u8 = 2;
 
 /// Per-random-tick probability that a sapling advances a stage — or, at the final
 /// stage, attempts to grow. (The task's 50%.)
@@ -71,12 +69,15 @@ impl BlockBehavior for Sapling {
         if !rng.chance(ADVANCE_CHANCE) {
             return;
         }
-        let stage = world.sapling_stage_world(pos);
-        if stage < FINAL_STAGE {
-            world.set_sapling_stage_world(pos, stage + 1);
-        } else {
-            let sapling = Block::from_id(world.chunk_block(pos.x, pos.y, pos.z));
-            world.grow_sapling(pos, sapling, &mut rng);
+        let sapling = Block::from_id(world.chunk_block(pos.x, pos.y, pos.z));
+        match sapling.next_stage() {
+            // A growing stage advances by becoming the next stage's block row
+            // — stage is plain block identity, riding the ordinary edit path
+            // (save, replication, and mod reads all see it for free).
+            Some(next) => {
+                world.set_block_world(pos.x, pos.y, pos.z, next);
+            }
+            None => world.grow_sapling(pos, sapling, &mut rng),
         }
     }
 
@@ -94,26 +95,33 @@ impl BlockBehavior for Sapling {
 /// The sapling singleton a row points at (`behavior: &behavior::SAPLING`).
 pub static SAPLING: Sapling = Sapling;
 
+/// Weighted draw over a final stage row's `grows_into` choices. The last entry
+/// is the fallback and draws nothing, so a single-choice row consumes no RNG
+/// and the oak's two-entry `[big w1, small w4]` list draws exactly one
+/// `chance(0.2)` — the pre-row-data streams, preserved. Load validation
+/// guarantees every key resolves; a row with no choices (unreachable through
+/// the loader) grows nothing rather than defaulting to some species.
+fn pick_growth(
+    choices: &[(&'static str, f32)],
+    rng: &mut FeatureRng,
+) -> Option<&'static ConfiguredFeature> {
+    let (last, head) = choices.split_last()?;
+    let mut remaining: f32 = choices.iter().map(|c| c.1).sum();
+    let mut picked = last.0;
+    for &(key, weight) in head {
+        if rng.chance(weight / remaining) {
+            picked = key;
+            break;
+        }
+        remaining -= weight;
+    }
+    crate::worldgen::data::features::by_name(picked)
+}
+
 impl World {
-    /// Growth stage (`0..=2`) of the sapling at a world voxel; `0` if its chunk is
-    /// unloaded or no stage is recorded (a freshly placed sapling).
-    fn sapling_stage_world(&self, pos: IVec3) -> u8 {
-        match self.chunk_at_world(pos.x, pos.y, pos.z) {
-            Some((c, lx, ly, lz)) => c.sapling_stage(lx, ly, lz),
-            None => 0,
-        }
-    }
-
-    /// Record a sapling's growth `stage` at a world voxel. No-op if unloaded. Does
-    /// not change the block id — the sapling block stays put while its stage climbs.
-    fn set_sapling_stage_world(&mut self, pos: IVec3, stage: u8) {
-        if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
-            c.set_sapling_stage(lx, ly, lz, stage);
-        }
-    }
-
-    /// Try to grow the sapling at `pos` (block `sapling`) into its tree. Picks the
-    /// tree type, checks the feature's ground-anchoring gate against the live
+    /// Try to grow the final-stage sapling at `pos` (block `sapling`) into its tree.
+    /// Picks the tree from the row's `grows_into` choices, checks the feature's
+    /// ground-anchoring gate against the live
     /// world (the oaks refuse a site where a root would hang over a drop — the
     /// same no-floating-trees rule worldgen applies), generates the tree into
     /// an overlay over the LIVE world, and commits ONLY IF every cell the tree
@@ -129,7 +137,9 @@ impl World {
     /// plants yield. If the tree doesn't fit, the sapling is left as-is to try
     /// again on a later tick.
     fn grow_sapling(&mut self, pos: IVec3, sapling: Block, rng: &mut FeatureRng) {
-        let cf = crate::worldgen::data::features::sapling_tree(sapling, rng);
+        let Some(cf) = pick_growth(sapling.grows_into(), rng) else {
+            return;
+        };
 
         // Ground-anchoring gate, mirroring worldgen's accepted-origin check:
         // a root ground cell is anchored when the block directly below it is
@@ -267,9 +277,18 @@ mod tests {
         Block::from_id(w.chunk_block(x, y, z))
     }
 
-    /// Plant an oak sapling at (8,64,8) on dirt; return its position.
-    /// Plant an oak sapling at (8,64,8) on a dirt floor wide enough for the
-    /// oak root splay's anchoring gate; return its position.
+    /// The final growth-stage row of a sapling's chain — the row `grow_sapling`
+    /// runs on (walked through the same `next_stage` links the behaviour uses).
+    fn final_stage(mut b: Block) -> Block {
+        while let Some(next) = b.next_stage() {
+            b = next;
+        }
+        b
+    }
+
+    /// Plant an oak sapling at its FINAL growth stage at (8,64,8) on a dirt
+    /// floor wide enough for the oak root splay's anchoring gate; return its
+    /// position.
     fn plant_oak(w: &mut World) -> IVec3 {
         let pos = IVec3::new(8, 64, 8);
         for z in -4..=20 {
@@ -277,7 +296,7 @@ mod tests {
                 w.set_block_world(x, 63, z, Block::Dirt);
             }
         }
-        w.set_block_world(pos.x, pos.y, pos.z, Block::OakSapling);
+        w.set_block_world(pos.x, pos.y, pos.z, final_stage(Block::OakSapling));
         pos
     }
 
@@ -292,7 +311,7 @@ mod tests {
         let mut w = world_with_grove();
         let pos = plant_oak(&mut w);
         let mut rng = FeatureRng::from_state(0x1234_5678);
-        w.grow_sapling(pos, Block::OakSapling, &mut rng);
+        w.grow_sapling(pos, final_stage(Block::OakSapling), &mut rng);
 
         // The trunk roots where the sapling stood, with a canopy above — the sapling
         // is consumed and its (now meaningless) growth stage cleared.
@@ -301,7 +320,6 @@ mod tests {
             "trunk roots where the sapling stood"
         );
         assert!(has_canopy(&w), "a grown tree has a leaf canopy");
-        assert_eq!(w.sapling_stage_world(pos), 0);
     }
 
     #[test]
@@ -312,11 +330,11 @@ mod tests {
         // non-log block the tree may not replace, so the growth is refused entirely.
         w.set_block_world(8, 65, 8, Block::Stone);
         let mut rng = FeatureRng::from_state(0x1234_5678);
-        w.grow_sapling(pos, Block::OakSapling, &mut rng);
+        w.grow_sapling(pos, final_stage(Block::OakSapling), &mut rng);
 
         assert_eq!(
             block(&w, 8, 64, 8),
-            Block::OakSapling,
+            final_stage(Block::OakSapling),
             "the blocked sapling stays"
         );
         assert_eq!(
@@ -335,7 +353,7 @@ mod tests {
         // above) and is itself kept — the tree grows up around it.
         w.set_block_world(8, 65, 8, Block::OakLog);
         let mut rng = FeatureRng::from_state(0x1234_5678);
-        w.grow_sapling(pos, Block::OakSapling, &mut rng);
+        w.grow_sapling(pos, final_stage(Block::OakSapling), &mut rng);
 
         assert!(
             block(&w, 8, 64, 8).is_log(),
@@ -359,7 +377,7 @@ mod tests {
         w.set_block_world(8, 65, 8, Block::BirchLeaves); // in the trunk's path
         w.set_block_world(7, 67, 8, Block::SpruceLeaves); // in the canopy's reach
         let mut rng = FeatureRng::from_state(0x1234_5678);
-        w.grow_sapling(pos, Block::OakSapling, &mut rng);
+        w.grow_sapling(pos, final_stage(Block::OakSapling), &mut rng);
 
         assert!(
             block(&w, 8, 64, 8).is_log(),
@@ -380,7 +398,7 @@ mod tests {
         }
         w.set_block_world(9, 64, 6, Block::Poppy);
         let mut rng = FeatureRng::from_state(0x1234_5678);
-        w.grow_sapling(pos, Block::OakSapling, &mut rng);
+        w.grow_sapling(pos, final_stage(Block::OakSapling), &mut rng);
 
         assert!(
             block(&w, 8, 64, 8).is_log(),
@@ -397,44 +415,41 @@ mod tests {
         let mut w = world_with_grove();
         let pos = IVec3::new(8, 64, 8);
         w.set_block_world(8, 63, 8, Block::Dirt);
-        w.set_block_world(pos.x, pos.y, pos.z, Block::OakSapling);
+        w.set_block_world(pos.x, pos.y, pos.z, final_stage(Block::OakSapling));
         let mut rng = FeatureRng::from_state(0x1234_5678);
-        w.grow_sapling(pos, Block::OakSapling, &mut rng);
+        w.grow_sapling(pos, final_stage(Block::OakSapling), &mut rng);
 
         assert_eq!(
             block(&w, 8, 64, 8),
-            Block::OakSapling,
+            final_stage(Block::OakSapling),
             "the unanchorable sapling stays"
         );
         assert!(!has_canopy(&w), "nothing of the tree was placed");
     }
 
     #[test]
-    fn breaking_a_sapling_clears_its_growth_stage() {
+    fn random_ticks_walk_the_stage_rows_and_grow_a_planted_sapling() {
+        // End-to-end through the real tick path, from the BASE stage row: the
+        // random-tick loop selects the sapling, walks it down its `next_stage`
+        // chain (every intermediate block stays a sapling row), and finally
+        // grows the tree. Deterministic for the fixed seed; the cap sits far
+        // above the expected ticks.
         let mut w = world_with_grove();
         let pos = plant_oak(&mut w);
-        w.set_sapling_stage_world(pos, 2);
-        assert_eq!(w.sapling_stage_world(pos), 2);
-        // Overwriting the cell (a break, or growth into a log) forgets the stage.
-        w.set_block_world(pos.x, pos.y, pos.z, Block::Air);
-        assert_eq!(w.sapling_stage_world(pos), 0);
-    }
-
-    #[test]
-    fn random_ticks_eventually_grow_a_planted_sapling() {
-        // End-to-end through the real tick path: the random-tick loop selects the
-        // sapling, advances it through its three stages, and grows it into a tree.
-        // Deterministic for the fixed seed; the cap sits far above the expected ticks.
-        let mut w = world_with_grove();
-        let pos = plant_oak(&mut w);
+        w.set_block_world(pos.x, pos.y, pos.z, Block::OakSapling);
         let recipes = Recipes::default();
         let mut grew = false;
         for _ in 0..1_000_000 {
             w.game_tick(&recipes);
-            if Block::from_id(w.chunk_block(pos.x, pos.y, pos.z)).is_log() {
+            let b = block(&w, pos.x, pos.y, pos.z);
+            if b.is_log() {
                 grew = true;
                 break;
             }
+            assert!(
+                b.has_tag(crate::block::BlockTag::SAPLING),
+                "every intermediate stage is a sapling row, got {b:?}"
+            );
         }
         assert!(grew, "a planted sapling was never grown by random ticks");
     }

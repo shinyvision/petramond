@@ -1,0 +1,15 @@
+{
+  "mobs": [],
+  "brain_extensions": [
+    {
+      "mob": "petramond:sheep",
+      "brain": [
+        {
+          "node": "farming:follow_wheat",
+          "priority": 20,
+          "inputs": ["player_held", "player_foothold"]
+        }
+      ]
+    }
+  ]
+}

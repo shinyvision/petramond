@@ -62,6 +62,7 @@ pub(crate) struct SectionMetrics {
     pub water_count: u32,
     pub biome_tint_count: u32,
     pub particle_emitter_count: u32,
+    pub light_emitter_count: u32,
 }
 
 impl SectionMetrics {
@@ -73,6 +74,7 @@ impl SectionMetrics {
             && self.water_count <= volume
             && self.biome_tint_count <= volume
             && self.particle_emitter_count <= volume
+            && self.light_emitter_count <= volume
             && self.plane_opaque.iter().all(|&n| n <= 256)
     }
 }
@@ -154,6 +156,10 @@ pub struct Section {
     /// Count of cells whose block row declares a visual particle emitter. `0` lets
     /// presentation skip this section when collecting ambient block emitters.
     particle_emitter_count: u32,
+    /// Count of cells whose block row EMITS block light (`emission > 0` —
+    /// torches, lit furnaces, pack glow blocks). `0` lets the light flood's
+    /// emitter gather skip this section without scanning its cells.
+    light_emitter_count: u32,
 }
 
 /// A section's block-entity maps, keyed by section-local block index
@@ -223,6 +229,7 @@ impl Section {
             water_count: 0,
             biome_tint_count: 0,
             particle_emitter_count: 0,
+            light_emitter_count: 0,
         }
     }
 

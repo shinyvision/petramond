@@ -55,6 +55,11 @@
         "dirt",
         "grass_side"
       ],
+      "side_overlay": {
+        "base": "dirt",
+        "overlay": "grass_side_overlay"
+      },
+      "covered_side": "grass_snow",
       "material": "dirt",
       "harvest_tier": 0,
       "hardness": 0.7,
@@ -2796,12 +2801,58 @@
           ]
         }
       ],
+      "emission": 0,
+      "tiles": [
+        "furnace_top",
+        "furnace_top",
+        "furnace_side"
+      ],
+      "front": "furnace_front",
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 3.5,
+      "drops": [
+        {
+          "item": "petramond:furnace",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:furnace_lit",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder",
+        "directional_view"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "open_furnace",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
       "emission": 28,
       "tiles": [
         "furnace_top",
         "furnace_top",
         "furnace_side"
       ],
+      "front": "furnace_front_on",
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 3.5,
@@ -2846,6 +2897,7 @@
         "chest_side",
         "chest_side"
       ],
+      "front": "chest_front",
       "material": "wood",
       "harvest_tier": 0,
       "hardness": 2.5,
@@ -2922,13 +2974,15 @@
     },
     {
       "block": "petramond:oak_sapling",
+      "next_stage": "petramond:oak_sapling_1",
       "shape": "cross",
       "flags": [
         "transparent"
       ],
       "tags": [
         "fragile",
-        "roots_in_soil"
+        "roots_in_soil",
+        "sapling"
       ],
       "behavior": "sapling",
       "interaction": "none",
@@ -2953,13 +3007,15 @@
     },
     {
       "block": "petramond:spruce_sapling",
+      "next_stage": "petramond:spruce_sapling_1",
       "shape": "cross",
       "flags": [
         "transparent"
       ],
       "tags": [
         "fragile",
-        "roots_in_soil"
+        "roots_in_soil",
+        "sapling"
       ],
       "behavior": "sapling",
       "interaction": "none",
@@ -2984,13 +3040,15 @@
     },
     {
       "block": "petramond:birch_sapling",
+      "next_stage": "petramond:birch_sapling_1",
       "shape": "cross",
       "flags": [
         "transparent"
       ],
       "tags": [
         "fragile",
-        "roots_in_soil"
+        "roots_in_soil",
+        "sapling"
       ],
       "behavior": "sapling",
       "interaction": "none",
@@ -3015,13 +3073,15 @@
     },
     {
       "block": "petramond:jungle_sapling",
+      "next_stage": "petramond:jungle_sapling_1",
       "shape": "cross",
       "flags": [
         "transparent"
       ],
       "tags": [
         "fragile",
-        "roots_in_soil"
+        "roots_in_soil",
+        "sapling"
       ],
       "behavior": "sapling",
       "interaction": "none",
@@ -3046,13 +3106,15 @@
     },
     {
       "block": "petramond:acacia_sapling",
+      "next_stage": "petramond:acacia_sapling_1",
       "shape": "cross",
       "flags": [
         "transparent"
       ],
       "tags": [
         "fragile",
-        "roots_in_soil"
+        "roots_in_soil",
+        "sapling"
       ],
       "behavior": "sapling",
       "interaction": "none",
@@ -3770,7 +3832,9 @@
         "solid",
         "directional_view"
       ],
-      "tags": [],
+      "tags": [
+        "bed"
+      ],
       "behavior": "inert",
       "interaction": "sleep",
       "collision": [],
@@ -4392,6 +4456,13 @@
     {
       "block": "petramond:ladder",
       "shape": "ladder",
+      "panel_facing": "north",
+      "facing_rows": {
+        "north": "petramond:ladder",
+        "south": "petramond:ladder_south",
+        "west": "petramond:ladder_west",
+        "east": "petramond:ladder_east"
+      },
       "flags": [
         "transparent"
       ],
@@ -4414,6 +4485,441 @@
       "drops": [
         {
           "item": "petramond:ladder",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:ladder_south",
+      "shape": "ladder",
+      "panel_facing": "south",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "climbable"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "ladder",
+        "ladder",
+        "ladder"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 0.4,
+      "drops": [
+        {
+          "item": "petramond:ladder",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:ladder_west",
+      "shape": "ladder",
+      "panel_facing": "west",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "climbable"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "ladder",
+        "ladder",
+        "ladder"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 0.4,
+      "drops": [
+        {
+          "item": "petramond:ladder",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:ladder_east",
+      "shape": "ladder",
+      "panel_facing": "east",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "climbable"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "ladder",
+        "ladder",
+        "ladder"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 0.4,
+      "drops": [
+        {
+          "item": "petramond:ladder",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:oak_sapling_1",
+      "next_stage": "petramond:oak_sapling_2",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil",
+        "sapling"
+      ],
+      "behavior": "sapling",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "oak_sapling",
+        "oak_sapling",
+        "oak_sapling"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:oak_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:oak_sapling_2",
+      "grows_into": [
+        {
+          "feature": "petramond:oak_big",
+          "weight": 1
+        },
+        {
+          "feature": "petramond:oak_small",
+          "weight": 4
+        }
+      ],
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil",
+        "sapling"
+      ],
+      "behavior": "sapling",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "oak_sapling",
+        "oak_sapling",
+        "oak_sapling"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:oak_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:spruce_sapling_1",
+      "next_stage": "petramond:spruce_sapling_2",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil",
+        "sapling"
+      ],
+      "behavior": "sapling",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "spruce_sapling",
+        "spruce_sapling",
+        "spruce_sapling"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:spruce_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:spruce_sapling_2",
+      "grows_into": "petramond:spruce",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil",
+        "sapling"
+      ],
+      "behavior": "sapling",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "spruce_sapling",
+        "spruce_sapling",
+        "spruce_sapling"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:spruce_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:birch_sapling_1",
+      "next_stage": "petramond:birch_sapling_2",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil",
+        "sapling"
+      ],
+      "behavior": "sapling",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "birch_sapling",
+        "birch_sapling",
+        "birch_sapling"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:birch_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:birch_sapling_2",
+      "grows_into": "petramond:birch",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil",
+        "sapling"
+      ],
+      "behavior": "sapling",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "birch_sapling",
+        "birch_sapling",
+        "birch_sapling"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:birch_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:jungle_sapling_1",
+      "next_stage": "petramond:jungle_sapling_2",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil",
+        "sapling"
+      ],
+      "behavior": "sapling",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "jungle_sapling",
+        "jungle_sapling",
+        "jungle_sapling"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:jungle_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:jungle_sapling_2",
+      "grows_into": "petramond:jungle",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil",
+        "sapling"
+      ],
+      "behavior": "sapling",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "jungle_sapling",
+        "jungle_sapling",
+        "jungle_sapling"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:jungle_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:acacia_sapling_1",
+      "next_stage": "petramond:acacia_sapling_2",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil",
+        "sapling"
+      ],
+      "behavior": "sapling",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "acacia_sapling",
+        "acacia_sapling",
+        "acacia_sapling"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:acacia_sapling",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:acacia_sapling_2",
+      "grows_into": "petramond:acacia",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "roots_in_soil",
+        "sapling"
+      ],
+      "behavior": "sapling",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "acacia_sapling",
+        "acacia_sapling",
+        "acacia_sapling"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:acacia_sapling",
           "min": 1,
           "max": 1,
           "chance": 1

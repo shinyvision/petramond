@@ -66,9 +66,14 @@ impl ServerGame {
             PlayerAction::Respawn => self.sessions[s].respawn_requested = true,
             // Menu transitions join clicks and crafts in one ordered queue so
             // arrival order remains authoritative on the fixed tick.
-            PlayerAction::OpenInventory => self.sessions[s]
-                .pending_menu_actions
-                .push(PendingMenuAction::OpenInventory),
+            PlayerAction::OpenInventory => {
+                self.sessions[s]
+                    .pending_menu_actions
+                    .push(PendingMenuAction::OpenGui {
+                        kind: crate::gui::GuiKind::Inventory,
+                        pos: None,
+                    })
+            }
             PlayerAction::CloseMenu => self.sessions[s]
                 .pending_menu_actions
                 .push(PendingMenuAction::Close),

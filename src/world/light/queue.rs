@@ -28,7 +28,7 @@ pub(in crate::world) struct LightBakeJob {
     revision: u64,
     sky: SkyPlan,
     nbhd: Option<neighborhood::Snapshot>,
-    emitters: Vec<IVec3>,
+    emitters: Vec<(IVec3, u8)>,
 }
 
 pub(in crate::world) struct LightBakeResult {

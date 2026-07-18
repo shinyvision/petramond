@@ -95,14 +95,18 @@ fn facing(f: Facing) -> api::Facing {
     }
 }
 
-fn container(k: events::ContainerKind) -> api::ContainerKind {
-    match k {
-        events::ContainerKind::Inventory => api::ContainerKind::Inventory,
-        events::ContainerKind::CraftingTable => api::ContainerKind::CraftingTable,
-        events::ContainerKind::Furnace => api::ContainerKind::Furnace,
-        events::ContainerKind::Chest => api::ContainerKind::Chest,
-        events::ContainerKind::FurnitureWorkbench => api::ContainerKind::FurnitureWorkbench,
-        events::ContainerKind::Mod(kind) => api::ContainerKind::Mod {
+/// Engine container sessions speak `GuiKind` end-to-end; the ABI mirror keeps
+/// its named engine variants (frozen wire shape), so the engine kinds map to
+/// them here and every other registered kind rides `Mod { key }`.
+fn container(kind: crate::gui::GuiKind) -> api::ContainerKind {
+    use crate::gui::GuiKind;
+    match kind {
+        GuiKind::Inventory => api::ContainerKind::Inventory,
+        GuiKind::CraftingTable => api::ContainerKind::CraftingTable,
+        GuiKind::Furnace => api::ContainerKind::Furnace,
+        GuiKind::Chest => api::ContainerKind::Chest,
+        GuiKind::FurnitureWorkbench => api::ContainerKind::FurnitureWorkbench,
+        kind => api::ContainerKind::Mod {
             key: crate::gui::kind_key(kind).unwrap_or("?").to_owned(),
         },
     }
@@ -129,7 +133,9 @@ pub(super) fn gui_value_out(v: &crate::gui::GuiValue) -> api::GuiValue {
 fn damage_source(s: events::DamageSource) -> api::DamageSource {
     match s {
         events::DamageSource::Fall => api::DamageSource::Fall,
-        events::DamageSource::PlayerAttack(id) => api::DamageSource::PlayerAttack { id: id.0 },
+        events::DamageSource::PlayerAttack(id) => api::DamageSource::PlayerAttack {
+            id: api::PlayerId(id.0),
+        },
         events::DamageSource::MobAttack { kind, .. } => api::DamageSource::MobAttack {
             key: crate::mob::def(kind).key.to_owned(),
         },
@@ -171,16 +177,15 @@ pub(super) fn item_use_pre(ev: &ItemUsePre) -> api::EventPayload {
 
 pub(super) fn mob_interact(ev: &MobInteract) -> api::EventPayload {
     api::EventPayload::MobInteract {
-        mob: ev.mob as u32,
         id: ev.id,
         key: crate::mob::def(ev.kind).key.to_owned(),
-        player_id: ev.player.0,
+        player_id: api::PlayerId(ev.player.0),
     }
 }
 
 pub(super) fn mob_damage_pre(ev: &MobDamagePre) -> api::EventPayload {
     api::EventPayload::MobDamagePre {
-        mob: ev.mob as u32,
+        mob_id: ev.mob_id,
         kind: api::MobId(ev.kind.id()),
         amount: ev.amount,
         source: damage_source(ev.source),
@@ -251,11 +256,13 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
         PostEvent::ItemUsed { item } => api::EventPayload::ItemUsed {
             item: api::ItemId(item.id()),
         },
-        PostEvent::MobDied { kind, pos } => api::EventPayload::MobDied {
+        PostEvent::MobDied { id, kind, pos } => api::EventPayload::MobDied {
+            id,
             kind: api::MobId(kind.id()),
             pos: vec(pos),
         },
-        PostEvent::MobSpawned { kind, pos } => api::EventPayload::MobSpawned {
+        PostEvent::MobSpawned { id, kind, pos } => api::EventPayload::MobSpawned {
+            id,
             kind: api::MobId(kind.id()),
             pos: vec(pos),
         },
@@ -276,7 +283,7 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
         }
         PostEvent::SectionLoaded { pos } => api::EventPayload::SectionLoaded { pos: section(pos) },
         PostEvent::PlayerDismounted { player, mob_id } => api::EventPayload::PlayerDismounted {
-            player_id: player.0,
+            player_id: api::PlayerId(player.0),
             mob_id,
         },
     }

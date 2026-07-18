@@ -47,4 +47,11 @@ impl ItemTag {
     pub(crate) fn resolve(name: &str) -> Result<ItemTag, String> {
         ITEM_TAGS.resolve(name).map(ItemTag)
     }
+
+    /// Look up an already-registered tag name without interning — the QUERY
+    /// path (the mod ABI's `ItemsByTag`): an unknown name is simply a tag no
+    /// item carries, never a new registration.
+    pub(crate) fn lookup(name: &str) -> Option<ItemTag> {
+        ITEM_TAGS.lookup(name).map(ItemTag)
+    }
 }

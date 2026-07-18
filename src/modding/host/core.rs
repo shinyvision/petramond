@@ -1,5 +1,11 @@
-//! Core calls, legal on any instance: logging, the tick clock, RNG
-//! streams, the `mod_init` registration window, and shader parameters.
+//! Core calls: logging, the tick clock, RNG streams, the `mod_init`
+//! registration window, and shader parameters. Log/RNG/RuntimeSide are
+//! scope-free and legal on any instance in any dispatch. The tick clock is
+//! legal in EVERY simulation-instance dispatch — it reads the active sim
+//! scope, falling back to the detached AI-dispatch tick stash
+//! (`modding::ai::detached_tick`) — but errors on instances that have no
+//! tick at all (worldgen workers, whose replies must be pure functions of
+//! their inputs; client instances gate it off in `client_capability`).
 
 use mod_api::{HostCall, HostRet};
 
@@ -17,7 +23,9 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostR
             HostRet::Unit
         }
         HostCall::RuntimeSide => HostRet::RuntimeSide(data.side),
-        HostCall::CurrentTick => match scope::with_active(|ctx| ctx.world.current_tick()) {
+        HostCall::CurrentTick => match scope::with_active(|ctx| ctx.world.current_tick())
+            .or_else(crate::modding::ai::detached_tick)
+        {
             Some(tick) => HostRet::U64(tick),
             None => HostRet::Error("no simulation context is active".into()),
         },
@@ -85,6 +93,35 @@ mod tests {
     use mod_api::{HostCall, HostRet};
 
     use crate::events::{PostQueue, SimCtx};
+
+    /// The tick clock is legal in the detached AI-dispatch scope: with no sim
+    /// scope active it reads the dispatcher's published tick instead of
+    /// erroring — the contract that lets scripted AI nodes call
+    /// `current_tick` like any other dispatch (mods must never be forced to
+    /// count time in dispatches).
+    #[test]
+    fn current_tick_reads_the_detached_ai_dispatch_stash() {
+        use crate::modding::host::{handle_host_call, ModStoreData};
+        let mut data = ModStoreData::new("alpha", 1);
+        assert!(
+            matches!(
+                handle_host_call(&mut data, HostCall::CurrentTick),
+                HostRet::Error(_)
+            ),
+            "outside every scope there is no tick to report"
+        );
+        let ret = crate::modding::ai::with_detached_tick(7, || {
+            handle_host_call(&mut data, HostCall::CurrentTick)
+        });
+        assert_eq!(ret, HostRet::U64(7));
+        assert!(
+            matches!(
+                handle_host_call(&mut data, HostCall::CurrentTick),
+                HostRet::Error(_)
+            ),
+            "the stash is scoped to the dispatch"
+        );
+    }
     use crate::game::TickEvents;
     use crate::mathh::Vec3;
     use crate::modding::host::{handle_host_call, ModStoreData};

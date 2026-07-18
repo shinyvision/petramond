@@ -93,7 +93,13 @@ impl TickSystems {
     }
 
     /// Run the systems attached at `at`, in order. `player`/`gui_state` are
-    /// the HOST session's (the single-player-shaped mod ABI).
+    /// the ACTING session's — the HOST's (session 0) at these stage seams, a
+    /// derived convenience of the sessions view. Player-plural systems reach
+    /// every connected session through the `SimCtx` accessors
+    /// (`acting_player_id`/`player_ids`/`with_player`), served by the roster
+    /// the caller publishes around this run (`ServerGame::with_sessions_view`);
+    /// with no roster published (unit fixtures) the context is single-session
+    /// and anonymous.
     pub(crate) fn run(
         &mut self,
         at: Attach,

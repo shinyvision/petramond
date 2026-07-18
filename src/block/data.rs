@@ -136,6 +136,20 @@ pub(crate) const ENGINE_BLOCK_NAMES: &[&str] = &[
     "petramond:polished_marble_stairs",
     "petramond:polished_marble_slab",
     "petramond:ladder",
+    "petramond:oak_sapling_1",
+    "petramond:oak_sapling_2",
+    "petramond:spruce_sapling_1",
+    "petramond:spruce_sapling_2",
+    "petramond:birch_sapling_1",
+    "petramond:birch_sapling_2",
+    "petramond:jungle_sapling_1",
+    "petramond:jungle_sapling_2",
+    "petramond:acacia_sapling_1",
+    "petramond:acacia_sapling_2",
+    "petramond:furnace_lit",
+    "petramond:ladder_south",
+    "petramond:ladder_west",
+    "petramond:ladder_east",
 ];
 
 /// The JSON-loaded block table. Loads exactly once, on first access from any
@@ -174,4 +188,11 @@ pub(super) fn def(block: Block) -> &'static BlockDef {
 #[inline]
 pub(super) fn flags(id: u8) -> BlockFlags {
     REGISTRY.flags[id as usize]
+}
+
+/// Dense per-id copy of every block's light `emission`, same rationale as
+/// [`flags`]: the light emitter scan reads it per cell over whole sections.
+#[inline]
+pub(super) fn emission(id: u8) -> u8 {
+    REGISTRY.emission[id as usize]
 }

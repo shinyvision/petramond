@@ -1,13 +1,11 @@
 use super::game::ServerGame;
-use crate::block::{Aabb, Block, BlockInteraction, RenderShape};
-use crate::block_state::StairState;
+use crate::block::{Aabb, Block, BlockInteraction};
 use crate::events::{BlockInteract, BlockPlacePre, Outcome, PostEvent};
 use crate::facing::Facing;
 use crate::game::tick::TickEvents;
 use crate::mathh::{IVec3, Vec3};
 use crate::net::protocol::TargetRef;
 use crate::server::player::PendingUseClick;
-use crate::torch::TorchPlacement;
 
 /// Hold-to-interact repeat cadence: a HELD use button re-runs the use-click
 /// ladder this many ticks apart (250 ms at the 20 TPS tick).
@@ -285,35 +283,13 @@ impl ServerGame {
         // before the Menu stage, so this appends behind any close/click/craft
         // messages already received for the old screen.
         match block.interaction() {
-            BlockInteraction::OpenCraftingTable => {
-                self.sessions[s]
-                    .pending_menu_actions
-                    .push(crate::server::player::PendingMenuAction::OpenCraftingTable);
-                true
-            }
-            BlockInteraction::OpenFurnace => {
+            // Engine containers and mod GUIs ride ONE open lane. The clicked
+            // block's position rides the session so per-kind session setup
+            // (chest viewer, machine gauges, mod container anchoring) and
+            // gui_click dispatches know where the GUI was opened from.
+            BlockInteraction::OpenGui(kind) => {
                 self.sessions[s].pending_menu_actions.push(
-                    crate::server::player::PendingMenuAction::OpenFurnace(h.block),
-                );
-                true
-            }
-            BlockInteraction::OpenChest => {
-                self.sessions[s]
-                    .pending_menu_actions
-                    .push(crate::server::player::PendingMenuAction::OpenChest(h.block));
-                true
-            }
-            BlockInteraction::OpenFurnitureWorkbench => {
-                self.sessions[s]
-                    .pending_menu_actions
-                    .push(crate::server::player::PendingMenuAction::OpenWorkbench);
-                true
-            }
-            BlockInteraction::OpenModGui(kind) => {
-                // The clicked block's position rides the session so gui_click
-                // dispatches carry where the GUI was opened from.
-                self.sessions[s].pending_menu_actions.push(
-                    crate::server::player::PendingMenuAction::OpenModGui {
+                    crate::server::player::PendingMenuAction::OpenGui {
                         kind,
                         pos: Some(h.block),
                     },
@@ -391,22 +367,16 @@ impl ServerGame {
             h.block + h.normal
         };
         let player_facing = facing_from_forward(self.sessions[s].player.forward());
-        let slab_stack_slot = (block.render_shape() == RenderShape::Slab
-            && crate::slab::is_slab(looked_at))
-        .then(|| {
-            crate::slab::stack_slot(
+        let slab_stacks_in_hit = self
+            .world
+            .slab_stack_slot_in_hit(
+                block,
+                h.block,
                 self.sessions[s].held_slab_rotation(),
                 h.normal,
                 player_facing,
             )
-        })
-        .flatten();
-        let slab_stacks_in_hit = slab_stack_slot.is_some_and(|slot| {
-            crate::slab::can_add_layer(
-                self.world.slab_state_at(h.block.x, h.block.y, h.block.z),
-                slot,
-            )
-        });
+            .is_some();
         let place_pos_for_pre = if slab_stacks_in_hit { h.block } else { p };
 
         // The placement decision, announced before the shape-specific validity
@@ -438,220 +408,28 @@ impl ServerGame {
             }
         }
 
-        // A torch only mounts on a floor or wall (never a ceiling) and needs a usable
-        // support face. Resolve that up front so an invalid spot is a no-op (the click
-        // neither places nor consumes the torch) rather than leaving a floating one.
-        // When REPLACING a plant the torch always drops to the FLOOR of that cell — so
-        // right-clicking grass from any angle, even its side, stands a floor torch where
-        // the grass was instead of failing on the side face's would-be wall mount.
-        let torch_placement = if block == Block::Torch {
-            let tp = if replacing_in_place {
-                TorchPlacement::Floor
-            } else {
-                TorchPlacement::from_place_normal(h.normal)?
-            };
-            if !self.world.torch_supported_at(p, tp) {
-                return None;
-            }
-            Some(tp)
-        } else {
-            None
+        // The per-shape ladder is the SHARED placement rule (also evaluated by
+        // the client place ghost against its replica): validity + the exact
+        // state write. Only the body-occupancy answer is authoritative-side
+        // specific.
+        let inputs = crate::world::placement::PlaceInputs {
+            hit: h.block,
+            normal: h.normal,
+            place_pos: p,
+            replacing_in_place,
+            player_facing,
+            stair_half: self.sessions[s].held_stair_half(),
+            slab_rotation: self.sessions[s].held_slab_rotation(),
+            log_axis: self.sessions[s].held_log_axis_for_facing(player_facing),
         };
-
-        // A ladder-shaped block only mounts on a vertical wall face (never floor or
-        // ceiling) and needs a complete face behind its panel. Resolve up front like
-        // the torch, so an invalid spot is a no-op that keeps the held item. The
-        // clicked face's normal names the panel front even when replacing a plant
-        // in place. Keyed on the shape, not the engine block: a pack row declaring
-        // the ladder shape gets the same mount rule.
-        let ladder_facing = if block.render_shape() == RenderShape::Ladder {
-            let facing = crate::facing::Facing::from_horizontal_normal(h.normal)?;
-            if !self.world.ladder_supported_at(p, facing) {
-                return None;
-            }
-            // The panel is real collision, so like every colliding shape it may
-            // not be placed inside a gameplay body.
-            if self.placement_occupied_by_body(s, p, crate::ladder::collision_boxes(facing)) {
-                return None;
-            }
-            Some(facing)
-        } else {
-            None
-        };
-
-        if block.render_shape() == RenderShape::Slab {
-            let (target, slot) = match slab_stack_slot {
-                Some(slot) if slab_stacks_in_hit => (h.block, slot),
-                _ => (
-                    p,
-                    crate::slab::slot_for_rotation(
-                        self.sessions[s].held_slab_rotation(),
-                        h.normal,
-                        player_facing,
-                    ),
-                ),
-            };
-            let target_block = Block::from_id(self.world.chunk_block(target.x, target.y, target.z));
-            if !crate::slab::is_slab(target_block) && !self.world.placement_cell_open(target) {
-                return None;
-            }
-            let next_state = self.world.slab_layer_target_state(target, block, slot)?;
-            let boxes = crate::slab::boxes_for_state(next_state);
-            let blocked = self.placement_occupied_by_body(s, target, boxes);
-            if !blocked && self.world.place_slab_layer(target, block, slot) {
-                self.sessions[s].player.inventory.decrement_selected();
-                return Some(target);
-            }
+        let plan = self.world.placement_plan(block, &inputs, &mut |cell, boxes| {
+            self.placement_occupied_by_body(s, cell, boxes)
+        })?;
+        if !self.world.commit_placement(block, &plan, true) {
             return None;
         }
-
-        // A bbmodel block places its WHOLE footprint (the workbench is 2×2×1): every
-        // occupied cell must be loaded + replaceable AND clear of blocking bodies, or the
-        // placement fails as a unit (nothing placed, the held item kept). Multi-cell
-        // models, and models marked directionalView, are oriented from the player's
-        // facing through the model's own placement orientation (the workbench spans
-        // left-to-right across the view, the bed runs front-to-back away from it);
-        // `p` is the front-left bottom anchor from the player's view.
-        if let RenderShape::Model(kind) = block.render_shape() {
-            let multi_cell = crate::block_model::instance(kind).cells.len() > 1;
-            let facing = if block.directional_view() || multi_cell {
-                crate::block_model::def(kind)
-                    .orientation
-                    .apply(player_facing)
-            } else {
-                crate::block_model::DEFAULT_MODEL_FACING
-            };
-            let base = if block.directional_view() || multi_cell {
-                crate::block_model::base_from_front_left_anchor(p, kind, facing)
-            } else {
-                p
-            };
-            if !self.world.model_footprint_clear_facing(base, kind, facing) {
-                return None;
-            }
-            let blocked = crate::block_model::oriented_footprint_cells(base, kind, facing)
-                .into_iter()
-                .any(|(c, off)| {
-                    self.placement_occupied_by_body(
-                        s,
-                        c,
-                        crate::block_model::collision_boxes_oriented(kind, off, facing),
-                    )
-                });
-            if !blocked && self.world.place_model_block_facing(base, block, facing) {
-                self.sessions[s].player.inventory.decrement_selected();
-                return Some(base);
-            }
-            return None;
-        }
-
-        // A door is a 2-tall thin block: its lower cell is `p`, the upper is the cell
-        // above. Both must be loaded + replaceable AND give it a floor to stand on
-        // (`door_footprint_clear`), and the closed slab must not trap the player or a
-        // mob. It sits on the edge nearest the placer (the player's facing). Placement
-        // + the paired door state live in `World::place_door`.
-        if block.render_shape() == RenderShape::Door {
-            let facing = player_facing;
-            let upper = p + IVec3::new(0, 1, 0);
-            if !self.world.door_footprint_clear(p) {
-                return None;
-            }
-            let closed = |top: bool| {
-                crate::door::collision_boxes(crate::door::DoorState {
-                    facing,
-                    open: false,
-                    top,
-                })
-            };
-            let blocked = [(p, false), (upper, true)]
-                .into_iter()
-                .any(|(c, top)| self.placement_occupied_by_body(s, c, closed(top)));
-            if !blocked && self.world.place_door(p, block, facing) {
-                self.sessions[s].player.inventory.decrement_selected();
-                return Some(p);
-            }
-            return None;
-        }
-
-        if block.render_shape() == RenderShape::Stair {
-            let facing = player_facing;
-            let state = StairState::new(facing, self.sessions[s].held_stair_half());
-            if !self.world.placement_cell_open(p) {
-                return None;
-            }
-            let boxes = self.world.resolved_stair_boxes(p, state);
-            let blocked = self.placement_occupied_by_body(s, p, boxes);
-            if !blocked && self.world.place_stair(p, block, state) {
-                self.sessions[s].player.inventory.decrement_selected();
-                return Some(p);
-            }
-            return None;
-        }
-
-        // A pane occupies only its resolved post + arms, so the overlap gate tests
-        // those thin boxes (a player standing beside the centre line doesn't block
-        // it the way a full cube would). No stored state: the connections are
-        // re-resolved from neighbours wherever the shape is read.
-        if block.render_shape() == RenderShape::Pane {
-            if !self.world.placement_cell_open(p) {
-                return None;
-            }
-            let boxes = self.world.pane_boxes_at(p);
-            let blocked = self.placement_occupied_by_body(s, p, boxes);
-            if !blocked && self.world.set_block_world(p.x, p.y, p.z, block) {
-                self.sessions[s].player.inventory.decrement_selected();
-                return Some(p);
-            }
-            return None;
-        }
-
-        // Substrate gate: a block that roots in a particular ground — a flower in soil, a
-        // cactus in sand, a mushroom on soil or stone — places only when the cell directly
-        // below is a ground it accepts (`can_root_on`). Blocks with no such rule (almost
-        // all of them) accept anything; a torch is gated by its own opaque-face check
-        // above. Staying put once placed is the separate job of the FRAGILE behaviour.
-        let below = self.world.physics_block(p.x, p.y - 1, p.z);
-        if !block.can_root_on(below) {
-            return None;
-        }
-
-        // A block with no collision box (a torch, grass, a fern, …) traps nothing, so it
-        // may be placed inside an entity; a block that WOULD collide cannot be placed
-        // where its placed shape overlaps a gameplay body.
-        let target = Block::from_id(self.world.chunk_block(p.x, p.y, p.z));
-        let clear_of_bodies = !self.placement_occupied_by_body(s, p, block.collision_boxes());
-        if target.is_replaceable()
-            && clear_of_bodies
-            && if block.is_log() {
-                let axis = self.sessions[s].held_log_axis_for_facing(player_facing);
-                self.world.place_log(p, block, axis)
-            } else {
-                self.world.set_block_world(p.x, p.y, p.z, block)
-            }
-        {
-            // A placed furnace/chest gets an empty block-entity from the moment it
-            // exists. Blocks marked directionalView have their front oriented to face
-            // the player; a torch records how it is mounted (floor vs which wall) for
-            // the mesher + outline.
-            let placed_facing = if block.directional_view() {
-                player_facing
-            } else {
-                crate::block_model::DEFAULT_MODEL_FACING
-            };
-            if block == Block::Furnace {
-                self.world.insert_furnace(p, placed_facing);
-            } else if block == Block::Chest {
-                self.world.insert_chest(p, placed_facing);
-            } else if let Some(tp) = torch_placement {
-                self.world.insert_torch(p, tp);
-            } else if let Some(facing) = ladder_facing {
-                self.world.insert_entity_facing(p, facing);
-            }
-            self.sessions[s].player.inventory.decrement_selected();
-            Some(p)
-        } else {
-            None
-        }
+        self.sessions[s].player.inventory.decrement_selected();
+        Some(plan.anchor)
     }
 
     /// Whether the placed collision boxes at `cell` overlap a gameplay body that

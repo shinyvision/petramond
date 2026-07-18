@@ -15,6 +15,21 @@
 //! every node's params are validated by actually running its factory once, so a bad
 //! brain fails the load, never a spawn. A namespaced node key resolves to the
 //! scripted (WASM) AI node (see `behavior::wasm`).
+//!
+//! A layer may also carry ADDITIVE `brain_extensions`: `{mob, brain}` rows that
+//! append nodes to ANOTHER catalog row's brain without restating (or owning) it —
+//! how a pack composes behavior onto an engine or foreign species (the farming
+//! pack's wheat-lure on the engine sheep). Extending is not registering, so the
+//! pack-admission namespace rule does not apply to the target name. Extensions
+//! are CROSS-PACK injections, so their failure policy is degradation, never a
+//! catalog panic blaming the target row: what is checkable without the def
+//! table (shape, node-key resolution, declared inputs) fails PACK ADMISSION
+//! ([`validate_brain_extensions`]); what needs the loaded defs (factory param
+//! validation, an unloaded target) logs the offending layer's source and skips
+//! that extension, mirroring how an unregistered scripted node contributes no
+//! opinion. Validated extensions live in a side table beside the def rows
+//! ([`LoadedMobs::extensions`]) and are appended per spawn by
+//! [`super::build_brain`] — the target row's own `brain` stays its own.
 
 use std::collections::HashSet;
 
@@ -32,17 +47,20 @@ use super::{
     DEFAULT_DAMAGE_KNOCKBACK_SECS, ENGINE_MOB_NAMES,
 };
 
-/// Constructs one AI node from its row key + brain-row params + the owning
-/// species row. Factories run once at load for validation and once per
-/// spawned mob. The key matters only to the scripted (WASM) node, which
-/// routes its dispatch on it; engine factories ignore it. The trailing slice
-/// is the FULL def table (the in-flight leaked slice during load validation)
-/// for factories that resolve cross-species references (`chase_sound`'s
-/// `mob_targets`) — a factory must NEVER call `defs()` itself: validation runs
-/// inside that LazyLock's initializer and the re-entry deadlocks the load.
+/// Constructs one AI node from its row key + brain-row params + declared
+/// scripted inputs + the owning species row. Factories run once at load for
+/// validation and once per spawned mob. The key and inputs matter only to the
+/// scripted (WASM) node, which routes its dispatch on the key and ships only
+/// the declared facts; engine factories ignore the key and reject inputs. The
+/// trailing slice is the FULL def table (the in-flight leaked slice during
+/// load validation) for factories that resolve cross-species references
+/// (`chase_sound`'s `mob_targets`) — a factory must NEVER call `defs()`
+/// itself: validation runs inside that LazyLock's initializer and the
+/// re-entry deadlocks the load.
 pub(super) type NodeFactory = fn(
     &'static str,
     &serde_json::Value,
+    behavior::ScriptedInputs,
     &'static MobDef,
     &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String>;
@@ -50,6 +68,66 @@ pub(super) type NodeFactory = fn(
 #[derive(Deserialize)]
 struct RawFile {
     mobs: Vec<RawMobDef>,
+    /// Collected during the same parse the catalog frame runs — no extra
+    /// per-layer parse pass.
+    #[serde(default)]
+    brain_extensions: Vec<RawBrainExtension>,
+}
+
+/// The extension-only lenient view a pack's `mobs.json` gets at ADMISSION
+/// (before any registry exists) — see [`validate_brain_extensions`].
+#[derive(Deserialize)]
+struct RawExtFile {
+    #[serde(default)]
+    brain_extensions: Vec<RawBrainExtension>,
+}
+
+/// One additive brain extension: nodes appended to `mob`'s merged row.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBrainExtension {
+    /// Registry name of the TARGET species — deliberately anyone's.
+    mob: String,
+    brain: Vec<RawBrainNode>,
+}
+
+/// Pack-admission validation of a layer's optional `brain_extensions`,
+/// surfaced early (`manifest::registration_keys`) so a bad extension disables
+/// the PACK — the admission contract — instead of panicking the whole catalog
+/// load. Everything checkable WITHOUT the loaded def table is checked here:
+/// the strict shape parse, node-key resolution through the same registry the
+/// loader uses, and the declared-inputs vocabulary. Factory param validation
+/// needs the target def and runs at catalog load, where a failing extension
+/// is skipped with its source named (see the module docs).
+pub(crate) fn validate_brain_extensions(text: &str) -> Result<(), String> {
+    let file = serde_json::from_str::<RawExtFile>(text)
+        .map_err(|e| format!("invalid brain_extensions: {e}"))?;
+    for ext in &file.brain_extensions {
+        for node in &ext.brain {
+            admission_check_node(node).map_err(|e| {
+                format!(
+                    "invalid brain_extensions: extension for '{}': node '{}': {e}",
+                    ext.mob, node.node
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// The def-free half of extension-node validation (shared vocabulary with the
+/// loader: `node_spec` + [`behavior::ScriptedInputs::parse`]).
+fn admission_check_node(node: &RawBrainNode) -> Result<(), String> {
+    if behavior::node_spec(&node.node).is_none() {
+        return Err(format!("unknown AI node '{}'", node.node));
+    }
+    let inputs = behavior::ScriptedInputs::parse(&node.inputs)?;
+    let scripted = crate::registry::namespace(&node.node)
+        .is_some_and(|ns| ns != crate::registry::ENGINE_NAMESPACE);
+    if !scripted && !inputs.is_empty() {
+        return Err("'inputs' are only declarable on scripted (mod_id:name) nodes".into());
+    }
+    Ok(())
 }
 
 /// One species row as written in `mobs.json`: a mirror of [`MobDef`] with owned
@@ -188,7 +266,7 @@ enum RawMobDamageSound {
     Death,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawBrainNode {
     node: String,
@@ -198,24 +276,68 @@ struct RawBrainNode {
     priority: Option<u8>,
     #[serde(default)]
     params: serde_json::Value,
+    /// Scripted-node perception facts this node DECLARES it reads
+    /// (`"inputs": ["player_held"]`) — only declared facts are computed and
+    /// shipped per dispatch (see `behavior::ScriptedInputs`). Engine nodes
+    /// read the sim context directly and must declare none.
+    #[serde(default)]
+    inputs: Vec<String>,
+}
+
+/// The mob catalog as loaded: the id-ordered def rows plus the validated
+/// cross-pack brain extensions (a side table — the target rows' own `brain`
+/// lists stay their own; [`super::build_brain`] appends per spawn).
+pub(super) struct LoadedMobs {
+    pub defs: &'static [MobDef],
+    /// `(target, appended nodes)` in extension (layer) order.
+    pub extensions: &'static [(Mob, &'static [BrainNode])],
 }
 
 /// Load the mob table from every `mobs.json` layer (base + mod packs, later packs
 /// replacing rows by mob), panicking with a precise message if the table is missing
 /// or inconsistent.
-pub(super) fn table() -> &'static [MobDef] {
-    crate::registry::read_catalog("mobs.json", "mob", |texts| parse_layers(texts))
+pub(super) fn table() -> LoadedMobs {
+    crate::registry::read_catalog_labeled("mobs.json", "mob", |layers| {
+        let labeled: Vec<(&str, String)> = layers
+            .iter()
+            .map(|(text, path)| (*text, path.display().to_string()))
+            .collect();
+        parse_layers_labeled(&labeled)
+    })
 }
 
-pub(super) fn parse_layers(texts: &[&str]) -> Result<&'static [MobDef], String> {
+#[cfg(test)]
+pub(super) fn parse_layers(texts: &[&str]) -> Result<LoadedMobs, String> {
+    let labeled: Vec<(&str, String)> = texts
+        .iter()
+        .enumerate()
+        .map(|(li, text)| (*text, format!("mobs.json layer #{li}")))
+        .collect();
+    parse_layers_labeled(&labeled)
+}
+
+/// Each layer arrives with a source label (its pack path) so extension
+/// diagnostics can name the offending pack.
+fn parse_layers_labeled(layers: &[(&str, String)]) -> Result<LoadedMobs, String> {
+    let texts: Vec<&str> = layers.iter().map(|(text, _)| *text).collect();
+    // One parse per layer: the parse hook feeds the catalog frame its rows
+    // and collects that layer's extensions aside, tagged with the layer index.
+    let mut extensions: Vec<(usize, RawBrainExtension)> = Vec::new();
+    let mut parse_li = 0usize;
     let mut keys = HashSet::new();
-    let defs = crate::registry::load_catalog(
-        texts,
-        |text| serde_json::from_str::<RawFile>(text).map(|f| f.mobs),
+    let catalog = crate::registry::load_catalog(
+        &texts,
+        |text| {
+            let file = serde_json::from_str::<RawFile>(text)?;
+            let li = parse_li;
+            parse_li += 1;
+            extensions.extend(file.brain_extensions.into_iter().map(|e| (li, e)));
+            Ok(file.mobs)
+        },
         |r| &r.mob,
         ENGINE_MOB_NAMES,
         "mob",
-        |r, id, names| {
+        |r: RawMobDef, id, names| {
             if !keys.insert(r.key.clone()) {
                 return Err(format!(
                     "mob '{}': duplicate key '{}' — loot tables resolve by key, so keys must be unique",
@@ -225,8 +347,8 @@ pub(super) fn parse_layers(texts: &[&str]) -> Result<&'static [MobDef], String> 
             let name = r.mob.clone();
             convert(r, Mob(id), names).map_err(|e| format!("mob '{name}': {e}"))
         },
-    )?
-    .rows();
+    )?;
+    let defs = catalog.rows();
 
     // Brain validation needs the leaked `&'static MobDef` rows (node factories read
     // row data), so it runs last: every factory must accept its params NOW, failing
@@ -237,7 +359,37 @@ pub(super) fn parse_layers(texts: &[&str]) -> Result<&'static [MobDef], String> 
                 .map_err(|e| format!("mob '{}': brain node '{}': {e}", d.name, node.node))?;
         }
     }
-    Ok(defs)
+
+    // Extensions are FOREIGN injections, so a bad one degrades (skip + a
+    // warning naming its source layer) instead of failing the whole catalog
+    // while blaming the target row. Admission already refused everything
+    // checkable without the def table.
+    let mut applied: Vec<(Mob, &'static [BrainNode])> = Vec::new();
+    for (li, ext) in extensions {
+        let source = &layers[li].1;
+        let validated = match catalog.id(&ext.mob) {
+            None => Err(format!("targets '{}', which is not loaded", ext.mob)),
+            Some(id) => convert_brain(ext.brain)
+                .and_then(|nodes| {
+                    let target = &defs[id as usize];
+                    for node in nodes {
+                        node.validate(target, defs)
+                            .map_err(|e| format!("brain node '{}': {e}", node.node))?;
+                    }
+                    Ok(nodes)
+                })
+                .map(|nodes| (Mob(id), nodes))
+                .map_err(|e| format!("for '{}': {e}", ext.mob)),
+        };
+        match validated {
+            Ok(entry) => applied.push(entry),
+            Err(e) => log::warn!("{source}: mobs.json brain extension {e} — extension skipped"),
+        }
+    }
+    Ok(LoadedMobs {
+        defs,
+        extensions: Box::leak(applied.into_boxed_slice()),
+    })
 }
 
 fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> {
@@ -400,6 +552,8 @@ fn convert_brain(rows: Vec<RawBrainNode>) -> Result<&'static [BrainNode], String
         let Some(spec) = behavior::node_spec(&r.node) else {
             return Err(format!("unknown AI node '{}'", r.node));
         };
+        let inputs = behavior::ScriptedInputs::parse(&r.inputs)
+            .map_err(|e| format!("brain node '{}': {e}", r.node))?;
         // A missing `params` reads as JSON null; normalize to the empty object so
         // factories see one shape.
         let params = if r.params.is_null() {
@@ -412,6 +566,7 @@ fn convert_brain(rows: Vec<RawBrainNode>) -> Result<&'static [BrainNode], String
             priority: r.priority.unwrap_or(spec.default_priority),
             factory: spec.factory,
             params: Box::leak(Box::new(params)),
+            inputs,
         });
     }
     Ok(Box::leak(nodes.into_boxed_slice()))

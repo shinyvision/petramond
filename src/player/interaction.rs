@@ -76,7 +76,7 @@ impl Player {
         // mounted — state that lives in the world's per-chunk torch map, not visible
         // to the block-only DDA core. Override the default full-cube outline here.
         let hit_block = Block::from_id(world.chunk_block(hit.block.x, hit.block.y, hit.block.z));
-        if hit_block == Block::Torch {
+        if hit_block.render_shape() == RenderShape::Torch {
             hit.outline = SelectionShape::Torch {
                 origin: hit.block,
                 transform: world.torch_placement(hit.block).model_transform(),
@@ -240,7 +240,7 @@ impl Player {
                 // the ladder panel) only registers when the ray actually crosses its
                 // shape — otherwise the ray sees past the empty parts of its cell.
                 if block.visual_aabb().is_none()
-                    && block != Block::Torch
+                    && shape != RenderShape::Torch
                     && shape != RenderShape::Stair
                     && shape != RenderShape::Slab
                     && shape != RenderShape::Ladder
@@ -385,7 +385,7 @@ fn precise_shape_hit(
     block: Block,
     world: &World,
 ) -> Option<ShapeHit> {
-    if block == Block::Torch {
+    if block.render_shape() == RenderShape::Torch {
         return ray_vs_torch(eye, dir, pos, world.torch_placement(pos));
     }
     // A bbmodel block is picked PIXEL-PERFECT: the ray is tested against the actual
@@ -406,8 +406,8 @@ fn precise_shape_hit(
         .map(ShapeHit::distance);
     }
     // A door's thin slab depends on its facing + open state (the chunk door map), and
-    // a ladder's panel on its wall facing (the entity-facing map), so test the
-    // position-aware box rather than the block row's position-less default.
+    // a ladder's panel on its facing row, so test the resolved panel box
+    // rather than the block row's position-less default.
     if matches!(
         block.render_shape(),
         RenderShape::Door | RenderShape::Ladder

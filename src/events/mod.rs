@@ -13,11 +13,11 @@ mod payload;
 mod stages;
 
 pub(crate) use crate::mob::{MobDamageFeedback, MobDamageFeedbackComponent, MobDamageSound};
-pub(crate) use bus::{EventBus, Outcome, SimCtx};
+pub(crate) use bus::{with_sessions_scope, EventBus, Outcome, SessionPlayerRef, SimCtx};
 #[allow(unused_imports)] // named only by tests that build a `SimCtx` by hand.
 pub(crate) use bus::PostQueue;
 pub(crate) use payload::{
-    BlockBreakPre, BlockInteract, BlockPlacePre, ContainerKind, DamageSource, ItemUsePre,
+    BlockBreakPre, BlockInteract, BlockPlacePre, DamageSource, ItemUsePre,
     MobDamagePre, MobInteract, ModAction, PlayerDamagePre, PostEvent, PostEventKind,
 };
 pub(crate) use stages::{Attach, Stage, TickSystems};

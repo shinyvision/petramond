@@ -171,17 +171,11 @@ pub struct GameEvents {
     pub threw_item: bool,
     /// At least one dropped item was collected into the inventory this frame.
     pub picked_up_item: bool,
-    /// The player right-clicked a placed crafting table this frame.
-    pub open_crafting_table: bool,
-    /// The player right-clicked a placed furnace this frame.
-    pub open_furnace: Option<IVec3>,
-    /// The player right-clicked a placed chest this frame.
-    pub open_chest: Option<IVec3>,
-    /// The player right-clicked a placed furniture workbench this frame.
-    pub open_furniture_workbench: Option<IVec3>,
-    /// A mod GUI should open this frame: from a block's `open_gui` interaction
-    /// (`pos = Some`) or a mod's programmatic `GuiOpen` (`pos = None`).
-    pub open_mod_gui: Option<(crate::gui::GuiKind, Option<IVec3>)>,
+    /// A GUI screen should open this frame — engine containers and mod GUIs
+    /// alike: from a block's interaction (`pos = Some`) or a mod's
+    /// programmatic `GuiOpen` (`pos = None`). The inventory's E-key open is
+    /// client-initiated and never rides here.
+    pub open_gui: Option<(crate::gui::GuiKind, Option<IVec3>)>,
     /// A mod asked to close the open mod GUI this frame (`GuiClose`); the app
     /// honours it only while a mod GUI screen is actually up.
     pub close_mod_gui: bool,
@@ -645,20 +639,17 @@ impl Game {
             }
         }
         match se.open_screen {
-            // The client itself requested the inventory (the E key already
-            // opened its screen); the event is the server's ack.
-            Some(OpenScreen::Inventory) | None => {}
-            Some(OpenScreen::CraftingTable) => out.open_crafting_table = true,
-            Some(OpenScreen::Furnace(pos)) => out.open_furnace = Some(pos),
-            Some(OpenScreen::Chest(pos)) => out.open_chest = Some(pos),
-            // Only presence is meaningful — the workbench session carries no
-            // position (the field keeps its historical Option<IVec3> shape).
-            Some(OpenScreen::Workbench) => out.open_furniture_workbench = Some(IVec3::ZERO),
-            Some(OpenScreen::ModGui { kind_key, pos }) => {
+            None => {}
+            Some(OpenScreen::Gui { kind_key, pos }) => {
                 // Unknown kind = a mod the client lacks; the handshake makes
-                // this unreachable in practice — skip rather than panic.
-                if let Some(kind) = crate::gui::resolve_kind(&kind_key) {
-                    out.open_mod_gui = Some((kind, pos));
+                // this unreachable in practice — skip rather than panic. The
+                // inventory open is the server's ack of the client's own E-key
+                // request (its screen is already up), so it never re-opens.
+                match crate::gui::resolve_kind(&kind_key) {
+                    Some(kind) if kind != crate::gui::GuiKind::Inventory => {
+                        out.open_gui = Some((kind, pos));
+                    }
+                    _ => {}
                 }
             }
             Some(OpenScreen::Sleep) => out.open_sleep = true,

@@ -72,11 +72,11 @@ impl World {
     /// still shed it (per Rachel: snow stays on any full block, and canopy snow must
     /// not shatter the tick after the weather mod lays it).
     fn fragile_supported(&self, pos: IVec3, block: Block) -> bool {
-        if block == Block::Torch {
+        if block.render_shape() == crate::block::RenderShape::Torch {
             return self.torch_supported_at(pos, self.torch_placement(pos));
         }
         if block.render_shape() == crate::block::RenderShape::Ladder {
-            return self.ladder_supported_at(pos, self.ladder_facing(pos));
+            return self.ladder_supported_at(pos, block.panel_facing());
         }
         let s = self.fragile_ground_cell(pos);
         if matches!(block.render_shape(), crate::block::RenderShape::LoweredCube(_)) {
@@ -209,13 +209,12 @@ mod tests {
         use crate::facing::Facing;
         let mut w = world();
         let ladder = IVec3::new(8, 65, 8);
-        // An east-facing ladder hangs on the wall to its west.
+        // An east-facing ladder (its own block row) hangs on the wall to its west.
         let wall = crate::ladder::support_cell(ladder, Facing::East);
         w.set_block_world(wall.x, wall.y, wall.z, Block::Stone);
-        w.set_block_world(ladder.x, ladder.y, ladder.z, Block::Ladder);
-        w.insert_entity_facing(ladder, Facing::East);
+        w.set_block_world(ladder.x, ladder.y, ladder.z, Block::LadderEast);
         run_ticks(&mut w, 2);
-        assert_eq!(block(&w, ladder), Block::Ladder, "held up by its wall");
+        assert_eq!(block(&w, ladder), Block::LadderEast, "held up by its wall");
 
         // Mine the wall: the ladder loses its support and breaks on the next tick
         // (the same announce → scheduled-break cadence as the wall torch above).
@@ -230,7 +229,7 @@ mod tests {
         assert!(
             breaks
                 .iter()
-                .any(|&(p, b)| p == ladder && b == Block::Ladder),
+                .any(|&(p, b)| p == ladder && b == Block::LadderEast),
             "the broken ladder was recorded for its drop + particle burst",
         );
     }

@@ -82,7 +82,8 @@ pub struct EffectDef {
     pub display: &'static str,
     /// HUD icon, as an asset-relative PNG path resolved through
     /// [`crate::assets`] (pack rows resolve inside their own pack). Expected
-    /// 12×12; other sizes are nearest-resized into the HUD frame.
+    /// 16×16, filling the HUD frame cell; smaller icons composite centered,
+    /// oversize icons are nearest-resized.
     pub icon: &'static str,
     pub behavior: EffectBehavior,
 }

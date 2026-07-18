@@ -1,7 +1,7 @@
 //! Sim-scoped player calls: state, input, the damage funnel, knockback,
 //! items, health, teleports, status effects, and chat delivery.
 
-use mod_api::{EffectStateData, PlayerInputData, PlayerSnapshot};
+use mod_api::{EffectStateData, PlayerId, PlayerInputData, PlayerSnapshot};
 
 use crate::__rt::host_fn;
 
@@ -22,7 +22,7 @@ host_fn! {
     /// One player's movement intent this tick (forward/strafe in their own yaw
     /// frame, jump/sneak, look) — how a vehicle mod reads what its driver is
     /// pressing. `None` = no such player connected.
-    pub fn player_input(player_id: u8) -> Option<PlayerInputData>
+    pub fn player_input(player_id: PlayerId) -> Option<PlayerInputData>
         => PlayerInput { player_id } => PlayerInput
 }
 
@@ -40,6 +40,10 @@ host_fn! {
     /// engine-owned i-frames and `player_damage_pre` apply, with
     /// `DamageSource::Mod` carrying this mod's id. Queued; applied at the next
     /// in-tick drain point.
+    ///
+    /// To KILL the player, pass their current health ([`player_state`]) as
+    /// `amount` — same funnel; i-frames or a pre-event handler can still
+    /// reject it. There is no separate kill call.
     pub fn damage_player(amount: i32) => DamagePlayer { amount }
 }
 
@@ -49,16 +53,10 @@ host_fn! {
 }
 
 host_fn! {
-    /// Give the player items through the normal inventory fill; overflow drops at
-    /// the player's feet. `false` = unknown item key.
-    pub fn give_item(item_key: &str, count: u8) -> bool
-        => GiveItem { item_key: item_key.into(), count } => Bool
-}
-
-host_fn! {
-    /// Kill the player: current-health damage through the same funnel (and queue)
-    /// as [`damage_player`] — global i-frames or a pre-event handler can reject it.
-    pub fn kill_player() => KillPlayer
+    /// Give the player items (by registry NAME) through the normal inventory
+    /// fill; overflow drops at the player's feet. `false` = unknown item name.
+    pub fn give_item(item: &str, count: u8) -> bool
+        => GiveItem { item: item.into(), count } => Bool
 }
 
 host_fn! {
@@ -99,7 +97,7 @@ host_fn! {
     /// currently connected client; `Some(ids)` sends only to those player ids
     /// (unknown / left ids are ignored). Markup `$[fg=color]` is parsed by the
     /// server. Empty / whitespace-only text returns `false`.
-    pub fn chat_send(text: &str, targets: Option<&[u8]>) -> bool
+    pub fn chat_send(text: &str, targets: Option<&[PlayerId]>) -> bool
         => ChatSend {
             text: text.into(),
             targets: targets.map(|ids| ids.to_vec()),

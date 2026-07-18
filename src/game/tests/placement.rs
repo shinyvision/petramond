@@ -22,18 +22,13 @@ fn place_with_empty_hand_does_nothing() {
 
 #[test]
 fn right_clicking_interactable_blocks_requests_their_screen() {
-    enum ExpectedOpen {
-        CraftingTable,
-        Furnace,
-        Chest,
-        FurnitureWorkbench,
-    }
+    use crate::gui::GuiKind;
 
-    for (block, expected) in [
-        (Block::CraftingTable, ExpectedOpen::CraftingTable),
-        (Block::Furnace, ExpectedOpen::Furnace),
-        (Block::Chest, ExpectedOpen::Chest),
-        (Block::FurnitureWorkbench, ExpectedOpen::FurnitureWorkbench),
+    for (block, expected_kind) in [
+        (Block::CraftingTable, GuiKind::CraftingTable),
+        (Block::Furnace, GuiKind::Furnace),
+        (Block::Chest, GuiKind::Chest),
+        (Block::FurnitureWorkbench, GuiKind::FurnitureWorkbench),
     ] {
         let mut game = game_on_empty_chunk();
         let pos = IVec3::new(4, 64, 4);
@@ -58,31 +53,13 @@ fn right_clicking_interactable_blocks_requests_their_screen() {
             events.player_at(0).interacted,
             "{block:?} should report interacted"
         );
-        match expected {
-            ExpectedOpen::CraftingTable => {
-                assert!(
-                    game.server.sessions[0].request_open_table,
-                    "{block:?} should open crafting"
-                );
-            }
-            ExpectedOpen::Furnace => {
-                assert_eq!(
-                    game.server.sessions[0].request_open_furnace,
-                    Some(pos),
-                    "{block:?}"
-                );
-            }
-            ExpectedOpen::Chest => {
-                assert_eq!(
-                    game.server.sessions[0].request_open_chest,
-                    Some(pos),
-                    "{block:?}"
-                );
-            }
-            ExpectedOpen::FurnitureWorkbench => {
-                assert!(game.server.sessions[0].request_open_workbench, "{block:?}");
-            }
-        }
+        // Every engine container opens through the SAME unified request lane
+        // a mod GUI uses: one (kind, pos) shape, no per-kind fields.
+        assert_eq!(
+            game.server.sessions[0].request_open_gui,
+            Some((expected_kind, Some(pos))),
+            "{block:?}"
+        );
     }
 }
 

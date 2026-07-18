@@ -165,10 +165,10 @@ fn resolve(d: RawDrop) -> Result<LootEntry, String> {
     })
 }
 
-/// Resolve a stable snake_case item key (e.g. `stick`) to its [`ItemType`] — matched
-/// against each item's explicit key, like the recipe loader.
+/// Resolve a stable item key (e.g. `petramond:stick`) to its [`ItemType`] —
+/// the same keyed index the recipe loader resolves through.
 fn item_from_key(key: &str) -> Option<ItemType> {
-    ItemType::all().iter().copied().find(|it| it.key() == key)
+    ItemType::by_key(key)
 }
 
 #[cfg(test)]

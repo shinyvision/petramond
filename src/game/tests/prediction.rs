@@ -991,6 +991,50 @@ fn optimistic_chest_place_records_front_facing_immediately() {
 }
 
 #[test]
+fn optimistic_ladder_place_commits_the_facing_row() {
+    // Ladder facing is block IDENTITY (one row per facing): the ghost must
+    // write the sibling row matching the clicked wall face — same-frame mesh,
+    // panel collision, and climb probe all read that id — and must leave the
+    // entity-facing map untouched (a ladder is not a block entity).
+    let mut game = game_on_empty_chunk();
+    game.game.replica.insert_chunk_for_test(
+        crate::chunk::ChunkPos::new(0, 0),
+        crate::chunk::Chunk::new(0, 0),
+    );
+    let wall = IVec3::new(8, 64, 8);
+    assert!(game
+        .game
+        .replica
+        .set_block_world(wall.x, wall.y, wall.z, Block::Stone));
+    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    give(&mut game, crate::item::ItemType::Ladder, 1);
+    game.sync_self_view_for_test();
+
+    // Click the wall's +X face: the panel front points east, hanging on the
+    // wall to its west.
+    assert!(matches!(
+        game.game.predict_place_at_for_test(wall, IVec3::X, false),
+        PlacePrediction::Predicted(_)
+    ));
+
+    let cell = wall + IVec3::X;
+    assert_eq!(
+        game.game.replica.chunk_block(cell.x, cell.y, cell.z),
+        Block::LadderEast.id(),
+        "the ghost is the facing row, not the held base row"
+    );
+    assert!(
+        game.game
+            .replica
+            .section_at_world_for_test(cell.x, cell.y, cell.z)
+            .expect("ladder section")
+            .entity_facings()
+            .is_empty(),
+        "no entity-facing record — the ladder is not a block entity"
+    );
+}
+
+#[test]
 fn slab_stack_click_is_not_predicted() {
     let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(

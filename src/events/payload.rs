@@ -58,13 +58,10 @@ pub(crate) struct ItemUsePre {
 
 /// `mob_interact` — a use click whose crosshair target was a live mob, before
 /// any engine mob use (shears). Cancel = the click was consumed; this is how
-/// mods make mobs interactable (mounting a vehicle, trading). Carries both
-/// addresses a handler may need: the tick-local `mob` index for immediate
-/// calls and the stable `id` for state a mod keeps across ticks.
+/// mods make mobs interactable (mounting a vehicle, trading). The stable `id`
+/// is the clicked mob's one address — for calls and cross-tick state alike.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct MobInteract {
-    /// Index into the live mob set, valid this tick only.
-    pub mob: usize,
     /// Stable mob session id.
     pub id: u64,
     pub kind: Mob,
@@ -75,8 +72,8 @@ pub(crate) struct MobInteract {
 /// `mob_damage_pre` — `amount` and `feedback` are mutable; cancel = no damage.
 #[derive(Clone, Debug)]
 pub(crate) struct MobDamagePre {
-    /// Index into the live mob set, valid this tick only.
-    pub mob: usize,
+    /// Stable session id of the struck mob (the mob's one mod-facing address).
+    pub mob_id: u64,
     pub kind: Mob,
     pub amount: f32,
     pub source: DamageSource,
@@ -112,7 +109,7 @@ pub(crate) enum DamageSource {
         kind: Mob,
         id: u64,
     },
-    /// A mod's `DamagePlayer`/`KillPlayer` HostCall; carries the mod's pack id
+    /// A mod's `DamagePlayer` HostCall; carries the mod's pack id
     /// (interned for the process lifetime — see `modding::host`), so handlers
     /// can filter by origin.
     Mod(&'static str),
@@ -146,13 +143,12 @@ impl DamageSource {
 pub(crate) enum ModAction {
     /// `Game::damage_player(amount, DamageSource::Mod(mod_id))`.
     DamagePlayer { amount: i32, mod_id: &'static str },
-    /// Damage equal to the player's health at drain time, same funnel.
-    KillPlayer { mod_id: &'static str },
     /// The mob-damage pipeline (`mob_damage_pre` → `Mobs::damage_mob` → death loot).
-    /// `index` is storage order at drain time. Mod damage is not an attack, so
-    /// it does not receive default knockback.
+    /// Carries the STABLE mob id; the drain resolves it to a live index only
+    /// then (earlier actions this drain may have shifted storage). Mod damage
+    /// is not an attack, so it does not receive default knockback.
     DamageMob {
-        index: usize,
+        mob_id: u64,
         amount: f32,
         mod_id: &'static str,
         origin: Option<Vec3>,
@@ -175,20 +171,6 @@ pub(crate) enum ModAction {
     },
 }
 
-/// Which container GUI a session opened/closed on (mirrors the game's container
-/// targets, including the inventory's own crafting recipe browser).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ContainerKind {
-    Inventory,
-    CraftingTable,
-    Furnace,
-    Chest,
-    FurnitureWorkbench,
-    /// A mod-defined GUI session; the ABI mirror carries the kind's
-    /// registered key string.
-    Mod(crate::gui::GuiKind),
-}
-
 /// Observational events, queued at their site and drained FIFO at the post-queue
 /// drain points (each tick-stage boundary) within the same tick.
 #[derive(Copy, Clone, Debug)]
@@ -209,10 +191,15 @@ pub(crate) enum PostEvent {
         item: ItemType,
     },
     MobDied {
+        /// Stable session id the mob lived under — how a mod releases per-mob
+        /// state keyed by it.
+        id: u64,
         kind: Mob,
         pos: Vec3,
     },
     MobSpawned {
+        /// The newborn's stable session id.
+        id: u64,
         kind: Mob,
         pos: Vec3,
     },
@@ -223,12 +210,16 @@ pub(crate) enum PostEvent {
     /// Health crossed >0 → 0. NO default consequence — a mod (or future core
     /// content) decides what death means.
     PlayerDied,
+    /// A container GUI session began. `kind` is the session's registered
+    /// `GuiKind` — engine containers (the inventory's own recipe browser
+    /// included) and mod GUIs speak the one kind registry; the ABI mirror
+    /// carries the kind's key string.
     ContainerOpened {
-        kind: ContainerKind,
+        kind: crate::gui::GuiKind,
         pos: Option<IVec3>,
     },
     ContainerClosed {
-        kind: ContainerKind,
+        kind: crate::gui::GuiKind,
         pos: Option<IVec3>,
     },
     SectionGenerated {

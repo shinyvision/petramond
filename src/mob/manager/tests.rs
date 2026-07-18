@@ -9,14 +9,12 @@ fn mobs_anchor_on_the_nearest_player() {
     let a = PlayerAnchor {
         id: crate::server::player::PlayerId(0),
         pos: Vec3::new(0.0, 64.0, 0.0),
-        body: None,
-        sneaking: false,
+        ..Default::default()
     };
     let b = PlayerAnchor {
         id: crate::server::player::PlayerId(1),
         pos: Vec3::new(10.0, 64.0, 0.0),
-        body: None,
-        sneaking: false,
+        ..Default::default()
     };
     let near_b = Vec3::new(8.0, 64.0, 0.0);
     assert_eq!(super::nearest_anchor(&[a, b], near_b).id.0, 1);
@@ -41,10 +39,8 @@ fn a_frozen_tick_discards_its_drive_intent() {
         0.05,
         &world,
         &[PlayerAnchor {
-            id: Default::default(),
             pos: Vec3::new(0.0, 64.0, 0.0),
-            body: None,
-            sneaking: false,
+            ..Default::default()
         }],
         true,
     );
@@ -174,10 +170,8 @@ fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
             0.05,
             &world,
             &[crate::mob::PlayerAnchor {
-                id: Default::default(),
                 pos: far(),
-                body: None,
-                sneaking: false,
+                ..Default::default()
             }],
             false,
         );
@@ -259,10 +253,8 @@ fn overlapping_mobs_drift_apart_smoothly() {
             0.05,
             &world,
             &[crate::mob::PlayerAnchor {
-                id: Default::default(),
                 pos: far(),
-                body: None,
-                sneaking: false,
+                ..Default::default()
             }],
             false,
         );
@@ -314,6 +306,7 @@ fn the_push_pass_records_touch_contacts_both_ways() {
         pos: Vec3::new(8.0, 64.9, 8.1),
         body: Some(Body::new(Vec3::new(8.0, 64.0, 8.1), 0.3, 1.8)),
         sneaking: true, // touch is felt, not heard — sneak is irrelevant
+        ..Default::default()
     };
     mobs.tick(0.05, &world, &[player], false);
 
@@ -379,10 +372,8 @@ fn a_bodiless_player_does_not_shove_mobs() {
         0.05,
         &world,
         &[crate::mob::PlayerAnchor {
-            id: Default::default(),
             pos: spot,
-            body: None,
-            sneaking: false,
+            ..Default::default()
         }],
         false,
     );

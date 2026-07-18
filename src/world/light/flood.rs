@@ -13,7 +13,11 @@ enum FloodKind {
     BlockLight,
 }
 
-/// Light value an emitter seeds at its own cell (x2 scale). One torch is level 14.
+/// The standard torch-class emission level (x2 scale, level 14). Seeds come
+/// from each emitter row's own `emission` value; this constant remains as the
+/// reference level the engine's emitters (torch, lit furnace) all use — tests
+/// build their emitters with it.
+#[cfg(test)]
 pub(super) const EMITTER_LIGHT: u8 = 28;
 
 /// Reusable flood scratch: the working light cube plus the BFS queue. One per
@@ -146,7 +150,7 @@ pub(super) fn skylight_cube<'s>(
 pub(super) fn block_light(
     pos: SectionPos,
     cells: LightCells<'_>,
-    emitters: &[IVec3],
+    emitters: &[(IVec3, u8)],
     scratch: &mut FloodScratch,
 ) -> Arc<[u8]> {
     let (cox, coy, coz) = pos.origin_world();
@@ -165,20 +169,20 @@ pub(super) fn block_light_cube<'s>(
     origin: (i32, i32, i32),
     dim: usize,
     cells: LightCells<'_>,
-    emitters: &[IVec3],
+    emitters: &[(IVec3, u8)],
     scratch: &'s mut FloodScratch,
 ) -> &'s [u8] {
     let n = dim as i32;
     let (light, queue) = scratch.reset(dim * dim * dim);
-    for e in emitters {
+    for &(e, emission) in emitters {
         let (x, y, z) = (e.x - origin.0, e.y - origin.1, e.z - origin.2);
         if !(0..n).contains(&x) || !(0..n).contains(&y) || !(0..n).contains(&z) {
             continue;
         }
         let (x, y, z) = (x as usize, y as usize, z as usize);
         let i = cube_idx(dim, x, y, z);
-        if light[i] < EMITTER_LIGHT {
-            light[i] = EMITTER_LIGHT;
+        if light[i] < emission {
+            light[i] = emission;
             queue.push_back((x, y, z));
         }
     }
@@ -381,7 +385,7 @@ mod tests {
         let cube = block_light(
             pos,
             cells(&blocks, &states),
-            &[emitter],
+            &[(emitter, EMITTER_LIGHT)],
             &mut FloodScratch::new(),
         );
 
@@ -406,7 +410,7 @@ mod tests {
         let cube = block_light(
             pos,
             cells(&blocks, &states),
-            &[emitter],
+            &[(emitter, EMITTER_LIGHT)],
             &mut FloodScratch::new(),
         );
 
@@ -432,7 +436,7 @@ mod tests {
         let closed = block_light(
             pos,
             cells(&blocks, &closed_back),
-            &[emitter],
+            &[(emitter, EMITTER_LIGHT)],
             &mut FloodScratch::new(),
         );
         assert_eq!(closed[section_idx(0, 8, 8)], 0);
@@ -441,7 +445,7 @@ mod tests {
         let open = block_light(
             pos,
             cells(&blocks, &open_side),
-            &[emitter],
+            &[(emitter, EMITTER_LIGHT)],
             &mut FloodScratch::new(),
         );
         assert!(open[section_idx(0, 8, 8)] > 0);

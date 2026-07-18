@@ -589,7 +589,7 @@ mod tests {
         ));
         for screen in [
             AppScreen::Pause,
-            AppScreen::Inventory,
+            AppScreen::Menu(crate::gui::GuiKind::Inventory),
             AppScreen::Sleeping,
             AppScreen::Dead,
         ] {

@@ -167,15 +167,14 @@ macro_rules! empty_map {
 }
 pub(crate) use empty_map;
 
-/// The nine sparse per-cell maps, boxed behind `Option` in [`BlockStates`]: the
+/// The eight sparse per-cell maps, boxed behind `Option` in [`BlockStates`]: the
 /// common generated section carries none of these, and their inline map headers
-/// (~430 bytes each section) dominated `size_of::<Section>()`.
+/// (~380 bytes each section) dominated `size_of::<Section>()`.
 #[derive(Clone, Default)]
 struct SparseStates {
     torches: HashMap<u16, TorchPlacement>,
     model_cells: HashMap<u16, [u8; 3]>,
     model_facings: HashMap<u16, Facing>,
-    sapling_stages: HashMap<u16, u8>,
     doors: HashMap<u16, DoorState>,
     stairs: HashMap<u16, StairState>,
     slabs: HashMap<u16, SlabState>,
@@ -188,7 +187,6 @@ impl SparseStates {
         self.torches.is_empty()
             && self.model_cells.is_empty()
             && self.model_facings.is_empty()
-            && self.sapling_stages.is_empty()
             && self.doors.is_empty()
             && self.stairs.is_empty()
             && self.slabs.is_empty()
@@ -220,7 +218,6 @@ impl BlockStates {
         torches: HashMap<u16, TorchPlacement>,
         model_cells: HashMap<u16, [u8; 3]>,
         model_facings: HashMap<u16, Facing>,
-        sapling_stages: HashMap<u16, u8>,
         doors: HashMap<u16, DoorState>,
         stairs: HashMap<u16, StairState>,
         slabs: HashMap<u16, SlabState>,
@@ -231,7 +228,6 @@ impl BlockStates {
             torches,
             model_cells,
             model_facings,
-            sapling_stages,
             doors,
             stairs,
             slabs,
@@ -289,7 +285,6 @@ impl BlockStates {
         let key = idx as u16;
         s.model_cells.remove(&key);
         s.model_facings.remove(&key);
-        s.sapling_stages.remove(&key);
         s.doors.remove(&key);
         s.stairs.remove(&key);
         s.slabs.remove(&key);
@@ -352,33 +347,6 @@ impl BlockStates {
         match &self.sparse {
             Some(s) => &s.model_facings,
             None => empty_map!(Facing),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn sapling_stage(&self, x: usize, y: usize, z: usize) -> u8 {
-        self.sapling_stages()
-            .get(&Self::key(x, y, z))
-            .copied()
-            .unwrap_or(0)
-    }
-
-    pub(crate) fn set_sapling_stage(&mut self, x: usize, y: usize, z: usize, stage: u8) {
-        let key = Self::key(x, y, z);
-        if stage == 0 {
-            if let Some(s) = self.sparse.as_deref_mut() {
-                s.sapling_stages.remove(&key);
-            }
-        } else {
-            self.sparse_mut().sapling_stages.insert(key, stage);
-        }
-    }
-
-    #[inline]
-    pub(crate) fn sapling_stages(&self) -> &HashMap<u16, u8> {
-        match &self.sparse {
-            Some(s) => &s.sapling_stages,
-            None => empty_map!(u8),
         }
     }
 

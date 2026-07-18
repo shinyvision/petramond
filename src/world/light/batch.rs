@@ -61,7 +61,7 @@ pub(in crate::world) struct LightBatchJob {
     states: Vec<SparseCellState>,
     /// `BDIM`² sky-cover map, gathered only when a member needs the sky flood.
     surface: Option<Box<[i32]>>,
-    emitters: Vec<IVec3>,
+    emitters: Vec<(IVec3, u8)>,
 }
 
 pub(in crate::world) struct LightBatchOutput {

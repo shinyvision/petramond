@@ -19,18 +19,22 @@ use super::store::World;
 impl World {
     /// Advance every loaded furnace by one game tick, smelting per `recipes`.
     /// Furnaces are section-owned, so this fans out to each section, then
-    /// promotes lit-state flips to world-coordinate mesh invalidation and block
-    /// updates. Cheap for the common furnace-free section (an empty-map
-    /// early-out).
+    /// swaps any furnace whose lit state changed onto its matching skin row
+    /// (`furnace` ⇄ `furnace_lit`). The swap rides the ordinary block-write
+    /// lanes — delta capture, relight (the lit row's `emission` makes it a
+    /// torch-class emitter), remesh, block updates, save `modified` — with the
+    /// sibling entity maps (machine state, container, facing) preserved by
+    /// [`World::swap_block_skin`]. Cheap for the common furnace-free section
+    /// (an empty-map early-out).
     ///
     /// One step of the per-tick sequence owned by [`World::game_tick`]; not a
     /// public entry point.
     pub(super) fn tick_furnaces(&mut self, recipes: &Recipes) {
-        let mut relit = Vec::new();
+        let mut reskin = Vec::new();
         // Only indexed sections can hold a furnace; skip the Arc::make_mut
         // (a potential copy-on-write clone) for chest/door-only ones. Sorted:
-        // set order reflects streaming history, and the relit block updates
-        // must fire in a deterministic order (the multiplayer tick contract).
+        // set order reflects streaming history, and the lit-flip block writes
+        // must land in a deterministic order (the multiplayer tick contract).
         let mut candidates: Vec<_> = self.block_entity_sections.iter().copied().collect();
         candidates.sort_unstable_by_key(|p| (p.cx, p.cy, p.cz));
         for cpos in candidates {
@@ -41,18 +45,15 @@ impl World {
                 continue;
             }
             let section = std::sync::Arc::make_mut(section);
-            for (lx, ly, lz) in section.tick_furnaces(|it| recipes.smelt(it)) {
-                relit.push((cpos, local_to_world(cpos, lx, ly, lz)));
+            for (lx, ly, lz, desired) in section.tick_furnaces(|it| recipes.smelt(it)) {
+                reskin.push((local_to_world(cpos, lx, ly, lz), desired));
             }
         }
 
-        for (cpos, pos) in relit {
-            self.queue_dirty_mesh(cpos);
-            // A furnace's lit-state flip changes its block-light emission. The
-            // announce re-floods the 3x3 light neighbourhood, and that relight then
-            // re-meshes every chunk the glow reaches (same path a torch placement
-            // takes).
-            self.notify_block_and_neighbors(pos.x, pos.y, pos.z);
+        for (pos, desired) in reskin {
+            // A refused swap (stream-finality guard) is retried by the next
+            // tick's skin comparison — the mismatch check self-heals.
+            self.swap_block_skin(pos, desired);
         }
     }
 
@@ -148,8 +149,12 @@ mod tests {
             .set_skylight(vec![0u8; SECTION_VOLUME].into());
     }
 
+    /// A lit flip is a row swap through the ordinary block-write lanes: the
+    /// block id flips to the lit row (remeshing to the lit front), while the
+    /// sibling entity maps — machine counters, container slots, facing — and
+    /// the cell's mod KV survive the swap. Going out swaps back.
     #[test]
-    fn furnace_lit_flip_queues_remesh_for_texture_swap() {
+    fn furnace_lit_flip_swaps_the_row_and_preserves_the_block_entity() {
         // Build just the furnace's section (0,4,0) — world (8,64,8) → section-local
         // (8,0,8) — so the mesh budget isn't spent on a column's other sections.
         let spos = SectionPos::new(0, 4, 0);
@@ -160,22 +165,52 @@ mod tests {
 
         let mut world = World::new(0, 0);
         world.insert_section_for_test(spos, section);
+        let pos = IVec3::new(8, 64, 8);
+        assert!(world.cell_kv_set(8, 64, 8, "testmod:note".into(), vec![9]));
         world.mesh_section_blocking_for_test(spos);
         let mesh = world.meshes.get(&spos).expect("initial mesh built");
         assert_eq!(count_tile(mesh, Tile::named("furnace_front")), 4);
         assert_eq!(count_tile(mesh, Tile::named("furnace_front_on")), 0);
 
         world.game_tick(&furnace_recipes());
-        // A lit furnace now emits block light, so the lit-flip re-dirties this section's
-        // light (this dirtying IS the new behavior). That would otherwise defer the
-        // texture-swap remesh behind the async light bake, so re-settle the light
-        // synchronously here — exactly as the test does before the initial mesh.
+        assert_eq!(block(&world, 8, 64, 8), Block::FurnaceLit, "lit row swap");
+        // The swap preserves the sibling entity maps and the cell's mod KV.
+        let furnace = world.furnace_at(pos).expect("machine state survives");
+        assert!(furnace.is_lit());
+        assert_eq!(
+            world.container_at(pos).unwrap().slots[SLOT_INPUT]
+                .unwrap()
+                .item,
+            ItemType::RawIron,
+            "container slots survive"
+        );
+        assert_eq!(
+            world.cell_kv_get(8, 64, 8, "testmod:note"),
+            Some(&[9u8][..]),
+            "cell KV survives"
+        );
+        // The lit row emits block light, so the swap re-dirties this section's
+        // light. That would otherwise defer the texture-swap remesh behind the
+        // async light bake, so re-settle the light synchronously here — exactly
+        // as the test does before the initial mesh.
         settle_section_light(&mut world, 8, 64, 8);
         world.mesh_section_blocking_for_test(spos);
 
         let mesh = world.meshes.get(&spos).expect("relit mesh rebuilt");
         assert_eq!(count_tile(mesh, Tile::named("furnace_front")), 0);
         assert_eq!(count_tile(mesh, Tile::named("furnace_front_on")), 4);
+
+        // Burn out: drain the fuel and input, then let the flame die — the
+        // skin swaps back to the unlit row.
+        {
+            let (furnace, container) = world.furnace_parts_mut(pos).unwrap();
+            furnace.burn_remaining = 1;
+            container.slots[SLOT_INPUT] = None;
+            container.slots[SLOT_FUEL] = None;
+        }
+        world.game_tick(&furnace_recipes());
+        assert_eq!(block(&world, 8, 64, 8), Block::Furnace, "extinguish swap");
+        assert!(world.furnace_at(pos).is_some(), "machine state still there");
     }
 
     #[test]

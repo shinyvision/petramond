@@ -127,6 +127,37 @@ impl World {
         true
     }
 
+    /// Swap a placed cube block's id in place while PRESERVING everything else
+    /// the cell owns — the sibling block-entity maps (machine state, container,
+    /// entity facing; `set_block` never touches them) and the cell's mod KV
+    /// (which `set_block` clears, so it is carried across explicitly). The
+    /// cube sibling of [`World::swap_model_block`]: the same placed machine
+    /// changing costume (`furnace` ⇄ `furnace_lit`). Announces itself through
+    /// the ordinary block-write lanes (delta capture, relight, remesh, block
+    /// updates, save `modified`) — a skin swap needs no bespoke promotion.
+    pub(crate) fn swap_block_skin(&mut self, pos: IVec3, to: Block) -> bool {
+        let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
+            return false;
+        };
+        let kv = chunk.cell_kv_take(lx, ly, lz);
+        if !self.set_block_world(pos.x, pos.y, pos.z, to) {
+            // The write was refused (stream-finality guard): put the KV back
+            // and leave the cell exactly as it was.
+            if let (Some(kv), Some((chunk, lx, ly, lz))) =
+                (kv, self.chunk_at_world_mut(pos.x, pos.y, pos.z))
+            {
+                chunk.cell_kv_restore(lx, ly, lz, kv);
+            }
+            return false;
+        }
+        if let Some(kv) = kv {
+            if let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
+                chunk.cell_kv_restore(lx, ly, lz, kv);
+            }
+        }
+        true
+    }
+
     /// How far (in cells, L1) the light change from replacing `old` with `new`
     /// at one cell can possibly propagate — `-1` when it provably cannot
     /// change any light value at all. Only the plain full-cube transitions

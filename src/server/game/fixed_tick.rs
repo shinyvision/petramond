@@ -1,6 +1,6 @@
-use crate::events::{Attach, PostEvent, SimCtx, Stage};
+use crate::events::{Attach, PostEvent, SessionPlayerRef, SimCtx, Stage};
 use crate::game::tick::{TickEvents, TICK_DT};
-use crate::server::player::PlayerId;
+use crate::server::player::{ConnectedPlayer, PlayerId};
 
 use super::{ServerGame, MAX_TICKS_PER_FRAME};
 
@@ -154,6 +154,9 @@ impl ServerGame {
                 body: (!sess.player.is_spectator() && sess.mount.is_none())
                     .then(|| sess.player.body()),
                 sneaking: sess.sneaking(),
+                held: (!sess.player.is_spectator())
+                    .then(|| sess.selected_item())
+                    .flatten(),
             })
             .collect();
         // Passive natural spawning still centres on one anchor per tick, round-robin,
@@ -207,16 +210,16 @@ impl ServerGame {
         self.begin_stage(Stage::Spawning, events);
         // One-time worldgen herds land as chunks near the round-robin player
         // settle; the persisted populated set keeps that stock one-time.
-        for (kind, pos) in self.world.populate_mobs_tick(anchors[spawn_s].pos) {
-            self.bus.emit(PostEvent::MobSpawned { kind, pos });
+        for (id, kind, pos) in self.world.populate_mobs_tick(anchors[spawn_s].pos) {
+            self.bus.emit(PostEvent::MobSpawned { id, kind, pos });
         }
         // The passive trickle backfills on the slow creature cadence — one
         // attempt per player per interval, not per tick, or killing animals
         // becomes a respawn faucet.
         if self.world.current_tick() % crate::mob::PASSIVE_SPAWN_INTERVAL_TICKS == 0 {
             for anchor in &anchors {
-                for (kind, pos) in self.world.spawn_mobs_tick(anchor.pos) {
-                    self.bus.emit(PostEvent::MobSpawned { kind, pos });
+                for (id, kind, pos) in self.world.spawn_mobs_tick(anchor.pos) {
+                    self.bus.emit(PostEvent::MobSpawned { id, kind, pos });
                 }
             }
         }
@@ -240,15 +243,16 @@ impl ServerGame {
             bus,
             ..
         } = self;
-        let host = &mut sessions[0];
-        let mut ctx = SimCtx {
-            world,
-            player: &mut host.player,
-            gui_state: &mut host.gui_state,
-            feed: events,
-            queue: bus.queue_mut(),
-        };
-        mods.dispatch_block_hooks(&mut ctx, &hooks);
+        Self::with_sessions_view(sessions, 0, |host| {
+            let mut ctx = SimCtx {
+                world,
+                player: &mut host.player,
+                gui_state: &mut host.gui_state,
+                feed: events,
+                queue: bus.queue_mut(),
+            };
+            mods.dispatch_block_hooks(&mut ctx, &hooks);
+        });
     }
 
     fn tick_mod_hostile_mob_spawns(
@@ -276,15 +280,16 @@ impl ServerGame {
                         bus,
                         ..
                     } = self;
-                    let host = &mut sessions[0];
-                    let mut ctx = SimCtx {
-                        world,
-                        player: &mut host.player,
-                        gui_state: &mut host.gui_state,
-                        feed: events,
-                        queue: bus.queue_mut(),
-                    };
-                    mods.hostile_spawn_kind(&mut ctx, &site.candidate)
+                    Self::with_sessions_view(sessions, 0, |host| {
+                        let mut ctx = SimCtx {
+                            world,
+                            player: &mut host.player,
+                            gui_state: &mut host.gui_state,
+                            feed: events,
+                            queue: bus.queue_mut(),
+                        };
+                        mods.hostile_spawn_kind(&mut ctx, &site.candidate)
+                    })
                 };
                 let Some(kind) = kind else {
                     continue;
@@ -292,8 +297,9 @@ impl ServerGame {
                 if !crate::mob::hostile_kind_has_room(&self.world, &plan, kind) {
                     continue;
                 }
-                if self.world.spawn_mob(kind, site.pos, site.yaw) {
+                if let Some(id) = self.world.spawn_mob(kind, site.pos, site.yaw) {
                     self.bus.emit(PostEvent::MobSpawned {
+                        id,
                         kind,
                         pos: site.pos,
                     });
@@ -303,8 +309,38 @@ impl ServerGame {
         }
     }
 
+    /// Split-borrow `sessions` around the ACTING session and run `f` against
+    /// it with the sessions view published: inside `f`, any `SimCtx` built on
+    /// the acting session's borrows can reach EVERY connected session's
+    /// player through its accessors (`acting_player_id` / `player_ids` /
+    /// `with_player`). The acting session is deliberately EXCLUDED from the
+    /// published roster — its player is exactly the `&mut` `f` receives, and
+    /// the accessors route its id through that borrow, so one player can
+    /// never be reachable on two paths (the `with_sessions_scope` soundness
+    /// contract). The other sessions' borrows are taken here, before `f`, and
+    /// nothing else touches `sessions` until it returns.
+    pub(crate) fn with_sessions_view<R>(
+        sessions: &mut [ConnectedPlayer],
+        acting: usize,
+        f: impl FnOnce(&mut ConnectedPlayer) -> R,
+    ) -> R {
+        let (left, rest) = sessions.split_at_mut(acting);
+        let (act, right) = rest.split_first_mut().expect("acting session in range");
+        let others: Vec<SessionPlayerRef> = left
+            .iter_mut()
+            .chain(right.iter_mut())
+            .map(|sess| SessionPlayerRef {
+                id: sess.id,
+                player: &mut sess.player,
+            })
+            .collect();
+        crate::events::with_sessions_scope(act.id, acting, others, || f(act))
+    }
+
     /// Run the systems attached at `at` — the mod seam. A slot with nothing
-    /// attached costs one bounds-checked array read per stage edge.
+    /// attached costs one bounds-checked array read per stage edge. The
+    /// sessions view rides every run: the HOST session (0) acts, the whole
+    /// roster is reachable.
     fn run_systems(&mut self, at: Attach, events: &mut TickEvents) {
         if self.systems.is_empty_at(at) {
             return;
@@ -316,15 +352,16 @@ impl ServerGame {
             bus,
             ..
         } = self;
-        let host = &mut sessions[0];
-        systems.run(
-            at,
-            world,
-            &mut host.player,
-            &mut host.gui_state,
-            events,
-            bus.queue_mut(),
-        );
+        Self::with_sessions_view(sessions, 0, |host| {
+            systems.run(
+                at,
+                world,
+                &mut host.player,
+                &mut host.gui_state,
+                events,
+                bus.queue_mut(),
+            );
+        });
     }
 
     /// Open a stage: run its `Before` systems, then apply any mod actions they
@@ -349,13 +386,17 @@ impl ServerGame {
     }
 
     fn drain_post_events(&mut self, events: &mut TickEvents) {
+        if !self.bus.has_queued_posts() {
+            return;
+        }
         let Self {
             world,
             sessions,
             bus,
             ..
         } = self;
-        let host = &mut sessions[0];
-        bus.drain_post(world, &mut host.player, &mut host.gui_state, events);
+        Self::with_sessions_view(sessions, 0, |host| {
+            bus.drain_post(world, &mut host.player, &mut host.gui_state, events);
+        });
     }
 }

@@ -85,6 +85,9 @@ struct Weather {
     /// must too.
     ice: Option<BlockId>,
     packed_ice: Option<BlockId>,
+    /// Engine water — excluded from snow footing (composed into
+    /// [`Weather::full_solid_support`]).
+    water: Option<BlockId>,
     /// The [`LEAF_TAG`] member ids, queried at init — both sides use them:
     /// the server's snow accumulation rests layers on canopy tops, the
     /// client's sky probe sees through them.
@@ -127,8 +130,8 @@ impl Weather {
     /// publishes one (frozen time freezes weather too), else the session
     /// tick counter.
     fn clock(&self) -> u64 {
-        world_kv_get("petramond:clock")
-            .and_then(|b| b.try_into().ok().map(u64::from_le_bytes))
+        world_kv_get(weather_core::CLOCK_KEY)
+            .and_then(|b| weather_core::decode_clock(&b))
             .unwrap_or_else(current_tick)
     }
 
@@ -192,6 +195,16 @@ impl Weather {
     /// connected players; where the field precipitates over a snowy biome,
     /// eligible bare surfaces gain a snow layer. The per-probe positional
     /// threshold makes onset patchy and organic instead of a sweeping fill.
+    /// Full-solid snow footing, composed from the generic collision-shape
+    /// query: exactly one full unit collision cube, not water, not leaves
+    /// (canopy is accepted separately at the call site). An unresolved shape
+    /// (`None` — unloaded / not stream-final) is never footing.
+    fn full_solid_support(&self, block: BlockId, pos: [i32; 3]) -> bool {
+        collision_shape_at(pos) == Some(CollisionShape::Full)
+            && Some(block) != self.water
+            && !self.leaves.contains(&block)
+    }
+
     fn accumulate_snow(&mut self, params: &FieldParams) {
         let Some(snow_layer) = self.snow_layer else {
             return;
@@ -242,7 +255,7 @@ impl Weather {
             // already lands on the treetop — leaves block movement), but
             // never on frozen water: worldgen keeps sea/pond ice bare and
             // its parity tests pin it.
-            if !self.leaves.contains(&support) && !block_is_full_spawn_support([x, surface_y, z])
+            if !self.leaves.contains(&support) && !self.full_solid_support(support, [x, surface_y, z])
             {
                 continue;
             }
@@ -406,6 +419,7 @@ impl Mod for Weather {
         self.snow_layer = resolve_block_logged("petramond:snow_layer");
         self.ice = resolve_block_logged("petramond:ice");
         self.packed_ice = resolve_block_logged("petramond:packed_ice");
+        self.water = resolve_block_logged("petramond:water");
         if let Some(bytes) = world_kv_get(KV_OFF) {
             if bytes.len() == 16 {
                 self.off = [

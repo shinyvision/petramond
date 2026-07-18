@@ -64,7 +64,7 @@
 //!   or stale means "clear sky".
 
 use mod_sdk::*;
-use weather_core::{FieldParams, FieldRow};
+use weather_core::FieldParams;
 
 const MONSTERS_TICK_SYSTEM: u32 = 1;
 const MONSTERS_HOSTILE_SPAWNER: u32 = 1;
@@ -72,7 +72,6 @@ const MONSTERS_HOSTILE_SPAWNER: u32 = 1;
 const ZOMBIE_KEY: &str = "monsters:zombie";
 const HUSHJAW_KEY: &str = "monsters:hushjaw";
 const TIME_KEY: &str = "petramond:time";
-const CLOCK_KEY: &str = "petramond:clock";
 const WATER_BLOCK: &str = "petramond:water";
 
 /// Hushjaw spawn rules — a deep-cave apex predator, deliberately never near
@@ -93,9 +92,10 @@ const HUSHJAW_CLAIM_PER_100: u64 = 10;
 /// is intentionally below ordinary torch light, while still accepting caves
 /// with little or no sky/block light.
 const SPAWN_LIGHT_THRESHOLD: f32 = 24.0;
-/// Sunburn ignition requires strong direct sky light.
+/// Sunburn ignition requires strong direct sky light — the shared cross-mod
+/// direct-sky threshold (rain lands exactly where the naked sun reaches).
 const SUNBURN_RADIUS: f32 = 160.0;
-const SUNBURN_SKY_THRESHOLD: f32 = 45.0;
+const SUNBURN_SKY_THRESHOLD: f32 = weather_core::DIRECT_SKY_MIN as f32;
 /// Per-TICK ignition chance for a sunlit, not-yet-burning zombie.
 const SUNBURN_CHANCE_PER_100: u64 = 5;
 /// Sunlit ticks on light fire before the burn escalates to great fire.
@@ -109,11 +109,6 @@ const DARK_COOL_TICKS: u32 = 60;
 /// while a drizzle only takes the sun away. Snow douses identically — the
 /// field is phase-agnostic here, and smothering a fire is what snow does.
 const RAIN_COOL_BOOST: f32 = 3.0;
-/// A `weather:field` row whose clock stamp trails `petramond:clock` by more
-/// than this is a leftover from an uninstalled weather mod (world KV
-/// persists) and reads as "no weather". Weather republishes every tick, so
-/// a live row is at most one tick behind; 2 s of slack is generous.
-const FIELD_STALE_TICKS: u64 = 40;
 /// Light fire: 1 damage every 40 ticks.
 const LIGHT_FIRE_DAMAGE: f32 = 1.0;
 const LIGHT_FIRE_DAMAGE_INTERVAL: u32 = 40;
@@ -239,7 +234,7 @@ impl Monsters {
                     && rain_at(field, mob.pos) == 0.0
                     && in_sunlight(mob.pos, daylight)
                     && !in_water(water, cell_of(mob.pos))
-                    && mob_emitter_set(mob.index, LIGHT_FIRE_EMITTER, true)
+                    && mob_emitter_set(mob.id, LIGHT_FIRE_EMITTER, true)
                 {
                     self.burning.insert(
                         mob.id,
@@ -258,10 +253,10 @@ impl Monsters {
             if in_water(water, cell) {
                 match burn.stage {
                     BurnStage::Light => {
-                        mob_emitter_set(mob.index, LIGHT_FIRE_EMITTER, false);
+                        mob_emitter_set(mob.id, LIGHT_FIRE_EMITTER, false);
                     }
                     BurnStage::Great => {
-                        mob_emitter_set(mob.index, GREAT_FIRE_EMITTER, false);
+                        mob_emitter_set(mob.id, GREAT_FIRE_EMITTER, false);
                     }
                 }
                 extinguished.push(mob.id);
@@ -291,13 +286,13 @@ impl Monsters {
                 burn.dark_ticks = 0;
                 match burn.stage {
                     BurnStage::Light => {
-                        mob_emitter_set(mob.index, LIGHT_FIRE_EMITTER, false);
+                        mob_emitter_set(mob.id, LIGHT_FIRE_EMITTER, false);
                         extinguished.push(mob.id);
                         continue;
                     }
                     BurnStage::Great => {
-                        mob_emitter_set(mob.index, GREAT_FIRE_EMITTER, false);
-                        mob_emitter_set(mob.index, LIGHT_FIRE_EMITTER, true);
+                        mob_emitter_set(mob.id, GREAT_FIRE_EMITTER, false);
+                        mob_emitter_set(mob.id, LIGHT_FIRE_EMITTER, true);
                         burn.stage = BurnStage::Light;
                         burn.stage_ticks = 0;
                     }
@@ -309,8 +304,8 @@ impl Monsters {
                 // 200 ticks of light burn AND still in direct sunlight:
                 // escalate. A zombie that found shade before the deadline
                 // stays on light fire until the sun catches it again.
-                mob_emitter_set(mob.index, LIGHT_FIRE_EMITTER, false);
-                mob_emitter_set(mob.index, GREAT_FIRE_EMITTER, true);
+                mob_emitter_set(mob.id, LIGHT_FIRE_EMITTER, false);
+                mob_emitter_set(mob.id, GREAT_FIRE_EMITTER, true);
                 burn.stage = BurnStage::Great;
                 burn.stage_ticks = 0;
             }
@@ -328,7 +323,7 @@ impl Monsters {
                 // NO `Immunity` — burn ticks are neither blocked by the
                 // engine i-frame window nor grant one, so a burning zombie
                 // can still be meleed at full cadence.
-                damage_mob_with_feedback(mob.index, amount, None, burn_feedback());
+                damage_mob_with_feedback(mob.id, amount, None, burn_feedback());
             }
         }
         for id in extinguished {
@@ -373,13 +368,9 @@ fn cell_of(pos: [f32; 3]) -> [i32; 3] {
 }
 
 /// Raw sky light at the cell; `None` while the section is unloaded or its
-/// streamed content is not final.
+/// streamed content is not final (`light_at` carries the gate itself).
 fn sky_light(cell: [i32; 3]) -> Option<f32> {
-    if !is_loaded(cell) {
-        return None;
-    }
-    let (_, sky, _) = light_at(cell);
-    Some(sky as f32)
+    light_at(cell).map(|l| l.sky as f32)
 }
 
 fn in_sunlight(pos: [f32; 3], daylight: f32) -> bool {
@@ -398,14 +389,10 @@ fn rain_at(field: Option<&FieldParams>, pos: [f32; 3]) -> f32 {
 /// stamp is unverifiable and the row is trusted (matching the weather mod's
 /// own session-tick clock fallback in clockless harnesses).
 fn weather_field() -> Option<FieldParams> {
-    let row = FieldRow::decode(&world_kv_get(weather_core::KV_FIELD)?)?;
-    let clock = world_kv_get(CLOCK_KEY).and_then(|b| b.try_into().ok().map(u64::from_le_bytes));
-    if let Some(clock) = clock {
-        if clock.abs_diff(row.clock) > FIELD_STALE_TICKS {
-            return None;
-        }
-    }
-    Some(row.params)
+    let row = world_kv_get(weather_core::KV_FIELD)?;
+    let clock =
+        world_kv_get(weather_core::CLOCK_KEY).and_then(|b| weather_core::decode_clock(&b));
+    weather_core::fresh_params(&row, clock)
 }
 
 fn effective_light(sky: u8, block: u8, daylight: f32) -> f32 {

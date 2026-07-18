@@ -241,6 +241,32 @@ impl World {
         }
         full_unit_cube(self.collision_boxes_at(wx, wy, wz))
     }
+
+    /// Generic collision-shape CLASS of a cell — pure geometry, no gameplay
+    /// policy (spawn/placement rules compose on top of it). Callers gate
+    /// loadedness themselves: an absent section's boxes read as empty here.
+    pub fn collision_shape_class(&self, wx: i32, wy: i32, wz: i32) -> CollisionShapeClass {
+        let boxes = self.collision_boxes_at(wx, wy, wz);
+        if boxes.is_empty() {
+            CollisionShapeClass::Empty
+        } else if full_unit_cube(boxes) {
+            CollisionShapeClass::Full
+        } else {
+            CollisionShapeClass::Partial
+        }
+    }
+}
+
+/// See [`World::collision_shape_class`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CollisionShapeClass {
+    /// No collision boxes: air, water, walk-through cover.
+    Empty,
+    /// Boxes that do not amount to one full unit cube: stairs, slabs, doors,
+    /// snow layers, model blocks.
+    Partial,
+    /// Exactly one box spanning the whole unit cell.
+    Full,
 }
 
 pub(super) fn full_unit_cube(boxes: &[Aabb]) -> bool {

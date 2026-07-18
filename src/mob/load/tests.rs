@@ -11,7 +11,9 @@ fn base() -> String {
 /// applies at startup, surfaced as a test so a bad edit fails CI, not a launch.
 #[test]
 fn shipped_mobs_json_loads_fully() {
-    let defs = parse_layers(&[&base()]).unwrap_or_else(|e| panic!("shipped mobs.json: {e}"));
+    let defs = parse_layers(&[&base()])
+        .unwrap_or_else(|e| panic!("shipped mobs.json: {e}"))
+        .defs;
     assert_eq!(
         defs.len(),
         ENGINE_MOB_NAMES.len(),
@@ -72,12 +74,52 @@ fn pack_layer_overrides_rows_by_mob() {
             "avoid_water": true,
             "brain": [{"node": "wander", "priority": 0}]
         }]}"#;
-    let defs = parse_layers(&[&base(), layer]).expect("layered table loads");
+    let defs = parse_layers(&[&base(), layer]).expect("layered table loads").defs;
     assert_eq!(defs.len(), ENGINE_MOB_NAMES.len(), "an override adds no id");
     let owl = &defs[Mob::Owl.0 as usize];
     assert_eq!(owl.scale, 0.5);
     assert_eq!(owl.cap, 4);
     assert_eq!(owl.brain.len(), 1);
+}
+
+/// A pack layer's `brain_extensions` row appends nodes to a FOREIGN mob's
+/// brain without owning or restating the row (a scripted namespaced node key
+/// resolves like any brain row's, and may declare scripted `inputs`).
+/// Extensions are cross-pack injections, so their failure policy is
+/// DEGRADATION: an unloaded target or a factory-rejected node skips that one
+/// extension (with a warning naming the source layer) — it never fails the
+/// catalog, and it never touches the target row's own brain.
+#[test]
+fn brain_extensions_apply_as_a_side_table_and_bad_ones_degrade() {
+    let layer = r#"{"mobs": [], "brain_extensions": [
+            {"mob": "petramond:sheep", "brain": [{"node": "mymod:lure", "priority": 20, "inputs": ["player_held"]}]},
+            {"mob": "gone:species", "brain": [{"node": "wander"}]},
+            {"mob": "petramond:owl", "brain": [{"node": "chase_player", "params": {"radius": "not a number"}}]}
+        ]}"#;
+    let loaded = parse_layers(&[&base(), layer]).expect("extension layer loads");
+    assert_eq!(
+        loaded.defs.len(),
+        ENGINE_MOB_NAMES.len(),
+        "extending registers nothing"
+    );
+    let base_sheep_nodes = parse_layers(&[&base()]).unwrap().defs[Mob::Sheep.0 as usize]
+        .brain
+        .len();
+    assert_eq!(
+        loaded.defs[Mob::Sheep.0 as usize].brain.len(),
+        base_sheep_nodes,
+        "the target row's own brain stays its own"
+    );
+    assert_eq!(
+        loaded.extensions.len(),
+        1,
+        "the valid extension applies; the unloaded target and the factory-rejected one degrade"
+    );
+    let (target, nodes) = &loaded.extensions[0];
+    assert_eq!(*target, Mob::Sheep);
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].node, "mymod:lure");
+    assert_eq!(nodes[0].priority, 20);
 }
 
 #[test]
@@ -98,7 +140,7 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
                 {"node": "melee_attack", "priority": 30, "params": {"reach": 1.2, "damage": 2.0, "knockback": 5.0, "cooldown_ticks": 20}}
             ]
         }]}"#;
-    let defs = parse_layers(&[&base(), layer]).expect("dynamic row loads");
+    let defs = parse_layers(&[&base(), layer]).expect("dynamic row loads").defs;
     let engine = ENGINE_MOB_NAMES.len();
     assert_eq!(defs.len(), engine + 1, "a fresh id past the engine set");
     let z = &defs[engine];
@@ -131,35 +173,15 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
     let mob_pos = Vec3::new(2.5, 64.0, 2.5);
     let player = Vec3::new(3.7, 64.9, 2.5); // 1.2 blocks away: chase + melee range
     let players = [crate::mob::PlayerAnchor {
-        id: Default::default(),
         pos: player,
-        body: None,
-        sneaking: false,
+        ..Default::default()
     }];
-    let mut ctx = super::super::brain::AiCtx {
-        mob_id: 1,
-        pos: mob_pos,
-        cell: crate::mathh::voxel_at(mob_pos),
-        yaw: -std::f32::consts::FRAC_PI_2, // facing +X, toward the player
-        head_height: z.size.height,
-        half_width: z.size.half_width,
-        world: &world,
-        player_id: Default::default(),
-        player_pos: player,
-        player_sneaking: false,
-        players: &[],
-        noises: &[],
-        contacts: &[],
-        target: None,
-        attacker: None,
-        nav_idle: true,
-        in_water: false,
-        head: z.size.head_cells(),
-        idle_anims: &[],
-        mob_index: 0,
-        mobs: &[],
-        rng: &mut rng,
-    };
+    let mut ctx = crate::mob::behavior::test_support::ctx_at(&world, &mut rng, mob_pos);
+    ctx.yaw = -std::f32::consts::FRAC_PI_2; // facing +X, toward the player
+    ctx.head_height = z.size.height;
+    ctx.half_width = z.size.half_width;
+    ctx.player_pos = player;
+    ctx.head = z.size.head_cells();
     let decision = brain.decide(&mut ctx);
     assert_eq!(
         decision.goal,
@@ -202,7 +224,7 @@ fn mob_sound_hooks_resolve_registered_sound_keys() {
             ],
             "brain": []
         }]}"#;
-    let defs = parse_layers(&[&base(), layer]).expect("sound hooks load");
+    let defs = parse_layers(&[&base(), layer]).expect("sound hooks load").defs;
     let caller = defs
         .iter()
         .find(|d| d.name == "mymod:caller")
@@ -243,7 +265,7 @@ fn empty_damage_feedback_row_resolves_to_default_components() {
             "damage_feedback": [],
             "brain": []
         }]}"#;
-    let defs = parse_layers(&[&base(), layer]).expect("damage feedback row loads");
+    let defs = parse_layers(&[&base(), layer]).expect("damage feedback row loads").defs;
     let dummy = defs
         .iter()
         .find(|d| d.name == "mymod:dummy")
@@ -272,7 +294,7 @@ fn damage_feedback_components_parse_from_json_objects() {
             ],
             "brain": []
         }]}"#;
-    let defs = parse_layers(&[&base(), layer]).expect("damage feedback row loads");
+    let defs = parse_layers(&[&base(), layer]).expect("damage feedback row loads").defs;
     let dummy = defs
         .iter()
         .find(|d| d.name == "mymod:dummy")
@@ -523,10 +545,8 @@ fn dynamic_pack_mob_inner() {
             0.05,
             &world,
             &[crate::mob::PlayerAnchor {
-                id: Default::default(),
                 pos: near,
-                body: None,
-                sneaking: false,
+                ..Default::default()
             }],
             false,
         );
@@ -536,10 +556,8 @@ fn dynamic_pack_mob_inner() {
         0.05,
         &world,
         &[crate::mob::PlayerAnchor {
-            id: Default::default(),
             pos: far,
-            body: None,
-            sneaking: false,
+            ..Default::default()
         }],
         false,
     );

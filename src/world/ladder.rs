@@ -1,11 +1,12 @@
-//! Ladder state at the world level: world-coordinate access to the ladder's
-//! per-cell facing, its wall-support rule, and the climbable query the player
-//! physics samples.
+//! Ladder state at the world level: the wall-support rule and the climbable
+//! query the player physics samples.
 //!
-//! The facing lives in the section's shared entity-facing map (the chest/furnace
-//! front map), so persistence, replication, and the break-time sweep all come
-//! from the existing facing plumbing — this module only adds the world wrappers
-//! and the ladder-specific support rule. Mirrors [`world::torch`](super::torch).
+//! The facing needs no world-level accessor at all: which wall a ladder hangs
+//! on is block IDENTITY (one row per facing, `Block::panel_facing` — see
+//! `crate::ladder`), so persistence, replication, and the break sweep are the
+//! ordinary block-id lanes and callers read the facing off the block they
+//! already fetched. This module only adds the ladder-specific support rule and
+//! the physics probe. Mirrors [`world::torch`](super::torch).
 
 use crate::block::Block;
 use crate::facing::Facing;
@@ -14,16 +15,6 @@ use crate::mathh::IVec3;
 use super::store::World;
 
 impl World {
-    /// Which way the ladder at `pos` faces (its panel front, away from the wall
-    /// it hangs on), or the default if the cell has no recorded facing or its
-    /// chunk is unloaded.
-    pub fn ladder_facing(&self, pos: IVec3) -> Facing {
-        match self.chunk_at_world(pos.x, pos.y, pos.z) {
-            Some((c, lx, ly, lz)) => c.entity_facing(lx, ly, lz),
-            None => Facing::default(),
-        }
-    }
-
     /// Whether a ladder facing `facing` at `pos` has a usable wall behind it:
     /// the support cell's face toward the ladder must be a complete vertical
     /// face (opaque block, stair back, full slab side — the same rule as the
@@ -37,13 +28,13 @@ impl World {
     /// The climbable cell sample the player physics probes each sub-step: the
     /// facing of a climbable block at the cell, or `None` when the cell holds
     /// none (or its section is unloaded). One section lookup and a dense flag
-    /// read, so the probe costs what `water_cell_at` costs — no `def()` table
-    /// walk, no second map traversal for the facing.
+    /// read gate it — no `def()` table walk until the cell actually climbs;
+    /// the facing then comes off the row of the id already fetched, so no
+    /// second per-cell map traversal exists at all.
     pub fn climbable_facing_at(&self, x: i32, y: i32, z: i32) -> Option<Facing> {
         let (s, lx, ly, lz) = self.chunk_at_world(x, y, z)?;
-        Block::from_id(s.block_raw(lx, ly, lz))
-            .is_climbable()
-            .then(|| s.entity_facing(lx, ly, lz))
+        let block = Block::from_id(s.block_raw(lx, ly, lz));
+        block.is_climbable().then(|| block.panel_facing())
     }
 }
 
@@ -78,8 +69,7 @@ mod tests {
     fn a_placed_ladder_collides_as_its_facing_resolved_panel() {
         let mut w = world();
         let p = IVec3::new(8, 64, 8);
-        w.set_block_world(p.x, p.y, p.z, Block::Ladder);
-        w.insert_entity_facing(p, Facing::East);
+        w.set_block_world(p.x, p.y, p.z, Block::LadderEast);
         let boxes = w.collision_boxes_at(p.x, p.y, p.z);
         assert_eq!(boxes, crate::ladder::collision_boxes(Facing::East));
         // The panel is thin, standable geometry hugging the wall side — not a
@@ -91,14 +81,40 @@ mod tests {
     }
 
     #[test]
-    fn climbable_query_reads_the_placed_facing() {
+    fn a_committed_wall_panel_is_the_facing_row_and_no_block_entity() {
+        use crate::world::placement::{PlacementPlan, PlacementWrite};
+        let mut w = world();
+        let p = IVec3::new(8, 64, 8);
+        let wall = crate::ladder::support_cell(p, Facing::East);
+        w.set_block_world(wall.x, wall.y, wall.z, Block::Stone);
+        let plan = PlacementPlan {
+            anchor: p,
+            cells: vec![p],
+            write: PlacementWrite::WallPanel(Facing::East),
+        };
+        // The shared commit resolves the held (base) row to the facing sibling.
+        assert!(w.commit_placement(Block::Ladder, &plan, true));
+        assert_eq!(
+            Block::from_id(w.chunk_block(p.x, p.y, p.z)),
+            Block::LadderEast
+        );
+        // The point of facing-as-identity: a ladder-only section never
+        // classifies as a block-entity section (no per-tick furnace fan-out,
+        // no per-frame chest/door collection walks it).
+        assert!(
+            w.block_entity_sections.is_empty(),
+            "a ladder must not index its section as a block-entity section"
+        );
+    }
+
+    #[test]
+    fn climbable_query_reads_the_facing_row() {
         let mut w = world();
         let p = IVec3::new(8, 64, 8);
         assert_eq!(w.climbable_facing_at(p.x, p.y, p.z), None);
-        w.set_block_world(p.x, p.y, p.z, Block::Ladder);
-        w.insert_entity_facing(p, Facing::South);
+        w.set_block_world(p.x, p.y, p.z, Block::LadderSouth);
         assert_eq!(w.climbable_facing_at(p.x, p.y, p.z), Some(Facing::South));
-        // A non-climbable block never answers, whatever facing the cell holds.
+        // A non-climbable block never answers.
         w.set_block_world(p.x, p.y, p.z, Block::Stone);
         assert_eq!(w.climbable_facing_at(p.x, p.y, p.z), None);
     }

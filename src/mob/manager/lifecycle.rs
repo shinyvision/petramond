@@ -15,13 +15,15 @@ impl Mobs {
     /// Spawn a mob of `kind` at `pos` (feet) facing `yaw`. Returns `false` if the
     /// mob cap is reached (the spawn is dropped).
     pub fn spawn(&mut self, kind: Mob, pos: Vec3, yaw: f32) -> bool {
-        self.spawn_lit(kind, pos, yaw, 63, 0)
+        self.spawn_lit(kind, pos, yaw, 63, 0).is_some()
     }
 
     /// Spawn a mob with its render light initialized for the first presentation
     /// frame. Use this from world-owned spawn paths where the spawn cell's light
     /// is already available; otherwise a cave spawn can render full-bright until
-    /// the next mob tick refreshes cached light.
+    /// the next mob tick refreshes cached light. Returns the newborn's stable
+    /// session id (the mob's one mod-facing address), or `None` when the mob
+    /// cap dropped the spawn.
     pub fn spawn_lit(
         &mut self,
         kind: Mob,
@@ -29,16 +31,17 @@ impl Mobs {
         yaw: f32,
         skylight: u8,
         blocklight: u8,
-    ) -> bool {
+    ) -> Option<u64> {
         if self.list.len() >= MAX_MOBS {
-            return false;
+            return None;
         }
         self.spawn_counter = self.spawn_counter.wrapping_add(1);
         let mut mob = Instance::new(kind, pos, yaw, self.spawn_counter);
         mob.skylight = skylight;
         mob.blocklight = blocklight;
+        let id = mob.id();
         self.list.push(mob);
-        true
+        Some(id)
     }
 
     /// Remaining room for `kind` under its species and category spawn caps.
@@ -48,8 +51,8 @@ impl Mobs {
 
     /// Run one natural-spawn step: a single spawn attempt at a random loaded position.
     /// Called once per game tick by `Game`, after [`tick`](Self::tick). Returns the
-    /// spawns actually performed (kind + feet position), for the caller to report as
-    /// `mob_spawned` events.
+    /// spawns actually performed (stable id + kind + feet position), for the caller
+    /// to report as `mob_spawned` events.
     ///
     /// Mobs that leave the loaded area are no longer dropped here — they are saved into
     /// their chunk as it unloads (see [`take_in_chunk`](Self::take_in_chunk)) and reload
@@ -58,7 +61,7 @@ impl Mobs {
     /// the spawn-relevant area is actually loaded. While saved records within the
     /// nine-chunk census neighborhood are still streaming back in, the attempt holds
     /// off, or every join would refill the caps before those nearby mobs restore.
-    pub fn spawn_tick(&mut self, world: &World, player_pos: Vec3) -> Vec<(Mob, Vec3)> {
+    pub fn spawn_tick(&mut self, world: &World, player_pos: Vec3) -> Vec<(u64, Mob, Vec3)> {
         // Disjoint borrows: the room test reads the live list, the picker draws `rng`.
         let list = &self.list;
         let chosen = spawn::attempt(world, player_pos, &mut self.rng, |kind| {
@@ -70,8 +73,8 @@ impl Mobs {
                 let c = crate::mathh::voxel_at(s.pos + Vec3::new(0.0, 0.3, 0.0));
                 let sky = world.skylight6_at_world(c.x, c.y, c.z);
                 let block = world.blocklight6_at_world(c.x, c.y, c.z);
-                if self.spawn_lit(s.kind, s.pos, s.yaw, sky, block) {
-                    spawned.push((s.kind, s.pos));
+                if let Some(id) = self.spawn_lit(s.kind, s.pos, s.yaw, sky, block) {
+                    spawned.push((id, s.kind, s.pos));
                 }
             }
         }
@@ -89,7 +92,7 @@ impl Mobs {
         &mut self,
         world: &World,
         player_pos: Vec3,
-    ) -> (Vec<(Mob, Vec3)>, Vec<ChunkPos>) {
+    ) -> (Vec<(u64, Mob, Vec3)>, Vec<ChunkPos>) {
         let herds = populate::attempt(world, player_pos, &mut self.populate_checked);
         let mut spawned = Vec::new();
         let mut populated = Vec::new();
@@ -99,8 +102,8 @@ impl Mobs {
                 let c = voxel_at(s.pos + Vec3::new(0.0, 0.3, 0.0));
                 let sky = world.skylight6_at_world(c.x, c.y, c.z);
                 let block = world.blocklight6_at_world(c.x, c.y, c.z);
-                if self.spawn_lit(s.kind, s.pos, s.yaw, sky, block) {
-                    spawned.push((s.kind, s.pos));
+                if let Some(id) = self.spawn_lit(s.kind, s.pos, s.yaw, sky, block) {
+                    spawned.push((id, s.kind, s.pos));
                     any = true;
                 }
             }
@@ -161,7 +164,7 @@ impl Mobs {
     }
 
     pub(crate) fn restore_saved_mob_lit(&mut self, m: SavedMob, skylight: u8, blocklight: u8) {
-        if self.spawn_lit(m.kind, m.pos, m.yaw, skylight, blocklight) {
+        if self.spawn_lit(m.kind, m.pos, m.yaw, skylight, blocklight).is_some() {
             if let Some(inst) = self.list.last_mut() {
                 inst.set_shear_regrow(m.shear_regrow);
                 *inst.mod_kv_mut() = m.kv;

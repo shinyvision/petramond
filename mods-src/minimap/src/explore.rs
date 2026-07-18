@@ -22,8 +22,8 @@ pub(crate) const SAMPLE_RADIUS: i32 = 96;
 pub(crate) const SAMPLE_STEP: i32 = 8;
 const BASE_PREFIX: &str = "minimap:r:";
 const MIP_PREFIX: &str = "minimap:m:";
-/// Resident-region caps (a base region ≈ 25 KB of cells). Eviction defers
-/// while the full map is open; see `trim_caches`.
+/// Resident-region caps (a base region ≈ 25 KB of cells), enforced by the
+/// map-open-aware trim in `pump_store`.
 const BASE_REGION_CACHE_MAX: usize = 448;
 const MIP_REGION_CACHE_MAX: usize = 448;
 const REGION_CACHE_SLACK: usize = 16;
@@ -537,10 +537,11 @@ impl TileStore {
         codec::encode_region(&members)
     }
 
-    /// Region-granular LRU trim, deferred while the full map is open (its
-    /// visible working set legitimately exceeds the caps when zoomed out).
-    /// Regions with unflushed members are skipped; they trim after their
-    /// next flush.
+    /// Region-granular LRU trim. `protect` exempts the live working sets
+    /// (the sampling neighborhood, and the open full map's visible+prefetch
+    /// rect) — the caps may be exceeded by however much `protect` covers,
+    /// but never by unprotected leftovers. Regions with unflushed members
+    /// are skipped; they trim after their next flush.
     pub(crate) fn trim_caches(&mut self, protect: impl Fn(RegionKind, (i32, i32)) -> bool) {
         for kind in [RegionKind::Base, RegionKind::Mip] {
             let (cap, regions) = match kind {
@@ -701,28 +702,37 @@ impl Minimap {
     }
 
     /// The once-per-frame store heartbeat: poll/issue async loads, repaint
-    /// whatever arrived, and (with the map closed) trim the caches.
+    /// whatever arrived, and trim the caches. Trimming runs with the full
+    /// map OPEN too — its visible+prefetch rect is protected instead of
+    /// deferring eviction wholesale, which let a long browse of a large
+    /// explored world grow the caches to the 64 MiB wasm cap and OOM-abort
+    /// the mod (2026-07-17).
     pub(crate) fn pump_store(&mut self) {
         for arrival in self.store.pump_loads() {
             if arrival.had_data {
                 self.mark_full_tiles_dirty(region_block_rect(arrival.kind, arrival.coord));
             }
         }
-        if self.open_canvas.as_deref() != Some(FULL_CANVAS) {
-            let sample_center = self.last_sample.unwrap_or((
-                self.player[0].floor() as i32,
-                self.player[2].floor() as i32,
-            ));
-            self.store.trim_caches(|kind, region| {
-                // Protect the live sampling neighborhood.
-                let rect = region_block_rect(kind, region);
-                let pad = SAMPLE_RADIUS + 16;
-                rect[2] > sample_center.0 - pad
-                    && rect[0] < sample_center.0 + pad
-                    && rect[3] > sample_center.1 - pad
-                    && rect[1] < sample_center.1 + pad
-            });
-        }
+        let sample_center = self.last_sample.unwrap_or((
+            self.player[0].floor() as i32,
+            self.player[2].floor() as i32,
+        ));
+        let view = (self.open_canvas.as_deref() == Some(FULL_CANVAS))
+            .then(|| self.full_view_world_rect());
+        self.store.trim_caches(|kind, region| {
+            let rect = region_block_rect(kind, region);
+            // The live sampling neighborhood…
+            let pad = SAMPLE_RADIUS + 16;
+            let sampled = rect[2] > sample_center.0 - pad
+                && rect[0] < sample_center.0 + pad
+                && rect[3] > sample_center.1 - pad
+                && rect[1] < sample_center.1 + pad;
+            // …and, while the map is open, everything it shows or prefetches.
+            sampled
+                || view.is_some_and(|v| {
+                    rect[2] > v[0] && rect[0] < v[2] && rect[3] > v[1] && rect[1] < v[3]
+                })
+        });
     }
 }
 
@@ -860,6 +870,30 @@ mod tests {
                 assert!(store.tiles.contains_key(&member));
             }
         }
+    }
+
+    /// With the full map OPEN, far-away regions must still trim — only the
+    /// map's visible+prefetch rect and the sampling neighborhood are
+    /// protected (the map-open trim in `pump_store`).
+    #[test]
+    fn an_open_full_map_trims_out_of_view_regions() {
+        let mut mm = crate::Minimap::default();
+        mm.open_canvas = Some(FULL_CANVAS.to_string());
+        // Player + pan at the origin: the view rect hugs (0, 0).
+        mm.store.materialize_region(RegionKind::Base, (0, 0));
+        for i in 0..(BASE_REGION_CACHE_MAX + REGION_CACHE_SLACK) as i32 + 8 {
+            mm.store.materialize_region(RegionKind::Base, (1000 + i, 500));
+        }
+        mm.pump_store();
+        assert!(
+            mm.store.region_resident(RegionKind::Base, (0, 0)),
+            "the viewport's region survives the trim"
+        );
+        assert!(
+            mm.store.base_regions.len() <= BASE_REGION_CACHE_MAX + 4,
+            "far regions trim while the map is open, got {}",
+            mm.store.base_regions.len()
+        );
     }
 
     #[test]

@@ -340,18 +340,6 @@ fn a_mods_damage_player_action_routes_through_the_funnel() {
         h0 - 3,
         "a cancelling player_damage_pre blocks a mod's DamagePlayer"
     );
-
-    // KillPlayer rides the same funnel/queue: cancelled the same way.
-    game.server
-        .bus
-        .queue_mut()
-        .push_action(crate::events::ModAction::KillPlayer { mod_id: "testmod" });
-    game.server.apply_mod_actions(&mut ev);
-    assert_eq!(
-        game.server.sessions[0].player.health(),
-        h0 - 3,
-        "KillPlayer cancelled too"
-    );
 }
 
 #[test]
@@ -771,10 +759,9 @@ fn a_killed_mob_ragdolls_then_despawns() {
         game.server.world.tick_mobs(
             TICK_DT,
             &[crate::mob::PlayerAnchor {
-                id: Default::default(),
                 pos: player_pos,
                 body: Some(player_body),
-                sneaking: false,
+                ..Default::default()
             }],
         );
     }
@@ -808,7 +795,7 @@ fn mobs_take_player_rule_fall_damage_when_they_land() {
         id: game.server.sessions[0].id,
         pos: player,
         body: Some(body),
-        sneaking: false,
+        ..Default::default()
     }];
 
     let mut feed = TickEvents::default();

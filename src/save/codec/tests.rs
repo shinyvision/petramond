@@ -174,6 +174,36 @@ fn section_record_roundtrips_furnaces() {
 }
 
 #[test]
+fn decode_drops_facing_records_on_non_block_entity_cells() {
+    // A record written while ladder facing still lived in the entity-facing
+    // list (facing is a block ROW since the conversion): decode keeps the
+    // ladder id it names but drops the stale facing entry — otherwise a
+    // ladder-only section would re-classify as a block-entity section and
+    // re-enter the furnace/chest fan-out forever.
+    let mut s = sec(0, 4, 0);
+    s.set_block(3, 3, 3, Block::Ladder);
+    s.insert_entity_facing(3, 3, 3, crate::facing::Facing::East);
+    s.set_block(5, 3, 3, Block::Chest);
+    s.insert_entity_facing(5, 3, 3, crate::facing::Facing::South);
+
+    let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
+    let (back, _entities, _mobs) =
+        decode_section(SectionPos::new(0, 4, 0), &blob).expect("decodes");
+
+    assert_eq!(back.block_raw(3, 3, 3), Block::Ladder.id());
+    assert_eq!(
+        back.entity_facings().len(),
+        1,
+        "the ladder's stale facing entry is dropped"
+    );
+    assert_eq!(
+        back.entity_facing(5, 3, 3),
+        crate::facing::Facing::South,
+        "genuine chest fronts persist"
+    );
+}
+
+#[test]
 fn section_record_roundtrips_chests() {
     let mut s = sec(4, 4, -2);
     s.set_block(9, 2, 1, Block::Chest);
@@ -257,27 +287,6 @@ fn section_record_roundtrips_model_cells() {
     );
     // The origin cell stores no offset and reads the [0,0,0] default.
     assert_eq!(back.model_offset(5, 0, 5), [0, 0, 0]);
-}
-
-#[test]
-fn section_record_roundtrips_sapling_stages() {
-    // A half-grown sapling must reload at the stage it reached. The stage is set
-    // AFTER the block (set_block clears it).
-    let mut s = sec(5, 4, -1);
-    s.set_block(2, 0, 3, Block::OakSapling);
-    s.set_sapling_stage(2, 0, 3, 2);
-    s.set_block(7, 6, 1, Block::BirchSapling);
-    s.set_sapling_stage(7, 6, 1, 1);
-
-    let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
-    let (back, _entities, _mobs) =
-        decode_section(SectionPos::new(5, 4, -1), &blob).expect("decodes");
-
-    assert_eq!(back.block_raw(2, 0, 3), Block::OakSapling.id());
-    assert_eq!(back.sapling_stage(2, 0, 3), 2, "oak stage persists");
-    assert_eq!(back.sapling_stage(7, 6, 1), 1, "birch stage persists");
-    // A cell with no recorded stage reads 0.
-    assert_eq!(back.sapling_stage(0, 0, 0), 0);
 }
 
 #[test]

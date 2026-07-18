@@ -153,30 +153,12 @@ mod tests {
         mobs: &'a [AiMob],
         attacker: Option<(EntityRef, u32)>,
     ) -> AiCtx<'a> {
-        AiCtx {
-            mob_id: 1,
-            pos,
-            cell: crate::mathh::voxel_at(pos),
-            yaw: 0.0,
-            head_height: 0.7,
-            half_width: 0.22,
-            world,
-            player_id: Default::default(),
-            player_pos: crate::mathh::Vec3::ZERO,
-            player_sneaking: false,
-            players,
-            noises: &[],
-            contacts: &[],
-            target: None,
-            attacker,
-            nav_idle: true,
-            in_water: false,
-            head: 1,
-            idle_anims: &[],
-            mob_index: 0,
-            mobs,
-            rng,
-        }
+        let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
+        c.half_width = 0.22;
+        c.players = players;
+        c.mobs = mobs;
+        c.attacker = attacker;
+        c
     }
 
     #[test]
@@ -234,8 +216,8 @@ mod tests {
         let players = [PlayerAnchor {
             id: PlayerId(7),
             pos: Vec3::new(9.5, 64.9, 2.5),
-            body: None,
             sneaking: true, // sneaking does not hide an attacker from their victim
+            ..Default::default()
         }];
         let grudge = Some((EntityRef::Player(PlayerId(7)), 3));
         let out = ai.tick(&mut ctx(&world, &mut rng, mob, &players, &[], grudge));

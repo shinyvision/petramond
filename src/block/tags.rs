@@ -30,6 +30,8 @@ static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
     "snow_cover",
     "slippery",
     "melts",
+    "sapling",
+    "bed",
 ]);
 
 impl BlockTag {
@@ -107,6 +109,24 @@ impl BlockTag {
     /// [`Block::break_residue`]), so mining the frozen sea never leaves a dry
     /// pocket the water sim cannot refill.
     pub const MELTS: BlockTag = BlockTag(15);
+    /// A planted tree-to-be — every growth-stage row of the sapling behaviour
+    /// (stages are distinct block rows chained by `next_stage`; the final row
+    /// carries `grows_into`). Tag and behaviour are ONE membership: the loader
+    /// errors on any row carrying one without the other (see `load::convert`),
+    /// so what mods enumerate through `BlocksByTag` and what actually grows can
+    /// never diverge. Consumers: the farming pack's fertilizer boost, and its
+    /// vegetation spread's sapling exclusion.
+    pub const SAPLING: BlockTag = BlockTag(16);
+    /// A bed — the block the server's bed-spawn bookkeeping recognises: a
+    /// sleep interaction on it SETS the player's spawn point, respawn verifies
+    /// the bed still stands, and breaking it clears the spawn. This is the
+    /// IDENTITY axis; the sleep flow itself dispatches on the row's
+    /// `interaction: "sleep"` capability, so a pack block may be sleepable
+    /// without being a spawn-anchoring bed. The loader requires every
+    /// `bed`-tagged row to be a sleepable model block (see `load::convert`) —
+    /// the bookkeeping resolves the bed through its model group, and a spawn
+    /// is only ever set by a sleep click.
+    pub const BED: BlockTag = BlockTag(17);
 
     /// Resolve a `blocks.json` row tag name (see [`crate::registry::TagTable`]).
     pub(crate) fn resolve(name: &str) -> Result<BlockTag, String> {

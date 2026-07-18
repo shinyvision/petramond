@@ -48,7 +48,7 @@ pub fn hurt_flash01(prev: f32, curr: f32, alpha: f32) -> f32 {
 /// eligible for *random* despawn each tick — the churn that recycles far unseen
 /// hostiles (deep cave spawns) so the population cap keeps freeing room for new
 /// spawns near the player. Inside this distance only the hard radius applies.
-const RANDOM_DESPAWN_MIN_DIST: f32 = 32.0;
+const RANDOM_DESPAWN_MIN_DIST: f32 = super::PLAYER_REACTIVE_RANGE;
 /// Per-tick random-despawn chance once eligible: ~40 s expected lifetime at 20 TPS.
 const RANDOM_DESPAWN_CHANCE: f32 = 1.0 / 800.0;
 
@@ -462,6 +462,7 @@ impl Instance {
                 player_id: anchor.id,
                 player_pos,
                 player_sneaking: anchor.sneaking,
+                player_held: anchor.held,
                 players: inputs.players,
                 noises: inputs.noises,
                 contacts: &self.contacts,

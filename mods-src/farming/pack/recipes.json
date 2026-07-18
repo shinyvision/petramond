@@ -69,6 +69,27 @@
       "class": "kitchen:milling",
       "ingredient": "farming:wheat",
       "result": "farming:flour"
+    },
+    {
+      "type": "crafting",
+      "recipe": "farming:compost_barrel",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "tag": "petramond:planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "farming:compost_barrel",
+        "count": 1
+      }
+    },
+    {
+      "type": "processing",
+      "class": "kitchen:cooking",
+      "ingredient": "farming:potato",
+      "result": "farming:baked_potato"
     }
   ]
 }

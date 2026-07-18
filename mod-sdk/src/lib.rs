@@ -24,6 +24,7 @@ mod entities;
 mod gui;
 mod kv;
 mod player;
+mod registry;
 mod sounds;
 mod world;
 mod worldgen;
@@ -39,6 +40,7 @@ pub use entities::*;
 pub use gui::*;
 pub use kv::*;
 pub use player::*;
+pub use registry::*;
 pub use sounds::*;
 pub use world::*;
 pub use worldgen::*;
@@ -70,7 +72,10 @@ pub trait Mod: Default {
 
     /// An event the mod registered for. For pre events the payload is echoed
     /// back mutated — the engine applies the taxonomy's mutable fields (e.g.
-    /// damage `amount`) — and the returned [`Outcome`] can cancel; post events
+    /// damage `amount`) — and the returned [`Outcome`] can cancel; the first
+    /// Cancel ends the dispatch, so a pre handler that runs always sees a
+    /// LIVE event (never one another handler already consumed — safe to
+    /// `consume_held`/`set_block` without a cancelled check). Post events
     /// are observe-only (the outcome is ignored).
     fn handle_event(&mut self, _handler_id: u32, _payload: &mut EventPayload) -> Outcome {
         Outcome::Continue
@@ -141,9 +146,13 @@ pub trait Mod: Default {
 
     /// One AI decision for one mob this tick, for a brain-row `node` key this
     /// mod registered via [`register_ai_node`]. DECISION-ONLY: the dispatch
-    /// runs mid-mob-tick with no simulation scope, so sim host calls error
-    /// here (RNG/log/tick work). Return `None` (or default fields) for "no
-    /// opinion"; the engine merges by the brain row's priority.
+    /// runs mid-mob-tick with no simulation scope, so sim host calls (world
+    /// edits, spawns, player state) error here; the core calls —
+    /// [`current_tick`], [`rng_u64`], [`log`] — work, and `ctx.tick` already
+    /// carries the tick without a host call. Facts beyond the baseline reach
+    /// `ctx` only when the brain row declares them (`"inputs"` — see
+    /// [`AiNodeCtx`]). Return `None` (or default fields) for "no opinion";
+    /// the engine merges by the brain row's priority.
     fn ai_node(&mut self, _callback_id: u32, _ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
         None
     }

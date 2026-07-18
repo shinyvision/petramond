@@ -143,15 +143,7 @@ pub struct EngineTiles {
     /// mesher (or the out-of-world item renderer) meets `grass_side`.
     pub grass_side: Tile,
     pub grass_side_overlay: Tile,
-    /// Untinted snowy grass side, swapped in for the compositing set wherever
-    /// a snow-cover block sits directly on the grass (see the mesher).
-    pub grass_snow: Tile,
     pub dirt: Tile,
-    /// Furnace faces: the mesher swaps `furnace_front` / `furnace_front_on` by
-    /// the block-entity's lit state and emits `furnace_side` around it.
-    pub furnace_side: Tile,
-    pub furnace_front: Tile,
-    pub furnace_front_on: Tile,
     /// The custom inset chest model's face set (see `render::chest_model`).
     pub chest_top: Tile,
     pub chest_front: Tile,
@@ -400,11 +392,7 @@ fn build(manifests: &[&str]) -> Result<AtlasData, String> {
         water_flow: need("water_flow")?,
         grass_side: need("grass_side")?,
         grass_side_overlay: need("grass_side_overlay")?,
-        grass_snow: need("grass_snow")?,
         dirt: need("dirt")?,
-        furnace_side: need("furnace_side")?,
-        furnace_front: need("furnace_front")?,
-        furnace_front_on: need("furnace_front_on")?,
         chest_top: need("chest_top")?,
         chest_front: need("chest_front")?,
         chest_side: need("chest_side")?,

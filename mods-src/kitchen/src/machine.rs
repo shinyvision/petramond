@@ -215,31 +215,32 @@ pub struct Caches {
 }
 
 impl Caches {
-    pub fn fuel_ticks_for(&mut self, key: &str) -> u32 {
-        if let Some(&t) = self.fuel_ticks.get(key) {
+    pub fn fuel_ticks_for(&mut self, item: &str) -> u32 {
+        if let Some(&t) = self.fuel_ticks.get(item) {
             return t;
         }
-        let t = item_info(key).map(|i| i.fuel_burn_ticks).unwrap_or(0);
-        self.fuel_ticks.insert(key.to_owned(), t);
+        let t = item_info(item).map(|i| i.fuel_burn_ticks).unwrap_or(0);
+        self.fuel_ticks.insert(item.to_owned(), t);
         t
     }
 
-    pub fn max_stack_for(&mut self, key: &str) -> u8 {
-        if let Some(&m) = self.max_stack.get(key) {
+    pub fn max_stack_for(&mut self, item: &str) -> u8 {
+        if let Some(&m) = self.max_stack.get(item) {
             return m;
         }
-        let m = item_info(key).map(|i| i.max_stack).unwrap_or(64);
-        self.max_stack.insert(key.to_owned(), m);
+        let m = item_info(item).map(|i| i.max_stack).unwrap_or(64);
+        self.max_stack.insert(item.to_owned(), m);
         m
     }
 
-    /// The loaded `class` recipe result for `key`, or `None` for no recipe.
-    pub fn recipe_for(&mut self, class: &'static str, key: &str) -> Option<ItemStackData> {
-        if let Some(cached) = self.recipes.get(&(class, key.to_owned())) {
+    /// The loaded `class` recipe result for input `item` (registry name), or
+    /// `None` for no recipe.
+    pub fn recipe_for(&mut self, class: &'static str, item: &str) -> Option<ItemStackData> {
+        if let Some(cached) = self.recipes.get(&(class, item.to_owned())) {
             return cached.clone();
         }
-        let result = recipe_result(class, key);
-        self.recipes.insert((class, key.to_owned()), result.clone());
+        let result = recipe_result(class, item);
+        self.recipes.insert((class, item.to_owned()), result.clone());
         result
     }
 }
@@ -256,8 +257,8 @@ pub fn output_accepts(
         // Saturating: a stack saved above a row's (since lowered) cap must
         // read as "no headroom", not wrap around.
         Some(o) => {
-            o.key == result.key
-                && caches.max_stack_for(&o.key).saturating_sub(o.count) >= result.count
+            o.item == result.item
+                && caches.max_stack_for(&o.item).saturating_sub(o.count) >= result.count
         }
     }
 }
@@ -268,7 +269,7 @@ pub fn merge_output(output: &mut Option<ItemStackData>, result: &ItemStackData) 
     *output = Some(match output.take() {
         None => result.clone(),
         Some(o) => ItemStackData {
-            key: o.key,
+            item: o.item,
             count: o.count + result.count,
         },
     });
@@ -278,7 +279,7 @@ pub fn merge_output(output: &mut Option<ItemStackData>, result: &ItemStackData) 
 pub fn consume_one(slot: &mut Option<ItemStackData>) {
     if let Some(s) = slot.take() {
         *slot = (s.count > 1).then(|| ItemStackData {
-            key: s.key,
+            item: s.item,
             count: s.count - 1,
         });
     }

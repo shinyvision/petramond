@@ -659,8 +659,8 @@ fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
     let slab_state = game.replica.slab_state_if_slab(block);
     let pane_mask =
         (block_type.render_shape() == RenderShape::Pane).then(|| game.replica.pane_mask_at(block));
-    let ladder_facing = (block_type.render_shape() == RenderShape::Ladder)
-        .then(|| game.replica.ladder_facing(block));
+    let ladder_facing =
+        (block_type.render_shape() == RenderShape::Ladder).then(|| block_type.panel_facing());
     BreakOverlayView {
         block,
         visual_box: if model.is_some()

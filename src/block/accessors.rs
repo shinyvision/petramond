@@ -1,5 +1,6 @@
 use crate::atlas::Tile;
 use crate::audio::Sound;
+use crate::facing::Facing;
 use crate::item::{DropSpec, ItemType, ToolKind};
 
 use super::{
@@ -232,6 +233,21 @@ impl Block {
         self.def().interaction
     }
 
+    /// The next growth stage of a sapling stage row (`None` = not a sapling,
+    /// or already the final stage). Growth stages are ordinary block rows; the
+    /// sapling behaviour advances a cell by swapping it to this block.
+    #[inline]
+    pub fn next_stage(self) -> Option<Block> {
+        self.def().next_stage
+    }
+
+    /// The weighted `(features.json key, weight)` tree choices a FINAL sapling
+    /// stage grows into (validated at load); empty on every other row.
+    #[inline]
+    pub fn grows_into(self) -> &'static [(&'static str, f32)] {
+        self.def().grows_into
+    }
+
     /// Whether this block receives random ticks — a shortcut for
     /// `self.behavior().has_random_tick()`, read by the per-section random-tick gate
     /// and the dispatch in `world::tick`.
@@ -278,16 +294,39 @@ impl Block {
         data::flags(self.id()).is_translucent()
     }
 
-    /// Block-light this block radiates when ACTIVE, on the SAME x2 integer scale the
+    /// Block-light this block radiates, on the SAME x2 integer scale the
     /// skylight flood-fill uses (`SKY_FULL` = 30 = full daylight = level 15). `0` for
-    /// non-emitters. A torch is always active at level 14 (`28` on the x2 scale):
-    /// bright enough to light a cave, but one notch under open daylight so a lit cell
-    /// still reads as "indoors" and takes the warm block-light tint. A furnace shares
-    /// that level but only while it is LIT — that state lives in its block-entity, not
-    /// the block id, so the flood seeds furnaces only in their lit state.
+    /// non-emitters. A torch is level 14 (`28` on the x2 scale): bright enough to
+    /// light a cave, but one notch under open daylight so a lit cell still reads as
+    /// "indoors" and takes the warm block-light tint. Emission is pure row data —
+    /// a stateful emitter (the furnace) is two rows, with the emission on the lit
+    /// one, and "turning on" is a row swap. The light flood's emitter scan reads
+    /// this per cell, so it goes through the dense per-id table.
     #[inline]
     pub fn light_emission(self) -> u8 {
-        self.def().emission
+        data::emission(self.id())
+    }
+
+    /// The tile drawn on the horizontal face this block's placed entity facing
+    /// points to (the furnace/chest front); `None` = uniform sides. Row data,
+    /// only present with the `directional_view` flag.
+    #[inline]
+    pub(crate) fn front_tile(self) -> Option<Tile> {
+        self.def().front
+    }
+
+    /// This block's composited side face (`base` + tinted `overlay` — grass),
+    /// or `None` for the ordinary single side tile.
+    #[inline]
+    pub(crate) fn side_overlay(self) -> Option<definition::SideOverlay> {
+        self.def().side_overlay
+    }
+
+    /// The side tile swapped in while a `snow_cover` block sits directly above
+    /// (snowy grass sides); `None` = sides never change with cover.
+    #[inline]
+    pub(crate) fn covered_side(self) -> Option<Tile> {
+        self.def().covered_side
     }
 
     /// Optional visual-only particle emitter rows declared on this block's data
@@ -331,6 +370,30 @@ impl Block {
     #[inline]
     pub fn is_climbable(self) -> bool {
         data::flags(self.id()).is_climbable()
+    }
+
+    /// A ladder-shaped row's wall facing — the direction its panel front
+    /// points, away from the supporting wall. Facing is block IDENTITY (one
+    /// row per facing, like sapling stages), so the mesher, the panel
+    /// collision/targeting, and the climb probe all read it off the row of
+    /// the id they already fetched — no per-cell state anywhere. The default
+    /// on rows that declare none (climbable non-panel rows, e.g. a future
+    /// vine) is [`Facing::North`].
+    #[inline]
+    pub fn panel_facing(self) -> Facing {
+        self.def().panel_facing.unwrap_or_default()
+    }
+
+    /// The sibling row of a wall-panel family that faces `facing`, via the
+    /// placeable row's load-validated `facing_rows` map — what the shared
+    /// placement commit writes for a `WallPanel` plan. A row without the map
+    /// (a facing variant, or a single-facing pack row) places as itself.
+    #[inline]
+    pub(crate) fn wall_panel_row(self, facing: Facing) -> Block {
+        match self.def().facing_rows {
+            Some(rows) => rows[facing.to_u8() as usize],
+            None => self,
+        }
     }
 
     /// Whether a body standing on this block glides (see [`BlockTag::SLIPPERY`]

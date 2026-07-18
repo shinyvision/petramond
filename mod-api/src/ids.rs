@@ -22,6 +22,23 @@ impl BlockId {
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ItemId(pub u8);
 
-/// A runtime mob species id — same contract as [`BlockId`].
+/// A runtime mob SPECIES id — same contract as [`BlockId`]. This identifies a
+/// kind (`"petramond:sheep"`), never a live instance; live mobs are addressed
+/// by their stable `u64` session id ([`MobSnapshot::id`]). Bridge species key
+/// strings and ids with [`HostCall::ResolveMob`] / [`HostCall::MobNames`].
+///
+/// [`MobSnapshot::id`]: crate::MobSnapshot::id
+/// [`HostCall::ResolveMob`]: crate::HostCall::ResolveMob
+/// [`HostCall::MobNames`]: crate::HostCall::MobNames
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MobId(pub u8);
+
+/// A connected session's player id — the one vocabulary for every ABI field
+/// naming a player (per-player calls like [`HostCall::PlayerInput`] /
+/// [`HostCall::MobMount`], rider lists, event payloads, damage sources).
+/// Session-scoped like every runtime id: never persist it.
+///
+/// [`HostCall::PlayerInput`]: crate::HostCall::PlayerInput
+/// [`HostCall::MobMount`]: crate::HostCall::MobMount
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PlayerId(pub u8);

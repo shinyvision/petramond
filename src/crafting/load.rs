@@ -280,11 +280,7 @@ fn validate_recipe_owner(key: &str, owner: Option<&str>) -> Result<(), String> {
 }
 
 fn resolve_item(key: &str) -> Result<ItemType, String> {
-    ItemType::all()
-        .iter()
-        .copied()
-        .find(|item| item.key() == key)
-        .ok_or_else(|| format!("unknown item '{key}'"))
+    ItemType::by_key(key).ok_or_else(|| format!("unknown item '{key}'"))
 }
 
 fn validate_stack_count(item: ItemType, count: u8, what: &str) -> Result<(), String> {

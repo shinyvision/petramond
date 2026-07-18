@@ -90,11 +90,12 @@ pub(super) fn assemble_blocks(snapshot: &Snapshot, out: &mut [u8]) {
     }
 }
 
-/// Collect every block-light emitter in `pos`'s 3x3x3 section neighbourhood.
+/// Collect every block-light emitter in `pos`'s 3x3x3 section neighbourhood,
+/// as `(cell, emission)` seeds for the flood.
 pub(super) fn collect_emitters(
     pos: SectionPos,
     sections: &FxHashMap<SectionPos, Arc<Section>>,
-) -> Vec<IVec3> {
+) -> Vec<(IVec3, u8)> {
     let mut emitters = Vec::new();
     for dcy in -1..=1 {
         for dcz in -1..=1 {
@@ -109,21 +110,29 @@ pub(super) fn collect_emitters(
     emitters
 }
 
-pub(super) fn collect_section_emitters(pos: SectionPos, section: &Section, out: &mut Vec<IVec3>) {
+/// Emitters are pure block-row data: any cell whose block declares
+/// `emission > 0` seeds the flood at that level (torches, the LIT furnace row,
+/// pack glow blocks) — no per-block-kind state map is consulted. The
+/// per-section `light_emitter_count` gate keeps this scan off the (vastly
+/// common) emitter-free sections, and the per-cell read goes through the dense
+/// per-id emission table.
+pub(super) fn collect_section_emitters(
+    pos: SectionPos,
+    section: &Section,
+    out: &mut Vec<(IVec3, u8)>,
+) {
+    if !section.has_light_emitters() {
+        return;
+    }
     let (ox, oy, oz) = pos.origin_world();
-    let world_of = |key: u16| {
-        IVec3::new(
-            ox + (key & 0x0F) as i32,
-            oy + (key >> 8) as i32,
-            oz + ((key >> 4) & 0x0F) as i32,
-        )
-    };
-    out.extend(section.torches().keys().map(|&k| world_of(k)));
-    out.extend(
-        section
-            .furnaces()
-            .iter()
-            .filter(|(_, f)| f.is_lit())
-            .map(|(&k, _)| world_of(k)),
-    );
+    for (idx, &id) in section.blocks_slice().iter().enumerate() {
+        let emission = crate::block::Block::from_id(id).light_emission();
+        if emission > 0 {
+            let (lx, ly, lz) = crate::chunk::section_local(idx);
+            out.push((
+                IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32),
+                emission,
+            ));
+        }
+    }
 }

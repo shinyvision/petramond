@@ -82,11 +82,6 @@ impl Section {
     }
 
     #[inline]
-    pub fn is_furnace_lit(&self, x: usize, y: usize, z: usize) -> bool {
-        self.furnace_at(x, y, z).is_some_and(Furnace::is_lit)
-    }
-
-    #[inline]
     pub fn furnaces(&self) -> &HashMap<u16, Furnace> {
         match &self.entities {
             Some(e) => &e.furnaces,
@@ -169,13 +164,18 @@ impl Section {
         }
     }
 
-    /// Advance every furnace one game tick. Returns the local coordinates of
-    /// furnaces whose lit texture changed (so the world can enqueue mesh/block
-    /// updates). No-op for the common furnace-free section.
+    /// Advance every furnace one game tick. Returns the local coordinates —
+    /// and the row the cell should hold — of every furnace whose lit state
+    /// disagrees with its block-id SKIN (`furnace` ⇄ `furnace_lit`), for the
+    /// world to swap through the ordinary block-write lanes. Compared against
+    /// the CURRENT block, not tracked as a transition, so a stale skin (an
+    /// older save, an interrupted swap) self-heals on the next tick. No-op for
+    /// the common furnace-free section.
     pub fn tick_furnaces(
         &mut self,
         smelt: impl Fn(ItemType) -> Option<ItemStack>,
-    ) -> Vec<(usize, usize, usize)> {
+    ) -> Vec<(usize, usize, usize, crate::block::Block)> {
+        use crate::block::Block;
         let Some(entities) = self.entities.as_deref_mut() else {
             return Vec::new();
         };
@@ -183,10 +183,10 @@ impl Section {
             return Vec::new();
         }
         let mut changed = false;
-        let mut relit = Vec::new();
-        // Key order, not map order: `relit` feeds block-update scheduling, and
-        // deterministic ticks (the multiplayer contract) forbid HashMap
-        // iteration order leaking into it.
+        let mut reskin = Vec::new();
+        // Key order, not map order: `reskin` feeds block writes and update
+        // scheduling, and deterministic ticks (the multiplayer contract)
+        // forbid HashMap iteration order leaking into them.
         let mut keys: Vec<u16> = entities.furnaces.keys().copied().collect();
         keys.sort_unstable();
         for key in keys {
@@ -196,20 +196,25 @@ impl Section {
             let Some(container) = entities.containers.get_mut(&key) else {
                 continue;
             };
-            let was_lit = f.is_lit();
             if f.tick(&mut container.slots, &smelt) {
                 changed = true;
             }
-            if f.is_lit() != was_lit {
-                relit.push(Self::block_entity_coords(key));
+            let desired = if f.is_lit() {
+                Block::FurnaceLit
+            } else {
+                Block::Furnace
+            };
+            let current = self.blocks[key as usize];
+            if (current == Block::Furnace.id() || current == Block::FurnaceLit.id())
+                && current != desired.id()
+            {
+                let (x, y, z) = Self::block_entity_coords(key);
+                reskin.push((x, y, z, desired));
             }
         }
         if changed {
             self.modified = true;
         }
-        if !relit.is_empty() {
-            self.dirty = true;
-        }
-        relit
+        reskin
     }
 }

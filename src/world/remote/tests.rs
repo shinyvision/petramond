@@ -35,8 +35,9 @@ fn server_and_replica() -> (World, World) {
 
 /// The replica convergence contract: everything a client can SEE —
 /// A furnace lighting (or going out) after join must flip the replica's
-/// front texture: the lit state rides the facing delta's high bit — a
-/// full section payload only ships at join/stream time.
+/// front texture. Lit is the block ID (`furnace` ⇄ `furnace_lit`), so the
+/// flip rides an ordinary block delta — no bespoke lit lane — and the front
+/// FACING survives the swap through the delta's cell state.
 #[test]
 fn furnace_lit_flip_reaches_the_replica_through_a_delta() {
     let (mut server, mut replica) = server_and_replica();
@@ -50,40 +51,54 @@ fn furnace_lit_flip_reaches_the_replica_through_a_delta() {
     for s in server.sections.values() {
         replica.install_remote_section(s.to_payload());
     }
-    let replica_lit = |r: &World| {
-        r.section_at_world_for_test(4, 65, 4)
-            .expect("furnace section")
-            .is_furnace_lit(4, 1, 4)
-    };
-    assert!(!replica_lit(&replica), "fixture: joins unlit");
+    let replica_block = |r: &World| Block::from_id(r.chunk_block(4, 65, 4));
+    assert_eq!(replica_block(&replica), Block::Furnace, "fixture: joins unlit");
 
-    // The furnace lights; `tick_furnaces` announces flips through
-    // `notify_block_and_neighbors`, which records the delta.
+    // The furnace lights; `tick_furnaces` swaps the skin row through the
+    // block-write lanes, which record the delta.
     server.set_replication_capture(true);
     {
         let (furnace, _) = server.furnace_parts_mut(pos).unwrap();
         furnace.burn_remaining = 50;
         furnace.burn_max = 100;
     }
-    server.notify_block_and_neighbors(pos.x, pos.y, pos.z);
+    server.game_tick(&crate::crafting::Recipes::default());
+    assert_eq!(
+        Block::from_id(server.chunk_block(4, 65, 4)),
+        Block::FurnaceLit,
+        "fixture: the server swapped the lit row"
+    );
     for d in server.take_block_deltas() {
         replica.apply_remote_delta(d);
     }
-    assert!(
-        replica_lit(&replica),
+    assert_eq!(
+        replica_block(&replica),
+        Block::FurnaceLit,
         "the lit flip must reach the replica's mesher"
+    );
+    assert_eq!(
+        replica
+            .section_at_world_for_test(4, 65, 4)
+            .expect("furnace section")
+            .entity_facing(4, 1, 4),
+        Facing::South,
+        "the front facing survives the row swap on the wire"
     );
 
     // ...and the flame going out flips it back.
     {
         let (furnace, _) = server.furnace_parts_mut(pos).unwrap();
-        furnace.burn_remaining = 0;
+        furnace.burn_remaining = 1;
     }
-    server.notify_block_and_neighbors(pos.x, pos.y, pos.z);
+    server.game_tick(&crate::crafting::Recipes::default());
     for d in server.take_block_deltas() {
         replica.apply_remote_delta(d);
     }
-    assert!(!replica_lit(&replica), "the extinguish must reach it too");
+    assert_eq!(
+        replica_block(&replica),
+        Block::Furnace,
+        "the extinguish must reach it too"
+    );
 }
 
 #[test]
@@ -125,13 +140,11 @@ fn replica_converges_on_payloads_and_deltas() {
     server.insert_torch(IVec3::new(7, 65, 7), TorchPlacement::East);
     assert!(server.place_log(IVec3::new(1, 65, 6), Block::OakLog, LogAxis::X));
     assert!(server.set_block_world(2, 65, 6, Block::OakSapling));
-    server
-        .section_at_world_mut_for_test(2, 65, 6)
-        .unwrap()
-        .set_sapling_stage(2, 1, 6, 2);
     assert!(server.set_block_world(1, 65, 1, Block::Chest));
     server.insert_chest(IVec3::new(1, 65, 1), Facing::West);
-    assert!(server.set_block_world(4, 65, 4, Block::Furnace));
+    // A BURNING furnace: the lit skin is the block id (`furnace_lit` row),
+    // installed by the tick's row swap — written directly here.
+    assert!(server.set_block_world(4, 65, 4, Block::FurnaceLit));
     server.insert_furnace(IVec3::new(4, 65, 4), Facing::South);
     {
         let (furnace, _) = server.furnace_parts_mut(IVec3::new(4, 65, 4)).unwrap();
@@ -255,13 +268,6 @@ fn replica_converges_on_payloads_and_deltas() {
         server.slab_state_at(6, 65, 1)
     );
     assert_eq!(
-        replica
-            .section_at_world_for_test(2, 65, 6)
-            .unwrap()
-            .sapling_stage(2, 1, 6),
-        2
-    );
-    assert_eq!(
         replica.model_offset_at(11, 65, 10),
         server.model_offset_at(11, 65, 10)
     );
@@ -281,12 +287,10 @@ fn replica_converges_on_payloads_and_deltas() {
             .entity_facing(4, 1, 4),
         Facing::South
     );
-    assert!(
-        replica
-            .section_at_world_for_test(4, 65, 4)
-            .unwrap()
-            .is_furnace_lit(4, 1, 4),
-        "the lit furnace face replicates"
+    assert_eq!(
+        Block::from_id(replica.chunk_block(4, 65, 4)),
+        Block::FurnaceLit,
+        "the lit furnace face replicates as its block row"
     );
 
     // Absent sections answer physics/placement from the column summaries.

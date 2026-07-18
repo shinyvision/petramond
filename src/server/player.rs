@@ -308,12 +308,11 @@ pub(crate) enum FallOutcome {
 /// share a queue so network arrival order is also simulation order.
 #[derive(Clone, Debug)]
 pub(crate) enum PendingMenuAction {
-    OpenInventory,
-    OpenCraftingTable,
-    OpenFurnace(IVec3),
-    OpenChest(IVec3),
-    OpenWorkbench,
-    OpenModGui {
+    /// Open the GUI session for `kind` — engine containers and mod GUIs ride
+    /// this one lane. `pos` is the block the open came from (`None` for the
+    /// inventory key and programmatic `GuiOpen`s); per-kind session semantics
+    /// resolve at the menu stage's kind dispatch, not here.
+    OpenGui {
         kind: crate::gui::GuiKind,
         pos: Option<IVec3>,
     },
@@ -471,12 +470,9 @@ pub(crate) struct ConnectedPlayer {
     // --- One-shot outbox: screen/effect requests the tick queues for this
     // player's client, consumed into its `SelfEvents` per replication batch
     // (INTERNAL — the client only sees `OpenScreen`). ---
-    pub request_open_inventory: bool,
-    pub request_open_table: bool,
-    pub request_open_furnace: Option<IVec3>,
-    pub request_open_chest: Option<IVec3>,
-    pub request_open_workbench: bool,
-    pub request_open_mod_gui: Option<(crate::gui::GuiKind, Option<IVec3>)>,
+    /// The GUI session the tick opened for this client this tick, if any —
+    /// one field for every kind (engine containers and mod GUIs alike).
+    pub request_open_gui: Option<(crate::gui::GuiKind, Option<IVec3>)>,
     pub request_close_mod_gui: bool,
     pub request_open_sleep: bool,
     /// The open mod-GUI session's state map (written by mods on the tick via
@@ -564,12 +560,7 @@ impl ConnectedPlayer {
             sleep: None,
             wake_requested: false,
             respawn_requested: false,
-            request_open_inventory: false,
-            request_open_table: false,
-            request_open_furnace: None,
-            request_open_chest: None,
-            request_open_workbench: false,
-            request_open_mod_gui: None,
+            request_open_gui: None,
             request_close_mod_gui: false,
             request_open_sleep: false,
             gui_state: crate::gui::empty_gui_state(),

@@ -67,10 +67,7 @@ fn kitchen_oven_inner() {
     use crate::mathh::IVec3;
 
     let by_key = |key: &str| {
-        ItemType::all()
-            .iter()
-            .copied()
-            .find(|i| i.key() == key)
+        ItemType::by_key(key)
             .unwrap_or_else(|| panic!("{key} registered from the fixture packs"))
     };
     let oven_item = by_key("kitchen:oven");
@@ -385,10 +382,7 @@ fn kitchen_reuse_inner() {
     use crate::mathh::IVec3;
 
     let by_key = |key: &str| {
-        ItemType::all()
-            .iter()
-            .copied()
-            .find(|i| i.key() == key)
+        ItemType::by_key(key)
             .unwrap_or_else(|| panic!("{key} registered from the kitchen pack"))
     };
     let oven_item = by_key("kitchen:oven");
@@ -470,7 +464,7 @@ fn kitchen_reuse_inner() {
     game.server.tick_place(0, &mut ev);
     game.server.tick_menu(0, &mut ev);
     assert_eq!(
-        game.server.sessions[0].request_open_mod_gui.take(),
+        game.server.sessions[0].request_open_gui.take(),
         Some((kind, Some(far_cell))),
         "a lit oven still opens its GUI on interact"
     );
@@ -509,7 +503,7 @@ fn kitchen_reuse_inner() {
     game.server.tick_place(0, &mut ev);
     game.server.tick_menu(0, &mut ev);
     assert_eq!(
-        game.server.sessions[0].request_open_mod_gui,
+        game.server.sessions[0].request_open_gui,
         Some((kind, Some(far_cell))),
         "the used oven still opens its GUI on interact"
     );
@@ -655,10 +649,7 @@ fn kitchen_mutton_inner() {
     use crate::mathh::Vec3 as V;
 
     let by_key = |key: &str| {
-        ItemType::all()
-            .iter()
-            .copied()
-            .find(|i| i.key() == key)
+        ItemType::by_key(key)
             .unwrap_or_else(|| panic!("{key} registered from the kitchen pack"))
     };
     let raw_mutton = by_key("kitchen:raw_mutton");
@@ -863,10 +854,7 @@ fn kitchen_miller_inner() {
     use crate::mathh::IVec3;
 
     let by_key = |key: &str| {
-        ItemType::all()
-            .iter()
-            .copied()
-            .find(|i| i.key() == key)
+        ItemType::by_key(key)
             .unwrap_or_else(|| panic!("{key} registered from the fixture packs"))
     };
     let block_by_name = |name: &str| {

@@ -25,6 +25,23 @@ impl ItemType {
         data::from_id(id)
     }
 
+    /// The item registered under registry NAME `name` (`"petramond:coal"`,
+    /// `"kitchen:raw_mutton"`), or `None`. O(1) through the shared name
+    /// table's hash index — the lookup behind every name-addressed mod call.
+    #[inline]
+    pub fn by_name(name: &str) -> Option<ItemType> {
+        crate::registry::names().items.id(name).map(ItemType)
+    }
+
+    /// The item whose row carries recipe [`key`](Self::key), or `None`. O(1)
+    /// hash index. ENGINE-INTERNAL recipe plumbing (recipes/loot tables
+    /// reference items by key); the mod-facing identity is the registry name
+    /// — see [`by_name`](Self::by_name).
+    #[inline]
+    pub fn by_key(key: &str) -> Option<ItemType> {
+        data::item_for_key(key)
+    }
+
     /// The block-item for a block: the item whose `items.json` row links it
     /// via the row's `block` field, read from the dense reverse LUT built at
     /// load (see `data`). A block no item links to (a machine's lit variant,

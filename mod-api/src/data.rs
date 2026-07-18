@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::ids::{BlockId, ItemId, MobId, PlayerId};
+
 /// Maximum UTF-8 byte length of a named mob animation crossing the mod API.
 /// The simulation stores and replicates active names, so the mechanism bounds
 /// them independently of whether the mob's model recognizes the name.
@@ -29,25 +31,34 @@ pub enum GuiValue {
     Str(String),
 }
 
-/// A live mob's snapshot for [`HostCall::MobsInRadius`]. `index` addresses the
-/// mob in later calls ([`HostCall::DamageMob`], the mob KV calls) and is valid
-/// THIS TICK ONLY — any engine mob removal (deaths finishing, despawns, section
-/// unloads, [`HostCall::DespawnMob`]) renumbers; re-query, never store indices.
+/// A live mob's snapshot for [`HostCall::MobsInRadius`]. The mob's ADDRESS is
+/// the stable [`id`](Self::id) — every mob call and event payload speaks it
+/// (see the mob-addressing note on [`HostCall`](crate::HostCall)). `index` is
+/// only an intra-tick JOIN key against other snapshots taken this tick; it is
+/// never accepted by a call and renumbers on any removal.
 ///
 /// [`HostCall::MobsInRadius`]: crate::HostCall::MobsInRadius
-/// [`HostCall::DamageMob`]: crate::HostCall::DamageMob
-/// [`HostCall::DespawnMob`]: crate::HostCall::DespawnMob
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MobSnapshot {
+    /// Live-set list position THIS TICK — an intra-tick join key only, never
+    /// an address (calls take [`id`](Self::id)).
     pub index: u32,
     /// The species' key (`"petramond:owl"`, `"zombies:zombie"`).
     pub key: String,
+    /// The species' session id — the compact form of `key`, matching the
+    /// `kind` in event payloads ([`EventPayload::MobDied`] etc.); bridge with
+    /// [`HostCall::ResolveMob`] / [`HostCall::MobNames`].
+    ///
+    /// [`EventPayload::MobDied`]: crate::EventPayload::MobDied
+    /// [`HostCall::ResolveMob`]: crate::HostCall::ResolveMob
+    /// [`HostCall::MobNames`]: crate::HostCall::MobNames
+    pub kind: MobId,
     /// Feet position.
     pub pos: [f32; 3],
     pub health: f32,
-    /// Stable session id for this live mob. Unlike `index`, this survives
-    /// unrelated `swap_remove` renumbering; it is not a species id and is not
-    /// promised stable across save/load.
+    /// Stable session id for this live mob — THE mob address, held across
+    /// ticks. It survives unrelated removals; it is not a species id and is
+    /// not promised stable across save/load.
     pub id: u64,
     /// Body facing, radians about +Y. MOB convention: yaw `0` faces `-Z`,
     /// so the facing direction is `(-sin yaw, 0, -cos yaw)` — the same frame
@@ -69,8 +80,8 @@ pub struct MobSnapshot {
 pub struct MobRiderData {
     /// Seat index into the species' `seats` row list.
     pub seat: u8,
-    /// The riding session's player id.
-    pub player_id: u8,
+    /// The riding session.
+    pub player_id: PlayerId,
 }
 
 /// Seat declaration and current occupants of one live mob, for
@@ -146,7 +157,7 @@ pub struct PlayerSnapshot {
 pub struct PlayerListEntry {
     /// The session's player id — the value per-player calls
     /// (`PlayerInput`, `MobMount`) address.
-    pub id: u8,
+    pub id: PlayerId,
     pub state: PlayerSnapshot,
 }
 
@@ -180,23 +191,70 @@ pub enum RuntimeSide {
     Client,
 }
 
-/// One item stack crossing the ABI: the item's stable registry key + count.
+/// One item stack crossing the ABI: the item's registry NAME (the one
+/// mod-facing item identity — see the identity note on
+/// [`HostCall`](crate::HostCall)) + count.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ItemStackData {
-    pub key: String,
+    /// Registry name (`"petramond:coal"`, `"kitchen:raw_mutton"`).
+    pub item: String,
     pub count: u8,
 }
 
-/// One item's registry data (see [`HostCall::ItemInfo`]).
+/// One item's registry row (see [`HostCall::ItemInfo`]) — the stable,
+/// mod-relevant fields of its `items.json` row, the same data engine
+/// mechanics read. Presentation internals (sprite/model/held pose) stay
+/// engine-side. Session-stable: cache it mod-side, never re-ask per tick.
 ///
 /// [`HostCall::ItemInfo`]: crate::HostCall::ItemInfo
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ItemInfoData {
+    /// Effective per-slot stack cap (durable items — tools — never stack).
     pub max_stack: u8,
-    /// Furnace-fuel burn duration in game ticks; `0` = not a fuel.
+    /// Fuel burn duration in game ticks; `0` = not a fuel. Any machine may
+    /// consume it (the furnace reads exactly this field).
     pub fuel_burn_ticks: u32,
     /// The item's tag names (engine tags bare, pack tags namespaced).
     pub tags: Vec<String>,
+    /// Human-readable display name (UI text only — never an identity).
+    pub display_name: String,
+    /// Session id of the block this item places (the row's `block` link), or
+    /// `None` for an item-only item (tools, raw drops, ingots). Compare
+    /// against `get_block` reads; resolve a name via `BlockNames`.
+    pub block: Option<BlockId>,
+    /// The mining tool this item acts as, or `None`.
+    pub tool: Option<ToolInfoData>,
+    /// Edible-item data, or `None` for non-food.
+    pub food: Option<FoodInfoData>,
+    /// The ENGINE use handler the row declares (`"bucket_fill"`,
+    /// `"bucket_pour"`, `"shear"`), or `None`. Mods react to any item's use
+    /// through `item_use_pre` — this field only reveals engine-handled uses.
+    pub item_use: Option<String>,
+}
+
+/// An item's mining-tool row data (see [`ItemInfoData::tool`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ToolInfoData {
+    /// Tool family: `"pickaxe"`, `"axe"`, `"shovel"`, or `"shears"`.
+    pub kind: String,
+    /// Material tier `1..=4` (wooden, stone, iron, diamond).
+    pub tier: u8,
+}
+
+/// An item's edible row data (see [`ItemInfoData::food`]).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct FoodInfoData {
+    /// Game ticks of held-button eating before the item is consumed.
+    pub eat_ticks: u32,
+    /// Status effects granted when the eat completes.
+    pub effects: Vec<FoodEffectData>,
+}
+
+/// One granted food effect: an `effects.json` registry key + duration.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct FoodEffectData {
+    pub effect: String,
+    pub ticks: u32,
 }
 
 /// Which [`BlockBehavior`](crate::GuestCall::BlockBehavior) hook fired — the mod-side
@@ -225,8 +283,45 @@ pub struct EffectStateData {
     pub remaining: u32,
 }
 
+/// Cached light at a loaded cell (see [`HostCall::LightAt`]), all on the
+/// renderer's 6-bit `0..=63` scale; `combined = max(sky, block)`.
+///
+/// [`HostCall::LightAt`]: crate::HostCall::LightAt
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub struct LightData {
+    pub combined: u8,
+    pub sky: u8,
+    pub block: u8,
+}
+
+/// The collision-shape CLASS of a world cell (see
+/// [`HostCall::CollisionShapeAt`]) — generic physics with no gameplay policy
+/// baked in. Spawn/placement rules compose on top of it in mod code (e.g.
+/// `Full` + not water + not tagged `petramond:leaves`).
+///
+/// [`HostCall::CollisionShapeAt`]: crate::HostCall::CollisionShapeAt
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CollisionShape {
+    /// No collision boxes: air, water, walk-through cover (tall grass).
+    Empty,
+    /// Collision boxes that do not amount to one full unit cube: stairs,
+    /// slabs, doors, snow layers, model blocks.
+    Partial,
+    /// Exactly one collision box spanning the whole unit cell.
+    Full,
+}
+
 /// The read-only mob snapshot an [`GuestCall::AiNode`] decision sees.
 ///
+/// The baseline fields (the mob's own state, the current tick, and the
+/// nearest player's id/position) are always present. Fact fields beyond the
+/// baseline are DECLARED INPUTS: the brain node row lists the facts its node
+/// reads (`"inputs": ["player_held"]` in `mobs.json`), and only declared
+/// facts are computed and shipped — an undeclared fact always reads `None`.
+/// Every `player_*` fact describes the SAME player, [`player_id`]
+/// (the nearest one), mutually consistent within a dispatch.
+///
+/// [`player_id`]: AiNodeCtx::player_id
 /// [`GuestCall::AiNode`]: crate::GuestCall::AiNode
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AiNodeCtx {
@@ -238,12 +333,31 @@ pub struct AiNodeCtx {
     pub cell: [i32; 3],
     /// Body facing (radians).
     pub yaw: f32,
-    /// Player body-centre (world space).
+    /// The current game tick — the same value `current_tick()` returns
+    /// (dispatch runs once per owning mob per game tick), carried here so
+    /// timekeeping costs no host call.
+    pub tick: u64,
+    /// Session id of the NEAREST player — the player every `player_*` fact
+    /// in this snapshot describes, and the target of an attack decision.
+    pub player_id: PlayerId,
+    /// That player's body-centre (world space).
     pub player_pos: [f32; 3],
     /// True when the navigator has no active path ("the mob is idle").
     pub nav_idle: bool,
     /// True when the mob's body is in water.
     pub in_water: bool,
+    /// DECLARED INPUT `"player_held"`: the nearest player's selected (held)
+    /// item — resolve names via `ResolveItem` and compare (a lure, a beg, a
+    /// trade gate all read this same fact). `None` when the input is
+    /// undeclared, the hand is empty, or the player is a spectator.
+    pub player_held: Option<ItemId>,
+    /// DECLARED INPUT `"player_foothold"`: the mob-standable navigation
+    /// foothold nearest that player (what the engine's `chase_player` paths
+    /// toward) — the ready-made `goal` for any follow/approach node. `None`
+    /// when the input is undeclared, the player is airborne or has no
+    /// reachable foothold, or the player is more than 32 blocks away (the
+    /// outer edge of player-reactive mob AI — the scan is skipped past it).
+    pub player_foothold: Option<[i32; 3]>,
 }
 
 /// One scripted node's contribution to a mob's tick. Every field defaults to

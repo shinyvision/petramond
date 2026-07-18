@@ -54,10 +54,11 @@ pub(super) struct RawItemDef {
     /// pack rows alike. Absent for item-only items.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block: Option<String>,
-    /// Use-handler key (see [`ItemUse::from_name`]): an engine handler by bare
-    /// name (`bucket_fill`, `bucket_pour`, `shear`) or a namespaced pending one.
+    /// Engine use handler (see [`ItemUse`]): a bare name for parameterless
+    /// handlers (`"use": "shear"`) or a tagged object whose params ride inside
+    /// (`"use": {"bucket_fill": {"becomes": "petramond:water_bucket"}}`).
     #[serde(default, rename = "use", skip_serializing_if = "Option::is_none")]
-    pub use_: Option<String>,
+    pub use_: Option<RawItemUse>,
     /// Which raycast this item's use click targets with (see
     /// [`UseRay`](super::UseRay)); absent = the normal water-transparent ray.
     #[serde(default, skip_serializing_if = "is_default_use_ray")]
@@ -75,6 +76,36 @@ pub(super) struct RawItemDef {
     /// [`DroppedReaction`](super::DroppedReaction)); absent = inert.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dropped_reaction: Option<RawDroppedReaction>,
+}
+
+/// A row's `use` field: a bare engine handler name (`"shear"`) or a tagged
+/// object carrying the handler's row params (`{"bucket_fill": {"becomes":
+/// ...}}` — the `effects.json` behavior shape). Resolved to [`ItemUse`] in
+/// [`convert`]; a parameterized handler written bare is a load error, so a
+/// bucket can never fall back to some hardcoded engine counterpart.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+pub(super) enum RawItemUse {
+    Bare(String),
+    Tagged(RawTaggedUse),
+}
+
+/// The parameterized engine use handlers, externally tagged by handler key.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum RawTaggedUse {
+    BucketFill(RawBucketUse),
+    BucketPour(RawBucketUse),
+}
+
+/// A bucket handler's row params: which item the held one becomes on success
+/// (the row-owned empty↔filled pair — fill declares the filled item, pour the
+/// empty one).
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawBucketUse {
+    /// Registry name of the resulting item.
+    pub becomes: String,
 }
 
 /// A dropped-reaction declaration in `items.json`: the environment predicate,
@@ -216,11 +247,40 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
         ),
         None => None,
     };
-    let item_use = match r.use_.as_deref() {
-        Some(name) => Some(ItemUse::from_name(name).ok_or_else(|| {
-            format!("unknown use handler '{name}' (engine handlers or 'mod_id:key' only)")
-        })?),
+    let becomes_item = |name: &str| {
+        names
+            .items
+            .id(name)
+            .map(ItemType)
+            .ok_or_else(|| format!("unknown 'becomes' item '{name}' in the row's use handler"))
+    };
+    let item_use = match &r.use_ {
         None => None,
+        Some(RawItemUse::Bare(name)) => Some(match name.as_str() {
+            "shear" => ItemUse::Shear,
+            // Parameterized handlers written bare would need a hardcoded
+            // engine counterpart — the row must declare its own.
+            "bucket_fill" | "bucket_pour" => {
+                return Err(format!(
+                    "use '{name}' needs its result item: {{\"{name}\": {{\"becomes\": \
+                     \"<item>\"}}}}"
+                ))
+            }
+            other => {
+                return Err(format!(
+                    "unknown use handler '{other}' (engine handlers only; mods react via \
+                     the item_use_pre event)"
+                ))
+            }
+        }),
+        Some(RawItemUse::Tagged(tagged)) => Some(match tagged {
+            RawTaggedUse::BucketFill(b) => ItemUse::BucketFill {
+                becomes: becomes_item(&b.becomes)?,
+            },
+            RawTaggedUse::BucketPour(b) => ItemUse::BucketPour {
+                becomes: becomes_item(&b.becomes)?,
+            },
+        }),
     };
     let tool = match &r.tool {
         Some(t) => {
@@ -357,17 +417,21 @@ mod tests {
         let (base, _) =
             crate::assets::read_base_text("items.json").expect("assets/items.json must ship");
         // A dynamic item linking to an engine block (any registered block name
-        // resolves the same way) and carrying an engine use handler.
+        // resolves the same way) and carrying an engine use handler whose
+        // result item is the ROW'S OWN declaration — a pack bucket fills into
+        // the pack's counterpart, never a hardcoded engine item.
         let layer = r#"{"items": [
-            {"item": "mymod:gadget", "key": "mymod:gadget", "name": "Gadget", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "petramond:stone", "use": "bucket_fill"}
+            {"item": "mymod:filled_gadget", "key": "mymod:filled_gadget", "name": "Filled Gadget", "max_stack_size": 1, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
+            {"item": "mymod:gadget", "key": "mymod:gadget", "name": "Gadget", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "petramond:stone", "use": {"bucket_fill": {"becomes": "mymod:filled_gadget"}}}
         ]}"#;
         let defs = parse_test_layers(&[&base, layer]).expect("dynamic rows load");
         let engine = crate::item::ENGINE_ITEM_NAMES.len();
-        assert_eq!(defs.len(), engine + 1, "fresh id past the engine set");
-        let gadget = &defs[engine];
-        assert_eq!(gadget.item, ItemType(engine as u8));
+        assert_eq!(defs.len(), engine + 2, "fresh ids past the engine set");
+        let filled = defs[engine].item;
+        let gadget = &defs[engine + 1];
+        assert_eq!(gadget.item, ItemType((engine + 1) as u8));
         assert_eq!(gadget.block, Some(crate::block::Block::Stone));
-        assert_eq!(gadget.item_use, Some(ItemUse::BucketFill));
+        assert_eq!(gadget.item_use, Some(ItemUse::BucketFill { becomes: filled }));
         // Engine rows are untouched.
         assert_eq!(defs[ItemType::Stone.id() as usize].item, ItemType::Stone);
     }
@@ -385,6 +449,15 @@ mod tests {
         let bad_use = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": "zap"}]}"#;
         let err = parse_test_layers(&[&base, bad_use]).expect_err("unknown use refused");
         assert!(err.contains("unknown use handler"), "{err}");
+        // A bucket handler written BARE has no declared result item — refused,
+        // never defaulted to an engine bucket.
+        let bare_bucket = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": "bucket_fill"}]}"#;
+        let err = parse_test_layers(&[&base, bare_bucket]).expect_err("bare bucket use refused");
+        assert!(err.contains("becomes"), "{err}");
+        // A declared `becomes` naming an unknown item is a load error.
+        let bad_becomes = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": {"bucket_pour": {"becomes": "mymod:nope"}}}]}"#;
+        let err = parse_test_layers(&[&base, bad_becomes]).expect_err("unknown becomes refused");
+        assert!(err.contains("becomes"), "{err}");
         // An unknown block link is a load error.
         let bad_block = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "bogus_block"}]}"#;
         let err = parse_test_layers(&[&base, bad_block]).expect_err("unknown block refused");

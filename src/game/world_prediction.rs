@@ -1,8 +1,9 @@
-//! Optimistic client prediction for world edits: the P1 place ghost
-//! mirroring the server's `try_place` shape ladder, the full local break, the
-//! P0 use-click jab verdict, and the shared body-occupancy check. Tick
-//! orchestration (when a click ships, what rides the wire) stays in
-//! [`tick`](super::tick); this module owns the prediction logic itself.
+//! Optimistic client prediction for world edits: the P1 place ghost (the
+//! SHARED per-shape placement rule `World::placement_plan` evaluated against
+//! the replica), the full local break, the P0 use-click jab verdict, and the
+//! client-side body-occupancy check. Tick orchestration (when a click ships,
+//! what rides the wire) stays in [`tick`](super::tick); this module owns the
+//! prediction logic itself.
 
 use super::prediction;
 use super::tick::{GameInput, PlacePrediction, WorldEvent};
@@ -88,12 +89,13 @@ impl Game {
     }
 
     /// Optimistic full place when the look target can accept the held block.
-    /// Mirrors the placement checks the client CAN evaluate on its replica —
-    /// a ghost the server is known to refuse is never drawn — and the server's
-    /// per-shape STATE write (torch mount, stair state, log axis, slab layer,
-    /// door pair, chest/furnace front), so the mesh built this frame matches
-    /// what the authoritative delta will confirm instead of rendering a
-    /// default orientation for a frame (SP) or an RTT (MP). Placements the
+    /// Runs the SAME per-shape placement rule the server runs
+    /// (`World::placement_plan`) against the replica — a ghost the server is
+    /// known to refuse is never drawn — and commits the same per-shape STATE
+    /// write (torch mount, stair state, log axis, slab layer, door pair,
+    /// chest/furnace front), so the mesh built this frame matches what the
+    /// authoritative delta will confirm instead of rendering a default
+    /// orientation for a frame (SP) or an RTT (MP). Placements the
     /// accept convention denies by design (replace-in-place, slab stack into
     /// the hit cell, an oriented model's shifted base) are never ghosted —
     /// they classify [`PlacePrediction::Plausible`] so the click still jabs.
@@ -101,18 +103,6 @@ impl Game {
     /// `WorldEvent::BlockPlaced`.
     pub(super) fn try_predict_place_ghost(&mut self, sneak: bool) -> PlacePrediction {
         use crate::block::RenderShape;
-
-        /// The server-mirrored world write a predicted place will commit.
-        enum PredictedPlace {
-            Bare,
-            Torch(crate::torch::TorchPlacement),
-            Facing(crate::facing::Facing),
-            Log(crate::block_state::LogAxis),
-            Stair(crate::block_state::StairState),
-            Slab(crate::slab::SlabSlot),
-            Door,
-            Model(crate::facing::Facing),
-        }
 
         let Some(look) = self.look else {
             return PlacePrediction::No;
@@ -176,228 +166,70 @@ impl Game {
         let held = self.self_view.inventory.selected().map(|s| s.item);
         let player_facing = crate::server::placement::facing_from_forward(self.player.forward());
 
-        // The shape ladder, mirroring the server's `try_place`: each arm runs
-        // the same validity checks against the replica and picks the same
-        // world write. `cells` lists every replica cell the write touches —
-        // the deny-rollback footprint.
-        let mut cells = vec![(place_pos, prev)];
-        let write = match block.render_shape() {
-            RenderShape::Slab => {
-                let rotation = self.held_rotation.slab_rotation(held);
-                // A stack lands in the CLICKED cell — off the ghost
-                // convention, denied by design. Plausible: jab, no ghost.
-                if crate::slab::is_slab(target) {
-                    if let Some(slot) =
-                        crate::slab::stack_slot(rotation, look.normal, player_facing)
-                    {
-                        if crate::slab::can_add_layer(
-                            self.replica
-                                .slab_state_at(look.block.x, look.block.y, look.block.z),
-                            slot,
-                        ) {
-                            return PlacePrediction::Plausible;
-                        }
-                    }
-                }
-                let slot = crate::slab::slot_for_rotation(rotation, look.normal, player_facing);
-                let Some(state) = self.replica.slab_layer_target_state(place_pos, block, slot)
-                else {
-                    return PlacePrediction::No;
-                };
-                if self.placement_blocked_by_body(place_pos, crate::slab::boxes_for_state(state)) {
-                    return PlacePrediction::No;
-                }
-                PredictedPlace::Slab(slot)
-            }
-            RenderShape::Model(kind) => {
-                let multi_cell = crate::block_model::instance(kind).cells.len() > 1;
-                if multi_cell || block.directional_view() {
-                    // The oriented base anchor usually shifts off the clicked
-                    // cell, which the accept convention denies — no ghost.
-                    // Still mirror the placement checks so the jab fires only
-                    // when the model will actually land.
-                    let facing = crate::block_model::def(kind)
-                        .orientation
-                        .apply(player_facing);
-                    let base =
-                        crate::block_model::base_from_front_left_anchor(place_pos, kind, facing);
-                    if !self
-                        .replica
-                        .model_footprint_clear_facing(base, kind, facing)
-                    {
-                        return PlacePrediction::No;
-                    }
-                    let blocked = crate::block_model::oriented_footprint_cells(base, kind, facing)
-                        .into_iter()
-                        .any(|(c, off)| {
-                            self.placement_blocked_by_body(
-                                c,
-                                crate::block_model::collision_boxes_oriented(kind, off, facing),
-                            )
-                        });
-                    return if blocked {
-                        PlacePrediction::No
-                    } else {
-                        PlacePrediction::Plausible
-                    };
-                }
-                let facing = crate::block_model::DEFAULT_MODEL_FACING;
-                if !self
-                    .replica
-                    .model_footprint_clear_facing(place_pos, kind, facing)
-                {
-                    return PlacePrediction::No;
-                }
-                let blocked = crate::block_model::oriented_footprint_cells(place_pos, kind, facing)
-                    .into_iter()
-                    .any(|(c, off)| {
-                        self.placement_blocked_by_body(
-                            c,
-                            crate::block_model::collision_boxes_oriented(kind, off, facing),
-                        )
-                    });
-                if blocked {
-                    return PlacePrediction::No;
-                }
-                PredictedPlace::Model(facing)
-            }
-            RenderShape::Door => {
-                if !self.replica.door_footprint_clear(place_pos) {
-                    return PlacePrediction::No;
-                }
-                let upper = place_pos + IVec3::new(0, 1, 0);
-                let closed = |top: bool| {
-                    crate::door::collision_boxes(crate::door::DoorState {
-                        facing: player_facing,
-                        open: false,
-                        top,
-                    })
-                };
-                if self.placement_blocked_by_body(place_pos, closed(false))
-                    || self.placement_blocked_by_body(upper, closed(true))
-                {
-                    return PlacePrediction::No;
-                }
-                cells.push((upper, self.replica.chunk_block(upper.x, upper.y, upper.z)));
-                PredictedPlace::Door
-            }
-            RenderShape::Stair => {
-                let state = crate::block_state::StairState::new(
-                    player_facing,
-                    self.held_rotation.stair_half(held),
-                );
-                if self.placement_blocked_by_body(
-                    place_pos,
-                    self.replica.resolved_stair_boxes(place_pos, state),
-                ) {
-                    return PlacePrediction::No;
-                }
-                PredictedPlace::Stair(state)
-            }
-            RenderShape::Pane => {
-                if self.placement_blocked_by_body(place_pos, self.replica.pane_boxes_at(place_pos))
-                {
-                    return PlacePrediction::No;
-                }
-                PredictedPlace::Bare
-            }
-            _ => {
-                // The general path. The client KNOWS these placements fail
-                // server-side: unrooted substrate, unsupported torch, or a
-                // body in the cell (own body included — no ghost where the
-                // player stands).
-                let below = self
-                    .replica
-                    .physics_block(place_pos.x, place_pos.y - 1, place_pos.z);
-                if !block.can_root_on(below) {
-                    return PlacePrediction::No;
-                }
-                let write = if block == crate::block::Block::Torch {
-                    match crate::torch::TorchPlacement::from_place_normal(look.normal) {
-                        Some(tp) if self.replica.torch_supported_at(place_pos, tp) => {
-                            PredictedPlace::Torch(tp)
-                        }
-                        _ => return PlacePrediction::No,
-                    }
-                } else if block.render_shape() == RenderShape::Ladder {
-                    // Mirror the server's wall-mount gate (shape-keyed, like the
-                    // server's): a floor/ceiling click, a missing wall face, or a
-                    // body overlapping the panel is a KNOWN refusal, so no ghost
-                    // and no jab.
-                    match crate::facing::Facing::from_horizontal_normal(look.normal) {
-                        Some(f)
-                            if self.replica.ladder_supported_at(place_pos, f)
-                                && !self.placement_blocked_by_body(
-                                    place_pos,
-                                    crate::ladder::collision_boxes(f),
-                                ) =>
-                        {
-                            PredictedPlace::Facing(f)
-                        }
-                        _ => return PlacePrediction::No,
-                    }
-                } else if block.is_log() {
-                    PredictedPlace::Log(self.held_rotation.log_axis_for_facing(held, player_facing))
-                } else if block.directional_view() {
-                    PredictedPlace::Facing(player_facing)
-                } else {
-                    PredictedPlace::Bare
-                };
-                if self.placement_blocked_by_body(place_pos, block.collision_boxes()) {
-                    return PlacePrediction::No;
-                }
-                write
-            }
+        // The SHARED per-shape placement ladder (`World::placement_plan`, the
+        // same rule the server evaluates against its world), run against the
+        // replica: same validity checks, same state write. Only the
+        // body-occupancy answer is client-side (the predicted own body plus
+        // the replicated rows).
+        let inputs = crate::world::placement::PlaceInputs {
+            hit: look.block,
+            normal: look.normal,
+            // Replace-in-place classified Plausible above, so the build cell
+            // is always `hit + normal` here — the ghost convention's cell.
+            place_pos,
+            replacing_in_place: false,
+            player_facing,
+            stair_half: self.held_rotation.stair_half(held),
+            slab_rotation: self.held_rotation.slab_rotation(held),
+            log_axis: self.held_rotation.log_axis_for_facing(held, player_facing),
         };
+        let plan = self
+            .replica
+            .placement_plan(block, &inputs, &mut |cell, boxes| {
+                self.placement_blocked_by_body(cell, boxes)
+            });
+        let Some(plan) = plan else {
+            // A KNOWN refusal (unrooted substrate, unsupported mount, blocked
+            // footprint, a body in the cell — own body included): no ghost
+            // and no jab.
+            return PlacePrediction::No;
+        };
+        // Placements the accept convention denies by design (accept ⇔ landed
+        // exactly at `target + normal`) are never ghosted: an anchor off the
+        // build cell (a slab stack into the hit cell, an oriented model's
+        // shifted base) — and oriented/multi-cell models even when the base
+        // happens to coincide. Plausible: the jab fires (the click WILL
+        // place), the request ships unpredicted.
+        let oriented_model = match block.render_shape() {
+            RenderShape::Model(kind) => {
+                block.directional_view() || crate::block_model::instance(kind).cells.len() > 1
+            }
+            _ => false,
+        };
+        if plan.anchor != place_pos || oriented_model {
+            return PlacePrediction::Plausible;
+        }
 
         if !self.prediction.can_predict() {
             return PlacePrediction::TrackOnly(self.prediction.begin_track_only());
         }
-        let previous_cells = cells.clone();
+        // `cells` lists every replica cell the write touches, with its
+        // previous id — the deny-rollback footprint.
+        let previous_cells: Vec<(IVec3, u8)> = plan
+            .cells
+            .iter()
+            .map(|&c| (c, self.replica.chunk_block(c.x, c.y, c.z)))
+            .collect();
         let snapshot = prediction::PredictionSnapshot::World {
             inventory: Some(self.self_view.inventory.clone()),
-            cells,
+            cells: previous_cells.clone(),
         };
         let id = self.prediction.begin(snapshot);
-        // The same World write the server commits. Deny-rollback restores the
-        // previous block ids, which wipes each cell's sparse state, so a
+        // The same World write the server commits (facing only for the engine
+        // containers — machine state is server-owned). Deny-rollback restores
+        // the previous block ids, which wipes each cell's sparse state, so a
         // stale predicted state cannot leak.
-        match write {
-            PredictedPlace::Bare => {
-                let _ = self
-                    .replica
-                    .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
-            }
-            PredictedPlace::Torch(tp) => {
-                let _ = self
-                    .replica
-                    .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
-                self.replica.insert_torch(place_pos, tp);
-            }
-            PredictedPlace::Facing(facing) => {
-                let _ = self
-                    .replica
-                    .set_block_world(place_pos.x, place_pos.y, place_pos.z, block);
-                self.replica.insert_entity_facing(place_pos, facing);
-            }
-            PredictedPlace::Log(axis) => {
-                let _ = self.replica.place_log(place_pos, block, axis);
-            }
-            PredictedPlace::Stair(state) => {
-                let _ = self.replica.place_stair(place_pos, block, state);
-            }
-            PredictedPlace::Slab(slot) => {
-                let _ = self.replica.place_slab_layer(place_pos, block, slot);
-            }
-            PredictedPlace::Door => {
-                let _ = self.replica.place_door(place_pos, block, player_facing);
-            }
-            PredictedPlace::Model(facing) => {
-                let _ = self
-                    .replica
-                    .place_model_block_facing(place_pos, block, facing);
-            }
-        }
+        let _ = self.replica.commit_placement(block, &plan, false);
         // Same synchronous prediction presentation as breaking: exact local
         // light and geometry are installed before the ghost is exposed.
         self.replica.present_predicted_edit(&previous_cells);

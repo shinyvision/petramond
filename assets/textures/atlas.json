@@ -11,7 +11,7 @@
     {"name": "oak_log_top", "file": "oak_log_top.png"},
     {"name": "oak_leaves", "file": "oak_leaves.png", "tint": "foliage", "fill_cutout_mips": true},
     {"name": "snow", "file": "snow.png"},
-    {"name": "grass_side_overlay", "file": "grass_block_side_overlay.png"},
+    {"name": "grass_side_overlay", "file": "grass_block_side_overlay.png", "tint": "grass"},
     {"name": "spruce_log_top", "file": "spruce_log_top.png"},
     {"name": "spruce_log_side", "file": "spruce_log.png"},
     {"name": "redwood_log_top", "file": "redwood_log_top.png"},

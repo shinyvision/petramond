@@ -457,7 +457,7 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
         handle_host_call(
             &mut data,
             HostCall::ResolveBlock {
-                key: "petramond:stone".into()
+                name: "petramond:stone".into()
             }
         ),
         HostRet::Block(Some(mod_api::BlockId(crate::block::Block::Stone.id())))

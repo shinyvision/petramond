@@ -25,7 +25,8 @@ impl World {
 
     /// Spawn a mob and initialize its cached render light immediately, so a mob
     /// created after the mob tick does not render full-bright until the next tick.
-    pub fn spawn_mob(&mut self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> bool {
+    /// Returns the newborn's stable session id, or `None` when the cap dropped it.
+    pub fn spawn_mob(&mut self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> Option<u64> {
         let (sky, block) = self.mob_render_light_at(pos);
         self.mobs.spawn_lit(kind, pos, yaw, sky, block)
     }
@@ -35,9 +36,9 @@ impl World {
     /// This is the programmatic-placement counterpart to [`spawn_mob`]: mods
     /// can create vehicles and other player-placed solid entities without a
     /// racy centre-cell approximation.
-    pub fn spawn_mob_checked(&mut self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> bool {
+    pub fn spawn_mob_checked(&mut self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> Option<u64> {
         if !self.mob_spawn_pose_clear(kind, pos, yaw) {
-            return false;
+            return None;
         }
         self.spawn_mob(kind, pos, yaw)
     }
@@ -130,7 +131,7 @@ impl World {
     /// Run one natural mob-spawn attempt (the passive backfill trickle; the
     /// caller owns the cadence). Returns the mobs actually spawned, for the
     /// caller to report as `mob_spawned` events.
-    pub fn spawn_mobs_tick(&mut self, player_pos: Vec3) -> Vec<(crate::mob::Mob, Vec3)> {
+    pub fn spawn_mobs_tick(&mut self, player_pos: Vec3) -> Vec<(u64, crate::mob::Mob, Vec3)> {
         let mut mobs = std::mem::take(&mut self.mobs);
         let spawned = mobs.spawn_tick(self, player_pos);
         self.mobs = mobs;
@@ -141,7 +142,7 @@ impl World {
     /// place the one-time herds of nearby chunks whose deterministic roll says so,
     /// and record the chunks that spawned in the persisted populated set. Returns
     /// the mobs spawned, for the caller's `mob_spawned` events.
-    pub fn populate_mobs_tick(&mut self, player_pos: Vec3) -> Vec<(crate::mob::Mob, Vec3)> {
+    pub fn populate_mobs_tick(&mut self, player_pos: Vec3) -> Vec<(u64, crate::mob::Mob, Vec3)> {
         let mut mobs = std::mem::take(&mut self.mobs);
         let (spawned, populated) = mobs.populate_tick(self, player_pos);
         self.mobs = mobs;

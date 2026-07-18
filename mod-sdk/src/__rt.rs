@@ -166,11 +166,7 @@ pub fn dispatch<T: crate::Mod>(slot: &ModSlot<T>, ptr: u32, len: u32) -> u64 {
             mod_.tick_system(id);
             GuestRet::Unit
         }
-        GuestCall::HandleEvent {
-            id,
-            kind: _,
-            mut payload,
-        } => {
+        GuestCall::HandleEvent { id, mut payload } => {
             let outcome = mod_.handle_event(id, &mut payload);
             GuestRet::Event { outcome, payload }
         }

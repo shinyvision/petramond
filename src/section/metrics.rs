@@ -102,6 +102,11 @@ impl Section {
             (true, false) => self.particle_emitter_count -= 1,
             _ => {}
         }
+        match (Self::id_emits_light(old_id), Self::id_emits_light(new_id)) {
+            (false, true) => self.light_emitter_count += 1,
+            (true, false) => self.light_emitter_count -= 1,
+            _ => {}
+        }
     }
 
     /// Compute every block-derived counter in one pass, including boundary planes.
@@ -153,6 +158,9 @@ impl Section {
             if Self::id_has_particle_emitter(id) {
                 out.particle_emitter_count += 1;
             }
+            if Self::id_emits_light(id) {
+                out.light_emitter_count += 1;
+            }
         }
         out
     }
@@ -165,6 +173,7 @@ impl Section {
         self.water_count = metrics.water_count;
         self.biome_tint_count = metrics.biome_tint_count;
         self.particle_emitter_count = metrics.particle_emitter_count;
+        self.light_emitter_count = metrics.light_emitter_count;
     }
 
     pub(crate) fn stream_metrics(&self) -> SectionMetrics {
@@ -176,6 +185,7 @@ impl Section {
             water_count: self.water_count,
             biome_tint_count: self.biome_tint_count,
             particle_emitter_count: self.particle_emitter_count,
+            light_emitter_count: self.light_emitter_count,
         }
     }
 
@@ -271,6 +281,14 @@ impl Section {
         self.particle_emitter_count > 0
     }
 
+    /// Whether this section holds any block-LIGHT-emitting cell (row
+    /// `emission > 0`) — the gate that keeps the light flood's emitter gather
+    /// from scanning emitter-free sections.
+    #[inline]
+    pub fn has_light_emitters(&self) -> bool {
+        self.light_emitter_count > 0
+    }
+
     /// Whether the section holds any air cell.
     #[inline]
     pub fn has_air(&self) -> bool {
@@ -309,6 +327,11 @@ impl Section {
     #[inline]
     fn id_has_particle_emitter(id: u8) -> bool {
         Block::from_id(id).particle_emitter().is_some()
+    }
+
+    #[inline]
+    fn id_emits_light(id: u8) -> bool {
+        Block::from_id(id).light_emission() > 0
     }
 
     #[cfg(all(test, feature = "worldgen-tests"))]

@@ -2,10 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{BlockId, ItemId, MobId};
+use crate::ids::{BlockId, ItemId, MobId, PlayerId};
 
-/// A pre-event handler's verdict. The first `Cancel` wins; later handlers still
-/// observe the (possibly mutated) payload.
+/// A pre-event handler's verdict. The first `Cancel` wins AND ends the
+/// dispatch — handlers after it never run on the consumed event. A handler
+/// that runs always sees a live event (with any earlier mutations) and may
+/// act on it.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Continue,
@@ -45,18 +47,17 @@ pub enum DamageSource {
     Fall,
     /// A player's melee strike; `id` is the attacking session's player id.
     PlayerAttack {
-        id: u8,
+        id: PlayerId,
     },
     /// A mob's melee strike; `key` is the attacking species' key
     /// (`"petramond:owl"`, `"zombies:zombie"`).
     MobAttack {
         key: String,
     },
-    /// A mod's [`HostCall::DamagePlayer`] / [`HostCall::KillPlayer`]; `mod_id`
-    /// is the calling mod's pack id, so handlers can filter by origin.
+    /// A mod's [`HostCall::DamagePlayer`]; `mod_id` is the calling mod's
+    /// pack id, so handlers can filter by origin.
     ///
     /// [`HostCall::DamagePlayer`]: crate::HostCall::DamagePlayer
-    /// [`HostCall::KillPlayer`]: crate::HostCall::KillPlayer
     Mod {
         mod_id: String,
     },
@@ -169,8 +170,9 @@ pub enum EventPayload {
     },
     /// A mob damage request that passed the victim's engine-owned immunity gate.
     MobDamagePre {
-        /// Index into the live mob set, valid this tick only.
-        mob: u32,
+        /// Stable session id of the struck mob — the address every mob call
+        /// takes, and the key for cross-tick mod state on this mob.
+        mob_id: u64,
         kind: MobId,
         /// Mutable: written back by the engine after the dispatch.
         amount: f32,
@@ -201,11 +203,23 @@ pub enum EventPayload {
     ItemUsed {
         item: ItemId,
     },
+    /// POST — a mob died through the damage pipeline. Carries the stable
+    /// `id` so a mod releases any per-mob state it keyed by it (despawns and
+    /// section unloads fire no event — bound such state maps anyway).
     MobDied {
+        /// Stable session id the mob lived under.
+        id: u64,
         kind: MobId,
         pos: [f32; 3],
     },
+    /// POST — a mob entered the live world (natural, hostile-planner, or a
+    /// mod's [`HostCall::SpawnMob`]; save-restores announce as
+    /// `section_loaded` instead). Carries the newborn's stable `id`.
+    ///
+    /// [`HostCall::SpawnMob`]: crate::HostCall::SpawnMob
     MobSpawned {
+        /// Stable session id the mob now answers to.
+        id: u64,
         kind: MobId,
         pos: [f32; 3],
     },
@@ -232,18 +246,16 @@ pub enum EventPayload {
     /// PRE — a use click whose crosshair target was a live mob, dispatched
     /// before any engine mob use (shears). Cancel = the click was consumed:
     /// this is how a mod makes a mob interactable (mounting a vehicle,
-    /// trading). Carries both addresses: the tick-local `mob` index for
-    /// immediate calls and the stable `id` for cross-tick mod state.
+    /// trading). The stable `id` is the clicked mob's address for calls and
+    /// cross-tick mod state alike.
     MobInteract {
-        /// Index into the live mob set, valid this tick only.
-        mob: u32,
         /// Stable mob session id.
         id: u64,
         /// Species key (`"vehicles:boat"`) — self-describing, no resolver
         /// needed.
         key: String,
         /// The interacting session's player id.
-        player_id: u8,
+        player_id: PlayerId,
     },
     /// POST — a player left a mob seat, however it happened (the engine's
     /// sneak gesture, the mount or rider dying, the rider leaving or turning
@@ -254,7 +266,7 @@ pub enum EventPayload {
     /// [`HostCall::MobMount`]: crate::HostCall::MobMount
     /// [`HostCall::MobDismount`]: crate::HostCall::MobDismount
     PlayerDismounted {
-        player_id: u8,
+        player_id: PlayerId,
         /// Stable id of the mob that was ridden (it may already be gone).
         mob_id: u64,
     },

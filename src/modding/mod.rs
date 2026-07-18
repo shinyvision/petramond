@@ -561,7 +561,6 @@ fn call_event(
 ) -> Option<(mod_api::Outcome, EventPayload)> {
     let call = GuestCall::HandleEvent {
         id: handler_id,
-        kind: payload.kind(),
         payload,
     };
     match inst.lock().unwrap().call_guest(ctx, &call)? {

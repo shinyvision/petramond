@@ -275,7 +275,7 @@ mod tests {
         assert!(w.physics_cell_final_at(8, 64, 8));
         assert!(!w.section_stream_final_at(8, 64, 8));
         assert!(
-            !w.spawn_mob_checked(Mob::Owl, pos, 0.0),
+            w.spawn_mob_checked(Mob::Owl, pos, 0.0).is_none(),
             "a truthful absent-air summary is not a loaded entity destination"
         );
 
@@ -283,11 +283,11 @@ mod tests {
         let section = SectionPos::new(0, 4, 0);
         w.awaited_overlays.insert(section);
         assert!(
-            !w.spawn_mob_checked(Mob::Owl, pos, 0.0),
+            w.spawn_mob_checked(Mob::Owl, pos, 0.0).is_none(),
             "a loaded base with an in-flight save overlay is not final"
         );
         w.awaited_overlays.remove(&section);
-        assert!(w.spawn_mob_checked(Mob::Owl, pos, 0.0));
+        assert!(w.spawn_mob_checked(Mob::Owl, pos, 0.0).is_some());
     }
 
     #[test]

@@ -1620,7 +1620,11 @@
       },
       "model": "petramond:bucket",
       "tags": [],
-      "use": "bucket_fill"
+      "use": {
+        "bucket_fill": {
+          "becomes": "petramond:water_bucket"
+        }
+      }
     },
     {
       "item": "petramond:water_bucket",
@@ -1634,7 +1638,11 @@
       },
       "model": "petramond:water_bucket",
       "tags": [],
-      "use": "bucket_pour"
+      "use": {
+        "bucket_pour": {
+          "becomes": "petramond:wooden_bucket"
+        }
+      }
     },
     {
       "item": "petramond:shears",

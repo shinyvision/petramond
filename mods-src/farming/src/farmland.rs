@@ -5,7 +5,10 @@
 //! at the SAME world Y within a square horizontal radius of 4 (|dx| ≤ 4,
 //! |dz| ≤ 4). Source, flowing, and falling water all count — the block query
 //! deliberately cannot distinguish them, which makes routed channels and
-//! diverted streams work as irrigation.
+//! diverted streams work as irrigation. RAIN is water too: an open-sky
+//! farmland cell under an active rain band (the `weather:field` interop row,
+//! soft-read like the monsters burn douse) counts as hydrated while the rain
+//! lasts — no weather mod, stale row, or covered soil simply means no rain.
 //!
 //! The wet/dry BLOCK is only an appearance and reconciles on this block's own
 //! RANDOM TICKS — bounded, local, and deliberately unhurried (per Rachel:
@@ -16,6 +19,7 @@
 use mod_sdk::*;
 
 use crate::content::Content;
+use crate::kv_counter::kv_counter_bump;
 
 pub const HYDRATION_RADIUS: i32 = 4;
 
@@ -49,11 +53,38 @@ pub fn probe(content: &Content, pos: [i32; 3]) -> Hydration {
             None => any_unknown = true,
         }
     }
+    if rained_on(pos) {
+        return Hydration::Hydrated;
+    }
     if any_unknown {
         Hydration::Unknown
     } else {
         Hydration::Dry
     }
+}
+
+/// Whether rain is currently landing on the cell above this soil: an active
+/// rain band over the column AND direct sky above the crop cell
+/// (`weather_core::DIRECT_SKY_MIN` — the shared cross-mod threshold;
+/// day/night-independent, night rain wets too). Every failure mode (no
+/// weather mod, stale row, unloaded cell, cover) is just "no rain" — the
+/// water scan's verdict stands. Field first, sky second: with no weather
+/// mod installed the whole check is one KV miss, and under a clear sky it
+/// never touches the light query.
+fn rained_on(pos: [i32; 3]) -> bool {
+    let Some(row) = world_kv_get(weather_core::KV_FIELD) else {
+        return false;
+    };
+    let clock =
+        world_kv_get(weather_core::CLOCK_KEY).and_then(|b| weather_core::decode_clock(&b));
+    let Some(params) = weather_core::fresh_params(&row, clock) else {
+        return false;
+    };
+    if weather_core::rain(pos[0] as f32 + 0.5, pos[2] as f32 + 0.5, &params) <= 0.0 {
+        return false;
+    }
+    let above = [pos[0], pos[1] + 1, pos[2]];
+    light_at(above).is_some_and(|l| l.sky >= weather_core::DIRECT_SKY_MIN)
 }
 
 /// A player built something in the cell directly above farmland. Anything
@@ -105,10 +136,7 @@ fn random_tick(content: &Content, pos: [i32; 3]) {
             section_kv_delete(pos, IDLE_KEY);
         }
         Some(_) => {
-            let idle = section_kv_get(pos, IDLE_KEY)
-                .and_then(|b| b.first().copied())
-                .unwrap_or(0)
-                + 1;
+            let idle = kv_counter_bump(pos, IDLE_KEY);
             if idle >= IDLE_REVERT_TICKS {
                 set_block(pos, content.dirt);
                 return;
@@ -116,12 +144,16 @@ fn random_tick(content: &Content, pos: [i32; 3]) {
             carry_idle = Some(idle);
         }
     }
-    // Visual reconcile: swap to match REAL hydration. `Unknown` changes
+    // Visual reconcile: swap to match REAL hydration, fertility preserved
+    // (each soil grade is its own wet/dry skin pair). `Unknown` changes
     // nothing (the next random tick retries); a swap goes through the
     // ordinary block write so neighbors see the update.
+    let (dry_skin, wet_skin) = content
+        .farmland_skins(current)
+        .unwrap_or((content.farmland_dry, content.farmland_wet));
     let want = match probe(content, pos) {
-        Hydration::Hydrated => content.farmland_wet,
-        Hydration::Dry => content.farmland_dry,
+        Hydration::Hydrated => wet_skin,
+        Hydration::Dry => dry_skin,
         Hydration::Unknown => current,
     };
     if current != want {

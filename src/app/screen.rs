@@ -29,20 +29,12 @@ pub(super) enum AppScreen {
     /// visible, but gameplay controls are disabled while text is entered.
     Chat,
     Pause,
-    Inventory,
-    /// The crafting-table recipe browser, opened by right-clicking a placed table.
-    CraftingTable,
-    /// The furnace screen, opened by right-clicking a placed furnace.
-    Furnace,
-    /// The chest screen (3×9 storage), opened by right-clicking a placed chest.
-    Chest,
-    /// The furniture-workbench screen (one input block + a grid of craftable results),
-    /// opened by right-clicking a placed workbench.
-    FurnitureWorkbench,
-    /// A mod-defined GUI screen (widgets only), opened by a block's
-    /// `open_gui` interaction or a mod's `GuiOpen` call. Carries which
-    /// registered kind it draws.
-    ModGui(crate::gui::GuiKind),
+    /// A slot-bearing game menu over a live tick: the engine containers
+    /// (inventory, crafting table, furnace, chest, furniture workbench) and
+    /// mod GUIs, one screen variant for all of them. Carries which registered
+    /// kind it draws; the open server session (`ContainerTarget`) speaks the
+    /// same kind.
+    Menu(crate::gui::GuiKind),
     /// A presentation-only client mod document. It releases the cursor and
     /// receives client-WASM UI events while the replicated world keeps
     /// running; no server menu session exists.
@@ -102,7 +94,7 @@ impl AppScreen {
     #[inline]
     #[cfg(test)]
     pub(super) fn inventory_open(self) -> bool {
-        matches!(self, AppScreen::Inventory)
+        self == AppScreen::Menu(crate::gui::GuiKind::Inventory)
     }
 
     /// A gameplay overlay screen is up (sleep fade / death): the document UI
@@ -113,19 +105,11 @@ impl AppScreen {
         matches!(self, AppScreen::Sleeping | AppScreen::Dead)
     }
 
-    /// Any slot-based menu (inventory or crafting table) is open — drives click
+    /// Any slot-based menu (container or mod GUI) is open — drives click
     /// routing and whether the panel UI is drawn.
     #[inline]
     pub(super) fn ui_open(self) -> bool {
-        matches!(
-            self,
-            AppScreen::Inventory
-                | AppScreen::CraftingTable
-                | AppScreen::Furnace
-                | AppScreen::Chest
-                | AppScreen::FurnitureWorkbench
-                | AppScreen::ModGui(_)
-        )
+        matches!(self, AppScreen::Menu(_))
     }
 
     #[inline]
@@ -147,12 +131,7 @@ impl AppScreen {
         match self {
             AppScreen::Game => GuiKind::Hotbar,
             AppScreen::Chat => GuiKind::Hotbar,
-            AppScreen::Inventory => GuiKind::Inventory,
-            AppScreen::CraftingTable => GuiKind::CraftingTable,
-            AppScreen::Furnace => GuiKind::Furnace,
-            AppScreen::Chest => GuiKind::Chest,
-            AppScreen::FurnitureWorkbench => GuiKind::FurnitureWorkbench,
-            AppScreen::ModGui(kind) => kind,
+            AppScreen::Menu(kind) => kind,
             AppScreen::ClientModGui(kind) => kind,
             AppScreen::Sleeping => GuiKind::Sleep,
             AppScreen::Dead => GuiKind::Death,

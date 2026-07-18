@@ -6,13 +6,34 @@ use mod_api::HostRet;
 use crate::block::Block;
 use crate::events::SimCtx;
 use crate::item::ItemType;
-use crate::mathh::Vec3;
+use crate::mathh::{IVec3, Vec3};
 use crate::modding::scope;
 
 /// Per-entry limits for the mod KV surfaces (world / section-cell / mob).
 /// Violations are [`HostRet::Error`] — a mod bug, surfaced loudly by the SDK.
 pub(super) const KV_MAX_KEY_BYTES: usize = 256;
 pub(super) const KV_MAX_VALUE_BYTES: usize = 64 * 1024;
+
+/// Element cap for every batched sim/registry call (`GetBlocks`, `SetBlocks`,
+/// `ContainerGetMany`, `ContainerSet` slots, the `*Names` reverse resolvers,
+/// `ChatSend` targets) — the documented ABI bound, mirroring the client
+/// surface's per-call caps (`CLIENT_BLOCKS_QUERY_MAX` etc.). The watchdog
+/// deliberately charges GUEST compute only, so host-side per-element work is
+/// unmetered; without this bound one maximal batch (the 64 MiB guest memory
+/// allows millions of positions) stalls the sim with no backstop. 4096 is
+/// orders of magnitude above legitimate per-tick batches (bundled mods peak
+/// in the low hundreds) while a maximal capped batch stays microseconds of
+/// host work. Violations are [`HostRet::Error`] — a mod bug, surfaced loudly
+/// by the SDK (panic → mod disabled), like every other cap on this surface.
+pub(super) const SIM_BATCH_MAX: usize = 4096;
+
+/// `Some(err)` when a batched call's element count exceeds
+/// [`SIM_BATCH_MAX`]; `what` names the call and lane for the error line.
+pub(super) fn batch_guard(what: &str, len: usize) -> Option<HostRet> {
+    (len > SIM_BATCH_MAX).then(|| {
+        HostRet::Error(format!("{what} count {len} exceeds {SIM_BATCH_MAX}"))
+    })
+}
 
 /// The mod-KV write guard: WRITES (set/delete) must use either the calling
 /// mod's own `mod_id:` prefix or an exposed engine `petramond:` key. Reads may cross
@@ -67,6 +88,32 @@ pub(super) fn sim_query(f: impl FnOnce(&mut SimCtx<'_>) -> HostRet) -> HostRet {
         .unwrap_or_else(|| HostRet::Error("no simulation context is active".into()))
 }
 
+/// Resolve a stable mob id to its live-list index — the ONE dead-mob policy
+/// for every id-addressed mob call arm: a dead (ragdolling) mob is GONE to
+/// the ABI, exactly as `MobsInRadius` never lists it, so `None` covers
+/// missing and dead alike. Readers then answer `None`/`false`, writers
+/// refuse — a corpse is neither readable nor writable. (`MobMount` reaches
+/// the same rule through `World::try_mount_player`, its engine seam;
+/// `DamageMob` re-resolves at its action drain, where the pipeline rejects
+/// the dead.) The returned index is valid only within the current handler.
+pub(super) fn live_mob(ctx: &SimCtx<'_>, mob_id: u64) -> Option<usize> {
+    let index = ctx.world.mobs().index_of_id(mob_id)?;
+    (!ctx.world.mobs().instances()[index].is_dead()).then_some(index)
+}
+
+/// Stream-final gate for WRITE-through-a-cell arms (`SwapModelBlock`,
+/// `ContainerSet`): the cell's block, or `Err(Bool(false))` while its section
+/// is unloaded or its streamed content is not yet final. During that window a
+/// plain read LIES — the generated base shows where the player's saved
+/// overlay is about to land — so an ownership check would see a FOREIGN block
+/// and misfire as a mod-disabling namespace `Error`. The gated miss is benign
+/// (`false` = "not stored, retry later"), exactly like every gated read.
+pub(super) fn stream_final_cell(ctx: &SimCtx<'_>, pos: IVec3) -> Result<Block, HostRet> {
+    ctx.world
+        .block_if_stream_final(pos.x, pos.y, pos.z)
+        .ok_or(HostRet::Bool(false))
+}
+
 /// Validate an ABI block id against the loaded registry — an unregistered id
 /// must never reach world storage.
 pub(super) fn checked_block(block: mod_api::BlockId) -> Result<Block, HostRet> {
@@ -91,16 +138,22 @@ pub(super) fn finite3(v: [f32; 3], what: &str) -> Result<Vec3, HostRet> {
     }
 }
 
-/// The runtime item registered under `key` (`ItemType::key` — the stable
-/// snake_case identity, `mod_id:name` for pack items).
-pub(super) fn item_by_key(key: &str) -> Option<ItemType> {
-    ItemType::all().iter().copied().find(|i| i.key() == key)
+/// The runtime item registered under registry NAME `name` — the one
+/// mod-facing item identity. O(1) through the shared name index.
+pub(super) fn item_by_name(name: &str) -> Option<ItemType> {
+    ItemType::by_name(name)
 }
 
-/// An engine stack as its ABI crossing (registry key + count).
+/// An item's registry NAME (every registered item has one; `"?"` guards the
+/// unreachable unregistered case).
+pub(super) fn item_name(item: ItemType) -> &'static str {
+    crate::registry::names().items.name(item.id()).unwrap_or("?")
+}
+
+/// An engine stack as its ABI crossing (registry name + count).
 pub(super) fn item_stack_data(stack: crate::item::ItemStack) -> mod_api::ItemStackData {
     mod_api::ItemStackData {
-        key: stack.item.key().to_owned(),
+        item: item_name(stack.item).to_owned(),
         count: stack.count,
     }
 }

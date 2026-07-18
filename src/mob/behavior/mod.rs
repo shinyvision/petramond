@@ -18,6 +18,8 @@ mod idle_anim;
 mod los;
 mod melee;
 mod retaliate;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod wander;
 mod wasm;
 
@@ -29,6 +31,7 @@ pub use idle_anim::IdleAnimAi;
 pub use melee::MeleeAttackAi;
 pub use retaliate::RetaliateAi;
 pub use wander::WanderAi;
+pub(crate) use wasm::ScriptedInputs;
 
 use super::brain::{
     AiBehavior, PRIORITY_ATTACK, PRIORITY_CHASE, PRIORITY_CONTACT, PRIORITY_EXPRESSION,
@@ -101,10 +104,12 @@ pub(super) fn node_spec(name: &str) -> Option<NodeSpec> {
 fn wander_node(
     _node: &'static str,
     params: &serde_json::Value,
+    inputs: ScriptedInputs,
     def: &'static MobDef,
     _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
     no_params(params)?;
+    no_inputs(inputs)?;
     Ok(Box::new(WanderAi::new(
         def.wander,
         &def.habitat,
@@ -115,65 +120,79 @@ fn wander_node(
 fn head_look_node(
     _node: &'static str,
     params: &serde_json::Value,
+    inputs: ScriptedInputs,
     _def: &'static MobDef,
     _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
     no_params(params)?;
+    no_inputs(inputs)?;
     Ok(Box::new(HeadLookAi::new()))
 }
 
 fn idle_anim_node(
     _node: &'static str,
     params: &serde_json::Value,
+    inputs: ScriptedInputs,
     _def: &'static MobDef,
     _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
     no_params(params)?;
+    no_inputs(inputs)?;
     Ok(Box::new(IdleAnimAi::new()))
 }
 
 fn chase_player_node(
     _node: &'static str,
     params: &serde_json::Value,
+    inputs: ScriptedInputs,
     _def: &'static MobDef,
     _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
+    no_inputs(inputs)?;
     Ok(Box::new(ChasePlayerAi::from_params(params)?))
 }
 
 fn chase_sound_node(
     _node: &'static str,
     params: &serde_json::Value,
+    inputs: ScriptedInputs,
     _def: &'static MobDef,
     all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
+    no_inputs(inputs)?;
     Ok(Box::new(ChaseSoundAi::from_params(params, all)?))
 }
 
 fn chase_contact_node(
     _node: &'static str,
     params: &serde_json::Value,
+    inputs: ScriptedInputs,
     _def: &'static MobDef,
     _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
+    no_inputs(inputs)?;
     Ok(Box::new(ChaseContactAi::from_params(params)?))
 }
 
 fn retaliate_node(
     _node: &'static str,
     params: &serde_json::Value,
+    inputs: ScriptedInputs,
     _def: &'static MobDef,
     _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
+    no_inputs(inputs)?;
     Ok(Box::new(RetaliateAi::from_params(params)?))
 }
 
 fn melee_attack_node(
     _node: &'static str,
     params: &serde_json::Value,
+    inputs: ScriptedInputs,
     _def: &'static MobDef,
     _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
+    no_inputs(inputs)?;
     Ok(Box::new(MeleeAttackAi::from_params(params)?))
 }
 
@@ -187,14 +206,28 @@ fn no_params(params: &serde_json::Value) -> Result<(), String> {
     }
 }
 
+/// Reject a declared `inputs` list on an engine node — engine behaviors read
+/// `AiCtx` directly; declared inputs exist to bound what crosses the ABI to a
+/// scripted node, and accepting them here would silently do nothing.
+fn no_inputs(inputs: ScriptedInputs) -> Result<(), String> {
+    if inputs.is_empty() {
+        Ok(())
+    } else {
+        Err("'inputs' are only declarable on scripted (mod_id:name) nodes".into())
+    }
+}
+
 /// Scripted WASM node: routes each decision on its row key. Takes no params
-/// (a mod configures itself from its own pack data).
+/// (a mod configures itself from its own pack data); the row's declared
+/// `inputs` select which perception facts are computed and shipped per
+/// dispatch.
 fn wasm_node(
     node: &'static str,
     params: &serde_json::Value,
+    inputs: ScriptedInputs,
     _def: &'static MobDef,
     _all: &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String> {
     no_params(params)?;
-    Ok(Box::new(wasm::WasmNodeAi::new(node)))
+    Ok(Box::new(wasm::WasmNodeAi::new(node, inputs)))
 }

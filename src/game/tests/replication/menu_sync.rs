@@ -456,19 +456,19 @@ fn open_screen_one_shot_maps_back_onto_game_events() {
     let pos = IVec3::new(3, 64, 3);
     // The tick's request site (interaction arm) writes this outbox field;
     // seed it directly to isolate the SelfEvents → GameEvents pipe.
-    game.server.sessions[0].request_open_chest = Some(pos);
+    game.server.sessions[0].request_open_gui = Some((crate::gui::GuiKind::Chest, Some(pos)));
 
     let events = game.tick(TICK_DT, &GameInput::default());
     assert_eq!(
-        events.open_chest,
-        Some(pos),
+        events.open_gui,
+        Some((crate::gui::GuiKind::Chest, Some(pos))),
         "the one-shot rode SelfEvents.open_screen into GameEvents"
     );
     assert!(
-        game.server.sessions[0].request_open_chest.is_none(),
+        game.server.sessions[0].request_open_gui.is_none(),
         "the request outbox is consumed by the batch"
     );
 
     let events = game.tick(TICK_DT, &GameInput::default());
-    assert_eq!(events.open_chest, None, "one-shots don't repeat");
+    assert_eq!(events.open_gui, None, "one-shots don't repeat");
 }

@@ -1,11 +1,15 @@
-//! Container calls: engine-backed mod container slots plus the item and
-//! recipe registry reads machine mods compose with.
+//! Container calls: engine-backed mod container slots plus the machine
+//! recipe reads machine mods compose with. (Item registry reads live in the
+//! `registry` domain.)
 
 use mod_api::{HostCall, HostRet};
 
-use super::guards::{item_by_key, item_stack_data, key_owned_by_namespace, sim_query};
+use super::guards::{
+    batch_guard, item_by_name, item_stack_data, key_owned_by_namespace, sim_query,
+    stream_final_cell,
+};
 
-/// Mod container slots + the item/recipe registry reads that make furnace-like
+/// Mod container slots + the machine recipe read that makes furnace-like
 /// mod logic possible without duplicating engine data.
 pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
@@ -21,23 +25,31 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                     .collect()
             }))
         }),
-        HostCall::ContainerGetMany { positions } => sim_query(|ctx| {
-            HostRet::Containers(
-                positions
-                    .iter()
-                    .map(|&pos| {
-                        let p = ctx.world.container_anchor(pos.into());
-                        ctx.world.container_at(p).map(|c| {
-                            c.slots
-                                .iter()
-                                .map(|slot| slot.map(item_stack_data))
-                                .collect()
+        HostCall::ContainerGetMany { positions } => {
+            if let Some(err) = batch_guard("ContainerGetMany position", positions.len()) {
+                return err;
+            }
+            sim_query(|ctx| {
+                HostRet::Containers(
+                    positions
+                        .iter()
+                        .map(|&pos| {
+                            let p = ctx.world.container_anchor(pos.into());
+                            ctx.world.container_at(p).map(|c| {
+                                c.slots
+                                    .iter()
+                                    .map(|slot| slot.map(item_stack_data))
+                                    .collect()
+                            })
                         })
-                    })
-                    .collect(),
-            )
-        }),
+                        .collect(),
+                )
+            })
+        }
         HostCall::ContainerSet { pos, slots } => {
+            if let Some(err) = batch_guard("ContainerSet slot entry", slots.len()) {
+                return err;
+            }
             // Resolve+validate every entry BEFORE any write, so a bad entry
             // can't leave a half-applied batch.
             let mut writes: Vec<(usize, Option<crate::item::ItemStack>)> = Vec::new();
@@ -52,14 +64,14 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 let stack = match slot {
                     None => None,
                     Some(data) => {
-                        // A typo'd registry key is not a protocol break: warn
+                        // A typo'd registry name is not a protocol break: warn
                         // and refuse the batch (the GiveItem/EffectApply
                         // policy), don't trap the whole mod.
-                        let Some(item) = item_by_key(&data.key) else {
+                        let Some(item) = item_by_name(&data.item) else {
                             log::warn!(
                                 "[mod {mod_id}] ContainerSet: unknown item '{}' — \
                                  batch not applied",
-                                data.key
+                                data.item
                             );
                             return HostRet::Bool(false);
                         };
@@ -76,11 +88,9 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 let p = ctx.world.container_anchor(pos.into());
                 // A mod owns only its own blocks' containers: the block at
                 // `pos` must be registered to the caller's namespace.
-                // Stream-final read: a half-streamed cell shows the generated
-                // base (a foreign block) — that must be "not stored", not a
-                // namespace violation.
-                let Some(block) = ctx.world.block_if_stream_final(p.x, p.y, p.z) else {
-                    return HostRet::Bool(false);
+                let block = match stream_final_cell(ctx, p) {
+                    Ok(b) => b,
+                    Err(miss) => return miss,
                 };
                 let block_name = crate::registry::names()
                     .blocks
@@ -105,25 +115,12 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             })
         }
-        HostCall::ItemInfo { key } => {
-            HostRet::ItemInfo(item_by_key(&key).map(|item| mod_api::ItemInfoData {
-                max_stack: item.max_stack_size(),
-                fuel_burn_ticks: item.fuel_burn_ticks() as u32,
-                tags: item.tags().iter().map(|t| t.name().to_owned()).collect(),
-            }))
-        }
-        // Registry-only like ResolveBlock: legal on any instance, any time —
-        // how a mod matches the numeric ids in event payloads (item_use_pre)
-        // against its own names.
-        HostCall::ResolveItem { key } => {
-            HostRet::Item(crate::registry::names().items.id(&key).map(mod_api::ItemId))
-        }
-        HostCall::RecipeResult { class, key } => {
+        HostCall::RecipeResult { class, item } => {
             let Some(recipes) = crate::modding::active_recipes() else {
                 log::warn!("[mod {mod_id}] RecipeResult: no recipe catalog installed");
                 return HostRet::ItemStack(None);
             };
-            let Some(item) = item_by_key(&key) else {
+            let Some(item) = item_by_name(&item) else {
                 return HostRet::ItemStack(None);
             };
             HostRet::ItemStack(recipes.process(&class, item).map(item_stack_data))
@@ -146,31 +143,6 @@ mod tests {
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
-
-    /// ResolveItem is registry-only: it answers OUTSIDE any published SimCtx
-    /// (the ResolveBlock contract), returns the session id for a known name,
-    /// and `None` — never an error — for an unknown one.
-    #[test]
-    fn resolve_item_answers_without_a_sim_scope() {
-        let mut store = ModStoreData::new("somemod", 1);
-        let got = handle_host_call(
-            &mut store,
-            HostCall::ResolveItem {
-                key: "petramond:stick".into(),
-            },
-        );
-        let HostRet::Item(Some(id)) = got else {
-            panic!("expected a resolved id for petramond:stick, got {got:?}");
-        };
-        assert_eq!(id.0, crate::item::ItemType::Stick.id());
-        let unknown = handle_host_call(
-            &mut store,
-            HostCall::ResolveItem {
-                key: "somemod:not_a_thing".into(),
-            },
-        );
-        assert_eq!(unknown, HostRet::Item(None));
-    }
 
     /// Container host calls canonicalize any footprint cell of a multi-cell
     /// model block to the group ANCHOR: a write through a non-anchor cell
@@ -212,7 +184,7 @@ mod tests {
                     slots: vec![(
                         0,
                         Some(mod_api::ItemStackData {
-                            key: "petramond:coal".into(),
+                            item: "petramond:coal".into(),
                             count: 3,
                         }),
                     )],

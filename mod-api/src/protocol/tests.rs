@@ -55,18 +55,14 @@ fn abi_roundtrip_host_and_guest_calls() {
         key: "zombies:zombie".into(),
         pos: [0.5, 64.0, 0.5],
         yaw: 1.5,
-    });
-    roundtrip(HostCall::SpawnMobChecked {
-        key: "vehicles:boat".into(),
-        pos: [0.5, 64.0, 0.5],
-        yaw: 1.5,
+        checked: false,
     });
     roundtrip(HostCall::MobsInRadius {
         pos: [0.0, 64.0, 0.0],
         radius: 16.0,
     });
     roundtrip(HostCall::DamageMob {
-        index: 3,
+        mob_id: 3,
         amount: 2.5,
         origin: Some([1.0, 64.0, 1.0]),
         feedback: Some(crate::events::MobDamageFeedback {
@@ -75,9 +71,9 @@ fn abi_roundtrip_host_and_guest_calls() {
             }],
         }),
     });
-    roundtrip(HostCall::DespawnMob { index: 7 });
+    roundtrip(HostCall::DespawnMob { mob_id: 7 });
     roundtrip(HostCall::MobEmitterSet {
-        index: 5,
+        mob_id: 5,
         key: "petramond:burn_light".into(),
         active: true,
     });
@@ -87,7 +83,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         intensity: 4.5,
     });
     roundtrip(HostCall::SpawnItem {
-        item_key: "petramond:stick".into(),
+        item: "petramond:stick".into(),
         count: 4,
         pos: [0.5, 64.0, 0.5],
     });
@@ -97,10 +93,9 @@ fn abi_roundtrip_host_and_guest_calls() {
         impulse: [1.0, 3.0, -1.0],
     });
     roundtrip(HostCall::GiveItem {
-        item_key: "petramond:diamond".into(),
+        item: "petramond:diamond".into(),
         count: 1,
     });
-    roundtrip(HostCall::KillPlayer);
     roundtrip(HostCall::SetHealth { value: 20 });
     roundtrip(HostCall::Teleport {
         pos: [10.5, 80.0, -4.5],
@@ -133,20 +128,20 @@ fn abi_roundtrip_host_and_guest_calls() {
         key: "farm:moisture".into(),
     });
     roundtrip(HostCall::MobKvGet {
-        mob_index: 2,
+        mob_id: 2,
         key: "zombies:target".into(),
     });
     roundtrip(HostCall::MobKvSet {
-        mob_index: 2,
+        mob_id: 2,
         key: "zombies:target".into(),
         value: vec![0xFF],
     });
     roundtrip(HostCall::MobKvDelete {
-        mob_index: 2,
+        mob_id: 2,
         key: "zombies:target".into(),
     });
     roundtrip(HostCall::ResolveBlock {
-        key: "kitchen:oven".into(),
+        name: "kitchen:oven".into(),
     });
     roundtrip(HostCall::RegisterWorldgenFeature {
         feature_id: 3,
@@ -174,7 +169,7 @@ fn abi_roundtrip_host_and_guest_calls() {
     });
     roundtrip(HostCall::ChatSend {
         text: "whisper".into(),
-        targets: Some(vec![0, 2]),
+        targets: Some(vec![PlayerId(0), PlayerId(2)]),
     });
     roundtrip(HostCall::SoundPlayAt {
         key: "zombies:groan".into(),
@@ -189,7 +184,9 @@ fn abi_roundtrip_host_and_guest_calls() {
         pitch: 1.05,
     });
     roundtrip(HostCall::SoundStop { handle: 99 });
-    roundtrip(HostCall::BlockIsFullSpawnSupport { pos: [8, 63, 8] });
+    roundtrip(HostCall::CollisionShapeAt { pos: [8, 63, 8] });
+    roundtrip(HostRet::CollisionShape(Some(CollisionShape::Partial)));
+    roundtrip(HostRet::CollisionShape(None));
     roundtrip(HostCall::ShaderSetParam {
         key: "petramond:light".into(),
         value: [0.75, 0.0, 0.0, 1.0],
@@ -394,9 +391,13 @@ fn abi_roundtrip_host_and_guest_calls() {
             pos: [1.5, 64.0, -3.5],
             cell: [1, 64, -4],
             yaw: 0.5,
+            tick: 1200,
+            player_id: PlayerId(1),
             player_pos: [8.0, 65.0, 8.0],
             nav_idle: true,
             in_water: false,
+            player_held: Some(ItemId(3)),
+            player_foothold: Some([8, 64, 8]),
         },
     });
     roundtrip(GuestRet::AiDecision(Some(AiNodeDecision {
@@ -441,14 +442,16 @@ fn abi_roundtrip_host_and_guest_calls() {
     roundtrip(HostRet::Bool(true));
     roundtrip(HostRet::Block(Some(BlockId(9))));
     roundtrip(HostRet::Blocks(vec![None, Some(BlockId(0))]));
-    roundtrip(HostRet::Light {
+    roundtrip(HostRet::Light(Some(LightData {
         combined: 63,
         sky: 63,
         block: 40,
-    });
+    })));
+    roundtrip(HostRet::Light(None));
     roundtrip(HostRet::Mobs(vec![MobSnapshot {
         index: 0,
         key: "petramond:owl".into(),
+        kind: MobId(0),
         pos: [1.5, 64.0, -3.5],
         health: 4.0,
         id: 123,
@@ -478,12 +481,11 @@ fn abi_roundtrip_host_and_guest_calls() {
     roundtrip(GuestCall::TickSystem { id: 3 });
     roundtrip(GuestCall::HandleEvent {
         id: 1,
-        kind: EventKind::MobDamagePre,
         payload: EventPayload::MobDamagePre {
-            mob: 5,
+            mob_id: 5,
             kind: MobId(1),
             amount: 2.5,
-            source: DamageSource::PlayerAttack { id: 0 },
+            source: DamageSource::PlayerAttack { id: PlayerId(0) },
             origin: Some([1.0, -2.0, 0.5]),
             feedback: MobDamageFeedback::default(),
         },
@@ -500,6 +502,20 @@ fn abi_roundtrip_host_and_guest_calls() {
         kind: ContainerKind::Furnace,
         pos: Some([1, -64, 3]),
     });
+    roundtrip(HostCall::BlockNames {
+        blocks: vec![BlockId(0), BlockId(200)],
+    });
+    roundtrip(HostCall::ItemNames {
+        items: vec![ItemId(3)],
+    });
+    roundtrip(HostRet::Names(vec![Some("petramond:stone".into()), None]));
+    roundtrip(HostCall::ResolveMob {
+        key: "petramond:sheep".into(),
+    });
+    roundtrip(HostCall::MobNames {
+        mobs: vec![MobId(0), MobId(9)],
+    });
+    roundtrip(HostRet::MobKind(Some(MobId(2))));
 }
 
 #[test]

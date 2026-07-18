@@ -48,7 +48,10 @@ fn horizontal_log_bark_faces_use_axis_aligned_cell_local_uvs() {
 
 /// A placed furnace shows its front on exactly the face it was placed facing and
 /// `furnace_side` on the other three horizontal faces (top + bottom use the top
-/// tile). Pins the directional fix for "front rendered on all four sides".
+/// tile). Pins the directional fix for "front rendered on all four sides", and
+/// the lit skin being the `furnace_lit` ROW: swapping the block id (the tick's
+/// lit flip) is all it takes for the mesher to show the glowing front — the
+/// entity facing survives the swap.
 #[test]
 fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
     use crate::atlas::Tile;
@@ -84,16 +87,10 @@ fn furnace_shows_front_on_facing_face_and_side_on_the_others() {
         "no lit front while unlit"
     );
 
-    // Lit: the facing face swaps to the glowing front; the sides do not glow.
-    section.insert_furnace(
-        8,
-        8,
-        8,
-        Furnace {
-            burn_remaining: 100,
-            ..Default::default()
-        },
-    );
+    // Lit: the block-row swap flips the facing face to the glowing front; the
+    // sides do not glow. `set_block` keeps the entity maps, so the facing
+    // carries across exactly as the world's skin swap relies on.
+    section.set_block(8, 8, 8, Block::FurnaceLit);
     let lit = mesh(&section);
     assert_eq!(
         count(&lit, Tile::named("furnace_front_on")),

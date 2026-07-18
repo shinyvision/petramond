@@ -22,10 +22,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::atlas::Tile;
+use crate::facing::Facing;
 use crate::item::{Drop, DropSpec, ItemType};
 use crate::registry::ContentNames;
 
-use super::definition::{BlockDef, BlockFlags, BlockMaterial, ParticleEmitter};
+use super::definition::{self, BlockDef, BlockFlags, BlockMaterial, ParticleEmitter};
 use super::{behavior, Aabb, Block, BlockInteraction, BlockTag, RenderShape};
 
 #[derive(Serialize, Deserialize)]
@@ -58,10 +59,83 @@ pub(super) struct RawBlockDef {
     #[serde(default)]
     pub particle_emitter: Option<RawEmitterRef>,
     pub tiles: [String; 3],
+    /// Tile shown on the placed entity-facing face (furnace/chest fronts).
+    /// Only valid together with the `directional_view` flag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub front: Option<String>,
+    /// Side compositing: `{"base": tile, "overlay": tile}` — side faces draw
+    /// the base with the overlay tinted by its atlas tint class (grass).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_overlay: Option<RawSideOverlay>,
+    /// Side tile swapped in while a `snow_cover` block sits directly above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub covered_side: Option<String>,
     pub material: BlockMaterial,
     pub harvest_tier: u8,
     pub hardness: f64,
     pub drops: Vec<RawDrop>,
+    /// Sapling stage chain: the registry name of the block this row advances
+    /// to on a successful growth roll. Required on every NON-final `sapling`
+    /// behaviour row, forbidden anywhere else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_stage: Option<String>,
+    /// The tree(s) a FINAL sapling stage grows: a `features.json` key, or a
+    /// weighted list of them. Required on every final `sapling` behaviour row,
+    /// forbidden anywhere else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grows_into: Option<RawGrowsInto>,
+    /// A ladder-shaped row's fixed wall facing (`"north"` / `"south"` /
+    /// `"west"` / `"east"`): the direction the panel front points, away from
+    /// its supporting wall. Required on every `ladder`-shaped row, forbidden
+    /// anywhere else — facing is block identity, one row per facing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel_facing: Option<String>,
+    /// The facing → sibling-row map of a wall-panel family's placeable row
+    /// (all four directions required); placement commits the sibling matching
+    /// the clicked face's normal. Only valid on `ladder`-shaped rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facing_rows: Option<RawFacingRows>,
+}
+
+/// A row's `facing_rows` field: the four facing-sibling registry names.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawFacingRows {
+    pub north: String,
+    pub south: String,
+    pub west: String,
+    pub east: String,
+}
+
+/// A row's `side_overlay` field: the two tiles of a composited side face.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawSideOverlay {
+    pub base: String,
+    pub overlay: String,
+}
+
+/// A row's `grows_into` field: one feature key, or a weighted choice list
+/// (`[{"feature": "petramond:oak_big", "weight": 1}, ...]`; `weight` defaults
+/// to 1).
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+pub(super) enum RawGrowsInto {
+    Key(String),
+    Weighted(Vec<RawGrowthChoice>),
+}
+
+/// One weighted `grows_into` entry.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawGrowthChoice {
+    pub feature: String,
+    #[serde(default = "default_growth_weight")]
+    pub weight: f64,
+}
+
+fn default_growth_weight() -> f64 {
+    1.0
 }
 
 /// A row's `particle_emitter` field: a `particle_emitters.json` bundle KEY
@@ -90,10 +164,16 @@ impl RawInteraction {
         match self {
             RawInteraction::Named(name) => Ok(match name.as_str() {
                 "none" => BlockInteraction::None,
-                "open_crafting_table" => BlockInteraction::OpenCraftingTable,
-                "open_furnace" => BlockInteraction::OpenFurnace,
-                "open_chest" => BlockInteraction::OpenChest,
-                "open_furniture_workbench" => BlockInteraction::OpenFurnitureWorkbench,
+                // The named engine openers are vocabulary sugar: they resolve
+                // to the same unified shape mod `open_gui` rows use.
+                "open_crafting_table" => {
+                    BlockInteraction::OpenGui(crate::gui::GuiKind::CraftingTable)
+                }
+                "open_furnace" => BlockInteraction::OpenGui(crate::gui::GuiKind::Furnace),
+                "open_chest" => BlockInteraction::OpenGui(crate::gui::GuiKind::Chest),
+                "open_furniture_workbench" => {
+                    BlockInteraction::OpenGui(crate::gui::GuiKind::FurnitureWorkbench)
+                }
                 "toggle_door" => BlockInteraction::ToggleDoor,
                 "sleep" => BlockInteraction::Sleep,
                 other => return Err(format!("unknown interaction '{other}'")),
@@ -108,7 +188,7 @@ impl RawInteraction {
                 }
                 let kind = crate::gui::intern_kind(open_gui)
                     .ok_or_else(|| format!("cannot register gui kind '{open_gui}'"))?;
-                Ok(BlockInteraction::OpenModGui(kind))
+                Ok(BlockInteraction::OpenGui(kind))
             }
         }
     }
@@ -150,11 +230,13 @@ pub(super) struct RawDrop {
     pub chance: f64,
 }
 
-/// The loaded block table: id-indexed defs plus the dense per-id flag copy the
-/// mesher/light hot loops read (see `data::flags`).
+/// The loaded block table: id-indexed defs plus the dense per-id flag and
+/// emission copies the mesher/light hot loops read (see `data::flags` /
+/// `data::emission`).
 pub(super) struct Registry {
     pub defs: &'static [BlockDef],
     pub flags: [BlockFlags; 256],
+    pub emission: [u8; 256],
 }
 
 /// Load the registry from every `blocks.json` layer (base + mod packs, later
@@ -197,16 +279,115 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
         },
     )?;
     let defs: &'static [BlockDef] = Box::leak(defs.into_boxed_slice());
+    validate_stage_chains(defs)?;
+    validate_facing_rows(defs)?;
     let mut flags = [BlockFlags::NONE; 256];
+    let mut emission = [0u8; 256];
     for d in defs {
         flags[d.block.id() as usize] = d.flags;
+        emission[d.block.id() as usize] = d.emission;
     }
-    Ok(Registry { defs, flags })
+    Ok(Registry {
+        defs,
+        flags,
+        emission,
+    })
+}
+
+/// Cross-row sapling checks `convert` can't do alone: every `next_stage`
+/// target must itself be a sapling row, and every chain must terminate in a
+/// final (`grows_into`) stage — a cycle or a dead end would be a sapling that
+/// silently never grows.
+fn validate_stage_chains(defs: &[BlockDef]) -> Result<(), String> {
+    let name = |d: &BlockDef| format!("{:?}", d.block);
+    for d in defs {
+        let Some(mut at) = d.next_stage else {
+            continue;
+        };
+        for _ in 0..defs.len() {
+            let target = &defs[at.id() as usize];
+            if target.behavior.key() != "sapling" {
+                return Err(format!(
+                    "block {}: next_stage target {:?} does not carry the sapling behaviour",
+                    name(d),
+                    target.block
+                ));
+            }
+            match target.next_stage {
+                Some(next) => at = next,
+                None => break, // reached a final (grows_into) stage
+            }
+        }
+        if defs[at.id() as usize].next_stage.is_some() {
+            return Err(format!(
+                "block {}: its next_stage chain never reaches a final grows_into stage (cycle?)",
+                name(d)
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Cross-row wall-panel checks `convert` can't do alone: every `facing_rows`
+/// target must be a ladder-shaped row whose own `panel_facing` matches the
+/// slot it fills, and the declaring row must map its own facing to itself —
+/// otherwise placement would commit a panel that doesn't hug the clicked wall.
+fn validate_facing_rows(defs: &[BlockDef]) -> Result<(), String> {
+    for d in defs {
+        let Some(rows) = d.facing_rows else {
+            continue;
+        };
+        for (facing, &target) in [Facing::North, Facing::South, Facing::West, Facing::East]
+            .iter()
+            .zip(rows.iter())
+        {
+            let t = &defs[target.id() as usize];
+            if t.panel_facing != Some(*facing) {
+                return Err(format!(
+                    "block {:?}: facing_rows.{} target {:?} does not declare panel_facing '{}'",
+                    d.block,
+                    facing_name(*facing),
+                    target,
+                    facing_name(*facing)
+                ));
+            }
+        }
+        // Self-consistency: placing this row toward its own facing must keep it.
+        let own = d.panel_facing.expect("ladder shape enforced in convert");
+        if rows[own.to_u8() as usize] != d.block {
+            return Err(format!(
+                "block {:?}: facing_rows.{} must name the row itself",
+                d.block,
+                facing_name(own)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn facing_name(f: Facing) -> &'static str {
+    match f {
+        Facing::North => "north",
+        Facing::South => "south",
+        Facing::West => "west",
+        Facing::East => "east",
+    }
+}
+
+fn parse_facing(name: &str) -> Result<Facing, String> {
+    match name {
+        "north" => Ok(Facing::North),
+        "south" => Ok(Facing::South),
+        "west" => Ok(Facing::West),
+        "east" => Ok(Facing::East),
+        other => Err(format!("unknown facing '{other}'")),
+    }
 }
 
 fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDef, String> {
     let behavior = behavior::by_name(&r.behavior)
         .ok_or_else(|| format!("unknown behavior '{}'", r.behavior))?;
+    let interaction = r.interaction.resolve()?;
     let tile = |name: &String| -> Result<Tile, String> {
         Tile::from_name(name).ok_or_else(|| format!("unknown tile '{name}'"))
     };
@@ -254,6 +435,97 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
         .iter()
         .map(|t| BlockTag::resolve(t))
         .collect::<Result<_, String>>()?;
+    // Sapling-ness has ONE membership definition: the `sapling` tag (what the
+    // block IS, what mods enumerate) and the `sapling` behaviour (what it
+    // DOES, the growth) must name the same rows — a tagged-but-inert row
+    // would be advertised as growable and never grow; a behaviour row without
+    // the tag would be invisible to tag-driven mod policy.
+    let is_sapling = behavior.key() == "sapling";
+    if is_sapling != tags.contains(&BlockTag::SAPLING) {
+        return Err(if is_sapling {
+            "a row with the 'sapling' behavior must also list the 'sapling' tag".into()
+        } else {
+            "the 'sapling' tag requires the 'sapling' behavior (tag and behavior must agree)"
+                .into()
+        });
+    }
+    // Growth stages are the block rows themselves: a sapling row is either a
+    // growing stage (`next_stage` names its successor) or the final stage
+    // (`grows_into` names its tree) — exactly one, and only on sapling rows.
+    let next_stage = match &r.next_stage {
+        None => None,
+        Some(name) => Some(
+            names
+                .blocks
+                .id(name)
+                .map(Block)
+                .ok_or_else(|| format!("unknown next_stage block '{name}'"))?,
+        ),
+    };
+    let grows_into: Vec<(&'static str, f32)> = match &r.grows_into {
+        None => Vec::new(),
+        Some(RawGrowsInto::Key(key)) => vec![(resolve_growth_feature(key)?, 1.0)],
+        Some(RawGrowsInto::Weighted(choices)) => {
+            if choices.is_empty() {
+                return Err("grows_into lists no choices".into());
+            }
+            choices
+                .iter()
+                .map(|c| {
+                    if !(c.weight > 0.0 && c.weight.is_finite()) {
+                        return Err(format!(
+                            "grows_into '{}' weight must be a positive finite number",
+                            c.feature
+                        ));
+                    }
+                    Ok((resolve_growth_feature(&c.feature)?, c.weight as f32))
+                })
+                .collect::<Result<_, String>>()?
+        }
+    };
+    match (is_sapling, next_stage.is_some(), !grows_into.is_empty()) {
+        (false, false, false) | (true, true, false) | (true, false, true) => {}
+        (false, ..) => {
+            return Err("next_stage/grows_into are sapling-row fields (behavior 'sapling')".into())
+        }
+        (true, true, true) => {
+            return Err(
+                "a sapling row is either a growing stage (next_stage) or the final stage \
+                 (grows_into), never both"
+                    .into(),
+            )
+        }
+        (true, false, false) => {
+            return Err(
+                "a sapling row must declare next_stage (growing stage) or grows_into (final \
+                 stage) — a sapling that names no tree would silently never grow"
+                    .into(),
+            )
+        }
+    }
+    // A bed is a spawn anchor: the server's bed-spawn bookkeeping (set on the
+    // sleep click, verified at respawn, cleared on break) resolves the bed
+    // through its MODEL GROUP, and a spawn is only ever SET by a sleep
+    // interaction. A `bed`-tagged row that is not a sleepable model block
+    // would advertise a spawn anchor the bookkeeping can never set or
+    // resolve. The converse is deliberately open: `interaction: "sleep"`
+    // without the tag is a sleepable block that anchors no spawn.
+    if tags.contains(&BlockTag::BED) {
+        if !matches!(r.shape, RenderShape::Model(_)) {
+            return Err(
+                "the 'bed' tag requires a model shape — bed-spawn bookkeeping resolves the \
+                 bed through its model group"
+                    .into(),
+            );
+        }
+        if interaction != BlockInteraction::Sleep {
+            return Err(
+                "the 'bed' tag requires interaction 'sleep' — a spawn point is only ever set \
+                 by a sleep click, so a non-sleepable bed could never anchor one"
+                    .into(),
+            );
+        }
+    }
     // Derived, not row-listed: the physics climb/grip probes need these as
     // dense flags (see `BlockFlags::CLIMBABLE` / `BlockFlags::SLIPPERY`).
     if tags.contains(&BlockTag::CLIMBABLE) {
@@ -262,6 +534,74 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
     if tags.contains(&BlockTag::SLIPPERY) {
         flags = flags.with(BlockFlags::SLIPPERY);
     }
+    // Row texture vocabulary beyond the plain [top, bottom, side] triple. The
+    // front is meaningless without a stored placement facing, which only
+    // `directional_view` rows record — refuse the dead data.
+    let front = match &r.front {
+        None => None,
+        Some(name) => {
+            if !flags.is_directional_view() {
+                return Err("a 'front' tile requires the 'directional_view' flag".into());
+            }
+            Some(tile(name)?)
+        }
+    };
+    // A wall panel's facing is meaningless off the ladder shape, and a
+    // ladder-shaped row without one would mesh/collide/climb some arbitrary
+    // default — facing is the shape's identity axis, so both directions of
+    // the pairing are load errors (mirroring front ⇔ directional_view).
+    let panel_facing = match &r.panel_facing {
+        None => {
+            if r.shape == RenderShape::Ladder {
+                return Err(
+                    "a ladder-shaped row must declare panel_facing (facing is block identity: \
+                     one row per facing)"
+                        .into(),
+                );
+            }
+            None
+        }
+        Some(name) => {
+            if r.shape != RenderShape::Ladder {
+                return Err("panel_facing requires the 'ladder' shape".into());
+            }
+            Some(parse_facing(name)?)
+        }
+    };
+    let facing_rows = match &r.facing_rows {
+        None => None,
+        Some(raw) => {
+            if r.shape != RenderShape::Ladder {
+                return Err("facing_rows requires the 'ladder' shape".into());
+            }
+            let resolve = |name: &String| {
+                names
+                    .blocks
+                    .id(name)
+                    .map(Block)
+                    .ok_or_else(|| format!("unknown facing_rows block '{name}'"))
+            };
+            // Facing discriminant order: North, South, West, East.
+            let rows: &'static [Block; 4] = Box::leak(Box::new([
+                resolve(&raw.north)?,
+                resolve(&raw.south)?,
+                resolve(&raw.west)?,
+                resolve(&raw.east)?,
+            ]));
+            Some(rows)
+        }
+    };
+    let side_overlay = match &r.side_overlay {
+        None => None,
+        Some(raw) => Some(definition::SideOverlay {
+            base: tile(&raw.base)?,
+            overlay: tile(&raw.overlay)?,
+        }),
+    };
+    let covered_side = match &r.covered_side {
+        None => None,
+        Some(name) => Some(tile(name)?),
+    };
     let particle_emitter: Option<&'static [ParticleEmitter]> = match &r.particle_emitter {
         None => None,
         Some(RawEmitterRef::Key(key)) => {
@@ -285,17 +625,34 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
         flags,
         tags: leak(tags),
         behavior,
-        interaction: r.interaction.resolve()?,
+        interaction,
         shape: r.shape,
         collision: leak(r.collision),
         emission: r.emission,
         particle_emitter,
         tiles,
+        front,
+        side_overlay,
+        covered_side,
         material: r.material,
         harvest_tier: r.harvest_tier,
         hardness: r.hardness as f32,
         drop: DropSpec { drops: leak(drops) },
+        next_stage,
+        grows_into: leak(grows_into),
+        panel_facing,
+        facing_rows,
     })
+}
+
+/// Validate one `grows_into` feature key against the loaded feature registry
+/// and intern it. Unknown keys fail the load — a final sapling stage naming a
+/// missing tree must never fall back to some default species.
+fn resolve_growth_feature(key: &str) -> Result<&'static str, String> {
+    if crate::worldgen::data::features::by_name(key).is_none() {
+        return Err(format!("grows_into names unknown worldgen feature '{key}'"));
+    }
+    Ok(String::leak(key.to_owned()))
 }
 
 /// Shared strict validation for one particle-emitter row — used by block rows
@@ -413,6 +770,33 @@ mod tests {
         );
     }
 
+    /// The `bed` tag is the spawn-anchor identity the server's bed bookkeeping
+    /// keys on; it resolves the bed through its model group and only a sleep
+    /// click ever sets a spawn — so a tagged row that is not a sleepable model
+    /// block must fail the load instead of silently never anchoring.
+    #[test]
+    fn bed_tagged_rows_must_be_sleepable_model_blocks() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        // A bed-tagged CUBE row: the bookkeeping could never resolve its group.
+        let cube = r#"{ "blocks": [ { "block": "petramond:stone", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["bed"], "behavior": "inert", "interaction": "sleep", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 1, "drops": [] } ] }"#;
+        let err = parse_test_layers(&[&base, cube])
+            .err()
+            .expect("bed tag on a cube refused");
+        assert!(err.contains("model shape"), "{err}");
+        // A bed-tagged model row WITHOUT the sleep interaction: no click could
+        // ever set the spawn it advertises.
+        let unsleepable = r#"{ "blocks": [ { "block": "petramond:bed", "shape": {"model": "petramond:bed"}, "flags": ["solid", "directional_view"], "tags": ["bed"], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["oak_planks", "oak_planks", "oak_planks"], "material": "wood", "harvest_tier": 0, "hardness": 1, "drops": [] } ] }"#;
+        let err = parse_test_layers(&[&base, unsleepable])
+            .err()
+            .expect("unsleepable bed tag refused");
+        assert!(err.contains("interaction 'sleep'"), "{err}");
+        // The open converse: `interaction: "sleep"` WITHOUT the tag is a
+        // sleepable block that anchors no spawn — legal.
+        let sleep_only = r#"{ "blocks": [ { "block": "petramond:bed", "shape": {"model": "petramond:bed"}, "flags": ["solid", "directional_view"], "tags": [], "behavior": "inert", "interaction": "sleep", "collision": [], "emission": 0, "tiles": ["oak_planks", "oak_planks", "oak_planks"], "material": "wood", "harvest_tier": 0, "hardness": 1, "drops": [] } ] }"#;
+        parse_test_layers(&[&base, sleep_only]).expect("sleep without the bed tag loads");
+    }
+
     #[test]
     fn pack_layer_overrides_rows_by_block() {
         let (base, _) =
@@ -517,6 +901,163 @@ mod tests {
         }
     }
 
+    /// Sapling-ness is ONE membership (D6) and the stage chain is validated
+    /// data (E3): tag ⇔ behavior must agree, a sapling row carries exactly one
+    /// of `next_stage`/`grows_into`, `grows_into` must name a real worldgen
+    /// feature, and a chain must terminate in a final stage.
+    #[test]
+    fn sapling_rows_validate_tag_behavior_and_stage_chain() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let row = |name: &str, tags: &str, behavior: &str, growth: &str| {
+            format!(
+                r#"{{ "blocks": [ {{ "block": "{name}", {growth} "shape": "cross", "flags": ["transparent"], "tags": [{tags}], "behavior": "{behavior}", "interaction": "none", "collision": [], "emission": 0, "tiles": ["oak_sapling", "oak_sapling", "oak_sapling"], "material": "plant", "harvest_tier": 0, "hardness": 0, "drops": [] }} ] }}"#
+            )
+        };
+        let sapling_tags = r#""fragile", "roots_in_soil", "sapling""#;
+
+        // A valid pack sapling: final stage, weighted grows_into.
+        let good = row(
+            "mymod:sap",
+            sapling_tags,
+            "sapling",
+            r#""grows_into": [{"feature": "petramond:oak_big", "weight": 1}, {"feature": "petramond:oak_small"}],"#,
+        );
+        parse_test_layers(&[&base, &good]).expect("a valid final-stage sapling row loads");
+        // ... and a growing stage chaining into an engine row.
+        let chained = row(
+            "mymod:sap",
+            sapling_tags,
+            "sapling",
+            r#""next_stage": "petramond:oak_sapling_1","#,
+        );
+        parse_test_layers(&[&base, &chained]).expect("a valid growing-stage sapling row loads");
+
+        for (layer, why, needle) in [
+            (
+                row("mymod:sap", r#""fragile""#, "sapling", r#""grows_into": "petramond:spruce","#),
+                "behavior without the tag",
+                "tag",
+            ),
+            (
+                row("mymod:sap", sapling_tags, "fragile", ""),
+                "tag without the behavior",
+                "behavior",
+            ),
+            (
+                row("mymod:sap", sapling_tags, "sapling", ""),
+                "a sapling row with neither stage field",
+                "next_stage",
+            ),
+            (
+                row(
+                    "mymod:sap",
+                    sapling_tags,
+                    "sapling",
+                    r#""next_stage": "petramond:oak_sapling_1", "grows_into": "petramond:spruce","#,
+                ),
+                "both stage fields at once",
+                "never both",
+            ),
+            (
+                row(
+                    "mymod:sap",
+                    sapling_tags,
+                    "sapling",
+                    r#""grows_into": "petramond:not_a_feature","#,
+                ),
+                "an unknown grows_into feature",
+                "unknown worldgen feature",
+            ),
+            (
+                row("mymod:notsap", r#""fragile""#, "fragile", r#""next_stage": "petramond:oak_sapling","#),
+                "next_stage on a non-sapling row",
+                "sapling-row fields",
+            ),
+            (
+                row("mymod:sap", sapling_tags, "sapling", r#""next_stage": "mymod:sap","#),
+                "a self-referential chain that never reaches a final stage",
+                "never reaches",
+            ),
+            (
+                row("mymod:sap", sapling_tags, "sapling", r#""next_stage": "petramond:stone","#),
+                "a chain leaving the sapling rows",
+                "sapling behaviour",
+            ),
+        ] {
+            let err = parse_test_layers(&[&base, &layer])
+                .err()
+                .unwrap_or_else(|| panic!("{why} must fail the load"));
+            assert!(err.contains(needle), "{why}: {err}");
+        }
+    }
+
+    /// Wall-panel facing is block identity (one ladder row per facing), so the
+    /// load enforces the pairing both ways and cross-validates the placeable
+    /// row's `facing_rows` map — a mismatched sibling would place a panel that
+    /// doesn't hug the clicked wall.
+    #[test]
+    fn wall_panel_rows_validate_facing_identity_and_sibling_map() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let row = |name: &str, shape: &str, extra: &str| {
+            format!(
+                r#"{{ "blocks": [ {{ "block": "{name}", "shape": "{shape}", {extra} "flags": ["transparent"], "tags": ["fragile", "climbable"], "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0, "tiles": ["ladder", "ladder", "ladder"], "material": "wood", "harvest_tier": 0, "hardness": 0.4, "drops": [] }} ] }}"#
+            )
+        };
+
+        // A pack's single-facing panel row loads (no sibling map needed —
+        // placement then keeps its declared facing).
+        let single = row("mymod:vine_panel", "ladder", r#""panel_facing": "south","#);
+        parse_test_layers(&[&base, &single]).expect("a single-facing wall panel loads");
+
+        for (layer, why, needle) in [
+            (
+                row("mymod:vine_panel", "ladder", ""),
+                "a ladder-shaped row without panel_facing",
+                "panel_facing",
+            ),
+            (
+                row("mymod:vine_panel", "cross", r#""panel_facing": "south","#),
+                "panel_facing off the ladder shape",
+                "'ladder' shape",
+            ),
+            (
+                row("mymod:vine_panel", "ladder", r#""panel_facing": "sideways","#),
+                "an unknown facing name",
+                "unknown facing",
+            ),
+            (
+                // The engine ladder's map re-pointed at a wrong-facing sibling.
+                row(
+                    "petramond:ladder",
+                    "ladder",
+                    r#""panel_facing": "north", "facing_rows": {"north": "petramond:ladder", "south": "petramond:ladder_south", "west": "petramond:ladder_west", "east": "petramond:ladder_south"},"#,
+                ),
+                "a facing_rows slot naming a wrong-facing row",
+                "facing_rows.east",
+            ),
+        ] {
+            let err = parse_test_layers(&[&base, &layer])
+                .err()
+                .unwrap_or_else(|| panic!("{why} must fail the load"));
+            assert!(err.contains(needle), "{why}: {err}");
+        }
+
+        // Every slot's facing matches, but the row maps its OWN facing to a
+        // different row: placing it toward its own facing would swap blocks.
+        let stranger = row("mymod:north_panel", "ladder", r#""panel_facing": "north","#);
+        let bad_self = row(
+            "petramond:ladder",
+            "ladder",
+            r#""panel_facing": "north", "facing_rows": {"north": "mymod:north_panel", "south": "petramond:ladder_south", "west": "petramond:ladder_west", "east": "petramond:ladder_east"},"#,
+        );
+        let err = parse_test_layers(&[&base, &stranger, &bad_self])
+            .err()
+            .expect("a non-self own-facing slot must fail the load");
+        assert!(err.contains("the row itself"), "{err}");
+    }
+
     #[test]
     fn new_bare_name_rows_are_rejected() {
         let (base, _) =
@@ -532,7 +1073,7 @@ mod tests {
     }
 
     /// `interaction: {"open_gui": "mod:kind"}` resolves to
-    /// `OpenModGui` with a registered kind; a bare (un-namespaced) open_gui
+    /// `OpenGui` with a registered kind; a bare (un-namespaced) open_gui
     /// key and an unknown named interaction are load errors.
     #[test]
     fn open_gui_interaction_parses_namespaced_and_rejects_bare() {
@@ -541,8 +1082,8 @@ mod tests {
         let layer = r#"{ "blocks": [ { "block": "guimod:opener", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": {"open_gui": "guimod:panel"}, "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [] } ] }"#;
         let reg = parse_test_layers(&[&base, layer]).expect("open_gui row loads");
         let def = &reg.defs[crate::block::ENGINE_BLOCK_NAMES.len()];
-        let BlockInteraction::OpenModGui(kind) = def.interaction else {
-            panic!("expected OpenModGui, got {:?}", def.interaction);
+        let BlockInteraction::OpenGui(kind) = def.interaction else {
+            panic!("expected OpenGui, got {:?}", def.interaction);
         };
         assert_eq!(crate::gui::kind_key(kind), Some("guimod:panel"));
 

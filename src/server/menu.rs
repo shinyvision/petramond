@@ -10,7 +10,7 @@
 
 use crate::controls::PointerButton;
 use crate::crafting::CraftingStation;
-use crate::events::{ContainerKind, PostEvent, SimCtx};
+use crate::events::{PostEvent, SimCtx};
 use crate::gui::{ChestView, ContainerView, FurnaceView, GuiStateMap, MenuSlot, WorkbenchView};
 use crate::inventory::Inventory;
 use crate::item::ItemStack;
@@ -72,35 +72,11 @@ impl ServerGame {
     pub(crate) fn tick_menu(&mut self, s: usize, events: &mut TickEvents) {
         for action in std::mem::take(&mut self.sessions[s].pending_menu_actions) {
             match action {
-                PendingMenuAction::OpenInventory => {
+                PendingMenuAction::OpenGui { kind, pos } => {
                     self.replace_open_menu_for(s, events);
-                    self.open_crafting_for(s, CraftingStation::Inventory);
-                    self.sessions[s].request_open_inventory = true;
-                }
-                PendingMenuAction::OpenCraftingTable => {
-                    self.replace_open_menu_for(s, events);
-                    self.open_crafting_for(s, CraftingStation::CraftingTable);
-                    self.sessions[s].request_open_table = true;
-                }
-                PendingMenuAction::OpenFurnace(pos) => {
-                    self.replace_open_menu_for(s, events);
-                    self.open_furnace_screen_for(s, pos);
-                    self.sessions[s].request_open_furnace = Some(pos);
-                }
-                PendingMenuAction::OpenChest(pos) => {
-                    self.replace_open_menu_for(s, events);
-                    self.open_chest_screen_for(s, pos, events);
-                    self.sessions[s].request_open_chest = Some(pos);
-                }
-                PendingMenuAction::OpenWorkbench => {
-                    self.replace_open_menu_for(s, events);
-                    self.open_workbench_screen_for(s);
-                    self.sessions[s].request_open_workbench = true;
-                }
-                PendingMenuAction::OpenModGui { kind, pos } => {
-                    self.replace_open_menu_for(s, events);
-                    self.open_mod_gui_screen_for(s, kind, pos);
-                    self.sessions[s].request_open_mod_gui = Some((kind, pos));
+                    if self.open_gui_for(s, kind, pos, events) {
+                        self.sessions[s].request_open_gui = Some((kind, pos));
+                    }
                 }
                 PendingMenuAction::Close => self.close_open_menu_for(s, events),
                 PendingMenuAction::SlotClick {
@@ -223,13 +199,40 @@ impl ServerGame {
     }
 
     fn clear_menu_open_requests(&mut self, s: usize) {
-        let sess = &mut self.sessions[s];
-        sess.request_open_inventory = false;
-        sess.request_open_table = false;
-        sess.request_open_furnace = None;
-        sess.request_open_chest = None;
-        sess.request_open_workbench = false;
-        sess.request_open_mod_gui = None;
+        self.sessions[s].request_open_gui = None;
+    }
+
+    /// Begin session `s`'s GUI session for `kind`, opened from block `pos`
+    /// (`None` for the inventory key / a programmatic `GuiOpen`). The ONE
+    /// open dispatch: every kind — engine container or mod GUI — arrives
+    /// through the same `OpenGui` action, and the per-kind session setup
+    /// (crafting station, chest viewer slot, mod GUI state clear) keys on the
+    /// kind here. Returns whether a session actually opened (a block-entity
+    /// kind without a position, or a shell kind, opens nothing).
+    fn open_gui_for(
+        &mut self,
+        s: usize,
+        kind: crate::gui::GuiKind,
+        pos: Option<IVec3>,
+        events: &mut TickEvents,
+    ) -> bool {
+        use crate::gui::GuiKind;
+        match kind {
+            GuiKind::Inventory => self.open_crafting_for(s, CraftingStation::Inventory),
+            GuiKind::CraftingTable => self.open_crafting_for(s, CraftingStation::CraftingTable),
+            GuiKind::Furnace => {
+                let Some(pos) = pos else { return false };
+                self.open_furnace_screen_for(s, pos);
+            }
+            GuiKind::Chest => {
+                let Some(pos) = pos else { return false };
+                self.open_chest_screen_for(s, pos, events);
+            }
+            GuiKind::FurnitureWorkbench => self.open_workbench_screen_for(s),
+            kind if kind.is_mod() => self.open_mod_gui_screen_for(s, kind, pos),
+            _ => return false,
+        }
+        true
     }
 
     /// Dispatch a latched button click to the open mod GUI's OWNING mod (the
@@ -242,9 +245,14 @@ impl ServerGame {
         widget_id: crate::gui::WidgetId,
         events: &mut TickEvents,
     ) {
-        let ContainerTarget::ModGui { kind, pos } = self.sessions[s].menu.target() else {
+        let ContainerTarget::Gui { kind, pos } = self.sessions[s].menu.target() else {
             return;
         };
+        // Engine kinds have no owning mod; their buttons are documented dead
+        // ends, exactly like a content-only pack's.
+        if !kind.is_mod() {
+            return;
+        }
         let Some(kind_key) = crate::gui::kind_key(kind) else {
             return;
         };
@@ -288,7 +296,7 @@ impl ServerGame {
         // releases the old slot.
         let same = matches!(
             self.sessions[s].menu.target(),
-            ContainerTarget::Chest(p) if p == pos
+            ContainerTarget::Gui { kind: crate::gui::GuiKind::Chest, pos: Some(p) } if p == pos
         );
         if !same {
             self.release_chest_viewer(s, events);
@@ -309,7 +317,11 @@ impl ServerGame {
     /// The lid falls (for every observer) only when the LAST viewer leaves —
     /// that 1→0 transition emits the world-anchored `ChestClosed` event.
     fn release_chest_viewer(&mut self, s: usize, events: &mut TickEvents) {
-        if let ContainerTarget::Chest(pos) = self.sessions[s].menu.target() {
+        if let ContainerTarget::Gui {
+            kind: crate::gui::GuiKind::Chest,
+            pos: Some(pos),
+        } = self.sessions[s].menu.target()
+        {
             if let Some(count) = self.chest_viewers.get_mut(&pos) {
                 *count = count.saturating_sub(1);
                 if *count == 0 {
@@ -389,10 +401,12 @@ impl ServerGame {
 
     /// End the mod GUI session and clear its state map.
     fn close_mod_gui_for(&mut self, s: usize) {
-        if matches!(
-            self.sessions[s].menu.target(),
-            ContainerTarget::ModGui { .. }
-        ) {
+        if self.sessions[s]
+            .menu
+            .target()
+            .kind()
+            .is_some_and(|kind| kind.is_mod())
+        {
             let sess = &mut self.sessions[s];
             crate::gui::gui_state_clear(&mut sess.gui_state);
             sess.menu.close_mod_gui();
@@ -405,7 +419,7 @@ impl ServerGame {
     fn any_mod_gui_open(&self) -> bool {
         self.sessions
             .iter()
-            .any(|sess| matches!(sess.menu.target(), ContainerTarget::ModGui { .. }))
+            .any(|sess| sess.menu.target().kind().is_some_and(|kind| kind.is_mod()))
     }
 
     fn clear_all_mod_gui_states(&mut self) {
@@ -430,50 +444,58 @@ impl ServerGame {
     /// Session `s`'s menu view as the wire message, with `gui_state` held
     /// `None` (the caller attaches the map only when its `Arc` changed).
     pub(super) fn build_menu_sync_base(&self, s: usize) -> MenuSyncMsg {
+        use crate::gui::GuiKind;
         let sess = &self.sessions[s];
+        // The wire keeps per-kind view payloads (gauges, workbench results);
+        // this is the one kind-keyed lookup that selects them.
         let target = match sess.menu.target() {
             ContainerTarget::None => MenuTargetWire::None,
-            ContainerTarget::Inventory => MenuTargetWire::Inventory {
-                output: slot_wire(sess.menu.craft_output()),
-            },
-            ContainerTarget::Table => MenuTargetWire::Table {
-                output: slot_wire(sess.menu.craft_output()),
-            },
-            ContainerTarget::Furnace(pos) => {
-                let v = sess.menu.open_furnace_view(&self.world).unwrap_or_default();
-                MenuTargetWire::Furnace {
+            ContainerTarget::Gui { kind, pos } => match kind {
+                GuiKind::Inventory => MenuTargetWire::Inventory {
+                    output: slot_wire(sess.menu.craft_output()),
+                },
+                GuiKind::CraftingTable => MenuTargetWire::Table {
+                    output: slot_wire(sess.menu.craft_output()),
+                },
+                GuiKind::Furnace => {
+                    let v = sess.menu.open_furnace_view(&self.world).unwrap_or_default();
+                    MenuTargetWire::Furnace {
+                        pos: pos.unwrap_or_default(),
+                        slots: [slot_wire(v.input), slot_wire(v.fuel), slot_wire(v.output)],
+                        cook01: v.cook01,
+                        burn01: v.burn01,
+                    }
+                }
+                GuiKind::Chest => {
+                    let slots = sess
+                        .menu
+                        .open_chest_view(&self.world)
+                        .map(|v| v.slots.iter().map(|s| slot_wire(*s)).collect())
+                        .unwrap_or_default();
+                    MenuTargetWire::Chest {
+                        pos: pos.unwrap_or_default(),
+                        slots,
+                    }
+                }
+                GuiKind::FurnitureWorkbench => {
+                    let v = sess
+                        .menu
+                        .open_workbench_view(&self.recipes)
+                        .unwrap_or_default();
+                    MenuTargetWire::Workbench {
+                        input: slot_wire(v.input),
+                        results: v.results.iter().map(|&(item, ok)| (item.0, ok)).collect(),
+                    }
+                }
+                kind => MenuTargetWire::ModGui {
+                    kind_key: crate::gui::kind_key(kind).unwrap_or_default().to_string(),
                     pos,
-                    slots: [slot_wire(v.input), slot_wire(v.fuel), slot_wire(v.output)],
-                    cook01: v.cook01,
-                    burn01: v.burn01,
-                }
-            }
-            ContainerTarget::Chest(pos) => {
-                let slots = sess
-                    .menu
-                    .open_chest_view(&self.world)
-                    .map(|v| v.slots.iter().map(|s| slot_wire(*s)).collect())
-                    .unwrap_or_default();
-                MenuTargetWire::Chest { pos, slots }
-            }
-            ContainerTarget::FurnitureWorkbench => {
-                let v = sess
-                    .menu
-                    .open_workbench_view(&self.recipes)
-                    .unwrap_or_default();
-                MenuTargetWire::Workbench {
-                    input: slot_wire(v.input),
-                    results: v.results.iter().map(|&(item, ok)| (item.0, ok)).collect(),
-                }
-            }
-            ContainerTarget::ModGui { kind, pos } => MenuTargetWire::ModGui {
-                kind_key: crate::gui::kind_key(kind).unwrap_or_default().to_string(),
-                pos,
-                slots: sess
-                    .menu
-                    .open_container_view(&self.world)
-                    .map(|v| v.slots.iter().map(|s| slot_wire(*s)).collect()),
-                gui_state: None,
+                    slots: sess
+                        .menu
+                        .open_container_view(&self.world)
+                        .map(|v| v.slots.iter().map(|s| slot_wire(*s)).collect()),
+                    gui_state: None,
+                },
             },
         };
         MenuSyncMsg { target }
@@ -481,15 +503,13 @@ impl ServerGame {
 }
 
 /// The `container_opened`/`container_closed` payload for a menu target, or `None`
-/// when no container session is involved.
-fn container_event_key(target: ContainerTarget) -> Option<(ContainerKind, Option<IVec3>)> {
+/// when no container session is involved. The unified target already carries
+/// the event's `(kind, pos)` identity.
+fn container_event_key(
+    target: ContainerTarget,
+) -> Option<(crate::gui::GuiKind, Option<IVec3>)> {
     match target {
         ContainerTarget::None => None,
-        ContainerTarget::Inventory => Some((ContainerKind::Inventory, None)),
-        ContainerTarget::Table => Some((ContainerKind::CraftingTable, None)),
-        ContainerTarget::Furnace(pos) => Some((ContainerKind::Furnace, Some(pos))),
-        ContainerTarget::Chest(pos) => Some((ContainerKind::Chest, Some(pos))),
-        ContainerTarget::FurnitureWorkbench => Some((ContainerKind::FurnitureWorkbench, None)),
-        ContainerTarget::ModGui { kind, pos } => Some((ContainerKind::Mod(kind), pos)),
+        ContainerTarget::Gui { kind, pos } => Some((kind, pos)),
     }
 }

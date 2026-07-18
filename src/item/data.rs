@@ -210,3 +210,15 @@ static BLOCK_TO_ITEM: LazyLock<[ItemType; 256]> = LazyLock::new(|| {
 pub(super) fn item_for_block(block: Block) -> ItemType {
     BLOCK_TO_ITEM[block.id() as usize]
 }
+
+/// Keyed hash index over the rows' recipe `key`s (unique — the loader
+/// enforces it), built once with the table. The engine-internal keyed lookup
+/// (recipes, loot tables); mod-facing identity is the registry NAME.
+static KEY_TO_ITEM: LazyLock<std::collections::HashMap<&'static str, ItemType>> =
+    LazyLock::new(|| TABLE.iter().map(|d| (d.key, d.item)).collect());
+
+/// The item whose row carries recipe `key`, or `None`.
+#[inline]
+pub(super) fn item_for_key(key: &str) -> Option<ItemType> {
+    KEY_TO_ITEM.get(key).copied()
+}

@@ -403,6 +403,413 @@
           "chance": 1.0
         }
       ]
+    },
+    {
+      "block": "farming:farmland_fertile_dry",
+      "shape": {
+        "lowered_cube": 15
+      },
+      "flags": [
+        "solid",
+        "ao_occluder"
+      ],
+      "tags": [
+        "no_pane_connect"
+      ],
+      "behavior": "farming:farmland",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            0.9375,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "farming:farmland_fertile_dry",
+        "dirt",
+        "dirt"
+      ],
+      "material": "dirt",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [
+        {
+          "item": "petramond:dirt",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:farmland_fertile_wet",
+      "shape": {
+        "lowered_cube": 15
+      },
+      "flags": [
+        "solid",
+        "ao_occluder"
+      ],
+      "tags": [
+        "no_pane_connect"
+      ],
+      "behavior": "farming:farmland",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            0.9375,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "farming:farmland_fertile_wet",
+        "dirt",
+        "dirt"
+      ],
+      "material": "dirt",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [
+        {
+          "item": "petramond:dirt",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:wild_potatoes",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:wild_potatoes",
+        "farming:wild_potatoes",
+        "farming:wild_potatoes"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:potato",
+          "min": 1,
+          "max": 2,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:potatoes_0",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:potatoes_0",
+        "farming:potatoes_0",
+        "farming:potatoes_0"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:potato",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:potatoes_1",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:potatoes_1",
+        "farming:potatoes_1",
+        "farming:potatoes_1"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:potato",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:potatoes_2",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:potatoes_2",
+        "farming:potatoes_2",
+        "farming:potatoes_2"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:potato",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:potatoes_3",
+      "shape": "crop",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:potatoes_3",
+        "farming:potatoes_3",
+        "farming:potatoes_3"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "farming:potato",
+          "min": 2,
+          "max": 3,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:compost_0",
+      "shape": {
+        "model": "farming:compost_0"
+      },
+      "flags": [
+        "solid"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "oak_planks",
+        "oak_planks",
+        "oak_planks"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "farming:compost_barrel",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:compost_1",
+      "shape": {
+        "model": "farming:compost_1"
+      },
+      "flags": [
+        "solid"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "oak_planks",
+        "oak_planks",
+        "oak_planks"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "farming:compost_barrel",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:compost_2",
+      "shape": {
+        "model": "farming:compost_2"
+      },
+      "flags": [
+        "solid"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "oak_planks",
+        "oak_planks",
+        "oak_planks"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "farming:compost_barrel",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:compost_3",
+      "shape": {
+        "model": "farming:compost_3"
+      },
+      "flags": [
+        "solid"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "oak_planks",
+        "oak_planks",
+        "oak_planks"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 1.5,
+      "drops": [
+        {
+          "item": "farming:compost_barrel",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "farming:grass_fertilized",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "soil"
+      ],
+      "behavior": "farming:grass_fertilized",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "farming:grass_fertilized_top",
+        "dirt",
+        "grass_side"
+      ],
+      "material": "dirt",
+      "harvest_tier": 0,
+      "hardness": 0.7,
+      "drops": [
+        {
+          "item": "petramond:dirt",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
     }
   ]
 }

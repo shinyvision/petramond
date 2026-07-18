@@ -241,25 +241,12 @@ impl ServerGame {
         let sess = &mut self.sessions[s];
         // Take every request so nothing lingers; the tick can only set one of
         // them (one consumed click per tick), so first-Some is the open.
-        let inventory = std::mem::take(&mut sess.request_open_inventory);
-        let table = std::mem::take(&mut sess.request_open_table);
-        let furnace = sess.request_open_furnace.take();
-        let chest = sess.request_open_chest.take();
-        let workbench = std::mem::take(&mut sess.request_open_workbench);
-        let mod_gui = sess.request_open_mod_gui.take();
+        let gui = sess.request_open_gui.take();
         let sleep = std::mem::take(&mut sess.request_open_sleep);
-        let open_screen = if inventory {
-            Some(OpenScreen::Inventory)
-        } else if table {
-            Some(OpenScreen::CraftingTable)
-        } else if let Some(pos) = furnace {
-            Some(OpenScreen::Furnace(pos))
-        } else if let Some(pos) = chest {
-            Some(OpenScreen::Chest(pos))
-        } else if workbench {
-            Some(OpenScreen::Workbench)
-        } else if let Some((kind, pos)) = mod_gui {
-            crate::gui::kind_key(kind).map(|kind_key| OpenScreen::ModGui {
+        let open_screen = if let Some((kind, pos)) = gui {
+            // The wire speaks kind KEYS (GuiKind ids are process-local) — one
+            // lane for engine containers and mod GUIs alike.
+            crate::gui::kind_key(kind).map(|kind_key| OpenScreen::Gui {
                 kind_key: kind_key.to_string(),
                 pos,
             })
@@ -379,12 +366,13 @@ impl ServerGame {
         &mut self,
         s: usize,
     ) -> Option<crate::net::protocol::MenuSyncMsg> {
-        use crate::game::container::ContainerTarget;
         use crate::net::protocol::{GuiValueWire, MenuTargetWire};
 
         let base = self.build_menu_sync_base(s);
         let target = self.sessions[s].menu.target();
-        let gui_arc = matches!(target, ContainerTarget::ModGui { .. })
+        let gui_arc = target
+            .kind()
+            .is_some_and(|kind| kind.is_mod())
             .then(|| self.mod_gui_state_for_menu_sync(s, target));
         let sess = &mut self.sessions[s];
         let gui_changed = match (&gui_arc, &sess.last_sent_gui_state) {
@@ -433,16 +421,15 @@ impl ServerGame {
         &self,
         target: crate::game::container::ContainerTarget,
     ) -> bool {
-        use crate::game::container::ContainerTarget;
-
         if self.sessions[0].menu.target() == target {
             return true;
         }
         let mut open_target = None;
         for sess in &self.sessions {
-            let t @ ContainerTarget::ModGui { .. } = sess.menu.target() else {
+            let t = sess.menu.target();
+            if !t.kind().is_some_and(|kind| kind.is_mod()) {
                 continue;
-            };
+            }
             if open_target.is_some_and(|seen| seen != t) {
                 return false;
             }

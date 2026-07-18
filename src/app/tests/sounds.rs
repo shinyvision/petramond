@@ -16,7 +16,7 @@ fn world_anchored_sounds_come_from_events_once_never_from_one_shots() {
         // local sound plays are gone.
         placed_block: Some(crate::block::Block::Dirt),
         toggled_door: Some(true),
-        open_chest: Some(pos),
+        open_gui: Some((crate::gui::GuiKind::Chest, Some(pos))),
         interacted: true,
         // The broadcast events every observer presents, positionally.
         world_events: vec![

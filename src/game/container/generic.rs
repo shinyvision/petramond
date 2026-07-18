@@ -48,7 +48,7 @@ impl ContainerMenu {
     /// the session is not a mod GUI opened from a block with storage. (The
     /// chest and furnace draw through their own views.)
     pub(crate) fn open_container_view(&self, world: &World) -> Option<ContainerView> {
-        if !matches!(self.target, ContainerTarget::ModGui { .. }) {
+        if !self.target.kind().is_some_and(|kind| kind.is_mod()) {
             return None;
         }
         let pos = self.container_pos()?;
@@ -60,7 +60,11 @@ impl ContainerMenu {
     /// The open chest's slots for the render view, or `None` when no chest is
     /// open.
     pub(crate) fn open_chest_view(&self, world: &World) -> Option<ChestView> {
-        let ContainerTarget::Chest(pos) = self.target else {
+        let ContainerTarget::Gui {
+            kind: crate::gui::GuiKind::Chest,
+            pos: Some(pos),
+        } = self.target
+        else {
             return None;
         };
         let container = world.container_at(pos)?;
@@ -71,27 +75,24 @@ impl ContainerMenu {
         Some(ChestView { slots })
     }
 
-    /// The open session's container position: the chest/furnace block, or the
-    /// mod GUI's opening block (`None` for a programmatic open or a screen
-    /// with no block-entity slots).
+    /// The open session's container position: the block a block-backed kind's
+    /// session is anchored on (`None` for a programmatic open or a transient
+    /// station with no block-entity slots).
     pub(super) fn container_pos(&self) -> Option<IVec3> {
         match self.target {
-            ContainerTarget::Chest(pos) | ContainerTarget::Furnace(pos) => Some(pos),
-            ContainerTarget::ModGui { pos, .. } => pos,
+            ContainerTarget::Gui { kind, pos } if ContainerTarget::kind_block_backed(kind) => pos,
             _ => None,
         }
     }
 
     /// The open session's slot semantics (empty when no slot-bearing GUI is
     /// up): the engine sets for the chest/furnace, the document's for a mod
-    /// GUI.
+    /// GUI — one kind-keyed lookup, never a per-target enum.
     pub(super) fn slot_specs(&self) -> Arc<Vec<SlotSpec>> {
-        match self.target {
-            ContainerTarget::Chest(_) => chest_slot_specs(),
-            ContainerTarget::Furnace(_) => furnace_slot_specs(),
-            ContainerTarget::ModGui { kind, .. } => {
-                crate::gui::documents::container_slot_specs(kind)
-            }
+        match self.target.kind() {
+            Some(crate::gui::GuiKind::Chest) => chest_slot_specs(),
+            Some(crate::gui::GuiKind::Furnace) => furnace_slot_specs(),
+            Some(kind) if kind.is_mod() => crate::gui::documents::container_slot_specs(kind),
             _ => Arc::default(),
         }
     }

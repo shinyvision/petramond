@@ -323,7 +323,8 @@ fn pumped_mob_batches_become_interpolated_presentation_rows() {
     assert!(game
         .server
         .world
-        .spawn_mob(Mob::Owl, Vec3::new(8.5, 70.0, 8.5), 0.0));
+        .spawn_mob(Mob::Owl, Vec3::new(8.5, 70.0, 8.5), 0.0)
+        .is_some());
     let id = game.server.world.mobs().instances()[0].id();
 
     let batch1 = pump_one_tick(&mut game);
@@ -368,7 +369,8 @@ fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
     assert!(game
         .server
         .world
-        .spawn_mob(Mob::Owl, Vec3::new(8.5, 70.0, 8.5), 0.0));
+        .spawn_mob(Mob::Owl, Vec3::new(8.5, 70.0, 8.5), 0.0)
+        .is_some());
     let id = game.server.world.mobs().instances()[0].id();
 
     let batch = pump_one_tick(&mut game);

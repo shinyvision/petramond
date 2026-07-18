@@ -69,9 +69,9 @@ impl World {
             }
         }
         // A ladder's thin panel is real collision (bumped into along the wall,
-        // standable on top of a column), resolved from its stored facing.
+        // standable on top of a column), resolved from its facing row.
         if block.render_shape() == RenderShape::Ladder {
-            return crate::ladder::collision_boxes(self.ladder_facing(IVec3::new(wx, wy, wz)));
+            return crate::ladder::collision_boxes(block.panel_facing());
         }
         block.collision_boxes()
     }
@@ -111,12 +111,11 @@ impl World {
             }
             return Some((mn, mx));
         }
-        // A ladder targets its thin wall panel (facing-resolved), so the raycast +
-        // break overlay hug the panel rather than the whole cell.
+        // A ladder targets its thin wall panel (facing-resolved from its row),
+        // so the raycast + break overlay hug the panel rather than the whole
+        // cell.
         if block.render_shape() == RenderShape::Ladder {
-            return Some(crate::ladder::panel_aabb(
-                self.ladder_facing(IVec3::new(wx, wy, wz)),
-            ));
+            return Some(crate::ladder::panel_aabb(block.panel_facing()));
         }
         // A door targets the thin slab where it actually is (closed/open edge), so the
         // raycast + break overlay hug the panel rather than the whole cell.

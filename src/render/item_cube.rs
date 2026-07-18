@@ -228,11 +228,10 @@ pub(super) fn block_icon_faces_with_state(block: Block, state: HeldBlockState) -
         faces = expand_log_tiles(block.tiles(), axis);
     }
     // Index 4 = PosZ, one of the two side faces the isometric icon presents, so a
-    // directional block shows its front there instead of repeating the side art.
-    match block {
-        Block::Furnace => faces[4] = crate::atlas::engine().furnace_front,
-        Block::Chest => faces[4] = crate::atlas::engine().chest_front,
-        _ => {}
+    // directional block shows its row-declared front there instead of repeating
+    // the side art (furnace/chest fronts).
+    if let Some(front) = block.front_tile() {
+        faces[4] = front;
     }
     faces
 }

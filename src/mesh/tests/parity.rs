@@ -187,7 +187,9 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     section.set_block(3, 1, 2, Block::OakLeaves);
     section.set_block(4, 1, 2, Block::ShortGrass);
     section.set_water(5, 1, 2, Block::Water, 4);
-    section.set_block(6, 1, 2, Block::Furnace);
+    // A BURNING furnace is the `furnace_lit` row; the machine state rides
+    // along as it does in the live world (the mesher only reads the row).
+    section.set_block(6, 1, 2, Block::FurnaceLit);
     section.insert_furnace(
         6,
         1,

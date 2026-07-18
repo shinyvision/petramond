@@ -374,7 +374,7 @@ fn craft_after_close_is_denied_once_without_consuming() {
         Some(crate::net::protocol::ActionDenyReason::InvalidSlot)
     );
     assert!(
-        !game.server.sessions[0].request_open_inventory,
+        game.server.sessions[0].request_open_gui.is_none(),
         "same-tick close cancels the stale open-screen one-shot"
     );
 }
@@ -422,9 +422,15 @@ fn close_then_table_interact_recovers_output_before_opening_the_new_menu() {
     );
     assert_eq!(
         game.server.sessions[0].menu.target(),
-        crate::game::container::ContainerTarget::Table
+        crate::game::container::ContainerTarget::Gui {
+            kind: crate::gui::GuiKind::CraftingTable,
+            pos: None
+        }
     );
-    assert!(game.server.sessions[0].request_open_table);
+    assert_eq!(
+        game.server.sessions[0].request_open_gui,
+        Some((crate::gui::GuiKind::CraftingTable, Some(table)))
+    );
     assert!(game.server.sessions[0].menu.craft_output().is_none());
 }
 

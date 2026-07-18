@@ -93,7 +93,7 @@ impl MachineSpec for OvenSpec {
         let result = slots[SLOT_INPUT]
             .as_ref()
             .filter(|s| s.count > 0)
-            .map(|s| s.key.clone())
+            .map(|s| s.item.clone())
             .and_then(|k| caches.recipe_for(COOKING_CLASS, &k));
         let can_cook = result
             .as_ref()
@@ -103,7 +103,7 @@ impl MachineSpec for OvenSpec {
         // cookable work — idle fuel is never consumed (the furnace contract).
         if state.burn_remaining == 0 && can_cook {
             if let Some(fuel) = slots[SLOT_FUEL].clone() {
-                let burn = caches.fuel_ticks_for(&fuel.key);
+                let burn = caches.fuel_ticks_for(&fuel.item);
                 if burn > 0 {
                     state.burn_remaining = burn;
                     state.burn_max = burn;

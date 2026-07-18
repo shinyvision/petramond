@@ -22,13 +22,23 @@ use std::collections::HashMap;
 
 use mod_sdk::*;
 
-use crate::content::{Content, Crop};
+use crate::content::{Content, CropDef};
 use crate::farmland::{self, Hydration};
 
 /// Stage delay: 120–180 s at 20 TPS, jittered per (position, stage) so a
 /// field planted in one sweep ripens staggered, not as one synchronized wave.
 const STAGE_DELAY_MIN: i32 = 2400;
 const STAGE_DELAY_MAX: i32 = 3600;
+
+/// Fertile soil scales the stage delay by this fraction (~33% faster).
+/// Fertility is read at ARM time — soil fertilized mid-delay speeds the
+/// NEXT stage, matching how the wet/dry look also catches up lazily.
+const FERTILE_DELAY_NUM: u64 = 2;
+const FERTILE_DELAY_DEN: u64 = 3;
+
+/// One-in-N chance of one bonus unit of primary produce per harvest on
+/// fertile soil (N = 10 → the "10% more" rule).
+const FERTILE_BONUS_IN: u64 = 10;
 
 /// Minimum combined light (0..=63) for planting and growth: classic light
 /// level 9 (levels sit ≈4.2 apart on the 6-bit scale — level 8 reads ≈34,
@@ -77,16 +87,17 @@ pub fn on_place_pre(content: &Content, pos: [i32; 3], block: BlockId) -> Outcome
 
 /// Whether the crop cell is too dark to live (see [`MIN_GROW_LIGHT`]). Raw
 /// light, deliberately not day/night-scaled — an open-sky field keeps its
-/// skylight at night; darkness means burial or an unlit cave.
+/// skylight at night; darkness means burial or an unlit cave. An unresolved
+/// read (`None` — unloaded / not stream-final) is never a dark verdict:
+/// don't act on frozen state.
 fn too_dark(pos: [i32; 3]) -> bool {
-    let (combined, _, _) = light_at(pos);
-    combined < MIN_GROW_LIGHT
+    light_at(pos).is_some_and(|l| l.combined < MIN_GROW_LIGHT)
 }
 
 /// A freshly planted crop schedules its first stage attempt.
 pub fn on_placed(content: &Content, growth: &mut Growth, pos: [i32; 3], block: BlockId) {
     if let Some((_, stage @ 0..=2)) = content.crop_stage(block) {
-        arm(growth, pos, stage);
+        arm(growth, pos, stage, soil_is_fertile(content, pos));
     }
 }
 
@@ -103,7 +114,7 @@ pub fn on_interact(
     pos: [i32; 3],
     block: BlockId,
 ) -> Outcome {
-    let Some((crop, stage)) = content.crop_stage(block) else {
+    let Some((def, stage)) = content.crop_stage(block) else {
         return Outcome::Continue;
     };
     if stage < 3 {
@@ -114,27 +125,26 @@ pub fn on_interact(
         pos[1] as f32 + 0.4,
         pos[2] as f32 + 0.5,
     ];
+    // Fertility read ONCE per interaction (a get_block crossing): it gates
+    // the harvest bonus roll and shortens the re-arm delay below.
+    let fertile = soil_is_fertile(content, pos);
     // Yield ranges are balance data; the invariant is that the plant itself
-    // is retained (reset, not removed).
-    let roll = |key: &str, lo: u64, hi: u64| -> u8 { (lo + rng_u64(key) % (hi - lo + 1)) as u8 };
-    match crop {
-        Crop::Wheat => {
-            spawn_item("farming:wheat", roll("harvest_wheat", 1, 2), center);
-            let seeds = roll("harvest_wheat_seeds", 0, 2);
-            if seeds > 0 {
-                spawn_item("farming:wheat_seeds", seeds, center);
-            }
-            emit_sound("farming:harvest", Some(center));
-            emitter_burst("farming:wheat_harvest", center, 1.0);
-        }
-        Crop::Carrots => {
-            spawn_item("farming:carrot", roll("harvest_carrot", 2, 3), center);
-            emit_sound("farming:harvest", Some(center));
-            emitter_burst("farming:carrot_harvest", center, 1.0);
+    // is retained (reset, not removed). Fertile soil adds a one-in-ten bonus
+    // unit of the primary produce.
+    let roll = |key: &str, (lo, hi): (u64, u64)| -> u8 { (lo + rng_u64(key) % (hi - lo + 1)) as u8 };
+    let count = roll(&def.harvest_key, def.yield_range)
+        + (fertile && rng_u64(&def.fertile_key) % FERTILE_BONUS_IN == 0) as u8;
+    spawn_item(def.produce, count, center);
+    if let Some((key, item, lo, hi)) = def.extra_drop {
+        let extra = roll(key, (lo, hi));
+        if extra > 0 {
+            spawn_item(item, extra, center);
         }
     }
-    set_block(pos, content.stage_block(crop, 0));
-    arm(growth, pos, 0);
+    emit_sound("farming:harvest", Some(center));
+    emitter_burst(&def.harvest_emitter, center, 1.0);
+    set_block(pos, def.stages[0]);
+    arm(growth, pos, 0, fertile);
     Outcome::Cancel
 }
 
@@ -160,18 +170,18 @@ fn attempt(content: &Content, growth: &mut Growth, pos: [i32; 3]) {
         retry(growth, pos);
         return;
     };
-    let Some((crop, stage @ 0..=2)) = content.crop_stage(block) else {
+    let Some((def, stage @ 0..=2)) = content.crop_stage(block) else {
         return; // broken, replaced, or already mature — nothing owed
     };
     let below = [pos[0], pos[1] - 1, pos[2]];
-    match get_block(below) {
-        Some(b) if content.is_farmland(b) => {}
+    let fertile = match get_block(below) {
+        Some(b) if content.is_farmland(b) => content.is_fertile(b),
         Some(_) => return, // support gone; the neighbor hook owns the pop
         None => {
             retry(growth, pos);
             return;
         }
-    }
+    };
     // Growth needs light: a due attempt in the dark pauses like dryness (the
     // next RANDOM tick is what breaks a dark crop — see `rearm_if_lost`).
     if too_dark(pos) {
@@ -181,9 +191,9 @@ fn attempt(content: &Content, growth: &mut Growth, pos: [i32; 3]) {
     match farmland::probe(content, below) {
         Hydration::Hydrated => {
             let next = stage + 1;
-            set_block(pos, content.stage_block(crop, next));
+            set_block(pos, def.stages[next as usize]);
             if next <= 2 {
-                arm(growth, pos, next);
+                arm(growth, pos, next, fertile);
             }
         }
         // The dry pause: readiness is retained (short retry), the full stage
@@ -201,11 +211,11 @@ fn rearm_if_lost(content: &Content, growth: &mut Growth, pos: [i32; 3]) {
     let Some(block) = get_block(pos) else {
         return;
     };
-    let Some((crop, stage)) = content.crop_stage(block) else {
+    let Some((def, stage)) = content.crop_stage(block) else {
         return;
     };
     if too_dark(pos) {
-        pop_planting_stock(growth, crop, pos);
+        pop_planting_stock(growth, def, pos);
         return;
     }
     if let Some(&due) = growth.pending.get(&pos) {
@@ -214,7 +224,7 @@ fn rearm_if_lost(content: &Content, growth: &mut Growth, pos: [i32; 3]) {
         }
     }
     if stage <= 2 {
-        arm(growth, pos, stage);
+        arm(growth, pos, stage, soil_is_fertile(content, pos));
     }
 }
 
@@ -225,7 +235,7 @@ fn support_check(content: &Content, growth: &mut Growth, pos: [i32; 3]) {
     let Some(block) = get_block(pos) else {
         return;
     };
-    let Some((crop, _)) = content.crop_stage(block) else {
+    let Some((def, _)) = content.crop_stage(block) else {
         return;
     };
     let Some(below) = get_block([pos[0], pos[1] - 1, pos[2]]) else {
@@ -234,15 +244,15 @@ fn support_check(content: &Content, growth: &mut Growth, pos: [i32; 3]) {
     if content.is_farmland(below) {
         return;
     }
-    pop_planting_stock(growth, crop, pos);
+    pop_planting_stock(growth, def, pos);
 }
 
 /// A crop dying in place (soil invalidated, or left in the dark): the plant
 /// goes and one planting stock pops — never lost, never a free harvest.
-fn pop_planting_stock(growth: &mut Growth, crop: Crop, pos: [i32; 3]) {
+fn pop_planting_stock(growth: &mut Growth, def: &CropDef, pos: [i32; 3]) {
     set_block(pos, BlockId::AIR);
     spawn_item(
-        crop.planting_stock(),
+        def.planting_stock,
         1,
         [
             pos[0] as f32 + 0.5,
@@ -253,11 +263,22 @@ fn pop_planting_stock(growth: &mut Growth, crop: Crop, pos: [i32; 3]) {
     growth.pending.remove(&pos);
 }
 
-/// Schedule the next stage attempt after the deterministic jittered delay.
-fn arm(growth: &mut Growth, pos: [i32; 3], stage: u8) {
-    let delay = stage_delay(pos, stage);
+/// Schedule the next stage attempt after the deterministic jittered delay,
+/// shortened on fertile soil (fertility is read at arm time — soil
+/// fertilized mid-delay speeds the NEXT stage; callers that already hold
+/// the below-block thread the verdict in instead of re-reading it).
+fn arm(growth: &mut Growth, pos: [i32; 3], stage: u8, fertile: bool) {
+    let mut delay = stage_delay(pos, stage);
+    if fertile {
+        delay = delay * FERTILE_DELAY_NUM / FERTILE_DELAY_DEN;
+    }
     schedule_tick(pos, delay);
     growth.pending.insert(pos, current_tick() + delay);
+}
+
+/// Whether the soil under a crop cell is fertile farmland.
+fn soil_is_fertile(content: &Content, pos: [i32; 3]) -> bool {
+    get_block([pos[0], pos[1] - 1, pos[2]]).is_some_and(|b| content.is_fertile(b))
 }
 
 fn retry(growth: &mut Growth, pos: [i32; 3]) {

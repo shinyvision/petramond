@@ -1,12 +1,13 @@
 //! Player calls: state snapshot, the damage funnel, knockback, items,
-//! health, teleports, status effects, and chat delivery.
+//! health, teleports, status effects, and chat delivery. (There is no kill
+//! call: `DamagePlayer` with current health is the kill, same funnel.)
 
 use mod_api::{HostCall, HostRet, PlayerSnapshot};
 
 use crate::events::ModAction;
 
 use super::entities::give_item;
-use super::guards::{finite3, item_by_key, sim_call, sim_query};
+use super::guards::{batch_guard, finite3, item_by_name, sim_call, sim_query};
 use super::intern_mod_id;
 
 /// Player calls (snapshot, damage/kill through the funnel, inventory,
@@ -31,7 +32,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                     .player_roster()
                     .iter()
                     .map(|p| mod_api::PlayerListEntry {
-                        id: p.id,
+                        id: mod_api::PlayerId(p.id),
                         state: PlayerSnapshot {
                             pos: p.pos,
                             vel: p.vel,
@@ -56,12 +57,12 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             Err(e) => e,
             Ok(impulse) => sim_call(|ctx| ctx.player.apply_knockback(impulse)),
         },
-        HostCall::GiveItem { item_key, count } => sim_query(|ctx| {
-            let Some(item) = item_by_key(&item_key) else {
-                log::warn!("[mod {mod_id}] GiveItem: unknown item '{item_key}'");
+        HostCall::GiveItem { item, count } => sim_query(|ctx| {
+            let Some(item_ty) = item_by_name(&item) else {
+                log::warn!("[mod {mod_id}] GiveItem: unknown item '{item}'");
                 return HostRet::Bool(false);
             };
-            give_item(ctx, item, count);
+            give_item(ctx, item_ty, count);
             HostRet::Bool(true)
         }),
         // Atomic: only a selected stack holding at least `count` of `item`
@@ -82,7 +83,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             HostRet::Bool(true)
         }),
         HostCall::PlayerInput { player_id } => sim_query(|ctx| {
-            HostRet::PlayerInput(ctx.world.player_input(player_id).map(|i| {
+            HostRet::PlayerInput(ctx.world.player_input(player_id.0).map(|i| {
                 mod_api::PlayerInputData {
                     forward: i.forward,
                     strafe: i.strafe,
@@ -93,10 +94,6 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 }
             }))
         }),
-        HostCall::KillPlayer => {
-            let mod_id = intern_mod_id(mod_id);
-            sim_call(|ctx| ctx.queue.push_action(ModAction::KillPlayer { mod_id }))
-        }
         HostCall::SetHealth { value } => sim_call(|ctx| ctx.player.set_health(value)),
         HostCall::Teleport { pos } => match finite3(pos, "Teleport.pos") {
             Err(e) => e,
@@ -134,11 +131,17 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             )
         }),
         HostCall::ChatSend { text, targets } => sim_query(|ctx| {
+            if let Some(err) =
+                batch_guard("ChatSend target", targets.as_ref().map_or(0, Vec::len))
+            {
+                return err;
+            }
             // Empty / whitespace-only text is rejected at delivery time too;
             // report it here so the mod can tell a no-op from a queued send.
             if text.trim().is_empty() {
                 return HostRet::Bool(false);
             }
+            let targets = targets.map(|ids| ids.into_iter().map(|p| p.0).collect());
             ctx.queue.push_action(ModAction::ChatSend { text, targets });
             HostRet::Bool(true)
         }),

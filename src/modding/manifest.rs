@@ -172,25 +172,66 @@ pub(crate) fn resolve_load_order(
     order
 }
 
+/// One admission-checked catalog file: where its registration-relevant row
+/// keys live, plus any extra whole-file validation the owning loader wants run
+/// at admission (so a malformed pack file disables the PACK instead of
+/// panicking the shared catalog load later). New catalog quirks extend this
+/// table — never a hardcoded filename branch in the loop.
+struct CatalogSpec {
+    rel: &'static str,
+    /// Top-level array field holding the rows.
+    array: &'static str,
+    /// Per-row field carrying the registering key.
+    key_field: &'static str,
+    /// `Some((field, value))`: only rows where `field == value` contribute a
+    /// key (other rows are skipped); `None`: every row must carry one.
+    row_filter: Option<(&'static str, &'static str)>,
+    /// Loader-owned extra validation over the raw file text.
+    extra_validate: Option<fn(&str) -> Result<(), String>>,
+}
+
+const CATALOGS: [CatalogSpec; 9] = {
+    const fn plain(rel: &'static str, array: &'static str, key_field: &'static str) -> CatalogSpec {
+        CatalogSpec {
+            rel,
+            array,
+            key_field,
+            row_filter: None,
+            extra_validate: None,
+        }
+    }
+    [
+        plain("blocks.json", "blocks", "block"),
+        plain("items.json", "items", "item"),
+        plain("sounds.json", "sounds", "sound"),
+        plain("models.json", "models", "key"),
+        CatalogSpec {
+            // `brain_extensions` register nothing but must fail admission
+            // when malformed — the loader owns that check.
+            extra_validate: Some(crate::mob::validate_brain_extensions),
+            ..plain("mobs.json", "mobs", "mob")
+        },
+        plain("effects.json", "effects", "effect"),
+        plain("particle_emitters.json", "emitters", "emitter"),
+        plain("textures/atlas.json", "tiles", "name"),
+        CatalogSpec {
+            // Only crafting rows carry a registering recipe id; processing
+            // rows register through their class strings, validated elsewhere.
+            row_filter: Some(("type", "crafting")),
+            ..plain("recipes.json", "recipes", "recipe")
+        },
+    ]
+};
+
 /// Collect every registration-relevant catalog key the pack at `dir` states —
 /// the row keys of registry catalogs plus player-crafting recipe ids and atlas
 /// tile names. Used for namespace-prefix validation before the pack is
 /// admitted to the overlay. A malformed catalog is an error (the pack gets
 /// disabled rather than panicking the registry bootstrap later).
 pub(crate) fn registration_keys(dir: &std::path::Path) -> Result<Vec<String>, String> {
-    // (file, array field, key field) for every catalog whose row keys register.
-    const CATALOGS: [(&str, &str, &str); 8] = [
-        ("blocks.json", "blocks", "block"),
-        ("items.json", "items", "item"),
-        ("sounds.json", "sounds", "sound"),
-        ("models.json", "models", "key"),
-        ("mobs.json", "mobs", "mob"),
-        ("effects.json", "effects", "effect"),
-        ("particle_emitters.json", "emitters", "emitter"),
-        ("textures/atlas.json", "tiles", "name"),
-    ];
     let mut keys = Vec::new();
-    for (rel, array, key_field) in CATALOGS {
+    for spec in &CATALOGS {
+        let rel = spec.rel;
         let path = dir.join(rel);
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue; // the pack doesn't layer this catalog
@@ -198,36 +239,23 @@ pub(crate) fn registration_keys(dir: &std::path::Path) -> Result<Vec<String>, St
         let value: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| format!("{rel}: invalid JSON: {e}"))?;
         let rows = value
-            .get(array)
+            .get(spec.array)
             .and_then(|v| v.as_array())
-            .ok_or_else(|| format!("{rel}: expected a top-level '{array}' array"))?;
+            .ok_or_else(|| format!("{rel}: expected a top-level '{}' array", spec.array))?;
         for (i, row) in rows.iter().enumerate() {
-            let key = row
-                .get(key_field)
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| format!("{rel}: row #{i} has no string '{key_field}' key"))?;
-            keys.push(key.to_owned());
-        }
-    }
-    let recipes_path = dir.join("recipes.json");
-    if let Ok(text) = std::fs::read_to_string(&recipes_path) {
-        let value: serde_json::Value =
-            serde_json::from_str(&text).map_err(|e| format!("recipes.json: invalid JSON: {e}"))?;
-        let rows = value
-            .get("recipes")
-            .and_then(|value| value.as_array())
-            .ok_or_else(|| "recipes.json: expected a top-level 'recipes' array".to_owned())?;
-        for (index, row) in rows.iter().enumerate() {
-            if row.get("type").and_then(|value| value.as_str()) != Some("crafting") {
-                continue;
+            if let Some((field, wanted)) = spec.row_filter {
+                if row.get(field).and_then(|v| v.as_str()) != Some(wanted) {
+                    continue;
+                }
             }
             let key = row
-                .get("recipe")
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| {
-                    format!("recipes.json: crafting row #{index} has no string 'recipe' key")
-                })?;
+                .get(spec.key_field)
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| format!("{rel}: row #{i} has no string '{}' key", spec.key_field))?;
             keys.push(key.to_owned());
+        }
+        if let Some(validate) = spec.extra_validate {
+            validate(&text).map_err(|e| format!("{rel}: {e}"))?;
         }
     }
     Ok(keys)
@@ -387,5 +415,41 @@ mod tests {
         assert_eq!(keys, vec!["fixture:tool"]);
         assert!(foreign_namespaced_keys(Some("fixture"), &keys).is_empty());
         assert_eq!(foreign_namespaced_keys(Some("other"), &keys), keys);
+    }
+
+    /// `brain_extensions` register no keys, but a malformed block must fail
+    /// ADMISSION (pack disabled) — never reach the catalog load, whose
+    /// extension pre-pass would panic the registry bootstrap.
+    #[test]
+    fn malformed_brain_extensions_fail_pack_admission() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "petramond-brainext-manifest-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("create fixture");
+
+        let write = |json: &str| std::fs::write(dir.join("mobs.json"), json).expect("write");
+        write(r#"{"mobs":[],"brain_extensions":[{"mob":"petramond:sheep","brain":[{"node":"fixture:lure","priority":20,"inputs":["player_held"]}]}]}"#);
+        let keys = registration_keys(&dir).expect("a well-formed extension passes admission");
+        assert!(keys.is_empty(), "extensions register no keys");
+
+        // Missing `brain` field, an unknown field, an unknown node key, an
+        // unknown declared input, and inputs on an engine node — all must be
+        // admission errors (pack disabled), not later catalog-load panics.
+        for bad in [
+            r#"{"mobs":[],"brain_extensions":[{"mob":"petramond:sheep"}]}"#,
+            r#"{"mobs":[],"brain_extensions":[{"mob":"petramond:sheep","brains":[]}]}"#,
+            r#"{"mobs":[],"brain_extensions":[{"mob":"petramond:sheep","brain":[{"node":"chasse_player"}]}]}"#,
+            r#"{"mobs":[],"brain_extensions":[{"mob":"petramond:sheep","brain":[{"node":"fixture:lure","inputs":["player_hand"]}]}]}"#,
+            r#"{"mobs":[],"brain_extensions":[{"mob":"petramond:sheep","brain":[{"node":"wander","inputs":["player_held"]}]}]}"#,
+        ] {
+            write(bad);
+            let err = registration_keys(&dir).expect_err("malformed extension fails admission");
+            assert!(err.contains("brain_extensions"), "{err}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

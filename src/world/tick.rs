@@ -309,7 +309,7 @@ impl World {
     pub(crate) fn note_block_destroyed(&mut self, pos: IVec3, block: Block) {
         self.sim.pending_breaks.push((pos, block));
         // Sweep any block-entity record the block owned (a torch's mount, a
-        // ladder's wall facing) — the same unconditional sweep the player-break
+        // chest/furnace front) — the same unconditional sweep the player-break
         // path uses, so no per-block arm is needed here and the block-entity
         // section index stays in sync.
         self.forget_block_entity_records(pos);

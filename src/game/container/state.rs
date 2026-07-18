@@ -1,5 +1,6 @@
 use super::ContainerTarget;
 use crate::crafting::CraftingStation;
+use crate::gui::GuiKind;
 use crate::inventory::Inventory;
 use crate::item::ItemStack;
 use crate::mathh::IVec3;
@@ -45,9 +46,9 @@ impl ContainerMenu {
     }
 
     pub(crate) fn crafting_station(&self) -> Option<CraftingStation> {
-        match self.target {
-            ContainerTarget::Inventory => Some(CraftingStation::Inventory),
-            ContainerTarget::Table => Some(CraftingStation::CraftingTable),
+        match self.target.kind() {
+            Some(GuiKind::Inventory) => Some(CraftingStation::Inventory),
+            Some(GuiKind::CraftingTable) => Some(CraftingStation::CraftingTable),
             _ => None,
         }
     }
@@ -56,10 +57,11 @@ impl ContainerMenu {
     /// session before replacement; preserving the slot here is a final no-loss
     /// guard for direct/test callers.
     pub(crate) fn open_crafting(&mut self, station: CraftingStation) {
-        self.target = match station {
-            CraftingStation::Inventory => ContainerTarget::Inventory,
-            CraftingStation::CraftingTable => ContainerTarget::Table,
+        let kind = match station {
+            CraftingStation::Inventory => GuiKind::Inventory,
+            CraftingStation::CraftingTable => GuiKind::CraftingTable,
         };
+        self.target = ContainerTarget::Gui { kind, pos: None };
     }
 
     /// Begin a furnace-screen session at `pos`: remember which furnace the GUI
@@ -69,14 +71,15 @@ impl ContainerMenu {
         if world.furnace_at(pos).is_none() {
             world.insert_furnace(pos, crate::facing::Facing::default());
         }
-        self.target = ContainerTarget::Furnace(pos);
+        self.target = ContainerTarget::Gui {
+            kind: GuiKind::Furnace,
+            pos: Some(pos),
+        };
     }
 
     /// End the furnace-screen session. The furnace keeps its block-entity contents.
     pub(crate) fn close_furnace(&mut self) {
-        if matches!(self.target, ContainerTarget::Furnace(_)) {
-            self.target = ContainerTarget::None;
-        }
+        self.close_kind(|kind| kind == GuiKind::Furnace);
     }
 
     /// Begin a chest-screen session at `pos`: remember which chest the GUI reads and
@@ -86,19 +89,23 @@ impl ContainerMenu {
         if world.container_at(pos).is_none() {
             world.insert_chest(pos, crate::facing::Facing::default());
         }
-        self.target = ContainerTarget::Chest(pos);
+        self.target = ContainerTarget::Gui {
+            kind: GuiKind::Chest,
+            pos: Some(pos),
+        };
     }
 
     /// End the chest-screen session. The chest keeps its block-entity contents.
     pub(crate) fn close_chest(&mut self) {
-        if matches!(self.target, ContainerTarget::Chest(_)) {
-            self.target = ContainerTarget::None;
-        }
+        self.close_kind(|kind| kind == GuiKind::Chest);
     }
 
     /// Begin a furniture-workbench session: the input slot starts empty.
     pub(crate) fn open_workbench(&mut self) {
-        self.target = ContainerTarget::FurnitureWorkbench;
+        self.target = ContainerTarget::Gui {
+            kind: GuiKind::FurnitureWorkbench,
+            pos: None,
+        };
         self.workbench_input = None;
     }
 
@@ -114,7 +121,7 @@ impl ContainerMenu {
     pub(crate) fn open_mod_gui(
         &mut self,
         world: &mut World,
-        kind: crate::gui::GuiKind,
+        kind: GuiKind,
         pos: Option<crate::mathh::IVec3>,
     ) {
         let pos = pos.map(|p| world.container_anchor(p));
@@ -122,15 +129,13 @@ impl ContainerMenu {
         if let (Some(p), false) = (pos, specs.is_empty()) {
             world.ensure_container(p, specs.len());
         }
-        self.target = ContainerTarget::ModGui { kind, pos };
+        self.target = ContainerTarget::Gui { kind, pos };
     }
 
     /// End the mod GUI session (the state map is cleared by `Game`'s close
     /// funnel, which knows the world).
     pub(crate) fn close_mod_gui(&mut self) {
-        if matches!(self.target, ContainerTarget::ModGui { .. }) {
-            self.target = ContainerTarget::None;
-        }
+        self.close_kind(|kind| kind.is_mod());
     }
 
     /// End the workbench session: return the input block to the inventory
@@ -145,9 +150,7 @@ impl ContainerMenu {
                 overflow(leftover);
             }
         }
-        if matches!(self.target, ContainerTarget::FurnitureWorkbench) {
-            self.target = ContainerTarget::None;
-        }
+        self.close_kind(|kind| kind == GuiKind::FurnitureWorkbench);
     }
 
     /// Close player crafting: return its real output to inventory (overflow is
@@ -162,10 +165,12 @@ impl ContainerMenu {
                 overflow(leftover);
             }
         }
-        if matches!(
-            self.target,
-            ContainerTarget::Inventory | ContainerTarget::Table
-        ) {
+        self.close_kind(|kind| kind == GuiKind::Inventory || kind == GuiKind::CraftingTable);
+    }
+
+    /// Drop the target if the open session's kind matches.
+    fn close_kind(&mut self, matches: impl Fn(GuiKind) -> bool) {
+        if self.target.kind().is_some_and(matches) {
             self.target = ContainerTarget::None;
         }
     }

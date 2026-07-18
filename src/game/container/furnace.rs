@@ -10,7 +10,11 @@ use crate::world::World;
 
 impl ContainerMenu {
     pub(crate) fn open_furnace_view(&self, world: &World) -> Option<FurnaceView> {
-        let ContainerTarget::Furnace(pos) = self.target else {
+        let ContainerTarget::Gui {
+            kind: crate::gui::GuiKind::Furnace,
+            pos: Some(pos),
+        } = self.target
+        else {
             return None;
         };
         let f = world.furnace_at(pos)?;

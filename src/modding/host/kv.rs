@@ -5,7 +5,7 @@ use mod_api::{HostCall, HostRet};
 
 use crate::mathh::IVec3;
 
-use super::guards::{kv_write_guard, sim_call, sim_query};
+use super::guards::{kv_write_guard, live_mob, sim_call, sim_query};
 
 /// Run one KV write behind [`kv_write_guard`], handing the key back to the
 /// operation when the guard passes (deletes guard with `value_len` 0).
@@ -56,30 +56,28 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(ctx.world.cell_kv_remove(p.x, p.y, p.z, &key))
             })
         }),
-        HostCall::MobKvGet { mob_index, key } => sim_query(|ctx| {
-            HostRet::Bytes(
-                ctx.world
-                    .mobs()
-                    .mod_kv_get(mob_index as usize, &key)
-                    .map(<[u8]>::to_vec),
-            )
+        HostCall::MobKvGet { mob_id, key } => sim_query(|ctx| {
+            let Some(index) = live_mob(ctx, mob_id) else {
+                return HostRet::Bytes(None);
+            };
+            HostRet::Bytes(ctx.world.mobs().mod_kv_get(index, &key).map(<[u8]>::to_vec))
         }),
-        HostCall::MobKvSet {
-            mob_index,
-            key,
-            value,
-        } => guarded_write(mod_id, key, value.len(), |key| {
-            sim_query(|ctx| {
-                HostRet::Bool(
-                    ctx.world
-                        .mobs_mut()
-                        .mod_kv_set(mob_index as usize, key, value),
-                )
+        HostCall::MobKvSet { mob_id, key, value } => {
+            guarded_write(mod_id, key, value.len(), |key| {
+                sim_query(|ctx| {
+                    let Some(index) = live_mob(ctx, mob_id) else {
+                        return HostRet::Bool(false);
+                    };
+                    HostRet::Bool(ctx.world.mobs_mut().mod_kv_set(index, key, value))
+                })
             })
-        }),
-        HostCall::MobKvDelete { mob_index, key } => guarded_write(mod_id, key, 0, |key| {
+        }
+        HostCall::MobKvDelete { mob_id, key } => guarded_write(mod_id, key, 0, |key| {
             sim_query(|ctx| {
-                HostRet::Bool(ctx.world.mobs_mut().mod_kv_remove(mob_index as usize, &key))
+                let Some(index) = live_mob(ctx, mob_id) else {
+                    return HostRet::Bool(false);
+                };
+                HostRet::Bool(ctx.world.mobs_mut().mod_kv_remove(index, &key))
             })
         }),
         other => HostRet::Error(format!(

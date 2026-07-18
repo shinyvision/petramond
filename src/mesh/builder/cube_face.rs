@@ -7,7 +7,8 @@ use crate::facing::Facing;
 use super::super::face::{vertex_ao, Face};
 use super::super::face_emit::{fold_light, fold_light_smooth, slab_corner_open};
 
-/// The horizontal cube face a furnace's front points to, for its [`Facing`].
+/// The horizontal cube face a directional block's front points to, for its
+/// stored entity [`Facing`] (furnace/chest fronts).
 #[inline]
 pub(super) fn facing_face(facing: Facing) -> Face {
     match facing {
@@ -23,7 +24,7 @@ pub(super) fn cube_face_tile(
     block: Block,
     face: Face,
     tiles: [Tile; 3],
-    furnace_faces: Option<(Face, Tile)>,
+    front: Option<(Face, Tile)>,
     log_axis: LogAxis,
 ) -> Tile {
     let [tile_top, tile_bot, tile_side] = tiles;
@@ -41,10 +42,11 @@ pub(super) fn cube_face_tile(
     match face {
         Face::PosY => tile_top,
         Face::NegY => tile_bot,
-        _ => match furnace_faces {
+        // A row-declared `front` tile replaces the side tile on the one face
+        // the block's stored entity facing points to (furnace fronts).
+        _ => match front {
             Some((front_face, front_tile)) if face == front_face => front_tile,
-            Some(_) => crate::atlas::engine().furnace_side,
-            None => tile_side,
+            _ => tile_side,
         },
     }
 }

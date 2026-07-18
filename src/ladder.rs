@@ -1,14 +1,16 @@
 //! Ladder orientation and panel geometry: how a placed ladder sits in its cell.
 //!
-//! A ladder is a thin climbable panel mounted on one vertical wall face. Its only
-//! per-instance state is *which wall it hangs on*, stored as the shared 4-way
-//! [`Facing`] in the owning section's entity-facing map (the same map chest and
-//! furnace fronts use) — the facing names the direction the panel's FRONT points,
-//! away from the supporting wall, matching the clicked face's outward normal
-//! ([`Facing::from_horizontal_normal`]; vertical normals refuse, so no floor or
-//! ceiling ladders). This module owns the single panel box that the mesher, the
-//! raycast target, the selection outline, and the break-crack overlay all build
-//! from — so they trace the same geometry by construction.
+//! A ladder is a thin climbable panel mounted on one vertical wall face.
+//! *Which wall it hangs on* is block IDENTITY — one block row per [`Facing`]
+//! (`Block::panel_facing`, the sapling-stage pattern), committed by placement
+//! as the sibling row matching the clicked face's outward normal
+//! ([`Facing::from_horizontal_normal`]; vertical normals refuse, so no floor
+//! or ceiling ladders). There is no per-cell ladder state: the facing rides
+//! the ordinary block-id save/replication lanes, and every reader takes it
+//! off the block it already fetched. This module owns the single panel box
+//! that the mesher, the raycast target, the selection outline, and the
+//! break-crack overlay all build from — so they trace the same geometry by
+//! construction.
 
 use crate::block::Aabb;
 use crate::facing::Facing;

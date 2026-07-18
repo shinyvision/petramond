@@ -32,16 +32,24 @@ use validate::{
 /// simulation, the registries, or the tick scheduler stays `false`.
 pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
     match call {
-        // Instance-neutral basics. `ResolveBlock`/`BlocksByTag` are
-        // registry-only (legal on ANY instance, like worldgen workers) — a
-        // client mod interpreting `ClientBlocksAt` ids resolves the block
-        // names and tag sets it compares against the same way the server
-        // side does.
+        // Instance-neutral basics. The whole REGISTRY domain (resolvers, the
+        // reverse name lookups, tag membership, item row reads) touches only
+        // the process-wide registries, so it is legal on ANY instance, like
+        // worldgen workers — a client mod interpreting `ClientBlocksAt` ids
+        // resolves the names, tag sets, and rows it compares against the
+        // same way the server side does.
         HostCall::Log { .. }
         | HostCall::RuntimeSide
         | HostCall::RngU64 { .. }
         | HostCall::ResolveBlock { .. }
-        | HostCall::BlocksByTag { .. } => true,
+        | HostCall::ResolveItem { .. }
+        | HostCall::ResolveMob { .. }
+        | HostCall::BlockNames { .. }
+        | HostCall::ItemNames { .. }
+        | HostCall::MobNames { .. }
+        | HostCall::BlocksByTag { .. }
+        | HostCall::ItemsByTag { .. }
+        | HostCall::ItemInfo { .. } => true,
         // The client presentation surface (handled below).
         HostCall::ClientRegisterOverlay { .. }
         | HostCall::ClientRegisterKey { .. }
@@ -80,7 +88,6 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::IsLoaded { .. }
         | HostCall::LightAt { .. }
         | HostCall::SpawnMob { .. }
-        | HostCall::SpawnMobChecked { .. }
         | HostCall::MobsInRadius { .. }
         | HostCall::DamageMob { .. }
         | HostCall::DespawnMob { .. }
@@ -89,7 +96,6 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::DamagePlayer { .. }
         | HostCall::ApplyKnockback { .. }
         | HostCall::GiveItem { .. }
-        | HostCall::KillPlayer
         | HostCall::SetHealth { .. }
         | HostCall::Teleport { .. }
         | HostCall::EmitSound { .. }
@@ -102,7 +108,6 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::MobKvGet { .. }
         | HostCall::MobKvSet { .. }
         | HostCall::MobKvDelete { .. }
-        | HostCall::ResolveItem { .. }
         | HostCall::RegisterWorldgenFeature { .. }
         | HostCall::RegisterStageReplacement { .. }
         | HostCall::RegisterGenerator { .. }
@@ -114,14 +119,13 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::SoundPlayAt { .. }
         | HostCall::SoundPlayOnMob { .. }
         | HostCall::SoundStop { .. }
-        | HostCall::BlockIsFullSpawnSupport { .. }
+        | HostCall::CollisionShapeAt { .. }
         | HostCall::ShaderSetParam { .. }
         | HostCall::RegisterHostileSpawner { .. }
         | HostCall::RegisterBlockBehavior { .. }
         | HostCall::RegisterAiNode { .. }
         | HostCall::ContainerGet { .. }
         | HostCall::ContainerSet { .. }
-        | HostCall::ItemInfo { .. }
         | HostCall::RecipeResult { .. }
         | HostCall::EffectApply { .. }
         | HostCall::EffectRemove { .. }

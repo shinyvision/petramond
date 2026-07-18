@@ -10,9 +10,12 @@
 //! cell) are then validated PER PLANT COLUMN with the section's own data,
 //! clipping patches naturally at biome edges and obstacles.
 //!
-//! Wheat is decided before carrots in the same pass, and a carrot cell is
-//! skipped wherever wheat would plant, so the two never overwrite one
-//! another where their biomes overlap (Plains).
+//! Crops are ONE ordered spec list ([`specs`]): a column takes the FIRST
+//! spec whose biome gate and patch membership hit, so a later crop never
+//! lands on an earlier one's cell BY CONSTRUCTION where their biomes overlap
+//! (wheat ∩ carrots on Plains, carrots ∩ potatoes in Forests). Patch
+//! membership is positional-RNG-pure per (seed, salt, anchor), so skipping a
+//! later spec's evaluation never shifts any stream.
 //!
 //! Wild crops generate only in newly generated terrain (this is a gen-time
 //! feature); enabling farming later does not retrofit explored sections.
@@ -23,6 +26,7 @@ use crate::content::Content;
 
 const WHEAT_SALT: u64 = 0x00FA_57EA_7000_0001;
 const CARROT_SALT: u64 = 0x00FA_57EA_7000_0002;
+const POTATO_SALT: u64 = 0x00FA_57EA_7000_0003;
 
 /// Patch anchor probability per eligible column. Balance data: tuned (map
 /// inspection over several seeds) so purposeful exploration of an eligible
@@ -30,25 +34,72 @@ const CARROT_SALT: u64 = 0x00FA_57EA_7000_0002;
 /// still feel found, not ubiquitous — about one patch per ~150x150 blocks of
 /// eligible terrain.
 const WHEAT_ANCHOR_CHANCE: f32 = 1.0 / 22000.0;
-const CARROT_ANCHOR_CHANCE: f32 = 1.0 / 26000.0;
+/// Carrots and potatoes run noticeably denser than wheat (bumped
+/// 2026-07-17, per Rachel: too rare at wheat-like odds).
+const CARROT_ANCHOR_CHANCE: f32 = 1.0 / 18000.0;
+/// Potatoes: ordinary forests carry them at carrot-like density; redwood
+/// forests — rare, and the potato's signature biome — roll denser so a
+/// purposeful redwood walk never comes up empty. One salt, two thresholds:
+/// the denser set is a superset of the sparser one (same positional draw,
+/// higher cutoff), so a patch straddling the biome border clips cleanly.
+const POTATO_ANCHOR_CHANCE: f32 = 1.0 / 18000.0;
+const POTATO_REDWOOD_ANCHOR_CHANCE: f32 = 1.0 / 12000.0;
 
 /// Patch sizes (random-walk step counts — revisits make real patches
 /// slightly smaller and irregular, which is the intent).
 const WHEAT_PATCH: (i32, i32) = (4, 8);
 const CARROT_PATCH: (i32, i32) = (3, 6);
+const POTATO_PATCH: (i32, i32) = (3, 6);
 
 /// Max |offset| of a patch cell from its anchor; also the anchor scan reach.
 const PATCH_REACH: i32 = 2;
 
-fn wheat_biome(b: u8) -> bool {
-    b == biome::PLAINS || b == biome::SAVANNA
+/// One wild crop's placement row. The slice ORDER is the priority order —
+/// the first spec that hits a column owns it.
+struct WildCropSpec {
+    /// Positional-RNG salt for the crop's anchor/walk streams. Frozen:
+    /// worldgen determinism depends on these exact literals.
+    salt: u64,
+    /// Random-walk step-count range (patch size/shape).
+    patch: (i32, i32),
+    /// The wild block the column plants.
+    block: BlockId,
+    /// Biome gate: the anchor chance for a column's biome, `None` outside
+    /// the crop's biomes. Chances are balance data (see the consts above).
+    chance: fn(u8) -> Option<f32>,
 }
 
-fn carrot_biome(b: u8) -> bool {
-    b == biome::PLAINS || b == biome::FOREST
+/// The ordered wild-crop table: wheat before carrots before potatoes.
+/// Adding a crop is one row here (salt + patch consts + a chance fn).
+fn specs(content: &Content) -> [WildCropSpec; 3] {
+    [
+        WildCropSpec {
+            salt: WHEAT_SALT,
+            patch: WHEAT_PATCH,
+            block: content.wild_wheat,
+            chance: |b| (b == biome::PLAINS || b == biome::SAVANNA).then_some(WHEAT_ANCHOR_CHANCE),
+        },
+        WildCropSpec {
+            salt: CARROT_SALT,
+            patch: CARROT_PATCH,
+            block: content.wild_carrots,
+            chance: |b| (b == biome::PLAINS || b == biome::FOREST).then_some(CARROT_ANCHOR_CHANCE),
+        },
+        WildCropSpec {
+            salt: POTATO_SALT,
+            patch: POTATO_PATCH,
+            block: content.wild_potatoes,
+            chance: |b| match b {
+                _ if b == biome::REDWOOD_FOREST => Some(POTATO_REDWOOD_ANCHOR_CHANCE),
+                _ if b == biome::FOREST => Some(POTATO_ANCHOR_CHANCE),
+                _ => None,
+            },
+        },
+    ]
 }
 
 pub fn wild_patches(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
+    let specs = specs(content);
     let mut writes = Vec::new();
     let oy = ctx.origin_world()[1];
     ctx.for_each_origin(0, |wx, wz| {
@@ -70,28 +121,13 @@ pub fn wild_patches(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
         let Some(biome) = ctx.biome(wx, wz) else {
             return;
         };
-        let wheat_here = wheat_biome(biome)
-            && in_patch(
-                ctx.seed(),
-                WHEAT_SALT,
-                WHEAT_ANCHOR_CHANCE,
-                WHEAT_PATCH,
-                wx,
-                wz,
-            );
-        let carrot_here = !wheat_here
-            && carrot_biome(biome)
-            && in_patch(
-                ctx.seed(),
-                CARROT_SALT,
-                CARROT_ANCHOR_CHANCE,
-                CARROT_PATCH,
-                wx,
-                wz,
-            );
-        if !wheat_here && !carrot_here {
+        // First spec whose biome gate + patch membership hit owns the cell.
+        let Some(spec) = specs.iter().find(|spec| {
+            (spec.chance)(biome)
+                .is_some_and(|chance| in_patch(ctx.seed(), spec.salt, chance, spec.patch, wx, wz))
+        }) else {
             return;
-        }
+        };
         // Final local surface facts: an ordinary grass root, and a plant
         // cell that is air or replaceable ground vegetation — never a tree,
         // solid block, other crop, or structure.
@@ -103,12 +139,7 @@ pub fn wild_patches(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
             Some(b) if content.is_clearable_cover(b) => {}
             _ => return,
         }
-        let block = if wheat_here {
-            content.wild_wheat
-        } else {
-            content.wild_carrots
-        };
-        writes.push(([wx, plant_y, wz], block));
+        writes.push(([wx, plant_y, wz], spec.block));
     });
     writes
 }

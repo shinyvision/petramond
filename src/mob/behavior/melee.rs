@@ -180,35 +180,18 @@ mod tests {
     ) -> AiCtx<'a> {
         let players: &'static [crate::mob::PlayerAnchor] =
             Box::leak(Box::new([crate::mob::PlayerAnchor {
-                id: Default::default(),
                 pos: player,
-                body: None,
-                sneaking: false,
+                ..Default::default()
             }]));
-        AiCtx {
-            mob_id: 1,
-            pos,
-            cell: crate::mathh::voxel_at(pos),
-            yaw,
-            head_height: 1.3,
-            half_width: 0.45,
-            world,
-            player_id: Default::default(),
-            player_pos: player,
-            player_sneaking: false,
-            players,
-            noises: &[],
-            contacts: &[],
-            target: Some(EntityRef::Player(Default::default())),
-            attacker: None,
-            nav_idle: true,
-            in_water: false,
-            head: 2,
-            idle_anims: &[],
-            mob_index: 0,
-            mobs: &[],
-            rng,
-        }
+        let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
+        c.yaw = yaw;
+        c.head_height = 1.3;
+        c.half_width = 0.45;
+        c.player_pos = player;
+        c.players = players;
+        c.target = Some(EntityRef::Player(Default::default()));
+        c.head = 2;
+        c
     }
 
     /// A player one block in front of the mob's face (-Z), inside a 1.5 reach.

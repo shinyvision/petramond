@@ -6,5 +6,6 @@
   "summary": "Adds farming to your world.",
   "icon": "icon.png",
   "wasm": "mod.wasm",
-  "dependencies": ["kitchen"]
+  "dependencies": ["kitchen"],
+  "after": ["weather"]
 }

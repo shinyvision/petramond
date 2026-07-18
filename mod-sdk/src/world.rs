@@ -1,7 +1,7 @@
 //! Sim-scoped world reads and writes: blocks, light, scheduled ticks,
 //! model-block swaps, and spawn-support queries.
 
-use mod_api::BlockId;
+use mod_api::{BlockId, CollisionShape, LightData};
 
 use crate::__rt::host_fn;
 
@@ -16,7 +16,9 @@ host_fn! {
 }
 
 host_fn! {
-    /// Batched [`get_block`]: one result per position, in order.
+    /// Batched [`get_block`]: one result per position, in order. At most 4096
+    /// positions per call (the sim batch cap); more disables the mod — chunk
+    /// larger sweeps across ticks.
     pub fn get_blocks(positions: Vec<[i32; 3]>) -> Vec<Option<BlockId>>
         => GetBlocks { positions } => Blocks
 }
@@ -41,6 +43,7 @@ host_fn! {
 host_fn! {
     /// Batched [`set_block`]; returns how many cells were actually set. Each write
     /// still pays its own relight/remesh — batch the ABI crossing, not a floodfill.
+    /// At most 4096 writes per call (the sim batch cap); more disables the mod.
     pub fn set_blocks(blocks: Vec<([i32; 3], BlockId)>) -> u64 => SetBlocks { blocks } => U64
 }
 
@@ -58,19 +61,26 @@ host_fn! {
 }
 
 host_fn! {
-    /// Cached light at a cell as `(combined, sky, block)` on the 6-bit `0..=63`
-    /// scale (combined = max of the two channels).
-    pub fn light_at(pos: [i32; 3]) -> (u8, u8, u8)
-        => LightAt { pos }
-        => crate::HostRet::Light { combined, sky, block } => (combined, sky, block)
+    /// Cached light at a loaded cell on the 6-bit `0..=63` scale
+    /// (`combined = max(sky, block)`). `None` = section unloaded or its
+    /// streamed content not yet final — the [`get_block`] contract: state
+    /// frozen, retry later. Never fabricated open-sky values, so light-driven
+    /// policy can trust every `Some`.
+    pub fn light_at(pos: [i32; 3]) -> Option<LightData> => LightAt { pos } => Light
 }
 
 host_fn! {
-    /// Whether the loaded block at `pos` is valid full-cube support for
-    /// programmatic mob spawns. Rejects unloaded cells, water, leaves, and partial
-    /// collision shapes such as stairs.
-    pub fn block_is_full_spawn_support(pos: [i32; 3]) -> bool
-        => BlockIsFullSpawnSupport { pos } => Bool
+    /// The collision-shape CLASS of the cell — generic physics with no
+    /// gameplay policy: [`CollisionShape::Full`] = exactly one collision box
+    /// spanning the whole unit cell, [`CollisionShape::Partial`] = any other
+    /// non-empty box set (stairs, slabs, doors, snow layers, model blocks),
+    /// [`CollisionShape::Empty`] = no collision boxes (air, water, tall
+    /// grass). `None` = unloaded / streamed content not final (retry later).
+    /// Compose spawn/placement rules on top in mod code, e.g. "full solid
+    /// footing" = `Full` + the block is not water + not a `petramond:leaves`
+    /// tag member ([`crate::blocks_by_tag`]).
+    pub fn collision_shape_at(pos: [i32; 3]) -> Option<CollisionShape>
+        => CollisionShapeAt { pos } => CollisionShape
 }
 
 host_fn! {

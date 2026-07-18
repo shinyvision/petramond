@@ -38,6 +38,7 @@ mod entities;
 mod gui;
 mod kv;
 mod player;
+mod registry;
 mod sounds;
 mod worldgen;
 
@@ -407,12 +408,11 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ScheduleTick { .. }
         | HostCall::IsLoaded { .. }
         | HostCall::LightAt { .. }
-        | HostCall::BlockIsFullSpawnSupport { .. }
+        | HostCall::CollisionShapeAt { .. }
         | HostCall::BiomeAt { .. }
         | HostCall::SurfaceYAt { .. }
         | HostCall::SwapModelBlock { .. } => blocks::handle_block_call(&data.mod_id, call),
         HostCall::SpawnMob { .. }
-        | HostCall::SpawnMobChecked { .. }
         | HostCall::MobsInRadius { .. }
         | HostCall::DamageMob { .. }
         | HostCall::DespawnMob { .. }
@@ -431,7 +431,6 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ApplyKnockback { .. }
         | HostCall::GiveItem { .. }
         | HostCall::ConsumeHeld { .. }
-        | HostCall::KillPlayer
         | HostCall::SetHealth { .. }
         | HostCall::Teleport { .. }
         | HostCall::EffectApply { .. }
@@ -455,8 +454,15 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::MobKvSet { .. }
         | HostCall::MobKvDelete { .. } => kv::handle_kv_call(&data.mod_id, call),
         HostCall::ResolveBlock { .. }
+        | HostCall::ResolveItem { .. }
+        | HostCall::ResolveMob { .. }
+        | HostCall::BlockNames { .. }
+        | HostCall::ItemNames { .. }
+        | HostCall::MobNames { .. }
         | HostCall::BlocksByTag { .. }
-        | HostCall::RegisterWorldgenFeature { .. }
+        | HostCall::ItemsByTag { .. }
+        | HostCall::ItemInfo { .. } => registry::handle_registry_call(call),
+        HostCall::RegisterWorldgenFeature { .. }
         | HostCall::RegisterStageReplacement { .. }
         | HostCall::RegisterGenerator { .. } => worldgen::handle_worldgen_call(data, call),
         HostCall::GuiStateSet { .. }
@@ -466,8 +472,6 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         HostCall::ContainerGet { .. }
         | HostCall::ContainerGetMany { .. }
         | HostCall::ContainerSet { .. }
-        | HostCall::ItemInfo { .. }
-        | HostCall::ResolveItem { .. }
         | HostCall::RecipeResult { .. } => containers::handle_container_call(&data.mod_id, call),
         HostCall::ClientRegisterOverlay { .. }
         | HostCall::ClientRegisterKey { .. }

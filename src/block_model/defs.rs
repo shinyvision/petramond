@@ -145,6 +145,12 @@ pub struct BlockModelDef {
     /// several rows can share one `.bbmodel` with different parts visible —
     /// the lit/unlit machine pattern). Empty for most rows.
     pub hidden_parts: &'static [&'static str],
+    /// Per-row translations of named cubes, in AUTHORED PIXELS (applied after
+    /// the cache load like `hidden_parts`) — how rows sharing one `.bbmodel`
+    /// pose a part differently per variant: a fill surface rising with the
+    /// composter's stages, a fluid level, a gauge needle. Name-sorted for
+    /// deterministic application; empty for most rows.
+    pub part_offsets: &'static [(&'static str, [f32; 3])],
 }
 
 /// How a model's authored geometry maps onto its footprint cell box.
@@ -178,6 +184,10 @@ struct RawModelDef {
     fit: FitMode,
     #[serde(default)]
     hidden_parts: Vec<String>,
+    /// `{"cube_name": [dx, dy, dz]}` in authored pixels (BTreeMap: the
+    /// leaked slice stays name-ordered, deterministic).
+    #[serde(default)]
+    part_offsets: std::collections::BTreeMap<String, [f32; 3]>,
 }
 
 #[derive(Deserialize)]
@@ -207,6 +217,11 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef
                 .into_iter()
                 .map(|p| &*Box::leak(p.into_boxed_str()))
                 .collect();
+            let part_offsets: Vec<(&'static str, [f32; 3])> = r
+                .part_offsets
+                .into_iter()
+                .map(|(p, off)| (&*Box::leak(p.into_boxed_str()), off))
+                .collect();
             Ok(BlockModelDef {
                 key: names.name(id).expect("id resolved from this table"),
                 model_file: Box::leak(r.model_file.into_boxed_str()),
@@ -215,6 +230,7 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef
                 orientation: r.orientation,
                 fit: r.fit,
                 hidden_parts: Box::leak(hidden_parts.into_boxed_slice()),
+                part_offsets: Box::leak(part_offsets.into_boxed_slice()),
             })
         },
     )

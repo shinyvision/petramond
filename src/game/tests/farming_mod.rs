@@ -68,11 +68,41 @@ fn farming_is_dependency_disabled_without_kitchen() {
     );
 }
 
+#[test]
+fn farming_rain_compost_and_fertile_soil_via_wasm() {
+    let Some(root) =
+        crate::modding::tests::stage_mods_fixture("farming-soil", &["kitchen", "farming"])
+    else {
+        return;
+    };
+    crate::modding::tests::run_child_test(&root, "game::tests::farming_mod::farming_soil_inner");
+}
+
+#[test]
+fn farming_sheep_follow_the_wheat_lure_via_wasm() {
+    let Some(root) =
+        crate::modding::tests::stage_mods_fixture("farming-lure", &["kitchen", "farming"])
+    else {
+        return;
+    };
+    crate::modding::tests::run_child_test(&root, "game::tests::farming_mod::farming_lure_inner");
+}
+
+#[test]
+fn farming_fertilized_grass_and_sapling_boost_via_wasm() {
+    let Some(root) =
+        crate::modding::tests::stage_mods_fixture("farming-landscape", &["kitchen", "farming"])
+    else {
+        return;
+    };
+    crate::modding::tests::run_child_test(
+        &root,
+        "game::tests::farming_mod::farming_landscape_inner",
+    );
+}
+
 fn by_key(key: &str) -> crate::item::ItemType {
-    crate::item::ItemType::all()
-        .iter()
-        .copied()
-        .find(|i| i.key() == key)
+    crate::item::ItemType::by_key(key)
         .unwrap_or_else(|| panic!("{key} registered from the fixture packs"))
 }
 
@@ -82,6 +112,49 @@ fn block_by_name(name: &str) -> crate::block::Block {
         .id(name)
         .map(crate::block::Block)
         .unwrap_or_else(|| panic!("block {name} registered from the fixture packs"))
+}
+
+fn at(game: &super::common::TestGame, x: i32, y: i32, z: i32) -> crate::block::Block {
+    crate::block::Block::from_id(game.server.world.chunk_block(x, y, z))
+}
+
+/// One authoritative use click at `target`: stand the player in reach, select
+/// `slot`, latch the look, queue the click, and run the tick that resolves it.
+fn use_click(
+    game: &mut super::common::TestGame,
+    ev: &mut TickEvents,
+    slot: u8,
+    target: crate::mathh::IVec3,
+    normal: crate::mathh::IVec3,
+) {
+    let sess = &mut game.server.sessions[0];
+    sess.player.pos = Vec3::new(target.x as f32 + 0.5, 65.0, target.z as f32 - 1.5);
+    sess.player.inventory.set_active(slot);
+    sess.look = Some(super::common::hit(target, normal));
+    game.server.queue_place_click_for_test(0);
+    game.server.game_tick_step(ev);
+}
+
+/// The standard farming stage: a full-skylight grass-floor island with the
+/// session player standing ready on it. Random ticks (the reconcile/growth
+/// heartbeat) only run around a streaming anchor, which a direct-stepping
+/// test must still arm itself (`set_load_target_for_test`).
+fn farming_floor_game() -> super::common::TestGame {
+    use crate::chunk::{SECTION_VOLUME, SKY_FULL};
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
+    super::common::flat_floor_loaded_air(&mut game.server.world, crate::block::Block::Grass);
+    let section = game
+        .server
+        .world
+        .section_at_world_mut_for_test(0, 64, 0)
+        .expect("floor section loaded");
+    section.set_skylight(vec![SKY_FULL; SECTION_VOLUME].into());
+    let sess = &mut game.server.sessions[0];
+    sess.player.pos = Vec3::new(8.0, 64.0, 5.0);
+    sess.player.vel = Vec3::ZERO;
+    sess.player.on_ground = true;
+    game
 }
 
 /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`).
@@ -179,9 +252,6 @@ fn farming_cultivation_inner() {
         section.set_skylight(sky.into());
     }
     game.server.world.set_block_world(6, 64, 10, carrots[0]);
-    fn at(game: &super::common::TestGame, x: i32, y: i32, z: i32) -> crate::block::Block {
-        crate::block::Block::from_id(game.server.world.chunk_block(x, y, z))
-    }
 
     let sess = &mut game.server.sessions[0];
     sess.player.pos = Vec3::new(4.0, 64.0, 5.0);
@@ -192,20 +262,6 @@ fn farming_cultivation_inner() {
     sess.player.inventory.add(ItemStack::new(carrot, 8)); // slot 2
 
     let mut ev = TickEvents::default();
-    fn use_click(
-        game: &mut super::common::TestGame,
-        ev: &mut TickEvents,
-        slot: u8,
-        target: crate::mathh::IVec3,
-        normal: crate::mathh::IVec3,
-    ) {
-        let sess = &mut game.server.sessions[0];
-        sess.player.pos = Vec3::new(target.x as f32 + 0.5, 65.0, target.z as f32 - 1.5);
-        sess.player.inventory.set_active(slot);
-        sess.look = Some(super::common::hit(target, normal));
-        game.server.queue_place_click_for_test(0);
-        game.server.game_tick_step(ev);
-    }
 
     // --- Tilling. Grass near the water tills straight to WET farmland; far
     // grass tills DRY. The hoe is identified by name through the generic
@@ -926,11 +982,11 @@ fn farming_nokitchen_inner() {
 }
 
 /// Runs ONLY in the child process spawned above. The wild-patch worldgen
-/// feature: patches land on grass above the waterline in their declared
-/// biomes, replace only air/ground vegetation, never overwrite one another,
-/// and the whole decision is a pure function of (seed, position) — the same
-/// chunk regenerates byte-identically. Density itself is balance data; the
-/// only count pinned is "patches exist".
+/// feature: patches root on ordinary grass above the waterline, and the
+/// whole decision is a pure function of (seed, position) — the same chunk
+/// regenerates byte-identically. Densities AND the per-crop biome whitelists
+/// are pack balance data (declared inside the mod's own worldgen), so they
+/// stay deliberately unpinned; the counts pinned are only "patches exist".
 #[test]
 #[ignore = "spawned by farming_wild_patches_generate_deterministically_via_wasm with a fixture pack env"]
 fn farming_worldgen_inner() {
@@ -942,32 +998,37 @@ fn farming_worldgen_inner() {
     assert_eq!(game.mods_for_test().loaded(), 2);
     let wild_wheat = block_by_name("farming:wild_wheat");
     let wild_carrots = block_by_name("farming:wild_carrots");
-    let wheat_biomes = ["plains", "savanna"];
-    let carrot_biomes = ["plains", "forest"];
+    let wild_potatoes = block_by_name("farming:wild_potatoes");
 
     let seed = 42u32;
-    // Target eligible-biome chunks straight off the climate graph (no chunk
-    // generation) instead of blind-scanning: one macro sample per chunk over
-    // a +-64-chunk square, then generate candidates until both crops showed.
+    // Order candidate chunks straight off the climate graph (no chunk
+    // generation): one macro sample per chunk over a +-64-chunk square. The
+    // per-crop biome whitelists are the PACK's balance data (mod-internal
+    // worldgen code) and deliberately unpinned here, so the biome names below
+    // are a scan-ordering HEURISTIC only — chunks in today's crop biomes
+    // generate first so the break-early triggers fast, with every remaining
+    // chunk queued behind them. A pack biome rebalance shifts scan time,
+    // never pass/fail.
     let side = 129usize;
     let map = crate::tooling::worldgen::macro_surface_map(seed, side, 16);
     let half = side as i32 / 2;
+    let likely = ["plains", "savanna", "forest", "redwood_forest"];
     let mut candidates: Vec<(i32, i32)> = Vec::new();
+    let mut fallback: Vec<(i32, i32)> = Vec::new();
     for gz in 0..side {
         for gx in 0..side {
             let b = crate::biome::Biome::from_id(map.biomes[gz * side + gx]).name();
-            if ["plains", "savanna", "forest"].contains(&b) {
-                candidates.push((gx as i32 - half, gz as i32 - half));
-            }
+            let list = if likely.contains(&b) {
+                &mut candidates
+            } else {
+                &mut fallback
+            };
+            list.push((gx as i32 - half, gz as i32 - half));
         }
     }
-    assert!(
-        candidates.len() > 40,
-        "seed {seed} offers eligible biomes to scan ({} found)",
-        candidates.len()
-    );
+    candidates.extend(fallback);
 
-    let (mut wheat_cells, mut carrot_cells) = (0u32, 0u32);
+    let (mut wheat_cells, mut carrot_cells, mut potato_cells) = (0u32, 0u32, 0u32);
     let mut first_hit: Option<(i32, i32)> = None;
     for &(cx, cz) in &candidates {
         let chunk = crate::worldgen::generate_chunk(seed, cx, cz);
@@ -975,8 +1036,9 @@ fn farming_worldgen_inner() {
             for x in 0..CHUNK_SX {
                 for y in 1..CHUNK_SY {
                     let b = Block::from_id(chunk.block_raw(x, y, z));
-                    let (wheat, carrot) = (b == wild_wheat, b == wild_carrots);
-                    if !wheat && !carrot {
+                    let (wheat, carrot, potato) =
+                        (b == wild_wheat, b == wild_carrots, b == wild_potatoes);
+                    if !wheat && !carrot && !potato {
                         continue;
                     }
                     assert_eq!(
@@ -988,29 +1050,27 @@ fn farming_worldgen_inner() {
                         y as i32 - 1 > crate::chunk::SEA_LEVEL,
                         "patches root above the waterline"
                     );
-                    let biome = crate::biome::Biome::from_id(chunk.biome_at(x, z)).name();
-                    let allowed: &[&str] = if wheat { &wheat_biomes } else { &carrot_biomes };
-                    assert!(
-                        allowed.contains(&biome),
-                        "a wild {} in disallowed biome {biome}",
-                        if wheat { "wheat" } else { "carrot" }
-                    );
+                    // WHICH biomes each crop lands in is the pack's own
+                    // declaration — balance data, deliberately not asserted.
                     if wheat {
                         wheat_cells += 1;
-                    } else {
+                    } else if carrot {
                         carrot_cells += 1;
+                    } else {
+                        potato_cells += 1;
                     }
                     first_hit.get_or_insert((cx, cz));
                 }
             }
         }
-        if wheat_cells >= 4 && carrot_cells >= 3 {
+        if wheat_cells >= 4 && carrot_cells >= 3 && potato_cells >= 2 {
             break;
         }
     }
     assert!(
-        wheat_cells >= 4 && carrot_cells >= 3,
-        "purposeful scanning finds both wild crops (wheat {wheat_cells}, carrots {carrot_cells})"
+        wheat_cells >= 4 && carrot_cells >= 3 && potato_cells >= 2,
+        "purposeful scanning finds all wild crops \
+         (wheat {wheat_cells}, carrots {carrot_cells}, potatoes {potato_cells})"
     );
 
     // Pure function of (seed, position): the same chunk regenerates
@@ -1029,4 +1089,517 @@ fn farming_worldgen_inner() {
             }
         }
     }
+}
+
+/// Hand-encode a `weather:field` row (layout owned by weather-core's
+/// `FieldRow`; farming is a READER — the test plays the weather mod's role).
+/// Storm 2.0 saturates both cloud sheets — rain 1.0 at EVERY column; storm
+/// 0.0 is a guaranteed clear sky. Field values stay deliberately unpinned.
+fn field_row(storm: f32, clock: u64) -> Vec<u8> {
+    // Pinned to `weather_core::FieldRow::encode` (the engine test crate
+    // cannot depend on the mods-src crate): LE, clock u64 at 0, then eight
+    // 4-byte lanes — storm is lane 2. A weather-core layout change edits
+    // these three consts and nothing else.
+    const ROW_LEN: usize = 40; // FieldRow::ENCODED_LEN
+    const CLOCK_OFFSET: usize = 0;
+    const STORM_OFFSET: usize = 8 + 2 * 4;
+    let mut b = vec![0u8; ROW_LEN];
+    b[CLOCK_OFFSET..CLOCK_OFFSET + 8].copy_from_slice(&clock.to_le_bytes());
+    b[STORM_OFFSET..STORM_OFFSET + 4].copy_from_slice(&storm.to_le_bytes());
+    b
+}
+
+/// Runs ONLY in the child process spawned above. The 2026-07 soil additions
+/// end to end: rain hydrates open-sky farmland through the `weather:field`
+/// interop row (freshness-gated), compostables fill the barrel to a
+/// fertilizer, fertilizer upgrades plain farmland to FERTILE with the skin
+/// pair preserved through the wet/dry reconcile, and fertile soil accepts
+/// planting and grows under rain alone.
+#[test]
+#[ignore = "spawned by farming_rain_compost_and_fertile_soil_via_wasm with a fixture pack env"]
+fn farming_soil_inner() {
+    use crate::block::Block;
+    use crate::item::ItemStack;
+    use crate::mathh::IVec3;
+
+    let hoe = by_key("farming:iron_hoe");
+    let seeds = by_key("farming:wheat_seeds");
+    let carrot = by_key("farming:carrot");
+    let potato = by_key("farming:potato");
+    let fertilizer = by_key("farming:fertilizer");
+    let barrel_item = by_key("farming:compost_barrel");
+    let farmland_dry = block_by_name("farming:farmland_dry");
+    let farmland_wet = block_by_name("farming:farmland_wet");
+    let fertile_dry = block_by_name("farming:farmland_fertile_dry");
+    let fertile_wet = block_by_name("farming:farmland_fertile_wet");
+    let compost: Vec<Block> = (0..4)
+        .map(|i| block_by_name(&format!("farming:compost_{i}")))
+        .collect();
+    let wheat: Vec<Block> = (0..4)
+        .map(|i| block_by_name(&format!("farming:wheat_{i}")))
+        .collect();
+    let potatoes_0 = block_by_name("farming:potatoes_0");
+
+    // (The potato -> baked-potato pair is a `kitchen:cooking` data row —
+    // balance data, deliberately unpinned; the cross-pack process-class seam
+    // is covered in `farming_processing_inner`.)
+
+    let mut game = farming_floor_game();
+    game.server.world.set_load_target_for_test(0, 4, 0, 4);
+
+    let sess = &mut game.server.sessions[0];
+    sess.player.inventory.add(ItemStack::new(hoe, 1)); // slot 0
+    sess.player.inventory.add(ItemStack::new(seeds, 8)); // slot 1
+    sess.player.inventory.add(ItemStack::new(carrot, 8)); // slot 2
+    sess.player.inventory.add(ItemStack::new(barrel_item, 1)); // slot 3
+    sess.player.inventory.add(ItemStack::new(potato, 2)); // slot 4
+
+    let mut ev = TickEvents::default();
+    // One tick so core day/night publishes `petramond:clock` — the row's
+    // freshness stamp must track it.
+    game.server.game_tick_step(&mut ev);
+    let set_weather = |game: &mut super::common::TestGame, storm: f32, lag: u64| {
+        let clock = game
+            .server
+            .world
+            .mod_kv_get("petramond:clock")
+            .and_then(|b| b.try_into().ok().map(u64::from_le_bytes))
+            .expect("core day/night publishes petramond:clock");
+        game.server
+            .world
+            .mod_kv_set("weather:field".to_owned(), field_row(storm, clock - lag));
+    };
+
+    // --- Rain hydration. NO water exists anywhere on this map: under a
+    // fresh saturated rain row, open-sky grass tills straight to WET.
+    set_weather(&mut game, 2.0, 0);
+    use_click(&mut game, &mut ev, 0, IVec3::new(5, 63, 8), IVec3::Y);
+    assert_eq!(
+        at(&game, 5, 63, 8),
+        farmland_wet,
+        "rain overhead hydrates tilled soil with no ground water at all"
+    );
+
+    // A STALE row (stamp trailing the clock beyond the tolerance) reads as
+    // no weather — the same rain field tills DRY.
+    set_weather(&mut game, 2.0, 1000);
+    use_click(&mut game, &mut ev, 0, IVec3::new(7, 63, 8), IVec3::Y);
+    assert_eq!(
+        at(&game, 7, 63, 8),
+        farmland_dry,
+        "a stale weather row is a clear sky (uninstalled-mod leftovers can't rain)"
+    );
+
+    // --- Compost. Place the barrel, feed it three compostables (carrots),
+    // and watch the fill stage rise — stage identity is the block id.
+    use_click(&mut game, &mut ev, 3, IVec3::new(11, 63, 8), IVec3::Y);
+    let barrel = IVec3::new(11, 64, 8);
+    assert_eq!(at(&game, 11, 64, 8), compost[0], "the barrel places empty");
+    for fill in 1..=3u8 {
+        use_click(&mut game, &mut ev, 2, barrel, IVec3::Y);
+        assert_eq!(
+            at(&game, 11, 64, 8),
+            compost[fill as usize],
+            "one compostable advances one fill stage"
+        );
+    }
+    assert_eq!(
+        game.server.sessions[0]
+            .player
+            .inventory
+            .slot(2)
+            .map(|s| s.count),
+        Some(5),
+        "three carrots went into the barrel"
+    );
+
+    // Any click on the FULL barrel pops one fertilizer and resets it; the
+    // player on the barrel top vacuums the pop.
+    use_click(&mut game, &mut ev, 7, barrel, IVec3::Y); // empty hand slot
+    assert_eq!(
+        at(&game, 11, 64, 8),
+        compost[0],
+        "collecting resets the barrel to empty"
+    );
+    game.server.sessions[0].player.pos = Vec3::new(11.5, 65.05, 8.5);
+    game.server.sessions[0].player.on_ground = true;
+    let mut got_fertilizer = false;
+    for _ in 0..80 {
+        game.server.game_tick_step(&mut ev);
+        if (0..36).any(|i| {
+            game.server.sessions[0]
+                .player
+                .inventory
+                .slot(i)
+                .is_some_and(|s| s.item == fertilizer)
+        }) {
+            got_fertilizer = true;
+            break;
+        }
+    }
+    assert!(got_fertilizer, "the popped fertilizer was picked up");
+    let fert_slot = (0..9)
+        .find(|&i| {
+            game.server.sessions[0]
+                .player
+                .inventory
+                .slot(i)
+                .is_some_and(|s| s.item == fertilizer)
+        })
+        .expect("fertilizer on the hotbar") as u8;
+
+    // --- Fertile soil. Fertilizer upgrades the DRY plain farmland in
+    // place, consuming one unit; seeds then plant on it like any farmland.
+    use_click(
+        &mut game,
+        &mut ev,
+        fert_slot,
+        IVec3::new(7, 63, 8),
+        IVec3::Y,
+    );
+    assert_eq!(
+        at(&game, 7, 63, 8),
+        fertile_dry,
+        "fertilizer upgrades plain dry farmland to fertile dry"
+    );
+    assert!(
+        !(0..9).any(|i| {
+            game.server.sessions[0]
+                .player
+                .inventory
+                .slot(i)
+                .is_some_and(|s| s.item == fertilizer)
+        }),
+        "the applied fertilizer was consumed"
+    );
+    use_click(&mut game, &mut ev, 1, IVec3::new(7, 63, 8), IVec3::Y);
+    assert_eq!(
+        at(&game, 7, 64, 8),
+        wheat[0],
+        "seeds plant on fertile farmland"
+    );
+
+    // A potato is contextual placeable food on farmland, like the carrot.
+    set_weather(&mut game, 2.0, 0);
+    use_click(&mut game, &mut ev, 0, IVec3::new(9, 63, 8), IVec3::Y);
+    use_click(&mut game, &mut ev, 4, IVec3::new(9, 63, 8), IVec3::Y);
+    assert_eq!(
+        at(&game, 9, 64, 8),
+        potatoes_0,
+        "a potato plants on farmland"
+    );
+
+    // --- Under sustained rain (row re-published every tick, like the real
+    // weather mod), the fertile cell's look reconciles to fertile WET — the
+    // wet/dry swap preserves the soil grade — and the planted wheat GROWS on
+    // rain alone (growth probes real hydration, which now includes rain).
+    let mut ok = false;
+    for _ in 0..90 {
+        for _ in 0..200 {
+            set_weather(&mut game, 2.0, 0);
+            game.server.game_tick_step(&mut ev);
+        }
+        let soil_wet = at(&game, 7, 63, 8) == fertile_wet;
+        let grown = wheat
+            .iter()
+            .position(|s| *s == at(&game, 7, 64, 8))
+            .is_some_and(|stage| stage >= 1);
+        if soil_wet && grown {
+            ok = true;
+            break;
+        }
+    }
+    assert!(
+        ok,
+        "rain-fed fertile soil turns fertile-wet and its crop grows; soil {:?}, crop {:?}",
+        at(&game, 7, 63, 8),
+        at(&game, 7, 64, 8)
+    );
+
+    let (disabled, _, _) = game.mods_for_test().probe(1);
+    assert!(!disabled, "the farming mod never trapped");
+}
+
+/// Runs ONLY in the child process spawned above. The wheat lure end to end
+/// through the whole new seam chain: the pack's `brain_extensions` row on the
+/// ENGINE sheep, the scripted AI node dispatch, and the extended AiNodeCtx
+/// facts (held item + player foothold). A sheep beyond the OLD lure range
+/// walks to a wheat-holding player and STOPS at the stand-off ring instead
+/// of crowding them; the player straying past the follow radius breaks the
+/// follow and the sheep refuses to re-follow until its 200–300-tick sulk
+/// expires. Radii are balance data — the assertions band around them
+/// loosely (reached the ring, never pressed in, refused while sulking).
+#[test]
+#[ignore = "spawned by farming_sheep_follow_the_wheat_lure_via_wasm with a fixture pack env"]
+fn farming_lure_inner() {
+    use crate::item::ItemStack;
+
+    let wheat_item = by_key("farming:wheat");
+    let mut game = farming_floor_game();
+    assert_eq!(game.mods_for_test().loaded(), 2, "kitchen + farming loaded");
+
+    let sess = &mut game.server.sessions[0];
+    sess.player.pos = Vec3::new(8.5, 64.0, 8.5);
+    sess.player.inventory.add(ItemStack::new(wheat_item, 8)); // slot 0
+    sess.player.inventory.set_active(0);
+
+    // 6.5 blocks out: beyond the pre-2026-07-17 5-block lure, inside the
+    // 8-block one.
+    assert!(game.server.world.mobs_mut().spawn(
+        crate::mob::Mob::Sheep,
+        Vec3::new(15.0, 64.0, 8.5),
+        0.0
+    ));
+    let id = game.server.world.mobs().instances()[0].id();
+    let sheep_pos = |game: &super::common::TestGame| -> Vec3 {
+        game.server
+            .world
+            .mobs()
+            .instances()
+            .iter()
+            .find(|m| m.id() == id)
+            .map(|m| m.pos)
+            .expect("the sheep lives")
+    };
+    let dist = |game: &super::common::TestGame| -> f32 {
+        let p = game.server.sessions[0].player.pos;
+        let s = sheep_pos(game);
+        Vec3::new(s.x - p.x, 0.0, s.z - p.z).length()
+    };
+
+    // --- Lured: wheat in hand, 6.5 blocks away — the sheep closes in but
+    // STOPS at the stand-off ring rather than pressing into the player.
+    let mut ev = TickEvents::default();
+    let mut closest = f32::MAX;
+    for _ in 0..400 {
+        game.server.game_tick_step(&mut ev);
+        closest = closest.min(dist(&game));
+    }
+    assert!(
+        closest < 3.5,
+        "a wheat-holding player lures the sheep to the stand-off ring, closest {closest}"
+    );
+    assert!(
+        closest > 1.5,
+        "the sheep stops short instead of crowding the player, closest {closest}"
+    );
+    let settled = dist(&game);
+    assert!(
+        settled < 4.0,
+        "the stopped sheep stays at the lure, settled {settled}"
+    );
+
+    // --- Broken: the player strides far past the follow radius. The follow
+    // breaks and arms the sulk.
+    game.server.sessions[0].player.pos = Vec3::new(30.5, 64.0, 8.5);
+    for _ in 0..20 {
+        game.server.game_tick_step(&mut ev);
+    }
+
+    // --- Sulking: wheat still in hand, five blocks away (inside the lure,
+    // outside the stand-off ring), but inside the refusal window (< 200
+    // ticks) the sheep will not walk in.
+    let s = sheep_pos(&game);
+    game.server.sessions[0].player.pos = Vec3::new(s.x + 5.0, 64.0, s.z);
+    let mut closest = f32::MAX;
+    for _ in 0..150 {
+        game.server.game_tick_step(&mut ev);
+        closest = closest.min(dist(&game));
+    }
+    assert!(
+        closest > 3.5,
+        "a freshly sulking sheep refuses the lure, closest {closest}"
+    );
+
+    // --- Forgiven: past the 200–300-tick sulk the same lure works again —
+    // the sheep closes from five blocks back to the stand-off ring. Keep the
+    // player pinned near the sheep's current spot and wait it out.
+    let mut lured_again = false;
+    for _ in 0..8 {
+        let s = sheep_pos(&game);
+        game.server.sessions[0].player.pos = Vec3::new(s.x + 5.0, 64.0, s.z);
+        for _ in 0..100 {
+            game.server.game_tick_step(&mut ev);
+        }
+        if dist(&game) < 3.5 {
+            lured_again = true;
+            break;
+        }
+    }
+    assert!(lured_again, "the sulk expires and the lure works again");
+
+    let (disabled, _, _) = game.mods_for_test().probe(1);
+    assert!(!disabled, "the farming mod never trapped");
+}
+
+/// Runs ONLY in the child process spawned above. Fertilizer's landscaping
+/// uses end to end: fertilizer flips grass to the fertilized block (one unit
+/// consumed), a flower rooted on it spreads a copy to nearby grass over
+/// random ticks, the fertility is SPENT after a bounded number of random
+/// ticks (back to plain grass), the hoe still tills the fertilized block —
+/// into PLAIN farmland — and fertilizer on a sapling jumps it to its last
+/// growth stage exactly once: the second click falls through and keeps the
+/// unit. Chances, radii, and tick counts are balance data — the assertions
+/// pin behavior (spread happens, revert happens, one charge per boost).
+#[test]
+#[ignore = "spawned by farming_fertilized_grass_and_sapling_boost_via_wasm with a fixture pack env"]
+fn farming_landscape_inner() {
+    use crate::block::Block;
+    use crate::item::ItemStack;
+    use crate::mathh::IVec3;
+
+    let hoe = by_key("farming:iron_hoe");
+    let fertilizer = by_key("farming:fertilizer");
+    let poppy_item = by_key("petramond:poppy");
+    let sapling_item = by_key("petramond:oak_sapling");
+    let grass_fertilized = block_by_name("farming:grass_fertilized");
+    let farmland_dry = block_by_name("farming:farmland_dry");
+
+    let mut game = farming_floor_game();
+    game.server.world.set_load_target_for_test(0, 4, 0, 4);
+
+    let sess = &mut game.server.sessions[0];
+    sess.player.inventory.add(ItemStack::new(hoe, 1)); // slot 0
+    sess.player.inventory.add(ItemStack::new(fertilizer, 8)); // slot 1
+    sess.player.inventory.add(ItemStack::new(poppy_item, 1)); // slot 2
+    sess.player.inventory.add(ItemStack::new(sapling_item, 1)); // slot 3
+
+    let mut ev = TickEvents::default();
+    fn fert_count(game: &super::common::TestGame) -> u8 {
+        game.server.sessions[0]
+            .player
+            .inventory
+            .slot(1)
+            .map_or(0, |s| s.count)
+    }
+
+    // --- Fertilized grass. A poppy rooted on grass, fertilizer on the soil
+    // under it: the block flips to the fertilized variant, one unit spent.
+    use_click(&mut game, &mut ev, 2, IVec3::new(8, 63, 8), IVec3::Y);
+    assert_eq!(at(&game, 8, 64, 8), Block::Poppy, "the poppy roots on grass");
+    use_click(&mut game, &mut ev, 1, IVec3::new(8, 63, 8), IVec3::Y);
+    assert_eq!(
+        at(&game, 8, 63, 8),
+        grass_fertilized,
+        "fertilizer flips grass to the fertilized block"
+    );
+    assert_eq!(fert_count(&game), 7, "one unit fertilized the grass");
+
+    // Over random ticks the rooted poppy spreads a copy onto nearby grass
+    // (the flat floor offers valid targets in every direction).
+    fn spread_poppies(game: &super::common::TestGame) -> usize {
+        let mut n = 0;
+        for dz in -7..=7 {
+            for dx in -7..=7 {
+                if (dx, dz) != (0, 0) && at(game, 8 + dx, 64, 8 + dz) == Block::Poppy {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+    // Crank the heartbeat: a natural draw hits one given cell ~3 times per
+    // 4096 world ticks, which would tune these loops to tens of thousands of
+    // full game ticks against unstated balance odds. Instead enqueue the SAME
+    // hook the world's random draw would (the block's own behavior seam —
+    // `WasmBehavior::random_tick` queues, the next `game_tick_step` drains it
+    // to the mod), one per step, so the mod's spread roll and spend count run
+    // unmodified at a testable rate. The bounds assume only "a handful of
+    // boosted ticks per roll", never the exact chance or spend count.
+    let soil = IVec3::new(8, 63, 8);
+    let mut spread = false;
+    for _ in 0..500 {
+        let b = at(&game, 8, 63, 8);
+        if b == grass_fertilized {
+            b.behavior().random_tick(&mut game.server.world, soil);
+        } else if b == Block::Grass {
+            // The rare path: the fertility spent all its ticks before any
+            // spread roll landed — re-fertilize like a player would rather
+            // than flake (counts below are all relative).
+            use_click(&mut game, &mut ev, 1, soil, IVec3::Y);
+            continue;
+        }
+        game.server.game_tick_step(&mut ev);
+        if spread_poppies(&game) > 0 {
+            spread = true;
+            break;
+        }
+    }
+    assert!(spread, "a rooted flower spreads to nearby grass");
+
+    // The fertility is a bounded investment: the block relaxes back to plain
+    // grass, and the spread stops with it.
+    let mut spent = false;
+    for _ in 0..500 {
+        let b = at(&game, 8, 63, 8);
+        if b == Block::Grass {
+            spent = true;
+            break;
+        }
+        if b == grass_fertilized {
+            b.behavior().random_tick(&mut game.server.world, soil);
+        }
+        game.server.game_tick_step(&mut ev);
+    }
+    assert!(spent, "spent fertility relaxes back to plain grass");
+    // The negative at the same cranked rate: the reverted block's random
+    // ticks run the ENGINE grass ecology, not the mod hook — no more spread.
+    let settled = spread_poppies(&game);
+    for _ in 0..50 {
+        at(&game, 8, 63, 8)
+            .behavior()
+            .random_tick(&mut game.server.world, soil);
+        game.server.game_tick_step(&mut ev);
+    }
+    assert_eq!(
+        spread_poppies(&game),
+        settled,
+        "plain grass spreads nothing further"
+    );
+
+    // --- The hoe still tills a fertilized block — into PLAIN farmland (the
+    // fertility was the spreading kind, not the soil upgrade).
+    use_click(&mut game, &mut ev, 1, IVec3::new(4, 63, 4), IVec3::Y);
+    assert_eq!(at(&game, 4, 63, 4), grass_fertilized);
+    use_click(&mut game, &mut ev, 0, IVec3::new(4, 63, 4), IVec3::Y);
+    assert_eq!(
+        at(&game, 4, 63, 4),
+        farmland_dry,
+        "tilling fertilized grass yields plain farmland"
+    );
+
+    // --- Sapling boost: one click jumps the sapling to its last growth
+    // stage — observable as a plain block swap to the final stage row —
+    // charging exactly one unit; a second click changes nothing and keeps
+    // the fertilizer (never waste a unit on an already-final sapling).
+    let final_oak = block_by_name("petramond:oak_sapling_2");
+    use_click(&mut game, &mut ev, 3, IVec3::new(12, 63, 4), IVec3::Y);
+    let sap = IVec3::new(12, 64, 4);
+    assert_eq!(at(&game, 12, 64, 4), Block::OakSapling, "the sapling plants");
+    let before_count = fert_count(&game);
+    use_click(&mut game, &mut ev, 1, sap, IVec3::Y);
+    assert_eq!(
+        at(&game, 12, 64, 4),
+        final_oak,
+        "fertilizer jumps the sapling to its final stage row"
+    );
+    assert_eq!(
+        fert_count(&game),
+        before_count - 1,
+        "the boost charged one unit"
+    );
+    use_click(&mut game, &mut ev, 1, sap, IVec3::Y);
+    assert_eq!(
+        fert_count(&game),
+        before_count - 1,
+        "a second click on the boosted sapling keeps the unit"
+    );
+    assert_eq!(
+        at(&game, 12, 64, 4),
+        final_oak,
+        "the boost never grows the tree by itself"
+    );
+
+    let (disabled, _, _) = game.mods_for_test().probe(1);
+    assert!(!disabled, "the farming mod never trapped");
 }

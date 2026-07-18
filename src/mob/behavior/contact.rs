@@ -135,30 +135,14 @@ mod tests {
         contacts: &'a [EntityRef],
         mobs: &'a [AiMob],
     ) -> AiCtx<'a> {
-        AiCtx {
-            mob_id: 1,
-            pos,
-            cell: crate::mathh::voxel_at(pos),
-            yaw: 0.0,
-            head_height: 0.7,
-            half_width: 0.45,
-            world,
-            player_id: players.first().map(|a| a.id).unwrap_or_default(),
-            player_pos: players.first().map(|a| a.pos).unwrap_or(Vec3::ZERO),
-            player_sneaking: false,
-            players,
-            noises: &[],
-            contacts,
-            target: None,
-            attacker: None,
-            nav_idle: true,
-            in_water: false,
-            head: 1,
-            idle_anims: &[],
-            mob_index: 0,
-            mobs,
-            rng,
-        }
+        let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
+        c.half_width = 0.45;
+        c.player_id = players.first().map(|a| a.id).unwrap_or_default();
+        c.player_pos = players.first().map(|a| a.pos).unwrap_or(Vec3::ZERO);
+        c.players = players;
+        c.contacts = contacts;
+        c.mobs = mobs;
+        c
     }
 
     #[test]
@@ -172,8 +156,8 @@ mod tests {
         let players = [PlayerAnchor {
             id: PlayerId(3),
             pos: Vec3::new(9.1, 64.9, 8.5),
-            body: None,
             sneaking: true,
+            ..Default::default()
         }];
         let bump = [EntityRef::Player(PlayerId(3))];
 
@@ -223,14 +207,12 @@ mod tests {
             PlayerAnchor {
                 id: PlayerId(3),
                 pos: Vec3::new(9.1, 64.9, 8.5),
-                body: None,
-                sneaking: false,
+                ..Default::default()
             },
             PlayerAnchor {
                 id: PlayerId(4),
                 pos: Vec3::new(8.5, 64.9, 9.0), // nearer than the locked target
-                body: None,
-                sneaking: false,
+                ..Default::default()
             },
         ];
         let first = [EntityRef::Player(PlayerId(3))];

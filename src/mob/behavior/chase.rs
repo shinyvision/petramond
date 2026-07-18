@@ -199,30 +199,10 @@ mod tests {
     }
 
     fn ctx<'a>(world: &'a World, rng: &'a mut MobRng, pos: Vec3, player: Vec3) -> AiCtx<'a> {
-        AiCtx {
-            mob_id: 1,
-            pos,
-            cell: crate::mathh::voxel_at(pos),
-            yaw: 0.0,
-            head_height: 0.7,
-            half_width: 0.22,
-            world,
-            player_id: Default::default(),
-            player_pos: player,
-            player_sneaking: false,
-            players: &[],
-            noises: &[],
-            contacts: &[],
-            target: None,
-            attacker: None,
-            nav_idle: true,
-            in_water: false,
-            head: 1,
-            idle_anims: &[],
-            mob_index: 0,
-            mobs: &[],
-            rng,
-        }
+        let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
+        c.half_width = 0.22;
+        c.player_pos = player;
+        c
     }
 
     #[test]

@@ -25,6 +25,7 @@ mod mobs;
 mod model;
 mod pane;
 mod particle_emitters;
+pub(crate) mod placement;
 mod prediction_render;
 mod query;
 mod remote;
@@ -50,6 +51,7 @@ pub(crate) use stream::split_generated_column;
 pub(crate) use render_handoff::TerrainRenderHandoff;
 pub(crate) use store::VERTICAL_LOAD_RADIUS;
 pub(crate) use store::{LoadAnchor, WorldRole};
+pub use query::CollisionShapeClass;
 pub use store::{World, RENDER_DIST};
 pub(crate) use stream::StreamEvent;
 

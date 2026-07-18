@@ -2,7 +2,7 @@
 //! emitters, riding, kinematic drive, named animations, and dropped-item
 //! spawns.
 
-use mod_api::{MobAnimStateData, MobRidersData, MobSnapshot};
+use mod_api::{MobAnimStateData, MobRidersData, MobSnapshot, PlayerId};
 
 use crate::__rt::host_fn;
 
@@ -16,37 +16,40 @@ pub fn mob_facing_xz(yaw: f32) -> [f32; 2] {
 }
 
 host_fn! {
-    /// Spawn a mob by species registry name at `pos` (feet) facing `yaw`. `false`
+    /// Spawn a mob by species key at `pos` (feet) facing `yaw`, unconditionally
+    /// (site fitness is your business — see [`spawn_mob_checked`]). `false`
     /// = unknown species or the mob cap is reached.
     pub fn spawn_mob(key: &str, pos: [f32; 3], yaw: f32) -> bool
-        => SpawnMob { key: key.into(), pos, yaw } => Bool
+        => SpawnMob { key: key.into(), pos, yaw, checked: false } => Bool
 }
 
 host_fn! {
-    /// Atomically spawn a mob only if its whole declared body fits loaded,
+    /// [`spawn_mob`] that spawns only if the whole declared body fits loaded,
     /// stream-final world state at `pos`/`yaw`, including exact terrain collision
     /// shapes and other live solid mobs. `false` also covers unknown terrain or
     /// species and the mob cap.
     /// Use this for player-placed vehicles and other solid entities; a failed call
     /// mutates nothing, so the caller can safely retain or refund its item.
     pub fn spawn_mob_checked(key: &str, pos: [f32; 3], yaw: f32) -> bool
-        => SpawnMobChecked { key: key.into(), pos, yaw } => Bool
+        => SpawnMob { key: key.into(), pos, yaw, checked: true } => Bool
 }
 
 host_fn! {
     /// Snapshot the live mobs within `radius` of `pos` (3-D, feet positions), in
-    /// the deterministic live-set storage order. Indices are valid this tick only.
+    /// the deterministic live-set storage order. Address a mob by its stable
+    /// `id`; the snapshot `index` is only an intra-tick join key.
     pub fn mobs_in_radius(pos: [f32; 3], radius: f32) -> Vec<MobSnapshot>
         => MobsInRadius { pos, radius } => Mobs
 }
 
 host_fn! {
-    /// Damage a mob through the `mob_damage_pre` pipeline with the species'
-    /// resolved `damage_feedback` (applied at the next in-tick drain point).
-    /// Mod damage is not an attack, so the default engine knockback is not
-    /// applied; `origin` is spatial context for handlers/feedback.
-    pub fn damage_mob(index: u32, amount: f32, origin: Option<[f32; 3]>)
-        => DamageMob { index, amount, origin, feedback: None }
+    /// Damage a live mob (STABLE id) through the `mob_damage_pre` pipeline with
+    /// the species' resolved `damage_feedback` (applied at the next in-tick
+    /// drain point; a mob gone by then is a silent no-op). Mod damage is not an
+    /// attack, so the default engine knockback is not applied; `origin` is
+    /// spatial context for handlers/feedback.
+    pub fn damage_mob(mob_id: u64, amount: f32, origin: Option<[f32; 3]>)
+        => DamageMob { mob_id, amount, origin, feedback: None }
 }
 
 host_fn! {
@@ -55,22 +58,23 @@ host_fn! {
     /// without the `Immunity` component is damage-over-time (burn ticks):
     /// neither blocked by the victim's active i-frame window nor granting one.
     pub fn damage_mob_with_feedback(
-        index: u32,
+        mob_id: u64,
         amount: f32,
         origin: Option<[f32; 3]>,
         feedback: crate::MobDamageFeedback,
     )
-        => DamageMob { index, amount, origin, feedback: Some(feedback) }
+        => DamageMob { mob_id, amount, origin, feedback: Some(feedback) }
 }
 
 host_fn! {
     /// Toggle one KEYED particle-emitter bundle (a `particle_emitters.json` catalog
     /// row: particle rows + optional body tint; engine `petramond:*` and pack keys
-    /// alike) on a live mob. Presentation-only, replicated, survives death, not
-    /// persisted — re-derive it from your own per-mob state. `false` = bad index,
-    /// unregistered key, or the mob's active set (4) is full.
-    pub fn mob_emitter_set(index: u32, key: &str, active: bool) -> bool
-        => MobEmitterSet { index, key: key.into(), active } => Bool
+    /// alike) on a live mob (STABLE id). Presentation-only, replicated, already-
+    /// active sets survive death, not persisted — re-derive it from your own
+    /// per-mob state. `false` = unknown/dead mob, unregistered key, or the mob's
+    /// active set (4) is full.
+    pub fn mob_emitter_set(mob_id: u64, key: &str, active: bool) -> bool
+        => MobEmitterSet { mob_id, key: key.into(), active } => Bool
 }
 
 host_fn! {
@@ -143,13 +147,13 @@ host_fn! {
     /// in a `mob_interact` handler. Every detach path (your [`mob_dismount`], the
     /// engine's sneak gesture, death, despawn, leave) announces the
     /// `player_dismounted` event.
-    pub fn mob_mount(mob_id: u64, player_id: u8, seat: u8) -> bool
+    pub fn mob_mount(mob_id: u64, player_id: PlayerId, seat: u8) -> bool
         => MobMount { mob_id, player_id, seat } => Bool
 }
 
 host_fn! {
     /// Unseat a player from whatever they ride. `false` = they were not mounted.
-    pub fn mob_dismount(player_id: u8) -> bool => MobDismount { player_id } => Bool
+    pub fn mob_dismount(player_id: PlayerId) -> bool => MobDismount { player_id } => Bool
 }
 
 host_fn! {
@@ -160,14 +164,14 @@ host_fn! {
 }
 
 host_fn! {
-    /// Remove a mob from the live world immediately (no death, no loot, not
-    /// saved). Renumbers later indices — re-query after use.
-    pub fn despawn_mob(index: u32) -> bool => DespawnMob { index } => Bool
+    /// Remove a live mob (STABLE id) from the world immediately (no death, no
+    /// loot, not saved). `false` = no such live mob.
+    pub fn despawn_mob(mob_id: u64) -> bool => DespawnMob { mob_id } => Bool
 }
 
 host_fn! {
-    /// Spawn `count` of an item (registry key) as a dropped-item entity at `pos`.
-    /// `false` = unknown key or zero count.
-    pub fn spawn_item(item_key: &str, count: u8, pos: [f32; 3]) -> bool
-        => SpawnItem { item_key: item_key.into(), count, pos } => Bool
+    /// Spawn `count` of an item (by registry NAME) as a dropped-item entity at
+    /// `pos`. `false` = unknown name or zero count.
+    pub fn spawn_item(item: &str, count: u8, pos: [f32; 3]) -> bool
+        => SpawnItem { item: item.into(), count, pos } => Bool
 }

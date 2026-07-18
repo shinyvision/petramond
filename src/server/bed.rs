@@ -19,7 +19,7 @@
 //! ([`crate::worldgen::spawn::find_spawn`] — deliberately OS-entropy random,
 //! like the fresh spawn).
 
-use crate::block::{Block, BlockInteraction};
+use crate::block::{Block, BlockTag};
 use crate::mathh::{IVec3, Vec3};
 use crate::player::{BedSpawn, MAX_HEALTH, PITCH_LIMIT};
 use crate::world::World;
@@ -48,15 +48,22 @@ pub(crate) struct SleepState {
 }
 
 impl ServerGame {
-    /// Right-clicked a bed: set the spawn point beside it (first interaction is
-    /// enough — completing the sleep is not required, and a daytime interaction
-    /// still sets it) and, at night, start sleeping.
+    /// Right-clicked a sleepable block (`interaction: "sleep"`): on a BED (the
+    /// `bed` tag — identity, not the sleep capability) set the spawn point
+    /// beside it (first interaction is enough — completing the sleep is not
+    /// required, and a daytime interaction still sets it) and, at night, start
+    /// sleeping. A sleepable block WITHOUT the tag gives the sleep, never a
+    /// spawn anchor — the spawn bookkeeping (verify at respawn, clear on
+    /// break) only tracks tagged beds, so recording one here would leave a
+    /// spawn nothing else maintains.
     pub(super) fn start_sleep(&mut self, s: usize, pos: IVec3) {
         let Some((_, base, cells)) = self.world.model_group(pos) else {
             return;
         };
-        let spot = find_wake_spot(&self.world, &cells).unwrap_or(bed_top_cell(base));
-        self.sessions[s].player.bed_spawn = Some(BedSpawn { bed: base, spot });
+        if bed_at(&self.world, pos) {
+            let spot = find_wake_spot(&self.world, &cells).unwrap_or(bed_top_cell(base));
+            self.sessions[s].player.bed_spawn = Some(BedSpawn { bed: base, spot });
+        }
         // Sleeping is a night action: a daytime click only (re)sets the spawn.
         if !super::daynight::is_night(&self.world) {
             return;
@@ -260,7 +267,7 @@ impl ServerGame {
         }
     }
 
-    /// A sleep block broke somewhere without a position-aware hook (a natural
+    /// A bed broke somewhere without a position-aware hook (a natural
     /// break): re-check that every stored spawn bed still exists.
     pub(super) fn validate_bed_spawn(&mut self) {
         for s in 0..self.sessions.len() {
@@ -275,8 +282,12 @@ impl ServerGame {
     }
 }
 
+/// Whether the block at `pos` IS a bed — the `bed` tag, block identity. The
+/// sleep-flow dispatch keys on `interaction() == Sleep` (a use capability);
+/// spawn bookkeeping deliberately does not, so a pack's sleepable non-bed
+/// never inherits it.
 fn bed_at(world: &World, pos: IVec3) -> bool {
-    Block::from_id(world.chunk_block(pos.x, pos.y, pos.z)).interaction() == BlockInteraction::Sleep
+    Block::from_id(world.chunk_block(pos.x, pos.y, pos.z)).has_tag(BlockTag::BED)
 }
 
 /// Feet position standing centred on top of the bed's base cell — the fallback

@@ -5,10 +5,12 @@
 //! ascending, registration order)` via sorted insertion — dispatch never iterates
 //! a map. Registration order will be engine first, then mods in load order.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
 
 use crate::game::TickEvents;
 use crate::player::Player;
+use crate::server::player::PlayerId;
 use crate::world::World;
 
 use super::payload::{
@@ -16,8 +18,14 @@ use super::payload::{
     PlayerDamagePre, PostEvent, PostEventKind,
 };
 
-/// A pre handler's verdict. The first `Cancel` wins; handlers after it still run
-/// (observe-only — their verdict can no longer change the outcome).
+/// A pre handler's verdict. The first `Cancel` wins AND ends the dispatch:
+/// handlers after it never run (2026-07-17 — closing the double-act gap:
+/// nothing could tell a later mutating handler the click was already
+/// consumed, so a `consume_held`/`set_block` handler could act on an event
+/// another mod had cancelled). A consumed action is consumed; to observe one,
+/// listen on the POST surface's `item_used`, which fires even for a cancelled
+/// `item_use_pre` (cancel = consumed = used). Other posts (`player_damaged`,
+/// `block_broken`) fire only when the action actually happened.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Outcome {
     Continue,
@@ -30,6 +38,18 @@ pub(crate) enum Outcome {
 /// `queue` lets a handler enqueue follow-up post events. Seeded RNG streams and
 /// the tick counter are reachable through `world`; WASM mods use their dedicated
 /// per-mod `RngU64` host streams instead.
+///
+/// `player`/`gui_state` are the ACTING session's — a derived convenience, not
+/// the whole roster. Player-plural code uses the sessions-view accessors
+/// ([`acting_player_id`]/[`player_ids`]/[`with_player`]), which reach EVERY
+/// connected session's player wherever the dispatch site published the roster
+/// (`ServerGame::with_sessions_view` — the tick-stage seams and the migrated
+/// pre-event sites). The direct fields stay because the mod ABI's player
+/// surface is per-acting-session and the WASM host reads them.
+///
+/// [`acting_player_id`]: Self::acting_player_id
+/// [`player_ids`]: Self::player_ids
+/// [`with_player`]: Self::with_player
 pub(crate) struct SimCtx<'a> {
     pub world: &'a mut World,
     pub player: &'a mut Player,
@@ -38,6 +58,146 @@ pub(crate) struct SimCtx<'a> {
     pub gui_state: &'a mut std::sync::Arc<crate::gui::GuiStateMap>,
     pub feed: &'a mut TickEvents,
     pub queue: &'a mut PostQueue,
+}
+
+/// One NON-acting session lent into [`with_sessions_scope`] — its stable id
+/// and its authoritative player.
+pub(crate) struct SessionPlayerRef<'a> {
+    pub id: PlayerId,
+    pub player: &'a mut Player,
+}
+
+// The sessions-view seam ships ahead of its first in-engine consumer (it
+// exists so player-plural systems CAN attach); the accessors are exercised by
+// the bus tests until one lands.
+#[allow(dead_code)]
+struct ScopeEntry {
+    id: PlayerId,
+    player: *mut Player,
+}
+
+/// The published sessions roster: the acting session's identity plus raw
+/// handles to every OTHER session's player (the acting player deliberately
+/// never appears here — it is exactly the `&mut` lent into the live
+/// [`SimCtx`], and [`SimCtx::with_player`] routes its id through that borrow
+/// so two paths to one player can never exist).
+#[allow(dead_code)]
+struct ScopeData {
+    acting: PlayerId,
+    /// The acting session's position in the full session order.
+    acting_index: usize,
+    others: Vec<ScopeEntry>,
+}
+
+thread_local! {
+    /// The scoped sessions roster, mirroring `modding::scope`: dispatch sites
+    /// publish it around the region where a `SimCtx` is live, because the
+    /// bus/scheduler signatures (and the `SimCtx` field set) are part of the
+    /// frozen mod-facing surface and cannot thread it as a parameter.
+    static SESSIONS_SCOPE: RefCell<Option<ScopeData>> = const { RefCell::new(None) };
+}
+
+/// Publish the sessions roster for the duration of `f`, then restore whatever
+/// was published before (nesting-safe, panic-safe).
+///
+/// Soundness contract for the publisher (see `ServerGame::with_sessions_view`,
+/// the one production caller): `others` must NOT include the session whose
+/// player is lent into the `SimCtx`(s) built inside `f`, the referenced
+/// players must not be reachable through any other live path while `f` runs,
+/// and the underlying storage must stay untouched for the whole call. The
+/// borrows in `others` prove validity at entry; [`SimCtx::with_player`]'s
+/// deref relies on this contract for the rest.
+pub(crate) fn with_sessions_scope<R>(
+    acting: PlayerId,
+    acting_index: usize,
+    others: Vec<SessionPlayerRef<'_>>,
+    f: impl FnOnce() -> R,
+) -> R {
+    struct Restore {
+        prev: Option<ScopeData>,
+    }
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SESSIONS_SCOPE.with(|s| *s.borrow_mut() = self.prev.take());
+        }
+    }
+    let entries = others
+        .into_iter()
+        .map(|o| ScopeEntry {
+            id: o.id,
+            player: o.player as *mut Player,
+        })
+        .collect();
+    let prev = SESSIONS_SCOPE.with(|s| {
+        s.borrow_mut().replace(ScopeData {
+            acting,
+            acting_index,
+            others: entries,
+        })
+    });
+    let _restore = Restore { prev };
+    f()
+}
+
+#[allow(dead_code)] // see `ScopeEntry` — seam ahead of its first consumer.
+impl SimCtx<'_> {
+    /// The id of the ACTING session — whose `player`/`gui_state` this context
+    /// carries. `None` when the dispatch site published no roster (mod init,
+    /// unit fixtures, not-yet-migrated pre-event sites): the context is then
+    /// single-session and anonymous, exactly the pre-roster behaviour.
+    pub(crate) fn acting_player_id(&self) -> Option<PlayerId> {
+        SESSIONS_SCOPE.with(|s| s.borrow().as_ref().map(|d| d.acting))
+    }
+
+    /// Every connected session's player id, in session order (acting session
+    /// included). Empty when no roster is published.
+    pub(crate) fn player_ids(&self) -> Vec<PlayerId> {
+        SESSIONS_SCOPE.with(|s| match s.borrow().as_ref() {
+            None => Vec::new(),
+            Some(d) => {
+                let mut ids: Vec<PlayerId> = d.others.iter().map(|e| e.id).collect();
+                ids.insert(d.acting_index.min(ids.len()), d.acting);
+                ids
+            }
+        })
+    }
+
+    /// Lend session `id`'s authoritative player to `f`. The acting session's
+    /// id resolves to `self.player` (the one live borrow); any other
+    /// connected session resolves through the published roster. `None` = no
+    /// such session, or no roster published here.
+    pub(crate) fn with_player<R>(
+        &mut self,
+        id: PlayerId,
+        f: impl FnOnce(&mut Player) -> R,
+    ) -> Option<R> {
+        enum Hit {
+            Acting,
+            Other(*mut Player),
+        }
+        let hit = SESSIONS_SCOPE.with(|s| {
+            let scope = s.borrow();
+            let d = scope.as_ref()?;
+            if d.acting == id {
+                return Some(Hit::Acting);
+            }
+            d.others
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| Hit::Other(e.player))
+        })?;
+        match hit {
+            Hit::Acting => Some(f(self.player)),
+            // SAFETY: the pointer was published by `with_sessions_scope` from
+            // a live `&mut` to a session OTHER than the acting one (the
+            // publisher's contract), so it cannot alias `self.player`; the
+            // publisher's split borrows keep it valid and exclusive for the
+            // scope's extent, and this method's `&mut self` receiver plus the
+            // module-private scope internals mean no second path can lend the
+            // same player while `f` runs.
+            Hit::Other(ptr) => Some(f(unsafe { &mut *ptr })),
+        }
+    }
 }
 
 type PreFn<E> = Box<dyn FnMut(&mut SimCtx, &mut E) -> Outcome + Send>;
@@ -131,10 +291,10 @@ macro_rules! pre_events {
                     self.$field.insert(at, PreHandler { priority, f: Box::new(f) });
                 }
 
-                /// Dispatch inline at the decision site. Every handler runs — a
-                /// cancelled event is still observed by later handlers — and the
-                /// first `Cancel` wins. `player`/`gui_state` are the ACTING
-                /// session's.
+                /// Dispatch inline at the decision site, in `(priority,
+                /// registration)` order. The first `Cancel` ends the dispatch —
+                /// later handlers never see a consumed event (see [`Outcome`]).
+                /// `player`/`gui_state` are the ACTING session's.
                 pub(crate) fn $dispatch(
                     &mut self,
                     world: &mut World,
@@ -147,7 +307,6 @@ macro_rules! pre_events {
                         return Outcome::Continue;
                     }
                     let Self { $field: handlers, queue, .. } = self;
-                    let mut out = Outcome::Continue;
                     for h in handlers.iter_mut() {
                         let mut ctx = SimCtx {
                             world: &mut *world,
@@ -156,12 +315,11 @@ macro_rules! pre_events {
                             feed: &mut *feed,
                             queue: &mut *queue,
                         };
-                        let o = (h.f)(&mut ctx, ev);
-                        if out == Outcome::Continue {
-                            out = o;
+                        if (h.f)(&mut ctx, ev) == Outcome::Cancel {
+                            return Outcome::Cancel;
                         }
                     }
-                    out
+                    Outcome::Continue
                 }
             )*
         }
@@ -244,6 +402,14 @@ impl EventBus {
         &mut self.queue
     }
 
+    /// Whether any post event is queued — the caller-side fast path, so a
+    /// drain site can skip its setup (publishing the sessions roster) on the
+    /// common empty tick edge.
+    #[inline]
+    pub(crate) fn has_queued_posts(&self) -> bool {
+        !self.queue.events.is_empty()
+    }
+
     /// Drain the queued post events FIFO, running each event's handlers in order.
     /// Handlers may enqueue follow-ups, which run in the same drain after the
     /// already-queued events (no recursion). The bound stops a runaway handler
@@ -311,6 +477,75 @@ mod tests {
         )
     }
 
+    /// The sessions view: a published roster lets a handler reach EVERY
+    /// session's player by id — the acting one routed through the `SimCtx`'s
+    /// own borrow (never a second path), the rest through the scope — while an
+    /// unpublished context stays honestly single-session and anonymous.
+    #[test]
+    fn the_sessions_view_reaches_every_session_and_routes_the_acting_player() {
+        use crate::server::player::PlayerId;
+
+        let (mut world, mut acting, mut gui, mut feed) = sim();
+        let mut other = Player::new(Vec3::new(4.0, 80.0, 0.0));
+        let mut queue = PostQueue::default();
+
+        // No roster published: anonymous single-session context.
+        {
+            let mut ctx = SimCtx {
+                world: &mut world,
+                player: &mut acting,
+                gui_state: &mut gui,
+                feed: &mut feed,
+                queue: &mut queue,
+            };
+            assert_eq!(ctx.acting_player_id(), None);
+            assert!(ctx.player_ids().is_empty());
+            assert!(ctx.with_player(PlayerId(0), |_| ()).is_none());
+        }
+
+        let others = vec![SessionPlayerRef {
+            id: PlayerId(0),
+            player: &mut other,
+        }];
+        with_sessions_scope(PlayerId(1), 1, others, || {
+            let mut ctx = SimCtx {
+                world: &mut world,
+                player: &mut acting,
+                gui_state: &mut gui,
+                feed: &mut feed,
+                queue: &mut queue,
+            };
+            assert_eq!(ctx.acting_player_id(), Some(PlayerId(1)));
+            assert_eq!(
+                ctx.player_ids(),
+                vec![PlayerId(0), PlayerId(1)],
+                "session order, acting inserted at its index"
+            );
+            let touched = ctx.with_player(PlayerId(1), |p| {
+                p.set_health(5);
+                p.pos.x
+            });
+            assert_eq!(touched, Some(0.0), "the acting id lends ctx.player");
+            let touched = ctx.with_player(PlayerId(0), |p| {
+                p.set_health(3);
+                p.pos.x
+            });
+            assert_eq!(touched, Some(4.0), "another id lends that session's player");
+            assert!(ctx.with_player(PlayerId(9), |_| ()).is_none());
+        });
+        // The mutations landed on the real players, and the scope is gone.
+        assert_eq!(acting.health(), 5);
+        assert_eq!(other.health(), 3);
+        let ctx = SimCtx {
+            world: &mut world,
+            player: &mut acting,
+            gui_state: &mut gui,
+            feed: &mut feed,
+            queue: &mut queue,
+        };
+        assert_eq!(ctx.acting_player_id(), None, "restored after the guard");
+    }
+
     #[test]
     fn pre_handlers_run_in_priority_then_registration_order() {
         let (mut world, mut player, mut gui, mut feed) = sim();
@@ -333,20 +568,24 @@ mod tests {
         assert_eq!(*order.lock().unwrap(), vec!["d", "b", "a", "c"]);
     }
 
+    /// The first `Cancel` ends the dispatch: a later handler never sees the
+    /// consumed event, so a mutating handler (`consume_held`, `set_block`)
+    /// can never double-act on a click another mod already handled. Earlier
+    /// payload mutations still land (the engine reads them back only when
+    /// the event was NOT cancelled anyway).
     #[test]
-    fn first_cancel_wins_but_later_handlers_still_observe_the_payload() {
+    fn the_first_cancel_ends_the_dispatch() {
         let (mut world, mut player, mut gui, mut feed) = sim();
         let mut bus = EventBus::default();
-        let seen_by_later = Arc::new(AtomicI32::new(0));
+        let later_ran = Arc::new(AtomicI32::new(0));
         bus.on_player_damage_pre(0, |_, ev| {
             ev.amount = 3;
             Outcome::Cancel
         });
         {
-            let seen = seen_by_later.clone();
-            bus.on_player_damage_pre(1, move |_, ev| {
-                seen.store(ev.amount, Ordering::Relaxed);
-                // A later verdict can't override the first Cancel.
+            let ran = later_ran.clone();
+            bus.on_player_damage_pre(1, move |_, _| {
+                ran.fetch_add(1, Ordering::Relaxed);
                 Outcome::Continue
             });
         }
@@ -358,10 +597,11 @@ mod tests {
         let out = bus.player_damage_pre(&mut world, &mut player, &mut gui, &mut feed, &mut ev);
         assert_eq!(out, Outcome::Cancel);
         assert_eq!(
-            seen_by_later.load(Ordering::Relaxed),
-            3,
-            "handlers after a cancel still run and see the mutated payload"
+            later_ran.load(Ordering::Relaxed),
+            0,
+            "a handler after the cancel must not run — the event is consumed"
         );
+        assert_eq!(ev.amount, 3, "mutations before the cancel still land");
     }
 
     #[test]

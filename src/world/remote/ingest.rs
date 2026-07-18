@@ -8,7 +8,6 @@ use crate::block_state::{LogAxis, SlabState, StairState};
 use crate::chunk::{ChunkPos, SectionPos, SECTION_SIZE, SECTION_VOLUME};
 use crate::door::DoorState;
 use crate::facing::Facing;
-use crate::furnace::Furnace;
 use crate::net::protocol::{BlockDelta, CellState, ColumnPayload, LightPayload, SectionPayload};
 use crate::section::{Section, SectionSummary};
 use crate::torch::TorchPlacement;
@@ -112,23 +111,6 @@ impl World {
             return None;
         }
         let s = &payload.states;
-        // Lit furnaces install a minimal lit stand-in: the mesher keys the lit
-        // face off `Furnace::is_lit`; the real counters are sim state and stay
-        // server-side (progress reaches clients through menu sync).
-        let furnaces: HashMap<u16, Furnace> = s
-            .furnaces_lit
-            .iter()
-            .map(|&cell| {
-                (
-                    cell,
-                    Furnace {
-                        cook_progress: 0,
-                        burn_remaining: 1,
-                        burn_max: 1,
-                    },
-                )
-            })
-            .collect();
         let cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>> = s
             .cell_kv
             .iter()
@@ -143,13 +125,15 @@ impl World {
             pos.cz,
             payload.blocks.0,
             payload.water.map(|w| w.0),
-            furnaces,
+            // No furnace machine state on a replica: burn/cook counters are sim
+            // state (progress reaches clients through menu sync), and the lit
+            // face is the block id (`furnace_lit` is its own row).
+            HashMap::new(),
             HashMap::new(), // container slots replicate via menu sync
             map_entries(&s.entity_facings, Facing::from_u8),
             map_entries(&s.torches, TorchPlacement::from_u8),
             map_entries(&s.model_cells, |off| off),
             map_entries(&s.model_facings, Facing::from_u8),
-            map_entries(&s.saplings, |v| v),
             map_entries(&s.doors, DoorState::decode),
             map_entries(&s.stairs, StairState::decode),
             map_entries(&s.slabs, |[meta, a, b]| {
@@ -317,7 +301,6 @@ impl World {
                 section.set_water(lx, ly, lz, Block::from_id(delta.block_id), meta);
             }
             section.take_entity_facing(lx, ly, lz);
-            section.take_furnace(lx, ly, lz);
             match delta.state {
                 None => {}
                 Some(CellState::Door(b)) => {
@@ -339,25 +322,7 @@ impl World {
                     section.insert_torch(lx, ly, lz, TorchPlacement::from_u8(b))
                 }
                 Some(CellState::Facing(b)) => {
-                    section.insert_entity_facing(lx, ly, lz, Facing::from_u8(b & 0x7F));
-                    // The high bit carries the furnace lit state so the front
-                    // texture flips without a full section payload. The
-                    // stand-in never ticks on a replica (sim is server-owned),
-                    // so `burn_remaining: 1` simply means "render lit" until
-                    // the next delta or payload says otherwise.
-                    if Block::from_id(delta.block_id).interaction()
-                        == crate::block::BlockInteraction::OpenFurnace
-                    {
-                        section.insert_furnace(
-                            lx,
-                            ly,
-                            lz,
-                            Furnace {
-                                burn_remaining: u16::from(b & 0x80 != 0),
-                                ..Furnace::default()
-                            },
-                        );
-                    }
+                    section.insert_entity_facing(lx, ly, lz, Facing::from_u8(b));
                 }
                 Some(CellState::ModelCell { off, facing }) => {
                     // The base cell's offset stays implicit (no [0,0,0] entry),

@@ -225,8 +225,7 @@ mod tests {
         PlayerAnchor {
             id: PlayerId(id),
             pos,
-            body: None,
-            sneaking: false,
+            ..Default::default()
         }
     }
 
@@ -246,30 +245,14 @@ mod tests {
         noises: &'a [Noise],
         mobs: &'a [AiMob],
     ) -> AiCtx<'a> {
-        AiCtx {
-            mob_id: 1,
-            pos,
-            cell: crate::mathh::voxel_at(pos),
-            yaw: 0.0,
-            head_height: 0.7,
-            half_width: 0.22,
-            world,
-            player_id: players.first().map(|a| a.id).unwrap_or_default(),
-            player_pos: players.first().map(|a| a.pos).unwrap_or(Vec3::ZERO),
-            player_sneaking: false,
-            players,
-            noises,
-            contacts: &[],
-            target: None,
-            attacker: None,
-            nav_idle: true,
-            in_water: false,
-            head: 1,
-            idle_anims: &[],
-            mob_index: 0,
-            mobs,
-            rng,
-        }
+        let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
+        c.half_width = 0.22;
+        c.player_id = players.first().map(|a| a.id).unwrap_or_default();
+        c.player_pos = players.first().map(|a| a.pos).unwrap_or(Vec3::ZERO);
+        c.players = players;
+        c.noises = noises;
+        c.mobs = mobs;
+        c
     }
 
     #[test]

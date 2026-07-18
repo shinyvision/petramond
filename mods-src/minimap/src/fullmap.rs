@@ -303,6 +303,24 @@ impl Minimap {
         true
     }
 
+    /// World-block rect `[x0, z0, x1, z1)` covering the open full map's
+    /// visible tile grid plus every prefetch band `request_visible_regions`
+    /// can reach (one MIP-region span — the larger kind — on all sides
+    /// covers the velocity band and the adjacent-zoom store alike). This is
+    /// the region working set the cache trim must protect while the map is
+    /// open; see `pump_store`.
+    pub(crate) fn full_view_world_rect(&self) -> [i32; 4] {
+        let bounds = full_tile_bounds(self.pan, self.zoom);
+        let tb = full_tile_blocks(self.zoom);
+        let span = region_block_rect(RegionKind::Mip, (0, 0))[2];
+        [
+            bounds[0] * tb - span,
+            bounds[2] * tb - span,
+            (bounds[1] + 1) * tb + span,
+            (bounds[3] + 1) * tb + span,
+        ]
+    }
+
     /// Queue async loads for every source region the visible bounds need
     /// (base regions, or mip regions at the outermost zoom), plus two
     /// prefetch layers: one region band beyond the edge the pan is moving

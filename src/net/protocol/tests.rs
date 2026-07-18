@@ -163,7 +163,6 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
             slabs: vec![(9, [5, 3, 0])],
             model_cells: vec![(80, [1, 0, 1])],
             entity_facings: vec![(7, 2)],
-            furnaces_lit: vec![7],
             cell_kv: vec![(12, vec![("kitchen:burn".into(), vec![1, 2, 3])])],
             ..Default::default()
         },
@@ -308,7 +307,7 @@ fn tick_updates_roundtrip() {
         ],
         self_events: SelfEvents {
             picked_up_item: true,
-            open_screen: Some(OpenScreen::ModGui {
+            open_screen: Some(OpenScreen::Gui {
                 kind_key: "kitchen:oven".into(),
                 pos: Some(IVec3::new(4, 65, 4)),
             }),

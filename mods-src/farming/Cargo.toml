@@ -10,3 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 mod-sdk = { path = "../../mod-sdk" }
+# The pure field crate only — NOT a dependency on the weather mod. The field
+# row is soft-read from world KV; without a weather mod the sky is clear and
+# irrigation behaves exactly as it does standalone.
+weather-core = { path = "../weather-core" }

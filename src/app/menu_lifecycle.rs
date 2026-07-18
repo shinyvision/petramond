@@ -20,35 +20,17 @@ impl App {
             self.enter_connection_lost(reason);
             return;
         }
-        // Right-clicking a placed crafting table opens its recipe browser.
-        if events.open_crafting_table && self.screen.gameplay_enabled() {
-            self.open_crafting_table();
-        }
-        // Right-clicking a placed furnace opens its screen at that position.
-        if let Some(pos) = events.open_furnace {
+        // A GUI session the server opened for us this frame — a block
+        // interaction (engine container or mod `open_gui` row) or a mod's
+        // `GuiOpen` request; one lane for every kind.
+        if let Some((kind, pos)) = events.open_gui {
             if self.screen.gameplay_enabled() {
-                self.open_furnace(pos);
-            }
-        }
-        // Right-clicking a placed chest opens its screen at that position.
-        if let Some(pos) = events.open_chest {
-            if self.screen.gameplay_enabled() {
-                self.open_chest(pos);
-            }
-        }
-        // Right-clicking a placed furniture workbench opens its screen.
-        if events.open_furniture_workbench.is_some() && self.screen.gameplay_enabled() {
-            self.open_furniture_workbench();
-        }
-        // A block's `open_gui` interaction or a mod's `GuiOpen` request.
-        if let Some((kind, pos)) = events.open_mod_gui {
-            if self.screen.gameplay_enabled() {
-                self.open_mod_gui(kind, pos);
+                self.open_gui(kind, pos);
             }
         }
         // A mod's `GuiClose` closes only an open MOD GUI (engine containers
         // are not closable from mods).
-        if events.close_mod_gui && matches!(self.screen, AppScreen::ModGui(_)) {
+        if events.close_mod_gui && matches!(self.screen, AppScreen::Menu(k) if k.is_mod()) {
             self.close_menu();
         }
         // Right-clicking a bed starts the sleep overlay.
@@ -93,47 +75,18 @@ impl App {
     }
 
     fn open_inventory(&mut self) {
-        self.enter_menu(AppScreen::Inventory);
+        self.enter_menu(AppScreen::Menu(crate::gui::GuiKind::Inventory));
         if let Some(game) = self.game.as_mut() {
             game.request_open_inventory();
         }
     }
 
-    /// Open the crafting-table recipe browser after right-clicking a table.
-    fn open_crafting_table(&mut self) {
-        self.enter_menu(AppScreen::CraftingTable);
-    }
-
-    /// Open the furnace screen for the furnace at `pos` (after right-clicking it).
-    fn open_furnace(&mut self, pos: IVec3) {
-        self.enter_menu(AppScreen::Furnace);
+    /// Open the screen for a server-opened GUI session — any kind, engine
+    /// container or mod GUI. `pos` is the opening block, if any.
+    fn open_gui(&mut self, kind: crate::gui::GuiKind, pos: Option<IVec3>) {
+        self.enter_menu(AppScreen::Menu(kind));
         if let Some(game) = self.game.as_mut() {
-            game.open_furnace_screen(pos);
-        }
-    }
-
-    /// Open the chest screen for the chest at `pos` (after right-clicking it).
-    fn open_chest(&mut self, pos: IVec3) {
-        self.enter_menu(AppScreen::Chest);
-        if let Some(game) = self.game.as_mut() {
-            game.open_chest_screen(pos);
-        }
-    }
-
-    /// Open the furniture-workbench screen (after right-clicking a placed workbench).
-    fn open_furniture_workbench(&mut self) {
-        self.enter_menu(AppScreen::FurnitureWorkbench);
-        if let Some(game) = self.game.as_mut() {
-            game.open_workbench_screen();
-        }
-    }
-
-    /// Open a mod GUI screen (after a block's `open_gui` interaction or a
-    /// mod's `GuiOpen` request). `pos` is the opening block, if any.
-    fn open_mod_gui(&mut self, kind: crate::gui::GuiKind, pos: Option<IVec3>) {
-        self.enter_menu(AppScreen::ModGui(kind));
-        if let Some(game) = self.game.as_mut() {
-            game.open_mod_gui_screen(kind, pos);
+            game.open_gui_screen(kind, pos);
         }
     }
 
@@ -141,7 +94,13 @@ impl App {
     /// cursor next tick, and clear any stale click streak so the first click
     /// can't register a phantom double.
     fn enter_menu(&mut self, screen: AppScreen) {
-        if matches!(screen, AppScreen::Inventory | AppScreen::CraftingTable) {
+        // The player-crafting browser is the compound controller behind the
+        // two crafting-station kinds.
+        if matches!(
+            screen,
+            AppScreen::Menu(k) if k == crate::gui::GuiKind::Inventory
+                || k == crate::gui::GuiKind::CraftingTable
+        ) {
             self.crafting_browser.reset();
         }
         self.screen = screen;

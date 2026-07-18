@@ -69,7 +69,7 @@ impl MachineSpec for MillerSpec {
         let result = slots[SLOT_INPUT]
             .as_ref()
             .filter(|s| s.count > 0)
-            .map(|s| s.key.clone())
+            .map(|s| s.item.clone())
             .and_then(|k| caches.recipe_for(MILLING_CLASS, &k));
         let can_mill = result
             .as_ref()

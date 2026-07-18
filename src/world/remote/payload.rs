@@ -16,13 +16,6 @@ impl Section {
     /// ship gate (`section_light_final`) guarantees it is present unless the
     /// section never bakes (fully opaque); replica INGEST does no light work.
     pub(crate) fn to_payload(&self) -> SectionPayload {
-        let mut furnaces_lit: Vec<u16> = self
-            .furnaces()
-            .iter()
-            .filter(|(_, f)| f.is_lit())
-            .map(|(&cell, _)| cell)
-            .collect();
-        furnaces_lit.sort_unstable();
         let mut cell_kv: Vec<crate::net::protocol::CellKvEntry> = self
             .cell_kv()
             .iter()
@@ -49,11 +42,9 @@ impl Section {
                 }),
                 log_axes: sorted_entries(self.log_axes(), |a| a.to_u8()),
                 torches: sorted_entries(self.torches(), |t| t.to_u8()),
-                saplings: sorted_entries(self.sapling_stages(), |&s| s),
                 entity_facings: sorted_entries(self.entity_facings(), |f| f.to_u8()),
                 model_facings: sorted_entries(self.model_facings(), |f| f.to_u8()),
                 model_cells: sorted_entries(self.model_cells(), |&off| off),
-                furnaces_lit,
                 cell_kv,
             },
         }

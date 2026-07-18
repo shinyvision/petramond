@@ -815,21 +815,9 @@ impl Game {
             .push(ClientToServer::Action(PlayerAction::OpenInventory));
     }
 
-    /// Ack of a server-opened furnace session at `pos` (no-op; see above).
-    pub fn open_furnace_screen(&mut self, pos: IVec3) {
-        let _ = pos;
-    }
-
-    /// Ack of a server-opened chest session at `pos` (no-op; see above).
-    pub fn open_chest_screen(&mut self, pos: IVec3) {
-        let _ = pos;
-    }
-
-    /// Ack of a server-opened furniture-workbench session (no-op; see above).
-    pub fn open_workbench_screen(&mut self) {}
-
-    /// Ack of a server-opened mod GUI session (no-op; see above).
-    pub fn open_mod_gui_screen(&mut self, kind: crate::gui::GuiKind, pos: Option<IVec3>) {
+    /// Ack of a server-opened GUI session — any kind, engine container or mod
+    /// GUI (no-op; see above).
+    pub fn open_gui_screen(&mut self, kind: crate::gui::GuiKind, pos: Option<IVec3>) {
         let _ = (kind, pos);
     }
 

@@ -24,7 +24,9 @@
         "roll": 0
       },
       "sprite": "farming:wheat_seeds",
-      "tags": [],
+      "tags": [
+        "farming:compostable"
+      ],
       "block": "farming:wheat_0"
     },
     {
@@ -39,7 +41,8 @@
       },
       "sprite": "farming:wheat",
       "tags": [
-        "kitchen:millable"
+        "kitchen:millable",
+        "farming:compostable"
       ]
     },
     {
@@ -53,7 +56,9 @@
         "roll": 0
       },
       "sprite": "farming:carrot",
-      "tags": [],
+      "tags": [
+        "farming:compostable"
+      ],
       "block": "farming:carrots_0",
       "food": {
         "eat_ticks": 20,
@@ -146,6 +151,80 @@
           }
         ]
       }
+    },
+    {
+      "item": "farming:potato",
+      "key": "farming:potato",
+      "name": "Potato",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "farming:potato",
+      "tags": [
+        "farming:compostable",
+        "kitchen:cookable"
+      ],
+      "block": "farming:potatoes_0",
+      "food": {
+        "eat_ticks": 20,
+        "effects": [
+          {
+            "effect": "petramond:regeneration",
+            "ticks": 100
+          }
+        ]
+      }
+    },
+    {
+      "item": "farming:baked_potato",
+      "key": "farming:baked_potato",
+      "name": "Baked Potato",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "farming:baked_potato",
+      "tags": [],
+      "food": {
+        "eat_ticks": 25,
+        "effects": [
+          {
+            "effect": "petramond:regeneration",
+            "ticks": 400
+          }
+        ]
+      }
+    },
+    {
+      "item": "farming:fertilizer",
+      "key": "farming:fertilizer",
+      "name": "Fertilizer",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "farming:fertilizer",
+      "tags": []
+    },
+    {
+      "item": "farming:compost_barrel",
+      "key": "farming:compost_barrel",
+      "name": "Compost Barrel",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "farming:compost_0"
     }
   ]
 }

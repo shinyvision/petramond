@@ -92,14 +92,16 @@ impl ServerGame {
                 bus,
                 ..
             } = self;
-            let sess = &mut sessions[s];
-            bus.item_use_pre(
-                world,
-                &mut sess.player,
-                &mut sess.gui_state,
-                events,
-                &mut pre,
-            ) == Outcome::Cancel
+            // The eating session acts; the sessions view rides the dispatch.
+            Self::with_sessions_view(sessions, s, |sess| {
+                bus.item_use_pre(
+                    world,
+                    &mut sess.player,
+                    &mut sess.gui_state,
+                    events,
+                    &mut pre,
+                ) == Outcome::Cancel
+            })
         };
         if cancelled {
             self.bus.emit(PostEvent::ItemUsed { item });
@@ -177,25 +179,29 @@ impl ServerGame {
                 bus,
                 ..
             } = self;
-            let sess = &mut sessions[s];
-            bus.item_use_pre(
-                world,
-                &mut sess.player,
-                &mut sess.gui_state,
-                events,
-                &mut pre,
-            ) == Outcome::Cancel
+            // The clicking session acts; the sessions view rides the dispatch.
+            Self::with_sessions_view(sessions, s, |sess| {
+                bus.item_use_pre(
+                    world,
+                    &mut sess.player,
+                    &mut sess.gui_state,
+                    events,
+                    &mut pre,
+                ) == Outcome::Cancel
+            })
         };
         if cancelled {
             self.bus.emit(PostEvent::ItemUsed { item });
             return true;
         }
-        // Dispatch on the item's data-declared use (`"use"` in items.json).
-        // `Shear` acts at the earlier shear stage of `tick_place`; mod items
-        // react to use through the `item_use_pre` event handled above.
+        // Dispatch on the item's data-declared use (`"use"` in items.json) —
+        // handler params (the bucket counterpart) ride the row, so a pack
+        // bucket transitions within its own item pair. `Shear` acts at the
+        // earlier shear stage of `tick_place`; mod items react to use through
+        // the `item_use_pre` event handled above.
         let used = match item.item_use() {
-            Some(ItemUse::BucketFill) => self.try_fill_bucket(s),
-            Some(ItemUse::BucketPour) => self.try_pour_bucket(s, events),
+            Some(ItemUse::BucketFill { becomes }) => self.try_fill_bucket(s, becomes),
+            Some(ItemUse::BucketPour { becomes }) => self.try_pour_bucket(s, becomes, events),
             _ => false,
         };
         if used {
@@ -223,7 +229,6 @@ impl ServerGame {
         };
         let inst = &self.world.mobs().instances()[idx];
         let mut pre = MobInteract {
-            mob: idx,
             id: inst.id(),
             kind: inst.kind,
             player: self.sessions[s].id,
@@ -234,14 +239,16 @@ impl ServerGame {
             bus,
             ..
         } = self;
-        let sess = &mut sessions[s];
-        bus.mob_interact(
-            world,
-            &mut sess.player,
-            &mut sess.gui_state,
-            events,
-            &mut pre,
-        ) == Outcome::Cancel
+        // The interacting session acts; the sessions view rides the dispatch.
+        Self::with_sessions_view(sessions, s, |sess| {
+            bus.mob_interact(
+                world,
+                &mut sess.player,
+                &mut sess.gui_state,
+                events,
+                &mut pre,
+            ) == Outcome::Cancel
+        })
     }
 
     /// Shear the targeted mob with the held shears: the mob's coat comes off (and
@@ -280,13 +287,15 @@ impl ServerGame {
         true
     }
 
-    /// Scoop water into the held empty bucket. The rule: the ray hits a water
-    /// SOURCE within reach → that cell is scooped; otherwise nothing. The fill
-    /// ray stops only at sources and solids — flowing water is transparent to
-    /// it (like it is to normal selection), so a spread sheet or thin film,
-    /// which can render exactly like still water, never shadows the source the
-    /// player is actually aiming at, and aiming at pure flow does nothing.
-    fn try_fill_bucket(&mut self, s: usize) -> bool {
+    /// Scoop water into the held empty bucket; on success the held item
+    /// becomes `becomes`, the row-declared filled counterpart. The rule: the
+    /// ray hits a water SOURCE within reach → that cell is scooped; otherwise
+    /// nothing. The fill ray stops only at sources and solids — flowing water
+    /// is transparent to it (like it is to normal selection), so a spread
+    /// sheet or thin film, which can render exactly like still water, never
+    /// shadows the source the player is actually aiming at, and aiming at
+    /// pure flow does nothing.
+    fn try_fill_bucket(&mut self, s: usize, becomes: ItemType) -> bool {
         let (eye, dir) = {
             let p = &self.sessions[s].player;
             (p.eye(), p.forward())
@@ -303,7 +312,7 @@ impl ServerGame {
         if !self.sessions[s]
             .player
             .inventory
-            .replace_selected_one(ItemStack::new(ItemType::WaterBucket, 1))
+            .replace_selected_one(ItemStack::new(becomes, 1))
         {
             return false;
         }
@@ -312,14 +321,15 @@ impl ServerGame {
         true
     }
 
-    /// Empty the held water bucket into the clicked cell. The pour uses the same
-    /// water-stopping ray as the fill, so aiming anywhere at a water body pours
-    /// INTO its surface cell: flowing water firms into a source, and pouring
-    /// onto an existing source still empties the bucket (a no-op world write) —
-    /// on water the action is always predictable. On land it follows block
-    /// placement: a replaceable target (grass, a fern) is filled in place,
-    /// anything else pours against the clicked face.
-    fn try_pour_bucket(&mut self, s: usize, events: &mut TickEvents) -> bool {
+    /// Empty the held water bucket into the clicked cell; on success the held
+    /// item becomes `becomes`, the row-declared empty counterpart. The pour
+    /// uses the same water-stopping ray as the fill, so aiming anywhere at a
+    /// water body pours INTO its surface cell: flowing water firms into a
+    /// source, and pouring onto an existing source still empties the bucket (a
+    /// no-op world write) — on water the action is always predictable. On land
+    /// it follows block placement: a replaceable target (grass, a fern) is
+    /// filled in place, anything else pours against the clicked face.
+    fn try_pour_bucket(&mut self, s: usize, becomes: ItemType, events: &mut TickEvents) -> bool {
         let (eye, dir) = {
             let p = &self.sessions[s].player;
             (p.eye(), p.forward())
@@ -351,15 +361,17 @@ impl ServerGame {
                 bus,
                 ..
             } = self;
-            let sess = &mut sessions[s];
-            if bus.block_place_pre(
-                world,
-                &mut sess.player,
-                &mut sess.gui_state,
-                events,
-                &mut pre,
-            ) == Outcome::Cancel
-            {
+            // The pouring session acts; the sessions view rides the dispatch.
+            let cancelled = Self::with_sessions_view(sessions, s, |sess| {
+                bus.block_place_pre(
+                    world,
+                    &mut sess.player,
+                    &mut sess.gui_state,
+                    events,
+                    &mut pre,
+                ) == Outcome::Cancel
+            });
+            if cancelled {
                 return false;
             }
         }
@@ -375,12 +387,13 @@ impl ServerGame {
             block: Block::Water,
         });
         self.push_block_noise(s, p, crate::mob::NoiseKind::BlockPlaced);
-        // A water bucket never stacks, so the swap back to the empty bucket is
-        // always an in-place slot swap and cannot fail.
+        // A filled bucket row is max-stack 1 (the engine's water bucket; packs
+        // should declare theirs the same), so the swap back to the empty
+        // counterpart is an in-place slot swap and cannot fail.
         self.sessions[s]
             .player
             .inventory
-            .replace_selected_one(ItemStack::new(ItemType::WoodenBucket, 1));
+            .replace_selected_one(ItemStack::new(becomes, 1));
         true
     }
 }

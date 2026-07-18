@@ -146,7 +146,7 @@ impl<D> Catalog<D> {
 /// interned `&'static` name and cross-row references).
 pub(crate) fn load_catalog<R, D>(
     texts: &[&str],
-    parse_layer: fn(&str) -> Result<Vec<R>, serde_json::Error>,
+    parse_layer: impl FnMut(&str) -> Result<Vec<R>, serde_json::Error>,
     row_key: fn(&R) -> &str,
     engine: &[&'static str],
     what: &str,
@@ -166,7 +166,7 @@ pub(crate) fn load_catalog<R, D>(
 /// assignment already happened there).
 pub(crate) fn resolve_catalog<R, D>(
     texts: &[&str],
-    parse_layer: fn(&str) -> Result<Vec<R>, serde_json::Error>,
+    parse_layer: impl FnMut(&str) -> Result<Vec<R>, serde_json::Error>,
     row_key: fn(&R) -> &str,
     names: &NameTable,
     what: &str,
@@ -178,7 +178,7 @@ pub(crate) fn resolve_catalog<R, D>(
 
 fn parse_and_merge<R>(
     texts: &[&str],
-    parse_layer: fn(&str) -> Result<Vec<R>, serde_json::Error>,
+    mut parse_layer: impl FnMut(&str) -> Result<Vec<R>, serde_json::Error>,
     row_key: fn(&R) -> &str,
 ) -> Result<(Vec<R>, Vec<Vec<String>>), String> {
     let mut merged: Vec<R> = Vec::new();
@@ -232,6 +232,19 @@ pub(crate) fn read_catalog<T>(
     what: &str,
     parse: impl FnOnce(&[&str]) -> Result<T, String>,
 ) -> T {
+    read_catalog_labeled(file, what, |layers| {
+        let texts: Vec<&str> = layers.iter().map(|(s, _)| *s).collect();
+        parse(&texts)
+    })
+}
+
+/// [`read_catalog`] with each layer's source path alongside its text, for the
+/// catalogs whose diagnostics should name the pack a layer came from.
+pub(crate) fn read_catalog_labeled<T>(
+    file: &str,
+    what: &str,
+    parse: impl FnOnce(&[(&str, &std::path::Path)]) -> Result<T, String>,
+) -> T {
     let layers = crate::assets::read_layers(file);
     if layers.is_empty() {
         panic!(
@@ -242,8 +255,11 @@ pub(crate) fn read_catalog<T>(
     for (_, path) in &layers {
         log::info!("{what} defs layer: {}", path.display());
     }
-    let texts: Vec<&str> = layers.iter().map(|(s, _)| s.as_str()).collect();
-    parse(&texts).unwrap_or_else(|e| panic!("{file}: {e}"))
+    let layers: Vec<(&str, &std::path::Path)> = layers
+        .iter()
+        .map(|(s, p)| (s.as_str(), p.as_path()))
+        .collect();
+    parse(&layers).unwrap_or_else(|e| panic!("{file}: {e}"))
 }
 
 /// Whether `key` carries a `namespace:` prefix.

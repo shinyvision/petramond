@@ -24,6 +24,25 @@ pub struct PlayerAnchor {
     /// Whether this player is sneaking — hostile detection shrinks for a
     /// sneaking target (`chase_player`'s `sneak_radius_penalty`).
     pub sneaking: bool,
+    /// The player's selected (held) item — the visible-to-the-world hand
+    /// fact behaviors may react to (a wheat lure). `None` for an empty hand
+    /// or a spectator (who shows nothing to the world).
+    pub held: Option<crate::item::ItemType>,
+}
+
+/// A neutral anchor (player 0 at the origin, bodiless, empty-handed) — the
+/// base tests override per field, so a new perception fact costs one field
+/// here instead of a struct-literal edit at every anchor site.
+impl Default for PlayerAnchor {
+    fn default() -> Self {
+        PlayerAnchor {
+            id: Default::default(),
+            pos: Vec3::ZERO,
+            body: None,
+            sneaking: false,
+            held: None,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]

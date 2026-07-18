@@ -354,7 +354,7 @@ mod tests {
         // travelling at cap would silently leave new terrain barren.
         for i in 0..MobCategory::Passive.cap() {
             let pos = Vec3::new(8.0 + i as f32 * 0.2, 65.0, 8.0);
-            assert!(world.spawn_mob(Mob::Sheep, pos, 0.0));
+            assert!(world.spawn_mob(Mob::Sheep, pos, 0.0).is_some());
         }
 
         let spawned = world.populate_mobs_tick(anchor());

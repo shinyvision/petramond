@@ -19,6 +19,17 @@
     { "name": "farming:flour", "file": "flour.png" },
     { "name": "farming:dough", "file": "dough.png" },
     { "name": "farming:bread", "file": "bread.png" },
-    { "name": "farming:farmers_lunch", "file": "farmers_lunch.png" }
+    { "name": "farming:farmers_lunch", "file": "farmers_lunch.png" },
+    { "name": "farming:farmland_fertile_dry", "file": "farmland_fertile_dry.png" },
+    { "name": "farming:farmland_fertile_wet", "file": "farmland_fertile_wet.png" },
+    { "name": "farming:wild_potatoes", "file": "wild_potatoes.png" },
+    { "name": "farming:potatoes_0", "file": "potatoes_0.png" },
+    { "name": "farming:potatoes_1", "file": "potatoes_1.png" },
+    { "name": "farming:potatoes_2", "file": "potatoes_2.png" },
+    { "name": "farming:potatoes_3", "file": "potatoes_3.png" },
+    { "name": "farming:potato", "file": "potato_item.png" },
+    { "name": "farming:baked_potato", "file": "baked_potato.png" },
+    { "name": "farming:fertilizer", "file": "fertilizer.png" },
+    { "name": "farming:grass_fertilized_top", "file": "grass_fertilized_top.png", "tint": "grass" }
   ]
 }

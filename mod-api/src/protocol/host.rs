@@ -6,11 +6,12 @@ use crate::client::{
     ClientTextRun,
 };
 use crate::data::{
-    EffectStateData, GuiValue, ItemInfoData, ItemStackData, MobAnimStateData, MobRidersData,
-    MobSnapshot, PlayerInputData, PlayerListEntry, PlayerSnapshot, RuntimeSide,
+    CollisionShape, EffectStateData, GuiValue, ItemInfoData, ItemStackData, LightData,
+    MobAnimStateData, MobRidersData, MobSnapshot, PlayerInputData, PlayerListEntry,
+    PlayerSnapshot, RuntimeSide,
 };
 use crate::events::EventKind;
-use crate::ids::{BlockId, ItemId};
+use crate::ids::{BlockId, ItemId, MobId, PlayerId};
 use crate::sched::{AttachSide, Stage, WorldgenStage};
 
 /// Guest → host: what a mod asks the engine for through `host_dispatch`.
@@ -20,6 +21,60 @@ use crate::sched::{AttachSide, Stage, WorldgenStage};
 /// The world-touching calls are sim-scoped: legal wherever a `SimCtx` is
 /// published (`mod_init`, tick systems, event handlers), [`HostRet::Error`]
 /// outside any guest dispatch.
+///
+/// # Item identity
+///
+/// Items have ONE mod-facing identity: the registry NAME (`"petramond:coal"`,
+/// `"farming:wheat"` — the `item` field of an `items.json` row). Every
+/// name-addressed call speaks it, and [`ItemStackData`] carries it. The
+/// numeric [`ItemId`] is a session-scoped compact form for id-bearing
+/// payloads (events, [`HostCall::ConsumeHeld`]); bridge the two with
+/// [`HostCall::ResolveItem`] (name → id) and [`HostCall::ItemNames`]
+/// (id → name), and never persist numeric ids. The `key` field on
+/// `items.json` rows is engine-internal recipe plumbing and does not cross
+/// the ABI.
+///
+/// # Mob addressing
+///
+/// A LIVE mob has ONE address: its stable session id
+/// ([`MobSnapshot::id`], the `mob_id` field on every mob call and event
+/// payload). It survives unrelated removals and is the key for cross-tick
+/// mod state; the list `index` on [`MobSnapshot`] is only an intra-tick
+/// join key between snapshots and is accepted by no call. Dead
+/// (ragdolling) mobs are GONE to this surface — id-addressed reads answer
+/// `None`, writes answer `false`, exactly the live set
+/// [`HostCall::MobsInRadius`] enumerates. Mob SPECIES are keyed by their
+/// `mobs.json` `key` string (`"petramond:sheep"`); the numeric [`MobId`]
+/// is its session-scoped compact form in payloads — bridge with
+/// [`HostCall::ResolveMob`] (key → id) and [`HostCall::MobNames`]
+/// (id → key), and never persist either the numeric species id or a live
+/// mob's session id.
+///
+/// # Player addressing
+///
+/// Every call or payload field that names a player carries the
+/// [`PlayerId`] newtype EXPLICITLY ([`HostCall::PlayerInput`],
+/// [`HostCall::MobMount`], [`HostCall::ChatSend`] targets, event payloads
+/// like `MobInteract`/`PlayerDismounted`). This is the frozen rule for NEW
+/// surface: a player-touching call takes a `player_id` — never a bare `u8`,
+/// and never a new implicit-player call. The older single-player-era calls
+/// ([`HostCall::PlayerState`], [`HostCall::DamagePlayer`],
+/// [`HostCall::GiveItem`], [`HostCall::Teleport`], ...) address the ACTING
+/// session's player as a documented default — the session whose dispatch is
+/// running (the interacting player for event handlers, the host session for
+/// global tick systems). They are the legacy exception, not the pattern;
+/// their per-player reshape is pending, and enumerating sessions is already
+/// explicit via [`HostCall::Players`].
+///
+/// # Batch bounds
+///
+/// Batched sim/registry calls (`GetBlocks`, `SetBlocks`, `ContainerGetMany`,
+/// `ContainerSet` slots, the `*Names` reverse resolvers, `ChatSend` targets)
+/// are capped at 4096 entries per call. Exceeding the cap is
+/// [`HostRet::Error`] (SDK panic → mod disabled): a batch that size is a mod
+/// bug, and the watchdog deliberately does not charge host-side work — the
+/// cap is what keeps one call from stalling the tick. Client-instance calls
+/// carry their own (tighter, per-frame) documented caps.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum HostCall {
     /// Log through the engine logger (mods have no stdout).
@@ -56,6 +111,8 @@ pub enum HostCall {
         pos: [i32; 3],
     },
     /// Batched [`HostCall::GetBlock`], one result per position in order.
+    /// At most 4096 positions per call (the sim batch cap — see "Batch
+    /// bounds" on [`HostCall`]); more is [`HostRet::Error`].
     /// → [`HostRet::Blocks`].
     GetBlocks {
         positions: Vec<[i32; 3]>,
@@ -70,7 +127,9 @@ pub enum HostCall {
     /// Batched [`HostCall::SetBlock`]; applied in order, each through the full
     /// edit path. NOTE: every write pays its own relight/remesh of the 3×3×3
     /// section neighbourhood — huge batches are expensive; this batches the
-    /// ABI crossing, not the world work. → [`HostRet::U64`] (cells actually set).
+    /// ABI crossing, not the world work. At most 4096 writes per call (the
+    /// sim batch cap); more is [`HostRet::Error`].
+    /// → [`HostRet::U64`] (cells actually set).
     SetBlocks {
         blocks: Vec<([i32; 3], BlockId)>,
     },
@@ -86,19 +145,29 @@ pub enum HostCall {
         pos: [i32; 3],
     },
     /// Cached light at a cell on the renderer's 6-bit scale (`0..=63`):
-    /// combined = max(sky, block). Unloaded cells read as open sky / no block
-    /// light (the engine's own fallbacks). → [`HostRet::Light`].
+    /// combined = max(sky, block). `None` = section unloaded / streamed
+    /// content not yet final — the [`HostCall::GetBlock`] contract ("state
+    /// frozen, retry later"), never a fabricated open-sky fallback, so
+    /// light-driven policy can never act on values the world does not hold.
+    /// → [`HostRet::Light`].
     LightAt {
         pos: [i32; 3],
     },
 
     // --- entities -----------------------------------------------------------
-    /// Spawn a mob by species key at `pos` (feet) facing `yaw`.
-    /// `false` = unknown key or the mob cap is reached. → [`HostRet::Bool`].
+    /// Spawn a mob by species key at `pos` (feet) facing `yaw`. With
+    /// `checked: false` the spawn is unconditional (site fitness is the
+    /// caller's business); `checked: true` spawns only when the COMPLETE
+    /// declared body fits — every covered section loaded and stream-final, no
+    /// terrain collision overlap, no live solid mob overlap — validated and
+    /// inserted as one atomic sim operation (use it for player-placed bodies:
+    /// a failed call mutates nothing, so the item can be refunded). `false` =
+    /// unknown key, the mob cap, or a failed check. → [`HostRet::Bool`].
     SpawnMob {
         key: String,
         pos: [f32; 3],
         yaw: f32,
+        checked: bool,
     },
     /// Snapshot the live mobs within `radius` (3-D, of feet positions) of
     /// `pos`. Deterministic order = the live set's storage order (spawn order,
@@ -108,32 +177,33 @@ pub enum HostCall {
         pos: [f32; 3],
         radius: f32,
     },
-    /// Damage the mob at `index` through its global engine-owned i-frames and
-    /// the `mob_damage_pre` pipeline. Mod damage is not an attack, so default
-    /// knockback is not applied; `origin` is only spatial context for
+    /// Damage the live mob `mob_id` through its global engine-owned i-frames
+    /// and the `mob_damage_pre` pipeline. Mod damage is not an attack, so
+    /// default knockback is not applied; `origin` is only spatial context for
     /// feedback/handlers. Applied at the next action drain point (same tick),
-    /// so a handler cannot re-enter the bus. → [`HostRet::Unit`].
+    /// so a handler cannot re-enter the bus; a mob gone by then is a silent
+    /// no-op. → [`HostRet::Unit`].
     ///
     /// `feedback` composes the damage pipeline for THIS request; `None` uses
     /// the species' resolved `damage_feedback`. A pipeline without the
     /// `Immunity` component is damage-over-time (burn): neither blocked by
     /// the victim's active i-frame window nor granting one.
     DamageMob {
-        index: u32,
+        mob_id: u64,
         amount: f32,
         origin: Option<[f32; 3]>,
         feedback: Option<crate::events::MobDamageFeedback>,
     },
-    /// Remove the mob at `index` from the live world immediately (not saved,
-    /// no death/loot). Renumbers later indices — re-query after use.
-    /// `false` = no such mob. → [`HostRet::Bool`].
+    /// Remove the live mob `mob_id` from the world immediately (not saved,
+    /// no death/loot). `false` = no such live mob. → [`HostRet::Bool`].
     DespawnMob {
-        index: u32,
+        mob_id: u64,
     },
-    /// Spawn `count` of an item (by registry key) as a dropped-item entity at
-    /// `pos`. `false` = unknown key / zero count. → [`HostRet::Bool`].
+    /// Spawn `count` of an item (by registry NAME — the one mod-facing item
+    /// identity, e.g. `"petramond:coal"`, `"farming:wheat"`) as a dropped-item
+    /// entity at `pos`. `false` = unknown name / zero count. → [`HostRet::Bool`].
     SpawnItem {
-        item_key: String,
+        item: String,
         count: u8,
         pos: [f32; 3],
     },
@@ -147,6 +217,10 @@ pub enum HostCall {
     /// the next action drain point (same tick, defined order). →
     /// [`HostRet::Unit`].
     ///
+    /// To KILL the player, pass their current health ([`HostCall::PlayerState`])
+    /// as `amount` — same funnel, and i-frames or a pre-event handler can still
+    /// reject it. There is no separate kill call.
+    ///
     /// [`DamageSource::Mod`]: crate::DamageSource::Mod
     DamagePlayer {
         amount: i32,
@@ -157,17 +231,13 @@ pub enum HostCall {
     ApplyKnockback {
         impulse: [f32; 3],
     },
-    /// Give the player `count` of an item (by registry key) through the normal
+    /// Give the player `count` of an item (by registry NAME) through the normal
     /// inventory fill; whatever doesn't fit drops at the player's feet like any
-    /// other overflow. `false` = unknown key. → [`HostRet::Bool`].
+    /// other overflow. `false` = unknown name. → [`HostRet::Bool`].
     GiveItem {
-        item_key: String,
+        item: String,
         count: u8,
     },
-    /// Kill the player: damage equal to current health, through the same
-    /// funnel (and queue) as [`HostCall::DamagePlayer`] — global i-frames or a
-    /// pre-event handler can still reject it. → [`HostRet::Unit`].
-    KillPlayer,
     /// Overwrite the player's health (clamped to `0..=20` half-hearts),
     /// BYPASSING the damage funnel — this is the heal/set primitive, not a
     /// damage source (no events fire). → [`HostRet::Unit`].
@@ -230,31 +300,34 @@ pub enum HostCall {
         pos: [i32; 3],
         key: String,
     },
-    /// Per-mob KV riding the mob's save record (`mob_index` as in
-    /// [`MobSnapshot::index`] — valid this tick only). → [`HostRet::Bytes`].
+    /// Per-mob KV riding the live mob `mob_id`'s save record. `Bytes(None)`
+    /// when the key is absent OR there is no such live mob.
+    /// → [`HostRet::Bytes`].
     MobKvGet {
-        mob_index: u32,
+        mob_id: u64,
         key: String,
     },
-    /// `false` = no such mob. → [`HostRet::Bool`].
+    /// `false` = no such live mob. → [`HostRet::Bool`].
     MobKvSet {
-        mob_index: u32,
+        mob_id: u64,
         key: String,
         value: Vec<u8>,
     },
     /// → [`HostRet::Bool`] (whether the key was present).
     MobKvDelete {
-        mob_index: u32,
+        mob_id: u64,
         key: String,
     },
 
-    // --- worldgen hooks --------------------------------------------------------
-    /// Resolve a block registry key (`"petramond:stone"`, `"kitchen:oven"`) to its
-    /// session-scoped runtime id. Needs no simulation context — legal anywhere,
-    /// including on worldgen instances. `None` = not registered (a typo'd or
-    /// absent pack — degrade gracefully, don't panic). → [`HostRet::Block`].
+    // --- registry queries (see also the reverse resolvers appended at the
+    // end) + worldgen hooks ---------------------------------------------------
+    /// Resolve a block registry NAME (`"petramond:stone"`, `"kitchen:oven"`) to
+    /// its session-scoped runtime id. Registry-only, needs no simulation
+    /// context — legal on ANY instance, any time (worldgen and client
+    /// instances included). `None` = not registered (a typo'd or absent pack —
+    /// degrade gracefully, don't panic). → [`HostRet::Block`].
     ResolveBlock {
-        key: String,
+        name: String,
     },
     /// Register a worldgen FEATURE that runs after `stage` (typically
     /// [`WorldgenStage::Trees`], the end of the pipeline). Legal ONLY during
@@ -315,11 +388,12 @@ pub enum HostCall {
     /// not simulation state: the host sanitizes/`$[fg=…]` markup-parses
     /// `text` and ships a structured line out-of-band (not on `TickUpdate`).
     /// `targets: None` = every currently connected session; `Some(ids)` =
-    /// those player ids only (unknown / already-left ids are ignored). Empty
+    /// those player ids only (unknown / already-left ids are ignored; at most
+    /// 4096 entries — the sim batch cap). Empty
     /// / whitespace-only text is a no-op (`Bool(false)`). → [`HostRet::Bool`].
     ChatSend {
         text: String,
-        targets: Option<Vec<u8>>,
+        targets: Option<Vec<PlayerId>>,
     },
 
     // --- Bugfix round 1 (audio): spatial mod sounds -----------------------
@@ -352,15 +426,6 @@ pub enum HostCall {
     /// handles are a no-op. → [`HostRet::Unit`].
     SoundStop {
         handle: u64,
-    },
-
-    // --- Bugfix round 1 (spawning): mod-visible full-block support --------
-    /// Whether the loaded block at `pos` is valid full-cube spawn support:
-    /// one full collision cube, not water, not leaves. Partial shapes such as
-    /// stairs, doors, and model blocks return false, as do unloaded/out-of-range
-    /// cells. → [`HostRet::Bool`].
-    BlockIsFullSpawnSupport {
-        pos: [i32; 3],
     },
 
     // --- Shader parameters ------------------------------------------------
@@ -423,28 +488,34 @@ pub enum HostCall {
     /// may cross namespaces). Multi-cell model blocks canonicalize to the
     /// group anchor, so writing through any footprint cell edits the one
     /// container the GUI shows. Counts past the item's stack cap are CLAMPED
-    /// to it — size against `ItemInfo.max_stack` if the overflow matters. →
-    /// [`HostRet::Bool`] (`false` = unloaded, or an unknown item key — the
+    /// to it — size against `ItemInfo.max_stack` if the overflow matters.
+    /// At most 4096 slot entries per call (the sim batch cap); more is
+    /// [`HostRet::Error`]. →
+    /// [`HostRet::Bool`] (`false` = unloaded, or an unknown item name — the
     /// batch is not applied).
     ContainerSet {
         pos: [i32; 3],
         slots: Vec<(u32, Option<ItemStackData>)>,
     },
-    /// Read one item's registry data: stack cap, fuel burn ticks, and tag
-    /// names — the same rows engine mechanics read, so mod logic (a fuel-fired
-    /// oven, a filtering hopper) composes with pack-added items for free.
-    /// `None` = unknown key. → [`HostRet::ItemInfo`].
+    /// Read one item's registry row (by registry NAME): the same
+    /// [`ItemInfoData`] fields engine mechanics read, so mod logic (a
+    /// fuel-fired oven, a filtering hopper, a tool gate) composes with
+    /// pack-added items for free. Registry-only like
+    /// [`HostCall::ResolveItem`]: legal on any instance, any time; row data is
+    /// session-stable — cache it mod-side. `None` = unknown name. →
+    /// [`HostRet::ItemInfo`].
     ItemInfo {
-        key: String,
+        item: String,
     },
-    /// The loaded machine-processing result for one input item key under a
-    /// recipe `class` (`"petramond:smelting"` = the furnace's table; a mod machine
-    /// names its own, e.g. `"kitchen:cooking"`), from the same layered
-    /// `recipes.json` catalog engine machines cook from — any pack's rows for
-    /// that class included. `None` = no recipe. → [`HostRet::ItemStack`].
+    /// The loaded machine-processing result for one input item (by registry
+    /// NAME) under a recipe `class` (`"petramond:smelting"` = the furnace's
+    /// table; a mod machine names its own, e.g. `"kitchen:cooking"`), from the
+    /// same layered `recipes.json` catalog engine machines cook from — any
+    /// pack's rows for that class included. `None` = no recipe. →
+    /// [`HostRet::ItemStack`].
     RecipeResult {
         class: String,
-        key: String,
+        item: String,
     },
 
     // --- Player status effects (landed 2026-07-07) --------------------------
@@ -484,26 +555,28 @@ pub enum HostCall {
     /// Batched [`ContainerGet`](Self::ContainerGet): every listed position's
     /// container slots in ONE crossing. A machine mod's tick loop MUST read
     /// its placed machines through this (like `GetBlocks`), never loop
-    /// `ContainerGet` per machine — the per-block-per-tick hot-loop rule. →
-    /// [`HostRet::Containers`], parallel to the positions.
+    /// `ContainerGet` per machine — the per-block-per-tick hot-loop rule.
+    /// At most 4096 positions per call (the sim batch cap); more is
+    /// [`HostRet::Error`]. → [`HostRet::Containers`], parallel to the
+    /// positions.
     ContainerGetMany {
         positions: Vec<[i32; 3]>,
     },
 
     // --- Mob particle emitters (landed 2026-07-10) ---------------------------
-    /// Toggle one KEYED particle-emitter bundle on the mob at `index` (a
-    /// [`MobSnapshot::index`], valid this tick only). `key` names a
-    /// `particle_emitters.json` catalog row (engine `petramond:*` rows —
-    /// `petramond:burn_light`, `petramond:burn_great` — and every pack's rows
-    /// alike, the same cross-namespace rule as effects): one or more particle
-    /// rows plus an optional body tint. The active set (≤ 4 per mob) is
-    /// presentation-only, replicates to every client, survives death (a corpse
-    /// keeps its effect through the ragdoll), and is NOT persisted: the owning
-    /// mod re-derives it, e.g. from its own per-mob state. →
-    /// [`HostRet::Bool`] (`false` = bad index, unregistered key, or the mob's
-    /// active set is full).
+    /// Toggle one KEYED particle-emitter bundle on the live mob `mob_id`.
+    /// `key` names a `particle_emitters.json` catalog row (engine
+    /// `petramond:*` rows — `petramond:burn_light`, `petramond:burn_great` —
+    /// and every pack's rows alike, the same cross-namespace rule as
+    /// effects): one or more particle rows plus an optional body tint. The
+    /// active set (≤ 4 per mob) is presentation-only, replicates to every
+    /// client, survives death (a corpse keeps its already-active effects
+    /// through the ragdoll — though a corpse can no longer be addressed), and
+    /// is NOT persisted: the owning mod re-derives it, e.g. from its own
+    /// per-mob state. → [`HostRet::Bool`] (`false` = unknown/dead mob,
+    /// unregistered key, or the mob's active set is full).
     MobEmitterSet {
-        index: u32,
+        mob_id: u64,
         key: String,
         active: bool,
     },
@@ -637,10 +710,11 @@ pub enum HostCall {
     /// for an unknown name. Registry-only (no world access): legal on any
     /// instance, any time — the [`HostCall::ResolveBlock`] contract. This is
     /// how a mod identifies its own items in id-bearing event payloads
-    /// (e.g. `item_use_pre`) without persisting numeric ids.
+    /// (e.g. `item_use_pre`) without persisting numeric ids. The reverse
+    /// direction is [`HostCall::ItemNames`].
     /// → [`HostRet::Item`].
     ResolveItem {
-        key: String,
+        name: String,
     },
     /// Overwrite one rectangle of an existing namespaced client image in
     /// place (`origin`/`size` in image pixels, `rgba` = `size` pixels of
@@ -695,7 +769,7 @@ pub enum HostCall {
     /// [`EventKind::PlayerDismounted`]: crate::EventKind::PlayerDismounted
     MobMount {
         mob_id: u64,
-        player_id: u8,
+        player_id: PlayerId,
         seat: u8,
     },
     /// Unseat `player_id` from whatever they ride (the mod-initiated detach;
@@ -703,7 +777,7 @@ pub enum HostCall {
     /// without this call). `false` = they were not mounted.
     /// → [`HostRet::Bool`].
     MobDismount {
-        player_id: u8,
+        player_id: PlayerId,
     },
     /// The declared seat capacity and every rider of the live mob `mob_id`,
     /// in player-id order. `None` = no such live mob, which is distinct from
@@ -772,7 +846,7 @@ pub enum HostCall {
     /// own yaw frame — how a vehicle mod reads what its driver is pressing.
     /// `None` = no such player connected. → [`HostRet::PlayerInput`].
     PlayerInput {
-        player_id: u8,
+        player_id: PlayerId,
     },
     /// Read the authoritative playback state of active named animation
     /// `anim` on live mob `mob_id`. `None` = missing/dead mob or inactive
@@ -782,19 +856,6 @@ pub enum HostCall {
     MobAnimState {
         mob_id: u64,
         anim: String,
-    },
-    /// Spawn a mob only when its COMPLETE declared body fits at `pos`/`yaw`:
-    /// every covered section is loaded and stream-final, no terrain collision
-    /// shape overlaps, and no live solid mob overlaps. The validation and
-    /// insertion are one atomic sim operation. `false` = unknown key, blocked,
-    /// unloaded or unresolved pose, or the mob cap is reached. → [`HostRet::Bool`].
-    ///
-    /// Appended for wire compatibility; conceptually this is the checked
-    /// sibling of [`HostCall::SpawnMob`].
-    SpawnMobChecked {
-        key: String,
-        pos: [f32; 3],
-        yaw: f32,
     },
     /// The loaded column's biome id at world `pos = [x, z]` (vocabulary:
     /// [`crate::biome`]). `None` = column unloaded. → [`HostRet::MaybeByte`].
@@ -879,6 +940,64 @@ pub enum HostCall {
     BlocksByTag {
         tag: String,
     },
+    /// Every registered item carrying `tag`, in id order — the item twin of
+    /// [`HostCall::BlocksByTag`], same contract: registry-only (legal on any
+    /// instance, any time), engine tags as `petramond:<name>`, pack tags as
+    /// their `mod_id:name`, and a name nothing lists is simply an empty set —
+    /// querying cannot register a tag. → [`HostRet::ItemList`].
+    ItemsByTag {
+        tag: String,
+    },
+    /// Resolve session block ids back to their registry NAMES — the reverse of
+    /// [`HostCall::ResolveBlock`], batched at the message level (resolve a
+    /// whole [`HostCall::BlocksByTag`] result in one crossing). Reply parallel
+    /// to `blocks`; `None` = unregistered id. At most 4096 ids per call (the
+    /// sim batch cap; the id space is 256 — a legitimate batch never
+    /// approaches it). Registry-only: legal on any
+    /// instance, any time. → [`HostRet::Names`].
+    BlockNames {
+        blocks: Vec<BlockId>,
+    },
+    /// Resolve session item ids back to their registry NAMES — the reverse of
+    /// [`HostCall::ResolveItem`], same batching and contract as
+    /// [`HostCall::BlockNames`]. How an id from an event payload or
+    /// [`HostCall::ItemsByTag`] reaches the name-addressed calls
+    /// ([`HostCall::GiveItem`], [`HostCall::ItemInfo`]). → [`HostRet::Names`].
+    ItemNames {
+        items: Vec<ItemId>,
+    },
+    /// Resolve a mob species key (`"petramond:sheep"`, `"monsters:zombie"` —
+    /// the `key` field of a `mobs.json` row, the same string
+    /// [`HostCall::SpawnMob`] and [`MobSnapshot::key`] speak) to its
+    /// session-scoped [`MobId`] — how a mod filters the `kind` in
+    /// `mob_died`/`mob_spawned`/`mob_damage_pre` payloads without string
+    /// round-trips. Registry-only like [`HostCall::ResolveBlock`]: legal on
+    /// any instance, any time. `None` = unregistered key. →
+    /// [`HostRet::MobKind`].
+    ResolveMob {
+        key: String,
+    },
+    /// Resolve session mob species ids back to their keys — the reverse of
+    /// [`HostCall::ResolveMob`], batched like [`HostCall::ItemNames`]. Reply
+    /// parallel to `mobs`; `None` = unregistered id. Registry-only: legal on
+    /// any instance, any time. → [`HostRet::Names`].
+    MobNames {
+        mobs: Vec<MobId>,
+    },
+    /// The collision-shape CLASS of the cell at `pos` — generic physics, no
+    /// gameplay policy: [`CollisionShape::Full`] = exactly one collision box
+    /// spanning the whole unit cell, [`CollisionShape::Partial`] = any other
+    /// non-empty box set (stairs, slabs, doors, snow layers, model blocks),
+    /// [`CollisionShape::Empty`] = no collision boxes (air, water, tall
+    /// grass). `None` = section unloaded / streamed content not yet final
+    /// (the [`HostCall::GetBlock`] contract: state frozen, retry later).
+    /// Spawn/placement rules compose on top in mod code — e.g. "full solid
+    /// footing" = `Full` + the block is not water + not in
+    /// [`HostCall::BlocksByTag`]`("petramond:leaves")`.
+    /// → [`HostRet::CollisionShape`].
+    CollisionShapeAt {
+        pos: [i32; 3],
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -895,12 +1014,9 @@ pub enum HostRet {
     /// [`HostCall::GetBlocks`] / [`HostCall::ClientBlocksAt`], parallel to
     /// the request positions.
     Blocks(Vec<Option<BlockId>>),
-    /// [`HostCall::LightAt`], all on the 6-bit `0..=63` scale.
-    Light {
-        combined: u8,
-        sky: u8,
-        block: u8,
-    },
+    /// [`HostCall::LightAt`], all on the 6-bit `0..=63` scale. `None` =
+    /// section unloaded / streamed content not final (never fabricated).
+    Light(Option<LightData>),
     /// [`HostCall::MobsInRadius`].
     Mobs(Vec<MobSnapshot>),
     /// [`HostCall::PlayerState`].
@@ -951,4 +1067,16 @@ pub enum HostRet {
     /// [`HostCall::BlocksByTag`]: the tag's members, id order (empty = no
     /// block carries it).
     BlockList(Vec<BlockId>),
+    /// [`HostCall::ItemsByTag`]: the tag's members, id order (empty = no
+    /// item carries it).
+    ItemList(Vec<ItemId>),
+    /// [`HostCall::BlockNames`] / [`HostCall::ItemNames`] /
+    /// [`HostCall::MobNames`], parallel to the request ids (`None` =
+    /// unregistered id).
+    Names(Vec<Option<String>>),
+    /// [`HostCall::ResolveMob`]: `None` = unregistered species key.
+    MobKind(Option<MobId>),
+    /// [`HostCall::CollisionShapeAt`]: `None` = section unloaded / streamed
+    /// content not final.
+    CollisionShape(Option<CollisionShape>),
 }

@@ -46,9 +46,20 @@ use super::palette;
 /// state, and adds the shared entity-facing list. v5 is a CLEAN BREAK
 /// (`SECTION_REC_MIN_VERSION` = 5): pre-v5 records do not load — the game is
 /// unreleased, dev worlds regenerate.
-const SECTION_REC_VERSION: u8 = 5;
+/// v6 RETIRES the sapling-stage map (flags2 bit 0x01, now reserved): growth
+/// stages became distinct block rows riding the ordinary block-id array.
+/// Another clean break — a v5 record could carry a stage payload this build
+/// has no store for.
+/// v6 (same version, uncommitted same-day change) also retires the LADDER's
+/// entity-facing record: ladder facing became four block rows, so the
+/// entity-facing list holds genuine directional block-entity fronts
+/// (chest/furnace) only. No bump — v6 never shipped; decode drops any facing
+/// entry whose cell is not a directional-view block, so a same-day v6 record
+/// with a ladder facing loads clean (the ladder id itself decodes as the
+/// north-facing row).
+const SECTION_REC_VERSION: u8 = 6;
 /// Oldest section-record version this build can still read.
-const SECTION_REC_MIN_VERSION: u8 = 5;
+const SECTION_REC_MIN_VERSION: u8 = 6;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
@@ -58,7 +69,8 @@ const FLAG_HAS_MOBS: u8 = 0x20;
 const FLAG_HAS_MODEL_CELLS: u8 = 0x40;
 const FLAG_HAS_MODEL_FACINGS: u8 = 0x80;
 /// Second flags byte (chunk-record v3+). `0` for a v2 record (no such byte).
-const FLAG2_HAS_SAPLINGS: u8 = 0x01;
+/// Bit 0x01 is RESERVED: it carried the retired v5 sapling-stage map (stages
+/// are block rows since v6).
 const FLAG2_HAS_DOORS: u8 = 0x02;
 const FLAG2_HAS_STAIRS: u8 = 0x04;
 const FLAG2_HAS_CELL_KV: u8 = 0x08;
@@ -106,10 +118,6 @@ pub struct SectionSnapshot {
     /// Per-cell facing for oriented bbmodel blocks, keyed like `model_cells`. Empty for
     /// old/non-directional model placements. See `Section::model_facings`.
     pub model_facings: HashMap<u16, Facing>,
-    /// Sapling growth stages (`0..=2`) in this section, keyed by section-local index,
-    /// so a half-grown sapling reloads at the stage it reached. Empty for the common
-    /// section. See `Section::sapling_stages`.
-    pub sapling_stages: HashMap<u16, u8>,
     /// Door state (facing + open + which-half), keyed by section-local index, so a
     /// placed door reloads on the same edge and in the same open/closed pose. Empty for
     /// the common section. See `Section::doors` / [`crate::door`].
@@ -159,7 +167,6 @@ impl SectionSnapshot {
             torches: s.torches().clone(),
             model_cells: s.model_cells().clone(),
             model_facings: s.model_facings().clone(),
-            sapling_stages: s.sapling_stages().clone(),
             doors: s.doors().clone(),
             stair_states: s.stair_states().clone(),
             slab_states: s.slab_states().clone(),
@@ -205,9 +212,6 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
         flags |= FLAG_HAS_MODEL_FACINGS;
     }
     let mut flags2 = 0u8;
-    if !s.sapling_stages.is_empty() {
-        flags2 |= FLAG2_HAS_SAPLINGS;
-    }
     if !s.doors.is_empty() {
         flags2 |= FLAG2_HAS_DOORS;
     }
@@ -271,12 +275,6 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.model_facings.is_empty() {
         put_indexed(&mut payload, &s.model_facings, 1, |buf, facing| {
             put_u8(buf, facing.to_u8());
-        });
-    }
-    if !s.sapling_stages.is_empty() {
-        // Each record is the cell's 1-byte growth stage (idx written by put_indexed).
-        put_indexed(&mut payload, &s.sapling_stages, 1, |buf, stage| {
-            put_u8(buf, *stage);
         });
     }
     if !s.doors.is_empty() {
@@ -358,11 +356,18 @@ pub fn decode_section(
     } else {
         HashMap::new()
     };
-    let entity_facings = if flags & FLAG_HAS_ENTITY_FACINGS != 0 {
+    let mut entity_facings = if flags & FLAG_HAS_ENTITY_FACINGS != 0 {
         get_indexed(&mut r, |r| Some(Facing::from_u8(r.u8()?)))?
     } else {
         HashMap::new()
     };
+    // Entity facings belong to directional-view block entities (chest/furnace
+    // fronts) only. Drop anything else: any surviving entry marks the section
+    // a block-entity section, and records written while ladders still stored
+    // their mount here would re-enter the furnace/chest fan-out for a cell
+    // whose facing now lives on its block row.
+    entity_facings
+        .retain(|&idx, _| crate::block::Block::from_id(blocks[idx as usize]).directional_view());
     let torches = if flags & FLAG_HAS_TORCHES != 0 {
         super::torch::get_torches(&mut r)?
     } else {
@@ -380,11 +385,6 @@ pub fn decode_section(
     };
     let model_facings = if flags & FLAG_HAS_MODEL_FACINGS != 0 {
         get_indexed(&mut r, |r| Some(Facing::from_u8(r.u8()?)))?
-    } else {
-        HashMap::new()
-    };
-    let sapling_stages = if flags2 & FLAG2_HAS_SAPLINGS != 0 {
-        get_indexed(&mut r, |r| r.u8())?
     } else {
         HashMap::new()
     };
@@ -445,7 +445,6 @@ pub fn decode_section(
         torches,
         model_cells,
         model_facings,
-        sapling_stages,
         doors,
         stair_states,
         slab_states,

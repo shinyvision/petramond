@@ -109,7 +109,7 @@ pub(crate) struct SectionPayload {
     pub skylight: Option<SectionBytes>,
     pub blocklight: Option<SectionBytes>,
     /// Sparse per-cell block states (doors, stairs, slabs, log axes, torches,
-    /// saplings, model cells, facings, lit furnaces, cell KV).
+    /// model cells, facings, cell KV).
     pub states: SectionStatesPayload,
 }
 
@@ -163,17 +163,12 @@ pub(crate) struct SectionStatesPayload {
     pub log_axes: Vec<(u16, u8)>,
     /// (cell, `TorchPlacement::to_u8` byte)
     pub torches: Vec<(u16, u8)>,
-    /// (cell, sapling growth stage)
-    pub saplings: Vec<(u16, u8)>,
     /// (cell, `Facing::to_u8` byte) — chest/furnace block-entity fronts.
     pub entity_facings: Vec<(u16, u8)>,
     /// (cell, `Facing::to_u8` byte) — oriented bbmodel blocks.
     pub model_facings: Vec<(u16, u8)>,
     /// (cell, authored footprint offset) for multi-cell model blocks.
     pub model_cells: Vec<(u16, [u8; 3])>,
-    /// Cells whose furnace is LIT. Machine state (burn/cook counters) is sim
-    /// state and stays server-side; the replica only needs the lit face.
-    pub furnaces_lit: Vec<u16>,
     /// Per-cell mod KV, preserved opaquely (entries sorted by key — the map
     /// is a `BTreeMap` section-side).
     pub cell_kv: Vec<CellKvEntry>,

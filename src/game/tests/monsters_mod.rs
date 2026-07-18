@@ -674,7 +674,8 @@ fn hushjaw_spawn_rules_inner() {
     assert!(game
         .server
         .world
-        .spawn_mob(hushjaw, Vec3::new(12.5, -40.0, 8.5), 0.0));
+        .spawn_mob(hushjaw, Vec3::new(12.5, -40.0, 8.5), 0.0)
+        .is_some());
     for _ in 0..100 {
         assert_eq!(
             ask(&mut game.server, &candidate(-40, 100.0), &mut ev),

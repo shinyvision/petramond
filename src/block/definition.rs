@@ -1,4 +1,5 @@
 use crate::atlas::Tile;
+use crate::facing::Facing;
 use crate::item::DropSpec;
 
 use super::behavior::BlockBehavior;
@@ -35,6 +36,19 @@ pub(super) struct BlockDef {
     pub particle_emitter: Option<&'static [ParticleEmitter]>,
     /// Per-face tile: [top, bottom, side].
     pub tiles: [Tile; 3],
+    /// Tile drawn on the ONE horizontal face the block's placed entity facing
+    /// points to (the furnace/chest front); the other sides keep `tiles[2]`.
+    /// Row-listed only with the `directional_view` flag (load-enforced) —
+    /// without a stored facing there is no front to orient.
+    pub front: Option<Tile>,
+    /// Side compositing: side faces draw `base` with `overlay` on top, the
+    /// overlay tinted by its atlas tint class (grass: dirt base + biome-tinted
+    /// `grass_side_overlay`). `None` for the ordinary single side tile.
+    pub side_overlay: Option<SideOverlay>,
+    /// Side tile swapped in (replacing base, overlay, AND tint) while the cell
+    /// directly above carries a `snow_cover` block — the snowy-grass side.
+    /// Derived at mesh time from the neighbour above, never stored per cell.
+    pub covered_side: Option<Tile>,
     /// Mining material class (drives tool requirement + future tool tiers).
     pub material: BlockMaterial,
     /// Minimum pickaxe tier to HARVEST this block (`0` = hand, `1` = wooden,
@@ -45,6 +59,38 @@ pub(super) struct BlockDef {
     pub hardness: f32,
     /// What this block yields when harvested. `DropSpec::NONE` = no drop.
     pub drop: DropSpec,
+    /// The block this row advances to when its growth stage completes — the
+    /// stage-row chain of the `sapling` behaviour (`oak_sapling` →
+    /// `oak_sapling_1` → `oak_sapling_2`). `None` on every non-sapling row
+    /// and on a FINAL sapling stage, which carries [`grows_into`](Self::grows_into)
+    /// instead. The loader enforces that split (see `load::convert`).
+    pub next_stage: Option<Block>,
+    /// The worldgen feature(s) a FINAL sapling stage grows into: weighted
+    /// `(features.json key, weight)` choices, drawn by the sapling behaviour's
+    /// growth roll (`world::sapling`). Empty on every other row. Keys are
+    /// validated against the feature registry at load — an unknown feature is
+    /// a load error, never a silent fallback tree.
+    pub grows_into: &'static [(&'static str, f32)],
+    /// A ladder-shaped row's fixed wall facing: the direction the panel FRONT
+    /// points, away from the wall it hangs on. Facing is block IDENTITY (one
+    /// row per facing, the sapling-stage pattern), so it rides the ordinary
+    /// block-id save/replication lanes and never touches the entity-facing
+    /// map. `Some` exactly on `shape == ladder` rows (load-enforced).
+    pub panel_facing: Option<Facing>,
+    /// Facing → sibling-row map ([`Facing`] discriminant order: N, S, W, E)
+    /// for the PLACEABLE (item-linked) row of a wall-panel family: placement
+    /// commits the sibling whose `panel_facing` matches the clicked face's
+    /// normal. `None` on the non-placeable facing variants. Cross-validated
+    /// at load (see `load::validate_facing_rows`).
+    pub facing_rows: Option<&'static [Block; 4]>,
+}
+
+/// A row's composited side face: `base` drawn untinted with `overlay` blended
+/// on top (the overlay takes the vertex tint — see the mesher's overlay lane).
+#[derive(Copy, Clone)]
+pub(crate) struct SideOverlay {
+    pub base: Tile,
+    pub overlay: Tile,
 }
 
 /// Where a block-row particle emitter starts from inside the occupied cell.

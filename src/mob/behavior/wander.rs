@@ -321,34 +321,13 @@ mod tests {
         mob_index: usize,
         pos: Vec3,
     ) -> AiCtx<'a> {
-        AiCtx {
-            mob_id: 1,
-            pos,
-            cell: IVec3::new(
-                pos.x.floor() as i32,
-                pos.y.floor() as i32,
-                pos.z.floor() as i32,
-            ),
-            yaw: 0.0,
-            head_height: 1.0,
-            half_width: 0.45,
-            world,
-            player_id: Default::default(),
-            player_pos: Vec3::ZERO,
-            player_sneaking: false,
-            players: &[],
-            noises: &[],
-            contacts: &[],
-            target: None,
-            attacker: None,
-            nav_idle: true,
-            in_water: false,
-            head: 2,
-            idle_anims: &[],
-            mob_index,
-            mobs,
-            rng,
-        }
+        let mut c = crate::mob::behavior::test_support::ctx_at(world, rng, pos);
+        c.head_height = 1.0;
+        c.half_width = 0.45;
+        c.head = 2;
+        c.mob_index = mob_index;
+        c.mobs = mobs;
+        c
     }
 
     fn flat_grass_world(extra: impl FnOnce(&mut Chunk)) -> World {

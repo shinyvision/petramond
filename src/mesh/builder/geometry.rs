@@ -49,7 +49,6 @@ pub(super) fn section_geometry(
 
     let (ox, oy, oz) = pos.origin_world();
     let tint_tile = |kind, ci| tints.map_or(tint::NO_TINT, |t| t.tile(kind, ci));
-    let tint_grass = |ci| tints.map_or(tint::NO_TINT, |t| t.grass[ci]);
     let tint_water = |ci| tints.map_or(tint::NO_TINT, |t| t.water[ci]);
 
     // Every block read is by world coord through the routing closure (in-section
@@ -182,7 +181,9 @@ pub(super) fn section_geometry(
                     let l = neighbour_light(wx, wy, wz) as u32;
                     let bl = neighbour_blocklight(wx, wy, wz) as u32;
                     let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
-                    let facing = section.entity_facing(lx, ly, lz);
+                    // The facing is the ROW's (one block row per facing) —
+                    // the mesher reads row fields, never per-cell maps.
+                    let facing = block.panel_facing();
                     super::ladder::emit_ladder_block(
                         &mut opaque,
                         &mut opaque_idx,
@@ -334,25 +335,41 @@ pub(super) fn section_geometry(
 
                 let is_water = block == Block::Water;
                 let block_tiles = block.tiles();
-                // Grass sides swap to the untinted snowy texture while a
-                // snow-cover block (snow layer / snow block) sits directly on
-                // top — derived from the neighbour above at mesh time, so it
-                // heals itself the moment the cover is placed or dug.
-                let grass_snow_covered =
-                    block == Block::Grass && block_at(wx, wy + 1, wz).is_snow_cover();
+                // Row-declared side treatments, resolved once per cell — the
+                // mesher reads row fields, never concrete block ids. A
+                // `covered_side` row (grass) swaps its sides to that tile while
+                // a snow-cover block sits directly on top — derived from the
+                // neighbour above at mesh time, so it heals itself the moment
+                // the cover is placed or dug. Otherwise a `side_overlay` row
+                // composites its base under the biome-tinted overlay (dirt +
+                // grass overlay). `None` = the plain side tile.
+                let side_style: Option<(Tile, Option<Tile>, [f32; 3])> = {
+                    let covered = block
+                        .covered_side()
+                        .filter(|_| block_at(wx, wy + 1, wz).is_snow_cover());
+                    match covered {
+                        Some(t) => Some((t, None, tint_tile(t.world_tint(), ci))),
+                        None => block.side_overlay().map(|so| {
+                            (
+                                so.base,
+                                Some(so.overlay),
+                                tint_tile(so.overlay.world_tint(), ci),
+                            )
+                        }),
+                    }
+                };
                 let log_axis = if block.is_log() {
                     section.log_axis(lx, ly, lz)
                 } else {
                     LogAxis::Y
                 };
-                let furnace_faces = (block == Block::Furnace).then(|| {
-                    let front = if section.is_furnace_lit(lx, ly, lz) {
-                        crate::atlas::engine().furnace_front_on
-                    } else {
-                        crate::atlas::engine().furnace_front
-                    };
-                    (facing_face(section.entity_facing(lx, ly, lz)), front)
-                });
+                // A directional-front row (furnace, lit furnace) draws its
+                // `front` tile on the face its stored entity facing points to;
+                // the other sides keep the plain side tile. The lit furnace is
+                // its own block row, so "lit" is just this row read.
+                let front_faces = block
+                    .front_tile()
+                    .map(|front| (facing_face(section.entity_facing(lx, ly, lz)), front));
                 let base_x = wx as f32;
                 let base_z = wz as f32;
                 let base_y = wy as f32;
@@ -371,25 +388,20 @@ pub(super) fn section_geometry(
                             }
                             let is_side =
                                 matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
-                            let (base_tile, overlay_tile, tint) =
-                                if block == Block::Grass && is_side {
-                                    let e = crate::atlas::engine();
-                                    if grass_snow_covered {
-                                        (e.grass_snow, None, tint_tile(e.grass_snow.world_tint(), ci))
-                                    } else {
-                                        (e.dirt, Some(e.grass_side_overlay), tint_grass(ci))
-                                    }
-                                } else {
+                            let (base_tile, overlay_tile, tint) = match side_style {
+                                Some(style) if is_side => style,
+                                _ => {
                                     let t = cube_face_tile(
                                         block,
                                         face,
                                         block_tiles,
-                                        furnace_faces,
+                                        front_faces,
                                         log_axis,
                                     );
                                     let tint = tint_tile(t.world_tint(), ci);
                                     (t, None, tint)
-                                };
+                                }
+                            };
                             let corners = quad_for(face, base_x, base_y, base_z);
                             let (dx, dy, dz) = face.dir();
                             let (fxp, fyp, fzp) = (
@@ -543,15 +555,10 @@ pub(super) fn section_geometry(
                             _ => crate::atlas::engine().water_flow,
                         };
                         (t, None, tint_water(ci))
-                    } else if block == Block::Grass && is_side {
-                        let e = crate::atlas::engine();
-                        if grass_snow_covered {
-                            (e.grass_snow, None, tint_tile(e.grass_snow.world_tint(), ci))
-                        } else {
-                            (e.dirt, Some(e.grass_side_overlay), tint_grass(ci))
-                        }
+                    } else if let (true, Some(style)) = (is_side, side_style) {
+                        style
                     } else {
-                        let t = cube_face_tile(block, face, block_tiles, furnace_faces, log_axis);
+                        let t = cube_face_tile(block, face, block_tiles, front_faces, log_axis);
                         let tint = tint_tile(t.world_tint(), ci);
                         (t, None, tint)
                     };
