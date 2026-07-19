@@ -44,7 +44,6 @@ use mod_sdk::*;
 
 use content::Content;
 use crops::Growth;
-use follow::Follow;
 
 /// First-Cancel-wins handler composition: run `next` only while the event is
 /// still live. Every multi-link dispatch below chains through this.
@@ -62,7 +61,6 @@ const ON_BLOCK_PLACED: u32 = 3;
 const ON_BLOCK_INTERACT: u32 = 4;
 const ON_PLAYER_DAMAGE_PRE: u32 = 5;
 const ON_BLOCK_BROKEN: u32 = 6;
-const ON_MOB_DIED: u32 = 7;
 
 // Block-behavior callback ids.
 const HOOK_CROP: u32 = 1;
@@ -84,8 +82,6 @@ struct Farming {
     /// Armed growth attempts (crop cell → due tick). Session-scoped by
     /// design: lost scheduling re-arms from random ticks (see [`crops`]).
     growth: Growth,
-    /// Per-sheep wheat-lure state (see [`follow`]).
-    follow: Follow,
 }
 
 impl Mod for Farming {
@@ -102,7 +98,6 @@ impl Mod for Farming {
         register_event_handler(EventKind::BlockInteract, 0, ON_BLOCK_INTERACT);
         register_event_handler(EventKind::PlayerDamagePre, 0, ON_PLAYER_DAMAGE_PRE);
         register_event_handler(EventKind::BlockBroken, 0, ON_BLOCK_BROKEN);
-        register_event_handler(EventKind::MobDied, 0, ON_MOB_DIED);
         register_block_behavior("farming:crop", HOOK_CROP);
         register_block_behavior("farming:farmland", HOOK_FARMLAND);
         register_block_behavior("farming:grass_fertilized", HOOK_SPREAD);
@@ -154,12 +149,6 @@ impl Mod for Farming {
                 forage::on_block_broken(content, *pos, *block, *harvested, *natural);
                 Outcome::Continue
             }
-            (ON_MOB_DIED, EventPayload::MobDied { id, .. }) => {
-                // Release the dead mob's lure state by its stable id (any
-                // non-sheep id is simply absent from the map).
-                follow::release(&mut self.follow, *id);
-                Outcome::Continue
-            }
             _ => Outcome::Continue,
         }
     }
@@ -179,7 +168,7 @@ impl Mod for Farming {
     fn ai_node(&mut self, callback_id: u32, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
         let content = self.content.as_ref()?;
         match callback_id {
-            AI_FOLLOW_WHEAT => follow::decide(content, &mut self.follow, ctx),
+            AI_FOLLOW_WHEAT => follow::decide(content, ctx),
             _ => None,
         }
     }

@@ -16,16 +16,14 @@
 
 use crate::mathh::Vec3;
 use crate::mob::{Mob, MobTagValue, SavedMob};
-use crate::save::codec::{
-    get_kv_map, put_f32, put_f64, put_i64, put_kv_map, put_u16, put_u32, put_u8, Reader,
-};
+use crate::save::codec::{put_f32, put_f64, put_i64, put_u16, put_u8, Reader};
 
-/// Fixed bytes per serialized mob: kind(1) + pos(12) + yaw(4) + shear_regrow(4);
-/// the variable-length tag map and mod KV map follow. Tag KEYS repeat across
+/// Fixed bytes per serialized mob: kind(1) + pos(12) + yaw(4);
+/// the variable-length tag map follows. Tag KEYS repeat across
 /// mobs (every penned mob carries `petramond:confined`), so one per-list
 /// string table holds each distinct key once and every tag stores a u16 index
 /// into it instead of the full string.
-const MOB_FIXED_BYTES: usize = 21;
+const MOB_FIXED_BYTES: usize = 17;
 
 /// Tag type discriminators for the mob tag map wire encoding.
 const TAG_BOOL: u8 = 0;
@@ -40,8 +38,8 @@ const TAG_STRING: u8 = 3;
 /// species' disk id would corrupt the record.
 ///
 /// Layout: count, then (when non-empty) the sorted distinct tag-key string
-/// table, then per mob the fixed fields, the tag map as (u16 table index,
-/// typed value) pairs, and the mod KV map.
+/// table, then per mob the fixed fields and the tag map as (u16 table index,
+/// typed value) pairs.
 pub fn put_mobs(buf: &mut Vec<u8>, mobs: &[SavedMob]) {
     let pal = super::palette::active();
     let capped = &mobs[..mobs.len().min(u16::MAX as usize)];
@@ -96,9 +94,7 @@ pub fn put_mobs(buf: &mut Vec<u8>, mobs: &[SavedMob]) {
         put_f32(buf, m.pos.y);
         put_f32(buf, m.pos.z);
         put_f32(buf, m.yaw);
-        put_u32(buf, m.shear_regrow);
         put_mob_tags(buf, &m.tags, &index_of);
-        put_kv_map(buf, &m.kv);
     }
 }
 
@@ -188,9 +184,7 @@ pub fn get_mobs(r: &mut Reader) -> Option<Vec<SavedMob>> {
         let disk = r.u8()?;
         let pos = Vec3::new(r.f32()?, r.f32()?, r.f32()?);
         let yaw = r.f32()?;
-        let shear_regrow = r.u32()?;
         let tags = get_mob_tags(r, &table)?;
-        let kv = get_kv_map(r)?;
         // Resolve the species AFTER consuming the record bytes, so a skip can't
         // desync the reader.
         let kind = pal
@@ -207,9 +201,7 @@ pub fn get_mobs(r: &mut Reader) -> Option<Vec<SavedMob>> {
             kind: Mob(id),
             pos,
             yaw,
-            shear_regrow,
             tags,
-            kv,
         });
     }
     Some(out)
@@ -227,22 +219,23 @@ mod tests {
             kind: Mob::Owl,
             pos: Vec3::new(1.0, 64.0, 2.0),
             yaw: 1.5,
-            shear_regrow: 0,
             tags: BTreeMap::new(),
-            kv: BTreeMap::new(),
         };
         let b = SavedMob {
             kind: Mob::Sheep,
             pos: Vec3::new(-3.0, 70.0, 8.0),
             yaw: -0.25,
-            shear_regrow: 4321,
             tags: BTreeMap::from([
                 (crate::mob::tags::CONFINED.to_owned(), MobTagValue::Bool(true)),
+                (
+                    crate::mob::tags::SHEAR_REGROW.to_owned(),
+                    MobTagValue::Int(4321),
+                ),
+                (
+                    crate::mob::tags::HEALTH.to_owned(),
+                    MobTagValue::Float(3.5),
+                ),
                 ("farm:quality".to_owned(), MobTagValue::Int(7)),
-            ]),
-            kv: BTreeMap::from([
-                ("zombies:target".to_owned(), vec![1, 2, 3]),
-                ("othermod:tag".to_owned(), Vec::new()),
             ]),
         };
         let mut buf = Vec::new();
@@ -255,7 +248,7 @@ mod tests {
             got[0], a,
             "species, position and facing survive the round-trip"
         );
-        assert_eq!(got[1], b, "the shear-regrow counter and mod KV survive too");
+        assert_eq!(got[1], b, "the tag map (shear, health, mod keys) survives too");
     }
 
     #[test]
@@ -263,23 +256,25 @@ mod tests {
         // Hand-write three records where the middle one carries a species id no
         // registry entry backs (the identity palette maps it through unchanged).
         // The reader must skip exactly that mob and keep the other two intact —
-        // INCLUDING consuming the stranger's variable-length KV map.
+        // INCLUDING consuming the stranger's variable-length tag map.
         let known = crate::mob::defs().len() as u8;
         let mut buf = Vec::new();
         put_u16(&mut buf, 3);
-        put_u16(&mut buf, 0); // empty tag-key string table
+        // One-key string table so the stranger can carry a variable-length tag.
+        put_u16(&mut buf, 1);
+        let key = "strange:mod";
+        put_u16(&mut buf, key.len() as u16);
+        buf.extend_from_slice(key.as_bytes());
         for (kind, x) in [(Mob::Owl.id(), 1.0f32), (200, 2.0), (Mob::Sheep.id(), 3.0)] {
             assert!(kind == 200 || kind < known);
             put_u8(&mut buf, kind);
             for v in [x, 64.0, 2.0, 0.5] {
                 put_f32(&mut buf, v);
             }
-            put_u32(&mut buf, 7);
-            put_u16(&mut buf, 0); // empty tag map
-            put_kv_map(
-                &mut buf,
-                &BTreeMap::from([("strange:mod".to_owned(), vec![9, 9])]),
-            );
+            put_u16(&mut buf, 1); // one tag...
+            put_u16(&mut buf, 0); // ...keying the shared table
+            put_u8(&mut buf, TAG_INT);
+            put_i64(&mut buf, 9);
         }
         let mut r = Reader::new(&buf);
         let got = get_mobs(&mut r).expect("decodes despite the stranger");
@@ -310,9 +305,7 @@ mod tests {
             kind: Mob::Sheep,
             pos: Vec3::new(x, 64.0, 2.0),
             yaw: 0.0,
-            shear_regrow: 0,
             tags: BTreeMap::from([(key.to_owned(), MobTagValue::Bool(true))]),
-            kv: BTreeMap::new(),
         };
         let mut buf = Vec::new();
         put_mobs(&mut buf, &[penned(1.0), penned(2.0)]);
@@ -344,12 +337,10 @@ mod tests {
         for v in [1.0f32, 64.0, 2.0, 0.5] {
             put_f32(&mut buf, v);
         }
-        put_u32(&mut buf, 0); // shear_regrow
         put_u16(&mut buf, 1); // one tag...
         put_u16(&mut buf, 0); // ...keying an EMPTY table
         put_u8(&mut buf, TAG_BOOL);
         put_u8(&mut buf, 1);
-        put_kv_map(&mut buf, &BTreeMap::new());
         let mut r = Reader::new(&buf);
         assert!(get_mobs(&mut r).is_none());
     }

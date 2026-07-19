@@ -43,8 +43,8 @@ use super::brain::AiBehavior;
 use super::{
     behavior, BrainNode, Buoyancy, Habitat, Mob, MobCategory, MobCollision, MobDamageFeedback,
     MobDamageFeedbackComponent, MobDamageSound, MobDef, MobSize, MobSoundCategory, MobSoundSpec,
-    ShearSpec, SpawnGroup, SpawnRule, WanderCohesion, WanderTuning, DEFAULT_DAMAGE_FLASH_SECS,
-    DEFAULT_DAMAGE_KNOCKBACK_SECS, ENGINE_MOB_NAMES,
+    MobTagValue, ShearSpec, SpawnGroup, SpawnRule, WanderCohesion, WanderTuning,
+    DEFAULT_DAMAGE_FLASH_SECS, DEFAULT_DAMAGE_KNOCKBACK_SECS, ENGINE_MOB_NAMES,
 };
 
 /// Constructs one AI node from its row key + brain-row params + declared
@@ -145,7 +145,10 @@ struct RawMobDef {
     model: String,
     scale: f64,
     size: MobSize,
-    max_health: f64,
+    /// Spawn tags: the mob tag map every individual of this species is born
+    /// with (JSON bool/int/float/string → the typed [`MobTagValue`]). Must
+    /// carry a positive numeric `petramond:health` — health IS a tag.
+    tags: serde_json::Map<String, serde_json::Value>,
     walk_speed: f64,
     jump_speed: f64,
     turn_rate: f64,
@@ -444,7 +447,7 @@ fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> 
         model: Box::leak(r.model.into_boxed_str()),
         scale: r.scale as f32,
         size: r.size,
-        max_health: r.max_health as f32,
+        tags: convert_spawn_tags(r.tags)?,
         walk_speed: r.walk_speed as f32,
         jump_speed: r.jump_speed as f32,
         turn_rate: r.turn_rate as f32,
@@ -536,6 +539,64 @@ fn convert_damage_feedback(rows: Vec<RawMobDamageFeedback>) -> Result<MobDamageF
         });
     }
     Ok(MobDamageFeedback { components })
+}
+
+/// Convert a row's spawn-tag map to the typed runtime map: JSON bool → `Bool`,
+/// integer → `Int`, other number → `Float`, string → `String` (arrays/objects
+/// are rejected — a tag is one value). `petramond:health` is required,
+/// positive, and normalized to `Float` however the row wrote it, so the
+/// damage pipeline reads one type.
+fn convert_spawn_tags(
+    raw: serde_json::Map<String, serde_json::Value>,
+) -> Result<&'static std::collections::BTreeMap<String, MobTagValue>, String> {
+    if raw.len() > super::MAX_MOB_TAGS {
+        return Err(format!(
+            "at most {} spawn tags per species, got {}",
+            super::MAX_MOB_TAGS,
+            raw.len()
+        ));
+    }
+    let mut tags = std::collections::BTreeMap::new();
+    for (key, value) in raw {
+        let tag = match value {
+            serde_json::Value::Bool(b) => MobTagValue::Bool(b),
+            serde_json::Value::Number(n) => match n.as_i64() {
+                Some(i) => MobTagValue::Int(i),
+                None => MobTagValue::Float(
+                    n.as_f64()
+                        .ok_or_else(|| format!("spawn tag '{key}': unrepresentable number"))?,
+                ),
+            },
+            serde_json::Value::String(s) => MobTagValue::String(s),
+            other => {
+                return Err(format!(
+                    "spawn tag '{key}' must be a bool, number, or string, got {other}"
+                ));
+            }
+        };
+        tags.insert(key, tag);
+    }
+    let health = match tags.get(super::tags::HEALTH) {
+        Some(MobTagValue::Int(i)) => *i as f64,
+        Some(MobTagValue::Float(f)) => *f,
+        _ => {
+            return Err(format!(
+                "spawn tags must carry a numeric '{}' — health is a tag",
+                super::tags::HEALTH
+            ));
+        }
+    };
+    if !health.is_finite() || health <= 0.0 {
+        return Err(format!(
+            "spawn tag '{}' must be positive and finite, got {health}",
+            super::tags::HEALTH
+        ));
+    }
+    tags.insert(
+        super::tags::HEALTH.to_owned(),
+        MobTagValue::Float(health),
+    );
+    Ok(Box::leak(Box::new(tags)))
 }
 
 fn resolve_biomes(names: Vec<String>) -> Result<&'static [Biome], String> {

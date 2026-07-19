@@ -11,22 +11,12 @@ use crate::mob::MobTagValue;
 use super::entities::mob_snapshot;
 use super::guards::{kv_write_guard, live_mob, sim_query};
 
-pub(super) fn from_api(v: ApiMobTagValue) -> MobTagValue {
-    match v {
-        ApiMobTagValue::Bool(b) => MobTagValue::Bool(b),
-        ApiMobTagValue::I64(i) => MobTagValue::Int(i),
-        ApiMobTagValue::F64(f) => MobTagValue::Float(f),
-        ApiMobTagValue::Str(s) => MobTagValue::String(s),
-    }
+fn from_api(v: ApiMobTagValue) -> MobTagValue {
+    MobTagValue::from(v)
 }
 
 fn to_api(v: &MobTagValue) -> ApiMobTagValue {
-    match v {
-        MobTagValue::Bool(b) => ApiMobTagValue::Bool(*b),
-        MobTagValue::Int(i) => ApiMobTagValue::I64(*i),
-        MobTagValue::Float(f) => ApiMobTagValue::F64(*f),
-        MobTagValue::String(s) => ApiMobTagValue::Str(s.clone()),
-    }
+    ApiMobTagValue::from(v)
 }
 
 pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {

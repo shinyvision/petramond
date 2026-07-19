@@ -10,7 +10,9 @@
         "height": 0.76,
         "half_length": 1.35
       },
-      "max_health": 4.0,
+      "tags": {
+        "petramond:health": 4.0
+      },
       "walk_speed": 0.0,
       "jump_speed": 0.0,
       "turn_rate": 0.0,

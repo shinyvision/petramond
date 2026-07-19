@@ -34,8 +34,17 @@ pub(crate) fn ctx<'a>(world: &'a World, rng: &'a mut MobRng) -> AiCtx<'a> {
         idle_anims: &[],
         mob_index: 0,
         mobs: &[],
+        tags: empty_tags(),
         rng,
     }
+}
+
+/// The shared empty tag map for neutral contexts (a `&'static` so the ctx
+/// builder needs no owner).
+pub(crate) fn empty_tags() -> &'static std::collections::BTreeMap<String, crate::mob::MobTagValue> {
+    static EMPTY: std::sync::LazyLock<std::collections::BTreeMap<String, crate::mob::MobTagValue>> =
+        std::sync::LazyLock::new(std::collections::BTreeMap::new);
+    &EMPTY
 }
 
 /// [`ctx`] positioned at `pos` (cell derived from the feet).

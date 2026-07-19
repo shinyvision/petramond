@@ -300,24 +300,6 @@ pub enum HostCall {
         pos: [i32; 3],
         key: String,
     },
-    /// Per-mob KV riding the live mob `mob_id`'s save record. `Bytes(None)`
-    /// when the key is absent OR there is no such live mob.
-    /// → [`HostRet::Bytes`].
-    MobKvGet {
-        mob_id: u64,
-        key: String,
-    },
-    /// `false` = no such live mob. → [`HostRet::Bool`].
-    MobKvSet {
-        mob_id: u64,
-        key: String,
-        value: Vec<u8>,
-    },
-    /// → [`HostRet::Bool`] (whether the key was present).
-    MobKvDelete {
-        mob_id: u64,
-        key: String,
-    },
     /// Per-mob tag map: typed key/value pairs attached to a live mob instance.
     /// → [`HostRet::MobTag`] carrying a [`MobTagLookup`]:
     /// [`MissingMob`](MobTagLookup::MissingMob) for a dead/absent mob,

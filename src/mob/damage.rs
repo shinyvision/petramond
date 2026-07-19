@@ -67,13 +67,14 @@ impl Instance {
             .iter()
             .any(|c| matches!(c, MobDamageFeedbackComponent::DecreaseHealth));
         let lethal = if decreases_health && amount > 0.0 {
-            self.health -= amount;
+            let health = self.health() - amount;
+            self.set_health(health);
             for component in &feedback.components {
                 if let MobDamageFeedbackComponent::Immunity { ticks } = component {
                     self.damage_immunity.grant_for(*ticks);
                 }
             }
-            self.health <= 0.0
+            health <= 0.0
         } else {
             false
         };
@@ -84,7 +85,7 @@ impl Instance {
             }
         }
         if lethal {
-            self.health = 0.0;
+            self.set_health(0.0);
         }
 
         for component in &feedback.components {
@@ -148,10 +149,25 @@ impl Instance {
         self.death.is_dead()
     }
 
-    /// Current health (`0` = dead), for mod `MobsInRadius` snapshots.
+    /// Current health (`0` = dead) — the `petramond:health` tag, seeded at
+    /// spawn from the species row and persisted with the mob. A missing or
+    /// mistyped tag (a mod deleted/rewrote it) reads as the species' spawn
+    /// health, never as dead.
     #[inline]
     pub fn health(&self) -> f32 {
-        self.health
+        self.tags()
+            .get(super::tags::HEALTH)
+            .and_then(super::MobTagValue::as_float)
+            .map_or_else(|| super::def(self.kind).spawn_health(), |h| h as f32)
+    }
+
+    /// Write the health tag (see [`health`](Self::health)).
+    #[inline]
+    pub(super) fn set_health(&mut self, health: f32) {
+        self.tags_mut().insert(
+            super::tags::HEALTH.to_owned(),
+            super::MobTagValue::Float(health.max(0.0) as f64),
+        );
     }
 
     #[inline]

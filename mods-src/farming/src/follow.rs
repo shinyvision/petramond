@@ -4,8 +4,11 @@
 //! sheep through this pack's `mobs.json` `brain_extensions` row — the engine
 //! knows nothing about wheat. The row DECLARES the facts this node reads
 //! (`"inputs": ["player_held", "player_foothold"]`); undeclared facts never
-//! reach `ctx`. Dispatch is detached and decision-only, so all per-mob state
-//! lives here, keyed by the stable mob id; time is `ctx.tick`.
+//! reach `ctx`. Dispatch is detached and decision-only, so per-sheep state
+//! rides the sheep's own TAG MAP: reads come in as `ctx.tags`, writes ride
+//! `AiNodeDecision::tags` and are applied by the engine after the dispatch.
+//! The state therefore persists, travels, and dies with the sheep — no
+//! guest-side map, no `mob_died` release, no prune backstop.
 //!
 //! RULES: a sheep follows while the nearest player holds wheat within
 //! [`FOLLOW_RADIUS`], but STOPS once inside [`STOP_RADIUS`] — it stands at
@@ -16,8 +19,6 @@
 //! refusal. The goal emitted is the engine-computed foothold near the
 //! player (the same cell `chase_player` targets), so the path is reachable
 //! by construction.
-
-use std::collections::HashMap;
 
 use mod_sdk::*;
 
@@ -32,48 +33,71 @@ const STOP_RADIUS: f32 = 3.0;
 /// Re-follow refusal after a broken follow: 200 + (0..=100) ticks.
 const SULK_MIN: u64 = 200;
 const SULK_SPAN: u64 = 101;
-/// Backstop bound, not the release mechanism — `mob_died` releases entries;
-/// this catches sheep that left the world without dying (section unload).
-const PRUNE_LEN: usize = 1024;
 
-/// Per-sheep lure state, keyed by stable mob id. An entry exists ONLY while
-/// the sheep is actively following or sulking; the idle 99% of dispatches
-/// touch the map read-only and insert nothing.
-#[derive(Default)]
-pub struct Follow {
-    mobs: HashMap<u64, Sheep>,
+/// `Bool(true)` while the sheep is actively following the lure.
+const FOLLOWING: &str = "farming:following";
+/// `Int` absolute game tick the re-follow refusal holds until (`ctx.tick`
+/// based, so a sulk keeps its real duration even across skipped dispatches —
+/// and now across save/reload too, since tags persist).
+const SULK_UNTIL: &str = "farming:sulk_until";
+
+fn tag_bool(ctx: &AiNodeCtx, key: &str) -> bool {
+    ctx.tags
+        .iter()
+        .any(|(k, v)| k == key && *v == MobTagValue::Bool(true))
 }
 
-#[derive(Copy, Clone, Default)]
-struct Sheep {
-    following: bool,
-    /// Re-follow refusal holds until this game tick (`ctx.tick`-based, so a
-    /// sulk keeps its real duration even across skipped dispatches).
-    sulk_until: u64,
+fn tag_int(ctx: &AiNodeCtx, key: &str) -> Option<i64> {
+    ctx.tags.iter().find_map(|(k, v)| match v {
+        MobTagValue::I64(i) if k == key => Some(*i),
+        _ => None,
+    })
 }
 
-/// Release a dead sheep's entry (the `mob_died` handler's hook).
-pub fn release(state: &mut Follow, mob_id: u64) {
-    state.mobs.remove(&mob_id);
-}
-
-pub fn decide(content: &Content, state: &mut Follow, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
-    let now = ctx.tick;
-    if state.mobs.len() > PRUNE_LEN {
-        state.mobs.retain(|_, s| s.sulk_until > now);
+fn set(key: &str, value: MobTagValue) -> MobTagWrite {
+    MobTagWrite {
+        key: key.into(),
+        value: Some(value),
     }
-    let prior = state.mobs.get(&ctx.mob_id).copied();
-    if prior.is_some_and(|s| now < s.sulk_until) {
+}
+
+fn delete(key: &str) -> MobTagWrite {
+    MobTagWrite {
+        key: key.into(),
+        value: None,
+    }
+}
+
+/// A decision that only carries tag writes (no goal or other opinion) — or
+/// `None` when there is nothing to write either.
+fn tags_only(tags: Vec<MobTagWrite>) -> Option<AiNodeDecision> {
+    if tags.is_empty() {
         return None;
     }
-    let following = prior.is_some_and(|s| s.following);
+    Some(AiNodeDecision {
+        tags,
+        ..Default::default()
+    })
+}
+
+pub fn decide(content: &Content, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
+    let now = ctx.tick;
+    let sulk = tag_int(ctx, SULK_UNTIL);
+    if sulk.is_some_and(|until| now < until as u64) {
+        return None;
+    }
+    let following = tag_bool(ctx, FOLLOWING);
+    // Whatever happens next, an expired sulk tag is stale — retire it with
+    // the transition it accompanies.
+    let expired_sulk = sulk.map(|_| delete(SULK_UNTIL));
     if ctx.player_held != Some(content.wheat_item) {
         // Wheat lowered (or an expired sulk with no lure): the follow ends
-        // quietly and the entry retires.
-        if prior.is_some() {
-            state.mobs.remove(&ctx.mob_id);
+        // quietly and the state retires.
+        let mut tags: Vec<MobTagWrite> = expired_sulk.into_iter().collect();
+        if following {
+            tags.push(delete(FOLLOWING));
         }
-        return None;
+        return tags_only(tags);
     }
     let [dx, dy, dz] = [
         ctx.player_pos[0] - ctx.pos[0],
@@ -85,41 +109,38 @@ pub fn decide(content: &Content, state: &mut Follow, ctx: &AiNodeCtx) -> Option<
         if following {
             // The lure walked off: the follow breaks and the sheep refuses
             // to re-engage for a deterministic per-break roll.
-            state.mobs.insert(
-                ctx.mob_id,
-                Sheep {
-                    following: false,
-                    sulk_until: now + SULK_MIN + rng_u64("follow_sulk") % SULK_SPAN,
-                },
-            );
-        } else if prior.is_some() {
-            // Expired sulk, lure out of range: nothing left to remember.
-            state.mobs.remove(&ctx.mob_id);
+            let until = now + SULK_MIN + rng_u64("follow_sulk") % SULK_SPAN;
+            return tags_only(vec![
+                delete(FOLLOWING),
+                set(SULK_UNTIL, MobTagValue::I64(until as i64)),
+            ]);
         }
-        return None;
+        // Expired sulk, lure out of range: nothing left to remember.
+        return tags_only(expired_sulk.into_iter().collect());
     }
+    // Engagement is the only insert on the held-wheat path.
+    let mut tags: Vec<MobTagWrite> = expired_sulk.into_iter().collect();
     if !following {
-        // Engagement is the only insert on the held-wheat path.
-        state.mobs.insert(
-            ctx.mob_id,
-            Sheep {
-                following: true,
-                sulk_until: 0,
-            },
-        );
+        tags.push(set(FOLLOWING, MobTagValue::Bool(true)));
     }
     if dist2 <= STOP_RADIUS * STOP_RADIUS {
         // Close enough — stand attentively at the lure until it moves.
         return Some(AiNodeDecision {
             goal: Some(ctx.cell),
+            tags,
             ..Default::default()
         });
     }
     // No reachable foothold (airborne player) = no goal this tick; the
     // follow itself holds, like chase_player's airborne fall-through.
-    let goal = ctx.player_foothold?;
+    // The engagement tag still lands even goalless.
+    let goal = ctx.player_foothold;
+    if goal.is_none() && tags.is_empty() {
+        return None;
+    }
     Some(AiNodeDecision {
-        goal: Some(goal),
+        goal,
+        tags,
         ..Default::default()
     })
 }

@@ -1,11 +1,13 @@
-//! Per-mob tags: typed key/value pairs attached to a live mob instance.
+//! Per-mob tags: typed key/value pairs attached to a live mob instance — THE
+//! per-mob keyed store (there is no separate per-mob byte KV).
 //!
-//! Unlike [`mob_kv_get`](crate::mob_kv_get)'s opaque bytes, tags are TYPED
-//! ([`MobTagValue`]), persist with the mob's save record, and are visible to
-//! the engine's AI (a mod can steer herd behavior by tagging mobs). Keys are
-//! namespaced exactly like KV: writes need this mod's own prefix or an
-//! engine-exposed `petramond:*` key; reads may cross namespaces. A mob carries
-//! at most 32 tags; replacing an existing key never counts against the cap.
+//! Tags are TYPED ([`MobTagValue`]), persist with the mob's save record, and
+//! are visible to the engine's AI (a mod can steer herd behavior by tagging
+//! mobs). A species' `mobs.json` row seeds spawn tags (the engine's own
+//! `petramond:health` rides there). Keys are namespaced exactly like KV:
+//! writes need this mod's own prefix or an engine-exposed `petramond:*` key;
+//! reads may cross namespaces. A mob carries at most 32 tags; replacing an
+//! existing key never counts against the cap.
 
 use mod_api::{MobSnapshot, MobTagLookup, MobTagValue};
 

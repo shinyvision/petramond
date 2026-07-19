@@ -107,6 +107,28 @@ pub enum MobTagValue {
     String(String),
 }
 
+impl From<mod_api::MobTagValue> for MobTagValue {
+    fn from(v: mod_api::MobTagValue) -> Self {
+        match v {
+            mod_api::MobTagValue::Bool(b) => Self::Bool(b),
+            mod_api::MobTagValue::I64(i) => Self::Int(i),
+            mod_api::MobTagValue::F64(f) => Self::Float(f),
+            mod_api::MobTagValue::Str(s) => Self::String(s),
+        }
+    }
+}
+
+impl From<&MobTagValue> for mod_api::MobTagValue {
+    fn from(v: &MobTagValue) -> Self {
+        match v {
+            MobTagValue::Bool(b) => Self::Bool(*b),
+            MobTagValue::Int(i) => Self::I64(*i),
+            MobTagValue::Float(f) => Self::F64(*f),
+            MobTagValue::String(s) => Self::Str(s.clone()),
+        }
+    }
+}
+
 impl MobTagValue {
     /// The carried `bool`, or `None` when the value is another type — a
     /// mismatched type reads as ABSENT, never as a default.
@@ -550,27 +572,22 @@ pub struct ShearSpec {
 }
 
 /// A mob in its persisted form: just what survives a save — the species, where it
-/// stands, which way it faces, how many ticks of coat regrowth remain (`0` = fully
-/// coated), and its mod KV entries. A live [`Instance`] projects to this when its
-/// chunk unloads (so it rides that chunk's save record, like a dropped item) and is
-/// rebuilt from it on reload with a fresh brain. Transient AI/physics state (velocity,
-/// health, animation, the despawn timer) is deliberately *not* saved: a reloaded mob
-/// simply resumes wandering. The shear-regrow counter IS saved — a shorn sheep must
-/// not reload with its wool back — and so is the mod KV (default-empty for records
-/// older than section-record v3). Mob tags are also saved so a penned mob
-/// doesn't briefly pull free mobs toward it on chunk reload.
+/// stands, which way it faces, and its tag map. A live [`Instance`] projects to
+/// this when its chunk unloads (so it rides that chunk's save record, like a
+/// dropped item) and is rebuilt from it on reload with a fresh brain. Transient
+/// AI/physics state (velocity, animation, the despawn timer) is deliberately
+/// *not* saved: a reloaded mob simply resumes wandering. Everything per-mob and
+/// gameplay-semantic rides the TAG MAP — health (`petramond:health`, a wounded
+/// sheep reloads wounded), shear regrowth (`petramond:shear_regrow`, a shorn
+/// sheep must not reload with its wool back), confinement, and any mod keys.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedMob {
     pub kind: Mob,
     pub pos: Vec3,
     pub yaw: f32,
-    pub shear_regrow: u32,
     /// Engine- and mod-owned tags attached to this mob instance. The engine
     /// reserves the `petramond:` namespace (e.g., `petramond:confined`).
     pub tags: std::collections::BTreeMap<String, MobTagValue>,
-    /// Per-mob mod KV (`mod_id:key` → bytes), opaque to the engine; BTreeMap
-    /// so the save encoding is deterministic.
-    pub kv: std::collections::BTreeMap<String, Vec<u8>>,
 }
 
 impl SavedMob {
@@ -580,9 +597,7 @@ impl SavedMob {
             kind: inst.kind,
             pos: inst.pos,
             yaw: inst.yaw,
-            shear_regrow: inst.shear_regrow(),
             tags: inst.tags().clone(),
-            kv: inst.mod_kv().clone(),
         }
     }
 }
@@ -658,9 +673,13 @@ pub struct MobDef {
     pub scale: f32,
     /// Body AABB (collision + pathfinding clearance).
     pub size: MobSize,
-    /// Starting (and maximum) health. A hit subtracts its rolled damage; at `0` the
-    /// mob dies. Float because weapon damage is rolled from a per-weapon range.
-    pub max_health: f32,
+    /// Spawn tags: the tag map every individual of this species is born with,
+    /// straight from the row's `tags` (see [`tags`] for the engine keys). The
+    /// loader guarantees a positive `Float` [`tags::HEALTH`] — health IS a
+    /// tag, so it persists with the mob like any other tag. On restore, saved
+    /// tags OVERLAY these (per-key), so a species gaining a new spawn tag
+    /// reaches previously saved individuals too.
+    pub tags: &'static std::collections::BTreeMap<String, MobTagValue>,
     /// Ground walk speed (m/s).
     pub walk_speed: f32,
     /// Upward launch speed of a jump (m/s); sized to clear a one-block step.
@@ -719,6 +738,17 @@ impl MobDef {
     #[inline]
     pub fn sound_for(&self, category: MobSoundCategory) -> Option<&MobSoundSpec> {
         self.sounds.iter().find(|s| s.category == category)
+    }
+
+    /// The species' spawn health — the row's `petramond:health` spawn tag,
+    /// which doubles as the species maximum. The loader validated presence
+    /// and type, so a miss here is a loader bug.
+    #[inline]
+    pub fn spawn_health(&self) -> f32 {
+        match self.tags.get(tags::HEALTH) {
+            Some(MobTagValue::Float(f)) => *f as f32,
+            _ => unreachable!("loader guarantees a Float {} spawn tag", tags::HEALTH),
+        }
     }
 }
 

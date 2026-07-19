@@ -63,7 +63,7 @@ fn loader_rejects_geometry_that_is_non_finite_or_unbounded() {
 fn pack_layer_overrides_rows_by_mob() {
     let layer = r#"{"mobs": [{
             "mob": "petramond:owl", "key": "petramond:owl", "model": "models/owl.bbmodel", "scale": 0.5,
-            "size": {"half_width": 0.3, "height": 0.9}, "max_health": 6.0,
+            "size": {"half_width": 0.3, "height": 0.9}, "tags": {"petramond:health": 6.0},
             "walk_speed": 3.0, "jump_speed": 7.2, "turn_rate": 7.0, "walk_anim_rate": 1.2,
             "category": "passive", "cap": 4,
             "spawn": {"biomes": ["forest"], "ground": ["petramond:grass"]},
@@ -127,7 +127,7 @@ fn brain_extensions_apply_as_a_side_table_and_bad_ones_degrade() {
 fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
     let layer = r#"{"mobs": [{
             "mob": "mymod:zombling", "key": "mymod:zombling", "model": "models/owl.bbmodel",
-            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.8}, "max_health": 20.0,
+            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.8}, "tags": {"petramond:health": 20.0},
             "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
             "category": "hostile", "despawn_radius": 64.0, "cap": 8,
             "spawn": {"biomes": [], "ground": []},
@@ -212,7 +212,7 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
 fn mob_sound_hooks_resolve_registered_sound_keys() {
     let layer = r#"{"mobs": [{
             "mob": "mymod:caller", "key": "mymod:caller", "model": "models/owl.bbmodel",
-            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0,
+            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0},
             "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
             "category": "passive", "cap": 8,
             "spawn": {"biomes": [], "ground": []},
@@ -259,7 +259,7 @@ fn mob_sound_hooks_resolve_registered_sound_keys() {
 fn empty_damage_feedback_row_resolves_to_default_components() {
     let layer = r#"{"mobs": [{
             "mob": "mymod:dummy", "key": "mymod:dummy", "model": "models/owl.bbmodel",
-            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0,
+            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0},
             "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
             "category": "passive", "cap": 8,
             "spawn": {"biomes": [], "ground": []},
@@ -284,7 +284,7 @@ fn empty_damage_feedback_row_resolves_to_default_components() {
 fn damage_feedback_components_parse_from_json_objects() {
     let layer = r#"{"mobs": [{
             "mob": "mymod:dummy", "key": "mymod:dummy", "model": "models/owl.bbmodel",
-            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0,
+            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0},
             "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
             "category": "passive", "cap": 8,
             "spawn": {"biomes": [], "ground": []},
@@ -329,7 +329,7 @@ fn damage_feedback_components_parse_from_json_objects() {
 fn idle_mob_sound_requires_a_positive_interval() {
     let layer = r#"{"mobs": [{
             "mob": "mymod:caller", "key": "mymod:caller", "model": "models/owl.bbmodel",
-            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0,
+            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0},
             "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
             "category": "passive", "cap": 8,
             "spawn": {"biomes": [], "ground": []},
@@ -352,7 +352,7 @@ fn unknown_and_reserved_brain_nodes_are_load_errors() {
         format!(
             r#"{{"mobs": [{{
                     "mob": "mymod:thing", "key": "mymod:thing", "model": "models/owl.bbmodel",
-                    "scale": 0.25, "size": {{"half_width": 0.3, "height": 1.0}}, "max_health": 4.0,
+                    "scale": 0.25, "size": {{"half_width": 0.3, "height": 1.0}}, "tags": {{"petramond:health": 4.0}},
                     "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
                     "category": "passive", "cap": 8,
                     "spawn": {{"biomes": [], "ground": []}},
@@ -373,7 +373,7 @@ fn unknown_and_reserved_brain_nodes_are_load_errors() {
     // Params on a params-less node are refused too (typos never load).
     let bad = r#"{"mobs": [{
             "mob": "mymod:thing", "key": "mymod:thing", "model": "models/owl.bbmodel",
-            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0,
+            "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0},
             "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
             "category": "passive", "cap": 8,
             "spawn": {"biomes": [], "ground": []},
@@ -393,7 +393,7 @@ fn unknown_and_reserved_brain_nodes_are_load_errors() {
 fn bare_additions_and_bad_references_are_rejected() {
     // A NEW bare mob name is refused at name-table build.
     let bare = r#"{"mobs": [{"mob": "zombling", "key": "zombling", "model": "m", "scale": 1.0,
-            "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0, "walk_speed": 2.0,
+            "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0}, "walk_speed": 2.0,
             "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0, "category": "passive",
             "cap": 8, "spawn": {"biomes": [], "ground": []}, "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
@@ -408,7 +408,7 @@ fn bare_additions_and_bad_references_are_rejected() {
 
     // An unknown biome name in a spawn rule is a load error.
     let bad_biome = r#"{"mobs": [{"mob": "mymod:z", "key": "mymod:z", "model": "m", "scale": 1.0,
-            "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0, "walk_speed": 2.0,
+            "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0}, "walk_speed": 2.0,
             "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0, "category": "passive",
             "cap": 8, "spawn": {"biomes": ["atlantis"], "ground": []},
             "spawn_group": {"min": 1, "max": 1},
@@ -421,7 +421,7 @@ fn bare_additions_and_bad_references_are_rejected() {
 
     // An unknown cohesion companion is a load error.
     let bad_companion = r#"{"mobs": [{"mob": "mymod:z", "key": "mymod:z", "model": "m", "scale": 1.0,
-            "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0, "walk_speed": 2.0,
+            "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0}, "walk_speed": 2.0,
             "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0, "category": "passive",
             "cap": 8, "spawn": {"biomes": [], "ground": []}, "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8,
@@ -448,7 +448,7 @@ fn loader_rejects_incomplete_tables_and_duplicate_keys() {
 
     // Two DIFFERENT mobs sharing one key: rejected (loot resolves by key).
     let clash = r#"{"mobs": [{"mob": "mymod:z", "key": "petramond:owl", "model": "m", "scale": 1.0,
-            "size": {"half_width": 0.3, "height": 1.0}, "max_health": 4.0, "walk_speed": 2.0,
+            "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0}, "walk_speed": 2.0,
             "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0, "category": "passive",
             "cap": 8, "spawn": {"biomes": [], "ground": []}, "spawn_group": {"min": 1, "max": 1},
             "wander": {"chance_per_tick": 0.0125, "radius": 8},
@@ -486,7 +486,7 @@ fn dynamic_pack_mob_flows_end_to_end() {
         r#"{"mobs": [{
                 "mob": "testmob:zombling", "key": "testmob:zombling",
                 "model": "models/owl.bbmodel", "scale": 0.25,
-                "size": {"half_width": 0.3, "height": 1.8}, "max_health": 20.0,
+                "size": {"half_width": 0.3, "height": 1.8}, "tags": {"petramond:health": 20.0},
                 "walk_speed": 2.0, "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0,
                 "category": "hostile", "cap": 8,
                 "spawn": {"biomes": [], "ground": []},

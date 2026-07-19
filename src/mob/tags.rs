@@ -9,3 +9,17 @@
 /// behaviors that rely on freedom of movement (e.g., herd cohesion) ignore
 /// confined companions; mods may read it through the `MobTagGet` HostCall.
 pub const CONFINED: &str = "petramond:confined";
+
+/// `Float` current health. Seeded at spawn from the species row's own
+/// `tags` (`mobs.json` — the loader requires it on every row), decreased by
+/// the damage pipeline, and persisted with the mob: a wounded sheep reloads
+/// wounded. The row's spawn value doubles as the species maximum
+/// ([`crate::mob::MobDef::spawn_health`]).
+pub const HEALTH: &str = "petramond:health";
+
+/// `Int` game ticks of coat regrowth remaining after a shear. Present and
+/// positive = shorn (coat cubes hidden, can't be shorn again); it counts
+/// down on the instance tick and is REMOVED at zero, so a fully coated mob
+/// carries no tag at all. Persisted — a shorn sheep must not reload with
+/// its wool back.
+pub const SHEAR_REGROW: &str = "petramond:shear_regrow";

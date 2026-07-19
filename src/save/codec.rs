@@ -62,9 +62,14 @@ use super::palette;
 /// v9 stores the mob tag map's keys in a per-record string table: every tag
 /// carries a u16 table index instead of repeating the full key string (see
 /// `save::mobs`).
-const SECTION_REC_VERSION: u8 = 9;
+/// v10 retires the per-mob fixed shear-regrow counter AND the per-mob mod KV
+/// map: both moved into the tag map (`petramond:shear_regrow`; the KV seam
+/// was deleted outright), which also newly carries `petramond:health`.
+/// Another clean break — a v9 record's shear/KV bytes have no store to land
+/// in; dev worlds regenerate.
+const SECTION_REC_VERSION: u8 = 10;
 /// Oldest section-record version this build can still read.
-const SECTION_REC_MIN_VERSION: u8 = 9;
+const SECTION_REC_MIN_VERSION: u8 = 10;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;

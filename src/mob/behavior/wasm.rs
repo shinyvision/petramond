@@ -105,6 +105,14 @@ impl AiBehavior for WasmNodeAi {
                 .then(|| super::chase::goal_cell_near(ctx, ctx.player_pos))
                 .flatten()
                 .map(|c| c.to_array()),
+            // The mob's own tag map — baseline own-state, so a node persists
+            // per-mob state through decision tag writes instead of keying a
+            // guest-side map off mob_id.
+            tags: ctx
+                .tags
+                .iter()
+                .map(|(k, v)| (k.clone(), mod_api::MobTagValue::from(v)))
+                .collect(),
         };
         let Some(d) = crate::modding::ai::dispatch(self.key, &snapshot) else {
             return BehaviorOutput::default();
@@ -121,6 +129,39 @@ impl AiBehavior for WasmNodeAi {
                 knockback,
             }),
             target: None,
+            tag_writes: self.convert_tag_writes(d.tags),
         }
+    }
+}
+
+impl WasmNodeAi {
+    /// Validate and convert a decision's tag writes: a decision may only
+    /// write keys in ITS OWN mod's namespace (stricter than the `MobTagSet`
+    /// HostCall, which also accepts exposed `petramond:*` keys). A violating
+    /// write is dropped with a warning, never applied — the decision's other
+    /// fields still count.
+    fn convert_tag_writes(
+        &self,
+        writes: Vec<mod_api::MobTagWrite>,
+    ) -> Vec<(String, Option<crate::mob::MobTagValue>)> {
+        if writes.is_empty() {
+            return Vec::new();
+        }
+        let own = crate::registry::namespace(self.key).unwrap_or("");
+        writes
+            .into_iter()
+            .filter(|w| {
+                let ok = crate::registry::namespace(&w.key) == Some(own) && !own.is_empty();
+                if !ok {
+                    log::warn!(
+                        "AI node '{}' decision tag write '{}' outside its own namespace — dropped",
+                        self.key,
+                        w.key
+                    );
+                }
+                ok
+            })
+            .map(|w| (w.key, w.value.map(crate::mob::MobTagValue::from)))
+            .collect()
     }
 }

@@ -125,19 +125,6 @@ fn abi_roundtrip_host_and_guest_calls() {
         pos: [4, -60, 4],
         key: "farm:moisture".into(),
     });
-    roundtrip(HostCall::MobKvGet {
-        mob_id: 2,
-        key: "zombies:target".into(),
-    });
-    roundtrip(HostCall::MobKvSet {
-        mob_id: 2,
-        key: "zombies:target".into(),
-        value: vec![0xFF],
-    });
-    roundtrip(HostCall::MobKvDelete {
-        mob_id: 2,
-        key: "zombies:target".into(),
-    });
     roundtrip(HostCall::MobTagGet {
         mob_id: 2,
         key: "zombies:target".into(),
@@ -430,6 +417,10 @@ fn abi_roundtrip_host_and_guest_calls() {
             in_water: false,
             player_held: Some(ItemId(3)),
             player_foothold: Some([8, 64, 8]),
+            tags: vec![
+                ("farming:following".into(), MobTagValue::Bool(true)),
+                ("farming:sulk_until".into(), MobTagValue::I64(1400)),
+            ],
         },
     });
     roundtrip(GuestRet::AiDecision(Some(AiNodeDecision {
@@ -437,6 +428,16 @@ fn abi_roundtrip_host_and_guest_calls() {
         head_look: None,
         idle_anim: Some(1),
         attack: Some([2.0, 6.0]),
+        tags: vec![
+            MobTagWrite {
+                key: "farming:sulk_until".into(),
+                value: Some(MobTagValue::I64(1400)),
+            },
+            MobTagWrite {
+                key: "farming:following".into(),
+                value: None,
+            },
+        ],
     })));
     roundtrip(EventPayload::ContainerOpened {
         kind: ContainerKind::Mod {

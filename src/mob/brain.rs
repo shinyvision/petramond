@@ -182,6 +182,11 @@ pub struct AiCtx<'a> {
     pub mob_index: usize,
     /// Snapshot of live mobs at the start of this tick.
     pub mobs: &'a [AiMob],
+    /// The deciding mob's OWN tag map (start-of-tick view) — the read side of
+    /// per-mob tag state. The scripted node ships it across the ABI as
+    /// `AiNodeCtx::tags`; writes ride [`BehaviorOutput::tag_writes`] and land
+    /// after the whole brain has decided.
+    pub tags: &'a std::collections::BTreeMap<String, super::MobTagValue>,
     /// Deterministic per-mob RNG (no `rand` crate; reproducible).
     pub rng: &'a mut MobRng,
 }
@@ -232,9 +237,10 @@ pub struct AttackIntent {
     pub knockback: f32,
 }
 
-/// One behavior's contribution to a tick. Every field defaults to "no opinion"; the
-/// brain keeps the highest-priority non-`None` value per field.
-#[derive(Default, Clone, Copy, Debug, PartialEq)]
+/// One behavior's contribution to a tick. The opinion fields default to "no
+/// opinion"; the brain keeps the highest-priority non-`None` value per field.
+/// `tag_writes` is not arbitrated — every node's writes apply, in brain order.
+#[derive(Default, Clone, Debug, PartialEq)]
 pub struct BehaviorOutput {
     /// A navigation destination this behavior wants the mob to head to.
     pub goal: Option<IVec3>,
@@ -248,6 +254,11 @@ pub struct BehaviorOutput {
     /// the instance and fed back as next tick's [`AiCtx::target`], so attack
     /// nodes strike what the winning perception/chase node locked.
     pub target: Option<EntityRef>,
+    /// Tag writes on the deciding mob itself (`None` value = delete),
+    /// namespace-validated at the emitting node. The instance applies them
+    /// after the whole brain has decided — the engine-applied half of the
+    /// scripted `AiNodeDecision::tags` channel.
+    pub tag_writes: Vec<(String, Option<super::MobTagValue>)>,
 }
 
 /// One composable unit of mob AI. Each tick it contributes a [`BehaviorOutput`].
@@ -299,6 +310,7 @@ impl Brain {
             decision.idle_anim = decision.idle_anim.or(out.idle_anim);
             decision.attack = decision.attack.or(out.attack);
             decision.target = decision.target.or(out.target);
+            decision.tag_writes.extend(out.tag_writes);
         }
         decision
     }

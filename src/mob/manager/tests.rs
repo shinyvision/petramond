@@ -88,17 +88,16 @@ fn restore_respawns_saved_mobs_with_their_pose() {
             kind: Mob::Owl,
             pos: Vec3::new(8.5, 70.0, 8.5),
             yaw: 1.25,
-            shear_regrow: 0,
             tags: Default::default(),
-            kv: Default::default(),
         },
         SavedMob {
             kind: Mob::Sheep,
             pos: Vec3::new(9.5, 70.0, 8.5),
             yaw: -0.5,
-            shear_regrow: 500,
-            tags: Default::default(),
-            kv: Default::default(),
+            tags: std::collections::BTreeMap::from([(
+                crate::mob::tags::SHEAR_REGROW.to_owned(),
+                MobTagValue::Int(500),
+            )]),
         },
     ]);
     assert_eq!(mobs.len(), 2);
@@ -119,31 +118,61 @@ fn restore_respawns_saved_mobs_with_their_pose() {
 }
 
 #[test]
-fn mob_mod_kv_survives_section_unload_and_reload() {
-    // The unload → save-record → reload cycle at the manager level: a mod
-    // KV entry set on a live mob rides its SavedMob projection and is back
-    // on the restored instance (the on-disk byte layer is covered by
-    // `save::mobs`).
+fn mob_tags_survive_section_unload_and_reload() {
+    // The unload → save-record → reload cycle at the manager level: a tag
+    // set on a live mob rides its SavedMob projection and is back on the
+    // restored instance (the on-disk byte layer is covered by `save::mobs`).
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, Vec3::new(2.5, 64.0, 2.5), 0.5));
-    assert!(mobs.mod_kv_set(0, "zombies:anger".into(), vec![3, 1]));
-    assert_eq!(mobs.mod_kv_get(0, "zombies:anger"), Some(&[3u8, 1][..]));
+    assert!(mobs.set_mob_tag(0, "zombies:anger".into(), MobTagValue::Int(31)));
 
     let taken = mobs.take_in_section(SectionPos::new(0, 4, 0));
     assert_eq!(taken.len(), 1);
-    assert_eq!(taken[0].kv.get("zombies:anger"), Some(&vec![3, 1]));
+    assert_eq!(
+        taken[0].tags.get("zombies:anger"),
+        Some(&MobTagValue::Int(31))
+    );
     assert_eq!(mobs.len(), 0, "harvested out of the live set");
 
     mobs.restore(taken);
     assert_eq!(
-        mobs.mod_kv_get(0, "zombies:anger"),
-        Some(&[3u8, 1][..]),
-        "the KV is back on the restored mob"
+        mobs.mob_tag(0, "zombies:anger"),
+        Some(&MobTagValue::Int(31)),
+        "the tag is back on the restored mob"
     );
     // Removal reports presence honestly; out-of-range indices are inert.
-    assert!(mobs.mod_kv_remove(0, "zombies:anger"));
-    assert!(!mobs.mod_kv_remove(0, "zombies:anger"));
-    assert!(!mobs.mod_kv_set(9, "zombies:anger".into(), vec![1]));
+    assert!(mobs.remove_mob_tag(0, "zombies:anger"));
+    assert!(!mobs.remove_mob_tag(0, "zombies:anger"));
+    assert!(!mobs.set_mob_tag(9, "zombies:anger".into(), MobTagValue::Int(1)));
+}
+
+#[test]
+fn a_wounded_mob_saves_and_restores_wounded() {
+    // Health is a tag now, so it persists: a mob hurt to 1.0 must not come
+    // back from a section unload at full spawn health (the pre-tag behavior).
+    let mut mobs = Mobs::new(0);
+    assert!(mobs.spawn(Mob::Sheep, Vec3::new(2.5, 64.0, 2.5), 0.0));
+    let spawn_health = crate::mob::def(Mob::Sheep).spawn_health();
+    assert_eq!(mobs.instances()[0].health(), spawn_health);
+    let drop = mobs.damage_mob(
+        0,
+        spawn_health - 1.0,
+        None,
+        true,
+        None,
+        &crate::mob::MobDamageFeedback::default(),
+    );
+    assert!(drop.is_none(), "the hit is not lethal");
+    assert_eq!(mobs.instances()[0].health(), 1.0);
+
+    let taken = mobs.take_in_section(SectionPos::new(0, 4, 0));
+    assert_eq!(taken.len(), 1);
+    mobs.restore(taken);
+    assert_eq!(
+        mobs.instances()[0].health(),
+        1.0,
+        "the health tag rides the save record"
+    );
 }
 
 #[test]
@@ -452,7 +481,11 @@ fn placement_is_blocked_only_where_a_solid_block_clips_a_live_mob() {
 fn the_tag_cap_refuses_new_keys_but_never_replacements() {
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, Vec3::new(8.5, 64.0, 8.5), 0.0));
-    for i in 0..crate::mob::MAX_MOB_TAGS {
+    // The mob is born with its row's spawn tags (health at least), so only
+    // the remaining slots take new keys.
+    let spawn_tags = mobs.instances()[0].tags().len();
+    assert!(spawn_tags >= 1, "spawn tags include petramond:health");
+    for i in 0..crate::mob::MAX_MOB_TAGS - spawn_tags {
         assert!(
             mobs.set_mob_tag(0, format!("farm:k{i}"), MobTagValue::Int(i as i64)),
             "key {i} fits under the cap"

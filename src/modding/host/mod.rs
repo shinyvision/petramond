@@ -450,10 +450,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::WorldKvDelete { .. }
         | HostCall::SectionKvGet { .. }
         | HostCall::SectionKvSet { .. }
-        | HostCall::SectionKvDelete { .. }
-        | HostCall::MobKvGet { .. }
-        | HostCall::MobKvSet { .. }
-        | HostCall::MobKvDelete { .. } => kv::handle_kv_call(&data.mod_id, call),
+        | HostCall::SectionKvDelete { .. } => kv::handle_kv_call(&data.mod_id, call),
         HostCall::MobTagGet { .. }
         | HostCall::MobTagSet { .. }
         | HostCall::MobTagDelete { .. }

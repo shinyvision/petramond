@@ -67,30 +67,6 @@ impl Mobs {
             .is_some_and(|m| m.set_drive(vel_x, vel_z, yaw))
     }
 
-    /// A live mob's mod KV entry (see [`Instance::mod_kv`]).
-    pub fn mod_kv_get(&self, index: usize, key: &str) -> Option<&[u8]> {
-        self.list.get(index)?.mod_kv().get(key).map(Vec::as_slice)
-    }
-
-    /// Store a mod KV entry on the mob at `index`; `false` = no such mob.
-    pub fn mod_kv_set(&mut self, index: usize, key: String, value: Vec<u8>) -> bool {
-        match self.list.get_mut(index) {
-            Some(m) => {
-                m.mod_kv_mut().insert(key, value);
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Remove a mod KV entry from the mob at `index`; returns whether it was
-    /// present.
-    pub fn mod_kv_remove(&mut self, index: usize, key: &str) -> bool {
-        self.list
-            .get_mut(index)
-            .is_some_and(|m| m.mod_kv_mut().remove(key).is_some())
-    }
-
     /// A live mob's tag value.
     pub fn mob_tag(&self, index: usize, key: &str) -> Option<&MobTagValue> {
         self.list.get(index)?.tags().get(key)

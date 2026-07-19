@@ -1,6 +1,6 @@
-//! Persistent mod KV: world-level (rides `level.dat`), per-section-cell
-//! (rides the section record), and per-mob (rides the mob record).
-//!
+//! Persistent mod KV: world-level (rides `level.dat`) and per-section-cell
+//! (rides the section record). Per-mob keyed data rides the typed TAG map
+//! instead — see [`mob_tag_get`](crate::mob_tag_get) and friends.
 //!
 //! Keys are namespaced. Writes must use this mod's own prefix or an exposed
 //! engine `petramond:*` key (enforced by the host; a violation panics = disables the
@@ -48,22 +48,3 @@ host_fn! {
         => SectionKvDelete { pos, key: key.into() } => Bool
 }
 
-host_fn! {
-    /// Read a per-mob KV entry (STABLE mob id). `None` when the key is absent
-    /// or there is no such live mob.
-    pub fn mob_kv_get(mob_id: u64, key: &str) -> Option<Vec<u8>>
-        => MobKvGet { mob_id, key: key.into() } => Bytes
-}
-
-host_fn! {
-    /// Write a per-mob KV entry (own-namespace key required); persists with the
-    /// mob's save record. `false` = no such live mob.
-    pub fn mob_kv_set(mob_id: u64, key: &str, value: Vec<u8>) -> bool
-        => MobKvSet { mob_id, key: key.into(), value } => Bool
-}
-
-host_fn! {
-    /// Delete a per-mob KV entry (own-namespace key required); `false` = absent.
-    pub fn mob_kv_delete(mob_id: u64, key: &str) -> bool
-        => MobKvDelete { mob_id, key: key.into() } => Bool
-}

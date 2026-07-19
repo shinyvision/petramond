@@ -113,9 +113,7 @@ fn section_record_roundtrips_mobs() {
         kind: crate::mob::Mob::Owl,
         pos: Vec3::new(-12.5, 65.0, 72.25),
         yaw: 1.75,
-        shear_regrow: 0,
         tags: Default::default(),
-        kv: Default::default(),
     });
 
     let blob = encode_snapshot(&snap);

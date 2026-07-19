@@ -711,21 +711,21 @@ mod tests {
             );
             refused(
                 &mut data,
-                HostCall::MobKvSet {
+                HostCall::MobTagSet {
                     mob_id,
                     key: "alpha:x".into(),
-                    value: vec![1],
+                    value: mod_api::MobTagValue::I64(1),
                 },
             );
             assert_eq!(
                 handle_host_call(
                     &mut data,
-                    HostCall::MobKvGet {
+                    HostCall::MobTagGet {
                         mob_id,
                         key: "alpha:x".into(),
                     }
                 ),
-                HostRet::Bytes(None)
+                HostRet::MobTag(mod_api::MobTagLookup::MissingMob)
             );
             assert_eq!(
                 handle_host_call(&mut data, HostCall::MobRiders { mob_id }),

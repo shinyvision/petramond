@@ -155,8 +155,9 @@ impl Mobs {
 
     /// Re-spawn mobs read back from a section's save record now that its section has
     /// loaded. Each gets a fresh AI brain (a reloaded owl simply resumes wandering) and
-    /// is subject to the mob cap like any spawn. The saved shear-regrow counter and mod
-    /// KV carry over, so a shorn sheep reloads shorn and mod data survives.
+    /// is subject to the mob cap like any spawn. The saved tag map carries over —
+    /// health, shear regrowth, confinement, mod keys — overlaid on the spawn tags,
+    /// so a shorn, wounded sheep reloads shorn and wounded.
     pub fn restore(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
         for m in mobs {
             self.restore_saved_mob_lit(m, 63, 0);
@@ -169,9 +170,7 @@ impl Mobs {
             .is_some()
         {
             if let Some(inst) = self.list.last_mut() {
-                inst.set_shear_regrow(m.shear_regrow);
-                *inst.tags_mut() = m.tags;
-                *inst.mod_kv_mut() = m.kv;
+                inst.overlay_tags(m.tags);
             }
         }
     }

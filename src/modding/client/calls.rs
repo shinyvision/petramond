@@ -105,9 +105,6 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::SectionKvGet { .. }
         | HostCall::SectionKvSet { .. }
         | HostCall::SectionKvDelete { .. }
-        | HostCall::MobKvGet { .. }
-        | HostCall::MobKvSet { .. }
-        | HostCall::MobKvDelete { .. }
         | HostCall::MobTagGet { .. }
         | HostCall::MobTagSet { .. }
         | HostCall::MobTagDelete { .. }

@@ -88,8 +88,6 @@ pub struct Instance {
 
     pub(super) vel: Vec3,
     pub(super) on_ground: bool,
-    /// Current health; at `0` the mob enters a dead `DeathState`.
-    pub(super) health: f32,
     /// Engine-owned global damage immunity. It is transient like hurt/stagger
     /// presentation and starts clear when a saved mob is restored.
     pub(super) damage_immunity: crate::damage::DamageImmunity,
@@ -119,13 +117,11 @@ pub struct Instance {
     /// Kept separate from `vel` for the same reason as `knockback`: the wish-velocity
     /// overwrite would otherwise wipe it.
     pub(super) push: Vec3,
-    /// Game ticks of coat regrowth remaining after a shear: while non-zero the mob is
-    /// shorn (its coat cubes are hidden and it can't be shorn again); it counts down on
-    /// the tick and the coat is back at `0`. Persisted (see [`super::SavedMob`]).
-    shear_regrow: u32,
-    /// Engine- and mod-owned tags attached to this mob instance. The engine
-    /// reserves the `petramond:` namespace (see [`super::tags`]); mods may
-    /// invent `mod_id:` keys. Persisted (see [`super::SavedMob`]).
+    /// Engine- and mod-owned tags attached to this mob instance, seeded at
+    /// spawn from the species row's spawn tags ([`MobDef::tags`]). The engine
+    /// reserves the `petramond:` namespace (see [`super::tags`]) — health and
+    /// shear regrowth live HERE, not in dedicated fields; mods may invent
+    /// `mod_id:` keys. Persisted (see [`super::SavedMob`]).
     /// Copy-on-write: the per-tick AI snapshot shares the map by `Arc` clone,
     /// so a write (`tags_mut`) only clones the contents when a snapshot is
     /// holding the previous state.
@@ -159,10 +155,6 @@ pub struct Instance {
     /// wish it must be re-set every tick — a disabled mod's vehicle simply
     /// stops. Never persisted.
     pub(super) drive: Option<DriveIntent>,
-    /// Per-mob mod KV (`mod_id:key` → bytes) — opaque to the engine, written
-    /// by mod HostCalls on the tick, persisted with the mob's save record
-    /// (see [`super::SavedMob`]). BTreeMap so the save encoding is deterministic.
-    mod_kv: std::collections::BTreeMap<String, Vec<u8>>,
     /// Once the mob has died it runs no AI and takes no further damage. The default
     /// death presentation is a ragdoll, but a custom feedback bundle may omit it.
     pub(super) death: DeathState,
@@ -216,7 +208,6 @@ impl Instance {
             prev_hurt: 0.0,
             vel: Vec3::ZERO,
             on_ground: false,
-            health: d.max_health,
             damage_immunity: Default::default(),
             fall_peak_y: pos.y,
             fall_distance: 0.0,
@@ -226,13 +217,11 @@ impl Instance {
             stagger_timer: 0.0,
             knockback: Vec3::ZERO,
             push: Vec3::ZERO,
-            shear_regrow: 0,
-            tags: Default::default(),
+            tags: std::sync::Arc::new(d.tags.clone()),
             confined_cooldown: ((seed % confined::CHECK_INTERVAL as u64) as u8).max(1),
             active_emitters: Vec::new(),
             active_anims: Vec::new(),
             drive: None,
-            mod_kv: std::collections::BTreeMap::new(),
             death: DeathState::Alive,
             anim_kind: AnimKind::Rest,
             attack: None,
@@ -315,22 +304,21 @@ impl Instance {
     }
 
     /// Is the mob currently shorn (its coat still regrowing)? The renderer hides the
-    /// model's coat cubes while this holds.
+    /// model's coat cubes while this holds. Reads the `petramond:shear_regrow` tag —
+    /// present and positive = shorn; absent = fully coated.
     #[inline]
     pub fn is_shorn(&self) -> bool {
-        self.shear_regrow > 0
+        self.tag_int(super::tags::SHEAR_REGROW) > 0
     }
 
-    /// Ticks of coat regrowth remaining (`0` = fully coated), for the save record.
+    /// The `Int` tag under `key`, or `0` when absent / another type — the
+    /// engine's read shape for its own countdown tags.
     #[inline]
-    pub(super) fn shear_regrow(&self) -> u32 {
-        self.shear_regrow
-    }
-
-    /// Restore a saved regrow counter onto a freshly respawned mob (reload path).
-    #[inline]
-    pub(super) fn set_shear_regrow(&mut self, ticks: u32) {
-        self.shear_regrow = ticks;
+    fn tag_int(&self, key: &str) -> i64 {
+        self.tags
+            .get(key)
+            .and_then(super::MobTagValue::as_int)
+            .unwrap_or(0)
     }
 
     /// The mob's tag map (engine- and mod-owned key/value pairs).
@@ -367,34 +355,39 @@ impl Instance {
             == Some(true)
     }
 
-    /// The mob's mod KV entries (see the field docs).
-    #[inline]
-    pub fn mod_kv(&self) -> &std::collections::BTreeMap<String, Vec<u8>> {
-        &self.mod_kv
-    }
-
-    /// Mutable mod KV access, for the manager's KV HostCall entry points and
-    /// the save-restore path.
-    #[inline]
-    pub(super) fn mod_kv_mut(&mut self) -> &mut std::collections::BTreeMap<String, Vec<u8>> {
-        &mut self.mod_kv
+    /// Overlay saved tags onto the spawn-seeded map (reload path): saved
+    /// values win per-key, while spawn tags a saved record predates stay —
+    /// so a species gaining a new spawn tag reaches previously saved mobs.
+    pub(super) fn overlay_tags(
+        &mut self,
+        saved: std::collections::BTreeMap<String, super::MobTagValue>,
+    ) {
+        let tags = self.tags_mut();
+        for (k, v) in saved {
+            tags.insert(k, v);
+        }
     }
 
     /// Shear this mob: roll how many of its [`ShearSpec`](super::ShearSpec) drop it
-    /// yields and start the regrow countdown. `None` when the species can't be shorn,
-    /// the coat is still regrowing, or the mob is dead.
+    /// yields and start the regrow countdown (the `petramond:shear_regrow` tag).
+    /// `None` when the species can't be shorn, the coat is still regrowing, or the
+    /// mob is dead.
     pub(super) fn shear(&mut self) -> Option<u8> {
         let spec = def(self.kind).shear?;
-        if self.death.is_dead() || self.shear_regrow > 0 {
+        if self.death.is_dead() || self.is_shorn() {
             return None;
         }
         let count = self
             .rng
             .next_range(spec.min.min(spec.max) as i32, spec.max as i32) as u8;
-        self.shear_regrow = self.rng.next_range(
+        let regrow = self.rng.next_range(
             spec.regrow_min.min(spec.regrow_max) as i32,
             spec.regrow_max as i32,
-        ) as u32;
+        ) as i64;
+        self.tags_mut().insert(
+            super::tags::SHEAR_REGROW.to_owned(),
+            super::MobTagValue::Int(regrow),
+        );
         Some(count)
     }
 
@@ -456,10 +449,22 @@ impl Instance {
             self.attacker_ticks = self.attacker_ticks.saturating_add(1);
         }
 
-        // Shear regrowth counts down on the tick; at zero the coat is back. Pauses
-        // with the rest of the sim while the mob's chunk is unloaded (this tick is
-        // simply not run), like the dropped-item timers.
-        self.shear_regrow = self.shear_regrow.saturating_sub(1);
+        // Shear regrowth counts down on the tick; at zero the tag is removed and
+        // the coat is back. Pauses with the rest of the sim while the mob's chunk
+        // is unloaded (this tick is simply not run), like the dropped-item timers.
+        // Gated on presence so a coated mob never touches (and never CoW-clones)
+        // its snapshot-shared tag map here.
+        let regrow = self.tag_int(super::tags::SHEAR_REGROW);
+        if regrow > 0 {
+            if regrow == 1 {
+                self.tags_mut().remove(super::tags::SHEAR_REGROW);
+            } else {
+                self.tags_mut().insert(
+                    super::tags::SHEAR_REGROW.to_owned(),
+                    super::MobTagValue::Int(regrow - 1),
+                );
+            }
+        }
 
         // Distance-despawn: a mob with a row-level radius is culled immediately once it
         // is outside that radius, and randomly once beyond the eligibility distance.
@@ -545,12 +550,33 @@ impl Instance {
                 idle_anims,
                 mob_index,
                 mobs: inputs.mobs,
+                tags: &*self.tags,
                 rng: &mut self.rng,
             };
             self.brain.decide(&mut ctx)
         };
         self.attack = decision.attack;
         self.current_target = decision.target;
+        // Tag writes carried back by scripted decisions land HERE, after the
+        // whole brain decided — the engine-applied half of the detached
+        // dispatch contract (`AiNodeDecision::tags`). Same cap rule as the
+        // `MobTagSet` HostCall: a NEW key past the cap is refused.
+        for (key, value) in &decision.tag_writes {
+            match value {
+                Some(v) => {
+                    if self.tags.len() >= super::MAX_MOB_TAGS && !self.tags.contains_key(key) {
+                        log::warn!("mob {} tag map full; decision write '{key}' dropped", self.id);
+                        continue;
+                    }
+                    self.tags_mut().insert(key.clone(), v.clone());
+                }
+                None => {
+                    if self.tags.contains_key(key) {
+                        self.tags_mut().remove(key);
+                    }
+                }
+            }
+        }
         let can_repath = self.on_ground || in_water;
         let can_steer = route_steering_supported(self.on_ground, in_water, self.vel.y);
         self.nav

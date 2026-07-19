@@ -385,12 +385,32 @@ pub struct AiNodeCtx {
     /// reachable foothold, or the player is more than 32 blocks away (the
     /// outer edge of player-reactive mob AI — the scan is skipped past it).
     pub player_foothold: Option<[i32; 3]>,
+    /// The deciding mob's OWN tag map (baseline — the mob's own state),
+    /// sorted by key: the same view `mob_tags_get` returns, without a host
+    /// call. Persist per-mob node state by WRITING tags back through
+    /// [`AiNodeDecision::tags`] instead of keying a guest-side map off
+    /// `mob_id` — tag state lives, saves, and dies with the mob.
+    pub tags: Vec<(String, MobTagValue)>,
 }
 
-/// One scripted node's contribution to a mob's tick. Every field defaults to
-/// "no opinion"; the engine keeps the highest-priority non-`None` value per
-/// field across the whole brain (scripted and engine nodes alike).
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+/// One tag write a scripted node's decision carries back — applied by the
+/// ENGINE after the detached dispatch returns (a node cannot call `mob_tag_set`
+/// mid-decision). `value: None` deletes the key.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct MobTagWrite {
+    /// Namespaced tag key. Must carry the deciding node's OWN `mod_id:`
+    /// prefix — a decision may not write engine or foreign tags (unlike
+    /// `mob_tag_set`, which may write exposed `petramond:*` keys).
+    pub key: String,
+    /// The value to store, or `None` to delete the key.
+    pub value: Option<MobTagValue>,
+}
+
+/// One scripted node's contribution to a mob's tick. The opinion fields
+/// default to "no opinion"; the engine keeps the highest-priority non-`None`
+/// value per field across the whole brain (scripted and engine nodes alike).
+/// `tags` is NOT arbitrated: every node's writes apply, in brain order.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct AiNodeDecision {
     /// A navigation destination (world voxel) to path toward.
     pub goal: Option<[i32; 3]>,
@@ -400,4 +420,9 @@ pub struct AiNodeDecision {
     pub idle_anim: Option<u8>,
     /// A melee strike `[damage, knockback]` to land on the player this tick.
     pub attack: Option<[f32; 2]>,
+    /// Tag writes on the deciding mob itself, applied by the engine after the
+    /// dispatch (own-namespace keys only; the 32-tag cap refuses NEW keys
+    /// past it). This is the persistence channel for per-mob node state —
+    /// see [`AiNodeCtx::tags`] for the read side.
+    pub tags: Vec<MobTagWrite>,
 }
