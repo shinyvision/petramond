@@ -42,7 +42,8 @@ use self::environment::{create_env_scaler, create_environment_pipelines};
 use self::grade::create_grade_pipeline;
 use self::model3d::{create_item3d_pipeline, create_model3d_pipelines};
 use self::overlays::{
-    create_break_overlay_pipeline, create_crosshair_pipeline, create_selection_pipeline,
+    create_break_overlay_pipeline, create_contact_pipeline, create_crosshair_pipeline,
+    create_selection_pipeline,
 };
 use self::particle::create_particle_pipeline;
 use self::sky::create_sky_pipeline;
@@ -138,6 +139,11 @@ pub(super) struct PipelineResources {
     /// `uniform_bind` (view_proj + uv_rects) + `atlas_bind`, alpha-blended, depth
     /// LessEqual / no-write over geometry coincident with the block faces.
     pub break_pipe: wgpu::RenderPipeline,
+    /// Model→terrain contact-shadow pipeline: the packed columns'
+    /// `ContactShadowVertex` streams, multiplicative, depth read-only with its
+    /// own coplanar bias, drawn between the opaque and sky passes. Binds only
+    /// the shared `uniform_bind` at group 0.
+    pub contact_pipe: wgpu::RenderPipeline,
     /// Reusable dynamic vbuf for the break overlay (one block-sized cube).
     pub break_vbuf: wgpu::Buffer,
     /// Reusable dynamic ibuf for the break overlay (one cube).
@@ -331,6 +337,7 @@ pub(super) fn create_pipeline_resources(
         create_world_model_pipeline(device, format, sample_count, &shared.layout, &mob_shader);
     let (break_pipe, break_vbuf, break_ibuf) =
         create_break_overlay_pipeline(device, format, sample_count, &shared.layout, &vbuf_layout);
+    let contact_pipe = create_contact_pipeline(device, format, sample_count, &shared.uniform_bgl);
     let entity_bufs = create_entity_model_buffers(device);
     let particles = create_particle_pipeline(device, format, sample_count, &shared.layout);
     let (ui_pipe, ui_vbuf) = create_ui_pipeline(device, format, sample_count);
@@ -374,6 +381,7 @@ pub(super) fn create_pipeline_resources(
         mob_pipe,
         world_model_pipe,
         break_pipe,
+        contact_pipe,
         break_vbuf,
         break_ibuf,
         item_entity_vbuf: entity_bufs.item_entity_vbuf,
@@ -398,6 +406,9 @@ pub(super) fn create_pipeline_resources(
 /// pipeline layout, and the terrain tile-array group + layout.
 struct SharedBindings {
     uv_rects_buf: wgpu::Buffer,
+    /// The block group-0 LAYOUT (Uniforms + uv_rects), for pipelines that bind
+    /// `uniform_bind` alone (the contact-shadow pass).
+    uniform_bgl: wgpu::BindGroupLayout,
     uniform_bind: wgpu::BindGroup,
     atlas_bgl: wgpu::BindGroupLayout,
     atlas_bind: wgpu::BindGroup,
@@ -476,6 +487,7 @@ fn create_shared_bindings(
 
     SharedBindings {
         uv_rects_buf,
+        uniform_bgl,
         uniform_bind,
         atlas_bgl,
         atlas_bind,

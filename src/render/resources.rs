@@ -1,6 +1,6 @@
 use crate::atlas::decode_atlas_mips;
 use crate::chunk::SectionPos;
-use crate::mesh::{ChunkMesh, ModelVertex, Vertex};
+use crate::mesh::{ChunkMesh, ContactShadowVertex, ModelVertex, Vertex};
 use crate::texture_mips::build_cutout_mips;
 
 /// Upload a standalone GUI PNG (e.g. the HUD heart atlas) as its own
@@ -178,6 +178,13 @@ pub struct GpuSectionMesh {
     pub translucent_idx_count: u32,
     pub model_index_start: u32,
     pub model_idx_count: u32,
+    /// Contact-shadow VERTEX range (the stream is non-indexed). Kept per section
+    /// only so `plan_draw_order` can decide column contact visibility from the
+    /// VISIBLE sections — the draw itself is whole-column. A section may hold
+    /// contact vertices with `model_idx_count == 0` (a multi-cell model whose
+    /// cuboids all render from a sibling cell), so contact visibility must NOT
+    /// be inferred from the model range.
+    pub contact_vertex_count: u32,
 }
 
 pub struct GpuColumnMesh {
@@ -193,6 +200,10 @@ pub struct GpuColumnMesh {
     pub model_vbuf: Option<wgpu::Buffer>,
     pub model_ibuf: Option<wgpu::Buffer>,
     pub model_idx_count: u32,
+    /// The column's whole contact-shadow stream (non-indexed 16-byte
+    /// `ContactShadowVertex`), drawn once per visible contact-bearing column.
+    pub contact_vbuf: Option<wgpu::Buffer>,
+    pub contact_vertex_count: u32,
     pub sections: Vec<(SectionPos, GpuSectionMesh)>,
 }
 
@@ -208,6 +219,7 @@ pub(super) struct ColumnUploadScratch {
     translucent_idx: Vec<u32>,
     model: Vec<ModelVertex>,
     model_idx: Vec<u32>,
+    contact: Vec<ContactShadowVertex>,
 }
 
 impl ColumnUploadScratch {
@@ -222,6 +234,7 @@ impl ColumnUploadScratch {
         self.translucent_idx.clear();
         self.model.clear();
         self.model_idx.clear();
+        self.contact.clear();
     }
 
     fn reserve_for(&mut self, meshes: &[(SectionPos, &ChunkMesh)]) {
@@ -257,6 +270,8 @@ impl ColumnUploadScratch {
             .reserve(meshes.iter().map(|(_, mesh)| mesh.model.len()).sum());
         self.model_idx
             .reserve(meshes.iter().map(|(_, mesh)| mesh.model_idx.len()).sum());
+        self.contact
+            .reserve(meshes.iter().map(|(_, mesh)| mesh.contact.len()).sum());
     }
 }
 
@@ -495,35 +510,37 @@ pub(super) fn upload_column_mesh(
     prev: Option<GpuColumnMesh>,
     scratch: &mut ColumnUploadScratch,
 ) -> GpuColumnMesh {
-    let (p_ov, p_oi, p_fov, p_foi, p_tv, p_ti, p_lv, p_li, p_mv, p_mi, mut sections) = match prev
-    {
-        Some(g) => (
-            g.opaque_vbuf,
-            g.opaque_ibuf,
-            g.far_opaque_vbuf,
-            g.far_opaque_ibuf,
-            g.transparent_vbuf,
-            g.transparent_ibuf,
-            g.translucent_vbuf,
-            g.translucent_ibuf,
-            g.model_vbuf,
-            g.model_ibuf,
-            g.sections,
-        ),
-        None => (
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Vec::new(),
-        ),
-    };
+    let (p_ov, p_oi, p_fov, p_foi, p_tv, p_ti, p_lv, p_li, p_mv, p_mi, p_cv, mut sections) =
+        match prev {
+            Some(g) => (
+                g.opaque_vbuf,
+                g.opaque_ibuf,
+                g.far_opaque_vbuf,
+                g.far_opaque_ibuf,
+                g.transparent_vbuf,
+                g.transparent_ibuf,
+                g.translucent_vbuf,
+                g.translucent_ibuf,
+                g.model_vbuf,
+                g.model_ibuf,
+                g.contact_vbuf,
+                g.sections,
+            ),
+            None => (
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+            ),
+        };
 
     scratch.clear();
     scratch.reserve_for(meshes);
@@ -561,6 +578,8 @@ pub(super) fn upload_column_mesh(
             &mesh.model,
             &mesh.model_idx,
         );
+        let contact_vertex_count = mesh.contact.len() as u32;
+        scratch.contact.extend_from_slice(&mesh.contact);
         sections.push((
             sp,
             GpuSectionMesh {
@@ -575,6 +594,7 @@ pub(super) fn upload_column_mesh(
                 translucent_idx_count,
                 model_index_start,
                 model_idx_count,
+                contact_vertex_count,
             },
         ));
     }
@@ -654,6 +674,14 @@ pub(super) fn upload_column_mesh(
             idx,
         ),
         model_idx_count: scratch.model_idx.len() as u32,
+        contact_vbuf: upload_layer(
+            device,
+            queue,
+            p_cv,
+            bytemuck::cast_slice(&scratch.contact),
+            vtx,
+        ),
+        contact_vertex_count: scratch.contact.len() as u32,
         sections,
     }
 }

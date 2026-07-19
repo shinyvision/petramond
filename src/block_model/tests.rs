@@ -294,3 +294,28 @@ fn display_from_unit_is_an_unmirrored_uniform_rescale() {
         "rescale must be uniform"
     );
 }
+
+/// A real furniture model (legs meeting a top) bakes some self-occlusion, and
+/// every factor stays a valid shade multiplier — the invariant is "joint
+/// definition exists and can never invert or black out a face"; the darkening
+/// depth itself is a tuned constant and is not pinned.
+#[test]
+fn baked_self_ao_darkens_joints_and_stays_a_valid_multiplier() {
+    let inst = instance(WB);
+    let mut any_darkened = false;
+    for per_face in &inst.face_ao {
+        for corners in per_face {
+            for &v in corners {
+                assert!(
+                    (0.0..=1.0 + 1e-6).contains(&v),
+                    "AO factor out of the multiplier range: {v}"
+                );
+                any_darkened |= v < 1.0 - 1e-3;
+            }
+        }
+    }
+    assert!(
+        any_darkened,
+        "a model with adjoining cuboids must bake SOME self-occlusion"
+    );
+}

@@ -4,7 +4,7 @@ use crate::block_model::{self, BlockModelKind};
 use crate::facing::Facing;
 use crate::torch::warm_tint;
 
-use super::super::vertex::ModelVertex;
+use super::super::vertex::{ContactShadowVertex, ModelVertex};
 
 /// Mesh-time brightness for a bbmodel-block face from the cell's combined 6-bit light.
 /// Mirrors `block.wgsl`'s skylight curve (the block pipeline applies this in the shader;
@@ -55,4 +55,40 @@ pub(super) fn emit_model_block(
         light,
     }));
     indices.extend(tmpl.indices.iter().map(|&i| start + i));
+}
+
+/// Stream one bottom footprint cell's contact-shadow stamp: the startup-baked
+/// single-cell pieces translated to the world base, coincident with the top
+/// face of the supported floor (the contact pass's coplanar bias resolves the
+/// depth tie). Each piece — the cell's own floor AND its owned spill onto the
+/// dilation ring — is gated INDIVIDUALLY through `supports_stamp(x, z)` on the
+/// stamped cell's own column, which is what lets the shadow cross onto the
+/// grass next to the model while an unsupported neighbouring cell still clips
+/// it. Every stamped cell is within ±1 of `(wx, wz)` by construction, so the
+/// gate's reads stay inside the mesh pad.
+pub(super) fn emit_model_contact(
+    contact: &mut Vec<ContactShadowVertex>,
+    kind: BlockModelKind,
+    offset: [u8; 3],
+    facing: Facing,
+    wx: i32,
+    wy: i32,
+    wz: i32,
+    supports_stamp: impl Fn(i32, i32) -> bool,
+) {
+    let inst = block_model::instance(kind);
+    let Some(tmpl) = inst.contact_template(offset, facing) else {
+        return;
+    };
+    let base = block_model::base_from_cell(IVec3::new(wx, wy, wz), kind, offset, facing);
+    let basef = Vec3::new(base.x as f32, base.y as f32, base.z as f32);
+    for piece in &tmpl.pieces {
+        if !supports_stamp(wx + piece.cell_delta[0], wz + piece.cell_delta[1]) {
+            continue;
+        }
+        contact.extend(piece.verts.iter().map(|v| ContactShadowVertex {
+            pos: (basef + Vec3::from(v.pos)).to_array(),
+            darken: v.darken,
+        }));
+    }
 }

@@ -2,7 +2,7 @@ use super::builders::{
     buffer_bind_group, color_target, cull_back, pipeline_layout, shader_module, uniform_entry,
     world_pipeline, DepthPreset,
 };
-use crate::mesh::Vertex;
+use crate::mesh::{ContactShadowVertex, Vertex};
 use crate::render::crosshair::MAX_CROSSHAIR_VERTICES;
 use crate::render::selection::MAX_OUTLINE_VERTICES;
 use crate::render::uniforms::Uniforms;
@@ -219,4 +219,76 @@ pub(super) fn create_break_overlay_pipeline(
         mapped_at_creation: false,
     });
     (break_pipe, break_vbuf, break_ibuf)
+}
+
+/// Model→terrain contact-shadow pipeline: the chunk `ContactShadowVertex`
+/// stream (16-byte `{pos, darken}`, non-indexed), MULTIPLY-blended like the
+/// break overlay, depth `LessEqual` read-only with its OWN coplanar bias
+/// (`DepthPreset::ReadLessEqualContactBiased`). Drawn between the opaque and
+/// sky passes — see `passes.rs` for why that order is a safety contract. Culling
+/// is off: the stamp only shows where terrain was drawn under it, and a facing
+/// rotation must never be able to wind it away.
+///
+/// Reuses the block group-0 layout (`layout` = the shared `[uniform_bgl,
+/// atlas_bgl]` pipeline layout's group 0) via its own single-group pipeline
+/// layout, so the pass binds the renderer's existing `uniform_bind` unchanged.
+pub(super) fn create_contact_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    sample_count: u32,
+    uniform_bgl: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let contact_shader = shader_module(
+        device,
+        "contact shadow shader",
+        concat!(
+            include_str!("../../shaders/cel.wgsl"),
+            include_str!("../../shaders/atmosphere.wgsl"),
+            include_str!("../../shaders/contact.wgsl")
+        ),
+    );
+    let multiply_blend = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Dst,
+            dst_factor: wgpu::BlendFactor::Zero,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+    };
+    let contact_targets = color_target(format, Some(multiply_blend), wgpu::ColorWrites::ALL);
+    let contact_layout = pipeline_layout(device, "contact layout", &[uniform_bgl]);
+    let contact_vbuf_attrs = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 0,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32,
+            offset: 12,
+            shader_location: 1,
+        },
+    ];
+    let contact_vbuf_layout = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<ContactShadowVertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &contact_vbuf_attrs,
+    };
+    world_pipeline(
+        device,
+        "contact shadow pipe",
+        &contact_layout,
+        &contact_shader,
+        "vs_contact",
+        "fs_contact",
+        std::slice::from_ref(&contact_vbuf_layout),
+        &contact_targets,
+        wgpu::PrimitiveState::default(),
+        Some(DepthPreset::ReadLessEqualContactBiased),
+        sample_count,
+    )
 }

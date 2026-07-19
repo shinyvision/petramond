@@ -97,6 +97,9 @@ pub fn build_block_model_item(
                 continue;
             }
             let shade = SHADES[face.shade_idx() as usize];
+            // The same startup-baked self-AO the chunk mesh shades with, so the
+            // held/dropped model matches the placed one.
+            let ao = inst.face_ao[ci][slot];
             let [u0, v0, u1, v1] = uv;
             let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
             let start = verts.len() as u32;
@@ -104,11 +107,11 @@ pub fn build_block_model_item(
                 verts.push(ItemVertex {
                     pos: p[i].to_array(),
                     uv: corner_uv[i],
-                    shade,
+                    shade: shade * ao[i],
                     tint,
                 });
             }
-            indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+            indices.extend(block_model::model_face_tris(ao).map(|i| start + i));
         }
     }
 }
@@ -141,8 +144,8 @@ pub fn build_block_model_icon(
     let tint = [1.0, 1.0, 1.0];
 
     // Collect every face with its mean clip-z, then sort far→near (painter's algorithm).
-    let mut faces: Vec<(f32, [ItemVertex; 4])> = Vec::new();
-    for cube in &inst.cubes {
+    let mut faces: Vec<(f32, [ItemVertex; 4], [u32; 6])> = Vec::new();
+    for (ci, cube) in inst.cubes.iter().enumerate() {
         let m = map
             * Mat4::from_translation(cube.origin)
             * Mat4::from_quat(crate::bbmodel::euler_quat(cube.rotation))
@@ -163,45 +166,28 @@ pub fn build_block_model_icon(
                 continue;
             }
             let shade = SHADES[face.shade_idx() as usize] * light;
+            // Icons carry the same baked self-AO as the placed/held model.
+            let ao = inst.face_ao[ci][slot];
             let [u0, v0, u1, v1] = uv;
             let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
-            let quad = [
-                ItemVertex {
-                    pos: p[0].to_array(),
-                    uv: corner_uv[0],
-                    shade,
-                    tint,
-                },
-                ItemVertex {
-                    pos: p[1].to_array(),
-                    uv: corner_uv[1],
-                    shade,
-                    tint,
-                },
-                ItemVertex {
-                    pos: p[2].to_array(),
-                    uv: corner_uv[2],
-                    shade,
-                    tint,
-                },
-                ItemVertex {
-                    pos: p[3].to_array(),
-                    uv: corner_uv[3],
-                    shade,
-                    tint,
-                },
-            ];
+            let corner = |i: usize| ItemVertex {
+                pos: p[i].to_array(),
+                uv: corner_uv[i],
+                shade: shade * ao[i],
+                tint,
+            };
+            let quad = [corner(0), corner(1), corner(2), corner(3)];
             let depth = (p[0].z + p[1].z + p[2].z + p[3].z) * 0.25;
-            faces.push((depth, quad));
+            faces.push((depth, quad, block_model::model_face_tris(ao)));
         }
     }
     // Larger clip-z is farther (wgpu z in [0,1], 0 = near): draw it FIRST so nearer faces
     // overpaint it.
     faces.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    for (_, quad) in faces {
+    for (_, quad, tris) in faces {
         let start = verts.len() as u32;
         verts.extend_from_slice(&quad);
-        indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+        indices.extend(tris.map(|i| start + i));
     }
 }
 

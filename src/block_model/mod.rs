@@ -34,6 +34,7 @@
 
 use crate::facing::Facing;
 
+mod ao;
 mod atlas;
 mod compiled;
 mod defs;

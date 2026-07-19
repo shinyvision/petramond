@@ -358,5 +358,9 @@ fn pad_local_section_mesher_matches_closure_mesher() {
         bytemuck::cast_slice::<ModelVertex, u8>(&pad.model)
     );
     assert_eq!(serial.model_idx, pad.model_idx);
+    assert_eq!(
+        bytemuck::cast_slice::<crate::mesh::ContactShadowVertex, u8>(&serial.contact),
+        bytemuck::cast_slice::<crate::mesh::ContactShadowVertex, u8>(&pad.contact)
+    );
     assert_eq!(serial.mesh_dirty, pad.mesh_dirty);
 }

@@ -28,6 +28,26 @@ const _: () = assert!(
     "slope-scaled bias must be negative (toward camera)"
 );
 
+/// Polygon offset for the model→terrain contact-shadow stamp, which is
+/// coincident with the top face of the supporting block. Its OWN named bias —
+/// initially equal to the break overlay's, but tuned independently: the stamp is
+/// a large mostly-horizontal decal seen at flatter angles than a crack cube, so
+/// its slope term may need to drift without touching the crack's.
+const CONTACT_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
+    constant: -10,
+    slope_scale: -1.0,
+    clamp: 0.0,
+};
+
+const _: () = assert!(
+    CONTACT_DEPTH_BIAS.constant < 0,
+    "constant bias must be negative (toward camera)"
+);
+const _: () = assert!(
+    CONTACT_DEPTH_BIAS.slope_scale < 0.0,
+    "slope-scaled bias must be negative (toward camera)"
+);
+
 /// The render target's depth format. Every depth-tested pass shares one
 /// `Depth32Float` attachment, so the presets below all use this.
 pub(super) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -47,6 +67,9 @@ pub(super) enum DepthPreset {
     /// Depth test `LessEqual`, NO write, with the break-overlay polygon offset.
     /// The crack decal is coincident with the block faces; the bias wins the tie.
     ReadLessEqualBiased,
+    /// Depth test `LessEqual`, NO write, with the contact-shadow polygon offset.
+    /// The stamp is coincident with the supporting block's top face.
+    ReadLessEqualContactBiased,
     /// Depth test `LessEqual`, NO write, no bias. The selection outline: hidden
     /// behind terrain but its slightly-inflated front edges win the equal test.
     ReadLessEqual,
@@ -67,6 +90,9 @@ impl DepthPreset {
             ),
             DepthPreset::ReadLessEqualBiased => {
                 (false, wgpu::CompareFunction::LessEqual, BREAK_DEPTH_BIAS)
+            }
+            DepthPreset::ReadLessEqualContactBiased => {
+                (false, wgpu::CompareFunction::LessEqual, CONTACT_DEPTH_BIAS)
             }
             DepthPreset::ReadLessEqual => (
                 false,

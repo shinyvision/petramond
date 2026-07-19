@@ -76,6 +76,7 @@ impl Renderer {
         order: &mut Vec<VisibleSection>,
         opaque_columns: &mut Vec<(f32, ChunkPos)>,
         model_columns: &mut Vec<(f32, ChunkPos)>,
+        contact_columns: &mut Vec<(f32, ChunkPos)>,
     ) -> (RenderStats, bool, bool) {
         if self.terrain_planned_gpu_revision == self.terrain_gpu_revision
             && self.terrain_planned_view_key.as_ref() == Some(&self.terrain_view_key)
@@ -98,6 +99,7 @@ impl Renderer {
         order.clear();
         opaque_columns.clear();
         model_columns.clear();
+        contact_columns.clear();
         let mut any_model_visible = false;
         let mut any_transparent_visible = false;
         for (column_pos, column) in terrain_columns {
@@ -105,6 +107,7 @@ impl Renderer {
             let mut column_dist_sq = f32::INFINITY;
             let mut column_has_opaque = false;
             let mut column_has_model = false;
+            let mut column_has_contact = false;
             let mut any_far_lod_active = false;
             for &(sp, ref section) in &column.sections {
                 if !Self::section_visible(section, frustum, render_origin, cam, fog) {
@@ -116,6 +119,10 @@ impl Renderer {
                 column_dist_sq = column_dist_sq.min(dist_sq);
                 column_has_opaque |= section.opaque_idx_count > 0;
                 column_has_model |= section.model_idx_count > 0;
+                // Contact visibility is its OWN presence bit: a multi-cell
+                // model's contact triangles can sit in a section whose model
+                // index range is empty.
+                column_has_contact |= section.contact_vertex_count > 0;
                 any_model_visible |= section.model_idx_count > 0;
                 any_transparent_visible |=
                     section.transparent_idx_count > 0 || section.translucent_idx_count > 0;
@@ -162,10 +169,14 @@ impl Renderer {
                 }
                 model_columns.push((column_dist_sq, *column_pos));
             }
+            if column_has_contact && column.contact_vertex_count > 0 {
+                contact_columns.push((column_dist_sq, *column_pos));
+            }
         }
         order.sort_by(|a, b| a.dist_sq.total_cmp(&b.dist_sq));
         opaque_columns.sort_by(|a, b| a.0.total_cmp(&b.0));
         model_columns.sort_by(|a, b| a.0.total_cmp(&b.0));
+        contact_columns.sort_by(|a, b| a.0.total_cmp(&b.0));
         self.terrain_planned_gpu_revision = self.terrain_gpu_revision;
         self.terrain_planned_view_key = Some(self.terrain_view_key.clone());
         self.terrain_plan_any_model = any_model_visible;
@@ -180,6 +191,7 @@ impl Renderer {
     /// Encode every GPU render pass for this frame, in order, with byte-for-byte
     /// identical load/store ops. Reads the baked per-frame buffers off `self`;
     /// mutates only the passed `stats`.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn encode_passes(
         &self,
         enc: &mut wgpu::CommandEncoder,
@@ -187,6 +199,7 @@ impl Renderer {
         order: &[VisibleSection],
         opaque_columns: &[(f32, ChunkPos)],
         model_columns: &[(f32, ChunkPos)],
+        contact_columns: &[(f32, ChunkPos)],
         stats: &mut RenderStats,
         any_model_visible: bool,
         any_transparent_visible: bool,
@@ -265,6 +278,39 @@ impl Renderer {
                     stats.opaque_draws += 1;
                     stats.opaque_indices += idx_count as u64;
                     pass.draw_indexed(index_start..index_start + idx_count, 0, 0..1);
+                }
+            }
+        }
+        // CONTACT-SHADOW PASS: the models' soft floor stamps, multiplied over the
+        // opaque terrain just drawn. Depth read-only (LessEqual + its own
+        // coplanar bias against the supporting top face). Drawing BEFORE the sky
+        // is a safety contract: the stamp writes no depth, so if its supporting
+        // terrain section was culled while an adjacent model section stayed
+        // visible, the sky's far-plane LessEqual draw replaces the orphaned
+        // darkening with sky instead of smudging the background. One whole-buffer
+        // draw per visible contact-bearing column — the stream is sparse and
+        // needs no per-section ranges.
+        if !contact_columns.is_empty() {
+            let mut pass = color_depth_pass(
+                enc,
+                view,
+                &self.depth,
+                "contact shadow pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+            );
+            pass.set_pipeline(&self.contact_pipe);
+            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            for (_, pos) in contact_columns {
+                let Some(col) = self.terrain_columns.get(pos) else {
+                    continue;
+                };
+                if col.contact_vertex_count == 0 {
+                    continue;
+                }
+                if let Some(vb) = &col.contact_vbuf {
+                    pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.draw(0..col.contact_vertex_count, 0..1);
                 }
             }
         }

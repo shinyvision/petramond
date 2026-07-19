@@ -338,6 +338,10 @@ pub struct Renderer {
     /// Pipeline for the chunk `ModelVertex` stream (day/night-aware lighting);
     /// `model_pipe` (mob layout) keeps drawing dropped bbmodel item entities.
     world_model_pipe: wgpu::RenderPipeline,
+    /// Model→terrain contact-shadow pipeline (multiplicative, depth read-only,
+    /// own coplanar bias); draws the packed columns' contact streams between
+    /// the opaque and sky passes.
+    contact_pipe: wgpu::RenderPipeline,
     model_atlas_bind: wgpu::BindGroup,
     /// Dropped bbmodel item-entities (world-space ItemVertex, model atlas), drawn by the
     /// model pipeline in the model pass — the explicit-UV counterpart of `item_entity_draw`.
@@ -377,6 +381,10 @@ pub struct Renderer {
     /// Reusable near→far list of packed columns that can draw their whole model index
     /// stream in one call this frame.
     model_column_order: Vec<(f32, ChunkPos)>,
+    /// Reusable near→far list of packed columns with a VISIBLE contact-shadow
+    /// stream this frame (independent of the model list — a section can hold
+    /// contact triangles while another cell owns the model indices).
+    contact_column_order: Vec<(f32, ChunkPos)>,
     terrain_gpu_revision: u64,
     terrain_planned_gpu_revision: u64,
     terrain_view_key: TerrainViewKey,
@@ -628,14 +636,20 @@ impl Renderer {
         let mut order = std::mem::take(&mut self.draw_order);
         let mut opaque_columns = std::mem::take(&mut self.opaque_column_order);
         let mut model_columns = std::mem::take(&mut self.model_column_order);
-        let (mut stats, any_model_visible, any_transparent_visible) =
-            self.plan_draw_order(&mut order, &mut opaque_columns, &mut model_columns);
+        let mut contact_columns = std::mem::take(&mut self.contact_column_order);
+        let (mut stats, any_model_visible, any_transparent_visible) = self.plan_draw_order(
+            &mut order,
+            &mut opaque_columns,
+            &mut model_columns,
+            &mut contact_columns,
+        );
         self.encode_passes(
             &mut enc,
             &view,
             &order,
             &opaque_columns,
             &model_columns,
+            &contact_columns,
             &mut stats,
             any_model_visible,
             any_transparent_visible,
@@ -643,6 +657,7 @@ impl Renderer {
         self.draw_order = order;
         self.opaque_column_order = opaque_columns;
         self.model_column_order = model_columns;
+        self.contact_column_order = contact_columns;
         self.queue.submit(std::iter::once(enc.finish()));
         self.last_stats = stats;
         frame.present();

@@ -7,8 +7,10 @@ use crate::block::Aabb;
 use crate::facing::Facing;
 use crate::mathh::IVec3;
 use crate::mesh::face::Face;
-use crate::mesh::SHADES;
+use crate::mesh::{ContactShadowVertex, SHADES};
 
+use super::ao::{bake_contact_field, bake_face_ao, CONTACT_GRID};
+use super::query::face_texel_opaque;
 use super::{
     all, atlas, cell_of, clip_to_cell, def, oriented_cell_instance, placement_transform_fp,
     posed_cube_bounds, render_face_bias, union_clip_to_cell, BlockModelKind, CollisionSpec,
@@ -66,8 +68,34 @@ pub struct ModelTemplateVertex {
 /// translate-by-base + scale-shade-by-light + copy — no `Mat4`/quat/trig per remesh.
 pub struct ModelCellTemplate {
     pub verts: Vec<ModelTemplateVertex>,
-    /// Quad indices relative to the cell's first vertex (`0,1,2, 0,2,3` per face).
+    /// Quad indices relative to the cell's first vertex (`0,1,2, 0,2,3` per face,
+    /// or the flipped `1,2,3, 1,3,0` split when the baked corner AO calls for it —
+    /// the same anisotropy fix terrain AO uses).
     pub indices: Vec<u32>,
+}
+
+/// One single-cell piece of a contact-shadow stamp: non-indexed triangles over
+/// exactly ONE floor cell (the owner's own cell, `cell_delta == [0, 0]`, or a
+/// ring cell of the footprint's one-cell dilation), positions relative to the
+/// rotated footprint base (like [`ModelCellTemplate`] vertices), `darken` the
+/// multiplicative strength. `cell_delta` is the stamped cell's world `(dx, dz)`
+/// from the OWNER cell, already rotated by the facing — the mesher gates each
+/// piece on ITS OWN cell's support (opaque full cube below, not buried), which
+/// is what lets the stamp spill onto the grass next to the model while a
+/// missing neighbour floor still clips it per cell.
+pub struct ContactPiece {
+    pub cell_delta: [i32; 2],
+    pub verts: Vec<ContactShadowVertex>,
+}
+
+/// The startup-baked contact-shadow stamp owned by ONE bottom footprint cell at
+/// one facing. Ring cells OUTSIDE the footprint are assigned to exactly one
+/// adjacent bottom cell (nearest, index tie-break) so two cells of one model
+/// can never stamp the same world cell — the multiplicative pass would darken
+/// it twice. Empty for non-bottom cells and cells whose fields baked to
+/// nothing.
+pub struct ContactCellTemplate {
+    pub pieces: Vec<ContactPiece>,
 }
 
 /// The runtime bake of a model kind: its footprint, the cubes in footprint space with
@@ -98,6 +126,16 @@ pub struct ModelInstance {
     /// face bias, degenerate-face culling, atlas UVs, directional shade) is resolved here
     /// once so a remesh just translates + lights the verts.
     pub oriented_render: [Vec<ModelCellTemplate>; 4],
+    /// Per-cube, per-face (`Face::ALL` order), per-corner (`face_corners` order)
+    /// self-AO shade multipliers (see [`super::ao`]). Baked once from the fitted
+    /// footprint-space cubes; already folded into `oriented_render` shades, and
+    /// applied by the held/dropped/icon bakes (`render::item_model`) so every
+    /// presentation shades identically.
+    pub face_ao: Vec<[[f32; 4]; 6]>,
+    /// Per-facing, per-cell contact-shadow stamps, indexed exactly like
+    /// [`Self::oriented_render`]. Non-bottom cells (and bottom cells whose field
+    /// baked empty) hold an empty template.
+    pub oriented_contact: [Vec<ContactCellTemplate>; 4],
     /// Maps the CENTRED-UNIT item space (the `build_block_model_item` bake: footprint
     /// centred on the origin, largest axis spanning ±0.5) back to the model's AUTHORED
     /// display space in blocks — origin at the authored display pivot, 1 unit = 16
@@ -128,6 +166,15 @@ impl ModelInstance {
     pub fn cell_template(&self, offset: [u8; 3], facing: Facing) -> Option<&ModelCellTemplate> {
         let idx = self.cells.iter().position(|c| c.offset == offset)?;
         Some(&self.oriented_render[facing.to_u8() as usize][idx])
+    }
+
+    /// The baked contact-shadow stamp for `offset` under `facing`, or `None` if
+    /// the cell isn't part of the footprint or owns no stamp pieces.
+    #[inline]
+    pub fn contact_template(&self, offset: [u8; 3], facing: Facing) -> Option<&ContactCellTemplate> {
+        let idx = self.cells.iter().position(|c| c.offset == offset)?;
+        let tmpl = &self.oriented_contact[facing.to_u8() as usize][idx];
+        (!tmpl.pieces.is_empty()).then_some(tmpl)
     }
 
     fn build(kind: BlockModelKind) -> Self {
@@ -267,6 +314,77 @@ impl ModelInstance {
                 .collect()
         });
 
+        // Self-AO: per-face corner shade multipliers from the fitted cubes, with
+        // the production alpha test (a cutout texel does not cast). Facing-
+        // independent — occlusion is intrinsic to the geometry — so one bake
+        // serves all four oriented templates plus the item/icon bakes.
+        let face_ao = bake_face_ao(&cubes, |cube, face, mn, mx, hit| {
+            face_texel_opaque(cube, face, mn, mx, hit, at)
+        });
+        // Contact-shadow fields, authored space: every bottom footprint cell's
+        // own floor, PLUS the one-cell dilation ring around the footprint so
+        // the stamp can spill onto neighbouring terrain instead of shearing
+        // off at the cell boundary. Each ring cell is assigned to exactly one
+        // adjacent bottom cell (nearest by chebyshev, index tie-break): unique
+        // ownership, because two owners stamping one world cell would darken
+        // it twice under the multiplicative pass. (Ring cells whose only
+        // adjacent footprint cells were dropped as empty find no owner and
+        // are skipped — the mesher's ±1-cell pad couldn't gate them anyway.)
+        struct AuthoredContact {
+            owner: usize,
+            cell: [i32; 2],
+            delta: [i32; 2],
+            field: [[f32; CONTACT_GRID]; CONTACT_GRID],
+        }
+        let bottoms: Vec<usize> = cells
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.offset[1] == 0)
+            .map(|(i, _)| i)
+            .collect();
+        let mut authored_contact: Vec<AuthoredContact> = Vec::new();
+        for &bi in &bottoms {
+            let o = cells[bi].offset;
+            let cell = [o[0] as i32, o[2] as i32];
+            if let Some(field) = bake_contact_field(&cubes, cell[0], cell[1]) {
+                authored_contact.push(AuthoredContact {
+                    owner: bi,
+                    cell,
+                    delta: [0, 0],
+                    field,
+                });
+            }
+        }
+        for cx in -1..=footprint[0] as i32 {
+            for cz in -1..=footprint[2] as i32 {
+                let inside = (0..footprint[0] as i32).contains(&cx)
+                    && (0..footprint[2] as i32).contains(&cz);
+                if inside {
+                    continue;
+                }
+                let Some(field) = bake_contact_field(&cubes, cx, cz) else {
+                    continue;
+                };
+                let owner = bottoms
+                    .iter()
+                    .map(|&bi| {
+                        let o = cells[bi].offset;
+                        let d = (cx - o[0] as i32).abs().max((cz - o[2] as i32).abs());
+                        (d, bi)
+                    })
+                    .filter(|&(d, _)| d <= 1)
+                    .min();
+                let Some((_, bi)) = owner else { continue };
+                let o = cells[bi].offset;
+                authored_contact.push(AuthoredContact {
+                    owner: bi,
+                    cell: [cx, cz],
+                    delta: [cx - o[0] as i32, cz - o[2] as i32],
+                    field,
+                });
+            }
+        }
+
         // Bake the per-facing render geometry once. `placement_transform` with a ZERO base
         // gives the facing's rotation + footprint shift; the mesher adds the integer world
         // base at remesh. All the per-cube/per-face math the mesher used to redo every
@@ -279,7 +397,34 @@ impl ModelInstance {
             let base_xform = placement_transform_fp(IVec3::ZERO, footprint, facing);
             cells
                 .iter()
-                .map(|cell| bake_cell_template(base_xform, &cubes, &cell.cubes))
+                .map(|cell| bake_cell_template(base_xform, &cubes, &cell.cubes, &face_ao))
+                .collect()
+        });
+        let oriented_contact = std::array::from_fn(|i| {
+            let facing = Facing::from_u8(i as u8);
+            let base_xform = placement_transform_fp(IVec3::ZERO, footprint, facing);
+            (0..cells.len())
+                .map(|ci| ContactCellTemplate {
+                    pieces: authored_contact
+                        .iter()
+                        .filter(|a| a.owner == ci)
+                        .filter_map(|a| {
+                            // The stamped cell's world offset from its owner:
+                            // the authored delta through the facing's rotation
+                            // (a vector, so the footprint shift drops out).
+                            let rd = base_xform.transform_vector3(Vec3::new(
+                                a.delta[0] as f32,
+                                0.0,
+                                a.delta[1] as f32,
+                            ));
+                            let piece = ContactPiece {
+                                cell_delta: [rd.x.round() as i32, rd.z.round() as i32],
+                                verts: bake_contact_piece(base_xform, a.cell, &a.field),
+                            };
+                            (!piece.verts.is_empty()).then_some(piece)
+                        })
+                        .collect(),
+                })
                 .collect()
         });
 
@@ -306,6 +451,8 @@ impl ModelInstance {
             cube_boxes,
             oriented_cells,
             oriented_render,
+            face_ao,
+            oriented_contact,
             display_from_unit,
         }
     }
@@ -319,6 +466,7 @@ fn bake_cell_template(
     base_xform: Mat4,
     cubes: &[ModelCube],
     cube_idx: &[u32],
+    face_ao: &[[[f32; 4]; 6]],
 ) -> ModelCellTemplate {
     let mut verts = Vec::new();
     let mut indices = Vec::new();
@@ -343,6 +491,7 @@ fn bake_cell_template(
                 bias,
                 uv,
                 SHADES[face.shade_idx() as usize],
+                face_ao[ci as usize][slot],
             );
         }
     }
@@ -350,7 +499,7 @@ fn bake_cell_template(
 }
 
 /// Append one textured cube face to a cell template. Cell light and warm tint are
-/// applied later by the mesher.
+/// applied later by the mesher; the baked per-corner AO folds into `shade` here.
 #[allow(clippy::too_many_arguments)]
 fn push_template_face(
     verts: &mut Vec<ModelTemplateVertex>,
@@ -362,6 +511,7 @@ fn push_template_face(
     bias: Vec3,
     uv: [f32; 4],
     shade: f32,
+    ao: [f32; 4],
 ) {
     let local = face_corners(face, from, to);
     let p: [Vec3; 4] = [
@@ -382,10 +532,63 @@ fn push_template_face(
         verts.push(ModelTemplateVertex {
             pos: p[i],
             uv: corner_uv[i],
-            shade,
+            shade: shade * ao[i],
         });
     }
-    indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+    indices.extend(model_face_tris(ao).map(|i| start + i));
+}
+
+/// The quad's triangulation for its corner AO: split along the darker diagonal
+/// so the interpolated gradient stays symmetric — the same anisotropy fix as
+/// terrain AO's `should_flip` (strict `>` leaves ties, and every AO-free face,
+/// on the default split). Public because the held/dropped/icon bakes
+/// (`render::item_model`) emit the same faces from the same cubes.
+pub fn model_face_tris(ao: [f32; 4]) -> [u32; 6] {
+    if ao[0] + ao[2] > ao[1] + ao[3] {
+        [1, 2, 3, 1, 3, 0]
+    } else {
+        [0, 1, 2, 0, 2, 3]
+    }
+}
+
+/// Bake one floor cell's contact field (own cell or dilation ring, authored
+/// coords) into rotated, base-relative triangles. Sub-quads whose corners all
+/// round to zero are skipped (the stamp is sparse), so a piece holds only the
+/// floor area the model actually shadows.
+fn bake_contact_piece(
+    base_xform: Mat4,
+    cell: [i32; 2],
+    field: &[[f32; CONTACT_GRID]; CONTACT_GRID],
+) -> Vec<ContactShadowVertex> {
+    const SKIP_EPS: f32 = 1e-3;
+    let mut verts = Vec::new();
+    let step = 1.0 / (CONTACT_GRID - 1) as f32;
+    let corner = |i: usize, j: usize| {
+        let p = base_xform.transform_point3(Vec3::new(
+            cell[0] as f32 + i as f32 * step,
+            0.0,
+            cell[1] as f32 + j as f32 * step,
+        ));
+        ContactShadowVertex {
+            pos: p.to_array(),
+            darken: field[i][j],
+        }
+    };
+    for i in 0..CONTACT_GRID - 1 {
+        for j in 0..CONTACT_GRID - 1 {
+            let quad = [
+                corner(i, j),
+                corner(i + 1, j),
+                corner(i + 1, j + 1),
+                corner(i, j + 1),
+            ];
+            if quad.iter().all(|v| v.darken < SKIP_EPS) {
+                continue;
+            }
+            verts.extend_from_slice(&[quad[0], quad[1], quad[2], quad[0], quad[2], quad[3]]);
+        }
+    }
+    verts
 }
 
 /// Every kind's runtime [`ModelInstance`], indexed by `kind as usize`.

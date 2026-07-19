@@ -18,7 +18,7 @@ use super::cube_face::{
     cube_face_lighting, cube_face_tile, face_axes, face_index, facing_face, log_side_cell_uvs,
 };
 use super::exposed_masks::{build_exposed_masks, mask_has, pad_cube_fast_candidate};
-use super::model_block::emit_model_block;
+use super::model_block::{emit_model_block, emit_model_contact};
 use super::pad::{mesh_pad_idx, SectionMeshPad};
 use super::plant::emit_plant;
 use super::{LeafMeshMode, MeshOptions};
@@ -46,6 +46,7 @@ pub(super) fn section_geometry(
     let mut translucent_idx = vec![];
     let mut model: Vec<ModelVertex> = vec![];
     let mut model_idx: Vec<u32> = vec![];
+    let mut contact: Vec<super::super::vertex::ContactShadowVertex> = vec![];
 
     let (ox, oy, oz) = pos.origin_world();
     let tint_tile = |kind, ci| tints.map_or(tint::NO_TINT, |t| t.tile(kind, ci));
@@ -219,6 +220,33 @@ pub(super) fn section_geometry(
                         block6,
                         warm,
                     );
+                    // Contact shadow: only a BOTTOM footprint cell stamps, each
+                    // single-cell piece (its own floor + its owned spill onto the
+                    // dilation ring) gated on ITS stamped cell — an opaque full
+                    // cube directly below, and no opaque full cube burying the
+                    // floor at stamp level. Slabs, stairs, lowered cubes, glass,
+                    // other models, and air get no stamp — supporting those
+                    // shapes needs their real covered top surface and height,
+                    // not a relaxed opacity check.
+                    if offset[1] == 0 {
+                        emit_model_contact(
+                            &mut contact,
+                            kind,
+                            offset,
+                            facing,
+                            wx,
+                            wy,
+                            wz,
+                            |gx, gz| {
+                                let below = block_at(gx, wy - 1, gz);
+                                if below.render_shape() != RenderShape::Cube || !below.is_opaque() {
+                                    return false;
+                                }
+                                let at = block_at(gx, wy, gz);
+                                at.render_shape() != RenderShape::Cube || !at.is_opaque()
+                            },
+                        );
+                    }
                     continue;
                 }
 
@@ -706,6 +734,7 @@ pub(super) fn section_geometry(
         translucent_idx,
         model,
         model_idx,
+        contact,
         mesh_dirty: true,
         ..ChunkMesh::empty()
     }

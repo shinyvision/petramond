@@ -383,6 +383,7 @@ async fn new_renderer_inner(
     });
     let model_pipe = pipelines.mob_pipe.clone();
     let world_model_pipe = pipelines.world_model_pipe.clone();
+    let contact_pipe = pipelines.contact_pipe.clone();
     // Dropped bbmodel item-entities ride the model pipeline (world-space ItemVertex,
     // model atlas) in their OWN buffers, sized like the packed item-entity buffers.
     let item_model_entity_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -639,6 +640,7 @@ async fn new_renderer_inner(
         player_block_item_draw,
         model_pipe: model_pipe.clone(),
         world_model_pipe,
+        contact_pipe,
         model_atlas_bind,
         item_model_entity_draw: DynamicDraw::new(
             model_pipe,
@@ -680,6 +682,7 @@ async fn new_renderer_inner(
         draw_order: Vec::new(),
         opaque_column_order: Vec::new(),
         model_column_order: Vec::new(),
+        contact_column_order: Vec::new(),
         terrain_gpu_revision: 0,
         terrain_planned_gpu_revision: u64::MAX,
         terrain_view_key: TerrainViewKey {

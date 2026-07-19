@@ -328,6 +328,7 @@ impl Renderer {
         self.draw_order.clear();
         self.opaque_column_order.clear();
         self.model_column_order.clear();
+        self.contact_column_order.clear();
         self.selection = None;
         self.selection_drawn = None;
         self.outline_vertex_count = 0;

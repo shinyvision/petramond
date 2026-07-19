@@ -155,6 +155,21 @@ pub struct ModelVertex {
     pub light: [f32; 2],
 }
 
+/// GPU vertex of the model→terrain contact-shadow stream: a non-indexed
+/// triangle of the soft stamp a bbmodel block lays on the opaque terrain under
+/// its bottom footprint cells and their supported one-cell dilation ring (the
+/// shadow spills onto the grass next to the model). `darken` is the
+/// multiplicative strength (0 = no change); the dedicated contact pass
+/// multiplies the already-drawn terrain colour by `1 - darken`, fading back to
+/// identity through fog. 16 bytes, deliberately minimal — the stream is sparse
+/// (model cells only).
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ContactShadowVertex {
+    pub pos: [f32; 3],
+    pub darken: f32,
+}
+
 pub struct ChunkMesh {
     pub opaque: Vec<Vertex>,
     pub opaque_idx: Vec<u32>,
@@ -178,6 +193,12 @@ pub struct ChunkMesh {
     /// of the chunk; empty for the common chunk with no bbmodel blocks.
     pub model: Vec<ModelVertex>,
     pub model_idx: Vec<u32>,
+    /// Model→terrain contact-shadow triangles (non-indexed, see
+    /// [`ContactShadowVertex`]), drawn by the renderer's dedicated contact pass.
+    /// A section can hold contact triangles with an EMPTY model stream (a
+    /// multi-cell model's spanning cuboids may all render from a sibling cell),
+    /// so contact presence is tracked independently of `model_idx`.
+    pub contact: Vec<ContactShadowVertex>,
     /// True until GPU upload has happened. Set by the mesh builder, cleared by
     /// renderer after a successful upload so we don't re-upload every frame.
     pub mesh_dirty: bool,
@@ -209,6 +230,7 @@ impl ChunkMesh {
             far_opaque_idx: vec![],
             model: vec![],
             model_idx: vec![],
+            contact: vec![],
             mesh_dirty: false,
             released: false,
             released_empty: false,
@@ -225,6 +247,7 @@ impl ChunkMesh {
             && self.transparent_idx.is_empty()
             && self.translucent_idx.is_empty()
             && self.model_idx.is_empty()
+            && self.contact.is_empty()
     }
 
     pub fn is_released(&self) -> bool {
@@ -247,5 +270,6 @@ impl ChunkMesh {
         self.far_opaque_idx = Vec::new();
         self.model = Vec::new();
         self.model_idx = Vec::new();
+        self.contact = Vec::new();
     }
 }
