@@ -2950,7 +2950,9 @@
         "solid",
         "directional_view"
       ],
-      "tags": [],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "open_furniture_workbench",
       "collision": [],
@@ -3833,7 +3835,8 @@
         "directional_view"
       ],
       "tags": [
-        "bed"
+        "bed",
+        "no_grass_decay"
       ],
       "behavior": "inert",
       "interaction": "sleep",

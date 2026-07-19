@@ -819,7 +819,9 @@
       "flags": [
         "solid"
       ],
-      "tags": [],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": {
         "open_gui": "farming:farmers_workbench"
@@ -851,7 +853,9 @@
       "flags": [
         "solid"
       ],
-      "tags": [],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
@@ -881,7 +885,9 @@
       "flags": [
         "solid"
       ],
-      "tags": [],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],

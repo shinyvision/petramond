@@ -9,7 +9,9 @@
         "solid",
         "directional_view"
       ],
-      "tags": [],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": {
         "open_gui": "kitchen:oven"
@@ -42,7 +44,9 @@
         "solid",
         "directional_view"
       ],
-      "tags": [],
+      "tags": [
+        "no_grass_decay"
+      ],
       "behavior": "inert",
       "interaction": {
         "open_gui": "kitchen:oven"
