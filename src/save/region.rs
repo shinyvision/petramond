@@ -107,8 +107,7 @@ impl RegionReader {
         }
         let count = read_u16(&mut r)? as usize;
         let mut pos: u64 = 8; // magic + version + count
-        let mut records =
-            FxHashMap::with_capacity_and_hasher(count, rustc_hash::FxBuildHasher);
+        let mut records = FxHashMap::with_capacity_and_hasher(count, rustc_hash::FxBuildHasher);
         for _ in 0..count {
             let lidx = read_u16(&mut r)?;
             let len = read_u32(&mut r)?;

@@ -491,8 +491,7 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
         .expect("join")
         .join;
     assert_eq!(join.player_id, PlayerId(0));
-    let conn =
-        TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
+    let conn = TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
     let mut remote = ServerHandle::from_remote(conn);
 
     // Connected: the world runs and terrain streams (drain_until acks
@@ -526,8 +525,7 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
         .expect("rejoin")
         .join;
     assert_eq!(join.player_id, PlayerId(0), "the freed id recycles");
-    let conn =
-        TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
+    let conn = TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
     let mut remote = ServerHandle::from_remote(conn);
     let resumed = drain_until(&mut remote, Duration::from_secs(10), |msg| match msg {
         ServerToClient::Tick(u) => Some(u.tick),

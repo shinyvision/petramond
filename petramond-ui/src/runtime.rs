@@ -115,7 +115,8 @@ impl UiRuntime {
             (args.screen.0 as i32) / scale,
             (args.screen.1 as i32) / scale,
         );
-        let tree = InstTree::expand_form(&self.doc, args.state, self.doc.compact_active(viewport.0));
+        let tree =
+            InstTree::expand_form(&self.doc, args.state, self.doc.compact_active(viewport.0));
         if tree.is_empty() {
             return;
         }

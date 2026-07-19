@@ -11,7 +11,7 @@ fn cross_section_seam_culls_faces_and_samples_neighbour_ao_and_light() {
     let mut lower = Section::new(0, 0, 0);
     lower.set_block(8, 15, 8, Block::Stone); // step — its top face lies on the seam
     lower.set_block(9, 15, 8, Block::Stone); // pillar base
-    // Upper section (cy 1): the pillar's upper cube, world (9, 16, 8).
+                                             // Upper section (cy 1): the pillar's upper cube, world (9, 16, 8).
     let mut upper = Section::new(0, 1, 0);
     upper.set_block(9, 0, 8, Block::Stone);
 
@@ -27,7 +27,13 @@ fn cross_section_seam_culls_faces_and_samples_neighbour_ao_and_light() {
     };
     // The lower section's volume is pitch dark, the upper fully sky-lit: any
     // light on a seam face can only have been sampled from the other section.
-    let light_at = |_: i32, wy: i32, _: i32| -> u8 { if wy >= 16 { SKY_FULL } else { 0 } };
+    let light_at = |_: i32, wy: i32, _: i32| -> u8 {
+        if wy >= 16 {
+            SKY_FULL
+        } else {
+            0
+        }
+    };
 
     let lower_mesh = mesh_in_scene(&lower, SectionPos::new(0, 0, 0), block_at, light_at);
     let upper_mesh = mesh_in_scene(&upper, SectionPos::new(0, 1, 0), block_at, light_at);
@@ -54,8 +60,16 @@ fn cross_section_seam_culls_faces_and_samples_neighbour_ao_and_light() {
     // 2) AO across the seam: the step's kept top face lies ON the seam plane;
     // its +X edge corners are edge-occluded by the UPPER section's pillar cube.
     let step_top_at = |wx: f32, wz: f32| vert_at(&lower_mesh.opaque, 0, [wx, 16.0, wz]);
-    assert_eq!(ao_idx(step_top_at(9.0, 8.0)), 2, "seam corner occluded from above");
-    assert_eq!(ao_idx(step_top_at(9.0, 9.0)), 2, "seam corner occluded from above");
+    assert_eq!(
+        ao_idx(step_top_at(9.0, 8.0)),
+        2,
+        "seam corner occluded from above"
+    );
+    assert_eq!(
+        ao_idx(step_top_at(9.0, 9.0)),
+        2,
+        "seam corner occluded from above"
+    );
     assert_eq!(ao_idx(step_top_at(8.0, 8.0)), 3, "open corner fully lit");
     assert_eq!(ao_idx(step_top_at(8.0, 9.0)), 3, "open corner fully lit");
 

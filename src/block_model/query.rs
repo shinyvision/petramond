@@ -149,7 +149,13 @@ where
 /// Ray vs one face of the local axis-aligned box `[mn, mx]`: the crossing distance plus
 /// the local hit point. Faces are treated as double-sided because the model pass disables
 /// culling; alpha still decides whether that face contributes a visible/pickable pixel.
-pub(super) fn ray_box_face_hit(o: Vec3, d: Vec3, mn: Vec3, mx: Vec3, face: Face) -> Option<(f32, Vec3)> {
+pub(super) fn ray_box_face_hit(
+    o: Vec3,
+    d: Vec3,
+    mn: Vec3,
+    mx: Vec3,
+    face: Face,
+) -> Option<(f32, Vec3)> {
     let (axis, plane) = match face {
         Face::PosX => (0, mx.x),
         Face::NegX => (0, mn.x),

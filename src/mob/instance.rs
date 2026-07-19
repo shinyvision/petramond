@@ -25,6 +25,7 @@ use super::anim::AnimKind;
 // animation impl.
 pub use super::anim::AnimLayer;
 use super::brain::{AiCtx, AttackIntent, Brain, TickInputs};
+use super::confined;
 use super::damage::DeathState;
 use super::kinematics::{route_steering_supported, DriveIntent};
 use super::model_meta::{IdleAnimMeta, Skeleton};
@@ -122,6 +123,13 @@ pub struct Instance {
     /// shorn (its coat cubes are hidden and it can't be shorn again); it counts down on
     /// the tick and the coat is back at `0`. Persisted (see [`super::SavedMob`]).
     shear_regrow: u32,
+    /// Engine- and mod-owned tags attached to this mob instance. The engine
+    /// reserves the `petramond:` namespace (e.g., `petramond:confined`); mods
+    /// may invent `mod_id:` keys. Persisted (see [`super::SavedMob`]).
+    tags: std::collections::BTreeMap<String, super::MobTagValue>,
+    /// Ticks until the next confined-state recompute. Spread across mobs by id
+    /// so checks don't clump on one tick.
+    confined_cooldown: u8,
     /// ACTIVE particle-emitter bundles by catalog id (`crate::particle_emitters`),
     /// sorted, at most [`super::MAX_ACTIVE_MOB_EMITTERS`]. Presentation-only
     /// state toggled by mods through the `MobEmitterSet` HostCall, replicated
@@ -216,6 +224,8 @@ impl Instance {
             knockback: Vec3::ZERO,
             push: Vec3::ZERO,
             shear_regrow: 0,
+            tags: std::collections::BTreeMap::new(),
+            confined_cooldown: ((seed % confined::CHECK_INTERVAL as u64) as u8).max(1),
             active_emitters: Vec::new(),
             active_anims: Vec::new(),
             drive: None,
@@ -318,6 +328,29 @@ impl Instance {
     #[inline]
     pub(super) fn set_shear_regrow(&mut self, ticks: u32) {
         self.shear_regrow = ticks;
+    }
+
+    /// The mob's tag map (engine- and mod-owned key/value pairs).
+    #[inline]
+    pub fn tags(&self) -> &std::collections::BTreeMap<String, super::MobTagValue> {
+        &self.tags
+    }
+
+    /// Mutable access to the mob's tag map, for HostCalls and the reload path.
+    #[inline]
+    pub(super) fn tags_mut(
+        &mut self,
+    ) -> &mut std::collections::BTreeMap<String, super::MobTagValue> {
+        &mut self.tags
+    }
+
+    /// Whether the mob is currently confined (captive / penned).
+    #[inline]
+    pub fn is_confined(&self) -> bool {
+        matches!(
+            self.tags.get("petramond:confined"),
+            Some(super::MobTagValue::Bool(true))
+        )
     }
 
     /// The mob's mod KV entries (see the field docs).
@@ -449,6 +482,26 @@ impl Instance {
             &water,
         )
         .unwrap_or_else(|| voxel_at(self.pos));
+
+        // Periodic confined-state refresh. Only grounded, dry mobs are judged:
+        // a swimming or falling mob's space is transient, and dead mobs don't
+        // participate in AI anyway. The result is maintained as the
+        // `petramond:confined` mob tag so AI and HostCalls can read it uniformly.
+        self.confined_cooldown = self.confined_cooldown.saturating_sub(1);
+        if self.confined_cooldown == 0 && self.on_ground && !in_water {
+            let params = path::PathParams::for_body(d.size.head_cells(), d.size.half_width);
+            let confined = confined::is_confined(cell, params, &solid, &water);
+            if confined {
+                self.tags.insert(
+                    "petramond:confined".to_string(),
+                    super::MobTagValue::Bool(true),
+                );
+            } else {
+                self.tags.remove("petramond:confined");
+            }
+            self.confined_cooldown = confined::CHECK_INTERVAL;
+        }
+
         let nav_idle = self.nav.is_idle();
         let decision = {
             let mut ctx = AiCtx {

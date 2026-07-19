@@ -187,6 +187,7 @@ mod tests {
             kind: Mob::Sheep,
             pos: Vec3::new(9.2, 64.0, 8.5),
             active: true,
+            tags: Default::default(),
         }];
         let bumps = [EntityRef::Mob(1), EntityRef::Mob(9)];
         let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &bumps, &mobs));

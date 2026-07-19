@@ -432,7 +432,9 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("create fixture");
 
         let write = |json: &str| std::fs::write(dir.join("mobs.json"), json).expect("write");
-        write(r#"{"mobs":[],"brain_extensions":[{"mob":"petramond:sheep","brain":[{"node":"fixture:lure","priority":20,"inputs":["player_held"]}]}]}"#);
+        write(
+            r#"{"mobs":[],"brain_extensions":[{"mob":"petramond:sheep","brain":[{"node":"fixture:lure","priority":20,"inputs":["player_held"]}]}]}"#,
+        );
         let keys = registration_keys(&dir).expect("a well-formed extension passes admission");
         assert!(keys.is_empty(), "extensions register no keys");
 

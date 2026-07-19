@@ -30,8 +30,8 @@ mod simulation;
 mod tests;
 
 pub use drops::{DeathDrop, ShearDrop};
-pub use simulation::{MobAttack, MobFall, MobTickEvents, PlayerAnchor};
 use simulation::PushBody;
+pub use simulation::{MobAttack, MobFall, MobTickEvents, PlayerAnchor};
 
 /// The anchor nearest `pos`. Anchors are never empty: the local session always
 /// exists.

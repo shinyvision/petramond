@@ -50,8 +50,7 @@ fn compiled_model_roundtrips_with_full_fidelity() {
 /// Base64-encode (standard alphabet, padded) — test-only counterpart of
 /// [`base64_decode`], for building synthetic embedded textures.
 fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for chunk in bytes.chunks(3) {
         let b = [

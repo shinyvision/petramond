@@ -98,15 +98,24 @@ pub struct MobDamageFeedback {
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub enum MobDamageFeedbackComponent {
     DecreaseHealth,
-    Flash { duration: f32 },
-    Knockback { scale: f32, duration: f32 },
-    Sound { category: MobDamageSound },
+    Flash {
+        duration: f32,
+    },
+    Knockback {
+        scale: f32,
+        duration: f32,
+    },
+    Sound {
+        category: MobDamageSound,
+    },
     Ragdoll,
     /// Engine i-frames: a hit that decreases health grants `ticks` of the
     /// victim-global window, and the request is rejected while one is active.
     /// Omit for damage-over-time (burn) that must neither grant nor be
     /// blocked.
-    Immunity { ticks: u32 },
+    Immunity {
+        ticks: u32,
+    },
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]

@@ -261,6 +261,7 @@ fn re_saving_a_mob_free_section_clears_its_stale_record() {
         pos: Vec3::new(-100.5, 65.0, 56.5),
         yaw: 0.5,
         shear_regrow: 0,
+        tags: Default::default(),
         kv: Default::default(),
     });
     opened.save.save_sections(vec![snap]);

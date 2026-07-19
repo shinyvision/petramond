@@ -250,7 +250,10 @@ fn collision_hidden_parts_keep_visuals_but_remove_collision() {
         1,
         "only the solid cube collides after hiding water"
     );
-    assert_eq!(model.bounds, bounds_before, "bounds still hug the visible water");
+    assert_eq!(
+        model.bounds, bounds_before,
+        "bounds still hug the visible water"
+    );
     assert_eq!(model.cubes.len(), 2, "water cube is still rendered");
 }
 

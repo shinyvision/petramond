@@ -14,18 +14,17 @@ use crate::render::uniforms::ShaderParams;
 #[test]
 fn packed_vertex_pipeline_validates() {
     let instance = wgpu::Instance::new(&instance_descriptor());
-    let adapter =
-        match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        })) {
-            Ok(a) => a,
-            Err(_) => {
-                eprintln!("[skip] no wgpu adapter; pipeline validation not run");
-                return;
-            }
-        };
+    let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+    })) {
+        Ok(a) => a,
+        Err(_) => {
+            eprintln!("[skip] no wgpu adapter; pipeline validation not run");
+            return;
+        }
+    };
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: None,
         required_features: wgpu::Features::empty(),

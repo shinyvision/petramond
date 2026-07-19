@@ -174,7 +174,16 @@ fn sneak_step_down_is_instant_so_diagonal_descent_cannot_fall_off() {
     let mut min_y = f32::MAX;
     let mut airborne_frames = 0;
     for i in 0..600 {
-        pl.update_core_with_current(1.0 / 60.0, &world, &dry, &still, &no_ladder, &no_slip, diag, &[]);
+        pl.update_core_with_current(
+            1.0 / 60.0,
+            &world,
+            &dry,
+            &still,
+            &no_ladder,
+            &no_slip,
+            diag,
+            &[],
+        );
         min_y = min_y.min(pl.pos.y);
         // Skip the first frames: a fresh Player spawns with on_ground unset.
         if i > 2 && !pl.on_ground {

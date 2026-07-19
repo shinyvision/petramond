@@ -143,11 +143,9 @@ impl AmbientDrives {
         self.ceilings.clear();
         for (mod_id, per_mod) in &mut self.drives {
             // FNV-1a over the mod id: two mods on one bundle interleave.
-            let mod_salt = mod_id
-                .bytes()
-                .fold(0xCBF2_9CE4_8422_2325u64, |h, b| {
-                    (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01B3)
-                });
+            let mod_salt = mod_id.bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| {
+                (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01B3)
+            });
             for (bundle, drive) in per_mod.iter_mut() {
                 if drive.intensity <= DEAD_INTENSITY {
                     continue;
@@ -341,8 +339,7 @@ fn derive_volume(
                 if rdx * rdx + rdz * rdz > gate_sq {
                     continue;
                 }
-                let Some((kill_y, refined_biome)) = column_ceiling(world, ceilings, hx, hz)
-                else {
+                let Some((kill_y, refined_biome)) = column_ceiling(world, ceilings, hx, hz) else {
                     continue;
                 };
                 // The refinement can land columns away: keep the biome
@@ -361,12 +358,10 @@ fn derive_volume(
                     let (fh_x, fh_z) = if has_flutter {
                         (
                             spec.flutter[0]
-                                * (std::f32::consts::TAU
-                                    * (spec.flutter[1] * t_hit + fphase_x))
+                                * (std::f32::consts::TAU * (spec.flutter[1] * t_hit + fphase_x))
                                     .sin(),
                             spec.flutter[0]
-                                * (std::f32::consts::TAU
-                                    * (spec.flutter[1] * t_hit + fphase_z))
+                                * (std::f32::consts::TAU * (spec.flutter[1] * t_hit + fphase_z))
                                     .cos(),
                         )
                     } else {
@@ -522,7 +517,17 @@ mod tests {
             out.clear();
             ceilings.clear();
             derive_volume(
-                &spec, None, 7, 1.0, [0.0, 0.0], [0.0, 0.0], &world, &mut ceilings, CAM, time, &mut out,
+                &spec,
+                None,
+                7,
+                1.0,
+                [0.0, 0.0],
+                [0.0, 0.0],
+                &world,
+                &mut ceilings,
+                CAM,
+                time,
+                &mut out,
             );
             assert!(!out.is_empty(), "an active volume derives particles");
             for p in &out {
@@ -638,13 +643,21 @@ mod tests {
         drives.collect(&world, CAM, 0.0, 1.0, &mut out);
         assert!(out.is_empty());
         // Easing math: intensity approaches the target.
-        let d = drives.drives.get("weather").and_then(|m| m.get(&200)).unwrap();
+        let d = drives
+            .drives
+            .get("weather")
+            .and_then(|m| m.get(&200))
+            .unwrap();
         assert!(d.intensity < 1.0);
         for step in 1..200 {
             out.clear();
             drives.collect(&world, CAM, step as f32 * 0.1, 1.0, &mut out);
         }
-        let d = drives.drives.get("weather").and_then(|m| m.get(&200)).unwrap();
+        let d = drives
+            .drives
+            .get("weather")
+            .and_then(|m| m.get(&200))
+            .unwrap();
         assert!(d.intensity > 0.95, "intensity converges on the target");
         // Zero target: eases out, then the drive retires.
         drives.set("weather", 200, 0.0, [0.0, 0.0]);
@@ -691,7 +704,11 @@ mod tests {
             // integral and a revert to the round-3 defect would pass. After
             // the flip they diverge (the defect displaces every position by
             // Δwind × elapsed time; the integral glides).
-            let wind = if step < 1000 { [5.0f32, -4.0] } else { [-3.0f32, 6.0] };
+            let wind = if step < 1000 {
+                [5.0f32, -4.0]
+            } else {
+                [-3.0f32, 6.0]
+            };
             let time = step as f32 * dt;
             adv[0] = (adv[0] + wind[0] * dt).rem_euclid(diameter);
             adv[1] = (adv[1] + wind[1] * dt).rem_euclid(diameter);
@@ -764,10 +781,7 @@ mod tests {
             let in_flip_window = (995..1075).contains(&step);
             if step > 10 && !in_flip_window && !prev.is_empty() && !crowns.is_empty() {
                 crown_frames += 1;
-                let stable = crowns
-                    .iter()
-                    .filter(|c| prev.contains(c))
-                    .count();
+                let stable = crowns.iter().filter(|c| prev.contains(c)).count();
                 // Splash windows (~0.2-0.3 s) span many 60 fps frames, so
                 // MOST crowns persist frame-to-frame at identical positions.
                 assert!(

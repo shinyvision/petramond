@@ -52,7 +52,11 @@ fn furnace_lit_flip_reaches_the_replica_through_a_delta() {
         replica.install_remote_section(s.to_payload());
     }
     let replica_block = |r: &World| Block::from_id(r.chunk_block(4, 65, 4));
-    assert_eq!(replica_block(&replica), Block::Furnace, "fixture: joins unlit");
+    assert_eq!(
+        replica_block(&replica),
+        Block::Furnace,
+        "fixture: joins unlit"
+    );
 
     // The furnace lights; `tick_furnaces` swaps the skin row through the
     // block-write lanes, which record the delta.
@@ -498,10 +502,7 @@ fn door_toggles_replicate_the_open_bit_without_a_block_change() {
 
 /// A hand-built column payload: flat maps, all-unknown summaries, and the
 /// given deep band floor — the minimum a replica needs to classify deep.
-fn column_payload_fixture(
-    pos: ChunkPos,
-    deep_band_lo: i32,
-) -> crate::net::protocol::ColumnPayload {
+fn column_payload_fixture(pos: ChunkPos, deep_band_lo: i32) -> crate::net::protocol::ColumnPayload {
     use crate::chunk::SECTION_SIZE;
     use crate::net::protocol::{ColumnPayload, SectionBytes};
     let flat = |n: usize| SectionBytes(Arc::from(vec![0u8; n].into_boxed_slice()));

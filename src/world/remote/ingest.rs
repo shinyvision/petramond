@@ -230,11 +230,9 @@ impl World {
                 crate::chunk::SKY_FULL,
             );
             let blk = match &payload.blocklight {
-                Some(b) => crate::world::light::cube_region_changes(
-                    s.blocklight_arc().as_deref(),
-                    &b.0,
-                    0,
-                ),
+                Some(b) => {
+                    crate::world::light::cube_region_changes(s.blocklight_arc().as_deref(), &b.0, 0)
+                }
                 None => match s.blocklight_arc() {
                     Some(old) => crate::world::light::cube_region_changes(
                         Some(&old),

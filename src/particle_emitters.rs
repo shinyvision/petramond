@@ -288,7 +288,11 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EmitterBundle
     // Cross-bundle references resolve against the FINISHED table (an ambient
     // may name a burst declared by any pack, in any load order).
     for row in catalog.rows() {
-        if let Some(AmbientSpec { hit: AmbientHit::Burst(key), .. }) = &row.ambient {
+        if let Some(AmbientSpec {
+            hit: AmbientHit::Burst(key),
+            ..
+        }) = &row.ambient
+        {
             match catalog.id(key).map(|id| &catalog.rows()[id as usize]) {
                 Some(target) if target.burst.is_some() => {}
                 Some(_) => {
@@ -321,17 +325,15 @@ fn resolve_biome_filter(key: &str, a: &AmbientSpec) -> Result<Option<[u64; 4]>, 
         ));
     }
     let exclude = !a.exclude_biomes.is_empty();
-    let names = if exclude { &a.exclude_biomes } else { &a.biomes };
-    let mut bits = if exclude {
-        [u64::MAX; 4]
+    let names = if exclude {
+        &a.exclude_biomes
     } else {
-        [0u64; 4]
+        &a.biomes
     };
+    let mut bits = if exclude { [u64::MAX; 4] } else { [0u64; 4] };
     for name in names {
         let Some(id) = mod_api::biome::by_name(name) else {
-            return Err(format!(
-                "emitter '{key}' ambient: unknown biome '{name}'"
-            ));
+            return Err(format!("emitter '{key}' ambient: unknown biome '{name}'"));
         };
         let (word, bit) = ((id >> 6) as usize, 1u64 << (id & 63));
         if exclude {
@@ -579,22 +581,47 @@ mod tests {
         // Allow-list resolves to a set admitting exactly its members.
         let ok = with_filter(r#", "biomes": ["snowy_plains", "snowy_taiga"]"#);
         let defs = parse_layers(&[&base(), ok.as_str()]).expect("filter loads");
-        let allow = &defs.rows().last().unwrap().ambient.as_ref().unwrap().biome_allow;
+        let allow = &defs
+            .rows()
+            .last()
+            .unwrap()
+            .ambient
+            .as_ref()
+            .unwrap()
+            .biome_allow;
         assert!(allow.is_some());
         assert!(biome_allowed(allow, mod_api::biome::SNOWY_PLAINS));
         assert!(!biome_allowed(allow, mod_api::biome::PLAINS));
         // Exclusion admits the complement.
         let ok = with_filter(r#", "exclude_biomes": ["desert"]"#);
         let defs = parse_layers(&[&base(), ok.as_str()]).expect("exclusion loads");
-        let allow = &defs.rows().last().unwrap().ambient.as_ref().unwrap().biome_allow;
+        let allow = &defs
+            .rows()
+            .last()
+            .unwrap()
+            .ambient
+            .as_ref()
+            .unwrap()
+            .biome_allow;
         assert!(!biome_allowed(allow, mod_api::biome::DESERT));
         assert!(biome_allowed(allow, mod_api::biome::PLAINS));
         // No filter = all biomes.
         let defs = parse_layers(&[&base(), with_filter("").as_str()]).expect("no filter");
-        assert!(defs.rows().last().unwrap().ambient.as_ref().unwrap().biome_allow.is_none());
+        assert!(defs
+            .rows()
+            .last()
+            .unwrap()
+            .ambient
+            .as_ref()
+            .unwrap()
+            .biome_allow
+            .is_none());
         // Unknown names and double declarations fail the load.
         for (bad, why) in [
-            (with_filter(r#", "biomes": ["nope_biome"]"#), "unknown biome"),
+            (
+                with_filter(r#", "biomes": ["nope_biome"]"#),
+                "unknown biome",
+            ),
             (
                 with_filter(r#", "biomes": ["desert"], "exclude_biomes": ["plains"]"#),
                 "both list kinds",
@@ -638,7 +665,10 @@ mod tests {
         // "die" is the default hit.
         let quiet = ambient(r#""die""#, "24");
         let defs = parse_layers(&[&base(), quiet.as_str()]).expect("die hit loads");
-        assert_eq!(defs.rows().last().unwrap().ambient.as_ref().unwrap().hit, AmbientHit::Die);
+        assert_eq!(
+            defs.rows().last().unwrap().ambient.as_ref().unwrap().hit,
+            AmbientHit::Die
+        );
 
         for (bad, why) in [
             (

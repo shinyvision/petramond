@@ -322,7 +322,15 @@ impl ServerGame {
             let Some(idx) = self.world.mobs().index_of_id(fall.mob_id) else {
                 continue;
             };
-            self.damage_mob_through_pipeline(0, idx, amount, DamageSource::Fall, None, None, events);
+            self.damage_mob_through_pipeline(
+                0,
+                idx,
+                amount,
+                DamageSource::Fall,
+                None,
+                None,
+                events,
+            );
         }
     }
 

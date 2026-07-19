@@ -61,9 +61,8 @@ pub(crate) fn tab_cell(rect: RectI, widths: &[i32], gap: i32, i: usize) -> RectI
 
 /// The tab index under `(x, y)`, if any.
 pub(crate) fn tab_hit(rect: RectI, widths: &[i32], gap: i32, x: f32, y: f32) -> Option<u32> {
-    (0..widths.len()).find_map(|i| {
-        contains_f(tab_cell(rect, widths, gap, i), x, y).then_some(i as u32)
-    })
+    (0..widths.len())
+        .find_map(|i| contains_f(tab_cell(rect, widths, gap, i), x, y).then_some(i as u32))
 }
 
 /// Float point-in-rect over a logical rect (half-open, like `RectI`).

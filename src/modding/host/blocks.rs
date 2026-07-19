@@ -49,17 +49,18 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
         // Biomes are column-level data fixed at generation (saved overlays
         // never change them), so a loaded-column read cannot lie: no
         // stream-final gate needed.
-        HostCall::BiomeAt { pos } => sim_query(move |ctx| {
-            HostRet::MaybeByte(ctx.world.biome_at_world(pos[0], pos[1]))
-        }),
+        HostCall::BiomeAt { pos } => {
+            sim_query(move |ctx| HostRet::MaybeByte(ctx.world.biome_at_world(pos[0], pos[1])))
+        }
         // The SURFACE can lie mid-stream (the generated base shows where a
         // saved overlay is about to land), so the found footing must be
         // stream-final like every block read — else a mod builds on terrain
         // the player's save is about to replace.
         HostCall::SurfaceYAt { pos } => sim_query(move |ctx| {
-            let y = ctx.world.surface_collision_y(pos[0], pos[1]).filter(|&y| {
-                ctx.world.block_if_stream_final(pos[0], y, pos[1]).is_some()
-            });
+            let y = ctx
+                .world
+                .surface_collision_y(pos[0], pos[1])
+                .filter(|&y| ctx.world.block_if_stream_final(pos[0], y, pos[1]).is_some());
             HostRet::MaybeI32(y)
         }),
         // Mod reads report None ("unloaded") while a section's streamed
@@ -275,8 +276,12 @@ mod tests {
                 matches!(loaded, HostRet::Light(Some(_))),
                 "loaded cell must answer light, got {loaded:?}"
             );
-            let unloaded =
-                handle_host_call(&mut store, HostCall::LightAt { pos: [512, 64, 512] });
+            let unloaded = handle_host_call(
+                &mut store,
+                HostCall::LightAt {
+                    pos: [512, 64, 512],
+                },
+            );
             assert_eq!(unloaded, HostRet::Light(None));
         });
     }
@@ -294,11 +299,11 @@ mod tests {
         assert!(world.set_block_world(8, 64, 8, Block::OakStairs));
         assert!(world.set_block_world(8, 65, 8, Block::Water));
         with_world_ctx(&mut world, || {
-            let mut shape = |pos| match handle_host_call(&mut store, HostCall::CollisionShapeAt { pos })
-            {
-                HostRet::CollisionShape(s) => s,
-                other => panic!("expected a shape reply, got {other:?}"),
-            };
+            let mut shape =
+                |pos| match handle_host_call(&mut store, HostCall::CollisionShapeAt { pos }) {
+                    HostRet::CollisionShape(s) => s,
+                    other => panic!("expected a shape reply, got {other:?}"),
+                };
             assert_eq!(shape([8, 63, 8]), Some(CollisionShape::Full));
             assert_eq!(shape([8, 64, 8]), Some(CollisionShape::Partial));
             assert_eq!(shape([8, 65, 8]), Some(CollisionShape::Empty));

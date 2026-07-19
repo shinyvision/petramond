@@ -436,8 +436,14 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
     else {
         panic!("blocks reply expected");
     };
-    assert_eq!(blocks[0], Some(mod_api::BlockId(crate::block::Block::Stone.id())));
-    assert_eq!(blocks[1], Some(mod_api::BlockId(crate::block::Block::Air.id())));
+    assert_eq!(
+        blocks[0],
+        Some(mod_api::BlockId(crate::block::Block::Stone.id()))
+    );
+    assert_eq!(
+        blocks[1],
+        Some(mod_api::BlockId(crate::block::Block::Air.id()))
+    );
     assert_eq!(blocks[2], None, "an unloaded section reads None");
 
     // A section whose streamed content is not final reads None — the same
@@ -448,7 +454,10 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
     else {
         panic!("blocks reply expected");
     };
-    assert_eq!(blocks[0], None, "an in-flight overlay leaked a replica read");
+    assert_eq!(
+        blocks[0], None,
+        "an in-flight overlay leaked a replica read"
+    );
 
     // Registry-only queries are legal on client instances (a client mod
     // interpreting block ids has to resolve the names and tag sets it

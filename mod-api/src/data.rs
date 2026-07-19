@@ -31,6 +31,17 @@ pub enum GuiValue {
     Str(String),
 }
 
+/// One value in a live mob's tag map. Engine tags use the `petramond:`
+/// namespace (e.g., `petramond:confined`); mods may invent `mod_id:` keys.
+/// Tags persist with the mob and are visible to AI.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum MobTagValue {
+    Bool(bool),
+    I64(i64),
+    F64(f64),
+    Str(String),
+}
+
 /// A live mob's snapshot for [`HostCall::MobsInRadius`]. The mob's ADDRESS is
 /// the stable [`id`](Self::id) — every mob call and event payload speaks it
 /// (see the mob-addressing note on [`HostCall`](crate::HostCall)). `index` is

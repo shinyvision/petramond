@@ -64,7 +64,7 @@ impl PathParams {
     }
 
     #[inline]
-    fn head_cells(self) -> i32 {
+    pub fn head_cells(self) -> i32 {
         self.head.max(1)
     }
 
@@ -210,7 +210,11 @@ fn footprint_range(half_width: f32) -> std::ops::RangeInclusive<i32> {
     min..=max
 }
 
-fn body_layer_touches(cell: IVec3, params: PathParams, occupied: &impl Fn(IVec3) -> bool) -> bool {
+pub fn body_layer_touches(
+    cell: IVec3,
+    params: PathParams,
+    occupied: &impl Fn(IVec3) -> bool,
+) -> bool {
     let range = footprint_range(params.body_half_width());
     for dx in range.clone() {
         for dz in range.clone() {
@@ -222,7 +226,7 @@ fn body_layer_touches(cell: IVec3, params: PathParams, occupied: &impl Fn(IVec3)
     false
 }
 
-fn body_layer_clear(cell: IVec3, params: PathParams, solid: &impl Fn(IVec3) -> bool) -> bool {
+pub fn body_layer_clear(cell: IVec3, params: PathParams, solid: &impl Fn(IVec3) -> bool) -> bool {
     !body_layer_touches(cell, params, solid)
 }
 

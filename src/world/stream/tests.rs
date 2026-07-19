@@ -802,6 +802,9 @@ mod sea_ice_streaming {
         let oneshot = crate::worldgen::generate_chunk(34, 6, -1);
         let expected = oneshot.block(15, 63, 15);
         assert_eq!(expected, Block::Ice, "the pinned column still freezes");
-        assert_eq!(live, expected, "streamed world must match one-shot generation");
+        assert_eq!(
+            live, expected,
+            "streamed world must match one-shot generation"
+        );
     }
 }

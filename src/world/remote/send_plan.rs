@@ -83,10 +83,12 @@ impl World {
         let mut band_los: HashMap<ChunkPos, i32> = HashMap::new();
         let mut band_lo_of = |world: &Self, cp: ChunkPos| {
             *band_los.entry(cp).or_insert_with(|| {
-                world.column_gen.get(&cp).map_or(
-                    crate::chunk::SECTION_MIN_CY,
-                    |col| *Self::surface_window_for_column(col, 0).start(),
-                )
+                world
+                    .column_gen
+                    .get(&cp)
+                    .map_or(crate::chunk::SECTION_MIN_CY, |col| {
+                        *Self::surface_window_for_column(col, 0).start()
+                    })
             })
         };
         let mut sections: Vec<(i64, SectionPos)> = self

@@ -386,7 +386,11 @@ impl SurfaceDensitySystem {
     /// that lands in it, reuses one sample+classify instead of recomputing. Output
     /// stays a pure function of `(seed, cell)`, independent of call order.
     fn climate_cells(&self) -> ClimateCellCache<'_> {
-        ClimateCellCache::new(ClimateSampler::new(self.density.graph()), &self.climate, self.seed)
+        ClimateCellCache::new(
+            ClimateSampler::new(self.density.graph()),
+            &self.climate,
+            self.seed,
+        )
     }
 
     /// The block a submerged column's waterline cell (`y == SEA_LEVEL`) takes:

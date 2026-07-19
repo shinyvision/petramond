@@ -21,6 +21,7 @@ mod anim;
 mod behavior;
 mod body_geometry;
 mod brain;
+mod confined;
 mod damage;
 mod instance;
 mod kinematics;
@@ -43,8 +44,8 @@ pub(crate) use body_geometry::{
     SolidMotionSolver,
 };
 pub use brain::Brain;
-pub(crate) use load::validate_brain_extensions;
 pub use instance::{hurt_flash01, Instance};
+pub(crate) use load::validate_brain_extensions;
 pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop};
 pub use noise::{player_steps_are_audible, Noise, NoiseKind};
@@ -91,6 +92,18 @@ impl Mob {
 pub enum EntityRef {
     Player(crate::server::player::PlayerId),
     Mob(u64),
+}
+
+/// A typed value in a mob's tag map. Tags are engine- or mod-owned key/value
+/// pairs attached to a live mob instance; they persist with the mob's chunk
+/// and are visible to AI and HostCalls. The engine reserves the `petramond:`
+/// namespace; mods may invent their own `mod_id:` keys.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MobTagValue {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(String),
 }
 
 /// Engine mob names in frozen id order (`ENGINE_MOB_NAMES[id]` names `Mob(id)`).
@@ -311,16 +324,25 @@ pub struct MobDamageFeedback {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MobDamageFeedbackComponent {
     DecreaseHealth,
-    Flash { duration: f32 },
-    Knockback { scale: f32, duration: f32 },
-    Sound { category: MobDamageSound },
+    Flash {
+        duration: f32,
+    },
+    Knockback {
+        scale: f32,
+        duration: f32,
+    },
+    Sound {
+        category: MobDamageSound,
+    },
     Ragdoll,
     /// Engine damage immunity: while present, a hit that decreases health
     /// grants `ticks` of the victim-global i-frame window, and the request is
     /// REJECTED while a window is active. A pipeline without this component
     /// neither grants nor is blocked — steady damage-over-time (burn) simply
     /// omits it.
-    Immunity { ticks: u32 },
+    Immunity {
+        ticks: u32,
+    },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -499,13 +521,17 @@ pub struct ShearSpec {
 /// health, animation, the despawn timer) is deliberately *not* saved: a reloaded mob
 /// simply resumes wandering. The shear-regrow counter IS saved — a shorn sheep must
 /// not reload with its wool back — and so is the mod KV (default-empty for records
-/// older than section-record v3).
+/// older than section-record v3). Mob tags are also saved so a penned mob
+/// doesn't briefly pull free mobs toward it on chunk reload.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedMob {
     pub kind: Mob,
     pub pos: Vec3,
     pub yaw: f32,
     pub shear_regrow: u32,
+    /// Engine- and mod-owned tags attached to this mob instance. The engine
+    /// reserves the `petramond:` namespace (e.g., `petramond:confined`).
+    pub tags: std::collections::BTreeMap<String, MobTagValue>,
     /// Per-mob mod KV (`mod_id:key` → bytes), opaque to the engine; BTreeMap
     /// so the save encoding is deterministic.
     pub kv: std::collections::BTreeMap<String, Vec<u8>>,
@@ -519,6 +545,7 @@ impl SavedMob {
             pos: inst.pos,
             yaw: inst.yaw,
             shear_regrow: inst.shear_regrow(),
+            tags: inst.tags().clone(),
             kv: inst.mod_kv().clone(),
         }
     }

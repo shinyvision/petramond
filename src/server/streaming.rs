@@ -209,7 +209,8 @@ impl TerrainSync {
         let mut cys = self.sent_by_column.remove(&cp).unwrap_or_default();
         cys.sort_unstable();
         cys.iter().for_each(|&cy| {
-            self.sent_sections.remove(&SectionPos::new(cp.cx, cy, cp.cz));
+            self.sent_sections
+                .remove(&SectionPos::new(cp.cx, cy, cp.cz));
         });
         cys.into_iter()
             .map(|cy| SectionPos::new(cp.cx, cy, cp.cz))
@@ -862,7 +863,10 @@ mod tests {
         let mut lit: Option<(SectionPos, (i32, i32, i32))> = None;
         let mut inbox: Vec<(PlayerId, ClientToServer)> = Vec::new();
         while lit.is_none() {
-            assert!(Instant::now() < deadline, "no editable lit section streamed");
+            assert!(
+                Instant::now() < deadline,
+                "no editable lit section streamed"
+            );
             let out = server.pump_tagged(0.01, &mut inbox, &[(remote_id, SERVER_QUEUE_MSGS)]);
             lit = out.remote.iter().flat_map(|(_, msgs)| msgs).find_map(|m| {
                 let ServerToClient::SectionData(p) = m else {

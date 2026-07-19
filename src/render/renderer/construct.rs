@@ -174,7 +174,11 @@ async fn new_renderer_inner(
                 &res.params_buf,
                 &env_depth,
             );
-            super::EnvPass { res, bind, dormant: false }
+            super::EnvPass {
+                res,
+                bind,
+                dormant: false,
+            }
         })
         .collect();
 

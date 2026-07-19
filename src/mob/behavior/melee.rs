@@ -328,6 +328,7 @@ mod tests {
             kind: crate::mob::Mob::Sheep,
             pos: Vec3::new(8.5, 64.0, 7.2),
             active: true,
+            tags: Default::default(),
         };
         let far_player = Vec3::new(80.0, 64.9, 80.0);
 

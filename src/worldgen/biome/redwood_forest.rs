@@ -2,7 +2,10 @@ use crate::biome::Biome;
 use crate::block::Block;
 use crate::worldgen::rng::FeatureRng;
 
-use super::{BiomeSpec, CoverCluster, SnowCover, TreeProfile, TreeSupport, VegetationProfile, surfaces, trees};
+use super::{
+    surfaces, trees, BiomeSpec, CoverCluster, SnowCover, TreeProfile, TreeSupport,
+    VegetationProfile,
+};
 
 const FLOWERS: &[Block] = &[Block::OxeyeDaisy, Block::Poppy];
 

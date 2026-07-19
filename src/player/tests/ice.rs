@@ -41,6 +41,12 @@ fn ice_glides_far_beyond_ordinary_ground() {
         }
         pl.vel.x
     };
-    assert!(steer(false) < 0.0, "ordinary ground reverses within the window");
-    assert!(steer(true) > 0.0, "ice keeps sliding forward through the same input");
+    assert!(
+        steer(false) < 0.0,
+        "ordinary ground reverses within the window"
+    );
+    assert!(
+        steer(true) > 0.0,
+        "ice keeps sliding forward through the same input"
+    );
 }

@@ -80,8 +80,9 @@ pub(crate) fn dispatch(key: &str, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
             callback_id: reg.callback_id,
             ctx: ctx.clone(),
         };
-        let reply =
-            with_detached_tick(ctx.tick, || reg.instance.lock().unwrap().call_guest_detached(&call));
+        let reply = with_detached_tick(ctx.tick, || {
+            reg.instance.lock().unwrap().call_guest_detached(&call)
+        });
         match reply? {
             GuestRet::AiDecision(decision) => decision,
             _ => {

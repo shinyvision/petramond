@@ -68,7 +68,11 @@ impl Game {
     /// use/shear target, an interactable block under the crosshair
     /// (non-sneak), or a held item with its own use (food, bucket). Gates the
     /// P0 jab only — the click ships regardless.
-    pub(super) fn use_click_predicts_effect(&self, input: &GameInput, use_mob: Option<u64>) -> bool {
+    pub(super) fn use_click_predicts_effect(
+        &self,
+        input: &GameInput,
+        use_mob: Option<u64>,
+    ) -> bool {
         if use_mob.is_some() {
             return true;
         }

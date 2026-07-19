@@ -339,10 +339,11 @@ impl ServerGame {
             // almost everything; melting ice leaves water — see
             // `Block::break_residue`). The predicted clear applies the same
             // rule (`World::clear_broken_block`).
-            let below = Block::from_id(
-                self.world
-                    .chunk_block(event.pos.x, event.pos.y - 1, event.pos.z),
-            );
+            let below = Block::from_id(self.world.chunk_block(
+                event.pos.x,
+                event.pos.y - 1,
+                event.pos.z,
+            ));
             self.world.set_block_world(
                 event.pos.x,
                 event.pos.y,

@@ -630,9 +630,10 @@ fn compound_buttons_click_by_row_and_hooks_keep_the_scroll_clip() {
         (recipe0.y + recipe0.h / 2) as f32,
     );
     frame(&[down(p0.0, p0.1), up(p0.0, p0.1)], &mut fs, &mut out);
-    assert!(out.events.iter().any(
-        |event| matches!(event, UiEvent::Click { id, item: Some(0), .. } if id == "recipe")
-    ));
+    assert!(out
+        .events
+        .iter()
+        .any(|event| matches!(event, UiEvent::Click { id, item: Some(0), .. } if id == "recipe")));
 
     let recipe1 = out
         .named
@@ -768,8 +769,7 @@ fn compound_button_faces_cover_normal_hover_pressed_selected_and_disabled() {
             [0, 0, 0, 255],
             &mut rgba,
         );
-        let i =
-            (((rect.y + rect.h / 2) as u32 * 400 + (rect.x + rect.w / 2) as u32) * 4) as usize;
+        let i = (((rect.y + rect.h / 2) as u32 * 400 + (rect.x + rect.w / 2) as u32) * 4) as usize;
         [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
     };
 
@@ -833,24 +833,25 @@ fn tab_bar_fires_on_down_and_respects_enabled_and_gaps() {
     let mut out = FrameOutput::default();
     let mut state = UiState::new();
     state.set("tab", UiValue::I32(0));
-    let mut frame = |state: &UiState, fs: &mut FrameState, out: &mut FrameOutput, input: &[InputEvent]| {
-        rt.frame(
-            FrameArgs {
-                screen: (400, 200),
-                scale: 2,
-                now: 0.0,
-                state,
-                input,
-                clipboard: None,
-                images: &NoImages,
-                dim: None,
-                preview: None,
-            },
-            fs,
-            out,
-        );
-        out.events.clone()
-    };
+    let mut frame =
+        |state: &UiState, fs: &mut FrameState, out: &mut FrameOutput, input: &[InputEvent]| {
+            rt.frame(
+                FrameArgs {
+                    screen: (400, 200),
+                    scale: 2,
+                    now: 0.0,
+                    state,
+                    input,
+                    clipboard: None,
+                    images: &NoImages,
+                    dim: None,
+                    preview: None,
+                },
+                fs,
+                out,
+            );
+            out.events.clone()
+        };
 
     frame(&state, &mut fs, &mut out, &[]);
     let (mx, my) = tab_center(&out, &theme, &doc, 1);
@@ -917,7 +918,11 @@ fn tab_faces_track_bound_selection_and_hover() {
         run(&[], &mut fs, &mut out);
         if let Some(t) = hover_tab {
             let (hx, hy) = tab_center(&out, &theme, &doc, t);
-            run(&[InputEvent::PointerMove { x: hx, y: hy }], &mut fs, &mut out);
+            run(
+                &[InputEvent::PointerMove { x: hx, y: hy }],
+                &mut fs,
+                &mut out,
+            );
         }
         let mut rgba = Vec::new();
         rasterize(
@@ -1009,8 +1014,7 @@ fn a_clicked_row_never_flashes_unpressed_between_release_and_rebound_selection()
             [0, 0, 0, 255],
             &mut rgba,
         );
-        let i =
-            (((rect.y + rect.h / 2) as u32 * 400 + (rect.x + rect.w / 2) as u32) * 4) as usize;
+        let i = (((rect.y + rect.h / 2) as u32 * 400 + (rect.x + rect.w / 2) as u32) * 4) as usize;
         [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
     };
 
@@ -1080,5 +1084,8 @@ fn compact_breakpoint_swaps_node_layouts_by_viewport_width() {
     let (a, b) = solve_at((200, 100));
     assert!(b.x > a.x && b.y == a.y, "wide viewports flow the row");
     let (a, b) = solve_at((80, 100));
-    assert!(b.y > a.y && b.x == a.x, "below the breakpoint the compact layout stacks");
+    assert!(
+        b.y > a.y && b.x == a.x,
+        "below the breakpoint the compact layout stacks"
+    );
 }

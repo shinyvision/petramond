@@ -110,8 +110,9 @@ fn controller_for(kind: GuiKind) -> ShellController {
         GuiKind::WorldSelect => C::screen(world_select::populate, world_select::handle),
         GuiKind::WorldSettings => C::screen(world_settings::populate, world_settings::handle)
             .with_prepare(world_settings::prepare),
-        GuiKind::CreateWorld => C::screen(create_world::populate, create_world::handle)
-            .with_prepare(pack_icon_prepare),
+        GuiKind::CreateWorld => {
+            C::screen(create_world::populate, create_world::handle).with_prepare(pack_icon_prepare)
+        }
         GuiKind::DeleteWorld => C::screen(delete_world::populate, delete_world::handle),
         GuiKind::ConnectServer => C::screen(connect_server::populate, connect_server::handle)
             .with_prepare(|app| {

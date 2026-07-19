@@ -422,12 +422,7 @@ fn precise_shape_hit(
             .stair_boxes_at(pos.x, pos.y, pos.z)
             .iter()
             .filter_map(|b| {
-                ray_vs_aabb_hit(
-                    eye,
-                    dir,
-                    base + Vec3::from(b.min),
-                    base + Vec3::from(b.max),
-                )
+                ray_vs_aabb_hit(eye, dir, base + Vec3::from(b.min), base + Vec3::from(b.max))
             })
             .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
     }
@@ -437,12 +432,7 @@ fn precise_shape_hit(
             .slab_boxes_at(pos.x, pos.y, pos.z)
             .iter()
             .filter_map(|b| {
-                ray_vs_aabb_hit(
-                    eye,
-                    dir,
-                    base + Vec3::from(b.min),
-                    base + Vec3::from(b.max),
-                )
+                ray_vs_aabb_hit(eye, dir, base + Vec3::from(b.min), base + Vec3::from(b.max))
             })
             .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
     }
@@ -454,12 +444,7 @@ fn precise_shape_hit(
             .pane_boxes_at(pos)
             .iter()
             .filter_map(|b| {
-                ray_vs_aabb_hit(
-                    eye,
-                    dir,
-                    base + Vec3::from(b.min),
-                    base + Vec3::from(b.max),
-                )
+                ray_vs_aabb_hit(eye, dir, base + Vec3::from(b.min), base + Vec3::from(b.max))
             })
             .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
     }

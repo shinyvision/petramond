@@ -46,7 +46,11 @@ pub(super) fn create_shader_texture_bind(
     }
     let mut entries = Vec::with_capacity(super::shader_pack::SKY_TEXTURE_SLOTS * 2);
     for (slot, (_, view, sampler)) in slots.iter().enumerate() {
-        entries.extend(texture_sampler_bind_entries((slot * 2) as u32, view, sampler));
+        entries.extend(texture_sampler_bind_entries(
+            (slot * 2) as u32,
+            view,
+            sampler,
+        ));
     }
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("pack shader texture bg"),
@@ -112,13 +116,8 @@ pub(super) fn create_sky_pipeline(
     let sky_texture_paths: &[String] = sky_spec
         .as_ref()
         .map_or(&[], |spec| spec.textures.as_slice());
-    let sky_texture_bind = create_shader_texture_bind(
-        device,
-        queue,
-        &sky_texture_bgl,
-        "sky",
-        sky_texture_paths,
-    );
+    let sky_texture_bind =
+        create_shader_texture_bind(device, queue, &sky_texture_bgl, "sky", sky_texture_paths);
     let sky_layout = pipeline_layout(device, "sky layout", &[&sky_bgl, &sky_texture_bgl]);
     let sky_targets = color_target(
         format,

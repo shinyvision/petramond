@@ -17,11 +17,11 @@ use super::state::{ClientCommand, ClientImageData, ClientOverlayRegistration};
 use validate::{
     client_canvas_element_image_key, client_canvas_element_valid, valid_client_key,
     valid_client_key_id, CLIENT_AMBIENT_WIND_MAX, CLIENT_BLOCKS_QUERY_MAX,
-    CLIENT_CANVAS_ELEMENT_MAX, CLIENT_CANVAS_MAX,
-    CLIENT_CANVAS_SIDE_MAX, CLIENT_COMMAND_MAX, CLIENT_ENV_PARAM_MAX, CLIENT_IMAGE_MAX,
-    CLIENT_IMAGE_SIDE_MAX, CLIENT_KEY_BINDING_MAX, CLIENT_OVERLAY_DISPLAY_SIDE_MAX,
-    CLIENT_OVERLAY_MAX, CLIENT_SURFACE_QUERY_MAX, CLIENT_TEXT_BYTES_MAX, CLIENT_TEXT_RUN_MAX,
-    CLIENT_TEXT_SCALE_MAX, CLIENT_UI_STATE_MAX, CLIENT_UI_STRING_MAX,
+    CLIENT_CANVAS_ELEMENT_MAX, CLIENT_CANVAS_MAX, CLIENT_CANVAS_SIDE_MAX, CLIENT_COMMAND_MAX,
+    CLIENT_ENV_PARAM_MAX, CLIENT_IMAGE_MAX, CLIENT_IMAGE_SIDE_MAX, CLIENT_KEY_BINDING_MAX,
+    CLIENT_OVERLAY_DISPLAY_SIDE_MAX, CLIENT_OVERLAY_MAX, CLIENT_SURFACE_QUERY_MAX,
+    CLIENT_TEXT_BYTES_MAX, CLIENT_TEXT_RUN_MAX, CLIENT_TEXT_SCALE_MAX, CLIENT_UI_STATE_MAX,
+    CLIENT_UI_STRING_MAX,
 };
 
 /// Whether a `client_wasm` instance may issue this call.
@@ -108,6 +108,9 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::MobKvGet { .. }
         | HostCall::MobKvSet { .. }
         | HostCall::MobKvDelete { .. }
+        | HostCall::MobTagGet { .. }
+        | HostCall::MobTagSet { .. }
+        | HostCall::MobTagDelete { .. }
         | HostCall::RegisterWorldgenFeature { .. }
         | HostCall::RegisterStageReplacement { .. }
         | HostCall::RegisterGenerator { .. }

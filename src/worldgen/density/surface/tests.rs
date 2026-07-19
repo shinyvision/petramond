@@ -1,8 +1,6 @@
 use super::*;
 use crate::chunk::Chunk;
-use crate::worldgen::biome::climate::{
-    AxisRange, BiomeClimateEntry, ClimateRect, SurfaceClimate,
-};
+use crate::worldgen::biome::climate::{AxisRange, BiomeClimateEntry, ClimateRect, SurfaceClimate};
 use crate::worldgen::graph::{Channel, SamplePoint, SampledScalarField};
 
 #[derive(Debug)]
@@ -162,8 +160,8 @@ fn exposed_solid_run_tops(chunk: &Chunk, x: usize, z: usize) -> Vec<i32> {
             if block == Block::Air || block == Block::Water {
                 return None;
             }
-            let above_open = y + 1 >= CHUNK_SY
-                || matches!(chunk.block(x, y + 1, z), Block::Air | Block::Water);
+            let above_open =
+                y + 1 >= CHUNK_SY || matches!(chunk.block(x, y + 1, z), Block::Air | Block::Water);
             above_open.then_some(y as i32)
         })
         .collect()

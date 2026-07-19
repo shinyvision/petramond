@@ -895,8 +895,8 @@ fn canvas_wheel_scroll_reaches_the_client_mod() {
 fn menu_click_that_enters_gameplay_leaves_no_mining_held() {
     let mut app = app();
     app.handle_control(Control::CloseScreen, true); // pause menu
-    // Physical press over the menu: recorded in the pointer state, routed to
-    // the UI (this is the double-click's second press).
+                                                    // Physical press over the menu: recorded in the pointer state, routed to
+                                                    // the UI (this is the double-click's second press).
     app.handle_raw_mouse(winit::event::MouseButton::Left, true);
     // The controller flips to gameplay between press and release.
     app.resume_game();

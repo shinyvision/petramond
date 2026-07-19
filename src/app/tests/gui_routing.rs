@@ -635,7 +635,11 @@ fn craftable_recipes_sort_first_and_the_filter_hides_the_rest() {
             ItemType::OakPlanks,
             ItemStack::new(ItemType::OakPlanks, 1),
         ),
-        super::test_recipe("test:sticks", ItemType::Coal, ItemStack::new(ItemType::Stick, 2)),
+        super::test_recipe(
+            "test:sticks",
+            ItemType::Coal,
+            ItemStack::new(ItemType::Stick, 2),
+        ),
     ]);
     app.add_to_inventory(ItemStack::new(ItemType::Coal, 1));
     app.handle_control(Control::ToggleInventory, true);

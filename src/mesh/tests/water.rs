@@ -180,7 +180,10 @@ fn sea_ice_sheet_over_water_emits_translucent_geometry() {
         .iter()
         .filter(|v| tile_idx(v) == ice_tile)
         .count();
-    assert!(blended > 0, "the ice sheet must emit translucent-pass geometry");
+    assert!(
+        blended > 0,
+        "the ice sheet must emit translucent-pass geometry"
+    );
     assert_eq!(cutout, 0, "no ice face may leak into the cutout pass");
     assert_eq!(water_pass, 0, "no ice face may leak into the water pass");
 
@@ -245,7 +248,9 @@ fn water_under_ordinary_blocks_keeps_its_own_surface() {
         "a still source under ice keeps the exact same 8/9 gap"
     );
     assert!(
-        !m.transparent.iter().any(|v| in_col(&v, 12) && v.pos[1] == 2.0),
+        !m.transparent
+            .iter()
+            .any(|v| in_col(&v, 12) && v.pos[1] == 2.0),
         "no flush sealing under ice"
     );
 }

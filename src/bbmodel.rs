@@ -36,9 +36,9 @@ use crate::mesh::face::Face;
 
 mod anim;
 mod parse;
-mod texture;
 #[cfg(test)]
 mod tests;
+mod texture;
 
 pub(crate) use anim::euler_quat;
 

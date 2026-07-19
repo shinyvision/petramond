@@ -30,9 +30,8 @@ pub(super) const SIM_BATCH_MAX: usize = 4096;
 /// `Some(err)` when a batched call's element count exceeds
 /// [`SIM_BATCH_MAX`]; `what` names the call and lane for the error line.
 pub(super) fn batch_guard(what: &str, len: usize) -> Option<HostRet> {
-    (len > SIM_BATCH_MAX).then(|| {
-        HostRet::Error(format!("{what} count {len} exceeds {SIM_BATCH_MAX}"))
-    })
+    (len > SIM_BATCH_MAX)
+        .then(|| HostRet::Error(format!("{what} count {len} exceeds {SIM_BATCH_MAX}")))
 }
 
 /// The mod-KV write guard: WRITES (set/delete) must use either the calling
@@ -147,7 +146,10 @@ pub(super) fn item_by_name(name: &str) -> Option<ItemType> {
 /// An item's registry NAME (every registered item has one; `"?"` guards the
 /// unreachable unregistered case).
 pub(super) fn item_name(item: ItemType) -> &'static str {
-    crate::registry::names().items.name(item.id()).unwrap_or("?")
+    crate::registry::names()
+        .items
+        .name(item.id())
+        .unwrap_or("?")
 }
 
 /// An engine stack as its ABI crossing (registry name + count).

@@ -100,10 +100,13 @@ impl LightBakeQueue {
             let id = self.next_id;
             self.next_id = self.next_id.wrapping_add(1).max(1);
             let cancel = crate::worker::JobCancel::new();
-            self.pending.insert(pos, PendingLightBake {
-                id,
-                cancel: cancel.clone(),
-            });
+            self.pending.insert(
+                pos,
+                PendingLightBake {
+                    id,
+                    cancel: cancel.clone(),
+                },
+            );
             cancels.push((pos, id, cancel));
         }
         self.backend.submit_batch(key, job, cancels);

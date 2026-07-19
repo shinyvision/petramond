@@ -301,12 +301,18 @@ mod tests {
         apply(&mut store, &[row(0, p1), row(1, p1), row(2, p1)]);
         assert_eq!(store.len(), 2, "the recipient's own row is never stored");
         let fresh = store.iter().next().expect("id 1 stored");
-        assert_eq!(fresh.prev.transform.pos, p1, "a fresh id interpolates from itself");
+        assert_eq!(
+            fresh.prev.transform.pos, p1,
+            "a fresh id interpolates from itself"
+        );
 
         apply(&mut store, &[row(1, p2)]);
         assert_eq!(store.len(), 1, "id 2 absent from the batch: dropped");
         let paired = store.iter().next().unwrap();
-        assert_eq!(paired.prev.transform.pos, p1, "previous batch became the prev row");
+        assert_eq!(
+            paired.prev.transform.pos, p1,
+            "previous batch became the prev row"
+        );
         assert_eq!(paired.curr.transform.pos, p2);
         // Midpoint interpolation over the pair.
         let (mid, _, _) = interpolate(&paired.prev, &paired.curr, 0.5);
@@ -337,7 +343,10 @@ mod tests {
         tp.snap = true;
         apply(&mut store, &[tp]);
         let p = store.iter().next().unwrap();
-        assert_eq!(p.prev.transform.pos, far, "a snap row adopts into BOTH pair slots");
+        assert_eq!(
+            p.prev.transform.pos, far,
+            "a snap row adopts into BOTH pair slots"
+        );
         let (pos, _, _) = interpolate(&p.prev, &p.curr, 0.25);
         assert_eq!(pos, far, "no frame lerps across the teleport");
     }

@@ -265,6 +265,9 @@ mod tests {
         let unknown_block = r#"{"features": [{"feature": "petramond:redwood", "shape": {
             "redwood": {"log": "petramond:not_a_block", "leaf": "petramond:redwood_leaves",
             "height": [38, 52]}}}]}"#;
-        assert!(parse_layers(&[unknown_block]).is_err(), "unknown block name");
+        assert!(
+            parse_layers(&[unknown_block]).is_err(),
+            "unknown block name"
+        );
     }
 }

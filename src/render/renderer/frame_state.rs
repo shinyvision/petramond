@@ -176,7 +176,10 @@ impl Renderer {
         // owning mod pay nothing for it.
         for pass in &mut self.env_passes {
             let any_present = shader_params.is_some_and(|params| {
-                pass.res.param_keys.iter().any(|key| params.contains_key(key))
+                pass.res
+                    .param_keys
+                    .iter()
+                    .any(|key| params.contains_key(key))
             });
             pass.dormant = !pass.res.param_keys.is_empty() && !any_present;
             if pass.dormant {

@@ -404,7 +404,6 @@ impl Block {
         data::flags(self.id()).is_slippery()
     }
 
-
     /// What the cell becomes when this block is BROKEN: air, except a
     /// [`MELTS`](BlockTag::MELTS) block (ice) leaves a water source when the
     /// cell below can hold it — solid ground or more water. Mining the frozen

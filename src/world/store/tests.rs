@@ -110,8 +110,7 @@ fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
     // the persist gate must rewrite B's record WITHOUT light so reload
     // rebakes — the pre-fix gate skipped unmodified light-dirty sections
     // entirely, stranding the stale cubes as a permanent dark seam.
-    let dir =
-        std::env::temp_dir().join(format!("petramond-stale-light-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("petramond-stale-light-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let opened = crate::save::open_at(dir.clone()).expect("open save");
     let mut world = World::new(0, 0);

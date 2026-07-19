@@ -445,8 +445,7 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
         return Err(if is_sapling {
             "a row with the 'sapling' behavior must also list the 'sapling' tag".into()
         } else {
-            "the 'sapling' tag requires the 'sapling' behavior (tag and behavior must agree)"
-                .into()
+            "the 'sapling' tag requires the 'sapling' behavior (tag and behavior must agree)".into()
         });
     }
     // Growth stages are the block rows themselves: a sapling row is either a
@@ -935,7 +934,12 @@ mod tests {
 
         for (layer, why, needle) in [
             (
-                row("mymod:sap", r#""fragile""#, "sapling", r#""grows_into": "petramond:spruce","#),
+                row(
+                    "mymod:sap",
+                    r#""fragile""#,
+                    "sapling",
+                    r#""grows_into": "petramond:spruce","#,
+                ),
                 "behavior without the tag",
                 "tag",
             ),
@@ -970,17 +974,32 @@ mod tests {
                 "unknown worldgen feature",
             ),
             (
-                row("mymod:notsap", r#""fragile""#, "fragile", r#""next_stage": "petramond:oak_sapling","#),
+                row(
+                    "mymod:notsap",
+                    r#""fragile""#,
+                    "fragile",
+                    r#""next_stage": "petramond:oak_sapling","#,
+                ),
                 "next_stage on a non-sapling row",
                 "sapling-row fields",
             ),
             (
-                row("mymod:sap", sapling_tags, "sapling", r#""next_stage": "mymod:sap","#),
+                row(
+                    "mymod:sap",
+                    sapling_tags,
+                    "sapling",
+                    r#""next_stage": "mymod:sap","#,
+                ),
                 "a self-referential chain that never reaches a final stage",
                 "never reaches",
             ),
             (
-                row("mymod:sap", sapling_tags, "sapling", r#""next_stage": "petramond:stone","#),
+                row(
+                    "mymod:sap",
+                    sapling_tags,
+                    "sapling",
+                    r#""next_stage": "petramond:stone","#,
+                ),
                 "a chain leaving the sapling rows",
                 "sapling behaviour",
             ),
@@ -1023,7 +1042,11 @@ mod tests {
                 "'ladder' shape",
             ),
             (
-                row("mymod:vine_panel", "ladder", r#""panel_facing": "sideways","#),
+                row(
+                    "mymod:vine_panel",
+                    "ladder",
+                    r#""panel_facing": "sideways","#,
+                ),
                 "an unknown facing name",
                 "unknown facing",
             ),

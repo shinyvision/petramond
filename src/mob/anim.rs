@@ -177,9 +177,7 @@ impl Instance {
         if name.len() > MAX_MOB_ANIM_NAME_BYTES {
             return None;
         }
-        self.anim_search(name)
-            .ok()
-            .map(|at| &self.active_anims[at])
+        self.anim_search(name).ok().map(|at| &self.active_anims[at])
     }
 
     /// Position of one named layer in the sorted `active_anims` (`Ok` =

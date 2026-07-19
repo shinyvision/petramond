@@ -422,9 +422,11 @@ impl ServerGame {
             slab_rotation: self.sessions[s].held_slab_rotation(),
             log_axis: self.sessions[s].held_log_axis_for_facing(player_facing),
         };
-        let plan = self.world.placement_plan(block, &inputs, &mut |cell, boxes| {
-            self.placement_occupied_by_body(s, cell, boxes)
-        })?;
+        let plan = self
+            .world
+            .placement_plan(block, &inputs, &mut |cell, boxes| {
+                self.placement_occupied_by_body(s, cell, boxes)
+            })?;
         if !self.world.commit_placement(block, &plan, true) {
             return None;
         }

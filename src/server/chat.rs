@@ -66,7 +66,12 @@ impl ServerGame {
         self.enqueue_line(authored_line(seq, text), targets);
     }
 
-    pub(crate) fn enqueue_plain_chat(&mut self, text: &str, color: ChatColor, targets: ChatTargets) {
+    pub(crate) fn enqueue_plain_chat(
+        &mut self,
+        text: &str,
+        color: ChatColor,
+        targets: ChatTargets,
+    ) {
         let seq = self.alloc_chat_seq();
         self.enqueue_line(plain_line(seq, text, color), targets);
     }

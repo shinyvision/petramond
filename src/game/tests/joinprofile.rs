@@ -111,7 +111,11 @@ fn join_profile_sync() {
     let t_click = Instant::now();
     let (mut server, bootstrap) = crate::game::session::build_session("joinprofile", 0x312, rd);
     let (handle, pipe) = crate::server::handle::ServerHandle::loopback();
-    let mut game = Game::assemble(Camera::new(Vec3::new(8.0, 90.0, 8.0), 16.0 / 9.0), handle, bootstrap);
+    let mut game = Game::assemble(
+        Camera::new(Vec3::new(8.0, 90.0, 8.0), 16.0 / 9.0),
+        handle,
+        bootstrap,
+    );
     let t_new = t_click.elapsed();
 
     let input = GameInput::default();
@@ -152,7 +156,8 @@ fn join_profile_sync() {
             let all_final = (-1..=1).all(|dz| {
                 (-1..=1).all(|dx| {
                     (-1..=1).all(|dy| {
-                        let sp = crate::chunk::SectionPos::new(pc.cx + dx, feet_cy + dy, pc.cz + dz);
+                        let sp =
+                            crate::chunk::SectionPos::new(pc.cx + dx, feet_cy + dy, pc.cz + dz);
                         let loaded = server
                             .world
                             .section_at_world_for_test(sp.cx * 16, sp.cy * 16, sp.cz * 16)
@@ -186,9 +191,18 @@ fn join_profile_sync() {
     };
     println!("== join profile SYNC floor (rd {rd}) ==");
     let ms = |t: Option<Duration>| t.map_or(-1.0, |t| t.as_secs_f64() * 1e3);
-    println!("first server section install:    {:.1} ms", ms(t_first_server_install));
-    println!("server spawn 3x3x3 light-final:  {:.1} ms", ms(t_server_spawn_light_final));
-    println!("first client section install:    {:.1} ms", ms(t_first_client_install));
+    println!(
+        "first server section install:    {:.1} ms",
+        ms(t_first_server_install)
+    );
+    println!(
+        "server spawn 3x3x3 light-final:  {:.1} ms",
+        ms(t_server_spawn_light_final)
+    );
+    println!(
+        "first client section install:    {:.1} ms",
+        ms(t_first_client_install)
+    );
     print_summary(rd, t_new, t_first_mesh, t_playable, frames);
 }
 
@@ -199,9 +213,15 @@ fn print_summary(
     t_playable: Duration,
     frames: u64,
 ) {
-    println!("Game::new (click -> constructed): {:.1} ms", t_new.as_secs_f64() * 1e3);
+    println!(
+        "Game::new (click -> constructed): {:.1} ms",
+        t_new.as_secs_f64() * 1e3
+    );
     if let Some(t) = t_first_mesh {
-        println!("click -> own column meshed:      {:.1} ms", t.as_secs_f64() * 1e3);
+        println!(
+            "click -> own column meshed:      {:.1} ms",
+            t.as_secs_f64() * 1e3
+        );
     }
     println!(
         "click -> spawn playable (3x3):   {:.1} ms ({frames} frames)",

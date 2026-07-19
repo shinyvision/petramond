@@ -305,7 +305,6 @@ impl Chunk {
         self.dirty = true;
         self.mark_light_dirty();
     }
-
 }
 
 /// 2D column coordinate `(cx, cz)` — the key for per-column [`crate::column::Column`]

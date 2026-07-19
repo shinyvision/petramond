@@ -171,7 +171,11 @@ impl ModelInstance {
     /// The baked contact-shadow stamp for `offset` under `facing`, or `None` if
     /// the cell isn't part of the footprint or owns no stamp pieces.
     #[inline]
-    pub fn contact_template(&self, offset: [u8; 3], facing: Facing) -> Option<&ContactCellTemplate> {
+    pub fn contact_template(
+        &self,
+        offset: [u8; 3],
+        facing: Facing,
+    ) -> Option<&ContactCellTemplate> {
         let idx = self.cells.iter().position(|c| c.offset == offset)?;
         let tmpl = &self.oriented_contact[facing.to_u8() as usize][idx];
         (!tmpl.pieces.is_empty()).then_some(tmpl)

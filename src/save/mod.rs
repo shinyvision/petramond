@@ -431,9 +431,21 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
         Colgen,
     }
     let mut files: Vec<(Store, PathBuf)> = Vec::new();
-    files.extend(list_files(&region_dir).into_iter().map(|p| (Store::Authoritative, p)));
-    files.extend(list_files(&explored_dir).into_iter().map(|p| (Store::Explored, p)));
-    files.extend(list_files(&colgen_dir).into_iter().map(|p| (Store::Colgen, p)));
+    files.extend(
+        list_files(&region_dir)
+            .into_iter()
+            .map(|p| (Store::Authoritative, p)),
+    );
+    files.extend(
+        list_files(&explored_dir)
+            .into_iter()
+            .map(|p| (Store::Explored, p)),
+    );
+    files.extend(
+        list_files(&colgen_dir)
+            .into_iter()
+            .map(|p| (Store::Colgen, p)),
+    );
 
     enum ScanResult {
         Sections(Store, i32, i32, Vec<u16>),
@@ -489,8 +501,7 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
                 manifest.extend(indices.iter().map(|&l| region::section_pos(rx, rz, l)));
             }
             ScanResult::Sections(_, rx, rz, indices) => {
-                explored_manifest
-                    .extend(indices.iter().map(|&l| region::section_pos(rx, rz, l)));
+                explored_manifest.extend(indices.iter().map(|&l| region::section_pos(rx, rz, l)));
             }
             ScanResult::Columns(rx, rz, indices) => {
                 colgen_manifest.extend(indices.iter().map(|&l| colgen::column_pos(rx, rz, l)));

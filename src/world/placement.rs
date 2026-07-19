@@ -127,8 +127,7 @@ impl World {
                         ),
                     ),
                 };
-                let target_block =
-                    Block::from_id(self.chunk_block(target.x, target.y, target.z));
+                let target_block = Block::from_id(self.chunk_block(target.x, target.y, target.z));
                 if !crate::slab::is_slab(target_block) && !self.placement_cell_open(target) {
                     return None;
                 }
@@ -149,8 +148,8 @@ impl World {
             // through the model's own placement orientation; the anchor
             // shifts to the oriented base.
             RenderShape::Model(kind) => {
-                let oriented = block.directional_view()
-                    || crate::block_model::instance(kind).cells.len() > 1;
+                let oriented =
+                    block.directional_view() || crate::block_model::instance(kind).cells.len() > 1;
                 let facing = if oriented {
                     crate::block_model::def(kind)
                         .orientation

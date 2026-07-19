@@ -188,9 +188,7 @@ impl BlockModel {
     ) {
         for h in hidden {
             if !already_hidden.contains(h) && !self.cubes.iter().any(|c| c.name == *h) {
-                log::warn!(
-                    "block model '{row_key}': collision-hidden part '{h}' matches no cube"
-                );
+                log::warn!("block model '{row_key}': collision-hidden part '{h}' matches no cube");
             }
         }
         self.rebake_with_collision_filter(|c| !hidden.contains(&c.name.as_str()));

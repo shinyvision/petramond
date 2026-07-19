@@ -316,10 +316,8 @@ pub(in crate::world) fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBat
             t_stage.elapsed().as_nanos() as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
-        super::queue::LIGHT_STAGE_JOBS.fetch_add(
-            members.len() as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        super::queue::LIGHT_STAGE_JOBS
+            .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
 
         members
             .iter()
@@ -421,11 +419,8 @@ mod tests {
                         for lx in 0..SECTION_SIZE {
                             let mut cover = crate::column::NO_SURFACE;
                             'scan: for dy in (0..SPAN).rev() {
-                                let pos = SectionPos::new(
-                                    dcx as i32 - 1,
-                                    dy as i32 - 1,
-                                    dcz as i32 - 1,
-                                );
+                                let pos =
+                                    SectionPos::new(dcx as i32 - 1, dy as i32 - 1, dcz as i32 - 1);
                                 let Some(section) = sections.get(&pos) else {
                                     continue;
                                 };

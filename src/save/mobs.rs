@@ -15,13 +15,20 @@
 //! to degrade to, and respawning a wrong species would corrupt the world.
 
 use crate::mathh::Vec3;
-use crate::mob::{Mob, SavedMob};
-use crate::save::codec::{get_kv_map, put_f32, put_kv_map, put_u16, put_u32, put_u8, Reader};
+use crate::mob::{Mob, MobTagValue, SavedMob};
+use crate::save::codec::{
+    get_kv_map, put_f32, put_f64, put_i64, put_kv_map, put_u16, put_u32, put_u8, Reader,
+};
 
 /// Fixed bytes per serialized mob: kind(1) + pos(12) + yaw(4) + shear_regrow(4);
-/// the variable-length mod KV map follows (a mob with no KV appends only the
-/// map's 2-byte zero count).
+/// the variable-length tag map and mod KV map follow.
 const MOB_FIXED_BYTES: usize = 21;
+
+/// Tag type discriminators for the mob tag map wire encoding.
+const TAG_BOOL: u8 = 0;
+const TAG_INT: u8 = 1;
+const TAG_FLOAT: u8 = 2;
+const TAG_STRING: u8 = 3;
 
 /// Append a `u16`-length-prefixed list of saved mobs to `buf`. The count is capped at
 /// `u16::MAX` (a chunk never holds anywhere near that many mobs). A species the
@@ -54,8 +61,60 @@ pub fn put_mobs(buf: &mut Vec<u8>, mobs: &[SavedMob]) {
         put_f32(buf, m.pos.z);
         put_f32(buf, m.yaw);
         put_u32(buf, m.shear_regrow);
+        put_mob_tags(buf, &m.tags);
         put_kv_map(buf, &m.kv);
     }
+}
+
+fn put_mob_tags(buf: &mut Vec<u8>, tags: &std::collections::BTreeMap<String, MobTagValue>) {
+    put_u16(buf, tags.len().min(u16::MAX as usize) as u16);
+    for (k, v) in tags {
+        let bytes = k.as_bytes();
+        put_u16(buf, bytes.len().min(u16::MAX as usize) as u16);
+        buf.extend_from_slice(bytes);
+        match v {
+            MobTagValue::Bool(b) => {
+                put_u8(buf, TAG_BOOL);
+                put_u8(buf, u8::from(*b));
+            }
+            MobTagValue::Int(i) => {
+                put_u8(buf, TAG_INT);
+                put_i64(buf, *i);
+            }
+            MobTagValue::Float(f) => {
+                put_u8(buf, TAG_FLOAT);
+                put_f64(buf, *f);
+            }
+            MobTagValue::String(s) => {
+                put_u8(buf, TAG_STRING);
+                let bytes = s.as_bytes();
+                put_u16(buf, bytes.len().min(u16::MAX as usize) as u16);
+                buf.extend_from_slice(bytes);
+            }
+        }
+    }
+}
+
+fn get_mob_tags(r: &mut Reader) -> Option<std::collections::BTreeMap<String, MobTagValue>> {
+    let n = r.u16()? as usize;
+    let mut tags = std::collections::BTreeMap::new();
+    for _ in 0..n {
+        let key_len = r.u16()? as usize;
+        let key = std::str::from_utf8(r.bytes(key_len)?).ok()?.to_string();
+        let tag = match r.u8()? {
+            TAG_BOOL => MobTagValue::Bool(r.u8()? != 0),
+            TAG_INT => MobTagValue::Int(r.i64()?),
+            TAG_FLOAT => MobTagValue::Float(r.f64()?),
+            TAG_STRING => {
+                let len = r.u16()? as usize;
+                let s = std::str::from_utf8(r.bytes(len)?).ok()?.to_string();
+                MobTagValue::String(s)
+            }
+            _ => return None,
+        };
+        tags.insert(key, tag);
+    }
+    Some(tags)
 }
 
 /// Read a list of saved mobs written by [`put_mobs`]; `None` on truncated input. A
@@ -71,6 +130,7 @@ pub fn get_mobs(r: &mut Reader) -> Option<Vec<SavedMob>> {
         let pos = Vec3::new(r.f32()?, r.f32()?, r.f32()?);
         let yaw = r.f32()?;
         let shear_regrow = r.u32()?;
+        let tags = get_mob_tags(r)?;
         let kv = get_kv_map(r)?;
         // Resolve the species AFTER consuming the record bytes, so a skip can't
         // desync the reader.
@@ -89,6 +149,7 @@ pub fn get_mobs(r: &mut Reader) -> Option<Vec<SavedMob>> {
             pos,
             yaw,
             shear_regrow,
+            tags,
             kv,
         });
     }
@@ -108,6 +169,7 @@ mod tests {
             pos: Vec3::new(1.0, 64.0, 2.0),
             yaw: 1.5,
             shear_regrow: 0,
+            tags: BTreeMap::new(),
             kv: BTreeMap::new(),
         };
         let b = SavedMob {
@@ -115,6 +177,10 @@ mod tests {
             pos: Vec3::new(-3.0, 70.0, 8.0),
             yaw: -0.25,
             shear_regrow: 4321,
+            tags: BTreeMap::from([
+                ("petramond:confined".to_owned(), MobTagValue::Bool(true)),
+                ("farm:quality".to_owned(), MobTagValue::Int(7)),
+            ]),
             kv: BTreeMap::from([
                 ("zombies:target".to_owned(), vec![1, 2, 3]),
                 ("othermod:tag".to_owned(), Vec::new()),
@@ -149,6 +215,7 @@ mod tests {
                 put_f32(&mut buf, v);
             }
             put_u32(&mut buf, 7);
+            put_u16(&mut buf, 0); // empty tag map
             put_kv_map(
                 &mut buf,
                 &BTreeMap::from([("strange:mod".to_owned(), vec![9, 9])]),

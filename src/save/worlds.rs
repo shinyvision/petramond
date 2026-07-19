@@ -191,9 +191,7 @@ pub fn world_size_bytes(dir_name: &str) -> u64 {
             .flatten()
             .map(|entry| match entry.file_type() {
                 Ok(kind) if kind.is_dir() => walk(&entry.path()),
-                Ok(kind) if kind.is_file() => {
-                    entry.metadata().map(|m| m.len()).unwrap_or(0)
-                }
+                Ok(kind) if kind.is_file() => entry.metadata().map(|m| m.len()).unwrap_or(0),
                 _ => 0,
             })
             .sum()

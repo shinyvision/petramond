@@ -79,7 +79,10 @@ impl World {
             return self.ladder_supported_at(pos, block.panel_facing());
         }
         let s = self.fragile_ground_cell(pos);
-        if matches!(block.render_shape(), crate::block::RenderShape::LoweredCube(_)) {
+        if matches!(
+            block.render_shape(),
+            crate::block::RenderShape::LoweredCube(_)
+        ) {
             return super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z));
         }
         self.physics_block(s.x, s.y, s.z).is_opaque()

@@ -172,6 +172,7 @@ mod tests {
             kind: Mob::Sheep,
             pos: Vec3::new(7.5, 64.0, 2.5),
             active: true,
+            tags: Default::default(),
         };
         let mobs = [biter];
         let grudge = Some((EntityRef::Mob(9), 0));
@@ -196,6 +197,7 @@ mod tests {
             kind: Mob::Sheep,
             pos: Vec3::new(7.5, 64.0, 2.5),
             active: false,
+            tags: Default::default(),
         }];
         let grudge = Some((EntityRef::Mob(9), 0));
         let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &corpse, grudge));
@@ -236,6 +238,7 @@ mod tests {
             kind: Mob::Sheep,
             pos: Vec3::new(7.5, 64.0, 2.5),
             active: true,
+            tags: Default::default(),
         }];
 
         // The hit tick and the following warmup window: the mob reels, no

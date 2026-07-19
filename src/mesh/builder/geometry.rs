@@ -577,9 +577,7 @@ pub(super) fn section_geometry(
                             // step walls of the recessed pocket under a block
                             // sitting in the sea must not stream. Flowing and
                             // falling cells keep the animated flow sides.
-                            _ if water_still_at(wx, wy, wz) => {
-                                crate::atlas::engine().water_still
-                            }
+                            _ if water_still_at(wx, wy, wz) => crate::atlas::engine().water_still,
                             _ => crate::atlas::engine().water_flow,
                         };
                         (t, None, tint_water(ci))

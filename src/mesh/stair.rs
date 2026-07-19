@@ -171,9 +171,7 @@ fn emit_face_plane<B, S, L, K, T>(
         let nb = block_at(fx, fy, fz);
         // A full slab stack in the neighbour cell hides this boundary plane
         // exactly like an opaque cube would.
-        if nb.is_opaque()
-            || (nb.is_slab() && slab_at(fx, fy, fz).is_some_and(|s| s.is_full()))
-        {
+        if nb.is_opaque() || (nb.is_slab() && slab_at(fx, fy, fz).is_some_and(|s| s.is_full())) {
             return;
         }
     }

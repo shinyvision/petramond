@@ -143,8 +143,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             )
         }),
         HostCall::ChatSend { text, targets } => sim_query(|ctx| {
-            if let Some(err) =
-                batch_guard("ChatSend target", targets.as_ref().map_or(0, Vec::len))
+            if let Some(err) = batch_guard("ChatSend target", targets.as_ref().map_or(0, Vec::len))
             {
                 return err;
             }

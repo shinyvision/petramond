@@ -44,6 +44,6 @@ pub(crate) use movement::WATER_PROBE_Y;
 /// and gravity (correction deadband scaling).
 pub(crate) use movement::{GRAVITY, JUMP_V0, SPECTATOR_SPRINT, SPRINT, TERMINAL};
 pub use state::{
-    BedSpawn, Input, Player, PlayerInputSnapshot, PlayerMode, PlayerRosterSnapshot, DT_MAX, EYE, HALF_W, HEIGHT,
-    MAX_HEALTH, PITCH_LIMIT,
+    BedSpawn, Input, Player, PlayerInputSnapshot, PlayerMode, PlayerRosterSnapshot, DT_MAX, EYE,
+    HALF_W, HEIGHT, MAX_HEALTH, PITCH_LIMIT,
 };

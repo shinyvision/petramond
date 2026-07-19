@@ -213,7 +213,14 @@ impl Player {
         let climb = |x: i32, y: i32, z: i32| world.climbable_facing_at(x, y, z);
         let slippery = |x: i32, y: i32, z: i32| world.physics_block(x, y, z).is_slippery();
         self.update_core_with_current(
-            dt, &boxes, &water, &water_flow, &climb, &slippery, input, obstacles,
+            dt,
+            &boxes,
+            &water,
+            &water_flow,
+            &climb,
+            &slippery,
+            input,
+            obstacles,
         );
     }
 
@@ -291,16 +298,7 @@ impl Player {
             }
             .collision_boxes()
         };
-        self.update_core_with_current(
-            dt,
-            &boxes,
-            water,
-            &still_water,
-            climb,
-            slippery,
-            input,
-            &[],
-        );
+        self.update_core_with_current(dt, &boxes, water, &still_water, climb, slippery, input, &[]);
     }
 
     #[allow(clippy::too_many_arguments)]

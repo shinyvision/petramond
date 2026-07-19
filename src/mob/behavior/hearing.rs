@@ -409,12 +409,14 @@ mod tests {
                 kind: Mob::Owl,
                 pos: mob,
                 active: true,
+                tags: Default::default(),
             },
             AiMob {
                 id: 9,
                 kind: Mob::Sheep,
                 pos: prey_pos,
                 active: true,
+                tags: Default::default(),
             },
         ];
 
@@ -452,6 +454,7 @@ mod tests {
             kind: Mob::Sheep,
             pos: prey_pos,
             active: true,
+            tags: Default::default(),
         }];
         let noises = [
             step(prey_pos, EntityRef::Mob(9)),
@@ -477,12 +480,14 @@ mod tests {
             kind: Mob::Sheep,
             pos: prey_pos,
             active: true,
+            tags: Default::default(),
         }];
         let dead = [AiMob {
             id: 9,
             kind: Mob::Sheep,
             pos: prey_pos,
             active: false,
+            tags: Default::default(),
         }];
         let noises = [step(prey_pos, EntityRef::Mob(9))];
         let mut ai = ChaseSoundAi::new(12.0, 40, 1.0, vec![Mob::Sheep]);

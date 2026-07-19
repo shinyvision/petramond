@@ -1,6 +1,6 @@
 use crate::biome::Biome;
 
-use super::{BiomeSpec, SnowCover, TreeProfile, VegetationProfile, surfaces};
+use super::{surfaces, BiomeSpec, SnowCover, TreeProfile, VegetationProfile};
 
 /// Open snowfield: the treeless cold flat. Distinct from snowy tundra
 /// (scattered lone spruces) and snowy taiga (spruce forest).

@@ -9,9 +9,9 @@ use super::{item_model, particles, resources, shader_pack, ui};
 mod builders;
 mod entity_models;
 mod environment;
-mod grade;
 #[cfg(test)]
 mod gpu_validation;
+mod grade;
 mod model3d;
 mod overlays;
 mod particle;

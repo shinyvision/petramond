@@ -48,10 +48,10 @@ pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 #[cfg(test)]
 pub(crate) use stream::split_generated_column;
 
+pub use query::CollisionShapeClass;
 pub(crate) use render_handoff::TerrainRenderHandoff;
 pub(crate) use store::VERTICAL_LOAD_RADIUS;
 pub(crate) use store::{LoadAnchor, WorldRole};
-pub use query::CollisionShapeClass;
 pub use store::{World, RENDER_DIST};
 pub(crate) use stream::StreamEvent;
 

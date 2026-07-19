@@ -66,9 +66,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         amount: 2.5,
         origin: Some([1.0, 64.0, 1.0]),
         feedback: Some(crate::events::MobDamageFeedback {
-            components: vec![crate::events::MobDamageFeedbackComponent::Immunity {
-                ticks: 10,
-            }],
+            components: vec![crate::events::MobDamageFeedbackComponent::Immunity { ticks: 10 }],
         }),
     });
     roundtrip(HostCall::DespawnMob { mob_id: 7 });
@@ -137,6 +135,19 @@ fn abi_roundtrip_host_and_guest_calls() {
         value: vec![0xFF],
     });
     roundtrip(HostCall::MobKvDelete {
+        mob_id: 2,
+        key: "zombies:target".into(),
+    });
+    roundtrip(HostCall::MobTagGet {
+        mob_id: 2,
+        key: "zombies:target".into(),
+    });
+    roundtrip(HostCall::MobTagSet {
+        mob_id: 2,
+        key: "zombies:target".into(),
+        value: MobTagValue::Bool(true),
+    });
+    roundtrip(HostCall::MobTagDelete {
         mob_id: 2,
         key: "zombies:target".into(),
     });
@@ -358,6 +369,8 @@ fn abi_roundtrip_host_and_guest_calls() {
     ))));
     roundtrip(HostRet::GuiValue(Some(GuiValue::I32(-3))));
     roundtrip(HostRet::GuiValue(None));
+    roundtrip(HostRet::MobTag(Some(MobTagValue::Bool(true))));
+    roundtrip(HostRet::MobTag(None));
     roundtrip(GuestCall::GuiClick {
         kind_key: "wheel:wheel".into(),
         widget_id: "spin".into(),

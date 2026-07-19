@@ -137,15 +137,17 @@ fn leaf_box_eroded(
     let (hx, hy, hz) = (half.x.max(1), half.y.max(1), half.z.max(1));
     debug_assert!(hx <= 3 && hy <= 3 && hz <= 3);
     let (sy, sz) = ((2 * hy + 1) as usize, (2 * hz + 1) as usize);
-    let idx =
-        |dx: i32, dy: i32, dz: i32| ((dx + hx) as usize * sy + (dy + hy) as usize) * sz + (dz + hz) as usize;
+    let idx = |dx: i32, dy: i32, dz: i32| {
+        ((dx + hx) as usize * sy + (dy + hy) as usize) * sz + (dz + hz) as usize
+    };
     // Stack scratch: a replayed tree erodes ~80 boxes and every chunk within
     // MARGIN replays the tree, so per-box heap allocation is measurable.
     let mut keep = [false; 7 * 7 * 7];
     for dx in -hx..=hx {
         for dy in -hy..=hy {
             for dz in -hz..=hz {
-                let exposed = (dx.abs() == hx) as i32 + (dy.abs() == hy) as i32 + (dz.abs() == hz) as i32;
+                let exposed =
+                    (dx.abs() == hx) as i32 + (dy.abs() == hy) as i32 + (dz.abs() == hz) as i32;
                 if exposed == 3 && rng.chance(0.72) {
                     continue;
                 }
@@ -287,7 +289,10 @@ fn grow_branch(
             ctx.set_branch(IVec3::new(origin.x + x, origin.y + y, origin.z + z), log);
         }
         if step < (length / 3).max(2) {
-            ctx.set_branch(IVec3::new(origin.x + x, origin.y + y - 1, origin.z + z), log);
+            ctx.set_branch(
+                IVec3::new(origin.x + x, origin.y + y - 1, origin.z + z),
+                log,
+            );
             ctx.set_branch(
                 IVec3::new(origin.x + x + perp.0, origin.y + y, origin.z + z + perp.1),
                 log,
@@ -456,7 +461,11 @@ impl BlockyOakFeature {
                     origin.y + ry,
                     origin.z + pz,
                 )));
-                emit(BaseCell::Log(IVec3::new(origin.x + px, origin.y, origin.z + pz)));
+                emit(BaseCell::Log(IVec3::new(
+                    origin.x + px,
+                    origin.y,
+                    origin.z + pz,
+                )));
                 if t < 0.28 {
                     let wx = if ez == sz {
                         0

@@ -206,8 +206,7 @@ impl CaveLattice {
 
                     // Entrance and tunnel both open on the a/b metric; bound
                     // them with the largest radius either can reach here.
-                    let tunnel_r_ub =
-                        (CAVE_TUNNEL_R + rough_ub(CAVE_TUNNEL_ROUGHNESS)).max(0.018);
+                    let tunnel_r_ub = (CAVE_TUNNEL_R + rough_ub(CAVE_TUNNEL_ROUGHNESS)).max(0.018);
                     let entrance_r_ub = (CAVE_ENTRANCE_SURFACE_R.max(CAVE_ENTRANCE_DEEP_R)
                         + rough_ub(CAVE_TUNNEL_ROUGHNESS))
                     .max(0.016);

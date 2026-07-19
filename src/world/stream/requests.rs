@@ -442,7 +442,10 @@ impl World {
             }
             // The full 3D key (not just dcy²): these compete in the shared pool
             // against other columns' sections, so the key must be globally comparable.
-            wanted.push((target.surface_biased_section_key(sp, band_lo, underground), sp));
+            wanted.push((
+                target.surface_biased_section_key(sp, band_lo, underground),
+                sp,
+            ));
         }
         wanted.sort_by_key(|(key, _)| *key);
         for (key, sp) in wanted {

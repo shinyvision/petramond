@@ -20,10 +20,10 @@ use crate::section::{Section, SectionSummary};
 
 use super::density::surface::SurfaceDensitySystem;
 use super::feature::{
-    apply_gen_writes, feature_candidate_bounds, feature_region_bounds, place_features_section,
+    apply_gen_writes, cached_feature_region, feature_candidate_bounds, feature_region_bounds,
+    place_features_section,
     scatter::{self, SCATTER_MAX_Y, SCATTER_MIN_Y},
-    cached_feature_region, vegetation, ColumnFeatureField, RuntimeFeatureField,
-    SurfaceHeights, MAX_TREE_REACH_ABOVE,
+    vegetation, ColumnFeatureField, RuntimeFeatureField, SurfaceHeights, MAX_TREE_REACH_ABOVE,
     TREELINE,
 };
 use super::noise::height::CaveField;
@@ -500,12 +500,7 @@ impl ChunkGenerator {
     /// candidate region: the shared tail of [`generate_column_gen`] and
     /// [`build_feature_windows`]. `candidates` must come from
     /// `cached_feature_region`.
-    fn finish_feature_windows(
-        &self,
-        ox: i32,
-        oz: i32,
-        candidates: RegionCells,
-    ) -> FeatureWindows {
+    fn finish_feature_windows(&self, ox: i32, oz: i32, candidates: RegionCells) -> FeatureWindows {
         let needs_support = candidates.biomes.iter().any(|b| {
             matches!(
                 super::biome::spec(*b).trees.support,

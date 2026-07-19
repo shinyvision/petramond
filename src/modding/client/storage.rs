@@ -72,7 +72,9 @@ impl ClientStorage {
         }
         for key in &keys {
             if key.len() > KEY_MAX {
-                return Err(format!("client storage key '{key}' exceeds {KEY_MAX} bytes"));
+                return Err(format!(
+                    "client storage key '{key}' exceeds {KEY_MAX} bytes"
+                ));
             }
         }
         self.drain_read_completions();
@@ -97,7 +99,10 @@ impl ClientStorage {
     }
 
     /// `Ok(Some(values))` consumes the ticket; `Ok(None)` = still in flight.
-    pub(super) fn read_poll(&mut self, ticket: u64) -> Result<Option<Vec<Option<Vec<u8>>>>, String> {
+    pub(super) fn read_poll(
+        &mut self,
+        ticket: u64,
+    ) -> Result<Option<Vec<Option<Vec<u8>>>>, String> {
         self.drain_read_completions();
         if let Some(result) = self.ready_reads.remove(&ticket) {
             return result.map(Some);

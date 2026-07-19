@@ -74,8 +74,7 @@ impl World {
             (pos.cx - target.center.cx).abs() <= NEAR_LOAD_RADIUS
                 && (pos.cz - target.center.cz).abs() <= NEAR_LOAD_RADIUS
         };
-        self.last_load_target.is_some_and(near)
-            || self.extra_load_targets.iter().copied().any(near)
+        self.last_load_target.is_some_and(near) || self.extra_load_targets.iter().copied().any(near)
     }
 
     /// Whether the mesh pump should park `pos` instead of meshing it.

@@ -44,7 +44,8 @@ fn generate_into_map(
     let mut rng = FeatureRng::positional(seed, 0xACAC, 0, 0, 0);
     {
         let mut ctx = super::FeatureCtx::new(&mut sink);
-        feat.feature.generate(&mut ctx, IVec3::new(0, 64, 0), &mut rng);
+        feat.feature
+            .generate(&mut ctx, IVec3::new(0, 64, 0), &mut rng);
     }
     sink.0
 }
@@ -101,10 +102,7 @@ fn configured_trees_place_only_orthogonally_supported_leaves() {
                             supported = true;
                             break 'bfs;
                         }
-                        if dist + 1 < MAX_LOG_DISTANCE
-                            && leaves.contains(&n)
-                            && visited.insert(n)
-                        {
+                        if dist + 1 < MAX_LOG_DISTANCE && leaves.contains(&n) && visited.insert(n) {
                             frontier.push_back((n, dist + 1));
                         }
                     }
@@ -145,9 +143,9 @@ fn oak_crowns_bury_the_trunk_top() {
                 .filter_map(|(x, z)| top_log(x, z).map(|y| (x, z, y)))
                 .max_by_key(|&(_, _, y)| y)
                 .expect("trunk has logs");
-            let covered = map.iter().any(|(p, b)| {
-                p.x == best.0 && p.z == best.1 && p.y > best.2 && b.is_leaves()
-            });
+            let covered = map
+                .iter()
+                .any(|(p, b)| p.x == best.0 && p.z == best.1 && p.y > best.2 && b.is_leaves());
             assert!(
                 covered,
                 "{name} seed {seed}: bare trunk-top log exposed at column ({}, {}), y {}",

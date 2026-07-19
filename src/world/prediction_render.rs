@@ -287,11 +287,7 @@ fn run_prediction_terrain(
                 prev_skylight.as_deref(),
                 &result.skylight,
                 crate::chunk::SKY_FULL,
-            ) | super::light::cube_region_changes(
-                prev_blocklight.as_deref(),
-                &result.blocklight,
-                0,
-            )
+            ) | super::light::cube_region_changes(prev_blocklight.as_deref(), &result.blocklight, 0)
         };
         PredictionLightResult {
             result,

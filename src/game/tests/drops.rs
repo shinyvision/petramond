@@ -35,10 +35,7 @@ fn an_undermined_snow_layer_shatters_without_a_drop() {
     use super::common::game_on_empty_chunk;
 
     let mut game = game_on_empty_chunk();
-    let cases = [
-        (Block::SnowLayer, 0usize),
-        (Block::Poppy, 1usize),
-    ];
+    let cases = [(Block::SnowLayer, 0usize), (Block::Poppy, 1usize)];
     for (i, (block, expected_drops)) in cases.into_iter().enumerate() {
         // Keep both sites ≥ SIM_READ_REACH cells from the lone chunk's borders,
         // or the streaming-finality guard drops the scheduled break.

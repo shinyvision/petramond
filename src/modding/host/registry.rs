@@ -18,9 +18,12 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                 .id(&name)
                 .map(mod_api::BlockId),
         ),
-        HostCall::ResolveItem { name } => {
-            HostRet::Item(crate::registry::names().items.id(&name).map(mod_api::ItemId))
-        }
+        HostCall::ResolveItem { name } => HostRet::Item(
+            crate::registry::names()
+                .items
+                .id(&name)
+                .map(mod_api::ItemId),
+        ),
         // The reverse resolvers answer `None` for unregistered ids — a mod
         // holding a stale id degrades, it is not a protocol break. Their id
         // lists share the sim batch cap (a legitimate batch never exceeds
@@ -63,16 +66,16 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
         },
         // Tag membership never interns: a name nothing lists is an empty
         // set, and a query cannot grow the tag table.
-        HostCall::BlocksByTag { tag } => HostRet::BlockList(
-            match crate::block::BlockTag::lookup(&tag) {
+        HostCall::BlocksByTag { tag } => {
+            HostRet::BlockList(match crate::block::BlockTag::lookup(&tag) {
                 Some(t) => crate::block::Block::all()
                     .iter()
                     .filter(|b| b.has_tag(t))
                     .map(|b| mod_api::BlockId(b.id()))
                     .collect(),
                 None => Vec::new(),
-            },
-        ),
+            })
+        }
         HostCall::ItemsByTag { tag } => {
             HostRet::ItemList(match crate::item::ItemTag::lookup(&tag) {
                 Some(t) => crate::item::ItemType::all()

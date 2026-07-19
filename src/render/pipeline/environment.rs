@@ -174,7 +174,13 @@ pub(super) fn create_env_scaler(
         min_filter: wgpu::FilterMode::Linear,
         ..Default::default()
     });
-    EnvScaler { down_pipe, down_bgl, comp_pipe, comp_bgl, samp }
+    EnvScaler {
+        down_pipe,
+        down_bgl,
+        comp_pipe,
+        comp_bgl,
+        samp,
+    }
 }
 
 /// The downsample bind: just the full-res depth to read.
@@ -319,13 +325,8 @@ pub(super) fn create_environment_pipelines(
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let texture_bind = create_shader_texture_bind(
-            device,
-            queue,
-            &texture_bgl,
-            "environment",
-            &spec.textures,
-        );
+        let texture_bind =
+            create_shader_texture_bind(device, queue, &texture_bgl, "environment", &spec.textures);
         passes.push(EnvPassResources {
             pipe,
             bgl: bgl.clone(),

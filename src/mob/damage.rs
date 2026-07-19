@@ -249,10 +249,13 @@ mod tests {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(owl.set_drive(2.0, 0.0, Some(1.0)));
         assert!(owl.drive_pending());
-        assert!(owl.damage(100.0,
+        assert!(owl.damage(
+            100.0,
             Some(Vec3::new(2.0, 0.0, 0.5)),
             true,
-            None, &default_feedback()));
+            None,
+            &default_feedback()
+        ));
         assert!(!owl.drive_pending());
     }
 
@@ -324,10 +327,13 @@ mod tests {
                 MobDamageFeedbackComponent::Ragdoll,
             ],
         };
-        assert!(dead_with_ragdoll.damage(100.0,
+        assert!(dead_with_ragdoll.damage(
+            100.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
             true,
-            None, &health_and_ragdoll));
+            None,
+            &health_and_ragdoll
+        ));
         assert!(dead_with_ragdoll.is_dead());
         assert!(
             !dead_with_ragdoll.is_despawned(),
@@ -338,10 +344,13 @@ mod tests {
         let health_only = MobDamageFeedback {
             components: vec![MobDamageFeedbackComponent::DecreaseHealth],
         };
-        assert!(dead_without_ragdoll.damage(100.0,
+        assert!(dead_without_ragdoll.damage(
+            100.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
             true,
-            None, &health_only));
+            None,
+            &health_only
+        ));
         assert!(dead_without_ragdoll.is_dead());
         assert!(
             dead_without_ragdoll.is_despawned(),
@@ -353,17 +362,23 @@ mod tests {
     fn a_dead_mob_ignores_further_damage() {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(
-            owl.damage(100.0,
+            owl.damage(
+                100.0,
                 Some(Vec3::new(5.0, 0.0, 0.5)),
                 true,
-                None, &default_feedback()),
+                None,
+                &default_feedback()
+            ),
             "one big hit kills"
         );
         // A corpse takes no more damage and reports no further lethal hits.
-        assert!(!owl.damage(100.0,
+        assert!(!owl.damage(
+            100.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
             true,
-            None, &default_feedback()));
+            None,
+            &default_feedback()
+        ));
         assert!(owl.is_dead());
     }
 
@@ -374,10 +389,13 @@ mod tests {
             false
         });
         let x0 = owl.pos.x;
-        assert!(!owl.damage(1.0,
+        assert!(!owl.damage(
+            1.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
             false,
-            None, &default_feedback()));
+            None,
+            &default_feedback()
+        ));
         owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero, &|_| {
             false
         });
@@ -402,10 +420,13 @@ mod tests {
 
         // The killing blow flashes red too (so it looks like any other hit).
         let mut dead = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-        assert!(dead.damage(100.0,
+        assert!(dead.damage(
+            100.0,
             Some(Vec3::new(5.0, 0.0, 0.5)),
             true,
-            None, &default_feedback()));
+            None,
+            &default_feedback()
+        ));
         assert!(
             dead.hurt_flash(1.0) > 0.0,
             "the kill flashes red like a normal hit"

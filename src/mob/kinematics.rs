@@ -446,7 +446,11 @@ pub(super) fn approach(cur: f32, target: f32, step: f32) -> f32 {
     cur + (target - cur).clamp(-step, step)
 }
 
-pub(super) fn route_steering_supported(on_ground: bool, in_water: bool, vertical_velocity: f32) -> bool {
+pub(super) fn route_steering_supported(
+    on_ground: bool,
+    in_water: bool,
+    vertical_velocity: f32,
+) -> bool {
     on_ground || in_water || vertical_velocity > 0.0
 }
 

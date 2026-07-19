@@ -43,8 +43,13 @@ impl World {
                         .map(|&sp| target.map_or(0, |t| t.section_priority_key(sp)))
                         .min()
                         .unwrap_or(0);
-                    self.light_bakes
-                        .request_batch(key, base, &members, &self.sections, &self.columns);
+                    self.light_bakes.request_batch(
+                        key,
+                        base,
+                        &members,
+                        &self.sections,
+                        &self.columns,
+                    );
                 } else {
                     for pos in members {
                         let key = target.map_or(0, |t| t.section_priority_key(pos));
@@ -156,7 +161,11 @@ impl World {
     /// neighbour whose installed or in-flight mesh sampled those cells through
     /// its one-cell pad must rebuild. Already queued/parked neighbours are left
     /// alone — they will build against the fresh cube anyway.
-    pub(in crate::world) fn requeue_meshes_sampling_changed_regions(&mut self, pos: SectionPos, mask: u32) {
+    pub(in crate::world) fn requeue_meshes_sampling_changed_regions(
+        &mut self,
+        pos: SectionPos,
+        mask: u32,
+    ) {
         for dy in -1..=1 {
             for dz in -1..=1 {
                 for dx in -1..=1 {

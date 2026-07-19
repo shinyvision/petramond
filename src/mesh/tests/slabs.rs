@@ -66,11 +66,7 @@ fn mixed_full_slab_stack_covers_the_cell_with_both_layer_tiles() {
     // Full-cell cover: 2 full caps + 4 sides x 2 half quads = 10 quads.
     assert_eq!(m.opaque.len(), 40, "mixed stack should emit 10 quads");
     let tiles_at = |pred: &dyn Fn(&Vertex) -> bool| -> std::collections::HashSet<u32> {
-        m.opaque
-            .iter()
-            .filter(|v| pred(v))
-            .map(tile_idx)
-            .collect()
+        m.opaque.iter().filter(|v| pred(v)).map(tile_idx).collect()
     };
     let top = tiles_at(&|v| shade_idx(v) == 0);
     let bottom = tiles_at(&|v| shade_idx(v) == 3);

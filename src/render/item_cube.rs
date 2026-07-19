@@ -328,12 +328,7 @@ pub(super) fn facing_yaw(facing: Facing) -> f32 {
 /// [`facing_yaw`] (canonical = South), then translate to the world block origin
 /// `pos`. CPU vertex transform since the opaque pipeline has no per-draw model
 /// matrix (chests, doors, item entities all place geometry this way).
-pub(super) fn orient_faces_to_block(
-    verts: &mut [Vertex],
-    start: usize,
-    facing: Facing,
-    pos: Vec3,
-) {
+pub(super) fn orient_faces_to_block(verts: &mut [Vertex], start: usize, facing: Facing, pos: Vec3) {
     let (ys, yc) = facing_yaw(facing).sin_cos();
     for v in verts[start..].iter_mut() {
         let [x, y, z] = v.pos;

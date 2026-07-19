@@ -46,7 +46,10 @@ impl World {
     /// the mesh pool can build with no access to the live world. Reads match the live
     /// neighbour accessors exactly (air / open-sky / not-loaded fallbacks), so the
     /// off-thread mesh is byte-identical to an inline one.
-    pub(in crate::world) fn build_mesh_job(&self, pos: SectionPos) -> Option<crate::world::mesh_pool::MeshJob> {
+    pub(in crate::world) fn build_mesh_job(
+        &self,
+        pos: SectionPos,
+    ) -> Option<crate::world::mesh_pool::MeshJob> {
         use crate::world::mesh_pool::{
             biome_pad_idx, empty_biome, nbhd_idx27, MeshJob, NeighborSnap, BIOME_PAD,
             BIOME_PAD_RADIUS,

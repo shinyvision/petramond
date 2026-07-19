@@ -201,7 +201,7 @@ fn companion_within(ctx: &AiCtx, rule: WanderCohesion, pos: Vec3, radius: i32) -
     let r = radius.max(0) as f32;
     let r2 = r * r;
     ctx.mobs.iter().enumerate().any(|(i, mob)| {
-        if i == ctx.mob_index || !mob.active || mob.kind != rule.companion {
+        if i == ctx.mob_index || !mob.active || mob.kind != rule.companion || mob.confined() {
             return false;
         }
         let dx = mob.pos.x - pos.x;
@@ -300,11 +300,13 @@ impl Picker {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::block::Block;
     use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     use crate::mob::brain::AiMob;
-    use crate::mob::{Mob, MobRng};
+    use crate::mob::{Mob, MobRng, MobTagValue};
     use crate::world::World;
 
     fn habitat() -> Habitat {
@@ -433,18 +435,21 @@ mod tests {
                 kind: Mob::Sheep,
                 pos: Vec3::new(0.5, 64.0, 0.5),
                 active: true,
+                tags: Default::default(),
             },
             AiMob {
                 id: 0,
                 kind: Mob::Owl,
                 pos: Vec3::new(2.5, 64.0, 0.5),
                 active: true,
+                tags: Default::default(),
             },
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(3.5, 64.0, 0.5),
                 active: false,
+                tags: Default::default(),
             },
         ];
         let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
@@ -454,12 +459,13 @@ mod tests {
         );
 
         let mobs = [
-            mobs[0],
+            mobs[0].clone(),
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(4.5, 64.0, 0.5),
                 active: true,
+                tags: Default::default(),
             },
         ];
         let mut rng = MobRng::new(1);
@@ -484,12 +490,14 @@ mod tests {
                 kind: Mob::Sheep,
                 pos: Vec3::new(0.5, 64.0, 0.5),
                 active: true,
+                tags: Default::default(),
             },
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(2.5, 64.0, 0.5),
                 active: true,
+                tags: Default::default(),
             },
         ];
         let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
@@ -522,12 +530,14 @@ mod tests {
                 kind: Mob::Sheep,
                 pos: Vec3::new(0.5, 64.0, 0.5),
                 active: true,
+                tags: Default::default(),
             },
             AiMob {
                 id: 0,
                 kind: Mob::Sheep,
                 pos: Vec3::new(15.5, 64.0, 0.5),
                 active: true,
+                tags: Default::default(),
             },
         ];
         let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
@@ -547,6 +557,47 @@ mod tests {
         assert!(
             !reject_for_cohesion(&ctx, rule, true, IVec3::new(7, 64, 0), 10),
             "a recovery wander accepts moving back within one wander radius"
+        );
+    }
+
+    #[test]
+    fn cohesion_ignores_confined_companions() {
+        let world = World::new(0, 1);
+        let mut rng = MobRng::new(1);
+        let rule = WanderCohesion {
+            companion: Mob::Sheep,
+            search_radius_multiplier: 2,
+        };
+        let mobs = [
+            AiMob {
+                id: 0,
+                kind: Mob::Sheep,
+                pos: Vec3::new(0.5, 64.0, 0.5),
+                active: true,
+                tags: Default::default(),
+            },
+            AiMob {
+                id: 0,
+                kind: Mob::Sheep,
+                pos: Vec3::new(2.5, 64.0, 0.5),
+                active: true,
+                tags: BTreeMap::from([(
+                    "petramond:confined".to_string(),
+                    MobTagValue::Bool(true),
+                )]),
+            },
+        ];
+        let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);
+
+        assert!(
+            !companion_within(&ctx, rule, mobs[0].pos, 5),
+            "a free sheep should not count a confined sheep as a herd companion"
+        );
+        // With no free companion seen at the origin, the mob is treated as already
+        // lonely and cohesion does not constrain its destination.
+        assert!(
+            !reject_for_cohesion(&ctx, rule, false, IVec3::new(20, 64, 0), 5),
+            "without a free companion, cohesion does not constrain the destination"
         );
     }
 

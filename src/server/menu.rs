@@ -509,9 +509,7 @@ impl ServerGame {
 /// The `container_opened`/`container_closed` payload for a menu target, or `None`
 /// when no container session is involved. The unified target already carries
 /// the event's `(kind, pos)` identity.
-fn container_event_key(
-    target: ContainerTarget,
-) -> Option<(crate::gui::GuiKind, Option<IVec3>)> {
+fn container_event_key(target: ContainerTarget) -> Option<(crate::gui::GuiKind, Option<IVec3>)> {
     match target {
         ContainerTarget::None => None,
         ContainerTarget::Gui { kind, pos } => Some((kind, pos)),

@@ -15,8 +15,8 @@ mod tests;
 
 pub use primitives::{deflate, get_item_slot, inflate, put_item_slot, Reader};
 pub(crate) use primitives::{
-    get_indexed, get_kv_map, put_f32, put_indexed, put_kv_map, put_u16, put_u32, put_u64, put_u8,
-    read_u16, read_u32, write_u16, write_u32,
+    get_indexed, get_kv_map, put_f32, put_f64, put_i64, put_indexed, put_kv_map, put_u16, put_u32,
+    put_u64, put_u8, read_u16, read_u32, write_u16, write_u32,
 };
 
 use std::collections::{BTreeMap, HashMap};
@@ -57,9 +57,11 @@ use super::palette;
 /// entry whose cell is not a directional-view block, so a same-day v6 record
 /// with a ladder facing loads clean (the ladder id itself decodes as the
 /// north-facing row).
-const SECTION_REC_VERSION: u8 = 6;
+/// v7 widens the per-mob record with the confined flag.
+/// v8 replaces the confined boolean with a general mob tag map.
+const SECTION_REC_VERSION: u8 = 8;
 /// Oldest section-record version this build can still read.
-const SECTION_REC_MIN_VERSION: u8 = 6;
+const SECTION_REC_MIN_VERSION: u8 = 8;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;

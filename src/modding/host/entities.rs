@@ -490,7 +490,12 @@ mod tests {
             assert_ne!(before[0].id, shifted_id);
 
             assert_eq!(
-                handle_host_call(&mut data, HostCall::DespawnMob { mob_id: before[0].id }),
+                handle_host_call(
+                    &mut data,
+                    HostCall::DespawnMob {
+                        mob_id: before[0].id
+                    }
+                ),
                 HostRet::Bool(true)
             );
 

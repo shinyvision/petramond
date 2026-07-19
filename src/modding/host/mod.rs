@@ -40,6 +40,7 @@ mod kv;
 mod player;
 mod registry;
 mod sounds;
+mod tags;
 mod worldgen;
 
 /// How often the background ticker advances the engine epoch.
@@ -453,6 +454,9 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::MobKvGet { .. }
         | HostCall::MobKvSet { .. }
         | HostCall::MobKvDelete { .. } => kv::handle_kv_call(&data.mod_id, call),
+        HostCall::MobTagGet { .. } | HostCall::MobTagSet { .. } | HostCall::MobTagDelete { .. } => {
+            tags::handle_tag_call(&data.mod_id, call)
+        }
         HostCall::ResolveBlock { .. }
         | HostCall::ResolveItem { .. }
         | HostCall::ResolveMob { .. }

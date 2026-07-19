@@ -115,9 +115,15 @@ fn immunity_is_a_composable_pipeline_component() {
         game.server.game_tick_step(&mut ev);
     }
     game.server.game_tick_step(&mut ev);
-    assert!(game
-        .server
-        .damage_mob_through_pipeline(0, 0, 1.0, DamageSource::Fall, None, None, &mut ev,));
+    assert!(game.server.damage_mob_through_pipeline(
+        0,
+        0,
+        1.0,
+        DamageSource::Fall,
+        None,
+        None,
+        &mut ev,
+    ));
 }
 
 #[test]
@@ -156,9 +162,15 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
         Vec3::ZERO,
         "an immune player receives no attack knockback"
     );
-    assert!(!game
-        .server
-        .damage_mob_through_pipeline(0, 0, 1.0, DamageSource::Fall, None, None, &mut ev,));
+    assert!(!game.server.damage_mob_through_pipeline(
+        0,
+        0,
+        1.0,
+        DamageSource::Fall,
+        None,
+        None,
+        &mut ev,
+    ));
     assert_eq!(
         game.server.world.mobs().instances()[0].health(),
         mob_health - 1.0
@@ -184,9 +196,15 @@ fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
     assert!(!game
         .server
         .damage_player(0, 1, DamageSource::Mod("test"), None, &mut ev));
-    assert!(game
-        .server
-        .damage_mob_through_pipeline(0, 0, 1.0, DamageSource::Fall, None, None, &mut ev,));
+    assert!(game.server.damage_mob_through_pipeline(
+        0,
+        0,
+        1.0,
+        DamageSource::Fall,
+        None,
+        None,
+        &mut ev,
+    ));
 
     for _ in (MOB_DAMAGE_IFRAME_TICKS + 1)..PLAYER_DAMAGE_IFRAME_TICKS {
         game.server.game_tick_step(&mut ev);

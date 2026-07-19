@@ -67,8 +67,7 @@ fn kitchen_oven_inner() {
     use crate::mathh::IVec3;
 
     let by_key = |key: &str| {
-        ItemType::by_key(key)
-            .unwrap_or_else(|| panic!("{key} registered from the fixture packs"))
+        ItemType::by_key(key).unwrap_or_else(|| panic!("{key} registered from the fixture packs"))
     };
     let oven_item = by_key("kitchen:oven");
     let oven_block = oven_item.as_block().expect("oven item links to its block");
@@ -382,8 +381,7 @@ fn kitchen_reuse_inner() {
     use crate::mathh::IVec3;
 
     let by_key = |key: &str| {
-        ItemType::by_key(key)
-            .unwrap_or_else(|| panic!("{key} registered from the kitchen pack"))
+        ItemType::by_key(key).unwrap_or_else(|| panic!("{key} registered from the kitchen pack"))
     };
     let oven_item = by_key("kitchen:oven");
     let raw_mutton = by_key("kitchen:raw_mutton");
@@ -649,8 +647,7 @@ fn kitchen_mutton_inner() {
     use crate::mathh::Vec3 as V;
 
     let by_key = |key: &str| {
-        ItemType::by_key(key)
-            .unwrap_or_else(|| panic!("{key} registered from the kitchen pack"))
+        ItemType::by_key(key).unwrap_or_else(|| panic!("{key} registered from the kitchen pack"))
     };
     let raw_mutton = by_key("kitchen:raw_mutton");
     let cooked_mutton = by_key("kitchen:cooked_mutton");
@@ -854,8 +851,7 @@ fn kitchen_miller_inner() {
     use crate::mathh::IVec3;
 
     let by_key = |key: &str| {
-        ItemType::by_key(key)
-            .unwrap_or_else(|| panic!("{key} registered from the fixture packs"))
+        ItemType::by_key(key).unwrap_or_else(|| panic!("{key} registered from the fixture packs"))
     };
     let block_by_name = |name: &str| {
         Block::all()

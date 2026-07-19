@@ -300,14 +300,13 @@ fn padded_segment_clamps_at_a_wall_and_passes_free_air() {
     assert!((d - 2.3).abs() < 1e-3, "clamped just before the wall: {d}");
 
     // Free air: the full boom length comes back.
-    let free =
-        clamp_padded_segment(
-            [0.5, 0.5, 0.5],
-            [0.0, 0.0, -1.0],
-            4.0,
-            0.2,
-            |_, _, _| &[][..],
-        );
+    let free = clamp_padded_segment(
+        [0.5, 0.5, 0.5],
+        [0.0, 0.0, -1.0],
+        4.0,
+        0.2,
+        |_, _, _| &[][..],
+    );
     assert!((free - 4.0).abs() < 1e-6, "unblocked boom is full length");
 }
 
@@ -316,20 +315,17 @@ fn padded_segment_respects_partial_shapes_and_a_solid_start() {
     // The inset box occupies y ∈ [0, 0.875]: a boom passing OVER it (y = 1.2,
     // pad 0.1 → clearance above 0.975) is unblocked, exactly like the swept
     // body respecting a model's real shape.
-    let over =
-        clamp_padded_segment([0.5, 1.2, 3.0], [0.0, 0.0, -1.0], 4.0, 0.1, one_cell(INSET));
+    let over = clamp_padded_segment([0.5, 1.2, 3.0], [0.0, 0.0, -1.0], 4.0, 0.1, one_cell(INSET));
     assert!(
         (over - 4.0).abs() < 1e-6,
         "passes over the inset top: {over}"
     );
     // The same boom at y = 0.5 runs straight into it.
-    let into =
-        clamp_padded_segment([0.5, 0.5, 3.0], [0.0, 0.0, -1.0], 4.0, 0.1, one_cell(INSET));
+    let into = clamp_padded_segment([0.5, 0.5, 3.0], [0.0, 0.0, -1.0], 4.0, 0.1, one_cell(INSET));
     assert!(into < 4.0 - 1e-3, "blocked through the box: {into}");
 
     // Starting already inside an expanded box clamps to zero, never negative.
-    let inside =
-        clamp_padded_segment([0.5, 0.5, 0.5], [0.0, 0.0, -1.0], 4.0, 0.2, one_cell(FULL));
+    let inside = clamp_padded_segment([0.5, 0.5, 0.5], [0.0, 0.0, -1.0], 4.0, 0.2, one_cell(FULL));
     assert_eq!(inside, 0.0, "a start inside solid stays at the eye");
 }
 

@@ -838,7 +838,10 @@ fn farming_processing_inner() {
         assert!(
             recipes
                 .crafting()
-                .get_at("farming:dough", crate::crafting::CraftingStation::CraftingTable)
+                .get_at(
+                    "farming:dough",
+                    crate::crafting::CraftingStation::CraftingTable
+                )
                 .is_none(),
             "farming craftables left the crafting table for the workbench"
         );
@@ -937,9 +940,9 @@ fn farming_processing_inner() {
             .expect("station registered");
         let kind = crate::gui::resolve_kind("farming:farmers_workbench")
             .expect("blocks.json interned the workbench GUI kind");
-        game.server.sessions[0].pending_menu_actions.push(
-            crate::server::player::PendingMenuAction::OpenGui { kind, pos: None },
-        );
+        game.server.sessions[0]
+            .pending_menu_actions
+            .push(crate::server::player::PendingMenuAction::OpenGui { kind, pos: None });
         let mut ev = TickEvents::default();
         game.server.tick_menu(0, &mut ev);
         assert_eq!(
@@ -1069,7 +1072,11 @@ fn farming_trough_inner() {
 
     // Empty: empty bucket → water bucket + empty trough.
     use_click(&mut game, &mut ev, 0, origin, IVec3::Y);
-    assert_eq!(at(&game, 5, 64, 5), trough, "the trough block swaps back to empty");
+    assert_eq!(
+        at(&game, 5, 64, 5),
+        trough,
+        "the trough block swaps back to empty"
+    );
     assert_eq!(
         game.server.sessions[0]
             .player
@@ -1610,7 +1617,11 @@ fn farming_landscape_inner() {
     // --- Fertilized grass. A poppy rooted on grass, fertilizer on the soil
     // under it: the block flips to the fertilized variant, one unit spent.
     use_click(&mut game, &mut ev, 2, IVec3::new(8, 63, 8), IVec3::Y);
-    assert_eq!(at(&game, 8, 64, 8), Block::Poppy, "the poppy roots on grass");
+    assert_eq!(
+        at(&game, 8, 64, 8),
+        Block::Poppy,
+        "the poppy roots on grass"
+    );
     use_click(&mut game, &mut ev, 1, IVec3::new(8, 63, 8), IVec3::Y);
     assert_eq!(
         at(&game, 8, 63, 8),
@@ -1709,7 +1720,11 @@ fn farming_landscape_inner() {
     let final_oak = block_by_name("petramond:oak_sapling_2");
     use_click(&mut game, &mut ev, 3, IVec3::new(12, 63, 4), IVec3::Y);
     let sap = IVec3::new(12, 64, 4);
-    assert_eq!(at(&game, 12, 64, 4), Block::OakSapling, "the sapling plants");
+    assert_eq!(
+        at(&game, 12, 64, 4),
+        Block::OakSapling,
+        "the sapling plants"
+    );
     let before_count = fert_count(&game);
     use_click(&mut game, &mut ev, 1, sap, IVec3::Y);
     assert_eq!(

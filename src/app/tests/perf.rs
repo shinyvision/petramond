@@ -27,11 +27,7 @@ fn synthetic_region_value(rx: i32, rz: i32, blocks_per_cell: i32) -> Vec<u8> {
             let wz = (tz * 16 + i / 16) * blocks_per_cell;
             let height = ((wx * 3 + wz * 5).rem_euclid(60)) as i16;
             out.extend(height.to_le_bytes());
-            out.extend([
-                (wx.rem_euclid(251)) as u8,
-                (wz.rem_euclid(241)) as u8,
-                200,
-            ]);
+            out.extend([(wx.rem_euclid(251)) as u8, (wz.rem_euclid(241)) as u8, 200]);
         }
     }
     out
@@ -88,11 +84,7 @@ fn resampled_sessions_should_rewrite_no_unchanged_tiles() {
     let home = crate::mathh::Vec3::new(100.5, 90.0, 100.5);
     let session = || {
         let mut app = app_with_render_dist(4);
-        app.app
-            .game
-            .as_mut()
-            .unwrap()
-            .place_player_for_test(home);
+        app.app.game.as_mut().unwrap().place_player_for_test(home);
         app.server.sessions[0].player.pos = home;
         let mut kinds = std::collections::BTreeMap::<String, usize>::new();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -109,7 +101,9 @@ fn resampled_sessions_should_rewrite_no_unchanged_tiles() {
         }
         let replica = app.app.game().replica_for_test();
         let loaded = (100i32.div_euclid(16) - 8..=100i32.div_euclid(16) + 8)
-            .flat_map(|cz| (100i32.div_euclid(16) - 8..=100i32.div_euclid(16) + 8).map(move |cx| (cx, cz)))
+            .flat_map(|cz| {
+                (100i32.div_euclid(16) - 8..=100i32.div_euclid(16) + 8).map(move |cx| (cx, cz))
+            })
             .filter(|&(cx, cz)| {
                 replica
                     .client_surface_column_revision(crate::chunk::ChunkPos::new(cx, cz))
@@ -134,7 +128,10 @@ fn resampled_sessions_should_rewrite_no_unchanged_tiles() {
         .filter(|(key, old)| second.get(*key).is_some_and(|new| new != *old))
         .count();
     println!("rewritten values: {rewritten} / {}", first.len());
-    assert_eq!(rewritten, 0, "a resample of unchanged terrain must rewrite nothing");
+    assert_eq!(
+        rewritten, 0,
+        "a resample of unchanged terrain must rewrite nothing"
+    );
 }
 
 /// Frame-time profile of the world map over a large synthetic explored world:
@@ -157,14 +154,8 @@ fn world_map_zoom_out_frame_profile() {
     // Cover the −2 viewport generously with both stores: ±16 base regions
     // (= ±64 chunk tiles, ~22 MB raw) plus the mip regions over the same
     // ground — the "long-played world" case that stuttered.
-    let (prx, prz) = (
-        (pcx * 16).div_euclid(64),
-        (pcz * 16).div_euclid(64),
-    );
-    let (pmx, pmz) = (
-        (pcx * 16).div_euclid(128),
-        (pcz * 16).div_euclid(128),
-    );
+    let (prx, prz) = ((pcx * 16).div_euclid(64), (pcz * 16).div_euclid(64));
+    let (pmx, pmz) = ((pcx * 16).div_euclid(128), (pcz * 16).div_euclid(128));
     let mut entries = Vec::new();
     for rz in (prz - 16)..=(prz + 16) {
         for rx in (prx - 16)..=(prx + 16) {
@@ -189,10 +180,7 @@ fn world_map_zoom_out_frame_profile() {
         "minimap",
         entries,
     );
-    println!(
-        "seeded {seeded} tiles in {:.0?}",
-        seed_started.elapsed()
-    );
+    println!("seeded {seeded} tiles in {:.0?}", seed_started.elapsed());
 
     let screen = (1280u32, 720u32);
     let frame = |app: &mut TestApp| {
@@ -236,7 +224,8 @@ fn world_map_zoom_out_frame_profile() {
     profile("steady @ −2", &steady_frames);
 
     // Pan a long diagonal drag: boundary crossings + band loads.
-    app.app.set_pointer_button(crate::controls::PointerButton::Primary, true);
+    app.app
+        .set_pointer_button(crate::controls::PointerButton::Primary, true);
     let mut pan_frames = Vec::new();
     for step in 1..=120 {
         app.app

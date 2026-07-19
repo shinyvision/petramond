@@ -507,8 +507,7 @@ mod tests {
     #[ignore = "spawned by dropped_reaction_transforms_the_stack_in_water with a fixture pack env"]
     fn dropped_reaction_inner() {
         let by_key = |key: &str| {
-            ItemType::by_key(key)
-                .unwrap_or_else(|| panic!("fixture item '{key}' registered"))
+            ItemType::by_key(key).unwrap_or_else(|| panic!("fixture item '{key}' registered"))
         };
         let (flour, dough) = (by_key("testreact:flour"), by_key("testreact:dough"));
         assert!(flour.dropped_reaction().is_some(), "the row resolved");

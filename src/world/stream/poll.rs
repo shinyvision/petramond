@@ -21,8 +21,7 @@ use super::StreamEvent;
 /// demand — the server's own loaded set fell to half the wanted disc.
 const GEN_DRAIN_MIN_PER_POLL: usize = 16;
 const GEN_DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(750);
-const SERVER_GEN_DRAIN_TIME_BUDGET: std::time::Duration =
-    std::time::Duration::from_micros(2_500);
+const SERVER_GEN_DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(2_500);
 const DISK_DRAIN_MIN_PER_POLL: usize = 16;
 const DISK_DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(750);
 
@@ -440,9 +439,9 @@ impl World {
         let mut sky_cover_changed: FxHashMap<ChunkPos, (SkyCoverChange, bool)> =
             FxHashMap::default();
         let note_change = |map: &mut FxHashMap<ChunkPos, (SkyCoverChange, bool)>,
-                               cp: ChunkPos,
-                               change: SkyCoverChange,
-                               from_persist: bool| {
+                           cp: ChunkPos,
+                           change: SkyCoverChange,
+                           from_persist: bool| {
             map.entry(cp)
                 .and_modify(|(all, fp)| {
                     all.merge(change);

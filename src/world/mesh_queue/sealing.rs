@@ -29,7 +29,10 @@ impl World {
 
     /// Clear stale render output for a section that now intentionally emits no mesh.
     /// Returns true when the section is in that settled no-output state.
-    pub(in crate::world) fn clear_mesh_if_section_produces_no_mesh(&mut self, pos: SectionPos) -> bool {
+    pub(in crate::world) fn clear_mesh_if_section_produces_no_mesh(
+        &mut self,
+        pos: SectionPos,
+    ) -> bool {
         if !self.section_produces_no_mesh(pos) {
             return false;
         }

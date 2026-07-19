@@ -75,8 +75,7 @@ mod parallel_parity_tests {
                     return 0;
                 }
                 let ay = y - self.ylo;
-                self.band
-                    [((ay * CHUNK_SZ as i32 + z as i32) * CHUNK_SX as i32 + x as i32) as usize]
+                self.band[((ay * CHUNK_SZ as i32 + z as i32) * CHUNK_SX as i32 + x as i32) as usize]
             }
         }
         let columns: HashMap<(i32, i32), LitColumn> = coords
@@ -84,7 +83,15 @@ mod parallel_parity_tests {
             .map(|&(cx, cz)| {
                 let chunk = generate_chunk(seed, cx, cz);
                 let (band, ylo, yhi) = compute_chunk_skylight(&chunk);
-                ((cx, cz), LitColumn { chunk, band, ylo, yhi })
+                (
+                    (cx, cz),
+                    LitColumn {
+                        chunk,
+                        band,
+                        ylo,
+                        yhi,
+                    },
+                )
             })
             .collect();
 
@@ -93,8 +100,7 @@ mod parallel_parity_tests {
         let sections: Vec<(SectionPos, Section)> = coords
             .iter()
             .flat_map(|&(cx, cz)| {
-                let (_, secs) =
-                    crate::world::split_generated_column(&columns[&(cx, cz)].chunk);
+                let (_, secs) = crate::world::split_generated_column(&columns[&(cx, cz)].chunk);
                 secs.into_iter()
                     .filter(|(cy, _)| *cy >= 0)
                     .map(move |(cy, s)| (SectionPos::new(cx, cy, cz), s))

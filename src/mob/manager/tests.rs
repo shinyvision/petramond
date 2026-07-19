@@ -89,6 +89,7 @@ fn restore_respawns_saved_mobs_with_their_pose() {
             pos: Vec3::new(8.5, 70.0, 8.5),
             yaw: 1.25,
             shear_regrow: 0,
+            tags: Default::default(),
             kv: Default::default(),
         },
         SavedMob {
@@ -96,6 +97,7 @@ fn restore_respawns_saved_mobs_with_their_pose() {
             pos: Vec3::new(9.5, 70.0, 8.5),
             yaw: -0.5,
             shear_regrow: 500,
+            tags: Default::default(),
             kv: Default::default(),
         },
     ]);

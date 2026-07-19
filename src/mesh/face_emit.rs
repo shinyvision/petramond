@@ -118,12 +118,7 @@ pub(super) fn slab_corner_open(
             (d < 0) as usize
         }
     };
-    !crate::slab::half_cell_occupied(
-        state,
-        pick(dx, ux, vx),
-        pick(dy, uy, vy),
-        pick(dz, uz, vz),
-    )
+    !crate::slab::half_cell_occupied(state, pick(dx, ux, vx), pick(dy, uy, vy), pick(dz, uz, vz))
 }
 
 pub(super) fn cube_face_lighting_pad(

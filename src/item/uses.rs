@@ -48,4 +48,3 @@ pub enum UseRay {
     /// handlers run their own server-side water rays and don't need this).
     Water,
 }
-

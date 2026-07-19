@@ -12,6 +12,7 @@
 //! from the species' data brain rows (see `mob::build_brain` and `mob::behavior`).
 
 use std::cmp::Reverse;
+use std::collections::BTreeMap;
 
 use crate::mathh::{IVec3, Vec3};
 use crate::world::World;
@@ -49,7 +50,7 @@ pub struct HeadLook {
 
 /// Read-only mob state captured at the start of a mob tick for AI decisions that need
 /// nearby companions without borrowing the live [`Mobs`](super::Mobs) container.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct AiMob {
     /// Stable session id — what noise sources, targets, and attacker memory
     /// name, so a lock survives `swap_remove` renumbering across ticks.
@@ -58,6 +59,24 @@ pub struct AiMob {
     /// Feet position (like `Instance::pos`).
     pub pos: Vec3,
     pub active: bool,
+    /// Engine- and mod-owned tags attached to this mob instance, cloned from
+    /// [`Instance::tags`](super::Instance::tags) for the snapshot. Behaviors can
+    /// query any tag generically; the engine reserves the `petramond:` namespace.
+    pub tags: BTreeMap<String, super::MobTagValue>,
+}
+
+impl AiMob {
+    /// Whether this mob carries `key` with a truthy `Bool` value.
+    pub fn bool_tag(&self, key: &str) -> bool {
+        matches!(self.tags.get(key), Some(super::MobTagValue::Bool(true)))
+    }
+
+    /// Whether this mob is confined (captive / penned). Behaviors that rely on
+    /// a mob's freedom of movement (e.g., herd cohesion) should ignore confined
+    /// companions.
+    pub fn confined(&self) -> bool {
+        self.bool_tag("petramond:confined")
+    }
 }
 
 /// The tick-wide, read-only inputs every mob's AI shares this tick — built once

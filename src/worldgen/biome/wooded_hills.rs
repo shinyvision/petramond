@@ -1,7 +1,7 @@
 use crate::biome::Biome;
 use crate::block::Block;
 
-use super::{BiomeSpec, SnowCover, TreeProfile, VegetationProfile, surfaces, trees};
+use super::{surfaces, trees, BiomeSpec, SnowCover, TreeProfile, VegetationProfile};
 
 pub(super) static SPEC: BiomeSpec = BiomeSpec {
     biome: Biome::WoodedHills,

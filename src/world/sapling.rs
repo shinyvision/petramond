@@ -151,7 +151,10 @@ impl World {
         let anchored = cf.feature.is_anchored(
             &mut |wx, wz| match self.block_if_loaded(wx, pos.y - 1, wz) {
                 Some(b)
-                    if b != Block::Air && b != Block::Water && !b.is_leaves() && !b.is_fragile() =>
+                    if b != Block::Air
+                        && b != Block::Water
+                        && !b.is_leaves()
+                        && !b.is_fragile() =>
                 {
                     pos.y
                 }

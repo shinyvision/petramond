@@ -204,10 +204,8 @@ fn y_dependency_metadata_is_composed_from_graph_inputs() {
     let sampled_field = graph.sampled_field(CountingField { samples });
     let horizontal_sum = graph.add(x, z);
     let vertical_sum = graph.add(horizontal_sum, y);
-    let horizontal_selector =
-        graph.range_select(x, -1.0, 1.0, horizontal_field, horizontal_sum);
-    let conservative_selector =
-        graph.range_select(x, -1.0, 1.0, horizontal_field, sampled_field);
+    let horizontal_selector = graph.range_select(x, -1.0, 1.0, horizontal_field, horizontal_sum);
+    let conservative_selector = graph.range_select(x, -1.0, 1.0, horizontal_field, sampled_field);
     let vertical_ramp = graph.vertical_ramp(0.0, 10.0);
     let vertical_bias = graph.vertical_bias(constant);
     let floor_clamp = graph.floor_clamp(horizontal_sum, 0.0, 4.0, 64.0);

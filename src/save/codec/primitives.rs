@@ -35,8 +35,14 @@ impl<'a> Reader<'a> {
     pub fn u64(&mut self) -> Option<u64> {
         Some(u64::from_le_bytes(self.arr()?))
     }
+    pub fn i64(&mut self) -> Option<i64> {
+        Some(i64::from_le_bytes(self.arr()?))
+    }
     pub fn f32(&mut self) -> Option<f32> {
         Some(f32::from_le_bytes(self.arr()?))
+    }
+    pub fn f64(&mut self) -> Option<f64> {
+        Some(f64::from_le_bytes(self.arr()?))
     }
     pub fn bytes(&mut self, n: usize) -> Option<&'a [u8]> {
         self.take(n)
@@ -59,7 +65,15 @@ pub(crate) fn put_u64(buf: &mut Vec<u8>, v: u64) {
     buf.extend_from_slice(&v.to_le_bytes());
 }
 
+pub(crate) fn put_i64(buf: &mut Vec<u8>, v: i64) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+
 pub(crate) fn put_f32(buf: &mut Vec<u8>, v: f32) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+
+pub(crate) fn put_f64(buf: &mut Vec<u8>, v: f64) {
     buf.extend_from_slice(&v.to_le_bytes());
 }
 

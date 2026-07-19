@@ -19,8 +19,7 @@ pub(super) fn create_grade_pipeline(
     );
     // Filterable texture (the grade pass bilinearly upscales when the scene
     // renders below swapchain resolution) + the mod-mood uniform vec4.
-    let mut entries =
-        texture_sampler_layout_entries(0, wgpu::TextureViewDimension::D2).to_vec();
+    let mut entries = texture_sampler_layout_entries(0, wgpu::TextureViewDimension::D2).to_vec();
     entries.push(uniform_entry(2, wgpu::ShaderStages::FRAGMENT, 16));
     let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("grade bgl"),

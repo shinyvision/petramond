@@ -155,10 +155,9 @@ fn store_artifact(module: &Module, artifact: &Path) {
     };
     for entry in entries.flatten() {
         let stale = entry.file_name() != name
-            && entry
-                .file_name()
-                .to_str()
-                .is_some_and(|n| n.starts_with(path_prefix) && n[path_prefix.len()..].starts_with('-'));
+            && entry.file_name().to_str().is_some_and(|n| {
+                n.starts_with(path_prefix) && n[path_prefix.len()..].starts_with('-')
+            });
         if stale {
             let _ = std::fs::remove_file(entry.path());
         }

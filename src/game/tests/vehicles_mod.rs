@@ -123,8 +123,8 @@ fn boat_inner() {
         .position(|def| def.name == "vehicles:boat")
         .map(|index| crate::mob::Mob(index as u8))
         .expect("vehicles:boat registered from the fixture pack");
-    let boat_item = crate::item::ItemType::by_key("vehicles:boat")
-        .expect("vehicles:boat item registered");
+    let boat_item =
+        crate::item::ItemType::by_key("vehicles:boat").expect("vehicles:boat item registered");
 
     let mut game =
         super::common::game_with_camera(Camera::new(Vec3::new(5.0, 66.0, 8.0), 16.0 / 9.0));

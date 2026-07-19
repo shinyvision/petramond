@@ -146,7 +146,10 @@ fn checked_shader_source(
         );
         return None;
     }
-    if let Some(bad) = params.iter().find(|key| !crate::registry::is_namespaced(key)) {
+    if let Some(bad) = params
+        .iter()
+        .find(|key| !crate::registry::is_namespaced(key))
+    {
         log::warn!(
             "ignoring {} {kind} shader '{shader}': shader param '{bad}' is not namespaced",
             catalog_path.display(),

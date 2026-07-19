@@ -1,4 +1,5 @@
 use super::Mobs;
+use crate::mob::MobTagValue;
 
 impl Mobs {
     /// Toggle the particle-emitter bundle registered under `key` (a
@@ -31,7 +32,8 @@ impl Mobs {
     /// (see `Instance::set_anim_rate`): `0` freezes the layer mid-stroke,
     /// negative reverses. `false` for a bad index or an inactive anim.
     pub fn set_mob_anim_rate(&mut self, index: usize, name: &str, rate: f32) -> bool {
-        self.mob_mut(index).is_some_and(|m| m.set_anim_rate(name, rate))
+        self.mob_mut(index)
+            .is_some_and(|m| m.set_anim_rate(name, rate))
     }
 
     /// Seek an ACTIVE named animation's phase on the mob at `index` toward
@@ -87,5 +89,28 @@ impl Mobs {
         self.list
             .get_mut(index)
             .is_some_and(|m| m.mod_kv_mut().remove(key).is_some())
+    }
+
+    /// A live mob's tag value.
+    pub fn mob_tag(&self, index: usize, key: &str) -> Option<&MobTagValue> {
+        self.list.get(index)?.tags().get(key)
+    }
+
+    /// Store a tag on the mob at `index`. `false` = no such mob.
+    pub fn set_mob_tag(&mut self, index: usize, key: String, value: MobTagValue) -> bool {
+        match self.list.get_mut(index) {
+            Some(m) => {
+                m.tags_mut().insert(key, value);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Remove a tag from the mob at `index`; returns whether it was present.
+    pub fn remove_mob_tag(&mut self, index: usize, key: &str) -> bool {
+        self.list
+            .get_mut(index)
+            .is_some_and(|m| m.tags_mut().remove(key).is_some())
     }
 }

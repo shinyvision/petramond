@@ -7,7 +7,7 @@ use crate::client::{
 };
 use crate::data::{
     CollisionShape, EffectStateData, GuiValue, ItemInfoData, ItemStackData, LightData,
-    MobAnimStateData, MobRidersData, MobSnapshot, PlayerInputData, PlayerListEntry,
+    MobAnimStateData, MobRidersData, MobSnapshot, MobTagValue, PlayerInputData, PlayerListEntry,
     PlayerSnapshot, RuntimeSide,
 };
 use crate::events::EventKind;
@@ -315,6 +315,24 @@ pub enum HostCall {
     },
     /// → [`HostRet::Bool`] (whether the key was present).
     MobKvDelete {
+        mob_id: u64,
+        key: String,
+    },
+    /// Per-mob tag map: typed key/value pairs attached to a live mob instance.
+    /// `MobTag(None)` when the key is absent OR there is no such live mob.
+    /// → [`HostRet::MobTag`].
+    MobTagGet {
+        mob_id: u64,
+        key: String,
+    },
+    /// `false` = no such live mob. → [`HostRet::Bool`].
+    MobTagSet {
+        mob_id: u64,
+        key: String,
+        value: MobTagValue,
+    },
+    /// → [`HostRet::Bool`] (whether the key was present).
+    MobTagDelete {
         mob_id: u64,
         key: String,
     },
@@ -1029,6 +1047,8 @@ pub enum HostRet {
     Player(PlayerSnapshot),
     /// The KV gets: `None` = key absent (or target unloaded/missing).
     Bytes(#[serde(with = "serde_bytes")] Option<Vec<u8>>),
+    /// [`HostCall::MobTagGet`]: `None` = key absent (or target unloaded/missing).
+    MobTag(Option<MobTagValue>),
     /// [`HostCall::GuiStateGet`]: `None` = key absent.
     GuiValue(Option<GuiValue>),
     /// [`HostCall::ContainerGet`]: every slot in index order; `None` = no

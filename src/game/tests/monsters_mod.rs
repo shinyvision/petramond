@@ -554,7 +554,10 @@ fn zombie_douse_inner() {
         "the twice-doused zombie survived"
     );
     let (disabled, _, _) = game.mods_for_test().probe(0);
-    assert!(!disabled, "the monsters mod stayed healthy through the douses");
+    assert!(
+        !disabled,
+        "the monsters mod stayed healthy through the douses"
+    );
 }
 
 #[test]

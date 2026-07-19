@@ -2,8 +2,7 @@ use super::*;
 use crate::mathh::Vec3;
 
 fn base() -> String {
-    let (text, _) =
-        crate::assets::read_base_text("mobs.json").expect("assets/mobs.json must ship");
+    let (text, _) = crate::assets::read_base_text("mobs.json").expect("assets/mobs.json must ship");
     text
 }
 
@@ -74,7 +73,9 @@ fn pack_layer_overrides_rows_by_mob() {
             "avoid_water": true,
             "brain": [{"node": "wander", "priority": 0}]
         }]}"#;
-    let defs = parse_layers(&[&base(), layer]).expect("layered table loads").defs;
+    let defs = parse_layers(&[&base(), layer])
+        .expect("layered table loads")
+        .defs;
     assert_eq!(defs.len(), ENGINE_MOB_NAMES.len(), "an override adds no id");
     let owl = &defs[Mob::Owl.0 as usize];
     assert_eq!(owl.scale, 0.5);
@@ -140,7 +141,9 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
                 {"node": "melee_attack", "priority": 30, "params": {"reach": 1.2, "damage": 2.0, "knockback": 5.0, "cooldown_ticks": 20}}
             ]
         }]}"#;
-    let defs = parse_layers(&[&base(), layer]).expect("dynamic row loads").defs;
+    let defs = parse_layers(&[&base(), layer])
+        .expect("dynamic row loads")
+        .defs;
     let engine = ENGINE_MOB_NAMES.len();
     assert_eq!(defs.len(), engine + 1, "a fresh id past the engine set");
     let z = &defs[engine];
@@ -224,7 +227,9 @@ fn mob_sound_hooks_resolve_registered_sound_keys() {
             ],
             "brain": []
         }]}"#;
-    let defs = parse_layers(&[&base(), layer]).expect("sound hooks load").defs;
+    let defs = parse_layers(&[&base(), layer])
+        .expect("sound hooks load")
+        .defs;
     let caller = defs
         .iter()
         .find(|d| d.name == "mymod:caller")
@@ -265,7 +270,9 @@ fn empty_damage_feedback_row_resolves_to_default_components() {
             "damage_feedback": [],
             "brain": []
         }]}"#;
-    let defs = parse_layers(&[&base(), layer]).expect("damage feedback row loads").defs;
+    let defs = parse_layers(&[&base(), layer])
+        .expect("damage feedback row loads")
+        .defs;
     let dummy = defs
         .iter()
         .find(|d| d.name == "mymod:dummy")
@@ -294,7 +301,9 @@ fn damage_feedback_components_parse_from_json_objects() {
             ],
             "brain": []
         }]}"#;
-    let defs = parse_layers(&[&base(), layer]).expect("damage feedback row loads").defs;
+    let defs = parse_layers(&[&base(), layer])
+        .expect("damage feedback row loads")
+        .defs;
     let dummy = defs
         .iter()
         .find(|d| d.name == "mymod:dummy")

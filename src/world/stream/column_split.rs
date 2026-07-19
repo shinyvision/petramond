@@ -1,5 +1,7 @@
 use crate::block::Block;
-use crate::chunk::{section_idx, Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_MIN_CY, SECTION_SIZE};
+use crate::chunk::{
+    section_idx, Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SECTION_MIN_CY, SECTION_SIZE,
+};
 use crate::column::Column;
 use crate::section::Section;
 

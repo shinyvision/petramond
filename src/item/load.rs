@@ -431,7 +431,10 @@ mod tests {
         let gadget = &defs[engine + 1];
         assert_eq!(gadget.item, ItemType((engine + 1) as u8));
         assert_eq!(gadget.block, Some(crate::block::Block::Stone));
-        assert_eq!(gadget.item_use, Some(ItemUse::BucketFill { becomes: filled }));
+        assert_eq!(
+            gadget.item_use,
+            Some(ItemUse::BucketFill { becomes: filled })
+        );
         // Engine rows are untouched.
         assert_eq!(defs[ItemType::Stone.id() as usize].item, ItemType::Stone);
     }

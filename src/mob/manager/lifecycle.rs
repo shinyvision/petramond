@@ -164,9 +164,13 @@ impl Mobs {
     }
 
     pub(crate) fn restore_saved_mob_lit(&mut self, m: SavedMob, skylight: u8, blocklight: u8) {
-        if self.spawn_lit(m.kind, m.pos, m.yaw, skylight, blocklight).is_some() {
+        if self
+            .spawn_lit(m.kind, m.pos, m.yaw, skylight, blocklight)
+            .is_some()
+        {
             if let Some(inst) = self.list.last_mut() {
                 inst.set_shear_regrow(m.shear_regrow);
+                *inst.tags_mut() = m.tags;
                 *inst.mod_kv_mut() = m.kv;
             }
         }
