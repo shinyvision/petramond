@@ -19,6 +19,7 @@ fn overlaid_saved_section_keeps_its_block_entities_live() {
     world.ensure_column(sp.chunk_pos());
     // The generated base the overlay replaces.
     world.sections.insert(sp, Arc::new(Section::new(0, 4, 0)));
+    world.note_section_loaded(sp);
     // A saved section carrying a chest lands from disk.
     let mut saved = Section::new(0, 4, 0);
     saved.set_block(0, 0, 0, crate::block::Block::Chest);
@@ -367,8 +368,9 @@ fn first_bake_defers_until_generation_neighborhood_settles() {
     let mut section = Section::new(0, 4, 0);
     section.set_block(0, 0, 0, Block::Stone);
     world.sections.insert(sp, Arc::new(section));
+    world.note_section_loaded(sp);
     let generating = SectionPos::new(0, 5, 0);
-    world.pending_sections.insert(generating);
+    world.insert_pending_section(generating);
     world.light_deferred.insert(sp);
 
     world.flush_settled_deferred(target);
@@ -383,7 +385,7 @@ fn first_bake_defers_until_generation_neighborhood_settles() {
 
     // The neighbour lands (or is discarded): the neighbourhood is now settled —
     // every other absent neighbour belongs to a landed column that skipped it.
-    world.pending_sections.remove(&generating);
+    world.remove_pending_section(generating);
     world.flush_settled_deferred(target);
     assert!(
         !world.light_deferred.contains(&sp),
@@ -504,40 +506,30 @@ fn horizontal_move_requests_sections_for_newly_wanted_loaded_columns() {
 #[cfg(feature = "worldgen-tests")]
 #[test]
 fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
-    use std::time::Duration;
+    use std::time::Instant;
 
     let dir = std::env::temp_dir().join(format!("petramond-cubic-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let opened = crate::save::open_at(dir.clone()).expect("open save");
     let mut world = World::new(0x51EED, 2);
     world.attach_save(opened.save);
+    let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
 
     // Stream the origin column: generate (worker) + ingest. The later edit lands well
     // above the active vertical window; reload coverage comes from the save manifest.
     world.update_load(0, 8, 0);
-    let mut spun = 0;
-    while !world.chunk_loaded(0, 0) && spun < 3000 {
+    while !world.chunk_loaded(0, 0) {
+        assert!(Instant::now() < deadline, "the origin column streamed in");
         world.poll();
-        std::thread::sleep(Duration::from_millis(2));
-        spun += 1;
     }
-    assert!(world.chunk_loaded(0, 0), "the origin column streamed in");
 
-    // Mesh the loaded sections. Poll + sleep between budgets so the async light bakes
-    // the mesher waits on can finish, exactly as they do between real frames (a tight
-    // no-delay loop never lets the light pool produce a result).
-    for _ in 0..400 {
+    // Mesh the loaded sections. Poll until a mesh lands (inline-friendly; under a
+    // threaded pool the bake still completes inside the hard deadline).
+    while world.iter_meshes().next().is_none() {
+        assert!(Instant::now() < deadline, "at least one section meshed");
         world.poll();
         world.tick_mesh_budget(64);
-        if world.iter_meshes().next().is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(
-        world.iter_meshes().next().is_some(),
-        "at least one section meshed"
-    );
 
     // Edit a block into the open air well above any terrain (max surface ~171): this
     // materializes section (0,15,0) on write.
@@ -557,12 +549,11 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
         );
         save.request_load(sp, false);
         let mut got = None;
-        for _ in 0..1500 {
+        while got.is_none() {
+            assert!(Instant::now() < deadline, "section read back from disk");
             if let Some(l) = save.poll_loaded() {
                 got = Some(l);
-                break;
             }
-            std::thread::sleep(Duration::from_millis(2));
         }
         let loaded = got.expect("section read back from disk");
         let section = loaded.section.expect("section record decodes");
@@ -578,11 +569,12 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     world.clear_world();
     world.last_load_target = None;
     world.update_load(0, 8, 0);
-    let mut spun = 0;
-    while world.chunk_block(edit.x, edit.y, edit.z) != Block::Stone.id() && spun < 3000 {
+    while world.chunk_block(edit.x, edit.y, edit.z) != Block::Stone.id() {
+        assert!(
+            Instant::now() < deadline,
+            "the saved edit overlaid back on after reload"
+        );
         world.poll();
-        std::thread::sleep(Duration::from_millis(2));
-        spun += 1;
     }
     assert_eq!(
         world.chunk_block(edit.x, edit.y, edit.z),
@@ -600,36 +592,39 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
 #[cfg(feature = "worldgen-tests")]
 #[test]
 fn explored_terrain_reloads_from_disk_without_generating() {
-    use std::time::Duration;
-
     let dir =
         std::env::temp_dir().join(format!("petramond-explored-terrain-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
 
+    // Settled = OBSERVABLE state (nothing pending), never a quiet window: a
+    // tight no-sleep loop passes any fixed iteration count in microseconds
+    // while disk/gen round-trips are still in flight.
     let stream_settled = |world: &mut World| {
+        use std::time::Instant;
         world.update_load(0, 8, 0);
-        let mut settled = 0;
-        let mut last = 0usize;
-        for _ in 0..5000 {
+        let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
+        loop {
             world.poll();
-            let now = world.loaded_section_count();
-            if now == last && now > 0 {
-                settled += 1;
-                if settled >= 100 {
-                    break;
-                }
-            } else {
-                settled = 0;
-                last = now;
+            if world.loaded_section_count() > 0
+                && world.pending.is_empty()
+                && world.pending_sections.is_empty()
+                && world.awaited_overlays.is_empty()
+            {
+                break;
             }
-            std::thread::sleep(Duration::from_millis(2));
+            assert!(
+                Instant::now() < deadline,
+                "streaming settled (nothing pending)"
+            );
         }
     };
 
     // Every section's light settled: baked-and-clean, or fully opaque
     // (never bakes). The first-persist gate waits for exactly this.
     let light_settled = |world: &mut World| {
-        for _ in 0..5000 {
+        use std::time::Instant;
+        let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
+        while Instant::now() < deadline {
             world.poll();
             world.pump_light_bakes();
             let done = world
@@ -639,7 +634,6 @@ fn explored_terrain_reloads_from_disk_without_generating() {
             if done {
                 return true;
             }
-            std::thread::sleep(Duration::from_millis(2));
         }
         false
     };
@@ -731,24 +725,26 @@ fn explored_terrain_reloads_from_disk_without_generating() {
 #[cfg(feature = "worldgen-tests")]
 #[test]
 fn vertical_window_generates_near_the_player_not_the_whole_column() {
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     let mut world = World::new(0xC0FFEE, 1);
     // y=-60 is deep section cy=-4 (the would-be cave space); y=96 is the surface band.
     let deep = (0, -60, 0);
     let surface = (0, 96, 0);
 
-    // Player near the surface (section cy 6): stream until a surface section lands.
+    // Player near the surface (section cy 6): stream until nothing is pending —
+    // the whole wanted window has landed (observable state, not a quiet window).
     world.update_load(0, 6, 0);
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while !world.chunk_loaded(0, 0) && Instant::now() < deadline {
+    let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
+    loop {
         world.poll();
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    // Drain a few more polls so the whole window has a chance to stream in.
-    for _ in 0..32 {
-        world.poll();
-        std::thread::sleep(Duration::from_millis(2));
+        if world.loaded_section_count() > 0
+            && world.pending.is_empty()
+            && world.pending_sections.is_empty()
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the surface window streamed in");
     }
     assert!(
         world.section_loaded_at(surface.0, surface.1, surface.2),
@@ -761,10 +757,9 @@ fn vertical_window_generates_near_the_player_not_the_whole_column() {
 
     // Descend to that deep section (cy -4): now it must stream in.
     world.update_load(0, -4, 0);
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
     while !world.section_loaded_at(deep.0, deep.1, deep.2) && Instant::now() < deadline {
         world.poll();
-        std::thread::sleep(Duration::from_millis(2));
     }
     assert!(
         world.section_loaded_at(deep.0, deep.1, deep.2),
@@ -776,7 +771,6 @@ fn vertical_window_generates_near_the_player_not_the_whole_column() {
 mod sea_ice_streaming {
     use super::*;
     use crate::block::Block;
-    use std::time::Duration;
 
     /// The frozen sea exists in the LIVE streamed world, not just the one-shot
     /// generator: a waterline ice cell must survive the per-section pipeline
@@ -789,14 +783,14 @@ mod sea_ice_streaming {
         let mut world = World::new(34, 2);
         world.update_load(6, 3, -1);
         let (wx, wy, wz) = (6 * 16 + 15, 63, -16 + 15);
-        // Give-up bound only (generous per WIKI/testing-and-verification.md —
-        // a starved shared JobPool can stretch quiet stretches far past any
-        // tight window; passing runs never wait this long).
-        let mut spun = 0;
-        while !world.section_loaded_at(wx, wy, wz) && spun < 30_000 {
+        use std::time::Instant;
+        let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
+        while !world.section_loaded_at(wx, wy, wz) {
+            assert!(
+                Instant::now() < deadline,
+                "sea-ice section never streamed within the hard deadline"
+            );
             world.poll();
-            std::thread::sleep(Duration::from_millis(2));
-            spun += 1;
         }
         let live = Block::from_id(world.chunk_block(wx, wy, wz));
         let oneshot = crate::worldgen::generate_chunk(34, 6, -1);
@@ -808,3 +802,7 @@ mod sea_ice_streaming {
         );
     }
 }
+
+
+
+

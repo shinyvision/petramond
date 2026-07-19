@@ -53,6 +53,21 @@ fn color_depth_pass<'a>(
 impl Renderer {
     /// Is this section mesh's bounding box inside the current view frustum?
     #[inline]
+    fn aabb_visible(
+        min: glam::Vec3,
+        max: glam::Vec3,
+        frustum: Frustum,
+        render_origin: glam::Vec3,
+        cam_pos: glam::Vec3,
+        fog: f32,
+    ) -> bool {
+        if !frustum.aabb_visible(min - render_origin, max - render_origin) {
+            return false;
+        }
+        aabb_distance_sq(cam_pos, min, max) <= fog * fog
+    }
+
+    #[inline]
     fn section_visible(
         section: &GpuSectionMesh,
         frustum: Frustum,
@@ -63,10 +78,36 @@ impl Renderer {
         let (ox, oy, oz) = section.origin;
         let min = glam::Vec3::new(ox as f32, oy as f32, oz as f32);
         let max = glam::Vec3::new((ox + 16) as f32, (oy + 16) as f32, (oz + 16) as f32);
-        if !frustum.aabb_visible(min - render_origin, max - render_origin) {
+        Self::aabb_visible(min, max, frustum, render_origin, cam_pos, fog)
+    }
+
+    /// Whole-column AABB covering every installed section. Rejecting here is
+    /// visibility-identical to rejecting every section: a section outside the
+    /// column stack cannot exist, and a column that fails frustum/fog has no
+    /// section that can pass.
+    #[inline]
+    fn column_visible(
+        column: &GpuColumnMesh,
+        column_pos: ChunkPos,
+        frustum: Frustum,
+        render_origin: glam::Vec3,
+        cam_pos: glam::Vec3,
+        fog: f32,
+    ) -> bool {
+        let mut min_cy = i32::MAX;
+        let mut max_cy = i32::MIN;
+        for &(sp, _) in &column.sections {
+            min_cy = min_cy.min(sp.cy);
+            max_cy = max_cy.max(sp.cy);
+        }
+        if min_cy > max_cy {
             return false;
         }
-        aabb_distance_sq(cam_pos, min, max) <= fog * fog
+        let ox = column_pos.cx * 16;
+        let oz = column_pos.cz * 16;
+        let min = glam::Vec3::new(ox as f32, (min_cy * 16) as f32, oz as f32);
+        let max = glam::Vec3::new((ox + 16) as f32, ((max_cy + 1) * 16) as f32, (oz + 16) as f32);
+        Self::aabb_visible(min, max, frustum, render_origin, cam_pos, fog)
     }
 
     /// Frustum-cull + depth-sort the visible chunks into `order`, returning this
@@ -103,6 +144,9 @@ impl Renderer {
         let mut any_model_visible = false;
         let mut any_transparent_visible = false;
         for (column_pos, column) in terrain_columns {
+            if !Self::column_visible(column, *column_pos, frustum, render_origin, cam, fog) {
+                continue;
+            }
             let first_section = order.len();
             let mut column_dist_sq = f32::INFINITY;
             let mut column_has_opaque = false;
@@ -240,6 +284,7 @@ impl Renderer {
                 }
                 if let (Some(vb), Some(ib)) = (&col.opaque_vbuf, &col.opaque_ibuf) {
                     pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_vertex_buffer(1, col.origin_vbuf.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
                     stats.opaque_draws += 1;
                     stats.opaque_indices += col.opaque_idx_count as u64;
@@ -274,6 +319,7 @@ impl Renderer {
                 }
                 if let (Some(vb), Some(ib)) = (vbuf, ibuf) {
                     pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_vertex_buffer(1, col.origin_vbuf.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
                     stats.opaque_draws += 1;
                     stats.opaque_indices += idx_count as u64;
@@ -507,6 +553,7 @@ impl Renderer {
                 // near -> far: depth-writing, so early-Z applies like opaque.
                 if let (Some(vb), Some(ib)) = (&col.translucent_vbuf, &col.translucent_ibuf) {
                     pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_vertex_buffer(1, col.origin_vbuf.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
                     stats.transparent_draws += 1;
                     stats.transparent_indices += item.translucent_idx_count as u64;
@@ -610,6 +657,7 @@ impl Renderer {
                 // far -> near (alpha order)
                 if let (Some(vb), Some(ib)) = (&col.transparent_vbuf, &col.transparent_ibuf) {
                     pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_vertex_buffer(1, col.origin_vbuf.slice(..));
                     pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
                     stats.transparent_draws += 1;
                     stats.transparent_indices += item.transparent_idx_count as u64;

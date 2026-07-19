@@ -94,7 +94,7 @@ fn test_system(field: impl SampledScalarField + 'static) -> SurfaceDensitySystem
     SurfaceDensitySystem {
         seed,
         density,
-        climate: plains_index(),
+        climate: Box::leak(Box::new(plains_index())),
         surface: SurfaceSystem,
     }
 }
@@ -128,7 +128,7 @@ fn coast_system() -> SurfaceDensitySystem {
     SurfaceDensitySystem {
         seed,
         density,
-        climate: coast_index(),
+        climate: Box::leak(Box::new(coast_index())),
         surface: SurfaceSystem,
     }
 }

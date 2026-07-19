@@ -184,10 +184,10 @@ async fn new_renderer_inner(
 
     // Item entities + chests draw through the EXISTING opaque pipeline; clone its
     // (Arc-backed) handle so each `DynamicDraw` issues a byte-identical draw while
-    // the `opaque_pipe` field below still owns the original.
-    let item_entity_pipe = pipelines.opaque_pipe.clone();
-    let chest_pipe = pipelines.opaque_pipe.clone();
-    let door_pipe = pipelines.opaque_pipe.clone();
+    // Terrain `opaque_pipe` is quantized; dynamic bakes need absolute Vertex.
+    let item_entity_pipe = pipelines.dynamic_opaque_pipe.clone();
+    let chest_pipe = pipelines.dynamic_opaque_pipe.clone();
+    let door_pipe = pipelines.dynamic_opaque_pipe.clone();
 
     // Build per-species mob render resources by iterating the mob registry: load each
     // species' `.bbmodel` (geometry + walk animation + embedded texture), upload its
@@ -354,7 +354,7 @@ async fn new_renderer_inner(
         PLAYER_ITEM_INDICES,
     );
     let player_block_item_draw = DynamicDraw::new(
-        pipelines.opaque_pipe.clone(),
+        pipelines.dynamic_opaque_pipe.clone(),
         player_block_item_vbuf,
         player_block_item_ibuf,
         PLAYER_ITEM_VERTICES,

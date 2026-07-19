@@ -162,6 +162,7 @@ impl World {
 
         self.ensure_column(pos.chunk_pos());
         self.sections.insert(pos, Arc::new(section));
+        self.note_section_loaded(pos);
         // Installed content may change the visible surface without moving its
         // height (a same-height block swap) — surface consumers gate on
         // the column revision, so it must move with every section install.
@@ -397,12 +398,14 @@ impl World {
             self.role == WorldRole::ClientReplica,
             "remote unloads are the replica's ingest path"
         );
-        let evicted = Self::column_section_range()
-            .filter_map(|cy| {
-                let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                self.sections.get(&sp).map(|s| (sp, Arc::clone(s)))
-            })
-            .collect();
+        let bits = self.section_column_cys.get(&pos).copied().unwrap_or(0);
+        let mut evicted = Vec::with_capacity(bits.count_ones() as usize);
+        Self::for_each_column_cy(bits, |cy| {
+            let sp = SectionPos::new(pos.cx, cy, pos.cz);
+            if let Some(s) = self.sections.get(&sp) {
+                evicted.push((sp, Arc::clone(s)));
+            }
+        });
         self.remove_column(pos);
         self.vis_dirty = true;
         evicted
@@ -425,6 +428,7 @@ impl World {
         );
         self.ensure_column(pos.chunk_pos());
         self.sections.insert(pos, section);
+        self.note_section_loaded(pos);
         // Same rule as a full section install: newly visible surface content
         // must move the column revision for revision-gated surface sampling.
         self.bump_column_payload_revision(pos.chunk_pos());

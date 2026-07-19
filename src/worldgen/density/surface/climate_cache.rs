@@ -3,7 +3,7 @@ use crate::worldgen::biome::climate::{
     BiomeClimateIndex, ClimateSampleCell, ClimateSampler, SurfaceClimate, CLIMATE_SAMPLE_CELL_X,
     CLIMATE_SAMPLE_CELL_Z,
 };
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 /// Memoized base climate for one shared 4×4 climate cell: the sampled climate
 /// vector plus its classified base biome. Coast/beach derivation still layers the
@@ -20,19 +20,43 @@ pub(super) struct ClimateCellCache<'a> {
     index: &'a BiomeClimateIndex,
     seed: u32,
     /// Raw climate sampled once per 4×4 cell corner (the expensive noise step).
-    climate: HashMap<ClimateSampleCell, SurfaceClimate>,
+    climate: FxHashMap<ClimateSampleCell, SurfaceClimate>,
     /// Coarse per-cell classification of that corner — only the cheap ocean
     /// proximity scan needs cell-resolution biomes.
-    base: HashMap<ClimateSampleCell, Biome>,
+    base: FxHashMap<ClimateSampleCell, Biome>,
+    /// The most recent 4×4 block's four corner climates (+ lazily, whether its
+    /// corner BASES agree). Region loops visit whole blocks of columns sharing
+    /// one climate cell, so this collapses their per-column corner fetches to
+    /// one map round-trip per block. Pure memoization of pure values.
+    block: Option<BlockMemo>,
+    /// Memoized beach ocean-proximity scans, keyed by the query's climate cell —
+    /// the scan offsets are cell-size multiples, so the answer is a pure
+    /// function of the cell (see `near_ocean_climate`).
+    near_ocean: FxHashMap<(i32, i32), bool>,
 }
 
-/// One memoized quart-cell climate sample.
+/// Cached corners of one climate block (see [`ClimateCellCache::block`]).
+struct BlockMemo {
+    cx: i32,
+    cz: i32,
+    corners: [SurfaceClimate; 4],
+    /// `None` = not yet derived; `Some(base_agreement)` mirrors
+    /// [`ClimateCellCache::uniform_base`]'s answer for this block.
+    uniform: Option<Option<Biome>>,
+}
+
+/// One memoized quart-cell climate sample (+ optionally its DEFAULT-index base
+/// classification — see [`ClimateCellCache::cell_base`]).
 #[derive(Clone, Copy)]
 struct ClimateMemoEntry {
     init: bool,
     seed: u32,
     cell: ClimateSampleCell,
     climate: SurfaceClimate,
+    /// `Some` only when classified with the process-wide default surface index
+    /// (`BiomeClimateIndex::default_surface` — pointer identity), so a custom
+    /// (test) index can never read another index's classification.
+    base: Option<Biome>,
 }
 
 /// Per-thread, world-anchored memo of raw quart-cell climate samples (the
@@ -51,6 +75,7 @@ thread_local! {
                     seed: 0,
                     cell: ClimateSampleCell::surface(0, 0),
                     climate: SurfaceClimate::new(0.0, 0.0, 0.0, 0.0, 0.0),
+                    base: None,
                 };
                 1 << CLIMATE_MEMO_BITS
             ]
@@ -77,9 +102,55 @@ impl<'a> ClimateCellCache<'a> {
             sampler,
             index,
             seed,
-            climate: HashMap::new(),
-            base: HashMap::new(),
+            climate: FxHashMap::default(),
+            base: FxHashMap::default(),
+            block: None,
+            near_ocean: FxHashMap::default(),
         }
+    }
+
+    /// Memoize `scan` per climate cell of `(wx, wz)`. Only sound for scans whose
+    /// answer is a pure function of the query's cell — the beach ocean-proximity
+    /// scan proves that by construction (cell-size-multiple offsets).
+    pub(super) fn near_ocean_memo(
+        &mut self,
+        wx: i32,
+        wz: i32,
+        scan: impl FnOnce(&mut Self, i32, i32) -> bool,
+    ) -> bool {
+        let key = (
+            wx.div_euclid(CLIMATE_SAMPLE_CELL_X),
+            wz.div_euclid(CLIMATE_SAMPLE_CELL_Z),
+        );
+        if let Some(&v) = self.near_ocean.get(&key) {
+            return v;
+        }
+        let v = scan(self, wx, wz);
+        self.near_ocean.insert(key, v);
+        v
+    }
+
+    /// The four corner climates of the climate block holding cell indices
+    /// `(cx, cz)`, through the one-block memo.
+    fn block_corners(&mut self, cx: i32, cz: i32) -> [SurfaceClimate; 4] {
+        if let Some(b) = &self.block {
+            if b.cx == cx && b.cz == cz {
+                return b.corners;
+            }
+        }
+        let corners = [
+            self.cell_climate(ClimateSampleCell::at_surface_indices(cx, cz)),
+            self.cell_climate(ClimateSampleCell::at_surface_indices(cx + 1, cz)),
+            self.cell_climate(ClimateSampleCell::at_surface_indices(cx, cz + 1)),
+            self.cell_climate(ClimateSampleCell::at_surface_indices(cx + 1, cz + 1)),
+        ];
+        self.block = Some(BlockMemo {
+            cx,
+            cz,
+            corners,
+            uniform: None,
+        });
+        corners
     }
 
     fn cell_climate(&mut self, cell: ClimateSampleCell) -> SurfaceClimate {
@@ -103,6 +174,7 @@ impl<'a> ClimateCellCache<'a> {
                 seed,
                 cell,
                 climate,
+                base: None,
             };
             climate
         });
@@ -114,12 +186,42 @@ impl<'a> ClimateCellCache<'a> {
         if let Some(cached) = self.base.get(&cell) {
             return *cached;
         }
+        // With the process-wide DEFAULT index, the classification is a pure
+        // function of `(seed, cell)` like the climate itself — memoize it in
+        // the same thread-local slot so region rebuilds and beach scans don't
+        // re-classify shared corners. A custom index (tests) skips the memo.
+        let is_default = std::ptr::eq(self.index, BiomeClimateIndex::default_surface());
+        let seed = self.seed;
+        if is_default {
+            let memoized = CLIMATE_MEMO.with(|memo| {
+                let memo = memo.borrow();
+                let e = &memo[climate_memo_idx(seed, cell)];
+                if e.init && e.seed == seed && e.cell == cell {
+                    e.base
+                } else {
+                    None
+                }
+            });
+            if let Some(base) = memoized {
+                self.base.insert(cell, base);
+                return base;
+            }
+        }
         let climate = self.cell_climate(cell);
         let base = self
             .index
             .classify_surface(climate)
             .expect("surface climate index must classify default biomes");
         self.base.insert(cell, base);
+        if is_default {
+            CLIMATE_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                let e = &mut memo[climate_memo_idx(seed, cell)];
+                if e.init && e.seed == seed && e.cell == cell {
+                    e.base = Some(base);
+                }
+            });
+        }
         base
     }
 
@@ -130,10 +232,7 @@ impl<'a> ClimateCellCache<'a> {
         let cz = wz.div_euclid(CLIMATE_SAMPLE_CELL_Z);
         let fx = (wx - cx * CLIMATE_SAMPLE_CELL_X) as f32 / CLIMATE_SAMPLE_CELL_X as f32;
         let fz = (wz - cz * CLIMATE_SAMPLE_CELL_Z) as f32 / CLIMATE_SAMPLE_CELL_Z as f32;
-        let c00 = self.cell_climate(ClimateSampleCell::at_surface_indices(cx, cz));
-        let c10 = self.cell_climate(ClimateSampleCell::at_surface_indices(cx + 1, cz));
-        let c01 = self.cell_climate(ClimateSampleCell::at_surface_indices(cx, cz + 1));
-        let c11 = self.cell_climate(ClimateSampleCell::at_surface_indices(cx + 1, cz + 1));
+        let [c00, c10, c01, c11] = self.block_corners(cx, cz);
         SurfaceClimate::bilerp(c00, c10, c01, c11, fx, fz)
     }
 
@@ -153,10 +252,24 @@ impl<'a> ClimateCellCache<'a> {
     fn uniform_base(&mut self, wx: i32, wz: i32) -> Option<Biome> {
         let cx = wx.div_euclid(CLIMATE_SAMPLE_CELL_X);
         let cz = wz.div_euclid(CLIMATE_SAMPLE_CELL_Z);
+        if let Some(b) = &self.block {
+            if b.cx == cx && b.cz == cz {
+                if let Some(uniform) = b.uniform {
+                    return uniform;
+                }
+            }
+        }
         let base = self.cell_base(ClimateSampleCell::at_surface_indices(cx, cz));
         let agree = self.cell_base(ClimateSampleCell::at_surface_indices(cx + 1, cz)) == base
             && self.cell_base(ClimateSampleCell::at_surface_indices(cx, cz + 1)) == base
             && self.cell_base(ClimateSampleCell::at_surface_indices(cx + 1, cz + 1)) == base;
-        agree.then_some(base)
+        let uniform = agree.then_some(base);
+        if let Some(b) = &mut self.block {
+            if b.cx == cx && b.cz == cz {
+                b.uniform = Some(uniform);
+            }
+        }
+        uniform
     }
 }
+

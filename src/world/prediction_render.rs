@@ -13,7 +13,9 @@ use crate::chunk::SectionPos;
 use crate::mesh::ChunkMesh;
 use crate::worker::{JobCancel, JobPool};
 
-use super::light::{run_light_bake, LightBakeJob, LightBakeResult};
+use super::light::{
+    run_light_bake, run_light_bake_batch, LightBakeJob, LightBakeResult, LightBatchJob,
+};
 use super::mesh_pool::{self, MeshJob};
 
 const PREDICTION_TERRAIN_PRIORITY: i64 = i64::MIN;
@@ -77,6 +79,17 @@ pub(super) struct PredictionLightJob {
     pub prev_blocklight: Option<Arc<[u8]>>,
 }
 
+/// Per-unit light work for a prediction bundle: a lone 48³ bake, or one
+/// aligned 2×2×2 batch (≥3 members) sharing a 64³ flood.
+pub(super) enum PredictionLightUnit {
+    Single(PredictionLightJob),
+    Batch {
+        job: LightBatchJob,
+        /// Pre-bake cubes in the same order as [`LightBatchJob::member_positions`].
+        prev: Vec<(Option<Arc<[u8]>>, Option<Arc<[u8]>>)>,
+    },
+}
+
 pub(super) struct PredictionLightResult {
     pub result: LightBakeResult,
     /// [`super::light::cube_region_changes`] mask vs. the pre-bake cubes:
@@ -95,7 +108,7 @@ pub(super) struct PredictionTerrainResult {
 
 pub(super) struct PredictionTerrainWork {
     pub guards: Vec<SectionGuard>,
-    pub lights: Vec<PredictionLightJob>,
+    pub lights: Vec<PredictionLightUnit>,
     pub meshes: Vec<PredictionMeshJob>,
     /// Sections whose mesh pads sample an edited cell: their geometry/AO
     /// changed, so they rebuild regardless of what the light diff says.
@@ -140,8 +153,14 @@ impl PredictionTerrainQueue {
     }
 
     pub(super) fn submit(&mut self, work: PredictionTerrainWork) -> Vec<SectionPos> {
-        let light_positions: Box<[SectionPos]> =
-            work.lights.iter().map(|light| light.job.pos()).collect();
+        let light_positions: Box<[SectionPos]> = work
+            .lights
+            .iter()
+            .flat_map(|unit| match unit {
+                PredictionLightUnit::Single(light) => vec![light.job.pos()],
+                PredictionLightUnit::Batch { job, .. } => job.member_positions().collect(),
+            })
+            .collect();
         let mesh_positions: Box<[SectionPos]> =
             work.meshes.iter().map(PredictionMeshJob::pos).collect();
         let mut affected: Vec<SectionPos> = work.guards.iter().map(|guard| guard.pos).collect();
@@ -272,29 +291,35 @@ fn run_prediction_terrain(
         meshes,
         always_mesh,
     } = work;
-    let light_results = run_parallel(pool, cancel, lights, |light| {
-        let PredictionLightJob {
-            job,
-            prev_skylight,
-            prev_blocklight,
-        } = light;
-        let first_bake = prev_skylight.is_none();
-        let result = run_light_bake(job);
-        let mask = if first_bake {
-            super::light::REGION_ALL
-        } else {
-            super::light::cube_region_changes(
-                prev_skylight.as_deref(),
-                &result.skylight,
-                crate::chunk::SKY_FULL,
-            ) | super::light::cube_region_changes(prev_blocklight.as_deref(), &result.blocklight, 0)
-        };
-        PredictionLightResult {
-            result,
-            mask,
-            first_bake,
+    let light_batches = run_parallel(pool, cancel, lights, |unit| match unit {
+        PredictionLightUnit::Single(light) => {
+            let PredictionLightJob {
+                job,
+                prev_skylight,
+                prev_blocklight,
+            } = light;
+            vec![finish_prediction_light(
+                run_light_bake(job),
+                prev_skylight,
+                prev_blocklight,
+            )]
+        }
+        PredictionLightUnit::Batch { job, prev } => {
+            let outs = run_light_bake_batch(job);
+            debug_assert_eq!(outs.len(), prev.len());
+            outs.into_iter()
+                .zip(prev)
+                .map(|(out, (prev_skylight, prev_blocklight))| {
+                    finish_prediction_light(
+                        LightBakeResult::from_batch_output(out),
+                        prev_skylight,
+                        prev_blocklight,
+                    )
+                })
+                .collect()
         }
     })?;
+    let light_results: Vec<PredictionLightResult> = light_batches.into_iter().flatten().collect();
 
     // Build only the meshes something actually sampled: the edited cells'
     // geometry samplers, plus every section a changed light region reaches
@@ -359,6 +384,28 @@ fn run_prediction_terrain(
         lights: light_results,
         meshes: mesh_results,
     })
+}
+
+fn finish_prediction_light(
+    result: LightBakeResult,
+    prev_skylight: Option<Arc<[u8]>>,
+    prev_blocklight: Option<Arc<[u8]>>,
+) -> PredictionLightResult {
+    let first_bake = prev_skylight.is_none();
+    let mask = if first_bake {
+        super::light::REGION_ALL
+    } else {
+        super::light::cube_region_changes(
+            prev_skylight.as_deref(),
+            &result.skylight,
+            crate::chunk::SKY_FULL,
+        ) | super::light::cube_region_changes(prev_blocklight.as_deref(), &result.blocklight, 0)
+    };
+    PredictionLightResult {
+        result,
+        mask,
+        first_bake,
+    }
 }
 
 struct BatchState<J, R> {

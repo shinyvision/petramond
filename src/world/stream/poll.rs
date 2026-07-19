@@ -219,12 +219,12 @@ impl World {
                     w.deferred_recheck_needed = true;
                 }
                 GenOutput::SectionFailed(sp) => {
-                    w.pending_sections.remove(&sp);
+                    w.remove_pending_section(sp);
                     w.pending_section_jobs.remove(&sp);
                     w.queue_deferred_rechecks_around(sp);
                 }
                 GenOutput::Section { sp, section } => {
-                    if !w.pending_sections.remove(&sp) {
+                    if !w.remove_pending_section(sp) {
                         return;
                     }
                     w.pending_section_jobs.remove(&sp);
@@ -234,6 +234,7 @@ impl World {
                         return;
                     }
                     w.sections.insert(sp, section);
+                    w.note_section_loaded(sp);
                     w.refresh_block_entity_index(sp);
                     w.refresh_particle_emitter_index(sp);
                     w.classify_deep_on_install(sp);
@@ -313,7 +314,7 @@ impl World {
                 w.awaited_overlays.remove(&sp);
                 let disk_primary = w.disk_primary_sections.remove(&sp);
                 if disk_primary {
-                    w.pending_sections.remove(&sp);
+                    w.remove_pending_section(sp);
                     w.pending_section_jobs.remove(&sp);
                 }
                 if !w.within_current_keep_radius(sp.chunk_pos()) {
@@ -337,7 +338,7 @@ impl World {
                                     seed: w.seed,
                                 },
                             );
-                            w.pending_sections.insert(sp);
+                            w.insert_pending_section(sp);
                             w.pending_section_jobs.insert(sp, job);
                         }
                     }
@@ -353,6 +354,7 @@ impl World {
                         }
                     }
                     w.sections.insert(sp, Arc::new(section));
+                    w.note_section_loaded(sp);
                     w.refresh_block_entity_index(sp);
                     w.refresh_particle_emitter_index(sp);
                     w.classify_deep_on_install(sp);
@@ -396,13 +398,8 @@ impl World {
         // column-gen cache capture point.
         let ingested_columns: FxHashSet<ChunkPos> =
             ingested.iter().map(|sp| sp.chunk_pos()).collect();
-        let pending_columns: FxHashSet<ChunkPos> = self
-            .pending_sections
-            .iter()
-            .map(|sp| sp.chunk_pos())
-            .collect();
         for pos in &ingested_columns {
-            if !pending_columns.contains(pos) {
+            if !self.column_has_pending_section(*pos) {
                 self.slim_settled_column_gen(*pos);
             }
         }
@@ -624,6 +621,7 @@ impl World {
                 }
             }
             self.sections.insert(*sp, Arc::new(section));
+            self.note_section_loaded(*sp);
             self.refresh_block_entity_index(*sp);
             self.refresh_particle_emitter_index(*sp);
             self.dropped_items.extend(entities);

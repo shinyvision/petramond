@@ -111,6 +111,8 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::MobTagGet { .. }
         | HostCall::MobTagSet { .. }
         | HostCall::MobTagDelete { .. }
+        | HostCall::MobTagsGet { .. }
+        | HostCall::MobsWithTag { .. }
         | HostCall::RegisterWorldgenFeature { .. }
         | HostCall::RegisterStageReplacement { .. }
         | HostCall::RegisterGenerator { .. }

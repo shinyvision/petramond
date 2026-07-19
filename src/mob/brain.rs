@@ -13,6 +13,7 @@
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::mathh::{IVec3, Vec3};
 use crate::world::World;
@@ -59,23 +60,40 @@ pub struct AiMob {
     /// Feet position (like `Instance::pos`).
     pub pos: Vec3,
     pub active: bool,
-    /// Engine- and mod-owned tags attached to this mob instance, cloned from
-    /// [`Instance::tags`](super::Instance::tags) for the snapshot. Behaviors can
-    /// query any tag generically; the engine reserves the `petramond:` namespace.
-    pub tags: BTreeMap<String, super::MobTagValue>,
+    /// Engine- and mod-owned tags attached to this mob instance, shared with
+    /// [`Instance::tags`](super::Instance::tags) by `Arc` clone (copy-on-write
+    /// — a mob whose tags change mid-tick keeps the snapshot's start-of-tick
+    /// view). Behaviors can query any tag generically; the engine reserves the
+    /// `petramond:` namespace.
+    pub tags: Arc<BTreeMap<String, super::MobTagValue>>,
 }
 
 impl AiMob {
     /// Whether this mob carries `key` with a truthy `Bool` value.
     pub fn bool_tag(&self, key: &str) -> bool {
-        matches!(self.tags.get(key), Some(super::MobTagValue::Bool(true)))
+        self.tags.get(key).and_then(super::MobTagValue::as_bool) == Some(true)
+    }
+
+    /// The mob's `Int` tag under `key` (`None` = absent or another type).
+    pub fn int_tag(&self, key: &str) -> Option<i64> {
+        self.tags.get(key).and_then(super::MobTagValue::as_int)
+    }
+
+    /// The mob's `Float` tag under `key` (`None` = absent or another type).
+    pub fn float_tag(&self, key: &str) -> Option<f64> {
+        self.tags.get(key).and_then(super::MobTagValue::as_float)
+    }
+
+    /// The mob's `String` tag under `key` (`None` = absent or another type).
+    pub fn str_tag(&self, key: &str) -> Option<&str> {
+        self.tags.get(key).and_then(super::MobTagValue::as_str)
     }
 
     /// Whether this mob is confined (captive / penned). Behaviors that rely on
     /// a mob's freedom of movement (e.g., herd cohesion) should ignore confined
     /// companions.
     pub fn confined(&self) -> bool {
-        self.bool_tag("petramond:confined")
+        self.bool_tag(super::tags::CONFINED)
     }
 }
 

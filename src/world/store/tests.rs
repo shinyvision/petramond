@@ -169,12 +169,16 @@ fn mesh_column_index_tracks_multiple_vertical_meshes() {
     world.install_mesh(lower, ChunkMesh::empty());
     world.install_mesh(upper, ChunkMesh::empty());
     assert!(world.column_has_mesh(column));
+    let bits = world.mesh_column_cys[&column];
+    assert_eq!(bits.count_ones(), 2);
 
     assert!(world.remove_mesh(lower));
     assert!(world.column_has_mesh(column));
+    assert_eq!(world.mesh_column_cys[&column].count_ones(), 1);
 
     assert!(world.remove_mesh(upper));
     assert!(!world.column_has_mesh(column));
+    assert!(!world.mesh_column_cys.contains_key(&column));
 }
 
 #[test]
@@ -239,6 +243,7 @@ fn heightmap_recompute_preserves_generated_cave_mouth_surface() {
     let sp = SectionPos::new(cp.cx, cy, cp.cz);
     let section = generator.generate_section(sp, &col);
     world.sections.insert(sp, Arc::new(section));
+    world.note_section_loaded(sp);
 
     world.recompute_column_heightmaps(cp);
 
@@ -259,9 +264,11 @@ fn heightmap_recompute_keeps_glass_out_of_direct_sky_cover() {
     let mut ground_section = Section::new(0, 0, 0);
     ground_section.set_block(8, 0, 8, Block::Stone);
     world.sections.insert(ground, Arc::new(ground_section));
+    world.note_section_loaded(ground);
     let mut roof_section = Section::new(0, 4, 0);
     roof_section.set_block(8, 0, 8, Block::Glass);
     world.sections.insert(roof, Arc::new(roof_section));
+    world.note_section_loaded(roof);
 
     let column = world.ensure_column(cp);
     column.set_surface_y(8, 8, 64);
@@ -323,6 +330,7 @@ fn heightmap_recompute_preserves_loaded_dug_shaft_below_generated_surface() {
         ground_sp,
         Arc::new(Section::new(cp.cx, ground_sp.cy, cp.cz)),
     );
+    world.note_section_loaded(ground_sp);
 
     let lower_sp = SectionPos::from_world(
         cp.cx * SECTION_SIZE as i32 + x as i32,
@@ -338,6 +346,7 @@ fn heightmap_recompute_preserves_loaded_dug_shaft_below_generated_surface() {
         Block::Stone,
     );
     world.sections.insert(lower_sp, Arc::new(lower_section));
+    world.note_section_loaded(lower_sp);
 
     world.recompute_column_heightmaps(cp);
 
@@ -381,7 +390,9 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
     lower_section.dirty = false;
 
     world.sections.insert(top, Arc::new(top_section));
+    world.note_section_loaded(top);
     world.sections.insert(lower, Arc::new(lower_section));
+    world.note_section_loaded(lower);
 
     assert!(
         !world.sections.get(&lower).unwrap().light_dirty,

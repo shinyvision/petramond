@@ -50,7 +50,7 @@ pub(super) fn game_on_empty_chunk() -> TestGame {
 /// The fixture with an explicit camera (the WASM child tests spawn near their
 /// build site).
 pub(super) fn game_with_camera(cam: Camera) -> TestGame {
-    let (server, bootstrap) = crate::game::session::build_session("", 1, 1);
+    let (server, bootstrap) = crate::game::session::build_session_inline("", 1, 1);
     let (handle, pipe) = crate::server::handle::ServerHandle::loopback();
     let game = Game::assemble(cam, handle, bootstrap);
     TestGame { game, server, pipe }

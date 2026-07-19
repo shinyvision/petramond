@@ -82,7 +82,7 @@ pub mod worldgen {
         use crate::worldgen::graph::SamplePoint;
 
         let graph = TerrainDensitySpec::default_surface().build_graph(seed);
-        let index = BiomeClimateIndex::default_surface();
+        let index = BiomeClimateIndex::default_surface().clone();
         let sampler = ClimateSampler::new(graph.graph());
         let half = (side as i32 / 2) * stride;
         let mut biomes = Vec::with_capacity(side * side);

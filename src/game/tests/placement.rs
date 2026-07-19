@@ -221,11 +221,8 @@ fn place_into_loaded_air_decrements_selected() {
     // Player at the surface (section cy 4 ≈ y64): the vertical window streams the surface
     // band, and the y=200 placement below is into open air via materialize-on-write.
     game.server.world.update_load(0, 4, 0);
-    // Real async generation runs on the shared worldgen pool; under a saturated pool
-    // (the full `worldgen-tests` suite on a many-core box) this chunk's job can queue
-    // for a while, so wait on a generous wall-clock deadline rather than a fixed poll
-    // count to stay robust under load. The common case still returns in well under 1s.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    // `TestGame` uses an inline job pool — gen finishes inside `poll`.
+    let deadline = std::time::Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
     let mut loaded = false;
     while std::time::Instant::now() < deadline {
         game.server.world.poll();
@@ -233,9 +230,8 @@ fn place_into_loaded_air_decrements_selected() {
             loaded = true;
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(2));
     }
-    assert!(loaded, "chunk (0,0) failed to load within 30s");
+    assert!(loaded, "chunk (0,0) failed to load within the hard deadline");
 
     let p = IVec3::new(0, 200, 0);
     assert!(Block::from_id(game.server.world.chunk_block(p.x, p.y, p.z)).is_replaceable());

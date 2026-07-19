@@ -59,9 +59,12 @@ use super::palette;
 /// north-facing row).
 /// v7 widens the per-mob record with the confined flag.
 /// v8 replaces the confined boolean with a general mob tag map.
-const SECTION_REC_VERSION: u8 = 8;
+/// v9 stores the mob tag map's keys in a per-record string table: every tag
+/// carries a u16 table index instead of repeating the full key string (see
+/// `save::mobs`).
+const SECTION_REC_VERSION: u8 = 9;
 /// Oldest section-record version this build can still read.
-const SECTION_REC_MIN_VERSION: u8 = 8;
+const SECTION_REC_MIN_VERSION: u8 = 9;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;

@@ -11,9 +11,10 @@ impl World {
         if let Some(job) = self.pending_section_jobs.remove(&pos) {
             job.cancel();
         }
-        self.pending_sections.remove(&pos);
+        self.remove_pending_section(pos);
         let section_removed = self.sections.remove(&pos).is_some();
         if section_removed {
+            self.note_section_unloaded(pos);
             self.bump_column_payload_revision(pos.chunk_pos());
         }
         self.block_entity_sections.remove(&pos);
@@ -43,7 +44,8 @@ impl World {
         // An evicted column is missing again if an anchor still wants it —
         // the settled short-circuit must not hide it from the next scan.
         self.missing_columns_settled = false;
-        for cy in Self::column_section_range() {
+        let bits = self.section_column_cys.get(&pos).copied().unwrap_or(0);
+        Self::for_each_column_cy(bits, |cy| {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             self.prediction_terrain.cancel_section(sp);
             self.sections.remove(&sp);
@@ -64,8 +66,9 @@ impl World {
             self.sealed_parked.remove(&sp);
             self.light_bakes.cancel(sp);
             self.light_edited_since_persist.remove(&sp);
-        }
-        self.mesh_columns.remove(&pos);
+        });
+        self.clear_mesh_column_index(pos);
+        self.clear_section_column_index(pos);
         self.mesh_upload_revisions.remove(&pos);
         self.mesh_upload_dirty_columns.remove(&pos);
         self.mesh_release_after.remove(&pos);
@@ -89,7 +92,7 @@ impl World {
                 job.cancel();
             }
         }
-        self.pending_sections.retain(|sp| sp.chunk_pos() != pos);
+        self.clear_pending_sections_for_column(pos);
         self.awaited_overlays.retain(|sp| sp.chunk_pos() != pos);
         self.disk_primary_sections
             .retain(|sp| sp.chunk_pos() != pos);
@@ -118,6 +121,8 @@ impl World {
         }
         self.mesh_job_cancels.clear();
         self.mesh_columns.clear();
+        self.mesh_column_cys.clear();
+        self.section_column_cys.clear();
         self.mesh_upload_revisions.clear();
         self.mesh_upload_dirty_columns.clear();
         self.mesh_release_after.clear();
@@ -135,7 +140,7 @@ impl World {
             job.cancel();
         }
         self.pending_section_jobs.clear();
-        self.pending_sections.clear();
+        self.clear_all_pending_sections();
         self.pending_overlays.clear();
         self.awaited_overlays.clear();
         self.disk_primary_sections.clear();

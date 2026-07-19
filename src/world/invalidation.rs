@@ -3,7 +3,7 @@
 
 use rustc_hash::FxHashSet;
 
-use crate::chunk::{self, ChunkPos, SectionPos, SECTION_SIZE};
+use crate::chunk::{self, ChunkPos, SectionPos, SECTION_MIN_CY, SECTION_SIZE};
 
 use super::store::{SkyCoverChange, World, WorldRole};
 
@@ -102,11 +102,14 @@ impl World {
         let note_persist = self.save.is_some();
         for dz in -1..=1 {
             for dx in -1..=1 {
-                for cy in Self::column_section_range() {
-                    let pos = SectionPos::new(center.cx + dx, cy, center.cz + dz);
-                    if change.segment_gap(pos, wx, wz) > LIGHT_REACH
-                        || !self.sections.contains_key(&pos)
-                    {
+                let cp = ChunkPos::new(center.cx + dx, center.cz + dz);
+                let bits = self.section_column_cys.get(&cp).copied().unwrap_or(0);
+                let mut b = bits;
+                while b != 0 {
+                    let cy = SECTION_MIN_CY + b.trailing_zeros() as i32;
+                    b &= b - 1;
+                    let pos = SectionPos::new(cp.cx, cy, cp.cz);
+                    if change.segment_gap(pos, wx, wz) > LIGHT_REACH {
                         continue;
                     }
                     if note_persist {
@@ -128,8 +131,13 @@ impl World {
         for (center, (change, from_persist)) in changes {
             for dz in -1..=1 {
                 for dx in -1..=1 {
-                    for cy in Self::column_section_range() {
-                        let pos = SectionPos::new(center.cx + dx, cy, center.cz + dz);
+                    let cp = ChunkPos::new(center.cx + dx, center.cz + dz);
+                    let bits = self.section_column_cys.get(&cp).copied().unwrap_or(0);
+                    let mut b = bits;
+                    while b != 0 {
+                        let cy = SECTION_MIN_CY + b.trailing_zeros() as i32;
+                        b &= b - 1;
+                        let pos = SectionPos::new(cp.cx, cy, cp.cz);
                         if change.affects(pos)
                             && self
                                 .sections

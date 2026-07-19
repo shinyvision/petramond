@@ -193,6 +193,9 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     section.set_block(3, 1, 2, Block::OakLeaves);
     section.set_block(4, 1, 2, Block::ShortGrass);
     section.set_water(5, 1, 2, Block::Water, 4);
+    // Top-of-section water: the pad-local fill probe reads the neighbour
+    // ABOVE (one past the top pad face for that neighbour) — must not OOB.
+    section.set_water(5, SECTION_SIZE - 1, 2, Block::Water, 0);
     // A BURNING furnace is the `furnace_lit` row; the machine state rides
     // along as it does in the live world (the mesher only reads the row).
     section.set_block(6, 1, 2, Block::FurnaceLit);
@@ -248,6 +251,9 @@ fn pad_local_section_mesher_matches_closure_mesher() {
             && (-1..=SECTION_SIZE as i32).contains(&wz)
         {
             Block::Stone.id()
+        } else if wy == SECTION_SIZE as i32 && wx == 5 && wz == 2 {
+            // Water column continuing above the section (pad top face).
+            Block::Water.id()
         } else {
             Block::Air.id()
         }
@@ -255,6 +261,8 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     let water_at = |wx: i32, wy: i32, wz: i32| -> u8 {
         if in_section(wx, wy, wz) {
             section.water_meta(wx as usize, wy as usize, wz as usize)
+        } else if wy == SECTION_SIZE as i32 && wx == 5 && wz == 2 {
+            0
         } else {
             0
         }

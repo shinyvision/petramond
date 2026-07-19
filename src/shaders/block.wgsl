@@ -69,6 +69,19 @@ struct VsIn {
     @location(3) packed2: u32,
 };
 
+// Packed-column terrain: column-local XZ + world Y as i16 fixed-point (1/64
+// block), plus the column's world XZ origin as an instance-step attribute.
+struct VsInTerrain {
+    // xyz = fixed-point pos; w = padding (wgpu has no i16x3 vertex format).
+    @location(0) pos_q: vec4<i32>,
+    @location(1) tint: vec3<f32>,
+    @location(2) packed: u32,
+    @location(3) packed2: u32,
+    @location(4) col_origin: vec4<f32>,
+};
+
+const TERRAIN_POS_SCALE_INV: f32 = 1.0 / 64.0;
+
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -130,19 +143,18 @@ fn cell_local_uv(packed2: u32) -> vec2<f32> {
     ) / 16.0;
 }
 
-@vertex
-fn vs_main(in: VsIn) -> VsOut {
+fn vs_common(pos: vec3<f32>, tint: vec3<f32>, packed: u32, packed2: u32) -> VsOut {
     var out: VsOut;
-    let local_pos = in.pos - u.render_origin.xyz;
+    let local_pos = pos - u.render_origin.xyz;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
 
-    let tile = in.packed & 0xFFu;
-    let corner = (in.packed >> 8u) & 0x3u;
-    let shade_idx = (in.packed >> 10u) & 0x3u;
-    let overlay_tile = (in.packed >> 12u) & 0xFFu;
-    let ao = (in.packed >> 21u) & 0x3u;
-    let sky6 = (in.packed >> 23u) & 0x3Fu;
-    let uv_mode = (in.packed >> 29u) & 0x7u;
+    let tile = packed & 0xFFu;
+    let corner = (packed >> 8u) & 0x3u;
+    let shade_idx = (packed >> 10u) & 0x3u;
+    let overlay_tile = (packed >> 12u) & 0xFFu;
+    let ao = (packed >> 21u) & 0x3u;
+    let sky6 = (packed >> 23u) & 0x3Fu;
+    let uv_mode = (packed >> 29u) & 0x7u;
 
     // Animate water: WaterStill / WaterFlow are the first of `frame_count`
     // consecutive flipbook tiles; advance base + frame over time.
@@ -178,7 +190,7 @@ fn vs_main(in: VsIn) -> VsOut {
             // slice of the texture instead of squishing/stretching the full tile.
             // v=0 at the cell top, v=1 at the bottom. A full-height top vertex lands on
             // an integer Y (fract 0), so treat that as height 1.
-            var lh = in.pos.y - floor(in.pos.y);
+            var lh = pos.y - floor(pos.y);
             if ((corner == 2u || corner == 3u) && lh < 0.001) { lh = 1.0; }
             uv.y = 1.0 - lh;
         }
@@ -194,17 +206,17 @@ fn vs_main(in: VsIn) -> VsOut {
             uv.y = lv * THIN_SLICE;
         }
     } else if (uv_mode == UV_MODE_CELL_LOCAL) {
-        uv = cell_local_uv(in.packed2);
+        uv = cell_local_uv(packed2);
     } else {
         // uv_mode == NONE: plain cube face. A greedy-merged quad packs (W-1, H-1) into
         // bits 12..20 so its layer tiles W×H across the merge under the REPEAT sampler;
         // a normal 1×1 face has 0 there → ×(1,1), a no-op. Water tops/sides (flow
         // heading) and grass-side overlays reuse those bits for other data, so exclude
         // them (they are never greedy-merged by the mesher).
-        let has_overlay = (in.packed >> 20u) & 0x1u;
+        let has_overlay = (packed >> 20u) & 0x1u;
         if (has_overlay == 0u && tile != u.water_anim.x && tile != u.water_anim.y) {
-            let gw = f32(((in.packed >> 12u) & 0xFu) + 1u);
-            let gh = f32(((in.packed >> 16u) & 0xFu) + 1u);
+            let gw = f32(((packed >> 12u) & 0xFu) + 1u);
+            let gh = f32(((packed >> 16u) & 0xFu) + 1u);
             uv = corner_local(corner) * vec2<f32>(gw, gh);
         }
     }
@@ -213,7 +225,7 @@ fn vs_main(in: VsIn) -> VsOut {
     // Overlay uv: only grass sides (full cube faces) composite an overlay, so the
     // plain corner uv is always correct here.
     out.uv2 = corner_local(corner);
-    out.overlay = (in.packed >> 20u) & 0x1u;
+    out.overlay = (packed >> 20u) & 0x1u;
     out.overlay_layer = overlay_tile;
 
     // Final vertex light = directional face shade * per-vertex AO *
@@ -239,13 +251,13 @@ fn vs_main(in: VsIn) -> VsOut {
     //   - FINAL_MIN floors the darkest possible pixel: "very dark, not pitch black".
     var shades = array<f32, 4>(1.0, 0.85, 0.75, 0.55);
     var ao_lut = array<f32, 4>(0.25, 0.45, 0.70, 1.0);
-    let block6 = in.packed2 & 0x3Fu;
+    let block6 = packed2 & 0x3Fu;
     let sky = f32(sky6) / 63.0;
     let blk = f32(block6) / 63.0;
     let sky_curve = pow(sky, SKY_GAMMA);
     let sky_term = mix(SKY_MIN, 1.0, sky_curve * u.fog_color.w) * u.sky_color.rgb;
     let block_term = mix(SKY_MIN, 1.0, pow(blk, SKY_GAMMA));
-    let ncode = (in.packed2 >> 16u) & 0x7u;
+    let ncode = (packed2 >> 16u) & 0x7u;
     var face_shade = vec3<f32>(shades[shade_idx]);
     if (ncode != 0u) {
         // Sun colours only where the sky actually reaches. The warm-lit /
@@ -268,9 +280,24 @@ fn vs_main(in: VsIn) -> VsOut {
     out.ncode = ncode;
 
     out.view = local_pos - u.cam_pos.xyz;
-    out.tint = in.tint;
-    out.world_pos = in.pos;
+    out.tint = tint;
+    out.world_pos = pos;
     return out;
+}
+
+@vertex
+fn vs_main(in: VsIn) -> VsOut {
+    return vs_common(in.pos, in.tint, in.packed, in.packed2);
+}
+
+@vertex
+fn vs_terrain(in: VsInTerrain) -> VsOut {
+    let pos = vec3<f32>(
+        f32(in.pos_q.x) * TERRAIN_POS_SCALE_INV + in.col_origin.x,
+        f32(in.pos_q.y) * TERRAIN_POS_SCALE_INV,
+        f32(in.pos_q.z) * TERRAIN_POS_SCALE_INV + in.col_origin.z,
+    );
+    return vs_common(pos, in.tint, in.packed, in.packed2);
 }
 
 @fragment

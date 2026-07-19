@@ -42,13 +42,29 @@ pub enum MobTagValue {
     Str(String),
 }
 
-/// A live mob's snapshot for [`HostCall::MobsInRadius`]. The mob's ADDRESS is
-/// the stable [`id`](Self::id) — every mob call and event payload speaks it
+/// The outcome of [`HostCall::MobTagGet`](crate::HostCall::MobTagGet): a mob
+/// that is GONE (dead, unloaded, never spawned) is told apart from a live mob
+/// simply not carrying the key — the two mean different things to a mod
+/// (retry vs. store), so they are never conflated.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum MobTagLookup {
+    /// No such LIVE mob (dead, unloaded, or never existed).
+    MissingMob,
+    /// The mob is live but carries nothing under the key.
+    Absent,
+    /// The mob carries this value under the key.
+    Value(MobTagValue),
+}
+
+/// A live mob's snapshot for [`HostCall::MobsInRadius`] /
+/// [`HostCall::MobsWithTag`]. The mob's ADDRESS is the stable
+/// [`id`](Self::id) — every mob call and event payload speaks it
 /// (see the mob-addressing note on [`HostCall`](crate::HostCall)). `index` is
 /// only an intra-tick JOIN key against other snapshots taken this tick; it is
 /// never accepted by a call and renumbers on any removal.
 ///
 /// [`HostCall::MobsInRadius`]: crate::HostCall::MobsInRadius
+/// [`HostCall::MobsWithTag`]: crate::HostCall::MobsWithTag
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MobSnapshot {
     /// Live-set list position THIS TICK — an intra-tick join key only, never

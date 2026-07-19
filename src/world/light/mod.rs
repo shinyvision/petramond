@@ -13,7 +13,7 @@ mod skylight;
 
 use crate::chunk::SECTION_SIZE;
 
-pub(super) use batch::group_positions;
+pub(super) use batch::{group_positions, run_light_bake_batch, snapshot_batch, LightBatchJob};
 pub(super) use queue::{run_light_bake, LightBakeJob, LightBakeQueue, LightBakeResult};
 pub(super) use skylight::cover_change_affects_section;
 

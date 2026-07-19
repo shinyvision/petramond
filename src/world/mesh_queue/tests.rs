@@ -17,6 +17,7 @@ fn solid_section(pos: SectionPos) -> Section {
 fn insert_solid_section(world: &mut World, pos: SectionPos) {
     world.ensure_column(pos.chunk_pos());
     world.sections.insert(pos, Arc::new(solid_section(pos)));
+    world.note_section_loaded(pos);
 }
 
 fn insert_sealed_cavity(world: &mut World, center: SectionPos) {
@@ -274,8 +275,11 @@ fn predicted_mine_relights_and_remeshes_the_opened_shaft_synchronously() {
 
     world.ensure_column(ground.chunk_pos());
     world.sections.insert(ground, Arc::new(ground_section));
+    world.note_section_loaded(ground);
     world.sections.insert(shaft, Arc::new(shaft_section));
+    world.note_section_loaded(shaft);
     world.sections.insert(roof, Arc::new(roof_section));
+    world.note_section_loaded(roof);
     let column = world.columns.get_mut(&ground.chunk_pos()).unwrap();
     for z in 0..crate::chunk::SECTION_SIZE {
         for x in 0..crate::chunk::SECTION_SIZE {

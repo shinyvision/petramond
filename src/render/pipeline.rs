@@ -1,5 +1,5 @@
 use crate::atlas::{tile_uv, Tile};
-use crate::mesh::Vertex;
+use crate::mesh::{TerrainVertex, Vertex};
 
 use wgpu::util::DeviceExt;
 
@@ -71,9 +71,12 @@ pub(super) struct PipelineResources {
     pub env_passes: Vec<EnvPassResources>,
     /// Half-res env scaler (downsample + composite around the env passes).
     pub env_scaler: EnvScaler,
+    /// Terrain opaque (quantized [`TerrainVertex`] + column origin instance).
     pub opaque_pipe: wgpu::RenderPipeline,
     pub translucent_pipe: wgpu::RenderPipeline,
     pub transparent_pipe: wgpu::RenderPipeline,
+    /// Absolute-`Vertex` opaque pipe for chests / doors / item entities.
+    pub dynamic_opaque_pipe: wgpu::RenderPipeline,
     /// Full-screen colour-grade pass: reads the offscreen scene texture, writes
     /// the swapchain (see `grade.wgsl`). The bind group over the scene view is
     /// built by [`create_grade_bind`] (and rebuilt on resize).
@@ -224,10 +227,7 @@ pub(super) fn create_pipeline_resources(
         array_sampler,
     );
 
-    // 24-byte packed vertex: pos (f32x3) + tint (unorm8x4, linear RGB) +
-    // packed (u32) + packed2 (u32). Pipelines whose shaders ignore `packed2`
-    // (break overlay) share the layout; an attribute the shader doesn't consume
-    // is valid.
+    // Absolute 24-byte vertex (dynamic bakes / break): pos f32x3 + tint + packed×2.
     let vbuf_attrs = [
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x3,
@@ -254,6 +254,46 @@ pub(super) fn create_pipeline_resources(
         array_stride: std::mem::size_of::<Vertex>() as u64,
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &vbuf_attrs,
+    };
+    // Terrain 20-byte vertex: i16×3 pos + pad + tint + packed×2, plus instance
+    // column origin at location 4.
+    // Sint16x4 = pos.xyz + pad (wgpu has no Sint16x3).
+    let terrain_vbuf_attrs = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Sint16x4,
+            offset: 0,
+            shader_location: 0,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Unorm8x4,
+            offset: 8,
+            shader_location: 1,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Uint32,
+            offset: 12,
+            shader_location: 2,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Uint32,
+            offset: 16,
+            shader_location: 3,
+        },
+    ];
+    let terrain_vbuf_layout = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<TerrainVertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &terrain_vbuf_attrs,
+    };
+    let terrain_origin_attrs = [wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 0,
+        shader_location: 4,
+    }];
+    let terrain_origin_layout = wgpu::VertexBufferLayout {
+        array_stride: 16,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &terrain_origin_attrs,
     };
 
     // Vertex: pos (f32x3 @0) + uv (f32x2 @12) + shade (f32 @20) + tint (f32x3 @24)
@@ -293,7 +333,27 @@ pub(super) fn create_pipeline_resources(
         sample_count,
         &shader,
         &shared.array_layout,
-        &vbuf_layout,
+        &[terrain_vbuf_layout, terrain_origin_layout],
+    );
+    // Absolute-pos opaque pipe for chests / doors / item entities (same FS as
+    // terrain opaque; `vs_main` keeps world-space f32 positions).
+    let dynamic_opaque_targets = builders::color_target(
+        format,
+        Some(wgpu::BlendState::REPLACE),
+        wgpu::ColorWrites::ALL,
+    );
+    let dynamic_opaque_pipe = builders::world_pipeline(
+        device,
+        "dynamic opaque pipe",
+        &shared.array_layout,
+        &shader,
+        "vs_main",
+        "fs_opaque",
+        std::slice::from_ref(&vbuf_layout),
+        &dynamic_opaque_targets,
+        builders::cull_back(),
+        Some(builders::DepthPreset::WriteLess),
+        sample_count,
     );
     let sky = create_sky_pipeline(
         device,
@@ -360,6 +420,7 @@ pub(super) fn create_pipeline_resources(
         opaque_pipe,
         translucent_pipe,
         transparent_pipe,
+        dynamic_opaque_pipe,
         grade_pipe,
         grade_bgl,
         outline_pipe,

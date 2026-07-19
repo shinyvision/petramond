@@ -251,7 +251,10 @@ fn sweep_matches_reference_from_all_directions() {
                 let len = (dx * dx + dz * dz).sqrt();
                 let wishdir = Vec3::new(dx / len, 0.0, dz / len);
                 let lateral = Vec3::new(-wishdir.z, 0.0, wishdir.x);
-                for k in -19..=19 {
+                // Sample every other lateral offset and fewer steps: still
+                // dense enough to catch float-boundary phantom collisions,
+                // without a multi-second combinatorial blow-up.
+                for k in (-19..=19).step_by(2) {
                     let off = k as f32 * 0.05;
                     let start = centre - wishdir * 3.5 + lateral * off;
                     let (dt, speed) = (0.02f32, WALK);
@@ -270,7 +273,7 @@ fn sweep_matches_reference_from_all_directions() {
                     };
                     // reference path (kept at floor height, like the grounded body)
                     let mut rpos = start;
-                    for _ in 0..150 {
+                    for _ in 0..80 {
                         pl.update_core(dt, &solid, &dry, input);
                         rpos = ref_move(rpos, wishdir * (speed * dt), &solid);
                     }

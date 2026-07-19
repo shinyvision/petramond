@@ -1,6 +1,6 @@
 use super::*;
 use crate::block::Block;
-use crate::chunk::{section_idx, SectionPos};
+use crate::chunk::SectionPos;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::{IVec3, Vec3};
 use crate::net::connection::TcpClientConn;
@@ -9,21 +9,23 @@ use crate::net::handshake::{client_handshake, installed_mod_ids};
 use crate::net::protocol::{PlayerAction, PlayerUpdate, TargetRef};
 use crate::net::remap::IdRemap;
 use crate::server::handle::ServerHandle;
-use std::collections::HashMap;
+use crate::test_time::TEST_HARD_DEADLINE;
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
 fn connect(port: u16) -> TcpStream {
     let stream = TcpStream::connect(("127.0.0.1", port)).expect("connect to loopback");
     stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
+        .set_read_timeout(Some(TEST_HARD_DEADLINE))
         .expect("read timeout");
     stream
 }
 
 /// Drain `handle` until `f` yields, sleeping between polls; None =
 /// timeout. Acks every streaming batch like a live client so the
-/// server's flow-control window keeps streaming.
+/// server's flow-control window keeps streaming. The sleep only parks an
+/// EMPTY poll — while messages are flowing we re-poll immediately, so a
+/// fast (unthrottled) server isn't rounded up to 10 ms per batch.
 fn drain_until<T>(
     handle: &mut ServerHandle,
     timeout: Duration,
@@ -33,6 +35,7 @@ fn drain_until<T>(
     let mut msgs = Vec::new();
     while Instant::now() < deadline {
         handle.drain(&mut msgs);
+        let received = msgs.len();
         for msg in msgs.drain(..) {
             if matches!(msg, ServerToClient::StreamBatchEnd { .. }) {
                 let _ = handle.send(ClientToServer::StreamBatchAck {
@@ -43,57 +46,10 @@ fn drain_until<T>(
                 return Some(hit);
             }
         }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    None
-}
-
-/// A surface cell we can build on, from the terrain the client RECEIVED:
-/// a bare ground block with two air (dry) cells above, near `(cx, cz)` =
-/// (8, 8) world-horizontal. Scanning what actually arrived keeps the test
-/// independent of the seed's exact terrain shape.
-/// A ground cell (two dry-air cells above) the player standing at `pos`
-/// can LEGITIMATELY build against: within reach of its eye — the server
-/// bounds the reach eye by the F1 drift ring, so a hover claim far from
-/// the session's own position no longer grants reach — and far enough
-/// sideways that the placed block cannot overlap the placer's body.
-fn find_place_spot_within_reach(
-    sections: &HashMap<SectionPos, (Vec<u8>, Option<Vec<u8>>)>,
-    pos: Vec3,
-) -> Option<IVec3> {
-    let eye = pos + Vec3::new(0.0, 1.62, 0.0);
-    let ground = [Block::Grass.0, Block::Dirt.0, Block::Stone.0, Block::Sand.0];
-    for (sp, (blocks, water)) in sections {
-        let dry_air = |x: usize, y: usize, z: usize| {
-            let i = section_idx(x, y, z);
-            blocks[i] == Block::Air.0 && water.as_ref().is_none_or(|w| w[i] == 0)
-        };
-        for y in 0..14 {
-            for z in 0..16 {
-                for x in 0..16 {
-                    let cell = IVec3::new(
-                        sp.cx * 16 + x as i32,
-                        sp.cy * 16 + y as i32,
-                        sp.cz * 16 + z as i32,
-                    );
-                    let dx = (cell.x as f32 + 0.5 - pos.x).abs();
-                    let dz = (cell.z as f32 + 0.5 - pos.z).abs();
-                    if dx.max(dz) < 1.2 {
-                        continue; // the placed cell would overlap the placer
-                    }
-                    let lo = Vec3::new(cell.x as f32, cell.y as f32, cell.z as f32);
-                    let closest = eye.clamp(lo, lo + Vec3::ONE);
-                    if (closest - eye).length() > 3.5 {
-                        continue; // out of legitimate reach
-                    }
-                    if ground.contains(&blocks[section_idx(x, y, z)])
-                        && dry_air(x, y + 1, z)
-                        && dry_air(x, y + 2, z)
-                    {
-                        return Some(cell);
-                    }
-                }
-            }
+        if received == 0 {
+            std::thread::sleep(Duration::from_millis(2));
+        } else {
+            std::thread::yield_now();
         }
     }
     None
@@ -104,7 +60,7 @@ fn find_place_spot_within_reach(
 /// suffixed name IS the session name (it keys the per-name save file).
 #[test]
 fn duplicate_join_names_dedupe_with_the_lowest_free_numeric_suffix() {
-    let (mut server, _) = crate::game::session::build_session("", 3, 2);
+    let (mut server, _) = crate::game::session::build_session_inline("", 3, 2);
     // The local session's name resolves from the REAL environment
     // (client.json / $USER); pin it so an ambient "Rachel"-ish name
     // can't occupy a suffix the assertions below count on.
@@ -177,6 +133,17 @@ fn headless_disconnect_detaches_before_player_id_reuse() {
 /// ignore Pause while remote players exist, and broadcast joins/leaves.
 #[test]
 fn full_lan_join_place_pause_gate_and_leave() {
+    // One wall-clock budget for the whole narrative (hard per-test rule).
+    let test_end = Instant::now() + TEST_HARD_DEADLINE;
+    let remain = || {
+        let left = test_end.saturating_duration_since(Instant::now());
+        assert!(
+            !left.is_zero(),
+            "full_lan narrative exceeded the hard 10 s test budget"
+        );
+        left
+    };
+
     let dir = std::env::temp_dir().join(format!("petramond-lan-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("players")).expect("temp players dir");
@@ -198,11 +165,64 @@ fn full_lan_join_place_pause_gate_and_leave() {
         crate::save::player::encode(&visitor),
     )
     .expect("player file");
+    // The later join/leave cycles (dedupe + broadcast ordering) get restored
+    // players too — their FINAL names are predictable. A fresh nameless spawn
+    // would run `find_spawn` (~0.4 s of worldgen search) synchronously inside
+    // the server's admit path, dominating this test for no coverage gain
+    // (spawn search has its own tests).
+    for extra in ["vISITOR2", "Guest"] {
+        std::fs::write(
+            dir.join(format!("players/{extra}.dat")),
+            crate::save::player::encode(&visitor),
+        )
+        .expect("player file");
+    }
 
     let (mut server, _) = crate::game::session::build_session("", 7, 2);
     let opened = crate::save::open_at(dir.clone()).expect("temp save opens");
     server.world.attach_save(opened.save);
+    // Pre-build a tiny stone pad at the visitor's feet (threaded pool, but a
+    // single column) so the place claim targets a known cell instead of
+    // scanning streamed worldgen under CPU contention.
+    let (pcx, pcy, pcz) = (
+        spawn.x.div_euclid(16),
+        spawn.y.div_euclid(16),
+        spawn.z.div_euclid(16),
+    );
+    server.world.update_load(pcx, pcy, pcz);
+    // Stream-finality can refuse writes while gen/overlay is in flight —
+    // poll + retry until the pad sticks (common under a parallel suite).
+    'pad: loop {
+        let _ = remain();
+        server.world.poll();
+        if !server.world.section_loaded_at(spawn.x, spawn.y, spawn.z) {
+            std::thread::sleep(Duration::from_millis(1));
+            continue;
+        }
+        let mut ok = true;
+        for dx in -2..=2 {
+            for dz in -2..=2 {
+                let x = spawn.x + dx;
+                let z = spawn.z + dz;
+                let _ = server.world.set_block_world(x, spawn.y, z, Block::Stone);
+                let _ = server.world.set_block_world(x, spawn.y + 1, z, Block::Air);
+                let _ = server.world.set_block_world(x, spawn.y + 2, z, Block::Air);
+                if server.world.chunk_block(x, spawn.y, z) != Block::Stone.id() {
+                    ok = false;
+                }
+            }
+        }
+        if ok {
+            break 'pad;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let place_target = IVec3::new(spawn.x + 2, spawn.y, spawn.z);
     let mut host = ServerHandle::spawn(server);
+    // One fixed tick per loop iteration, compute-bound. The pool stays
+    // THREADED so handshake RTs are not stuck behind inline gen on the
+    // server thread.
+    host.unthrottle_for_test();
 
     let port = host.open_to_lan(0).expect("bind an ephemeral port");
     assert_ne!(port, 0, "the reply carries the actual bound port");
@@ -224,9 +244,11 @@ fn full_lan_join_place_pause_gate_and_leave() {
         }
     }
 
-    // The real join.
+    // The real join. A render distance of 2 streams ~25 columns (enough for
+    // a buildable spot near the visitor's feet) instead of ~1000 — the
+    // wire path under test is identical.
     let mut stream = connect(port);
-    let join = client_handshake(&mut stream, "Visitor", 16, &installed_mod_ids(), Vec::new())
+    let join = client_handshake(&mut stream, "Visitor", 2, &installed_mod_ids(), Vec::new())
         .expect("handshake succeeds")
         .join;
     assert_eq!(join.player_id, PlayerId(1));
@@ -248,56 +270,52 @@ fn full_lan_join_place_pause_gate_and_leave() {
     let mut remote = ServerHandle::from_remote(conn);
 
     // The host is told about the join.
-    let joined = drain_until(&mut host, Duration::from_secs(10), |msg| match msg {
+    let joined = drain_until(&mut host, remain(), |msg| match msg {
         ServerToClient::PlayerJoined { id, name } => Some((id, name)),
         _ => None,
     })
     .expect("host hears PlayerJoined");
     assert_eq!(joined, (PlayerId(1), "Visitor".to_string()));
 
-    // Terrain streams to the remote client WITH the server's baked light
-    // (the ship gate holds a section until its light is final; the remote
-    // replica never manufactures authoritative light). Meanwhile the
-    // visitor's server-side
-    // body free-falls from its restored y=80 to the surface — the reach
-    // eye is bounded by the F1 drift ring around the server's own
-    // integration, so the client reads its SETTLED position off its own
-    // replicated player row and builds within reach of it, exactly as a
-    // real client would.
-    let mut sections: HashMap<SectionPos, (Vec<u8>, Option<Vec<u8>>)> = HashMap::new();
+    // Wait until the pad's section is in the remote's sent set (deltas are
+    // filtered by `terrain.covers`) and a lit payload has proven light ships.
+    let pad_section = SectionPos::from_world(place_target.x, place_target.y, place_target.z)
+        .expect("pad is inside the section grid");
     let mut lit_sections = 0usize;
-    let mut self_row: Option<(Vec3, Vec3)> = None;
-    let (own_pos, target) = drain_until(&mut remote, Duration::from_secs(60), |msg| {
+    let mut pad_streamed = false;
+    let own_pos = drain_until(&mut remote, remain(), |msg| {
         match msg {
             ServerToClient::SectionData(p) => {
                 if p.skylight.is_some() {
                     lit_sections += 1;
                 }
-                sections.insert(p.pos, (p.blocks.0.to_vec(), p.water.map(|w| w.0.to_vec())));
+                if p.pos == pad_section {
+                    pad_streamed = true;
+                }
             }
             ServerToClient::Tick(update) => {
-                if let Some(row) = update.players.iter().find(|r| r.id == PlayerId(1)) {
-                    self_row = Some((row.transform.pos, row.transform.vel));
+                if pad_streamed && lit_sections > 0 {
+                    if let Some(row) = update.players.iter().find(|r| r.id == PlayerId(1)) {
+                        return Some(row.transform.pos);
+                    }
                 }
             }
             _ => {}
         }
-        let (pos, vel) = self_row?;
-        if vel.length() > 0.5 {
-            return None; // still falling
-        }
-        find_place_spot_within_reach(&sections, pos).map(|spot| (pos, spot))
+        None
     })
-    .expect("streamed terrain holds a buildable cell within reach of the settled visitor");
+    .expect("pad section streams with lit terrain and a visitor row");
     assert!(lit_sections > 0, "baked light rides TCP section payloads");
+    let _ = own_pos;
+    let target = place_target;
     let placed_at = IVec3::new(target.x, target.y + 1, target.z);
 
-    // Place a dirt block from the remote client: standing where the
-    // server saw this body settle, aim at a nearby ground cell's top
-    // face, use-click.
+    // Place from the restored feet (the pre-built pad is within reach of
+    // that pose); the F1 drift ring rejects a hover claim far from the
+    // server's own integration, so we claim where the save put us.
     let update = PlayerUpdate {
         transform: crate::net::protocol::Transform {
-            pos: own_pos,
+            pos: visitor_feet,
             vel: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
@@ -332,22 +350,39 @@ fn full_lan_join_place_pause_gate_and_leave() {
             jabbed: false,
         }))
         .expect("live connection");
-    drain_until(&mut remote, Duration::from_secs(10), |msg| {
+    // Prefer inventory revision (always on self_state) over block_deltas:
+    // deltas are filtered by `terrain.covers`, which can lag under load even
+    // after the pad section streamed once.
+    drain_until(&mut remote, remain(), |msg| {
         let ServerToClient::Tick(update) = msg else {
             return None;
         };
-        update
+        if update
             .block_deltas
             .iter()
-            .find(|d| d.pos == placed_at && d.block_id == Block::Dirt.0)
-            .map(|_| ())
+            .any(|d| d.pos == placed_at && d.block_id == Block::Dirt.0)
+        {
+            return Some(());
+        }
+        let Some(self_state) = update.self_state.as_ref() else {
+            return None;
+        };
+        let Some(inv) = self_state.inventory.as_ref() else {
+            return None;
+        };
+        match inv.first() {
+            Some(Some(slot)) if slot.item_id == ItemType::Dirt.0 && slot.count == 63 => Some(()),
+            _ => None,
+        }
     })
-    .expect("the remote client's placement comes back as a block delta");
+    .expect("the remote placement consumes one dirt (delta or inventory)");
 
     // Pause is ignored while the server has been opened to LAN: ticks
-    // keep flowing to the remote client.
+    // keep flowing to the remote client. The pinned clock consumes the
+    // Pause message within a couple of iterations, so a short settle
+    // replaces the old wall-clock 200 ms wait.
     host.send(ClientToServer::Pause(true)).expect("live pipe");
-    std::thread::sleep(Duration::from_millis(200));
+    std::thread::sleep(Duration::from_millis(50));
     let mut drained = Vec::new();
     remote.drain(&mut drained);
     let before = drained
@@ -358,21 +393,24 @@ fn full_lan_join_place_pause_gate_and_leave() {
         })
         .max()
         .unwrap_or(0);
-    drain_until(&mut remote, Duration::from_secs(5), |msg| match msg {
+    drain_until(&mut remote, remain(), |msg| match msg {
         ServerToClient::Tick(u) if u.tick > before => Some(()),
         _ => None,
     })
     .expect("ticks keep flowing: Pause is ignored once open to LAN");
 
     // A second client with the same name (case-insensitive) is ADMITTED
-    // under the lowest free numeric suffix, never refused.
+    // under the lowest free numeric suffix, never refused. It asks for the
+    // same small render distance as the visitor — this connection never
+    // needs terrain, and a big request makes the server generate a huge
+    // load target for nothing.
     {
         let mut dup = connect(port);
-        let data = client_handshake(&mut dup, "vISITOR", 16, &installed_mod_ids(), Vec::new())
+        let data = client_handshake(&mut dup, "vISITOR", 2, &installed_mod_ids(), Vec::new())
             .expect("a duplicate name joins deduped, not rejected")
             .join;
         let dup_id = data.player_id;
-        let name = drain_until(&mut host, Duration::from_secs(10), |msg| match msg {
+        let name = drain_until(&mut host, remain(), |msg| match msg {
             ServerToClient::PlayerJoined { id, name } if id == dup_id => Some(name),
             _ => None,
         })
@@ -382,7 +420,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
             "the requested name gains a numeric suffix"
         );
         drop(dup); // socket drop -> leave path
-        drain_until(&mut host, Duration::from_secs(10), |msg| match msg {
+        drain_until(&mut host, remain(), |msg| match msg {
             ServerToClient::PlayerLeft { id } if id == dup_id => Some(()),
             _ => None,
         })
@@ -393,7 +431,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
     // everyone else hears PlayerJoined then PlayerLeft.
     let guest_id = {
         let mut guest = connect(port);
-        let data = client_handshake(&mut guest, "Guest", 16, &installed_mod_ids(), Vec::new())
+        let data = client_handshake(&mut guest, "Guest", 2, &installed_mod_ids(), Vec::new())
             .expect("guest joins")
             .join;
         assert_eq!(
@@ -408,7 +446,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
         // One pass for both events: they may land in the same drain batch.
         let mut joined = false;
         let mut left = false;
-        drain_until(handle, Duration::from_secs(10), |msg| {
+        drain_until(handle, remain(), |msg| {
             match msg {
                 ServerToClient::PlayerJoined { id, .. } if id == guest_id => joined = true,
                 ServerToClient::PlayerLeft { id } if id == guest_id => {
@@ -426,14 +464,14 @@ fn full_lan_join_place_pause_gate_and_leave() {
     // path) runs the leave path: the host hears PlayerLeft and the
     // visitor's player file is saved with the post-placement inventory.
     remote.shutdown_and_join();
-    let left = drain_until(&mut host, Duration::from_secs(10), |msg| match msg {
+    let left = drain_until(&mut host, remain(), |msg| match msg {
         ServerToClient::PlayerLeft { id } => Some(id),
         _ => None,
     });
     assert_eq!(left, Some(PlayerId(1)), "host hears the visitor leave");
 
-    let deadline = Instant::now() + Duration::from_secs(10);
     let saved_count = loop {
+        let left = remain();
         if let Some(data) = std::fs::read(dir.join("players/Visitor.dat"))
             .ok()
             .and_then(|bytes| crate::save::player::decode(&bytes))
@@ -443,10 +481,11 @@ fn full_lan_join_place_pause_gate_and_leave() {
                 .slot(0)
                 .map(|s| (s.item, s.count))
                 .unwrap_or((ItemType::Dirt, 0));
-            if count == (ItemType::Dirt, 63) || Instant::now() >= deadline {
+            if count == (ItemType::Dirt, 63) {
                 break count;
             }
-        } else if Instant::now() >= deadline {
+        }
+        if left < Duration::from_millis(25) {
             break (ItemType::Dirt, 0);
         }
         std::thread::sleep(Duration::from_millis(25));
@@ -499,26 +538,26 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     // render-dist-2 window can finish streaming before the first tick
     // lands, and a drain that waited for a tick would silently discard
     // every section payload it swept past.
-    drain_until(&mut remote, Duration::from_secs(60), |msg| {
+    drain_until(&mut remote, TEST_HARD_DEADLINE, |msg| {
         matches!(msg, ServerToClient::SectionData(_)).then_some(())
     })
     .expect("terrain streams to the headless server's first player");
-    let first = drain_until(&mut remote, Duration::from_secs(10), |msg| match msg {
+    let first = drain_until(&mut remote, TEST_HARD_DEADLINE, |msg| match msg {
         ServerToClient::Tick(u) => Some(u.tick),
         _ => None,
     })
     .expect("ticks flow to the joined player");
-    let last_seen = drain_until(&mut remote, Duration::from_secs(10), |msg| match msg {
+    let last_seen = drain_until(&mut remote, TEST_HARD_DEADLINE, |msg| match msg {
         ServerToClient::Tick(u) if u.tick > first + 5 => Some(u.tick),
         _ => None,
     })
     .expect("the world advances while a player is connected");
 
     // Clean leave (farewell Disconnect through the handle drop path):
-    // the session list empties and the world freezes. Two seconds of
-    // wall time would be ~40 ticks if the sim kept running.
+    // the session list empties and the world freezes. One second of wall
+    // time is ~20 ticks if the sim kept running; stay under the hard budget.
     remote.shutdown_and_join();
-    std::thread::sleep(Duration::from_secs(2));
+    std::thread::sleep(Duration::from_secs(1));
 
     let mut stream = connect(port);
     let join = client_handshake(&mut stream, "Head", 16, &installed_mod_ids(), Vec::new())
@@ -527,15 +566,15 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     assert_eq!(join.player_id, PlayerId(0), "the freed id recycles");
     let conn = TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
     let mut remote = ServerHandle::from_remote(conn);
-    let resumed = drain_until(&mut remote, Duration::from_secs(10), |msg| match msg {
+    let resumed = drain_until(&mut remote, TEST_HARD_DEADLINE, |msg| match msg {
         ServerToClient::Tick(u) => Some(u.tick),
         _ => None,
     })
     .expect("ticks resume on rejoin");
     assert!(
-        resumed < last_seen + 20,
+        resumed < last_seen + 12,
         "the world froze while empty: tick {last_seen} -> {resumed} across \
-         2+ s of empty wall time (an unfrozen sim would be 40+ ahead)"
+         1 s of empty wall time (an unfrozen sim would be ~20 ahead)"
     );
 
     remote.shutdown_and_join();

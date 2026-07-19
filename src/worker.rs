@@ -98,8 +98,10 @@ impl JobPool {
             shutdown: AtomicBool::new(false),
             seq: AtomicU64::new(0),
         });
-        let mut handles = Vec::with_capacity(threads.max(1));
-        for _ in 0..threads.max(1) {
+        // `threads == 0` is INLINE mode (see [`inline`](Self::inline)): no
+        // workers at all, so `submit` can never queue — it runs on the caller.
+        let mut handles = Vec::with_capacity(threads);
+        for _ in 0..threads {
             let shared = shared.clone();
             let h = thread::Builder::new()
                 .name("petramond-jobs".to_string())
@@ -135,8 +137,28 @@ impl JobPool {
         Self { shared, handles }
     }
 
-    /// Queue `f` at `key` (lower runs sooner; equal keys run FIFO).
+    /// A pool with NO worker threads: [`submit`](Self::submit) runs each job
+    /// immediately on the caller, in submission order. The in-process test
+    /// harness uses this so a pump that queues gen/light/mesh work FINISHES it
+    /// before returning — tests then gate on one more pump, never on
+    /// wall-clock sleeps racing a (possibly CPU-starved) worker pool, which is
+    /// what made the streaming test class slow and intermittently flaky.
+    pub fn inline() -> Self {
+        Self::new(0)
+    }
+
+    /// Whether this pool runs jobs on the calling thread (see [`inline`](Self::inline)).
+    pub fn is_inline(&self) -> bool {
+        self.handles.is_empty()
+    }
+
+    /// Queue `f` at `key` (lower runs sooner; equal keys run FIFO). On an
+    /// INLINE pool the job runs immediately, inline with this call.
     pub fn submit<F: FnOnce() + Send + 'static>(&self, key: i64, f: F) {
+        if self.is_inline() {
+            f();
+            return;
+        }
         let seq = self.shared.seq.fetch_add(1, Ordering::Relaxed);
         let job = QueuedJob {
             key,

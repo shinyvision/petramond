@@ -217,7 +217,7 @@ mod tests {
         // The receiving section (chunk (1,0), y 64..79) has an in-flight gen
         // job: flow at the seam must hold.
         let in_flight = SectionPos::new(1, 4, 0);
-        w.pending_sections.insert(in_flight);
+        w.insert_pending_section(in_flight);
 
         w.set_block_world(15, 65, 8, Block::Water);
         run_ticks(&mut w, 60);
@@ -228,7 +228,7 @@ mod tests {
         );
 
         // The job resolves: the parked (retrying) flow must complete on its own.
-        w.pending_sections.remove(&in_flight);
+        w.remove_pending_section(in_flight);
         run_ticks(&mut w, 60);
         assert_eq!(
             w.chunk_block(16, 65, 8),
@@ -243,14 +243,14 @@ mod tests {
 
         // Loaded section with an in-flight gen result: both write paths refuse.
         let loaded = SectionPos::new(1, 4, 0);
-        w.pending_sections.insert(loaded);
+        w.insert_pending_section(loaded);
         assert!(!w.set_block_world(20, 70, 8, Block::Stone));
         assert!(!w.set_water_world(IVec3::new(20, 70, 8), Block::Water, 0));
         assert_eq!(w.chunk_block(20, 70, 8), Block::Air.id());
 
         // Absent section with an in-flight job: the write must not materialize it.
         let absent = SectionPos::new(1, 6, 0);
-        w.pending_sections.insert(absent);
+        w.insert_pending_section(absent);
         assert!(!w.set_block_world(20, 100, 8, Block::Stone));
         assert!(
             !w.sections.contains_key(&absent),

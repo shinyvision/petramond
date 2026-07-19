@@ -2,15 +2,16 @@
 //!
 //! Tags are namespaced like KV entries (caller must own the `mod_id:` prefix or
 //! use the engine-reserved `petramond:` namespace), but they are typed and
-//! visible to AI via [`AiCtx::tags`](crate::mob::brain::AiCtx).
+//! visible to AI via [`AiMob::tags`](crate::mob::brain::AiMob).
 
-use mod_api::{HostCall, HostRet, MobTagValue as ApiMobTagValue};
+use mod_api::{HostCall, HostRet, MobTagLookup, MobTagValue as ApiMobTagValue};
 
 use crate::mob::MobTagValue;
 
+use super::entities::mob_snapshot;
 use super::guards::{kv_write_guard, live_mob, sim_query};
 
-fn from_api(v: ApiMobTagValue) -> MobTagValue {
+pub(super) fn from_api(v: ApiMobTagValue) -> MobTagValue {
     match v {
         ApiMobTagValue::Bool(b) => MobTagValue::Bool(b),
         ApiMobTagValue::I64(i) => MobTagValue::Int(i),
@@ -32,9 +33,13 @@ pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
         HostCall::MobTagGet { mob_id, key } => sim_query(|ctx| {
             let Some(index) = live_mob(ctx, mob_id) else {
-                return HostRet::MobTag(None);
+                return HostRet::MobTag(MobTagLookup::MissingMob);
             };
-            HostRet::MobTag(ctx.world.mobs().mob_tag(index, &key).map(to_api))
+            let lookup = match ctx.world.mobs().mob_tag(index, &key) {
+                Some(v) => MobTagLookup::Value(to_api(v)),
+                None => MobTagLookup::Absent,
+            };
+            HostRet::MobTag(lookup)
         }),
         HostCall::MobTagSet { mob_id, key, value } => {
             let value_len = match &value {
@@ -48,10 +53,7 @@ pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
                     let Some(index) = live_mob(ctx, mob_id) else {
                         return HostRet::Bool(false);
                     };
-                    ctx.world
-                        .mobs_mut()
-                        .set_mob_tag(index, key, from_api(value));
-                    HostRet::Bool(true)
+                    HostRet::Bool(ctx.world.mobs_mut().set_mob_tag(index, key, from_api(value)))
                 }),
             }
         }
@@ -64,6 +66,26 @@ pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(ctx.world.mobs_mut().remove_mob_tag(index, &key))
             }),
         },
+        HostCall::MobTagsGet { mob_id } => sim_query(|ctx| {
+            let Some(index) = live_mob(ctx, mob_id) else {
+                return HostRet::MobTags(None);
+            };
+            HostRet::MobTags(ctx.world.mobs().mob_tags(index).map(|tags| {
+                tags.iter()
+                    .map(|(k, v)| (k.clone(), to_api(v)))
+                    .collect()
+            }))
+        }),
+        HostCall::MobsWithTag { key, value } => sim_query(|ctx| {
+            let want = value.map(from_api);
+            let mobs = ctx.world.mobs();
+            HostRet::Mobs(
+                mobs.indices_with_tag(&key, want.as_ref())
+                    .into_iter()
+                    .map(|i| mob_snapshot(i, &mobs.instances()[i]))
+                    .collect(),
+            )
+        }),
         other => HostRet::Error(format!(
             "non-tag call {other:?} mis-routed to handle_tag_call (host bug)"
         )),

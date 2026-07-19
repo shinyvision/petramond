@@ -40,10 +40,24 @@ fn magnitude_guard(call: &str, field: &str, value: f32, max: f32) -> Result<(), 
     }
 }
 
+/// The ABI snapshot of the live mob at list `index` — the one construction
+/// shared by `MobsInRadius` and `MobsWithTag`.
+pub(super) fn mob_snapshot(index: usize, m: &crate::mob::Instance) -> MobSnapshot {
+    MobSnapshot {
+        index: index as u32,
+        key: crate::mob::def(m.kind).key.to_owned(),
+        kind: mod_api::MobId(m.kind.0),
+        pos: m.pos.to_array(),
+        health: m.health(),
+        id: m.id(),
+        yaw: m.yaw,
+        vel: m.vel().to_array(),
+    }
+}
+
 /// Entity calls (mob spawn/query/hurt/despawn, item drops).
 pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
-    match call {
-        HostCall::SpawnMob {
+    match call {        HostCall::SpawnMob {
             key,
             pos,
             yaw,
@@ -82,16 +96,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                         .enumerate()
                         .filter(|(_, m)| !m.is_dead())
                         .filter(|(_, m)| (m.pos - pos).length_squared() <= r2)
-                        .map(|(i, m)| MobSnapshot {
-                            index: i as u32,
-                            key: crate::mob::def(m.kind).key.to_owned(),
-                            kind: mod_api::MobId(m.kind.0),
-                            pos: m.pos.to_array(),
-                            health: m.health(),
-                            id: m.id(),
-                            yaw: m.yaw,
-                            vel: m.vel().to_array(),
-                        })
+                        .map(|(i, m)| mob_snapshot(i, m))
                         .collect(),
                 )
             }),

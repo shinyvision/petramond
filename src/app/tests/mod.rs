@@ -252,7 +252,7 @@ fn app() -> TestApp {
 
 fn app_with_render_dist(render_dist: i32) -> TestApp {
     ensure_test_data_dir();
-    let (server, bootstrap) = crate::game::session::build_session("", 1, render_dist);
+    let (server, bootstrap) = crate::game::session::build_session_inline("", 1, render_dist);
     let (handle, pipe) = crate::server::handle::ServerHandle::loopback();
     let game = Game::assemble(
         Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0),
@@ -342,3 +342,4 @@ fn panel_gap_point(app: &mut App, screen: (u32, u32)) -> (f32, f32) {
     }
     panic!("no in-panel, off-slot point found");
 }
+

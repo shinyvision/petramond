@@ -3,6 +3,38 @@ use crate::chunk::{SECTION_SIZE, SECTION_VOLUME};
 
 use super::{uniform_cube, Section, SectionMetrics, SectionSummary};
 
+const MB_RANDOM_TICK: u8 = 1 << 0;
+const MB_OPAQUE: u8 = 1 << 1;
+const MB_NON_AIR: u8 = 1 << 2;
+const MB_WATER: u8 = 1 << 3;
+const MB_BIOME_TINT: u8 = 1 << 4;
+const MB_PARTICLE_EMITTER: u8 = 1 << 5;
+const MB_LIGHT_EMITTER: u8 = 1 << 6;
+
+/// Per-id metrics class bits, derived once from the SAME predicates the
+/// incremental setter path (`adjust_random_tick_count` / `adjust_opaque_count`)
+/// uses — the block registry loads exactly once per process, so this can never
+/// go stale. Ids beyond the registry read as `Air` through `Block::from_id`,
+/// matching the per-cell predicates on such ids.
+fn metrics_bits() -> &'static [u8; 256] {
+    static BITS: std::sync::LazyLock<[u8; 256]> = std::sync::LazyLock::new(|| {
+        let mut bits = [0u8; 256];
+        for (i, b) in bits.iter_mut().enumerate() {
+            let id = i as u8;
+            let block = Block::from_id(id);
+            *b = (block.has_random_tick() as u8) * MB_RANDOM_TICK
+                | (block.is_opaque() as u8) * MB_OPAQUE
+                | ((id != 0) as u8) * MB_NON_AIR
+                | ((id == Block::Water.id()) as u8) * MB_WATER
+                | (Section::id_uses_biome_tint(id) as u8) * MB_BIOME_TINT
+                | (Section::id_has_particle_emitter(id) as u8) * MB_PARTICLE_EMITTER
+                | (Section::id_emits_light(id) as u8) * MB_LIGHT_EMITTER;
+        }
+        bits
+    });
+    &BITS
+}
+
 impl Section {
     // --- Random-tick gate -------------------------------------------------------
 
@@ -109,57 +141,65 @@ impl Section {
         }
     }
 
-    /// Compute every block-derived counter in one pass, including boundary planes.
+    /// Compute every block-derived counter for a bulk-filled buffer.
+    ///
+    /// Runs on every generated/loaded section, so it avoids per-cell block
+    /// dispatch: one id histogram pass over the 4096 cells, folded through the
+    /// per-id [`metrics_bits`] class table (derived from the same predicates
+    /// the incremental setters use, so the two paths cannot disagree), then a
+    /// boundary-plane pass for `plane_opaque`.
     pub(crate) fn metrics_from_blocks(blocks: &[u8]) -> SectionMetrics {
         if blocks.len() != SECTION_VOLUME {
             return SectionMetrics::default();
         }
-        let water_id = Block::Water.id();
+        let mut hist = [0u16; 256];
+        for &id in blocks {
+            hist[id as usize] += 1;
+        }
+        let bits = metrics_bits();
         let mut out = SectionMetrics::default();
-        let hi = SECTION_SIZE - 1;
-        for (idx, &id) in blocks.iter().enumerate() {
-            let block = Block::from_id(id);
-            if block.has_random_tick() {
-                out.random_tick_count += 1;
+        for (id, &n) in hist.iter().enumerate() {
+            if n == 0 {
+                continue;
             }
-            if block.is_opaque() {
-                out.opaque_count += 1;
-                let x = idx % SECTION_SIZE;
-                let y = idx / (SECTION_SIZE * SECTION_SIZE);
-                let z = (idx / SECTION_SIZE) % SECTION_SIZE;
-                if x == hi {
-                    out.plane_opaque[0] += 1;
-                }
-                if x == 0 {
-                    out.plane_opaque[1] += 1;
-                }
-                if y == hi {
-                    out.plane_opaque[2] += 1;
-                }
-                if y == 0 {
-                    out.plane_opaque[3] += 1;
-                }
-                if z == hi {
-                    out.plane_opaque[4] += 1;
-                }
-                if z == 0 {
-                    out.plane_opaque[5] += 1;
-                }
+            let n = n as u32;
+            let b = bits[id];
+            if b & MB_RANDOM_TICK != 0 {
+                out.random_tick_count += n;
             }
-            if id != 0 {
-                out.non_air_count += 1;
+            if b & MB_OPAQUE != 0 {
+                out.opaque_count += n;
             }
-            if id == water_id {
-                out.water_count += 1;
+            if b & MB_NON_AIR != 0 {
+                out.non_air_count += n;
             }
-            if Self::id_uses_biome_tint(id) {
-                out.biome_tint_count += 1;
+            if b & MB_WATER != 0 {
+                out.water_count += n;
             }
-            if Self::id_has_particle_emitter(id) {
-                out.particle_emitter_count += 1;
+            if b & MB_BIOME_TINT != 0 {
+                out.biome_tint_count += n;
             }
-            if Self::id_emits_light(id) {
-                out.light_emitter_count += 1;
+            if b & MB_PARTICLE_EMITTER != 0 {
+                out.particle_emitter_count += n;
+            }
+            if b & MB_LIGHT_EMITTER != 0 {
+                out.light_emitter_count += n;
+            }
+        }
+        if out.opaque_count > 0 {
+            let opaque = |x: usize, y: usize, z: usize| {
+                (bits[blocks[crate::chunk::section_idx(x, y, z)] as usize] & MB_OPAQUE != 0) as u16
+            };
+            let hi = SECTION_SIZE - 1;
+            for a in 0..SECTION_SIZE {
+                for b in 0..SECTION_SIZE {
+                    out.plane_opaque[0] += opaque(hi, a, b);
+                    out.plane_opaque[1] += opaque(0, a, b);
+                    out.plane_opaque[2] += opaque(a, hi, b);
+                    out.plane_opaque[3] += opaque(a, 0, b);
+                    out.plane_opaque[4] += opaque(a, b, hi);
+                    out.plane_opaque[5] += opaque(a, b, 0);
+                }
             }
         }
         out

@@ -464,7 +464,7 @@ impl World {
     fn submit_section_job(&mut self, key: i64, sp: SectionPos, col: Arc<ColumnGen>) {
         let disk_primary = self.saved_section_contains(sp);
         if disk_primary {
-            self.pending_sections.insert(sp);
+            self.insert_pending_section(sp);
             self.disk_primary_sections.insert(sp);
             // The section's true content is in flight until the save thread
             // answers: the sim guard blocks mutation and the harvest skips
@@ -483,7 +483,7 @@ impl World {
                 seed: self.seed,
             },
         );
-        self.pending_sections.insert(sp);
+        self.insert_pending_section(sp);
         self.pending_section_jobs.insert(sp, job);
         if let Some(save) = self.save.as_ref() {
             if save.authoritative_manifest_contains(sp) {

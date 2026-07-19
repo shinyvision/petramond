@@ -198,6 +198,10 @@ impl SparseStates {
 #[derive(Clone, Default)]
 pub(crate) struct BlockStates {
     water: Option<Arc<[u8]>>,
+    /// Count of nonzero water-meta cells (water mid-flow). O(1) "anything
+    /// flowing?" for the streamed-water kick; the buffer is dropped when the
+    /// last cell settles, so `water` is `Some` iff this is nonzero.
+    flowing_count: u16,
     /// Allocated on the first sparse-state insert; `None` for the common section.
     sparse: Option<Box<SparseStates>>,
 }
@@ -234,8 +238,12 @@ impl BlockStates {
             log_axes,
             cell_kv,
         };
+        let flowing_count = water
+            .as_deref()
+            .map_or(0, |w| w.iter().filter(|&&m| m != 0).count() as u16);
         Self {
-            water,
+            water: water.filter(|_| flowing_count > 0),
+            flowing_count,
             sparse: (!sparse.is_empty()).then(|| Box::new(sparse)),
         }
     }
@@ -260,8 +268,16 @@ impl BlockStates {
 
     #[inline]
     pub(crate) fn clear_water_meta(&mut self, idx: usize) {
-        if let Some(w) = self.water.as_mut() {
-            Arc::make_mut(w)[idx] = 0;
+        // Read before `make_mut`: clearing an already-settled cell (the common
+        // block edit) must not clone a buffer a mesh job still shares.
+        let Some(w) = self.water.as_mut() else { return };
+        if w[idx] == 0 {
+            return;
+        }
+        Arc::make_mut(w)[idx] = 0;
+        self.flowing_count -= 1;
+        if self.flowing_count == 0 {
+            self.water = None;
         }
     }
 
@@ -273,7 +289,17 @@ impl BlockStates {
         let w = self
             .water
             .get_or_insert_with(|| vec![0u8; SECTION_VOLUME].into());
-        Arc::make_mut(w)[idx] = meta;
+        let cell = &mut Arc::make_mut(w)[idx];
+        if *cell == 0 {
+            self.flowing_count += 1;
+        }
+        *cell = meta;
+    }
+
+    /// Whether any cell holds nonzero water-flow meta (water mid-flow).
+    #[inline]
+    pub(crate) fn has_flowing(&self) -> bool {
+        self.flowing_count > 0
     }
 
     #[inline]

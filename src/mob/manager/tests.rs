@@ -1,6 +1,6 @@
 use crate::body::Body;
 use crate::chunk::SectionPos;
-use crate::mob::{Mob, MobDamageFeedback, SavedMob};
+use crate::mob::{Mob, MobDamageFeedback, MobTagValue, SavedMob};
 use crate::world::World;
 
 #[test]
@@ -447,3 +447,77 @@ fn placement_is_blocked_only_where_a_solid_block_clips_a_live_mob() {
         "a corpse doesn't block placement"
     );
 }
+
+#[test]
+fn the_tag_cap_refuses_new_keys_but_never_replacements() {
+    let mut mobs = Mobs::new(0);
+    assert!(mobs.spawn(Mob::Owl, Vec3::new(8.5, 64.0, 8.5), 0.0));
+    for i in 0..crate::mob::MAX_MOB_TAGS {
+        assert!(
+            mobs.set_mob_tag(0, format!("farm:k{i}"), MobTagValue::Int(i as i64)),
+            "key {i} fits under the cap"
+        );
+    }
+    assert!(
+        !mobs.set_mob_tag(0, "farm:one_too_many".into(), MobTagValue::Int(0)),
+        "a NEW key past the cap is refused"
+    );
+    assert!(
+        mobs.set_mob_tag(0, "farm:k0".into(), MobTagValue::Int(-1)),
+        "replacing an existing key is always allowed"
+    );
+    assert_eq!(mobs.mob_tag(0, "farm:k0"), Some(&MobTagValue::Int(-1)));
+    assert!(mobs.remove_mob_tag(0, "farm:k1"));
+    assert!(
+        mobs.set_mob_tag(0, "farm:back_under".into(), MobTagValue::Int(0)),
+        "a deletion frees a slot again"
+    );
+}
+
+#[test]
+fn indices_with_tag_filters_by_presence_and_value_and_skips_the_dead() {
+    let mut mobs = Mobs::new(0);
+    assert!(mobs.spawn(Mob::Sheep, Vec3::new(8.5, 64.0, 8.5), 0.0));
+    assert!(mobs.spawn(Mob::Sheep, Vec3::new(9.5, 64.0, 8.5), 0.0));
+    assert!(mobs.spawn(Mob::Sheep, Vec3::new(10.5, 64.0, 8.5), 0.0));
+    assert!(mobs.set_mob_tag(0, "farm:quality".into(), MobTagValue::Int(1)));
+    assert!(mobs.set_mob_tag(1, "farm:quality".into(), MobTagValue::Int(2)));
+
+    assert_eq!(
+        mobs.indices_with_tag("farm:quality", None),
+        vec![0, 1],
+        "presence matches every carrier"
+    );
+    assert_eq!(
+        mobs.indices_with_tag("farm:quality", Some(&MobTagValue::Int(2))),
+        vec![1],
+        "a value filter matches only equal values"
+    );
+    assert_eq!(
+        mobs.indices_with_tag("farm:quality", Some(&MobTagValue::Int(1))),
+        vec![0],
+        "and the other stored value"
+    );
+    assert_eq!(
+        mobs.indices_with_tag("farm:missing", None),
+        Vec::<usize>::new(),
+        "an uncarried key matches nothing"
+    );
+
+    assert!(mobs
+        .damage_mob(
+            0,
+            100.0,
+            Some(Vec3::new(5.0, 64.0, 8.5)),
+            true,
+            None,
+            &MobDamageFeedback::default()
+        )
+        .is_some());
+    assert_eq!(
+        mobs.indices_with_tag("farm:quality", None),
+        vec![1],
+        "a ragdolling corpse is gone to the query, exactly like MobsInRadius"
+    );
+}
+

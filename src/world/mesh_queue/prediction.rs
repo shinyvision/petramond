@@ -49,9 +49,10 @@ impl World {
         &mut self,
         previous: &[(crate::mathh::IVec3, u8)],
     ) -> Option<crate::world::prediction_render::PredictionTerrainWork> {
-        use crate::world::light::LightBakeJob;
+        use crate::world::light::{group_positions, snapshot_batch, LightBakeJob};
         use crate::world::prediction_render::{
-            PredictionLightJob, PredictionMeshJob, PredictionTerrainWork, SectionGuard,
+            PredictionLightJob, PredictionLightUnit, PredictionMeshJob, PredictionTerrainWork,
+            SectionGuard,
         };
 
         // Everything the edit can possibly require: light-influence reach plus
@@ -97,17 +98,37 @@ impl World {
                 })
             })
             .collect();
-        let mut lights = Vec::with_capacity(light_positions.len());
-        for &pos in &light_positions {
-            let Some(job) = LightBakeJob::snapshot(0, pos, &self.sections, &self.columns) else {
-                return None;
-            };
-            let section = self.sections.get(&pos).expect("filtered on presence");
-            lights.push(PredictionLightJob {
-                job,
-                prev_skylight: section.skylight_arc(),
-                prev_blocklight: section.blocklight_arc(),
-            });
+        // Mirror streaming: groups of 3+ share one 64³ batch flood; smaller
+        // groups keep the per-section 48³ bake (below three the shared cube
+        // costs more cells than separate floods).
+        let mut lights = Vec::new();
+        for (base, members) in group_positions(&light_positions) {
+            if members.len() >= 3 {
+                let Some(job) = snapshot_batch(base, &members, &self.sections, &self.columns)
+                else {
+                    return None;
+                };
+                let mut prev = Vec::with_capacity(members.len());
+                for pos in job.member_positions() {
+                    let section = self.sections.get(&pos).expect("batch members are loaded");
+                    prev.push((section.skylight_arc(), section.blocklight_arc()));
+                }
+                lights.push(PredictionLightUnit::Batch { job, prev });
+            } else {
+                for pos in members {
+                    let Some(job) =
+                        LightBakeJob::snapshot(0, pos, &self.sections, &self.columns)
+                    else {
+                        return None;
+                    };
+                    let section = self.sections.get(&pos).expect("filtered on presence");
+                    lights.push(PredictionLightUnit::Single(PredictionLightJob {
+                        job,
+                        prev_skylight: section.skylight_arc(),
+                        prev_blocklight: section.blocklight_arc(),
+                    }));
+                }
+            }
         }
         let mut meshes = Vec::with_capacity(candidates.len());
         for pos in candidates {
@@ -232,11 +253,14 @@ impl World {
             };
             for cz in cpos.cz - 1..=cpos.cz + 1 {
                 for cx in cpos.cx - 1..=cpos.cx + 1 {
-                    for cy in World::column_section_range() {
+                    let cp = ChunkPos::new(cx, cz);
+                    let bits = self.section_column_cys.get(&cp).copied().unwrap_or(0);
+                    let mut b = bits;
+                    while b != 0 {
+                        let cy = chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
+                        b &= b - 1;
                         let pos = SectionPos::new(cx, cy, cz);
-                        if change.segment_gap(pos, wx, wz) <= SAMPLER_REACH
-                            && self.sections.contains_key(&pos)
-                            && seen.insert(pos)
+                        if change.segment_gap(pos, wx, wz) <= SAMPLER_REACH && seen.insert(pos)
                         {
                             candidates.push(pos);
                         }

@@ -238,7 +238,7 @@ mod tests {
     use crate::player::PlayerMode;
 
     fn server_with_guest() -> (ServerGame, usize) {
-        let (mut server, _) = crate::game::session::build_session("", 1, 2);
+        let (mut server, _) = crate::game::session::build_session_inline("", 1, 2);
         let guest = crate::game::session::spawn_player(server.world.seed);
         let s = server.add_session_for_test(guest);
         (server, s)

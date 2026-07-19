@@ -581,10 +581,10 @@ mod tests {
                 kind: Mob::Sheep,
                 pos: Vec3::new(2.5, 64.0, 0.5),
                 active: true,
-                tags: BTreeMap::from([(
-                    "petramond:confined".to_string(),
+                tags: std::sync::Arc::new(BTreeMap::from([(
+                    crate::mob::tags::CONFINED.to_string(),
                     MobTagValue::Bool(true),
-                )]),
+                )])),
             },
         ];
         let ctx = make_ctx(&world, &mut rng, &mobs, 0, mobs[0].pos);

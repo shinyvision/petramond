@@ -36,6 +36,7 @@ mod populate;
 mod ragdoll;
 pub mod riding;
 mod spawn;
+pub mod tags;
 
 pub(crate) use body_geometry::{
     append_body_supports, body_boxes, body_has_peer_support, body_overlaps_block_boxes,
@@ -104,6 +105,41 @@ pub enum MobTagValue {
     Int(i64),
     Float(f64),
     String(String),
+}
+
+impl MobTagValue {
+    /// The carried `bool`, or `None` when the value is another type — a
+    /// mismatched type reads as ABSENT, never as a default.
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    /// The carried `i64`, or `None` when the value is another type.
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            Self::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    /// The carried `f64`, or `None` when the value is another type.
+    pub fn as_float(&self) -> Option<f64> {
+        match self {
+            Self::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    /// The carried string, or `None` when the value is another type.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(s) => Some(s),
+            _ => None,
+        }
+    }
 }
 
 /// Engine mob names in frozen id order (`ENGINE_MOB_NAMES[id]` names `Mob(id)`).
@@ -745,6 +781,14 @@ pub const MAX_ACTIVE_MOB_EMITTERS: usize = 4;
 /// replicated name list exactly like [`MAX_ACTIVE_MOB_EMITTERS`] bounds
 /// emitters.
 pub const MAX_ACTIVE_MOB_ANIMS: usize = 4;
+
+/// Most tags on one mob at a time — bounds the per-mob tag map that rides the
+/// AI snapshot and the save record, exactly like [`MAX_ACTIVE_MOB_EMITTERS`]
+/// bounds the replicated id list. Refusing only NEW keys past the cap:
+/// replacing an existing key always succeeds, and the engine's own reserved
+/// (`petramond:`) writes bypass it, so a mod filling the map can't lock the
+/// engine out of its own tags.
+pub const MAX_MOB_TAGS: usize = 32;
 
 /// Most rider seats one species may declare — bounds the `seats` row list and
 /// keeps the wire-facing seat index an honest small integer.

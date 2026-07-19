@@ -218,11 +218,43 @@ pub(crate) fn build_session(
     new_seed: u32,
     render_dist: i32,
 ) -> (ServerGame, ClientBootstrap) {
+    build_session_with_pool(
+        world_name,
+        new_seed,
+        render_dist,
+        Arc::new(JobPool::new(JobPool::default_threads())),
+    )
+}
+
+/// [`build_session`] with an INLINE job pool (jobs run at submit, on the
+/// caller) — the in-process test harness's deterministic variant: streaming
+/// work completes inside the pump that queued it, so tests never sleep-wait
+/// on background workers. (The join-profile test deliberately keeps the real
+/// threaded pool — it MEASURES that pipeline.)
+#[cfg(test)]
+pub(crate) fn build_session_inline(
+    world_name: &str,
+    new_seed: u32,
+    render_dist: i32,
+) -> (ServerGame, ClientBootstrap) {
+    build_session_with_pool(world_name, new_seed, render_dist, Arc::new(JobPool::inline()))
+}
+
+/// [`build_session`] over a caller-owned job pool. The in-process test
+/// harness passes an INLINE pool ([`JobPool::inline`]) so queued gen/light
+/// work completes inside the pump that queued it — tests gate on one more
+/// pump, never on wall-clock sleeps racing background workers.
+pub(crate) fn build_session_with_pool(
+    world_name: &str,
+    new_seed: u32,
+    render_dist: i32,
+    pool: Arc<JobPool>,
+) -> (ServerGame, ClientBootstrap) {
     // The LOCAL player's identity (client.json / env / OS username) keys
     // its per-world save file: `players/<name>.dat`.
     let player_name = crate::save::client::resolve_player_name(&crate::save::client::load());
     let (server, pool, fallback_world) =
-        build_server(world_name, new_seed, render_dist, Some(player_name));
+        build_server_with_pool(world_name, new_seed, render_dist, Some(player_name), pool);
     let t_client = std::time::Instant::now();
 
     // The CLIENT's replica world: fed by the server's terrain payloads and
@@ -309,6 +341,26 @@ fn build_server(
     render_dist: i32,
     local_player_name: Option<String>,
 ) -> (ServerGame, Arc<JobPool>, SurfaceDensitySystem) {
+    build_server_with_pool(
+        world_name,
+        new_seed,
+        render_dist,
+        local_player_name,
+        Arc::new(JobPool::new(JobPool::default_threads())),
+    )
+}
+
+/// [`build_server`] over a caller-owned job pool. The in-process test harness
+/// passes an INLINE pool ([`JobPool::inline`]) so queued gen/light work
+/// completes inside the pump that queued it — deterministic, with no
+/// wall-clock waiting on background workers.
+fn build_server_with_pool(
+    world_name: &str,
+    new_seed: u32,
+    render_dist: i32,
+    local_player_name: Option<String>,
+    pool: Arc<JobPool>,
+) -> (ServerGame, Arc<JobPool>, SurfaceDensitySystem) {
     let mut perf = JoinPerf::start();
     let opened = open_session(world_name);
     perf.mark("save_open");
@@ -324,10 +376,9 @@ fn build_server(
     perf.mark("player_restore_or_spawn");
     let disabled_mods = opened.disabled_mods;
 
-    // ONE background pool shared by the server world (gen/light) and the
-    // client replica (light/mesh) — two machine-sized thread sets in one
-    // process would oversubscribe every core.
-    let pool = Arc::new(JobPool::new(JobPool::default_threads()));
+    // ONE pool shared by the server world (gen/light) and the client replica
+    // (light/mesh) — two machine-sized thread sets in one process would
+    // oversubscribe every core. Caller-owned (see `build_server_with_pool`).
     // Warm the spawn area's surface tiles across the pool while the rest of
     // construction runs: the stream kick below then finds them hot, instead
     // of the first column job deriving the whole neighbourhood serially.

@@ -17,10 +17,9 @@ use crate::game::GameInput;
 use crate::mathh::{IVec3, Vec3};
 use crate::net::protocol::{SectionCacheClaim, SectionPayload, ServerToClient};
 
-/// Wall-clock give-up bound for the pump loops. Generous on purpose: gen and
-/// light run on the shared job pool, and a workspace-parallel test run can
-/// starve it for tens of seconds without anything being wrong.
-const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+/// Wall-clock give-up bound for the pump loops (`TestGame` uses an inline
+/// pool, so waits are compute-bound; this is only a hard fail reporting cap).
+const DEADLINE: std::time::Duration = crate::test_time::TEST_HARD_DEADLINE;
 
 const HOME: Vec3 = Vec3::new(8.5, 80.0, 8.5);
 const FAR: Vec3 = Vec3::new(328.5, 80.0, 328.5);
@@ -34,9 +33,7 @@ fn place_player(game: &mut TestGame, feet: Vec3) {
 }
 
 fn frame(game: &mut TestGame) -> Vec<ServerToClient> {
-    let msgs = game.tick_recorded(TICK_DT, &GameInput::default());
-    std::thread::sleep(std::time::Duration::from_millis(1));
-    msgs
+    game.tick_recorded(TICK_DT, &GameInput::default())
 }
 
 /// Pump frames until `done`, panicking past the deadline with a summary of

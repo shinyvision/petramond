@@ -124,9 +124,12 @@ pub struct Instance {
     /// the tick and the coat is back at `0`. Persisted (see [`super::SavedMob`]).
     shear_regrow: u32,
     /// Engine- and mod-owned tags attached to this mob instance. The engine
-    /// reserves the `petramond:` namespace (e.g., `petramond:confined`); mods
-    /// may invent `mod_id:` keys. Persisted (see [`super::SavedMob`]).
-    tags: std::collections::BTreeMap<String, super::MobTagValue>,
+    /// reserves the `petramond:` namespace (see [`super::tags`]); mods may
+    /// invent `mod_id:` keys. Persisted (see [`super::SavedMob`]).
+    /// Copy-on-write: the per-tick AI snapshot shares the map by `Arc` clone,
+    /// so a write (`tags_mut`) only clones the contents when a snapshot is
+    /// holding the previous state.
+    tags: std::sync::Arc<std::collections::BTreeMap<String, super::MobTagValue>>,
     /// Ticks until the next confined-state recompute. Spread across mobs by id
     /// so checks don't clump on one tick.
     confined_cooldown: u8,
@@ -224,7 +227,7 @@ impl Instance {
             knockback: Vec3::ZERO,
             push: Vec3::ZERO,
             shear_regrow: 0,
-            tags: std::collections::BTreeMap::new(),
+            tags: Default::default(),
             confined_cooldown: ((seed % confined::CHECK_INTERVAL as u64) as u8).max(1),
             active_emitters: Vec::new(),
             active_anims: Vec::new(),
@@ -336,21 +339,32 @@ impl Instance {
         &self.tags
     }
 
+    /// The mob's tag map behind its shared handle — the AI snapshot's copy is
+    /// this cheap `Arc` clone, not a per-tick deep clone of the whole map.
+    #[inline]
+    pub(super) fn tags_shared(
+        &self,
+    ) -> std::sync::Arc<std::collections::BTreeMap<String, super::MobTagValue>> {
+        std::sync::Arc::clone(&self.tags)
+    }
+
     /// Mutable access to the mob's tag map, for HostCalls and the reload path.
+    /// Clones the contents when a shared snapshot still holds them (see the
+    /// field docs) — writers should check-and-skip no-op writes.
     #[inline]
     pub(super) fn tags_mut(
         &mut self,
     ) -> &mut std::collections::BTreeMap<String, super::MobTagValue> {
-        &mut self.tags
+        std::sync::Arc::make_mut(&mut self.tags)
     }
 
     /// Whether the mob is currently confined (captive / penned).
     #[inline]
     pub fn is_confined(&self) -> bool {
-        matches!(
-            self.tags.get("petramond:confined"),
-            Some(super::MobTagValue::Bool(true))
-        )
+        self.tags
+            .get(super::tags::CONFINED)
+            .and_then(super::MobTagValue::as_bool)
+            == Some(true)
     }
 
     /// The mob's mod KV entries (see the field docs).
@@ -487,17 +501,21 @@ impl Instance {
         // a swimming or falling mob's space is transient, and dead mobs don't
         // participate in AI anyway. The result is maintained as the
         // `petramond:confined` mob tag so AI and HostCalls can read it uniformly.
+        // Written ONLY on a transition: the map is copy-on-write shared with
+        // the AI snapshot, so a redundant write would still deep-clone it.
         self.confined_cooldown = self.confined_cooldown.saturating_sub(1);
         if self.confined_cooldown == 0 && self.on_ground && !in_water {
             let params = path::PathParams::for_body(d.size.head_cells(), d.size.half_width);
             let confined = confined::is_confined(cell, params, &solid, &water);
-            if confined {
-                self.tags.insert(
-                    "petramond:confined".to_string(),
-                    super::MobTagValue::Bool(true),
-                );
-            } else {
-                self.tags.remove("petramond:confined");
+            if confined != self.is_confined() {
+                if confined {
+                    self.tags_mut().insert(
+                        super::tags::CONFINED.to_owned(),
+                        super::MobTagValue::Bool(true),
+                    );
+                } else {
+                    self.tags_mut().remove(super::tags::CONFINED);
+                }
             }
             self.confined_cooldown = confined::CHECK_INTERVAL;
         }

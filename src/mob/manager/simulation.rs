@@ -162,7 +162,7 @@ impl Mobs {
             kind: m.kind,
             pos: m.pos,
             active: !m.is_dead() && (!freeze_unloaded || chunk_loaded_at(world, m)),
-            tags: m.tags().clone(),
+            tags: m.tags_shared(),
         }));
         // Solid-collision bodies as of the start of this tick. Soft mobs use
         // this immutable obstacle view; solid peers propose independently and

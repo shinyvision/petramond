@@ -151,6 +151,15 @@ fn abi_roundtrip_host_and_guest_calls() {
         mob_id: 2,
         key: "zombies:target".into(),
     });
+    roundtrip(HostCall::MobTagsGet { mob_id: 2 });
+    roundtrip(HostCall::MobsWithTag {
+        key: "zombies:target".into(),
+        value: Some(MobTagValue::I64(-3)),
+    });
+    roundtrip(HostCall::MobsWithTag {
+        key: "petramond:confined".into(),
+        value: None,
+    });
     roundtrip(HostCall::ResolveBlock {
         name: "kitchen:oven".into(),
     });
@@ -369,8 +378,14 @@ fn abi_roundtrip_host_and_guest_calls() {
     ))));
     roundtrip(HostRet::GuiValue(Some(GuiValue::I32(-3))));
     roundtrip(HostRet::GuiValue(None));
-    roundtrip(HostRet::MobTag(Some(MobTagValue::Bool(true))));
-    roundtrip(HostRet::MobTag(None));
+    roundtrip(HostRet::MobTag(MobTagLookup::Value(MobTagValue::Bool(true))));
+    roundtrip(HostRet::MobTag(MobTagLookup::Absent));
+    roundtrip(HostRet::MobTag(MobTagLookup::MissingMob));
+    roundtrip(HostRet::MobTags(Some(vec![
+        ("farm:quality".into(), MobTagValue::I64(7)),
+        ("petramond:confined".into(), MobTagValue::Bool(true)),
+    ])));
+    roundtrip(HostRet::MobTags(None));
     roundtrip(GuestCall::GuiClick {
         kind_key: "wheel:wheel".into(),
         widget_id: "spin".into(),

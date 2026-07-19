@@ -17,7 +17,7 @@ fn chat_texts(msgs: &[ServerToClient]) -> Vec<String> {
 
 #[test]
 fn targeted_chat_reaches_only_listed_sessions() {
-    let (mut server, _) = crate::game::session::build_session("", 1, 2);
+    let (mut server, _) = crate::game::session::build_session_inline("", 1, 2);
     let player = crate::game::session::spawn_player(server.world.seed);
     let remote_s = server.add_session_for_test(player);
     let remote_id = server.sessions[remote_s].id;

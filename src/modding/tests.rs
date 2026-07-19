@@ -181,6 +181,10 @@ pub(crate) fn stage_monsters_fixture(tag: &str) -> Option<PathBuf> {
 
 /// Re-spawn the test binary on `test_path` (an `#[ignore]`d inner test) with
 /// `PETRAMOND_MODS` pointing at `root/mods`, then clean the fixture up.
+/// `PETRAMOND_DATA_DIR` is pinned to this process's shared test root (the one
+/// the app tests use): saves stay out of the developer's real data dir, and
+/// the disk module cache there lets every child after the first deserialize
+/// precompiled mod modules (~1 ms) instead of recompiling them (~1 s).
 pub(crate) fn run_child_test(root: &std::path::Path, test_path: &str) {
     let exe = std::env::current_exe().expect("test binary path");
     let out = std::process::Command::new(exe)
@@ -189,6 +193,10 @@ pub(crate) fn run_child_test(root: &std::path::Path, test_path: &str) {
         .arg("--ignored")
         .arg("--nocapture")
         .env("PETRAMOND_MODS", root.join("mods"))
+        .env(
+            "PETRAMOND_DATA_DIR",
+            std::env::temp_dir().join(format!("petramond-test-data-{}", std::process::id())),
+        )
         .output()
         .expect("spawn test binary");
     let _ = std::fs::remove_dir_all(root);

@@ -11,6 +11,7 @@ impl World {
     pub(crate) fn insert_section_for_test(&mut self, pos: SectionPos, section: Section) {
         self.ensure_column(pos.chunk_pos());
         self.sections.insert(pos, Arc::new(section));
+        self.note_section_loaded(pos);
         self.refresh_block_entity_index(pos);
         self.refresh_particle_emitter_index(pos);
         self.queue_dirty_mesh(pos);
@@ -57,6 +58,7 @@ impl World {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             sums[(cy - SECTION_MIN_CY) as usize] = section.summary();
             self.sections.insert(sp, Arc::new(section));
+            self.note_section_loaded(sp);
             self.refresh_particle_emitter_index(sp);
             self.queue_dirty_mesh(sp);
             self.request_fixture_bake(sp);
@@ -85,6 +87,7 @@ impl World {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             self.sections
                 .insert(sp, Arc::new(Section::new(pos.cx, cy, pos.cz)));
+            self.note_section_loaded(sp);
             self.refresh_particle_emitter_index(sp);
             self.queue_dirty_mesh(sp);
             self.request_fixture_bake(sp);

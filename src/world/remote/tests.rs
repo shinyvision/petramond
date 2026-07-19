@@ -598,7 +598,7 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
     use crate::chunk::SECTION_VOLUME;
     use crate::section::Section;
     use crate::world::store::LoadAnchor;
-    use rustc_hash::FxHashSet;
+    use rustc_hash::{FxHashMap, FxHashSet};
 
     let sky = || Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice());
     let mut w = World::new(0, 2);
@@ -615,9 +615,39 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
 
     let mut sent_columns: FxHashSet<ChunkPos> = FxHashSet::default();
     let mut sent_sections: FxHashSet<SectionPos> = FxHashSet::default();
+    let mut sent_by_column: FxHashMap<ChunkPos, Vec<i32>> = FxHashMap::default();
+    let note_sent = |sp: SectionPos,
+                     sent_sections: &mut FxHashSet<SectionPos>,
+                     sent_by_column: &mut FxHashMap<ChunkPos, Vec<i32>>| {
+        if sent_sections.insert(sp) {
+            sent_by_column
+                .entry(sp.chunk_pos())
+                .or_default()
+                .push(sp.cy);
+        }
+    };
+    let forget_sent = |sp: SectionPos,
+                       sent_sections: &mut FxHashSet<SectionPos>,
+                       sent_by_column: &mut FxHashMap<ChunkPos, Vec<i32>>| {
+        if !sent_sections.remove(&sp) {
+            return;
+        }
+        if let Some(cys) = sent_by_column.get_mut(&sp.chunk_pos()) {
+            cys.retain(|&cy| cy != sp.cy);
+            if cys.is_empty() {
+                sent_by_column.remove(&sp.chunk_pos());
+            }
+        }
+    };
     // Light gates shipping: a never-baked (non-opaque) section is not
     // presentable — the replica can't bake it, so the server holds it.
-    let plan = w.plan_terrain_send(anchor(0), &sent_columns, &sent_sections, 128);
+    let plan = w.plan_terrain_send(
+        anchor(0),
+        &sent_columns,
+        &sent_sections,
+        &sent_by_column,
+        128,
+    );
     assert!(
         !plan.sections.contains(&sp),
         "a lightless section is held back by the ship gate"
@@ -625,13 +655,19 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
     w.section_at_world_mut_for_test(0, 64, 0)
         .unwrap()
         .set_skylight(sky());
-    let plan = w.plan_terrain_send(anchor(0), &sent_columns, &sent_sections, 128);
+    let plan = w.plan_terrain_send(
+        anchor(0),
+        &sent_columns,
+        &sent_sections,
+        &sent_by_column,
+        128,
+    );
     assert!(
         plan.sections.contains(&sp),
         "the loaded, lit, wanted section ships"
     );
     sent_columns.insert(sp.chunk_pos());
-    sent_sections.insert(sp);
+    note_sent(sp, &mut sent_sections, &mut sent_by_column);
 
     // The send key: stable while nothing moved; re-keyed by new content
     // and by an anchor chunk move.
@@ -647,29 +683,127 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
     // A loaded section whose saved overlay is still in flight is NOT
     // final: it must not ship until the overlay resolves.
     w.awaited_overlays.insert(SectionPos::new(1, 4, 0));
-    let plan = w.plan_terrain_send(anchor(0), &sent_columns, &sent_sections, 128);
+    let plan = w.plan_terrain_send(
+        anchor(0),
+        &sent_columns,
+        &sent_sections,
+        &sent_by_column,
+        128,
+    );
     assert!(
         !plan.sections.contains(&SectionPos::new(1, 4, 0)),
         "an in-flight section must not be sent (its base would lie)"
     );
     w.awaited_overlays.clear();
-    let plan = w.plan_terrain_send(anchor(0), &sent_columns, &sent_sections, 128);
+    let plan = w.plan_terrain_send(
+        anchor(0),
+        &sent_columns,
+        &sent_sections,
+        &sent_by_column,
+        128,
+    );
     assert!(plan.sections.contains(&SectionPos::new(1, 4, 0)));
 
     // A sent section the server evicted (vertical exit) unloads even while
     // its column is kept.
     let gone = SectionPos::new(0, 9, 0);
-    sent_sections.insert(gone);
-    let plan = w.plan_terrain_send(anchor(0), &sent_columns, &sent_sections, 128);
+    note_sent(gone, &mut sent_sections, &mut sent_by_column);
+    let plan = w.plan_terrain_send(
+        anchor(0),
+        &sent_columns,
+        &sent_sections,
+        &sent_by_column,
+        128,
+    );
     assert!(plan.drop_sections.contains(&gone));
     assert!(plan.drop_columns.is_empty());
-    sent_sections.remove(&gone);
+    forget_sent(gone, &mut sent_sections, &mut sent_by_column);
 
     // The whole column leaving the keep shape plans a ColumnUnload (its
     // sections drop with it — no per-section messages).
-    let plan = w.plan_terrain_send(anchor(20), &sent_columns, &sent_sections, 128);
+    let plan = w.plan_terrain_send(
+        anchor(20),
+        &sent_columns,
+        &sent_sections,
+        &sent_by_column,
+        128,
+    );
     assert!(plan.drop_columns.contains(&sp.chunk_pos()));
     assert!(!plan.drop_sections.contains(&sp));
+}
+
+/// Deep sections below the column surface band stay off the wire until the
+/// connection's vertical window (or near ring) needs them — they would park
+/// on the replica without meshing anyway.
+#[test]
+fn terrain_send_defers_deep_sections_outside_the_anchor_window() {
+    use crate::chunk::SECTION_VOLUME;
+    use crate::section::Section;
+    use crate::world::store::LoadAnchor;
+    use rustc_hash::{FxHashMap, FxHashSet};
+
+    let sky = || Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice());
+    let mut w = World::new(0, 8);
+    let cp = ChunkPos::new(0, 0);
+    let gen = crate::worldgen::driver::ChunkGenerator::new(0).generate_column_gen(cp.cx, cp.cz);
+    let band_lo = *World::surface_window_for_column(&gen, 0).start();
+    w.column_gen.insert(cp, Arc::new(gen));
+
+    // Deepest legal cy: a surface anchor at band_lo+2 has vwin down to
+    // band_lo-3, so SECTION_MIN_CY must sit below that for the deferral
+    // case to be distinguishable (true for any band_lo ≥ SECTION_MIN_CY+4).
+    let deep_cy = crate::chunk::SECTION_MIN_CY;
+    assert!(
+        deep_cy < band_lo,
+        "seed 0 column must have a surface band above world floor (band_lo={band_lo})"
+    );
+    let deep = SectionPos::new(0, deep_cy, 0);
+    let mut section = Section::new(deep.cx, deep.cy, deep.cz);
+    section.set_block(0, 0, 0, Block::Stone);
+    section.set_skylight(sky());
+    w.insert_section_for_test(deep, section);
+    assert!(
+        w.section_light_final(deep) && w.stream_writable(deep),
+        "fixture must be ship-final"
+    );
+
+    // Place the surface anchor so its vertical window (radius 5) and near
+    // ring both miss SECTION_MIN_CY.
+    let surface_cy = (deep_cy + 6).max(band_lo + 2);
+    assert!(!World::vertical_window(surface_cy, 0).contains(&deep_cy));
+    let plan = w.plan_terrain_send(
+        LoadAnchor {
+            cx: 0,
+            cy: surface_cy,
+            cz: 0,
+            radius: 64,
+        },
+        &FxHashSet::default(),
+        &FxHashSet::default(),
+        &FxHashMap::default(),
+        128,
+    );
+    assert!(
+        !plan.sections.contains(&deep),
+        "deep section outside the surface anchor window must not ship yet"
+    );
+
+    let plan = w.plan_terrain_send(
+        LoadAnchor {
+            cx: 0,
+            cy: deep.cy,
+            cz: 0,
+            radius: 64,
+        },
+        &FxHashSet::default(),
+        &FxHashSet::default(),
+        &FxHashMap::default(),
+        128,
+    );
+    assert!(
+        plan.sections.contains(&deep),
+        "the same deep section ships once the anchor window covers it"
+    );
 }
 
 #[test]

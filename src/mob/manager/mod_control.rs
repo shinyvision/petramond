@@ -96,10 +96,41 @@ impl Mobs {
         self.list.get(index)?.tags().get(key)
     }
 
-    /// Store a tag on the mob at `index`. `false` = no such mob.
+    /// A live mob's whole tag map (the `MobTagsGet` HostCall's bulk read).
+    pub fn mob_tags(
+        &self,
+        index: usize,
+    ) -> Option<&std::collections::BTreeMap<String, MobTagValue>> {
+        Some(self.list.get(index)?.tags())
+    }
+
+    /// Live-list indices of non-dead mobs carrying `key` — with `want`, only
+    /// those whose stored value EQUALS it. The `MobsWithTag` HostCall's
+    /// filter, kept here so `list` stays private and the predicate is
+    /// unit-testable.
+    pub fn indices_with_tag(&self, key: &str, want: Option<&MobTagValue>) -> Vec<usize> {
+        self.list
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| !m.is_dead())
+            .filter(|(_, m)| match (m.tags().get(key), want) {
+                (Some(have), Some(want)) => have == want,
+                (Some(_), None) => true,
+                (None, _) => false,
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Store a tag on the mob at `index`. `false` = no such mob, or the map
+    /// already holds [`MAX_MOB_TAGS`](crate::mob::MAX_MOB_TAGS) entries and
+    /// `key` would be a NEW one (replacing an existing key always succeeds).
     pub fn set_mob_tag(&mut self, index: usize, key: String, value: MobTagValue) -> bool {
         match self.list.get_mut(index) {
             Some(m) => {
+                if m.tags().len() >= crate::mob::MAX_MOB_TAGS && !m.tags().contains_key(&key) {
+                    return false;
+                }
                 m.tags_mut().insert(key, value);
                 true
             }

@@ -13,24 +13,29 @@ impl World {
             .filter(|p| !targets.iter().any(|t| Self::column_kept(*t, **p)))
             .copied()
             .collect();
-        let drop_sections: Vec<SectionPos> =
-            self.sections
-                .keys()
-                .filter(|sp| {
-                    if targets
-                        .iter()
-                        .any(|t| Self::vertical_window(t.center_cy, 2).contains(&sp.cy))
-                    {
-                        return false;
-                    }
-                    let cp = sp.chunk_pos();
-                    targets.iter().any(|t| Self::column_kept(*t, cp))
-                        && !self.column_gen.get(&cp).is_some_and(|col| {
-                            Self::surface_window_for_column(col, 2).contains(&sp.cy)
-                        })
-                })
-                .copied()
-                .collect();
+        let mut drop_sections = Vec::new();
+        for (&cp, &bits) in &self.section_column_cys {
+            if !targets.iter().any(|t| Self::column_kept(*t, cp)) {
+                continue;
+            }
+            let mut b = bits;
+            while b != 0 {
+                let cy = crate::chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
+                b &= b - 1;
+                if targets
+                    .iter()
+                    .any(|t| Self::vertical_window(t.center_cy, 2).contains(&cy))
+                {
+                    continue;
+                }
+                let in_surface = self.column_gen.get(&cp).is_some_and(|col| {
+                    Self::surface_window_for_column(col, 2).contains(&cy)
+                });
+                if !in_surface {
+                    drop_sections.push(SectionPos::new(cp.cx, cy, cp.cz));
+                }
+            }
+        }
         self.evict_columns_and_sections(drop_columns, drop_sections);
     }
 
@@ -47,23 +52,29 @@ impl World {
             .copied()
             .collect();
         let drop_sections: Vec<SectionPos> = if vertical_moved {
-            self.sections
-                .keys()
-                .filter(|sp| {
-                    // Cheapest rejection first: almost every section is still inside
-                    // the player window, so answer that with two integer compares
-                    // before the column-shape test and the per-column surface band.
-                    if vwindow.contains(&sp.cy) {
-                        return false;
+            // Walk loaded stacks of kept columns only — sections in columns
+            // already selected for full drop are removed with the column.
+            let mut out = Vec::new();
+            for (&cp, &bits) in &self.section_column_cys {
+                if !Self::column_kept(target, cp) {
+                    continue;
+                }
+                let mut b = bits;
+                while b != 0 {
+                    let cy = crate::chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
+                    b &= b - 1;
+                    if vwindow.contains(&cy) {
+                        continue;
                     }
-                    let cp = sp.chunk_pos();
-                    Self::column_kept(target, cp)
-                        && !self.column_gen.get(&cp).is_some_and(|col| {
-                            Self::surface_window_for_column(col, 2).contains(&sp.cy)
-                        })
-                })
-                .copied()
-                .collect()
+                    let in_surface = self.column_gen.get(&cp).is_some_and(|col| {
+                        Self::surface_window_for_column(col, 2).contains(&cy)
+                    });
+                    if !in_surface {
+                        out.push(SectionPos::new(cp.cx, cy, cp.cz));
+                    }
+                }
+            }
+            out
         } else {
             Vec::new()
         };
@@ -82,13 +93,14 @@ impl World {
         if self.save.is_some() {
             let mut snaps = Vec::new();
             for &cpos in &drop_columns {
-                for cy in Self::column_section_range() {
+                let bits = self.section_column_cys.get(&cpos).copied().unwrap_or(0);
+                Self::for_each_column_cy(bits, |cy| {
                     if let Some(snap) =
                         self.harvest_section_snapshot(SectionPos::new(cpos.cx, cy, cpos.cz))
                     {
                         snaps.push(snap);
                     }
-                }
+                });
             }
             for &sp in &drop_sections {
                 if let Some(snap) = self.harvest_section_snapshot(sp) {
@@ -109,7 +121,7 @@ impl World {
         for sp in drop_sections {
             self.remove_section(sp);
             self.pending_overlays.remove(&sp);
-            self.pending_sections.remove(&sp);
+            self.remove_pending_section(sp);
             if let Some(job) = self.pending_section_jobs.remove(&sp) {
                 job.cancel();
             }

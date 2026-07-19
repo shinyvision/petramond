@@ -476,6 +476,7 @@ impl ServerGame {
                 anchor,
                 &sync.sent_columns,
                 &sync.sent_sections,
+                &sync.sent_by_column,
                 usize::MAX,
             );
             sync.planned_sections = plan.sections.into();
@@ -610,7 +611,8 @@ mod tests {
     use crate::net::protocol::ClientToServer;
     use crate::server::game::PumpOutput;
     use crate::server::player::PlayerId;
-    use std::time::{Duration, Instant};
+    use crate::test_time::TEST_HARD_DEADLINE;
+    use std::time::Instant;
 
     fn count_terrain(msgs: &[ServerToClient]) -> usize {
         msgs.iter()
@@ -691,7 +693,9 @@ mod tests {
     /// of overflowing its bounded queue.
     #[test]
     fn starved_sessions_pause_streaming_and_resume_without_losing_any() {
-        let (mut server, _) = crate::game::session::build_session("", 1, 2);
+        // Inline pool: gen/light finish inside the pump that queued them, so
+        // loops stay compute-bound (no sleep-wait on background workers).
+        let (mut server, _) = crate::game::session::build_session_inline("", 1, 2);
         let player = crate::game::session::spawn_player(server.world.seed);
         let s = server.add_session_for_test(player);
         let remote_id = server.sessions[s].id;
@@ -699,7 +703,7 @@ mod tests {
         // Starve the remote queue until the LOCAL session has received
         // terrain — the world demonstrably had shippable sections, and the
         // starved session got only tick updates.
-        let deadline = Instant::now() + Duration::from_secs(120);
+        let deadline = Instant::now() + TEST_HARD_DEADLINE;
         let mut local_terrain = 0usize;
         while local_terrain == 0 {
             assert!(Instant::now() < deadline, "no terrain became shippable");
@@ -712,7 +716,6 @@ mod tests {
                     "a zero-headroom session receives only tick updates"
                 );
             }
-            std::thread::sleep(Duration::from_millis(2));
         }
 
         // Room returns: the withheld terrain ships to the remote session.
@@ -727,7 +730,6 @@ mod tests {
                 .map(|(_, msgs)| count_terrain(msgs))
                 .sum::<usize>();
             inbox = acks(&out);
-            std::thread::sleep(Duration::from_millis(2));
         }
     }
 
@@ -737,13 +739,13 @@ mod tests {
     /// it, so streaming resumes.
     #[test]
     fn stream_batches_window_on_acks_and_stall_without_them() {
-        let (mut server, _) = crate::game::session::build_session("", 1, 2);
+        let (mut server, _) = crate::game::session::build_session_inline("", 1, 2);
         let player = crate::game::session::spawn_player(server.world.seed);
         let s = server.add_session_for_test(player);
         let remote_id = server.sessions[s].id;
 
         // Pump WITHOUT acking until the first batch lands.
-        let deadline = Instant::now() + Duration::from_secs(120);
+        let deadline = Instant::now() + TEST_HARD_DEADLINE;
         let mut batches = 0usize;
         while batches == 0 {
             assert!(Instant::now() < deadline, "no first batch");
@@ -754,7 +756,6 @@ mod tests {
                 .flat_map(|(_, msgs)| msgs)
                 .filter(|m| matches!(m, ServerToClient::StreamBatchStart))
                 .count();
-            std::thread::sleep(Duration::from_millis(2));
         }
         assert_eq!(batches, 1, "the pre-ack window is exactly one batch");
 
@@ -767,7 +768,6 @@ mod tests {
                     "an unacked window ships nothing but tick updates"
                 );
             }
-            std::thread::sleep(Duration::from_millis(1));
         }
 
         // One ack: the window reopens and the next batch ships.
@@ -788,7 +788,6 @@ mod tests {
                 .filter(|m| matches!(m, ServerToClient::StreamBatchStart))
                 .count();
             inbox = acks(&out);
-            std::thread::sleep(Duration::from_millis(2));
         }
     }
 
@@ -799,7 +798,7 @@ mod tests {
     /// plans' diffs, because a lost unload leaks replica memory forever.
     #[test]
     fn unload_bursts_clip_to_the_allowance_and_all_arrive() {
-        let (mut server, _) = crate::game::session::build_session("", 1, 2);
+        let (mut server, _) = crate::game::session::build_session_inline("", 1, 2);
         let player = crate::game::session::spawn_player(server.world.seed);
         let s = server.add_session_for_test(player);
         let remote_id = server.sessions[s].id;
@@ -815,7 +814,7 @@ mod tests {
         server.sessions[s].terrain.backlog = true;
 
         let room = STREAM_QUEUE_RESERVE + 100;
-        let deadline = Instant::now() + Duration::from_secs(120);
+        let deadline = Instant::now() + TEST_HARD_DEADLINE;
         let mut inbox: Vec<(PlayerId, ClientToServer)> = Vec::new();
         while !awaiting.is_empty() {
             assert!(Instant::now() < deadline, "clipped unloads never drained");
@@ -837,7 +836,6 @@ mod tests {
                 }
             }
             inbox = acks(&out);
-            std::thread::sleep(Duration::from_millis(2));
         }
     }
 
@@ -847,7 +845,7 @@ mod tests {
     /// refresh would be lost and the replica's light permanently stale).
     #[test]
     fn light_refreshes_defer_for_starved_sessions_and_ship_later() {
-        let (mut server, _) = crate::game::session::build_session("", 1, 2);
+        let (mut server, _) = crate::game::session::build_session_inline("", 1, 2);
         let player = crate::game::session::spawn_player(server.world.seed);
         let s = server.add_session_for_test(player);
         let remote_id = server.sessions[s].id;
@@ -859,7 +857,7 @@ mod tests {
         // at all (an ocean or cave-band interior), so selection must keep
         // streaming until a usable edit target shipped, not grab the first
         // skylit payload.
-        let deadline = Instant::now() + Duration::from_secs(120);
+        let deadline = Instant::now() + TEST_HARD_DEADLINE;
         let mut lit: Option<(SectionPos, (i32, i32, i32))> = None;
         let mut inbox: Vec<(PlayerId, ClientToServer)> = Vec::new();
         while lit.is_none() {
@@ -878,7 +876,6 @@ mod tests {
                 find_lit_air(&server.world, p.pos).map(|cell| (p.pos, cell))
             });
             inbox = acks(&out);
-            std::thread::sleep(Duration::from_millis(2));
         }
         let (lit, lit_air) = lit.unwrap();
 
@@ -899,7 +896,12 @@ mod tests {
         );
         while !server.sessions[s].terrain.pending_light.contains(&lit) {
             assert!(Instant::now() < deadline, "the rebake never landed");
-            let out = server.pump_tagged(0.01, &mut Vec::new(), &[(remote_id, 0)]);
+            // `inbox` CARRIES phase 1's final acks into this first starved
+            // pump: a window slot widowed by an undelivered ack would stay
+            // full (`unacked == max`) and the deferred ship below could
+            // never start. Zero headroom still blocks every batch, so the
+            // no-LightData assertion below is unaffected.
+            let out = server.pump_tagged(0.01, &mut inbox, &[(remote_id, 0)]);
             assert!(
                 out.remote
                     .iter()
@@ -907,7 +909,6 @@ mod tests {
                     .all(|m| { !matches!(m, ServerToClient::LightData(_)) }),
                 "a zero-headroom session receives no light refreshes"
             );
-            std::thread::sleep(Duration::from_millis(2));
         }
 
         // The queue drains: the deferred refresh ships.
@@ -925,7 +926,6 @@ mod tests {
                 .flat_map(|(_, msgs)| msgs)
                 .any(|m| matches!(m, ServerToClient::LightData(p) if p.pos == lit));
             inbox = acks(&out);
-            std::thread::sleep(Duration::from_millis(2));
         }
     }
 }

@@ -214,6 +214,7 @@ mod tests {
         let pos = SectionPos::new(section.cx, section.cy, section.cz);
         world.ensure_column(pos.chunk_pos());
         world.sections.insert(pos, Arc::new(section));
+        world.note_section_loaded(pos);
         world.classify_deep_on_install(pos);
         world.queue_dirty_mesh(pos);
     }

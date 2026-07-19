@@ -8,7 +8,6 @@ use crate::worldgen::density::terrain::channels;
 use crate::worldgen::graph::{SamplePoint, ScalarGraph};
 
 const SURFACE_AXIS_COUNT: usize = 5;
-const LEAF_RECT_COUNT: usize = 4;
 
 pub(crate) const CLIMATE_SAMPLE_CELL_X: i32 = 4;
 pub(crate) const CLIMATE_SAMPLE_CELL_Y: i32 = 4;
@@ -66,9 +65,6 @@ impl AxisRange {
         }
     }
 
-    const fn center(self) -> f32 {
-        (self.min + self.max) * 0.5
-    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -167,9 +163,6 @@ impl ClimateRect {
         surface_distance + offset_distance
     }
 
-    fn center_on_axis(self, axis: usize) -> f32 {
-        self.axes[axis].center()
-    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -179,11 +172,26 @@ pub(crate) struct BiomeClimateEntry<'a> {
     pub rectangles: &'a [ClimateRect],
 }
 
+/// Bin count for the per-axis containment buckets (power of two; the axes are
+/// normalized to roughly `[-1, 1]`, and the end bins absorb out-of-range values).
+const AXIS_BIN_COUNT: usize = 64;
+
 #[derive(Clone, Debug)]
 pub(crate) struct BiomeClimateIndex {
-    #[cfg(test)]
     rects: Vec<IndexedRect>,
-    root: Option<IndexNode>,
+    /// Ordered row indices whose VARIANCE range intersects each bin of the
+    /// normalized `[-1, 1]` variance axis. A containing rect must contain the
+    /// query's variance value, so it provably appears in the query's bin — the
+    /// containment scan walks only that bin's rows (in table order) instead of
+    /// the whole table. The surface table is organized as variance slices, so
+    /// this axis discriminates best.
+    variance_bins: Vec<Vec<u32>>,
+}
+
+/// The variance-axis bin holding `value` (end bins absorb out-of-range).
+fn axis_bin(value: f32) -> usize {
+    let t = (f64::from(value) + 1.0) / 2.0 * AXIS_BIN_COUNT as f64;
+    (t.floor().max(0.0) as usize).min(AXIS_BIN_COUNT - 1)
 }
 
 impl BiomeClimateIndex {
@@ -228,16 +236,38 @@ impl BiomeClimateIndex {
     }
 
     fn from_indexed(rects: Vec<IndexedRect>) -> Self {
-        let root = (!rects.is_empty()).then(|| IndexNode::build(rects.clone(), 0));
+        let variance_axis = SURFACE_AXIS_COUNT - 1;
+        let mut variance_bins = vec![Vec::new(); AXIS_BIN_COUNT];
+        for (i, rect) in rects.iter().enumerate() {
+            let range = rect.rect.axes[variance_axis];
+            let (lo, hi) = (range.min.min(range.max), range.min.max(range.max));
+            // End bins are unbounded: a range touching an edge value lands in
+            // the same bin any out-of-range query value quantizes to.
+            for (bin, rows) in variance_bins.iter_mut().enumerate() {
+                let bin_lo = -1.0 + bin as f32 * (2.0 / AXIS_BIN_COUNT as f32);
+                let bin_hi = bin_lo + 2.0 / AXIS_BIN_COUNT as f32;
+                let bin_lo = if bin == 0 { f32::NEG_INFINITY } else { bin_lo };
+                let bin_hi = if bin == AXIS_BIN_COUNT - 1 {
+                    f32::INFINITY
+                } else {
+                    bin_hi
+                };
+                if lo < bin_hi && hi >= bin_lo {
+                    rows.push(i as u32);
+                }
+            }
+        }
         Self {
-            #[cfg(test)]
             rects,
-            root,
+            variance_bins,
         }
     }
 
-    pub(crate) fn default_surface() -> Self {
-        Self::from_rects(&super::surface_table::surface_biome_table())
+    pub(crate) fn default_surface() -> &'static Self {
+        static DEFAULT: std::sync::LazyLock<BiomeClimateIndex> = std::sync::LazyLock::new(|| {
+            BiomeClimateIndex::from_rects(&super::surface_table::surface_biome_table())
+        });
+        &DEFAULT
     }
 
     #[cfg(test)]
@@ -245,10 +275,36 @@ impl BiomeClimateIndex {
         self.rects.is_empty()
     }
 
+    /// Nearest-rect classification: lowest fitness distance, ties broken by
+    /// stable `(entry_order, order)` — i.e. table row order.
+    ///
+    /// The scan runs the rows IN ORDER, so the first exact containment
+    /// (`distance == 0`) is the final winner and returns immediately: a later
+    /// rect can at best tie at 0, and ties prefer the earlier row. The
+    /// surface table covers the whole climate space, so nearly every query
+    /// takes this early exit — a KD-tree over the rows was measurably SLOWER
+    /// here, because the heavily overlapping rows give most nodes
+    /// distance-0 bounds (no pruning) and the spatial visit order defeats
+    /// the order-tiebreak early exit. Byte-parity with the exhaustive scan
+    /// is pinned by `index_matches_bruteforce_for_surface_queries`.
     pub(crate) fn classify_surface(&self, climate: SurfaceClimate) -> Option<Biome> {
-        let root = self.root.as_ref()?;
+        // Containment pass over the query's variance bin only: any rect
+        // containing the query contains its variance value, so it is in this
+        // bin's list; the list preserves table order, making the first
+        // distance-0 hit the global tie-break winner.
+        let bin = &self.variance_bins[axis_bin(climate.axes[SURFACE_AXIS_COUNT - 1])];
+        for &i in bin {
+            let rect = &self.rects[i as usize];
+            if rect.rect.distance_squared(climate) == 0.0 {
+                return Some(rect.biome);
+            }
+        }
+        // No containing rect anywhere: exhaustive nearest scan (rare — the
+        // surface table covers the climate space nearly everywhere).
         let mut best = Candidate::none();
-        root.search(climate, &mut best);
+        for rect in &self.rects {
+            best.consider(rect, rect.rect.distance_squared(climate));
+        }
         best.biome
     }
 
@@ -268,113 +324,6 @@ struct IndexedRect {
     entry_order: usize,
     biome: Biome,
     rect: ClimateRect,
-}
-
-#[derive(Clone, Debug)]
-struct IndexNode {
-    bounds: ClimateBounds,
-    kind: IndexNodeKind,
-}
-
-#[derive(Clone, Debug)]
-enum IndexNodeKind {
-    Leaf(Vec<IndexedRect>),
-    Branch {
-        left: Box<IndexNode>,
-        right: Box<IndexNode>,
-    },
-}
-
-impl IndexNode {
-    fn build(mut rects: Vec<IndexedRect>, depth: usize) -> Self {
-        let bounds = ClimateBounds::from_rects(&rects);
-        if rects.len() <= LEAF_RECT_COUNT {
-            return Self {
-                bounds,
-                kind: IndexNodeKind::Leaf(rects),
-            };
-        }
-
-        let axis = bounds
-            .widest_surface_axis()
-            .unwrap_or(depth % SURFACE_AXIS_COUNT);
-        rects.sort_by(|a, b| {
-            a.rect
-                .center_on_axis(axis)
-                .total_cmp(&b.rect.center_on_axis(axis))
-                .then(a.order.cmp(&b.order))
-        });
-        let right = rects.split_off(rects.len() / 2);
-        Self {
-            bounds,
-            kind: IndexNodeKind::Branch {
-                left: Box::new(Self::build(rects, depth + 1)),
-                right: Box::new(Self::build(right, depth + 1)),
-            },
-        }
-    }
-
-    fn search(&self, climate: SurfaceClimate, best: &mut Candidate) {
-        if self.bounds.distance_squared(climate) > best.distance {
-            return;
-        }
-
-        match &self.kind {
-            IndexNodeKind::Leaf(rects) => {
-                for rect in rects {
-                    best.consider(rect, rect.rect.distance_squared(climate));
-                }
-            }
-            IndexNodeKind::Branch { left, right } => {
-                let left_distance = left.bounds.distance_squared(climate);
-                let right_distance = right.bounds.distance_squared(climate);
-                if left_distance <= right_distance {
-                    left.search(climate, best);
-                    right.search(climate, best);
-                } else {
-                    right.search(climate, best);
-                    left.search(climate, best);
-                }
-            }
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-struct ClimateBounds {
-    axes: [AxisRange; SURFACE_AXIS_COUNT],
-}
-
-impl ClimateBounds {
-    fn from_rects(rects: &[IndexedRect]) -> Self {
-        debug_assert!(!rects.is_empty());
-        let mut axes = rects[0].rect.axes;
-
-        for rect in &rects[1..] {
-            for (bounds, range) in axes.iter_mut().zip(rect.rect.axes) {
-                *bounds = union_range(*bounds, range);
-            }
-        }
-
-        Self { axes }
-    }
-
-    fn distance_squared(self, climate: SurfaceClimate) -> f64 {
-        let values = climate.axes();
-        self.axes
-            .into_iter()
-            .zip(values)
-            .map(|(range, value)| range.distance_squared(value))
-            .sum::<f64>()
-    }
-
-    fn widest_surface_axis(self) -> Option<usize> {
-        self.axes
-            .into_iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| range_width(*a).total_cmp(&range_width(*b)))
-            .map(|(index, _)| index)
-    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -474,13 +423,9 @@ impl<'a> ClimateSampler<'a> {
     }
 }
 
-fn union_range(a: AxisRange, b: AxisRange) -> AxisRange {
-    AxisRange::new(a.min.min(b.min), a.max.max(b.max))
-}
 
-fn range_width(range: AxisRange) -> f32 {
-    (range.max - range.min).abs()
-}
+
+
 
 fn squared(value: f64) -> f64 {
     value * value

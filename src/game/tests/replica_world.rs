@@ -48,16 +48,15 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     let mut game = floored_game_at(Vec3::new(8.5, 65.0, 8.5));
 
     // The first pumps stream the fixture into the replica. Sections ship only
-    // once the server's light bake lands (the light-final ship gate) and the
-    // bake runs on async workers — pump bounded until the floor arrives.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    // once the server's light bake lands (the light-final ship gate); with the
+    // inline test pool that completes inside the pump.
+    let deadline = std::time::Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
     while game.replica.chunk_block(8, 64, 8) != Block::Stone.id() {
         assert!(
             std::time::Instant::now() < deadline,
             "the server floor replicated"
         );
         frame(&mut game);
-        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     assert!(
         game.replica.loaded_section_count() > 0,
@@ -134,11 +133,10 @@ fn server_rebakes_replicate_as_light_data() {
     let torch = IVec3::new(6, 65, 6);
 
     // Wait for the lit floor section to ship.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
     while game.replica.chunk_block(8, 64, 8) != Block::Stone.id() {
         assert!(std::time::Instant::now() < deadline, "the floor replicated");
         frame(&mut game);
-        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     let block_at = |g: &super::common::TestGame| {
         g.replica
@@ -158,14 +156,13 @@ fn server_rebakes_replicate_as_light_data() {
     game.server
         .world
         .insert_torch(torch, crate::torch::TorchPlacement::Floor);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
     while block_at(&game) == 0 {
         assert!(
             std::time::Instant::now() < deadline,
             "the server's rebake reached the replica as LightData"
         );
         frame(&mut game);
-        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     assert!(
         game.replica

@@ -7,8 +7,8 @@ use crate::client::{
 };
 use crate::data::{
     CollisionShape, EffectStateData, GuiValue, ItemInfoData, ItemStackData, LightData,
-    MobAnimStateData, MobRidersData, MobSnapshot, MobTagValue, PlayerInputData, PlayerListEntry,
-    PlayerSnapshot, RuntimeSide,
+    MobAnimStateData, MobRidersData, MobSnapshot, MobTagLookup, MobTagValue, PlayerInputData,
+    PlayerListEntry, PlayerSnapshot, RuntimeSide,
 };
 use crate::events::EventKind;
 use crate::ids::{BlockId, ItemId, MobId, PlayerId};
@@ -319,13 +319,16 @@ pub enum HostCall {
         key: String,
     },
     /// Per-mob tag map: typed key/value pairs attached to a live mob instance.
-    /// `MobTag(None)` when the key is absent OR there is no such live mob.
-    /// → [`HostRet::MobTag`].
+    /// → [`HostRet::MobTag`] carrying a [`MobTagLookup`]:
+    /// [`MissingMob`](MobTagLookup::MissingMob) for a dead/absent mob,
+    /// [`Absent`](MobTagLookup::Absent) for a live mob not carrying the key.
     MobTagGet {
         mob_id: u64,
         key: String,
     },
-    /// `false` = no such live mob. → [`HostRet::Bool`].
+    /// `false` = no such live mob, or the mob's tag map is full (32 entries)
+    /// and `key` would be a NEW one — replacing an existing key always
+    /// succeeds. → [`HostRet::Bool`].
     MobTagSet {
         mob_id: u64,
         key: String,
@@ -1022,6 +1025,23 @@ pub enum HostCall {
     CollisionShapeAt {
         pos: [i32; 3],
     },
+
+    // --- appended after the frozen set above (wire evolution is APPEND-ONLY —
+    // postcard numbers variants by declaration index) ------------------------
+    /// The WHOLE tag map of the live mob `mob_id`, sorted by key — one call
+    /// instead of one [`HostCall::MobTagGet`] per key. `MobTags(None)` = no
+    /// such live mob. → [`HostRet::MobTags`].
+    MobTagsGet {
+        mob_id: u64,
+    },
+    /// Every live mob carrying `key` (any value); with `value: Some(v)` only
+    /// those whose stored value EQUALS `v` (exact match — a `F64` NaN matches
+    /// nothing). Resolved host-side against the live set, dead mobs excluded
+    /// exactly like [`HostCall::MobsInRadius`]. → [`HostRet::Mobs`].
+    MobsWithTag {
+        key: String,
+        value: Option<MobTagValue>,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -1041,14 +1061,15 @@ pub enum HostRet {
     /// [`HostCall::LightAt`], all on the 6-bit `0..=63` scale. `None` =
     /// section unloaded / streamed content not final (never fabricated).
     Light(Option<LightData>),
-    /// [`HostCall::MobsInRadius`].
+    /// [`HostCall::MobsInRadius`] / [`HostCall::MobsWithTag`].
     Mobs(Vec<MobSnapshot>),
     /// [`HostCall::PlayerState`].
     Player(PlayerSnapshot),
     /// The KV gets: `None` = key absent (or target unloaded/missing).
     Bytes(#[serde(with = "serde_bytes")] Option<Vec<u8>>),
-    /// [`HostCall::MobTagGet`]: `None` = key absent (or target unloaded/missing).
-    MobTag(Option<MobTagValue>),
+    /// [`HostCall::MobTagGet`]: the lookup outcome — a missing mob is told
+    /// apart from an absent key (see [`MobTagLookup`]).
+    MobTag(MobTagLookup),
     /// [`HostCall::GuiStateGet`]: `None` = key absent.
     GuiValue(Option<GuiValue>),
     /// [`HostCall::ContainerGet`]: every slot in index order; `None` = no
@@ -1105,4 +1126,7 @@ pub enum HostRet {
     /// [`HostCall::CollisionShapeAt`]: `None` = section unloaded / streamed
     /// content not final.
     CollisionShape(Option<CollisionShape>),
+    /// [`HostCall::MobTagsGet`]: the mob's full tag map, sorted by key;
+    /// `None` = no such live mob.
+    MobTags(Option<Vec<(String, MobTagValue)>>),
 }

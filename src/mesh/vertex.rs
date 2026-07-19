@@ -1,21 +1,14 @@
 /// Per-face directional shade factors, mirrored in `block.wgsl`.
 pub const SHADES: [f32; 4] = [1.00, 0.85, 0.75, 0.55];
 
-/// GPU vertex: 24 bytes. `pos` stays full `f32` (it keeps the water surface Y
-/// baked on the CPU, and dynamic bakes — item entities, chests, doors — write
-/// absolute world positions). `tint` is LINEAR RGB packed unorm8 ([`pack_tint`];
-/// the GPU reads it as `Unorm8x4` — linear values in a linear-interpreted
-/// format, so no sRGB OETF level shift; 1/255 steps on a multiplier that feeds
-/// an 8-bit output). `packed` folds the uv tile + corner + shade index + AO
-/// level into one word; the vertex shader reconstructs uv (by SELECTING from a
-/// CPU-uploaded `tile_uv()` table -- never recomputing) and light (from the
-/// `SHADES` literal times an AO lookup). The uv/shade decode is bit-identical to
-/// the old inline values; `light` additionally folds in the per-vertex AO term.
+/// GPU vertex for dynamic bakes (item entities, chests, doors, break overlay):
+/// 24 bytes with absolute world `pos` as `f32`. Terrain packed columns use
+/// [`TerrainVertex`] instead (column-local fixed-point `pos`).
 ///
-/// Remaining pack lever, NOT done: quantizing `pos` to section-local fixed
-/// point would reach ~16 bytes, but needs a per-column origin fed to the packed
-/// column draws (instance-step buffer or per-draw uniform) AND a split format
-/// for the dynamic bakes that share this layout with absolute positions.
+/// `tint` is LINEAR RGB packed unorm8 ([`pack_tint`]; the GPU reads it as
+/// `Unorm8x4` — linear values in a linear-interpreted format, so no sRGB OETF
+/// level shift). `packed` / `packed2` match the terrain layout so the shared
+/// block shader body can shade both.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
@@ -30,6 +23,85 @@ pub struct Vertex {
     /// Second packed word: block light plus the optional cell-local UV. See
     /// [`pack_vertex2`] and [`pack_cell_uv`], the owners of its bit layout.
     pub packed2: u32,
+}
+
+/// Fixed-point scale for [`TerrainVertex::pos`]: one unit = 1/64 block.
+/// Water surface Y and greedy T-junction overlaps stay sub-block accurate.
+pub const TERRAIN_POS_SCALE: f32 = 64.0;
+
+/// Packed-column terrain vertex: **20 bytes**. `pos` is column-local XZ + world Y
+/// in [`TERRAIN_POS_SCALE`] fixed point (`i16`); the draw binds the column's
+/// world XZ origin as an instance-step attribute and the terrain VS reconstructs
+/// absolute world position. CPU meshes still use [`Vertex`]; conversion happens
+/// at upload / patch time.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct TerrainVertex {
+    pub pos: [i16; 3],
+    pub _pad: i16,
+    pub tint: u32,
+    pub packed: u32,
+    pub packed2: u32,
+}
+
+impl TerrainVertex {
+    #[inline]
+    pub fn from_world(v: &Vertex, col_ox: i32, col_oz: i32) -> Self {
+        let q = |world: f32, origin: f32| {
+            ((world - origin) * TERRAIN_POS_SCALE)
+                .round()
+                .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+        };
+        Self {
+            pos: [
+                q(v.pos[0], col_ox as f32),
+                q(v.pos[1], 0.0),
+                q(v.pos[2], col_oz as f32),
+            ],
+            _pad: 0,
+            tint: v.tint,
+            packed: v.packed,
+            packed2: v.packed2,
+        }
+    }
+
+    /// Inverse of [`from_world`] for tests (round-trip within 1/64 block).
+    #[cfg(test)]
+    pub fn to_world(&self, col_ox: i32, col_oz: i32) -> [f32; 3] {
+        [
+            self.pos[0] as f32 / TERRAIN_POS_SCALE + col_ox as f32,
+            self.pos[1] as f32 / TERRAIN_POS_SCALE,
+            self.pos[2] as f32 / TERRAIN_POS_SCALE + col_oz as f32,
+        ]
+    }
+}
+
+#[cfg(test)]
+mod terrain_vertex_tests {
+    use super::*;
+
+    #[test]
+    fn terrain_pos_quantizes_within_half_unit() {
+        let v = Vertex {
+            pos: [16.0 + 3.125, 64.5, -32.0 + 0.0625],
+            tint: 0xFF00_00FF,
+            packed: 1,
+            packed2: 2,
+        };
+        let t = TerrainVertex::from_world(&v, 16, -32);
+        let back = t.to_world(16, -32);
+        for i in 0..3 {
+            assert!(
+                (back[i] - v.pos[i]).abs() <= 0.5 / TERRAIN_POS_SCALE + f32::EPSILON,
+                "axis {i}: {back:?} vs {:?}",
+                v.pos
+            );
+        }
+        assert_eq!(t.tint, v.tint);
+        assert_eq!(t.packed, v.packed);
+        assert_eq!(t.packed2, v.packed2);
+        assert_eq!(std::mem::size_of::<TerrainVertex>(), 20);
+    }
 }
 
 /// Pack a linear RGB tint (each channel `0..=1` — warm/biome tints never

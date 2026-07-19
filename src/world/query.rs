@@ -15,11 +15,18 @@ impl World {
     /// Is any terrain CPU light/mesh work still queued or in flight? Tooling uses this
     /// to detect when the background pipeline has settled; renderer upload dirtiness is
     /// tracked separately because headless profilers have no renderer to clear it.
+    ///
+    /// `light_deferred` members count only while a recheck is outstanding: a
+    /// deferred section with no queued recheck is PARKED by design (sealed /
+    /// unsettled-forever neighbourhood) and only an external event — target
+    /// move, topology change, neighbour landing — can wake it, so it is not
+    /// pending work.
     pub fn has_dirty_meshes(&self) -> bool {
         !self.dirty_meshes.is_empty()
             || (self.role != super::store::WorldRole::ServerHeadless && self.vis_dirty)
             || !self.light_blocked_meshes.is_empty()
-            || !self.light_deferred.is_empty()
+            || self.deferred_recheck_needed
+            || !self.deferred_rechecks.is_empty()
             || self.light_bakes.has_pending()
             || self.prediction_terrain.has_pending()
             || self.mesh_jobs_in_flight > 0

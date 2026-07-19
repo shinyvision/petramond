@@ -265,6 +265,10 @@ fn samples() -> Samples {
     s.pin("HostCall::ResolveMob", &HostCall::ResolveMob { key: "m:k".into() });
     s.pin("HostCall::MobNames", &HostCall::MobNames { mobs: vec![MobId(1), MobId(9)] });
     s.pin("HostCall::CollisionShapeAt", &HostCall::CollisionShapeAt { pos: [1, 2, 3] });
+    s.pin("HostCall::MobTagsGet", &HostCall::MobTagsGet { mob_id: 7 });
+    s.pin("HostCall::MobsWithTag", &HostCall::MobsWithTag {
+        key: "m:k".into(), value: Some(MobTagValue::I64(-3)),
+    });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -283,7 +287,7 @@ fn samples() -> Samples {
         health: 20, on_ground: true, spectator: false,
     }));
     s.pin("HostRet::Bytes", &HostRet::Bytes(Some(vec![1])));
-    s.pin("HostRet::MobTag", &HostRet::MobTag(Some(MobTagValue::Bool(true))));
+    s.pin("HostRet::MobTag", &HostRet::MobTag(MobTagLookup::Value(MobTagValue::Bool(true))));
     s.pin("HostRet::GuiValue", &HostRet::GuiValue(Some(GuiValue::F32(1.0))));
     s.pin("HostRet::ContainerSlots", &HostRet::ContainerSlots(Some(vec![
         Some(ItemStackData { item: "m:i".into(), count: 1 }), None,
@@ -339,6 +343,9 @@ fn samples() -> Samples {
     s.pin("HostRet::Names", &HostRet::Names(vec![None, Some("m:b".into())]));
     s.pin("HostRet::MobKind", &HostRet::MobKind(Some(MobId(1))));
     s.pin("HostRet::CollisionShape", &HostRet::CollisionShape(Some(CollisionShape::Full)));
+    s.pin("HostRet::MobTags", &HostRet::MobTags(Some(vec![
+        ("m:k".into(), MobTagValue::Bool(true)),
+    ])));
 
     // --- GuestCall: every variant, declaration order -------------------------
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
@@ -520,6 +527,11 @@ fn samples() -> Samples {
         MobTagValue::F64(1.5),
         MobTagValue::Str("s".into()),
     ]);
+    s.pin("MobTagLookup::*", &vec![
+        MobTagLookup::MissingMob,
+        MobTagLookup::Absent,
+        MobTagLookup::Value(MobTagValue::I64(-1)),
+    ]);
     s.pin("RuntimeSide::*", &vec![RuntimeSide::Server, RuntimeSide::Worldgen, RuntimeSide::Client]);
     s.pin("ClientOverlayAnchor::*", &vec![
         ClientOverlayAnchor::TopLeft, ClientOverlayAnchor::TopRight,
@@ -665,6 +677,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::ResolveMob", "6b036d3a6b"),
     ("HostCall::MobNames", "6c020109"),
     ("HostCall::CollisionShapeAt", "6d020406"),
+    ("HostCall::MobTagsGet", "6e07"),
+    ("HostCall::MobsWithTag", "6f036d3a6b010105"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -675,7 +689,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Mobs", "070101036d3a6b020000803f000000400000404000008040050000003f0000803f0000000000000040"),
     ("HostRet::Player", "080000803f00000040000040400000000000000000000000000000003f0000803e280100"),
     ("HostRet::Bytes", "09010101"),
-    ("HostRet::MobTag", "0a010001"),
+    ("HostRet::MobTag", "0a020001"),
     ("HostRet::GuiValue", "0b01000000803f"),
     ("HostRet::ContainerSlots", "0c010201036d3a690100"),
     ("HostRet::ItemInfo", "0d014000010174014e010201077069636b61786501013c01036d3a6564010b6275636b65745f66696c6c"),
@@ -700,6 +714,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Names", "20020001036d3a62"),
     ("HostRet::MobKind", "210101"),
     ("HostRet::CollisionShape", "220102"),
+    ("HostRet::MobTags", "230101036d3a6b0001"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
@@ -751,6 +766,7 @@ const PINS: &[(&str, &str)] = &[
     ("MobDamageSound::*", "020001"),
     ("GuiValue::*", "03000000803f0101020173"),
     ("MobTagValue::*", "040001010102000000000000f83f030173"),
+    ("MobTagLookup::*", "030001020101"),
     ("RuntimeSide::*", "03000102"),
     ("ClientOverlayAnchor::*", "0400010203"),
     ("ClientPointerPhase::*", "03000102"),

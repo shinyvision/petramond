@@ -286,8 +286,9 @@ fn multiplayer_pause_menu_does_not_freeze_the_client() {
 /// disconnect leaving cleanly.
 #[test]
 fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
-    let (server, _bootstrap) = crate::game::session::build_session("", 7, 1);
+    let (server, _bootstrap) = crate::game::session::build_session_inline("", 7, 1);
     let mut host = ServerHandle::spawn(server);
+    host.unthrottle_for_test();
     let port = host.open_to_lan(0).expect("bind an ephemeral LAN port");
 
     let mut app = shell_app();
@@ -298,7 +299,7 @@ fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
     app.begin_connect();
     assert!(app.connect.connecting(), "the worker attempt is running");
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
     loop {
         app.poll_connect_worker();
         if app.screen == AppScreen::Game {
@@ -311,7 +312,7 @@ fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
             std::time::Instant::now() < deadline,
             "connect did not complete in time"
         );
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
     assert!(
         app.game.as_ref().is_some_and(|g| g.is_remote()),

@@ -48,9 +48,7 @@ impl World {
             let (ox, oy, oz) = sp.origin_world();
             let has_water = section.has_water();
             let has_air = section.has_air();
-            let has_flowing = section
-                .water_slice()
-                .is_some_and(|metas| metas.iter().any(|&m| m != 0));
+            let has_flowing = section.has_flowing_water();
 
             if has_water && (has_air || has_flowing) {
                 let blocks = section.blocks_slice();
@@ -170,7 +168,7 @@ impl World {
                             continue;
                         };
                         let Some(metas) = ns.water_slice() else {
-                            continue; // all sources: nothing mid-flow to re-arm
+                            continue; // no mid-flow cells: nothing to re-arm
                         };
                         let nblocks = ns.blocks_slice();
                         let (nox, noy, noz) = npos.origin_world();

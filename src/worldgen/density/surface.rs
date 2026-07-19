@@ -14,7 +14,8 @@ use super::lattice::{DensityLattice, DensityLatticeBounds, DensityLatticeCellSiz
 use super::terrain::{channels, TerrainDensityGraph, TerrainDensitySpec};
 
 use crate::worldgen::biome::climate::{
-    BiomeClimateIndex, ClimateAxis, ClimateSampleCell, ClimateSampler,
+    BiomeClimateIndex, ClimateAxis, ClimateSampleCell, ClimateSampler, CLIMATE_SAMPLE_CELL_X,
+    CLIMATE_SAMPLE_CELL_Z,
 };
 use crate::worldgen::biome::spec;
 use crate::worldgen::biome::surface_table::FROZEN_TEMPERATURE_MAX;
@@ -55,7 +56,7 @@ const SEA_ICE_EDGE_PERIOD: f32 = 24.0;
 pub(crate) struct SurfaceDensitySystem {
     seed: u32,
     density: TerrainDensityGraph,
-    climate: BiomeClimateIndex,
+    climate: &'static BiomeClimateIndex,
     surface: SurfaceSystem,
 }
 
@@ -385,6 +386,11 @@ impl SurfaceDensitySystem {
     /// `ClimateSampleCell`: every column in a cell, and every coast-scan neighbour
     /// that lands in it, reuses one sample+classify instead of recomputing. Output
     /// stays a pure function of `(seed, cell)`, independent of call order.
+    #[cfg(test)]
+    pub(crate) fn climate_cells_for_test(&self) -> ClimateCellCache<'_> {
+        self.climate_cells()
+    }
+
     fn climate_cells(&self) -> ClimateCellCache<'_> {
         ClimateCellCache::new(
             ClimateSampler::new(self.density.graph()),
@@ -468,21 +474,35 @@ impl SurfaceDensitySystem {
     }
 
     fn near_ocean_climate(&self, cells: &mut ClimateCellCache<'_>, wx: i32, wz: i32) -> bool {
-        for dz in (-BEACH_SCAN_RADIUS..=BEACH_SCAN_RADIUS).step_by(BEACH_SCAN_STEP as usize) {
-            for dx in (-BEACH_SCAN_RADIUS..=BEACH_SCAN_RADIUS).step_by(BEACH_SCAN_STEP as usize) {
-                if dx == 0 && dz == 0 {
-                    continue;
-                }
-                let dist2 = dx * dx + dz * dz;
-                if dist2 > BEACH_SCAN_RADIUS * BEACH_SCAN_RADIUS {
-                    continue;
-                }
-                if is_ocean_biome(cells.cell_base(ClimateSampleCell::surface(wx + dx, wz + dz))) {
-                    return true;
+        // Every probe offset is a multiple of the 4-block climate cell size, so
+        // `surface(wx+dx, wz+dz)` resolves to `query cell + offset/cell` — the
+        // scan's answer is exactly a function of the query's climate cell, and
+        // the cache memoizes it per cell (every column of a cell, and the whole
+        // shoreline band revisiting it, reuses one scan).
+        const {
+            assert!(BEACH_SCAN_STEP % CLIMATE_SAMPLE_CELL_X == 0);
+            assert!(BEACH_SCAN_RADIUS % CLIMATE_SAMPLE_CELL_X == 0);
+            assert!(CLIMATE_SAMPLE_CELL_X == CLIMATE_SAMPLE_CELL_Z);
+        }
+        cells.near_ocean_memo(wx, wz, |cells, wx, wz| {
+            for dz in (-BEACH_SCAN_RADIUS..=BEACH_SCAN_RADIUS).step_by(BEACH_SCAN_STEP as usize) {
+                for dx in (-BEACH_SCAN_RADIUS..=BEACH_SCAN_RADIUS).step_by(BEACH_SCAN_STEP as usize)
+                {
+                    if dx == 0 && dz == 0 {
+                        continue;
+                    }
+                    let dist2 = dx * dx + dz * dz;
+                    if dist2 > BEACH_SCAN_RADIUS * BEACH_SCAN_RADIUS {
+                        continue;
+                    }
+                    if is_ocean_biome(cells.cell_base(ClimateSampleCell::surface(wx + dx, wz + dz)))
+                    {
+                        return true;
+                    }
                 }
             }
-        }
-        false
+            false
+        })
     }
 
     fn master_density_lattice(&self, bounds: DensityLatticeBounds) -> DensityLattice {

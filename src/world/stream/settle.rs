@@ -51,11 +51,15 @@ impl World {
     }
 
     pub(super) fn queue_deferred_rechecks_around_column(&mut self, pos: ChunkPos) {
+        // Only loaded sections can be in `light_deferred`; phantoms across the
+        // full vertical range just churn the recheck set and die in the filter.
         for cz in pos.cz - 1..=pos.cz + 1 {
             for cx in pos.cx - 1..=pos.cx + 1 {
-                for cy in Self::column_section_range() {
+                let cp = ChunkPos::new(cx, cz);
+                let bits = self.section_column_cys.get(&cp).copied().unwrap_or(0);
+                Self::for_each_column_cy(bits, |cy| {
                     self.deferred_rechecks.insert(SectionPos::new(cx, cy, cz));
-                }
+                });
             }
         }
     }

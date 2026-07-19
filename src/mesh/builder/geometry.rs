@@ -403,8 +403,23 @@ pub(super) fn section_geometry(
                 let base_y = wy as f32;
 
                 let water_surface = is_water.then(|| {
-                    let full = water_fills_cell(wx, wy, wz);
-                    WaterSurface::new(wx, wy, wz, full, &block_at, &fluid_at, &water_still_at)
+                    if let Some(pad) = pad {
+                        // Pad-local samples: ±1 neighbours stay inside SECTION_PAD.
+                        let (plx, ply, plz) = (lx as i32, ly as i32, lz as i32);
+                        let full = pad.water_fills_local(plx, ply, plz);
+                        let block_l =
+                            |nwx, nwy, nwz| pad.block_local(plx + nwx - wx, ply + nwy - wy, plz + nwz - wz);
+                        let fluid_l = |nwx, nwy, nwz| {
+                            pad.fluid_height_local(plx + nwx - wx, ply + nwy - wy, plz + nwz - wz)
+                        };
+                        let still_l = |nwx, nwy, nwz| {
+                            pad.water_still_local(plx + nwx - wx, ply + nwy - wy, plz + nwz - wz)
+                        };
+                        WaterSurface::new(wx, wy, wz, full, &block_l, &fluid_l, &still_l)
+                    } else {
+                        let full = water_fills_cell(wx, wy, wz);
+                        WaterSurface::new(wx, wy, wz, full, &block_at, &fluid_at, &water_still_at)
+                    }
                 });
 
                 if let (Some(pad), Some(exposed)) = (pad, exposed_masks.as_ref()) {
@@ -561,7 +576,15 @@ pub(super) fn section_geometry(
                     let mut water_exposed_step = false;
                     if let Some(ws) = &water_surface {
                         if nb == Block::Water {
-                            let nb_full = water_fills_cell(nwx, nwy, nwz);
+                            let nb_full = if let Some(pad) = pad {
+                                pad.water_fills_local(
+                                    lx as i32 + dx,
+                                    ly as i32 + dy,
+                                    lz as i32 + dz,
+                                )
+                            } else {
+                                water_fills_cell(nwx, nwy, nwz)
+                            };
                             match ws.side_against_water(is_side, nb_full) {
                                 SideVsWater::ExposedStep => water_exposed_step = true,
                                 SideVsWater::Cull => continue,
@@ -577,7 +600,12 @@ pub(super) fn section_geometry(
                             // step walls of the recessed pocket under a block
                             // sitting in the sea must not stream. Flowing and
                             // falling cells keep the animated flow sides.
-                            _ if water_still_at(wx, wy, wz) => crate::atlas::engine().water_still,
+                            _ if pad
+                                .map(|p| p.water_still_local(lx as i32, ly as i32, lz as i32))
+                                .unwrap_or_else(|| water_still_at(wx, wy, wz)) =>
+                            {
+                                crate::atlas::engine().water_still
+                            }
                             _ => crate::atlas::engine().water_flow,
                         };
                         (t, None, tint_water(ci))

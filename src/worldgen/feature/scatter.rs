@@ -24,6 +24,7 @@ use crate::mathh::IVec3;
 use crate::section::Section;
 
 use super::super::rng::FeatureRng;
+use super::sink::SinkTarget;
 use super::{ChunkSink, FeatureCtx, SectionSink};
 
 /// How a vein materialises its cells around the rolled origin.
@@ -51,6 +52,36 @@ struct ScatterConfig {
     y_min: i32,
     y_max: i32,
     ramp: Option<DepthRamp>,
+}
+
+impl ScatterConfig {
+    /// Conservative `(horizontal, vertical)` reach of one vein from its rolled
+    /// origin, in cells: every write lands within this Chebyshev box. Blob radius
+    /// is `base_r × (0.85 + 0.4·f)` with `f < 1`, so `ceil(base_r × 1.25)` bounds
+    /// `ceil(r)` (f32 multiply is monotone; an exact-integer bound still holds
+    /// because `r` is strictly below it). Grid3 writes one 3×3 layer.
+    fn reach(&self) -> (i32, i32) {
+        match self.shape {
+            VeinShape::Blob { size } => {
+                let r = (blob_base_radius(size) * 1.25).ceil() as i32;
+                (r, r)
+            }
+            VeinShape::Grid3 { .. } => (1, 0),
+        }
+    }
+}
+
+/// The widest horizontal reach across [`CONFIGS`] — the column-level reject bound.
+fn max_config_reach() -> i32 {
+    static MAX: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    *MAX.get_or_init(|| CONFIGS.iter().map(|c| c.reach().0).max().unwrap_or(0))
+}
+
+/// Radius for a blob of `size` cells: `r = cbrt(3·size / 4π)` — shared by the
+/// materialiser and the reach bound so they can never drift apart.
+#[inline]
+fn blob_base_radius(size: i32) -> f32 {
+    ((size as f32) * 3.0 / (4.0 * std::f32::consts::PI)).cbrt()
 }
 
 const fn blob(
@@ -127,9 +158,10 @@ static CONFIGS: &[ScatterConfig] = &[
 /// Place all underground veins for `chunk`. Pure function of `(seed, cx, cz)`.
 pub fn place_underground(chunk: &mut Chunk, seed: u32) {
     let (ccx, ccz) = (chunk.cx, chunk.cz);
+    let clip = clip_box_of(chunk.world_box());
     let mut sink = ChunkSink::new(chunk);
     let mut ctx = FeatureCtx::new(&mut sink);
-    place_underground_into(&mut ctx, ccx, ccz, seed);
+    place_underground_into(&mut ctx, clip, ccx, ccz, seed);
 }
 
 /// Cubic per-section scatter: run the SAME 3×3-column vein loop into one 16³
@@ -140,25 +172,71 @@ pub fn place_underground(chunk: &mut Chunk, seed: u32) {
 /// whole-column pass for this section's slab.
 pub fn place_underground_section(section: &mut Section, seed: u32) {
     let (ccx, ccz) = (section.cx, section.cz);
+    let clip = clip_box_of(section.world_box());
     let mut sink = SectionSink::new(section);
     let mut ctx = FeatureCtx::new(&mut sink);
-    place_underground_into(&mut ctx, ccx, ccz, seed);
+    place_underground_into(&mut ctx, clip, ccx, ccz, seed);
+}
+
+/// Inclusive world-coordinate bounds of a sink target's writable footprint.
+fn clip_box_of((origin, size): (IVec3, IVec3)) -> (IVec3, IVec3) {
+    (origin, origin + size - IVec3::splat(1))
 }
 
 /// The shared vein loop: regenerate every vein of the 3×3 column neighbourhood around
 /// `(ccx,ccz)` into `ctx`, whose sink clips to the caller's target (chunk or section).
-fn place_underground_into(ctx: &mut FeatureCtx, ccx: i32, ccz: i32, seed: u32) {
+///
+/// `clip` is that target's inclusive writable box: a vein whose conservative reach
+/// box around its rolled origin cannot intersect it is skipped WITHOUT
+/// materialising its cells. Byte-identical: every vein derives from its own
+/// positional RNG (`(seed, salt, ncx, i, ncz)`), so skipping one vein's remaining
+/// draws can never shift another vein's, and a skipped vein's whole write set was
+/// outside the sink's clip anyway. This is what makes the 16-tall section path
+/// cheap — most of the 3×3 neighbourhood's full-depth veins miss one section's slab.
+fn place_underground_into(
+    ctx: &mut FeatureCtx,
+    clip: (IVec3, IVec3),
+    ccx: i32,
+    ccz: i32,
+    seed: u32,
+) {
+    let (clip_min, clip_max) = clip;
     // 3x3 neighbourhood so border-straddling veins appear from both sides.
     for dcz in -1..=1 {
         for dcx in -1..=1 {
             let ncx = ccx + dcx;
             let ncz = ccz + dcz;
+            // Column-level reject: no origin in this 16×16 column can reach the
+            // clip box horizontally (origins span the column; reach ≤ the widest
+            // vein's radius).
+            let max_r = max_config_reach();
+            if (ncx * 16 + 15 + max_r) < clip_min.x
+                || (ncx * 16 - max_r) > clip_max.x
+                || (ncz * 16 + 15 + max_r) < clip_min.z
+                || (ncz * 16 - max_r) > clip_max.z
+            {
+                continue;
+            }
             for cfg in CONFIGS {
+                let (rxz, ry) = cfg.reach();
+                // Band-level reject: the whole config's Y band is out of reach.
+                if cfg.y_max + ry < clip_min.y || cfg.y_min - ry > clip_max.y {
+                    continue;
+                }
                 for i in 0..cfg.count {
                     let mut rng = FeatureRng::positional(seed, cfg.salt, ncx, i, ncz);
                     let ox = ncx * 16 + rng.next_i32(0, 15);
                     let oz = ncz * 16 + rng.next_i32(0, 15);
                     let oy = rng.next_i32(cfg.y_min, cfg.y_max);
+                    if oy + ry < clip_min.y
+                        || oy - ry > clip_max.y
+                        || ox + rxz < clip_min.x
+                        || ox - rxz > clip_max.x
+                        || oz + rxz < clip_min.z
+                        || oz - rxz > clip_max.z
+                    {
+                        continue;
+                    }
                     if let Some(ramp) = &cfg.ramp {
                         // Deeper = likelier: quadratic ease toward the band floor.
                         let t = (cfg.y_max - oy) as f32 / (cfg.y_max - cfg.y_min) as f32;
@@ -205,9 +283,7 @@ fn place_blob_vein(
     block: Block,
     rng: &mut FeatureRng,
 ) {
-    // radius for a sphere of `size` cells: r = cbrt(3*size / 4pi).
-    let base_r = ((size as f32) * 3.0 / (4.0 * std::f32::consts::PI)).cbrt();
-    let r = (base_r * (0.85 + 0.4 * rng.next_f32())).max(0.7);
+    let r = (blob_base_radius(size) * (0.85 + 0.4 * rng.next_f32())).max(0.7);
     let ri = r.ceil() as i32;
     let r2 = r * r;
     for dy in -ri..=ri {

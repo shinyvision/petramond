@@ -330,9 +330,18 @@ impl Section {
         self.dirty = true;
     }
 
-    /// Bulk water-flow metadata for saving (`None` if never held flowing water).
+    /// Bulk water-flow metadata for saving (`None` when nothing is mid-flow —
+    /// the buffer is dropped once the last cell settles).
     pub fn water_slice(&self) -> Option<&[u8]> {
         self.states.water_slice()
+    }
+
+    /// Whether any water cell is mid-flow (nonzero flow meta). O(1) from the
+    /// states counter; the streamed-water kick uses it to skip settled sections
+    /// without scanning the 4 KiB meta buffer.
+    #[inline]
+    pub fn has_flowing_water(&self) -> bool {
+        self.states.has_flowing()
     }
 
     // --- Light ------------------------------------------------------------------

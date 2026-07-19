@@ -39,7 +39,10 @@ impl World {
     /// The vertical section-`cy` window around the player, clamped to the world range.
     /// `slack` widens it (used by unload for hysteresis so a section doesn't thrash on
     /// the boundary).
-    pub(super) fn vertical_window(center_cy: i32, slack: i32) -> std::ops::RangeInclusive<i32> {
+    pub(in crate::world) fn vertical_window(
+        center_cy: i32,
+        slack: i32,
+    ) -> std::ops::RangeInclusive<i32> {
         let center_cy = center_cy.clamp(SECTION_MIN_CY, SECTION_MAX_CY);
         let r = VERTICAL_LOAD_RADIUS + slack;
         (center_cy - r).max(SECTION_MIN_CY)..=(center_cy + r).min(SECTION_MAX_CY)

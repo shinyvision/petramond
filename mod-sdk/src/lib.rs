@@ -26,6 +26,7 @@ mod kv;
 mod player;
 mod registry;
 mod sounds;
+mod tags;
 mod world;
 mod worldgen;
 
@@ -42,6 +43,7 @@ pub use kv::*;
 pub use player::*;
 pub use registry::*;
 pub use sounds::*;
+pub use tags::*;
 pub use world::*;
 pub use worldgen::*;
 

@@ -9,11 +9,18 @@ impl World {
         self.mesh_columns.contains(&pos)
     }
 
+    /// Iterate the meshed section `cy` values recorded for a column bitset.
+    #[inline]
+    pub(in crate::world) fn for_each_mesh_cy(bits: u32, f: impl FnMut(i32)) {
+        Self::for_each_column_cy(bits, f);
+    }
+
     pub(in crate::world) fn install_mesh(&mut self, pos: SectionPos, mesh: ChunkMesh) {
         self.meshes.insert(pos, mesh);
         self.repack_forced.remove(&pos);
         let column = pos.chunk_pos();
         self.mesh_columns.insert(column);
+        *self.mesh_column_cys.entry(column).or_insert(0) |= Self::column_cy_bit(pos.cy);
         self.bump_mesh_upload_revision(column);
         self.mesh_upload_dirty_columns.insert(column);
     }
@@ -23,7 +30,7 @@ impl World {
         self.repack_forced.remove(&pos);
         if removed {
             let column = pos.chunk_pos();
-            self.refresh_mesh_column_presence(column);
+            self.clear_mesh_cy(column, pos.cy);
             self.bump_mesh_upload_revision(column);
         }
         removed
@@ -34,15 +41,21 @@ impl World {
         *revision = revision.wrapping_add(1).max(1);
     }
 
-    fn refresh_mesh_column_presence(&mut self, pos: ChunkPos) {
-        let has_mesh = Self::column_section_range().any(|cy| {
-            self.meshes
-                .contains_key(&SectionPos::new(pos.cx, cy, pos.cz))
-        });
-        if has_mesh {
-            self.mesh_columns.insert(pos);
-        } else {
+    fn clear_mesh_cy(&mut self, pos: ChunkPos, cy: i32) {
+        let Some(bits) = self.mesh_column_cys.get_mut(&pos) else {
+            self.mesh_columns.remove(&pos);
+            return;
+        };
+        *bits &= !Self::column_cy_bit(cy);
+        if *bits == 0 {
+            self.mesh_column_cys.remove(&pos);
             self.mesh_columns.remove(&pos);
         }
+    }
+
+    /// Drop the column's mesh-index entries (meshes themselves already removed).
+    pub(in crate::world) fn clear_mesh_column_index(&mut self, pos: ChunkPos) {
+        self.mesh_columns.remove(&pos);
+        self.mesh_column_cys.remove(&pos);
     }
 }

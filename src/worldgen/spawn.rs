@@ -32,7 +32,8 @@ use crate::chunk::SEA_LEVEL;
 use crate::mathh::IVec3;
 
 use super::density::surface::SurfaceDensitySystem;
-use super::region::RegionCells;
+use super::feature::cached_feature_region;
+use super::noise::height::CaveField;
 
 /// Radius (blocks) of the disk a spawn is drawn from, around the origin (or the
 /// nearest coast when the origin is open ocean).
@@ -86,18 +87,34 @@ fn find_spawn_rng(world: &SpawnWorld, rng_seed: u64) -> IVec3 {
 }
 
 struct SpawnWorld {
+    seed: u32,
     surface: SurfaceDensitySystem,
+    caves: CaveField,
 }
 
 impl SpawnWorld {
     fn new(seed: u32) -> Self {
         Self {
+            seed,
             surface: SurfaceDensitySystem::new(seed),
+            caves: CaveField::new(seed),
         }
     }
 
-    fn region(&self, x0: i32, z0: i32, w: usize, h: usize) -> RegionCells {
-        self.surface.region(x0, z0, w, h)
+    /// RAW (pre-cave) 16×16 surfaces for a chunk, via the process-wide feature
+    /// tile memo — same bytes as `surface.region`, but warms tiles the join
+    /// gen path reuses immediately after.
+    fn raw_chunk_surfaces(&self, cx: i32, cz: i32) -> Vec<i32> {
+        let (_region, raw) = cached_feature_region(
+            &self.surface,
+            &self.caves,
+            self.seed,
+            cx * CHUNK,
+            cz * CHUNK,
+            16,
+            16,
+        );
+        raw
     }
 }
 
@@ -160,21 +177,21 @@ fn nearest_dry_land(world: &SpawnWorld) -> Option<IVec3> {
 /// closer to the origin than the current best.
 ///
 fn scan_chunk(world: &SpawnWorld, cx: i32, cz: i32, best: &mut Option<(i64, IVec3)>) {
-    let region = world.region(cx * CHUNK, cz * CHUNK, 16, 16);
-    if !region.surf.iter().any(|&s| s >= SEA_LEVEL) {
+    let surf = world.raw_chunk_surfaces(cx, cz);
+    if !surf.iter().any(|&s| s >= SEA_LEVEL) {
         return; // all ocean/lake floor, or no solid column.
     }
     for z in 0..16i32 {
         for x in 0..16i32 {
-            let surf = region.surf[(z * 16 + x) as usize];
-            if surf < SEA_LEVEL {
+            let s = surf[(z * 16 + x) as usize];
+            if s < SEA_LEVEL {
                 continue; // ocean / lake / river channel — surface is water.
             }
             let wx = cx * CHUNK + x;
             let wz = cz * CHUNK + z;
             let d = (wx as i64) * (wx as i64) + (wz as i64) * (wz as i64);
             if best.is_none_or(|(bd, _)| d < bd) {
-                *best = Some((d, IVec3::new(wx, surf, wz)));
+                *best = Some((d, IVec3::new(wx, s, wz)));
             }
         }
     }
@@ -182,10 +199,14 @@ fn scan_chunk(world: &SpawnWorld, cx: i32, cz: i32, best: &mut Option<(i64, IVec
 
 /// Density top-solid surface height for a single world column. Matches the
 /// per-chunk batch [`scan_chunk`] reads because density lattice sampling is
-/// world-anchored.
+/// world-anchored (and both go through the same tile memo).
 fn column_surface(world: &SpawnWorld, wx: i32, wz: i32) -> i32 {
-    let region = world.region(wx, wz, 1, 1);
-    region.at(wx, wz).0
+    let tcx = wx.div_euclid(CHUNK);
+    let tcz = wz.div_euclid(CHUNK);
+    let surf = world.raw_chunk_surfaces(tcx, tcz);
+    let lx = (wx - tcx * CHUNK) as usize;
+    let lz = (wz - tcz * CHUNK) as usize;
+    surf[lz * 16 + lx]
 }
 
 /// Chunk coordinates on the square ring at Chebyshev distance `r` from `(0, 0)`.

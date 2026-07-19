@@ -32,12 +32,17 @@ impl TerrainRenderHandoff<'_> {
     }
 
     pub(crate) fn column_meshes(&self, pos: ChunkPos) -> Vec<(SectionPos, &ChunkMesh)> {
-        World::column_section_range()
-            .filter_map(|cy| {
-                let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                self.world.meshes.get(&sp).map(|mesh| (sp, mesh))
-            })
-            .collect()
+        let Some(&bits) = self.world.mesh_column_cys.get(&pos) else {
+            return Vec::new();
+        };
+        let mut out = Vec::with_capacity(bits.count_ones() as usize);
+        World::for_each_mesh_cy(bits, |cy| {
+            let sp = SectionPos::new(pos.cx, cy, pos.cz);
+            if let Some(mesh) = self.world.meshes.get(&sp) {
+                out.push((sp, mesh));
+            }
+        });
+        out
     }
 
     /// A packed-column rebuild needs every section's CPU geometry, but a settled
@@ -47,30 +52,39 @@ impl TerrainRenderHandoff<'_> {
     /// upload-dirty) until the fresh meshes land. The installed GPU column keeps
     /// drawing meanwhile, so the cost is latency on the repack, never a hole.
     pub(crate) fn needs_repack_remeshes(&mut self, pos: ChunkPos) -> bool {
+        let Some(&bits) = self.world.mesh_column_cys.get(&pos) else {
+            return false;
+        };
         let mut waiting = false;
-        for cy in World::column_section_range() {
+        let mut forced = Vec::new();
+        World::for_each_mesh_cy(bits, |cy| {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             if self.world.meshes.get(&sp).is_some_and(|m| m.is_released()) {
                 waiting = true;
-                // Newly forced sections enter the dirty queue; already-forced ones
-                // are somewhere in the pipeline (queued, light-blocked, or in flight).
-                if self.world.repack_forced.insert(sp) {
-                    self.world.dirty_meshes.push(sp);
-                }
+                forced.push(sp);
+            }
+        });
+        for sp in forced {
+            // Newly forced sections enter the dirty queue; already-forced ones
+            // are somewhere in the pipeline (queued, light-blocked, or in flight).
+            if self.world.repack_forced.insert(sp) {
+                self.world.dirty_meshes.push(sp);
             }
         }
         waiting
     }
 
     pub(crate) fn mark_column_uploaded(&mut self, pos: ChunkPos) {
-        for cy in World::column_section_range() {
-            if let Some(mesh) = self
-                .world
-                .meshes
-                .get_mut(&SectionPos::new(pos.cx, cy, pos.cz))
-            {
-                mesh.mesh_dirty = false;
-            }
+        if let Some(&bits) = self.world.mesh_column_cys.get(&pos) {
+            World::for_each_mesh_cy(bits, |cy| {
+                if let Some(mesh) = self
+                    .world
+                    .meshes
+                    .get_mut(&SectionPos::new(pos.cx, cy, pos.cz))
+                {
+                    mesh.mesh_dirty = false;
+                }
+            });
         }
         self.world.mesh_upload_dirty_columns.remove(&pos);
         if self.world.mesh_columns.contains(&pos) {

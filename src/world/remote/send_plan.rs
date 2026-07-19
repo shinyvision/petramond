@@ -1,8 +1,6 @@
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
-use rustc_hash::FxHashSet;
-
-use crate::chunk::{ChunkPos, SectionPos};
+use crate::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
 use crate::world::store::{LoadAnchor, LoadTarget, World};
 
 impl World {
@@ -72,6 +70,9 @@ impl World {
         anchor: LoadAnchor,
         sent_columns: &FxHashSet<ChunkPos>,
         sent_sections: &FxHashSet<SectionPos>,
+        // Per-column index over `sent_sections` (the cys sent for each column).
+        // Drop planning walks this instead of every sent section.
+        sent_by_column: &FxHashMap<ChunkPos, Vec<i32>>,
         budget: usize,
     ) -> TerrainSendPlan {
         let target = self.send_target(anchor);
@@ -80,7 +81,10 @@ impl World {
         // Ship order mirrors the streamer's gen order: surface shell first for
         // an above-ground anchor, pure 3D nearest-first for a caving one. The
         // band floor is per column; memoize the lookup across the scan.
-        let mut band_los: HashMap<ChunkPos, i32> = HashMap::new();
+        // Scan wanted columns × vertical stack instead of every loaded section:
+        // the keep-hysteresis ring and far unloaded-but-still-resident columns
+        // never enter the unsent candidate list.
+        let mut band_los: FxHashMap<ChunkPos, i32> = FxHashMap::default();
         let mut band_lo_of = |world: &Self, cp: ChunkPos| {
             *band_los.entry(cp).or_insert_with(|| {
                 world
@@ -91,21 +95,44 @@ impl World {
                     })
             })
         };
-        let mut sections: Vec<(i64, SectionPos)> = self
-            .sections
-            .keys()
-            .filter(|sp| !sent_sections.contains(sp))
-            .filter(|sp| Self::column_wanted(target, sp.chunk_pos()))
-            .filter(|sp| self.stream_writable(**sp))
-            .filter(|sp| self.section_light_final(**sp))
-            .map(|&sp| {
-                let band_lo = band_lo_of(self, sp.chunk_pos());
-                (
+        // Deep sections (below the column surface band) are deferred until the
+        // connection's vertical window or 5×5×5 near ring needs them — the
+        // replica would park them without meshing anyway, so shipping early
+        // only burns bandwidth + client install. Cave BFS visibility still
+        // works once the player approaches (window moves → sections enter
+        // the plan). Already-sent deep sections are not yanked here.
+        let vwin = Self::vertical_window(target.center_cy, 0);
+        let mut sections: Vec<(i64, SectionPos)> = Vec::new();
+        for (&cp, &bits) in &self.section_column_cys {
+            if bits == 0 || !Self::column_wanted(target, cp) {
+                continue;
+            }
+            let band_lo = band_lo_of(self, cp);
+            let near_xz = (cp.cx - target.center.cx).abs() <= 2
+                && (cp.cz - target.center.cz).abs() <= 2;
+            let mut b = bits;
+            while b != 0 {
+                let cy = crate::chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
+                b &= b - 1;
+                if cy < band_lo {
+                    let near = near_xz && (cy - target.center_cy).abs() <= 2;
+                    if !vwin.contains(&cy) && !near {
+                        continue;
+                    }
+                }
+                let sp = SectionPos::new(cp.cx, cy, cp.cz);
+                if sent_sections.contains(&sp)
+                    || !self.stream_writable(sp)
+                    || !self.section_light_final(sp)
+                {
+                    continue;
+                }
+                sections.push((
                     target.surface_biased_section_key(sp, band_lo, underground),
                     sp,
-                )
-            })
-            .collect();
+                ));
+            }
+        }
         sections.sort_unstable_by_key(|(key, _)| *key);
         sections.truncate(budget);
         let sections: Vec<SectionPos> = sections.into_iter().map(|(_, sp)| sp).collect();
@@ -119,14 +146,23 @@ impl World {
             .copied()
             .collect();
         let dropped_cols: FxHashSet<ChunkPos> = drop_columns.iter().copied().collect();
-        let drop_sections: Vec<SectionPos> = sent_sections
-            .iter()
-            .filter(|sp| !dropped_cols.contains(&sp.chunk_pos()))
-            .filter(|sp| {
-                !Self::column_kept(target, sp.chunk_pos()) || !self.sections.contains_key(sp)
-            })
-            .copied()
-            .collect();
+        let mut drop_sections = Vec::new();
+        for (&cp, cys) in sent_by_column {
+            if dropped_cols.contains(&cp) {
+                continue;
+            }
+            let column_gone = !Self::column_kept(target, cp);
+            for &cy in cys {
+                let sp = SectionPos::new(cp.cx, cy, cp.cz);
+                debug_assert!(
+                    (SECTION_MIN_CY..=crate::chunk::SECTION_MAX_CY).contains(&cy),
+                    "sent_by_column cy out of world range"
+                );
+                if column_gone || !self.sections.contains_key(&sp) {
+                    drop_sections.push(sp);
+                }
+            }
+        }
 
         TerrainSendPlan {
             sections,

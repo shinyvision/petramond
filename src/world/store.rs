@@ -26,6 +26,7 @@ pub use super::load_targets::{LoadAnchor, RENDER_DIST, VERTICAL_LOAD_RADIUS};
 mod block_entity_index;
 mod evict;
 mod mesh_index;
+mod section_index;
 
 #[cfg(test)]
 mod fixtures;
@@ -87,6 +88,15 @@ pub struct World {
     /// Mirrors `meshes` so renderer retention does not scan the vertical range
     /// of every GPU column each frame.
     pub(super) mesh_columns: FxHashSet<ChunkPos>,
+    /// Per-column bitset of meshed section `cy` values (bit `i` =
+    /// `SECTION_MIN_CY + i`). Kept in sync with `meshes` / `mesh_columns` so
+    /// packed-column consumers walk only the meshed stack, not the full
+    /// vertical world range.
+    pub(super) mesh_column_cys: FxHashMap<ChunkPos, u32>,
+    /// Per-column bitset of *loaded* section `cy` values. Maintained at every
+    /// section install/evict so planners (terrain send) iterate real stacks
+    /// instead of probing the full vertical world range per wanted column.
+    pub(super) section_column_cys: FxHashMap<ChunkPos, u32>,
     /// Changes whenever a section mesh enters or leaves a packed GPU column.
     /// The renderer uses it to coalesce consecutive sibling completions.
     pub(super) mesh_upload_revisions: FxHashMap<ChunkPos, u64>,
@@ -114,6 +124,10 @@ pub struct World {
     /// Sections with an in-flight per-section gen job, so the streamer never submits a
     /// section twice while it is being generated.
     pub(super) pending_sections: FxHashSet<SectionPos>,
+    /// Count of `pending_sections` per XZ column. Lets settled-column slimming
+    /// ask "anything still pending in this column?" in O(1) instead of rebuilding
+    /// a column set from every pending section each ingest pump.
+    pub(super) pending_section_columns: FxHashMap<ChunkPos, u16>,
     /// Cancellation handles for pending worker-generated sections. Disk-primary
     /// requests are in `pending_sections` without an entry here.
     pub(super) pending_section_jobs: FxHashMap<SectionPos, JobCancel>,
@@ -350,6 +364,8 @@ impl World {
             column_revision_counter: 0,
             meshes: FxHashMap::default(),
             mesh_columns: FxHashSet::default(),
+            mesh_column_cys: FxHashMap::default(),
+            section_column_cys: FxHashMap::default(),
             mesh_upload_revisions: FxHashMap::default(),
             mesh_upload_dirty_columns: FxHashSet::default(),
             mesh_release_after: FxHashMap::default(),
@@ -359,6 +375,7 @@ impl World {
             column_gen: FxHashMap::default(),
             pending: FxHashMap::default(),
             pending_sections: FxHashSet::default(),
+            pending_section_columns: FxHashMap::default(),
             pending_section_jobs: FxHashMap::default(),
             pending_overlays: FxHashMap::default(),
             awaited_overlays: FxHashSet::default(),
@@ -537,6 +554,7 @@ impl World {
                 .unwrap_or_else(|| Section::new(pos.cx, pos.cy, pos.cz));
             self.ensure_column(pos.chunk_pos());
             self.sections.insert(pos, Arc::new(section));
+            self.note_section_loaded(pos);
             self.refresh_block_entity_index(pos);
             self.refresh_particle_emitter_index(pos);
             // A synchronously-born section must enter connected clients' sent

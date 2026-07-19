@@ -39,6 +39,20 @@ pub(in crate::world) struct LightBakeResult {
     pub blocklight: Arc<[u8]>,
 }
 
+impl LightBakeResult {
+    /// Build a result outside the async queue (prediction batch clips).
+    /// `id` is unused by the prediction install path.
+    pub(in crate::world) fn from_batch_output(out: super::batch::LightBatchOutput) -> Self {
+        Self {
+            id: 0,
+            pos: out.pos,
+            revision: out.revision,
+            skylight: out.skylight,
+            blocklight: out.blocklight,
+        }
+    }
+}
+
 impl LightBakeQueue {
     pub fn new(pool: std::sync::Arc<crate::worker::JobPool>) -> Self {
         Self {

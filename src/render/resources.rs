@@ -1,6 +1,6 @@
 use crate::atlas::decode_atlas_mips;
 use crate::chunk::SectionPos;
-use crate::mesh::{ChunkMesh, ContactShadowVertex, ModelVertex, Vertex};
+use crate::mesh::{ChunkMesh, ContactShadowVertex, ModelVertex, TerrainVertex, Vertex};
 use crate::texture_mips::build_cutout_mips;
 
 /// Upload a standalone GUI PNG (e.g. the HUD heart atlas) as its own
@@ -170,20 +170,31 @@ pub struct GpuSectionMesh {
     pub origin: (i32, i32, i32),
     pub opaque_index_start: u32,
     pub opaque_idx_count: u32,
+    pub opaque_vertex_start: u32,
+    pub opaque_vertex_count: u32,
     pub far_opaque_index_start: u32,
     pub far_opaque_idx_count: u32,
+    pub far_opaque_vertex_start: u32,
+    pub far_opaque_vertex_count: u32,
     pub transparent_index_start: u32,
     pub transparent_idx_count: u32,
+    pub transparent_vertex_start: u32,
+    pub transparent_vertex_count: u32,
     pub translucent_index_start: u32,
     pub translucent_idx_count: u32,
+    pub translucent_vertex_start: u32,
+    pub translucent_vertex_count: u32,
     pub model_index_start: u32,
     pub model_idx_count: u32,
+    pub model_vertex_start: u32,
+    pub model_vertex_count: u32,
     /// Contact-shadow VERTEX range (the stream is non-indexed). Kept per section
     /// only so `plan_draw_order` can decide column contact visibility from the
     /// VISIBLE sections — the draw itself is whole-column. A section may hold
     /// contact vertices with `model_idx_count == 0` (a multi-cell model whose
     /// cuboids all render from a sibling cell), so contact visibility must NOT
     /// be inferred from the model range.
+    pub contact_vertex_start: u32,
     pub contact_vertex_count: u32,
 }
 
@@ -204,18 +215,22 @@ pub struct GpuColumnMesh {
     /// `ContactShadowVertex`), drawn once per visible contact-bearing column.
     pub contact_vbuf: Option<wgpu::Buffer>,
     pub contact_vertex_count: u32,
+    /// Instance-step column world XZ origin (`[ox, 0, oz, 0]`) for `vs_terrain`.
+    pub origin_vbuf: wgpu::Buffer,
+    pub col_ox: i32,
+    pub col_oz: i32,
     pub sections: Vec<(SectionPos, GpuSectionMesh)>,
 }
 
 #[derive(Default)]
 pub(super) struct ColumnUploadScratch {
-    opaque: Vec<Vertex>,
+    opaque: Vec<TerrainVertex>,
     opaque_idx: Vec<u32>,
-    far_opaque: Vec<Vertex>,
+    far_opaque: Vec<TerrainVertex>,
     far_opaque_idx: Vec<u32>,
-    transparent: Vec<Vertex>,
+    transparent: Vec<TerrainVertex>,
     transparent_idx: Vec<u32>,
-    translucent: Vec<Vertex>,
+    translucent: Vec<TerrainVertex>,
     translucent_idx: Vec<u32>,
     model: Vec<ModelVertex>,
     model_idx: Vec<u32>,
@@ -495,12 +510,185 @@ fn append_indexed_layer<V: Copy>(
     indices: &mut Vec<u32>,
     src_verts: &[V],
     src_indices: &[u32],
-) -> (u32, u32) {
-    let start = indices.len() as u32;
-    let base = verts.len() as u32;
+) -> (u32, u32, u32, u32) {
+    let index_start = indices.len() as u32;
+    let vertex_start = verts.len() as u32;
     verts.extend_from_slice(src_verts);
-    indices.extend(src_indices.iter().map(|&i| i + base));
-    (start, src_indices.len() as u32)
+    if vertex_start == 0 {
+        indices.extend_from_slice(src_indices);
+    } else {
+        indices.extend(src_indices.iter().map(|&i| i + vertex_start));
+    }
+    (
+        index_start,
+        src_indices.len() as u32,
+        vertex_start,
+        src_verts.len() as u32,
+    )
+}
+
+fn append_terrain_layer(
+    verts: &mut Vec<TerrainVertex>,
+    indices: &mut Vec<u32>,
+    src_verts: &[Vertex],
+    src_indices: &[u32],
+    col_ox: i32,
+    col_oz: i32,
+) -> (u32, u32, u32, u32) {
+    let index_start = indices.len() as u32;
+    let vertex_start = verts.len() as u32;
+    verts.extend(
+        src_verts
+            .iter()
+            .map(|v| TerrainVertex::from_world(v, col_ox, col_oz)),
+    );
+    if vertex_start == 0 {
+        indices.extend_from_slice(src_indices);
+    } else {
+        indices.extend(src_indices.iter().map(|&i| i + vertex_start));
+    }
+    (
+        index_start,
+        src_indices.len() as u32,
+        vertex_start,
+        src_verts.len() as u32,
+    )
+}
+
+fn column_origin_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    prev: Option<wgpu::Buffer>,
+    col_ox: i32,
+    col_oz: i32,
+) -> wgpu::Buffer {
+    let data = [col_ox as f32, 0.0, col_oz as f32, 0.0];
+    let bytes = bytemuck::bytes_of(&data);
+    if let Some(buf) = prev {
+        queue.write_buffer(&buf, 0, bytes);
+        return buf;
+    }
+    let buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("column origin"),
+        size: 16,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&buf, 0, bytes);
+    buf
+}
+
+fn patch_terrain_verts(
+    queue: &wgpu::Queue,
+    buf: &Option<wgpu::Buffer>,
+    vertex_start: u32,
+    src: &[Vertex],
+    col_ox: i32,
+    col_oz: i32,
+) -> bool {
+    if src.is_empty() {
+        return true;
+    }
+    let quantized: Vec<TerrainVertex> = src
+        .iter()
+        .map(|v| TerrainVertex::from_world(v, col_ox, col_oz))
+        .collect();
+    patch_verts(queue, buf, vertex_start, &quantized)
+}
+
+fn layer_sizes_match(mesh: &ChunkMesh, gpu: &GpuSectionMesh) -> bool {
+    mesh.opaque.len() as u32 == gpu.opaque_vertex_count
+        && mesh.opaque_idx.len() as u32 == gpu.opaque_idx_count
+        && mesh.far_opaque.len() as u32 == gpu.far_opaque_vertex_count
+        && mesh.far_opaque_idx.len() as u32 == gpu.far_opaque_idx_count
+        && mesh.transparent.len() as u32 == gpu.transparent_vertex_count
+        && mesh.transparent_idx.len() as u32 == gpu.transparent_idx_count
+        && mesh.translucent.len() as u32 == gpu.translucent_vertex_count
+        && mesh.translucent_idx.len() as u32 == gpu.translucent_idx_count
+        && mesh.model.len() as u32 == gpu.model_vertex_count
+        && mesh.model_idx.len() as u32 == gpu.model_idx_count
+        && mesh.contact.len() as u32 == gpu.contact_vertex_count
+}
+
+fn patch_verts<V: bytemuck::Pod>(
+    queue: &wgpu::Queue,
+    buf: &Option<wgpu::Buffer>,
+    vertex_start: u32,
+    src: &[V],
+) -> bool {
+    if src.is_empty() {
+        return true;
+    }
+    let Some(buf) = buf else {
+        return false;
+    };
+    let offset = vertex_start as u64 * std::mem::size_of::<V>() as u64;
+    let bytes = bytemuck::cast_slice(src);
+    if offset + bytes.len() as u64 > buf.size() {
+        return false;
+    }
+    queue.write_buffer(buf, offset, bytes);
+    true
+}
+
+/// When every section keeps the same vertex/index counts as the installed GPU
+/// column, rewrite only vertex attributes in place (light/AO remeshes). Indices
+/// and sibling CPU packing are skipped entirely.
+fn try_patch_column_verts(
+    queue: &wgpu::Queue,
+    meshes: &[(SectionPos, &ChunkMesh)],
+    prev: &GpuColumnMesh,
+) -> bool {
+    if meshes.len() != prev.sections.len() {
+        return false;
+    }
+    for (&(sp, mesh), &(psp, ref gpu)) in meshes.iter().zip(&prev.sections) {
+        if sp != psp || !layer_sizes_match(mesh, gpu) {
+            return false;
+        }
+    }
+    let (ox, oz) = (prev.col_ox, prev.col_oz);
+    for (&(_, mesh), &(_, ref gpu)) in meshes.iter().zip(&prev.sections) {
+        if !patch_terrain_verts(
+            queue,
+            &prev.opaque_vbuf,
+            gpu.opaque_vertex_start,
+            &mesh.opaque,
+            ox,
+            oz,
+        ) || !patch_terrain_verts(
+            queue,
+            &prev.far_opaque_vbuf,
+            gpu.far_opaque_vertex_start,
+            &mesh.far_opaque,
+            ox,
+            oz,
+        ) || !patch_terrain_verts(
+            queue,
+            &prev.transparent_vbuf,
+            gpu.transparent_vertex_start,
+            &mesh.transparent,
+            ox,
+            oz,
+        ) || !patch_terrain_verts(
+            queue,
+            &prev.translucent_vbuf,
+            gpu.translucent_vertex_start,
+            &mesh.translucent,
+            ox,
+            oz,
+        ) || !patch_verts(queue, &prev.model_vbuf, gpu.model_vertex_start, &mesh.model)
+            || !patch_verts(
+                queue,
+                &prev.contact_vbuf,
+                gpu.contact_vertex_start,
+                &mesh.contact,
+            )
+        {
+            return false;
+        }
+    }
+    true
 }
 
 pub(super) fn upload_column_mesh(
@@ -510,8 +698,21 @@ pub(super) fn upload_column_mesh(
     prev: Option<GpuColumnMesh>,
     scratch: &mut ColumnUploadScratch,
 ) -> GpuColumnMesh {
-    let (p_ov, p_oi, p_fov, p_foi, p_tv, p_ti, p_lv, p_li, p_mv, p_mi, p_cv, mut sections) =
+    let col_ox = meshes
+        .first()
+        .map(|(sp, _)| sp.cx * 16)
+        .unwrap_or(0);
+    let col_oz = meshes
+        .first()
+        .map(|(sp, _)| sp.cz * 16)
+        .unwrap_or(0);
+
+    let (p_ov, p_oi, p_fov, p_foi, p_tv, p_ti, p_lv, p_li, p_mv, p_mi, p_cv, p_origin, mut sections) =
         match prev {
+            Some(g) if try_patch_column_verts(queue, meshes, &g) => {
+                // Layout unchanged: reuse the GPU column (buffers + section ranges).
+                return g;
+            }
             Some(g) => (
                 g.opaque_vbuf,
                 g.opaque_ibuf,
@@ -524,9 +725,11 @@ pub(super) fn upload_column_mesh(
                 g.model_vbuf,
                 g.model_ibuf,
                 g.contact_vbuf,
+                Some(g.origin_vbuf),
                 g.sections,
             ),
             None => (
+                None,
                 None,
                 None,
                 None,
@@ -548,36 +751,62 @@ pub(super) fn upload_column_mesh(
     sections.reserve(meshes.len());
 
     for &(sp, mesh) in meshes {
-        let (opaque_index_start, opaque_idx_count) = append_indexed_layer(
-            &mut scratch.opaque,
-            &mut scratch.opaque_idx,
-            &mesh.opaque,
-            &mesh.opaque_idx,
-        );
-        let (far_opaque_index_start, far_opaque_idx_count) = append_indexed_layer(
+        let (opaque_index_start, opaque_idx_count, opaque_vertex_start, opaque_vertex_count) =
+            append_terrain_layer(
+                &mut scratch.opaque,
+                &mut scratch.opaque_idx,
+                &mesh.opaque,
+                &mesh.opaque_idx,
+                col_ox,
+                col_oz,
+            );
+        let (
+            far_opaque_index_start,
+            far_opaque_idx_count,
+            far_opaque_vertex_start,
+            far_opaque_vertex_count,
+        ) = append_terrain_layer(
             &mut scratch.far_opaque,
             &mut scratch.far_opaque_idx,
             &mesh.far_opaque,
             &mesh.far_opaque_idx,
+            col_ox,
+            col_oz,
         );
-        let (transparent_index_start, transparent_idx_count) = append_indexed_layer(
+        let (
+            transparent_index_start,
+            transparent_idx_count,
+            transparent_vertex_start,
+            transparent_vertex_count,
+        ) = append_terrain_layer(
             &mut scratch.transparent,
             &mut scratch.transparent_idx,
             &mesh.transparent,
             &mesh.transparent_idx,
+            col_ox,
+            col_oz,
         );
-        let (translucent_index_start, translucent_idx_count) = append_indexed_layer(
+        let (
+            translucent_index_start,
+            translucent_idx_count,
+            translucent_vertex_start,
+            translucent_vertex_count,
+        ) = append_terrain_layer(
             &mut scratch.translucent,
             &mut scratch.translucent_idx,
             &mesh.translucent,
             &mesh.translucent_idx,
+            col_ox,
+            col_oz,
         );
-        let (model_index_start, model_idx_count) = append_indexed_layer(
-            &mut scratch.model,
-            &mut scratch.model_idx,
-            &mesh.model,
-            &mesh.model_idx,
-        );
+        let (model_index_start, model_idx_count, model_vertex_start, model_vertex_count) =
+            append_indexed_layer(
+                &mut scratch.model,
+                &mut scratch.model_idx,
+                &mesh.model,
+                &mesh.model_idx,
+            );
+        let contact_vertex_start = scratch.contact.len() as u32;
         let contact_vertex_count = mesh.contact.len() as u32;
         scratch.contact.extend_from_slice(&mesh.contact);
         sections.push((
@@ -586,14 +815,25 @@ pub(super) fn upload_column_mesh(
                 origin: (sp.cx * 16, sp.cy * 16, sp.cz * 16),
                 opaque_index_start,
                 opaque_idx_count,
+                opaque_vertex_start,
+                opaque_vertex_count,
                 far_opaque_index_start,
                 far_opaque_idx_count,
+                far_opaque_vertex_start,
+                far_opaque_vertex_count,
                 transparent_index_start,
                 transparent_idx_count,
+                transparent_vertex_start,
+                transparent_vertex_count,
                 translucent_index_start,
                 translucent_idx_count,
+                translucent_vertex_start,
+                translucent_vertex_count,
                 model_index_start,
                 model_idx_count,
+                model_vertex_start,
+                model_vertex_count,
+                contact_vertex_start,
                 contact_vertex_count,
             },
         ));
@@ -682,6 +922,9 @@ pub(super) fn upload_column_mesh(
             vtx,
         ),
         contact_vertex_count: scratch.contact.len() as u32,
+        origin_vbuf: column_origin_buffer(device, queue, p_origin, col_ox, col_oz),
+        col_ox,
+        col_oz,
         sections,
     }
 }

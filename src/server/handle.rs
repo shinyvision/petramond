@@ -54,6 +54,11 @@ pub(crate) enum ControlMsg {
     /// Panic the server loop, for the crash-policy tests.
     #[cfg(test)]
     PanicForTest,
+    /// Drop real-clock pacing: the loop advances one fixed tick per iteration
+    /// as fast as the machine pumps, for tests that wait on many sim ticks
+    /// over real channels (they must not race the wall clock under load).
+    #[cfg(test)]
+    UnthrottleForTest,
 }
 
 /// The client's handle to the server: message senders/receiver, the control
@@ -225,6 +230,15 @@ impl ServerHandle {
         let _ = self.control.send(ControlMsg::PanicForTest);
     }
 
+    /// Pin the server loop's clock: one fixed tick per iteration, no
+    /// real-time sleeps. Tests that wait on many sim ticks over the real
+    /// channels (a TCP join, a long fall, heavy streaming) run compute-bound
+    /// instead of racing the wall clock under machine load.
+    #[cfg(test)]
+    pub(crate) fn unthrottle_for_test(&self) {
+        let _ = self.control.send(ControlMsg::UnthrottleForTest);
+    }
+
     /// Wait for the server thread to exit WITHOUT requesting a save-shutdown —
     /// for tests that made it exit another way (panic).
     #[cfg(test)]
@@ -292,6 +306,8 @@ fn server_main(
     let mut hub = RemoteHub::default();
     let mut msgs: Vec<(PlayerId, ClientToServer)> = Vec::new();
     let mut last = Instant::now();
+    #[cfg(test)]
+    let mut unthrottled = false;
     loop {
         loop {
             match control.try_recv() {
@@ -314,6 +330,8 @@ fn server_main(
                 }
                 #[cfg(test)]
                 Ok(ControlMsg::PanicForTest) => panic!("server loop panic injected by test"),
+                #[cfg(test)]
+                Ok(ControlMsg::UnthrottleForTest) => unthrottled = true,
                 Err(TryRecvError::Empty) => break,
                 // Control sender dropped = the client handle is gone entirely
                 // (no clean Shutdown reached us): save and exit.
@@ -355,6 +373,11 @@ fn server_main(
         let now = Instant::now();
         let dt = (now - last).as_secs_f32();
         last = now;
+        // A test may pin the clock (`UnthrottleForTest`, see the control arm):
+        // exactly one fixed tick per iteration, compute-bound. Production
+        // builds always take the real clock.
+        #[cfg(test)]
+        let dt = if unthrottled { TICK_DT } else { dt };
         let headroom = hub.send_headroom();
         let out = server.pump_tagged(dt, &mut msgs, &headroom);
         for msg in out.msgs {
@@ -374,7 +397,13 @@ fn server_main(
         }
 
         // Sleep to min(next tick edge, POLL_INTERVAL); sub-millisecond
-        // remainders just yield so the tick edge isn't overslept.
+        // remainders just yield so the tick edge isn't overslept. The pinned
+        // test clock never sleeps — its iterations are compute-bound.
+        #[cfg(test)]
+        if unthrottled {
+            std::thread::yield_now();
+            continue;
+        }
         let until_tick = Duration::from_secs_f32((TICK_DT - server.tick_accumulator).max(0.0));
         let sleep = until_tick.min(POLL_INTERVAL);
         if sleep > Duration::from_millis(1) {
@@ -394,7 +423,7 @@ mod tests {
     /// A real, fully-built ServerGame (no save attached), as `Game::new`
     /// builds it.
     fn server_game() -> crate::server::game::ServerGame {
-        crate::game::session::build_session("", 1, 1).0
+        crate::game::session::build_session_inline("", 1, 1).0
     }
 
     fn player_update(server: &crate::server::game::ServerGame) -> PlayerUpdate {
@@ -443,14 +472,17 @@ mod tests {
         let server = server_game();
         let update = player_update(&server);
         let mut handle = ServerHandle::spawn(server);
+        handle.unthrottle_for_test();
 
         handle
             .send(ClientToServer::PlayerUpdate(update))
             .expect("live server accepts messages");
         handle.send(ClientToServer::KeepAlive).expect("live server");
 
-        let first = recv_tick(&handle, Duration::from_secs(5)).expect("a TickUpdate arrives");
-        let second = recv_tick(&handle, Duration::from_secs(5)).expect("ticks keep coming");
+        let first = recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE)
+            .expect("a TickUpdate arrives");
+        let second = recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE)
+            .expect("ticks keep coming");
         assert!(
             second.tick > first.tick,
             "the self-clocked loop advances the world tick"
@@ -475,13 +507,17 @@ mod tests {
         handle
             .send(ClientToServer::PlayerUpdate(update))
             .expect("live server");
-        let _ = recv_tick(&handle, Duration::from_secs(5)).expect("running before the pause");
+        let _ = recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE)
+            .expect("running before the pause");
 
         handle
             .send(ClientToServer::Pause(true))
             .expect("live server");
         // Let the pause land and drain any in-flight updates from before it.
-        std::thread::sleep(Duration::from_millis(200));
+        // Real-time clock (not unthrottled): pause is edge-triggered on the
+        // gameplay inbox, and an unthrottled loop can still deliver a tick
+        // that was already banked before the flag flips.
+        std::thread::sleep(Duration::from_millis(50));
         let mut drained = Vec::new();
         handle.drain(&mut drained);
         let last_tick = drained
@@ -492,9 +528,9 @@ mod tests {
             })
             .max();
 
-        // Several tick periods of silence: the sim is frozen…
+        // A few tick periods of silence: the sim is frozen…
         assert!(
-            recv_tick(&handle, Duration::from_millis(300)).is_none(),
+            recv_tick(&handle, Duration::from_millis(150)).is_none(),
             "no TickUpdates while paused"
         );
         // …but the connection is alive (message drain continues server-side).
@@ -504,11 +540,10 @@ mod tests {
         handle
             .send(ClientToServer::Pause(false))
             .expect("live server");
-        let resumed = recv_tick(&handle, Duration::from_secs(5)).expect("ticks resume");
+        let resumed = recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE).expect("ticks resume");
         if let Some(last) = last_tick {
             assert!(resumed.tick > last, "the world advances again");
-            // ~500 ms of pause would be ~10 banked ticks; resuming must not
-            // replay them (the accumulator is pinned while paused).
+            // Pausing must not bank catch-up ticks (the accumulator is pinned).
             assert!(
                 resumed.tick - last <= u64::from(super::super::game::MAX_TICKS_PER_FRAME),
                 "resume fast-forwarded: tick jumped {} -> {}",

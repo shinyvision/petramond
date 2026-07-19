@@ -44,20 +44,26 @@ impl World {
             if self.mesh_upload_dirty_columns.contains(&pos) {
                 continue;
             }
-            let busy = Self::column_section_range().any(|cy| {
+            let Some(&bits) = self.mesh_column_cys.get(&pos) else {
+                continue;
+            };
+            let mut busy = false;
+            Self::for_each_mesh_cy(bits, |cy| {
                 let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                self.dirty_meshes.contains(sp) || self.light_blocked_meshes.contains(&sp)
+                if self.dirty_meshes.contains(sp) || self.light_blocked_meshes.contains(&sp) {
+                    busy = true;
+                }
             });
             if busy {
                 continue;
             }
-            for cy in Self::column_section_range() {
+            Self::for_each_mesh_cy(bits, |cy| {
                 if let Some(mesh) = self.meshes.get_mut(&SectionPos::new(pos.cx, cy, pos.cz)) {
                     if !mesh.mesh_dirty && !mesh.is_released() {
                         mesh.release_cpu_buffers();
                     }
                 }
-            }
+            });
         }
     }
 }

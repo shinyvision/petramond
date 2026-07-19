@@ -1,15 +1,15 @@
 use super::builders::{color_target, cull_back, world_pipeline, DepthPreset};
 
 /// The opaque + translucent-block (ice) + transparent (water) terrain
-/// pipelines: the packed 32-byte block vertex over the tile-array pipeline
-/// layout.
+/// pipelines: quantized [`TerrainVertex`] + instance-step column origin,
+/// `vs_terrain` entry. Dynamic bakes keep the absolute-`Vertex` `opaque_pipe`.
 pub(super) fn create_terrain_pipelines(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
     sample_count: u32,
     shader: &wgpu::ShaderModule,
     array_layout: &wgpu::PipelineLayout,
-    vbuf_layout: &wgpu::VertexBufferLayout,
+    vbuf_layouts: &[wgpu::VertexBufferLayout],
 ) -> (
     wgpu::RenderPipeline,
     wgpu::RenderPipeline,
@@ -27,12 +27,12 @@ pub(super) fn create_terrain_pipelines(
     );
     let opaque_pipe = world_pipeline(
         device,
-        "opaque pipe",
+        "terrain opaque pipe",
         array_layout,
         shader,
-        "vs_main",
+        "vs_terrain",
         "fs_opaque",
-        std::slice::from_ref(vbuf_layout),
+        vbuf_layouts,
         &opaque_targets,
         cull_back(),
         Some(DepthPreset::WriteLess),
@@ -46,12 +46,12 @@ pub(super) fn create_terrain_pipelines(
     // Depth `Less`, NO write so the water doesn't occlude geometry behind it.
     let transparent_pipe = world_pipeline(
         device,
-        "transparent pipe",
+        "terrain transparent pipe",
         array_layout,
         shader,
-        "vs_main",
+        "vs_terrain",
         "fs_transparent",
-        std::slice::from_ref(vbuf_layout),
+        vbuf_layouts,
         &transparent_targets,
         cull_back(),
         Some(DepthPreset::ReadLess),
@@ -65,12 +65,12 @@ pub(super) fn create_terrain_pipelines(
     // alpha split gives these tiles their own alpha (see block.wgsl).
     let translucent_pipe = world_pipeline(
         device,
-        "translucent pipe",
+        "terrain translucent pipe",
         array_layout,
         shader,
-        "vs_main",
+        "vs_terrain",
         "fs_transparent",
-        std::slice::from_ref(vbuf_layout),
+        vbuf_layouts,
         &transparent_targets,
         cull_back(),
         Some(DepthPreset::WriteLess),
