@@ -254,17 +254,17 @@ impl App {
                     pos,
                 );
             }
-            if self.screen.gameplay_enabled() {
-                tick_idle_mob_sounds(
-                    &mut self.audio,
-                    &mut self.mob_sound_state,
-                    &mut self.next_mob_sound_handle,
-                    listener,
-                    presentation.mobs,
-                    &self.spatial_mob_positions,
-                    current_tick,
-                );
-            }
+            // Idle cadence follows the live world clock, not gameplay input:
+            // menus and multiplayer pause can keep that clock moving.
+            tick_idle_mob_sounds(
+                &mut self.audio,
+                &mut self.mob_sound_state,
+                &mut self.next_mob_sound_handle,
+                listener,
+                presentation.mobs,
+                &self.spatial_mob_positions,
+                current_tick,
+            );
             self.audio
                 .update_spatial(listener, &self.spatial_mob_positions);
             // Client-mod looping ambience (rain beds, wind): sync desired
@@ -413,7 +413,7 @@ fn play_pending_mob_sound_events(
     }
 }
 
-fn tick_idle_mob_sounds(
+pub(super) fn tick_idle_mob_sounds(
     audio: &mut crate::audio::Audio,
     states: &mut std::collections::HashMap<u64, super::MobSoundState>,
     next_handle: &mut u64,
