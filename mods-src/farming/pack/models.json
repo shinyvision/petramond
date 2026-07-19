@@ -32,6 +32,20 @@
       "model_file": "models/farmers_workbench.bbmodel",
       "cells": [2, 2, 1],
       "orientation": "left_to_right"
+    },
+    {
+      "key": "farming:trough",
+      "model_file": "models/trough.bbmodel",
+      "cells": [2, 1, 1],
+      "orientation": "left_to_right",
+      "hidden_parts": ["water"]
+    },
+    {
+      "key": "farming:trough_filled",
+      "model_file": "models/trough.bbmodel",
+      "cells": [2, 1, 1],
+      "orientation": "left_to_right",
+      "collision_hidden_parts": ["water"]
     }
   ]
 }

@@ -36,6 +36,16 @@ host_fn! {
 }
 
 host_fn! {
+    /// Swap ONE of the held stack for `replacement` (by registry name) when the
+    /// held stack holds at least one of `item`. A single-item stack swaps in
+    /// place; a larger stack consumes one unit and gives the replacement through
+    /// normal inventory fill. `false` = wrong/empty hand, unknown replacement, or
+    /// no room. This is the bucket empty/fill primitive.
+    pub fn replace_held_one(item: mod_api::ItemId, replacement: &str) -> bool
+        => ReplaceHeldOne { item, replacement: replacement.into() } => Bool
+}
+
+host_fn! {
     /// Damage the player through the engine funnel. The victim's global
     /// engine-owned i-frames and `player_damage_pre` apply, with
     /// `DamageSource::Mod` carrying this mod's id. Queued; applied at the next

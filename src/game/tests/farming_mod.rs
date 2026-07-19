@@ -1006,6 +1006,84 @@ fn farming_processing_inner() {
     assert!(!disabled, "the farming mod never trapped");
 }
 
+#[test]
+fn farming_trough_bucket_swap_via_wasm() {
+    let Some(root) =
+        crate::modding::tests::stage_mods_fixture("farming-trough", &["kitchen", "farming"])
+    else {
+        return;
+    };
+    crate::modding::tests::run_child_test(&root, "game::tests::farming_mod::farming_trough_inner");
+}
+
+/// Runs ONLY in the child process spawned above.
+#[test]
+#[ignore = "spawned by farming_trough_bucket_swap_via_wasm with a fixture pack env"]
+fn farming_trough_inner() {
+    use crate::block::Block;
+    use crate::item::ItemStack;
+    use crate::mathh::IVec3;
+
+    let trough = block_by_name("farming:trough");
+    let trough_filled = block_by_name("farming:trough_filled");
+    let water_bucket = by_key("petramond:water_bucket");
+    let wooden_bucket = by_key("petramond:wooden_bucket");
+
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
+    super::common::flat_floor_loaded_air(&mut game.server.world, Block::Stone);
+    game.server.sessions[0].player.pos = Vec3::new(4.0, 64.0, 4.0);
+    game.server.sessions[0].player.vel = Vec3::ZERO;
+    game.server.sessions[0].player.on_ground = true;
+
+    // Place the trough on the floor at (5,64,5) — its [2,1,1] footprint covers
+    // (5,64,5) and (6,64,5).
+    let origin = IVec3::new(5, 64, 5);
+    assert!(game.server.world.place_model_block(origin, trough));
+    assert_eq!(at(&game, 5, 64, 5), trough);
+    assert_eq!(at(&game, 6, 64, 5), trough);
+
+    let mut ev = TickEvents::default();
+
+    // Fill: water bucket → empty bucket + filled trough.
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(water_bucket, 1));
+    game.server.sessions[0].player.inventory.set_active(0);
+    use_click(&mut game, &mut ev, 0, origin, IVec3::Y);
+    assert_eq!(
+        at(&game, 5, 64, 5),
+        trough_filled,
+        "the trough block swaps to filled"
+    );
+    assert_eq!(
+        game.server.sessions[0]
+            .player
+            .inventory
+            .selected()
+            .map(|s| s.item),
+        Some(wooden_bucket),
+        "the water bucket emptied in hand"
+    );
+
+    // Empty: empty bucket → water bucket + empty trough.
+    use_click(&mut game, &mut ev, 0, origin, IVec3::Y);
+    assert_eq!(at(&game, 5, 64, 5), trough, "the trough block swaps back to empty");
+    assert_eq!(
+        game.server.sessions[0]
+            .player
+            .inventory
+            .selected()
+            .map(|s| s.item),
+        Some(water_bucket),
+        "the empty bucket refilled in hand"
+    );
+
+    let (disabled, _, _) = game.mods_for_test().probe(1);
+    assert!(!disabled, "the farming mod never trapped");
+}
+
 fn inventory_count(inventory: &crate::inventory::Inventory, item: crate::item::ItemType) -> u16 {
     inventory
         .raw_slots()

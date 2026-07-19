@@ -85,6 +85,10 @@ pub struct Content {
     pub crops: Vec<CropDef>,
     /// Compost barrel fill stages 0..=3 (empty..full).
     pub compost: [BlockId; 4],
+    /// Empty water trough (water cube hidden).
+    pub trough: BlockId,
+    /// Filled water trough (water cube visible).
+    pub trough_filled: BlockId,
     /// Fertilized grass: spreads its rooted vegetation to nearby grass for a
     /// while, then relaxes back to plain grass (see [`crate::spread`]).
     pub grass_fertilized: BlockId,
@@ -115,6 +119,10 @@ pub struct Content {
     /// Everything carrying the `farming:compostable` item tag — any pack may
     /// opt its own scraps into the barrel by listing the tag on a row.
     pub compostable: Vec<ItemId>,
+    /// Empty wooden bucket.
+    pub wooden_bucket: ItemId,
+    /// Water-filled wooden bucket.
+    pub water_bucket: ItemId,
 }
 
 impl Content {
@@ -170,6 +178,8 @@ impl Content {
                 block("farming:compost_2")?,
                 block("farming:compost_3")?,
             ],
+            trough: block("farming:trough")?,
+            trough_filled: block("farming:trough_filled")?,
             grass_fertilized: block("farming:grass_fertilized")?,
             grass: block("petramond:grass")?,
             dirt: block("petramond:dirt")?,
@@ -182,6 +192,8 @@ impl Content {
             fertilizer: item("farming:fertilizer")?,
             wheat_item: item("farming:wheat")?,
             compostable: items_by_tag("farming:compostable"),
+            wooden_bucket: item("petramond:wooden_bucket")?,
+            water_bucket: item("petramond:water_bucket")?,
         })
     }
 

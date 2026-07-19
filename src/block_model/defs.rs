@@ -145,6 +145,11 @@ pub struct BlockModelDef {
     /// several rows can share one `.bbmodel` with different parts visible —
     /// the lit/unlit machine pattern). Empty for most rows.
     pub hidden_parts: &'static [&'static str],
+    /// Authored cube NAMES that stay VISIBLE but are excluded from collision.
+    /// Useful for decorative/detail cubes (water surface, glass pane, flame)
+    /// that should render and be selectable but not block movement. Applied
+    /// after the cache load like `hidden_parts`. Empty for most rows.
+    pub collision_hidden_parts: &'static [&'static str],
     /// Per-row translations of named cubes, in AUTHORED PIXELS (applied after
     /// the cache load like `hidden_parts`) — how rows sharing one `.bbmodel`
     /// pose a part differently per variant: a fill surface rising with the
@@ -184,6 +189,9 @@ struct RawModelDef {
     fit: FitMode,
     #[serde(default)]
     hidden_parts: Vec<String>,
+    /// Authored cube names excluded from collision while remaining visible.
+    #[serde(default)]
+    collision_hidden_parts: Vec<String>,
     /// `{"cube_name": [dx, dy, dz]}` in authored pixels (BTreeMap: the
     /// leaked slice stays name-ordered, deterministic).
     #[serde(default)]
@@ -217,6 +225,11 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef
                 .into_iter()
                 .map(|p| &*Box::leak(p.into_boxed_str()))
                 .collect();
+            let collision_hidden_parts: Vec<&'static str> = r
+                .collision_hidden_parts
+                .into_iter()
+                .map(|p| &*Box::leak(p.into_boxed_str()))
+                .collect();
             let part_offsets: Vec<(&'static str, [f32; 3])> = r
                 .part_offsets
                 .into_iter()
@@ -230,6 +243,7 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef
                 orientation: r.orientation,
                 fit: r.fit,
                 hidden_parts: Box::leak(hidden_parts.into_boxed_slice()),
+                collision_hidden_parts: Box::leak(collision_hidden_parts.into_boxed_slice()),
                 part_offsets: Box::leak(part_offsets.into_boxed_slice()),
             })
         },

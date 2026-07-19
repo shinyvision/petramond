@@ -36,6 +36,7 @@ mod forage;
 mod kv_counter;
 mod spread;
 mod tilling;
+mod trough;
 mod wellfed;
 mod worldgen;
 
@@ -116,13 +117,14 @@ impl Mod for Farming {
         match (handler_id, &mut *payload) {
             (ON_ITEM_USE_PRE, EventPayload::ItemUsePre { item, target }) => {
                 // The hoe first (it consumes eligible clicks), then the
-                // fertilizer targets, then the compostable barrel fill —
-                // each falls through quietly when the held item is not its
-                // business.
+                // fertilizer targets, then the compostable barrel fill, then
+                // the water trough bucket swap — each falls through quietly
+                // when the held item is not its business.
                 let first = chain(tilling::on_item_use(content, *item, *target), || {
                     fertilize::on_item_use(content, *item, *target)
                 });
-                chain(first, || compost::on_item_use(content, *item, *target))
+                let second = chain(first, || compost::on_item_use(content, *item, *target));
+                chain(second, || trough::on_item_use(content, *item, *target))
             }
             (ON_BLOCK_PLACE_PRE, EventPayload::BlockPlacePre { pos, block, .. }) => {
                 crops::on_place_pre(content, *pos, *block)

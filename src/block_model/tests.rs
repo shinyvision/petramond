@@ -9,6 +9,7 @@ fn model_bytes(kind: BlockModelKind) -> Vec<u8> {
 use glam::Vec3;
 
 use crate::asset_cache::CompiledAsset;
+use crate::block::Aabb;
 use crate::mesh::face::Face;
 
 use super::geometry::{face_slot, FLAT_FACE_BIAS};
@@ -204,6 +205,53 @@ fn collision_is_the_multi_box_model_shape_not_one_coarse_box() {
         inst.bounds_max[1] - inst.bounds_min[1] > 1.0,
         "outline spans >1 cell tall"
     );
+}
+
+#[test]
+fn collision_hidden_parts_keep_visuals_but_remove_collision() {
+    // A solid cube plus a decorative "water" cube that should render and
+    // contribute to bounds/selection but not to player collision.
+    let solid = ModelCube {
+        name: "solid".into(),
+        from: Vec3::new(0.0, 0.0, 0.0),
+        to: Vec3::new(16.0, 16.0, 16.0),
+        origin: Vec3::ZERO,
+        rotation: Vec3::ZERO,
+        faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+    };
+    let water = ModelCube {
+        name: "water".into(),
+        from: Vec3::new(2.0, 2.0, 2.0),
+        to: Vec3::new(14.0, 14.0, 14.0),
+        origin: Vec3::ZERO,
+        rotation: Vec3::ZERO,
+        faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+    };
+    let mut model = BlockModel {
+        cubes: vec![solid, water],
+        texture_rgba: vec![0, 0, 0, 0],
+        tex_w: 1,
+        tex_h: 1,
+        collision: Vec::new(),
+        bounds: Aabb {
+            min: [0.0; 3],
+            max: [1.0; 3],
+        },
+        display: BlockDisplay::default(),
+        display_pivot: [0.0, 8.0, 0.0],
+    };
+    model.rebake();
+    assert_eq!(model.collision.len(), 2, "both cubes collide before hiding");
+    let bounds_before = model.bounds;
+
+    model.hide_collision_parts(&["water"], &[], "test:trough_filled");
+    assert_eq!(
+        model.collision.len(),
+        1,
+        "only the solid cube collides after hiding water"
+    );
+    assert_eq!(model.bounds, bounds_before, "bounds still hug the visible water");
+    assert_eq!(model.cubes.len(), 2, "water cube is still rendered");
 }
 
 #[test]

@@ -146,10 +146,18 @@ impl BlockModel {
 
     /// Re-bake collision + bounds from the current cubes — required after any
     /// geometry change (the initial bake, per-row part hiding/posing).
-    fn rebake(&mut self) {
-        let (collision, bounds) = bake_collision_bounds(&self.cubes);
+    pub(in crate::block_model) fn rebake(&mut self) {
+        let (collision, bounds) = bake_collision_bounds(&self.cubes, |_| true);
         self.collision = collision;
         self.bounds = bounds;
+    }
+
+    /// Re-bake collision from cubes matching `include_in_collision`, while
+    /// keeping the bounds over ALL cubes so selection/outlines still hug the
+    /// full visible model.
+    fn rebake_with_collision_filter(&mut self, include_in_collision: impl Fn(&ModelCube) -> bool) {
+        let (collision, _) = bake_collision_bounds(&self.cubes, include_in_collision);
+        self.collision = collision;
     }
 
     /// Drop the cubes named in `hidden` and re-bake collision + bounds from
@@ -166,6 +174,26 @@ impl BlockModel {
         }
         self.cubes.retain(|c| !hidden.contains(&c.name.as_str()));
         self.rebake();
+    }
+
+    /// Exclude the cubes named in `hidden` from collision while keeping them
+    /// visible and selectable — the per-ROW `collision_hidden_parts` filter,
+    /// applied after the cache load. A name matching no visible cube warns,
+    /// unless it was already removed by `hidden_parts`.
+    pub(in crate::block_model) fn hide_collision_parts(
+        &mut self,
+        hidden: &[&str],
+        already_hidden: &[&str],
+        row_key: &str,
+    ) {
+        for h in hidden {
+            if !already_hidden.contains(h) && !self.cubes.iter().any(|c| c.name == *h) {
+                log::warn!(
+                    "block model '{row_key}': collision-hidden part '{h}' matches no cube"
+                );
+            }
+        }
+        self.rebake_with_collision_filter(|c| !hidden.contains(&c.name.as_str()));
     }
 
     /// Translate the cubes named in `offsets` (authored pixels) and re-bake
@@ -196,10 +224,14 @@ impl BlockModel {
     }
 }
 
-/// Collision = one posed AABB per SOLID cube (skip flat/degenerate — a
-/// zero-extent cube is decoration, not a wall). Bounds = the tight box over
-/// all cubes (a cube-less model degrades to the unit cell).
-fn bake_collision_bounds(cubes: &[ModelCube]) -> (Vec<Aabb>, Aabb) {
+/// Collision = one posed AABB per SOLID cube matching `include_in_collision`
+/// (skip flat/degenerate — a zero-extent cube is decoration, not a wall).
+/// Bounds = the tight box over ALL cubes (a cube-less model degrades to the
+/// unit cell).
+fn bake_collision_bounds(
+    cubes: &[ModelCube],
+    include_in_collision: impl Fn(&ModelCube) -> bool,
+) -> (Vec<Aabb>, Aabb) {
     let mut collision = Vec::new();
     let mut bmn = Vec3::splat(f32::INFINITY);
     let mut bmx = Vec3::splat(f32::NEG_INFINITY);
@@ -207,7 +239,7 @@ fn bake_collision_bounds(cubes: &[ModelCube]) -> (Vec<Aabb>, Aabb) {
         let (mn, mx) = posed_cube_bounds(c);
         bmn = bmn.min(mn);
         bmx = bmx.max(mx);
-        if (mx - mn).min_element() > 1e-4 {
+        if include_in_collision(c) && (mx - mn).min_element() > 1e-4 {
             collision.push(Aabb {
                 min: mn.to_array(),
                 max: mx.to_array(),
@@ -288,12 +320,15 @@ pub(super) static MODELS: LazyLock<Vec<BlockModel>> = LazyLock::new(|| {
                     log::error!("block model precache failed for {k:?}: {e}");
                     BlockModel::empty()
                 });
-            // The cache always holds the FULL model; the row's part filter and
-            // part poses are applied on top so rows sharing one file stay one
-            // cache entry each (the cache is keyed by row key) with independent
-            // visibility/pose.
+            // The cache always holds the FULL model; the row's part filter,
+            // collision filter, and part poses are applied on top so rows
+            // sharing one file stay one cache entry each (the cache is keyed by
+            // row key) with independent visibility/collision/pose.
             if !d.hidden_parts.is_empty() {
                 model.hide_parts(d.hidden_parts, d.key);
+            }
+            if !d.collision_hidden_parts.is_empty() {
+                model.hide_collision_parts(d.collision_hidden_parts, d.hidden_parts, d.key);
             }
             if !d.part_offsets.is_empty() {
                 model.offset_parts(d.part_offsets, d.hidden_parts, d.key);

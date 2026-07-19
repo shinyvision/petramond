@@ -5,6 +5,7 @@
 use mod_api::{HostCall, HostRet, PlayerSnapshot};
 
 use crate::events::ModAction;
+use crate::item::ItemStack;
 
 use super::entities::give_item;
 use super::guards::{batch_guard, finite3, item_by_name, sim_call, sim_query};
@@ -81,6 +82,25 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 ctx.player.inventory.decrement_selected();
             }
             HostRet::Bool(true)
+        }),
+        HostCall::ReplaceHeldOne { item, replacement } => sim_query(|ctx| {
+            let holds = ctx
+                .player
+                .inventory
+                .selected()
+                .is_some_and(|st| st.item.0 == item.0 && st.count >= 1);
+            if !holds {
+                return HostRet::Bool(false);
+            }
+            let Some(replacement_ty) = item_by_name(&replacement) else {
+                log::warn!("[mod {mod_id}] ReplaceHeldOne: unknown item '{replacement}'");
+                return HostRet::Bool(false);
+            };
+            let ok = ctx
+                .player
+                .inventory
+                .replace_selected_one(ItemStack::new(replacement_ty, 1));
+            HostRet::Bool(ok)
         }),
         HostCall::PlayerInput { player_id } => sim_query(|ctx| {
             HostRet::PlayerInput(ctx.world.player_input(player_id.0).map(|i| {

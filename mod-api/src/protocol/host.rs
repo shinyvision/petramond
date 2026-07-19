@@ -754,6 +754,16 @@ pub enum HostCall {
         item: ItemId,
         count: u32,
     },
+    /// Swap ONE of the selected stack for `replacement` (by registry NAME) when
+    /// the selected stack holds at least one of `item`. For a single-item stack
+    /// the replacement lands in the same slot (the bucket empty/fill case); for
+    /// larger stacks one unit is consumed and the replacement is given through
+    /// normal inventory fill. `false` = wrong/empty hand, unknown replacement
+    /// name, or no room for the replacement. → [`HostRet::Bool`].
+    ReplaceHeldOne {
+        item: ItemId,
+        replacement: String,
+    },
     /// Seat player `player_id` in `seat` of the live mob `mob_id` (stable
     /// id). Validated by the engine: the mob is alive and its species row
     /// declares that seat (`seats` in `mobs.json`), the seat is free, and the

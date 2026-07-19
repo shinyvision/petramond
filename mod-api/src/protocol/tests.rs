@@ -282,6 +282,10 @@ fn abi_roundtrip_host_and_guest_calls() {
         keys: vec!["minimap:tile:0:0".into(), "minimap:tile:1:0".into()],
     });
     roundtrip(HostCall::ClientStorageReadPoll { ticket: 7 });
+    roundtrip(HostCall::ReplaceHeldOne {
+        item: ItemId(3),
+        replacement: "petramond:water_bucket".into(),
+    });
     roundtrip(HostRet::ClientStorageRead(None));
     roundtrip(HostRet::ClientStorageRead(Some(vec![
         Some(ByteBuf::from(vec![1, 2, 3])),

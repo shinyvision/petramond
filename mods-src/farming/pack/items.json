@@ -238,6 +238,19 @@
       },
       "tags": [],
       "block": "farming:farmers_workbench"
+    },
+    {
+      "item": "farming:trough",
+      "key": "farming:trough",
+      "name": "Trough",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "farming:trough"
     }
   ]
 }

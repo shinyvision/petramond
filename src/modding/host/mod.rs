@@ -431,6 +431,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ApplyKnockback { .. }
         | HostCall::GiveItem { .. }
         | HostCall::ConsumeHeld { .. }
+        | HostCall::ReplaceHeldOne { .. }
         | HostCall::SetHealth { .. }
         | HostCall::Teleport { .. }
         | HostCall::EffectApply { .. }

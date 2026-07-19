@@ -93,6 +93,25 @@
     },
     {
       "type": "crafting",
+      "recipe": "farming:trough",
+      "station": "farming:farmers_workbench",
+      "ingredients": [
+        {
+          "tag": "petramond:planks",
+          "count": 5
+        },
+        {
+          "tag": "petramond:logs",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "farming:trough",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
       "recipe": "farming:farmers_workbench",
       "station": "petramond:crafting_table",
       "ingredients": [

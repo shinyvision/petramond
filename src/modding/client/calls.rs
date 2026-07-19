@@ -141,6 +141,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::MobDismount { .. }
         | HostCall::MobRiders { .. }
         | HostCall::ConsumeHeld { .. }
+        | HostCall::ReplaceHeldOne { .. }
         | HostCall::PlayerInput { .. }
         | HostCall::EmitterBurst { .. }
         | HostCall::BiomeAt { .. }
