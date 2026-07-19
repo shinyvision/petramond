@@ -66,12 +66,14 @@ const RAIN_DARKEN: f32 = 1.7;    // extinction boost at full menace — the
                                  // deep slate (~1/3 sky luminance), never
                                  // near-black ("no harsh darks" — the art
                                  // direction; playtest 2026-07-17).
-// Cloud fog-fade band: NEVER fades anything nearer than this (a close deck
-// at eye level must stay crisp), and the fade is COMPLETE by the far edge so
-// the deck dissolves into the haze exactly like terrain does — just over a
-// cloud-scaled range (they are huge and high, so they legitimately outlive
-// the terrain fog before melting away). Playtest-tuned 2026-07-17.
-const CLOUD_FADE_NEAR_MIN: f32 = 400.0;
+// Cloud fog-fade band: starts where the terrain fog completes (u.fog.y) and
+// is COMPLETE by 3x that, so the deck dissolves into the haze exactly like
+// terrain does — just over a cloud-scaled range (they are huge and high, so
+// they legitimately outlive the terrain fog before melting away). PURELY
+// proportional to the view distance: hard floors here (400/+600, removed
+// 2026-07-19) pinned the band below ~25 chunks, so lowering the view
+// distance fogged the terrain in but left clouds crisp to 400 blocks and
+// visible to a kilometer.
 const CLOUD_FADE_END_CAP: f32 = 2200.0;
 const AMBIENT_LIFT: f32 = 0.56;  // how much haze light fills the shadow side
 // Global opacity ceiling: a whisper of sky always shows through the deck —
@@ -352,6 +354,14 @@ fn fs_env(in: VsOut) -> @location(0) vec4<f32> {
     // step budget below.
     if (t1 <= t0 + 1e-3) { return vec4<f32>(0.0); }
 
+    // Aerial fade band, terrain-style: from where the terrain fog completes
+    // to a cloud-scaled 3x (see CLOUD_FADE_END_CAP). Computed before the
+    // march so a ray entering the slab beyond full fade skips it entirely —
+    // alpha would multiply to zero anyway (hit_dist >= t0 >= fade_end).
+    let fade_start = u.fog.y;
+    let fade_end = min(CLOUD_FADE_END_CAP, u.fog.y * 3.0);
+    if (t0 >= fade_end) { return vec4<f32>(0.0); }
+
     let mu = dot(dir, u.sun_dir.xyz);
     let daylight = u.sun_dir.w;
     // Dual-lobe phase: soft forward scattering + a restrained silver lining.
@@ -478,12 +488,9 @@ fn fs_env(in: VsOut) -> @location(0) vec4<f32> {
     var alpha = (1.0 - transmittance) * (1.0 - CLOUD_SKY_BLEND);
     if (alpha <= 0.002) { return vec4<f32>(0.0); }
     // Aerial perspective, terrain-style: purely by DISTANCE (an angle-based
-    // horizon merge cut white bands through NEARBY eye-level clouds). The
-    // band starts where the terrain fog completes and finishes the dissolve
-    // entirely — distance lightens, and a far deck ends as haze, never as a
-    // hard grey edge.
-    let fade_start = max(u.fog.y, CLOUD_FADE_NEAR_MIN);
-    let fade_end = min(CLOUD_FADE_END_CAP, max(u.fog.y * 3.0, fade_start + 600.0));
+    // horizon merge cut white bands through NEARBY eye-level clouds) —
+    // distance lightens, and a far deck ends as haze, never as a hard grey
+    // edge. The band itself is computed above the march.
     let haze = smoothstep(fade_start, fade_end, max(hit_dist, 0.0));
     // Fade toward the DIRECTIONAL haze (savanna cream, sunset peach), with
     // the COLOR converging faster than the alpha thins: the far deck first

@@ -14,10 +14,15 @@
 # Override vars:
 #   SEED=0x12345678 RD=12 make run
 #   NV_OFFLOAD= make run        -- run on the Intel iGPU instead of the NVIDIA dGPU
+#
+# RD is only exported when set explicitly: the client normally reads the view
+# distance saved in client.json (forcing PETRAMOND_RD on every run shadowed
+# the Options slider across restarts). The headless server has no client.json,
+# so it falls back to 32.
 
 CARGO ?= cargo
 SEED  ?= 0x312
-RD    ?= 32
+RD    ?=
 
 # Run on the discrete NVIDIA GPU via PRIME render offload. The game renders through
 # Vulkan, so __VK_LAYER_NV_optimus=NVIDIA_only (which hides the Intel iGPU from the
@@ -32,11 +37,11 @@ NV_OFFLOAD ?= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GL
 # seconds. `run-release` is the exact shipped configuration.
 run: run-native
 run-native:
-	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) \
+	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) $(if $(RD),PETRAMOND_RD=$(RD)) \
 		$(CARGO) run --profile playtest --bin petramond_native
 
 run-release: build-native
-	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) \
+	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) $(if $(RD),PETRAMOND_RD=$(RD)) \
 		$(CARGO) run --release --bin petramond_native
 
 # Headless dedicated server (no GPU, no window, no audio libs — built without
@@ -44,11 +49,11 @@ run-release: build-native
 PORT ?= 7434
 run-server:
 	@test -n "$(WORLD)" || { echo "usage: make run-server WORLD=<world-name> [PORT=7434]"; exit 2; }
-	PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) PETRAMOND_PORT=$(PORT) \
+	PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(or $(RD),32) PETRAMOND_PORT=$(PORT) \
 		$(CARGO) run --profile playtest --no-default-features --bin petramond_server -- $(WORLD)
 
 dev:
-	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(RD) \
+	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) $(if $(RD),PETRAMOND_RD=$(RD)) \
 		$(CARGO) run --bin petramond_native
 
 build: build-native
