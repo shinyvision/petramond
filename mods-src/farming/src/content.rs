@@ -27,6 +27,42 @@ struct CropSpec {
     extra_drop: Option<(&'static str, &'static str, u64, u64)>,
 }
 
+/// One breedable species row: the whole husbandry system (grazing
+/// saturation, love mode, courtship, offspring, growth — see
+/// [`crate::husbandry`] and [`crate::growth`]) drives off these. Adding a
+/// breedable mob is ONE row here plus a `brain_extensions` entry composing
+/// `farming:husbandry_goal` onto its brain — never a species branch in the
+/// logic.
+struct HusbandrySpec {
+    /// The ADULT species key (`mobs.json` row key) — what breeds, and what a
+    /// grown juvenile becomes.
+    mob: &'static str,
+    /// The JUVENILE species a birth spawns (this pack's own row); it carries
+    /// `farming:baby` and grows into `mob` when the tag is removed.
+    offspring: &'static str,
+    /// The vegetation this species grazes (block registry names).
+    food: &'static [&'static str],
+    /// Saturation restored per eaten plant (balance data).
+    restore: i64,
+}
+
+const HUSBANDRY: &[HusbandrySpec] = &[HusbandrySpec {
+    mob: "petramond:sheep",
+    offspring: "farming:lamb",
+    food: &["petramond:short_grass"],
+    restore: 3,
+}];
+
+/// One breedable species, resolved from its [`HusbandrySpec`] row.
+pub struct HusbandryDef {
+    pub key: &'static str,
+    pub kind: MobId,
+    pub offspring_key: &'static str,
+    pub offspring_kind: MobId,
+    pub food: Vec<BlockId>,
+    pub restore: i64,
+}
+
 const CROPS: &[CropSpec] = &[
     CropSpec {
         name: "wheat",
@@ -123,6 +159,8 @@ pub struct Content {
     pub wooden_bucket: ItemId,
     /// Water-filled wooden bucket.
     pub water_bucket: ItemId,
+    /// The breedable species, one [`HusbandryDef`] per [`HUSBANDRY`] row.
+    pub husbandry: Vec<HusbandryDef>,
 }
 
 impl Content {
@@ -145,6 +183,30 @@ impl Content {
             sapling_finals.push((block(&format!("petramond:{species}_sapling"))?, last));
             sapling_finals.push((block(&format!("petramond:{species}_sapling_1"))?, last));
             sapling_finals.push((last, last));
+        }
+        let mut husbandry = Vec::with_capacity(HUSBANDRY.len());
+        for spec in HUSBANDRY {
+            let mut food = Vec::with_capacity(spec.food.len());
+            for name in spec.food {
+                food.push(block(name)?);
+            }
+            let (Some(kind), Some(offspring_kind)) =
+                (resolve_mob(spec.mob), resolve_mob(spec.offspring))
+            else {
+                log(&format!(
+                    "farming: unknown husbandry species '{}' / '{}'",
+                    spec.mob, spec.offspring
+                ));
+                return None;
+            };
+            husbandry.push(HusbandryDef {
+                key: spec.mob,
+                kind,
+                offspring_key: spec.offspring,
+                offspring_kind,
+                food,
+                restore: spec.restore,
+            });
         }
         let mut crops = Vec::with_capacity(CROPS.len());
         for spec in CROPS {
@@ -194,6 +256,7 @@ impl Content {
             compostable: items_by_tag("farming:compostable"),
             wooden_bucket: item("petramond:wooden_bucket")?,
             water_bucket: item("petramond:water_bucket")?,
+            husbandry,
         })
     }
 

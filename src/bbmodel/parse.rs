@@ -106,6 +106,7 @@ pub(super) fn parse_animations(
             _ => false,
         };
         let mut tracks: HashMap<usize, Vec<Keyframe>> = HashMap::new();
+        let mut pos_tracks: HashMap<usize, Vec<Keyframe>> = HashMap::new();
         if let Some(animators) = a.get("animators").and_then(Value::as_object) {
             for (uuid, animator) in animators {
                 let Some(&bone) = bone_by_uuid.get(uuid) else {
@@ -114,23 +115,31 @@ pub(super) fn parse_animations(
                 let Some(kfs) = animator.get("keyframes").and_then(Value::as_array) else {
                     continue;
                 };
-                let mut track: Vec<Keyframe> = kfs
-                    .iter()
-                    .filter(|k| k.get("channel").and_then(Value::as_str) == Some("rotation"))
-                    .filter_map(|k| {
-                        let time = k.get("time").and_then(Value::as_f64)? as f32;
-                        let dp = k.get("data_points").and_then(Value::as_array)?.first()?;
-                        let rot = Vec3::new(
-                            dp.get("x").and_then(num).unwrap_or(0.0),
-                            dp.get("y").and_then(num).unwrap_or(0.0),
-                            dp.get("z").and_then(num).unwrap_or(0.0),
-                        );
-                        Some(Keyframe { time, rot })
-                    })
-                    .collect();
-                if !track.is_empty() {
+                let channel_track = |channel: &str| -> Vec<Keyframe> {
+                    let mut track: Vec<Keyframe> = kfs
+                        .iter()
+                        .filter(|k| k.get("channel").and_then(Value::as_str) == Some(channel))
+                        .filter_map(|k| {
+                            let time = k.get("time").and_then(Value::as_f64)? as f32;
+                            let dp = k.get("data_points").and_then(Value::as_array)?.first()?;
+                            let v = Vec3::new(
+                                dp.get("x").and_then(num).unwrap_or(0.0),
+                                dp.get("y").and_then(num).unwrap_or(0.0),
+                                dp.get("z").and_then(num).unwrap_or(0.0),
+                            );
+                            Some(Keyframe { time, v })
+                        })
+                        .collect();
                     track.sort_by(|a, b| a.time.total_cmp(&b.time));
-                    tracks.insert(bone, track);
+                    track
+                };
+                let rot = channel_track("rotation");
+                if !rot.is_empty() {
+                    tracks.insert(bone, rot);
+                }
+                let pos = channel_track("position");
+                if !pos.is_empty() {
+                    pos_tracks.insert(bone, pos);
                 }
             }
         }
@@ -140,6 +149,7 @@ pub(super) fn parse_animations(
                 length,
                 looping,
                 tracks,
+                pos_tracks,
             },
         );
     }

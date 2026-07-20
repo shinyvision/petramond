@@ -27,6 +27,12 @@ pub(super) const KV_MAX_VALUE_BYTES: usize = 64 * 1024;
 /// by the SDK (panic → mod disabled), like every other cap on this surface.
 pub(super) const SIM_BATCH_MAX: usize = 4096;
 
+/// Cell cap for the `FindBlocks` box scan — the same "bounded host work"
+/// doctrine as [`SIM_BATCH_MAX`], but a VOLUME bound: the scan pays per cell,
+/// not per element. 32³ comfortably covers radius-8..15 neighbourhood
+/// searches (17³ = 4913) while a maximal capped scan stays microseconds.
+pub(super) const FIND_BLOCKS_VOLUME_MAX: i64 = 32 * 32 * 32;
+
 /// `Some(err)` when a batched call's element count exceeds
 /// [`SIM_BATCH_MAX`]; `what` names the call and lane for the error line.
 pub(super) fn batch_guard(what: &str, len: usize) -> Option<HostRet> {

@@ -373,8 +373,8 @@ impl Audio {
         listener: SpatialListener,
         initial_position: crate::mathh::Vec3,
     ) {
-        let pitch_variation = sound.def().pitch_variation;
-        let pitch = 1.0 + self.next_jitter() * pitch_variation;
+        let def = sound.def();
+        let pitch = def.pitch * (1.0 + self.next_jitter() * def.pitch_variation);
         self.play_spatial(
             handle,
             sound,
@@ -461,7 +461,7 @@ impl Audio {
         // below doesn't conflict: a random variant (so a repeated sound isn't the
         // same clip) plus the per-play pitch jitter.
         let variant = self.next_index(count);
-        let pitch = 1.0 + self.next_jitter() * def.pitch_variation;
+        let pitch = def.pitch * (1.0 + self.next_jitter() * def.pitch_variation);
         let gain = self.mix_gain(def.category) * def.gain * extra_gain;
 
         let buf = &self.buffers[sound.0 as usize][variant];

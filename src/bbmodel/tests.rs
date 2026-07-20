@@ -399,3 +399,44 @@ fn base64_roundtrips_known_vector() {
     assert_eq!(base64_decode("TWE=").unwrap(), b"Ma");
     assert_eq!(base64_decode("TW Fu\n").unwrap(), b"Man");
 }
+
+/// Position keyframes translate the bone (and its cubes) in the parent's
+/// frame — a clip authored with a head that bodily dips (the lamb's `eat`)
+/// must move geometry, not just parse away silently.
+#[test]
+fn position_tracks_translate_the_bone() {
+    let tex = one_pixel_texture([255, 255, 255, 255]);
+    let src = format!(
+        r#"{{
+            "resolution": {{ "width": 16, "height": 16 }},
+            "textures": [{{ "uv_width": 16, "uv_height": 16, "source": "{tex}" }}],
+            "elements": [
+                {{ "uuid": "c", "type": "cube", "from": [0,0,0], "to": [4,4,4],
+                   "faces": {{ "up": {{ "uv": [0,0,16,16], "texture": 0 }} }} }}
+            ],
+            "groups": [{{ "uuid": "g", "name": "head", "origin": [2,2,2] }}],
+            "outliner": [{{ "uuid": "g", "name": "head", "origin": [2,2,2], "children": ["c"] }}],
+            "animations": [{{
+                "name": "dip", "loop": "once", "length": 1.0,
+                "animators": {{ "g": {{ "name": "head", "type": "bone", "keyframes": [
+                    {{ "channel": "position", "time": 0,
+                       "data_points": [{{ "x": "0", "y": "0", "z": "0" }}] }},
+                    {{ "channel": "position", "time": 1.0,
+                       "data_points": [{{ "x": "0", "y": "-3", "z": "0" }}] }}
+                ] }} }}
+            }}]
+        }}"#
+    );
+    let m = Model::load(&src).expect("position-animated model parses");
+    let dip = m.animation("dip").expect("dip parses");
+    assert!(dip.affects_bone(0), "a position-only track claims the bone");
+    let rest = m.pose(dip, 0.0);
+    let low = m.pose(dip, 1.0);
+    let p0 = rest[0].transform_point3(Vec3::splat(2.0));
+    let p1 = low[0].transform_point3(Vec3::splat(2.0));
+    assert!((p1.y - (p0.y - 3.0)).abs() < 1e-5, "the bone dips 3 units: {p0} -> {p1}");
+    assert!((p1.x - p0.x).abs() < 1e-5 && (p1.z - p0.z).abs() < 1e-5);
+    // Clamped past the end (a held `once` frame keeps the offset).
+    let held = m.pose(dip, 2.0);
+    assert!((held[0].transform_point3(Vec3::splat(2.0)).y - p1.y).abs() < 1e-5);
+}

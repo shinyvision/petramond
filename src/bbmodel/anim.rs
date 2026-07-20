@@ -2,18 +2,18 @@ use glam::{Mat4, Quat, Vec3};
 
 use super::{Bone, Keyframe};
 
-/// Linearly interpolate a sorted rotation track (euler degrees) at time `t`.
-/// Clamps to the endpoints outside the keyed range.
+/// Linearly interpolate a sorted channel track (euler degrees or model-unit
+/// offsets) at time `t`. Clamps to the endpoints outside the keyed range.
 pub(super) fn sample_track(kfs: &[Keyframe], t: f32) -> Vec3 {
     if kfs.is_empty() {
         return Vec3::ZERO;
     }
     if t <= kfs[0].time {
-        return kfs[0].rot;
+        return kfs[0].v;
     }
     let last = kfs.len() - 1;
     if t >= kfs[last].time {
-        return kfs[last].rot;
+        return kfs[last].v;
     }
     for w in kfs.windows(2) {
         let (a, b) = (&w[0], &w[1]);
@@ -24,10 +24,10 @@ pub(super) fn sample_track(kfs: &[Keyframe], t: f32) -> Vec3 {
             } else {
                 0.0
             };
-            return a.rot + (b.rot - a.rot) * f;
+            return a.v + (b.v - a.v) * f;
         }
     }
-    kfs[last].rot
+    kfs[last].v
 }
 
 /// Quaternion from euler degrees (XYZ order — exact for single-axis rotations).
@@ -41,8 +41,11 @@ pub(crate) fn euler_quat(deg: Vec3) -> Quat {
     )
 }
 
-pub(super) fn bone_transform(bone: &Bone, anim_rot: Vec3) -> Mat4 {
-    Mat4::from_translation(bone.pivot)
+/// A bone's local pose: the animated position offset translates the bone (and
+/// its subtree) in the parent's frame, then the rest + animated rotation turns
+/// it about its pivot — matching Blockbench's preview of both channels.
+pub(super) fn bone_transform(bone: &Bone, anim_rot: Vec3, anim_pos: Vec3) -> Mat4 {
+    Mat4::from_translation(bone.pivot + anim_pos)
         * Mat4::from_quat(euler_quat(bone.rotation + anim_rot))
         * Mat4::from_translation(-bone.pivot)
 }

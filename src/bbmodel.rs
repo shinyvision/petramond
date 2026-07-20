@@ -78,15 +78,19 @@ pub struct Bone {
     pub parent: Option<usize>,
 }
 
-/// One rotation keyframe: euler degrees at `time` seconds.
+/// One keyframe: the channel's `Vec3` at `time` seconds — euler degrees on a
+/// rotation track, a model-unit offset on a position track.
 #[derive(Serialize, Deserialize)]
 struct Keyframe {
     time: f32,
-    rot: Vec3,
+    v: Vec3,
 }
 
-/// A named animation: per-bone rotation tracks (sorted keyframes), keyed by bone
-/// index. Only the rotation channel is read (the bundled owl animates rotation only).
+/// A named animation: per-bone rotation and position tracks (sorted
+/// keyframes), keyed by bone index. Rotation rotates about the bone's pivot;
+/// position translates the bone (and its subtree) in its parent's frame —
+/// both sampled with the same linear interpolation. Scale channels are not
+/// read.
 #[derive(Serialize, Deserialize)]
 pub struct Animation {
     pub length: f32,
@@ -95,14 +99,16 @@ pub struct Animation {
     /// wrapping).
     pub looping: bool,
     tracks: HashMap<usize, Vec<Keyframe>>,
+    #[serde(default)]
+    pos_tracks: HashMap<usize, Vec<Keyframe>>,
 }
 
 impl Animation {
-    /// Does this animation animate `bone` (have a rotation track for it)? The mob
-    /// baker uses this to suppress AI head-look while an animation already drives the
-    /// head bone.
+    /// Does this animation animate `bone` (have a rotation or position track for
+    /// it)? The mob baker uses this to suppress AI head-look while an animation
+    /// already drives the head bone.
     pub fn affects_bone(&self, bone: usize) -> bool {
-        self.tracks.contains_key(&bone)
+        self.tracks.contains_key(&bone) || self.pos_tracks.contains_key(&bone)
     }
 }
 
@@ -357,7 +363,7 @@ impl Model {
         let local: Vec<Mat4> = self
             .bones
             .iter()
-            .map(|b| bone_transform(b, Vec3::ZERO))
+            .map(|b| bone_transform(b, Vec3::ZERO, Vec3::ZERO))
             .collect();
         self.resolve_pose(&local)
     }
@@ -387,6 +393,7 @@ impl Model {
             .enumerate()
             .map(|(i, b)| {
                 let mut rot = Vec3::ZERO;
+                let mut pos = Vec3::ZERO;
                 for (anim, time, weight) in layers {
                     let w = weight.clamp(0.0, 1.0);
                     if w <= 0.0 {
@@ -404,8 +411,11 @@ impl Model {
                     if let Some(kfs) = anim.tracks.get(&i) {
                         rot += sample_track(kfs, t) * w;
                     }
+                    if let Some(kfs) = anim.pos_tracks.get(&i) {
+                        pos += sample_track(kfs, t) * w;
+                    }
                 }
-                bone_transform(b, rot)
+                bone_transform(b, rot, pos)
             })
             .collect();
 

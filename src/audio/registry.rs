@@ -168,6 +168,11 @@ pub(crate) struct SoundDef {
     /// a random speed in `[1 - v, 1 + v]`, so a repeated sound never sounds
     /// identical. `0.0` = none. (Speed shifts pitch — rodio `Source::speed`.)
     pub pitch_variation: f32,
+    /// BASE playback speed multiplier (`1.0` = as authored; optional in the
+    /// row). The jitter varies around it (`pitch * (1 ± variation)`), so a row
+    /// can reuse another row's clips a constant interval up or down — the lamb
+    /// bleats the sheep's calls 30% higher without new audio files.
+    pub pitch: f32,
     /// Distance in blocks where positional playback fades to silence.
     pub attenuation_distance: f32,
     pub category: SoundCategory,
@@ -181,9 +186,15 @@ struct RawSoundDef {
     variants: Vec<String>,
     gain: f64,
     pitch_variation: f64,
+    #[serde(default = "default_pitch")]
+    pitch: f64,
     #[serde(default = "default_attenuation_distance")]
     attenuation_distance: f64,
     category: SoundCategory,
+}
+
+fn default_pitch() -> f64 {
+    1.0
 }
 
 fn default_attenuation_distance() -> f64 {
@@ -227,6 +238,12 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<SoundDef>, St
                     r.sound
                 ));
             }
+            if !(r.pitch.is_finite() && r.pitch > 0.0) {
+                return Err(format!(
+                    "sound '{}': pitch must be finite and > 0",
+                    r.sound
+                ));
+            }
             let variants: Vec<&'static str> = r
                 .variants
                 .into_iter()
@@ -238,6 +255,7 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<SoundDef>, St
                 variants: Box::leak(variants.into_boxed_slice()),
                 gain: r.gain as f32,
                 pitch_variation: r.pitch_variation as f32,
+                pitch: r.pitch as f32,
                 attenuation_distance: r.attenuation_distance as f32,
                 category: r.category,
             })

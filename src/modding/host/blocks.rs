@@ -92,6 +92,56 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 )
             })
         }
+        HostCall::FindBlocks { min, max, blocks } => {
+            if let Some(err) = batch_guard("FindBlocks block", blocks.len()) {
+                return err;
+            }
+            if min.iter().zip(&max).any(|(lo, hi)| lo > hi) {
+                return HostRet::Error(format!("FindBlocks: inverted box {min:?}..{max:?}"));
+            }
+            let volume = min
+                .iter()
+                .zip(&max)
+                .map(|(lo, hi)| (hi - lo) as i64 + 1)
+                .product::<i64>();
+            if volume > super::guards::FIND_BLOCKS_VOLUME_MAX {
+                return HostRet::Error(format!(
+                    "FindBlocks: box volume {volume} exceeds {}",
+                    super::guards::FIND_BLOCKS_VOLUME_MAX
+                ));
+            }
+            let mut wanted = Vec::with_capacity(blocks.len());
+            for &b in &blocks {
+                match checked_block(b) {
+                    Ok(block) => wanted.push(block),
+                    Err(e) => return e,
+                }
+            }
+            sim_query(move |ctx| {
+                let mut found = Vec::new();
+                // Cells outside the world's vertical range are definitionally
+                // empty — they can never match, and treating them as
+                // unreadable would starve every search near the world's top
+                // or bottom. Clamp instead of gating.
+                let y_lo = min[1].max(crate::chunk::WORLD_MIN_Y);
+                let y_hi = max[1].min(crate::chunk::WORLD_MAX_Y - 1);
+                // Scan order (y, then z, then x ascending) is the documented
+                // ABI contract — deterministic for every caller.
+                for y in y_lo..=y_hi {
+                    for z in min[2]..=max[2] {
+                        for x in min[0]..=max[0] {
+                            let Some(block) = ctx.world.block_if_stream_final(x, y, z) else {
+                                return HostRet::FoundBlocks(None);
+                            };
+                            if wanted.contains(&block) {
+                                found.push([x, y, z]);
+                            }
+                        }
+                    }
+                }
+                HostRet::FoundBlocks(Some(found))
+            })
+        }
         HostCall::SetBlock { pos, block } => match checked_block(block) {
             Err(e) => e,
             Ok(b) => sim_query(|ctx| {
@@ -309,6 +359,62 @@ mod tests {
             assert_eq!(shape([8, 65, 8]), Some(CollisionShape::Empty));
             assert_eq!(shape([8, 66, 8]), Some(CollisionShape::Empty), "air");
             assert_eq!(shape([512, 64, 512]), None, "unloaded gates like GetBlock");
+        });
+    }
+
+    /// `FindBlocks` contract: matches come back in the documented scan order
+    /// (y, then z, then x ascending), a box touching any unreadable cell
+    /// answers `None` whole (never a partial search), and the volume /
+    /// inverted-box guards reject before any sim access.
+    #[test]
+    fn find_blocks_scans_in_order_and_gates_unreadable_boxes() {
+        let mut store = ModStoreData::new("alpha", 1);
+        let volume_capped = handle_host_call(
+            &mut store,
+            HostCall::FindBlocks {
+                min: [0, 0, 0],
+                max: [32, 31, 31],
+                blocks: vec![],
+            },
+        );
+        match volume_capped {
+            HostRet::Error(e) => assert!(e.contains("volume"), "got '{e}'"),
+            other => panic!("over-volume box answered {other:?}"),
+        }
+        let inverted = handle_host_call(
+            &mut store,
+            HostCall::FindBlocks {
+                min: [0, 5, 0],
+                max: [1, 4, 1],
+                blocks: vec![],
+            },
+        );
+        assert!(matches!(inverted, HostRet::Error(_)), "inverted box");
+
+        let mut world = World::new(1, 4);
+        world.clear_world();
+        world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+        assert!(world.set_block_world(4, 66, 5, Block::Stone));
+        assert!(world.set_block_world(3, 64, 5, Block::Stone));
+        assert!(world.set_block_world(8, 64, 2, Block::OakLog));
+        with_world_ctx(&mut world, || {
+            let stone = vec![mod_api::BlockId(Block::Stone.id())];
+            let find = |store: &mut ModStoreData, min, max, blocks| {
+                match handle_host_call(store, HostCall::FindBlocks { min, max, blocks }) {
+                    HostRet::FoundBlocks(f) => f,
+                    other => panic!("expected FoundBlocks, got {other:?}"),
+                }
+            };
+            assert_eq!(
+                find(&mut store, [0, 60, 0], [15, 70, 15], stone.clone()),
+                Some(vec![[3, 64, 5], [4, 66, 5]]),
+                "matches in scan order, other species not listed"
+            );
+            assert_eq!(
+                find(&mut store, [10, 60, 10], [20, 70, 20], stone),
+                None,
+                "a box reaching an unloaded column is unreadable whole"
+            );
         });
     }
 }

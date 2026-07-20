@@ -109,6 +109,10 @@ pub struct MobTickEvents {
 struct MobMeta {
     /// This species' `idle_*` animations (name-sorted; length + loop mode).
     idle_anims: Vec<IdleAnimMeta>,
+    /// EVERY named animation (name-sorted; length + loop mode) — how a
+    /// mod-activated one-shot layer knows when it has played through and
+    /// retires itself.
+    named_anims: Vec<model_meta::NamedAnimMeta>,
     /// Bone hierarchy (pivots + parents) for the death ragdoll, matching the renderer's
     /// bone order so a sim-computed pose drops into the render bake.
     skeleton: Skeleton,
@@ -123,6 +127,7 @@ static MOB_META: LazyLock<Vec<MobMeta>> = LazyLock::new(|| {
         .iter()
         .map(|d| MobMeta {
             idle_anims: model_meta::idle_anims(model(d.mob)),
+            named_anims: model_meta::named_anims(model(d.mob)),
             skeleton: model_meta::skeleton(model(d.mob)),
         })
         .collect()
@@ -231,6 +236,7 @@ impl Mobs {
                 i,
                 d.despawn_radius,
                 &meta.idle_anims,
+                &meta.named_anims,
                 &meta.skeleton,
             );
         }

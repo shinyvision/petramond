@@ -83,6 +83,8 @@ pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
         K::SectionGenerated => PostEventKind::SectionGenerated,
         K::SectionLoaded => PostEventKind::SectionLoaded,
         K::PlayerDismounted => PostEventKind::PlayerDismounted,
+        K::MobTagAdded => PostEventKind::MobTagAdded,
+        K::MobTagRemoved => PostEventKind::MobTagRemoved,
     })
 }
 
@@ -285,6 +287,28 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
         PostEvent::PlayerDismounted { player, mob_id } => api::EventPayload::PlayerDismounted {
             player_id: api::PlayerId(player.0),
             mob_id,
+        },
+        PostEvent::MobTagAdded {
+            id,
+            kind,
+            ref key,
+            ref value,
+        } => api::EventPayload::MobTagAdded {
+            mob_id: id,
+            kind: api::MobId(kind.id()),
+            key: key.clone(),
+            value: super::host::tags::to_api(value),
+        },
+        PostEvent::MobTagRemoved {
+            id,
+            kind,
+            ref key,
+            ref value,
+        } => api::EventPayload::MobTagRemoved {
+            mob_id: id,
+            kind: api::MobId(kind.id()),
+            key: key.clone(),
+            value: super::host::tags::to_api(value),
         },
     }
 }

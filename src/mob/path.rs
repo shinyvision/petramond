@@ -4,12 +4,23 @@
 //! capped height. No move climbs more than one block; no descent exceeds
 //! [`PathParams::max_drop`].
 //!
-//! Pure and world-agnostic: the search takes a `solid(cell)` closure (does this
-//! cell block movement?) plus the mob's body footprint, so it is fully unit-testable
-//! against a stub world. [`find_path`] returns the foothold cells from the start
-//! toward the goal; if the goal is unreachable it returns the path to the reachable
-//! cell that gets **closest** to the goal (a best-effort partial path), so a mob
-//! always makes progress instead of standing still.
+//! Pure and world-agnostic: the search takes closures plus the mob's body
+//! footprint, so it is fully unit-testable against a stub world. Two occupancy
+//! predicates keep cell probes honest about partial-collision shapes:
+//! `solid(cell)` marks cells whose collision fills the whole cell (a body can
+//! never be there), while `support(cell)` marks cells that can bear feet (any
+//! collision at all — a slab, a bed, a ladder column's top). A cell with
+//! partial collision is therefore routable in principle; whether a specific
+//! body actually fits through a specific move is the `step_allowed` edge
+//! gate's call (the world adapter sweeps the real body AABB against the real
+//! collision boxes — see `mob::nav`). `cell_cost` adds a per-cell surcharge so
+//! soft obstacles (other mobs, players) are routed around when a detour
+//! exists without ever walling a route off.
+//!
+//! [`find_path`] returns the foothold cells from the start toward the goal; if
+//! the goal is unreachable it returns the path to the reachable cell that gets
+//! **closest** to the goal (a best-effort partial path), so a mob always makes
+//! progress instead of standing still.
 
 use rustc_hash::FxHashMap;
 use std::cmp::Reverse;
@@ -85,14 +96,30 @@ pub fn is_foothold(cell: IVec3, params: PathParams, solid: &impl Fn(IVec3) -> bo
 
 /// Is `cell` a navigation foothold when water may support the body? Water support
 /// only counts at the surface: submerged cells are passable, not standable waypoints.
+#[allow(dead_code)]
 pub fn is_navigation_foothold(
     cell: IVec3,
     params: PathParams,
     solid: &impl Fn(IVec3) -> bool,
     water: &impl Fn(IVec3) -> bool,
 ) -> bool {
-    let support = |p: IVec3| solid(p) || water(p);
-    supported_foothold(cell, params, &support, solid) && body_layer_clear(cell, params, water)
+    is_navigation_foothold_with(cell, params, solid, solid, water)
+}
+
+/// [`is_navigation_foothold`] with a separate `support` predicate: `solid` still
+/// marks fully-blocked cells (body clearance), while `support` marks any cell
+/// that can bear feet — including partial-collision shapes (a slab, a bed, a
+/// ladder column) that do not blanket-block their cell. Whether a body truly
+/// fits a specific move through a partial cell is the edge gate's call.
+pub fn is_navigation_foothold_with(
+    cell: IVec3,
+    params: PathParams,
+    solid: &impl Fn(IVec3) -> bool,
+    support: &impl Fn(IVec3) -> bool,
+    water: &impl Fn(IVec3) -> bool,
+) -> bool {
+    let bearing = |p: IVec3| support(p) || water(p);
+    supported_foothold(cell, params, &bearing, solid) && body_layer_clear(cell, params, water)
 }
 
 /// Find the foothold cell a mob is standing in, given its feet position `pos` and
@@ -104,26 +131,43 @@ pub fn is_navigation_foothold(
 /// Without this, a mob standing at a block edge — centre over the drop, body still on
 /// the block — would have a non-foothold "current cell", so [`find_path`] would bail
 /// and it would never path anywhere (it'd freeze at the edge).
+#[allow(dead_code)]
 pub fn standing_cell(
     pos: Vec3,
     half_width: f32,
     head: i32,
     solid: &impl Fn(IVec3) -> bool,
 ) -> Option<IVec3> {
+    standing_cell_with(pos, half_width, head, solid, solid)
+}
+
+/// [`standing_cell`] with the separate `support` predicate (see
+/// [`is_navigation_foothold_with`]): partial-collision blocks bear feet
+/// without blanket-blocking their cell.
+pub fn standing_cell_with(
+    pos: Vec3,
+    half_width: f32,
+    head: i32,
+    solid: &impl Fn(IVec3) -> bool,
+    support: &impl Fn(IVec3) -> bool,
+) -> Option<IVec3> {
     let params = PathParams::for_body(head, half_width);
     let feet_y = pos.y.floor() as i32;
     let centre = IVec3::new(pos.x.floor() as i32, feet_y, pos.z.floor() as i32);
-    // A mob standing ON a partial-collision solid (a bed, stair, slab, model
-    // block) has its feet inside that block's own cell, which reads blocked —
-    // the real foothold is then the cell above it (floor = that block, body
-    // space clear). Without this the standing probe fails and the mob goes
-    // goalless the moment it steps onto a bed.
+    let foothold = |c: IVec3| supported_foothold(c, params, support, solid);
+    // A mob standing ON a partial-collision block (a bed, stair, slab, model
+    // block) has its feet inside that block's own cell — the real foothold is
+    // then the cell above it (floor = that block, body space clear), checked
+    // FIRST: if the cell under the feet can bear this body, the mob is resting
+    // on that shape, not standing beside it. Without this the standing probe
+    // fails (or claims the in-shape cell) and the mob goes goalless the moment
+    // it steps onto a bed.
     let foothold_at = |c: IVec3| -> Option<IVec3> {
-        if is_foothold(c, params, solid) {
-            return Some(c);
-        }
-        if solid(c) && is_foothold(c + IVec3::Y, params, solid) {
+        if support(c) && foothold(c + IVec3::Y) {
             return Some(c + IVec3::Y);
+        }
+        if foothold(c) {
+            return Some(c);
         }
         None
     };
@@ -158,11 +202,24 @@ pub fn standing_cell(
 /// Find the water-surface navigation cell near a swimming mob. This deliberately
 /// searches upward from the feet: underwater cells are not path waypoints, but the
 /// surface just above them can be.
+#[allow(dead_code)]
 pub fn swimming_cell(
     pos: Vec3,
     half_width: f32,
     head: i32,
     solid: &impl Fn(IVec3) -> bool,
+    water: &impl Fn(IVec3) -> bool,
+) -> Option<IVec3> {
+    swimming_cell_with(pos, half_width, head, solid, solid, water)
+}
+
+/// [`swimming_cell`] with the separate `support` predicate.
+pub fn swimming_cell_with(
+    pos: Vec3,
+    half_width: f32,
+    head: i32,
+    solid: &impl Fn(IVec3) -> bool,
+    support: &impl Fn(IVec3) -> bool,
     water: &impl Fn(IVec3) -> bool,
 ) -> Option<IVec3> {
     let params = PathParams::for_body(head, half_width);
@@ -171,7 +228,7 @@ pub fn swimming_cell(
     let z = pos.z.floor() as i32;
     for dy in 0..=params.head_cells() + 4 {
         let c = IVec3::new(x, feet_y + dy, z);
-        if is_navigation_foothold(c, params, solid, water) {
+        if is_navigation_foothold_with(c, params, solid, support, water) {
             return Some(c);
         }
     }
@@ -184,6 +241,7 @@ pub fn swimming_cell(
 /// the solid-only standing probe would claim the *submerged* feet cell, which
 /// [`find_path`] rejects as a start (water cells are passable, not standable) —
 /// leaving the mob goalless, bobbing in place forever.
+#[allow(dead_code)]
 pub fn navigation_cell(
     pos: Vec3,
     half_width: f32,
@@ -192,10 +250,23 @@ pub fn navigation_cell(
     solid: &impl Fn(IVec3) -> bool,
     water: &impl Fn(IVec3) -> bool,
 ) -> Option<IVec3> {
+    navigation_cell_with(pos, half_width, head, in_water, solid, solid, water)
+}
+
+/// [`navigation_cell`] with the separate `support` predicate.
+pub fn navigation_cell_with(
+    pos: Vec3,
+    half_width: f32,
+    head: i32,
+    in_water: bool,
+    solid: &impl Fn(IVec3) -> bool,
+    support: &impl Fn(IVec3) -> bool,
+    water: &impl Fn(IVec3) -> bool,
+) -> Option<IVec3> {
     if in_water {
-        swimming_cell(pos, half_width, head, solid, water)
+        swimming_cell_with(pos, half_width, head, solid, support, water)
     } else {
-        standing_cell(pos, half_width, head, solid)
+        standing_cell_with(pos, half_width, head, solid, support)
     }
 }
 
@@ -291,24 +362,36 @@ pub fn find_path(
     solid: impl Fn(IVec3) -> bool,
     water: impl Fn(IVec3) -> bool,
 ) -> Vec<IVec3> {
-    find_path_with_step_gate(start, goal, params, solid, water, |_, _| true)
+    find_path_nav(start, goal, params, &solid, &solid, water, |_, _| true, |_| 0)
 }
 
-/// [`find_path`] with an extra per-edge movement gate. The cell probes still decide
-/// which footholds exist; `step_allowed(from, to)` rejects a specific transition
-/// between two accepted footholds when dynamic edge collision blocks that move.
-pub fn find_path_with_step_gate(
+/// The full navigation search. Beyond [`find_path`]'s closures it takes:
+/// - `support(cell)` — cells that can bear feet even when not fully `solid`
+///   (partial-collision shapes), see [`is_navigation_foothold_with`];
+/// - `step_allowed(from, to)` — the accurate edge gate: rejects a specific
+///   transition between two accepted footholds when the real body AABB cannot
+///   sweep that move through the real collision boxes (partial shapes, doors);
+/// - `cell_cost(cell)` — a soft per-cell surcharge added when an edge ENTERS
+///   that cell. Soft obstacles (other entities) get routed around when a
+///   detour exists, yet never wall off the only route. Costs are in the same
+///   scale as the step costs ([`COST_FLAT`] = 10 per cell); the heuristic
+///   ignores them, so they only ever ADD cost and A* stays admissible.
+#[allow(clippy::too_many_arguments)]
+pub fn find_path_nav(
     start: IVec3,
     goal: IVec3,
     params: PathParams,
-    solid: impl Fn(IVec3) -> bool,
+    solid: &impl Fn(IVec3) -> bool,
+    support: &impl Fn(IVec3) -> bool,
     water: impl Fn(IVec3) -> bool,
     step_allowed: impl Fn(IVec3, IVec3) -> bool,
+    cell_cost: impl Fn(IVec3) -> u32,
 ) -> Vec<IVec3> {
-    let passable_col = |c: IVec3| body_clear(c, params, &solid);
-    // A cell is a foothold if its floor *supports* it (solid ground or water surface)
-    // and the body fits above. Submerged water cells are passable, not footholds.
-    let foothold = |c: IVec3| is_navigation_foothold(c, params, &solid, &water);
+    let passable_col = |c: IVec3| body_clear(c, params, solid);
+    // A cell is a foothold if its floor *supports* it (solid ground, a partial
+    // shape's top, or the water surface) and the body fits above. Submerged
+    // water cells are passable, not footholds.
+    let foothold = |c: IVec3| is_navigation_foothold_with(c, params, solid, support, &water);
 
     if !foothold(start) {
         return Vec::new();
@@ -365,10 +448,12 @@ pub fn find_path_with_step_gate(
             &params,
             &foothold,
             &passable_col,
-            &solid,
+            solid,
             &step_allowed,
         ) {
-            let tentative = g_score[&current].saturating_add(step_cost);
+            let tentative = g_score[&current]
+                .saturating_add(step_cost)
+                .saturating_add(cell_cost(next));
             if tentative < *g_score.get(&next).unwrap_or(&u32::MAX) {
                 came_from.insert(next, current);
                 g_score.insert(next, tentative);
@@ -830,6 +915,104 @@ mod tests {
             path.iter().all(|c| !w.solid_at(*c)),
             "path never enters a solid cell"
         );
+    }
+
+    #[test]
+    fn cell_costs_steer_the_route_around_soft_obstacles() {
+        // Open floor; a soft-cost blob (another entity's body) sits on the straight
+        // line. The route detours around it — the surcharge outweighs a couple of
+        // extra steps — and still reaches the goal.
+        let w = Stub::new(1);
+        let start = IVec3::new(0, 1, 0);
+        let goal = IVec3::new(6, 1, 0);
+        let costly: FxHashSet<(i32, i32)> = [(3, -1), (3, 0), (3, 1)].into_iter().collect();
+        let solid = |c: IVec3| w.solid_at(c);
+        let path = find_path_nav(
+            start,
+            goal,
+            params(),
+            &solid,
+            &solid,
+            |_| false,
+            |_, _| true,
+            |c| {
+                if costly.contains(&(c.x, c.z)) {
+                    100
+                } else {
+                    0
+                }
+            },
+        );
+        assert_eq!(path.last(), Some(&goal), "still reaches the goal");
+        assert!(
+            path.iter().all(|c| !costly.contains(&(c.x, c.z))),
+            "detours around the soft-cost cells: {path:?}"
+        );
+    }
+
+    #[test]
+    fn a_soft_cost_never_walls_off_the_only_route() {
+        // A 1-wide corridor with a very costly cell in the middle: unlike a solid
+        // wall, the surcharge is soft — the route still crosses it.
+        let solid = |c: IVec3| c.y < 1 || (c.z != 0 && (c.y == 1 || c.y == 2));
+        let start = IVec3::new(0, 1, 0);
+        let goal = IVec3::new(4, 1, 0);
+        let mid = IVec3::new(2, 1, 0);
+        let path = find_path_nav(
+            start,
+            goal,
+            params(),
+            &solid,
+            &solid,
+            |_| false,
+            |_, _| true,
+            |c| if c == mid { 10_000 } else { 0 },
+        );
+        assert_eq!(path.last(), Some(&goal), "the only route is still taken");
+        assert!(path.contains(&mid), "crosses the costly cell: {path:?}");
+    }
+
+    #[test]
+    fn a_partial_support_cell_is_a_foothold_and_routable() {
+        // Floor plane; the cell (2,1,0) holds a partial-collision block (support
+        // but not solid — think a ladder or a slab): the route may pass through
+        // it, and the cell ABOVE it counts as a foothold (floor = that block).
+        let floor = |c: IVec3| c.y < 1;
+        let partial = IVec3::new(2, 1, 0);
+        let support = |c: IVec3| floor(c) || c == partial;
+        assert!(
+            is_navigation_foothold_with(partial, params(), &floor, &support, &|_| false),
+            "a partial cell with a supported floor stays routable"
+        );
+        assert!(
+            is_navigation_foothold_with(partial + IVec3::Y, params(), &floor, &support, &|_| {
+                false
+            }),
+            "the cell above a partial support block is a foothold"
+        );
+        let path = find_path_nav(
+            IVec3::new(0, 1, 0),
+            IVec3::new(4, 1, 0),
+            params(),
+            &floor,
+            &support,
+            |_| false,
+            |_, _| true,
+            |_| 0,
+        );
+        assert_eq!(path.last(), Some(&IVec3::new(4, 1, 0)));
+    }
+
+    #[test]
+    fn standing_on_a_partial_support_block_resolves_to_the_cell_above_it() {
+        // The support/solid split version of the bed rule: the bed cell bears
+        // feet (support) without blanket-blocking (not solid). A mob resting ON
+        // it still resolves its foothold to the cell above.
+        let floor = |c: IVec3| c.y < 1;
+        let bed = IVec3::new(0, 1, 0);
+        let support = |c: IVec3| floor(c) || c == bed;
+        let cell = standing_cell_with(Vec3::new(0.5, 1.56, 0.5), 0.25, 1, &floor, &support);
+        assert_eq!(cell, Some(IVec3::new(0, 2, 0)));
     }
 
     #[test]

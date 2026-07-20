@@ -197,7 +197,13 @@ impl Instance {
     /// (walk while moving, an `idle_*` if one was requested, else the neutral rest
     /// pose), and ease the head toward the head-look target (recentring when there's
     /// none — e.g. while walking).
-    pub(super) fn apply_expression(&mut self, dt: f32, d: &MobDef, decision: &BehaviorOutput) {
+    pub(super) fn apply_expression(
+        &mut self,
+        dt: f32,
+        d: &MobDef,
+        named_anims: &[super::model_meta::NamedAnimMeta],
+        decision: &BehaviorOutput,
+    ) {
         // An idle animation only plays while the mob isn't walking.
         self.idle_anim = if self.moving {
             None
@@ -231,6 +237,23 @@ impl Instance {
         for layer in &mut self.active_anims {
             step_anim_layer(layer, dt);
         }
+        // A ONE-SHOT layer that has played through retires itself: activation
+        // is fire-and-forget for the mod (the sheep's `eat` bite finishes on
+        // its own, freeing the layer slot and releasing head-look). Only
+        // plain forward playback completes — a mod-driven seek or rate hold
+        // (the boat oar freeze) is a deliberate pose and never expires, and a
+        // looping clip plays until deactivated. A name the model doesn't
+        // carry has no meta and stays (it draws nothing; the mod's business).
+        self.active_anims.retain(|layer| {
+            let finished = layer.seek.is_none()
+                && layer.rate > 0.0
+                && named_anims
+                    .binary_search_by(|m| m.name.as_str().cmp(&layer.name))
+                    .ok()
+                    .map(|at| &named_anims[at])
+                    .is_some_and(|m| !m.looping && m.length > 0.0 && layer.phase >= m.length);
+            !finished
+        });
 
         // Head-look: ease toward the requested orientation, or recentre when none.
         let (target_yaw, target_pitch) = match decision.head_look {
@@ -270,7 +293,7 @@ mod tests {
             &floor_at_zero,
             &|_| false,
         );
-        owl.apply_expression(1.0 / 60.0, owl_def(), &BehaviorOutput::default());
+        owl.apply_expression(1.0 / 60.0, owl_def(), &[], &BehaviorOutput::default());
         let a1 = owl.anim_time;
         owl.integrate(
             1.0 / 60.0,
@@ -280,7 +303,7 @@ mod tests {
             &floor_at_zero,
             &|_| false,
         );
-        owl.apply_expression(1.0 / 60.0, owl_def(), &BehaviorOutput::default());
+        owl.apply_expression(1.0 / 60.0, owl_def(), &[], &BehaviorOutput::default());
         assert!(
             owl.anim_time > a1,
             "walk cycle keeps advancing: {a1} -> {}",
@@ -304,7 +327,7 @@ mod tests {
                 &floor_at_zero,
                 &|_| false,
             );
-            owl.apply_expression(1.0 / 60.0, owl_def(), &look);
+            owl.apply_expression(1.0 / 60.0, owl_def(), &[], &look);
         }
         assert!(
             (owl.head_yaw - 1.0).abs() < 0.05,
@@ -317,7 +340,7 @@ mod tests {
             owl.head_pitch
         );
         for _ in 0..120 {
-            owl.apply_expression(1.0 / 60.0, owl_def(), &BehaviorOutput::default());
+            owl.apply_expression(1.0 / 60.0, owl_def(), &[], &BehaviorOutput::default());
         }
         assert!(
             owl.head_yaw.abs() < 0.05,
@@ -372,7 +395,7 @@ mod tests {
             "a rate on an inactive anim refuses"
         );
         let step = |owl: &mut Instance| {
-            owl.apply_expression(0.5, def(Mob::Owl), &Default::default());
+            owl.apply_expression(0.5, def(Mob::Owl), &[], &Default::default());
         };
         step(&mut owl); // both at default rate 1
         let phase = |owl: &Instance, n: &str| {
@@ -402,7 +425,7 @@ mod tests {
             "a seek on an inactive anim refuses"
         );
         let step = |owl: &mut Instance| {
-            owl.apply_expression(0.5, def(Mob::Owl), &Default::default());
+            owl.apply_expression(0.5, def(Mob::Owl), &[], &Default::default());
         };
         let phase = |owl: &Instance| owl.active_anims()[0].phase;
         step(&mut owl); // free-runs to 0.5 at the default rate 1
@@ -449,5 +472,43 @@ mod tests {
         assert!(layer.phase.is_finite());
         assert!(layer.phase.abs() <= mod_api::MAX_MOB_ANIM_PHASE_MAGNITUDE);
         assert_eq!(layer.rate, 0.0, "a step past the phase envelope parks");
+    }
+
+    /// A mod-activated ONE-SHOT layer retires itself once it has played
+    /// through (fire-and-forget activation — the sheep's `eat` bite ends on
+    /// its own); looping clips, deliberate rate-0 holds, and names the model
+    /// doesn't carry all stay until deactivated.
+    #[test]
+    fn a_finished_one_shot_layer_retires_itself() {
+        use crate::mob::model_meta::NamedAnimMeta;
+        let named = [
+            NamedAnimMeta { name: "bite".into(), length: 0.2, looping: false },
+            NamedAnimMeta { name: "hum".into(), length: 0.2, looping: true },
+        ];
+        let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+        assert!(owl.set_anim_active("bite", true));
+        assert!(owl.set_anim_active("hum", true));
+        assert!(owl.set_anim_active("mystery", true));
+        for _ in 0..30 {
+            owl.apply_expression(1.0 / 60.0, owl_def(), &named, &BehaviorOutput::default());
+        }
+        let names: Vec<&str> = owl.active_anims().iter().map(|l| l.name.as_str()).collect();
+        assert!(!names.contains(&"bite"), "played-through one-shot retired: {names:?}");
+        assert!(names.contains(&"hum"), "a looping layer plays until deactivated");
+        assert!(names.contains(&"mystery"), "an unknown name is the mod's business");
+
+        // A rate-0 hold is a deliberate pose — it never expires, and resuming
+        // playback lets it finish and retire.
+        assert!(owl.set_anim_active("bite", true));
+        assert!(owl.set_anim_rate("bite", 0.0));
+        for _ in 0..30 {
+            owl.apply_expression(1.0 / 60.0, owl_def(), &named, &BehaviorOutput::default());
+        }
+        assert!(owl.anim_state("bite").is_some(), "a frozen one-shot holds");
+        assert!(owl.set_anim_rate("bite", 1.0));
+        for _ in 0..30 {
+            owl.apply_expression(1.0 / 60.0, owl_def(), &named, &BehaviorOutput::default());
+        }
+        assert!(owl.anim_state("bite").is_none(), "resumed playback finishes and retires");
     }
 }

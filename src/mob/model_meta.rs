@@ -9,6 +9,31 @@
 use crate::bbmodel::{euler_quat, Model};
 use crate::mathh::Vec3;
 
+/// Length + loop mode of one NAMED animation, for the sim's one-shot layer
+/// retirement: a mod-activated `once` clip (`MobAnimSet`) retires itself when
+/// its phase passes the clip's length (see `mob::anim`). Name-sorted for a
+/// binary-search lookup.
+pub struct NamedAnimMeta {
+    pub name: String,
+    pub length: f32,
+    pub looping: bool,
+}
+
+/// Every animation the model carries, name-sorted, with length + loop mode.
+pub fn named_anims(model: &Model) -> Vec<NamedAnimMeta> {
+    let mut anims: Vec<NamedAnimMeta> = model
+        .animations
+        .iter()
+        .map(|(name, a)| NamedAnimMeta {
+            name: name.to_owned(),
+            length: a.length,
+            looping: a.looping,
+        })
+        .collect();
+    anims.sort_by(|a, b| a.name.cmp(&b.name));
+    anims
+}
+
 /// What the AI needs to know about one `idle_*` animation.
 #[derive(Copy, Clone, Debug)]
 pub struct IdleAnimMeta {

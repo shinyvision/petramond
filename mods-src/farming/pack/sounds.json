@@ -15,6 +15,28 @@
       "pitch_variation": 0.1,
       "attenuation_distance": 12.0,
       "category": "block"
+    },
+    {
+      "sound": "farming:lamb_idle",
+      "variants": [
+        "sounds/sheep_idle1.ogg",
+        "sounds/sheep_idle2.ogg",
+        "sounds/sheep_idle3.ogg"
+      ],
+      "gain": 0.9,
+      "pitch_variation": 0.08,
+      "pitch": 1.3,
+      "attenuation_distance": 12.0,
+      "category": "mob"
+    },
+    {
+      "sound": "farming:lamb_hurt",
+      "variants": ["sounds/sheep_hurt.ogg"],
+      "gain": 0.9,
+      "pitch_variation": 0.08,
+      "pitch": 1.3,
+      "attenuation_distance": 12.0,
+      "category": "mob"
     }
   ]
 }

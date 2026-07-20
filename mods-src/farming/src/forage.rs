@@ -3,8 +3,11 @@
 //! spawn region with no wild wheat patch in walking range.
 //!
 //! Player breaks only (`natural: false`): world-sim destruction (water
-//! washing a meadow away) must not be a seed faucet, and `harvested` keeps
-//! the roll off drop-less breaks. The chance is balance data.
+//! washing a meadow away) must not be a seed faucet. Deliberately NOT gated
+//! on `harvested` — short grass is a shears-only harvest (2026-07-20), and
+//! punching it bare-handed (destroying the plant dropless) must still shake
+//! seeds loose, or the fallback seed source would need shears. The chance
+//! is balance data.
 
 use mod_sdk::*;
 
@@ -13,14 +16,8 @@ use crate::content::Content;
 /// One-in-N chance per broken cover block (100 → 1%).
 const SEED_DROP_IN: u64 = 100;
 
-pub fn on_block_broken(
-    content: &Content,
-    pos: [i32; 3],
-    block: BlockId,
-    harvested: bool,
-    natural: bool,
-) {
-    if natural || !harvested {
+pub fn on_block_broken(content: &Content, pos: [i32; 3], block: BlockId, natural: bool) {
+    if natural {
         return;
     }
     if !content.seed_cover.contains(&block) {

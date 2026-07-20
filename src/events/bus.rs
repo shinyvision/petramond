@@ -256,6 +256,18 @@ impl PostQueue {
         !self.actions.is_empty()
     }
 
+    /// Mark `kind` as listened-to without a bus (emission contract tests).
+    #[cfg(test)]
+    pub(crate) fn want_for_test(&mut self, kind: PostEventKind) {
+        self.wanted |= 1 << kind as u32;
+    }
+
+    /// Drain the queued events (emission contract tests).
+    #[cfg(test)]
+    pub(crate) fn take_events_for_test(&mut self) -> Vec<PostEvent> {
+        self.events.drain(..).collect()
+    }
+
     #[inline]
     fn wants(&self, kind: PostEventKind) -> bool {
         self.wanted & (1 << kind as u32) != 0

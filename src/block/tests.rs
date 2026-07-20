@@ -104,21 +104,30 @@ fn preferred_tool_pairs_pickaxe_axe_shovel_with_their_materials() {
         );
         assert_eq!(b.preferred_tool(), Some(ToolKind::Shovel), "{b:?}");
     }
-    // Wool wants shears — the block and its stair/slab variants alike.
+    // Wool and plants want shears — the wool block family, and the cut
+    // plants. For tier-0 plants the pairing is inert (hand-harvested
+    // instantly); short grass raises its harvest tier, making it the
+    // CUT-ONLY yield that feeds pasture-building (a bare hand destroys it
+    // dropless, like the snow layer without a shovel).
     for b in [Block::WoolBlock, Block::WoolStairs, Block::WoolSlab] {
         assert_eq!(b.material(), BlockMaterial::Wool, "{b:?} should be wool");
         assert_eq!(b.preferred_tool(), Some(ToolKind::Shears), "{b:?}");
     }
-    // Everything a hand mines just as well has no preferred tool (plants,
-    // leaves, air).
-    for b in [
-        Block::Poppy,
-        Block::ShortGrass,
-        Block::OakLeaves,
-        Block::Air,
-    ] {
+    for b in [Block::Poppy, Block::ShortGrass] {
+        assert_eq!(b.material(), BlockMaterial::Plant, "{b:?} should be plant");
+        assert_eq!(b.preferred_tool(), Some(ToolKind::Shears), "{b:?}");
+    }
+    // Everything a hand mines just as well has no preferred tool (leaves, air).
+    for b in [Block::OakLeaves, Block::Air] {
         assert_eq!(b.preferred_tool(), None, "{b:?}");
     }
+    // The shears harvest gate itself: bare-handed short grass is destroyed
+    // dropless, any shears cut it whole; every other plant stays
+    // hand-harvestable.
+    let shears = crate::item::ItemType::Shears.tool();
+    assert!(!crate::mining::harvests(Block::ShortGrass, None));
+    assert!(crate::mining::harvests(Block::ShortGrass, shears));
+    assert!(crate::mining::harvests(Block::Poppy, None));
 }
 
 /// Asset↔shader contract, both directions. OPAQUE rows: every referenced

@@ -17,21 +17,22 @@ pub fn mob_facing_xz(yaw: f32) -> [f32; 2] {
 
 host_fn! {
     /// Spawn a mob by species key at `pos` (feet) facing `yaw`, unconditionally
-    /// (site fitness is your business — see [`spawn_mob_checked`]). `false`
-    /// = unknown species or the mob cap is reached.
-    pub fn spawn_mob(key: &str, pos: [f32; 3], yaw: f32) -> bool
-        => SpawnMob { key: key.into(), pos, yaw, checked: false } => Bool
+    /// (site fitness is your business — see [`spawn_mob_checked`]). Returns the
+    /// newborn's STABLE id — tag/configure it immediately through the ordinary
+    /// mob calls. `None` = unknown species or the mob cap is reached.
+    pub fn spawn_mob(key: &str, pos: [f32; 3], yaw: f32) -> Option<u64>
+        => SpawnMob { key: key.into(), pos, yaw, checked: false } => SpawnedMob
 }
 
 host_fn! {
     /// [`spawn_mob`] that spawns only if the whole declared body fits loaded,
     /// stream-final world state at `pos`/`yaw`, including exact terrain collision
-    /// shapes and other live solid mobs. `false` also covers unknown terrain or
+    /// shapes and other live solid mobs. `None` also covers unknown terrain or
     /// species and the mob cap.
     /// Use this for player-placed vehicles and other solid entities; a failed call
     /// mutates nothing, so the caller can safely retain or refund its item.
-    pub fn spawn_mob_checked(key: &str, pos: [f32; 3], yaw: f32) -> bool
-        => SpawnMob { key: key.into(), pos, yaw, checked: true } => Bool
+    pub fn spawn_mob_checked(key: &str, pos: [f32; 3], yaw: f32) -> Option<u64>
+        => SpawnMob { key: key.into(), pos, yaw, checked: true } => SpawnedMob
 }
 
 host_fn! {
@@ -40,6 +41,13 @@ host_fn! {
     /// `id`; the snapshot `index` is only an intra-tick join key.
     pub fn mobs_in_radius(pos: [f32; 3], radius: f32) -> Vec<MobSnapshot>
         => MobsInRadius { pos, radius } => Mobs
+}
+
+host_fn! {
+    /// Snapshot ONE live mob by its stable id — for a handler that already
+    /// holds an id (an event payload, a stored tag) and needs the mob's
+    /// current pose/species. `None` = no such live mob.
+    pub fn mob_info(mob_id: u64) -> Option<MobSnapshot> => MobInfo { mob_id } => Mob
 }
 
 host_fn! {

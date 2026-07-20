@@ -19,6 +19,8 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
             return Outcome::Continue;
         }
         swap_model_block(pos, content.trough_filled);
+        // Fresh water holds fresh sips (cell KV rides the swap).
+        crate::husbandry::clear_sips(content, pos);
         emit_sound("petramond:water_splash_small", Some(center(pos)));
         return Outcome::Cancel;
     }
@@ -28,6 +30,8 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
             return Outcome::Continue;
         }
         swap_model_block(pos, content.trough);
+        // Collected water can't leave a stale sip count behind.
+        crate::husbandry::clear_sips(content, pos);
         emit_sound("petramond:water_splash_small", Some(center(pos)));
         return Outcome::Cancel;
     }

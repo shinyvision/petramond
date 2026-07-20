@@ -264,6 +264,10 @@ fn samples() -> Samples {
     s.pin("HostCall::MobsWithTag", &HostCall::MobsWithTag {
         key: "m:k".into(), value: Some(MobTagValue::I64(-3)),
     });
+    s.pin("HostCall::FindBlocks", &HostCall::FindBlocks {
+        min: [-1, 2, -3], max: [4, 5, 6], blocks: vec![BlockId(1), BlockId(9)],
+    });
+    s.pin("HostCall::MobInfo", &HostCall::MobInfo { mob_id: 7 });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -341,6 +345,12 @@ fn samples() -> Samples {
     s.pin("HostRet::MobTags", &HostRet::MobTags(Some(vec![
         ("m:k".into(), MobTagValue::Bool(true)),
     ])));
+    s.pin("HostRet::SpawnedMob", &HostRet::SpawnedMob(Some(7)));
+    s.pin("HostRet::FoundBlocks", &HostRet::FoundBlocks(Some(vec![[1, -2, 3]])));
+    s.pin("HostRet::Mob", &HostRet::Mob(Some(MobSnapshot {
+        index: 1, key: "m:k".into(), kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
+        yaw: 0.5, vel: [1.0, 0.0, 2.0],
+    })));
 
     // --- GuestCall: every variant, declaration order -------------------------
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
@@ -474,6 +484,12 @@ fn samples() -> Samples {
     s.pin("EventPayload::PlayerDismounted", &EventPayload::PlayerDismounted {
         player_id: PlayerId(0), mob_id: 7,
     });
+    s.pin("EventPayload::MobTagAdded", &EventPayload::MobTagAdded {
+        mob_id: 7, kind: MobId(2), key: "m:k".into(), value: MobTagValue::I64(-3),
+    });
+    s.pin("EventPayload::MobTagRemoved", &EventPayload::MobTagRemoved {
+        mob_id: 7, kind: MobId(2), key: "m:k".into(), value: MobTagValue::I64(-3),
+    });
 
     // --- Auxiliary enums: ALL variants of each, encoded as one Vec ----------
     s.pin("Outcome::*", &vec![Outcome::Continue, Outcome::Cancel]);
@@ -494,7 +510,7 @@ fn samples() -> Samples {
         EventKind::MobDied, EventKind::MobSpawned, EventKind::PlayerDamaged,
         EventKind::PlayerDied, EventKind::ContainerOpened, EventKind::ContainerClosed,
         EventKind::SectionGenerated, EventKind::SectionLoaded, EventKind::MobInteract,
-        EventKind::PlayerDismounted,
+        EventKind::PlayerDismounted, EventKind::MobTagAdded, EventKind::MobTagRemoved,
     ]);
     s.pin("DamageSource::*", &vec![
         DamageSource::Fall,
@@ -673,6 +689,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::CollisionShapeAt", "6a020406"),
     ("HostCall::MobTagsGet", "6b07"),
     ("HostCall::MobsWithTag", "6c036d3a6b010105"),
+    ("HostCall::FindBlocks", "6d010405080a0c020109"),
+    ("HostCall::MobInfo", "6e07"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -709,6 +727,9 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobKind", "210101"),
     ("HostRet::CollisionShape", "220102"),
     ("HostRet::MobTags", "230101036d3a6b0001"),
+    ("HostRet::SpawnedMob", "240107"),
+    ("HostRet::FoundBlocks", "250101020306"),
+    ("HostRet::Mob", "260101036d3a6b020000803f000000400000404000008040050000003f0000803f0000000000000040"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
@@ -748,11 +769,13 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::SectionLoaded", "10020406"),
     ("EventPayload::MobInteract", "1107036d3a6b00"),
     ("EventPayload::PlayerDismounted", "120007"),
+    ("EventPayload::MobTagAdded", "130702036d3a6b0105"),
+    ("EventPayload::MobTagRemoved", "140702036d3a6b0105"),
     ("Outcome::*", "020001"),
     ("Stage::*", "0c000102030405060708090a0b"),
     ("AttachSide::*", "020001"),
     ("WorldgenStage::*", "050001020304"),
-    ("EventKind::*", "13000102030405060708090a0b0c0d0e0f101112"),
+    ("EventKind::*", "15000102030405060708090a0b0c0d0e0f1011121314"),
     ("DamageSource::*", "0400010102036d3a6b03016d"),
     ("ContainerKind::*", "06000102030405036d3a67"),
     ("Facing::*", "0400010203"),

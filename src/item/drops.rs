@@ -24,6 +24,6 @@ pub struct DropSpec {
 }
 
 impl DropSpec {
-    /// No drop at all (e.g. air, water, short grass).
+    /// No drop at all (e.g. air, water).
     pub const NONE: DropSpec = DropSpec { drops: &[] };
 }

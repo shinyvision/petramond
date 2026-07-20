@@ -18,7 +18,7 @@ use crate::biome::Biome;
 use crate::mathh::{IVec3, Vec3};
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
-use super::super::path::{body_or_floor_touches, is_navigation_foothold, PathParams};
+use super::super::path::{body_or_floor_touches, is_navigation_foothold_with, PathParams};
 use super::super::{Habitat, WanderCohesion, WanderTuning};
 
 /// How many random offsets to try when picking a destination before giving up for
@@ -89,7 +89,8 @@ fn pick_destination(
     habitat: &Habitat,
     avoid_water: bool,
 ) -> Option<IVec3> {
-    let solid = |c: IVec3| ctx.world.blocks_movement_at(c.x, c.y, c.z);
+    let solid = super::super::nav::nav_solid_fn(ctx.world);
+    let support = super::super::nav::nav_support_fn(ctx.world, ctx.half_width);
     let water = |c: IVec3| ctx.world.water_cell_at(c.x, c.y, c.z);
     let radius = tuning.radius;
     let r2 = radius * radius;
@@ -121,9 +122,16 @@ fn pick_destination(
         if picker.reject_avoided(fit) {
             continue;
         }
-        let Some(y) =
-            nearest_navigation_foothold_y(x, z, ctx.cell.y, radius, path_params, &solid, &water)
-        else {
+        let Some(y) = nearest_navigation_foothold_y(
+            x,
+            z,
+            ctx.cell.y,
+            radius,
+            path_params,
+            &solid,
+            &support,
+            &water,
+        ) else {
             continue;
         };
         let dest = IVec3::new(x, y, z);
@@ -159,6 +167,7 @@ fn pick_destination(
 /// The navigation foothold Y in column `(x, z)` closest to `y0`, scanning outward
 /// up to `radius` cells either way, or `None` if the column has no foothold in
 /// range. Water surface cells count here, matching the pathfinder.
+#[allow(clippy::too_many_arguments)]
 fn nearest_navigation_foothold_y(
     x: i32,
     z: i32,
@@ -166,11 +175,12 @@ fn nearest_navigation_foothold_y(
     radius: i32,
     params: PathParams,
     solid: &impl Fn(IVec3) -> bool,
+    support: &impl Fn(IVec3) -> bool,
     water: &impl Fn(IVec3) -> bool,
 ) -> Option<i32> {
     for d in 0..=radius {
         for y in [y0 - d, y0 + d] {
-            if is_navigation_foothold(IVec3::new(x, y, z), params, solid, water) {
+            if is_navigation_foothold_with(IVec3::new(x, y, z), params, solid, support, water) {
                 return Some(y);
             }
         }

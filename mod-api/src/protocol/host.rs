@@ -161,8 +161,10 @@ pub enum HostCall {
     /// declared body fits — every covered section loaded and stream-final, no
     /// terrain collision overlap, no live solid mob overlap — validated and
     /// inserted as one atomic sim operation (use it for player-placed bodies:
-    /// a failed call mutates nothing, so the item can be refunded). `false` =
-    /// unknown key, the mob cap, or a failed check. → [`HostRet::Bool`].
+    /// a failed call mutates nothing, so the item can be refunded). The reply
+    /// carries the newborn's STABLE id (`None` = unknown key, the mob cap, or
+    /// a failed check) so the spawner can immediately tag/configure it.
+    /// → [`HostRet::SpawnedMob`].
     SpawnMob {
         key: String,
         pos: [f32; 3],
@@ -1024,6 +1026,34 @@ pub enum HostCall {
         key: String,
         value: Option<MobTagValue>,
     },
+    /// Every cell in the INCLUSIVE box `min..=max` currently holding one of
+    /// `blocks`, resolved host-side in one scan (never page a box through
+    /// [`HostCall::GetBlocks`] to search it). Positions come back in scan
+    /// order — ascending `y`, then `z`, then `x` — so "the nearest match" is
+    /// the caller's own fold over a deterministic list. The box is capped at
+    /// 32768 cells (32³) and `blocks` at the sim batch cap; an inverted box
+    /// (`min > max` on any axis) is an error. Reads are stream-final like
+    /// [`HostCall::GetBlock`]: ANY unreadable cell in the box makes the whole
+    /// reply `None` (state frozen, retry later) — a partial search would let
+    /// policy act on terrain a saved overlay is about to replace. The one
+    /// exception: cells OUTSIDE the world's vertical range are definitionally
+    /// empty, so the scan clamps to it instead of gating (a box poking past
+    /// the world's top must not starve a search forever).
+    /// → [`HostRet::FoundBlocks`].
+    FindBlocks {
+        min: [i32; 3],
+        max: [i32; 3],
+        blocks: Vec<BlockId>,
+    },
+    /// Snapshot ONE live mob by its stable id — the single-mob sibling of
+    /// [`HostCall::MobsInRadius`], for a handler that already holds an id
+    /// (an event payload, a stored tag) and needs the mob's current state
+    /// (pose to act on, species to branch on). `None` = no such live mob
+    /// (dead mobs are gone to the ABI, as everywhere).
+    /// → [`HostRet::Mob`].
+    MobInfo {
+        mob_id: u64,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -1111,4 +1141,13 @@ pub enum HostRet {
     /// [`HostCall::MobTagsGet`]: the mob's full tag map, sorted by key;
     /// `None` = no such live mob.
     MobTags(Option<Vec<(String, MobTagValue)>>),
+    /// [`HostCall::SpawnMob`]: the newborn's STABLE session id — the address
+    /// every mob call speaks, so a spawner can immediately tag/configure what
+    /// it created. `None` = unknown key, the mob cap, or a failed check.
+    SpawnedMob(Option<u64>),
+    /// [`HostCall::FindBlocks`]: matching cells in scan order; `None` = some
+    /// cell in the box is unloaded / streamed content not yet final.
+    FoundBlocks(Option<Vec<[i32; 3]>>),
+    /// [`HostCall::MobInfo`]: the mob's snapshot; `None` = no such live mob.
+    Mob(Option<MobSnapshot>),
 }

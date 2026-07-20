@@ -24,6 +24,20 @@ host_fn! {
 }
 
 host_fn! {
+    /// Every cell in the INCLUSIVE box `min..=max` currently holding one of
+    /// `blocks`, resolved host-side in one scan — the neighbourhood-search
+    /// primitive ("is there a filled trough near this mob", "where is the
+    /// nearest ore/plant"); never page a box through [`get_blocks`] to search
+    /// it. Positions arrive in scan order (ascending `y`, then `z`, then `x`);
+    /// fold for the nearest match yourself. The box is capped at 32³ cells and
+    /// reads are stream-final: ANY unreadable cell makes the whole reply
+    /// `None` ("state frozen, retry later").
+    pub fn find_blocks(min: [i32; 3], max: [i32; 3], blocks: Vec<BlockId>)
+        -> Option<Vec<[i32; 3]>>
+        => FindBlocks { min, max, blocks } => FoundBlocks
+}
+
+host_fn! {
     /// Set one block through the engine's full edit path (relight, neighbour
     /// updates). Returns `false` when the cell is unloaded / out of range.
     pub fn set_block(pos: [i32; 3], block: BlockId) -> bool => SetBlock { pos, block } => Bool

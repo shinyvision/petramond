@@ -68,7 +68,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             Ok(pos) => sim_query(|ctx| {
                 let Some(kind) = crate::mob::by_key(&key) else {
                     log::warn!("[mod {mod_id}] SpawnMob: unknown species '{key}'");
-                    return HostRet::Bool(false);
+                    return HostRet::SpawnedMob(None);
                 };
                 let spawned = if checked {
                     ctx.world.spawn_mob_checked(kind, pos, yaw)
@@ -78,9 +78,14 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 if let Some(id) = spawned {
                     ctx.queue.emit(PostEvent::MobSpawned { id, kind, pos });
                 }
-                HostRet::Bool(spawned.is_some())
+                HostRet::SpawnedMob(spawned)
             }),
         },
+        HostCall::MobInfo { mob_id } => sim_query(|ctx| {
+            HostRet::Mob(
+                live_mob(ctx, mob_id).map(|i| mob_snapshot(i, &ctx.world.mobs().instances()[i])),
+            )
+        }),
         HostCall::MobsInRadius { pos, radius } => match finite3(pos, "MobsInRadius.pos") {
             Err(e) => e,
             Ok(pos) => sim_query(|ctx| {
@@ -376,7 +381,7 @@ mod tests {
             queue: &mut queue,
         };
         scope::enter(&mut ctx, || {
-            assert_eq!(
+            assert!(matches!(
                 handle_host_call(
                     &mut data,
                     HostCall::SpawnMob {
@@ -386,8 +391,8 @@ mod tests {
                         checked: false,
                     },
                 ),
-                HostRet::Bool(true)
-            );
+                HostRet::SpawnedMob(Some(_))
+            ));
         });
 
         let mob = &world.mobs().instances()[0];
@@ -421,12 +426,12 @@ mod tests {
             };
             assert_eq!(
                 handle_host_call(&mut data, checked([8.5, 64.0, 8.5])),
-                HostRet::Bool(false),
+                HostRet::SpawnedMob(None),
                 "terrain overlap rejects without spawning"
             );
             assert_eq!(
                 handle_host_call(&mut data, checked([32.5, 64.0, 8.5])),
-                HostRet::Bool(false),
+                HostRet::SpawnedMob(None),
                 "unknown unloaded space is never treated as clear"
             );
         });
@@ -441,7 +446,7 @@ mod tests {
             queue: &mut queue,
         };
         scope::enter(&mut ctx, || {
-            assert_eq!(
+            assert!(matches!(
                 handle_host_call(
                     &mut data,
                     HostCall::SpawnMob {
@@ -451,8 +456,8 @@ mod tests {
                         checked: true,
                     },
                 ),
-                HostRet::Bool(true)
-            );
+                HostRet::SpawnedMob(Some(_))
+            ));
         });
         assert_eq!(world.mobs().instances().len(), 1);
     }

@@ -199,7 +199,7 @@ impl Vehicles {
             pos[1] as f32 + 0.9,
             pos[2] as f32 + 0.5,
         ];
-        if !spawn_mob_checked(BOAT_KEY, feet, yaw) {
+        if spawn_mob_checked(BOAT_KEY, feet, yaw).is_none() {
             give_item(BOAT_KEY, 1);
         }
         Outcome::Cancel

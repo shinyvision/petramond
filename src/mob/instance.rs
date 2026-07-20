@@ -230,7 +230,7 @@ impl Instance {
             attacker_ticks: 0,
             contacts: Vec::new(),
             brain: super::build_brain(d),
-            nav: Navigator::new(d.size.head_cells(), d.size.half_width),
+            nav: Navigator::new(d.size.head_cells(), d.size.half_width, d.size.height),
             rng: MobRng::new(seed),
         }
     }
@@ -405,6 +405,7 @@ impl Instance {
         mob_index: usize,
         despawn_radius: Option<f32>,
         idle_anims: &[IdleAnimMeta],
+        named_anims: &[super::model_meta::NamedAnimMeta],
         skeleton: &Skeleton,
     ) -> Option<(bool, Vec3)> {
         let world: &World = inputs.world;
@@ -478,9 +479,13 @@ impl Instance {
             self.distance_despawned = false;
         }
 
-        let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
-        // The model-aware box source for body collision (legs/top of a bbmodel block); the
-        // cell-based `solid` above still drives navigation (foothold/pathfinding/ledge).
+        // Navigation's cell probes share one collision-derived classification:
+        // `solid` = cells whose boxes fill the whole cell, `support` = cells
+        // with any collision at all (a slab, a bed, a ladder column can bear
+        // feet without blanket-blocking their cell). See `mob::nav`.
+        let solid = super::nav::nav_solid_fn(world);
+        let support = super::nav::nav_support_fn(world, d.size.half_width);
+        // The model-aware box source for body collision (legs/top of a bbmodel block).
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
         let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
         // On or in water — feet submerged, or resting on the surface (water just
@@ -492,12 +497,13 @@ impl Instance {
         // standing at a block edge, where the cell under the centre overhangs into
         // air), or the water-surface cell while in water — see `navigation_cell` for
         // why a mob in water must never path from its (submerged) standing cell.
-        let cell = path::navigation_cell(
+        let cell = path::navigation_cell_with(
             self.pos,
             d.size.half_width,
             d.size.head_cells(),
             in_water,
             &solid,
+            &support,
             &water,
         )
         .unwrap_or_else(|| voxel_at(self.pos));
@@ -511,7 +517,7 @@ impl Instance {
         self.confined_cooldown = self.confined_cooldown.saturating_sub(1);
         if self.confined_cooldown == 0 && self.on_ground && !in_water {
             let params = path::PathParams::for_body(d.size.head_cells(), d.size.half_width);
-            let confined = confined::is_confined(cell, params, &solid, &water);
+            let confined = confined::is_confined(cell, params, &solid, &support, &water);
             if confined != self.is_confined() {
                 if confined {
                     self.tags_mut().insert(
@@ -579,10 +585,19 @@ impl Instance {
         }
         let can_repath = self.on_ground || in_water;
         let can_steer = route_steering_supported(self.on_ground, in_water, self.vel.y);
+        // The pathfinder treats every OTHER entity as a soft obstacle to bend
+        // around — except the brain's current target (a zombie paths TO the
+        // player it hunts, never around them).
+        let obstacles = super::nav::NavObstacles {
+            self_id: self.id,
+            target: self.current_target,
+            mobs: inputs.mobs,
+            players: inputs.players,
+        };
         self.nav
-            .update_goal_when_supported(decision.goal, cell, world, can_repath);
+            .update_goal_when_supported(decision.goal, cell, world, can_repath, &obstacles);
         let (wish, jump) = if can_steer {
-            self.nav.follow(self.pos, self.on_ground)
+            self.nav.follow_steered(self.pos, self.on_ground, world)
         } else {
             (Vec3::ZERO, false)
         };
@@ -599,12 +614,12 @@ impl Instance {
             &boxes,
             inputs.solid,
             inputs.solid_heal,
-            &solid,
+            &support,
             &water,
             &water_surface,
             &water_flow,
         );
-        self.apply_expression(dt, d, &decision);
+        self.apply_expression(dt, d, named_anims, &decision);
         Some((was_on_ground, motion_start + Vec3::Y * healed))
     }
 }

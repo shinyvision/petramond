@@ -180,7 +180,7 @@ impl Instance {
         boxes: &impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
         obstacles: &[crate::collision::DynBox],
         healing_obstacles: &[crate::collision::DynBox],
-        solid: &impl Fn(IVec3) -> bool,
+        support: &impl Fn(IVec3) -> bool,
         water: &impl Fn(IVec3) -> bool,
         water_surface: &impl Fn(IVec3) -> Option<f32>,
         water_flow: &impl Fn(Vec3) -> Vec3,
@@ -283,7 +283,7 @@ impl Instance {
                 let climbing_out = self.vel.y >= 0.0
                     && can_steer
                     && wish.length_squared() > 1e-12
-                    && self.ledge_ahead(wish, d.size.half_width, solid);
+                    && self.ledge_ahead(wish, d.size.half_width, support);
                 if climbing_out {
                     self.vel.y = self.vel.y.max(SWIM_CLIMB);
                 } else {
@@ -295,9 +295,9 @@ impl Instance {
         }
         // Body collision via the shared swept-AABB resolver (the same one the player and
         // dropped items use) against the block's REAL collision shape — so a mob stops at a
-        // bbmodel block's legs/top, not its full cube. Navigation (foothold/pathfinding/
-        // `ledge_ahead`) stays cell-based (`solid`): that's "is this cell an obstacle", a
-        // separate concern from "does my body hit the shape".
+        // bbmodel block's legs/top, not its full cube. Navigation keeps its cell-indexed
+        // skeleton but validates candidate edges against the same real shapes (the
+        // `mob::nav` gate), so what the planner accepts is what this resolver permits.
         // A grounded mob auto-steps up a half-block ledge (a slab / a model block's low
         // edge) without jumping — same `STEP_HEIGHT` the player uses.
         let (moved, grounded, hit, healed) = super::resolve_body_motion(
@@ -382,10 +382,11 @@ impl Instance {
     /// the mob is resting on the ground after the move. Mirrors the dropped-item
     /// integrator, sized to the mob's AABB.
     /// Is there a 1-block ledge to climb onto just ahead in `dir` (horizontal)? True
-    /// when the cell just beyond the body is solid at the feet (or one above) with open
-    /// space directly above it — a single step, not a taller wall (so swimming into a
-    /// cliff face won't lift the mob up it). Mirrors the player's climb-out probe.
-    fn ledge_ahead(&self, dir: Vec3, half_width: f32, solid: &impl Fn(IVec3) -> bool) -> bool {
+    /// when the cell just beyond the body bears feet (`support` — full or partial
+    /// collision) at the feet level (or one above) with open space directly above
+    /// it — a single step, not a taller wall (so swimming into a cliff face won't
+    /// lift the mob up it). Mirrors the player's climb-out probe.
+    fn ledge_ahead(&self, dir: Vec3, half_width: f32, support: &impl Fn(IVec3) -> bool) -> bool {
         let d = Vec3::new(dir.x, 0.0, dir.z);
         if d.length_squared() <= 1e-12 {
             return false;
@@ -400,8 +401,8 @@ impl Instance {
         let step_at = |y: i32| {
             let top = (y + 1) as f32;
             top <= self.pos.y + SWIM_CLIMB_MAX_LEDGE_DELTA
-                && solid(IVec3::new(fx, y, fz))
-                && !solid(IVec3::new(fx, y + 1, fz))
+                && support(IVec3::new(fx, y, fz))
+                && !support(IVec3::new(fx, y + 1, fz))
         };
         step_at(base) || step_at(base + 1)
     }

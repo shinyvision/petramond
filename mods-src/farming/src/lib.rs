@@ -19,6 +19,12 @@
 //! - [`forage`] — the rare wheat-seed forage from broken ground cover.
 //! - [`follow`] — the wheat lure (a scripted AI node composed onto the
 //!   engine sheep through the pack's `brain_extensions` row).
+//! - [`husbandry`] — grazing saturation, drinking, love mode, courtship, and
+//!   offspring for the breedable species (a sim sweep owning the state
+//!   machine plus a steering/posing AI node, both driven by [`content`]
+//!   husbandry rows).
+//! - [`growth`] — juveniles (the lamb) growing into their adult species when
+//!   their `farming:baby` tag is removed (the `mob_tag_removed` hook).
 //! - [`wellfed`] — the Well Fed marker effect's damage consequence.
 //!
 //! Everything mutating runs on the deterministic tick through events, block
@@ -33,6 +39,8 @@ mod farmland;
 mod fertilize;
 mod follow;
 mod forage;
+mod growth;
+mod husbandry;
 mod kv_counter;
 mod spread;
 mod tilling;
@@ -61,6 +69,7 @@ const ON_BLOCK_PLACED: u32 = 3;
 const ON_BLOCK_INTERACT: u32 = 4;
 const ON_PLAYER_DAMAGE_PRE: u32 = 5;
 const ON_BLOCK_BROKEN: u32 = 6;
+const ON_MOB_TAG_REMOVED: u32 = 7;
 
 // Block-behavior callback ids.
 const HOOK_CROP: u32 = 1;
@@ -70,8 +79,12 @@ const HOOK_SPREAD: u32 = 3;
 // Worldgen feature id.
 const GEN_WILD_PATCHES: u32 = 1;
 
-// AI node callback id.
+// AI node callback ids.
 const AI_FOLLOW_WHEAT: u32 = 1;
+const AI_HUSBANDRY_GOAL: u32 = 2;
+
+// Tick system id.
+const TICK_HUSBANDRY: u32 = 1;
 
 #[derive(Default)]
 struct Farming {
@@ -98,11 +111,25 @@ impl Mod for Farming {
         register_event_handler(EventKind::BlockInteract, 0, ON_BLOCK_INTERACT);
         register_event_handler(EventKind::PlayerDamagePre, 0, ON_PLAYER_DAMAGE_PRE);
         register_event_handler(EventKind::BlockBroken, 0, ON_BLOCK_BROKEN);
+        register_event_handler(EventKind::MobTagRemoved, 0, ON_MOB_TAG_REMOVED);
         register_block_behavior("farming:crop", HOOK_CROP);
         register_block_behavior("farming:farmland", HOOK_FARMLAND);
         register_block_behavior("farming:grass_fertilized", HOOK_SPREAD);
         register_worldgen_feature(WorldgenStage::Trees, GEN_WILD_PATCHES);
         register_ai_node("farming:follow_wheat", AI_FOLLOW_WHEAT);
+        register_ai_node("farming:husbandry_goal", AI_HUSBANDRY_GOAL);
+        // Right after the mobs move, so the sweep measures this tick's
+        // positions and its steering tags are in place for the next.
+        register_tick_system(Stage::Mobs, AttachSide::After, 0, TICK_HUSBANDRY);
+    }
+
+    fn tick_system(&mut self, system_id: u32) {
+        let Some(content) = &self.content else {
+            return;
+        };
+        if system_id == TICK_HUSBANDRY {
+            husbandry::on_tick(content);
+        }
     }
 
     fn handle_event(&mut self, handler_id: u32, payload: &mut EventPayload) -> Outcome {
@@ -142,11 +169,20 @@ impl Mod for Farming {
                 EventPayload::BlockBroken {
                     pos,
                     block,
-                    harvested,
                     natural,
+                    ..
                 },
             ) => {
-                forage::on_block_broken(content, *pos, *block, *harvested, *natural);
+                forage::on_block_broken(content, *pos, *block, *natural);
+                Outcome::Continue
+            }
+            (
+                ON_MOB_TAG_REMOVED,
+                EventPayload::MobTagRemoved {
+                    mob_id, kind, key, ..
+                },
+            ) => {
+                growth::on_tag_removed(content, *mob_id, *kind, key);
                 Outcome::Continue
             }
             _ => Outcome::Continue,
@@ -169,6 +205,7 @@ impl Mod for Farming {
         let content = self.content.as_ref()?;
         match callback_id {
             AI_FOLLOW_WHEAT => follow::decide(content, ctx),
+            AI_HUSBANDRY_GOAL => husbandry::decide(ctx),
             _ => None,
         }
     }

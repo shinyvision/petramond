@@ -500,12 +500,18 @@ impl Block {
     /// The tool kind that mines this block efficiently — a [`Pickaxe`](ToolKind::Pickaxe)
     /// for stone & ore, an [`Axe`](ToolKind::Axe) for wood (logs, planks, the
     /// crafting table, the chest), a [`Shovel`](ToolKind::Shovel) for dirt & sand
-    /// (grass, podzol, gravel, clay, snow…), [`Shears`](ToolKind::Shears) for wool —
-    /// or `None` for blocks a bare hand mines just as fast (plants, glass-likes).
-    /// Holding the matching tool grants the tier speed-up in
-    /// [`crate::mining::break_time`], and for tool-gated blocks the pickaxe also
+    /// (grass, podzol, gravel, clay, snow…), [`Shears`](ToolKind::Shears) for wool
+    /// and plants — or `None` for blocks a bare hand mines just as fast
+    /// (leaves, glass-likes). Holding the matching tool grants the tier speed-up
+    /// in [`crate::mining::break_time`], and for tool-gated blocks it also
     /// unlocks the drop (see [`harvest_tier`](Self::harvest_tier)); the item half
     /// of the pairing is [`ItemType::tool`](crate::item::ItemType::tool).
+    ///
+    /// Plants pair with shears the way snow pairs with the shovel: almost every
+    /// plant is tier 0 and hardness 0 (hand-harvested instantly, the pairing
+    /// inert), but a plant row that raises `harvest_tier` to 1 becomes a
+    /// CUT-ONLY yield — breaking it bare-handed destroys it dropless (short
+    /// grass, whose drop feeds pasture-building for husbandry).
     #[inline]
     pub fn preferred_tool(self) -> Option<ToolKind> {
         match self.material() {
@@ -514,7 +520,7 @@ impl Block {
             }
             BlockMaterial::Wood => Some(ToolKind::Axe),
             BlockMaterial::Dirt | BlockMaterial::Sand => Some(ToolKind::Shovel),
-            BlockMaterial::Wool => Some(ToolKind::Shears),
+            BlockMaterial::Wool | BlockMaterial::Plant => Some(ToolKind::Shears),
             _ => None,
         }
     }

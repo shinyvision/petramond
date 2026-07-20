@@ -5,7 +5,7 @@
 use rustc_hash::FxHashSet;
 
 use crate::mathh::IVec3;
-use crate::mob::path::{body_clear, body_layer_clear, is_navigation_foothold, PathParams};
+use crate::mob::path::{body_clear, body_layer_clear, is_navigation_foothold_with, PathParams};
 
 /// Game ticks between confined-state re-evaluations for one mob.
 pub const CHECK_INTERVAL: u8 = 60;
@@ -25,17 +25,19 @@ const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 /// Returns `true` if the mob at `start` cannot reach at least
 /// [`MIN_REACHABLE_CELLS`] navigable cells within [`SEARCH_RADIUS`] cells.
 ///
-/// `solid` and `water` match the pathfinder's semantics: `solid` blocks
-/// movement, water is a valid support surface but not passable underwater.
-/// Mobs that are not on a foothold (swimming, mid-air, unsupported) are
-/// never reported as confined.
+/// `solid`, `support`, and `water` match the pathfinder's semantics: `solid`
+/// marks fully-blocked cells, `support` marks anything that can bear feet
+/// (partial shapes included), water is a valid support surface but not
+/// passable underwater. Mobs that are not on a foothold (swimming, mid-air,
+/// unsupported) are never reported as confined.
 pub fn is_confined(
     start: IVec3,
     params: PathParams,
     solid: &impl Fn(IVec3) -> bool,
+    support: &impl Fn(IVec3) -> bool,
     water: &impl Fn(IVec3) -> bool,
 ) -> bool {
-    let foothold = |c: IVec3| is_navigation_foothold(c, params, solid, water);
+    let foothold = |c: IVec3| is_navigation_foothold_with(c, params, solid, support, water);
     if !foothold(start) {
         return false;
     }
@@ -155,9 +157,10 @@ mod tests {
     }
 
     fn check(world: &World, start: IVec3) -> bool {
-        let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
+        let solid = crate::mob::nav::nav_solid_fn(world);
+        let support = crate::mob::nav::nav_support_fn(world, params().half_width);
         let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
-        is_confined(start, params(), &solid, &water)
+        is_confined(start, params(), &solid, &support, &water)
     }
 
     #[test]

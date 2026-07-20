@@ -173,7 +173,9 @@ pub(crate) enum ModAction {
 
 /// Observational events, queued at their site and drained FIFO at the post-queue
 /// drain points (each tick-stage boundary) within the same tick.
-#[derive(Copy, Clone, Debug)]
+/// (`Copy` was dropped when the tag events gained String keys — a Rust-trait
+/// change only, like `ContainerKind`'s.)
+#[derive(Clone, Debug)]
 pub(crate) enum PostEvent {
     BlockPlaced {
         pos: IVec3,
@@ -237,6 +239,24 @@ pub(crate) enum PostEvent {
         player: crate::server::player::PlayerId,
         mob_id: u64,
     },
+    /// A key BECAME PRESENT in a live mob's tag map through the ABI tag
+    /// surface (`MobTagSet` inserting a new key). Presence transitions only —
+    /// value overwrites, engine-internal tag churn, spawn seeding, save
+    /// restore, and AI-decision writes all fire nothing.
+    MobTagAdded {
+        id: u64,
+        kind: Mob,
+        key: String,
+        value: crate::mob::MobTagValue,
+    },
+    /// A present key was DELETED from a live mob's tag map through the ABI
+    /// tag surface (`MobTagDelete`). `value` is what it held.
+    MobTagRemoved {
+        id: u64,
+        kind: Mob,
+        key: String,
+        value: crate::mob::MobTagValue,
+    },
 }
 
 /// Registration key for post handlers; one bit per kind gates enqueueing so an
@@ -255,10 +275,12 @@ pub(crate) enum PostEventKind {
     SectionGenerated,
     SectionLoaded,
     PlayerDismounted,
+    MobTagAdded,
+    MobTagRemoved,
 }
 
 impl PostEventKind {
-    pub(crate) const COUNT: usize = 12;
+    pub(crate) const COUNT: usize = 14;
 }
 
 impl PostEvent {
@@ -276,6 +298,8 @@ impl PostEvent {
             PostEvent::SectionGenerated { .. } => PostEventKind::SectionGenerated,
             PostEvent::SectionLoaded { .. } => PostEventKind::SectionLoaded,
             PostEvent::PlayerDismounted { .. } => PostEventKind::PlayerDismounted,
+            PostEvent::MobTagAdded { .. } => PostEventKind::MobTagAdded,
+            PostEvent::MobTagRemoved { .. } => PostEventKind::MobTagRemoved,
         }
     }
 }

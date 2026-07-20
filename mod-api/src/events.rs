@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::data::MobTagValue;
 use crate::ids::{BlockId, ItemId, MobId, PlayerId};
 
 /// A pre-event handler's verdict. The first `Cancel` wins AND ends the
@@ -39,6 +40,8 @@ pub enum EventKind {
     SectionLoaded,
     MobInteract,
     PlayerDismounted,
+    MobTagAdded,
+    MobTagRemoved,
 }
 
 /// Why an entity is taking damage.
@@ -279,6 +282,36 @@ pub enum EventPayload {
         /// Stable id of the mob that was ridden (it may already be gone).
         mob_id: u64,
     },
+    /// POST — a key BECAME PRESENT in a live mob's tag map through the ABI
+    /// tag surface ([`HostCall::MobTagSet`] inserting a new key). Presence
+    /// transitions only: overwriting an existing key's value is silent, and
+    /// engine-internal tag churn (health, the confined refresh, spawn
+    /// seeding, save restore) and AI-decision writes fire nothing.
+    ///
+    /// [`HostCall::MobTagSet`]: crate::HostCall::MobTagSet
+    MobTagAdded {
+        /// The mob's stable session id.
+        mob_id: u64,
+        /// Its species (session id — bridge with `MobNames`/`ResolveMob`).
+        kind: MobId,
+        key: String,
+        /// The stored value.
+        value: MobTagValue,
+    },
+    /// POST — a present key was DELETED from a live mob's tag map through
+    /// the ABI tag surface ([`HostCall::MobTagDelete`]). Same scope rules as
+    /// [`MobTagAdded`](Self::MobTagAdded). This is the composable
+    /// state-transition hook: e.g. removing a maturity tag is what grows a
+    /// juvenile, whoever removes it.
+    ///
+    /// [`HostCall::MobTagDelete`]: crate::HostCall::MobTagDelete
+    MobTagRemoved {
+        mob_id: u64,
+        kind: MobId,
+        key: String,
+        /// The value the key held when it was removed.
+        value: MobTagValue,
+    },
 }
 
 impl EventPayload {
@@ -303,6 +336,8 @@ impl EventPayload {
             EventPayload::SectionLoaded { .. } => EventKind::SectionLoaded,
             EventPayload::MobInteract { .. } => EventKind::MobInteract,
             EventPayload::PlayerDismounted { .. } => EventKind::PlayerDismounted,
+            EventPayload::MobTagAdded { .. } => EventKind::MobTagAdded,
+            EventPayload::MobTagRemoved { .. } => EventKind::MobTagRemoved,
         }
     }
 }

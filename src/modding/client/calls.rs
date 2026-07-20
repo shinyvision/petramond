@@ -148,6 +148,8 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::EmitterBurst { .. }
         | HostCall::BiomeAt { .. }
         | HostCall::SurfaceYAt { .. }
+        | HostCall::FindBlocks { .. }
+        | HostCall::MobInfo { .. }
         | HostCall::Players => false,
     }
 }

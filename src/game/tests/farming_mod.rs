@@ -1752,3 +1752,356 @@ fn farming_landscape_inner() {
     let (disabled, _, _) = game.mods_for_test().probe(1);
     assert!(!disabled, "the farming mod never trapped");
 }
+
+#[test]
+fn farming_husbandry_grazes_and_breeds_via_wasm() {
+    let Some(root) =
+        crate::modding::tests::stage_mods_fixture("farming-husbandry", &["kitchen", "farming"])
+    else {
+        return;
+    };
+    crate::modding::tests::run_child_test(
+        &root,
+        "game::tests::farming_mod::farming_husbandry_inner",
+    );
+}
+
+/// A live mob's `I64` tag, by stable id.
+fn mob_tag_i64(game: &super::common::TestGame, id: u64, key: &str) -> Option<i64> {
+    game.server
+        .world
+        .mobs()
+        .instances()
+        .iter()
+        .find(|m| m.id() == id)
+        .and_then(|m| match m.tags().get(key) {
+            Some(crate::mob::MobTagValue::Int(v)) => Some(*v),
+            _ => None,
+        })
+}
+
+/// Force an animal's next husbandry heartbeat due immediately (the chance
+/// rolls run on a long cadence; the test compresses the waiting, never the
+/// odds or the behavior).
+fn force_heartbeat(game: &mut super::common::TestGame, id: u64) {
+    let idx = game
+        .server
+        .world
+        .mobs()
+        .index_of_id(id)
+        .expect("the animal lives");
+    game.server.world.mobs_mut().set_mob_tag(
+        idx,
+        "farming:husbandry_next".to_owned(),
+        crate::mob::MobTagValue::Int(0),
+    );
+}
+
+/// Force an animal's next drink due immediately (same compression as
+/// [`force_heartbeat`] — the cadence is balance data, the behavior isn't).
+fn force_drink(game: &mut super::common::TestGame, id: u64) {
+    let idx = game
+        .server
+        .world
+        .mobs()
+        .index_of_id(id)
+        .expect("the animal lives");
+    game.server.world.mobs_mut().set_mob_tag(
+        idx,
+        "farming:drink_next".to_owned(),
+        crate::mob::MobTagValue::Int(0),
+    );
+}
+
+/// Freeze an animal's saturation decay and set its level: `None` = full
+/// (the tag deleted — absent reads as 10).
+fn prime_saturation(game: &mut super::common::TestGame, id: u64, sat: Option<i64>) {
+    let idx = game
+        .server
+        .world
+        .mobs()
+        .index_of_id(id)
+        .expect("the animal lives");
+    let mobs = game.server.world.mobs_mut();
+    match sat {
+        Some(v) => {
+            mobs.set_mob_tag(
+                idx,
+                "farming:saturation".to_owned(),
+                crate::mob::MobTagValue::Int(v),
+            );
+        }
+        None => {
+            mobs.remove_mob_tag(idx, "farming:saturation");
+        }
+    }
+    mobs.set_mob_tag(
+        idx,
+        "farming:sat_next".to_owned(),
+        crate::mob::MobTagValue::Int(i64::MAX),
+    );
+}
+
+/// Runs ONLY in the child process spawned above. The husbandry loop end to
+/// end on the real engine seams (`FindBlocks`, tag-driven AI steering, the
+/// id-returning `SpawnMob`): a hungry sheep seeks and EATS a grass plant
+/// (+3 saturation, the plant consumed); two well-fed sheep near a FILLED
+/// trough enter love mode, pair, court, and a newborn sheep spawns between
+/// them carrying its maturity refusal while the parents leave love mode on
+/// a breeding cooldown. Cadences and chances are balance data — the test
+/// forces heartbeats due instead of pinning them.
+#[test]
+#[ignore = "spawned by farming_husbandry_grazes_and_breeds_via_wasm with a fixture pack env"]
+fn farming_husbandry_inner() {
+    use crate::block::Block;
+    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    use crate::mathh::IVec3;
+
+    let short_grass = block_by_name("petramond:short_grass");
+    let trough_filled = block_by_name("farming:trough_filled");
+
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
+    // The husbandry searches probe ±8 blocks around an animal, and wandering
+    // sheep drift a chunk or so from spawn: an animal whose probe box reaches
+    // unloaded terrain honestly gets no verdict (retry later), so the pasture
+    // needs a generous loaded neighbourhood, not the single-chunk floor.
+    game.server.world.clear_world();
+    for cx in -1..=2 {
+        for cz in -1..=2 {
+            let pos = ChunkPos::new(cx, cz);
+            game.server.world.insert_empty_column_for_test(pos);
+            let mut chunk = Chunk::new(cx, cz);
+            for z in 0..CHUNK_SZ {
+                for x in 0..CHUNK_SX {
+                    chunk.set_block(x, 63, z, Block::Grass);
+                }
+            }
+            game.server.world.insert_chunk_for_test(pos, chunk);
+        }
+    }
+    let sess = &mut game.server.sessions[0];
+    sess.player.pos = Vec3::new(8.0, 64.0, 4.0);
+    sess.player.vel = Vec3::ZERO;
+    sess.player.on_ground = true;
+    assert_eq!(game.mods_for_test().loaded(), 2, "kitchen + farming loaded");
+
+    // --- Grazing: a hungry sheep (saturation 2) seeks the one grass plant
+    // in range and eats it.
+    assert!(game.server.world.set_block_world(11, 64, 8, short_grass));
+    assert!(game.server.world.mobs_mut().spawn(
+        crate::mob::Mob::Sheep,
+        Vec3::new(8.5, 64.0, 8.5),
+        0.0
+    ));
+    let a = game.server.world.mobs().instances()[0].id();
+    prime_saturation(&mut game, a, Some(2));
+    force_heartbeat(&mut game, a);
+
+    let mut ev = TickEvents::default();
+    let mut eaten = false;
+    let mut munched = false;
+    for _ in 0..60 {
+        for _ in 0..30 {
+            game.server.game_tick_step(&mut ev);
+        }
+        // Once the 40-tick munch is running, the sheep stands with its head
+        // eased down to grass level (the procedural feeding pose).
+        if !munched && mob_tag_i64(&game, a, "farming:consume_until").is_some() {
+            for _ in 0..12 {
+                game.server.game_tick_step(&mut ev);
+            }
+            let sheep = game
+                .server
+                .world
+                .mobs()
+                .instances()
+                .iter()
+                .find(|m| m.id() == a)
+                .expect("the sheep lives");
+            assert!(
+                sheep.active_anims().iter().any(|l| l.name == "eat"),
+                "the authored eat clip plays through the munch"
+            );
+            // The clip drives the head bone down (and suppresses head-look),
+            // so the eased head-look state itself is not asserted here — the
+            // munch is visible through the active layer, and the sheep must
+            // roughly FACE its plant to have started at all.
+            munched = true;
+        }
+        if at(&game, 11, 64, 8) != short_grass {
+            eaten = true;
+            break;
+        }
+        force_heartbeat(&mut game, a);
+    }
+    assert!(eaten, "a hungry sheep seeks and eats the grass plant");
+    assert!(munched, "eating passes through the head-down munch");
+    // Activation is fire-and-forget: the one-shot clip retires ITSELF once
+    // played through — no stuck layer pinning the head after the bite.
+    for _ in 0..100 {
+        game.server.game_tick_step(&mut ev);
+    }
+    assert!(
+        !game
+            .server
+            .world
+            .mobs()
+            .instances()
+            .iter()
+            .find(|m| m.id() == a)
+            .expect("the sheep lives")
+            .active_anims()
+            .iter()
+            .any(|l| l.name == "eat"),
+        "the played-through eat clip retired itself"
+    );
+    assert_eq!(
+        mob_tag_i64(&game, a, "farming:saturation"),
+        Some(5),
+        "eating restores 3 saturation onto the primed 2"
+    );
+
+    // --- Love and breeding: both sheep well fed beside a FILLED trough.
+    assert!(game
+        .server
+        .world
+        .place_model_block(IVec3::new(5, 64, 5), trough_filled));
+    assert!(game.server.world.mobs_mut().spawn(
+        crate::mob::Mob::Sheep,
+        Vec3::new(10.5, 64.0, 9.5),
+        0.0
+    ));
+    let b = game
+        .server
+        .world
+        .mobs()
+        .instances()
+        .iter()
+        .map(|m| m.id())
+        .find(|&id| id != a)
+        .expect("the second sheep spawned");
+    for id in [a, b] {
+        prime_saturation(&mut game, id, None);
+        force_heartbeat(&mut game, id);
+    }
+
+    let mut both_love = false;
+    for _ in 0..60 {
+        for _ in 0..30 {
+            game.server.game_tick_step(&mut ev);
+        }
+        let la = mob_tag_i64(&game, a, "farming:love_until").is_some();
+        let lb = mob_tag_i64(&game, b, "farming:love_until").is_some();
+        if la && lb {
+            both_love = true;
+            break;
+        }
+        for (id, in_love) in [(a, la), (b, lb)] {
+            if !in_love {
+                force_heartbeat(&mut game, id);
+            }
+        }
+    }
+    assert!(both_love, "well-fed sheep near a filled trough enter love mode");
+
+    // Paired lovers walk to each other; 100 consecutive close ticks births a
+    // newborn between them.
+    let mut born = false;
+    for _ in 0..4000 {
+        game.server.game_tick_step(&mut ev);
+        if game.server.world.mobs().instances().len() >= 3 {
+            born = true;
+            break;
+        }
+    }
+    assert!(born, "a courting pair spawns a newborn");
+    let lamb_kind = crate::mob::by_key("farming:lamb").expect("the pack registers the lamb");
+    let sheep_kind = crate::mob::by_key("petramond:sheep").expect("the engine sheep");
+    let newborn = game
+        .server
+        .world
+        .mobs()
+        .instances()
+        .iter()
+        .find(|m| m.id() != a && m.id() != b)
+        .map(|m| (m.id(), m.kind))
+        .expect("the newborn lives");
+    assert_eq!(newborn.1, lamb_kind, "breeding births a LAMB, not a sheep");
+    let lamb = newborn.0;
+    assert!(
+        mob_tag_i64(&game, lamb, "farming:baby").is_some(),
+        "the lamb carries its baby tag"
+    );
+    for id in [a, b] {
+        assert_eq!(
+            mob_tag_i64(&game, id, "farming:love_until"),
+            None,
+            "birth retires the parents' love mode"
+        );
+        assert!(
+            mob_tag_i64(&game, id, "farming:breed_cool").is_some(),
+            "parents leave on a breeding cooldown"
+        );
+    }
+
+    // --- Growth: expire the baby tag (compressed — the 12000-tick maturity
+    // is balance data); the removal-triggered metamorphosis replaces the
+    // lamb with an adult sheep where it stood.
+    {
+        let idx = game
+            .server
+            .world
+            .mobs()
+            .index_of_id(lamb)
+            .expect("the lamb lives");
+        game.server.world.mobs_mut().set_mob_tag(
+            idx,
+            "farming:baby".to_owned(),
+            crate::mob::MobTagValue::Int(1),
+        );
+    }
+    let mut grown = false;
+    for _ in 0..200 {
+        game.server.game_tick_step(&mut ev);
+        if game.server.world.mobs().index_of_id(lamb).is_none() {
+            grown = true;
+            break;
+        }
+    }
+    assert!(grown, "the expired baby tag grows the lamb");
+    let adults = game
+        .server
+        .world
+        .mobs()
+        .instances()
+        .iter()
+        .filter(|m| m.kind == sheep_kind)
+        .count();
+    assert_eq!(
+        (adults, game.server.world.mobs().instances().len()),
+        (3, 3),
+        "the lamb was replaced by an adult sheep in place"
+    );
+
+    // --- Drinking: sheep sip from the filled trough on their own cadence
+    // (compressed here by forcing the deadline due), and enough sips flip it
+    // to the EMPTY trough block — the pasture upkeep loop: no refill, no
+    // love-mode gate, no more breeding.
+    let trough = block_by_name("farming:trough");
+    let mut drained = false;
+    for _ in 0..120 {
+        for _ in 0..30 {
+            game.server.game_tick_step(&mut ev);
+        }
+        if at(&game, 5, 64, 5) == trough {
+            drained = true;
+            break;
+        }
+        force_drink(&mut game, a);
+    }
+    assert!(drained, "sips drain the filled trough to the empty block");
+
+    let (disabled, _, _) = game.mods_for_test().probe(1);
+    assert!(!disabled, "the farming mod never trapped");
+}
