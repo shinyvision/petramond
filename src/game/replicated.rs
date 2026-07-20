@@ -272,8 +272,11 @@ impl SelfView {
         }
     }
 
-    /// Adopt one batch's self state.
-    pub(crate) fn apply(&mut self, state: &SelfState) {
+    /// Adopt one batch's self state. `adopt_inventory` is false when the
+    /// batch's inventory snapshot is stale against a pending prediction (see
+    /// `apply_tick_update`): contents and revision then keep the predicted
+    /// view — the pending request's own outcome batch carries the truth.
+    pub(crate) fn apply(&mut self, state: &SelfState, adopt_inventory: bool) {
         self.health = state.health;
         self.mode = match state.mode {
             1 => PlayerMode::Spectator,
@@ -288,11 +291,13 @@ impl SelfView {
         // a full-body ship keeps the CURRENT local selection, never a server
         // echo that would yank a fast scroll back. `mining` is likewise
         // untouched — the own crack overlay is the local timer's.
-        if let Some(slots) = &state.inventory {
-            let active = self.inventory.active_slot();
-            self.inventory = inventory_from_wire(slots, active);
+        if adopt_inventory {
+            if let Some(slots) = &state.inventory {
+                let active = self.inventory.active_slot();
+                self.inventory = inventory_from_wire(slots, active);
+            }
+            self.inventory_revision = state.inventory_revision;
         }
-        self.inventory_revision = state.inventory_revision;
         self.eating = state.eating.map(|p| p as f32 / 255.0);
         self.sleeping = state.sleeping.map(|p| p as f32 / 255.0);
         self.sleep_bed = state.sleep_bed;
@@ -312,6 +317,9 @@ pub(crate) struct MenuView {
     pub(crate) workbench: Option<WorkbenchView>,
     /// The open mod GUI's container slots.
     pub(crate) container: Option<ContainerView>,
+    /// The open mod GUI's kind — resolves the document's slot semantics
+    /// (take-only outputs) for click prediction against `container`.
+    pub(crate) container_kind: Option<crate::gui::GuiKind>,
     /// The open mod GUI's state map. Only replaced when a sync carries one
     /// (the server ships it on `Arc` change only).
     pub(crate) gui_state: Option<Arc<GuiStateMap>>,
@@ -325,6 +333,7 @@ impl Default for MenuView {
             chest: None,
             workbench: None,
             container: None,
+            container_kind: None,
             gui_state: None,
         }
     }
@@ -343,6 +352,7 @@ impl MenuView {
         self.chest = None;
         self.workbench = None;
         self.container = None;
+        self.container_kind = None;
         match msg.target {
             MenuTargetWire::None => {
                 self.gui_state = None;
@@ -387,8 +397,12 @@ impl MenuView {
                 });
             }
             MenuTargetWire::ModGui {
-                slots, gui_state, ..
+                kind_key,
+                slots,
+                gui_state,
+                ..
             } => {
+                self.container_kind = crate::gui::resolve_kind(&kind_key);
                 self.container = slots.map(|slots| ContainerView {
                     slots: slots.into_iter().map(stack_from_wire).collect(),
                 });
@@ -405,6 +419,26 @@ impl MenuView {
                     self.gui_state = Some(crate::gui::empty_gui_state());
                 }
             }
+        }
+    }
+
+    /// Adopt ONLY the sync's mod GUI state map, keeping the slot views as
+    /// they are. Used when the sync's slot state is stale against a pending
+    /// menu prediction: gauges keep flowing (predictions never touch them,
+    /// and a skipped map would be lost until its next change), while slot
+    /// truth arrives with the pending request's own forced outcome batch.
+    pub(crate) fn adopt_gui_state(&mut self, msg: MenuSyncMsg) {
+        if let MenuTargetWire::ModGui {
+            gui_state: Some(entries),
+            ..
+        } = msg.target
+        {
+            self.gui_state = Some(Arc::new(
+                entries
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into_value()))
+                    .collect(),
+            ));
         }
     }
 }
@@ -747,8 +781,25 @@ impl Game {
         } else {
             self.stage_rows(staged);
         }
+        // A batch's inventory / menu snapshot reflects the server state as of
+        // the requests it ANSWERS. A snapshot-bearing prediction of the same
+        // store that stays pending past this batch postdates that snapshot —
+        // adopting it would visibly regress the newer prediction for one RTT
+        // (the rapid-click flicker). Skip adoption then: every predicted menu
+        // request forces the authoritative pair into its own outcome batch,
+        // so the store reconciles the moment the pending queue drains.
+        let stale_inventory = self
+            .prediction
+            .awaits_inventory_authority(&update.action_outcomes);
+        let stale_menu = self.prediction.awaits_menu_authority(&update.action_outcomes);
+        let adopted_inventory = !stale_inventory
+            && update
+                .self_state
+                .as_ref()
+                .is_some_and(|s| s.inventory.is_some());
+        let adopted_menu = !stale_menu && update.menu_sync.is_some();
         if let Some(state) = &update.self_state {
-            self.self_view.apply(state);
+            self.self_view.apply(state, !stale_inventory);
             if self.player.mode() != self.self_view.mode {
                 self.player.set_mode(self.self_view.mode);
             }
@@ -779,38 +830,23 @@ impl Game {
             match snap {
                 crate::game::prediction::PredictionSnapshot::None => {}
                 crate::game::prediction::PredictionSnapshot::Inventory(inv) => {
-                    // Only restore if the server did not also ship a fresh body
-                    // this batch (unsolicited SelfState inventory wins).
-                    if update
-                        .self_state
-                        .as_ref()
-                        .and_then(|s| s.inventory.as_ref())
-                        .is_none()
-                    {
+                    // Only restore if we did not adopt a fresh authoritative
+                    // body this batch (adopted SelfState inventory wins).
+                    if !adopted_inventory {
                         self.self_view.inventory = inv;
                     }
                 }
                 crate::game::prediction::PredictionSnapshot::Menu { inventory, menu } => {
-                    if update
-                        .self_state
-                        .as_ref()
-                        .and_then(|s| s.inventory.as_ref())
-                        .is_none()
-                    {
+                    if !adopted_inventory {
                         self.self_view.inventory = inventory;
                     }
-                    if update.menu_sync.is_none() {
+                    if !adopted_menu {
                         self.menu_view = menu;
                     }
                 }
                 crate::game::prediction::PredictionSnapshot::World { inventory, cells } => {
                     if let Some(inv) = inventory {
-                        if update
-                            .self_state
-                            .as_ref()
-                            .and_then(|s| s.inventory.as_ref())
-                            .is_none()
-                        {
+                        if !adopted_inventory {
                             self.self_view.inventory = inv;
                         }
                     }
@@ -855,7 +891,11 @@ impl Game {
         }
         self.open_chests = update.open_chests.into_iter().collect();
         if let Some(sync) = update.menu_sync {
-            self.menu_view.apply(sync);
+            if stale_menu {
+                self.menu_view.adopt_gui_state(sync);
+            } else {
+                self.menu_view.apply(sync);
+            }
         }
         for msg in update.events {
             self.buffer_world_event(msg, &suppress);

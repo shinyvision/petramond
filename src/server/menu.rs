@@ -103,6 +103,15 @@ impl ServerGame {
                             shift,
                             gather,
                         );
+                        // A click may be predicted across both client
+                        // mirrors. Force the authoritative pair into the
+                        // outcome batch even if a stale client mirror made
+                        // the server-side action a no-op and neither
+                        // ordinary on-change gate moved — the client skips
+                        // interim snapshots while its prediction is pending
+                        // and reconciles from exactly this batch.
+                        sess.last_sent_inventory_revision = None;
+                        sess.last_menu_sync = None;
                     }
                     self.push_action_outcome(s, request_id, true, None);
                 }

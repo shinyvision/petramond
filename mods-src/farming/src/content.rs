@@ -121,10 +121,12 @@ pub struct Content {
     pub crops: Vec<CropDef>,
     /// Compost barrel fill stages 0..=3 (empty..full).
     pub compost: [BlockId; 4],
-    /// Empty water trough (water cube hidden).
+    /// Empty water trough (water + wheat cubes hidden).
     pub trough: BlockId,
     /// Filled water trough (water cube visible).
     pub trough_filled: BlockId,
+    /// Wheat-filled trough (wheat bed + stalks visible).
+    pub trough_wheat: BlockId,
     /// Fertilized grass: spreads its rooted vegetation to nearby grass for a
     /// while, then relaxes back to plain grass (see [`crate::spread`]).
     pub grass_fertilized: BlockId,
@@ -242,6 +244,7 @@ impl Content {
             ],
             trough: block("farming:trough")?,
             trough_filled: block("farming:trough_filled")?,
+            trough_wheat: block("farming:trough_wheat")?,
             grass_fertilized: block("farming:grass_fertilized")?,
             grass: block("petramond:grass")?,
             dirt: block("petramond:dirt")?,

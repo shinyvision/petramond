@@ -108,8 +108,19 @@ impl ServerGame {
             events.player(s).used_item = true;
             consumed = true;
         } else {
-            let interacted =
-                !self.sessions[s].sneaking() && self.try_open_interactable(s, target, events);
+            // Every click walks ONE interaction ladder, sneak-clicks included:
+            // each consumer — mod or engine — either claims the click or
+            // passes, and whatever nothing claims falls through to the
+            // place/eat/use attempts below. Mod `block_interact` handlers see
+            // every click (a sneak-click is how a mod block offers a secondary
+            // interaction — the farming wheat-trough take-out); the BUILT-IN
+            // interactions (GUIs, doors, beds) are plain right-click consumers
+            // and pass on sneak clicks, which is exactly why sneak-to-place
+            // on a chest keeps working: nothing claims the sneak click on its
+            // way down the ladder.
+            let sneaking = self.sessions[s].sneaking();
+            let interacted = self.try_mod_interact(s, target, events)
+                || (!sneaking && self.open_builtin_interactable(s, target, events));
             // The one place every consumed interaction passes through: the interact
             // hand jab defaults ON for all of them (see `GameEvents::interacted`).
             events.player(s).interacted |= interacted;
@@ -242,9 +253,13 @@ impl ServerGame {
         Some(pos)
     }
 
-    /// If the click's block target has a secondary-use capability, apply it
-    /// and return `true` (consuming the right-click).
-    fn try_open_interactable(
+    /// Offer a block click to the mod `block_interact` handlers — every
+    /// block click, sneak or not, walks past them first. A handler's Cancel
+    /// consumes the click: this is how mod blocks open their own GUIs, and
+    /// how a mod block's sneak-click secondary interaction (the farming
+    /// wheat-trough take-out) claims the gesture. A consumed click never
+    /// reaches the block's built-in capability or placement.
+    fn try_mod_interact(
         &mut self,
         s: usize,
         target: Option<TargetRef>,
@@ -254,8 +269,6 @@ impl ServerGame {
             return false;
         };
         let block = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
-        // A handler cancelling `block_interact` consumed the click (this is how mod
-        // blocks will open their own GUIs); the block's built-in capability is skipped.
         let mut pre = BlockInteract {
             pos: h.block,
             block,
@@ -265,25 +278,35 @@ impl ServerGame {
                 .selected()
                 .map(|st| st.item),
         };
-        let cancelled = {
-            let Self {
-                world,
-                sessions,
-                bus,
-                ..
-            } = self;
-            let sess = &mut sessions[s];
-            bus.block_interact(
-                world,
-                &mut sess.player,
-                &mut sess.gui_state,
-                events,
-                &mut pre,
-            ) == Outcome::Cancel
+        let Self {
+            world,
+            sessions,
+            bus,
+            ..
+        } = self;
+        let sess = &mut sessions[s];
+        bus.block_interact(
+            world,
+            &mut sess.player,
+            &mut sess.gui_state,
+            events,
+            &mut pre,
+        ) == Outcome::Cancel
+    }
+
+    /// If the click's block target has a secondary-use capability, apply it
+    /// and return `true` (consuming the right-click). These are plain
+    /// right-click consumers: the caller never routes sneak-clicks here.
+    fn open_builtin_interactable(
+        &mut self,
+        s: usize,
+        target: Option<TargetRef>,
+        events: &mut TickEvents,
+    ) -> bool {
+        let Some(h) = target else {
+            return false;
         };
-        if cancelled {
-            return true;
-        }
+        let block = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
         // Menu opens join the ordered menu-action stream. Placement resolves
         // before the Menu stage, so this appends behind any close/click/craft
         // messages already received for the old screen.

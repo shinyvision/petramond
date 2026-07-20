@@ -156,9 +156,15 @@ impl Game {
         // Replace-in-place (clicking short grass, a fern…): the server
         // overwrites the CLICKED cell, which can never match the ghost
         // convention (`target + normal`), so the request denies by design —
-        // plausible (jab), never ghosted.
+        // plausible (jab), never ghosted. Replacing a block with ITSELF is a
+        // KNOWN refusal (the shared ladder rejects the no-op rewrite), so the
+        // click stays silent.
         if target.is_replaceable() && target != crate::block::Block::Air {
-            return PlacePrediction::Plausible;
+            return if target == block {
+                PlacePrediction::No
+            } else {
+                PlacePrediction::Plausible
+            };
         }
         let place_pos = look.block + look.normal;
         let prev = self

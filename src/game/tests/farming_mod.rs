@@ -1038,6 +1038,9 @@ fn farming_trough_inner() {
     game.server.sessions[0].player.pos = Vec3::new(4.0, 64.0, 4.0);
     game.server.sessions[0].player.vel = Vec3::ZERO;
     game.server.sessions[0].player.on_ground = true;
+    // Gameplay input live, so the sneak intent reads true when latched (the
+    // take-out is a sneak gesture).
+    game.server.sessions[0].intent_gameplay = true;
 
     // Place the trough on the floor at (5,64,5) — its [2,1,1] footprint covers
     // (5,64,5) and (6,64,5).
@@ -1085,6 +1088,127 @@ fn farming_trough_inner() {
             .map(|s| s.item),
         Some(water_bucket),
         "the empty bucket refilled in hand"
+    );
+
+    // Wheat: the fill needs a full bundle of three — two wheat click through
+    // with nothing spent and nothing swapped.
+    let wheat = by_key("farming:wheat");
+    let trough_wheat = block_by_name("farming:trough_wheat");
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(wheat, 2));
+    use_click(&mut game, &mut ev, 1, origin, IVec3::Y);
+    assert_eq!(
+        at(&game, 5, 64, 5),
+        trough,
+        "two wheat can't pack a trough"
+    );
+    assert_eq!(
+        inventory_count(&game.server.sessions[0].player.inventory, wheat),
+        2,
+        "a short stack spends nothing"
+    );
+
+    // Four wheat fill it: three spent, one left, both cells swapped.
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(wheat, 2));
+    use_click(&mut game, &mut ev, 1, origin, IVec3::Y);
+    assert_eq!(
+        at(&game, 5, 64, 5),
+        trough_wheat,
+        "three wheat pack the trough"
+    );
+    assert_eq!(
+        at(&game, 6, 64, 5),
+        trough_wheat,
+        "the swap covers the whole [2,1,1] group"
+    );
+    assert_eq!(
+        inventory_count(&game.server.sessions[0].player.inventory, wheat),
+        1,
+        "the fill spent exactly three"
+    );
+
+    // More wheat on an already-packed trough falls through: nothing spent.
+    use_click(&mut game, &mut ev, 1, origin, IVec3::Y);
+    assert_eq!(at(&game, 5, 64, 5), trough_wheat);
+    assert_eq!(
+        inventory_count(&game.server.sessions[0].player.inventory, wheat),
+        1,
+        "a packed trough takes no more wheat"
+    );
+
+    // An empty-hand click WITHOUT sneaking leaves the feed alone.
+    use_click(&mut game, &mut ev, 2, origin, IVec3::Y);
+    assert_eq!(at(&game, 5, 64, 5), trough_wheat);
+    assert_eq!(
+        inventory_count(&game.server.sessions[0].player.inventory, wheat),
+        1,
+        "only a sneak-click takes the feed out"
+    );
+
+    // Sneak + empty hand takes the feed back: untouched meals return the
+    // full three wheat.
+    game.server.sessions[0].intent_sneak = true;
+    use_click(&mut game, &mut ev, 2, origin, IVec3::Y);
+    game.server.sessions[0].intent_sneak = false;
+    assert_eq!(at(&game, 5, 64, 5), trough, "the take-out empties the trough");
+    assert_eq!(
+        inventory_count(&game.server.sessions[0].player.inventory, wheat),
+        4,
+        "an untouched trough gives all three wheat back"
+    );
+
+    // The yield floor: one wheat per four meals REMAINING, floored — the
+    // flock's partial nibbles are lost.
+    for (meals, back) in [(1u8, 2u16), (4, 2), (8, 1), (11, 0)] {
+        game.server.sessions[0]
+            .player
+            .inventory
+            .add(ItemStack::new(wheat, 3));
+        use_click(&mut game, &mut ev, 1, origin, IVec3::Y);
+        assert_eq!(at(&game, 5, 64, 5), trough_wheat, "refill packs it again");
+        for (x, y, z) in [(5, 64, 5), (6, 64, 5)] {
+            assert!(game.server.world.cell_kv_set(
+                x,
+                y,
+                z,
+                "farming:meals".to_owned(),
+                vec![meals]
+            ));
+        }
+        let before = inventory_count(&game.server.sessions[0].player.inventory, wheat);
+        game.server.sessions[0].intent_sneak = true;
+        use_click(&mut game, &mut ev, 2, origin, IVec3::Y);
+        game.server.sessions[0].intent_sneak = false;
+        assert_eq!(at(&game, 5, 64, 5), trough);
+        assert_eq!(
+            inventory_count(&game.server.sessions[0].player.inventory, wheat),
+            before + back,
+            "{meals} meals eaten returns {back} wheat"
+        );
+    }
+
+    // A refilled trough starts on FRESH meals: the take-out scrubbed the
+    // stale count, so an un-nibbled refill returns all three again.
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(ItemStack::new(wheat, 3));
+    use_click(&mut game, &mut ev, 1, origin, IVec3::Y);
+    assert_eq!(at(&game, 5, 64, 5), trough_wheat);
+    let before = inventory_count(&game.server.sessions[0].player.inventory, wheat);
+    game.server.sessions[0].intent_sneak = true;
+    use_click(&mut game, &mut ev, 2, origin, IVec3::Y);
+    game.server.sessions[0].intent_sneak = false;
+    assert_eq!(at(&game, 5, 64, 5), trough);
+    assert_eq!(
+        inventory_count(&game.server.sessions[0].player.inventory, wheat),
+        before + 3,
+        "a refilled trough holds no stale meal count"
     );
 
     let (disabled, _, _) = game.mods_for_test().probe(1);
@@ -2150,6 +2274,155 @@ fn farming_husbandry_inner() {
         force_drink(&mut game, a);
     }
     assert!(drained, "sips drain the filled trough to the empty block");
+
+    let (disabled, _, _) = game.mods_for_test().probe(1);
+    assert!(!disabled, "the farming mod never trapped");
+}
+
+#[test]
+fn farming_husbandry_trough_feed_via_wasm() {
+    let Some(root) = crate::modding::tests::stage_mods_fixture(
+        "farming-trough-feed",
+        &["kitchen", "farming"],
+    ) else {
+        return;
+    };
+    crate::modding::tests::run_child_test(
+        &root,
+        "game::tests::farming_mod::farming_husbandry_trough_feed_inner",
+    );
+}
+
+/// Runs ONLY in the child process spawned above. A wheat-packed trough is the
+/// kept feed store: a hungry sheep targets it BEFORE any grass in range, a
+/// meal restores 3 saturation while the pasture stands untouched, and the
+/// twelfth meal flips the trough to the empty block with its meal counter
+/// scrubbed. Cadences are balance data — the test forces heartbeats due and
+/// re-primes hunger instead of waiting them out.
+#[test]
+#[ignore = "spawned by farming_husbandry_trough_feed_via_wasm with a fixture pack env"]
+fn farming_husbandry_trough_feed_inner() {
+    use crate::block::Block;
+    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    use crate::mathh::IVec3;
+
+    let short_grass = block_by_name("petramond:short_grass");
+    let trough_wheat = block_by_name("farming:trough_wheat");
+    let trough = block_by_name("farming:trough");
+
+    let mut game =
+        super::common::game_with_camera(Camera::new(Vec3::new(8.0, 66.0, 8.0), 16.0 / 9.0));
+    // The husbandry searches probe ±8 blocks around an animal, so the pasture
+    // needs the generous loaded neighbourhood, not the single-chunk floor.
+    game.server.world.clear_world();
+    for cx in -1..=2 {
+        for cz in -1..=2 {
+            let pos = ChunkPos::new(cx, cz);
+            game.server.world.insert_empty_column_for_test(pos);
+            let mut chunk = Chunk::new(cx, cz);
+            for z in 0..CHUNK_SZ {
+                for x in 0..CHUNK_SX {
+                    chunk.set_block(x, 63, z, Block::Grass);
+                }
+            }
+            game.server.world.insert_chunk_for_test(pos, chunk);
+        }
+    }
+    let sess = &mut game.server.sessions[0];
+    sess.player.pos = Vec3::new(8.0, 64.0, 4.0);
+    sess.player.vel = Vec3::ZERO;
+    sess.player.on_ground = true;
+
+    // A packed trough AND a grass plant in range of one hungry sheep.
+    assert!(game
+        .server
+        .world
+        .place_model_block(IVec3::new(5, 64, 5), trough_wheat));
+    assert!(game.server.world.set_block_world(11, 64, 8, short_grass));
+    assert!(game.server.world.mobs_mut().spawn(
+        crate::mob::Mob::Sheep,
+        Vec3::new(8.5, 64.0, 8.5),
+        0.0
+    ));
+    let a = game.server.world.mobs().instances()[0].id();
+    prime_saturation(&mut game, a, Some(2));
+    force_heartbeat(&mut game, a);
+
+    let mut ev = TickEvents::default();
+
+    // --- Priority: the hunger roll targets the trough, never the grass.
+    let mut targeted = false;
+    for _ in 0..40 {
+        for _ in 0..30 {
+            game.server.game_tick_step(&mut ev);
+        }
+        if mob_tag_i64(&game, a, "farming:feed_cell").is_some() {
+            targeted = true;
+            break;
+        }
+        force_heartbeat(&mut game, a);
+    }
+    assert!(targeted, "a hungry sheep targets the wheat trough");
+    assert!(
+        mob_tag_i64(&game, a, "farming:graze_cell").is_none(),
+        "the feed trough outranks the grass errand"
+    );
+
+    // --- The first meal: saturation restored, the counter bumped (on either
+    // member cell — the sync keeps both honest), the pasture untouched.
+    let mut ate = false;
+    for _ in 0..60 {
+        for _ in 0..30 {
+            game.server.game_tick_step(&mut ev);
+        }
+        if game
+            .server
+            .world
+            .cell_kv_get(5, 64, 5, "farming:meals")
+            .is_some()
+        {
+            ate = true;
+            break;
+        }
+        force_heartbeat(&mut game, a);
+    }
+    assert!(ate, "the sheep eats a first meal from the trough");
+    assert_eq!(
+        mob_tag_i64(&game, a, "farming:saturation"),
+        Some(5),
+        "a meal restores 3 saturation onto the primed 2"
+    );
+    assert_eq!(
+        at(&game, 11, 64, 8),
+        short_grass,
+        "the grass survives while the trough serves"
+    );
+
+    // --- The twelfth meal empties the trough (re-prime hunger each round —
+    // a saturated sheep stops seeking, exactly like the pasture).
+    let mut emptied = false;
+    for _ in 0..200 {
+        for _ in 0..30 {
+            game.server.game_tick_step(&mut ev);
+        }
+        if at(&game, 5, 64, 5) == trough {
+            emptied = true;
+            break;
+        }
+        prime_saturation(&mut game, a, Some(2));
+        force_heartbeat(&mut game, a);
+    }
+    assert!(emptied, "twelve meals empty the wheat trough");
+    for (x, y, z) in [(5, 64, 5), (6, 64, 5)] {
+        assert!(
+            game
+                .server
+                .world
+                .cell_kv_get(x, y, z, "farming:meals")
+                .is_none(),
+            "the spent meal counter is scrubbed off every member cell"
+        );
+    }
 
     let (disabled, _, _) = game.mods_for_test().probe(1);
     assert!(!disabled, "the farming mod never trapped");

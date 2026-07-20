@@ -318,6 +318,47 @@ fn placing_into_replaceable_grass_overwrites_it_with_no_drop() {
 }
 
 #[test]
+fn placing_a_replaceable_block_on_itself_is_refused() {
+    // Clicking short grass while HOLDING short grass must not "replace" it:
+    // the rewrite would be invisible yet still eat one item off the hotbar.
+    let mut game = game_on_empty_chunk();
+    give(&mut game, ItemType::ShortGrass, 64);
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0); // park clear of the cell
+
+    let g = IVec3::new(8, 100, 8);
+    // Real ground below, so the refusal comes from the same-block rule and
+    // not the substrate gate.
+    game.server
+        .world
+        .set_block_world(g.x, g.y - 1, g.z, Block::Grass);
+    game.server
+        .world
+        .set_block_world(g.x, g.y, g.z, Block::ShortGrass);
+
+    game.server.sessions[0].look = Some(hit(g, IVec3::Y));
+    assert!(
+        !game.server.try_place_for_test(),
+        "placing grass on grass is refused"
+    );
+
+    assert_eq!(
+        Block::from_id(game.server.world.chunk_block(g.x, g.y, g.z)),
+        Block::ShortGrass,
+        "the clicked grass is untouched"
+    );
+    assert_eq!(
+        game.server.sessions[0]
+            .player
+            .inventory
+            .selected()
+            .unwrap()
+            .count,
+        64,
+        "no item was consumed"
+    );
+}
+
+#[test]
 fn rooted_plants_place_only_on_their_required_ground() {
     // The data-driven substrate gate: a flower roots in soil (grass/dirt), a cactus
     // in sand (sand/red sand). Building onto the wrong ground is a no-op; the right

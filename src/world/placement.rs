@@ -310,7 +310,10 @@ impl World {
             return None;
         }
         let target = Block::from_id(self.chunk_block(p.x, p.y, p.z));
-        if !target.is_replaceable() {
+        // Replacing a block with ITSELF (short grass clicked while holding
+        // short grass) would rewrite the same state invisibly while still
+        // consuming the held item — refuse it like any unplaceable spot.
+        if !target.is_replaceable() || target == block {
             return None;
         }
         // A block with no collision box (a torch, grass, a fern, …) traps

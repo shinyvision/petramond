@@ -156,10 +156,17 @@ impl Mod for Farming {
                 farmland::on_block_placed_above(content, *pos, *block);
                 Outcome::Continue
             }
-            (ON_BLOCK_INTERACT, EventPayload::BlockInteract { pos, block, item }) => chain(
-                crops::on_interact(content, &mut self.growth, *pos, *block, *item),
-                || compost::on_interact(content, *pos, *block),
-            ),
+            (ON_BLOCK_INTERACT, EventPayload::BlockInteract { pos, block, item }) => {
+                // Crops first, then the compost collect, then the trough's
+                // sneak take-out — each falls through on Continue.
+                let first = chain(
+                    crops::on_interact(content, &mut self.growth, *pos, *block, *item),
+                    || compost::on_interact(content, *pos, *block),
+                );
+                chain(first, || {
+                    trough::on_interact(content, *pos, *block, *item)
+                })
+            }
             (ON_PLAYER_DAMAGE_PRE, EventPayload::PlayerDamagePre { amount, .. }) => {
                 wellfed::on_player_damage(amount);
                 Outcome::Continue

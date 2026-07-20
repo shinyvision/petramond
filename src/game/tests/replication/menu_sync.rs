@@ -359,6 +359,57 @@ fn menu_sync_ships_on_change_only() {
     );
 }
 
+/// A slot click forces the authoritative inventory + menu pair into its
+/// outcome batch even when the server-side action was a no-op and neither
+/// on-change gate moved: the client may have predicted the click against a
+/// stale mirror, and it skips interim snapshots while a prediction is
+/// pending — this batch is the one it reconciles from.
+#[test]
+fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
+    use crate::block::Block;
+    use crate::mathh::IVec3;
+    use crate::net::protocol::{ClientToServer, MenuSlotWire};
+
+    let mut game = super::common::game_on_empty_chunk();
+    let pos = IVec3::new(3, 64, 3);
+    game.server.world.set_block_world(3, 64, 3, Block::Chest);
+    game.server
+        .world
+        .insert_chest(pos, crate::block_model::DEFAULT_MODEL_FACING);
+    let mut ev = TickEvents::default();
+    game.server.open_chest_screen_for(0, pos, &mut ev);
+    pump_one_tick(&mut game);
+    let quiet = pump_one_tick(&mut game);
+    assert!(quiet.menu_sync.is_none(), "baseline: nothing changes");
+
+    // Empty cursor onto an empty chest slot: a server-side no-op.
+    game.server.apply_message(
+        0,
+        ClientToServer::MenuClick {
+            slot: MenuSlotWire::Chest(0),
+            button: crate::net::protocol::button_to_wire(
+                crate::controls::PointerButton::Secondary,
+            ),
+            shift: false,
+            gather: false,
+            request_id: 11,
+        },
+    );
+    let up = pump_one_tick(&mut game);
+    assert!(
+        up.action_outcomes.iter().any(|o| o.id == 11 && o.accepted),
+        "the click is answered in the same batch"
+    );
+    assert!(
+        up.menu_sync.is_some(),
+        "the outcome batch forces the menu view"
+    );
+    assert!(
+        up.self_state.is_some_and(|s| s.inventory.is_some()),
+        "the outcome batch forces the inventory body"
+    );
+}
+
 /// The mod-GUI state map rides `menu_sync` only when its `Arc` changed: once
 /// at open (the cleared map), once per tick-side write (copy-on-write forces
 /// a fresh allocation), never in between.

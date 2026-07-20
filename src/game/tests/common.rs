@@ -190,7 +190,7 @@ impl TestGame {
     pub(super) fn sync_self_view_for_test(&mut self) {
         self.server.sessions[0].last_sent_inventory_revision = None;
         let state = self.server.build_self_state(0);
-        self.game.self_view.apply(&state);
+        self.game.self_view.apply(&state, true);
     }
 
     /// Mirror of the next batch's `menu_sync`, for tests that drive menu

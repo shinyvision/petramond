@@ -348,7 +348,7 @@ impl Game {
         state: &crate::net::protocol::SelfState,
         sync: Option<crate::net::protocol::MenuSyncMsg>,
     ) {
-        self.self_view.apply(state);
+        self.self_view.apply(state, true);
         if let Some(sync) = sync {
             self.menu_view.apply(sync);
         }
@@ -519,6 +519,22 @@ impl Game {
         (can, self.prediction.begin(snapshot))
     }
 
+    /// Like [`begin_inventory_prediction`](Self::begin_inventory_prediction),
+    /// but the snapshot also captures the open menu mirror — for predictions
+    /// that mutate a container-slot view alongside the cursor.
+    fn begin_menu_prediction(&mut self) -> (bool, crate::net::protocol::ClientRequestId) {
+        let can = self.prediction.can_predict();
+        let snapshot = if can {
+            prediction::PredictionSnapshot::Menu {
+                inventory: self.self_view.inventory.clone(),
+                menu: self.menu_view.clone(),
+            }
+        } else {
+            prediction::PredictionSnapshot::None
+        };
+        (can, self.prediction.begin(snapshot))
+    }
+
     /// Drop the player's held (active hotbar) item into the world via the in-game
     /// drop key. With `all`, the whole stack is thrown (Ctrl+Q); otherwise a
     /// single item (Q). No-op with an empty hand.
@@ -591,9 +607,15 @@ impl Game {
         gather: bool,
     ) {
         // Clicks the prediction cannot faithfully apply ride track-only: no
-        // inventory clone, no snapshot slot burned, nothing to roll back.
+        // inventory clone, no snapshot slot burned, nothing to roll back. A
+        // container-slot click mutates the open menu mirror too, so its
+        // rollback unit spans both stores.
         let (can, request_id) = if self.menu_click_is_predictable(slot, shift, gather) {
-            self.begin_inventory_prediction()
+            if matches!(slot, crate::gui::MenuSlot::Inventory(_)) {
+                self.begin_inventory_prediction()
+            } else {
+                self.begin_menu_prediction()
+            }
         } else {
             (false, self.prediction.begin_track_only())
         };
@@ -725,37 +747,50 @@ impl Game {
         self.crafting = catalog;
     }
 
-    /// Whether a click's outcome is container-independent — the ONLY clicks
-    /// the client may predict without a local container mirror, because the
-    /// shared apply (`ContainerMenu::click`) reroutes the rest by the open
-    /// target: shift-clicks route into an open chest/furnace/mod/workbench,
-    /// and a gather sweeps an open block container. Predicting those with
-    /// inventory-only primitives would drift from the server (the
-    /// single-apply-path rule).
+    /// Whether the client can faithfully predict a click's outcome. Inventory
+    /// slots: always for plain clicks; shift/gather only while no open target
+    /// reroutes them (the shared apply routes a shifted stack INTO an open
+    /// chest/furnace/mod/workbench, and a gather sweeps an open block
+    /// container — predicting those with inventory-only primitives would
+    /// drift from the server). Container slots (chest/furnace/mod document):
+    /// plain clicks only, and only while the mirror view is present — the
+    /// mutation is cursor ↔ mirrored slot through the same external-slot
+    /// primitives the server's decode runs. Shift quick-moves and gathers on
+    /// those still ride track-only (the single-apply-path rule).
     fn menu_click_is_predictable(
         &self,
         slot: crate::gui::MenuSlot,
         shift: bool,
         gather: bool,
     ) -> bool {
-        if !matches!(slot, crate::gui::MenuSlot::Inventory(_)) {
-            return false;
-        }
+        use crate::gui::MenuSlot;
         let v = &self.menu_view;
-        let block_container_open =
-            v.chest.is_some() || v.furnace.is_some() || v.container.is_some();
-        if shift {
-            !block_container_open && v.workbench.is_none()
-        } else if gather {
-            !block_container_open
-        } else {
-            true
+        match slot {
+            MenuSlot::Inventory(_) => {
+                let block_container_open =
+                    v.chest.is_some() || v.furnace.is_some() || v.container.is_some();
+                if shift {
+                    !block_container_open && v.workbench.is_none()
+                } else if gather {
+                    !block_container_open
+                } else {
+                    true
+                }
+            }
+            MenuSlot::Chest(_) => !shift && !gather && v.chest.is_some(),
+            MenuSlot::Furnace(_) => !shift && !gather && v.furnace.is_some(),
+            MenuSlot::Container(_) => {
+                !shift && !gather && v.container.is_some() && v.container_kind.is_some()
+            }
+            _ => false,
         }
     }
 
-    /// Apply inventory-only click prediction; callers gate on
+    /// Apply click prediction; callers gate on
     /// [`menu_click_is_predictable`](Self::menu_click_is_predictable), so
-    /// every arm here matches what `ContainerMenu::click` will do server-side.
+    /// every arm here matches what `ContainerMenu::click` will do server-side:
+    /// container-slot arms run the same external-slot primitives its generic
+    /// decode runs, against the mirror cell instead of the world container.
     fn predict_menu_click(
         &mut self,
         slot: crate::gui::MenuSlot,
@@ -764,7 +799,8 @@ impl Game {
         gather: bool,
     ) {
         use crate::controls::PointerButton;
-        use crate::gui::MenuSlot;
+        use crate::gui::{FurnaceHit, MenuSlot};
+        let secondary = button == PointerButton::Secondary;
         let inv = &mut self.self_view.inventory;
         match slot {
             MenuSlot::Inventory(i) => {
@@ -772,10 +808,60 @@ impl Game {
                     inv.shift_move_slot(i);
                 } else if gather {
                     inv.collect_to_cursor();
+                } else if secondary {
+                    inv.right_click_slot(i);
                 } else {
-                    match button {
-                        PointerButton::Primary => inv.click_slot(i),
-                        PointerButton::Secondary => inv.right_click_slot(i),
+                    inv.click_slot(i);
+                }
+            }
+            MenuSlot::Chest(i) => {
+                if let Some(cell) = self
+                    .menu_view
+                    .chest
+                    .as_mut()
+                    .and_then(|chest| chest.slots.get_mut(i))
+                {
+                    if secondary {
+                        inv.right_click_external_slot(cell);
+                    } else {
+                        inv.click_external_slot(cell);
+                    }
+                }
+            }
+            MenuSlot::Furnace(hit) => {
+                if let Some(furnace) = self.menu_view.furnace.as_mut() {
+                    match hit {
+                        FurnaceHit::Input if secondary => {
+                            inv.right_click_external_slot(&mut furnace.input)
+                        }
+                        FurnaceHit::Input => inv.click_external_slot(&mut furnace.input),
+                        FurnaceHit::Fuel if secondary => {
+                            inv.right_click_external_slot(&mut furnace.fuel)
+                        }
+                        FurnaceHit::Fuel => inv.click_external_slot(&mut furnace.fuel),
+                        FurnaceHit::Output => {
+                            inv.click_take_only_external_slot(&mut furnace.output, secondary)
+                        }
+                    }
+                }
+            }
+            MenuSlot::Container(i) => {
+                let Some(kind) = self.menu_view.container_kind else {
+                    return;
+                };
+                let specs = crate::gui::documents::container_slot_specs(kind);
+                if let Some(cell) = self
+                    .menu_view
+                    .container
+                    .as_mut()
+                    .and_then(|container| container.slots.get_mut(i))
+                {
+                    if specs.get(i).is_some_and(|spec| spec.take_only) {
+                        inv.click_take_only_external_slot(cell, secondary);
+                    } else if secondary {
+                        inv.right_click_external_slot(cell);
+                    } else {
+                        inv.click_external_slot(cell);
                     }
                 }
             }

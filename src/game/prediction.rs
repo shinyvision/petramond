@@ -105,6 +105,33 @@ impl PredictionLedger {
         })
     }
 
+    /// Whether an inventory-mutating prediction stays pending past this
+    /// batch's `outcomes` — the batch's `SelfState` inventory snapshot then
+    /// predates that prediction and must not be adopted over it.
+    pub(crate) fn awaits_inventory_authority(&self, outcomes: &[ActionOutcome]) -> bool {
+        self.pending.iter().any(|p| {
+            let holds_inventory = matches!(
+                &p.snapshot,
+                PredictionSnapshot::Inventory(_)
+                    | PredictionSnapshot::Menu { .. }
+                    | PredictionSnapshot::World {
+                        inventory: Some(_),
+                        ..
+                    }
+            );
+            holds_inventory && !outcomes.iter().any(|o| o.id == p.id)
+        })
+    }
+
+    /// Whether a menu-mirror-mutating prediction stays pending past this
+    /// batch's `outcomes` — the batch's menu sync then predates it.
+    pub(crate) fn awaits_menu_authority(&self, outcomes: &[ActionOutcome]) -> bool {
+        self.pending.iter().any(|p| {
+            matches!(&p.snapshot, PredictionSnapshot::Menu { .. })
+                && !outcomes.iter().any(|o| o.id == p.id)
+        })
+    }
+
     /// Apply one batch of outcomes. Returns `(rollbacks, resolved_cells)`:
     /// deny snapshots to restore, and every World cell whose pending entry
     /// was answered (accept or deny) so presentation suppress can clear.

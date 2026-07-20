@@ -38,14 +38,23 @@
       "model_file": "models/trough.bbmodel",
       "cells": [2, 1, 1],
       "orientation": "left_to_right",
-      "hidden_parts": ["water"]
+      "hidden_parts": ["water", "wheat"]
     },
     {
       "key": "farming:trough_filled",
       "model_file": "models/trough.bbmodel",
       "cells": [2, 1, 1],
       "orientation": "left_to_right",
+      "hidden_parts": ["wheat"],
       "collision_hidden_parts": ["water"]
+    },
+    {
+      "key": "farming:trough_wheat",
+      "model_file": "models/trough.bbmodel",
+      "cells": [2, 1, 1],
+      "orientation": "left_to_right",
+      "hidden_parts": ["water"],
+      "collision_hidden_parts": ["wheat"]
     }
   ]
 }

@@ -22,10 +22,15 @@
 //!   writes state.
 //!
 //! EATING AND DRINKING take [`CONSUME_TICKS`] of head-down munching before
-//! the effect lands (the plant breaks / the sip counts). Drinking drains the
-//! pasture's trough: every [`TROUGH_SIPS`] sips flip it to the empty block,
-//! so keeping the flock breedable means keeping water topped up and grass
-//! replanted — the love-mode gate reads the FILLED trough only.
+//! the effect lands (the plant breaks / the sip counts / the meal lands).
+//! Drinking drains the pasture's water trough: every [`TROUGH_SIPS`] sips
+//! flip it to the empty block. A WHEAT-PACKED trough is the kept feed store:
+//! a hungry animal ALWAYS seeks it before grazing the pasture down
+//! ([`FEED_CELL`] — thirst alone outranks it), every meal restores the
+//! species' `restore` saturation, and the [`TROUGH_MEALS`]th bite flips the
+//! trough to empty — so keeping the flock means keeping water topped up,
+//! feed stocked, and grass replanted. The love-mode gate still reads the
+//! FILLED (water) trough only.
 //!
 //! ALL per-animal state rides the mob's own tag map, so it persists, travels,
 //! and dies with the animal: `farming:saturation` (ABSENT = full — healthy
@@ -87,6 +92,19 @@ const DRINK_RETRY: u64 = 600;
 const DRINK_RANGE: f32 = 1.75;
 /// Sips a filled trough holds before it flips to the empty block.
 const TROUGH_SIPS: u8 = 5;
+/// Meals a packed wheat trough holds ([`MEALS_PER_WHEAT`] per fill wheat) —
+/// the twelfth bite flips it to the empty block.
+pub const TROUGH_MEALS: u8 = 12;
+/// One wheat is worth this many meals — the take-out yields the un-eaten
+/// wheat back at this rate, floored (partial nibbles are lost).
+pub const MEALS_PER_WHEAT: u8 = 4;
+
+/// The wheat a take-out returns for `meals` bites already eaten: the
+/// remaining meals over [`MEALS_PER_WHEAT`], floored — a fresh trough gives
+/// its full fill back, a nearly-finished one can give nothing.
+pub fn wheat_yield(meals: u8) -> u8 {
+    TROUGH_MEALS.saturating_sub(meals) / MEALS_PER_WHEAT
+}
 
 /// The authored feeding clip (a named ONE-SHOT `.bbmodel` animation — the
 /// sheep's head-dip-and-chew). Activation is FIRE-AND-FORGET: the engine
@@ -118,6 +136,9 @@ const SATURATION: &str = "farming:saturation";
 const SAT_NEXT: &str = "farming:sat_next";
 const HEART_NEXT: &str = "farming:husbandry_next";
 const GRAZE_CELL: &str = "farming:graze_cell";
+/// The packed wheat-trough cell a hungry animal is walking to / munching —
+/// the trough feed errand (outranks grass, loses to thirst).
+const FEED_CELL: &str = "farming:feed_cell";
 const DRINK_NEXT: &str = "farming:drink_next";
 const DRINK_CELL: &str = "farming:drink_cell";
 const CONSUME_UNTIL: &str = "farming:consume_until";
@@ -130,6 +151,9 @@ const BREED_COOL: &str = "farming:breed_cool";
 /// Cell-KV sip counter on a filled trough's member cells (kept in sync
 /// across the group — either cell may be the drink target).
 const SIPS_KEY: &str = "farming:sips";
+/// Cell-KV meal counter on a wheat trough's member cells (same sync rule —
+/// either cell may be targeted, by the flock or by the take-out).
+const MEALS_KEY: &str = "farming:meals";
 
 /// `Int` absolute tick a juvenile stays a baby until. The sweep deletes the
 /// tag when due; the REMOVAL (whoever performs it — the timer, a future
@@ -172,6 +196,7 @@ struct State {
     sat_next: Option<i64>,
     heart_next: Option<i64>,
     graze: Option<i64>,
+    feed_cell: Option<i64>,
     drink_next: Option<i64>,
     drink_cell: Option<i64>,
     consume_until: Option<i64>,
@@ -189,6 +214,7 @@ impl State {
             sat_next: tag_i64(tags, SAT_NEXT),
             heart_next: tag_i64(tags, HEART_NEXT),
             graze: tag_i64(tags, GRAZE_CELL),
+            feed_cell: tag_i64(tags, FEED_CELL),
             drink_next: tag_i64(tags, DRINK_NEXT),
             drink_cell: tag_i64(tags, DRINK_CELL),
             consume_until: tag_i64(tags, CONSUME_UNTIL),
@@ -232,6 +258,7 @@ impl State {
         int(SAT_NEXT, was.sat_next, self.sat_next);
         int(HEART_NEXT, was.heart_next, self.heart_next);
         int(GRAZE_CELL, was.graze, self.graze);
+        int(FEED_CELL, was.feed_cell, self.feed_cell);
         int(DRINK_NEXT, was.drink_next, self.drink_next);
         int(DRINK_CELL, was.drink_cell, self.drink_cell);
         int(CONSUME_UNTIL, was.consume_until, self.consume_until);
@@ -389,12 +416,13 @@ fn step_animal(content: &Content, def: &HusbandryDef, a: &mut Animal, tick: u64)
         s.heart_next = Some((tick + HEARTBEAT) as i64);
         if s.consume_until.is_none() {
             s.graze = None;
+            s.feed_cell = None;
             if s.drink_cell.take().is_some() {
                 s.drink_next = Some((tick + DRINK_RETRY) as i64);
             }
             if !s.in_love(tick) {
                 roll_love(content, a, tick);
-                roll_graze(def, a);
+                roll_graze(content, def, a);
             }
         }
     }
@@ -431,8 +459,9 @@ fn roll_drink(content: &Content, a: &mut Animal, tick: u64) {
     match nearest {
         Some(p) => {
             a.now.drink_cell = Some(pack_cell(p));
-            // The walk to water outranks a pending grass errand.
+            // The walk to water outranks a pending grass or feed errand.
             a.now.graze = None;
+            a.now.feed_cell = None;
         }
         None => a.now.drink_next = Some((tick + DRINK_RETRY) as i64),
     }
@@ -462,10 +491,11 @@ fn roll_love(content: &Content, a: &mut Animal, tick: u64) {
 }
 
 /// The hunger roll: chance grows one step per missing saturation point
-/// ((SAT_MAX - sat) / 10 per heartbeat), and a hit targets the nearest food
-/// plant in the seek box.
-fn roll_graze(def: &HusbandryDef, a: &mut Animal) {
-    if a.now.sat >= SAT_MAX || a.now.graze.is_some() {
+/// ((SAT_MAX - sat) / 10 per heartbeat). A hit targets the nearest REACHABLE
+/// food in the seek box — a packed wheat trough ALWAYS beats grazing (a kept
+/// feed store saves the pasture), grass plants only when no trough serves.
+fn roll_graze(content: &Content, def: &HusbandryDef, a: &mut Animal) {
+    if a.now.sat >= SAT_MAX || a.now.graze.is_some() || a.now.feed_cell.is_some() {
         return;
     }
     if (rng_u64("husbandry_graze") % 10) as i64 >= SAT_MAX - a.now.sat {
@@ -473,6 +503,19 @@ fn roll_graze(def: &HusbandryDef, a: &mut Animal) {
     }
     let c = a.cell();
     let r = SEEK_RADIUS;
+    // The trough first. None = terrain still streaming: no verdict, retry
+    // next heartbeat — never a false "no trough" that falls back to grass.
+    let Some(troughs) = find_blocks(
+        [c[0] - r, c[1] - r, c[2] - r],
+        [c[0] + r, c[1] + r, c[2] + r],
+        vec![content.trough_wheat],
+    ) else {
+        return;
+    };
+    if let Some(p) = nearest_reachable(a, troughs) {
+        a.now.feed_cell = Some(pack_cell(p));
+        return;
+    }
     let Some(found) = find_blocks(
         [c[0] - r, c[1] - r, c[2] - r],
         [c[0] + r, c[1] + r, c[2] + r],
@@ -527,9 +570,14 @@ fn facing_or_turn(a: &Animal, cell: [i32; 3]) -> bool {
 fn standing_on_trough(content: &Content, a: &Animal) -> bool {
     let feet = a.cell();
     let below = [feet[0], feet[1] - 1, feet[2]];
-    [feet, below].into_iter().any(|c| {
-        get_block(c).is_some_and(|b| b == content.trough || b == content.trough_filled)
-    })
+    [feet, below]
+        .into_iter()
+        .any(|c| get_block(c).is_some_and(|b| is_any_trough(content, b)))
+}
+
+/// Any trough block, whatever it currently holds.
+fn is_any_trough(content: &Content, b: BlockId) -> bool {
+    b == content.trough || b == content.trough_filled || b == content.trough_wheat
 }
 
 /// Eating and drinking: an arrival starts a [`CONSUME_TICKS`] head-down
@@ -555,6 +603,20 @@ fn consume_step(content: &Content, def: &HusbandryDef, a: &mut Animal, tick: u64
             if done {
                 finish_drink(content, a, cell, tick);
             }
+        } else if let Some(packed) = a.now.feed_cell {
+            let cell = unpack_cell(packed);
+            match get_block(cell) {
+                None => return,
+                Some(b) if b == content.trough_wheat => {}
+                Some(_) => {
+                    a.now.feed_cell = None;
+                    a.now.consume_until = None;
+                    return;
+                }
+            }
+            if done {
+                finish_feed(content, def, a, cell);
+            }
         } else if let Some(packed) = a.now.graze {
             let cell = unpack_cell(packed);
             match get_block(cell) {
@@ -579,7 +641,7 @@ fn consume_step(content: &Content, def: &HusbandryDef, a: &mut Animal, tick: u64
     // No active munch/sip: an arrival at the current target starts one —
     // close enough, FACING it (a turned animal is yawed toward it first),
     // and for the trough, standing on the ground beside it, never on it.
-    // Water outranks grass, mirroring the targeting side.
+    // Water outranks feed, feed outranks grass — the targeting order.
     let start = |a: &mut Animal| {
         a.now.consume_until = Some((tick + CONSUME_TICKS) as i64);
         mob_anim_set(a.snap.id, EAT_ANIM, true);
@@ -600,6 +662,22 @@ fn consume_step(content: &Content, def: &HusbandryDef, a: &mut Animal, tick: u64
                 a.now.drink_cell = None;
                 a.now.drink_next = Some((tick + DRINK_RETRY) as i64);
             }
+        }
+        return;
+    }
+    if let Some(packed) = a.now.feed_cell {
+        let cell = unpack_cell(packed);
+        match get_block(cell) {
+            None => {}
+            Some(b) if b == content.trough_wheat => {
+                if near_cell(a, cell, DRINK_RANGE, 0.75)
+                    && !standing_on_trough(content, a)
+                    && facing_or_turn(a, cell)
+                {
+                    start(a);
+                }
+            }
+            Some(_) => a.now.feed_cell = None,
         }
         return;
     }
@@ -637,13 +715,31 @@ fn finish_drink(content: &Content, a: &mut Animal, cell: [i32; 3], tick: u64) {
     a.now.drink_next = Some((tick + DRINK_MIN + rng_u64("husbandry_drink") % DRINK_SPAN) as i64);
 }
 
+/// The meal lands: saturation restored, the trough's meal counter bumped
+/// (same member-cell sync as the sips) — and at [`TROUGH_MEALS`] the feed is
+/// gone and the trough flips to the empty block.
+fn finish_feed(content: &Content, def: &HusbandryDef, a: &mut Animal, cell: [i32; 3]) {
+    let meals = crate::kv_counter::kv_counter_bump(cell, MEALS_KEY);
+    if meals >= TROUGH_MEALS {
+        swap_model_block(cell, content.trough);
+        clear_meals(content, cell);
+    } else {
+        for member in trough_members(content, cell) {
+            section_kv_set(member, MEALS_KEY, vec![meals]);
+        }
+    }
+    a.now.sat = (a.now.sat + def.restore).min(SAT_MAX);
+    a.now.feed_cell = None;
+    a.now.consume_until = None;
+}
+
 /// The trough group's member cells around (and including) `cell` — the
-/// [2,1,1] footprint read from the world, either fill state.
+/// [2,1,1] footprint read from the world, any fill state.
 fn trough_members(content: &Content, cell: [i32; 3]) -> Vec<[i32; 3]> {
     let mut cells = vec![cell];
     for d in [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]] {
         let n = [cell[0] + d[0], cell[1] + d[1], cell[2] + d[2]];
-        if get_block(n).is_some_and(|b| b == content.trough || b == content.trough_filled) {
+        if get_block(n).is_some_and(|b| is_any_trough(content, b)) {
             cells.push(n);
         }
     }
@@ -657,6 +753,23 @@ fn trough_members(content: &Content, cell: [i32; 3]) -> Vec<[i32; 3]> {
 pub fn clear_sips(content: &Content, pos: [i32; 3]) {
     for member in trough_members(content, pos) {
         section_kv_delete(member, SIPS_KEY);
+    }
+}
+
+/// The meal count on the trough at `pos` (absent = untouched feed). Synced
+/// across the group's member cells, so either cell answers.
+pub fn meals_at(pos: [i32; 3]) -> u8 {
+    section_kv_get(pos, MEALS_KEY)
+        .and_then(|b| b.first().copied())
+        .unwrap_or(0)
+}
+
+/// Scrub the meal counter off every member cell — called by the take-out
+/// swap ([`crate::trough`]) and by the last meal's own swap: an emptied
+/// trough must not bank a stale count for the next fill.
+pub fn clear_meals(content: &Content, pos: [i32; 3]) {
+    for member in trough_members(content, pos) {
+        section_kv_delete(member, MEALS_KEY);
     }
 }
 
@@ -777,13 +890,13 @@ fn birth(content: &Content, animals: &mut [Animal], i: usize, j: usize, tick: u6
 // --- the AI node -----------------------------------------------------------
 
 /// `farming:husbandry_goal`: steer toward the sweep's destination tags —
-/// courting partner first, then the trough, then the grass target — standing
-/// in place once close (which also keeps wander from strolling the animal
-/// away). While a munch/sip is active it holds position and plays the
-/// procedural feeding pose: head down at grass level, bobbing between
-/// [`HEAD_DOWN`] and [`HEAD_RAISED`] (the engine eases the head toward each
-/// target, so the square wave renders as a smooth chew). Reads only the
-/// baseline ctx; all state belongs to the sweep.
+/// courting partner first, then the water trough, the feed trough, and the
+/// grass target last — standing in place once close (which also keeps wander
+/// from strolling the animal away). While a munch/sip is active it holds
+/// position and plays the procedural feeding pose: head down at grass level,
+/// bobbing between [`HEAD_DOWN`] and [`HEAD_RAISED`] (the engine eases the
+/// head toward each target, so the square wave renders as a smooth chew).
+/// Reads only the baseline ctx; all state belongs to the sweep.
 pub fn decide(ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
     let consuming =
         tag_i64(&ctx.tags, CONSUME_UNTIL).is_some_and(|until| (ctx.tick as i64) < until);
@@ -809,6 +922,9 @@ pub fn decide(ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
         return goal_toward(packed, COURT_NEAR * 0.8);
     }
     if let Some(packed) = tag_i64(&ctx.tags, DRINK_CELL) {
+        return goal_toward(packed, DRINK_RANGE * 0.8);
+    }
+    if let Some(packed) = tag_i64(&ctx.tags, FEED_CELL) {
         return goal_toward(packed, DRINK_RANGE * 0.8);
     }
     if let Some(packed) = tag_i64(&ctx.tags, GRAZE_CELL) {

@@ -153,6 +153,155 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
     );
 }
 
+/// The one-by-one container fill: a plain click on an open chest's slot is a
+/// P1 prediction — the mirror slot and cursor move at click time, and the
+/// outcome batch reconciles to the same state, never back through the
+/// pre-click view (the counter up-down-up flicker, 2026-07-21).
+#[test]
+fn predicted_chest_slot_click_applies_immediately_and_survives_reconcile() {
+    let mut game = game_on_empty_chunk();
+    let pos = IVec3::new(3, 64, 3);
+    game.server.world.set_block_world(3, 64, 3, Block::Chest);
+    game.server
+        .world
+        .insert_chest(pos, crate::block_model::DEFAULT_MODEL_FACING);
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(crate::item::ItemStack::new(crate::item::ItemType::Grass, 10));
+    game.server.sessions[0].player.inventory.click_slot(0);
+    let mut ev = TickEvents::default();
+    game.server.open_chest_screen_for(0, pos, &mut ev);
+    game.sync_self_view_for_test();
+    game.sync_menu_view_for_test();
+
+    game.menu_click(MenuSlot::Chest(0), PointerButton::Secondary, false, false);
+    assert_eq!(
+        game.game.menu_view.chest.unwrap().slots[0].map(|stack| stack.count),
+        Some(1),
+        "the mirror slot fills at click time"
+    );
+    assert_eq!(
+        game.game
+            .self_view
+            .inventory
+            .cursor()
+            .map(|stack| stack.count),
+        Some(9),
+        "the cursor pays at click time"
+    );
+
+    game.tick(TICK_DT, &GameInput::default());
+
+    assert_eq!(game.game.prediction.pending_len(), 0);
+    assert_eq!(
+        game.game.menu_view.chest.unwrap().slots[0].map(|stack| stack.count),
+        Some(1),
+        "the authoritative pair confirms the prediction in place"
+    );
+    assert_eq!(
+        game.game
+            .self_view
+            .inventory
+            .cursor()
+            .map(|stack| stack.count),
+        Some(9)
+    );
+}
+
+/// Pipelined one-by-one clicks: a batch answering only the FIRST click
+/// carries inventory/menu truth that predates the still-pending second — it
+/// must not stomp the newer prediction (the rapid-click regress). The second
+/// click's own forced outcome batch installs the final truth.
+#[test]
+fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
+    use crate::net::protocol::{ItemSlotWire, MenuSyncMsg, MenuTargetWire, SelfState};
+
+    let grass = crate::item::ItemType::Grass;
+    let pos = IVec3::new(3, 64, 3);
+    let mut game = game();
+    game.game
+        .self_view
+        .inventory
+        .add(crate::item::ItemStack::new(grass, 10));
+    game.game.self_view.inventory.click_slot(0);
+    game.game.menu_view.chest = Some(crate::gui::ChestView {
+        slots: [None; crate::world::chest::CHEST_SLOTS],
+    });
+
+    game.game
+        .menu_click(MenuSlot::Chest(0), PointerButton::Secondary, false, false);
+    game.game
+        .menu_click(MenuSlot::Chest(0), PointerButton::Secondary, false, false);
+    let chest_count = |game: &TestGame| {
+        game.game.menu_view.chest.unwrap().slots[0].map(|stack| stack.count)
+    };
+    let cursor_count = |game: &TestGame| {
+        game.game
+            .self_view
+            .inventory
+            .cursor()
+            .map(|stack| stack.count)
+    };
+    assert_eq!(chest_count(&game), Some(2));
+    assert_eq!(cursor_count(&game), Some(8));
+
+    let self_state = |cursor: u8, revision: u64| {
+        let mut slots: Vec<Option<ItemSlotWire>> = vec![None; 36];
+        slots.push(Some(ItemSlotWire {
+            item_id: grass.0,
+            count: cursor,
+        }));
+        SelfState {
+            health: 20,
+            mode: 0,
+            effects: Vec::new(),
+            inventory_revision: revision,
+            inventory: Some(slots),
+            eating: None,
+            sleeping: None,
+            sleep_bed: None,
+            transform: None,
+        }
+    };
+    let chest_sync = |count: u8| {
+        let mut slots: Vec<Option<ItemSlotWire>> =
+            vec![None; crate::world::chest::CHEST_SLOTS];
+        slots[0] = Some(ItemSlotWire {
+            item_id: grass.0,
+            count,
+        });
+        MenuSyncMsg {
+            target: MenuTargetWire::Chest { pos, slots },
+        }
+    };
+
+    // The first click's batch: truth as of click #1 only.
+    game.game.apply_tick_update(Box::new(TickUpdate {
+        action_outcomes: vec![prediction::accept(0)],
+        self_state: Some(self_state(9, 1)),
+        menu_sync: Some(chest_sync(1)),
+        ..Default::default()
+    }));
+    assert_eq!(
+        chest_count(&game),
+        Some(2),
+        "the still-pending second click's prediction stays visible"
+    );
+    assert_eq!(cursor_count(&game), Some(8));
+
+    // The second click's own batch: final truth, pending queue drains.
+    game.game.apply_tick_update(Box::new(TickUpdate {
+        action_outcomes: vec![prediction::accept(1)],
+        self_state: Some(self_state(8, 2)),
+        menu_sync: Some(chest_sync(2)),
+        ..Default::default()
+    }));
+    assert_eq!(game.game.prediction.pending_len(), 0);
+    assert_eq!(chest_count(&game), Some(2));
+    assert_eq!(cursor_count(&game), Some(8));
+}
+
 #[test]
 fn break_finished_without_observed_mining_is_denied() {
     let mut game = game_on_empty_chunk();
