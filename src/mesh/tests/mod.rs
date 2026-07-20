@@ -243,6 +243,7 @@ fn roof_with_open_shaft(roof: Block) -> Chunk {
 
 mod ao;
 mod contact;
+mod fence;
 mod foliage;
 mod glass;
 mod greedy;

@@ -10,6 +10,7 @@
 mod builder;
 pub(crate) mod face;
 mod face_emit;
+pub(crate) mod fence;
 mod greedy;
 pub(crate) mod ladder;
 pub(crate) mod pane;

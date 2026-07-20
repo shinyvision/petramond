@@ -4198,6 +4198,192 @@
       "drops": []
     },
     {
+      "block": "petramond:oak_fence",
+      "shape": "fence",
+      "flags": [
+        "solid",
+        "transparent"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "oak_planks",
+        "oak_planks",
+        "oak_planks"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 2,
+      "drops": [
+        {
+          "item": "petramond:oak_fence",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:spruce_fence",
+      "shape": "fence",
+      "flags": [
+        "solid",
+        "transparent"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "spruce_planks",
+        "spruce_planks",
+        "spruce_planks"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 2,
+      "drops": [
+        {
+          "item": "petramond:spruce_fence",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:birch_fence",
+      "shape": "fence",
+      "flags": [
+        "solid",
+        "transparent"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "birch_planks",
+        "birch_planks",
+        "birch_planks"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 2,
+      "drops": [
+        {
+          "item": "petramond:birch_fence",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:jungle_fence",
+      "shape": "fence",
+      "flags": [
+        "solid",
+        "transparent"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "jungle_planks",
+        "jungle_planks",
+        "jungle_planks"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 2,
+      "drops": [
+        {
+          "item": "petramond:jungle_fence",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:acacia_fence",
+      "shape": "fence",
+      "flags": [
+        "solid",
+        "transparent"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "acacia_planks",
+        "acacia_planks",
+        "acacia_planks"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 2,
+      "drops": [
+        {
+          "item": "petramond:acacia_fence",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
+      "block": "petramond:redwood_fence",
+      "shape": "fence",
+      "flags": [
+        "solid",
+        "transparent"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "redwood_planks",
+        "redwood_planks",
+        "redwood_planks"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 2,
+      "drops": [
+        {
+          "item": "petramond:redwood_fence",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ]
+    },
+    {
       "block": "petramond:wool_block",
       "shape": "cube",
       "flags": [

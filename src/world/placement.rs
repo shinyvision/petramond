@@ -234,6 +234,21 @@ impl World {
                     write: PlacementWrite::Cube,
                 })
             }
+            // A fence places exactly like a pane: the overlap gate tests its
+            // resolved post + arms, and there is no state to store.
+            RenderShape::Fence => {
+                if !self.placement_cell_open(p) {
+                    return None;
+                }
+                if occupied(p, self.fence_boxes_at(p)) {
+                    return None;
+                }
+                Some(PlacementPlan {
+                    anchor: p,
+                    cells: vec![p],
+                    write: PlacementWrite::Cube,
+                })
+            }
             _ => self.general_placement_plan(block, inputs, occupied),
         }
     }

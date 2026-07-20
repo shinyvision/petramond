@@ -61,6 +61,10 @@ impl World {
         if block.render_shape() == RenderShape::Pane {
             return self.pane_boxes_at(IVec3::new(wx, wy, wz));
         }
+        // A fence's post + arms likewise — see `world::fence` / `crate::fence`.
+        if block.render_shape() == RenderShape::Fence {
+            return self.fence_boxes_at(IVec3::new(wx, wy, wz));
+        }
         // A door's thin slab sits on its facing edge, swinging to the adjacent edge when
         // open — both read from the chunk door state (see `world::door` / `crate::door`).
         if block.render_shape() == RenderShape::Door {
@@ -101,6 +105,19 @@ impl World {
         // break overlay hug the connected shape rather than the whole cell.
         if block.render_shape() == RenderShape::Pane {
             let boxes = self.pane_boxes_at(IVec3::new(wx, wy, wz));
+            let mut mn = [f32::INFINITY; 3];
+            let mut mx = [f32::NEG_INFINITY; 3];
+            for b in boxes {
+                for i in 0..3 {
+                    mn[i] = mn[i].min(b.min[i]);
+                    mx[i] = mx[i].max(b.max[i]);
+                }
+            }
+            return Some((mn, mx));
+        }
+        // A fence targets the union of its resolved post + arms, same as a pane.
+        if block.render_shape() == RenderShape::Fence {
+            let boxes = self.fence_boxes_at(IVec3::new(wx, wy, wz));
             let mut mn = [f32::INFINITY; 3];
             let mut mx = [f32::NEG_INFINITY; 3];
             for b in boxes {

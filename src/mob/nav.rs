@@ -532,8 +532,17 @@ fn cell_shape(world: &World, c: IVec3) -> CellShape {
 /// outright. Partial shapes are the edge gate's business — treating them as
 /// solid walls off routes a body actually fits through (a ladder corridor),
 /// while treating them as air walks mobs into their boxes forever.
+/// The one BY-DESIGN exception is the fence: a fence cell always reads solid,
+/// so no route steps through it and the one-block jump from the ground is no
+/// foothold jump either (see [`nav_support_fn`] for the step-up caveat) — a
+/// lone fence is a wall here or no pen would hold.
 pub(super) fn nav_solid_fn(world: &World) -> impl Fn(IVec3) -> bool + '_ {
-    move |c: IVec3| cell_shape(world, c) == CellShape::Full
+    move |c: IVec3| {
+        if crate::fence::is_fence(world.physics_block(c.x, c.y, c.z)) {
+            return true;
+        }
+        cell_shape(world, c) == CellShape::Full
+    }
 }
 
 /// The `support` probe: can this cell bear the feet of a body CENTRED in its
@@ -543,6 +552,10 @@ pub(super) fn nav_solid_fn(world: &World) -> impl Fn(IVec3) -> bool + '_ {
 /// rest its feet on a 1/16 sliver it doesn't even cover). Without the overlap
 /// test, routes confidently "stand" on top of closed doors. Pairs with
 /// [`nav_solid_fn`] through the `*_with` probes in [`path`].
+/// A fence top DOES support (the post overlaps the centre): a lone fence stays
+/// uncrossable because its cell is `solid` and the edge gate refuses the
+/// one-block sweep from the ground — while a step placed beside the fence
+/// opens the honest flat route over its top, as it physically should.
 pub(super) fn nav_support_fn(world: &World, half_width: f32) -> impl Fn(IVec3) -> bool + '_ {
     let hw = half_width.max(0.05).min(0.5);
     let (lo, hi) = (0.5 - hw, 0.5 + hw);
@@ -595,8 +608,10 @@ fn floor_top(world: &World, floor: IVec3) -> f32 {
 ///
 /// Cells with no partial collision cost one memoized classification each, so
 /// over plain terrain the gate is a cheap table lookup and the sweep only runs
-/// where partial shapes actually are.
-fn partial_step_gate<'w>(
+/// where partial shapes actually are. Shared with `mob::confined`, whose
+/// reachability fill must agree with the routes this gate admits (a lone
+/// fence refuses the jump from below; a step beside it opens the way over).
+pub(super) fn partial_step_gate<'w>(
     world: &'w World,
     params: PathParams,
     height: f32,
@@ -1011,6 +1026,73 @@ mod tests {
         assert!(
             nav.path().iter().all(|c| c.z <= ladder.z),
             "the best-effort route stops on the near side of the panel: {:?}",
+            nav.path()
+        );
+    }
+
+    #[test]
+    fn a_one_high_block_wall_is_routable_but_a_one_high_fence_wall_is_not() {
+        // Ordinary one-block steps stay jumpable; a fence of the same height
+        // must never route, or no fenced pen would hold (the by-design pen
+        // rule in `nav_solid_fn`/`nav_support_fn`).
+        let start = IVec3::new(4, 64, 0);
+        let goal = IVec3::new(4, 64, 2);
+
+        let mut stone_world = flat_world();
+        for x in 0..12 {
+            stone_world.set_block_world(x, 64, 1, Block::Stone);
+        }
+        let mut nav = Navigator::new(1, 0.25, 0.9);
+        nav.update_goal_when_supported(Some(goal), start, &stone_world, true, &NavObstacles::none());
+        assert_eq!(
+            nav.path().last(),
+            Some(&goal),
+            "a one-block stone step stays routable: {:?}",
+            nav.path()
+        );
+
+        let mut fence_world = flat_world();
+        for x in 0..12 {
+            fence_world.set_block_world(x, 64, 1, Block::OakFence);
+        }
+        let mut nav = Navigator::new(1, 0.25, 0.9);
+        nav.update_goal_when_supported(Some(goal), start, &fence_world, true, &NavObstacles::none());
+        assert_ne!(
+            nav.path().last(),
+            Some(&goal),
+            "a one-high fence wall must not be routable: {:?}",
+            nav.path()
+        );
+        assert!(
+            nav.path().iter().all(|c| c.z < 1),
+            "the best-effort route stops on the near side of the fence: {:?}",
+            nav.path()
+        );
+    }
+
+    #[test]
+    fn a_step_beside_the_fence_opens_the_route_over_it() {
+        // The pen rule's honest exception: with a block placed in front of the
+        // fence, the mob may jump onto it and walk over the fence top.
+        let mut world = flat_world();
+        for x in 0..12 {
+            world.set_block_world(x, 64, 1, Block::OakFence);
+        }
+        world.set_block_world(4, 64, 0, Block::Dirt);
+        // The mob starts beside the step on the ground, goal beyond the fence.
+        let start = IVec3::new(3, 64, 0);
+        let goal = IVec3::new(4, 64, 2);
+        let mut nav = Navigator::new(1, 0.25, 0.9);
+        nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+        assert_eq!(
+            nav.path().last(),
+            Some(&goal),
+            "the route should go over the fence via the step: {:?}",
+            nav.path()
+        );
+        assert!(
+            nav.path().contains(&IVec3::new(4, 65, 1)),
+            "the route walks the fence top: {:?}",
             nav.path()
         );
     }

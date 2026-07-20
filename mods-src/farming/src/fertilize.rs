@@ -10,6 +10,12 @@
 //! already-final sapling — falls through untouched: no wasted units, no
 //! consumed click.
 //!
+//! A click on VEGETATION proxies to the soil beneath it: a crop fertilizes
+//! its (unfertilized) farmland, and any other soil-rooted plant (flowers,
+//! short grass, ferns — the spreadable set) fertilizes its grass block. The
+//! same target table answers the soil cell, so fertile farmland and non-grass
+//! soil still fall through untouched.
+//!
 //! [`apply`] owns the consume → swap → sound/burst → Cancel sequence for
 //! every target, so the feedback keys can never drift apart per arm. The
 //! SAPLING arm is the one flagged variant: stages are invisible, so the
@@ -74,7 +80,32 @@ pub fn on_item_use(content: &Content, item: ItemId, target_pos: Option<[i32; 3]>
         return Outcome::Continue;
     };
     let Some(action) = target(content, block) else {
-        return Outcome::Continue;
+        // A click on vegetation proxies to the soil beneath it: a crop
+        // fertilizes its (unfertilized) farmland; any other soil-rooted plant
+        // (flowers, short grass, ferns) fertilizes its grass block. Anything
+        // else — fertile soil already, dirt, air — falls through quietly.
+        let below = [pos[0], pos[1] - 1, pos[2]];
+        let Some(soil) = get_block(below) else {
+            return Outcome::Continue;
+        };
+        let action = if content.crop_stage(block).is_some() {
+            if content.is_farmland(soil) {
+                target(content, soil)
+            } else {
+                None
+            }
+        } else if content.spreadable.contains(&block) && soil == content.grass {
+            Some(Target::Swap {
+                to: content.grass_fertilized,
+                feedback_y: 1.0,
+            })
+        } else {
+            None
+        };
+        let Some(action) = action else {
+            return Outcome::Continue;
+        };
+        return apply(below, item, action);
     };
     apply(pos, item, action)
 }

@@ -12,6 +12,7 @@ pub(crate) mod door;
 mod edit;
 mod entities;
 pub(crate) mod environment;
+mod fence;
 pub(crate) mod fragile;
 mod furnace;
 mod invalidation;

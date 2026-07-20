@@ -193,6 +193,9 @@ impl ItemType {
                 // sprite in-hand — the in-world post/arm shape only exists once
                 // placed among neighbours.
                 RenderShape::Pane => ItemRenderKind::Sprite(self.item_sprite()),
+                // A fence draws its two-posts-and-rails segment everywhere the
+                // item shows (icon / held / dropped) — see `render::item_cube`.
+                RenderShape::Fence => ItemRenderKind::BlockCube(block),
                 // A bbmodel block renders its actual baked model everywhere it's shown.
                 RenderShape::Model(kind) => ItemRenderKind::Model(kind),
                 // A door shows its flat door icon (the `_door_item` art), not the

@@ -332,6 +332,56 @@ pub(super) fn section_geometry(
                     continue;
                 }
 
+                if shape == RenderShape::Fence {
+                    let tiles = block.tiles();
+                    // A neighbour stair's resolved corner shape decides whether its
+                    // face toward the fence is complete — the pane arm's read.
+                    let stair_shape_at = |q: IVec3| {
+                        crate::stair::resolved_shape(q, neighbour_stair_state(q.x, q.y, q.z), |r| {
+                            crate::stair::is_stair(block_at(r.x, r.y, r.z))
+                                .then(|| neighbour_stair_state(r.x, r.y, r.z))
+                        })
+                    };
+                    let fence_mask_at = |p: IVec3| {
+                        crate::fence::resolved_mask(
+                            p,
+                            |q| block_at(q.x, q.y, q.z),
+                            &stair_shape_at,
+                            |q| slab_full_at(q.x, q.y, q.z),
+                        )
+                    };
+                    let vertical = |dy: i32| {
+                        let vb = block_at(wx, wy + dy, wz);
+                        if crate::fence::is_fence(vb) {
+                            super::fence::FenceVertical::Fence
+                        } else if vb.is_opaque() || (vb.is_slab() && slab_full_at(wx, wy + dy, wz))
+                        {
+                            super::fence::FenceVertical::Solid
+                        } else {
+                            super::fence::FenceVertical::Open
+                        }
+                    };
+                    let l = neighbour_light(wx, wy, wz) as u32;
+                    let bl = neighbour_blocklight(wx, wy, wz) as u32;
+                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    super::fence::emit_fence_block(
+                        &mut opaque,
+                        &mut opaque_idx,
+                        wx,
+                        wy,
+                        wz,
+                        fence_mask_at(IVec3::new(wx, wy, wz)),
+                        vertical(1),
+                        vertical(-1),
+                        tiles,
+                        tint_tile(tiles[2].world_tint(), ci),
+                        sky6,
+                        block6,
+                        warm,
+                    );
+                    continue;
+                }
+
                 // A same-material full slab stack IS the material's full cube: fall
                 // through to the cube path (fast path + greedy merge included) so it
                 // culls, lights, and merges like one. Partial cells and mixed-material

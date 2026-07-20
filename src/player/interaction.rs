@@ -128,6 +128,13 @@ impl Player {
             hit.outline = SelectionShape::Boxes {
                 boxes: SelectionBoxes { boxes, len },
             };
+        } else if hit_block.render_shape() == RenderShape::Fence {
+            // A fence outlines its resolved post + arm runs, same as a pane.
+            let (boxes, len) =
+                crate::fence::world_boxes(hit.block, world.fence_boxes_at(hit.block));
+            hit.outline = SelectionShape::Boxes {
+                boxes: SelectionBoxes { boxes, len },
+            };
         }
         Some((hit, dist))
     }
@@ -442,6 +449,17 @@ fn precise_shape_hit(
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         return world
             .pane_boxes_at(pos)
+            .iter()
+            .filter_map(|b| {
+                ray_vs_aabb_hit(eye, dir, base + Vec3::from(b.min), base + Vec3::from(b.max))
+            })
+            .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+    }
+    // A fence is picked against its resolved post + arm runs, same as a pane.
+    if block.render_shape() == RenderShape::Fence {
+        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        return world
+            .fence_boxes_at(pos)
             .iter()
             .filter_map(|b| {
                 ray_vs_aabb_hit(eye, dir, base + Vec3::from(b.min), base + Vec3::from(b.max))

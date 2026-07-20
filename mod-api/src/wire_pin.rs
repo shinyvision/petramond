@@ -431,7 +431,7 @@ fn samples() -> Samples {
         pos: [1, 2, 3], block: BlockId(1), harvested: true,
     });
     s.pin("EventPayload::BlockInteract", &EventPayload::BlockInteract {
-        pos: [1, 2, 3], block: BlockId(1),
+        pos: [1, 2, 3], block: BlockId(1), item: Some(ItemId(2)),
     });
     s.pin("EventPayload::ItemUsePre", &EventPayload::ItemUsePre {
         item: ItemId(1), target: Some([1, 2, 3]),
@@ -752,7 +752,7 @@ const PINS: &[(&str, &str)] = &[
     ("GuestRet::AiDecision", "060101020406010000003f0000803e010101000000400000404001036d3a6b010001"),
     ("EventPayload::BlockPlacePre", "000204060100"),
     ("EventPayload::BlockBreakPre", "010204060101"),
-    ("EventPayload::BlockInteract", "0202040601"),
+    ("EventPayload::BlockInteract", "02020406010102"),
     ("EventPayload::ItemUsePre", "030101020406"),
     ("EventPayload::MobDamagePre", "0407020000404000010000803f00000040000040400600010000003f020000803f0000003f030004050a"),
     ("EventPayload::PlayerDamagePre", "0502010100"),

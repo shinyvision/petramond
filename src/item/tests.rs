@@ -280,6 +280,13 @@ fn render_kind_matches_render_shape() {
                     "{block:?} pane renders as a flat sprite"
                 );
             }
+            RenderShape::Fence => {
+                assert_eq!(
+                    item.render_kind(),
+                    ItemRenderKind::BlockCube(block),
+                    "{block:?}"
+                );
+            }
             RenderShape::Ladder => {
                 assert!(
                     matches!(item.render_kind(), ItemRenderKind::Sprite(_)),

@@ -156,8 +156,8 @@ impl Mod for Farming {
                 farmland::on_block_placed_above(content, *pos, *block);
                 Outcome::Continue
             }
-            (ON_BLOCK_INTERACT, EventPayload::BlockInteract { pos, block }) => chain(
-                crops::on_interact(content, &mut self.growth, *pos, *block),
+            (ON_BLOCK_INTERACT, EventPayload::BlockInteract { pos, block, item }) => chain(
+                crops::on_interact(content, &mut self.growth, *pos, *block, *item),
                 || compost::on_interact(content, *pos, *block),
             ),
             (ON_PLAYER_DAMAGE_PRE, EventPayload::PlayerDamagePre { amount, .. }) => {

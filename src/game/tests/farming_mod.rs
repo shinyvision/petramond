@@ -1593,17 +1593,21 @@ fn farming_landscape_inner() {
     let fertilizer = by_key("farming:fertilizer");
     let poppy_item = by_key("petramond:poppy");
     let sapling_item = by_key("petramond:oak_sapling");
+    let seeds = by_key("farming:wheat_seeds");
     let grass_fertilized = block_by_name("farming:grass_fertilized");
     let farmland_dry = block_by_name("farming:farmland_dry");
+    let farmland_fertile_dry = block_by_name("farming:farmland_fertile_dry");
+    let wheat_seedling = block_by_name("farming:wheat_0");
 
     let mut game = farming_floor_game();
     game.server.world.set_load_target_for_test(0, 4, 0, 4);
 
     let sess = &mut game.server.sessions[0];
     sess.player.inventory.add(ItemStack::new(hoe, 1)); // slot 0
-    sess.player.inventory.add(ItemStack::new(fertilizer, 8)); // slot 1
-    sess.player.inventory.add(ItemStack::new(poppy_item, 1)); // slot 2
+    sess.player.inventory.add(ItemStack::new(fertilizer, 16)); // slot 1
+    sess.player.inventory.add(ItemStack::new(poppy_item, 2)); // slot 2
     sess.player.inventory.add(ItemStack::new(sapling_item, 1)); // slot 3
+    sess.player.inventory.add(ItemStack::new(seeds, 1)); // slot 4
 
     let mut ev = TickEvents::default();
     fn fert_count(game: &super::common::TestGame) -> u8 {
@@ -1628,7 +1632,7 @@ fn farming_landscape_inner() {
         grass_fertilized,
         "fertilizer flips grass to the fertilized block"
     );
-    assert_eq!(fert_count(&game), 7, "one unit fertilized the grass");
+    assert_eq!(fert_count(&game), 15, "one unit fertilized the grass");
 
     // Over random ticks the rooted poppy spreads a copy onto nearby grass
     // (the flat floor offers valid targets in every direction).
@@ -1747,6 +1751,51 @@ fn farming_landscape_inner() {
         at(&game, 12, 64, 4),
         final_oak,
         "the boost never grows the tree by itself"
+    );
+
+    // --- Vegetation proxy: fertilizer clicked on the PLANT acts on the soil
+    // beneath it. A poppy fertilizes its grass block. (Both spots sit outside
+    // the earlier spread radius, so no stray flower covers them.)
+    use_click(&mut game, &mut ev, 2, IVec3::new(1, 63, 14), IVec3::Y);
+    assert_eq!(at(&game, 1, 64, 14), Block::Poppy, "the poppy plants");
+    let before_count = fert_count(&game);
+    use_click(&mut game, &mut ev, 1, IVec3::new(1, 64, 14), IVec3::Y);
+    assert_eq!(
+        at(&game, 1, 63, 14),
+        grass_fertilized,
+        "the click through the poppy fertilizes its grass block"
+    );
+    assert_eq!(
+        fert_count(&game),
+        before_count - 1,
+        "the plant proxy charged one unit"
+    );
+
+    // ...and a crop fertilizes its unfertilized farmland — but a second click
+    // on the now-fertile soil does nothing and keeps the unit.
+    let farm = IVec3::new(15, 63, 5);
+    use_click(&mut game, &mut ev, 0, farm, IVec3::Y);
+    assert_eq!(at(&game, 15, 63, 5), farmland_dry, "the hoe tills");
+    use_click(&mut game, &mut ev, 4, farm, IVec3::Y);
+    let crop = IVec3::new(15, 64, 5);
+    assert_eq!(at(&game, 15, 64, 5), wheat_seedling, "the seeds plant");
+    let before_count = fert_count(&game);
+    use_click(&mut game, &mut ev, 1, crop, IVec3::Y);
+    assert_eq!(
+        at(&game, 15, 63, 5),
+        farmland_fertile_dry,
+        "the click through the crop fertilizes its farmland"
+    );
+    assert_eq!(
+        fert_count(&game),
+        before_count - 1,
+        "the crop proxy charged one unit"
+    );
+    use_click(&mut game, &mut ev, 1, crop, IVec3::Y);
+    assert_eq!(
+        fert_count(&game),
+        before_count - 1,
+        "already-fertile soil keeps the unit"
     );
 
     let (disabled, _, _) = game.mods_for_test().probe(1);

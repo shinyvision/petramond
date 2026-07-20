@@ -485,6 +485,8 @@ pub(super) fn push_block_item_cube_lit_with_state(
             _ => crate::slab::default_state(block),
         };
         push_slab_item_lit(verts, indices, slab, origin, size, light);
+    } else if block.render_shape() == crate::block::RenderShape::Fence {
+        push_fence_item_lit(verts, indices, faces, origin, size, light);
     } else if block == Block::Cactus {
         let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
         push_cactus_faces_lit(verts, indices, faces, origin, max, light);
@@ -524,6 +526,50 @@ fn push_slab_item_lit(
                     light,
                 );
             }
+        }
+    }
+}
+
+/// A fence item draws as a complete fence segment — two posts joined by the
+/// two rails from `crate::fence`'s item boxes — with cell-local UVs sampling
+/// the planks tile, so the icon / hand / drop all read as the placed shape.
+fn push_fence_item_lit(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    faces: [Tile; 6],
+    origin: Vec3,
+    size: f32,
+    light: DynLight,
+) {
+    for post in crate::fence::ITEM_POSTS {
+        for face in Face::ALL {
+            push_cell_local_face(
+                verts,
+                indices,
+                faces[face as usize],
+                origin,
+                size,
+                post.min,
+                post.max,
+                face,
+                light,
+            );
+        }
+    }
+    // The rail ends butt against the post faces, so only the long faces draw.
+    for rail in crate::fence::ITEM_RAILS {
+        for face in [Face::NegY, Face::PosY, Face::NegZ, Face::PosZ] {
+            push_cell_local_face(
+                verts,
+                indices,
+                faces[face as usize],
+                origin,
+                size,
+                rail.min,
+                rail.max,
+                face,
+                light,
+            );
         }
     }
 }

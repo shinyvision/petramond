@@ -44,6 +44,12 @@ pub enum RenderShape {
     /// shape is needed (collision, selection, meshing), like stair corners. See
     /// `crate::pane` for the connection rules and boxes.
     Pane,
+    /// A chunk-meshed wooden fence: a 4/16-thick full-height post growing a pair
+    /// of horizontal rails (2/16 from the top and bottom, 3/16 thick) toward each
+    /// connected side. Like the pane it stores NO per-cell state — the 4-bit
+    /// connection mask is resolved from the current neighbours at every query.
+    /// See `crate::fence` for the connection rules and boxes.
+    Fence,
     /// A chunk-meshed climbable wall panel: a 1/16-thick alpha-cutout slice flush
     /// against the vertical wall face it hangs on. Its facing (the direction the
     /// panel front points, away from the wall) lives in the section's shared

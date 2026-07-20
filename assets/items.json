@@ -1846,6 +1846,84 @@
       "block": "petramond:glass_pane"
     },
     {
+      "item": "petramond:oak_fence",
+      "key": "petramond:oak_fence",
+      "name": "Oak Fence",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "petramond:oak_fence"
+    },
+    {
+      "item": "petramond:spruce_fence",
+      "key": "petramond:spruce_fence",
+      "name": "Spruce Fence",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "petramond:spruce_fence"
+    },
+    {
+      "item": "petramond:birch_fence",
+      "key": "petramond:birch_fence",
+      "name": "Birch Fence",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "petramond:birch_fence"
+    },
+    {
+      "item": "petramond:jungle_fence",
+      "key": "petramond:jungle_fence",
+      "name": "Jungle Fence",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "petramond:jungle_fence"
+    },
+    {
+      "item": "petramond:acacia_fence",
+      "key": "petramond:acacia_fence",
+      "name": "Acacia Fence",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "petramond:acacia_fence"
+    },
+    {
+      "item": "petramond:redwood_fence",
+      "key": "petramond:redwood_fence",
+      "name": "Redwood Fence",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "petramond:redwood_fence"
+    },
+    {
       "item": "petramond:wool_block",
       "key": "petramond:wool_block",
       "name": "Wool Block",

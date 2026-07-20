@@ -28,14 +28,19 @@ const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 /// `solid`, `support`, and `water` match the pathfinder's semantics: `solid`
 /// marks fully-blocked cells, `support` marks anything that can bear feet
 /// (partial shapes included), water is a valid support surface but not
-/// passable underwater. Mobs that are not on a foothold (swimming, mid-air,
-/// unsupported) are never reported as confined.
+/// passable underwater. `step_allowed` is the navigator's per-edge sweep
+/// (`nav::partial_step_gate`): the fill must agree with real routes — a lone
+/// fence refuses the jump from below, while a step beside it opens the way
+/// over (a pen with a step inside is genuinely escapable). Mobs that are not
+/// on a foothold (swimming, mid-air, unsupported) are never reported as
+/// confined.
 pub fn is_confined(
     start: IVec3,
     params: PathParams,
     solid: &impl Fn(IVec3) -> bool,
     support: &impl Fn(IVec3) -> bool,
     water: &impl Fn(IVec3) -> bool,
+    step_allowed: &impl Fn(IVec3, IVec3) -> bool,
 ) -> bool {
     let foothold = |c: IVec3| is_navigation_foothold_with(c, params, solid, support, water);
     if !foothold(start) {
@@ -62,6 +67,7 @@ pub fn is_confined(
             let up = side + IVec3::Y;
             if !visited.contains(&up)
                 && foothold(up)
+                && step_allowed(c, up)
                 && body_layer_clear(c + IVec3::Y * params.head_cells(), params, solid)
             {
                 visited.insert(up);
@@ -70,7 +76,7 @@ pub fn is_confined(
             }
 
             // Flat step.
-            if !visited.contains(&side) && foothold(side) {
+            if !visited.contains(&side) && foothold(side) && step_allowed(c, side) {
                 visited.insert(side);
                 queue.push(side);
                 continue;
@@ -86,7 +92,7 @@ pub fn is_confined(
                     if solid(down) {
                         break;
                     }
-                    if !visited.contains(&down) && foothold(down) {
+                    if !visited.contains(&down) && foothold(down) && step_allowed(c, down) {
                         visited.insert(down);
                         queue.push(down);
                         break;
@@ -160,7 +166,8 @@ mod tests {
         let solid = crate::mob::nav::nav_solid_fn(world);
         let support = crate::mob::nav::nav_support_fn(world, params().half_width);
         let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
-        is_confined(start, params(), &solid, &support, &water)
+        let step = crate::mob::nav::partial_step_gate(world, params(), 1.4);
+        is_confined(start, params(), &solid, &support, &water, &step)
     }
 
     #[test]
@@ -213,6 +220,48 @@ mod tests {
             chunk.set_block(11, 65, 8, Block::Air);
         });
         assert!(!check(&world, start), "a door should break confinement");
+    }
+
+    /// A 5×5 pen of one-high fences centred at chunk-local (8,64,8): walls at
+    /// 5 and 11. The flood fill must treat the fence as a wall even though a
+    /// mob's physical jump could clear it.
+    fn fence_pen(extra: impl FnOnce(&mut Chunk)) -> (World, IVec3) {
+        let world = flat_world(|chunk| {
+            for i in 5..=11 {
+                for (x, z) in [(5, i), (11, i), (i, 5), (i, 11)] {
+                    chunk.set_block(x, 64, z, Block::OakFence);
+                }
+            }
+            extra(chunk);
+        });
+        (world, IVec3::new(8, 64, 8))
+    }
+
+    #[test]
+    fn small_fence_pen_is_confined() {
+        let (world, start) = fence_pen(|_| {});
+        assert!(
+            check(&world, start),
+            "a one-high fence pen holds: the fill must not hop the fence"
+        );
+    }
+
+    #[test]
+    fn fence_pen_with_a_gap_is_not_confined() {
+        let (world, start) = fence_pen(|chunk| {
+            chunk.set_block(11, 64, 8, Block::Air);
+        });
+        assert!(!check(&world, start), "a gap in the fence breaks the pen");
+    }
+
+    #[test]
+    fn fence_pen_with_a_step_up_inside_is_not_confined() {
+        // A block inside the pen beside the fence is an honest escape route:
+        // jump onto the block, walk over the fence top, drop outside.
+        let (world, start) = fence_pen(|chunk| {
+            chunk.set_block(10, 64, 8, Block::Dirt);
+        });
+        assert!(!check(&world, start), "a step beside the fence opens the pen");
     }
 
     #[test]

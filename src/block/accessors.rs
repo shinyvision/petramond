@@ -97,6 +97,9 @@ impl Block {
         if self.def().shape == RenderShape::Pane {
             return crate::pane::boxes_for_mask(0);
         }
+        if self.def().shape == RenderShape::Fence {
+            return crate::fence::boxes_for_mask(0);
+        }
         self.def().collision
     }
 

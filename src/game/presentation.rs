@@ -39,6 +39,10 @@ pub struct BreakOverlayView {
     /// faces the chunk mesher emitted (`mesh::pane::shape_faces`), so the decal
     /// hugs the connected shape rather than a box around it.
     pub pane_mask: Option<u8>,
+    /// A fence's resolved connection mask: the crack rebuilds the exact
+    /// post/rail faces the chunk mesher emitted (`mesh::fence::shape_faces`),
+    /// same contract as the pane's.
+    pub fence_mask: Option<u8>,
     /// A ladder's wall facing: the crack rebuilds the exact panel faces the
     /// chunk mesher emitted (`mesh::ladder::shape_faces`), omitting the face
     /// buried in the supporting wall — a box crack would paint the destroy
@@ -659,6 +663,8 @@ fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
     let slab_state = game.replica.slab_state_if_slab(block);
     let pane_mask =
         (block_type.render_shape() == RenderShape::Pane).then(|| game.replica.pane_mask_at(block));
+    let fence_mask = (block_type.render_shape() == RenderShape::Fence)
+        .then(|| game.replica.fence_mask_at(block));
     let ladder_facing =
         (block_type.render_shape() == RenderShape::Ladder).then(|| block_type.panel_facing());
     BreakOverlayView {
@@ -667,6 +673,7 @@ fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
             || stair_shape.is_some()
             || slab_state.is_some()
             || pane_mask.is_some()
+            || fence_mask.is_some()
             || ladder_facing.is_some()
         {
             None
@@ -676,6 +683,7 @@ fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
         stair_shape,
         slab_state,
         pane_mask,
+        fence_mask,
         ladder_facing,
         model,
         stage,

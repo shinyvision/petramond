@@ -45,6 +45,9 @@ pub(crate) struct BlockBreakPre {
 pub(crate) struct BlockInteract {
     pub pos: IVec3,
     pub block: Block,
+    /// The interactor's held item, if any — handlers may key on it (a
+    /// fertilizer click on a crop behaves differently from an empty hand).
+    pub item: Option<ItemType>,
 }
 
 /// `item_use_pre` — cancel = the click was consumed (the engine's own use is

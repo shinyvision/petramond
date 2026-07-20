@@ -167,6 +167,7 @@ pub(super) fn block_interact(ev: &BlockInteract) -> api::EventPayload {
     api::EventPayload::BlockInteract {
         pos: ivec(ev.pos),
         block: api::BlockId(ev.block.id()),
+        item: ev.item.map(|i| api::ItemId(i.id())),
     }
 }
 

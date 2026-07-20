@@ -197,6 +197,12 @@ impl ItemType {
     pub const PolishedMarbleStairs: ItemType = ItemType(139);
     pub const PolishedMarbleSlab: ItemType = ItemType(140);
     pub const Ladder: ItemType = ItemType(141);
+    pub const OakFence: ItemType = ItemType(142);
+    pub const SpruceFence: ItemType = ItemType(143);
+    pub const BirchFence: ItemType = ItemType(144);
+    pub const JungleFence: ItemType = ItemType(145);
+    pub const AcaciaFence: ItemType = ItemType(146);
+    pub const RedwoodFence: ItemType = ItemType(147);
 }
 
 impl std::fmt::Debug for ItemType {

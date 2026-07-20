@@ -194,6 +194,22 @@ fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indice
                 super::lighting::DynLight::FULL,
             );
         });
+    } else if let Some(mask) = view.fence_mask {
+        // A fence cracks over the SAME post/rail faces the chunk mesher emitted
+        // (cell-local UVs) — the pane contract on the fence's shape list.
+        crate::mesh::fence::shape_faces(mask, |min, max, face, _| {
+            super::item_cube::push_cell_local_face(
+                verts,
+                indices,
+                tile,
+                base,
+                1.0,
+                min,
+                max,
+                face,
+                super::lighting::DynLight::FULL,
+            );
+        });
     } else {
         match view.visual_box {
             // A non-full-cube block (the chest) cracks over its inset visual box.
@@ -258,6 +274,7 @@ mod tests {
             stair_shape: None,
             slab_state: None,
             pane_mask: None,
+            fence_mask: None,
             ladder_facing: None,
             model: None,
             stage: 4,
@@ -302,6 +319,7 @@ mod tests {
             stair_shape: Some(shape),
             slab_state: None,
             pane_mask: None,
+            fence_mask: None,
             ladder_facing: None,
             model: None,
             stage: 5,
@@ -368,6 +386,7 @@ mod tests {
             stair_shape: None,
             slab_state: Some(state),
             pane_mask: None,
+            fence_mask: None,
             ladder_facing: None,
             model: None,
             stage: 6,
@@ -435,6 +454,7 @@ mod tests {
             stair_shape: None,
             slab_state: None,
             pane_mask: None,
+            fence_mask: None,
             ladder_facing: None,
             model: Some((kind, offset, crate::block_model::DEFAULT_MODEL_FACING)),
             stage: 3,
@@ -697,6 +717,7 @@ mod tests {
             stair_shape: None,
             slab_state: None,
             pane_mask: None,
+            fence_mask: None,
             ladder_facing: None,
             model: None,
             stage: 0,

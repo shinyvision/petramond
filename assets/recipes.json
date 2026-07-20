@@ -905,6 +905,96 @@
       }
     },
     {
+      "type": "crafting",
+      "recipe": "petramond:oak_fence",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:oak_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:oak_fence",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:spruce_fence",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:spruce_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:spruce_fence",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:birch_fence",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:birch_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:birch_fence",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:jungle_fence",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:jungle_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:jungle_fence",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:acacia_fence",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:acacia_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:acacia_fence",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:redwood_fence",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:redwood_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "petramond:redwood_fence",
+        "count": 6
+      }
+    },
+    {
       "type": "furniture",
       "input": "petramond:oak_planks",
       "result": "petramond:oak_door",

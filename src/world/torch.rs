@@ -95,6 +95,9 @@ impl World {
                     crate::slab::half_cell_occupied(state, ix, iy, iz)
                 })
             }
+            // A fence always has its post: the flat post top holds a floor
+            // torch. Its sides are never a complete 1×1 wall face.
+            RenderShape::Fence => kind == SupportKind::Floor,
             _ => false,
         }
     }
@@ -203,6 +206,31 @@ mod tests {
             !w.torch_supported_at(torch, TorchPlacement::East),
             "the open side of a stair is not a complete wall face"
         );
+    }
+
+    #[test]
+    fn fence_post_top_supports_a_floor_torch_but_its_sides_hold_no_wall_torch() {
+        let mut w = world();
+        w.set_block_world(8, 64, 8, Block::OakFence);
+
+        let floor_torch = IVec3::new(8, 65, 8);
+        assert!(
+            w.torch_supported_at(floor_torch, TorchPlacement::Floor),
+            "a fence's post top should hold a floor torch"
+        );
+
+        let fence = IVec3::new(8, 64, 8);
+        for (torch, placement) in [
+            (fence + IVec3::new(1, 0, 0), TorchPlacement::East),
+            (fence + IVec3::new(-1, 0, 0), TorchPlacement::West),
+            (fence + IVec3::new(0, 0, 1), TorchPlacement::South),
+            (fence + IVec3::new(0, 0, -1), TorchPlacement::North),
+        ] {
+            assert!(
+                !w.torch_supported_at(torch, placement),
+                "{placement:?} must not mount on a fence side"
+            );
+        }
     }
 
     #[test]

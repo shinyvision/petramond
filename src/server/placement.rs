@@ -259,6 +259,11 @@ impl ServerGame {
         let mut pre = BlockInteract {
             pos: h.block,
             block,
+            item: self.sessions[s]
+                .player
+                .inventory
+                .selected()
+                .map(|st| st.item),
         };
         let cancelled = {
             let Self {

@@ -175,6 +175,9 @@ pub enum EventPayload {
     BlockInteract {
         pos: [i32; 3],
         block: BlockId,
+        /// The acting player's held item (`None` = empty hand), so interact
+        /// behavior may key on what the click carries.
+        item: Option<ItemId>,
     },
     ItemUsePre {
         item: ItemId,

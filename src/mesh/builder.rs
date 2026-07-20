@@ -6,7 +6,7 @@ use crate::section::Section;
 
 use super::tint;
 use super::vertex::ChunkMesh;
-use super::{ladder, pane, slab, stair, torch};
+use super::{fence, ladder, pane, slab, stair, torch};
 
 mod cube_face;
 mod exposed_masks;

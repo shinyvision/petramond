@@ -517,7 +517,9 @@ impl Instance {
         self.confined_cooldown = self.confined_cooldown.saturating_sub(1);
         if self.confined_cooldown == 0 && self.on_ground && !in_water {
             let params = path::PathParams::for_body(d.size.head_cells(), d.size.half_width);
-            let confined = confined::is_confined(cell, params, &solid, &support, &water);
+            let step_allowed = super::nav::partial_step_gate(world, params, d.size.height);
+            let confined =
+                confined::is_confined(cell, params, &solid, &support, &water, &step_allowed);
             if confined != self.is_confined() {
                 if confined {
                     self.tags_mut().insert(

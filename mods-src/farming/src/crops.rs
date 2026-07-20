@@ -106,19 +106,26 @@ pub fn on_placed(content: &Content, growth: &mut Growth, pos: [i32; 3], block: B
 /// to its stage-0 block in the same tick (the retained plant is one replanted
 /// seed/root), and the next growth attempt is armed. An IMMATURE cultivated
 /// crop consumes the click without acting, so aiming at it can never plant
-/// another crop or begin eating the held carrot. Wild crops are not ours to
-/// handle here — they never right-click harvest.
+/// another crop or begin eating the held carrot — EXCEPT a fertilizer click,
+/// which falls through to the fertilizer handler (it feeds the soil below,
+/// never the plant). Wild crops are not ours to handle here — they never
+/// right-click harvest.
 pub fn on_interact(
     content: &Content,
     growth: &mut Growth,
     pos: [i32; 3],
     block: BlockId,
+    item: Option<ItemId>,
 ) -> Outcome {
     let Some((def, stage)) = content.crop_stage(block) else {
         return Outcome::Continue;
     };
     if stage < 3 {
-        return Outcome::Cancel;
+        return if item == Some(content.fertilizer) {
+            Outcome::Continue
+        } else {
+            Outcome::Cancel
+        };
     }
     let center = [
         pos[0] as f32 + 0.5,

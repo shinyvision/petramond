@@ -192,6 +192,12 @@ impl Block {
     pub const LadderSouth: Block = Block(128);
     pub const LadderWest: Block = Block(129);
     pub const LadderEast: Block = Block(130);
+    pub const OakFence: Block = Block(131);
+    pub const SpruceFence: Block = Block(132);
+    pub const BirchFence: Block = Block(133);
+    pub const JungleFence: Block = Block(134);
+    pub const AcaciaFence: Block = Block(135);
+    pub const RedwoodFence: Block = Block(136);
 }
 
 impl std::fmt::Debug for Block {
