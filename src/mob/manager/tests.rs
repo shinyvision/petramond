@@ -554,3 +554,53 @@ fn indices_with_tag_filters_by_presence_and_value_and_skips_the_dead() {
     );
 }
 
+
+#[test]
+fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
+    use crate::block::Block;
+    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+
+    // 3×3 chunk grass field (48×48): big enough that open ground outgrows the
+    // 24×24 confinement span, with a 5×5 fence pen at its centre.
+    let mut world = World::new(0, 1);
+    for cx in 0..3 {
+        for cz in 0..3 {
+            let mut chunk = Chunk::new(cx, cz);
+            for z in 0..CHUNK_SZ {
+                for x in 0..CHUNK_SX {
+                    chunk.set_block(x, 63, z, Block::Grass);
+                }
+            }
+            world.insert_chunk_for_test(ChunkPos::new(cx, cz), chunk);
+        }
+    }
+    for i in 21..=27 {
+        for (x, z) in [(21, i), (27, i), (i, 21), (i, 27)] {
+            assert!(world.set_block_world(x, 64, z, Block::OakFence));
+        }
+    }
+    let id = world
+        .spawn_mob(Mob::Sheep, Vec3::new(24.5, 64.0, 24.5), 0.0)
+        .expect("spawned");
+    let anchors = [PlayerAnchor {
+        pos: Vec3::new(24.5, 64.0, 30.5),
+        ..Default::default()
+    }];
+    let confined = |world: &World| {
+        let i = world.mobs().index_of_id(id).expect("alive");
+        world.mobs().instances()[i].is_confined()
+    };
+
+    for _ in 0..=super::super::confined::CHECK_INTERVAL as usize {
+        world.tick_mobs(0.05, &anchors);
+    }
+    assert!(confined(&world), "an enclosed fence pen must read confined");
+
+    // Break one fence: the announced change invalidates the cached region,
+    // which forces the re-check off-cadence — freedom lands within a couple
+    // of ticks, not after the next 60-tick interval.
+    assert!(world.set_block_world(27, 64, 24, Block::Air));
+    world.tick_mobs(0.05, &anchors);
+    world.tick_mobs(0.05, &anchors);
+    assert!(!confined(&world), "a gap in the fence frees the pen-mate");
+}

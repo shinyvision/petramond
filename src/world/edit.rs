@@ -117,12 +117,16 @@ impl World {
         // neighbours (e.g. water) re-evaluate on the next game tick. A proven
         // light-identical replacement (glass into air, stone variants) skips
         // the relight entirely; a plain solid⇄air edit relights only as far
-        // as the light actually present at the cell can carry a change.
+        // as the light actually present at the cell can carry a change. A
+        // proven walkability-identical replacement (a grazed grass tuft, a
+        // crop stage, a hydration swap) likewise skips the confinement
+        // invalidation feed (see `edit_nav_equivalent`).
+        let nav_relevant = !super::tick::edit_nav_equivalent(old, b);
         if old.has_same_light_behavior(b) {
-            self.notify_light_equivalent_change(wx, wy, wz);
+            self.notify_light_equivalent_change_nav(wx, wy, wz, nav_relevant);
         } else {
             let radius = self.edit_light_reach(wx, wy, wz, old, b);
-            self.notify_block_change_with_light_radius(wx, wy, wz, radius);
+            self.notify_block_change_with_light_radius_nav(wx, wy, wz, radius, nav_relevant);
         }
         true
     }

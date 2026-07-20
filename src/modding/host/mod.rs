@@ -416,6 +416,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::SwapModelBlock { .. } => blocks::handle_block_call(&data.mod_id, call),
         HostCall::SpawnMob { .. }
         | HostCall::MobInfo { .. }
+        | HostCall::MobCanReach { .. }
         | HostCall::MobsInRadius { .. }
         | HostCall::DamageMob { .. }
         | HostCall::DespawnMob { .. }

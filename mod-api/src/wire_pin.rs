@@ -268,6 +268,7 @@ fn samples() -> Samples {
         min: [-1, 2, -3], max: [4, 5, 6], blocks: vec![BlockId(1), BlockId(9)],
     });
     s.pin("HostCall::MobInfo", &HostCall::MobInfo { mob_id: 7 });
+    s.pin("HostCall::MobCanReach", &HostCall::MobCanReach { mob_id: 7, cell: [1, -2, 3] });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -691,6 +692,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::MobsWithTag", "6c036d3a6b010105"),
     ("HostCall::FindBlocks", "6d010405080a0c020109"),
     ("HostCall::MobInfo", "6e07"),
+    ("HostCall::MobCanReach", "6f07020306"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),

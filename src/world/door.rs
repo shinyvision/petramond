@@ -241,10 +241,13 @@ impl World {
             }
             // A toggle flips the door map with NO block-id write, so it never
             // passes the announce choke point — log its delta explicitly
-            // (`state: Some(Door(..))` carries the new open bit to replicas).
+            // (`state: Some(Door(..))` carries the new open bit to replicas)
+            // and feed the confinement invalidation the same way: an opened
+            // door frees a pen NOW, not when the region cache ages out.
             if self.replication_capture {
                 self.record_block_delta(c.x, c.y, c.z);
             }
+            self.push_nav_change(c);
         }
         Some(lower)
     }

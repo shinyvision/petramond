@@ -51,6 +51,18 @@ host_fn! {
 }
 
 host_fn! {
+    /// Whether the live mob `mob_id` can genuinely NAVIGATE from where it
+    /// stands to `cell` (a bounded engine pathfinding probe with the mob's
+    /// real body). Ask this before committing the mob to any PICKED
+    /// walk-target cell — an unreachable goal walks the mob into the
+    /// obstacle between them and parks it there (the pathfinder crowds
+    /// partial routes on purpose, for chases). `false` = unreachable, no
+    /// such live mob, or the mob is airborne (retry later).
+    pub fn mob_can_reach(mob_id: u64, cell: [i32; 3]) -> bool
+        => MobCanReach { mob_id, cell } => Bool
+}
+
+host_fn! {
     /// Damage a live mob (STABLE id) through the `mob_damage_pre` pipeline with
     /// the species' resolved `damage_feedback` (applied at the next in-tick
     /// drain point; a mob gone by then is a silent no-op). Mod damage is not an

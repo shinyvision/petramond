@@ -187,6 +187,11 @@ pub struct AiCtx<'a> {
     /// `AiNodeCtx::tags`; writes ride [`BehaviorOutput::tag_writes`] and land
     /// after the whole brain has decided.
     pub tags: &'a std::collections::BTreeMap<String, super::MobTagValue>,
+    /// The closed-off area this mob is captive in, when confinement detection
+    /// found one (`petramond:confined` set) — every foothold the mob can
+    /// reach. Wander picks destinations straight from it instead of sampling
+    /// (and pathing toward) spots beyond the walls.
+    pub confined_region: Option<&'a super::confined::ConfinedRegion>,
     /// Deterministic per-mob RNG (no `rand` crate; reproducible).
     pub rng: &'a mut MobRng,
 }

@@ -150,6 +150,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::SurfaceYAt { .. }
         | HostCall::FindBlocks { .. }
         | HostCall::MobInfo { .. }
+        | HostCall::MobCanReach { .. }
         | HostCall::Players => false,
     }
 }

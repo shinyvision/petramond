@@ -188,6 +188,11 @@ impl Mobs {
         motion_finish.resize(self.list.len(), None);
         let mut supporting_solid = std::mem::take(&mut self.solid_support_scratch);
         supporting_solid.clear();
+        // Moved out so instances can look up / fill shared confined regions
+        // while `self.list` is mutably borrowed. The clock feed also expires
+        // regions past their maximum age (see `confined::REGION_MAX_AGE_TICKS`).
+        self.confined_regions.set_now(world.current_tick());
+        let mut confined_regions = std::mem::take(&mut self.confined_regions);
 
         // Phase 1: every instance proposes its terrain-resolved transform from
         // the same start-of-tick state. Soft bodies see rigid peers as fixed
@@ -232,6 +237,7 @@ impl Mobs {
             motion_finish[i] = mob.tick(
                 dt,
                 &inputs,
+                &mut confined_regions,
                 &anchor,
                 i,
                 d.despawn_radius,
@@ -240,6 +246,8 @@ impl Mobs {
                 &meta.skeleton,
             );
         }
+
+        self.confined_regions = confined_regions;
 
         // Phase 2: solve solid peers from their complete proposals, then
         // commit every selected prefix together. Stable-id sorting keeps the

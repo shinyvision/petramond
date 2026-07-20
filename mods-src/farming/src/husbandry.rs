@@ -261,6 +261,44 @@ impl Animal {
     }
 }
 
+/// How many nearest candidates a destination roll may reachability-probe
+/// before giving up this round (mirrors the engine wander's bounded
+/// retries). The heartbeat re-rolls, so a round that finds nothing
+/// reachable just waits.
+const REACH_PROBES: usize = 5;
+
+/// The nearest of `cells` the animal can genuinely WALK to, probing at most
+/// [`REACH_PROBES`] candidates nearest-first. Nearest-by-distance alone is a
+/// trap: the engine walks best-effort partial routes toward unreachable
+/// goals (chases must crowd their target), so grass beyond the fence — or a
+/// trough in the neighbouring pen — pins a penned animal against the fence
+/// forever, re-picked every heartbeat.
+fn nearest_reachable(a: &Animal, mut cells: Vec<[i32; 3]>) -> Option<[i32; 3]> {
+    let c = a.cell();
+    cells.sort_by_key(|p| {
+        let d = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+        d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
+    });
+    cells
+        .into_iter()
+        .take(REACH_PROBES)
+        .find(|&p| can_stand_by(a, p))
+}
+
+/// [`mob_can_reach`] loosened to CONSUME semantics: every husbandry act
+/// happens standing WITHIN RANGE of its target (a sip beside the trough — a
+/// trough's basin can never be walked into — a bite beside the plant, a
+/// courtship beside the partner), so the target cell or any cardinal
+/// neighbour being walkable is enough. Deliberately generous at pen borders:
+/// a plant right against the far side of the fence is honestly consumable
+/// from the near side, and a trough embedded in a shared fence line serves
+/// both pens.
+fn can_stand_by(a: &Animal, p: [i32; 3]) -> bool {
+    [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]
+        .iter()
+        .any(|d| mob_can_reach(a.snap.id, [p[0] + d[0], p[1], p[2] + d[1]]))
+}
+
 fn dist2(a: [f32; 3], b: [f32; 3]) -> f32 {
     let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
@@ -389,12 +427,7 @@ fn roll_drink(content: &Content, a: &mut Animal, tick: u64) {
         [c[0] + r, c[1] + r, c[2] + r],
         vec![content.trough_filled],
     );
-    let nearest = found.and_then(|cells| {
-        cells.into_iter().min_by_key(|p| {
-            let d = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
-            d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
-        })
-    });
+    let nearest = found.and_then(|cells| nearest_reachable(a, cells));
     match nearest {
         Some(p) => {
             a.now.drink_cell = Some(pack_cell(p));
@@ -447,11 +480,7 @@ fn roll_graze(def: &HusbandryDef, a: &mut Animal) {
     ) else {
         return;
     };
-    let nearest = found.into_iter().min_by_key(|p| {
-        let d = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
-        d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
-    });
-    a.now.graze = nearest.map(|p| pack_cell(p));
+    a.now.graze = nearest_reachable(a, found).map(pack_cell);
 }
 
 /// Horizontally within `range` of the cell's centre, feet within `dy_tol`
@@ -664,13 +693,22 @@ fn court(content: &Content, animals: &mut [Animal], tick: u64) {
         if !lover(&animals[i]) || animals[i].now.partner.is_some() {
             continue;
         }
-        let near = (0..animals.len())
+        let mut near: Vec<(usize, f32)> = (0..animals.len())
             .filter(|&j| j != i)
             .filter(|&j| animals[j].def == animals[i].def)
             .filter(|&j| lover(&animals[j]) && animals[j].now.partner.is_none())
             .map(|j| (j, dist2(animals[i].snap.pos, animals[j].snap.pos)))
             .filter(|&(_, d2)| d2 <= PAIR_RANGE * PAIR_RANGE)
-            .min_by(|a, b| a.1.total_cmp(&b.1));
+            .collect();
+        near.sort_by(|a, b| a.1.total_cmp(&b.1));
+        // A lover the animal cannot WALK to (the fence between two pens) is
+        // no candidate: courtship needs consecutive closeness, so an
+        // unreachable pairing just presses both against the fence until
+        // love expires.
+        let near = near
+            .into_iter()
+            .take(REACH_PROBES)
+            .find(|&(j, _)| can_stand_by(&animals[i], animals[j].cell()));
         if let Some((j, _)) = near {
             animals[i].now.partner = Some(animals[j].snap.id as i64);
             animals[j].now.partner = Some(animals[i].snap.id as i64);

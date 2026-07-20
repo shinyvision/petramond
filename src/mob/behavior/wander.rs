@@ -13,17 +13,58 @@
 //! targeted (bar a bounded escape hatch so a hemmed-in mob still moves), and among
 //! the rest preferred biomes win out — so, e.g., an owl hugs forest and drifts back
 //! toward it after straying.
+//!
+//! Every pick must be REACHABLE (2026-07-20): a free mob's sampled spot is
+//! verified with a bounded pathfinding probe and re-rolled when the route
+//! doesn't actually arrive — up to [`REACH_ATTEMPTS`] failures, after which
+//! the pick is cancelled. A CONFINED mob (see `mob::confined`) skips sampling
+//! entirely and draws from its cached region of reachable cells; a region
+//! smaller than 2×2 never wanders. Both rules exist for the same reason: the
+//! pathfinder answers an unreachable goal with a best-effort partial route,
+//! which walks the mob to the nearest wall cell and parks it there — penned
+//! sheep spent their lives pressed against the fence chasing pasture they
+//! could never reach.
 
 use crate::biome::Biome;
 use crate::mathh::{IVec3, Vec3};
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
+use super::super::confined::ConfinedRegion;
 use super::super::path::{body_or_floor_touches, is_navigation_foothold_with, PathParams};
 use super::super::{Habitat, WanderCohesion, WanderTuning};
 
 /// How many random offsets to try when picking a destination before giving up for
 /// this tick (keeps the search cheap; it only runs on the occasional roll).
 const PICK_ATTEMPTS: u32 = 24;
+
+/// Reachability probes allowed per pick: a sampled destination the pathfinder
+/// cannot actually reach (beyond a fence, over a wall) re-rolls; after this
+/// many failed probes the pick is cancelled — the mob keeps whatever reachable
+/// fallback it already saw, or stays put until the next wander roll. Without
+/// this gate an unreachable pick walks the mob to the nearest wall cell and
+/// parks it there (the sheep-hugging-the-fence bug).
+const REACH_ATTEMPTS: u32 = 5;
+
+/// A confined region smaller than 2×2 (fewer reachable cells than this) never
+/// wanders: there is nowhere meaningful to go, and endlessly re-pathing inside
+/// a one-block box is just jitter.
+const MIN_REGION_WANDER_CELLS: usize = 4;
+
+/// How many consecutive probe-exhausted picks shrink the wander horizon (each
+/// step halves the radius, floored at [`MIN_BACKOFF_RADIUS`]). A pick that
+/// cancels on unreachable probes is EVIDENCE the far part of the disc is
+/// walled off — a mob near the wall of an enclosure too large to read as
+/// confined, a cliff base, a shore — so instead of going quiet (the lethargy
+/// failure mode of a flat retry cap), the next roll looks CLOSER, where
+/// samples are likelier reachable: the free-mob analogue of a confined mob's
+/// region-picking. Any successful pick resets the horizon.
+const MAX_BACKOFF_STEPS: u8 = 2;
+const MIN_BACKOFF_RADIUS: i32 = 3;
+
+/// The wander radius after `steps` consecutive exhausted picks.
+fn backoff_radius(radius: i32, steps: u8) -> i32 {
+    (radius >> steps.min(MAX_BACKOFF_STEPS) as i32).max(MIN_BACKOFF_RADIUS.min(radius))
+}
 
 /// After this many avoided-biome candidates have been passed over in one pick, the
 /// avoid rule lifts for the rest of that pick — so a mob boxed in by avoided terrain
@@ -43,6 +84,9 @@ pub struct WanderAi {
     avoid_water: bool,
     /// The destination currently being walked to (if any).
     current: Option<IVec3>,
+    /// Consecutive picks that exhausted their reachability probes — drives
+    /// the horizon back-off (see [`backoff_radius`]). Reset by any success.
+    exhausted_picks: u8,
 }
 
 impl WanderAi {
@@ -52,6 +96,7 @@ impl WanderAi {
             habitat,
             avoid_water,
             current: None,
+            exhausted_picks: 0,
         }
     }
 }
@@ -67,7 +112,15 @@ impl AiBehavior for WanderAi {
             self.current = None;
             let escape_water = self.avoid_water && ctx.in_water;
             if escape_water || ctx.rng.next_f32() < self.tuning.chance_per_tick {
-                self.current = pick_destination(ctx, self.tuning, self.habitat, self.avoid_water);
+                let mut tuning = self.tuning;
+                tuning.radius = backoff_radius(tuning.radius, self.exhausted_picks);
+                let pick = pick_destination(ctx, tuning, self.habitat, self.avoid_water);
+                self.current = pick.goal;
+                if pick.goal.is_some() {
+                    self.exhausted_picks = 0;
+                } else if pick.exhausted {
+                    self.exhausted_picks = self.exhausted_picks.saturating_add(1);
+                }
             }
             self.current
         };
@@ -76,6 +129,14 @@ impl AiBehavior for WanderAi {
             ..Default::default()
         }
     }
+}
+
+/// The outcome of one destination pick: the goal (if any), and whether the
+/// pick died by exhausting its reachability probes — the hemmed-in signal
+/// that shrinks the next pick's horizon.
+struct Pick {
+    goal: Option<IVec3>,
+    exhausted: bool,
 }
 
 /// Pick a random standable destination within `radius` of the mob, honoring the
@@ -88,7 +149,16 @@ fn pick_destination(
     tuning: WanderTuning,
     habitat: &Habitat,
     avoid_water: bool,
-) -> Option<IVec3> {
+) -> Pick {
+    // A confined mob's world IS its region: pick from the cells it can
+    // actually reach instead of sampling (and pathing toward) open ground
+    // beyond the walls. Region picks never probe, so they never exhaust.
+    if let Some(region) = ctx.confined_region {
+        return Pick {
+            goal: pick_region_destination(ctx, tuning, habitat, avoid_water, region),
+            exhausted: false,
+        };
+    }
     let solid = super::super::nav::nav_solid_fn(ctx.world);
     let support = super::super::nav::nav_support_fn(ctx.world, ctx.half_width);
     let water = |c: IVec3| ctx.world.water_cell_at(c.x, c.y, c.z);
@@ -104,6 +174,7 @@ fn pick_destination(
     let escape_water = avoid_water && ctx.in_water;
     let mut picker = Picker::new(AVOID_ESCAPE, WATER_ESCAPE);
     let mut wet_fallback = None;
+    let mut unreachable_seen = 0u32;
     for _ in 0..PICK_ATTEMPTS {
         let dx = ctx.rng.next_range(-radius, radius);
         let dz = ctx.rng.next_range(-radius, radius);
@@ -135,21 +206,113 @@ fn pick_destination(
             continue;
         };
         let dest = IVec3::new(x, y, z);
+        // A body already standing there is not a destination: the pathfinder's
+        // soft entity costs bend the ROUTE around a crowd, but only this veto
+        // keeps the mob from picking a GOAL inside it.
+        if body_occupied(ctx, dest) {
+            continue;
+        }
+        let wet = body_or_floor_touches(dest, path_params, &water);
+        // For a water-averse species (not currently escaping water), re-roll a
+        // destination that sits in water — up to the escape hatch, after which
+        // a wet spot is accepted rather than refusing.
+        if avoid_water && !escape_water && picker.reject_water(wet) {
+            continue;
+        }
+        if let Some((rule, origin_has_companion)) = cohesion {
+            if reject_for_cohesion(ctx, rule, origin_has_companion, dest, radius) {
+                continue;
+            }
+        }
+        // The expensive gate comes LAST: the spot must be genuinely reachable.
+        // Fences and walls read solid to the pathfinder, and it answers an
+        // unreachable goal with a best-effort partial route — which would walk
+        // the mob to the nearest wall cell and park it there. A bounded number
+        // of failed probes cancels the pick: the mob is likely hemmed in, and
+        // more probes would just be a slow way to stand still.
+        if !super::super::nav::destination_reachable(
+            ctx.world,
+            ctx.cell,
+            dest,
+            path_params,
+            ctx.head_height,
+        ) {
+            unreachable_seen += 1;
+            if unreachable_seen >= REACH_ATTEMPTS {
+                break;
+            }
+            continue;
+        }
+        if escape_water && wet {
+            wet_fallback.get_or_insert(dest);
+            continue;
+        }
+        if let Some(dest) = picker.offer(dest, fit) {
+            return Pick {
+                goal: Some(dest),
+                exhausted: false,
+            };
+        }
+    }
+    // No preferred foothold turned up: fall back to the first allowed one we saw (a
+    // neutral biome, or — once an escape hatch tripped — an avoided / wet one). If
+    // the mob is actively escaping water and sampled no dry target, use the first
+    // wet surface so it still swims instead of idling in place.
+    let goal = picker.into_fallback().or(wet_fallback);
+    Pick {
+        exhausted: goal.is_none() && unreachable_seen >= REACH_ATTEMPTS,
+        goal,
+    }
+}
+
+/// Pick a wander destination for a CONFINED mob: sample straight from the
+/// region's reachable cells — never beyond the walls, and no pathfinding
+/// probes needed (membership IS reachability). The species' biome and water
+/// preferences still apply through the shared [`Picker`]; herd cohesion does
+/// not (the pen is the herd's whole world, and chasing a companion beyond the
+/// fence would just re-create the fence-hugging this branch removes). A
+/// region smaller than 2×2 never wanders at all.
+fn pick_region_destination(
+    ctx: &mut AiCtx,
+    tuning: WanderTuning,
+    habitat: &Habitat,
+    avoid_water: bool,
+    region: &ConfinedRegion,
+) -> Option<IVec3> {
+    if region.cells.len() < MIN_REGION_WANDER_CELLS {
+        return None;
+    }
+    let water = |c: IVec3| ctx.world.water_cell_at(c.x, c.y, c.z);
+    let radius = tuning.radius;
+    let r2 = radius * radius;
+    let path_params = PathParams::for_body(ctx.head, ctx.half_width);
+    let escape_water = avoid_water && ctx.in_water;
+    let mut picker = Picker::new(AVOID_ESCAPE, WATER_ESCAPE);
+    let mut wet_fallback = None;
+    for _ in 0..PICK_ATTEMPTS {
+        let roll = ctx.rng.next_range(0, region.cells.len() as i32 - 1);
+        let dest = region.cells[roll as usize];
+        let (dx, dz) = (dest.x - ctx.cell.x, dest.z - ctx.cell.z);
+        if (dx == 0 && dz == 0) || dx * dx + dz * dz > r2 {
+            continue;
+        }
+        let fit = match ctx.world.column_biome(dest.x, dest.z) {
+            Some(id) => classify_biome(Biome::from_id(id), habitat),
+            None => continue,
+        };
+        if picker.reject_avoided(fit) {
+            continue;
+        }
+        if body_occupied(ctx, dest) {
+            continue;
+        }
         let wet = body_or_floor_touches(dest, path_params, &water);
         if avoid_water {
             if escape_water && wet {
                 wet_fallback.get_or_insert(dest);
                 continue;
             }
-            // For a water-averse species, re-roll a destination that sits in water —
-            // up to the escape hatch, after which a wet spot is accepted rather than
-            // refusing.
             if picker.reject_water(wet) {
-                continue;
-            }
-        }
-        if let Some((rule, origin_has_companion)) = cohesion {
-            if reject_for_cohesion(ctx, rule, origin_has_companion, dest, radius) {
                 continue;
             }
         }
@@ -157,10 +320,6 @@ fn pick_destination(
             return Some(dest);
         }
     }
-    // No preferred foothold turned up: fall back to the first allowed one we saw (a
-    // neutral biome, or — once an escape hatch tripped — an avoided / wet one). If
-    // the mob is actively escaping water and sampled no dry target, use the first
-    // wet surface so it still swims instead of idling in place.
     picker.into_fallback().or(wet_fallback)
 }
 
@@ -195,6 +354,38 @@ fn companion_within_cell(ctx: &AiCtx, rule: WanderCohesion, cell: IVec3, radius:
         Vec3::new(cell.x as f32 + 0.5, cell.y as f32, cell.z as f32 + 0.5),
         radius,
     )
+}
+
+/// Whether another active entity's body already covers the arrival footprint
+/// at `dest` — wandering there would just press into them. Read from the tick
+/// snapshot (self excluded): a best-effort veto, not a reservation.
+fn body_occupied(ctx: &AiCtx, dest: IVec3) -> bool {
+    let center = Vec3::new(dest.x as f32 + 0.5, dest.y as f32, dest.z as f32 + 0.5);
+    let hit = |pos: Vec3, hw: f32, height: f32| {
+        (pos.x - center.x).abs() < hw + ctx.half_width
+            && (pos.z - center.z).abs() < hw + ctx.half_width
+            && pos.y < center.y + ctx.head_height
+            && center.y < pos.y + height
+    };
+    ctx.mobs.iter().enumerate().any(|(i, m)| {
+        if i == ctx.mob_index || !m.active {
+            return false;
+        }
+        let s = super::super::def(m.kind).size;
+        hit(m.pos, s.half_width, s.height)
+    }) || ctx.players.iter().any(|p| {
+        let Some(body) = p.body else {
+            return false;
+        };
+        let (mn, mx) = body.aabb();
+        let hw = ctx.half_width;
+        mn.x < center.x + hw
+            && mx.x > center.x - hw
+            && mn.z < center.z + hw
+            && mx.z > center.z - hw
+            && mn.y < center.y + ctx.head_height
+            && mx.y > center.y
+    })
 }
 
 fn reject_for_cohesion(
@@ -609,6 +800,185 @@ mod tests {
             !reject_for_cohesion(&ctx, rule, false, IVec3::new(20, 64, 0), 5),
             "without a free companion, cohesion does not constrain the destination"
         );
+    }
+
+    #[test]
+    fn a_destination_covered_by_another_body_is_rejected() {
+        let world = World::new(0, 1);
+        let mut rng = MobRng::new(1);
+        let mobs = [AiMob {
+            id: 0,
+            kind: Mob::Sheep,
+            pos: Vec3::new(3.5, 64.0, 0.5),
+            active: true,
+            tags: Default::default(),
+        }];
+        let ctx = make_ctx(&world, &mut rng, &mobs, 1, Vec3::new(0.5, 64.0, 0.5));
+        assert!(
+            body_occupied(&ctx, IVec3::new(3, 64, 0)),
+            "the other sheep's cell is covered"
+        );
+        assert!(
+            !body_occupied(&ctx, IVec3::new(6, 64, 0)),
+            "a clear cell is not covered"
+        );
+    }
+
+    /// The real confinement fill for the tests below, so region-driven picks
+    /// are exercised against exactly what the instance refresh would cache.
+    fn region_for(world: &World, start: IVec3) -> crate::mob::confined::ConfinedRegion {
+        let params = PathParams::for_body(2, 0.45);
+        let solid = crate::mob::nav::nav_solid_fn(world);
+        let support = crate::mob::nav::nav_support_fn(world, 0.45);
+        let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
+        let step = crate::mob::nav::partial_step_gate(world, params, 1.4);
+        let loaded = |c: IVec3| world.physics_cell_final_at(c.x, c.y, c.z);
+        crate::mob::confined::confined_region(
+            start, params, &solid, &support, &water, &step, &loaded,
+        )
+        .expect("test area should read as confined")
+    }
+
+    fn wander_tuning(radius: i32) -> WanderTuning {
+        WanderTuning {
+            chance_per_tick: 1.0,
+            radius,
+            cohesion: None,
+        }
+    }
+
+    #[test]
+    fn a_confined_mob_wanders_only_within_its_region() {
+        // 5×5 fence pen: the wander radius (10) reaches far beyond it, but a
+        // confined mob draws destinations from its region, never outside.
+        let world = flat_grass_world(|chunk| {
+            for i in 5..=11 {
+                for (x, z) in [(5, i), (11, i), (i, 5), (i, 11)] {
+                    chunk.set_block(x, 65, z, Block::OakFence);
+                }
+            }
+        });
+        let region = region_for(&world, IVec3::new(8, 65, 8));
+        let mut picked = 0;
+        for seed in 0..20 {
+            let mut rng = MobRng::new(seed);
+            let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.0, 8.5));
+            ctx.confined_region = Some(&region);
+            let mut ai = WanderAi::new(wander_tuning(10), plains_habitat(), true);
+            if let Some(goal) = ai.tick(&mut ctx).goal {
+                picked += 1;
+                assert!(region.contains(goal), "goal {goal:?} escaped the pen");
+            }
+        }
+        assert!(picked > 0, "a penned mob must still wander");
+    }
+
+    #[test]
+    fn a_region_smaller_than_two_by_two_never_wanders() {
+        // 1×2 interior: room to exist, no room worth pacing.
+        let world = flat_grass_world(|chunk| {
+            for x in 4..=7 {
+                for z in 4..=6 {
+                    if x == 4 || x == 7 || z == 4 || z == 6 {
+                        chunk.set_block(x, 65, z, Block::OakFence);
+                    }
+                }
+            }
+        });
+        let region = region_for(&world, IVec3::new(5, 65, 5));
+        assert!(region.cells.len() < MIN_REGION_WANDER_CELLS);
+        let mut rng = MobRng::new(3);
+        let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(5.5, 65.0, 5.5));
+        ctx.confined_region = Some(&region);
+        let mut ai = WanderAi::new(wander_tuning(10), plains_habitat(), true);
+        for _ in 0..50 {
+            assert!(
+                ai.tick(&mut ctx).goal.is_none(),
+                "a boxed-in mob must not jitter between its two cells"
+            );
+        }
+    }
+
+    #[test]
+    fn a_free_mob_never_picks_an_unreachable_destination() {
+        // The mob is walled in but (with no cached region on the ctx —
+        // detection hasn't run yet / just got invalidated) doesn't know it:
+        // sampled spots beyond the stone walls must be rejected by the
+        // reachability probe, so any goal that comes back lies inside.
+        let world = flat_grass_world(|chunk| {
+            for i in 5..=11 {
+                for (x, z) in [(5, i), (11, i), (i, 5), (i, 11)] {
+                    for y in 65..68 {
+                        chunk.set_block(x, y, z, Block::Stone);
+                    }
+                }
+            }
+        });
+        let mut picked = 0;
+        for seed in 0..30 {
+            let mut rng = MobRng::new(seed);
+            let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.0, 8.5));
+            let mut ai = WanderAi::new(wander_tuning(10), plains_habitat(), true);
+            if let Some(goal) = ai.tick(&mut ctx).goal {
+                picked += 1;
+                assert!(
+                    (6..=10).contains(&goal.x) && (6..=10).contains(&goal.z) && goal.y == 65,
+                    "goal {goal:?} lies beyond the sealed walls"
+                );
+            }
+        }
+        assert!(picked > 0, "in-pen destinations are reachable and pickable");
+    }
+
+    #[test]
+    fn an_exhausted_pick_reports_itself_and_the_horizon_backs_off() {
+        // The hemmed-in signal must be distinguishable from "no candidates at
+        // all", and the back-off must halve toward its floor and reset never
+        // below the species' own radius.
+        let world = flat_grass_world(|chunk| {
+            for x in 7..=9 {
+                for z in 7..=9 {
+                    if (x, z) != (8, 8) {
+                        for y in 65..68 {
+                            chunk.set_block(x, y, z, Block::Stone);
+                        }
+                    }
+                }
+            }
+        });
+        let mut rng = MobRng::new(1);
+        let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.0, 8.5));
+        let pick = pick_destination(&mut ctx, wander_tuning(10), plains_habitat(), true);
+        assert!(pick.goal.is_none() && pick.exhausted, "sealed = exhausted");
+
+        assert_eq!(backoff_radius(10, 0), 10);
+        assert_eq!(backoff_radius(10, 1), 5);
+        assert_eq!(backoff_radius(10, 2), 3, "halving floors at the minimum");
+        assert_eq!(backoff_radius(10, 9), 3, "steps clamp at the maximum");
+        assert_eq!(backoff_radius(2, 2), 2, "the floor never exceeds the base");
+    }
+
+    #[test]
+    fn a_mob_sealed_into_one_cell_cancels_the_wander() {
+        // Nothing but the cell it stands on is reachable: five failed probes
+        // cancel the pick instead of walking the mob into a wall forever.
+        let world = flat_grass_world(|chunk| {
+            for x in 7..=9 {
+                for z in 7..=9 {
+                    if (x, z) != (8, 8) {
+                        for y in 65..68 {
+                            chunk.set_block(x, y, z, Block::Stone);
+                        }
+                    }
+                }
+            }
+        });
+        for seed in 0..10 {
+            let mut rng = MobRng::new(seed);
+            let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(8.5, 65.0, 8.5));
+            let mut ai = WanderAi::new(wander_tuning(10), plains_habitat(), true);
+            assert_eq!(ai.tick(&mut ctx).goal, None, "seed {seed}");
+        }
     }
 
     #[test]

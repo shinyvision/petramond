@@ -46,6 +46,7 @@ pub(crate) use body_geometry::{
 };
 pub use brain::Brain;
 pub use instance::{hurt_flash01, Instance};
+pub use nav::mob_can_reach;
 pub(crate) use load::validate_brain_extensions;
 pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop};

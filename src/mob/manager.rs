@@ -98,6 +98,13 @@ pub struct Mobs {
     /// The cross-session "this chunk spawned its herd" fact lives on the
     /// world's persisted populated set, not here.
     populate_checked: FxHashSet<ChunkPos>,
+    /// Live confined regions shared by penned mobs (see [`super::confined`]):
+    /// one flood-fill serves every mob in the same pen. Block changes drop
+    /// overlapping regions through [`invalidate_confined_regions`]
+    /// (fed by the world's per-tick change buffer) before each mob tick.
+    ///
+    /// [`invalidate_confined_regions`]: Mobs::invalidate_confined_regions
+    confined_regions: super::confined::RegionCache,
 }
 
 impl Default for Mobs {
@@ -130,12 +137,20 @@ impl Mobs {
             pending_noises: Vec::new(),
             heard: Vec::new(),
             populate_checked: FxHashSet::default(),
+            confined_regions: super::confined::RegionCache::default(),
         }
     }
 
     /// Record one gameplay noise for the NEXT mob AI batch (this tick's, when
     /// pushed before the mob stage). Emitters go through
     /// [`World::push_noise`](crate::world::World::push_noise).
+    /// Drop cached confined regions a block change could have altered — the
+    /// world drains its per-tick change buffer here before each mob tick.
+    /// `all` means the buffer overflowed (exact positions unknown).
+    pub fn invalidate_confined_regions(&mut self, changed: &[crate::mathh::IVec3], all: bool) {
+        self.confined_regions.invalidate(changed, all);
+    }
+
     pub fn push_noise(&mut self, noise: Noise) {
         self.pending_noises.push(noise);
     }

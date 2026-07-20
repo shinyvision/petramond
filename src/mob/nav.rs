@@ -501,6 +501,152 @@ fn next_repath_backoff(current: u32) -> u32 {
         .min(MAX_REPATH_BACKOFF_TICKS)
 }
 
+/// How far ahead (centre distance) a touching body counts as "in the way" —
+/// the mob's own half-width plus a pressing margin that covers the other
+/// body's radius.
+const UNSTICK_REACH: f32 = 0.6;
+/// The fixed veer angle applied to a blocked wish.
+const UNSTICK_ANGLE: f32 = std::f32::consts::FRAC_PI_3;
+/// Ticks a veer keeps holding after its blocking contact stops registering.
+/// Contacts are recorded from the PREVIOUS tick's overlap, so a successful
+/// veer erases its own trigger one tick later; without this hold the veer
+/// flip-flops — veer, straight, re-press, veer — and the wish (which the
+/// body FACES) wags ±60° at a few hertz: the crowd-jitter bug. Committing to
+/// the side briefly walks a small clean arc around the peer instead.
+const UNSTICK_HOLD_TICKS: u8 = 8;
+
+/// The crowd veer with its side COMMITMENT (2026-07-20; the stateless
+/// version jittered). While a touching entity blocks the wish, the wish is
+/// rotated [`UNSTICK_ANGLE`] to the side away from the contact (a dead-ahead
+/// tie breaks on the stable id) so two mobs pushing each other slide past
+/// instead of cancelling out; the chosen side then HOLDS — against contact
+/// flicker and against the cross-product changing its mind mid-manoeuvre —
+/// until the contact has stayed gone for [`UNSTICK_HOLD_TICKS`]. Transient
+/// per-instance steering state; never persisted.
+#[derive(Default)]
+pub(super) struct Unstick {
+    /// The committed veer side (+1 / −1); meaningful while `hold > 0`.
+    side: f32,
+    /// Ticks of commitment left once the blocking contact stops registering.
+    hold: u8,
+}
+
+impl Unstick {
+    /// Veer `wish` around a touching entity it drives into. The brain's
+    /// current TARGET never deflects — a hunter means to reach its prey.
+    /// Deterministic: the same scene and latch state always veer the same way.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn steer(
+        &mut self,
+        wish: Vec3,
+        pos: Vec3,
+        self_id: u64,
+        half_width: f32,
+        contacts: &[EntityRef],
+        target: Option<EntityRef>,
+        mobs: &[AiMob],
+        players: &[PlayerAnchor],
+    ) -> Vec3 {
+        if wish == Vec3::ZERO {
+            // Standing: let any leftover commitment expire so it can't bend
+            // the first step of the next walk half a second later.
+            self.hold = self.hold.saturating_sub(1);
+            return wish;
+        }
+        match blocking_bearing(wish, pos, half_width, contacts, target, mobs, players) {
+            Some(d) => {
+                // A live block refreshes the commitment; the side is only
+                // (re)chosen when no commitment is running.
+                if self.hold == 0 {
+                    self.side = veer_side(wish, d, self_id);
+                }
+                self.hold = UNSTICK_HOLD_TICKS;
+                veer(wish, self.side)
+            }
+            None if self.hold > 0 => {
+                // The contact cleared — keep rounding the peer on the same
+                // side while the commitment runs down, instead of snapping
+                // straight and pressing right back into it.
+                self.hold -= 1;
+                veer(wish, self.side)
+            }
+            None => wish,
+        }
+    }
+}
+
+/// The bearing of the nearest touching entity that blocks `wish` (touching
+/// bodies only — far bodies are the soft route costs' business), or `None`
+/// when nothing ahead is pressed against.
+fn blocking_bearing(
+    wish: Vec3,
+    pos: Vec3,
+    half_width: f32,
+    contacts: &[EntityRef],
+    target: Option<EntityRef>,
+    mobs: &[AiMob],
+    players: &[PlayerAnchor],
+) -> Option<Vec3> {
+    let mut best: Option<(Vec3, f32)> = None;
+    let mut consider = |other: Vec3| {
+        let d = other - pos;
+        let dist2 = d.x * d.x + d.z * d.z;
+        if best.is_none_or(|(_, bd)| dist2 < bd) {
+            best = Some((d, dist2));
+        }
+    };
+    for c in contacts {
+        if Some(*c) == target {
+            continue;
+        }
+        match c {
+            EntityRef::Mob(id) => {
+                if let Some(m) = mobs.iter().find(|m| m.id == *id && m.active) {
+                    consider(m.pos);
+                }
+            }
+            EntityRef::Player(id) => {
+                if let Some(p) = players.iter().find(|p| p.id == *id) {
+                    consider(p.pos);
+                }
+            }
+        }
+    }
+    let (d, dist2) = best?;
+    let dist = dist2.sqrt();
+    if dist > half_width + UNSTICK_REACH {
+        return None;
+    }
+    let facing = if dist > 1e-3 {
+        (d.x * wish.x + d.z * wish.z) / dist
+    } else {
+        1.0
+    };
+    // A contact behind the travel direction is not ours to dodge.
+    (facing > 0.0).then_some(d)
+}
+
+/// The side to veer AWAY from a contact at bearing `d`; a dead-ahead contact
+/// (cross ≈ 0) picks a side by the mob's stable id, so a head-on pair stops
+/// being anti-parallel and the pushes gain a lateral component.
+fn veer_side(wish: Vec3, d: Vec3, self_id: u64) -> f32 {
+    let cross = wish.x * d.z - wish.z * d.x;
+    if cross.abs() < 1e-3 {
+        if self_id % 2 == 0 {
+            1.0
+        } else {
+            -1.0
+        }
+    } else {
+        cross.signum()
+    }
+}
+
+fn veer(wish: Vec3, side: f32) -> Vec3 {
+    let (sin, cos) = (side * UNSTICK_ANGLE).sin_cos();
+    Vec3::new(wish.x * cos + wish.z * sin, 0.0, wish.z * cos - wish.x * sin)
+}
+
 /// How a cell's real collision reads for navigation.
 #[derive(Copy, Clone, PartialEq)]
 enum CellShape {
@@ -569,6 +715,63 @@ pub(super) fn nav_support_fn(world: &World, half_width: f32) -> impl Fn(IVec3) -
                 .any(|b| b.min[0] < hi && b.max[0] > lo && b.min[2] < hi && b.max[2] > lo),
         }
     }
+}
+
+/// Node budget for one goal-reachability probe (wander picks, the mod ABI's
+/// `MobCanReach`). Destinations sit within local seek radii, so an honest
+/// route needs far fewer expansions than the navigator's full budget — and it
+/// is the UNREACHABLE probe that pays the entire budget before failing, so a
+/// small cap keeps the worst tick cheap. A spot the budget can't prove
+/// reachable counts as unreachable.
+pub const REACH_PROBE_NODES: usize = 600;
+
+/// Whether a body (`params`, physical `height`) standing at foothold `start`
+/// can genuinely path to `dest` within [`REACH_PROBE_NODES`]. Entity
+/// soft-costs are deliberately absent: bodies never make a spot unreachable,
+/// and the navigator prices them when it routes for real. This is the
+/// DESTINATION-honesty gate — the pathfinder deliberately walks best-effort
+/// partial routes toward unreachable goals (chases must crowd their target),
+/// which parks a mob against the obstacle when the goal was a picked CELL, so
+/// every cell-picking policy must ask this first.
+pub(super) fn destination_reachable(
+    world: &World,
+    start: IVec3,
+    dest: IVec3,
+    mut params: PathParams,
+    height: f32,
+) -> bool {
+    params.max_nodes = REACH_PROBE_NODES;
+    let solid = nav_solid_fn(world);
+    let support = nav_support_fn(world, params.half_width);
+    let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
+    let step_allowed = partial_step_gate(world, params, height);
+    path::find_path_nav(start, dest, params, &solid, &support, &water, step_allowed, |_| 0).last()
+        == Some(&dest)
+}
+
+/// [`destination_reachable`] for a live mob instance: probes from the mob's
+/// current navigation cell with its real body. `false` when the mob is not on
+/// a foothold (airborne — nothing is provable, callers retry later). The
+/// `MobCanReach` HostCall's engine seam.
+pub fn mob_can_reach(world: &World, mob: &super::Instance, dest: IVec3) -> bool {
+    let d = super::def(mob.kind);
+    let params = PathParams::for_body(d.size.head_cells(), d.size.half_width);
+    let solid = nav_solid_fn(world);
+    let support = nav_support_fn(world, d.size.half_width);
+    let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
+    let feet = crate::mathh::voxel_at(mob.pos);
+    let in_water = water(feet) || water(feet - IVec3::Y);
+    let start = path::navigation_cell_with(
+        mob.pos,
+        d.size.half_width,
+        d.size.head_cells(),
+        in_water,
+        &solid,
+        &support,
+        &water,
+    )
+    .unwrap_or(feet);
+    destination_reachable(world, start, dest, params, d.size.height)
 }
 
 /// The collision boxes navigation must sweep against in `c` — the PARTIAL
@@ -692,11 +895,13 @@ pub(super) fn partial_step_gate<'w>(
     }
 }
 
-/// Cost of routing through a cell another entity's body occupies — a few
-/// blocks' worth of detour ([`path`]'s flat step costs 10), so a route bends
-/// around a standing mob or player when a reasonable detour exists but still
-/// crosses when it is the only way (the search never deadlocks on a crowd).
-const ENTITY_CELL_COST: u32 = 40;
+/// Cost of routing through a cell another entity's body occupies — about a
+/// 20-cell detour ([`path`]'s flat step costs 10), so ANY local way around a
+/// standing mob or player (over a trough, around a pen-mate) always beats
+/// pressing through them, while a genuinely packed crowd still resolves by
+/// paying it (the search never deadlocks, and the surcharge stays out of the
+/// heuristic so A* remains admissible).
+const ENTITY_CELL_COST: u32 = 200;
 /// Entities farther than this from the path start are ignored when pricing
 /// cells — far bodies cannot matter to a local route.
 const ENTITY_AVOID_RANGE: f32 = 32.0;
@@ -1031,6 +1236,112 @@ mod tests {
     }
 
     #[test]
+    fn a_touching_body_ahead_veers_the_wish_to_a_side() {
+        let pos = Vec3::new(0.5, 64.0, 0.5);
+        let wish = Vec3::new(1.0, 0.0, 0.0);
+        let blocking = [AiMob {
+            id: 2,
+            kind: crate::mob::Mob::Sheep,
+            pos: Vec3::new(1.4, 64.0, 0.5),
+            active: true,
+            tags: Default::default(),
+        }];
+        let contacts = [EntityRef::Mob(2)];
+
+        // Dead ahead: the wish veers sideways (id-picked side), keeping forward speed.
+        let out = Unstick::default().steer(wish, pos, 1, 0.45, &contacts, None, &blocking, &[]);
+        assert!(out.z.abs() > 0.5, "veers sideways around the body: {out:?}");
+        assert!(out.x > 0.0, "keeps forward progress: {out:?}");
+
+        // No contact (and no running commitment): the wish passes through untouched.
+        assert_eq!(
+            Unstick::default().steer(wish, pos, 1, 0.45, &[], None, &blocking, &[]),
+            wish
+        );
+
+        // The brain's target is never dodged.
+        assert_eq!(
+            Unstick::default().steer(
+                wish,
+                pos,
+                1,
+                0.45,
+                &contacts,
+                Some(EntityRef::Mob(2)),
+                &blocking,
+                &[]
+            ),
+            wish
+        );
+
+        // A body BEHIND the travel direction is not ours to dodge.
+        let behind = [AiMob {
+            id: 2,
+            kind: crate::mob::Mob::Sheep,
+            pos: Vec3::new(-0.4, 64.0, 0.5),
+            active: true,
+            tags: Default::default(),
+        }];
+        assert_eq!(
+            Unstick::default().steer(wish, pos, 1, 0.45, &contacts, None, &behind, &[]),
+            wish
+        );
+    }
+
+    #[test]
+    fn the_veer_commits_to_its_side_instead_of_flip_flopping() {
+        // Contacts are recorded from the PREVIOUS tick's overlap, so a veer
+        // that works erases its own trigger next tick. The latch must keep
+        // rounding the peer on the SAME side while the commitment runs down —
+        // the stateless version snapped straight, re-pressed, and wagged the
+        // wish (and the body facing) every other tick.
+        let pos = Vec3::new(0.5, 64.0, 0.5);
+        let wish = Vec3::new(1.0, 0.0, 0.0);
+        let blocking = [AiMob {
+            id: 2,
+            kind: crate::mob::Mob::Sheep,
+            pos: Vec3::new(1.4, 64.0, 0.5),
+            active: true,
+            tags: Default::default(),
+        }];
+        let contacts = [EntityRef::Mob(2)];
+
+        let mut latch = Unstick::default();
+        let veered = latch.steer(wish, pos, 1, 0.45, &contacts, None, &blocking, &[]);
+        assert!(veered.z.abs() > 0.5, "the contact tick veers: {veered:?}");
+
+        // Contact gone: the commitment keeps the SAME veer, no snap-back.
+        for _ in 0..UNSTICK_HOLD_TICKS {
+            assert_eq!(
+                latch.steer(wish, pos, 1, 0.45, &[], None, &blocking, &[]),
+                veered,
+                "the committed side holds through contact flicker"
+            );
+        }
+        // Commitment exhausted: the wish runs straight again.
+        assert_eq!(
+            latch.steer(wish, pos, 1, 0.45, &[], None, &blocking, &[]),
+            wish,
+            "the veer expires once the contact has stayed gone"
+        );
+
+        // A body slightly to the OTHER side of the new travel line must not
+        // flip the committed side while the commitment is live.
+        let mut latch = Unstick::default();
+        let first = latch.steer(wish, pos, 1, 0.45, &contacts, None, &blocking, &[]);
+        let other_side = [AiMob {
+            pos: Vec3::new(1.3, 64.0, 0.4 - first.z.signum() * 0.2),
+            ..blocking[0].clone()
+        }];
+        let second = latch.steer(wish, pos, 1, 0.45, &contacts, None, &other_side, &[]);
+        assert_eq!(
+            first.z.signum(),
+            second.z.signum(),
+            "a live commitment pins the veer side: {first:?} vs {second:?}"
+        );
+    }
+
+    #[test]
     fn a_one_high_block_wall_is_routable_but_a_one_high_fence_wall_is_not() {
         // Ordinary one-block steps stay jumpable; a fence of the same height
         // must never route, or no fenced pen would hold (the by-design pen
@@ -1067,6 +1378,31 @@ mod tests {
             nav.path().iter().all(|c| c.z < 1),
             "the best-effort route stops on the near side of the fence: {:?}",
             nav.path()
+        );
+    }
+
+    #[test]
+    fn mob_can_reach_answers_the_fence_honestly() {
+        // The `MobCanReach` HostCall's engine seam: a cell beyond a fence
+        // line is not reachable, a cell on the mob's own side is — the
+        // honesty gate mod destination policies (grazing) build on.
+        let mut world = flat_world();
+        for x in 0..12 {
+            world.set_block_world(x, 64, 1, Block::OakFence);
+        }
+        let mob = crate::mob::Instance::new(
+            crate::mob::Mob::Sheep,
+            Vec3::new(4.5, 64.0, 0.5),
+            0.0,
+            1,
+        );
+        assert!(
+            !mob_can_reach(&world, &mob, IVec3::new(4, 64, 2)),
+            "grass beyond the fence is not a reachable destination"
+        );
+        assert!(
+            mob_can_reach(&world, &mob, IVec3::new(8, 64, 0)),
+            "a cell on the mob's own side is reachable"
         );
     }
 
@@ -1199,6 +1535,80 @@ mod tests {
         assert!(
             !nav.path().contains(&blocker_cell),
             "the route bends around the standing mob: {:?}",
+            nav.path()
+        );
+    }
+
+    #[test]
+    fn a_blocked_corridor_is_rounded_rather_than_pushed_through() {
+        // A 1-wide corridor with a sheep standing in it and a gap in one wall
+        // before AND after her: squeezing past her body costs one crowded cell
+        // (200), the gap detour costs a handful of flat steps (~40). The route
+        // must take the gap, not the shove.
+        let mut world = flat_world();
+        for x in 0..12 {
+            if x != 3 && x != 5 {
+                world.set_block_world(x, 64, 0, Block::Stone);
+            }
+            world.set_block_world(x, 64, 2, Block::Stone);
+        }
+        let start = IVec3::new(1, 64, 1);
+        let goal = IVec3::new(8, 64, 1);
+        let blocker_cell = IVec3::new(4, 64, 1);
+        let mobs = [AiMob {
+            id: 7,
+            kind: crate::mob::Mob::Sheep,
+            pos: Vec3::new(4.5, 64.0, 1.5),
+            active: true,
+            tags: Default::default(),
+        }];
+        let obstacles = NavObstacles {
+            self_id: 1,
+            target: None,
+            mobs: &mobs,
+            players: &[],
+        };
+        let mut nav = Navigator::new(1, 0.25, 0.9);
+        nav.update_goal_when_supported(Some(goal), start, &world, true, &obstacles);
+        assert_eq!(nav.path().last(), Some(&goal), "still reaches the goal");
+        assert!(
+            !nav.path().contains(&blocker_cell),
+            "the route rounds the corridor through the gaps: {:?}",
+            nav.path()
+        );
+    }
+
+    #[test]
+    fn a_truly_blocked_crowd_still_resolves_by_paying_the_cost() {
+        // The other half of the contract: no detour at all (sealed corridor)
+        // must never deadlock the search — the mob squeezes through as a last
+        // resort instead of freezing.
+        let mut world = flat_world();
+        for x in 0..12 {
+            world.set_block_world(x, 64, 0, Block::Stone);
+            world.set_block_world(x, 64, 2, Block::Stone);
+        }
+        let start = IVec3::new(1, 64, 1);
+        let goal = IVec3::new(8, 64, 1);
+        let mobs = [AiMob {
+            id: 7,
+            kind: crate::mob::Mob::Sheep,
+            pos: Vec3::new(4.5, 64.0, 1.5),
+            active: true,
+            tags: Default::default(),
+        }];
+        let obstacles = NavObstacles {
+            self_id: 1,
+            target: None,
+            mobs: &mobs,
+            players: &[],
+        };
+        let mut nav = Navigator::new(1, 0.25, 0.9);
+        nav.update_goal_when_supported(Some(goal), start, &world, true, &obstacles);
+        assert_eq!(
+            nav.path().last(),
+            Some(&goal),
+            "a packed corridor still resolves by squeezing through: {:?}",
             nav.path()
         );
     }

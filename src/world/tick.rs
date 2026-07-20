@@ -85,6 +85,44 @@ pub(super) struct TickState {
     /// cells). The phases run strictly in sequence, so one buffer serves all
     /// three without a fresh allocation every tick.
     batch_scratch: Vec<IVec3>,
+    /// Block positions announced changed since the last mob tick — the feed
+    /// for confinement-cache invalidation (`mob::confined::RegionCache`),
+    /// drained by `tick_mobs`. Bounded: past [`NAV_CHANGE_CAP`] the overflow
+    /// flag stands in for the exact positions (invalidate everything), so a
+    /// world that never drains (a pure client) cannot grow it unbounded.
+    nav_changes: Vec<IVec3>,
+    nav_changes_overflow: bool,
+}
+
+/// Cap on the per-tick nav-change buffer (see [`TickState::nav_changes`]).
+const NAV_CHANGE_CAP: usize = 256;
+
+/// Whether replacing `old` with `new` provably CANNOT change what a mob can
+/// walk on or through — the confinement-invalidation filter for
+/// `set_block_world` (the one funnel that holds both blocks). Only shapes
+/// whose collision is fully determined by the block id qualify (cube,
+/// lowered cube, and the non-colliding decorations); anything whose real
+/// boxes resolve from per-cell or neighbour state (doors, models, fences,
+/// panes, stairs, slabs, ladders) stays conservatively relevant, as does any
+/// water involvement (water is navigation FOOTING). This keeps the heavy pen
+/// churn out of the feed — grazed grass (`Cross` → air), crop growth stages,
+/// farmland hydration swaps (same 15/16 box) — while a broken wall, a placed
+/// fence, or a stone→air edit still invalidates. When unsure, answer `false`.
+pub(super) fn edit_nav_equivalent(old: Block, new: Block) -> bool {
+    if old == new {
+        return true;
+    }
+    let static_shape = |b: Block| {
+        matches!(
+            b.render_shape(),
+            crate::block::RenderShape::Cube
+                | crate::block::RenderShape::LoweredCube(_)
+                | crate::block::RenderShape::Cross
+                | crate::block::RenderShape::Crop
+                | crate::block::RenderShape::Torch
+        ) && !b.is_water()
+    };
+    static_shape(old) && static_shape(new) && old.collision_boxes() == new.collision_boxes()
 }
 
 impl TickState {
@@ -223,9 +261,9 @@ impl World {
     /// a torch away changes the block light, but the water path never relit). Any
     /// announced change may have moved opacity or an emitter, so any announced
     /// change relights — the only exemption is a caller that PROVED the cell's
-    /// old and new contents light-identically (`notify_light_equivalent_change`).
+    /// old and new contents light-identically (`notify_light_equivalent_change_nav`).
     pub(super) fn notify_block_and_neighbors(&mut self, wx: i32, wy: i32, wz: i32) {
-        self.notify_block_change(wx, wy, wz, Self::LIGHT_REACH);
+        self.notify_block_change(wx, wy, wz, Self::LIGHT_REACH, true);
     }
 
     /// The announce for a change whose caller compared the old and new block
@@ -233,29 +271,48 @@ impl World {
     /// or proved the edit sits in darkness no light reaches — delta capture
     /// and block updates run, the relight is skipped. Callers that cannot
     /// prove either use [`Self::notify_block_and_neighbors`].
-    pub(super) fn notify_light_equivalent_change(&mut self, wx: i32, wy: i32, wz: i32) {
-        self.notify_block_change(wx, wy, wz, -1);
+    /// The announce for a change whose caller proved the old and new cell
+    /// contents light-equivalent — delta capture and block updates run, the
+    /// relight is skipped. `nav_relevant: false` additionally skips the
+    /// confinement-invalidation feed; only `set_block_world` (which holds
+    /// both blocks — see [`edit_nav_equivalent`]) may prove that, every
+    /// other announce passes `true`.
+    pub(super) fn notify_light_equivalent_change_nav(
+        &mut self,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+        nav_relevant: bool,
+    ) {
+        self.notify_block_change(wx, wy, wz, -1, nav_relevant);
     }
 
     /// The announce with the relight bounded to `radius` cells — for a caller
     /// that bounded the edit's influence by the light actually present at the
-    /// cell (see `World::edit_light_reach`).
-    pub(super) fn notify_block_change_with_light_radius(
+    /// cell (see `World::edit_light_reach`). `nav_relevant` as on
+    /// [`Self::notify_light_equivalent_change_nav`].
+    pub(super) fn notify_block_change_with_light_radius_nav(
         &mut self,
         wx: i32,
         wy: i32,
         wz: i32,
         radius: i32,
+        nav_relevant: bool,
     ) {
-        self.notify_block_change(wx, wy, wz, radius);
+        self.notify_block_change(wx, wy, wz, radius, nav_relevant);
     }
 
-    fn notify_block_change(&mut self, wx: i32, wy: i32, wz: i32, light_radius: i32) {
+    fn notify_block_change(&mut self, wx: i32, wy: i32, wz: i32, light_radius: i32, nav: bool) {
         // Replication rides the same choke point, for the same reason as the
         // relight: every editor announces here, so no block/water change a
         // client could see can miss the delta log (see `record_block_delta`).
         if self.replication_capture {
             self.record_block_delta(wx, wy, wz);
+        }
+        // Confinement invalidation rides here too, unless the caller PROVED
+        // the change navigationally equivalent (`edit_nav_relevant`).
+        if nav {
+            self.push_nav_change(IVec3::new(wx, wy, wz));
         }
         if light_radius >= 0 {
             // Persist staleness notes ride the mark (see
@@ -267,6 +324,32 @@ impl World {
         for d in FACE_NEIGHBORS {
             self.queue_block_update(p + d);
         }
+    }
+
+    /// Record one changed position for the confinement-invalidation feed
+    /// (see [`TickState::nav_changes`]). Also the direct entry for mutation
+    /// funnels that never pass the announce choke point — the door toggle
+    /// flips collision through the door map with no block write.
+    pub(super) fn push_nav_change(&mut self, pos: IVec3) {
+        if self.sim.nav_changes_overflow {
+            return;
+        }
+        if self.sim.nav_changes.len() >= NAV_CHANGE_CAP {
+            self.sim.nav_changes.clear();
+            self.sim.nav_changes_overflow = true;
+        } else {
+            self.sim.nav_changes.push(pos);
+        }
+    }
+
+    /// Drain the changed-block buffer feeding confinement-cache invalidation
+    /// (see [`TickState::nav_changes`]): every position announced since the
+    /// last drain, plus whether the buffer overflowed (positions unknown —
+    /// the consumer must invalidate everything).
+    pub(super) fn take_nav_changes(&mut self) -> (Vec<IVec3>, bool) {
+        let overflow = self.sim.nav_changes_overflow;
+        self.sim.nav_changes_overflow = false;
+        (std::mem::take(&mut self.sim.nav_changes), overflow)
     }
 
     pub(super) fn queue_block_update(&mut self, pos: IVec3) -> bool {
@@ -479,6 +562,34 @@ mod tests {
     /// Fire one leaf random tick at `p` through the public behaviour path.
     fn tick_leaf(world: &mut World, p: IVec3) {
         Block::OakLeaves.behavior().random_tick(world, p);
+    }
+
+    #[test]
+    fn only_walkability_changes_feed_the_confinement_invalidation() {
+        let mut world = world_with_centered_chunk();
+        let p = IVec3::new(8, 70, 8);
+        world.set_block_world(p.x, p.y - 1, p.z, Block::Grass);
+        let _ = world.take_nav_changes();
+
+        // A decoration appearing/vanishing (a tuft grazed to air, a crop
+        // stage) can't change what a mob walks on: filtered out.
+        world.set_block_world(p.x, p.y, p.z, Block::ShortGrass);
+        world.set_block_world(p.x, p.y, p.z, Block::Air);
+        assert_eq!(world.take_nav_changes(), (vec![], false));
+
+        // A wall appearing very much can.
+        world.set_block_world(p.x, p.y, p.z, Block::Stone);
+        assert_eq!(world.take_nav_changes(), (vec![p], false));
+
+        // A door toggle bypasses the announce choke point entirely and must
+        // feed the invalidation on its own.
+        world.set_block_world(p.x, p.y, p.z, Block::Air);
+        let door = IVec3::new(8, 70, 9);
+        assert!(world.place_door(door, Block::OakDoor, crate::facing::Facing::South));
+        let _ = world.take_nav_changes();
+        assert!(world.toggle_door(door).is_some());
+        let (changed, overflow) = world.take_nav_changes();
+        assert!(!overflow && changed.contains(&door), "toggle invalidates: {changed:?}");
     }
 
     #[test]

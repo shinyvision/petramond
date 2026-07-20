@@ -35,6 +35,7 @@ pub(crate) fn ctx<'a>(world: &'a World, rng: &'a mut MobRng) -> AiCtx<'a> {
         mob_index: 0,
         mobs: &[],
         tags: empty_tags(),
+        confined_region: None,
         rng,
     }
 }

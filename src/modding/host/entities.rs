@@ -86,6 +86,15 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 live_mob(ctx, mob_id).map(|i| mob_snapshot(i, &ctx.world.mobs().instances()[i])),
             )
         }),
+        HostCall::MobCanReach { mob_id, cell } => sim_query(|ctx| {
+            HostRet::Bool(live_mob(ctx, mob_id).is_some_and(|i| {
+                crate::mob::mob_can_reach(
+                    ctx.world,
+                    &ctx.world.mobs().instances()[i],
+                    crate::mathh::IVec3::new(cell[0], cell[1], cell[2]),
+                )
+            }))
+        }),
         HostCall::MobsInRadius { pos, radius } => match finite3(pos, "MobsInRadius.pos") {
             Err(e) => e,
             Ok(pos) => sim_query(|ctx| {

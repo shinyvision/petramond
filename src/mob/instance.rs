@@ -129,6 +129,13 @@ pub struct Instance {
     /// Ticks until the next confined-state recompute. Spread across mobs by id
     /// so checks don't clump on one tick.
     confined_cooldown: u8,
+    /// The confined region this mob is captive in — a shared handle into the
+    /// manager's [`confined::RegionCache`], `Some` exactly while the
+    /// `petramond:confined` tag is set by the periodic refresh. Wander picks
+    /// destinations straight from it. Never persisted (rebuilt from the
+    /// world); a block change drops the cache entry, which forces this mob's
+    /// re-check off-cadence.
+    confined_region: Option<std::sync::Arc<confined::ConfinedRegion>>,
     /// ACTIVE particle-emitter bundles by catalog id (`crate::particle_emitters`),
     /// sorted, at most [`super::MAX_ACTIVE_MOB_EMITTERS`]. Presentation-only
     /// state toggled by mods through the `MobEmitterSet` HostCall, replicated
@@ -180,6 +187,9 @@ pub struct Instance {
     contacts: Vec<EntityRef>,
     brain: Brain,
     nav: Navigator,
+    /// Crowd-veer side commitment (see `nav::Unstick`) — transient steering
+    /// state, never persisted.
+    unstick: super::nav::Unstick,
     pub(super) rng: MobRng,
 }
 
@@ -219,6 +229,7 @@ impl Instance {
             push: Vec3::ZERO,
             tags: std::sync::Arc::new(d.tags.clone()),
             confined_cooldown: ((seed % confined::CHECK_INTERVAL as u64) as u8).max(1),
+            confined_region: None,
             active_emitters: Vec::new(),
             active_anims: Vec::new(),
             drive: None,
@@ -231,6 +242,7 @@ impl Instance {
             contacts: Vec::new(),
             brain: super::build_brain(d),
             nav: Navigator::new(d.size.head_cells(), d.size.half_width, d.size.height),
+            unstick: Default::default(),
             rng: MobRng::new(seed),
         }
     }
@@ -401,6 +413,7 @@ impl Instance {
         &mut self,
         dt: f32,
         inputs: &TickInputs,
+        regions: &mut confined::RegionCache,
         anchor: &PlayerAnchor,
         mob_index: usize,
         despawn_radius: Option<f32>,
@@ -514,12 +527,40 @@ impl Instance {
         // `petramond:confined` mob tag so AI and HostCalls can read it uniformly.
         // Written ONLY on a transition: the map is copy-on-write shared with
         // the AI snapshot, so a redundant write would still deep-clone it.
+        // A block change near this mob's pen drops its cached region, which
+        // forces the re-check off-cadence instead of waiting out the interval.
         self.confined_cooldown = self.confined_cooldown.saturating_sub(1);
-        if self.confined_cooldown == 0 && self.on_ground && !in_water {
+        let region_dropped = self
+            .confined_region
+            .as_ref()
+            .is_some_and(|r| !regions.is_live(r));
+        if region_dropped {
+            self.confined_region = None;
+        }
+        if (self.confined_cooldown == 0 || region_dropped) && self.on_ground && !in_water {
             let params = path::PathParams::for_body(d.size.head_cells(), d.size.half_width);
-            let step_allowed = super::nav::partial_step_gate(world, params, d.size.height);
-            let confined =
-                confined::is_confined(cell, params, &solid, &support, &water, &step_allowed);
+            // Steady state for a penned mob: the shared cache still holds a
+            // region covering its cell (a pen-mate may have filled this pen
+            // already) — the lookup enforces region age, so a stale handle
+            // can never short-circuit it. Only a miss floods.
+            let region = regions
+                .region_at(cell)
+                .or_else(|| {
+                    let step_allowed = super::nav::partial_step_gate(world, params, d.size.height);
+                    let loaded = |c: IVec3| world.physics_cell_final_at(c.x, c.y, c.z);
+                    confined::confined_region(
+                        cell,
+                        params,
+                        &solid,
+                        &support,
+                        &water,
+                        &step_allowed,
+                        &loaded,
+                    )
+                    .map(|r| regions.insert(r))
+                });
+            let confined = region.is_some();
+            self.confined_region = region;
             if confined != self.is_confined() {
                 if confined {
                     self.tags_mut().insert(
@@ -559,6 +600,7 @@ impl Instance {
                 mob_index,
                 mobs: inputs.mobs,
                 tags: &*self.tags,
+                confined_region: self.confined_region.as_deref(),
                 rng: &mut self.rng,
             };
             self.brain.decide(&mut ctx)
@@ -602,6 +644,23 @@ impl Instance {
             self.nav.follow_steered(self.pos, self.on_ground, world)
         } else {
             (Vec3::ZERO, false)
+        };
+        // A wish driving straight into a touching body veers around it, so two
+        // mobs pressing each other slide past instead of cancelling out. A
+        // jump approach is left alone (the ledge face ahead IS the route).
+        let wish = if jump {
+            wish
+        } else {
+            self.unstick.steer(
+                wish,
+                self.pos,
+                self.id,
+                d.size.half_width,
+                &self.contacts,
+                self.current_target,
+                inputs.mobs,
+                inputs.players,
+            )
         };
         let water_flow = |p: Vec3| world.water_flow_at_point(p);
         let water_surface = |c: IVec3| world.water_surface_y_world(c);

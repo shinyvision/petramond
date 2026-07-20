@@ -1054,6 +1054,22 @@ pub enum HostCall {
     MobInfo {
         mob_id: u64,
     },
+    /// Whether the live mob `mob_id` can genuinely NAVIGATE from where it
+    /// stands to `cell` — a bounded engine pathfinding probe with the mob's
+    /// real body, the same honesty test the engine's own wander applies to
+    /// its destination picks. Ask this before committing the mob to any
+    /// PICKED walk-target cell (food to graze, a trough, a partner's cell):
+    /// the pathfinder deliberately answers an unreachable goal with a
+    /// best-effort partial route (chases must crowd their target), which
+    /// PARKS the mob against the obstacle when the goal was just a picked
+    /// cell — grass beyond a fence pins a penned animal to the fence
+    /// forever. `false` = unreachable within the probe budget, no such live
+    /// mob, or the mob is airborne (nothing provable — retry later).
+    /// → [`HostRet::Bool`].
+    MobCanReach {
+        mob_id: u64,
+        cell: [i32; 3],
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].

@@ -115,6 +115,11 @@ impl World {
         dt: f32,
         anchors: &[crate::mob::PlayerAnchor],
     ) -> crate::mob::MobTickEvents {
+        // Feed this tick's announced block changes to the confinement cache
+        // BEFORE the mobs decide: a pen edit must never leave a mob acting on
+        // a stale region.
+        let (changed, overflow) = self.take_nav_changes();
+        self.mobs.invalidate_confined_regions(&changed, overflow);
         if self.mobs.is_empty() {
             // Nobody is listening: drop the tick's noise batch, or a mob-free
             // world would accumulate the player's footsteps forever.
