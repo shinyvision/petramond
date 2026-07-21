@@ -8,8 +8,8 @@
 
 use crate::chunk::SectionPos;
 use crate::events::{
-    self, BlockBreakPre, BlockInteract, BlockPlacePre, ItemUsePre, MobDamageFeedbackComponent,
-    MobDamagePre, MobDamageSound, MobInteract, PlayerDamagePre, PostEvent, PostEventKind,
+    self, BlockBreakPre, BlockPlacePre, InteractAttempt, ItemUsePre, MobDamageFeedbackComponent,
+    MobDamagePre, MobDamageSound, PlayerDamagePre, PostEvent, PostEventKind,
 };
 use crate::facing::Facing;
 use crate::mathh::{IVec3, Vec3};
@@ -66,9 +66,8 @@ pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
     Some(match kind {
         K::BlockPlacePre
         | K::BlockBreakPre
-        | K::BlockInteract
+        | K::InteractAttempt
         | K::ItemUsePre
-        | K::MobInteract
         | K::MobDamagePre
         | K::PlayerDamagePre => return None,
         K::BlockPlaced => PostEventKind::BlockPlaced,
@@ -163,11 +162,12 @@ pub(super) fn block_break_pre(ev: &BlockBreakPre) -> api::EventPayload {
     }
 }
 
-pub(super) fn block_interact(ev: &BlockInteract) -> api::EventPayload {
-    api::EventPayload::BlockInteract {
-        pos: ivec(ev.pos),
-        block: api::BlockId(ev.block.id()),
-        item: ev.item.map(|i| api::ItemId(i.id())),
+pub(super) fn interact_attempt(ev: &InteractAttempt) -> api::EventPayload {
+    api::EventPayload::InteractAttempt {
+        block: ev.block.map(ivec),
+        face: ev.face.map(ivec),
+        mob: ev.mob,
+        player: api::PlayerId(ev.player.0),
     }
 }
 
@@ -175,14 +175,6 @@ pub(super) fn item_use_pre(ev: &ItemUsePre) -> api::EventPayload {
     api::EventPayload::ItemUsePre {
         item: api::ItemId(ev.item.id()),
         target: ev.target.map(ivec),
-    }
-}
-
-pub(super) fn mob_interact(ev: &MobInteract) -> api::EventPayload {
-    api::EventPayload::MobInteract {
-        id: ev.id,
-        key: crate::mob::def(ev.kind).key.to_owned(),
-        player_id: api::PlayerId(ev.player.0),
     }
 }
 

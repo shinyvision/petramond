@@ -56,17 +56,23 @@ impl ServerGame {
     /// spawn anchor — the spawn bookkeeping (verify at respawn, clear on
     /// break) only tracks tagged beds, so recording one here would leave a
     /// spawn nothing else maintains.
-    pub(super) fn start_sleep(&mut self, s: usize, pos: IVec3) {
+    /// Returns whether anything HAPPENED (the spawn anchor moved and/or the
+    /// sleep started) — the interact consumer's claim follows this verdict:
+    /// checking a bed is free, consuming means an effect (see
+    /// `server::interact`).
+    pub(super) fn start_sleep(&mut self, s: usize, pos: IVec3) -> bool {
         let Some((_, base, cells)) = self.world.model_group(pos) else {
-            return;
+            return false;
         };
+        let mut acted = false;
         if bed_at(&self.world, pos) {
             let spot = find_wake_spot(&self.world, &cells).unwrap_or(bed_top_cell(base));
             self.sessions[s].player.bed_spawn = Some(BedSpawn { bed: base, spot });
+            acted = true;
         }
         // Sleeping is a night action: a daytime click only (re)sets the spawn.
         if !super::daynight::is_night(&self.world) {
-            return;
+            return acted;
         }
         // A rider already has an authoritative physical owner. Starting a
         // second body state here would let the later riding pass pull the
@@ -75,7 +81,7 @@ impl ServerGame {
         // the player dismounts.
         let player_id = self.sessions[s].id.0;
         if self.world.riding().mount_of(player_id).is_some() {
-            return;
+            return acted;
         }
         // Tuck the player into the bed for the sleep; physics settles them onto
         // the mattress (movement input is off while the sleep screen is up).
@@ -88,6 +94,7 @@ impl ServerGame {
         // presentation: the client applies it after the fixed ticks, keyed on
         // this open request (`Game::tick`), before any presentation read.
         sess.request_open_sleep = true;
+        true
     }
 
     /// The bed base cell session `s` currently sleeps in (a session read — the

@@ -391,6 +391,17 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
             "simulation host calls are unavailable to a client_wasm instance".into(),
         );
     }
+    // A client instance's `PlayerState` answers the actor snapshot published
+    // by the prediction dispatch — never the sim query path below.
+    if data.side == RuntimeSide::Client && matches!(call, HostCall::PlayerState) {
+        return match super::client::scope::active_actor() {
+            Some(actor) => HostRet::Player(actor),
+            None => HostRet::Error(
+                "PlayerState on a client instance is available during prediction dispatches only"
+                    .into(),
+            ),
+        };
+    }
     match call {
         HostCall::Log { .. }
         | HostCall::RuntimeSide

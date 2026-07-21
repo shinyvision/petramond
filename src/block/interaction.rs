@@ -17,3 +17,14 @@ pub enum BlockInteraction {
     /// spawn point beside it and starts the sleep fade (see `game::bed`).
     Sleep,
 }
+
+/// Whether a block's BUILT-IN interaction claims a use click made while
+/// `sneaking`. The engine's built-in consumers (GUI openers, doors, beds) are
+/// plain right-click consumers: they pass on sneak clicks, which is what
+/// keeps sneak-to-place against a chest working. ONE rule shared by the
+/// server's interact dispatch and the client's jab / place-ghost prediction —
+/// the two sides must agree on who claims a click, or the ghost and the jab
+/// drift from the authoritative outcome.
+pub(crate) fn builtin_claims_click(block: crate::block::Block, sneaking: bool) -> bool {
+    !sneaking && block.interaction() != BlockInteraction::None
+}

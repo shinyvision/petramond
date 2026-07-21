@@ -499,6 +499,9 @@ fn abi_roundtrip_host_and_guest_calls() {
         health: 17,
         on_ground: false,
         spectator: false,
+        sneak: true,
+        held: Some(ItemId(3)),
+        held_count: 2,
     }));
     roundtrip(HostRet::Bytes(Some(vec![1, 2, 3])));
     roundtrip(GuestRet::Event {

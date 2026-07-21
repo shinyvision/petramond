@@ -72,11 +72,9 @@ pub fn on_interact(
     pos: [i32; 3],
     block: BlockId,
     item: Option<ItemId>,
+    sneaking: bool,
 ) -> Outcome {
-    if block != content.trough_wheat || item.is_some() {
-        return Outcome::Continue;
-    }
-    if !acting_sneaks() {
+    if block != content.trough_wheat || item.is_some() || !sneaking {
         return Outcome::Continue;
     }
     let meals = crate::husbandry::meals_at(pos);
@@ -92,30 +90,40 @@ pub fn on_interact(
     Outcome::Cancel
 }
 
-/// The click initiator's sneak state. `block_interact` carries no player (the
-/// frozen per-acting-session ABI), so: `player_state` IS the acting session's
-/// snapshot — find the roster entry sharing its exact look, then read that
-/// player's published input. Yaw+pitch are the fingerprint: pos/vel/on_ground
-/// drift between the roster's pre-movement publish and the placement stage's
-/// post-movement read. An ambiguous match refuses rather than guess.
-fn acting_sneaks() -> bool {
-    let me = player_state();
-    let mut hit = None;
-    for p in players() {
-        if p.state.yaw == me.yaw && p.state.pitch == me.pitch {
-            if hit.is_some() {
-                return false;
-            }
-            hit = Some(p.id);
-        }
-    }
-    hit.and_then(player_input).is_some_and(|i| i.sneak)
-}
-
 fn center(pos: [i32; 3]) -> [f32; 3] {
     [
         pos[0] as f32 + 0.5,
         pos[1] as f32 + 0.5,
         pos[2] as f32 + 0.5,
     ]
+}
+
+/// CLIENT prediction mirror of [`on_item_use`]'s gates (bucket swaps + the
+/// atomic three-wheat fill, exact via the snapshot's `held_count`).
+pub fn predict_item_use(
+    content: &Content,
+    item: ItemId,
+    block: BlockId,
+    held_count: u8,
+) -> Outcome {
+    let claims = (block == content.trough && item == content.water_bucket)
+        || (block == content.trough_filled && item == content.wooden_bucket)
+        || (block == content.trough
+            && item == content.wheat_item
+            && u32::from(held_count) >= FILL_WHEAT);
+    if claims {
+        Outcome::Cancel
+    } else {
+        Outcome::Continue
+    }
+}
+
+/// CLIENT prediction mirror of [`on_interact`]'s gate (the sneak +
+/// empty-hand take-out).
+pub fn predict_interact(content: &Content, block: BlockId, actor: &PlayerSnapshot) -> Outcome {
+    if block == content.trough_wheat && actor.held.is_none() && actor.sneak {
+        Outcome::Cancel
+    } else {
+        Outcome::Continue
+    }
 }

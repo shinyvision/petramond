@@ -39,15 +39,24 @@ pub(crate) struct BlockBreakPre {
     pub harvested: bool,
 }
 
-/// `block_interact` — cancel = the click was consumed (this is how mod blocks
-/// will open their own GUIs); the block's built-in capability is skipped.
+/// `interact_attempt` — the player's use click as its most PRIMITIVE gesture:
+/// what the crosshair held (a block cell + face, a live mob), nothing more.
+/// Cancel = the attempt was consumed. Any consumer — mod or engine — gates
+/// its own claim by querying the world and the acting player's snapshot
+/// (held item, sneak); the attempt itself interprets nothing.
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct BlockInteract {
-    pub pos: IVec3,
-    pub block: Block,
-    /// The interactor's held item, if any — handlers may key on it (a
-    /// fertilizer click on a crop behaves differently from an empty hand).
-    pub item: Option<ItemType>,
+pub(crate) struct InteractAttempt {
+    /// The clicked block cell, if the crosshair held a block.
+    pub block: Option<IVec3>,
+    /// The clicked face's normal (back toward the eye; zero when the eye
+    /// started inside the cell). `Some` exactly when `block` is.
+    pub face: Option<IVec3>,
+    /// The clicked mob's stable session id, if the crosshair held a live mob
+    /// (authoritatively validated before dispatch — a forged, vanished, dead,
+    /// or occluded claim never appears here).
+    pub mob: Option<u64>,
+    /// The interacting session.
+    pub player: crate::server::player::PlayerId,
 }
 
 /// `item_use_pre` — cancel = the click was consumed (the engine's own use is
@@ -57,19 +66,6 @@ pub(crate) struct ItemUsePre {
     pub item: ItemType,
     /// The looked-at block, if any.
     pub target: Option<IVec3>,
-}
-
-/// `mob_interact` — a use click whose crosshair target was a live mob, before
-/// any engine mob use (shears). Cancel = the click was consumed; this is how
-/// mods make mobs interactable (mounting a vehicle, trading). The stable `id`
-/// is the clicked mob's one address — for calls and cross-tick state alike.
-#[derive(Copy, Clone, Debug)]
-pub(crate) struct MobInteract {
-    /// Stable mob session id.
-    pub id: u64,
-    pub kind: Mob,
-    /// The interacting session.
-    pub player: crate::server::player::PlayerId,
 }
 
 /// `mob_damage_pre` — `amount` and `feedback` are mutable; cancel = no damage.

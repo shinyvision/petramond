@@ -445,8 +445,10 @@ fn a_forged_out_of_reach_mob_id_cannot_interact_or_shear() {
 
     let dispatched = Arc::new(AtomicBool::new(false));
     let observed = dispatched.clone();
-    game.server.bus.on_mob_interact(0, move |_, _| {
-        observed.store(true, Ordering::Relaxed);
+    game.server.bus.on_interact_attempt(0, move |_, ev| {
+        // The forged id must be scrubbed BEFORE mods observe the attempt —
+        // and with no block target either, the dispatch never fires at all.
+        observed.store(ev.mob.is_some(), Ordering::Relaxed);
         crate::events::Outcome::Cancel
     });
     let id = game.server.world.mobs().instances()[0].id();
@@ -456,7 +458,7 @@ fn a_forged_out_of_reach_mob_id_cannot_interact_or_shear() {
 
     assert!(
         !dispatched.load(Ordering::Relaxed),
-        "authority rejects the forged id before mob_interact dispatch"
+        "authority rejects the forged id before the mod attempt dispatch"
     );
     assert!(!events.player_at(0).interacted);
     assert!(

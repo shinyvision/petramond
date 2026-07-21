@@ -14,7 +14,7 @@ use crate::server::player::PlayerId;
 use crate::world::World;
 
 use super::payload::{
-    BlockBreakPre, BlockInteract, BlockPlacePre, ItemUsePre, MobDamagePre, MobInteract, ModAction,
+    BlockBreakPre, BlockPlacePre, InteractAttempt, ItemUsePre, MobDamagePre, ModAction,
     PlayerDamagePre, PostEvent, PostEventKind,
 };
 
@@ -279,9 +279,8 @@ impl PostQueue {
 pub(crate) struct EventBus {
     pre_block_place: Vec<PreHandler<BlockPlacePre>>,
     pre_block_break: Vec<PreHandler<BlockBreakPre>>,
-    pre_block_interact: Vec<PreHandler<BlockInteract>>,
+    pre_interact_attempt: Vec<PreHandler<InteractAttempt>>,
     pre_item_use: Vec<PreHandler<ItemUsePre>>,
-    pre_mob_interact: Vec<PreHandler<MobInteract>>,
     pre_mob_damage: Vec<PreHandler<MobDamagePre>>,
     pre_player_damage: Vec<PreHandler<PlayerDamagePre>>,
     post: [Vec<PostHandler>; PostEventKind::COUNT],
@@ -352,13 +351,12 @@ pre_events!(
         BlockBreakPre
     ),
     (
-        on_block_interact,
-        block_interact,
-        pre_block_interact,
-        BlockInteract
+        on_interact_attempt,
+        interact_attempt,
+        pre_interact_attempt,
+        InteractAttempt
     ),
     (on_item_use_pre, item_use_pre, pre_item_use, ItemUsePre),
-    (on_mob_interact, mob_interact, pre_mob_interact, MobInteract),
     (
         on_mob_damage_pre,
         mob_damage_pre,

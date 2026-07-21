@@ -124,7 +124,7 @@ fn right_clicking_a_door_toggles_it_through_block_interaction() {
 /// (`used_unpredicted`): there was no client click to animate it.
 #[test]
 fn holding_use_repeats_the_use_ladder_but_stays_a_noop_on_plain_blocks() {
-    use crate::server::placement::USE_REPEAT_TICKS;
+    use crate::server::interact::USE_REPEAT_TICKS;
 
     let mut game = game_on_empty_chunk();
     let floor = IVec3::new(5, 63, 5);

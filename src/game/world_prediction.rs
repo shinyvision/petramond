@@ -12,6 +12,76 @@ use crate::mathh::IVec3;
 use crate::net::protocol::{ClientToServer, PlayerAction};
 
 impl Game {
+    /// The acting player's snapshot for a client-mod PREDICTION dispatch —
+    /// the same `PlayerSnapshot` vocabulary a server handler queries, built
+    /// from the client's predicted local player + replicated self view.
+    fn client_actor_snapshot(&self, sneak: bool) -> mod_api::PlayerSnapshot {
+        mod_api::PlayerSnapshot {
+            pos: self.player.pos.to_array(),
+            vel: self.player.vel.to_array(),
+            yaw: self.player.yaw,
+            pitch: self.player.pitch,
+            health: self.self_view.health,
+            on_ground: self.player.on_ground,
+            spectator: self.player.is_spectator(),
+            sneak,
+            held: self
+                .self_view
+                .inventory
+                .selected()
+                .map(|st| mod_api::ItemId(st.item.id())),
+            held_count: self
+                .self_view
+                .inventory
+                .selected()
+                .map_or(0, |st| st.count),
+        }
+    }
+
+    /// Ask the client mod instances whether any PREDICTOR claims this
+    /// predicted pre event (see `ClientModRuntime::predict_claim`) — the mod
+    /// half of prediction parity: a mod consumer is exactly as predictable
+    /// as an engine one, through the same event vocabulary the server
+    /// dispatches, evaluated against the replica.
+    fn predict_mod_claim(&mut self, sneak: bool, payload: mod_api::EventPayload) -> bool {
+        let actor = self.client_actor_snapshot(sneak);
+        let Self {
+            client_mods,
+            replica,
+            ..
+        } = self;
+        client_mods.predict_claim(replica, &actor, &payload)
+    }
+
+    /// The ONE per-click dispatch of the predicted `interact_attempt` to the
+    /// client mod predictors (registry position: before every engine
+    /// consumer, exactly like the server walk). `true` = a mod consumer is
+    /// predicted to claim this click: the jab plays and NO ghost may appear.
+    fn predict_interact_claim(&mut self, sneak: bool) -> bool {
+        let Some(look) = self.look else {
+            return false;
+        };
+        let payload = mod_api::EventPayload::InteractAttempt {
+            block: Some(look.block.to_array()),
+            face: Some(look.normal.to_array()),
+            mob: None,
+            player: mod_api::PlayerId(self.self_id.0),
+        };
+        self.predict_mod_claim(sneak, payload)
+    }
+
+    /// The whole use-click prediction, in server-registry order: the mod
+    /// interact predictors first (a predicted claim suppresses the ghost —
+    /// a consumed attempt reaches no later consumer, placement included),
+    /// then the place ghost. Returns `(mod_claimed, place)` — the jab is
+    /// `mod_claimed || place != No || use_click_predicts_effect(..)`.
+    pub(super) fn predict_use_click(&mut self, sneak: bool) -> (bool, PlacePrediction) {
+        if self.predict_interact_claim(sneak) {
+            return (true, PlacePrediction::No);
+        }
+        (false, self.try_predict_place_ghost(sneak))
+    }
+
     /// Full local break prediction at `pos`: clear the replica footprint, latch
     /// hand + world event, open a ledger entry, and queue `BreakFinished`.
     pub(super) fn apply_predicted_break(
@@ -64,21 +134,65 @@ impl Game {
             }));
     }
 
-    /// Whether the client can foresee this use click doing anything: a mob
-    /// use/shear target, an interactable block under the crosshair
-    /// (non-sneak), or a held item with its own use (food, bucket). Gates the
-    /// P0 jab only — the click ships regardless.
+    /// Whether the client can foresee a CONSUMER claiming this use click —
+    /// the P0 jab is a prediction of "something consumed the attempt", so it
+    /// mirrors the server's consumer registry against the replica, per
+    /// consumer: a mob target (mod claim or shear), the eat consumer (held
+    /// food), the held item's own use evaluated by KIND (shears need a mob;
+    /// buckets run their real target rules), or a built-in block claim. An
+    /// attempt nothing is predicted to claim plays NO jab — shears on air
+    /// stay silent. Claims only the server can see (a mod-cancelled
+    /// `item_use_pre`/`interact_attempt` — tilling, harvest) arrive through
+    /// the `used_unpredicted` echo instead. Gates the P0 jab only — the
+    /// click ships regardless.
     pub(super) fn use_click_predicts_effect(
-        &self,
+        &mut self,
         input: &GameInput,
         use_mob: Option<u64>,
     ) -> bool {
+        use crate::item::ItemUse;
+
+        // A targeted mob: the mod consumers (boarding, trading) or the
+        // shears may claim it — a claim the replica cannot rule out.
         if use_mob.is_some() {
             return true;
         }
-        if let Some(stack) = self.self_view.inventory.selected() {
-            if stack.item.food().is_some() || stack.item.item_use().is_some() {
+        // The mod `interact_attempt` predictors were already dispatched
+        // upstream ([`predict_use_click`](Self::predict_use_click) — one
+        // dispatch per click); a predicted claim jabbed there.
+        let held = self.self_view.inventory.selected().map(|st| st.item);
+        if let Some(item) = held {
+            // The eat consumer claims every click while food is held.
+            if item.food().is_some() {
                 return true;
+            }
+            // Mod item-use consumers (tilling, the trough/compost fills):
+            // the predicted `item_use_pre`, dispatched to the client
+            // predictors in the same registry position the server runs it.
+            let payload = mod_api::EventPayload::ItemUsePre {
+                item: mod_api::ItemId(item.id()),
+                target: self.look.map(|l| l.block.to_array()),
+            };
+            if self.predict_mod_claim(input.movement.sneak, payload) {
+                return true;
+            }
+            // The held item's own use, mirrored per kind. No arm RETURNS
+            // false: an item use that predicts nothing still falls through
+            // to the block consumer below, exactly like the server walk
+            // (shears aimed at a chest still open it).
+            match item.item_use() {
+                // Shears claim only through a mob target, handled above.
+                Some(ItemUse::Shear) | None => {}
+                Some(ItemUse::BucketFill { .. }) => {
+                    if self.predicts_bucket_fill() {
+                        return true;
+                    }
+                }
+                Some(ItemUse::BucketPour { .. }) => {
+                    if self.predicts_bucket_pour() {
+                        return true;
+                    }
+                }
             }
         }
         let Some(look) = self.look else {
@@ -89,7 +203,48 @@ impl Game {
             look.block.y,
             look.block.z,
         ));
-        !input.movement.sneak && target.interaction() != crate::block::BlockInteraction::None
+        // The SAME claim rule the server's built-in consumer runs — parity by
+        // construction, not by two hand-kept copies.
+        crate::block::builtin_claims_click(target, input.movement.sneak)
+    }
+
+    /// Replica mirror of the fill consumer's rule (`try_fill_bucket`): the
+    /// source-stopping ray hits a water SOURCE within reach.
+    fn predicts_bucket_fill(&self) -> bool {
+        crate::player::Player::raycast_water_sources(
+            self.cam.pos,
+            self.cam.forward(),
+            &self.replica,
+        )
+        .is_some_and(|(h, _)| self.replica.is_water_source_world(h.block))
+    }
+
+    /// Replica mirror of the pour consumer's rule (`try_pour_bucket`): the
+    /// water-stopping ray hits something within reach, and the resolved pour
+    /// cell (replace-in-place or against the face) is replaceable. Mod
+    /// `block_place_pre` cancels stay invisible to the replica — the same
+    /// over-optimism policy as the engine-block place ghost.
+    fn predicts_bucket_pour(&self) -> bool {
+        use crate::block::Block;
+        let Some((h, _)) = crate::player::Player::raycast_including_water(
+            self.cam.pos,
+            self.cam.forward(),
+            &self.replica,
+        ) else {
+            return false;
+        };
+        let looked = Block::from_id(
+            self.replica.chunk_block(h.block.x, h.block.y, h.block.z),
+        );
+        let p = if looked.is_replaceable() && looked != Block::Air {
+            h.block
+        } else {
+            if h.normal == IVec3::ZERO {
+                return false;
+            }
+            h.block + h.normal
+        };
+        Block::from_id(self.replica.chunk_block(p.x, p.y, p.z)).is_replaceable()
     }
 
     /// Optimistic full place when the look target can accept the held block.
@@ -134,23 +289,56 @@ impl Game {
         {
             return PlacePrediction::Plausible;
         }
-        // A MOD-registered block's placement may be governed by mod law the
-        // replica cannot evaluate (`block_place_pre` — a crop plants only on
-        // farmland). Never ghost one: jab only, and a real placement arrives
-        // unpredicted through the authoritative delta. Engine blocks keep
-        // full prediction; a mod cancelling THOSE accepts rollback jank.
+        // A MOD-registered block's placement is governed by mod law
+        // (`block_place_pre` — a crop plants only on farmland), so ask the
+        // mod's own CLIENT PREDICTOR: the predicted pre event dispatched
+        // against the replica, the same vocabulary the server dispatches. A
+        // predicted cancel is a KNOWN refusal (no jab, no ghost); otherwise
+        // never ghost one — jab only (Plausible), and the real placement
+        // arrives unpredicted through the authoritative delta. Engine blocks
+        // keep full prediction; a mod cancelling THOSE accepts rollback jank.
         if !block.is_engine() {
-            return PlacePrediction::Plausible;
+            let looked_at = crate::block::Block::from_id(self.replica.chunk_block(
+                look.block.x,
+                look.block.y,
+                look.block.z,
+            ));
+            // The server's pre-event position rule (minus slab stacking,
+            // which no mod row participates in): replace-in-place targets
+            // the clicked cell, anything else builds against the face.
+            let pre_pos =
+                if looked_at.is_replaceable() && looked_at != crate::block::Block::Air {
+                    look.block
+                } else {
+                    look.block + look.normal
+                };
+            let facing = crate::server::placement::facing_from_forward(self.player.forward());
+            let payload = mod_api::EventPayload::BlockPlacePre {
+                pos: pre_pos.to_array(),
+                block: mod_api::BlockId(block.id()),
+                facing: match facing {
+                    crate::facing::Facing::North => mod_api::Facing::North,
+                    crate::facing::Facing::South => mod_api::Facing::South,
+                    crate::facing::Facing::West => mod_api::Facing::West,
+                    crate::facing::Facing::East => mod_api::Facing::East,
+                },
+            };
+            return if self.predict_mod_claim(sneak, payload) {
+                PlacePrediction::No
+            } else {
+                PlacePrediction::Plausible
+            };
         }
-        // A non-sneak click on an interactable block opens/uses it instead of
-        // placing (the server's interact ladder) — no ghost, or the client
-        // would render a phantom block the server never places.
+        // A click the block's built-in consumer claims (the server's interact
+        // chain — same shared rule) opens/uses it instead of placing — no
+        // ghost, or the client would render a phantom block the server never
+        // places.
         let target = crate::block::Block::from_id(self.replica.chunk_block(
             look.block.x,
             look.block.y,
             look.block.z,
         ));
-        if !sneak && target.interaction() != crate::block::BlockInteraction::None {
+        if crate::block::builtin_claims_click(target, sneak) {
             return PlacePrediction::No;
         }
         // Replace-in-place (clicking short grass, a fern…): the server

@@ -62,6 +62,24 @@ pub fn on_interact(content: &Content, pos: [i32; 3], block: BlockId) -> Outcome 
     Outcome::Cancel
 }
 
+/// CLIENT prediction mirror of [`on_item_use`]'s gate.
+pub fn predict_item_use(content: &Content, item: ItemId, block: BlockId) -> Outcome {
+    if content.compostable.contains(&item) && matches!(content.compost_stage(block), Some(0..=2)) {
+        Outcome::Cancel
+    } else {
+        Outcome::Continue
+    }
+}
+
+/// CLIENT prediction mirror of [`on_interact`]'s gate.
+pub fn predict_interact(content: &Content, block: BlockId) -> Outcome {
+    if content.compost_stage(block) == Some(3) {
+        Outcome::Cancel
+    } else {
+        Outcome::Continue
+    }
+}
+
 fn barrel_top(pos: [i32; 3]) -> [f32; 3] {
     [
         pos[0] as f32 + 0.5,

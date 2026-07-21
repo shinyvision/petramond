@@ -729,7 +729,7 @@ impl Game {
                     block: h.block,
                     normal: h.normal,
                 });
-                let place = self.try_predict_place_ghost(input.movement.sneak);
+                let (mod_claimed, place) = self.predict_use_click(input.movement.sneak);
                 let request_id = match place {
                     PlacePrediction::Predicted(id) | PlacePrediction::TrackOnly(id) => Some(id),
                     _ => None,
@@ -742,7 +742,8 @@ impl Game {
                 // stays silent locally; the verdict rides the wire so a
                 // server-side surprise (a mod-consumed use/interact) echoes
                 // the jab back through `SelfEvents::used_unpredicted`.
-                let jabbed = !matches!(place, PlacePrediction::No)
+                let jabbed = mod_claimed
+                    || !matches!(place, PlacePrediction::No)
                     || self.use_click_predicts_effect(input, use_mob);
                 self.local_hand_jab = jabbed;
                 self.frame_messages

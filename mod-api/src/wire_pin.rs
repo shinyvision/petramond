@@ -284,7 +284,7 @@ fn samples() -> Samples {
     }]));
     s.pin("HostRet::Player", &HostRet::Player(PlayerSnapshot {
         pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, 0.0], yaw: 0.5, pitch: 0.25,
-        health: 20, on_ground: true, spectator: false,
+        health: 20, on_ground: true, spectator: false, sneak: true, held: Some(ItemId(2)), held_count: 3,
     }));
     s.pin("HostRet::Bytes", &HostRet::Bytes(Some(vec![1])));
     s.pin("HostRet::MobTag", &HostRet::MobTag(MobTagLookup::Value(MobTagValue::Bool(true))));
@@ -334,7 +334,7 @@ fn samples() -> Samples {
         id: PlayerId(1),
         state: PlayerSnapshot {
             pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, 0.0], yaw: 0.5, pitch: 0.25,
-            health: 20, on_ground: true, spectator: false,
+            health: 20, on_ground: true, spectator: false, sneak: false, held: None, held_count: 0,
         },
     }]));
     s.pin("HostRet::EnvParams", &HostRet::EnvParams(vec![None, Some([1.0, 2.0, 3.0, 4.0])]));
@@ -431,8 +431,8 @@ fn samples() -> Samples {
     s.pin("EventPayload::BlockBreakPre", &EventPayload::BlockBreakPre {
         pos: [1, 2, 3], block: BlockId(1), harvested: true,
     });
-    s.pin("EventPayload::BlockInteract", &EventPayload::BlockInteract {
-        pos: [1, 2, 3], block: BlockId(1), item: Some(ItemId(2)),
+    s.pin("EventPayload::InteractAttempt", &EventPayload::InteractAttempt {
+        block: Some([1, 2, 3]), face: Some([0, 1, 0]), mob: Some(7), player: PlayerId(0),
     });
     s.pin("EventPayload::ItemUsePre", &EventPayload::ItemUsePre {
         item: ItemId(1), target: Some([1, 2, 3]),
@@ -479,9 +479,6 @@ fn samples() -> Samples {
     });
     s.pin("EventPayload::SectionGenerated", &EventPayload::SectionGenerated { pos: [1, 2, 3] });
     s.pin("EventPayload::SectionLoaded", &EventPayload::SectionLoaded { pos: [1, 2, 3] });
-    s.pin("EventPayload::MobInteract", &EventPayload::MobInteract {
-        id: 7, key: "m:k".into(), player_id: PlayerId(0),
-    });
     s.pin("EventPayload::PlayerDismounted", &EventPayload::PlayerDismounted {
         player_id: PlayerId(0), mob_id: 7,
     });
@@ -505,12 +502,12 @@ fn samples() -> Samples {
         WorldgenStage::Vegetation, WorldgenStage::Trees,
     ]);
     s.pin("EventKind::*", &vec![
-        EventKind::BlockPlacePre, EventKind::BlockBreakPre, EventKind::BlockInteract,
+        EventKind::BlockPlacePre, EventKind::BlockBreakPre, EventKind::InteractAttempt,
         EventKind::ItemUsePre, EventKind::MobDamagePre, EventKind::PlayerDamagePre,
         EventKind::BlockPlaced, EventKind::BlockBroken, EventKind::ItemUsed,
         EventKind::MobDied, EventKind::MobSpawned, EventKind::PlayerDamaged,
         EventKind::PlayerDied, EventKind::ContainerOpened, EventKind::ContainerClosed,
-        EventKind::SectionGenerated, EventKind::SectionLoaded, EventKind::MobInteract,
+        EventKind::SectionGenerated, EventKind::SectionLoaded,
         EventKind::PlayerDismounted, EventKind::MobTagAdded, EventKind::MobTagRemoved,
     ]);
     s.pin("DamageSource::*", &vec![
@@ -701,7 +698,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Blocks", "0502000102"),
     ("HostRet::Light", "0601010203"),
     ("HostRet::Mobs", "070101036d3a6b020000803f000000400000404000008040050000003f0000803f0000000000000040"),
-    ("HostRet::Player", "080000803f00000040000040400000000000000000000000000000003f0000803e280100"),
+    ("HostRet::Player", "080000803f00000040000040400000000000000000000000000000003f0000803e28010001010203"),
     ("HostRet::Bytes", "09010101"),
     ("HostRet::MobTag", "0a020001"),
     ("HostRet::GuiValue", "0b01000000803f"),
@@ -721,7 +718,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobAnimState", "19010000c03f0000403f0100000040"),
     ("HostRet::MaybeByte", "1a0104"),
     ("HostRet::MaybeI32", "1b010d"),
-    ("HostRet::Players", "1c01010000803f00000040000040400000000000000000000000000000003f0000803e280100"),
+    ("HostRet::Players", "1c01010000803f00000040000040400000000000000000000000000000003f0000803e280100000000"),
     ("HostRet::EnvParams", "1d0200010000803f000000400000404000008040"),
     ("HostRet::BlockList", "1e020109"),
     ("HostRet::ItemList", "1f020109"),
@@ -754,7 +751,7 @@ const PINS: &[(&str, &str)] = &[
     ("GuestRet::AiDecision", "060101020406010000003f0000803e010101000000400000404001036d3a6b010001"),
     ("EventPayload::BlockPlacePre", "000204060100"),
     ("EventPayload::BlockBreakPre", "010204060101"),
-    ("EventPayload::BlockInteract", "02020406010102"),
+    ("EventPayload::InteractAttempt", "020102040601000200010700"),
     ("EventPayload::ItemUsePre", "030101020406"),
     ("EventPayload::MobDamagePre", "0407020000404000010000803f00000040000040400600010000003f020000803f0000003f030004050a"),
     ("EventPayload::PlayerDamagePre", "0502010100"),
@@ -769,15 +766,14 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::ContainerClosed", "0e05036d3a6700"),
     ("EventPayload::SectionGenerated", "0f020406"),
     ("EventPayload::SectionLoaded", "10020406"),
-    ("EventPayload::MobInteract", "1107036d3a6b00"),
-    ("EventPayload::PlayerDismounted", "120007"),
-    ("EventPayload::MobTagAdded", "130702036d3a6b0105"),
-    ("EventPayload::MobTagRemoved", "140702036d3a6b0105"),
+    ("EventPayload::PlayerDismounted", "110007"),
+    ("EventPayload::MobTagAdded", "120702036d3a6b0105"),
+    ("EventPayload::MobTagRemoved", "130702036d3a6b0105"),
     ("Outcome::*", "020001"),
     ("Stage::*", "0c000102030405060708090a0b"),
     ("AttachSide::*", "020001"),
     ("WorldgenStage::*", "050001020304"),
-    ("EventKind::*", "15000102030405060708090a0b0c0d0e0f1011121314"),
+    ("EventKind::*", "14000102030405060708090a0b0c0d0e0f10111213"),
     ("DamageSource::*", "0400010102036d3a6b03016d"),
     ("ContainerKind::*", "06000102030405036d3a67"),
     ("Facing::*", "0400010203"),

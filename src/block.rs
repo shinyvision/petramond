@@ -23,6 +23,7 @@ pub(crate) use definition::BlockMaterial;
 pub use definition::ColorRamp;
 pub use definition::{ParticleEmitter, ParticleEmitterAnchor};
 pub use interaction::BlockInteraction;
+pub(crate) use interaction::builtin_claims_click;
 pub(crate) use load::validate_particle_emitter;
 pub(crate) use shape::BlockLightShape;
 pub use shape::{Aabb, RenderShape, CROP_PLANE_DROP, CROP_PLANE_INSET};

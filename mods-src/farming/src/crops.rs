@@ -85,6 +85,49 @@ pub fn on_place_pre(content: &Content, pos: [i32; 3], block: BlockId) -> Outcome
     }
 }
 
+/// CLIENT prediction mirror of [`on_place_pre`]'s gate (minus the light
+/// veto — no client light read; a dark-cave planting over-jabs).
+pub fn predict_place_pre(content: &Content, pos: [i32; 3], block: BlockId) -> Outcome {
+    let Some((_, stage)) = content.crop_stage(block) else {
+        return Outcome::Continue;
+    };
+    if stage != 0 {
+        return Outcome::Cancel;
+    }
+    match crate::predict::peek([pos[0], pos[1] - 1, pos[2]]) {
+        Some(b) if content.is_farmland(b) => Outcome::Continue,
+        Some(_) => Outcome::Cancel,
+        // Frozen state (unloaded / not stream-final): never predict a veto
+        // on state we cannot inspect — fall back to the optimistic jab.
+        None => Outcome::Continue,
+    }
+}
+
+/// CLIENT prediction mirror of [`on_interact`]'s claim gate: only a MATURE
+/// crop claims (the harvest); an immature one — or a sneak click holding a
+/// placeable block (deferred to placement) — is inspected and passed.
+pub fn predict_interact(content: &Content, block: BlockId, actor: &PlayerSnapshot) -> Outcome {
+    match content.crop_stage(block) {
+        Some((_, 3)) if !(actor.sneak && held_places_a_block(actor.held)) => Outcome::Cancel,
+        _ => Outcome::Continue,
+    }
+}
+
+/// Whether the held item places a block (its row carries a `block` link) —
+/// the gate the sneak-defer rule reads. Registry-only, legal on any
+/// instance; an unresolvable id reads as "not a block".
+fn held_places_a_block(held: Option<ItemId>) -> bool {
+    let Some(id) = held else {
+        return false;
+    };
+    item_names(vec![id])
+        .into_iter()
+        .next()
+        .flatten()
+        .and_then(|name| item_info(&name))
+        .is_some_and(|info| info.block.is_some())
+}
+
 /// Whether the crop cell is too dark to live (see [`MIN_GROW_LIGHT`]). Raw
 /// light, deliberately not day/night-scaled — an open-sky field keeps its
 /// skylight at night; darkness means burial or an unlit cave. An unresolved
@@ -101,31 +144,36 @@ pub fn on_placed(content: &Content, growth: &mut Growth, pos: [i32; 3], block: B
     }
 }
 
-/// Right-click interaction. A MATURE cultivated crop harvests with any held
-/// item or empty hand: produce pops as nearby item entities, the crop resets
-/// to its stage-0 block in the same tick (the retained plant is one replanted
-/// seed/root), and the next growth attempt is armed. An IMMATURE cultivated
-/// crop consumes the click without acting, so aiming at it can never plant
-/// another crop or begin eating the held carrot — EXCEPT a fertilizer click,
-/// which falls through to the fertilizer handler (it feeds the soil below,
-/// never the plant). Wild crops are not ours to handle here — they never
-/// right-click harvest.
+/// Right-click interaction. A MATURE cultivated crop harvests: produce pops
+/// as nearby item entities, the crop resets to its stage-0 block in the same
+/// tick (the retained plant is one replanted seed/root), and the next growth
+/// attempt is armed. Two deliberate PASSES (act-based consumption — this
+/// consumer claims only what it harvests):
+///
+/// - An IMMATURE crop is only INSPECTED — checking maturity is free — so
+///   its click falls through (fertilizer use, eating the held carrot,
+///   placement against the face) and, if nothing acts, to no jab at all.
+/// - A SNEAK click while holding a placeable block defers to the placement
+///   consumer: sneak-to-build works against a ripe field. Sneaking with an
+///   empty hand (or a non-block item) harvests like any other click.
+///
+/// Wild crops are not ours to handle here — they never right-click harvest.
 pub fn on_interact(
     content: &Content,
     growth: &mut Growth,
     pos: [i32; 3],
     block: BlockId,
-    item: Option<ItemId>,
+    held: Option<ItemId>,
+    sneaking: bool,
 ) -> Outcome {
     let Some((def, stage)) = content.crop_stage(block) else {
         return Outcome::Continue;
     };
     if stage < 3 {
-        return if item == Some(content.fertilizer) {
-            Outcome::Continue
-        } else {
-            Outcome::Cancel
-        };
+        return Outcome::Continue;
+    }
+    if sneaking && held_places_a_block(held) {
+        return Outcome::Continue;
     }
     let center = [
         pos[0] as f32 + 0.5,

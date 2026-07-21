@@ -19,6 +19,7 @@ pub(crate) mod entities;
 pub(crate) mod game;
 pub(crate) mod handle;
 pub(crate) mod health;
+pub(crate) mod interact;
 pub(crate) mod item_use;
 pub(crate) mod menu;
 pub(crate) mod mob_target;

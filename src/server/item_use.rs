@@ -7,7 +7,7 @@ use super::game::ServerGame;
 use super::placement::facing_from_forward;
 use crate::block::Block;
 use crate::entity::DroppedItem;
-use crate::events::{BlockPlacePre, ItemUsePre, MobInteract, Outcome, PostEvent};
+use crate::events::{BlockPlacePre, ItemUsePre, Outcome, PostEvent};
 use crate::game::tick::TickEvents;
 use crate::item::{ItemStack, ItemType, ItemUse, UseRay};
 use crate::mathh::Vec3;
@@ -208,47 +208,6 @@ impl ServerGame {
             self.bus.emit(PostEvent::ItemUsed { item });
         }
         used
-    }
-
-    /// Dispatch `mob_interact` for a use click whose crosshair target was a
-    /// live mob — mods see the interaction before any engine mob use
-    /// (shears), mirroring how `block_interact` precedes engine block
-    /// capabilities. Returns `true` when a handler consumed the click.
-    /// `target` is only the stable mob id the `UseClick` claimed. It must
-    /// resolve through the authoritative view-ray validator before the event
-    /// can observe it; a forged, vanished, dead, or occluded target is a
-    /// no-op.
-    pub(crate) fn mob_interact(
-        &mut self,
-        s: usize,
-        target: Option<u64>,
-        events: &mut TickEvents,
-    ) -> bool {
-        let Some(idx) = self.authoritative_mob_target(s, target) else {
-            return false;
-        };
-        let inst = &self.world.mobs().instances()[idx];
-        let mut pre = MobInteract {
-            id: inst.id(),
-            kind: inst.kind,
-            player: self.sessions[s].id,
-        };
-        let Self {
-            world,
-            sessions,
-            bus,
-            ..
-        } = self;
-        // The interacting session acts; the sessions view rides the dispatch.
-        Self::with_sessions_view(sessions, s, |sess| {
-            bus.mob_interact(
-                world,
-                &mut sess.player,
-                &mut sess.gui_state,
-                events,
-                &mut pre,
-            ) == Outcome::Cancel
-        })
     }
 
     /// Shear the targeted mob with the held shears: the mob's coat comes off (and

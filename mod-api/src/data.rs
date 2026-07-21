@@ -174,6 +174,22 @@ pub struct PlayerSnapshot {
     pub health: i32,
     pub on_ground: bool,
     pub spectator: bool,
+    /// Whether the player is sneaking (held intent, gated on gameplay focus).
+    /// Part of the snapshot so anything consuming an
+    /// [`EventPayload::InteractAttempt`] gates its own claim on the actor's
+    /// state instead of reconstructing input from the roster.
+    ///
+    /// [`EventPayload::InteractAttempt`]: crate::EventPayload::InteractAttempt
+    pub sneak: bool,
+    /// The selected hotbar stack's item (`None` = empty hand); bridge with
+    /// [`HostCall::ItemNames`] / [`HostCall::ResolveItem`].
+    ///
+    /// [`HostCall::ItemNames`]: crate::HostCall::ItemNames
+    /// [`HostCall::ResolveItem`]: crate::HostCall::ResolveItem
+    pub held: Option<ItemId>,
+    /// The selected stack's count (0 = empty hand) — lets a consumer gate an
+    /// atomic multi-item spend (the trough's three-wheat fill) exactly.
+    pub held_count: u8,
 }
 
 /// One entry of [`HostCall::Players`]: a connected player's session id plus

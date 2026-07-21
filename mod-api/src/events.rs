@@ -23,7 +23,7 @@ pub enum Outcome {
 pub enum EventKind {
     BlockPlacePre,
     BlockBreakPre,
-    BlockInteract,
+    InteractAttempt,
     ItemUsePre,
     MobDamagePre,
     PlayerDamagePre,
@@ -38,7 +38,6 @@ pub enum EventKind {
     ContainerClosed,
     SectionGenerated,
     SectionLoaded,
-    MobInteract,
     PlayerDismounted,
     MobTagAdded,
     MobTagRemoved,
@@ -172,12 +171,34 @@ pub enum EventPayload {
         block: BlockId,
         harvested: bool,
     },
-    BlockInteract {
-        pos: [i32; 3],
-        block: BlockId,
-        /// The acting player's held item (`None` = empty hand), so interact
-        /// behavior may key on what the click carries.
-        item: Option<ItemId>,
+    /// PRE — the player's use click as its most PRIMITIVE gesture: what the
+    /// crosshair held (a block cell + face, a live mob), nothing more.
+    /// Cancel = the attempt was consumed; the block's built-in capability,
+    /// the held item's own use, and placement are all skipped. Handlers gate
+    /// their own claim by querying the world ([`HostCall::GetBlock`]) and the
+    /// acting player's snapshot ([`HostCall::PlayerState`]: held item,
+    /// sneak) — attempt context is never pre-interpreted onto the event.
+    ///
+    /// [`HostCall::GetBlock`]: crate::HostCall::GetBlock
+    /// [`HostCall::PlayerState`]: crate::HostCall::PlayerState
+    InteractAttempt {
+        /// The clicked block cell, if the crosshair held a block.
+        block: Option<[i32; 3]>,
+        /// The clicked face's normal (back toward the eye; zero when the eye
+        /// started inside the cell). `Some` exactly when `block` is.
+        face: Option<[i32; 3]>,
+        /// The clicked mob's stable session id, if the crosshair held a live
+        /// mob (authoritatively validated — a forged, vanished, dead, or
+        /// occluded claim never appears here). THE mob address for calls and
+        /// cross-tick mod state; species via [`HostCall::MobInfo`].
+        ///
+        /// [`HostCall::MobInfo`]: crate::HostCall::MobInfo
+        mob: Option<u64>,
+        /// The interacting session's player id (for per-player calls such as
+        /// [`HostCall::MobMount`]).
+        ///
+        /// [`HostCall::MobMount`]: crate::HostCall::MobMount
+        player: PlayerId,
     },
     ItemUsePre {
         item: ItemId,
@@ -258,20 +279,6 @@ pub enum EventPayload {
     SectionLoaded {
         pos: [i32; 3],
     },
-    /// PRE — a use click whose crosshair target was a live mob, dispatched
-    /// before any engine mob use (shears). Cancel = the click was consumed:
-    /// this is how a mod makes a mob interactable (mounting a vehicle,
-    /// trading). The stable `id` is the clicked mob's address for calls and
-    /// cross-tick mod state alike.
-    MobInteract {
-        /// Stable mob session id.
-        id: u64,
-        /// Species key (`"vehicles:boat"`) — self-describing, no resolver
-        /// needed.
-        key: String,
-        /// The interacting session's player id.
-        player_id: PlayerId,
-    },
     /// POST — a player left a mob seat, however it happened (the engine's
     /// sneak gesture, the mount or rider dying, the rider leaving or turning
     /// spectator, or a mod's [`HostCall::MobDismount`]). The mounting mod
@@ -322,7 +329,7 @@ impl EventPayload {
         match self {
             EventPayload::BlockPlacePre { .. } => EventKind::BlockPlacePre,
             EventPayload::BlockBreakPre { .. } => EventKind::BlockBreakPre,
-            EventPayload::BlockInteract { .. } => EventKind::BlockInteract,
+            EventPayload::InteractAttempt { .. } => EventKind::InteractAttempt,
             EventPayload::ItemUsePre { .. } => EventKind::ItemUsePre,
             EventPayload::MobDamagePre { .. } => EventKind::MobDamagePre,
             EventPayload::PlayerDamagePre { .. } => EventKind::PlayerDamagePre,
@@ -337,7 +344,6 @@ impl EventPayload {
             EventPayload::ContainerClosed { .. } => EventKind::ContainerClosed,
             EventPayload::SectionGenerated { .. } => EventKind::SectionGenerated,
             EventPayload::SectionLoaded { .. } => EventKind::SectionLoaded,
-            EventPayload::MobInteract { .. } => EventKind::MobInteract,
             EventPayload::PlayerDismounted { .. } => EventKind::PlayerDismounted,
             EventPayload::MobTagAdded { .. } => EventKind::MobTagAdded,
             EventPayload::MobTagRemoved { .. } => EventKind::MobTagRemoved,

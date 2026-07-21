@@ -42,6 +42,7 @@ mod forage;
 mod growth;
 mod husbandry;
 mod kv_counter;
+mod predict;
 mod spread;
 mod tilling;
 mod trough;
@@ -66,7 +67,7 @@ fn chain(first: Outcome, next: impl FnOnce() -> Outcome) -> Outcome {
 const ON_ITEM_USE_PRE: u32 = 1;
 const ON_BLOCK_PLACE_PRE: u32 = 2;
 const ON_BLOCK_PLACED: u32 = 3;
-const ON_BLOCK_INTERACT: u32 = 4;
+const ON_INTERACT_ATTEMPT: u32 = 4;
 const ON_PLAYER_DAMAGE_PRE: u32 = 5;
 const ON_BLOCK_BROKEN: u32 = 6;
 const ON_MOB_TAG_REMOVED: u32 = 7;
@@ -92,6 +93,9 @@ struct Farming {
     /// resolution failed (a broken install) — the mod then stays idle instead
     /// of trapping.
     content: Option<Content>,
+    /// Running as the CLIENT instance: this side only PREDICTS (the same pre
+    /// events, answered against the replica — see [`predict`]).
+    client: bool,
     /// Armed growth attempts (crop cell → due tick). Session-scoped by
     /// design: lost scheduling re-arms from random ticks (see [`crops`]).
     growth: Growth,
@@ -105,10 +109,21 @@ impl Mod for Farming {
         };
         self.content = Some(content);
 
+        if runtime_side() == RuntimeSide::Client {
+            // The client instance registers the same pre kinds as PREDICTORS
+            // (dispatched speculatively by the engine's jab/ghost prediction);
+            // no tick systems, no worldgen, no AI on this side.
+            self.client = true;
+            register_event_handler(EventKind::InteractAttempt, 0, ON_INTERACT_ATTEMPT);
+            register_event_handler(EventKind::ItemUsePre, 0, ON_ITEM_USE_PRE);
+            register_event_handler(EventKind::BlockPlacePre, 0, ON_BLOCK_PLACE_PRE);
+            return;
+        }
+
         register_event_handler(EventKind::ItemUsePre, 0, ON_ITEM_USE_PRE);
         register_event_handler(EventKind::BlockPlacePre, 0, ON_BLOCK_PLACE_PRE);
         register_event_handler(EventKind::BlockPlaced, 0, ON_BLOCK_PLACED);
-        register_event_handler(EventKind::BlockInteract, 0, ON_BLOCK_INTERACT);
+        register_event_handler(EventKind::InteractAttempt, 0, ON_INTERACT_ATTEMPT);
         register_event_handler(EventKind::PlayerDamagePre, 0, ON_PLAYER_DAMAGE_PRE);
         register_event_handler(EventKind::BlockBroken, 0, ON_BLOCK_BROKEN);
         register_event_handler(EventKind::MobTagRemoved, 0, ON_MOB_TAG_REMOVED);
@@ -136,8 +151,26 @@ impl Mod for Farming {
         let Some(content) = &self.content else {
             return Outcome::Continue;
         };
+        if self.client {
+            // Prediction dispatch: same events, gate-only mirrors.
+            return match (handler_id, &*payload) {
+                (
+                    ON_INTERACT_ATTEMPT,
+                    EventPayload::InteractAttempt {
+                        block: Some(pos), ..
+                    },
+                ) => predict::on_interact_attempt(content, *pos),
+                (ON_ITEM_USE_PRE, EventPayload::ItemUsePre { item, target }) => {
+                    predict::on_item_use(content, *item, *target)
+                }
+                (ON_BLOCK_PLACE_PRE, EventPayload::BlockPlacePre { pos, block, .. }) => {
+                    predict::on_place_pre(content, *pos, *block)
+                }
+                _ => Outcome::Continue,
+            };
+        }
         match (handler_id, &mut *payload) {
-            (ON_ITEM_USE_PRE, EventPayload::ItemUsePre { item, target }) => {
+            (ON_ITEM_USE_PRE, EventPayload::ItemUsePre { item, target, .. }) => {
                 // The hoe first (it consumes eligible clicks), then the
                 // fertilizer targets, then the compostable barrel fill, then
                 // the water trough bucket swap — each falls through quietly
@@ -156,15 +189,28 @@ impl Mod for Farming {
                 farmland::on_block_placed_above(content, *pos, *block);
                 Outcome::Continue
             }
-            (ON_BLOCK_INTERACT, EventPayload::BlockInteract { pos, block, item }) => {
+            (
+                ON_INTERACT_ATTEMPT,
+                EventPayload::InteractAttempt {
+                    block: Some(pos), ..
+                },
+            ) => {
+                // The attempt is the bare gesture: consumers read the world
+                // and the acting player's snapshot themselves. A frozen cell
+                // (`None`) passes — nothing here may claim a click it cannot
+                // inspect.
+                let Some(block) = get_block(*pos) else {
+                    return Outcome::Continue;
+                };
+                let actor = player_state();
                 // Crops first, then the compost collect, then the trough's
                 // sneak take-out — each falls through on Continue.
                 let first = chain(
-                    crops::on_interact(content, &mut self.growth, *pos, *block, *item),
-                    || compost::on_interact(content, *pos, *block),
+                    crops::on_interact(content, &mut self.growth, *pos, block, actor.held, actor.sneak),
+                    || compost::on_interact(content, *pos, block),
                 );
                 chain(first, || {
-                    trough::on_interact(content, *pos, *block, *item)
+                    trough::on_interact(content, *pos, block, actor.held, actor.sneak)
                 })
             }
             (ON_PLAYER_DAMAGE_PRE, EventPayload::PlayerDamagePre { amount, .. }) => {

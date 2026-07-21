@@ -76,10 +76,18 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::ClientLoopSet { .. }
         | HostCall::ClientMoodSet { .. }
         | HostCall::ClientBlocksAt { .. } => true,
-        // Simulation, registration, and registry surfaces: server-side only.
+        // The prediction seam (2026-07-21): a client instance may REGISTER
+        // event handlers — the client runtime keeps only the predictable PRE
+        // kinds (interact_attempt / block_place_pre / item_use_pre) as
+        // PREDICTORS, dispatched speculatively against the replica so a mod
+        // consumer is exactly as predictable as an engine one (jab/ghost
+        // parity). `PlayerState` answers the ACTOR SNAPSHOT published for
+        // the prediction dispatch (see `scope::enter_actor`) — the same
+        // query-the-snapshot doctrine as the server side.
+        HostCall::RegisterEventHandler { .. } | HostCall::PlayerState => true,
+        // Simulation and registry surfaces: server-side only.
         HostCall::CurrentTick
         | HostCall::RegisterTickSystem { .. }
-        | HostCall::RegisterEventHandler { .. }
         | HostCall::GetBlock { .. }
         | HostCall::GetBlocks { .. }
         | HostCall::SetBlock { .. }
@@ -92,7 +100,6 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::DamageMob { .. }
         | HostCall::DespawnMob { .. }
         | HostCall::SpawnItem { .. }
-        | HostCall::PlayerState
         | HostCall::DamagePlayer { .. }
         | HostCall::ApplyKnockback { .. }
         | HostCall::GiveItem { .. }

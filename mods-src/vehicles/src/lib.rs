@@ -44,7 +44,7 @@ use mod_sdk::*;
 
 const TICK_DRIVE: u32 = 1;
 const ON_ITEM_USE: u32 = 1;
-const ON_MOB_INTERACT: u32 = 2;
+const ON_INTERACT_ATTEMPT: u32 = 2;
 const ON_DISMOUNTED: u32 = 3;
 
 const BOAT_KEY: &str = "vehicles:boat";
@@ -129,7 +129,7 @@ impl Mod for Vehicles {
         self.boat_item = resolve_item_logged(BOAT_KEY);
         self.water = resolve_block_logged("petramond:water");
         register_event_handler(EventKind::ItemUsePre, 0, ON_ITEM_USE);
-        register_event_handler(EventKind::MobInteract, 0, ON_MOB_INTERACT);
+        register_event_handler(EventKind::InteractAttempt, 0, ON_INTERACT_ATTEMPT);
         register_event_handler(EventKind::PlayerDismounted, 0, ON_DISMOUNTED);
         register_tick_system(Stage::Mobs, AttachSide::Before, 0, TICK_DRIVE);
         log("initialized: boat placement + boarding + drive");
@@ -137,22 +137,30 @@ impl Mod for Vehicles {
 
     fn handle_event(&mut self, handler_id: u32, payload: &mut EventPayload) -> Outcome {
         match (handler_id, &*payload) {
-            (ON_ITEM_USE, EventPayload::ItemUsePre { item, target }) => {
+            (ON_ITEM_USE, EventPayload::ItemUsePre { item, target, .. }) => {
                 self.on_boat_item_use(*item, *target)
             }
             (
-                ON_MOB_INTERACT,
-                EventPayload::MobInteract {
-                    id, key, player_id, ..
+                ON_INTERACT_ATTEMPT,
+                EventPayload::InteractAttempt {
+                    mob: Some(id),
+                    player,
+                    ..
                 },
             ) => {
-                if key != BOAT_KEY {
+                // Self-gate: only a boat hull claims the attempt — and only
+                // when a seat was actually taken (act-based claim: a full
+                // boat, or an engine-refused mount, consumed nothing; a
+                // targeted mob blanks the block look anyway, so nothing
+                // later in the chain acts either).
+                if mob_info(*id).is_none_or(|m| m.key != BOAT_KEY) {
                     return Outcome::Continue;
                 }
-                self.board(*id, *player_id);
-                // A click on a boat never falls through to placement — full
-                // boats included.
-                Outcome::Cancel
+                if self.board(*id, *player) {
+                    Outcome::Cancel
+                } else {
+                    Outcome::Continue
+                }
             }
             (ON_DISMOUNTED, EventPayload::PlayerDismounted { player_id, mob_id }) => {
                 if let Some(boat) = self.boats.get_mut(mob_id) {
@@ -207,16 +215,17 @@ impl Vehicles {
 
     /// Seat a clicking player in the first free seat and record boarding
     /// order (the first rider steers).
-    fn board(&mut self, mob_id: u64, player_id: PlayerId) {
+    /// Returns whether the player actually took a seat (the act-based claim).
+    fn board(&mut self, mob_id: u64, player_id: PlayerId) -> bool {
         let Some(seats) = mob_riders(mob_id) else {
-            return;
+            return false;
         };
         let Some(seat) = (0..seats.capacity).find(|s| !seats.riders.iter().any(|r| r.seat == *s))
         else {
-            return; // full
+            return false; // full
         };
         if !mob_mount(mob_id, player_id, seat) {
-            return; // already mounted / boat gone — the engine said no
+            return false; // already mounted / boat gone — the engine said no
         }
         let boat = self.boats.entry(mob_id).or_insert_with(|| {
             // Seed the heading from the live hull so a reloaded (or drifted)
@@ -232,6 +241,7 @@ impl Vehicles {
             Boat::new(yaw)
         });
         boat.riders.push(player_id);
+        true
     }
 
     /// One momentum step per live boat: read the driver's input, integrate

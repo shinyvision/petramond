@@ -55,7 +55,7 @@ use crate::sched::{AttachSide, Stage, WorldgenStage};
 /// Every call or payload field that names a player carries the
 /// [`PlayerId`] newtype EXPLICITLY ([`HostCall::PlayerInput`],
 /// [`HostCall::MobMount`], [`HostCall::ChatSend`] targets, event payloads
-/// like `MobInteract`/`PlayerDismounted`). This is the frozen rule for NEW
+/// like `InteractAttempt`/`PlayerDismounted`). This is the frozen rule for NEW
 /// surface: a player-touching call takes a `player_id` — never a bare `u8`,
 /// and never a new implicit-player call. The older single-player-era calls
 /// ([`HostCall::PlayerState`], [`HostCall::DamagePlayer`],

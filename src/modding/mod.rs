@@ -609,9 +609,9 @@ fn wire_event_handler(
                 }
             })
         }
-        EventKind::BlockInteract => {
-            bus.on_block_interact(priority, move |ctx, ev| {
-                match call_event(&inst, ctx, handler_id, convert::block_interact(ev)) {
+        EventKind::InteractAttempt => {
+            bus.on_interact_attempt(priority, move |ctx, ev| {
+                match call_event(&inst, ctx, handler_id, convert::interact_attempt(ev)) {
                     Some((outcome, _)) => convert::outcome(outcome),
                     None => Outcome::Continue,
                 }
@@ -619,12 +619,6 @@ fn wire_event_handler(
         }
         EventKind::ItemUsePre => bus.on_item_use_pre(priority, move |ctx, ev| {
             match call_event(&inst, ctx, handler_id, convert::item_use_pre(ev)) {
-                Some((outcome, _)) => convert::outcome(outcome),
-                None => Outcome::Continue,
-            }
-        }),
-        EventKind::MobInteract => bus.on_mob_interact(priority, move |ctx, ev| {
-            match call_event(&inst, ctx, handler_id, convert::mob_interact(ev)) {
                 Some((outcome, _)) => convert::outcome(outcome),
                 None => Outcome::Continue,
             }

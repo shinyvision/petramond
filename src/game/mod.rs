@@ -983,7 +983,9 @@ impl Game {
             normal,
             outline: crate::mathh::SelectionShape::full_block(block),
         });
-        self.try_predict_place_ghost(sneak)
+        // The full click composition (mod interact predictors first), so
+        // tests exercise the same walk production clicks run.
+        self.predict_use_click(sneak).1
     }
 
     /// Test injection: run the full local break prediction at `pos`.

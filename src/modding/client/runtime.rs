@@ -9,7 +9,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use mod_api::{ClientFrameData, ClientUiEvent, GuestCall, GuestRet, RuntimeSide};
+use mod_api::{ClientFrameData, ClientUiEvent, EventKind, EventPayload, GuestCall, GuestRet, Outcome, PlayerSnapshot, RuntimeSide};
 
 use crate::world::World;
 
@@ -19,6 +19,24 @@ use crate::modding::instance::ModInstance;
 struct ClientMod {
     id: String,
     instance: ModInstance,
+}
+
+/// One client-registered PREDICTOR: a pre-event handler the mod asked for
+/// during `mod_init`, dispatched speculatively against the replica (see
+/// [`ClientModRuntime::predict_claim`]).
+struct Predictor {
+    kind: EventKind,
+    mod_index: usize,
+    handler_id: u32,
+}
+
+/// The pre kinds a client instance may predict. Anything else registered on
+/// a client instance is a mistake — logged and ignored, never dispatched.
+fn predictable(kind: EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::InteractAttempt | EventKind::BlockPlacePre | EventKind::ItemUsePre
+    )
 }
 
 #[derive(Clone)]
@@ -53,6 +71,9 @@ pub(crate) struct ModKeyAction {
 
 pub(crate) struct ClientModRuntime {
     mods: Vec<ClientMod>,
+    /// Prediction handlers in dispatch order: `(priority, load order,
+    /// registration order)` — the same ordering contract as the server bus.
+    predictors: Vec<Predictor>,
     actions: Vec<ModKeyAction>,
     overlays: Vec<super::state::ClientOverlayRegistration>,
     /// Currently-down action `full_id`s — the edge filter for `ClientKey`
@@ -68,6 +89,7 @@ impl ClientModRuntime {
     /// server does not run therefore never activates.
     pub(crate) fn load(world_seed: u32, session_key: &str, enabled: &BTreeSet<String>) -> Self {
         let mut mods = Vec::new();
+        let mut predictor_rows: Vec<(i32, Predictor)> = Vec::new();
         let session = session_client_mods(crate::assets::packs(), enabled);
         crate::modding::host::module_cache::prewarm(session.iter().map(|(_, path)| path.clone()));
         for (id, path) in session {
@@ -96,9 +118,28 @@ impl ClientModRuntime {
             if instance.disabled() {
                 continue;
             }
-            // Client registrations live in ClientStoreData; simulation
-            // registrations are irrelevant to this isolated instance.
-            instance.take_registrations();
+            // Client registrations live in ClientStoreData; of the
+            // simulation registrations only PREDICTOR event handlers are
+            // meaningful here — the rest are irrelevant to this isolated
+            // instance (a dual-side wasm branches its init on RuntimeSide).
+            let registrations = instance.take_registrations();
+            let mod_index = mods.len();
+            for reg in registrations {
+                if let crate::modding::host::Registration::EventHandler {
+                    event,
+                    priority,
+                    handler_id,
+                } = reg
+                {
+                    if predictable(event) {
+                        predictor_rows.push((priority, Predictor { kind: event, mod_index, handler_id }));
+                    } else {
+                        log::warn!(
+                            "client mod '{id}': event kind {event:?} is not predictable on a client instance; handler ignored"
+                        );
+                    }
+                }
+            }
             mods.push(ClientMod { id, instance });
         }
 
@@ -152,12 +193,60 @@ impl ClientModRuntime {
                 });
             }
         }
+        // Stable sort: ties keep (load order, registration order).
+        predictor_rows.sort_by_key(|(priority, _)| *priority);
+        let predictors = predictor_rows.into_iter().map(|(_, p)| p).collect();
+
         Self {
             mods,
+            predictors,
             actions,
             overlays,
             pressed: HashSet::new(),
         }
+    }
+
+    /// Speculatively dispatch a predicted pre event to every client
+    /// predictor registered for its kind, in bus order, with `actor`
+    /// published as the `PlayerState` snapshot and the REPLICA as the world
+    /// scope. Returns whether any predictor answered Cancel — "I predict I
+    /// claim (interact/use) or veto (place_pre) this attempt". Prediction is
+    /// presentation-only: handlers must not mutate (mutating host calls are
+    /// capability-blocked on client instances anyway).
+    pub(crate) fn predict_claim(
+        &mut self,
+        world: &World,
+        actor: &PlayerSnapshot,
+        payload: &EventPayload,
+    ) -> bool {
+        let kind = payload.kind();
+        for p in &self.predictors {
+            if p.kind != kind {
+                continue;
+            }
+            let loaded = &mut self.mods[p.mod_index];
+            if loaded.instance.disabled() {
+                continue;
+            }
+            let call = GuestCall::HandleEvent {
+                id: p.handler_id,
+                payload: payload.clone(),
+            };
+            let ret = super::scope::enter_actor(actor.clone(), || {
+                loaded.instance.call_guest_client(world, &call)
+            });
+            match ret {
+                Some(GuestRet::Event {
+                    outcome: Outcome::Cancel,
+                    ..
+                }) => return true,
+                None | Some(GuestRet::Event { .. }) => {}
+                Some(_) => loaded
+                    .instance
+                    .disable("returned a non-event reply to a prediction dispatch"),
+            }
+        }
+        false
     }
 
     /// The session's mod-registered remappable actions, for the app's action

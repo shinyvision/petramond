@@ -3,7 +3,7 @@
 //! `ResolveItem`), contextual placeable food (the carrot planting vs eating),
 //! `block_place_pre` planting validation, mod block behaviors (farmland
 //! hydration reconcile, scheduled crop growth with the dry pause and
-//! random-tick re-arming), `block_interact` right-click harvesting, and the
+//! random-tick re-arming), `interact_attempt` right-click harvesting, and the
 //! data-only recipe surface (catalyst flour, bucket-remainder dough,
 //! `kitchen:cooking` baking, Well Fed damage mutation).
 //!
@@ -391,6 +391,21 @@ fn farming_cultivation_inner() {
         Some(6),
         "one seed consumed per successful planting"
     );
+    // An IMMATURE crop is inspected, never claimed: an empty-hand click on
+    // the freshly planted stage-0 wheat consumes NOTHING — no `interacted`
+    // presentation and no `used_unpredicted` jab echo (the whole chain
+    // no-oped), and the crop is untouched. Consumers claim effects, not
+    // inspections.
+    {
+        let mut ev = TickEvents::default();
+        use_click(&mut game, &mut ev, 8, IVec3::new(5, 64, 8), IVec3::Y);
+        assert_eq!(at(&game, 5, 64, 8), wheat[0], "the immature crop is untouched");
+        assert!(
+            !ev.player_at(0).interacted && !ev.player_at(0).used_unpredicted,
+            "an immature-crop click consumes nothing — no jab"
+        );
+    }
+
     use_click(&mut game, &mut ev, 1, IVec3::new(6, 63, 4), IVec3::Y);
     assert_eq!(at(&game, 6, 64, 4), Block::Air, "seeds refuse non-farmland");
     assert_eq!(
@@ -403,20 +418,35 @@ fn farming_cultivation_inner() {
         "a refused placement keeps the seed"
     );
 
-    // The CLIENT never ghosts a mod-registered block: its placement law
-    // (`block_place_pre` — crops demand farmland) lives mod-side, invisible
-    // to the replica. A ghost would flash a phantom crop on ANY surface and
-    // roll back on the deny; the ladder classifies Plausible instead (jab
-    // only, a real placement arrives unpredicted).
+    // The CLIENT never ghosts a mod-registered block, but its placement law
+    // is no longer invisible: the farming CLIENT instance predicts the same
+    // `block_place_pre` against the replica. Non-farmland → a predicted veto
+    // (No: no jab, no ghost, silent click); farmland → Plausible (jab, the
+    // real placement arrives unpredicted — still never a ghost).
     game.sync_self_view_for_test();
     game.game.self_view.inventory.set_active(1);
+    // This fixture steps the server directly (nothing streams), so mirror
+    // the two probed floor cells into the client replica by hand — the
+    // predictor reads ONLY replica truth and refuses to claim on frozen
+    // state (`ClientBlocksAt` = None ⇒ optimistic Plausible, never a veto).
+    super::common::flat_floor_loaded_air(&mut game.game.replica, Block::Grass);
+    game.game
+        .replica
+        .set_block_world(wet_b.x, wet_b.y, wet_b.z, farmland_wet);
     assert!(
         matches!(
             game.game
                 .predict_place_at_for_test(IVec3::new(6, 63, 4), IVec3::Y, false),
+            crate::game::tick::PlacePrediction::No
+        ),
+        "the client predictor vetoes seeds on non-farmland"
+    );
+    assert!(
+        matches!(
+            game.game.predict_place_at_for_test(wet_b, IVec3::Y, false),
             crate::game::tick::PlacePrediction::Plausible
         ),
-        "a mod block never ghost-predicts"
+        "predicted-placeable mod blocks jab but never ghost"
     );
 
     // Darkness refuses planting outright (the light gate; the seed is kept).
@@ -545,6 +575,68 @@ fn farming_cultivation_inner() {
         stage_of(at(&game, 7, 64, 8), &wheat) >= Some(1),
         "the event-less crop was re-armed by random ticks (reload can never freeze a crop)"
     );
+
+    // --- Sneak-defer: a SNEAK click on the mature crop while holding a
+    // placeable block is PASSED by the harvest consumer (act-based claims are
+    // also context-sensitive) — placement handles it: the block lands against
+    // the face and the ripe crop is untouched. Without sneak, the harvest
+    // claims first and no block places (asserted by the harvest block below
+    // keeping the dirt count).
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(crate::item::ItemStack::new(crate::item::ItemType::Dirt, 4));
+    let dirt_slot = (0..9)
+        .find(|&i| {
+            game.server.sessions[0]
+                .player
+                .inventory
+                .slot(i)
+                .is_some_and(|s| s.item == crate::item::ItemType::Dirt)
+        })
+        .expect("dirt on the hotbar") as u8;
+    game.server.sessions[0].intent_sneak = true;
+    game.server.sessions[0].intent_gameplay = true; // sneak reads through the gameplay gate
+    use_click(&mut game, &mut ev, dirt_slot, IVec3::new(5, 64, 8), IVec3::Y);
+    game.server.sessions[0].intent_sneak = false;
+    assert_eq!(
+        at(&game, 5, 64, 8),
+        wheat[3],
+        "sneak + held block defers the harvest to placement"
+    );
+    assert_eq!(
+        at(&game, 5, 65, 8),
+        Block::Dirt,
+        "the deferred click places the block against the crop's face"
+    );
+    let dirt_after_sneak_place = game.server.sessions[0]
+        .player
+        .inventory
+        .slot(dirt_slot as usize)
+        .map(|s| s.count);
+    assert_eq!(dirt_after_sneak_place, Some(3), "the placement spent one dirt");
+
+    // A NON-sneak click with the same block in hand harvests instead: the
+    // claim wins before placement, so no second dirt is spent.
+    use_click(&mut game, &mut ev, dirt_slot, IVec3::new(5, 64, 8), IVec3::Y);
+    assert_eq!(
+        at(&game, 5, 64, 8),
+        wheat[0],
+        "a non-sneak click harvests even with a block in hand"
+    );
+    assert_eq!(
+        game.server.sessions[0]
+            .player
+            .inventory
+            .slot(dirt_slot as usize)
+            .map(|s| s.count),
+        dirt_after_sneak_place,
+        "the harvest claim spends no block"
+    );
+    // Restore the mature crop for the ordinary harvest assertions below.
+    game.server
+        .world
+        .set_block_world(5, 64, 8, wheat[3]);
 
     // --- Right-click harvest: produce pops as item entities, the plant
     // resets to stage 0 in the same tick, and the next cycle is armed.

@@ -143,3 +143,33 @@ fn feedback(pos: [i32; 3], y: f32) {
     emit_sound("farming:till", Some(center));
     emitter_burst("farming:fertilize_burst", center, 1.0);
 }
+
+/// CLIENT prediction mirror of [`on_item_use`]'s gate: the direct target
+/// table, then the vegetation-to-soil proxy — the claim condition only,
+/// never the swap.
+pub fn predict_item_use(
+    content: &Content,
+    item: ItemId,
+    pos: [i32; 3],
+    block: BlockId,
+) -> Outcome {
+    if item != content.fertilizer {
+        return Outcome::Continue;
+    }
+    if target(content, block).is_some() {
+        return Outcome::Cancel;
+    }
+    let Some(soil) = crate::predict::peek([pos[0], pos[1] - 1, pos[2]]) else {
+        return Outcome::Continue;
+    };
+    let claims = if content.crop_stage(block).is_some() {
+        content.is_farmland(soil) && target(content, soil).is_some()
+    } else {
+        content.spreadable.contains(&block) && soil == content.grass
+    };
+    if claims {
+        Outcome::Cancel
+    } else {
+        Outcome::Continue
+    }
+}

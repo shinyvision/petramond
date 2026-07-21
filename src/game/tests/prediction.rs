@@ -1557,3 +1557,37 @@ fn multi_deny_rollback_is_emission_order_independent() {
         "rollback must be allocation-ordered, not emission-ordered"
     );
 }
+
+/// The P0 jab predicts "a consumer claims the attempt". A click nothing is
+/// predicted to claim — shears with no mob targeted, a bucket at nothing —
+/// must play NO jab; food always claims (the eat consumer).
+#[test]
+fn a_use_click_with_no_predictable_consumer_predicts_no_jab() {
+    use crate::inventory::Inventory;
+    use crate::item::{ItemStack, ItemType};
+
+    let mut game = game_on_empty_chunk();
+    let input = GameInput::default();
+
+    fn holding(game: &mut super::common::TestGame, item: ItemType) {
+        let mut inv = Inventory::new();
+        inv.add(ItemStack::new(item, 1));
+        game.self_view.inventory = inv;
+    }
+
+    holding(&mut game, ItemType::Shears);
+    assert!(
+        !game.use_click_predicts_effect(&input, None),
+        "shears with no mob targeted claim nothing — no jab"
+    );
+    assert!(
+        game.use_click_predicts_effect(&input, Some(7)),
+        "a targeted mob predicts a claim (shear or a mod consumer)"
+    );
+
+    holding(&mut game, ItemType::WoodenBucket);
+    assert!(
+        !game.use_click_predicts_effect(&input, None),
+        "an empty bucket aimed at nothing scoops nothing — no jab"
+    );
+}

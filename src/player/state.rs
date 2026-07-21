@@ -70,6 +70,11 @@ pub struct PlayerRosterSnapshot {
     pub health: i32,
     pub on_ground: bool,
     pub spectator: bool,
+    /// Sneak intent, gated on gameplay focus (the session's one sneak rule).
+    pub sneak: bool,
+    /// The selected hotbar stack's item, if any, with its count.
+    pub held: Option<crate::item::ItemType>,
+    pub held_count: u8,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

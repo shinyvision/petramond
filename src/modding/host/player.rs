@@ -16,6 +16,20 @@ use super::intern_mod_id;
 pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
         HostCall::PlayerState => sim_query(|ctx| {
+            // Sneak lives on the session, not the `Player` body: read the
+            // acting session's published roster row (same tick, same intent
+            // latches). No roster published (mod init, unit fixtures) reads
+            // as not sneaking.
+            let sneak = ctx
+                .acting_player_id()
+                .and_then(|id| {
+                    ctx.world
+                        .player_roster()
+                        .iter()
+                        .find(|r| r.id == id.0)
+                        .map(|r| r.sneak)
+                })
+                .unwrap_or(false);
             let p = &*ctx.player;
             HostRet::Player(PlayerSnapshot {
                 pos: p.pos.to_array(),
@@ -25,6 +39,12 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 health: p.health(),
                 on_ground: p.on_ground,
                 spectator: p.is_spectator(),
+                sneak,
+                held: p
+                    .inventory
+                    .selected()
+                    .map(|st| mod_api::ItemId(st.item.id())),
+                held_count: p.inventory.selected().map_or(0, |st| st.count),
             })
         }),
         HostCall::Players => sim_query(|ctx| {
@@ -42,6 +62,9 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                             health: p.health,
                             on_ground: p.on_ground,
                             spectator: p.spectator,
+                            sneak: p.sneak,
+                            held: p.held.map(|i| mod_api::ItemId(i.id())),
+                            held_count: p.held_count,
                         },
                     })
                     .collect(),
