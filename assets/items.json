@@ -1676,19 +1676,6 @@
       "tags": []
     },
     {
-      "item": "petramond:bed_frame",
-      "key": "petramond:bed_frame",
-      "name": "Bed Frame",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": 1.8,
-        "roll": 0
-      },
-      "tags": [],
-      "block": "petramond:bed_frame"
-    },
-    {
       "item": "petramond:bed",
       "key": "petramond:bed",
       "name": "Bed",

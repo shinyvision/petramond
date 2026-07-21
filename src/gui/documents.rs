@@ -58,13 +58,20 @@ struct Registry {
 
 static REGISTRY: Mutex<Option<Registry>> = Mutex::new(None);
 
-/// The document for `kind`, if one is loaded. A registered pack CRAFTING
-/// STATION kind without its own document is backed by the crafting table's —
-/// a pack workbench is the ordinary crafting session, so its screen is the
-/// ordinary crafting screen unless the pack ships a replacement.
+/// The document for `kind`, if one is loaded. A CRAFTING STATION kind
+/// without its own document — a pack workbench, or the engine's furniture
+/// workbench — is backed by the crafting table's: a station runs the
+/// ordinary crafting session, so its screen is the ordinary crafting screen
+/// unless a dedicated document ships.
 pub(crate) fn doc_for(kind: GuiKind) -> Option<DocRef> {
     doc_entry_for(kind).or_else(|| {
-        (kind.is_mod() && crate::crafting::CraftingStation::of_kind(kind).is_some())
+        // Only stations WITHOUT a document of their own fall back — the
+        // inventory and table own their browser screens, and a validation
+        // failure there must stay a loud missing-document failure, not a
+        // silent swap to the other's layout.
+        use crate::crafting::CraftingStation;
+        CraftingStation::of_kind(kind)
+            .is_some_and(|s| s != CraftingStation::Inventory && s != CraftingStation::CraftingTable)
             .then(|| doc_entry_for(GuiKind::CraftingTable))
             .flatten()
     })
@@ -197,12 +204,6 @@ pub(crate) fn contract_for(kind: GuiKind) -> SlotContract {
             ("furnace_output", 1),
         ]),
         GuiKind::Hotbar => SlotContract::new(&[("hotbar", 9)]),
-        GuiKind::FurnitureWorkbench => SlotContract::new(&[
-            ("player_inv", 27),
-            ("hotbar", 9),
-            ("workbench_input", 1),
-            ("workbench_result", 21),
-        ]),
         GuiKind::Demo => SlotContract::new(&[("demo_slots", 9)]),
         _ => SlotContract::default(),
     }
@@ -372,7 +373,6 @@ mod tests {
             (GuiKind::CraftingTable, 27 + 9 + 1),
             (GuiKind::Furnace, 27 + 9 + 3),
             (GuiKind::Hotbar, 9),
-            (GuiKind::FurnitureWorkbench, 27 + 9 + 1 + 21),
         ] {
             let contract = contract_for(kind);
             let sum: usize = contract.roles.iter().map(|(_, n)| n).sum();
@@ -592,6 +592,10 @@ mod tests {
         crate::crafting::CraftingStation::from_key("doctest:bench_station")
             .expect("station registers");
         let doc = doc_for(kind).expect("station kinds are backed by the crafting table document");
+        assert_eq!(doc.doc.kind, "petramond:crafting_table");
+        // The engine's furniture workbench ships no document of its own and
+        // rides the same fallback.
+        let doc = doc_for(GuiKind::FurnitureWorkbench).expect("furniture workbench screen loads");
         assert_eq!(doc.doc.kind, "petramond:crafting_table");
     }
 

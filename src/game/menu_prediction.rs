@@ -7,7 +7,7 @@
 
 use super::Game;
 use crate::controls::PointerButton;
-use crate::gui::{FurnaceHit, GuiKind, MenuSlot, WorkbenchHit, MAX_MENU_DRAG_SLOTS};
+use crate::gui::{FurnaceHit, GuiKind, MenuSlot, MAX_MENU_DRAG_SLOTS};
 use crate::inventory::{plan_drag_distribution, slot_capacity};
 use crate::item::ItemType;
 use crate::net::protocol::{ClientToServer, MenuSlotWire};
@@ -73,12 +73,6 @@ impl Game {
                 .get(i)
                 .map(|cell| slot_capacity(cell, item))
                 .unwrap_or(0),
-            MenuSlot::Workbench(WorkbenchHit::Input) => self
-                .menu_view
-                .workbench
-                .as_ref()
-                .map(|workbench| slot_capacity(&workbench.input, item))
-                .unwrap_or(0),
             MenuSlot::Furnace(hit) => self
                 .menu_view
                 .furnace
@@ -103,10 +97,7 @@ impl Game {
                 .and_then(|container| container.slots.get(i))
                 .map(|cell| slot_capacity(cell, item))
                 .unwrap_or(0),
-            MenuSlot::CraftResult
-            | MenuSlot::Workbench(_)
-            | MenuSlot::Container(_)
-            | MenuSlot::Widget(_) => 0,
+            MenuSlot::CraftResult | MenuSlot::Container(_) | MenuSlot::Widget(_) => 0,
         }
     }
 
@@ -121,11 +112,6 @@ impl Game {
         match slot {
             MenuSlot::Inventory(i) => {
                 inventory.place_cursor_count_in_slot(i, wanted);
-            }
-            MenuSlot::Workbench(WorkbenchHit::Input) => {
-                if let Some(workbench) = menu.workbench.as_mut() {
-                    inventory.place_cursor_count_in_external_slot(&mut workbench.input, wanted);
-                }
             }
             MenuSlot::Furnace(FurnaceHit::Input) => {
                 if let Some(furnace) = menu.furnace.as_mut() {
@@ -153,7 +139,6 @@ impl Game {
             }
             MenuSlot::CraftResult
             | MenuSlot::Furnace(FurnaceHit::Output)
-            | MenuSlot::Workbench(_)
             | MenuSlot::Container(_)
             | MenuSlot::Widget(_) => {}
         }

@@ -26,7 +26,6 @@ fn install_test_crafting_recipe(game: &mut super::common::TestGame) {
             ItemStack::new(ItemType::Stick, 2),
         )],
         Vec::new(),
-        Vec::new(),
     );
 }
 

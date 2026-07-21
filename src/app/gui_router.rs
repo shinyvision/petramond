@@ -43,7 +43,6 @@ impl GuiRouter {
             // semantic slots): the double-click sweep is a plain-storage read.
             MenuSlot::CraftResult
             | MenuSlot::Furnace(_)
-            | MenuSlot::Workbench(_)
             | MenuSlot::Container(_)
             | MenuSlot::Widget(_) => None,
         };

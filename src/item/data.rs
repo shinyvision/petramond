@@ -141,7 +141,6 @@ pub(crate) const ENGINE_ITEM_NAMES: &[&str] = &[
     "petramond:water_bucket",
     "petramond:shears",
     "petramond:wool",
-    "petramond:bed_frame",
     "petramond:bed",
     "petramond:oak_slab",
     "petramond:spruce_slab",

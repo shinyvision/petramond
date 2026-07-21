@@ -138,49 +138,48 @@ impl Block {
     pub const CobblestoneStairs: Block = Block(92);
     pub const StoneStairs: Block = Block(93);
     pub const DirtStairs: Block = Block(94);
-    pub const BedFrame: Block = Block(95);
-    pub const Bed: Block = Block(96);
-    pub const OakSlab: Block = Block(97);
-    pub const SpruceSlab: Block = Block(98);
-    pub const BirchSlab: Block = Block(99);
-    pub const JungleSlab: Block = Block(100);
-    pub const AcaciaSlab: Block = Block(101);
-    pub const RedwoodSlab: Block = Block(102);
-    pub const CobblestoneSlab: Block = Block(103);
-    pub const StoneSlab: Block = Block(104);
-    pub const DirtSlab: Block = Block(105);
-    pub const Glass: Block = Block(106);
-    pub const GlassPane: Block = Block(107);
-    pub const WoolBlock: Block = Block(108);
-    pub const WoolStairs: Block = Block(109);
-    pub const WoolSlab: Block = Block(110);
-    pub const PolishedMarble: Block = Block(111);
-    pub const MarbleStairs: Block = Block(112);
-    pub const MarbleSlab: Block = Block(113);
-    pub const PolishedMarbleStairs: Block = Block(114);
-    pub const PolishedMarbleSlab: Block = Block(115);
-    pub const Ladder: Block = Block(116);
+    pub const Bed: Block = Block(95);
+    pub const OakSlab: Block = Block(96);
+    pub const SpruceSlab: Block = Block(97);
+    pub const BirchSlab: Block = Block(98);
+    pub const JungleSlab: Block = Block(99);
+    pub const AcaciaSlab: Block = Block(100);
+    pub const RedwoodSlab: Block = Block(101);
+    pub const CobblestoneSlab: Block = Block(102);
+    pub const StoneSlab: Block = Block(103);
+    pub const DirtSlab: Block = Block(104);
+    pub const Glass: Block = Block(105);
+    pub const GlassPane: Block = Block(106);
+    pub const WoolBlock: Block = Block(107);
+    pub const WoolStairs: Block = Block(108);
+    pub const WoolSlab: Block = Block(109);
+    pub const PolishedMarble: Block = Block(110);
+    pub const MarbleStairs: Block = Block(111);
+    pub const MarbleSlab: Block = Block(112);
+    pub const PolishedMarbleStairs: Block = Block(113);
+    pub const PolishedMarbleSlab: Block = Block(114);
+    pub const Ladder: Block = Block(115);
     // Sapling growth stages 1..=2 (stage 0 is the base sapling row above).
     // Visually identical to their species' base row; the `sapling` behaviour
     // walks the `next_stage` chain and the final row's `grows_into` names the
     // tree — see `world::sapling`.
-    pub const OakSapling1: Block = Block(117);
-    pub const OakSapling2: Block = Block(118);
-    pub const SpruceSapling1: Block = Block(119);
-    pub const SpruceSapling2: Block = Block(120);
-    pub const BirchSapling1: Block = Block(121);
-    pub const BirchSapling2: Block = Block(122);
-    pub const JungleSapling1: Block = Block(123);
-    pub const JungleSapling2: Block = Block(124);
-    pub const AcaciaSapling1: Block = Block(125);
-    pub const AcaciaSapling2: Block = Block(126);
+    pub const OakSapling1: Block = Block(116);
+    pub const OakSapling2: Block = Block(117);
+    pub const SpruceSapling1: Block = Block(118);
+    pub const SpruceSapling2: Block = Block(119);
+    pub const BirchSapling1: Block = Block(120);
+    pub const BirchSapling2: Block = Block(121);
+    pub const JungleSapling1: Block = Block(122);
+    pub const JungleSapling2: Block = Block(123);
+    pub const AcaciaSapling1: Block = Block(124);
+    pub const AcaciaSapling2: Block = Block(125);
     // The furnace's lit SKIN — the sapling-stage pattern applied to a machine:
     // burning is a row swap (`furnace` ⇄ `furnace_lit`), so the lit face and
     // its light emission ride ordinary block identity through save/replication.
     // Machine counters stay in the `Furnace` block-entity; the swap preserves
     // the sibling entity maps (see `World::tick_furnaces`). Not obtainable —
     // no item row links it; it drops the furnace item like the unlit row.
-    pub const FurnaceLit: Block = Block(127);
+    pub const FurnaceLit: Block = Block(126);
     // The ladder's non-default wall facings — the sapling-stage pattern
     // applied to an oriented panel: which wall a ladder hangs on is block
     // IDENTITY (`petramond:ladder` is the north-facing row; each row's
@@ -189,15 +188,15 @@ impl Block {
     // ordinary block-id save/replication lanes — the ladder is not a block
     // entity and never touches the entity-facing map. Not obtainable — no
     // item rows link them; all four rows drop the one ladder item.
-    pub const LadderSouth: Block = Block(128);
-    pub const LadderWest: Block = Block(129);
-    pub const LadderEast: Block = Block(130);
-    pub const OakFence: Block = Block(131);
-    pub const SpruceFence: Block = Block(132);
-    pub const BirchFence: Block = Block(133);
-    pub const JungleFence: Block = Block(134);
-    pub const AcaciaFence: Block = Block(135);
-    pub const RedwoodFence: Block = Block(136);
+    pub const LadderSouth: Block = Block(127);
+    pub const LadderWest: Block = Block(128);
+    pub const LadderEast: Block = Block(129);
+    pub const OakFence: Block = Block(130);
+    pub const SpruceFence: Block = Block(131);
+    pub const BirchFence: Block = Block(132);
+    pub const JungleFence: Block = Block(133);
+    pub const AcaciaFence: Block = Block(134);
+    pub const RedwoodFence: Block = Block(135);
 }
 
 impl std::fmt::Debug for Block {

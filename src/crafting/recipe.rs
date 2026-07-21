@@ -1,8 +1,8 @@
 //! Resolved recipe data and catalog lookups.
 //!
 //! Player crafting is inventory-driven: recipes declare aggregate ingredient
-//! quantities and a minimum station, never a grid arrangement. Processing and
-//! furniture recipes remain separate because their interaction models differ.
+//! quantities and a minimum station, never a grid arrangement. Processing
+//! recipes remain separate because their interaction model differs.
 
 use std::collections::HashMap;
 
@@ -386,14 +386,6 @@ pub struct ProcessingRecipe {
     pub result: ItemStack,
 }
 
-/// A furniture-workbench recipe, keyed by its single input block.
-#[derive(Clone, Copy, Debug)]
-pub struct FurnitureRecipe {
-    pub input: ItemType,
-    pub result: ItemStack,
-    pub cost: u8,
-}
-
 /// Every loaded recipe interaction model.
 #[derive(Clone, Default)]
 pub struct Recipes {
@@ -403,14 +395,12 @@ pub struct Recipes {
     /// never a linear scan. First row per `(class, input)` wins, like the
     /// old scan.
     processing: std::collections::HashMap<String, std::collections::HashMap<ItemType, ItemStack>>,
-    furniture: Vec<FurnitureRecipe>,
 }
 
 impl Recipes {
     pub fn new(
         crafting: Vec<CraftingRecipe>,
         processing: Vec<ProcessingRecipe>,
-        furniture: Vec<FurnitureRecipe>,
     ) -> Self {
         let mut index: std::collections::HashMap<String, std::collections::HashMap<_, _>> =
             std::collections::HashMap::new();
@@ -424,7 +414,6 @@ impl Recipes {
         Self {
             crafting: CraftingCatalog::new(crafting),
             processing: index,
-            furniture,
         }
     }
 
@@ -448,11 +437,6 @@ impl Recipes {
         self.process(SMELTING_CLASS, input)
     }
 
-    pub fn furniture_for(&self, input: ItemType) -> impl Iterator<Item = &FurnitureRecipe> {
-        self.furniture
-            .iter()
-            .filter(move |recipe| recipe.input == input)
-    }
 }
 
 fn item_by_key(key: &str) -> Option<ItemType> {

@@ -16,10 +16,6 @@ pub(crate) struct ContainerMenu {
     /// The real transient result of an explicit CRAFT action. It is returned
     /// to inventory/drop on close, never recomputed as a preview.
     pub(super) craft_output: Option<ItemStack>,
-    /// The furniture workbench's single input block while its screen is open. Transient
-    /// (returned to the inventory on close), so the workbench owns
-    /// no block-entity. `None` whenever no workbench screen is open.
-    pub(super) workbench_input: Option<ItemStack>,
 }
 
 impl ContainerMenu {
@@ -41,8 +37,8 @@ impl ContainerMenu {
 
     /// Station-owned stacks that a crash-safe player snapshot must project
     /// back into inventory even though the live menu remains open.
-    pub(crate) fn unpersisted_items(&self) -> [Option<ItemStack>; 2] {
-        [self.craft_output, self.workbench_input]
+    pub(crate) fn unpersisted_items(&self) -> [Option<ItemStack>; 1] {
+        [self.craft_output]
     }
 
     pub(crate) fn crafting_station(&self) -> Option<CraftingStation> {
@@ -95,15 +91,6 @@ impl ContainerMenu {
         self.close_kind(|kind| kind == GuiKind::Chest);
     }
 
-    /// Begin a furniture-workbench session: the input slot starts empty.
-    pub(crate) fn open_workbench(&mut self) {
-        self.target = ContainerTarget::Gui {
-            kind: GuiKind::FurnitureWorkbench,
-            pos: None,
-        };
-        self.workbench_input = None;
-    }
-
     /// Begin a mod GUI session for `kind`, opened from `pos` (`None` for a
     /// programmatic open). The state map lives on the world; `Game`'s open
     /// funnel clears it around this call.
@@ -131,21 +118,6 @@ impl ContainerMenu {
     /// funnel, which knows the world).
     pub(crate) fn close_mod_gui(&mut self) {
         self.close_kind(|kind| kind.is_mod());
-    }
-
-    /// End the workbench session: return the input block to the inventory
-    /// (overflow goes through `overflow`), then drop the transient target.
-    pub(crate) fn close_workbench(
-        &mut self,
-        inv: &mut Inventory,
-        mut overflow: impl FnMut(ItemStack),
-    ) {
-        if let Some(stack) = self.workbench_input.take() {
-            if let Some(leftover) = inv.add(stack) {
-                overflow(leftover);
-            }
-        }
-        self.close_kind(|kind| kind == GuiKind::FurnitureWorkbench);
     }
 
     /// Close player crafting: return its real output to inventory (overflow is

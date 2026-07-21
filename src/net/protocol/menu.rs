@@ -15,15 +15,13 @@ pub(crate) enum MenuSlotWire {
     FurnaceFuel,
     FurnaceOutput,
     Chest(u32),
-    WorkbenchInput,
-    WorkbenchResult(u32),
     Container(u32),
     Widget(String),
 }
 
 impl MenuSlotWire {
     pub(crate) fn from_menu_slot(slot: &crate::gui::MenuSlot) -> Self {
-        use crate::gui::{FurnaceHit, MenuSlot, WorkbenchHit};
+        use crate::gui::{FurnaceHit, MenuSlot};
         match slot {
             MenuSlot::Inventory(i) => Self::Inventory(*i as u32),
             MenuSlot::CraftResult => Self::CraftResult,
@@ -31,15 +29,13 @@ impl MenuSlotWire {
             MenuSlot::Furnace(FurnaceHit::Fuel) => Self::FurnaceFuel,
             MenuSlot::Furnace(FurnaceHit::Output) => Self::FurnaceOutput,
             MenuSlot::Chest(i) => Self::Chest(*i as u32),
-            MenuSlot::Workbench(WorkbenchHit::Input) => Self::WorkbenchInput,
-            MenuSlot::Workbench(WorkbenchHit::Result(i)) => Self::WorkbenchResult(*i as u32),
             MenuSlot::Container(i) => Self::Container(*i as u32),
             MenuSlot::Widget(id) => Self::Widget((*id).to_string()),
         }
     }
 
     pub(crate) fn to_menu_slot(&self) -> crate::gui::MenuSlot {
-        use crate::gui::{FurnaceHit, MenuSlot, WorkbenchHit};
+        use crate::gui::{FurnaceHit, MenuSlot};
         match self {
             Self::Inventory(i) => MenuSlot::Inventory(*i as usize),
             Self::CraftResult => MenuSlot::CraftResult,
@@ -47,8 +43,6 @@ impl MenuSlotWire {
             Self::FurnaceFuel => MenuSlot::Furnace(FurnaceHit::Fuel),
             Self::FurnaceOutput => MenuSlot::Furnace(FurnaceHit::Output),
             Self::Chest(i) => MenuSlot::Chest(*i as usize),
-            Self::WorkbenchInput => MenuSlot::Workbench(WorkbenchHit::Input),
-            Self::WorkbenchResult(i) => MenuSlot::Workbench(WorkbenchHit::Result(*i as usize)),
             Self::Container(i) => MenuSlot::Container(*i as usize),
             Self::Widget(id) => MenuSlot::Widget(crate::gui::intern_str(id)),
         }
@@ -104,11 +98,6 @@ pub(crate) enum MenuTargetWire {
     Chest {
         pos: IVec3,
         slots: Vec<Option<ItemSlotWire>>,
-    },
-    Workbench {
-        input: Option<ItemSlotWire>,
-        /// `(wire item id, craftable now)` per offered recipe, row-major.
-        results: Vec<(u8, bool)>,
     },
     ModGui {
         kind_key: String,

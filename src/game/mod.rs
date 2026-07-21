@@ -654,7 +654,7 @@ impl Game {
     }
 
     fn menu_slot_has_stack(&self, slot: crate::gui::MenuSlot) -> bool {
-        use crate::gui::{FurnaceHit, MenuSlot, WorkbenchHit};
+        use crate::gui::{FurnaceHit, MenuSlot};
         match slot {
             MenuSlot::Inventory(i) => self.self_view.inventory.slot(i).is_some(),
             MenuSlot::CraftResult => self.menu_view.craft_output.is_some(),
@@ -668,17 +668,6 @@ impl Game {
                 .chest
                 .and_then(|chest| chest.slots.get(i).copied().flatten())
                 .is_some(),
-            MenuSlot::Workbench(WorkbenchHit::Input) => self
-                .menu_view
-                .workbench
-                .as_ref()
-                .is_some_and(|workbench| workbench.input.is_some()),
-            MenuSlot::Workbench(WorkbenchHit::Result(i)) => self
-                .menu_view
-                .workbench
-                .as_ref()
-                .and_then(|workbench| workbench.results.get(i))
-                .is_some_and(|(_, craftable)| *craftable),
             MenuSlot::Container(i) => self
                 .menu_view
                 .container
@@ -770,7 +759,7 @@ impl Game {
                 let block_container_open =
                     v.chest.is_some() || v.furnace.is_some() || v.container.is_some();
                 if shift {
-                    !block_container_open && v.workbench.is_none()
+                    !block_container_open
                 } else if gather {
                     !block_container_open
                 } else {
@@ -887,7 +876,6 @@ impl Game {
             craft_output: view.craft_output,
             furnace: view.furnace,
             chest: view.chest,
-            workbench: view.workbench.clone(),
             gui_state: view.gui_state.clone(),
             container: view.container.clone(),
         }

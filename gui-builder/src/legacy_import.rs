@@ -175,8 +175,7 @@ fn convert(legacy: &LegacyProject) -> Imported {
         let node = match slot.role.as_str() {
             // Item-slot roles pass straight through.
             "generic" | "storage" | "player_inv" | "hotbar" | "craft_result"
-            | "furnace_input" | "furnace_fuel" | "furnace_output" | "workbench_input"
-            | "workbench_result" => {
+            | "furnace_input" | "furnace_fuel" | "furnace_output" => {
                 let kind = if cols * rows <= 1 {
                     NodeKind::Slot { role: slot.role.clone(), accepts: Vec::new(), take_only: false }
                 } else {

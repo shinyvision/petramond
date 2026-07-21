@@ -6,9 +6,8 @@
 
 use super::{ContainerMenu, ContainerTarget};
 use crate::controls::PointerButton;
-use crate::crafting::Recipes;
 use crate::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
-use crate::gui::{FurnaceHit, GuiKind, MenuSlot, WorkbenchHit, MAX_MENU_DRAG_SLOTS};
+use crate::gui::{FurnaceHit, GuiKind, MenuSlot, MAX_MENU_DRAG_SLOTS};
 use crate::inventory::{plan_drag_distribution, slot_capacity, take_slot_stack, Inventory};
 use crate::item::{ItemStack, ItemType};
 use crate::world::World;
@@ -52,7 +51,6 @@ impl ContainerMenu {
         &mut self,
         world: &mut World,
         inv: &mut Inventory,
-        recipes: &Recipes,
         slot: MenuSlot,
         all: bool,
     ) -> Option<ItemStack> {
@@ -64,22 +62,11 @@ impl ContainerMenu {
             MenuSlot::CraftResult if self.crafting_station().is_some() => {
                 take_slot_stack(&mut self.craft_output, all)
             }
-            MenuSlot::Workbench(WorkbenchHit::Input) if self.workbench_open() => {
-                take_slot_stack(&mut self.workbench_input, all)
-            }
-            MenuSlot::Workbench(WorkbenchHit::Result(i)) if self.workbench_open() => {
-                self.workbench_drop_result(recipes, i)
-            }
             MenuSlot::Furnace(_) | MenuSlot::Chest(_) | MenuSlot::Container(_) => {
                 self.drop_open_container_slot(world, slot, all)
             }
-            MenuSlot::CraftResult | MenuSlot::Workbench(_) | MenuSlot::Widget(_) => None,
+            MenuSlot::CraftResult | MenuSlot::Widget(_) => None,
         }
-    }
-
-    /// Whether the furniture-workbench session is the open target.
-    fn workbench_open(&self) -> bool {
-        self.target.kind() == Some(GuiKind::FurnitureWorkbench)
     }
 
     /// Validate the slot's role identity against the open kind — a forged
@@ -104,9 +91,6 @@ impl ContainerMenu {
                 .get(i)
                 .map(|cell| slot_capacity(cell, item))
                 .unwrap_or(0),
-            MenuSlot::Workbench(WorkbenchHit::Input) if self.workbench_open() => {
-                slot_capacity(&self.workbench_input, item)
-            }
             MenuSlot::Furnace(_) | MenuSlot::Chest(_) | MenuSlot::Container(_) => {
                 let Some(i) = self.open_container_index(slot) else {
                     return 0;
@@ -120,7 +104,7 @@ impl ContainerMenu {
                     .map(|cell| slot_capacity(cell, item))
                     .unwrap_or(0)
             }
-            MenuSlot::CraftResult | MenuSlot::Workbench(_) | MenuSlot::Widget(_) => 0,
+            MenuSlot::CraftResult | MenuSlot::Widget(_) => 0,
         }
     }
 
@@ -134,9 +118,6 @@ impl ContainerMenu {
         match slot {
             MenuSlot::Inventory(i) => {
                 inv.place_cursor_count_in_slot(i, wanted);
-            }
-            MenuSlot::Workbench(WorkbenchHit::Input) if self.workbench_open() => {
-                inv.place_cursor_count_in_external_slot(&mut self.workbench_input, wanted);
             }
             MenuSlot::Furnace(_) | MenuSlot::Chest(_) | MenuSlot::Container(_) => {
                 let Some(i) = self.open_container_index(slot) else {
@@ -157,7 +138,7 @@ impl ContainerMenu {
                     world.mark_chunk_modified(pos);
                 }
             }
-            MenuSlot::CraftResult | MenuSlot::Workbench(_) | MenuSlot::Widget(_) => {}
+            MenuSlot::CraftResult | MenuSlot::Widget(_) => {}
         }
     }
 

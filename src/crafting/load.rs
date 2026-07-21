@@ -1,16 +1,16 @@
 //! Load layered recipe data from `recipes.json`.
 //!
-//! Player crafting has one quantity-based format. Processing and furniture
-//! rows retain their separate schemas because their stations consume them by
-//! different interaction models.
+//! Player crafting has one quantity-based format. Processing rows retain
+//! their separate schema because machines consume them by a different
+//! interaction model.
 
 use serde::Deserialize;
 
 use crate::item::{ItemStack, ItemTag, ItemType};
 
 use super::recipe::{
-    CraftingIngredient, CraftingRecipe, FurnitureRecipe, IngredientSelector, IngredientUse,
-    ProcessingRecipe, Recipes,
+    CraftingIngredient, CraftingRecipe, IngredientSelector, IngredientUse, ProcessingRecipe,
+    Recipes,
 };
 use super::station::CraftingStation;
 
@@ -34,14 +34,6 @@ enum RawRecipe {
         class: String,
         ingredient: String,
         result: String,
-        #[serde(default = "one_u8")]
-        count: u8,
-    },
-    Furniture {
-        input: String,
-        result: String,
-        #[serde(default = "one_u8")]
-        cost: u8,
         #[serde(default = "one_u8")]
         count: u8,
     },
@@ -69,7 +61,6 @@ struct RawCraftingIngredient {
 enum Converted {
     Crafting(CraftingRecipe),
     Processing(ProcessingRecipe),
-    Furniture(FurnitureRecipe),
 }
 
 fn one_u8() -> u8 {
@@ -96,7 +87,6 @@ fn load_layers(
 ) -> Recipes {
     let mut crafting = Vec::new();
     let mut processing = Vec::new();
-    let mut furniture = Vec::new();
     for (text, path, owner) in layers {
         if owner.as_ref().is_some_and(|id| disabled.contains(id)) {
             log::info!(
@@ -106,12 +96,11 @@ fn load_layers(
             continue;
         }
         log::info!("crafting recipes layer: {}", path.display());
-        let (c, p, f) = parse_for(&text, disabled, owner.as_deref());
+        let (c, p) = parse_for(&text, disabled, owner.as_deref());
         crafting.extend(c);
         processing.extend(p);
-        furniture.extend(f);
     }
-    Recipes::new(crafting, processing, furniture)
+    Recipes::new(crafting, processing)
 }
 
 fn read_recipe_layers() -> Vec<(String, std::path::PathBuf, Option<String>)> {
@@ -129,13 +118,7 @@ fn read_recipe_layers() -> Vec<(String, std::path::PathBuf, Option<String>)> {
 }
 
 #[cfg(test)]
-fn parse(
-    text: &str,
-) -> (
-    Vec<CraftingRecipe>,
-    Vec<ProcessingRecipe>,
-    Vec<FurnitureRecipe>,
-) {
+fn parse(text: &str) -> (Vec<CraftingRecipe>, Vec<ProcessingRecipe>) {
     parse_for(text, &std::collections::BTreeSet::new(), None)
 }
 
@@ -143,21 +126,16 @@ fn parse_for(
     text: &str,
     disabled: &std::collections::BTreeSet<String>,
     owner: Option<&str>,
-) -> (
-    Vec<CraftingRecipe>,
-    Vec<ProcessingRecipe>,
-    Vec<FurnitureRecipe>,
-) {
+) -> (Vec<CraftingRecipe>, Vec<ProcessingRecipe>) {
     let file: RawFile = match serde_json::from_str(text) {
         Ok(file) => file,
         Err(error) => {
             log::error!("recipes.json is not valid JSON: {error}");
-            return (Vec::new(), Vec::new(), Vec::new());
+            return (Vec::new(), Vec::new());
         }
     };
     let mut crafting = Vec::new();
     let mut processing = Vec::new();
-    let mut furniture = Vec::new();
     for (index, raw) in file.recipes.into_iter().enumerate() {
         if let Some(namespace) = disabled_namespace_in(&raw, disabled) {
             log::info!("skipping recipe #{index}: it references disabled mod '{namespace}'");
@@ -166,11 +144,10 @@ fn parse_for(
         match convert(raw, owner) {
             Ok(Converted::Crafting(recipe)) => crafting.push(recipe),
             Ok(Converted::Processing(recipe)) => processing.push(recipe),
-            Ok(Converted::Furniture(recipe)) => furniture.push(recipe),
             Err(error) => log::error!("skipping recipe #{index}: {error}"),
         }
     }
-    (crafting, processing, furniture)
+    (crafting, processing)
 }
 
 fn convert(raw: RawRecipe, owner: Option<&str>) -> Result<Converted, String> {
@@ -215,24 +192,6 @@ fn convert(raw: RawRecipe, owner: Option<&str>) -> Result<Converted, String> {
                 class,
                 input,
                 result: ItemStack::new(result, count),
-            }))
-        }
-        RawRecipe::Furniture {
-            input,
-            result,
-            cost,
-            count,
-        } => {
-            if cost == 0 {
-                return Err("furniture cost is zero".into());
-            }
-            let input = resolve_item(&input)?;
-            let result = resolve_item(&result)?;
-            validate_stack_count(result, count, "furniture result")?;
-            Ok(Converted::Furniture(FurnitureRecipe {
-                input,
-                result: ItemStack::new(result, count),
-                cost,
             }))
         }
     }
@@ -331,7 +290,6 @@ fn disabled_namespace_in<'a>(
         } => hit(class)
             .or_else(|| hit(ingredient))
             .or_else(|| hit(result)),
-        RawRecipe::Furniture { input, result, .. } => hit(input).or_else(|| hit(result)),
     }
 }
 
@@ -340,11 +298,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shipped_catalog_parses_all_three_interaction_models() {
-        let (crafting, processing, furniture) = parse(EMBEDDED);
+    fn shipped_catalog_parses_both_interaction_models() {
+        let (crafting, processing) = parse(EMBEDDED);
         assert!(!crafting.is_empty());
         assert!(!processing.is_empty());
-        assert!(!furniture.is_empty());
         assert!(crafting
             .iter()
             .all(|recipe| !recipe.ingredients().is_empty()));
@@ -360,7 +317,7 @@ mod tests {
             ],
             "result":{"item":"petramond:stick","count":4}
         }] }"#;
-        let (crafting, _, _) = parse(text);
+        let (crafting, _) = parse(text);
         let recipe = crafting.first().expect("valid recipe");
         assert_eq!(recipe.key(), "petramond:test");
         assert_eq!(recipe.ingredients()[0].count, 2);
@@ -387,27 +344,28 @@ mod tests {
              "ingredients":[{"item":"petramond:wooden_shovel","count":1,"keep":true}],
              "result":{"item":"petramond:stick","count":1}}
         ] }"#;
-        let (crafting, _, _) = parse(text);
+        let (crafting, _) = parse(text);
         assert_eq!(crafting.len(), 1);
 
         let legacy = r#"{ "recipes": [{"type":"shapeless","ingredients":["petramond:oak_log"],"result":"petramond:oak_planks"}] }"#;
         assert!(parse(legacy).0.is_empty());
+        // The retired furniture row shape is malformed, not decoded.
+        let furniture = r#"{ "recipes": [{"type":"furniture","input":"petramond:oak_planks","result":"petramond:oak_door","cost":1}] }"#;
+        let (crafting, processing) = parse(furniture);
+        assert!(crafting.is_empty() && processing.is_empty());
     }
 
     #[test]
-    fn processing_and_furniture_lookup_contracts_remain_distinct() {
+    fn processing_lookup_contract_remains_distinct() {
         let text = r#"{ "recipes": [
-            {"type":"processing","class":"test:cooking","ingredient":"petramond:raw_iron","result":"petramond:iron_ingot"},
-            {"type":"furniture","input":"petramond:oak_planks","result":"petramond:oak_door","cost":3}
+            {"type":"processing","class":"test:cooking","ingredient":"petramond:raw_iron","result":"petramond:iron_ingot"}
         ] }"#;
-        let (crafting, processing, furniture) = parse(text);
-        let recipes = Recipes::new(crafting, processing, furniture);
+        let (crafting, processing) = parse(text);
+        let recipes = Recipes::new(crafting, processing);
         assert_eq!(
             recipes.process("test:cooking", ItemType::RawIron),
             Some(ItemStack::new(ItemType::IronIngot, 1))
         );
-        assert_eq!(recipes.furniture_for(ItemType::OakPlanks).count(), 1);
-        assert!(recipes.furniture_for(ItemType::Stick).next().is_none());
     }
 
     #[test]
@@ -423,7 +381,7 @@ mod tests {
 
         // This row mentions only engine content, so reference filtering alone
         // cannot remove it. Disabling its owning pack must remove the layer
-        // before parse, including non-selectable processing/furniture rows.
+        // before parse, including non-selectable processing rows.
         let core_only = r#"{ "recipes": [{
             "type":"processing","class":"petramond:test_disabled_owner",
             "ingredient":"petramond:coal","result":"petramond:stick"

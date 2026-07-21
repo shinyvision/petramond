@@ -1,8 +1,7 @@
 use super::{ContainerMenu, ContainerTarget};
 use crate::controls::PointerButton;
-use crate::crafting::Recipes;
 use crate::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
-use crate::gui::{FurnaceHit, MenuSlot, WorkbenchHit};
+use crate::gui::{FurnaceHit, MenuSlot};
 use crate::inventory::Inventory;
 use crate::world::World;
 
@@ -17,12 +16,11 @@ impl ContainerMenu {
     /// Every block-entity container slot (chest, furnace, mod document) decodes
     /// through ONE generic path driven by the target's `SlotSpec`s — the furnace's
     /// role hits just map to their conventional indices first. The transient
-    /// crafting output and furniture workbench keep dedicated handling.
+    /// crafting output keeps dedicated handling.
     pub(crate) fn click(
         &mut self,
         world: &mut World,
         inv: &mut Inventory,
-        recipes: &Recipes,
         slot: MenuSlot,
         button: PointerButton,
         shift: bool,
@@ -37,9 +35,6 @@ impl ContainerMenu {
                     match self.target.kind() {
                         Some(kind) if ContainerTarget::kind_block_backed(kind) => {
                             self.container_shift_from_inventory(world, inv, i)
-                        }
-                        Some(crate::gui::GuiKind::FurnitureWorkbench) => {
-                            self.workbench_shift_from_inventory(inv, recipes, i)
                         }
                         _ => inv.shift_move_slot(i),
                     }
@@ -69,24 +64,6 @@ impl ContainerMenu {
             MenuSlot::Chest(i) | MenuSlot::Container(i) => {
                 self.container_slot_interaction(world, inv, i, button, shift, gather);
             }
-            MenuSlot::Workbench(hit) => match hit {
-                WorkbenchHit::Input => {
-                    if shift {
-                        self.workbench_shift_input(inv);
-                    } else {
-                        match button {
-                            PointerButton::Primary => {
-                                inv.click_external_slot(&mut self.workbench_input)
-                            }
-                            PointerButton::Secondary => {
-                                inv.right_click_external_slot(&mut self.workbench_input)
-                            }
-                        }
-                    }
-                }
-                // Results are take-only: craft the i-th offered recipe (shift -> inv).
-                WorkbenchHit::Result(i) => self.workbench_take_result(inv, recipes, i, shift),
-            },
             // Widget clicks mutate no container: `Game::tick_menu` intercepts
             // them before this decode and dispatches to the owning mod.
             MenuSlot::Widget(_) => {}

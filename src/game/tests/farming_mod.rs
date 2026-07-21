@@ -894,7 +894,6 @@ fn farming_processing_inner() {
         menu.click(
             &mut game.server.world,
             inv,
-            &recipes,
             crate::gui::MenuSlot::CraftResult,
             crate::controls::PointerButton::Primary,
             false,
@@ -918,7 +917,6 @@ fn farming_processing_inner() {
         menu.click(
             &mut game.server.world,
             inv,
-            &recipes,
             crate::gui::MenuSlot::CraftResult,
             crate::controls::PointerButton::Primary,
             false,

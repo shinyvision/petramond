@@ -1,8 +1,9 @@
 //! The crafting-station registry.
 //!
 //! A station is the context a player-crafting recipe requires, identified by
-//! the [`GuiKind`] whose open menu session admits it. The engine ships two
-//! (`petramond:inventory`, `petramond:crafting_table`); packs ADD stations by
+//! the [`GuiKind`] whose open menu session admits it. The engine ships three
+//! (`petramond:inventory`, `petramond:crafting_table`,
+//! `petramond:furniture_workbench`); packs ADD stations by
 //! naming a namespaced key in a `recipes.json` `station` field — the same
 //! key an `open_gui` block interaction uses, so a pack workbench is pure
 //! data: block row opens the kind, recipe rows require it, and the engine
@@ -25,9 +26,12 @@ static MOD_STATIONS: Mutex<Vec<GuiKind>> = Mutex::new(Vec::new());
 impl CraftingStation {
     pub const Inventory: CraftingStation = CraftingStation(GuiKind::Inventory);
     pub const CraftingTable: CraftingStation = CraftingStation(GuiKind::CraftingTable);
+    pub const FurnitureWorkbench: CraftingStation =
+        CraftingStation(GuiKind::FurnitureWorkbench);
 
     pub const INVENTORY_KEY: &'static str = "petramond:inventory";
     pub const CRAFTING_TABLE_KEY: &'static str = "petramond:crafting_table";
+    pub const FURNITURE_WORKBENCH_KEY: &'static str = "petramond:furniture_workbench";
 
     /// Resolve `key` to its station, REGISTERING a namespaced non-engine key
     /// on first sight (the recipe-loading path — a recipe declaring a station
@@ -36,6 +40,7 @@ impl CraftingStation {
         match key {
             Self::INVENTORY_KEY => Some(Self::Inventory),
             Self::CRAFTING_TABLE_KEY => Some(Self::CraftingTable),
+            Self::FURNITURE_WORKBENCH_KEY => Some(Self::FurnitureWorkbench),
             _ => {
                 let kind = crate::gui::intern_kind(key)?;
                 let mut stations = MOD_STATIONS.lock().unwrap();
@@ -53,6 +58,7 @@ impl CraftingStation {
         match kind {
             GuiKind::Inventory => Some(Self::Inventory),
             GuiKind::CraftingTable => Some(Self::CraftingTable),
+            GuiKind::FurnitureWorkbench => Some(Self::FurnitureWorkbench),
             _ => MOD_STATIONS
                 .lock()
                 .unwrap()
@@ -70,6 +76,7 @@ impl CraftingStation {
         match self {
             Self::Inventory => Self::INVENTORY_KEY,
             Self::CraftingTable => Self::CRAFTING_TABLE_KEY,
+            Self::FurnitureWorkbench => Self::FURNITURE_WORKBENCH_KEY,
             Self(kind) => crate::gui::kind_key(kind).unwrap_or("?"),
         }
     }
@@ -97,6 +104,10 @@ mod tests {
         assert_eq!(
             CraftingStation::from_key("petramond:crafting_table"),
             Some(CraftingStation::CraftingTable)
+        );
+        assert_eq!(
+            CraftingStation::from_key("petramond:furniture_workbench"),
+            Some(CraftingStation::FurnitureWorkbench)
         );
         assert_eq!(CraftingStation::from_key("petramond:not_a_station"), None);
         assert_eq!(CraftingStation::from_key("bare_name"), None);

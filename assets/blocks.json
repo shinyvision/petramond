@@ -3802,37 +3802,6 @@
       ]
     },
     {
-      "block": "petramond:bed_frame",
-      "shape": {
-        "model": "petramond:bed_frame"
-      },
-      "flags": [
-        "solid",
-        "directional_view"
-      ],
-      "tags": [],
-      "behavior": "inert",
-      "interaction": "none",
-      "collision": [],
-      "emission": 0,
-      "tiles": [
-        "oak_planks",
-        "oak_planks",
-        "oak_planks"
-      ],
-      "material": "wood",
-      "harvest_tier": 0,
-      "hardness": 2,
-      "drops": [
-        {
-          "item": "petramond:bed_frame",
-          "min": 1,
-          "max": 1,
-          "chance": 1
-        }
-      ]
-    },
-    {
       "block": "petramond:bed",
       "shape": {
         "model": "petramond:bed"

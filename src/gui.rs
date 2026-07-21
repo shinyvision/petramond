@@ -89,15 +89,6 @@ pub enum FurnaceHit {
     Output,
 }
 
-/// A hit-tested furniture-workbench slot: the single input block, or one of the
-/// take-only result cells (`0..` row-major, indexing the recipes the placed block
-/// offers).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum WorkbenchHit {
-    Input,
-    Result(usize),
-}
-
 /// A click hit-tested to a concrete logical slot identity, the unit the App routes
 /// through the deterministic container menu on the next tick.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -110,8 +101,6 @@ pub enum MenuSlot {
     Furnace(FurnaceHit),
     /// A chest storage slot index.
     Chest(usize),
-    /// A furniture-workbench slot: the input block, or a take-only result cell.
-    Workbench(WorkbenchHit),
     /// A mod GUI's `container` role slot index, backed by the
     /// [`Container`](crate::container::Container) at the session's
     /// opening block. Slot semantics (filters, take-only) come from the
@@ -135,8 +124,6 @@ pub(crate) enum Role {
     FurnaceInput,
     FurnaceFuel,
     FurnaceOutput,
-    WorkbenchInput,
-    WorkbenchResult,
     /// A mod GUI's generic container slots (role string `container`).
     Container,
     #[serde(other)]
@@ -155,8 +142,6 @@ impl Role {
             "furnace_input" => Role::FurnaceInput,
             "furnace_fuel" => Role::FurnaceFuel,
             "furnace_output" => Role::FurnaceOutput,
-            "workbench_input" => Role::WorkbenchInput,
-            "workbench_result" => Role::WorkbenchResult,
             "container" => Role::Container,
             _ => return None,
         })
@@ -174,8 +159,6 @@ impl Role {
             Role::FurnaceInput => MenuSlot::Furnace(FurnaceHit::Input),
             Role::FurnaceFuel => MenuSlot::Furnace(FurnaceHit::Fuel),
             Role::FurnaceOutput => MenuSlot::Furnace(FurnaceHit::Output),
-            Role::WorkbenchInput => MenuSlot::Workbench(WorkbenchHit::Input),
-            Role::WorkbenchResult => MenuSlot::Workbench(WorkbenchHit::Result(i)),
             Role::Container => MenuSlot::Container(i),
             Role::Generic | Role::Other => return None,
         })
@@ -272,17 +255,6 @@ pub struct ContainerView {
     pub slots: Vec<Option<ItemStack>>,
 }
 
-/// A furniture workbench's view for its open screen: the placed input block and
-/// the list of results it offers, each flagged craftable (enough input) or not
-/// (shown greyed). The result list is row-major, mapping to the manifest's result
-/// slots.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct WorkbenchView {
-    pub input: Option<ItemStack>,
-    /// `(result item, craftable now)` per offered recipe, row-major.
-    pub results: Vec<(ItemType, bool)>,
-}
-
 /// The player's health for the HUD hearts: `current` and `max` in half-heart points
 /// (a full heart is 2). `None` in a [`UiSnapshot`] hides the bar (spectator).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -316,9 +288,6 @@ pub struct UiSnapshot {
     pub furnace: Option<FurnaceView>,
     /// The open chest's 27 storage slots, or `None`.
     pub chest: Option<ChestView>,
-    /// The open furniture workbench's input + offered results, or `None`. When `Some`,
-    /// the workbench panel is drawn with the result grid (greyed where not craftable).
-    pub workbench: Option<WorkbenchView>,
     /// The open mod GUI's container slots, or `None` when the open session is
     /// not a slot-bearing mod GUI.
     pub container: Option<ContainerView>,
@@ -378,7 +347,6 @@ impl Default for UiSnapshot {
             cursor: None,
             furnace: None,
             chest: None,
-            workbench: None,
             container: None,
             health: None,
             effects: Vec::new(),

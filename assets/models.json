@@ -31,16 +31,6 @@
       "orientation": "left_to_right"
     },
     {
-      "key": "petramond:bed_frame",
-      "model_file": "models/blocks/bed_frame.bbmodel",
-      "cells": [
-        1,
-        1,
-        2
-      ],
-      "orientation": "left_to_right"
-    },
-    {
       "key": "petramond:bed",
       "model_file": "models/blocks/bed.bbmodel",
       "cells": [

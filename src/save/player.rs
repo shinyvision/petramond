@@ -14,7 +14,7 @@ use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u32, put_u8,
 
 /// The one supported player-file version. Only the CURRENT version decodes —
 /// no legacy ladders. Bump this and let old dev players respawn fresh.
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 /// Decoded `players/<name>.dat` contents.
 pub struct PlayerData {

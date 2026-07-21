@@ -67,9 +67,12 @@ use super::palette;
 /// was deleted outright), which also newly carries `petramond:health`.
 /// Another clean break — a v9 record's shear/KV bytes have no store to land
 /// in; dev worlds regenerate.
-const SECTION_REC_VERSION: u8 = 10;
+/// v11 retires the bed_frame block/item: every block id above 94 and item id
+/// above 119 shifted down by one, so older sections would decode to the
+/// wrong blocks/items. Clean break; dev worlds regenerate.
+const SECTION_REC_VERSION: u8 = 11;
 /// Oldest section-record version this build can still read.
-const SECTION_REC_MIN_VERSION: u8 = 10;
+const SECTION_REC_MIN_VERSION: u8 = 11;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;

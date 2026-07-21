@@ -45,12 +45,6 @@ pub fn contract_for(kind: &str) -> SlotContract {
             ("furnace_output", 1),
         ]),
         "petramond:hotbar" => SlotContract::new(&[("hotbar", 9)]),
-        "petramond:furniture_workbench" => SlotContract::new(&[
-            ("player_inv", 27),
-            ("hotbar", 9),
-            ("workbench_input", 1),
-            ("workbench_result", 21),
-        ]),
         "petramond:demo" => SlotContract::new(&[("demo_slots", 9)]),
         _ => SlotContract::default(),
     }
@@ -112,10 +106,6 @@ mod tests {
                 ],
             ),
             ("petramond:hotbar", &[("hotbar", 9)]),
-            (
-                "petramond:furniture_workbench",
-                &[("player_inv", 27), ("hotbar", 9), ("workbench_input", 1), ("workbench_result", 21)],
-            ),
             ("petramond:demo", &[("demo_slots", 9)]),
         ];
         for (kind, roles) in expect {

@@ -843,15 +843,15 @@
     {
       "type": "crafting",
       "recipe": "petramond:bed",
-      "station": "petramond:crafting_table",
+      "station": "petramond:furniture_workbench",
       "ingredients": [
+        {
+          "tag": "petramond:planks",
+          "count": 5
+        },
         {
           "item": "petramond:wool",
           "count": 8
-        },
-        {
-          "item": "petramond:bed_frame",
-          "count": 1
         }
       ],
       "result": {
@@ -995,76 +995,94 @@
       }
     },
     {
-      "type": "furniture",
-      "input": "petramond:oak_planks",
-      "result": "petramond:oak_door",
-      "cost": 1
+      "type": "crafting",
+      "recipe": "petramond:oak_door",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:oak_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:oak_door",
+        "count": 1
+      }
     },
     {
-      "type": "furniture",
-      "input": "petramond:spruce_planks",
-      "result": "petramond:spruce_door",
-      "cost": 1
+      "type": "crafting",
+      "recipe": "petramond:spruce_door",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:spruce_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:spruce_door",
+        "count": 1
+      }
     },
     {
-      "type": "furniture",
-      "input": "petramond:birch_planks",
-      "result": "petramond:birch_door",
-      "cost": 1
+      "type": "crafting",
+      "recipe": "petramond:birch_door",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:birch_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:birch_door",
+        "count": 1
+      }
     },
     {
-      "type": "furniture",
-      "input": "petramond:jungle_planks",
-      "result": "petramond:jungle_door",
-      "cost": 1
+      "type": "crafting",
+      "recipe": "petramond:jungle_door",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:jungle_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:jungle_door",
+        "count": 1
+      }
     },
     {
-      "type": "furniture",
-      "input": "petramond:acacia_planks",
-      "result": "petramond:acacia_door",
-      "cost": 1
+      "type": "crafting",
+      "recipe": "petramond:acacia_door",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:acacia_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:acacia_door",
+        "count": 1
+      }
     },
     {
-      "type": "furniture",
-      "input": "petramond:redwood_planks",
-      "result": "petramond:redwood_door",
-      "cost": 1
-    },
-    {
-      "type": "furniture",
-      "input": "petramond:oak_planks",
-      "result": "petramond:bed_frame",
-      "cost": 5
-    },
-    {
-      "type": "furniture",
-      "input": "petramond:spruce_planks",
-      "result": "petramond:bed_frame",
-      "cost": 5
-    },
-    {
-      "type": "furniture",
-      "input": "petramond:birch_planks",
-      "result": "petramond:bed_frame",
-      "cost": 5
-    },
-    {
-      "type": "furniture",
-      "input": "petramond:jungle_planks",
-      "result": "petramond:bed_frame",
-      "cost": 5
-    },
-    {
-      "type": "furniture",
-      "input": "petramond:acacia_planks",
-      "result": "petramond:bed_frame",
-      "cost": 5
-    },
-    {
-      "type": "furniture",
-      "input": "petramond:redwood_planks",
-      "result": "petramond:bed_frame",
-      "cost": 5
+      "type": "crafting",
+      "recipe": "petramond:redwood_door",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "petramond:redwood_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "petramond:redwood_door",
+        "count": 1
+      }
     },
     {
       "type": "crafting",

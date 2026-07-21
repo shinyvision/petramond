@@ -4,7 +4,7 @@
 //! Every screen's chrome (panels, slot faces, hover, gauges, text, dim) is
 //! drawn by the GUI-document runtime (`petramond-ui` draw list → `renderer::doc_ui`).
 //! [`build_ui`] emits only what the game owns on top of that: item icons +
-//! stack counts in the document's solved slot cells, greyed workbench results,
+//! stack counts in the document's solved slot cells,
 //! the HUD hearts, and the cursor-held drag stack. When no document backs the
 //! frame has no solved document slots, nothing draws.
 //!
@@ -60,9 +60,6 @@ pub struct UiBuild {
     /// One `(item, slot rect)` per filled slot. The renderer resolves each to its
     /// pre-baked icon-atlas cell and emits a textured quad.
     pub icon_quads: Vec<(ItemType, SlotRect)>,
-    /// Like [`icon_quads`](Self::icon_quads) but drawn semi-transparent (greyed) — the
-    /// furniture-workbench results the placed block can't yet make (not enough input).
-    pub dim_icon_quads: Vec<(ItemType, SlotRect)>,
     /// Recipe-browser icons embedded in document hooks. Each carries the
     /// inherited scroll clip and whether the unavailable row should dim it.
     pub hook_icon_quads: Vec<HookIconQuad>,
@@ -85,7 +82,6 @@ impl UiBuild {
         self.hearts.clear();
         self.effects.clear();
         self.icon_quads.clear();
-        self.dim_icon_quads.clear();
         self.hook_icon_quads.clear();
         self.counts.clear();
         self.drag_icon_quads.clear();
@@ -153,7 +149,7 @@ pub(super) fn push_quad_uv(
 
 /// The game-owned content of a document-drawn screen: item icons + counts in
 /// the document's slot cells (inset one logical px so icons sit inside the
-/// themed cell border), greyed workbench results, HUD hearts, and the
+/// themed cell border), HUD hearts, and the
 /// cursor-held drag stack. All chrome (panels, slot faces, hover, gauges,
 /// text) is in the document draw list.
 fn push_doc_game_content(
@@ -172,18 +168,6 @@ fn push_doc_game_content(
             h: (slot.rect.h - 2.0 * inset).max(0.0),
         };
         let i = slot.index as usize;
-        if slot.role == Role::WorkbenchResult {
-            if let Some(&(item, craftable)) = ui.workbench.as_ref().and_then(|w| w.results.get(i)) {
-                if item != ItemType::Air {
-                    if craftable {
-                        icon::push_slot_icon(build, screen, item, r);
-                    } else {
-                        icon::push_dim_slot_icon(build, screen, item, r);
-                    }
-                }
-            }
-            continue;
-        }
         let Some((item, count)) = slot_item(ui, slot.role, i) else {
             continue;
         };
@@ -516,10 +500,6 @@ fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<(ItemType, u32)> {
         Role::FurnaceInput => ui.furnace.and_then(|f| f.input).map(stack),
         Role::FurnaceFuel => ui.furnace.and_then(|f| f.fuel).map(stack),
         Role::FurnaceOutput => ui.furnace.and_then(|f| f.output).map(stack),
-        Role::WorkbenchInput => ui.workbench.as_ref().and_then(|w| w.input).map(stack),
-        // The result grid carries a craftable flag (greyed when not), so it's drawn
-        // specially in `push_doc_game_content` rather than through this mapping.
-        Role::WorkbenchResult => None,
         Role::Container => ui
             .container
             .as_ref()

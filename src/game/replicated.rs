@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use glam::{Quat, Vec3};
 
-use crate::gui::{ChestView, ContainerView, FurnaceView, GuiStateMap, WorkbenchView};
+use crate::gui::{ChestView, ContainerView, FurnaceView, GuiStateMap};
 use crate::inventory::Inventory;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::IVec3;
@@ -314,7 +314,6 @@ pub(crate) struct MenuView {
     pub(crate) craft_output: Option<ItemStack>,
     pub(crate) furnace: Option<FurnaceView>,
     pub(crate) chest: Option<ChestView>,
-    pub(crate) workbench: Option<WorkbenchView>,
     /// The open mod GUI's container slots.
     pub(crate) container: Option<ContainerView>,
     /// The open mod GUI's kind — resolves the document's slot semantics
@@ -331,7 +330,6 @@ impl Default for MenuView {
             craft_output: None,
             furnace: None,
             chest: None,
-            workbench: None,
             container: None,
             container_kind: None,
             gui_state: None,
@@ -350,7 +348,6 @@ impl MenuView {
         self.craft_output = None;
         self.furnace = None;
         self.chest = None;
-        self.workbench = None;
         self.container = None;
         self.container_kind = None;
         match msg.target {
@@ -385,16 +382,6 @@ impl MenuView {
                     *dst = stack_from_wire(src);
                 }
                 self.chest = Some(view);
-            }
-            MenuTargetWire::Workbench { input, results } => {
-                self.gui_state = None;
-                self.workbench = Some(WorkbenchView {
-                    input: stack_from_wire(input),
-                    results: results
-                        .into_iter()
-                        .map(|(id, ok)| (ItemType(id), ok))
-                        .collect(),
-                });
             }
             MenuTargetWire::ModGui {
                 kind_key,

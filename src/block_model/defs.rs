@@ -29,8 +29,7 @@ impl BlockModelKind {
     pub const FurnitureWorkbench: BlockModelKind = BlockModelKind(0);
     pub const Bucket: BlockModelKind = BlockModelKind(1);
     pub const WaterBucket: BlockModelKind = BlockModelKind(2);
-    pub const BedFrame: BlockModelKind = BlockModelKind(3);
-    pub const Bed: BlockModelKind = BlockModelKind(4);
+    pub const Bed: BlockModelKind = BlockModelKind(3);
 }
 
 /// Engine model keys in frozen id order — the completeness oracle
@@ -39,7 +38,6 @@ const ENGINE_MODEL_KEYS: &[&str] = &[
     "petramond:furniture_workbench",
     "petramond:bucket",
     "petramond:water_bucket",
-    "petramond:bed_frame",
     "petramond:bed",
 ];
 

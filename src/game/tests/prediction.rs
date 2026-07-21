@@ -5,7 +5,7 @@ use crate::block::Block;
 use crate::controls::PointerButton;
 use crate::game::prediction::{self, PredictionSnapshot};
 use crate::game::tick::{GameInput, PlacePrediction, TickEvents, TICK_DT};
-use crate::gui::{GuiKind, MenuSlot, WorkbenchHit};
+use crate::gui::{GuiKind, MenuSlot};
 use crate::mathh::{IVec3, Vec3};
 use crate::net::protocol::{
     ActionDenyReason, ClientToServer, MenuSlotWire, PlayerAction, SelfTransform, TickUpdate,
@@ -89,8 +89,12 @@ fn mixed_menu_drag_prediction_rolls_back_as_one_unit_on_deny() {
 
 #[test]
 fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
-    let mut game = game();
-    game.server.open_workbench_screen_for(0);
+    let mut game = game_on_empty_chunk();
+    let pos = IVec3::new(3, 64, 3);
+    game.server.world.set_block_world(3, 64, 3, Block::Chest);
+    game.server
+        .world
+        .insert_chest(pos, crate::block_model::DEFAULT_MODEL_FACING);
     game.server.sessions[0]
         .player
         .inventory
@@ -99,15 +103,14 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
             10,
         ));
     game.server.sessions[0].player.inventory.click_slot(0);
+    let mut ev = TickEvents::default();
+    game.server.open_chest_screen_for(0, pos, &mut ev);
     game.sync_self_view_for_test();
     game.sync_menu_view_for_test();
 
     game.game.menu_drag(
-        GuiKind::FurnitureWorkbench,
-        vec![
-            MenuSlot::Inventory(9),
-            MenuSlot::Workbench(WorkbenchHit::Input),
-        ],
+        GuiKind::Chest,
+        vec![MenuSlot::Inventory(9), MenuSlot::Chest(0)],
         PointerButton::Primary,
     );
     assert_eq!(game.game.prediction.pending_len(), 1);
@@ -123,9 +126,9 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
     assert_eq!(
         game.game
             .menu_view
-            .workbench
+            .chest
             .as_ref()
-            .and_then(|workbench| workbench.input)
+            .and_then(|chest| chest.slots[0])
             .map(|stack| stack.count),
         Some(5)
     );
@@ -145,9 +148,9 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
     assert_eq!(
         game.game
             .menu_view
-            .workbench
+            .chest
             .as_ref()
-            .and_then(|workbench| workbench.input)
+            .and_then(|chest| chest.slots[0])
             .map(|stack| stack.count),
         Some(5)
     );

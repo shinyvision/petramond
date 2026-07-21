@@ -1,6 +1,6 @@
 use crate::app::AppScreen;
 use crate::game::Game;
-use crate::gui::{FurnaceHit, MenuSlot, UiSnapshot, WorkbenchHit};
+use crate::gui::{FurnaceHit, MenuSlot, UiSnapshot};
 use crate::inventory::{place_cursor_count, plan_drag_distribution, slot_capacity};
 use crate::item::{ItemStack, ItemType};
 
@@ -28,7 +28,6 @@ pub(super) fn build(
     snapshot.cursor = inv.cursor().copied().map(stack_tuple);
     snapshot.furnace = menu.furnace;
     snapshot.chest = menu.chest;
-    snapshot.workbench = menu.workbench;
     snapshot.container = menu.container;
     snapshot.gui_state = menu.gui_state;
     snapshot.health = game.player_health();
@@ -80,11 +79,6 @@ fn preview_capacity(
             .get(i)
             .map(|cell| slot_capacity(&cell.map(stack_from_tuple), item))
             .unwrap_or(0),
-        MenuSlot::Workbench(WorkbenchHit::Input) => snapshot
-            .workbench
-            .as_ref()
-            .map(|workbench| slot_capacity(&workbench.input, item))
-            .unwrap_or(0),
         MenuSlot::Furnace(hit) => snapshot
             .furnace
             .as_ref()
@@ -106,10 +100,7 @@ fn preview_capacity(
             .and_then(|container| container.slots.get(i))
             .map(|cell| slot_capacity(cell, item))
             .unwrap_or(0),
-        MenuSlot::CraftResult
-        | MenuSlot::Workbench(_)
-        | MenuSlot::Container(_)
-        | MenuSlot::Widget(_) => 0,
+        MenuSlot::CraftResult | MenuSlot::Container(_) | MenuSlot::Widget(_) => 0,
     }
 }
 
@@ -131,10 +122,6 @@ fn preview_place(
     }
 
     let cell = match slot {
-        MenuSlot::Workbench(WorkbenchHit::Input) => snapshot
-            .workbench
-            .as_mut()
-            .map(|workbench| &mut workbench.input),
         MenuSlot::Furnace(FurnaceHit::Input) => {
             snapshot.furnace.as_mut().map(|furnace| &mut furnace.input)
         }
@@ -152,7 +139,6 @@ fn preview_place(
         MenuSlot::Inventory(_)
         | MenuSlot::CraftResult
         | MenuSlot::Furnace(FurnaceHit::Output)
-        | MenuSlot::Workbench(_)
         | MenuSlot::Container(_)
         | MenuSlot::Widget(_) => None,
     };

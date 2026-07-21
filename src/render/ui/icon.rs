@@ -32,17 +32,6 @@ pub(super) fn push_slot_icon(
     build.icon_quads.push((item, r));
 }
 
-/// Record `item` as a GREYED (semi-transparent) slot icon — a furniture-workbench
-/// result the placed block can't yet make. Drawn like [`push_slot_icon`] but with a
-/// reduced alpha by the renderer (see `UiBuild::dim_icon_quads`).
-pub(super) fn push_dim_slot_icon(
-    build: &mut UiBuild,
-    _screen: (u32, u32),
-    item: ItemType,
-    r: SlotRect,
-) {
-    build.dim_icon_quads.push((item, r));
-}
 
 /// The slot's center in NDC (y up). Shared by the iso + flat icon MVPs so an icon
 /// is always anchored at the geometric centre of its slot rect.
@@ -327,7 +316,6 @@ mod tests {
         // rot = RotY180 · Q), swap the quats below.
         let candidates: Vec<(String, BlockModelKind, Quat)> = [
             BlockModelKind::FurnitureWorkbench,
-            BlockModelKind::BedFrame,
             BlockModelKind::Bed,
         ]
         .into_iter()

@@ -114,7 +114,6 @@ pub(crate) const ENGINE_BLOCK_NAMES: &[&str] = &[
     "petramond:cobblestone_stairs",
     "petramond:stone_stairs",
     "petramond:dirt_stairs",
-    "petramond:bed_frame",
     "petramond:bed",
     "petramond:oak_slab",
     "petramond:spruce_slab",

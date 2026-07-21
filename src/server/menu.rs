@@ -11,7 +11,7 @@
 use crate::controls::PointerButton;
 use crate::crafting::CraftingStation;
 use crate::events::{PostEvent, SimCtx};
-use crate::gui::{ChestView, ContainerView, FurnaceView, GuiStateMap, MenuSlot, WorkbenchView};
+use crate::gui::{ChestView, ContainerView, FurnaceView, GuiStateMap, MenuSlot};
 use crate::inventory::Inventory;
 use crate::item::ItemStack;
 use crate::mathh::IVec3;
@@ -32,7 +32,6 @@ pub struct MenuReadModel<'a> {
     pub craft_output: Option<ItemStack>,
     pub furnace: Option<FurnaceView>,
     pub chest: Option<ChestView>,
-    pub workbench: Option<WorkbenchView>,
     /// The open mod GUI's state map (a shared snapshot), or `None` when the
     /// open session is not a mod GUI.
     pub gui_state: Option<std::sync::Arc<GuiStateMap>>,
@@ -97,7 +96,6 @@ impl ServerGame {
                         sess.menu.click(
                             &mut self.world,
                             &mut sess.player.inventory,
-                            &self.recipes,
                             slot,
                             button,
                             shift,
@@ -145,7 +143,6 @@ impl ServerGame {
                         sess.menu.drop_slot(
                             &mut self.world,
                             &mut sess.player.inventory,
-                            &self.recipes,
                             slot,
                             all,
                         )
@@ -196,7 +193,7 @@ impl ServerGame {
     }
 
     /// Replace an existing menu through the ordinary close funnel before a
-    /// new target opens. Transient cursor/output/workbench stacks are thereby
+    /// new target opens. Transient cursor/output stacks are thereby
     /// recovered exactly once, and chest viewer state cannot leak across a
     /// direct menu transition.
     fn replace_open_menu_for(&mut self, s: usize, events: &mut TickEvents) {
@@ -242,7 +239,6 @@ impl ServerGame {
                 let Some(pos) = pos else { return false };
                 self.open_chest_screen_for(s, pos, events);
             }
-            GuiKind::FurnitureWorkbench => self.open_workbench_screen_for(s),
             kind if kind.is_mod() => self.open_mod_gui_screen_for(s, kind, pos),
             _ => return false,
         }
@@ -348,12 +344,6 @@ impl ServerGame {
         }
     }
 
-    /// Begin session `s`'s furniture-workbench session (input starts empty).
-    pub(crate) fn open_workbench_screen_for(&mut self, s: usize) {
-        self.sessions[s].menu.open_workbench();
-        self.emit_container_opened(s);
-    }
-
     /// Begin session `s`'s mod GUI session for `kind`, opened from block
     /// `pos` (`None` for a programmatic `GuiOpen`). The session's state map
     /// starts empty — cleared here so no session can read a predecessor's
@@ -374,8 +364,8 @@ impl ServerGame {
     }
 
     /// Close player `s`'s open menu session in the app-required cleanup order:
-    /// cursor stack, player-crafting output, furnace, chest, furniture workbench, then
-    /// any mod GUI (whose session state map is cleared with it).
+    /// cursor stack, player-crafting output, furnace, chest, then any mod
+    /// GUI (whose session state map is cleared with it).
     pub(crate) fn close_open_menu_for(&mut self, s: usize, events: &mut TickEvents) {
         // `container_closed` for whatever session was actually open. Emitted
         // (not dispatched) here: the handler runs at the tick's next drain
@@ -388,7 +378,6 @@ impl ServerGame {
         self.close_crafting_for(s);
         self.sessions[s].menu.close_furnace();
         self.sessions[s].menu.close_chest();
-        self.close_workbench_for(s);
         self.close_mod_gui_for(s);
         self.clear_menu_open_requests(s);
     }
@@ -445,24 +434,12 @@ impl ServerGame {
         }
     }
 
-    /// End the workbench session: return the input block to the inventory
-    /// (overflow thrown into the world).
-    fn close_workbench_for(&mut self, s: usize) {
-        let mut overflow = Vec::new();
-        let sess = &mut self.sessions[s];
-        sess.menu
-            .close_workbench(&mut sess.player.inventory, |stack| overflow.push(stack));
-        for stack in overflow {
-            sess.drop_queue.queue_stack(stack);
-        }
-    }
-
     /// Session `s`'s menu view as the wire message, with `gui_state` held
     /// `None` (the caller attaches the map only when its `Arc` changed).
     pub(super) fn build_menu_sync_base(&self, s: usize) -> MenuSyncMsg {
         use crate::gui::GuiKind;
         let sess = &self.sessions[s];
-        // The wire keeps per-kind view payloads (gauges, workbench results);
+        // The wire keeps per-kind view payloads (gauges, chest slots);
         // this is the one kind-keyed lookup that selects them.
         let target = match sess.menu.target() {
             ContainerTarget::None => MenuTargetWire::None,
@@ -488,16 +465,6 @@ impl ServerGame {
                     MenuTargetWire::Chest {
                         pos: pos.unwrap_or_default(),
                         slots,
-                    }
-                }
-                GuiKind::FurnitureWorkbench => {
-                    let v = sess
-                        .menu
-                        .open_workbench_view(&self.recipes)
-                        .unwrap_or_default();
-                    MenuTargetWire::Workbench {
-                        input: slot_wire(v.input),
-                        results: v.results.iter().map(|&(item, ok)| (item.0, ok)).collect(),
                     }
                 }
                 kind => MenuTargetWire::ModGui {

@@ -75,7 +75,6 @@ fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
             ItemType::Stick,
         )],
         Vec::new(),
-        Vec::new(),
     );
     game.server.sessions[0]
         .player
@@ -119,7 +118,6 @@ fn crafting_outputs_replicate_per_session_and_remain_independent() {
             test_crafting_recipe("test:local", ItemType::Coal, ItemType::Stick),
             test_crafting_recipe("test:remote", ItemType::Dirt, ItemType::Glass),
         ],
-        Vec::new(),
         Vec::new(),
     );
     let remote = game

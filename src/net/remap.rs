@@ -313,16 +313,6 @@ impl IdRemap {
                     remap_slot(self, slot);
                 }
             }
-            MenuTargetWire::Workbench { input, results } => {
-                remap_slot(self, input);
-                results.retain_mut(|(id, _)| match self.item(*id) {
-                    Some(local) => {
-                        *id = local;
-                        true
-                    }
-                    None => false,
-                });
-            }
             MenuTargetWire::ModGui { slots, .. } => {
                 if let Some(slots) = slots {
                     for slot in slots {

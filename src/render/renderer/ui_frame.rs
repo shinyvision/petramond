@@ -104,22 +104,6 @@ impl Renderer {
                     [1.0, 1.0, 1.0, 1.0],
                 );
             }
-            // Greyed (semi-transparent) icons — workbench results not yet craftable.
-            // Same icon-atlas quad, drawn at reduced alpha so the panel shows through.
-            for &(item, r) in &self.ui_build.dim_icon_quads {
-                let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(item);
-                crate::render::ui::push_quad_uv(
-                    &mut verts,
-                    screen,
-                    r.x,
-                    r.y,
-                    r.w,
-                    r.h,
-                    [u0, v0],
-                    [u1, v1],
-                    [1.0, 1.0, 1.0, 0.35],
-                );
-            }
             for icon in &self.ui_build.hook_icon_quads {
                 let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(icon.item);
                 let Some((visible, uv_tl, uv_br)) =

@@ -5,7 +5,6 @@ mod generic;
 mod state;
 mod target;
 mod transport;
-mod workbench;
 
 pub(crate) use crafting::CraftMenuFailure;
 pub(crate) use state::ContainerMenu;
@@ -21,7 +20,7 @@ mod tests {
         Recipes,
     };
     use crate::facing::Facing;
-    use crate::gui::{MenuSlot, WorkbenchHit};
+    use crate::gui::MenuSlot;
     use crate::inventory::Inventory;
     use crate::item::{ItemStack, ItemType};
     use crate::mathh::IVec3;
@@ -50,7 +49,6 @@ mod tests {
                 }],
                 ItemStack::new(ItemType::Stick, 2),
             )],
-            Vec::new(),
             Vec::new(),
         )
     }
@@ -95,7 +93,6 @@ mod tests {
         menu.click(
             &mut world,
             &mut inv,
-            &recipes(),
             MenuSlot::CraftResult,
             PointerButton::Secondary,
             false,
@@ -122,7 +119,6 @@ mod tests {
         menu.click(
             &mut world,
             &mut inv,
-            &recipes(),
             MenuSlot::Furnace(crate::gui::FurnaceHit::Output),
             PointerButton::Secondary,
             false,
@@ -189,7 +185,7 @@ mod tests {
         menu.open_chest_screen(&mut world, pos);
 
         assert_eq!(
-            menu.drop_slot(&mut world, &mut inv, &recipes(), MenuSlot::Chest(0), false),
+            menu.drop_slot(&mut world, &mut inv, MenuSlot::Chest(0), false),
             Some(ItemStack::new(ItemType::Coal, 1))
         );
         assert_eq!(
@@ -197,7 +193,7 @@ mod tests {
             Some(ItemStack::new(ItemType::Coal, 4))
         );
         assert_eq!(
-            menu.drop_slot(&mut world, &mut inv, &recipes(), MenuSlot::Chest(0), true),
+            menu.drop_slot(&mut world, &mut inv, MenuSlot::Chest(0), true),
             Some(ItemStack::new(ItemType::Coal, 4))
         );
         assert!(world.container_at(pos).unwrap().slots[0].is_none());
@@ -426,181 +422,5 @@ mod tests {
         assert_eq!(c.slots[0], None, "no new stack opened while one can merge");
         assert_eq!(c.slots[1], Some(ItemStack::new(ItemType::Coal, 40)));
         assert!(inv.slot(0).is_none(), "the whole shifted stack moved");
-    }
-    fn place_in_workbench_input(
-        menu: &mut ContainerMenu,
-        world: &mut World,
-        inv: &mut Inventory,
-        recipes: &Recipes,
-        stack: ItemStack,
-    ) {
-        inv.add(stack);
-        inv.click_slot(0); // pick onto cursor
-        menu.click(
-            world,
-            inv,
-            recipes,
-            MenuSlot::Workbench(WorkbenchHit::Input),
-            PointerButton::Primary,
-            false,
-            false,
-        );
-    }
-
-    #[test]
-    fn workbench_offers_a_door_for_planks_and_crafting_consumes_input() {
-        let recipes = recipes(); // the shipped recipes incl. plank → door
-        let mut world = world_with_empty_chunk();
-        let mut menu = ContainerMenu::new();
-        let mut inv = Inventory::new();
-        menu.open_workbench();
-        // Empty input offers nothing.
-        assert!(menu
-            .open_workbench_view(&recipes)
-            .unwrap()
-            .results
-            .is_empty());
-
-        // Three oak planks in → oak door offered and craftable (cost 1).
-        place_in_workbench_input(
-            &mut menu,
-            &mut world,
-            &mut inv,
-            &recipes,
-            ItemStack::new(ItemType::OakPlanks, 3),
-        );
-        let view = menu.open_workbench_view(&recipes).unwrap();
-        assert_eq!(view.input.map(|s| s.count), Some(3));
-        assert!(
-            view.results
-                .iter()
-                .any(|&(it, ok)| it == ItemType::OakDoor && ok),
-            "oak door offered + craftable"
-        );
-
-        // Craft the first result: a door onto the cursor, one plank consumed.
-        menu.click(
-            &mut world,
-            &mut inv,
-            &recipes,
-            MenuSlot::Workbench(WorkbenchHit::Result(0)),
-            PointerButton::Primary,
-            false,
-            false,
-        );
-        assert_eq!(
-            inv.cursor().map(|s| (s.item, s.count)),
-            Some((ItemType::OakDoor, 1))
-        );
-        assert_eq!(
-            menu.open_workbench_view(&recipes)
-                .unwrap()
-                .input
-                .unwrap()
-                .count,
-            2
-        );
-    }
-
-    #[test]
-    fn shift_clicking_inventory_planks_fills_the_workbench_input() {
-        let recipes = recipes();
-        let mut world = world_with_empty_chunk();
-        let mut menu = ContainerMenu::new();
-        let mut inv = Inventory::new();
-        menu.open_workbench();
-        inv.add(ItemStack::new(ItemType::OakPlanks, 5));
-
-        // Shift-click the inventory slot: the planks (a furniture input) jump to the input.
-        menu.click(
-            &mut world,
-            &mut inv,
-            &recipes,
-            MenuSlot::Inventory(0),
-            PointerButton::Primary,
-            true,
-            false,
-        );
-        assert_eq!(
-            menu.open_workbench_view(&recipes)
-                .unwrap()
-                .input
-                .map(|s| (s.item, s.count)),
-            Some((ItemType::OakPlanks, 5)),
-            "the whole plank stack moved into the input",
-        );
-        assert!(inv.slot(0).is_none(), "the inventory slot emptied");
-    }
-
-    #[test]
-    fn shift_clicking_a_non_input_item_does_not_fill_the_workbench() {
-        // A stick has no furniture recipe, so shift-click must NOT dump it in the input —
-        // it falls back to the ordinary hotbar↔grid move instead.
-        let recipes = recipes();
-        let mut world = world_with_empty_chunk();
-        let mut menu = ContainerMenu::new();
-        let mut inv = Inventory::new();
-        menu.open_workbench();
-        inv.add(ItemStack::new(ItemType::Stick, 4));
-        menu.click(
-            &mut world,
-            &mut inv,
-            &recipes,
-            MenuSlot::Inventory(0),
-            PointerButton::Primary,
-            true,
-            false,
-        );
-        assert!(
-            menu.open_workbench_view(&recipes).unwrap().input.is_none(),
-            "a non-input item never lands in the workbench input",
-        );
-    }
-
-    #[test]
-    fn workbench_greys_out_and_refuses_a_result_below_its_cost() {
-        // A recipe that needs 6 planks: with fewer it shows greyed and won't craft.
-        let recipes = Recipes::new(
-            Vec::new(),
-            Vec::new(),
-            vec![crate::crafting::FurnitureRecipe {
-                input: ItemType::OakPlanks,
-                result: ItemStack::new(ItemType::OakDoor, 1),
-                cost: 6,
-            }],
-        );
-        let mut world = world_with_empty_chunk();
-        let mut menu = ContainerMenu::new();
-        let mut inv = Inventory::new();
-        menu.open_workbench();
-        place_in_workbench_input(
-            &mut menu,
-            &mut world,
-            &mut inv,
-            &recipes,
-            ItemStack::new(ItemType::OakPlanks, 3),
-        );
-        // Offered but greyed (3 < 6).
-        let view = menu.open_workbench_view(&recipes).unwrap();
-        assert_eq!(view.results, vec![(ItemType::OakDoor, false)]);
-        // Clicking a greyed result does nothing: no door, input untouched.
-        menu.click(
-            &mut world,
-            &mut inv,
-            &recipes,
-            MenuSlot::Workbench(WorkbenchHit::Result(0)),
-            PointerButton::Primary,
-            false,
-            false,
-        );
-        assert!(inv.cursor().is_none(), "no craft below cost");
-        assert_eq!(
-            menu.open_workbench_view(&recipes)
-                .unwrap()
-                .input
-                .unwrap()
-                .count,
-            3
-        );
     }
 }

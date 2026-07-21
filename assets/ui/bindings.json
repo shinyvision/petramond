@@ -368,7 +368,7 @@
   "petramond:furniture_workbench": {
    "state": {},
    "handles": {},
-   "notes": "container: slots route by role; result icons grey out automatically when not craftable"
+   "notes": "crafting station: backed by the petramond:crafting_table document (ordinary crafting session); the title label binds craft_station_title"
   },
   "mod kinds (modid:name)": {
    "state": {
