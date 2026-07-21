@@ -323,17 +323,21 @@ impl Renderer {
             g.visible.clear();
         }
         for inst in &self.mobs {
-            // Cull box: ~0.5 m around the feet, expanded up for the standing body. A
-            // killed mob is flung from its (frozen) death point and tumbles across the
-            // ground, so use a generous box while it's ragdolling so the flying corpse
-            // doesn't pop out of view.
-            let pad = if inst.ragdoll.is_some() {
-                glam::Vec3::splat(6.0)
+            // Cull box: the species' rest-pose bounds × scale + slack around the
+            // feet (`MobGpu::cull_*`, computed at construction) — a hardcoded pad
+            // clipped every species taller than it. A killed mob is flung from its
+            // (frozen) death point and tumbles across the ground, so use a generous
+            // box while it's ragdolling so the flying corpse doesn't pop out of view.
+            let g = &self.mob_gpu[inst.kind.0 as usize];
+            let (min, max) = if inst.ragdoll.is_some() {
+                let pad = glam::Vec3::splat(6.0);
+                (inst.pos - pad, inst.pos + pad)
             } else {
-                glam::Vec3::new(0.5, 1.2, 0.5)
+                (
+                    inst.pos + glam::Vec3::new(-g.cull_r, g.cull_y0, -g.cull_r),
+                    inst.pos + glam::Vec3::new(g.cull_r, g.cull_y1, g.cull_r),
+                )
             };
-            let min = inst.pos - pad;
-            let max = inst.pos + pad;
             if visible_world_aabb(min, max) {
                 self.mob_gpu[inst.kind.0 as usize]
                     .visible

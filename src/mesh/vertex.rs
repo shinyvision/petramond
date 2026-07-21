@@ -26,7 +26,9 @@ pub struct Vertex {
 }
 
 /// Fixed-point scale for [`TerrainVertex::pos`]: one unit = 1/64 block.
-/// Water surface Y and greedy T-junction overlaps stay sub-block accurate.
+/// Water surface Y stays sub-block accurate. NOTE: sub-pixel offsets (like the
+/// greedy T-junction overlap) do NOT survive this grid — that overlap is
+/// applied in `vs_terrain` (`greedy_overlap_push`), never baked into vertices.
 pub const TERRAIN_POS_SCALE: f32 = 64.0;
 
 /// Packed-column terrain vertex: **20 bytes**. `pos` is column-local XZ + world Y

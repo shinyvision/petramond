@@ -195,6 +195,8 @@ async fn new_renderer_inner(
     // dynamic-draw buffers over the shared mob pipeline. Adding a species is a row in
     // `mobs.json` — no renderer edit. A model parse failure degrades to an empty
     // model (that species just doesn't draw) rather than crashing the renderer.
+    // World-space margin added around each species' rest-pose cull bounds.
+    const MOB_CULL_SLACK: f32 = 0.5;
     let mob_gpu: Vec<MobGpu> = crate::mob::defs()
         .iter()
         .map(|d| {
@@ -237,6 +239,17 @@ async fn new_renderer_inner(
                 usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            // Cull volume from the rest-posed model bounds × render scale. The
+            // horizontal radius takes the farthest posed corner (yaw can point
+            // it in any direction); MOB_CULL_SLACK absorbs what the rest pose
+            // cannot know — walk/idle limb swing, head-look, the interpolation
+            // between replicated positions. Conservative slack costs a few
+            // early-visible instances; too tight pops mobs at screen edges.
+            let (bmin, bmax) = model.rest_bounds();
+            let r = [bmin.x, bmax.x]
+                .into_iter()
+                .flat_map(|x| [bmin.z, bmax.z].map(|z| (x * x + z * z).sqrt()))
+                .fold(0.0f32, f32::max);
             MobGpu {
                 model,
                 scale: d.scale,
@@ -248,6 +261,9 @@ async fn new_renderer_inner(
                     crate::render::pipeline::MAX_MOB_VERTICES,
                     crate::render::pipeline::MAX_MOB_INDICES,
                 ),
+                cull_r: r * d.scale + MOB_CULL_SLACK,
+                cull_y0: bmin.y * d.scale - MOB_CULL_SLACK,
+                cull_y1: bmax.y * d.scale + MOB_CULL_SLACK,
                 visible: Vec::new(),
                 verts: Vec::new(),
                 indices: Vec::new(),

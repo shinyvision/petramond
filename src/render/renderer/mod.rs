@@ -129,6 +129,15 @@ struct MobGpu {
     scale: f32,
     bind: wgpu::BindGroup,
     draw: DynamicDraw,
+    /// Live-mob frustum cull volume around the instance position, derived from
+    /// the REST-POSED model bounds × scale plus animation slack (see
+    /// `construct`): horizontal radius (yaw-independent — the farthest posed
+    /// corner can point any way) and the vertical extent relative to the feet.
+    /// A hardcoded pad was the old bug: it topped out at 1.2 m and clipped any
+    /// taller species (the hushjaw is ~1.9 m) out of the frustum early.
+    cull_r: f32,
+    cull_y0: f32,
+    cull_y1: f32,
     /// Frustum-visible subset of this species' instances this frame.
     visible: Vec<MobRenderInstance>,
     /// Reused CPU staging for this species' baked geometry.

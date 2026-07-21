@@ -251,6 +251,7 @@ mod oriented_blocks;
 mod parity;
 mod seams;
 mod skylight;
+mod snow;
 mod slabs;
 mod stairs;
 mod water;

@@ -272,6 +272,14 @@ impl Block {
         data::flags(self.id()).is_slab()
     }
 
+    /// Shape-class test the mesher's exposure masks run per pad cell (a
+    /// lowered cube's full 1×1 base culls the top face of the block beneath
+    /// it); same dense-flag rationale as [`is_slab`](Self::is_slab).
+    #[inline]
+    pub fn is_lowered_cube(self) -> bool {
+        data::flags(self.id()).is_lowered_cube()
+    }
+
     /// Does this block cast ambient occlusion? Full opaque cubes always do, and
     /// leaves also occlude — onto adjacent leaves and within a canopy — so dense
     /// foliage gets internal AO depth instead of reading flat. Unlike `is_opaque`,

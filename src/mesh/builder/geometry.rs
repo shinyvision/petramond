@@ -592,7 +592,14 @@ pub(super) fn section_geometry(
                         _ => None,
                     };
                     let is_lowered_top = lowered.is_some() && matches!(face, Face::PosY);
-                    let nb_solid = nb.is_opaque() || (nb.is_slab() && slab_full_at(nwx, nwy, nwz));
+                    // A lowered cube's full 1×1 base sits flush on the cell
+                    // floor, so for the face BENEATH it it covers exactly like
+                    // an opaque cube (a snow layer's carrier top would z-fight
+                    // the layer from far above otherwise).
+                    let nb_covers_below = matches!(face, Face::PosY) && nb.is_lowered_cube();
+                    let nb_solid = nb.is_opaque()
+                        || (nb.is_slab() && slab_full_at(nwx, nwy, nwz))
+                        || nb_covers_below;
                     if nb_solid && !is_water_top && !is_cactus_side && !is_lowered_top {
                         continue;
                     }

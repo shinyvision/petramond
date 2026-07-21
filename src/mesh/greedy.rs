@@ -12,9 +12,14 @@ use super::vertex::{
     pack_normal_code, pack_vertex, pack_vertex2, Vertex, UV_MODE_NONE, UV_MODE_SHIFT,
 };
 
-// Long greedy edges can meet subdivided neighbour faces as T-junctions; a tiny tangent-only
-// overlap covers the rasterizer crack without moving the face plane or affecting water.
-const GREEDY_FACE_OVERLAP: f32 = 1.0 / 1024.0;
+// Long greedy edges can meet subdivided neighbour faces as T-junctions, which rasterize
+// as one-pixel background cracks. The covering tangent overlap is applied in the VERTEX
+// SHADER (`vs_terrain`'s greedy_overlap_push), NOT baked into these vertices: the packed
+// column format quantizes positions to 1/64 block, which either rounds a sub-pixel
+// overlap away (cracks return as bright speckles) or forces a full quantization step of
+// overlap — a visibly protruding skirt with texture-wrap fringes and coplanar
+// z-fighting. CPU mesh bounds therefore stay EXACT; the shader detects merged quads by
+// their nonzero packed (W-1, H-1) extent and pushes corners outward in f32.
 
 /// A flat (uniform-across-corners) opaque cube face, recorded per (direction, cell) so a
 /// run of identical adjacent faces can collapse into ONE tiled quad (greedy meshing). Only
@@ -199,7 +204,6 @@ fn push_greedy_quad(
     w: u32,
     h: u32,
 ) {
-    let (min, max) = overlap_greedy_box(face, min, max);
     let corners = face.quad_box(min, max);
     let shade_idx = face.shade_idx();
     let wh = ((w - 1) & 0xF) | (((h - 1) & 0xF) << 4);
@@ -221,14 +225,4 @@ fn push_greedy_quad(
         });
     }
     opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
-}
-
-#[inline]
-fn overlap_greedy_box(face: Face, mut min: [f32; 3], mut max: [f32; 3]) -> ([f32; 3], [f32; 3]) {
-    let (_, u, v) = face_axes(face);
-    min[u] -= GREEDY_FACE_OVERLAP;
-    max[u] += GREEDY_FACE_OVERLAP;
-    min[v] -= GREEDY_FACE_OVERLAP;
-    max[v] += GREEDY_FACE_OVERLAP;
-    (min, max)
 }

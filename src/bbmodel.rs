@@ -368,6 +368,39 @@ impl Model {
         self.resolve_pose(&local)
     }
 
+    /// Tight AABB over the rest-posed geometry, MODEL space (feet near y=0) —
+    /// every cube's box through its bone + static-tilt transform, the same
+    /// composition the render bake applies. Callers derive conservative cull
+    /// volumes from this (scaled to the world + slack for animation), instead
+    /// of guessing a species' extent from its collision size. An empty model
+    /// answers a zero box at the origin.
+    pub fn rest_bounds(&self) -> (Vec3, Vec3) {
+        let pose = self.rest_pose();
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for cube in &self.cubes {
+            let bone = pose.get(cube.bone).copied().unwrap_or(Mat4::IDENTITY);
+            let s_cube = Mat4::from_translation(cube.origin)
+                * Mat4::from_quat(euler_quat(cube.rotation))
+                * Mat4::from_translation(-cube.origin);
+            let m = bone * s_cube;
+            for i in 0..8 {
+                let corner = Vec3::new(
+                    if i & 1 == 0 { cube.from.x } else { cube.to.x },
+                    if i & 2 == 0 { cube.from.y } else { cube.to.y },
+                    if i & 4 == 0 { cube.from.z } else { cube.to.z },
+                );
+                let p = m.transform_point3(corner);
+                min = min.min(p);
+                max = max.max(p);
+            }
+        }
+        if !min.x.is_finite() {
+            return (Vec3::ZERO, Vec3::ZERO);
+        }
+        (min, max)
+    }
+
     /// Per-bone world-within-model transforms posed by `anim` at `time` seconds
     /// (looped over the animation length) — the single-animation form of
     /// [`pose_layers`](Self::pose_layers). Index by `Cube::bone`. Apply to a
@@ -454,8 +487,14 @@ impl CompiledAsset for Model {
     /// named rotation animations + the RGBA texture — since v4 the texture is the
     /// combined multi-texture sheet with face UVs remapped into it. v5: element
     /// `inflate` baked into the cube box (skin overlay layers stop z-fighting).
-    /// Bump on any change to these fields or to [`Model::load`]'s output.
-    const FORMAT_VERSION: u32 = 5;
+    /// v6: animations carry `pos_tracks` (the 2026-07-20 position channels —
+    /// this bump is LATE: v5-era caches mis-decoded under the grown layout, and
+    /// an unlucky byte order decoded into valid-but-empty garbage instead of a
+    /// clean failure — the invisible-hushjaw bug).
+    /// Bump on any change to these fields or to [`Model::load`]'s output; the
+    /// `compiled_model_layout_change_requires_a_format_version_bump` guard
+    /// fails until you do.
+    const FORMAT_VERSION: u32 = 6;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llmob";
 

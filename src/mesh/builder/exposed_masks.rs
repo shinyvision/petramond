@@ -58,16 +58,24 @@ pub(super) fn build_exposed_masks(pad: &SectionMeshPad<'_>) -> ExposedMasks {
 
     let mut masks = [[0u64; FACE_MASK_WORDS]; FACES.len()];
     let mut opaque_rows = [0u32; SECTION_PAD * SECTION_PAD];
+    // Blocks whose full 1×1 base covers the face BELOW them (lowered cubes:
+    // snow layer, farmland) without being opaque. Only the PosY cull may read
+    // this — a lowered cube covers nothing sideways or upward.
+    let mut covers_below_rows = [0u32; SECTION_PAD * SECTION_PAD];
     for py in 0..SECTION_PAD {
         for pz in 0..SECTION_PAD {
             let mut row = 0u32;
+            let mut covers_row = 0u32;
             for px in 0..SECTION_PAD {
                 let block = pad.block_at_pad(px, py, pz);
                 if block.is_opaque() || pad.full_slab_stack_at_pad(block, px, py, pz) {
                     row |= 1u32 << px;
+                } else if block.is_lowered_cube() {
+                    covers_row |= 1u32 << px;
                 }
             }
             opaque_rows[row_idx(py, pz)] = row;
+            covers_below_rows[row_idx(py, pz)] = covers_row;
         }
     }
 
@@ -122,7 +130,10 @@ pub(super) fn build_exposed_masks(pad: &SectionMeshPad<'_>) -> ExposedMasks {
                 Face::PosY,
                 ly,
                 lz,
-                cand & !((opaque_rows[row_idx(py + 1, pz)] >> 1) & CENTER_BITS),
+                cand & !(((opaque_rows[row_idx(py + 1, pz)]
+                    | covers_below_rows[row_idx(py + 1, pz)])
+                    >> 1)
+                    & CENTER_BITS),
             );
             set_face_row(
                 &mut masks,

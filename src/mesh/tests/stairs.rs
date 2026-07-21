@@ -82,12 +82,19 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
         &[((8, 8, 8), Facing::South)],
     );
 
-    // Continuity: group by (position, face kind); every group must agree on
-    // both packed words (AO + sky light + block light + cell UV).
-    let mut seen: std::collections::HashMap<([u32; 3], u32), (u32, u32)> =
+    // Continuity: group the STAIR's own vertices (cell-local UVs — the wall's
+    // plain cube faces share exact corner positions with the stair box and are
+    // legitimately a different tile/format) by (position, face kind); every
+    // group must agree on both packed words (AO + sky light + block light +
+    // cell UV). Face kind is shade index plus the normal code, so coincident
+    // corners of differently-facing sub-quads never compare.
+    let mut seen: std::collections::HashMap<([u32; 3], u32, u32), (u32, u32)> =
         std::collections::HashMap::new();
     for v in &m.opaque {
-        let key = (v.pos.map(f32::to_bits), shade_idx(v));
+        if uv_mode(v) != UV_MODE_CELL_LOCAL {
+            continue;
+        }
+        let key = (v.pos.map(f32::to_bits), shade_idx(v), (v.packed2 >> 16) & 0x7);
         // Ignore the per-quad corner index (bits 8..10); everything else —
         // tile, AO, sky light, block light, cell UV — must agree.
         let val = (v.packed & !(0x3 << 8), v.packed2);

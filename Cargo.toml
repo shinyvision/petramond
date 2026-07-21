@@ -1,6 +1,6 @@
 [package]
 name = "petramond"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["rachel"]
 description = "A noise-based voxel world biomes + features."

@@ -412,6 +412,7 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
         if flags.is_opaque() {
             return Err("a lowered_cube row must not carry the 'opaque' flag".into());
         }
+        flags = flags.with(BlockFlags::LOWERED_CUBE);
     }
     let drops: Vec<Drop> = r
         .drops

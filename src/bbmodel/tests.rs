@@ -440,3 +440,98 @@ fn position_tracks_translate_the_bone() {
     let held = m.pose(dip, 2.0);
     assert!((held[0].transform_point3(Vec3::splat(2.0)).y - p1.y).abs() < 1e-5);
 }
+
+
+/// The serialized bytes of a canonical compiled model, pinned against
+/// [`CompiledAsset::FORMAT_VERSION`]. The cache header treats an equal version
+/// as decode-compatible, so ANY change to the serialized layout that ships
+/// without a bump lets stale `.llmob` files mis-decode under the new structs —
+/// usually a clean failure (recompile), but an unlucky byte order decodes into
+/// valid-but-garbage models (the 2026-07-21 invisible-hushjaw bug: a species
+/// silently baking zero triangles). Every collection in the canonical model
+/// holds at most ONE entry, so HashMap iteration order cannot vary the bytes.
+///
+/// If this fails you changed the compiled layout (or `Model::load`'s output):
+/// bump `FORMAT_VERSION` and update `GOLDEN_VERSION` + `GOLDEN_HEX` from the
+/// failure message. Never update the golden without the bump.
+#[test]
+fn compiled_model_layout_change_requires_a_format_version_bump() {
+    use crate::asset_cache::CompiledAsset;
+
+    const GOLDEN_VERSION: u32 = 6;
+    const GOLDEN_HEX: &str = concat!(
+        "01000000000000000400000000000000726f6f7400000040000000400000004000000000",
+        "00000000000000000001000000000000000400000000000000626f647900000000000000",
+        "000000000000008040000080400000804000000000000000000000000000000000000000",
+        "0000000000000000000000000000000100000000000000000000803f0000803f00000001",
+        "00000000000000090000000000000069646c655f776176650000803f0001000000000000",
+        "00000000000000000001000000000000000000803e00002041000000000000a040010000",
+        "0000000000000000000000000001000000000000000000003f00000000000040c0000000",
+        "000100000000000000090000000000000069646c655f776176650400000000000000ff00",
+        "00ff0100000001000000",
+    );
+
+    let tex = one_pixel_texture([255, 0, 0, 255]);
+    let src = format!(
+        r#"{{
+            "resolution": {{ "width": 16, "height": 16 }},
+            "textures": [{{ "uv_width": 16, "uv_height": 16, "source": "{tex}" }}],
+            "elements": [
+                {{ "uuid": "c", "type": "cube", "name": "body", "from": [0,0,0], "to": [4,4,4],
+                   "faces": {{ "up": {{ "uv": [0,0,16,16], "texture": 0 }} }} }}
+            ],
+            "groups": [{{ "uuid": "g", "name": "root", "origin": [2,2,2] }}],
+            "outliner": [{{ "uuid": "g", "name": "root", "origin": [2,2,2], "rotation": [0,10,0], "children": ["c"] }}],
+            "animations": [{{
+                "name": "idle_wave", "loop": "once", "length": 1.0,
+                "animators": {{ "g": {{ "name": "root", "type": "bone", "keyframes": [
+                    {{ "channel": "rotation", "time": 0.25,
+                       "data_points": [{{ "x": "10", "y": "0", "z": "5" }}] }},
+                    {{ "channel": "position", "time": 0.5,
+                       "data_points": [{{ "x": "0", "y": "-3", "z": "0" }}] }}
+                ] }} }}
+            }}]
+        }}"#
+    );
+    let m = <Model as CompiledAsset>::compile(src.as_bytes()).expect("canonical model compiles");
+    let bytes = bincode::serialize(&m).expect("serializes");
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    assert!(
+        Model::FORMAT_VERSION == GOLDEN_VERSION && hex == GOLDEN_HEX,
+        "compiled .llmob layout or version changed.\n\
+         FORMAT_VERSION: {} (golden {GOLDEN_VERSION})\n\
+         serialized canonical model:\n{hex}\n\
+         If any serialized struct or Model::load output changed, bump FORMAT_VERSION \
+         in `impl CompiledAsset for Model` and update GOLDEN_VERSION + GOLDEN_HEX \
+         together. A layout change WITHOUT the bump lets stale caches mis-decode \
+         into garbage models (invisible mobs).",
+        Model::FORMAT_VERSION,
+    );
+}
+
+/// The rest-pose bounds must cover the posed geometry — the renderer derives
+/// mob frustum-cull volumes from them, and an undersized answer clips live
+/// mobs out of view (the old hardcoded 1.2 m pad bug, inverted).
+#[test]
+fn rest_bounds_cover_the_posed_geometry() {
+    let m = owl();
+    let (min, max) = m.rest_bounds();
+    assert!(max.x > min.x && max.y > min.y && max.z > min.z, "{min} {max}");
+
+    // Every posed cube corner lies inside the answered box.
+    let pose = m.rest_pose();
+    for cube in &m.cubes {
+        let bone = pose.get(cube.bone).copied().unwrap_or(Mat4::IDENTITY);
+        let s_cube = Mat4::from_translation(cube.origin)
+            * Mat4::from_quat(euler_quat(cube.rotation))
+            * Mat4::from_translation(-cube.origin);
+        let p = (bone * s_cube).transform_point3(cube.from);
+        assert!(
+            p.cmpge(min - 1e-4).all() && p.cmple(max + 1e-4).all(),
+            "posed corner {p} escapes bounds {min}..{max}"
+        );
+    }
+
+    let empty = Model::empty();
+    assert_eq!(empty.rest_bounds(), (Vec3::ZERO, Vec3::ZERO));
+}

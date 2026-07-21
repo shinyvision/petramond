@@ -45,14 +45,19 @@ jobs:
       - name: Build and install mods
         run: make mods
 
+      # Stage every pack `make mods` installed (a pack = a directory with a
+      # pack.json, the same rule the game's discovery uses) — never a hardcoded
+      # list, which silently dropped newer packs from releases (vehicles and
+      # weather were missing until 2026-07-21).
       - name: Stage bundled mods
         run: |
           set -euo pipefail
           mkdir -p staged-mods
-          cp -r mods/kitchen staged-mods/kitchen
-          cp -r mods/monsters staged-mods/monsters
-          cp -r mods/minimap staged-mods/minimap
-          cp -r mods/farming staged-mods/farming
+          for d in mods/*/; do
+            [ -f "${d}pack.json" ] || continue
+            cp -r "$d" "staged-mods/$(basename "$d")"
+          done
+          echo "staged packs:" staged-mods/*/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -131,10 +136,14 @@ jobs:
           mkdir -p "$DEST/mods"
           cp "target/${{ matrix.target }}/release/petramond_native${EXT}" "$DEST/petramond${EXT}"
           cp -r assets "$DEST/assets"
-          cp -r staged-mods/kitchen "$DEST/mods/kitchen"
-          cp -r staged-mods/monsters "$DEST/mods/monsters"
-          cp -r staged-mods/minimap "$DEST/mods/minimap"
-          cp -r staged-mods/farming "$DEST/mods/farming"
+          # Every staged pack ships; the list lives in the mods job, not here.
+          cp -r staged-mods/. "$DEST/mods/"
+
+          BUNDLED=""
+          for d in staged-mods/*/; do
+            n="$(basename "$d")"
+            BUNDLED="${BUNDLED:+$BUNDLED, }$n"
+          done
 
           README="$DEST/README.txt"
           {
@@ -184,7 +193,7 @@ jobs:
             echo "  program. The game loads them from here."
             echo
             echo "MODS"
-            echo "  Bundled: kitchen, monsters, minimap and farming."
+            echo "  Bundled: ${BUNDLED}."
             echo "  To add more, drop a mod folder into the \"mods\" folder."
             echo
             echo "SAVES"

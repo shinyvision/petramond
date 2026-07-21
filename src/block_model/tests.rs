@@ -370,3 +370,63 @@ fn baked_self_ao_darkens_joints_and_stays_a_valid_multiplier() {
         "a model with adjoining cuboids must bake SOME self-occlusion"
     );
 }
+
+/// 1x1 red PNG data URI, byte-fixed so the canonical source below never
+/// depends on a test-time PNG encoder (the golden pins the COMPILED output).
+const GOLDEN_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+
+/// The [`Model`](crate::bbmodel::Model) guard's `.llblock` twin: canonical
+/// compiled bytes pinned against `FORMAT_VERSION` (see
+/// `compiled_model_layout_change_requires_a_format_version_bump` in
+/// `bbmodel::tests` for the full rationale — a layout change shipped without a
+/// bump lets stale caches mis-decode into valid-but-garbage models). If this
+/// fails: bump `FORMAT_VERSION` in `impl CompiledAsset for BlockModel` and
+/// update GOLDEN_VERSION + GOLDEN_HEX together.
+#[test]
+fn compiled_block_model_layout_change_requires_a_format_version_bump() {
+    const GOLDEN_VERSION: u32 = 8;
+    const GOLDEN_HEX: &str = concat!(
+        "01000000000000000400000000000000626f647900000000000000000000000000008041",
+        "000080400000804100000000000000000000000000000000000000000000000000000100",
+        "000000000000000000803f0000803f0000000400000000000000ff0000ff010000000100",
+        "000001000000000000000000000000000000000000000000804100008040000080410000",
+        "000000000000000000000000804100008040000080410000000000007041000000000000",
+        "000000000000000000000000803f0000803f0000803f0000000000000000000000000000",
+        "000000000000000000000000f0410000344200000000000000000000803f000000009a99",
+        "193f9a99193f9a99193f0000000000000000000000000000000000000000000000000000",
+        "000000000000000000000000000000000000000000000000803f0000803f0000803f0000",
+        "000000000000000000000000000000000000000000000000000000000000000000000000",
+        "000000000000000000000000803f0000803f0000803f0000000000000000000000000000",
+        "00000000000000000000000000000000004100000000",
+    );
+
+    const SRC: &str = r##"{
+        "resolution": { "width": 16, "height": 16 },
+        "textures": [{ "uv_width": 16, "uv_height": 16, "source": "URI" }],
+        "elements": [
+            { "uuid": "c", "type": "cube", "name": "body", "from": [0,0,0], "to": [16,4,16],
+              "faces": { "up": { "uv": [0,0,16,16], "texture": 0 } } }
+        ],
+        "outliner": ["c"],
+        "display": {
+            "gui": { "rotation": [30, 45, 0], "translation": [0, 1, 0], "scale": [0.6, 0.6, 0.6] },
+            "firstperson_righthand": { "rotation": [0, 15, 0] }
+        }
+    }"##;
+    let m =
+        BlockModel::compile(SRC.replace("\"URI\"", &format!("\"{GOLDEN_URI}\"")).as_bytes())
+            .expect("canonical block model compiles");
+    let bytes = bincode::serialize(&m).expect("serializes");
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    assert!(
+        BlockModel::FORMAT_VERSION == GOLDEN_VERSION && hex == GOLDEN_HEX,
+        "compiled .llblock layout or version changed.\n\
+         FORMAT_VERSION: {} (golden {GOLDEN_VERSION})\n\
+         serialized canonical model:\n{hex}\n\
+         If any serialized struct or the compile output changed, bump FORMAT_VERSION \
+         in `impl CompiledAsset for BlockModel` and update GOLDEN_VERSION + GOLDEN_HEX \
+         together. A layout change WITHOUT the bump lets stale caches mis-decode into \
+         garbage models (the invisible-hushjaw class of bug).",
+        BlockModel::FORMAT_VERSION,
+    );
+}

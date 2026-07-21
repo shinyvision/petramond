@@ -242,6 +242,11 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     section.set_block(14, 1, 2, Block::Glass);
     section.set_block(2, 1, 4, Block::GlassPane);
     section.set_block(3, 1, 4, Block::GlassPane);
+    // Snow layers over a full cube (grass: snowy sides + culled top) and over
+    // the bare floor — the lowered-cube covers-below cull must agree between
+    // the fast exposure masks and the per-face closure path.
+    section.set_block(2, 2, 2, Block::SnowLayer);
+    section.set_block(12, 1, 4, Block::SnowLayer);
 
     let block_at = |wx: i32, wy: i32, wz: i32| -> u8 {
         if in_section(wx, wy, wz) {

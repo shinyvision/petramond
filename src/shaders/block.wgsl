@@ -297,7 +297,43 @@ fn vs_terrain(in: VsInTerrain) -> VsOut {
         f32(in.pos_q.y) * TERRAIN_POS_SCALE_INV,
         f32(in.pos_q.z) * TERRAIN_POS_SCALE_INV + in.col_origin.z,
     );
-    return vs_common(pos, in.tint, in.packed, in.packed2);
+    return vs_common(pos + greedy_overlap_push(in.packed, in.packed2), in.tint, in.packed, in.packed2);
+}
+
+// Sub-pixel tangent overlap for greedy-MERGED quads (1/1024 block). Their long
+// edges meet per-cell neighbour faces as T-junctions, which rasterize one-pixel
+// background cracks; a tiny outward push of each corner along the quad's own
+// tangent plane covers them. It lives HERE, in f32, because the packed vertex
+// grid is 1/64 block: baking the overlap either rounds it away (cracks return
+// as bright speckles) or forces a full 1/64 skirt (visible wrap fringes +
+// coplanar z-fighting). The gate mirrors the W×H tiling decode in vs_common:
+// uv-mode NONE, no overlay, not a water tile — and a nonzero (W-1, H-1) field,
+// so 1×1 faces (which never form T-junctions) stay mathematically exact.
+fn greedy_overlap_push(packed: u32, packed2: u32) -> vec3<f32> {
+    let uv_mode = (packed >> 29u) & 0x7u;
+    let has_overlay = (packed >> 20u) & 0x1u;
+    let tile = packed & 0xFFu;
+    let whf = (packed >> 12u) & 0xFFu;
+    if (uv_mode != 0u || has_overlay == 1u || whf == 0u
+        || tile == u.water_anim.x || tile == u.water_anim.y) {
+        return vec3<f32>(0.0);
+    }
+    // corner_local -> {-1,+1} per tangent axis; du/dv map (u,v) quad space to
+    // world axes per face (normal code 1..=6, Face::ALL order — the same
+    // corner order as Face::quad_box).
+    let c = corner_local((packed >> 8u) & 0x3u) * 2.0 - vec2<f32>(1.0, 1.0);
+    var du = vec3<f32>(0.0);
+    var dv = vec3<f32>(0.0);
+    switch ((packed2 >> 16u) & 0x7u) {
+        case 1u: { du = vec3<f32>(0.0, 0.0, -1.0); dv = vec3<f32>(0.0, -1.0, 0.0); } // +X
+        case 2u: { du = vec3<f32>(0.0, 0.0, 1.0);  dv = vec3<f32>(0.0, -1.0, 0.0); } // -X
+        case 3u: { du = vec3<f32>(1.0, 0.0, 0.0);  dv = vec3<f32>(0.0, 0.0, 1.0); }  // +Y
+        case 4u: { du = vec3<f32>(1.0, 0.0, 0.0);  dv = vec3<f32>(0.0, 0.0, -1.0); } // -Y
+        case 5u: { du = vec3<f32>(1.0, 0.0, 0.0);  dv = vec3<f32>(0.0, -1.0, 0.0); } // +Z
+        case 6u: { du = vec3<f32>(-1.0, 0.0, 0.0); dv = vec3<f32>(0.0, -1.0, 0.0); } // -Z
+        default: {}
+    }
+    return (du * c.x + dv * c.y) * (1.0 / 1024.0);
 }
 
 @fragment

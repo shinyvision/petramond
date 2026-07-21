@@ -331,6 +331,12 @@ impl BlockFlags {
     /// it stay visible) and its texture must sit BELOW the cutout threshold
     /// (see `block_tiles_match_their_render_pass_alpha_contract`'s translucent half).
     pub const TRANSLUCENT: BlockFlags = BlockFlags(1 << 8);
+    /// Derived by the loader from `shape == lowered_cube`, never listed in a
+    /// data row. The mesher's exposure masks test every pad cell for "does the
+    /// block above cover the face below" (a lowered cube's full 1×1 base is
+    /// flush with the cell floor) and need the shape class without a `def()`
+    /// big-table read, same rationale as [`SLAB`](Self::SLAB).
+    pub const LOWERED_CUBE: BlockFlags = BlockFlags(1 << 9);
 
     #[inline]
     pub const fn with(self, flag: BlockFlags) -> BlockFlags {
@@ -380,6 +386,11 @@ impl BlockFlags {
     #[inline]
     pub const fn is_translucent(self) -> bool {
         self.contains(BlockFlags::TRANSLUCENT)
+    }
+
+    #[inline]
+    pub const fn is_lowered_cube(self) -> bool {
+        self.contains(BlockFlags::LOWERED_CUBE)
     }
 
     #[inline]
