@@ -89,7 +89,9 @@ fn cel_band(s: CelStages, strength: f32) -> f32 {
 // camera toward the fragment.
 fn cel_rim(n: vec3<f32>, view_dir: vec3<f32>, light: vec3<f32>) -> vec3<f32> {
     let facing = max(dot(n, -view_dir), 0.0);
-    let edge = pow(1.0 - facing, CEL_RIM_FALLOFF);
+    // CEL_RIM_FALLOFF == 3: e³ as multiplies beats the exp2/log2 pow().
+    let e = 1.0 - facing;
+    let edge = e * e * e;
     let span = CEL_LIGHT.max_light - CEL_LIGHT.min_light;
     return light * (edge * CEL_RIM_INTENSE * span);
 }

@@ -121,10 +121,14 @@ fn fs_sky(in: VsOut) -> @location(0) vec4<f32> {
         + (u.fog_color.rgb - vec3<f32>(fog_luma)) * vec3<f32>(0.0, 0.12, 0.55)) * 1.04;
     // Hue-preserving gamut clip — mirror of atmosphere.wgsl.
     haze /= max(1.0, max(haze.r, max(haze.g, haze.b)));
-    let glow = pow(toward, 8.0) * daylight * 0.70;
+    // Sun glow ^8 as three squarings (beats exp2/log2 pow); mirrors
+    // atmosphere.wgsl's haze glow.
+    let toward2 = toward * toward;
+    let toward4 = toward2 * toward2;
+    let glow = toward4 * toward4 * daylight * 0.70;
     var horizon = mix(haze, haze * vec3<f32>(1.22, 1.04, 0.84), glow);
     let twilight_tint = vec3<f32>(1.05, 0.62, 0.38);
-    let tw_facing = twilight * (0.25 + 0.75 * pow(toward, 2.0));
+    let tw_facing = twilight * (0.25 + 0.75 * toward2);
     horizon = mix(horizon, twilight_tint * max(max(horizon.r, horizon.g), horizon.b), tw_facing);
 
     // Three-stop gradient: horizon → a lighter airy belt just above it → the
@@ -143,19 +147,27 @@ fn fs_sky(in: VsOut) -> @location(0) vec4<f32> {
     let t_zenith = smoothstep(0.28, 0.95, up_pow);
     var color = mix(mix(horizon, belt, t_belt), zenith, t_zenith);
 
+    // Sprite fetches are gated on their screen masks: the sun/moon discs cover
+    // a tiny, coherent patch of sky, so nearly every pixel skips both samples
+    // (explicit LOD 0 keeps this legal in non-uniform control flow; the disc
+    // is near-native size, so its implicit LOD was ~0 anyway).
     let sun_sprite = sprite_uv(ray, sun_dir, SUN_RADIUS);
-    let sun_sample = textureSample(sun_tex, sun_samp, sun_sprite.uv);
-    let sun_alpha = keyed_sprite_alpha(sun_sample, 0.02, 0.08) * sun_sprite.mask * daylight;
-    color += sun_sample.rgb * sun_alpha * 1.35;
+    if (sun_sprite.mask > 0.0 && daylight > 0.0) {
+        let sun_sample = textureSampleLevel(sun_tex, sun_samp, sun_sprite.uv, 0.0);
+        let sun_alpha = keyed_sprite_alpha(sun_sample, 0.02, 0.08) * daylight;
+        color += sun_sample.rgb * sun_alpha * 1.35;
+    }
 
     let moon_sprite = sprite_uv(ray, moon_dir, MOON_RADIUS);
-    let phase_idx = floor(phase + 0.5);
-    let phase_col = phase_idx - 4.0 * floor(phase_idx / 4.0);
-    let phase_row = floor(phase_idx / 4.0);
-    let moon_uv = (moon_sprite.uv + vec2<f32>(phase_col, phase_row)) * vec2<f32>(0.25, 0.5);
-    let moon_sample = textureSample(moon_tex, moon_samp, moon_uv);
-    let moon_alpha = keyed_sprite_alpha(moon_sample, 0.02, 0.08) * moon_sprite.mask * night;
-    color += moon_sample.rgb * moon_alpha * 0.95;
+    if (moon_sprite.mask > 0.0 && night > 0.0) {
+        let phase_idx = floor(phase + 0.5);
+        let phase_col = phase_idx - 4.0 * floor(phase_idx / 4.0);
+        let phase_row = floor(phase_idx / 4.0);
+        let moon_uv = (moon_sprite.uv + vec2<f32>(phase_col, phase_row)) * vec2<f32>(0.25, 0.5);
+        let moon_sample = textureSampleLevel(moon_tex, moon_samp, moon_uv, 0.0);
+        let moon_alpha = keyed_sprite_alpha(moon_sample, 0.02, 0.08) * night;
+        color += moon_sample.rgb * moon_alpha * 0.95;
+    }
 
     return vec4<f32>(color, 1.0);
 }

@@ -111,15 +111,16 @@ struct VsOut {
 // banded/raw ratio of the day-invariant drive (hue, night dimming, and AO
 // survive), faded to identity in the dark and applied at partial strength so
 // cave gradients stay gradual; then add the view-angle rim on faces that carry
-// a normal.
-fn cel_shaded_light(in: VsOut) -> vec3<f32> {
+// a normal. `view_dir` is the caller's normalized in.view (shared with the
+// atmosphere so each fragment normalizes once).
+fn cel_shaded_light(in: VsOut, view_dir: vec3<f32>) -> vec3<f32> {
     let banded = cel_band(CEL_LIGHT, in.cel_drive);
     let f = smoothstep(CEL_LIGHT_FADE_LO, CEL_LIGHT_FADE_HI, in.cel_drive)
         * CEL_LIGHT_STRENGTH;
     let cel = mix(1.0, banded / max(in.cel_drive, 1e-4), f);
     var light = max(vec3<f32>(FINAL_MIN), in.light * cel);
     if (CEL_RIM_ENABLED && in.ncode != 0u) {
-        light += cel_rim(face_normal(in.ncode), normalize(in.view), light);
+        light += cel_rim(face_normal(in.ncode), view_dir, light);
     }
     return light;
 }
@@ -338,6 +339,10 @@ fn greedy_overlap_push(packed: u32, packed2: u32) -> vec3<f32> {
 
 @fragment
 fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
+    // One view length/direction per fragment, shared by the rim, the
+    // underwater murk, and the atmosphere.
+    let dist = length(in.view);
+    let vdir = in.view / max(dist, 1e-4);
     let base = textureSample(atlas, samp, in.uv, i32(in.layer));
     var rgb: vec3<f32>;
     if (in.overlay == 1u) {
@@ -353,16 +358,17 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
         if (base.a < 0.25) { discard; }
         rgb = base.rgb * in.tint;
     }
-    var color = rgb * cel_shaded_light(in);
+    var color = rgb * cel_shaded_light(in, vdir);
     // Underwater: blue darkening multiply + the tight linear murk fog.
     if (u.fog.w > 0.5) {
         color = color * WATER_TINT;
-        let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+        let f = clamp((dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
         return vec4<f32>(mix(color, u.fog_color.rgb, f), 1.0);
     }
-    let out = atmosphere_apply(
+    let out = atmosphere_apply_dir(
         color,
-        in.view,
+        dist,
+        vdir,
         in.world_pos.y,
         u.cam_pos.y + u.render_origin.y,
         u.fog.x,
@@ -376,25 +382,28 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_transparent(in: VsOut) -> @location(0) vec4<f32> {
+    let dist = length(in.view);
+    let vdir = in.view / max(dist, 1e-4);
     let tex = textureSample(atlas, samp, in.uv, i32(in.layer));
     // Two tenants share this alpha-blended pass, split by authored alpha:
     // water tiles are full-alpha and take the water constant below, while a
     // TRANSLUCENT block tile (ice) is authored under the opaque pass's 0.5
     // cutout and keeps its own texture alpha. Only near-zero texels discard.
     if (tex.a < 0.03) { discard; }
-    var color = tex.rgb * in.tint * cel_shaded_light(in);
+    var color = tex.rgb * in.tint * cel_shaded_light(in, vdir);
     // Water blue tint + slight transparency.
     let alpha = select(tex.a, 0.78, tex.a >= 0.5);
     // Tint the water volume itself when submerged so the surface seen from below
     // blends into the murk rather than glowing.
     if (u.fog.w > 0.5) {
         color = color * WATER_TINT;
-        let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+        let f = clamp((dist - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
         return vec4<f32>(mix(color, u.fog_color.rgb, f), alpha);
     }
-    let out = atmosphere_apply(
+    let out = atmosphere_apply_dir(
         color,
-        in.view,
+        dist,
+        vdir,
         in.world_pos.y,
         u.cam_pos.y + u.render_origin.y,
         u.fog.x,

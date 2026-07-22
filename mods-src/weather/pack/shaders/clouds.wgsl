@@ -278,7 +278,9 @@ fn cloud_density(p: vec3<f32>, cov: f32, cheap: bool) -> f32 {
 
 fn hg(mu: f32, g: f32) -> f32 {
     let gg = g * g;
-    return (1.0 - gg) / (12.566371 * pow(1.0 + gg - 2.0 * g * mu, 1.5));
+    // pow(b, 1.5) == b*sqrt(b); b = (1-g)² at worst, always positive here.
+    let b = 1.0 + gg - 2.0 * g * mu;
+    return (1.0 - gg) / (12.566371 * b * sqrt(b));
 }
 
 // A small ordered dither so a 20-step march reads as soft layers, not bands

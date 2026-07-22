@@ -134,7 +134,10 @@ fn atmosphere_haze_color(
     let horizon = 1.0 - clamp(abs(view_dir.y) * 1.8, 0.0, 1.0);
     haze *= mix(ATMOS_DOME_TINT, vec3<f32>(1.0), horizon);
     let toward = max(dot(view_dir, sun_dir), 0.0);
-    let glow = pow(toward, ATMOS_SUN_GLOW_POW) * daylight * ATMOS_SUN_GLOW_MAX;
+    // ATMOS_SUN_GLOW_POW == 8: three squarings beat the exp2/log2 pow().
+    let t2 = toward * toward;
+    let t4 = t2 * t2;
+    let glow = t4 * t4 * daylight * ATMOS_SUN_GLOW_MAX;
     return mix(haze, haze * ATMOS_SUN_GLOW_WARM, glow);
 }
 
@@ -153,7 +156,27 @@ fn atmosphere_apply(
     daylight: f32,
 ) -> vec3<f32> {
     let dist = length(view);
+    return atmosphere_apply_dir(
+        color, dist, view / max(dist, 1e-4),
+        world_y, cam_y, fog_start, fog_end, base_haze, sun_dir, daylight,
+    );
+}
+
+// Same blend with the caller's already-computed view distance and direction,
+// so a shader that also needs them (block.wgsl's rim) normalizes once.
+fn atmosphere_apply_dir(
+    color: vec3<f32>,
+    dist: f32,
+    dir: vec3<f32>,
+    world_y: f32,
+    cam_y: f32,
+    fog_start: f32,
+    fog_end: f32,
+    base_haze: vec3<f32>,
+    sun_dir: vec3<f32>,
+    daylight: f32,
+) -> vec3<f32> {
     let f = atmosphere_amount(dist, fog_start, fog_end, world_y, cam_y);
-    let haze = atmosphere_haze_color(view / max(dist, 1e-4), base_haze, sun_dir, daylight);
+    let haze = atmosphere_haze_color(dir, base_haze, sun_dir, daylight);
     return mix(color, haze, f);
 }
