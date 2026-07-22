@@ -280,6 +280,22 @@ impl Game {
         else {
             return PlacePrediction::No;
         };
+        // A click the block's built-in consumer claims (the server's interact
+        // chain — same shared rule) opens/uses it instead of placing — no
+        // ghost, or the client would render a phantom block the server never
+        // places. This gate sits BEFORE every placement arm, the mod branch
+        // included: in the server registry the built-in block capability runs
+        // ahead of the whole place consumer, so a chest/table/furnace click
+        // cancels a mod-block ghost exactly like an engine-block ghost
+        // (holding a chain must predict like holding a fence).
+        let target = crate::block::Block::from_id(self.replica.chunk_block(
+            look.block.x,
+            look.block.y,
+            look.block.z,
+        ));
+        if crate::block::builtin_claims_click(target, sneak) {
+            return PlacePrediction::No;
+        }
         // A dual-natured item (both food and placeable — contextual placeable
         // food, e.g. a plantable carrot) resolves place-vs-eat server-side
         // through mod placement rules the replica cannot evaluate. Never
@@ -292,14 +308,17 @@ impl Game {
         {
             return PlacePrediction::Plausible;
         }
-        // A MOD-registered block's placement is governed by mod law
+        // A MOD-registered block's placement can be governed by mod law
         // (`block_place_pre` — a crop plants only on farmland), so ask the
-        // mod's own CLIENT PREDICTOR: the predicted pre event dispatched
+        // mod's own CLIENT PREDICTOR first: the predicted pre event dispatched
         // against the replica, the same vocabulary the server dispatches. A
-        // predicted cancel is a KNOWN refusal (no jab, no ghost); otherwise
-        // never ghost one — jab only (Plausible), and the real placement
-        // arrives unpredicted through the authoritative delta. Engine blocks
-        // keep full prediction; a mod cancelling THOSE accepts rollback jank.
+        // predicted cancel is a KNOWN refusal (no jab, no ghost). Everything
+        // AFTER that gate is deterministic on both sides: a Layer-3 CUSTOM
+        // shape runs the server's whole plan+bake pipeline and ghosts the
+        // exact write; every other mod block falls through to the shared
+        // placement ladder below like an engine block — a pack model block
+        // (the furniture chair) gets the same footprint/body-gate refusal
+        // prediction a bed or workbench does.
         if !block.is_engine() {
             let looked_at = crate::block::Block::from_id(self.replica.chunk_block(
                 look.block.x,
@@ -326,23 +345,16 @@ impl Game {
                     crate::facing::Facing::East => mod_api::Facing::East,
                 },
             };
-            return if self.predict_mod_claim(sneak, payload) {
-                PlacePrediction::No
-            } else {
-                PlacePrediction::Plausible
-            };
-        }
-        // A click the block's built-in consumer claims (the server's interact
-        // chain — same shared rule) opens/uses it instead of placing — no
-        // ghost, or the client would render a phantom block the server never
-        // places.
-        let target = crate::block::Block::from_id(self.replica.chunk_block(
-            look.block.x,
-            look.block.y,
-            look.block.z,
-        ));
-        if crate::block::builtin_claims_click(target, sneak) {
-            return PlacePrediction::No;
+            if self.predict_mod_claim(sneak, payload) {
+                return PlacePrediction::No;
+            }
+            if block.shape_family() == crate::block::ShapeFamily::Custom {
+                if let Some(prediction) = self.try_predict_custom_place(sneak, block, look, pre_pos) {
+                    return prediction;
+                }
+                // No reachable owner: the server falls through to the
+                // ordinary placement ladder — the shared ghost below does too.
+            }
         }
         // Replace-in-place (clicking short grass, a fern…): the server
         // overwrites the CLICKED cell, which can never match the ghost
@@ -443,6 +455,140 @@ impl Game {
             block,
         });
         PlacePrediction::Predicted(id)
+    }
+
+    /// Full client prediction of a Layer-3 custom shape's placement — the SAME
+    /// pipeline the server runs (`try_place_custom_shape`), evaluated against
+    /// the replica: the owning mod's placement plan (its client instance — the
+    /// plan is deterministic), the SHARED plan validation, the replaceable
+    /// gate, and the body-occupancy gate fed by the shape's own sim bake of
+    /// the hypothetical cell. A refusal the server will also reach predicts
+    /// silent ([`PlacePrediction::No`]); an accepted plan ghosts the exact row
+    /// the authoritative delta will confirm — sibling-row orientation
+    /// override included. `None` = no reachable owner: the caller falls
+    /// through to the ordinary ghost, the server's fall-through twin.
+    fn try_predict_custom_place(
+        &mut self,
+        sneak: bool,
+        block: crate::block::Block,
+        look: crate::player::RaycastHit,
+        place_pos: IVec3,
+    ) -> Option<PlacePrediction> {
+        let shape_key = block.shape_kind().key();
+        let shape_kind = block.shape_kind().0;
+        let view = mod_api::PlaceInputsView {
+            hit: look.block.to_array(),
+            normal: look.normal.to_array(),
+            place_pos: place_pos.to_array(),
+            player_facing: crate::server::placement::facing_from_forward(self.player.forward())
+                as u8,
+        };
+        let actor = self.client_actor_snapshot(sneak);
+        let result = {
+            let Self {
+                client_mods, replica, ..
+            } = self;
+            client_mods.placement_plan(replica, &actor, shape_key, shape_kind, block.id(), view)?
+        };
+        if !result.accepted {
+            return Some(PlacePrediction::No);
+        }
+        let Some((anchor, write_block)) = crate::world::placement::validate_custom_plan(
+            &result,
+            block,
+            shape_kind,
+            place_pos,
+        ) else {
+            return Some(PlacePrediction::No);
+        };
+        // The replaceable gate (the server's `block_if_loaded` twin): an
+        // unread replica cell reads as air — optimistic, and a stale read
+        // rolls back like any engine ghost.
+        let cur = crate::block::Block::from_id(self.replica.chunk_block(anchor.x, anchor.y, anchor.z));
+        if !cur.is_replaceable() || cur == write_block {
+            return Some(PlacePrediction::No);
+        }
+        // The body-occupancy gate, fed by the shape's own bake of the
+        // hypothetical cell (collision AND render, installed eagerly so the
+        // ghost collides and draws exactly from frame 0), falling back to the
+        // replica's cached bake, then the row's static collision.
+        let (sim_boxes, render_boxes) = {
+            let n = |dx, dy, dz| {
+                mod_api::BlockId(
+                    self.replica
+                        .physics_block(anchor.x + dx, anchor.y + dy, anchor.z + dz)
+                        .id(),
+                )
+            };
+            let input = mod_api::CellInput {
+                world_pos: anchor.to_array(),
+                block_id: mod_api::BlockId(write_block.id()),
+                neighbor_ids: [
+                    n(-1, 0, 0),
+                    n(1, 0, 0),
+                    n(0, -1, 0),
+                    n(0, 1, 0),
+                    n(0, 0, -1),
+                    n(0, 0, 1),
+                ],
+            };
+            let Self {
+                client_mods, replica, ..
+            } = self;
+            client_mods.bake_placement_geometry(replica, shape_key, shape_kind, input)
+        };
+        let boxes: &[crate::block::Aabb] = match &sim_boxes {
+            Some(b) => b,
+            None => self
+                .replica
+                .custom_shape_boxes(anchor)
+                .unwrap_or_else(|| write_block.collision_boxes()),
+        };
+        if self.placement_blocked_by_body(anchor, boxes) {
+            return Some(PlacePrediction::No);
+        }
+        // The ghost convention: only a plan landing exactly on the build cell
+        // ghosts — a shifted anchor arrives unpredicted (jab only).
+        if anchor != place_pos {
+            return Some(PlacePrediction::Plausible);
+        }
+        if !self.prediction.can_predict() {
+            return Some(PlacePrediction::TrackOnly(self.prediction.begin_track_only()));
+        }
+        let plan = crate::world::placement::PlacementPlan {
+            anchor,
+            cells: vec![anchor],
+            write: crate::world::placement::PlacementWrite::Custom {
+                block_id: write_block.id(),
+            },
+        };
+        let previous_cells = vec![(anchor, cur.id())];
+        let snapshot = prediction::PredictionSnapshot::World {
+            inventory: Some(self.self_view.inventory.clone()),
+            cells: previous_cells.clone(),
+        };
+        let id = self.prediction.begin(snapshot);
+        let _ = self.replica.commit_placement(block, &plan, false);
+        // Install the eagerly baked geometry before presentation: the mesher
+        // and the local physics read the same boxes the delta will re-bake.
+        if let Some(b) = &sim_boxes {
+            self.replica.set_custom_bake(anchor, b);
+        }
+        if let Some(b) = render_boxes {
+            self.replica.set_custom_render_bake(anchor, b);
+        }
+        // Same synchronous prediction presentation as every ghost: exact
+        // local light and geometry are installed before the ghost is exposed.
+        self.replica.present_predicted_edit(&previous_cells);
+        self.self_view.inventory.decrement_selected();
+        self.place_ghost = Some((anchor, write_block.id()));
+        self.local_placed_block = Some(write_block);
+        self.predicted_presentation_cells.insert(anchor);
+        self.pending_events.world.push(WorldEvent::BlockPlaced {
+            pos: anchor,
+            block: write_block,
+        });
+        Some(PlacePrediction::Predicted(id))
     }
 
     /// Client mirror of the server's `placement_occupied_by_body`: the own

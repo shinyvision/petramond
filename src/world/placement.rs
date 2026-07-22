@@ -61,6 +61,8 @@ pub(crate) enum PlacementWrite {
     /// `shape_placement_plan` decided orientation): a plain single-cell id write,
     /// exactly like [`Cube`](Self::Cube). Placement is stateless — a custom cell
     /// carries no per-cell KV, so there is no new section map to write.
+    /// `block_id` is the held row or the plan's validated sibling-row override
+    /// (orientation as block identity, e.g. a chain's axis row).
     Custom { block_id: u8 },
 }
 
@@ -72,6 +74,55 @@ pub(crate) struct PlacementPlan {
     pub anchor: IVec3,
     pub cells: Vec<IVec3>,
     pub write: PlacementWrite,
+}
+
+/// The SHARED validation of an accepted Layer-3 placement plan — evaluated
+/// by the server against the authoritative world and by the client place
+/// ghost against the replica, so the two sides compute the same write by
+/// construction (one rule, never two hand-kept copies). Refuses: a plan
+/// writing more than the anchor cell, an anchor more than Chebyshev 2 from
+/// `place_pos`, or a `block` override that is not a sibling row of the same
+/// shape kind (orientation as block identity; a kind belongs to one pack, so
+/// a plan can never reach across packs). Returns the anchor and the row to
+/// write (the held row by default).
+pub(crate) fn validate_custom_plan(
+    result: &mod_api::ShapePlacementResult,
+    held: Block,
+    shape_kind: u8,
+    place_pos: IVec3,
+) -> Option<(IVec3, Block)> {
+    let write_block = match result.block {
+        None => held,
+        Some(b) => {
+            let b = Block::from_id(b.0);
+            if b.shape_kind().0 != shape_kind {
+                return None;
+            }
+            b
+        }
+    };
+    let anchor = IVec3::new(result.anchor[0], result.anchor[1], result.anchor[2]);
+    // Placement is SINGLE-CELL and stateless: the guest may claim only the
+    // anchor cell (an empty `cells`, or exactly `[anchor]`). A wider
+    // footprint is refused here — the host cannot yet atomically gate,
+    // re-bake, or remove a multi-cell custom object, so shipping the wire
+    // field is fine but honouring more than one cell is not.
+    let single_cell =
+        result.cells.is_empty() || (result.cells.len() == 1 && result.cells[0] == anchor.to_array());
+    if !single_cell {
+        return None;
+    }
+    // Bound the anchor to a small neighbourhood of the click so a plan
+    // cannot place kilometres from where the player aimed.
+    let (dx, dy, dz) = (
+        (anchor.x - place_pos.x).abs(),
+        (anchor.y - place_pos.y).abs(),
+        (anchor.z - place_pos.z).abs(),
+    );
+    if dx.max(dy).max(dz) > 2 {
+        return None;
+    }
+    Some((anchor, write_block))
 }
 
 impl World {
@@ -151,11 +202,18 @@ impl World {
             // the placement fails as a unit. Multi-cell models, and models
             // marked directionalView, are oriented from the player's facing
             // through the model's own placement orientation; the anchor
-            // shifts to the oriented base.
+            // shifts to the oriented base. A `centered` model instead centres
+            // its footprint on the clicked cell (top layer — hanging fixtures
+            // grow downward) with the default facing, regardless of size.
             ShapeFamily::Model => {
                 let kind = block.model_kind().expect("model family carries a model kind");
-                let oriented =
-                    block.directional_view() || crate::block_model::instance(kind).cells.len() > 1;
+                let centered = matches!(
+                    crate::block_model::def(kind).orientation,
+                    crate::block_model::PlacementOrientation::Centered
+                );
+                let oriented = !centered
+                    && (block.directional_view()
+                        || crate::block_model::instance(kind).cells.len() > 1);
                 let facing = if oriented {
                     crate::block_model::def(kind)
                         .orientation
@@ -163,7 +221,9 @@ impl World {
                 } else {
                     crate::block_model::DEFAULT_MODEL_FACING
                 };
-                let base = if oriented {
+                let base = if centered {
+                    crate::block_model::base_from_centered_anchor(p, kind)
+                } else if oriented {
                     crate::block_model::base_from_front_left_anchor(p, kind, facing)
                 } else {
                     p
@@ -409,5 +469,58 @@ impl World {
                 self.set_block_world(a.x, a.y, a.z, Block::from_id(*block_id))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn guest_plan(anchor: IVec3, cells: &[IVec3], block: Option<Block>) -> mod_api::ShapePlacementResult {
+        mod_api::ShapePlacementResult {
+            accepted: true,
+            anchor: anchor.to_array(),
+            cells: cells.iter().map(|c| c.to_array()).collect(),
+            block: block.map(|b| mod_api::BlockId(b.id())),
+        }
+    }
+
+    #[test]
+    fn custom_plan_validation_gates_the_guests_answer() {
+        // Two plain cubes share one shape-kind row; a ladder is another kind.
+        let held = Block::Stone;
+        let kind = held.shape_kind().0;
+        assert_eq!(Block::Dirt.shape_kind().0, kind);
+        assert_ne!(Block::Ladder.shape_kind().0, kind);
+        let pp = IVec3::new(10, 64, -3);
+
+        // The default writes the held row at the anchor; an empty `cells`
+        // claims just the anchor.
+        let (anchor, write) =
+            validate_custom_plan(&guest_plan(pp, &[], None), held, kind, pp).expect("held write");
+        assert_eq!((anchor, write), (pp, held));
+        // A sibling row of the SAME shape kind is a legal orientation override.
+        let (_, write) =
+            validate_custom_plan(&guest_plan(pp, &[pp], Some(Block::Dirt)), held, kind, pp)
+                .expect("sibling override");
+        assert_eq!(write, Block::Dirt);
+        // A row of a DIFFERENT shape kind can never be written — a plan may
+        // not reach outside its own variant family.
+        assert!(
+            validate_custom_plan(&guest_plan(pp, &[pp], Some(Block::Ladder)), held, kind, pp)
+                .is_none()
+        );
+        // A wider footprint than the anchor cell is refused, as is a `cells`
+        // list naming a different cell.
+        let other = pp + IVec3::new(0, 1, 0);
+        assert!(validate_custom_plan(&guest_plan(pp, &[pp, other], None), held, kind, pp).is_none());
+        assert!(validate_custom_plan(&guest_plan(pp, &[other], None), held, kind, pp).is_none());
+        // The anchor is bounded to the click's neighbourhood (Chebyshev ≤ 2).
+        let near = pp + IVec3::new(2, -2, 0);
+        assert!(
+            validate_custom_plan(&guest_plan(near, &[near], None), held, kind, pp).is_some()
+        );
+        let far = pp + IVec3::new(3, 0, 0);
+        assert!(validate_custom_plan(&guest_plan(far, &[far], None), held, kind, pp).is_none());
     }
 }

@@ -1001,6 +1001,79 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
     assert_eq!(game.game.local_placed_block, Some(Block::Dirt));
 }
 
+/// An interactive block (chest, crafting table, furnace…) clicked without
+/// sneaking is claimed by the server's BUILT-IN consumer before the place rung
+/// ever runs — so the client's place prediction must cancel EVERY placement
+/// arm, the mod custom-shape arm included (the chain-into-chest regression,
+/// 2026-07-22: the custom plan dispatched before the built-in claim gate and
+/// ghosted a block the server never places). Sneaking defers the built-in
+/// claim, so the same click then ghosts normally.
+#[test]
+fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
+    use crate::block::ShapeFamily;
+    // Any mod-registered Layer-3 custom block with a linked item (the
+    // furniture chain, when the pack is installed). The engine ships no
+    // custom rows, so without an installed pack there is nothing to pin.
+    let Some(item) = crate::item::ItemType::all().iter().copied().find(|i| {
+        i.as_block().is_some_and(|b| {
+            !b.is_engine() && b.shape_family() == ShapeFamily::Custom
+        })
+    }) else {
+        return;
+    };
+    let mut game = game_on_empty_chunk();
+    game.game.replica.insert_chunk_for_test(
+        crate::chunk::ChunkPos::new(0, 0),
+        crate::chunk::Chunk::new(0, 0),
+    );
+    let chest = IVec3::new(8, 64, 8);
+    assert!(game
+        .game
+        .replica
+        .set_block_world(chest.x, chest.y, chest.z, Block::Chest));
+    // Park the body clear of the build cell so occupancy never refuses.
+    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+    give(&mut game, item, 8);
+    game.sync_self_view_for_test();
+    // Scripted accepted plan on the build cell — the deterministic answer a
+    // loaded client instance would compute (no wasm in this harness).
+    let place_pos = chest + IVec3::Y;
+    game.game.client_mods.scripted_shape_plan = Some(mod_api::ShapePlacementResult {
+        accepted: true,
+        anchor: place_pos.to_array(),
+        cells: vec![],
+        block: None,
+    });
+
+    // Non-sneak: the built-in chest claim wins — silent, and no ghost cell.
+    assert!(matches!(
+        game.game.predict_place_at_for_test(chest, IVec3::Y, false),
+        PlacePrediction::No
+    ));
+    assert_eq!(
+        game.game
+            .replica
+            .chunk_block(place_pos.x, place_pos.y, place_pos.z),
+        Block::Air.0,
+        "an interactive target must never ghost a mod block"
+    );
+
+    // Sneaking defers the built-in claim: the same click ghosts in full —
+    // proof the custom arm itself still works (the gate is ordering, not a
+    // blanket veto).
+    assert!(matches!(
+        game.game.predict_place_at_for_test(chest, IVec3::Y, true),
+        PlacePrediction::Predicted(_)
+    ));
+    assert_ne!(
+        game.game
+            .replica
+            .chunk_block(place_pos.x, place_pos.y, place_pos.z),
+        Block::Air.0,
+        "the sneak click ghosts the custom block"
+    );
+}
+
 #[test]
 fn optimistic_torch_place_records_wall_mount_immediately() {
     let mut game = game_on_empty_chunk();

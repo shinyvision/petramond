@@ -461,7 +461,7 @@ fn samples() -> Samples {
     }]));
     s.pin("GuestRet::BakedItem", &GuestRet::BakedItem(BakedItemGeometry { boxes: vec![] }));
     s.pin("GuestRet::ShapePlacement", &GuestRet::ShapePlacement(ShapePlacementResult {
-        accepted: true, anchor: [0, 1, 0], cells: vec![[0, 1, 0]],
+        accepted: true, anchor: [0, 1, 0], cells: vec![[0, 1, 0]], block: Some(BlockId(2)),
     }));
 
     // --- EventPayload: every variant, declaration order ----------------------
@@ -804,7 +804,7 @@ const PINS: &[(&str, &str)] = &[
     ("GuestRet::BakedSim", "0701010000000000000000000000000000803f0000803f0000803f01"),
     ("GuestRet::BakedRender", "0801010000000000000000000000000000803f0000803f0000803f"),
     ("GuestRet::BakedItem", "0900"),
-    ("GuestRet::ShapePlacement", "0a0100020001000200"),
+    ("GuestRet::ShapePlacement", "0a01000200010002000102"),
     ("EventPayload::BlockPlacePre", "000204060100"),
     ("EventPayload::BlockBreakPre", "010204060101"),
     ("EventPayload::InteractAttempt", "020102040601000200010700"),

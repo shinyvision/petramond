@@ -79,6 +79,10 @@ pub(crate) struct ClientModRuntime {
     /// Currently-down action `full_id`s — the edge filter for `ClientKey`
     /// dispatch, whatever input the player bound.
     pressed: HashSet<String>,
+    /// Test-only scripted answer for [`Self::placement_plan`]: lets prediction
+    /// tests drive the custom-shape placement arm without a wasm instance.
+    #[cfg(test)]
+    pub(crate) scripted_shape_plan: Option<mod_api::ShapePlacementResult>,
 }
 
 impl ClientModRuntime {
@@ -203,6 +207,8 @@ impl ClientModRuntime {
             actions,
             overlays,
             pressed: HashSet::new(),
+            #[cfg(test)]
+            scripted_shape_plan: None,
         };
         rt.bake_item_geometry();
         rt
@@ -281,6 +287,99 @@ impl ClientModRuntime {
             }
         }
         false
+    }
+
+    /// The client twin of the server's custom-shape placement dispatch: ask
+    /// the shape's owning CLIENT instance for its placement plan against the
+    /// replica (`GuestCall::ShapePlacementPlan`), with `actor` published as
+    /// the `PlayerState` snapshot. The plan is deterministic, so the two
+    /// sides compute the same write — the ghost presents it and the
+    /// authoritative delta confirms. `None` = no reachable owner; the caller
+    /// falls through to the ordinary ghost, the server's fall-through twin.
+    pub(crate) fn placement_plan(
+        &mut self,
+        world: &World,
+        actor: &PlayerSnapshot,
+        shape_key: &str,
+        shape_kind: u8,
+        block_id: u8,
+        inputs: mod_api::PlaceInputsView,
+    ) -> Option<mod_api::ShapePlacementResult> {
+        #[cfg(test)]
+        if let Some(plan) = self.scripted_shape_plan.clone() {
+            return Some(plan);
+        }
+        let loaded = self.owner_mod_mut(shape_key)?;
+        let call = GuestCall::ShapePlacementPlan {
+            shape_kind,
+            block_id: mod_api::BlockId(block_id),
+            inputs,
+        };
+        match super::scope::enter_actor(actor.clone(), || {
+            loaded.instance.call_guest_client(world, &call)
+        }) {
+            Some(GuestRet::ShapePlacement(result)) => Some(result),
+            _ => None,
+        }
+    }
+
+    /// The client twin of [`ModHost::bake_placement_sim_boxes`]: the would-be
+    /// SIM and RENDER boxes of a not-yet-placed custom cell, baked against
+    /// the replica. The ghost installs them eagerly so a predicted placement
+    /// collides and draws exactly from frame 0; the per-tick pump re-bakes
+    /// the same pure result when the delta dirties the cell.
+    pub(crate) fn bake_placement_geometry(
+        &mut self,
+        world: &World,
+        shape_key: &str,
+        shape_kind: u8,
+        input: mod_api::CellInput,
+    ) -> (
+        Option<Vec<crate::block::Aabb>>,
+        Option<Box<[crate::block::Aabb]>>,
+    ) {
+        let Some(loaded) = self.owner_mod_mut(shape_key) else {
+            return (None, None);
+        };
+        let sim_call = GuestCall::BakeShapeSim {
+            shape_kind,
+            cells: vec![input.clone()],
+        };
+        let sim = match loaded.instance.call_guest_client(world, &sim_call) {
+            Some(GuestRet::BakedSim(baked)) => {
+                match crate::modding::shape_bake::ingest_sim_bake(&baked, 1) {
+                    crate::modding::shape_bake::BakeIngest::Apply(cells) => {
+                        cells.into_iter().next().map(|(boxes, _)| boxes)
+                    }
+                    crate::modding::shape_bake::BakeIngest::Fallback => None,
+                    crate::modding::shape_bake::BakeIngest::Disable(reason) => {
+                        loaded.instance.disable(&reason);
+                        return (None, None);
+                    }
+                }
+            }
+            _ => None,
+        };
+        let render_call = GuestCall::BakeShapeRender {
+            shape_kind,
+            cells: vec![input],
+        };
+        let render = match loaded.instance.call_guest_client(world, &render_call) {
+            Some(GuestRet::BakedRender(baked)) => {
+                match crate::modding::shape_bake::ingest_render_bake(&baked, 1) {
+                    crate::modding::shape_bake::BakeIngest::Apply(cells) => {
+                        cells.into_iter().next()
+                    }
+                    crate::modding::shape_bake::BakeIngest::Fallback => None,
+                    crate::modding::shape_bake::BakeIngest::Disable(reason) => {
+                        loaded.instance.disable(&reason);
+                        return (sim, None);
+                    }
+                }
+            }
+            _ => None,
+        };
+        (sim, render)
     }
 
     /// Bake the SIM geometry of any dirty Layer-3 custom-shape cell on the

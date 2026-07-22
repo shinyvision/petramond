@@ -181,7 +181,10 @@ pub enum GuestCall {
     /// Compute a custom shape's placement plan for one click — read-only world
     /// access through the ordinary `GetBlock` host calls (mutating host calls
     /// error during this dispatch). Placement is single-cell: the host accepts a
-    /// plan writing exactly one cell near the click. → [`GuestRet::ShapePlacement`].
+    /// plan writing exactly one cell near the click. Runs on the SERVER (the
+    /// authoritative write) AND on each CLIENT instance (the place ghost's
+    /// prediction), so the plan must be as deterministic as a bake: a pure
+    /// function of `inputs` and world reads. → [`GuestRet::ShapePlacement`].
     ShapePlacementPlan {
         shape_kind: u8,
         block_id: BlockId,

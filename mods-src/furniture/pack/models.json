@@ -6,6 +6,13 @@
       "cells": [1, 2, 1],
       "orientation": "left_to_right",
       "fit": "native"
+    },
+    {
+      "key": "furniture:chandelier",
+      "model_file": "models/chandelier.bbmodel",
+      "cells": [3, 2, 3],
+      "orientation": "centered",
+      "fit": "centered"
     }
   ]
 }

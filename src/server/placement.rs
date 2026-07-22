@@ -205,45 +205,68 @@ impl ServerGame {
         if !result.accepted {
             return Some(None);
         }
-        let anchor = IVec3::new(result.anchor[0], result.anchor[1], result.anchor[2]);
-        // Placement is SINGLE-CELL and stateless: the guest may claim only the
-        // anchor cell (an empty `cells`, or exactly `[anchor]`). A wider
-        // footprint is refused here — the host cannot yet atomically gate,
-        // re-bake, or remove a multi-cell custom object, so shipping the wire
-        // field is fine but honouring more than one cell is not.
-        let single_cell = result.cells.is_empty()
-            || (result.cells.len() == 1 && result.cells[0] == anchor.to_array());
-        if !single_cell {
+        // The SHARED plan validation (single-cell, click radius, the
+        // sibling-row override gate) — the client place ghost runs the same
+        // rule against its replica, so both sides compute the same write by
+        // construction.
+        let Some((anchor, write_block)) = crate::world::placement::validate_custom_plan(
+            &result,
+            block,
+            shape_kind,
+            inputs.place_pos,
+        ) else {
             return Some(None);
-        }
-        // Bound the anchor to a small neighbourhood of the click (Chebyshev ≤ 2)
-        // so a bake cannot place kilometres from where the player aimed.
-        let (dx, dy, dz) = (
-            (anchor.x - inputs.place_pos.x).abs(),
-            (anchor.y - inputs.place_pos.y).abs(),
-            (anchor.z - inputs.place_pos.z).abs(),
-        );
-        if dx.max(dy).max(dz) > 2 {
-            return Some(None);
-        }
+        };
         // World-integrity gate the host always owns (the guest can see neither
         // gameplay bodies nor the save's replaceability): the cell must be LOADED
         // — `block_if_loaded`, never `chunk_block`, which collapses an unloaded
-        // cell to replaceable air — and replaceable. `cur != block` is redundant
-        // for the usual non-replaceable furniture (a replaceable cell can't equal
-        // it) but guards the rare replaceable custom shape against a no-op
-        // self-replace that would still burn a re-bake.
+        // cell to replaceable air — and replaceable. `cur != write_block` is
+        // redundant for the usual non-replaceable furniture (a replaceable cell
+        // can't equal it) but guards the rare replaceable custom shape against a
+        // no-op self-replace that would still burn a re-bake.
         match self.world.block_if_loaded(anchor.x, anchor.y, anchor.z) {
-            Some(cur) if cur.is_replaceable() && cur != block => {}
+            Some(cur) if cur.is_replaceable() && cur != write_block => {}
             _ => return Some(None),
         }
         // The body-occupancy gate every engine placement path runs: a custom
-        // shape's solid boxes may not trap a player or mob. Use the cell's baked
-        // boxes if it has any, else the row's static collision.
-        let boxes = self
-            .world
-            .custom_shape_boxes(anchor)
-            .unwrap_or_else(|| block.collision_boxes());
+        // shape's solid boxes may not trap a player or mob. The bake cache
+        // only holds PLACED cells, so for this not-yet-placed cell the shape's
+        // own sim bake answers the hypothetical (a pure function of the same
+        // cell input the post-placement pump will see) — falling back to a
+        // cached bake, then the row's static collision, when no owner replies.
+        let boxes = {
+            let Self {
+                world,
+                sessions,
+                bus,
+                mods,
+                ..
+            } = self;
+            let n = |dx, dy, dz| {
+                mod_api::BlockId(world.physics_block(anchor.x + dx, anchor.y + dy, anchor.z + dz).id())
+            };
+            let input = mod_api::CellInput {
+                world_pos: anchor.to_array(),
+                block_id: mod_api::BlockId(write_block.id()),
+                neighbor_ids: [n(-1, 0, 0), n(1, 0, 0), n(0, -1, 0), n(0, 1, 0), n(0, 0, -1), n(0, 0, 1)],
+            };
+            let sess = &mut sessions[s];
+            let mut ctx = SimCtx {
+                world,
+                player: &mut sess.player,
+                gui_state: &mut sess.gui_state,
+                feed: events,
+                queue: bus.queue_mut(),
+            };
+            mods.bake_placement_sim_boxes(&mut ctx, shape_key, shape_kind, input)
+        };
+        let boxes: &[crate::block::Aabb] = match &boxes {
+            Some(b) => b,
+            None => self
+                .world
+                .custom_shape_boxes(anchor)
+                .unwrap_or_else(|| write_block.collision_boxes()),
+        };
         if self.placement_occupied_by_body(s, anchor, boxes) {
             return Some(None);
         }
@@ -251,7 +274,7 @@ impl ServerGame {
             anchor,
             cells: vec![anchor],
             write: crate::world::placement::PlacementWrite::Custom {
-                block_id: block.id(),
+                block_id: write_block.id(),
             },
         };
         if !self.world.commit_placement(block, &plan, true) {

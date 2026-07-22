@@ -21,6 +21,76 @@
       "harvest_tier": 0,
       "hardness": 2.0,
       "drops": [{ "item": "furniture:chair", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
+      "block": "furniture:chain",
+      "shape": "furniture:chain",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": ["furniture:chain_link", "furniture:chain_link", "furniture:chain_link"],
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 5.0,
+      "drops": [{ "item": "furniture:chain", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
+      "block": "furniture:chain_ns",
+      "shape": "furniture:chain",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": ["furniture:chain_link", "furniture:chain_link", "furniture:chain_link_h"],
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 5.0,
+      "drops": [{ "item": "furniture:chain", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
+      "block": "furniture:chain_ew",
+      "shape": "furniture:chain",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": ["furniture:chain_link_h", "furniture:chain_link_h", "furniture:chain_link_h"],
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 5.0,
+      "drops": [{ "item": "furniture:chain", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
+      "block": "furniture:chandelier",
+      "shape": {
+        "model": "furniture:chandelier"
+      },
+      "flags": [
+        "solid"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 28,
+      "tiles": ["furniture:chain_link", "furniture:chain_link", "furniture:chain_link"],
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 3.0,
+      "drops": [{ "item": "furniture:chandelier", "min": 1, "max": 1, "chance": 1.0 }]
     }
   ]
 }

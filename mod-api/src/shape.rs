@@ -98,16 +98,25 @@ pub struct PlaceInputsView {
     pub player_facing: u8,
 }
 
-/// A custom shape's placement plan: whether it accepts the click and the anchor
-/// cell it writes. Placement is SINGLE-CELL and stateless: the host requires an
-/// accepted plan to write exactly one cell (`cells` empty, or exactly
-/// `[anchor]`) within a small radius of `place_pos`. `cells` is retained for a
-/// future multi-cell layer but the host rejects a plan with a wider footprint.
+/// A custom shape's placement plan: whether it accepts the click, the anchor
+/// cell it writes, and which block row lands there. Placement is SINGLE-CELL
+/// and stateless: the host requires an accepted plan to write exactly one cell
+/// (`cells` empty, or exactly `[anchor]`) within a small radius of
+/// `place_pos`. `cells` is retained for a future multi-cell layer but the host
+/// rejects a plan with a wider footprint.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ShapePlacementResult {
     pub accepted: bool,
     pub anchor: [i32; 3],
     pub cells: Vec<[i32; 3]>,
+    /// The row written at the anchor: `None` writes the held block (the
+    /// ordinary case); `Some(row)` writes a SIBLING row of the same shape
+    /// kind instead — orientation as block identity (the ladder-row
+    /// pattern), how a shape with directional variants (a chain's three
+    /// axes) lets the plan pick the variant from `PlaceInputsView::normal`.
+    /// The host refuses any row that does not share the placed shape kind
+    /// (a kind belongs to one pack, so a plan can never reach across packs).
+    pub block: Option<BlockId>,
 }
 
 /// The item geometry a shape bakes once (load-time), reused for its icon,

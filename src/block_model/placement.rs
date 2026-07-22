@@ -70,6 +70,20 @@ pub fn base_from_front_left_anchor(anchor: IVec3, kind: BlockModelKind, facing: 
     anchor - cell_rel_for_offset(fp, front_left, facing)
 }
 
+/// Placement anchor for [`super::PlacementOrientation::Centered`] models: the clicked
+/// cell is the footprint's horizontal CENTRE cell (even sizes bias toward
+/// −X/−Z) on the TOP layer — a hanging fixture grows downward from the cell it
+/// is placed against. No facing: centered models always store the default.
+pub fn base_from_centered_anchor(anchor: IVec3, kind: BlockModelKind) -> IVec3 {
+    let fp = footprint(kind);
+    anchor
+        - IVec3::new(
+            (fp[0] as i32 - 1) / 2,
+            fp[1] as i32 - 1,
+            (fp[2] as i32 - 1) / 2,
+        )
+}
+
 /// Occupied world cells plus their authored offsets for this oriented model placement.
 pub fn oriented_footprint_cells(
     base: IVec3,

@@ -98,6 +98,12 @@ pub enum PlacementOrientation {
     /// authored-max-X end and authored −X growing away — a bed placed foot-first,
     /// headboard at the far end.
     FrontToBack,
+    /// No player-facing orientation at all: the footprint CENTRES on the clicked
+    /// cell (horizontal centre, TOP layer — a hanging fixture grows downward from
+    /// the cell it is placed against) and the stored facing is always the default.
+    /// For radially symmetric pieces (a chandelier); pairs with
+    /// [`FitMode::Centered`].
+    Centered,
 }
 
 impl PlacementOrientation {
@@ -114,6 +120,7 @@ impl PlacementOrientation {
                 Facing::South => Facing::East,
                 Facing::East => Facing::North,
             },
+            PlacementOrientation::Centered => Facing::North,
         }
     }
 }
@@ -172,6 +179,14 @@ pub enum FitMode {
     /// Right for machines whose occupied space is smaller than their
     /// silhouette. Author the model resting at `y = 0` inside `0..16·cells`.
     Native,
+    /// [`Native`](Self::Native) pixels, but the authored X/Z origin maps to
+    /// the footprint's horizontal CENTRE and the geometry TOP-RESTS: the
+    /// authored top lands flush with the footprint top, so a hanging fixture
+    /// stays snug against whatever it was placed under even when it is
+    /// shorter than its footprint. Right for radially symmetric pieces
+    /// authored about the origin (a chandelier); pairs with
+    /// [`PlacementOrientation::Centered`].
+    Centered,
 }
 
 /// One model row as written in `models.json`.

@@ -1,0 +1,6 @@
+{
+  "tiles": [
+    { "name": "furniture:chain_link", "file": "chain_link.png" },
+    { "name": "furniture:chain_link_h", "file": "chain_link_h.png" }
+  ]
+}

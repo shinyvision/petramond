@@ -52,7 +52,8 @@ pub use defs::*;
 pub use display::*;
 pub use instance::*;
 pub use placement::{
-    base_from_cell, base_from_front_left_anchor, oriented_footprint_cells, placement_transform,
+    base_from_cell, base_from_centered_anchor, base_from_front_left_anchor,
+    oriented_footprint_cells, placement_transform,
 };
 pub use query::{
     collision_boxes, collision_boxes_oriented, model_render_boxes, outline_bounds, ray_vs_model,

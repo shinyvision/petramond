@@ -21,6 +21,17 @@
 //! Breaking furniture is the one release this mod owes the engine (a pose is
 //! not tied to any block): `block_broken` re-derives which former group the
 //! cell belonged to and releases exactly the players anchored on its seats.
+//!
+//! Chains are three single-cell rows — `furniture:chain` (vertical, the
+//! item-linked base), `furniture:chain_ns`, `furniture:chain_ew` — sharing
+//! ONE Layer-3 custom shape (`shapes.json` + the bakes below); the axis is
+//! block IDENTITY (the ladder-row pattern), so the bake orients each cell
+//! from its block id alone and placement needs no per-cell state. The
+//! placement plan picks the sibling row from the clicked face's normal and
+//! returns it as the plan's block override. Placement is fully
+//! deterministic, so the ENGINE predicts it whole: the client runs the same
+//! plan + gates against its replica and ghosts the exact write — the mod
+//! ships no placement predictor of its own.
 
 use mod_sdk::*;
 
@@ -44,6 +55,75 @@ const PIECES: &[Piece] = &[Piece {
 
 const FACINGS: [Facing; 4] = [Facing::North, Facing::South, Facing::West, Facing::East];
 
+/// The chain family: the shared shape-kind id and its three axis rows —
+/// vertical (the item-linked base), north/south, east/west.
+struct Chains {
+    shape: u8,
+    rows: [BlockId; 3],
+}
+
+/// The plate pair per axis (matching `Chains::rows`): two crossing
+/// 2/16-thick, 3/16-wide plates — the vanilla chain geometry. ONE geometry
+/// source for the sim and render bakes so collision, selection, and the
+/// drawn boxes can't drift; the mesher alpha-cuts the plates out of the
+/// row's link tiles.
+const PLATES: [[ShapeAabb; 2]; 3] = [
+    // vertical
+    [
+        ShapeAabb {
+            min: [6.5 / 16.0, 0.0, 7.0 / 16.0],
+            max: [9.5 / 16.0, 1.0, 9.0 / 16.0],
+        },
+        ShapeAabb {
+            min: [7.0 / 16.0, 0.0, 6.5 / 16.0],
+            max: [9.0 / 16.0, 1.0, 9.5 / 16.0],
+        },
+    ],
+    // north/south
+    [
+        ShapeAabb {
+            min: [6.5 / 16.0, 7.0 / 16.0, 0.0],
+            max: [9.5 / 16.0, 9.0 / 16.0, 1.0],
+        },
+        ShapeAabb {
+            min: [7.0 / 16.0, 6.5 / 16.0, 0.0],
+            max: [9.0 / 16.0, 9.5 / 16.0, 1.0],
+        },
+    ],
+    // east/west
+    [
+        ShapeAabb {
+            min: [0.0, 6.5 / 16.0, 7.0 / 16.0],
+            max: [1.0, 9.5 / 16.0, 9.0 / 16.0],
+        },
+        ShapeAabb {
+            min: [0.0, 7.0 / 16.0, 6.5 / 16.0],
+            max: [1.0, 9.0 / 16.0, 9.5 / 16.0],
+        },
+    ],
+];
+
+impl Chains {
+    /// The row for a clicked face's normal: top/bottom hangs a vertical
+    /// chain, a side face lays it along that face's axis (vanilla rule).
+    fn row_for_normal(&self, n: [i32; 3]) -> BlockId {
+        if n[1] != 0 {
+            self.rows[0]
+        } else if n[0] != 0 {
+            self.rows[2]
+        } else {
+            self.rows[1]
+        }
+    }
+
+    /// The plate pair for a placed chain cell, oriented by its block id
+    /// (the bake's whole orientation input — a pure function of the cell).
+    fn plates_for(&self, block: BlockId) -> Vec<ShapeAabb> {
+        let axis = self.rows.iter().position(|&r| r == block).unwrap_or(0);
+        PLATES[axis].to_vec()
+    }
+}
+
 /// A [`Piece`] with its block name resolved to the session id.
 struct ResolvedPiece {
     block: BlockId,
@@ -53,6 +133,7 @@ struct ResolvedPiece {
 #[derive(Default)]
 struct Furniture {
     pieces: Vec<ResolvedPiece>,
+    chains: Option<Chains>,
     /// Running as the CLIENT instance: only PREDICT the sit claim against the
     /// replica — sim host calls are unavailable on this side.
     client: bool,
@@ -68,6 +149,7 @@ impl Mod for Furniture {
             })
             .collect();
         self.client = runtime_side() == RuntimeSide::Client;
+        self.chains = resolve_chains();
         register_event_handler(EventKind::InteractAttempt, 0, ON_INTERACT);
         if !self.client {
             register_event_handler(EventKind::BlockBroken, 0, ON_BLOCK_BROKEN);
@@ -103,6 +185,71 @@ impl Mod for Furniture {
                 Outcome::Continue
             }
             _ => Outcome::Continue,
+        }
+    }
+
+    /// Chain SIM bake (deterministic — server and client replica): the plate
+    /// pair for the cell's axis, oriented by its block id alone (a pure
+    /// function of the cell, per the bake purity rule). Light passes — the
+    /// plates are thin, so every cell reports the open aperture.
+    fn bake_shape_sim(&mut self, shape_kind: u8, cells: &[CellInput]) -> Vec<BakedSimCell> {
+        let Some(chains) = self.chains.as_ref().filter(|c| c.shape == shape_kind) else {
+            return Vec::new();
+        };
+        cells
+            .iter()
+            .map(|cell| BakedSimCell {
+                collision_boxes: chains.plates_for(cell.block_id),
+                light_aperture: LightAperture::Open,
+            })
+            .collect()
+    }
+
+    /// Chain RENDER bake (client): the same plates the sim bake reports, so
+    /// the drawn boxes, the selection union, and the collision agree.
+    fn bake_shape_render(&mut self, shape_kind: u8, cells: &[CellInput]) -> Vec<BakedRenderCell> {
+        let Some(chains) = self.chains.as_ref().filter(|c| c.shape == shape_kind) else {
+            return Vec::new();
+        };
+        cells
+            .iter()
+            .map(|cell| BakedRenderCell {
+                boxes: chains.plates_for(cell.block_id),
+            })
+            .collect()
+    }
+
+    /// Chain ITEM bake (client, once at load): the icon / in-hand / dropped
+    /// form is always the VERTICAL plate pair, however the block row the
+    /// item links is oriented — a held chain reads like the vanilla item.
+    fn bake_shape_item(&mut self, shape_kind: u8, _block: BlockId) -> BakedItemGeometry {
+        let boxes = match self.chains.as_ref().filter(|c| c.shape == shape_kind) {
+            Some(_) => PLATES[0].to_vec(),
+            None => Vec::new(),
+        };
+        BakedItemGeometry { boxes }
+    }
+
+    /// Chain placement: accept the click cell and write the axis row for the
+    /// clicked face's normal (vertical off the top/bottom faces, north/south
+    /// or east/west off the side faces) as the plan's block override. The
+    /// host owns every world gate — loaded, replaceable, body occupancy.
+    fn shape_placement_plan(
+        &mut self,
+        shape_kind: u8,
+        _block: BlockId,
+        inputs: &PlaceInputsView,
+    ) -> ShapePlacementResult {
+        let row = self
+            .chains
+            .as_ref()
+            .filter(|c| c.shape == shape_kind)
+            .map(|c| c.row_for_normal(inputs.normal));
+        ShapePlacementResult {
+            accepted: true,
+            anchor: inputs.place_pos,
+            cells: vec![inputs.place_pos],
+            block: row,
         }
     }
 }
@@ -165,6 +312,22 @@ impl Furniture {
     }
 }
 
+/// Resolve the chain family at init: the shared shape kind and its three
+/// axis rows (registry-only calls, legal on any instance — the bakes and the
+/// placement plan run on both). `None` when the pack content didn't load (a
+/// row renamed or removed) — the chair half of the mod keeps working and
+/// chains fall back to the row's static (cube) shape.
+fn resolve_chains() -> Option<Chains> {
+    Some(Chains {
+        shape: resolve_shape("furniture:chain")?,
+        rows: [
+            resolve_block("furniture:chain")?,
+            resolve_block("furniture:chain_ns")?,
+            resolve_block("furniture:chain_ew")?,
+        ],
+    })
+}
+
 /// Whether the held item places a block (its row carries a `block` link) —
 /// the gate the sneak-defer rule reads. Registry-only, legal on any
 /// instance; an unresolvable id reads as "not a block".
@@ -211,8 +374,7 @@ fn release_broken_piece_sitters(block: BlockId, piece: &Piece, pos: [i32; 3]) {
                         continue; // a still-standing group owns this base
                     }
                     for seat in piece.seats {
-                        let anchor =
-                            footprint_local_to_world(base, piece.footprint, facing, *seat);
+                        let anchor = footprint_local_to_world(base, piece.footprint, facing, *seat);
                         for (id, a) in &posed {
                             if *a == anchor {
                                 mob_dismount(*id);

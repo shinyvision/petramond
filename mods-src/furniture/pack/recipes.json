@@ -9,6 +9,27 @@
         { "tag": "petramond:planks", "count": 2 }
       ],
       "result": { "item": "furniture:chair", "count": 1 }
+    },
+    {
+      "type": "crafting",
+      "recipe": "furniture:chain",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        { "item": "petramond:iron_ingot", "count": 2 }
+      ],
+      "result": { "item": "furniture:chain", "count": 6 }
+    },
+    {
+      "type": "crafting",
+      "recipe": "furniture:chandelier",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        { "item": "petramond:gold_ingot", "count": 5 },
+        { "item": "petramond:iron_ingot", "count": 4 },
+        { "item": "petramond:torch", "count": 7 },
+        { "tag": "petramond:planks", "count": 4 }
+      ],
+      "result": { "item": "furniture:chandelier", "count": 1 }
     }
   ]
 }

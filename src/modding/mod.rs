@@ -477,6 +477,43 @@ impl ModHost {
         }
     }
 
+    /// Bake the SIM collision boxes a custom shape WOULD have at a
+    /// not-yet-placed cell — the placement body-occupancy gate's input. The
+    /// bake cache only holds PLACED cells and the row's static collision is
+    /// the trapped-bake fallback, so without this the gate would test an
+    /// empty box set and let a solid shape trap a body. The bake is a pure
+    /// function of the cell input, so this equals what the post-placement
+    /// pump caches. `None` = no reachable owner or a declined/invalid reply:
+    /// the caller falls back to the row's static collision.
+    pub(crate) fn bake_placement_sim_boxes(
+        &self,
+        ctx: &mut SimCtx,
+        shape_key: &str,
+        shape_kind: u8,
+        input: mod_api::CellInput,
+    ) -> Option<Vec<crate::block::Aabb>> {
+        let mod_id = crate::registry::namespace(shape_key)?;
+        let inst = self.instance_by_id(mod_id)?;
+        let call = GuestCall::BakeShapeSim {
+            shape_kind,
+            cells: vec![input],
+        };
+        let reply = inst.lock().unwrap().call_guest(ctx, &call);
+        let Some(GuestRet::BakedSim(baked)) = reply else {
+            return None;
+        };
+        match shape_bake::ingest_sim_bake(&baked, 1) {
+            shape_bake::BakeIngest::Apply(cells) => {
+                cells.into_iter().next().map(|(boxes, _)| boxes)
+            }
+            shape_bake::BakeIngest::Fallback => None,
+            shape_bake::BakeIngest::Disable(reason) => {
+                inst.lock().unwrap().disable(&reason);
+                None
+            }
+        }
+    }
+
     /// Ask a Layer-3 custom shape's owning pack how to place it for one click
     /// ([`GuestCall::ShapePlacementPlan`]) — the per-interaction placement
     /// callback (not a hot path). `None` means no reachable owner (unknown

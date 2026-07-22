@@ -8,6 +8,24 @@
       "held_pose": { "pitch": 0, "yaw": 1.8, "roll": 0 },
       "tags": [],
       "block": "furniture:chair"
+    },
+    {
+      "item": "furniture:chain",
+      "key": "furniture:chain",
+      "name": "Chain",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+      "tags": [],
+      "block": "furniture:chain"
+    },
+    {
+      "item": "furniture:chandelier",
+      "key": "furniture:chandelier",
+      "name": "Chandelier",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+      "tags": [],
+      "block": "furniture:chandelier"
     }
   ]
 }

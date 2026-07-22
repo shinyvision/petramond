@@ -208,9 +208,14 @@ pub trait Mod: Default {
     /// Compute a custom shape's placement plan for one click (read the world
     /// through the ordinary [`get_block`] host calls; mutating host calls error
     /// during this dispatch). Placement is SINGLE-CELL and stateless: the host
-    /// accepts a plan writing exactly one cell near the click. The default
-    /// accepts the click cell; override to refuse or to orient from
-    /// `inputs.player_facing`.
+    /// accepts a plan writing exactly one cell near the click. Runs on the
+    /// server AND on the client instance (the place ghost), so it must be a
+    /// pure function of `inputs` and world reads — the two sides compute the
+    /// same write and the delta confirms the ghost. The default accepts the
+    /// click cell; override to refuse or to orient — a directional shape picks
+    /// its sibling row from `inputs.normal` and returns it in
+    /// [`ShapePlacementResult::block`] (orientation as block identity; the host
+    /// writes only a row sharing this shape kind).
     fn shape_placement_plan(
         &mut self,
         _shape_kind: u8,
@@ -221,6 +226,7 @@ pub trait Mod: Default {
             accepted: true,
             anchor: inputs.place_pos,
             cells: vec![inputs.place_pos],
+            block: None,
         }
     }
 }

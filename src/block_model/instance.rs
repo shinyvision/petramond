@@ -221,6 +221,14 @@ impl ModelInstance {
             // overhangs visually and is clipped out of collision/selection by
             // the ordinary per-cell clipping below.
             FitMode::Native => (1.0 / 16.0, Vec3::ZERO, Vec3::ZERO),
+            // Centered: native pixels, authored X/Z origin at the footprint's
+            // horizontal centre, authored top flush with the footprint top —
+            // a hanging fixture stays snug against whatever it hangs from.
+            FitMode::Centered => (
+                1.0 / 16.0,
+                Vec3::new(fp.x * 0.5, fp.y - mx.y / 16.0, fp.z * 0.5),
+                Vec3::ZERO,
+            ),
         };
         let to_fp = |v: Vec3| lo + (v - anchor) * scale;
         // A model-space AABB → footprint space (uniform scale + translate keeps it axis-
