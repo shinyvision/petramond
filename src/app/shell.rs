@@ -140,8 +140,13 @@ impl App {
                     self.pointer.grab_for_gameplay();
                 }
                 _ => {
-                    self.chat
-                        .edit_key(nav_key_from_text_key(key), self.modifiers.shift, None, now);
+                    self.chat.edit_key(
+                        nav_key_from_text_key(key),
+                        self.modifiers.shift,
+                        self.modifiers.ctrl,
+                        None,
+                        now,
+                    );
                 }
             }
             return true;
@@ -152,6 +157,7 @@ impl App {
         self.ui.push_input(petramond_ui::InputEvent::Key {
             key: nav_key_from_text_key(key),
             shift: self.modifiers.shift,
+            ctrl: self.modifiers.ctrl,
         });
         true
     }
@@ -171,7 +177,7 @@ impl App {
             let key = nav_key_from_shortcut(shortcut);
             let now = now_seconds();
             let clipboard = self.ui.clipboard_mut();
-            self.chat.edit_key(key, false, Some(clipboard), now);
+            self.chat.edit_key(key, false, false, Some(clipboard), now);
             return true;
         }
         if self.doc_ui_kind().is_none() {
@@ -180,6 +186,7 @@ impl App {
         self.ui.push_input(petramond_ui::InputEvent::Key {
             key: nav_key_from_shortcut(shortcut),
             shift: false,
+            ctrl: false,
         });
         true
     }

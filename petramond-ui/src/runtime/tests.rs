@@ -197,6 +197,7 @@ fn text_input_focus_type_submit() {
         InputEvent::Key {
             key: NavKey::Enter,
             shift: false,
+            ctrl: false,
         },
     ]);
     assert!(
@@ -215,11 +216,101 @@ fn text_input_focus_type_submit() {
         InputEvent::Key {
             key: NavKey::Escape,
             shift: false,
+            ctrl: false,
         },
         InputEvent::Char { ch: 'X' },
     ]);
     assert!(
         !ev.iter().any(|e| matches!(e, UiEvent::TextChanged { .. })),
+        "{ev:?}"
+    );
+}
+
+#[test]
+fn tab_cycles_focus_across_text_inputs() {
+    let doc = Arc::new(
+        Document::from_json(
+            r#"{
+                "format": 1, "kind": "petramond:form", "class": "screen",
+                "root": { "type": "column", "layout": { "w": 200, "h": 120, "pad": [8,8,8,8], "gap": 4 },
+                    "children": [
+                        { "type": "text_input", "id": "a", "placeholder": "A",
+                          "bind": { "text": "a" }, "layout": { "w": 120 } },
+                        { "type": "text_input", "id": "b", "placeholder": "B",
+                          "bind": { "text": "b" }, "layout": { "w": 120 } }
+                    ] }
+            }"#,
+        )
+        .unwrap(),
+    );
+    let mut h = Harness {
+        rt: UiRuntime::new(doc, Arc::new(Theme::placeholder())),
+        fs: FrameState::new(),
+        out: FrameOutput::default(),
+        state: {
+            let mut s = UiState::new();
+            s.set("a", UiValue::Str(String::new()));
+            s.set("b", UiValue::Str(String::new()));
+            s
+        },
+        now: 0.0,
+    };
+    h.frame(&[]);
+    assert!(h.fs.focused().is_none());
+
+    h.frame(&[InputEvent::Key {
+        key: NavKey::Tab,
+        shift: false,
+        ctrl: false,
+    }]);
+    assert_eq!(h.fs.focused().map(|k| k.id.as_str()), Some("a"));
+
+    h.frame(&[InputEvent::Key {
+        key: NavKey::Tab,
+        shift: false,
+        ctrl: false,
+    }]);
+    assert_eq!(h.fs.focused().map(|k| k.id.as_str()), Some("b"));
+
+    h.frame(&[InputEvent::Key {
+        key: NavKey::Tab,
+        shift: false,
+        ctrl: false,
+    }]);
+    assert_eq!(h.fs.focused().map(|k| k.id.as_str()), Some("a"));
+
+    h.frame(&[InputEvent::Key {
+        key: NavKey::Tab,
+        shift: true,
+        ctrl: false,
+    }]);
+    assert_eq!(h.fs.focused().map(|k| k.id.as_str()), Some("b"));
+}
+
+#[test]
+fn ctrl_backspace_deletes_word_in_focused_input() {
+    let mut h = Harness::new();
+    h.frame(&[]);
+    let (ix, iy) = h.center("name");
+    h.frame(&[
+        down(ix, iy),
+        InputEvent::Char { ch: 'h' },
+        InputEvent::Char { ch: 'i' },
+        InputEvent::Char { ch: ' ' },
+        InputEvent::Char { ch: 't' },
+        InputEvent::Char { ch: 'h' },
+        InputEvent::Char { ch: 'e' },
+        InputEvent::Char { ch: 'r' },
+        InputEvent::Char { ch: 'e' },
+    ]);
+    let ev = h.frame(&[InputEvent::Key {
+        key: NavKey::Backspace,
+        shift: false,
+        ctrl: true,
+    }]);
+    assert!(
+        ev.iter()
+            .any(|e| matches!(e, UiEvent::TextChanged { id, text } if id == "name" && text == "hi ")),
         "{ev:?}"
     );
 }

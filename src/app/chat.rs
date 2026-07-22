@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use crate::net::protocol::{ChatColor, ChatLine, ChatSpan, MAX_CHAT_CHARS};
 
 const MAX_HISTORY: usize = 256;
+const MAX_SENT: usize = 64;
 const PASSIVE_SECS: f64 = 10.0;
 const FADE_SECS: f64 = 1.0;
 const PASSIVE_MAX_LINES: usize = 6;
@@ -32,6 +33,9 @@ struct InputLayout {
 
 pub(super) struct ChatUi {
     history: VecDeque<TimedLine>,
+    sent: VecDeque<String>,
+    history_cursor: Option<usize>,
+    draft_backup: Option<String>,
     editor: petramond_ui::TextInput,
     scroll_lines: usize,
     history_chars: usize,
@@ -43,6 +47,9 @@ impl Default for ChatUi {
     fn default() -> Self {
         Self {
             history: VecDeque::new(),
+            sent: VecDeque::new(),
+            history_cursor: None,
+            draft_backup: None,
             editor: petramond_ui::TextInput::new(MAX_CHAT_CHARS),
             scroll_lines: 0,
             history_chars: chars_for_width(CHAT_W - PAD * 2),
@@ -65,6 +72,8 @@ impl ChatUi {
     }
 
     pub(super) fn insert_text(&mut self, text: &str, now: f64) {
+        self.history_cursor = None;
+        self.draft_backup = None;
         self.editor
             .insert_text(text, self.input_visible_chars(), now);
     }
@@ -73,39 +82,54 @@ impl ChatUi {
         &mut self,
         key: petramond_ui::NavKey,
         shift: bool,
+        ctrl: bool,
         clipboard: Option<&mut dyn petramond_ui::TextClipboard>,
         now: f64,
     ) {
         let visible = self.input_visible_chars();
-        match key {
-            petramond_ui::NavKey::Left => {
+        match (key, ctrl) {
+            (petramond_ui::NavKey::Left, true) => {
+                self.editor.move_word_left(shift, visible, now);
+            }
+            (petramond_ui::NavKey::Right, true) => {
+                self.editor.move_word_right(shift, visible, now);
+            }
+            (petramond_ui::NavKey::Left, false) => {
                 self.editor.move_left(shift, visible, now);
             }
-            petramond_ui::NavKey::Right => {
+            (petramond_ui::NavKey::Right, false) => {
                 self.editor.move_right(shift, visible, now);
             }
-            petramond_ui::NavKey::Home => self.editor.move_home(shift, visible, now),
-            petramond_ui::NavKey::End => self.editor.move_end(shift, visible, now),
-            petramond_ui::NavKey::Backspace => {
+            (petramond_ui::NavKey::Home, _) => self.editor.move_home(shift, visible, now),
+            (petramond_ui::NavKey::End, _) => self.editor.move_end(shift, visible, now),
+            (petramond_ui::NavKey::Up, _) => self.history_prev(visible, now),
+            (petramond_ui::NavKey::Down, _) => self.history_next(visible, now),
+            (petramond_ui::NavKey::Backspace, true) => {
+                self.editor.backspace_word(visible, now);
+            }
+            (petramond_ui::NavKey::Backspace, false) => {
                 self.editor.backspace(visible, now);
             }
-            petramond_ui::NavKey::Delete => {
+            (petramond_ui::NavKey::Delete, true) => {
+                self.editor.delete_word_forward(visible, now);
+            }
+            (petramond_ui::NavKey::Delete, false) => {
                 self.editor.delete_forward(visible, now);
             }
-            petramond_ui::NavKey::SelectAll => {
+            (petramond_ui::NavKey::SelectAll, _) => {
                 self.editor.select_all(visible, now);
             }
-            petramond_ui::NavKey::Copy => {
+            (petramond_ui::NavKey::Copy, _) => {
                 if let Some(cb) = clipboard {
                     self.editor.copy_selection(cb);
                 }
             }
-            petramond_ui::NavKey::Cut => {
+            (petramond_ui::NavKey::Cut, _) => {
                 if let Some(cb) = clipboard {
                     self.editor.cut_selection(cb, visible, now);
                 }
             }
-            petramond_ui::NavKey::Paste => {
+            (petramond_ui::NavKey::Paste, _) => {
                 if let Some(cb) = clipboard {
                     self.editor.paste(cb, visible, now);
                 }
@@ -116,6 +140,12 @@ impl ChatUi {
 
     pub(super) fn submit_or_close(&mut self, now: f64) -> Option<String> {
         let text = self.editor.text().trim().to_owned();
+        if !text.is_empty() {
+            if self.sent.len() == MAX_SENT {
+                self.sent.pop_front();
+            }
+            self.sent.push_back(text.clone());
+        }
         self.clear_draft(now);
         (!text.is_empty()).then_some(text)
     }
@@ -123,6 +153,45 @@ impl ChatUi {
     pub(super) fn clear_draft(&mut self, now: f64) {
         self.editor.clear(now);
         self.editor.focus(now);
+        self.drag_anchor = None;
+        self.history_cursor = None;
+        self.draft_backup = None;
+    }
+
+    fn history_prev(&mut self, visible: usize, now: f64) {
+        if self.sent.is_empty() {
+            return;
+        }
+        let next = match self.history_cursor {
+            None => {
+                self.draft_backup = Some(self.editor.text().to_owned());
+                self.sent.len() - 1
+            }
+            Some(i) => i.saturating_sub(1),
+        };
+        self.history_cursor = Some(next);
+        let text = self.sent[next].clone();
+        self.set_draft(&text, visible, now);
+    }
+
+    fn history_next(&mut self, visible: usize, now: f64) {
+        let Some(i) = self.history_cursor else {
+            return;
+        };
+        if i + 1 < self.sent.len() {
+            self.history_cursor = Some(i + 1);
+            let text = self.sent[i + 1].clone();
+            self.set_draft(&text, visible, now);
+        } else {
+            self.history_cursor = None;
+            let draft = self.draft_backup.take().unwrap_or_default();
+            self.set_draft(&draft, visible, now);
+        }
+    }
+
+    fn set_draft(&mut self, text: &str, visible: usize, now: f64) {
+        self.editor.clear(now);
+        self.editor.insert_text(text, visible, now);
         self.drag_anchor = None;
     }
 
@@ -473,5 +542,61 @@ mod tests {
 
         assert!(first_y >= panel.y + PAD);
         assert!(last_y + petramond_ui::text::GLYPH_H <= panel.y + panel.h - PAD);
+    }
+
+    fn send(chat: &mut ChatUi, text: &str) {
+        chat.insert_text(text, 0.0);
+        assert_eq!(chat.submit_or_close(0.0).as_deref(), Some(text));
+    }
+
+    fn press(chat: &mut ChatUi, key: petramond_ui::NavKey) {
+        chat.edit_key(key, false, false, None, 0.0);
+    }
+
+    #[test]
+    fn up_recalls_sent_lines_newest_first_down_walks_back() {
+        let mut chat = ChatUi::default();
+        send(&mut chat, "hello");
+        send(&mut chat, "/time set day");
+
+        press(&mut chat, petramond_ui::NavKey::Up);
+        assert_eq!(chat.editor.text(), "/time set day");
+        press(&mut chat, petramond_ui::NavKey::Up);
+        assert_eq!(chat.editor.text(), "hello");
+        // Already at the oldest entry: stays put.
+        press(&mut chat, petramond_ui::NavKey::Up);
+        assert_eq!(chat.editor.text(), "hello");
+        press(&mut chat, petramond_ui::NavKey::Down);
+        assert_eq!(chat.editor.text(), "/time set day");
+    }
+
+    #[test]
+    fn down_past_newest_restores_unsubmitted_draft() {
+        let mut chat = ChatUi::default();
+        send(&mut chat, "hello");
+        chat.insert_text("partial", 0.0);
+
+        press(&mut chat, petramond_ui::NavKey::Up);
+        assert_eq!(chat.editor.text(), "hello");
+        press(&mut chat, petramond_ui::NavKey::Down);
+        assert_eq!(chat.editor.text(), "partial");
+    }
+
+    #[test]
+    fn up_with_empty_sent_history_keeps_draft() {
+        let mut chat = ChatUi::default();
+        chat.insert_text("partial", 0.0);
+        press(&mut chat, petramond_ui::NavKey::Up);
+        assert_eq!(chat.editor.text(), "partial");
+    }
+
+    #[test]
+    fn typing_after_recall_detaches_from_history() {
+        let mut chat = ChatUi::default();
+        send(&mut chat, "hello");
+        press(&mut chat, petramond_ui::NavKey::Up);
+        chat.insert_text("!", 0.0);
+        press(&mut chat, petramond_ui::NavKey::Down);
+        assert_eq!(chat.editor.text(), "hello!");
     }
 }

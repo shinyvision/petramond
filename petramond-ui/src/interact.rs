@@ -101,8 +101,8 @@ impl Interact<'_> {
                     self.pointer_up(fs, button, events);
                 }
                 InputEvent::Scroll { delta } => self.wheel(fs, delta),
-                InputEvent::Key { key, shift } => {
-                    self.key(fs, key, shift, clipboard.as_deref_mut(), events);
+                InputEvent::Key { key, shift, ctrl } => {
+                    self.key(fs, key, shift, ctrl, clipboard.as_deref_mut(), events);
                 }
                 InputEvent::Char { ch } => self.chr(fs, ch, events),
                 InputEvent::Blur => {
@@ -560,9 +560,15 @@ impl Interact<'_> {
         fs: &mut FrameState,
         key: NavKey,
         shift: bool,
+        ctrl: bool,
         clipboard: Option<&mut C>,
         events: &mut Vec<UiEvent>,
     ) {
+        // Tab cycles focus among enabled text inputs (document order).
+        if key == NavKey::Tab && self.focus_next_input(fs, shift) {
+            return;
+        }
+
         // A focused editor consumes editing keys.
         if let Some(focus) = fs.focus.clone() {
             if let Some(i) = self.tree.find(&focus.id, focus.item) {
@@ -573,46 +579,58 @@ impl Interact<'_> {
                 if let Some(editor) = fs.editors.get_mut(&focus) {
                     let before = editor.text().to_owned();
                     let mut consumed = true;
-                    match key {
-                        NavKey::Left => {
+                    match (key, ctrl) {
+                        (NavKey::Left, true) => {
+                            editor.move_word_left(shift, visible, now);
+                        }
+                        (NavKey::Right, true) => {
+                            editor.move_word_right(shift, visible, now);
+                        }
+                        (NavKey::Left, false) => {
                             editor.move_left(shift, visible, now);
                         }
-                        NavKey::Right => {
+                        (NavKey::Right, false) => {
                             editor.move_right(shift, visible, now);
                         }
-                        NavKey::Home => editor.move_home(shift, visible, now),
-                        NavKey::End => editor.move_end(shift, visible, now),
-                        NavKey::Backspace => {
+                        (NavKey::Home, _) => editor.move_home(shift, visible, now),
+                        (NavKey::End, _) => editor.move_end(shift, visible, now),
+                        (NavKey::Backspace, true) => {
+                            editor.backspace_word(visible, now);
+                        }
+                        (NavKey::Backspace, false) => {
                             editor.backspace(visible, now);
                         }
-                        NavKey::Delete => {
+                        (NavKey::Delete, true) => {
+                            editor.delete_word_forward(visible, now);
+                        }
+                        (NavKey::Delete, false) => {
                             editor.delete_forward(visible, now);
                         }
-                        NavKey::SelectAll => {
+                        (NavKey::SelectAll, _) => {
                             editor.select_all(visible, now);
                         }
-                        NavKey::Copy => {
+                        (NavKey::Copy, _) => {
                             if let Some(mut cb) = clipboard {
                                 editor.copy_selection(&mut cb);
                             }
                         }
-                        NavKey::Cut => {
+                        (NavKey::Cut, _) => {
                             if let Some(mut cb) = clipboard {
                                 editor.cut_selection(&mut cb, visible, now);
                             }
                         }
-                        NavKey::Paste => {
+                        (NavKey::Paste, _) => {
                             if let Some(mut cb) = clipboard {
                                 editor.paste(&mut cb, visible, now);
                             }
                         }
-                        NavKey::Enter => {
+                        (NavKey::Enter, _) => {
                             events.push(UiEvent::Submit {
                                 id: focus.id.clone(),
                                 text: editor.text().to_owned(),
                             });
                         }
-                        NavKey::Escape => {
+                        (NavKey::Escape, _) => {
                             editor.blur();
                             fs.focus = None;
                         }
@@ -635,7 +653,50 @@ impl Interact<'_> {
                 }
             }
         }
-        events.push(UiEvent::Key { key, shift });
+        events.push(UiEvent::Key { key, shift, ctrl });
+    }
+
+    /// Focus the next (or previous with `back`) enabled text input in document
+    /// order. Returns true when the key was handled (at least one input exists).
+    fn focus_next_input(&self, fs: &mut FrameState, back: bool) -> bool {
+        let inputs: Vec<(InstKey, String, usize)> = self
+            .tree
+            .insts
+            .iter()
+            .filter_map(|inst| {
+                if !inst.enabled {
+                    return None;
+                }
+                let NodeKind::TextInput { max_chars, .. } = &inst.node.kind else {
+                    return None;
+                };
+                let key = inst.key.clone()?;
+                let bound = inst.text.clone().unwrap_or_default();
+                Some((key, bound, *max_chars))
+            })
+            .collect();
+        if inputs.is_empty() {
+            return false;
+        }
+        let cur = fs.focus.as_ref();
+        let idx = cur
+            .and_then(|f| inputs.iter().position(|(k, ..)| k == f))
+            .unwrap_or(if back { 0 } else { inputs.len() - 1 });
+        let next = if back {
+            if idx == 0 {
+                inputs.len() - 1
+            } else {
+                idx - 1
+            }
+        } else {
+            (idx + 1) % inputs.len()
+        };
+        let (key, bound, max_chars) = &inputs[next];
+        if fs.focus.as_ref() != Some(key) {
+            self.blur_editor(fs);
+            fs.focus_text_input(key.clone(), bound, *max_chars);
+        }
+        true
     }
 
     fn chr(&self, fs: &mut FrameState, ch: char, events: &mut Vec<UiEvent>) {

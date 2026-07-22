@@ -17,7 +17,8 @@ pub enum PointerButton {
 }
 
 /// Semantic (host-keymapped) keys: the host translates ctrl+C → `Copy` etc.,
-/// so petramond-ui never owns a keymap.
+/// and passes Shift/Ctrl alongside movement/edit keys, so petramond-ui never
+/// owns a keymap.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum NavKey {
     Up,
@@ -67,6 +68,7 @@ pub enum InputEvent {
     Key {
         key: NavKey,
         shift: bool,
+        ctrl: bool,
     },
     Char {
         ch: char,
@@ -153,6 +155,7 @@ pub enum UiEvent {
     Key {
         key: NavKey,
         shift: bool,
+        ctrl: bool,
     },
 }
 

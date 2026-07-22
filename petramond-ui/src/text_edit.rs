@@ -134,6 +134,25 @@ impl TextInput {
         true
     }
 
+    /// Delete the previous word (or the selection, if any).
+    pub fn backspace_word(&mut self, visible_chars: usize, now: f64) -> bool {
+        if self.delete_selection() {
+            self.ensure_cursor_visible(visible_chars);
+            self.touch(now);
+            return true;
+        }
+        if self.cursor == 0 {
+            return false;
+        }
+        let start = prev_word_boundary(&self.text, self.cursor);
+        let end = self.cursor;
+        self.delete_range(start, end);
+        self.cursor = start;
+        self.ensure_cursor_visible(visible_chars);
+        self.touch(now);
+        true
+    }
+
     pub fn delete_forward(&mut self, visible_chars: usize, now: f64) -> bool {
         if self.delete_selection() {
             self.ensure_cursor_visible(visible_chars);
@@ -144,6 +163,23 @@ impl TextInput {
             return false;
         }
         self.delete_range(self.cursor, self.cursor + 1);
+        self.ensure_cursor_visible(visible_chars);
+        self.touch(now);
+        true
+    }
+
+    /// Delete the next word (or the selection, if any).
+    pub fn delete_word_forward(&mut self, visible_chars: usize, now: f64) -> bool {
+        if self.delete_selection() {
+            self.ensure_cursor_visible(visible_chars);
+            self.touch(now);
+            return true;
+        }
+        let end = next_word_boundary(&self.text, self.cursor);
+        if end == self.cursor {
+            return false;
+        }
+        self.delete_range(self.cursor, end);
         self.ensure_cursor_visible(visible_chars);
         self.touch(now);
         true
@@ -177,6 +213,48 @@ impl TextInput {
             self.selection_anchor = None;
         } else {
             self.cursor = (self.cursor + 1).min(len);
+            self.selection_anchor = None;
+        }
+        self.ensure_cursor_visible(visible_chars);
+        self.touch(now);
+        self.edit_state() != before
+    }
+
+    /// Move (or extend selection) to the previous word boundary.
+    pub fn move_word_left(
+        &mut self,
+        extend_selection: bool,
+        visible_chars: usize,
+        now: f64,
+    ) -> bool {
+        let before = self.edit_state();
+        let target = prev_word_boundary(&self.text, self.cursor);
+        if extend_selection {
+            self.selection_anchor.get_or_insert(self.cursor);
+            self.cursor = target;
+        } else {
+            self.cursor = target;
+            self.selection_anchor = None;
+        }
+        self.ensure_cursor_visible(visible_chars);
+        self.touch(now);
+        self.edit_state() != before
+    }
+
+    /// Move (or extend selection) to the next word boundary.
+    pub fn move_word_right(
+        &mut self,
+        extend_selection: bool,
+        visible_chars: usize,
+        now: f64,
+    ) -> bool {
+        let before = self.edit_state();
+        let target = next_word_boundary(&self.text, self.cursor);
+        if extend_selection {
+            self.selection_anchor.get_or_insert(self.cursor);
+            self.cursor = target;
+        } else {
+            self.cursor = target;
             self.selection_anchor = None;
         }
         self.ensure_cursor_visible(visible_chars);
@@ -384,6 +462,51 @@ fn is_text_char(ch: char) -> bool {
     ch.is_ascii_graphic() || ch == ' '
 }
 
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+/// Char index of the word boundary left of `cursor` (OS-editor style: skip
+/// trailing whitespace, then the preceding run of word or non-word chars).
+fn prev_word_boundary(text: &str, cursor: usize) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = cursor.min(chars.len());
+    if i == 0 {
+        return 0;
+    }
+    while i > 0 && chars[i - 1].is_whitespace() {
+        i -= 1;
+    }
+    if i == 0 {
+        return 0;
+    }
+    let word = is_word_char(chars[i - 1]);
+    while i > 0 && !chars[i - 1].is_whitespace() && is_word_char(chars[i - 1]) == word {
+        i -= 1;
+    }
+    i
+}
+
+/// Char index of the word boundary right of `cursor`.
+fn next_word_boundary(text: &str, cursor: usize) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let mut i = cursor.min(len);
+    if i >= len {
+        return len;
+    }
+    let word = is_word_char(chars[i]);
+    if !chars[i].is_whitespace() {
+        while i < len && !chars[i].is_whitespace() && is_word_char(chars[i]) == word {
+            i += 1;
+        }
+    }
+    while i < len && chars[i].is_whitespace() {
+        i += 1;
+    }
+    i
+}
+
 fn byte_index(text: &str, char_index: usize) -> usize {
     text.char_indices()
         .nth(char_index)
@@ -549,5 +672,32 @@ mod tests {
         let input = TextInput::with_text("New World", 48, 0.0);
         assert_eq!(input.text(), "New World");
         assert_eq!(input.render(20, true, 0.0).cursor, 9);
+    }
+
+    #[test]
+    fn ctrl_arrow_moves_and_selects_by_word() {
+        let mut input = TextInput::new(48);
+        input.insert_text("hello world", 20, 0.0);
+
+        assert!(input.move_word_left(false, 20, 0.1));
+        assert_eq!(input.render(20, true, 0.1).cursor, 6); // before "world"
+        assert!(input.move_word_left(false, 20, 0.2));
+        assert_eq!(input.render(20, true, 0.2).cursor, 0);
+
+        assert!(input.move_word_right(true, 20, 0.3));
+        let view = input.render(20, true, 0.3);
+        assert_eq!(view.cursor, 6);
+        assert_eq!(view.selection, Some((0, 6))); // "hello "
+    }
+
+    #[test]
+    fn ctrl_backspace_deletes_previous_word() {
+        let mut input = TextInput::new(48);
+        input.insert_text("hello world", 20, 0.0);
+
+        assert!(input.backspace_word(20, 0.1));
+        assert_eq!(input.text(), "hello ");
+        assert!(input.backspace_word(20, 0.2));
+        assert_eq!(input.text(), "");
     }
 }

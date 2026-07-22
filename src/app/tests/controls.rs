@@ -134,6 +134,18 @@ fn create_world_document_input_types_selects_and_uses_clipboard() {
         app.ui.state_mut().get_str("create_name"),
         Some("Pasted $#@!^{}")
     );
+
+    // Tab cycles focus to the next text input on the form.
+    assert!(app.handle_text_key(TextKey::Tab));
+    drive(&mut app, 0.6);
+    assert!(app.handle_text_input("42"));
+    drive(&mut app, 0.7);
+    assert_eq!(app.ui.state_mut().get_str("create_seed"), Some("42"));
+    assert_eq!(
+        app.ui.state_mut().get_str("create_name"),
+        Some("Pasted $#@!^{}"),
+        "name field must keep its text after tabbing away"
+    );
 }
 
 /// The document shell flow end-to-end through real pointer plumbing:
