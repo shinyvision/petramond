@@ -21,8 +21,20 @@ use super::vertex::Vertex;
 /// so the crack is coincident with the mesh. The face flush against the
 /// supporting wall is never emitted: the wall (a complete face, by the support
 /// rule) covers that plane, and emitting it would z-fight.
-pub(crate) fn shape_faces(facing: Facing, mut visit: impl FnMut([f32; 3], [f32; 3], Face)) {
-    let (min, max) = crate::ladder::panel_aabb(facing);
+pub(crate) fn shape_faces(facing: Facing, visit: impl FnMut([f32; 3], [f32; 3], Face)) {
+    let (t, h) = (crate::ladder::THICKNESS, 1.0);
+    shape_faces_dim(facing, t, h, visit);
+}
+
+/// [`shape_faces`] for a Layer-2 wall panel of retuned `thickness`/`height` — the
+/// in-world mesh reads the same [`crate::ladder::panel_box`] the collision does.
+pub(crate) fn shape_faces_dim(
+    facing: Facing,
+    thickness: f32,
+    height: f32,
+    mut visit: impl FnMut([f32; 3], [f32; 3], Face),
+) {
+    let (min, max) = crate::ladder::panel_aabb_dim(facing, thickness, height);
     let buried = match facing {
         Facing::North => Face::PosZ,
         Facing::South => Face::NegZ,
@@ -49,6 +61,8 @@ pub(super) fn emit_ladder_block(
     sky6: u32,
     block6: u32,
     warm: f32,
+    thickness: f32,
+    height: f32,
 ) {
     let origin = [wx as f32, wy as f32, wz as f32];
     let tint = if warm == 0.0 {
@@ -56,7 +70,7 @@ pub(super) fn emit_ladder_block(
     } else {
         warm_tint(tint, warm)
     };
-    shape_faces(facing, |min, max, face| {
+    shape_faces_dim(facing, thickness, height, |min, max, face| {
         super::pane::push_face(
             opaque, opaque_idx, origin, min, max, face, tile, false, tint, sky6, block6,
         );

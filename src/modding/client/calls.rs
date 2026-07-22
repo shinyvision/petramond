@@ -49,7 +49,8 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::MobNames { .. }
         | HostCall::BlocksByTag { .. }
         | HostCall::ItemsByTag { .. }
-        | HostCall::ItemInfo { .. } => true,
+        | HostCall::ItemInfo { .. }
+        | HostCall::ResolveShape { .. } => true,
         // The client presentation surface (handled below).
         HostCall::ClientRegisterOverlay { .. }
         | HostCall::ClientRegisterKey { .. }
@@ -147,8 +148,10 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::MobAnimState { .. }
         | HostCall::MobDrive { .. }
         | HostCall::MobMount { .. }
+        | HostCall::PlayerPoseSet { .. }
         | HostCall::MobDismount { .. }
         | HostCall::MobRiders { .. }
+        | HostCall::BlockModelGroup { .. }
         | HostCall::ConsumeHeld { .. }
         | HostCall::ReplaceHeldOne { .. }
         | HostCall::PlayerInput { .. }

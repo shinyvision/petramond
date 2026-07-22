@@ -350,6 +350,10 @@ fn reply_shape(call: &str, expected: &str, got: &GuestRet) -> String {
         GuestRet::GenBiomes(_) => "GenBiomes",
         GuestRet::HostileSpawn(_) => "HostileSpawn",
         GuestRet::AiDecision(_) => "AiDecision",
+        GuestRet::BakedSim(_) => "BakedSim",
+        GuestRet::BakedRender(_) => "BakedRender",
+        GuestRet::BakedItem(_) => "BakedItem",
+        GuestRet::ShapePlacement(_) => "ShapePlacement",
     };
     format!("{call} expected a {expected} reply, got {got}")
 }

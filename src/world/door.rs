@@ -10,7 +10,7 @@
 //! toggle needs no remesh — only the placement/break edits relight + remesh neighbours.
 
 use crate::atlas::Tile;
-use crate::block::{Block, BlockBehavior, RenderShape};
+use crate::block::{Block, BlockBehavior, ShapeFamily};
 use crate::door::DoorState;
 use crate::facing::Facing;
 use crate::mathh::IVec3;
@@ -160,7 +160,7 @@ impl World {
     /// chunk-meshed, but its neighbours are). Assumes the footprint was gated clear.
     /// Returns false if `block` isn't a door or a cell is unloaded.
     pub fn place_door(&mut self, base: IVec3, block: Block, facing: Facing) -> bool {
-        if block.render_shape() != RenderShape::Door {
+        if block.shape_family() != ShapeFamily::Door {
             return false;
         }
         let upper = base + UP;

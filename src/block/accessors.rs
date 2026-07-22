@@ -3,9 +3,11 @@ use crate::audio::Sound;
 use crate::facing::Facing;
 use crate::item::{DropSpec, ItemType, ToolKind};
 
+use super::shape_kind::CustomLight;
 use super::{
     data, definition, sounds, Aabb, Block, BlockBehavior, BlockInteraction, BlockLightShape,
-    BlockMaterial, BlockSoundAction, BlockTag, ParticleEmitter, RenderShape, ENGINE_BLOCK_NAMES,
+    BlockMaterial, BlockShapeKind, BlockSoundAction, BlockTag, ParticleEmitter, ShapeFamily,
+    ShapeKindDef, ENGINE_BLOCK_NAMES,
 };
 
 impl Block {
@@ -15,12 +17,41 @@ impl Block {
         data::all()
     }
 
-    /// Mesh geometry kind — cube / cross-plant / torch — a per-row [`BlockDef`]
-    /// field (see [`RenderShape`]): cross-model plants render as billboards, a torch
-    /// as a thin pole, everything else as a full cube.
+    /// This block's composable [`BlockShapeKind`] — how it meshes / collides /
+    /// places. Carries the shape [`family`](crate::block::ShapeFamily) consumers
+    /// dispatch on plus the per-row [`params`](crate::block::ShapeParams).
     #[inline]
-    pub fn render_shape(self) -> RenderShape {
-        self.def().shape
+    pub fn shape_kind(self) -> BlockShapeKind {
+        self.def().shape_kind
+    }
+
+    /// The shape-kind registry row for this block.
+    #[inline]
+    pub(crate) fn shape_kind_def(self) -> &'static ShapeKindDef {
+        self.shape_kind().def()
+    }
+
+    /// The shape family this block meshes/collides as — the cheap `Copy`
+    /// discriminant consumers switch on. Backed by a dense per-id LUT, so this
+    /// is one small-array read (cheaper than a `def()` load).
+    #[inline]
+    pub fn shape_family(self) -> ShapeFamily {
+        data::shape_family(self.id())
+    }
+
+    /// The visible height (texels, `1..=15`) of a [`LoweredCube`](ShapeFamily::LoweredCube)
+    /// block, or `None` for any other family — the shape-kind param accessor for
+    /// the sunken-top height.
+    #[inline]
+    pub fn lowered_height(self) -> Option<u8> {
+        self.shape_kind_def().params.lowered_height()
+    }
+
+    /// The bbmodel kind of a [`Model`](ShapeFamily::Model) block, or `None` for
+    /// any other family — the shape-kind param accessor for the model kind.
+    #[inline]
+    pub fn model_kind(self) -> Option<crate::block_model::BlockModelKind> {
+        self.shape_kind_def().params.model_kind()
     }
 
     #[inline]
@@ -28,21 +59,32 @@ impl Block {
         if self.is_opaque() {
             return BlockLightShape::OpaqueCube;
         }
-        match self.def().shape {
-            RenderShape::Stair => BlockLightShape::Stair,
-            RenderShape::Slab => BlockLightShape::Slab,
+        match self.shape_family() {
+            ShapeFamily::Stair => BlockLightShape::Stair,
+            ShapeFamily::Slab => BlockLightShape::Slab,
             // No partial-cell light shape for lowered cubes — the deliberate
             // simplification, rounded to the nearer full case: a mostly-full
             // cube (farmland, 15/16) blocks like a full cube, a thin cover
             // (the snow layer, 1/16) blocks nothing. Anything else would
             // darken the cell an entity standing ON a thin cover occupies.
-            RenderShape::LoweredCube(h) => {
-                if h >= 8 {
+            ShapeFamily::LoweredCube => {
+                if self.lowered_height().unwrap_or(0) >= 8 {
                     BlockLightShape::OpaqueCube
                 } else {
                     BlockLightShape::Open
                 }
             }
+            // A Layer-3 custom shape's declared light tier: the simple
+            // open/opaque_cube declarations, or the advanced per-cell aperture
+            // (`custom_aperture`) whose opacity the SIM bake supplies per cell
+            // through the light snapshot.
+            ShapeFamily::Custom => match self.shape_kind_def().params.custom() {
+                Some(c) if c.light_shape == CustomLight::OpaqueCube => BlockLightShape::OpaqueCube,
+                Some(c) if c.light_shape == CustomLight::CustomAperture => {
+                    BlockLightShape::CustomAperture
+                }
+                _ => BlockLightShape::Open,
+            },
             _ => BlockLightShape::Open,
         }
     }
@@ -61,11 +103,15 @@ impl Block {
 
     /// Whether replacing one block with the other leaves the light solver's
     /// inputs unchanged. Stateful partial shapes stay conservative: their
-    /// block ids alone do not capture stair facing or slab occupancy.
+    /// block ids alone do not capture stair facing, slab occupancy, or a
+    /// custom shape's per-cell baked aperture.
     pub(crate) fn has_same_light_behavior(self, other: Block) -> bool {
         let shape = self.light_shape();
         shape == other.light_shape()
-            && !matches!(shape, BlockLightShape::Stair | BlockLightShape::Slab)
+            && !matches!(
+                shape,
+                BlockLightShape::Stair | BlockLightShape::Slab | BlockLightShape::CustomAperture
+            )
             && self.transmits_direct_skylight() == other.transmits_direct_skylight()
             && self.light_emission() == other.light_emission()
     }
@@ -85,22 +131,21 @@ impl Block {
         // whole block for a single-cell model); a multi-block's per-cell collision is
         // answered by [`World::collision_boxes_at`](crate::world::World::collision_boxes_at),
         // which knows the cell's offset.
-        if let RenderShape::Model(kind) = self.def().shape {
+        if let Some(kind) = self.model_kind() {
             return crate::block_model::collision_boxes(kind, [0, 0, 0]);
         }
-        if self.def().shape == RenderShape::Stair {
-            return crate::stair::boxes(crate::block_model::DEFAULT_MODEL_FACING);
+        match self.shape_family() {
+            ShapeFamily::Stair => crate::stair::boxes(crate::block_model::DEFAULT_MODEL_FACING),
+            ShapeFamily::Slab => crate::slab::default_boxes(),
+            // The bare no-neighbour post, from the shape's own connection params.
+            ShapeFamily::Fence | ShapeFamily::Pane => {
+                match self.shape_kind_def().params.connection() {
+                    Some(c) => crate::connect::boxes_for_mask(c.boxes, 0),
+                    None => &[],
+                }
+            }
+            _ => self.def().collision,
         }
-        if self.def().shape == RenderShape::Slab {
-            return crate::slab::default_boxes();
-        }
-        if self.def().shape == RenderShape::Pane {
-            return crate::pane::boxes_for_mask(0);
-        }
-        if self.def().shape == RenderShape::Fence {
-            return crate::fence::boxes_for_mask(0);
-        }
-        self.def().collision
     }
 
     /// Whether this block physically obstructs movement — i.e. has any collision
@@ -125,13 +170,13 @@ impl Block {
         // (no-collision) model block is still selectable. Position-LESS: answers the
         // footprint-origin cell; the per-cell outline of a multi-block is resolved by
         // [`World::selection_box_at`](crate::world::World::selection_box_at). See `block_model`.
-        if let RenderShape::Model(kind) = self.def().shape {
+        if let Some(kind) = self.model_kind() {
             return crate::block_model::selection_aabb(kind, [0, 0, 0]);
         }
         // A lowered cube's visible box IS its shape, independent of collision —
         // so a walk-through thin cover (the snow layer) is still selectable,
         // like a no-collision model block.
-        if let RenderShape::LoweredCube(h) = self.def().shape {
+        if let Some(h) = self.lowered_height() {
             return Some(([0.0, 0.0, 0.0], [1.0, h as f32 / 16.0, 1.0]));
         }
         let boxes = self.collision_boxes();
@@ -266,7 +311,7 @@ impl Block {
 
     /// Shape-class test the mesher runs per lighting-ring cell; the dense flag
     /// table answers it without a `def()` big-table read. Loader-derived from
-    /// `shape == slab`, so it cannot disagree with [`render_shape`](Self::render_shape).
+    /// the slab family, so it cannot disagree with [`shape_family`](Self::shape_family).
     #[inline]
     pub fn is_slab(self) -> bool {
         data::flags(self.id()).is_slab()
@@ -393,6 +438,18 @@ impl Block {
     #[inline]
     pub fn panel_facing(self) -> Facing {
         self.def().panel_facing.unwrap_or_default()
+    }
+
+    /// A wall-panel's `(thickness, height)` in cell fractions: the Layer-2
+    /// dimensions a mod retuned, or the engine ladder's `(1/16, full)`. Read by
+    /// the ONE panel box every panel path (collision, targeting, in-world mesh)
+    /// derives from, so a thicker/shorter panel stays coherent everywhere.
+    #[inline]
+    pub(crate) fn ladder_dims(self) -> (f32, f32) {
+        self.shape_kind_def()
+            .params
+            .dimensions()
+            .map_or((crate::ladder::THICKNESS, 1.0), |d| (d.thickness, d.height))
     }
 
     /// The sibling row of a wall-panel family that faces `facing`, via the

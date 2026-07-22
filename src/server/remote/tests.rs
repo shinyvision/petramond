@@ -91,7 +91,10 @@ fn headless_disconnect_detaches_before_player_id_reuse() {
                 event,
                 crate::events::PostEvent::PlayerDismounted {
                     player: PlayerId(0),
-                    mob_id: 77
+                    mount: crate::mob::riding::Mount {
+                        target: crate::mob::riding::MountTarget::Mob(77),
+                        seat: 0,
+                    }
                 }
             ) {
                 observed.fetch_add(1, AtomicOrdering::SeqCst);
@@ -101,7 +104,11 @@ fn headless_disconnect_detaches_before_player_id_reuse() {
 
     let (first, _) = server.admit_remote_player("First", 16, &[]);
     assert_eq!(first.player_id, PlayerId(0));
-    assert!(server.world.riding_mut().mount(0, 77, 0));
+    assert!(server.world.riding_mut().mount(
+        0,
+        crate::mob::riding::MountTarget::Mob(77),
+        0
+    ));
     server.sessions[0].mount = server.world.riding().mount_of(0);
 
     assert_eq!(

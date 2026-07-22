@@ -178,6 +178,51 @@ pub trait Mod: Default {
     /// (positive = scrolled up / away from the user), coalesced to at most
     /// one call per app frame.
     fn client_canvas_scroll(&mut self, _canvas_key: &str, _x: f32, _y: f32, _delta: f32) {}
+
+    /// Bake the DETERMINISTIC sim geometry — collision boxes + a light aperture —
+    /// for a batch of one custom shape kind's cells in a section. Return one
+    /// [`BakedSimCell`] per input cell, in order; each MUST be a pure function of
+    /// that cell's [`CellInput`] (the reply is cross-checked server↔replica for
+    /// prediction). The default returns EMPTY, which means "no bake, use the
+    /// static fallback" — override to supply geometry. (An empty reply is the
+    /// fallback; only a wrong-but-nonzero length is a protocol break.)
+    fn bake_shape_sim(&mut self, _shape_kind: u8, _cells: &[CellInput]) -> Vec<BakedSimCell> {
+        Vec::new()
+    }
+
+    /// Bake the client RENDER geometry — the drawn boxes — for a batch of one
+    /// custom shape kind's cells in a section. Return one [`BakedRenderCell`] per
+    /// input cell, in order. No determinism requirement (client presentation).
+    /// The default returns EMPTY (fallback to the cube render), like
+    /// [`Mod::bake_shape_sim`].
+    fn bake_shape_render(&mut self, _shape_kind: u8, _cells: &[CellInput]) -> Vec<BakedRenderCell> {
+        Vec::new()
+    }
+
+    /// Bake one block's item geometry (icon / dropped / in-hand), once at load.
+    /// Empty = the plain cube fallback.
+    fn bake_shape_item(&mut self, _shape_kind: u8, _block: BlockId) -> BakedItemGeometry {
+        BakedItemGeometry { boxes: Vec::new() }
+    }
+
+    /// Compute a custom shape's placement plan for one click (read the world
+    /// through the ordinary [`get_block`] host calls; mutating host calls error
+    /// during this dispatch). Placement is SINGLE-CELL and stateless: the host
+    /// accepts a plan writing exactly one cell near the click. The default
+    /// accepts the click cell; override to refuse or to orient from
+    /// `inputs.player_facing`.
+    fn shape_placement_plan(
+        &mut self,
+        _shape_kind: u8,
+        _block: BlockId,
+        inputs: &PlaceInputsView,
+    ) -> ShapePlacementResult {
+        ShapePlacementResult {
+            accepted: true,
+            anchor: inputs.place_pos,
+            cells: vec![inputs.place_pos],
+        }
+    }
 }
 
 /// Define the raw wasm exports for a [`Mod`] implementation. Exactly one call

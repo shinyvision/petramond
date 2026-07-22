@@ -1,5 +1,54 @@
-use super::{Block, BlockInteraction, BlockMaterial, RenderShape};
+use super::{Block, BlockInteraction, BlockMaterial, ShapeFamily};
 use crate::item::ItemType;
+
+/// The shape-kind registry resolves every block to a valid, self-consistent
+/// kind: the dense family LUT (`shape_family`) agrees with the registry row
+/// (`shape_kind().family`), the payload accessors agree with the row's params,
+/// and known engine blocks land in the expected family. Pins the loader's
+/// shape-kind interning (`shape_kind::ShapeKindInterner`) end-to-end.
+#[test]
+fn shape_kinds_resolve_consistently_for_every_block() {
+    for &b in Block::all() {
+        let def = b.shape_kind().def();
+        assert_eq!(b.shape_family(), def.family, "{b:?} LUT vs registry family");
+        // The payload accessors are exactly the row's params.
+        assert_eq!(b.lowered_height(), def.params.lowered_height(), "{b:?} lowered");
+        assert_eq!(b.model_kind(), def.params.model_kind(), "{b:?} model");
+        // Payloads exist iff the family carries them.
+        assert_eq!(
+            b.lowered_height().is_some(),
+            b.shape_family() == ShapeFamily::LoweredCube,
+            "{b:?} lowered payload matches family"
+        );
+        assert_eq!(
+            b.model_kind().is_some(),
+            b.shape_family() == ShapeFamily::Model,
+            "{b:?} model payload matches family"
+        );
+    }
+    // Spot-check known engine blocks land in their family.
+    for (b, family) in [
+        (Block::Stone, ShapeFamily::Cube),
+        (Block::ShortGrass, ShapeFamily::Cross),
+        (Block::Torch, ShapeFamily::Torch),
+        (Block::OakStairs, ShapeFamily::Stair),
+        (Block::OakSlab, ShapeFamily::Slab),
+        (Block::GlassPane, ShapeFamily::Pane),
+        (Block::OakFence, ShapeFamily::Fence),
+        (Block::Ladder, ShapeFamily::Ladder),
+        (Block::OakDoor, ShapeFamily::Door),
+        (Block::SnowLayer, ShapeFamily::LoweredCube),
+        (Block::Bed, ShapeFamily::Model),
+    ] {
+        assert_eq!(b.shape_family(), family, "{b:?}");
+    }
+    // A dedup sanity check: all plain cubes share ONE shape-kind id.
+    assert_eq!(
+        Block::Stone.shape_kind(),
+        Block::Dirt.shape_kind(),
+        "plain cubes share one shape kind"
+    );
+}
 
 #[test]
 fn directional_view_is_block_data_for_blocks_with_a_front() {
@@ -21,7 +70,7 @@ fn directional_view_is_block_data_for_blocks_with_a_front() {
 fn door_shaped_blocks_advertise_toggle_interaction() {
     let mut checked_any = false;
     for &block in Block::all() {
-        if block.render_shape() != RenderShape::Door {
+        if block.shape_family() != ShapeFamily::Door {
             continue;
         }
         checked_any = true;

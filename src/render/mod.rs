@@ -10,6 +10,7 @@ mod hand;
 mod hand_animator;
 mod item_cube;
 mod item_entity;
+pub(crate) mod item_shape_bake;
 mod item_model;
 mod lighting;
 mod mob_model;

@@ -1,5 +1,5 @@
 use crate::atlas::Tile;
-use crate::block::{Block, RenderShape};
+use crate::block::{Block, ItemRender};
 
 use super::{
     data, definition, DroppedReaction, FoodDef, HeldPose, ItemRenderKind, ItemTag, ItemType,
@@ -175,36 +175,22 @@ impl ItemType {
             return ItemRenderKind::Sprite(sprite);
         }
         match self.as_block() {
-            Some(block) => match block.render_shape() {
-                RenderShape::Cube => ItemRenderKind::BlockCube(block),
-                RenderShape::LoweredCube(_) => ItemRenderKind::BlockCube(block),
-                RenderShape::Stair => ItemRenderKind::BlockCube(block),
-                RenderShape::Slab => ItemRenderKind::BlockCube(block),
-                RenderShape::Cross => ItemRenderKind::Sprite(block.tiles()[0]),
-                // A sprite-less crop item falls back to the plant tile, like
-                // the cross plants (crop planters normally declare a sprite —
-                // the early return above).
-                RenderShape::Crop => ItemRenderKind::Sprite(block.tiles()[0]),
-                // A torch isn't a cube; it shows the full torch sprite as a flat
-                // hotbar icon and an extruded sprite in-hand (like a flower), not
-                // the cropped per-face tiles the in-world pole uses.
-                RenderShape::Torch => ItemRenderKind::Sprite(self.item_sprite()),
-                // A pane shows the flat glass tile as its icon and an extruded
-                // sprite in-hand — the in-world post/arm shape only exists once
-                // placed among neighbours.
-                RenderShape::Pane => ItemRenderKind::Sprite(self.item_sprite()),
-                // A fence draws its two-posts-and-rails segment everywhere the
-                // item shows (icon / held / dropped) — see `render::item_cube`.
-                RenderShape::Fence => ItemRenderKind::BlockCube(block),
-                // A bbmodel block renders its actual baked model everywhere it's shown.
-                RenderShape::Model(kind) => ItemRenderKind::Model(kind),
-                // A door shows its flat door icon (the `_door_item` art), not the
-                // per-half slab tiles the in-world model uses — like the torch.
-                RenderShape::Door => ItemRenderKind::Sprite(self.item_sprite()),
-                // A ladder shows its flat rung art as icon and an extruded sprite
-                // in-hand — the wall panel only exists once mounted.
-                RenderShape::Ladder => ItemRenderKind::Sprite(self.item_sprite()),
-            },
+            // A block-item's KIND is the shape's decision (`ShapeRender::item_render`),
+            // so item entities / in-hand / icons stay coherent for every shape,
+            // engine or modded. The one item-side piece is the flat art an
+            // `ItemSprite` shape uses — the item's own row sprite.
+            Some(block) => {
+                let k = block.shape_kind_def();
+                match k.render.item_render(&k.params, block) {
+                    ItemRender::ItemSprite => ItemRenderKind::Sprite(self.item_sprite()),
+                    ItemRender::Tile(tile) => ItemRenderKind::Sprite(tile),
+                    ItemRender::Cube(b) => ItemRenderKind::BlockCube(b),
+                    // The Cube/true-geometry split (stair/slab/fence) is drawn by
+                    // `render::item_cube`; both are `BlockCube` render kinds here.
+                    ItemRender::Geometry(b) => ItemRenderKind::BlockCube(b),
+                    ItemRender::Model(kind) => ItemRenderKind::Model(kind),
+                }
+            }
             None => match self.item_model() {
                 Some(kind) => ItemRenderKind::Model(kind),
                 None => ItemRenderKind::Sprite(self.item_sprite()),

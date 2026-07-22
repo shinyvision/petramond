@@ -438,8 +438,10 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::MobAnimState { .. }
         | HostCall::MobDrive { .. }
         | HostCall::MobMount { .. }
+        | HostCall::PlayerPoseSet { .. }
         | HostCall::MobDismount { .. }
         | HostCall::MobRiders { .. }
+        | HostCall::BlockModelGroup { .. }
         | HostCall::SpawnItem { .. } => entities::handle_entity_call(&data.mod_id, call),
         HostCall::PlayerState
         | HostCall::DamagePlayer { .. }
@@ -478,7 +480,8 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::MobNames { .. }
         | HostCall::BlocksByTag { .. }
         | HostCall::ItemsByTag { .. }
-        | HostCall::ItemInfo { .. } => registry::handle_registry_call(call),
+        | HostCall::ItemInfo { .. }
+        | HostCall::ResolveShape { .. } => registry::handle_registry_call(call),
         HostCall::RegisterWorldgenFeature { .. }
         | HostCall::RegisterStageReplacement { .. }
         | HostCall::RegisterGenerator { .. } => worldgen::handle_worldgen_call(data, call),

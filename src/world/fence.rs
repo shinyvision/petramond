@@ -5,30 +5,76 @@
 //! selection, and the placement overlap check all read the same
 //! `crate::fence::resolved_mask` the mesher renders from.
 
-use crate::block::Aabb;
+use crate::block::{Aabb, ConnectionParams, ConnectionRule, ShapeFamily};
 use crate::mathh::IVec3;
 
 use super::store::World;
 
 impl World {
-    /// The 4-bit connection mask a fence at `pos` has (or WOULD have — the cell's
-    /// current content is never read, so placement can ask before writing).
+    /// The 4-bit connection mask a shape of `family` under `rule` has at `pos`,
+    /// resolved from the current neighbours — the cell's own content is never
+    /// read, so placement can ask before writing. The single param-driven
+    /// connection resolver shared by fences, panes, and every Layer-2 wall/bar.
     #[inline]
-    pub fn fence_mask_at(&self, pos: IVec3) -> u8 {
-        crate::fence::resolved_mask(
+    pub fn connection_mask_at(&self, pos: IVec3, family: ShapeFamily, rule: ConnectionRule) -> u8 {
+        crate::connect::resolved_mask(
             pos,
             |p| self.physics_block(p.x, p.y, p.z),
             |p| self.stair_shape_at(p.x, p.y, p.z),
             |p| self.slab_state_at(p.x, p.y, p.z).is_full(),
+            |nb, dir, st, sl| crate::connect::connects(rule, family, nb, dir, st, sl),
         )
     }
 
-    /// The collision/selection boxes for a fence at `pos`, shaped by its current
-    /// neighbours: the centre post, extended by full-height arms toward each
-    /// connected side.
+    /// The collision/selection boxes for a connection shape at `pos` with the
+    /// given `params` + `family`: the post extended by full-height arms toward
+    /// each connected side, indexed out of the params' own box table.
+    #[inline]
+    pub fn connection_boxes_at(
+        &self,
+        pos: IVec3,
+        params: &ConnectionParams,
+        family: ShapeFamily,
+    ) -> &'static [Aabb] {
+        let mask = self.connection_mask_at(pos, family, params.rule);
+        crate::connect::boxes_for_mask(params.boxes, mask)
+    }
+
+    /// The 4-bit connection mask of the fence placed at `pos`, using its own
+    /// rule (a modded wall may connect differently than an engine fence).
+    #[inline]
+    pub fn fence_mask_at(&self, pos: IVec3) -> u8 {
+        let block = self.physics_block(pos.x, pos.y, pos.z);
+        debug_assert_eq!(
+            block.shape_family(),
+            ShapeFamily::Fence,
+            "fence_mask_at on a non-fence cell"
+        );
+        // Silent default in release: a non-fence cell has no connection params,
+        // so it falls back to the engine rule (and the debug assert above catches
+        // the misuse in tests/dev).
+        let rule = block
+            .shape_kind_def()
+            .params
+            .connection()
+            .map_or(ConnectionRule::OpaqueOrSame, |c| c.rule);
+        self.connection_mask_at(pos, ShapeFamily::Fence, rule)
+    }
+
+    /// The collision/selection boxes for the fence placed at `pos`, from its own
+    /// connection params.
     #[inline]
     pub fn fence_boxes_at(&self, pos: IVec3) -> &'static [Aabb] {
-        crate::fence::boxes_for_mask(self.fence_mask_at(pos))
+        let block = self.physics_block(pos.x, pos.y, pos.z);
+        debug_assert_eq!(
+            block.shape_family(),
+            ShapeFamily::Fence,
+            "fence_boxes_at on a non-fence cell"
+        );
+        match block.shape_kind_def().params.connection() {
+            Some(c) => self.connection_boxes_at(pos, c, ShapeFamily::Fence),
+            None => &[],
+        }
     }
 }
 

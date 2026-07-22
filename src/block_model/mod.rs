@@ -60,10 +60,11 @@ pub use query::{
 };
 
 pub(crate) use geometry::render_face_bias;
+pub(crate) use placement::placement_transform_fp;
 
 use compiled::MODELS;
 use geometry::{box_corners, cell_of, clip_to_cell, posed_cube_bounds, union_clip_to_cell};
-use placement::{oriented_cell_instance, placement_transform_fp};
+use placement::oriented_cell_instance;
 
 /// Canonical bbmodel orientation: Blockbench model fronts face `-Z` (North).
 /// Old model placements that predate per-cell facing read as this unrotated orientation.

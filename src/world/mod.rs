@@ -8,6 +8,7 @@ mod block_deltas;
 pub(crate) mod chest;
 mod column_heightmaps;
 mod container;
+mod custom_bake;
 pub(crate) mod door;
 mod edit;
 mod entities;
@@ -27,6 +28,7 @@ mod model;
 mod pane;
 mod particle_emitters;
 pub(crate) mod placement;
+mod shape_bake_validate;
 mod prediction_render;
 mod query;
 mod remote;
@@ -46,6 +48,8 @@ pub(crate) mod water;
 
 #[cfg(test)]
 pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
+pub(crate) use custom_bake::CustomBakeCell;
+pub(crate) use shape_bake_validate::ingest_shape_boxes;
 #[cfg(test)]
 pub(crate) use stream::split_generated_column;
 

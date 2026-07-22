@@ -148,38 +148,42 @@ impl Face {
 /// p1 bottom-right, p2 top-right, p3 top-left) so the shader's `corner_uv` maps the
 /// tile upright. Each plane is drawn in both windings by the mesher so the plant is
 /// visible from both sides under back-face culling.
-pub(super) fn cross_quads(x: f32, y: f32, z: f32) -> [[[f32; 3]; 4]; 2] {
+pub(super) fn cross_quads(x: f32, y: f32, z: f32, inset: f32) -> [[[f32; 3]; 4]; 2] {
+    // `inset` (a Layer-2 dimension; 0 for the engine cross) pulls both diagonal
+    // endpoints in from the cell corners, shrinking the X toward centre.
+    let lo = inset;
+    let hi = 1.0 - inset;
     [
-        // Plane (x,z) -> (x+1,z+1).
+        // Plane (x+lo,z+lo) -> (x+hi,z+hi).
         [
-            [x, y, z],
-            [x + 1.0, y, z + 1.0],
-            [x + 1.0, y + 1.0, z + 1.0],
-            [x, y + 1.0, z],
+            [x + lo, y, z + lo],
+            [x + hi, y, z + hi],
+            [x + hi, y + 1.0, z + hi],
+            [x + lo, y + 1.0, z + lo],
         ],
-        // Plane (x,z+1) -> (x+1,z).
+        // Plane (x+lo,z+hi) -> (x+hi,z+lo).
         [
-            [x, y, z + 1.0],
-            [x + 1.0, y, z],
-            [x + 1.0, y + 1.0, z],
-            [x, y + 1.0, z + 1.0],
+            [x + lo, y, z + hi],
+            [x + hi, y, z + lo],
+            [x + hi, y + 1.0, z + lo],
+            [x + lo, y + 1.0, z + hi],
         ],
     ]
 }
 
 /// The four axis-aligned billboard quads of a planted-crop lattice
-/// ([`RenderShape::Crop`](crate::block::RenderShape::Crop)): one pair
+/// ([`ShapeFamily::Crop`](crate::block::ShapeFamily::Crop)): one pair
 /// perpendicular to each horizontal axis, inset
 /// [`CROP_PLANE_INSET`](crate::block::CROP_PLANE_INSET) from the cell faces
 /// and running edge to edge along their long axis — a `#` from above. Corner
 /// order matches [`cross_quads`] (bottom-left, bottom-right, top-right,
 /// top-left) so the tile maps upright; the mesher draws each plane in both
 /// windings.
-pub(super) fn crop_quads(x: f32, y: f32, z: f32) -> [[[f32; 3]; 4]; 4] {
-    let a = crate::block::CROP_PLANE_INSET;
+pub(super) fn crop_quads(x: f32, y: f32, z: f32, inset: f32, drop: f32) -> [[[f32; 3]; 4]; 4] {
+    let a = inset;
     let b = 1.0 - a;
-    // Dropped 1/16 so the art roots on sunken farmland (see CROP_PLANE_DROP).
-    let y0 = y - crate::block::CROP_PLANE_DROP;
+    // Dropped `drop` (engine default 1/16) so the art roots on sunken farmland.
+    let y0 = y - drop;
     let y1 = y0 + 1.0;
     [
         // The pair perpendicular to X, spanning the full Z edge.

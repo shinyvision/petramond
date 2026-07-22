@@ -265,6 +265,21 @@ pub fn dispatch<T: crate::Mod>(slot: &ModSlot<T>, ptr: u32, len: u32) -> u64 {
             mod_.client_canvas_scroll(&canvas_key, x, y, delta);
             GuestRet::Unit
         }
+        GuestCall::BakeShapeSim { shape_kind, cells } => {
+            GuestRet::BakedSim(mod_.bake_shape_sim(shape_kind, &cells))
+        }
+        GuestCall::BakeShapeRender { shape_kind, cells } => {
+            GuestRet::BakedRender(mod_.bake_shape_render(shape_kind, &cells))
+        }
+        GuestCall::BakeShapeItem {
+            shape_kind,
+            block_id,
+        } => GuestRet::BakedItem(mod_.bake_shape_item(shape_kind, block_id)),
+        GuestCall::ShapePlacementPlan {
+            shape_kind,
+            block_id,
+            inputs,
+        } => GuestRet::ShapePlacement(mod_.shape_placement_plan(shape_kind, block_id, &inputs)),
     };
     to_wire(&mod_api::encode(&ret).expect("encode guest reply"))
 }

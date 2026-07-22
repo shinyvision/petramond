@@ -306,6 +306,10 @@ impl App {
         // precipitation volumes.
         self.audio.stop_mod_loops();
         self.presentation.ambient.clear();
+        // Baked custom-shape item geometry is keyed by session-local block ids;
+        // flush it so the next world's mods rebake instead of inheriting stale
+        // shapes.
+        crate::render::item_shape_bake::clear();
         self.scene.clear();
         self.client_canvas = None;
         self.client_overlay_images.clear();

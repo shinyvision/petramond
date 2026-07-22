@@ -104,6 +104,9 @@ impl ServerGame {
         self.begin_stage(Stage::WorldScheduled, events);
         self.world.game_tick(&self.recipes);
         self.dispatch_mod_block_hooks(events);
+        // Re-bake any Layer-3 custom-shape cells placed/edited this tick so their
+        // collision is ready for the next tick's physics (see `ModHost::bake_custom_shapes`).
+        self.bake_dirty_custom_shapes(events);
         self.end_stage(Stage::WorldScheduled, events);
 
         self.begin_stage(Stage::NaturalBreaks, events);
@@ -252,6 +255,39 @@ impl ServerGame {
                 queue: bus.queue_mut(),
             };
             mods.dispatch_block_hooks(&mut ctx, &hooks);
+        });
+    }
+
+    /// Bake the SIM geometry of any Layer-3 custom-shape cells dirtied this tick
+    /// (placement, edits) so the physics reads real collision boxes next tick,
+    /// not the static fallback. Cheap-gated on there being pending bakes.
+    fn bake_dirty_custom_shapes(&mut self, events: &mut TickEvents) {
+        if !self.world.has_pending_custom_bakes() {
+            return;
+        }
+        // The bake pump borrows session 0 for its dispatch scope, but the pending
+        // gate goes true from SECTION LOADS (worldgen/streaming), so a dedicated
+        // server with no players ticks here with an empty session list. Leave the
+        // cells dirty — a joining player's first tick catches them up.
+        if self.sessions.is_empty() {
+            return;
+        }
+        let Self {
+            world,
+            sessions,
+            mods,
+            bus,
+            ..
+        } = self;
+        Self::with_sessions_view(sessions, 0, |host| {
+            let mut ctx = SimCtx {
+                world,
+                player: &mut host.player,
+                gui_state: &mut host.gui_state,
+                feed: events,
+                queue: bus.queue_mut(),
+            };
+            mods.bake_custom_shapes(&mut ctx);
         });
     }
 

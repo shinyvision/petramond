@@ -79,8 +79,17 @@ pub(super) fn public_write_key_guard(mod_id: &str, key: &str) -> Option<HostRet>
 }
 
 /// Run a call that mutates the live simulation, or reject it when no guest
-/// dispatch scope is active (the same gate `CurrentTick` uses).
+/// dispatch scope is active (the same gate `CurrentTick` uses), or when the
+/// active dispatch is READ-ONLY (the shape placement-plan dispatch, whose ABI
+/// promises the guest cannot edit the world it validates against).
 pub(super) fn sim_call(f: impl FnOnce(&mut SimCtx<'_>)) -> HostRet {
+    if scope::read_only_active() {
+        return HostRet::Error(
+            "this host call mutates the world, which is not allowed during a read-only dispatch \
+             (e.g. a shape placement plan)"
+                .into(),
+        );
+    }
     match scope::with_active(f) {
         Some(()) => HostRet::Unit,
         None => HostRet::Error("no simulation context is active".into()),

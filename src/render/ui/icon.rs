@@ -54,6 +54,18 @@ fn ndc_half_extents(screen: (u32, u32), r: SlotRect) -> [f32; 2] {
     [r.w / w, r.h / h]
 }
 
+/// The iso icon's view-depth direction: the Z row of the [`iso_icon_mvp`]
+/// rotation `Rx(30°)·Ry(45°)`, so a point's `dot` with this is its view-space
+/// depth. The DEPTHLESS icon pass sorts self-occluding geometry (a Layer-3
+/// custom shape's baked boxes) far→near along it; the depth-tested hand /
+/// dropped forms don't sort. Derived from the pose angles here so it can't drift
+/// from `iso_icon_mvp`.
+pub(crate) fn icon_view_dir() -> Vec3 {
+    let (sx, cx) = 30f32.to_radians().sin_cos();
+    let (sy, cy) = 45f32.to_radians().sin_cos();
+    Vec3::new(-cx * sy, sx, cx * cy)
+}
+
 /// Isometric orthographic MVP mapping a unit cube (centered on origin, spanning
 /// ±0.5) into the slot's NDC rect, back-face culled so the iso view reads with NO
 /// depth buffer (front faces overdraw back faces in submission order). Called by
@@ -132,13 +144,18 @@ fn icon_mvp_for_rot(
     let fpv = Vec3::new(fp[0] as f32, fp[1] as f32, fp[2] as f32);
     let span = fpv.max_element().max(1.0);
     let (bmn, bmx) = crate::block_model::outline_bounds(kind);
+    // Frame about the GEOMETRY centre, not the footprint centre: a model whose
+    // silhouette overhangs its footprint (`fit: native` — the chair backrest,
+    // the miller tray) otherwise pivots around a point off its visual centre
+    // and renders small + shifted in the slot.
+    let bc = ((Vec3::from(bmn) + Vec3::from(bmx)) * 0.5 - fpv * 0.5) / span;
     // Largest |x|/|y| (slot fit) and |z| (depth fit) of the 8 rotated corners.
     let mut half = 1e-3f32;
     let mut half_z = 1e-3f32;
     for &cx in &[bmn[0], bmx[0]] {
         for &cy in &[bmn[1], bmx[1]] {
             for &cz in &[bmn[2], bmx[2]] {
-                let centred = (Vec3::new(cx, cy, cz) - fpv * 0.5) / span;
+                let centred = (Vec3::new(cx, cy, cz) - fpv * 0.5) / span - bc;
                 let p = rot.transform_point3(centred);
                 half = half.max(p.x.abs()).max(p.y.abs());
                 half_z = half_z.max(p.z.abs());
@@ -156,6 +173,7 @@ fn icon_mvp_for_rot(
     Mat4::from_translation(Vec3::new(center[0], center[1], 0.5))
         * Mat4::from_scale(Vec3::new(-sx, sy, sz))
         * rot
+        * Mat4::from_translation(-bc)
 }
 
 /// Orthographic MVP mapping the flat (X/Y plane) billboard quad (spanning ±0.5)

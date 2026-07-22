@@ -60,11 +60,59 @@ pub fn collision_boxes(facing: Facing) -> &'static [Aabb] {
     }
 }
 
-/// The ladder panel's cell-local AABB — the same 1/16 slice as
-/// [`collision_boxes`]. One box shared by targeting, the outline, and the
-/// crack overlay.
-pub fn panel_aabb(facing: Facing) -> ([f32; 3], [f32; 3]) {
-    let b = &collision_boxes(facing)[0];
+/// The panel box for arbitrary `thickness`/`height` (cell fractions) — the ONE
+/// geometry a Layer-2 wall-panel derives collision, targeting, and mesh from.
+/// The engine ladder is `panel_box(facing, THICKNESS, 1.0)`.
+pub fn panel_box(facing: Facing, thickness: f32, height: f32) -> Aabb {
+    match facing {
+        // Front faces -Z: the wall is the +Z neighbour, the panel hugs z = 1.
+        Facing::North => Aabb {
+            min: [0.0, 0.0, 1.0 - thickness],
+            max: [1.0, height, 1.0],
+        },
+        Facing::South => Aabb {
+            min: [0.0, 0.0, 0.0],
+            max: [1.0, height, thickness],
+        },
+        Facing::West => Aabb {
+            min: [1.0 - thickness, 0.0, 0.0],
+            max: [1.0, height, 1.0],
+        },
+        Facing::East => Aabb {
+            min: [0.0, 0.0, 0.0],
+            max: [thickness, height, 1.0],
+        },
+    }
+}
+
+/// Interned `'static` panel box sets for parameterized wall panels, keyed by
+/// `(facing, thickness bits, height bits)` — a handful per distinct panel dim.
+static PANEL_INTERN: std::sync::Mutex<Vec<((u8, u32, u32), &'static [Aabb])>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// A wall-panel's collision boxes for retuned `thickness`/`height`. The engine
+/// default returns the static slice (no alloc); other dims intern once.
+pub fn collision_boxes_dim(facing: Facing, thickness: f32, height: f32) -> &'static [Aabb] {
+    if thickness == THICKNESS && height == 1.0 {
+        return collision_boxes(facing);
+    }
+    let key = (facing.to_u8(), thickness.to_bits(), height.to_bits());
+    let mut intern = PANEL_INTERN.lock().expect("panel intern");
+    if let Some(&(_, boxes)) = intern.iter().find(|(k, _)| *k == key) {
+        return boxes;
+    }
+    let leaked: &'static [Aabb] =
+        Box::leak(vec![panel_box(facing, thickness, height)].into_boxed_slice());
+    intern.push((key, leaked));
+    leaked
+}
+
+/// The panel's cell-local AABB for `thickness`/`height` — the targeting /
+/// outline / crack box, derived from the same [`panel_box`] as collision so
+/// they never disagree. The engine ladder is `panel_aabb_dim(facing, THICKNESS,
+/// 1.0)`.
+pub fn panel_aabb_dim(facing: Facing, thickness: f32, height: f32) -> ([f32; 3], [f32; 3]) {
+    let b = panel_box(facing, thickness, height);
     (b.min, b.max)
 }
 
@@ -85,15 +133,30 @@ mod tests {
         // Full-height, full-width, THICKNESS-deep slice flush against the wall
         // opposite the facing (an east-facing ladder hangs on its -X wall).
         let t = THICKNESS;
-        assert_eq!(panel_aabb(Facing::East), ([0.0, 0.0, 0.0], [t, 1.0, 1.0]));
-        assert_eq!(
-            panel_aabb(Facing::West),
-            ([1.0 - t, 0.0, 0.0], [1.0, 1.0, 1.0])
-        );
-        assert_eq!(panel_aabb(Facing::South), ([0.0, 0.0, 0.0], [1.0, 1.0, t]));
-        assert_eq!(
-            panel_aabb(Facing::North),
-            ([0.0, 0.0, 1.0 - t], [1.0, 1.0, 1.0])
-        );
+        let aabb = |f| panel_aabb_dim(f, THICKNESS, 1.0);
+        assert_eq!(aabb(Facing::East), ([0.0, 0.0, 0.0], [t, 1.0, 1.0]));
+        assert_eq!(aabb(Facing::West), ([1.0 - t, 0.0, 0.0], [1.0, 1.0, 1.0]));
+        assert_eq!(aabb(Facing::South), ([0.0, 0.0, 0.0], [1.0, 1.0, t]));
+        assert_eq!(aabb(Facing::North), ([0.0, 0.0, 1.0 - t], [1.0, 1.0, 1.0]));
+    }
+
+    #[test]
+    fn parameterized_panel_thickens_and_shortens_the_box() {
+        // A Layer-2 wall panel (thickness 4/16, height 12/16) grows the slice and
+        // caps its height; the box the collision, targeting, and mesh share.
+        let boxes = collision_boxes_dim(Facing::East, 4.0 / 16.0, 12.0 / 16.0);
+        assert_eq!(boxes.len(), 1);
+        assert_eq!(boxes[0].min, [0.0, 0.0, 0.0]);
+        assert_eq!(boxes[0].max, [4.0 / 16.0, 12.0 / 16.0, 1.0]);
+        // The engine default routes to the static, no-alloc slice.
+        assert!(std::ptr::eq(
+            collision_boxes_dim(Facing::East, THICKNESS, 1.0),
+            collision_boxes(Facing::East)
+        ));
+        // Identical dims intern to the SAME leaked slice (pointer identity).
+        assert!(std::ptr::eq(
+            collision_boxes_dim(Facing::West, 5.0 / 16.0, 1.0),
+            collision_boxes_dim(Facing::West, 5.0 / 16.0, 1.0)
+        ));
     }
 }

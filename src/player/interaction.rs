@@ -1,6 +1,6 @@
 use super::state::Player;
 use crate::atlas::{tile_alpha_bounds, TileAlphaBounds};
-use crate::block::{Block, RenderShape};
+use crate::block::{Block, ShapeFamily};
 use crate::mathh::{IVec3, SelectionBoxes, SelectionShape, Vec3};
 use crate::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
 use crate::world::World;
@@ -76,12 +76,12 @@ impl Player {
         // mounted — state that lives in the world's per-chunk torch map, not visible
         // to the block-only DDA core. Override the default full-cube outline here.
         let hit_block = Block::from_id(world.chunk_block(hit.block.x, hit.block.y, hit.block.z));
-        if hit_block.render_shape() == RenderShape::Torch {
+        if hit_block.shape_family() == ShapeFamily::Torch {
             hit.outline = SelectionShape::Torch {
                 origin: hit.block,
                 transform: world.torch_placement(hit.block).model_transform(),
             };
-        } else if matches!(hit_block.render_shape(), RenderShape::Model(_)) {
+        } else if hit_block.shape_family() == ShapeFamily::Model {
             // A bbmodel block outlines its WHOLE-MODEL bounding box (baked from geometry),
             // drawn as one box hugging the model's real extent across all its cells — not
             // a per-cell cube. (The DDA still TARGETS per cell, above.)
@@ -92,8 +92,8 @@ impl Player {
                 };
             }
         } else if matches!(
-            hit_block.render_shape(),
-            RenderShape::Door | RenderShape::Ladder
+            hit_block.shape_family(),
+            ShapeFamily::Door | ShapeFamily::Ladder
         ) {
             // A door outlines the actual slab where it is (facing + open state), a
             // ladder its wall panel (facing), so the wireframe + break crack hug the
@@ -105,7 +105,7 @@ impl Player {
                     max: base + Vec3::from(mx),
                 };
             }
-        } else if hit_block.render_shape() == RenderShape::Stair {
+        } else if hit_block.shape_family() == ShapeFamily::Stair {
             let (boxes, len) = crate::stair::world_boxes(
                 hit.block,
                 world.stair_boxes_at(hit.block.x, hit.block.y, hit.block.z),
@@ -113,7 +113,7 @@ impl Player {
             hit.outline = SelectionShape::Boxes {
                 boxes: SelectionBoxes { boxes, len },
             };
-        } else if hit_block.render_shape() == RenderShape::Slab {
+        } else if hit_block.shape_family() == ShapeFamily::Slab {
             let (boxes, len) = crate::slab::world_boxes(
                 hit.block,
                 world.slab_boxes_at(hit.block.x, hit.block.y, hit.block.z),
@@ -121,20 +121,40 @@ impl Player {
             hit.outline = SelectionShape::Boxes {
                 boxes: SelectionBoxes { boxes, len },
             };
-        } else if hit_block.render_shape() == RenderShape::Pane {
+        } else if hit_block.shape_family() == ShapeFamily::Pane {
             // A pane outlines its resolved post + arm runs, so the wireframe hugs
             // the connected shape the mesher drew, not the bare-post default.
             let (boxes, len) = crate::pane::world_boxes(hit.block, world.pane_boxes_at(hit.block));
             hit.outline = SelectionShape::Boxes {
                 boxes: SelectionBoxes { boxes, len },
             };
-        } else if hit_block.render_shape() == RenderShape::Fence {
+        } else if hit_block.shape_family() == ShapeFamily::Fence {
             // A fence outlines its resolved post + arm runs, same as a pane.
             let (boxes, len) =
                 crate::fence::world_boxes(hit.block, world.fence_boxes_at(hit.block));
             hit.outline = SelectionShape::Boxes {
                 boxes: SelectionBoxes { boxes, len },
             };
+        } else if hit_block.shape_family() == ShapeFamily::Custom {
+            // A custom shape may hold more boxes than the outline array (a chair
+            // is 7), so its wireframe is the single UNION box hugging the baked
+            // extent — the hit test above is still per-box precise.
+            let boxes = world.collision_boxes_at(hit.block.x, hit.block.y, hit.block.z);
+            if !boxes.is_empty() {
+                let base = Vec3::new(hit.block.x as f32, hit.block.y as f32, hit.block.z as f32);
+                let mut mn = [f32::INFINITY; 3];
+                let mut mx = [f32::NEG_INFINITY; 3];
+                for b in boxes {
+                    for a in 0..3 {
+                        mn[a] = mn[a].min(b.min[a]);
+                        mx[a] = mx[a].max(b.max[a]);
+                    }
+                }
+                hit.outline = SelectionShape::Box {
+                    min: base + Vec3::from(mn),
+                    max: base + Vec3::from(mx),
+                };
+            }
         }
         Some((hit, dist))
     }
@@ -236,21 +256,27 @@ impl Player {
             // visible box — the cross-plant case is handled separately below,
             // like its render shape). Resolve the shape once: the def-table read
             // is per stepped ray cell.
-            let shape = block.render_shape();
+            let shape = block.shape_family();
             if block.is_solid()
-                || shape == RenderShape::Torch
-                || shape == RenderShape::Ladder
-                || matches!(shape, RenderShape::LoweredCube(_))
+                || shape == ShapeFamily::Torch
+                || shape == ShapeFamily::Ladder
+                || shape == ShapeFamily::LoweredCube
+                // A Layer-3 custom shape (a chair, a lamp) is defined by its BAKE,
+                // not the `solid` flag — a decorative furniture piece is not a
+                // solid cube but must still be aimable. It always resolves through
+                // its baked boxes below, never as a full-cell entry hit.
+                || shape == ShapeFamily::Custom
             {
                 // A full cube fills its cell, so it stops the ray on entry. A
                 // custom-shaped block (the inset chest, the thin/tilted torch pole,
                 // the ladder panel) only registers when the ray actually crosses its
                 // shape — otherwise the ray sees past the empty parts of its cell.
                 if block.visual_aabb().is_none()
-                    && shape != RenderShape::Torch
-                    && shape != RenderShape::Stair
-                    && shape != RenderShape::Slab
-                    && shape != RenderShape::Ladder
+                    && shape != ShapeFamily::Torch
+                    && shape != ShapeFamily::Stair
+                    && shape != ShapeFamily::Slab
+                    && shape != ShapeFamily::Ladder
+                    && shape != ShapeFamily::Custom
                 {
                     return Some((hit(pos, entry_normal, block), t_enter));
                 }
@@ -342,8 +368,8 @@ fn outline_shape(block_pos: IVec3, block: Block) -> SelectionShape {
 /// shape — solids, models, and torches keep their precise ray tests, which
 /// is what lets a ray aim past a chest or a bbmodel block's empty parts.
 fn plant_selection_aabb(block_pos: IVec3, block: Block) -> Option<(Vec3, Vec3)> {
-    let shape = block.render_shape();
-    if !matches!(shape, RenderShape::Cross | RenderShape::Crop) {
+    let shape = block.shape_family();
+    if !matches!(shape, ShapeFamily::Cross | ShapeFamily::Crop) {
         return None;
     }
     let base = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32);
@@ -354,7 +380,7 @@ fn plant_selection_aabb(block_pos: IVec3, block: Block) -> Option<(Vec3, Vec3)> 
     Some(match shape {
         // The lattice's flanks are inset; the box hangs 1/16 below the cell,
         // rooted on sunken farmland (mirroring `mesh::face::crop_quads`).
-        RenderShape::Crop => {
+        ShapeFamily::Crop => {
             let inset = crate::block::CROP_PLANE_INSET;
             let drop = crate::block::CROP_PLANE_DROP;
             (
@@ -392,7 +418,7 @@ fn precise_shape_hit(
     block: Block,
     world: &World,
 ) -> Option<ShapeHit> {
-    if block.render_shape() == RenderShape::Torch {
+    if block.shape_family() == ShapeFamily::Torch {
         return ray_vs_torch(eye, dir, pos, world.torch_placement(pos));
     }
     // A bbmodel block is picked PIXEL-PERFECT: the ray is tested against the actual
@@ -400,7 +426,7 @@ fn precise_shape_hit(
     // tested, so aiming through the gap between the legs / under the top / at a cut-out
     // texel misses instead of selecting the block. The DDA's per-cell `t <= t_exit`
     // window then attributes the crossing to whichever cell the surface falls in.
-    if let RenderShape::Model(kind) = block.render_shape() {
+    if let Some(kind) = block.model_kind() {
         let off = world.model_offset_at(pos.x, pos.y, pos.z);
         let facing = world.model_facing_at(pos.x, pos.y, pos.z);
         let base = crate::block_model::base_from_cell(pos, kind, off, facing);
@@ -416,14 +442,14 @@ fn precise_shape_hit(
     // a ladder's panel on its facing row, so test the resolved panel box
     // rather than the block row's position-less default.
     if matches!(
-        block.render_shape(),
-        RenderShape::Door | RenderShape::Ladder
+        block.shape_family(),
+        ShapeFamily::Door | ShapeFamily::Ladder
     ) {
         let (mn, mx) = world.selection_box_at(pos.x, pos.y, pos.z)?;
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         return ray_vs_aabb_hit(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx));
     }
-    if block.render_shape() == RenderShape::Stair {
+    if block.shape_family() == ShapeFamily::Stair {
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         return world
             .stair_boxes_at(pos.x, pos.y, pos.z)
@@ -433,7 +459,7 @@ fn precise_shape_hit(
             })
             .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
     }
-    if block.render_shape() == RenderShape::Slab {
+    if block.shape_family() == ShapeFamily::Slab {
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         return world
             .slab_boxes_at(pos.x, pos.y, pos.z)
@@ -445,7 +471,7 @@ fn precise_shape_hit(
     }
     // A pane is picked against its resolved post + arm runs (neighbour-derived,
     // like the stair's corner boxes), so the ray connects where the glass is.
-    if block.render_shape() == RenderShape::Pane {
+    if block.shape_family() == ShapeFamily::Pane {
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         return world
             .pane_boxes_at(pos)
@@ -456,10 +482,24 @@ fn precise_shape_hit(
             .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
     }
     // A fence is picked against its resolved post + arm runs, same as a pane.
-    if block.render_shape() == RenderShape::Fence {
+    if block.shape_family() == ShapeFamily::Fence {
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         return world
             .fence_boxes_at(pos)
+            .iter()
+            .filter_map(|b| {
+                ray_vs_aabb_hit(eye, dir, base + Vec3::from(b.min), base + Vec3::from(b.max))
+            })
+            .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+    }
+    // A Layer-3 custom shape is picked against its BAKED boxes (the chair's legs
+    // /seat/backrest), so aiming through a gap misses and aiming at a part hits —
+    // the same box-set the physics collides. A cache miss reads the row's static
+    // fallback boxes, so it is always aimable somewhere.
+    if block.shape_family() == ShapeFamily::Custom {
+        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        return world
+            .collision_boxes_at(pos.x, pos.y, pos.z)
             .iter()
             .filter_map(|b| {
                 ray_vs_aabb_hit(eye, dir, base + Vec3::from(b.min), base + Vec3::from(b.max))

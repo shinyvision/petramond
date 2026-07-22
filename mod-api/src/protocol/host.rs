@@ -773,7 +773,7 @@ pub enum HostCall {
     /// id). Validated by the engine: the mob is alive and its species row
     /// declares that seat (`seats` in `mobs.json`), the seat is free, and the
     /// player is not already mounted. WHO may sit WHERE is the calling mod's
-    /// policy — usually decided in its `mob_interact` handler. From this tick
+    /// policy — usually decided in its `interact_attempt` handler. From this tick
     /// the engine slaves the rider to the seat; every detach path announces
     /// [`EventKind::PlayerDismounted`]. → [`HostRet::Bool`].
     ///
@@ -1070,6 +1070,43 @@ pub enum HostCall {
         mob_id: u64,
         cell: [i32; 3],
     },
+    /// Resolve a block SHAPE-KIND registry key (`"petramond:fence"`,
+    /// `"mymod:gate"`) to its session-local numeric id — the shape twin of
+    /// [`HostCall::ResolveBlock`], for a Layer-3 mod branching on the
+    /// `shape_kind` its bake calls carry. Registry-only (legal on any instance).
+    /// `None` = no such shape kind. → [`HostRet::MaybeByte`].
+    ResolveShape {
+        key: String,
+    },
+    /// Pin `player_id` in a named POSE at the world-space `anchor` (rider
+    /// feet origin), body facing `yaw` (player convention: yaw `0` faces
+    /// `+Z`) — the static-seat primitive. The calling mod owns WHERE poses
+    /// exist (its own seat layout) and WHO may take one; the engine owns the
+    /// mechanism: one pose per player, no two players on one exact anchor,
+    /// replication + the posed body, and every release valve (sneak gesture,
+    /// death, spectator, leave). Pose vocabulary: [`crate::pose`] (`0` is
+    /// reserved; unknown values pin the rest pose). Poses are TRANSIENT
+    /// (never persisted) and NOT tied to any block — a mod whose furniture
+    /// breaks releases the sitter itself ([`HostCall::MobDismount`]); a
+    /// player a disabled mod leaves posed escapes through the engine valves.
+    /// Occupancy is read back from the roster
+    /// ([`crate::PlayerSnapshot::pose_anchor`]), never mirrored in mod
+    /// state. `false` = already posed or mounted, anchor taken, reserved
+    /// pose `0`, or a non-finite anchor/yaw. → [`HostRet::Bool`].
+    PlayerPoseSet {
+        player_id: PlayerId,
+        anchor: [f32; 3],
+        yaw: f32,
+        pose: u8,
+    },
+    /// The placed MODEL-BLOCK group at `pos` (any of its cells): the group's
+    /// base cell and placement facing — what block-local policy needs to map
+    /// footprint-space data (a seat layout, a machine front) into the world.
+    /// `None` = no model group there or the cell is unloaded.
+    /// → [`HostRet::ModelGroup`].
+    BlockModelGroup {
+        pos: [i32; 3],
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -1126,6 +1163,8 @@ pub enum HostRet {
     ClientStorageRead(Option<Vec<Option<serde_bytes::ByteBuf>>>),
     /// [`HostCall::MobRiders`]: `None` = no such live mob.
     Riders(Option<MobRidersData>),
+    /// [`HostCall::BlockModelGroup`]: `None` = no model group / unloaded.
+    ModelGroup(Option<crate::ModelGroupData>),
     /// [`HostCall::PlayerInput`]: `None` = no such player connected.
     PlayerInput(Option<PlayerInputData>),
     /// [`HostCall::MobAnimState`]: `None` = missing/dead mob or inactive anim.

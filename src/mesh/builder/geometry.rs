@@ -1,7 +1,7 @@
 use glam::IVec3;
 
 use crate::atlas::Tile;
-use crate::block::{Block, RenderShape};
+use crate::block::{Block, ShapeFamily};
 use crate::block_state::{LogAxis, SlabState, StairState};
 use crate::chunk::{section_idx, SectionPos, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
 use crate::section::Section;
@@ -20,7 +20,7 @@ use super::cube_face::{
 use super::exposed_masks::{build_exposed_masks, mask_has, pad_cube_fast_candidate};
 use super::model_block::{emit_model_block, emit_model_contact};
 use super::pad::{mesh_pad_idx, SectionMeshPad};
-use super::plant::emit_plant;
+use super::plant::{emit_baked_boxes, emit_plant};
 use super::{LeafMeshMode, MeshOptions};
 
 #[allow(clippy::too_many_arguments)]
@@ -119,8 +119,8 @@ pub(super) fn section_geometry(
                 }
                 // Resolve the render shape once per cell (each call indexes the block
                 // table); the special-shape checks below and the cube fallthrough share it.
-                let shape = block.render_shape();
-                if shape == RenderShape::Door {
+                let shape = block.shape_family();
+                if shape == ShapeFamily::Door {
                     continue;
                 }
 
@@ -129,12 +129,23 @@ pub(super) fn section_geometry(
                 let wz = oz + lz as i32;
                 let ci = lz * SECTION_SIZE + lx;
 
-                if matches!(shape, RenderShape::Cross | RenderShape::Crop) {
+                if matches!(shape, ShapeFamily::Cross | ShapeFamily::Crop) {
                     let tile = block.tiles()[0];
                     let l = neighbour_light(wx, wy, wz) as u32;
                     let bl = neighbour_blocklight(wx, wy, wz) as u32;
                     let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
                     let tint = warm_tint(tint_tile(tile.world_tint(), ci), warm);
+                    // Layer-2 dimensions (a mod's retuned cross/crop) or the
+                    // engine defaults for a parameterless row.
+                    let dims = block.shape_kind_def().params.dimensions();
+                    let (inset, drop) = if shape == ShapeFamily::Crop {
+                        (
+                            dims.map_or(crate::block::CROP_PLANE_INSET, |d| d.inset),
+                            dims.map_or(crate::block::CROP_PLANE_DROP, |d| d.drop),
+                        )
+                    } else {
+                        (dims.map_or(0.0, |d| d.inset), 0.0)
+                    };
                     emit_plant(
                         &mut opaque,
                         &mut opaque_idx,
@@ -146,11 +157,13 @@ pub(super) fn section_geometry(
                         tint,
                         sky6,
                         block6,
+                        inset,
+                        drop,
                     );
                     continue;
                 }
 
-                if shape == RenderShape::Torch {
+                if shape == ShapeFamily::Torch {
                     let [top_tile, _bottom, side_tile] = block.tiles();
                     // Sky channel = the cell's skylight; block channel = the torch's own
                     // emission (self-lit). `max(sky_term, block_term)` in the shader
@@ -177,7 +190,7 @@ pub(super) fn section_geometry(
                     continue;
                 }
 
-                if shape == RenderShape::Ladder {
+                if shape == ShapeFamily::Ladder {
                     let tile = block.tiles()[0];
                     let l = neighbour_light(wx, wy, wz) as u32;
                     let bl = neighbour_blocklight(wx, wy, wz) as u32;
@@ -185,6 +198,7 @@ pub(super) fn section_geometry(
                     // The facing is the ROW's (one block row per facing) —
                     // the mesher reads row fields, never per-cell maps.
                     let facing = block.panel_facing();
+                    let (thickness, height) = block.ladder_dims();
                     super::ladder::emit_ladder_block(
                         &mut opaque,
                         &mut opaque_idx,
@@ -197,11 +211,13 @@ pub(super) fn section_geometry(
                         sky6,
                         block6,
                         warm,
+                        thickness,
+                        height,
                     );
                     continue;
                 }
 
-                if let RenderShape::Model(kind) = shape {
+                if let Some(kind) = block.model_kind() {
                     let offset = section.model_offset(lx, ly, lz);
                     let facing = section.model_facing(lx, ly, lz);
                     let l = neighbour_light(wx, wy, wz) as u32;
@@ -239,18 +255,18 @@ pub(super) fn section_geometry(
                             wz,
                             |gx, gz| {
                                 let below = block_at(gx, wy - 1, gz);
-                                if below.render_shape() != RenderShape::Cube || !below.is_opaque() {
+                                if below.shape_family() != ShapeFamily::Cube || !below.is_opaque() {
                                     return false;
                                 }
                                 let at = block_at(gx, wy, gz);
-                                at.render_shape() != RenderShape::Cube || !at.is_opaque()
+                                at.shape_family() != ShapeFamily::Cube || !at.is_opaque()
                             },
                         );
                     }
                     continue;
                 }
 
-                if shape == RenderShape::Stair {
+                if shape == ShapeFamily::Stair {
                     let [tile_top, tile_bot, tile_side] = block.tiles();
                     let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
                     let state = section.stair_state(lx, ly, lz);
@@ -275,9 +291,16 @@ pub(super) fn section_geometry(
                     continue;
                 }
 
-                if shape == RenderShape::Pane {
+                if shape == ShapeFamily::Pane {
                     // [top, bottom, side] tiles = [edge, edge, glass].
                     let [edge_tile, _bottom, glass_tile] = block.tiles();
+                    // Post dimensions + connection rule are shape-kind params, so a
+                    // modded bar/wall's post and connection behaviour ride here.
+                    let c = block
+                        .shape_kind_def()
+                        .params
+                        .connection()
+                        .expect("pane carries connection params");
                     // A neighbour stair's resolved corner shape decides whether its
                     // face toward the pane is complete — same neighbour-of-neighbour
                     // read the stair's own corner resolution does.
@@ -288,11 +311,14 @@ pub(super) fn section_geometry(
                         })
                     };
                     let pane_mask_at = |p: IVec3| {
-                        crate::pane::resolved_mask(
+                        crate::connect::resolved_mask(
                             p,
                             |q| block_at(q.x, q.y, q.z),
                             &stair_shape_at,
                             |q| slab_full_at(q.x, q.y, q.z),
+                            |nb, dir, st, sl| {
+                                crate::connect::connects(c.rule, ShapeFamily::Pane, nb, dir, st, sl)
+                            },
                         )
                     };
                     let vertical = |dy: i32| {
@@ -319,6 +345,8 @@ pub(super) fn section_geometry(
                         wx,
                         wy,
                         wz,
+                        c.post_lo,
+                        c.post_hi,
                         pane_mask_at(IVec3::new(wx, wy, wz)),
                         vertical(1),
                         vertical(-1),
@@ -332,8 +360,16 @@ pub(super) fn section_geometry(
                     continue;
                 }
 
-                if shape == RenderShape::Fence {
+                if shape == ShapeFamily::Fence {
                     let tiles = block.tiles();
+                    // Post dimensions + connection rule are shape-kind params, so a
+                    // modded wall's post and connection behaviour ride here without
+                    // touching the mesher.
+                    let c = block
+                        .shape_kind_def()
+                        .params
+                        .connection()
+                        .expect("fence carries connection params");
                     // A neighbour stair's resolved corner shape decides whether its
                     // face toward the fence is complete — the pane arm's read.
                     let stair_shape_at = |q: IVec3| {
@@ -343,11 +379,14 @@ pub(super) fn section_geometry(
                         })
                     };
                     let fence_mask_at = |p: IVec3| {
-                        crate::fence::resolved_mask(
+                        crate::connect::resolved_mask(
                             p,
                             |q| block_at(q.x, q.y, q.z),
                             &stair_shape_at,
                             |q| slab_full_at(q.x, q.y, q.z),
+                            |nb, dir, st, sl| {
+                                crate::connect::connects(c.rule, ShapeFamily::Fence, nb, dir, st, sl)
+                            },
                         )
                     };
                     let vertical = |dy: i32| {
@@ -370,6 +409,8 @@ pub(super) fn section_geometry(
                         wx,
                         wy,
                         wz,
+                        c.post_lo,
+                        c.post_hi,
                         fence_mask_at(IVec3::new(wx, wy, wz)),
                         vertical(1),
                         vertical(-1),
@@ -382,6 +423,44 @@ pub(super) fn section_geometry(
                     continue;
                 }
 
+                // A Layer-3 custom shape emits the boxes the client render bake
+                // produced (cached on the section); a cache miss / pre-bake / trap
+                // falls through to the cube path (the render fallback).
+                if shape == ShapeFamily::Custom {
+                    if let Some(boxes) = section.shape_render_boxes(section_idx(lx, ly, lz) as u16) {
+                        let tiles = block.tiles();
+                        let l = neighbour_light(wx, wy, wz) as u32;
+                        let bl = neighbour_blocklight(wx, wy, wz) as u32;
+                        let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                        let tint = warm_tint(tint_tile(tiles[2].world_tint(), ci), warm);
+                        // A baked box face flush to the cell boundary is culled
+                        // when the neighbour there is a full opaque occluder —
+                        // the ordinary cube-cull rule applied per box, so
+                        // furniture flush to a wall/floor emits no buried quads.
+                        let neighbor_opaque = |face: Face| {
+                            let (dx, dy, dz) = face.dir();
+                            let nb = block_at(wx + dx, wy + dy, wz + dz);
+                            nb.is_opaque()
+                                || (nb.is_slab() && slab_full_at(wx + dx, wy + dy, wz + dz))
+                        };
+                        emit_baked_boxes(
+                            &mut opaque,
+                            &mut opaque_idx,
+                            wx,
+                            wy,
+                            wz,
+                            boxes,
+                            tiles,
+                            tint,
+                            sky6,
+                            block6,
+                            warm,
+                            neighbor_opaque,
+                        );
+                        continue;
+                    }
+                }
+
                 // A same-material full slab stack IS the material's full cube: fall
                 // through to the cube path (fast path + greedy merge included) so it
                 // culls, lights, and merges like one. Partial cells and mixed-material
@@ -389,7 +468,7 @@ pub(super) fn section_geometry(
                 // texture); full stacks of either kind still cull/occlude as opaque
                 // via `slab_full_at`.
                 let mut slab_as_cube = false;
-                if shape == RenderShape::Slab {
+                if shape == ShapeFamily::Slab {
                     let state = crate::slab::normalize_state(block, section.slab_state(lx, ly, lz));
                     slab_as_cube = crate::slab::is_uniform_full_stack(state);
                     if !slab_as_cube {
@@ -587,10 +666,7 @@ pub(super) fn section_geometry(
                     // above can ever cover it, so it is exempt from the
                     // neighbour cull (the block-above's bottom face still draws
                     // since lowered rows are non-opaque: no x-ray slit).
-                    let lowered = match shape {
-                        RenderShape::LoweredCube(h) => Some(h),
-                        _ => None,
-                    };
+                    let lowered = block.lowered_height();
                     let is_lowered_top = lowered.is_some() && matches!(face, Face::PosY);
                     // A lowered cube's full 1×1 base sits flush on the cell
                     // floor, so for the face BENEATH it it covers exactly like
@@ -625,7 +701,7 @@ pub(super) fn section_geometry(
                     }
                     // Two flush lowered cubes share no visible side either: the
                     // neighbour's body covers my whole (equally short) face.
-                    if let (Some(h), RenderShape::LoweredCube(nh)) = (lowered, nb.render_shape()) {
+                    if let (Some(h), Some(nh)) = (lowered, nb.lowered_height()) {
                         if is_side && nh >= h {
                             continue;
                         }

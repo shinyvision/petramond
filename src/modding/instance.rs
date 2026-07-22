@@ -138,6 +138,17 @@ impl ModInstance {
         scope::enter(ctx, || self.call_guest_detached(call))
     }
 
+    /// [`call_guest`](Self::call_guest) with a READ-ONLY scope: the guest may
+    /// query the world but a mutating host call errors. The shape
+    /// placement-plan dispatch path (the ABI promises read-only access).
+    pub(super) fn call_guest_read_only(
+        &mut self,
+        ctx: &mut SimCtx,
+        call: &GuestCall,
+    ) -> Option<GuestRet> {
+        scope::enter_read_only(ctx, || self.call_guest_detached(call))
+    }
+
     /// [`call_guest`](Self::call_guest) WITHOUT publishing a simulation
     /// context — the worldgen dispatch path (worker threads and any thread
     /// running `generate_*`): sim-scoped host calls made during the dispatch

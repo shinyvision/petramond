@@ -28,11 +28,12 @@ impl ServerGame {
         // Placement can mount a player earlier in this same tick, before the
         // riding pass refreshes the session mirror. The world registry is the
         // attachment authority at every stage boundary.
-        let own_mount = self
-            .world
-            .riding()
-            .mount_of(sess.id.0)
-            .map(|mount| mount.mob_id);
+        let own_mount = self.world.riding().mount_of(sess.id.0).and_then(|mount| {
+            match mount.target {
+                crate::mob::riding::MountTarget::Mob(id) => Some(id),
+                crate::mob::riding::MountTarget::Anchor(_) => None,
+            }
+        });
         let bodies = self
             .world
             .mobs()

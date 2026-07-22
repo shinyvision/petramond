@@ -279,18 +279,18 @@ pub enum EventPayload {
     SectionLoaded {
         pos: [i32; 3],
     },
-    /// POST — a player left a mob seat, however it happened (the engine's
-    /// sneak gesture, the mount or rider dying, the rider leaving or turning
-    /// spectator, or a mod's [`HostCall::MobDismount`]). The mounting mod
-    /// uses it to update rider policy (who controls the vehicle). Mounting
-    /// has no event: only a mod's own [`HostCall::MobMount`] starts a ride.
+    /// POST — a player left a seat or pose anchor, however it happened (the
+    /// engine's sneak gesture, the mount or rider dying, the rider leaving or
+    /// turning spectator, or a mod's [`HostCall::MobDismount`]). The mounting
+    /// mod uses it to update rider policy (who controls the vehicle).
+    /// Mounting has no event: only a mod's own mount/pose call starts one.
     ///
-    /// [`HostCall::MobMount`]: crate::HostCall::MobMount
     /// [`HostCall::MobDismount`]: crate::HostCall::MobDismount
     PlayerDismounted {
         player_id: PlayerId,
-        /// Stable id of the mob that was ridden (it may already be gone).
-        mob_id: u64,
+        /// The mount that was left (the mob may already be gone; an anchor's
+        /// furniture may already be air).
+        mount: crate::MountTarget,
     },
     /// POST — a key BECAME PRESENT in a live mob's tag map through the ABI
     /// tag surface ([`HostCall::MobTagSet`] inserting a new key). Presence

@@ -197,12 +197,46 @@ impl ClientModRuntime {
         predictor_rows.sort_by_key(|(priority, _)| *priority);
         let predictors = predictor_rows.into_iter().map(|(_, p)| p).collect();
 
-        Self {
+        let mut rt = Self {
             mods,
             predictors,
             actions,
             overlays,
             pressed: HashSet::new(),
+        };
+        rt.bake_item_geometry();
+        rt
+    }
+
+    /// One-time load pass: bake every Layer-3 custom block's ITEM geometry
+    /// (`BakeShapeItem`) on its owning client mod and cache it for the item
+    /// renderer. Detached (no world) — the item form is a pure function of the
+    /// block. A block whose owner ships no client wasm (or a trapped bake) is
+    /// simply skipped, and its item draws as a plain cube.
+    fn bake_item_geometry(&mut self) {
+        use crate::block::ShapeFamily;
+        for &block in crate::block::Block::all() {
+            if block.shape_family() != ShapeFamily::Custom {
+                continue;
+            }
+            let key = block.shape_kind().key();
+            let shape_kind = block.shape_kind().0;
+            let block_id = block.id();
+            let Some(loaded) = self.owner_mod_mut(key) else {
+                continue;
+            };
+            let call = GuestCall::BakeShapeItem {
+                shape_kind,
+                block_id: mod_api::BlockId(block_id),
+            };
+            if let Some(GuestRet::BakedItem(geo)) = loaded.instance.call_guest_detached(&call) {
+                // Sanitize the guest boxes; a breach falls back to the cube icon.
+                if let Ok(boxes) = crate::world::ingest_shape_boxes(&geo.boxes) {
+                    if !boxes.is_empty() {
+                        crate::render::item_shape_bake::set_item_bake(block_id, boxes);
+                    }
+                }
+            }
         }
     }
 
@@ -247,6 +281,89 @@ impl ClientModRuntime {
             }
         }
         false
+    }
+
+    /// Bake the SIM geometry of any dirty Layer-3 custom-shape cell on the
+    /// CLIENT (each shape's own `client_wasm` `bake_shape_sim`), so the client's
+    /// physics/prediction sees the same collision the server does — otherwise a
+    /// custom shape would fall back to its (often empty) static boxes and desync.
+    /// A missing owner / disabled mod / wrong reply leaves cells uncached
+    /// (static fallback), the failure policy.
+    pub(crate) fn bake_custom_shapes(&mut self, world: &mut World) {
+        let cells = world.drain_custom_bake_dirty();
+        if cells.is_empty() {
+            return;
+        }
+        // A BTreeMap (not HashMap) over the position-sorted drain gives the same
+        // dispatch order the server uses (C1) — the SIM bake is cross-checked
+        // against the server, so the two sides must dispatch identically.
+        let mut groups: std::collections::BTreeMap<(&'static str, u8), Vec<crate::world::CustomBakeCell>> =
+            std::collections::BTreeMap::new();
+        for cell in cells {
+            groups
+                .entry((cell.shape_key, cell.shape_kind))
+                .or_default()
+                .push(cell);
+        }
+        // Dispatch under an immutable world borrow, collect, then populate.
+        let mut baked_sim: Vec<(crate::mathh::IVec3, Vec<crate::block::Aabb>, mod_api::LightAperture)> =
+            Vec::new();
+        let mut baked_render: Vec<(crate::mathh::IVec3, Box<[crate::block::Aabb]>)> = Vec::new();
+        for ((shape_key, shape_kind), group) in &groups {
+            let Some(loaded) = self.owner_mod_mut(shape_key) else {
+                continue;
+            };
+            let inputs: Vec<mod_api::CellInput> =
+                group.iter().map(crate::modding::shape_bake::cell_input).collect();
+            // SIM bake → collision (also cross-checked against the server). A
+            // sanitation/protocol breach disables the mod; skip the render bake
+            // explicitly rather than relying on the no-op-on-disabled path.
+            let sim_call = GuestCall::BakeShapeSim {
+                shape_kind: *shape_kind,
+                cells: inputs.clone(),
+            };
+            if let Some(GuestRet::BakedSim(baked)) = loaded.instance.call_guest_client(world, &sim_call) {
+                match crate::modding::shape_bake::ingest_sim_bake(&baked, group.len()) {
+                    crate::modding::shape_bake::BakeIngest::Apply(cells) => {
+                        for (c, (boxes, aperture)) in group.iter().zip(cells) {
+                            baked_sim.push((c.pos, boxes, aperture));
+                        }
+                    }
+                    crate::modding::shape_bake::BakeIngest::Fallback => {}
+                    crate::modding::shape_bake::BakeIngest::Disable(reason) => {
+                        loaded.instance.disable(&reason);
+                        continue;
+                    }
+                }
+            }
+            // RENDER bake → mesh geometry (client presentation only).
+            let render_call = GuestCall::BakeShapeRender {
+                shape_kind: *shape_kind,
+                cells: inputs,
+            };
+            if let Some(GuestRet::BakedRender(baked)) =
+                loaded.instance.call_guest_client(world, &render_call)
+            {
+                match crate::modding::shape_bake::ingest_render_bake(&baked, group.len()) {
+                    crate::modding::shape_bake::BakeIngest::Apply(cells) => {
+                        for (c, boxes) in group.iter().zip(cells) {
+                            baked_render.push((c.pos, boxes));
+                        }
+                    }
+                    crate::modding::shape_bake::BakeIngest::Fallback => {}
+                    crate::modding::shape_bake::BakeIngest::Disable(reason) => {
+                        loaded.instance.disable(&reason)
+                    }
+                }
+            }
+        }
+        for (pos, boxes, aperture) in baked_sim {
+            world.set_custom_bake(pos, &boxes);
+            world.set_custom_light_aperture(pos, aperture);
+        }
+        for (pos, boxes) in baked_render {
+            world.set_custom_render_bake(pos, boxes);
+        }
     }
 
     /// The session's mod-registered remappable actions, for the app's action
@@ -491,6 +608,63 @@ impl ClientModRuntime {
             }
         }
         out
+    }
+}
+
+/// Bake the ITEM geometry of every INSTALLED Layer-3 custom block into the item
+/// cache, using a detached client instance per owning pack. Run ONCE at client
+/// startup, BEFORE the icon atlas bakes (`render::renderer::construct`), so a
+/// custom block's inventory icon shows its real baked shape (a chair) instead of
+/// the plain cube fallback (which reads a plank). Side-effect-free (no storage,
+/// no registration); the per-world runtime re-bakes the enabled subset at join,
+/// idempotently. A headless server has no icon atlas and never calls this.
+pub(crate) fn bake_installed_custom_item_geometry() {
+    use crate::block::{Block, ShapeFamily};
+
+    let all: BTreeSet<String> = crate::assets::packs()
+        .iter()
+        .filter_map(|p| p.id.clone())
+        .collect();
+    for (id, path) in session_client_mods(crate::assets::packs(), &all) {
+        let blocks: Vec<Block> = Block::all()
+            .iter()
+            .copied()
+            .filter(|b| {
+                b.shape_family() == ShapeFamily::Custom
+                    && crate::registry::namespace(b.shape_kind().key()) == Some(id.as_str())
+            })
+            .collect();
+        if blocks.is_empty() {
+            continue;
+        }
+        let Ok(module) = crate::modding::host::module_for(&path) else {
+            continue;
+        };
+        let Ok(mut instance) =
+            ModInstance::from_module_side(&id, &module, 0, RuntimeSide::Client, None)
+        else {
+            continue;
+        };
+        instance.call_init_detached();
+        if instance.disabled() {
+            continue;
+        }
+        for block in blocks {
+            let call = GuestCall::BakeShapeItem {
+                shape_kind: block.shape_kind().0,
+                block_id: mod_api::BlockId(block.id()),
+            };
+            if let Some(GuestRet::BakedItem(geo)) = instance.call_guest_detached(&call) {
+                // Sanitize like the sim/render pumps; a breach just means the
+                // item draws its cube fallback (this detached pass has no mod to
+                // disable for the session).
+                if let Ok(boxes) = crate::world::ingest_shape_boxes(&geo.boxes) {
+                    if !boxes.is_empty() {
+                        crate::render::item_shape_bake::set_item_bake(block.id(), boxes);
+                    }
+                }
+            }
+        }
     }
 }
 

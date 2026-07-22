@@ -9,7 +9,7 @@ use std::sync::Arc;
 use glam::{IVec3, Quat, Vec3};
 
 use crate::atlas::Tile;
-use crate::block::{Block, ParticleEmitter, RenderShape};
+use crate::block::{Block, ParticleEmitter, ShapeFamily};
 use crate::block_model::BlockModelKind;
 use crate::door::DoorState;
 use crate::facing::Facing;
@@ -43,6 +43,10 @@ pub struct BreakOverlayView {
     /// post/rail faces the chunk mesher emitted (`mesh::fence::shape_faces`),
     /// same contract as the pane's.
     pub fence_mask: Option<u8>,
+    /// A connection shape's post extent `(post_lo, post_hi)`, so a modded
+    /// wall/bar's crack matches its post thickness. `None` for non-connection
+    /// shapes (and unused unless `pane_mask` / `fence_mask` is set).
+    pub connection: Option<(f32, f32)>,
     /// A ladder's wall facing: the crack rebuilds the exact panel faces the
     /// chunk mesher emitted (`mesh::ladder::shape_faces`), omitting the face
     /// buried in the supporting wall — a box crack would paint the destroy
@@ -51,8 +55,24 @@ pub struct BreakOverlayView {
     /// A model block cracks over its cell's actual model cubes, including the targeted
     /// cell's authored footprint offset and placed facing.
     pub model: Option<(BlockModelKind, [u8; 3], Facing)>,
+    /// A Layer-3 custom shape's baked collision boxes: the crack traces THEM
+    /// (cell-local UVs), so a chair's decal hugs its legs/seat/backrest instead
+    /// of a box hanging in the cell's empty air.
+    pub custom_boxes: Option<CustomCrackBoxes>,
     /// 0..=9 crack stage.
     pub stage: u8,
+}
+
+/// The most cell-local boxes a custom shape's crack traces (a chair is 7). A
+/// shape with more truncates — the crack just covers fewer parts.
+pub const MAX_CUSTOM_CRACK_BOXES: usize = 12;
+
+/// A bounded, `Copy` snapshot of a custom shape's baked boxes for its break crack
+/// (the view stays `Copy`, so no per-frame allocation).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct CustomCrackBoxes {
+    pub boxes: [([f32; 3], [f32; 3]); MAX_CUSTOM_CRACK_BOXES],
+    pub len: u8,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -171,7 +191,9 @@ pub(crate) struct PlayerPresentation {
     pub(crate) head_pitch: f32,
     /// Seconds into the walk animation.
     pub(crate) anim_time: f32,
-    /// Mounted on a mob seat — the body renders seated (legs forward).
+    /// The body renders seated (legs forward): mounted on a mob seat, or
+    /// pinned at a pose anchor whose pose is `sitting`. Anchor poses outside
+    /// the known vocabulary render the rest pose (see [`mount_renders_seated`]).
     pub(crate) seated: bool,
     /// Walk-pose blend weight (`0` standing … `1` full walk cycle).
     pub(crate) walk_weight: f32,
@@ -488,14 +510,20 @@ impl GamePresentationScratch {
             // sits square in the seat — its yaw is the mount's facing, only
             // the clamped head follows the look. If the referenced mount row
             // is not available yet, keep the rider row's own interpolation.
-            if let Some((seat_pos, mount_yaw)) = p.curr.mount.and_then(|(mob_id, seat)| {
-                let (seat_pos, mob_yaw) = game
-                    .replicated_mobs
-                    .interpolated_seat_pose(mob_id, seat, tick_alpha)?;
-                Some((
-                    seat_pos,
-                    crate::game::body_pose::wrap_angle(mob_yaw + std::f32::consts::PI),
-                ))
+            if let Some((seat_pos, mount_yaw)) = p.curr.mount.and_then(|mount| {
+                // Mob yaw is mount convention (0 faces `-Z`), π from player
+                // body yaw; a pose anchor already carries player-convention
+                // yaw.
+                let (seat_pos, body_yaw) = match mount {
+                    crate::net::protocol::PlayerMount::Mob { id, seat } => {
+                        let (seat_pos, mob_yaw) = game
+                            .replicated_mobs
+                            .interpolated_seat_pose(id, seat, tick_alpha)?;
+                        (seat_pos, mob_yaw + std::f32::consts::PI)
+                    }
+                    crate::net::protocol::PlayerMount::Anchor { pos, yaw, .. } => (pos, yaw),
+                };
+                Some((seat_pos, crate::game::body_pose::wrap_angle(body_yaw)))
             }) {
                 pos = seat_pos;
                 body_yaw = mount_yaw;
@@ -524,7 +552,7 @@ impl GamePresentationScratch {
                     walk_weight: p.pose.walk_weight,
                     sneak_weight: p.pose.sneak_weight,
                     sleeping,
-                    seated: p.curr.mount.is_some(),
+                    seated: p.curr.mount.is_some_and(mount_renders_seated),
                     hurt: p.hurt_flash01(),
                     skylight: world.skylight6_at_world(c.x, c.y, c.z),
                     blocklight: world.blocklight6_at_world(c.x, c.y, c.z),
@@ -592,6 +620,16 @@ fn emitter_tint(ids: &[u8]) -> [f32; 3] {
 /// owl the neck when the rider looks backward.
 const SEATED_HEAD_YAW_LIMIT: f32 = 1.2;
 
+/// Whether a wire mount renders the SEATED body pose: every mob seat, and a
+/// pose anchor holding the `sitting` pose. An anchor pose outside the known
+/// vocabulary renders the rest pose — like a disabled pack, never an error.
+fn mount_renders_seated(mount: crate::net::protocol::PlayerMount) -> bool {
+    match mount {
+        crate::net::protocol::PlayerMount::Mob { .. } => true,
+        crate::net::protocol::PlayerMount::Anchor { pose, .. } => pose == mod_api::pose::SITTING,
+    }
+}
+
 fn collect_player(game: &Game) -> Option<PlayerPresentation> {
     // The body draws only once the boom camera is actually placed — never on a
     // frame whose render camera is still the first-person eye (inside the head).
@@ -617,7 +655,7 @@ fn collect_player(game: &Game) -> Option<PlayerPresentation> {
     // Seated: the body sits SQUARE in the seat — its yaw is the mount's
     // facing, never the look-follow (which would spin the whole body, legs
     // through the hull); only the head follows the look, clamped.
-    let seated = game.self_mount.is_some();
+    let seated = game.self_mount.is_some_and(mount_renders_seated);
     let (body_yaw, head_yaw) = match game.mount_body_yaw() {
         Some(mount_yaw) => (
             mount_yaw,
@@ -648,25 +686,40 @@ fn collect_player(game: &Game) -> Option<PlayerPresentation> {
 /// from replicated state (the own `SelfState::mining` or a remote row's); the
 /// shape details are derived from the REPLICA world at that cell.
 fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
-    let model =
-        match Block::from_id(game.replica.chunk_block(block.x, block.y, block.z)).render_shape() {
-            RenderShape::Model(kind) => Some((
-                kind,
-                game.replica.model_offset_at(block.x, block.y, block.z),
-                game.replica.model_facing_at(block.x, block.y, block.z),
-            )),
-            _ => None,
-        };
     let block_type = Block::from_id(game.replica.chunk_block(block.x, block.y, block.z));
-    let stair_shape = (block_type.render_shape() == RenderShape::Stair)
+    let model = block_type.model_kind().map(|kind| {
+        (
+            kind,
+            game.replica.model_offset_at(block.x, block.y, block.z),
+            game.replica.model_facing_at(block.x, block.y, block.z),
+        )
+    });
+    let stair_shape = (block_type.shape_family() == ShapeFamily::Stair)
         .then(|| game.replica.stair_shape_at(block.x, block.y, block.z));
     let slab_state = game.replica.slab_state_if_slab(block);
     let pane_mask =
-        (block_type.render_shape() == RenderShape::Pane).then(|| game.replica.pane_mask_at(block));
-    let fence_mask = (block_type.render_shape() == RenderShape::Fence)
+        (block_type.shape_family() == ShapeFamily::Pane).then(|| game.replica.pane_mask_at(block));
+    let fence_mask = (block_type.shape_family() == ShapeFamily::Fence)
         .then(|| game.replica.fence_mask_at(block));
     let ladder_facing =
-        (block_type.render_shape() == RenderShape::Ladder).then(|| block_type.panel_facing());
+        (block_type.shape_family() == ShapeFamily::Ladder).then(|| block_type.panel_facing());
+    let connection = block_type
+        .shape_kind_def()
+        .params
+        .connection()
+        .map(|c| (c.post_lo, c.post_hi));
+    let custom_boxes = (block_type.shape_family() == ShapeFamily::Custom).then(|| {
+        let src = game.replica.collision_boxes_at(block.x, block.y, block.z);
+        let mut boxes = [([0.0; 3], [0.0; 3]); MAX_CUSTOM_CRACK_BOXES];
+        let len = src.len().min(MAX_CUSTOM_CRACK_BOXES);
+        for (dst, b) in boxes.iter_mut().zip(src.iter()).take(len) {
+            *dst = (b.min, b.max);
+        }
+        CustomCrackBoxes {
+            boxes,
+            len: len as u8,
+        }
+    });
     BreakOverlayView {
         block,
         visual_box: if model.is_some()
@@ -675,6 +728,7 @@ fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
             || pane_mask.is_some()
             || fence_mask.is_some()
             || ladder_facing.is_some()
+            || custom_boxes.is_some()
         {
             None
         } else {
@@ -684,8 +738,10 @@ fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
         slab_state,
         pane_mask,
         fence_mask,
+        connection,
         ladder_facing,
         model,
+        custom_boxes,
         stage,
     }
 }

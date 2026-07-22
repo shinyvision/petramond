@@ -1,0 +1,14 @@
+{
+  "recipes": [
+    {
+      "type": "crafting",
+      "recipe": "furniture:chair",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        { "item": "petramond:stick", "count": 4 },
+        { "tag": "petramond:planks", "count": 2 }
+      ],
+      "result": { "item": "furniture:chair", "count": 1 }
+    }
+  ]
+}

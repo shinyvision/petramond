@@ -1,0 +1,9 @@
+{
+  "name": "Furniture",
+  "id": "furniture",
+  "version": "0.1.0",
+  "description": "Craftable wooden furniture as bbmodel blocks. Ships a rideable chair whose geometry comes from chair.bbmodel; sitting is mod policy over the engine block-mount API.",
+  "summary": "A craftable rideable wooden chair.",
+  "wasm": "mod.wasm",
+  "client_wasm": "mod.wasm"
+}

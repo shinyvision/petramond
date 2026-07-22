@@ -4,8 +4,8 @@
 //! placement path owes.
 
 use super::game::ServerGame;
-use crate::block::{Aabb, Block};
-use crate::events::{BlockPlacePre, Outcome, PostEvent};
+use crate::block::{Aabb, Block, ShapeFamily};
+use crate::events::{BlockPlacePre, Outcome, PostEvent, SimCtx};
 use crate::facing::Facing;
 use crate::game::tick::TickEvents;
 use crate::mathh::{IVec3, Vec3};
@@ -141,6 +141,17 @@ impl ServerGame {
             slab_rotation: self.sessions[s].held_slab_rotation(),
             log_axis: self.sessions[s].held_log_axis_for_facing(player_facing),
         };
+        // A Layer-3 custom shape places through its OWN pack's WASM callback
+        // (footprint + orientation + initial state are the shape's to decide),
+        // not the engine ladder. A pack with no reachable owner (disabled /
+        // trapped) falls through to the ordinary ladder so its cells still
+        // place as a plain cube — the block id stays load-bearing.
+        if block.shape_family() == ShapeFamily::Custom {
+            if let Some(landed) = self.try_place_custom_shape(s, block, &inputs, events) {
+                return landed;
+            }
+        }
+
         let plan = self
             .world
             .placement_plan(block, &inputs, &mut |cell, boxes| {
@@ -151,6 +162,103 @@ impl ServerGame {
         }
         self.sessions[s].player.inventory.decrement_selected();
         Some(plan.anchor)
+    }
+
+    /// Place a Layer-3 custom shape via its pack's `shape_placement_plan`
+    /// callback. `None` = no reachable owner, so `try_place` falls through to
+    /// the engine ladder; `Some(None)` = the callback refused (or nothing
+    /// placeable); `Some(Some(anchor))` = placed at `anchor`. The client never
+    /// ghosts a pack block, so this authoritative decision arrives unpredicted.
+    fn try_place_custom_shape(
+        &mut self,
+        s: usize,
+        block: Block,
+        inputs: &crate::world::placement::PlaceInputs,
+        events: &mut TickEvents,
+    ) -> Option<Option<IVec3>> {
+        let shape_key = block.shape_kind().key();
+        let shape_kind = block.shape_kind().0;
+        let view = mod_api::PlaceInputsView {
+            hit: inputs.hit.to_array(),
+            normal: inputs.normal.to_array(),
+            place_pos: inputs.place_pos.to_array(),
+            player_facing: inputs.player_facing as u8,
+        };
+        let result = {
+            let Self {
+                world,
+                sessions,
+                bus,
+                mods,
+                ..
+            } = self;
+            let sess = &mut sessions[s];
+            let mut ctx = SimCtx {
+                world,
+                player: &mut sess.player,
+                gui_state: &mut sess.gui_state,
+                feed: events,
+                queue: bus.queue_mut(),
+            };
+            mods.shape_placement_plan(&mut ctx, shape_key, shape_kind, block.id(), view)?
+        };
+        if !result.accepted {
+            return Some(None);
+        }
+        let anchor = IVec3::new(result.anchor[0], result.anchor[1], result.anchor[2]);
+        // Placement is SINGLE-CELL and stateless: the guest may claim only the
+        // anchor cell (an empty `cells`, or exactly `[anchor]`). A wider
+        // footprint is refused here — the host cannot yet atomically gate,
+        // re-bake, or remove a multi-cell custom object, so shipping the wire
+        // field is fine but honouring more than one cell is not.
+        let single_cell = result.cells.is_empty()
+            || (result.cells.len() == 1 && result.cells[0] == anchor.to_array());
+        if !single_cell {
+            return Some(None);
+        }
+        // Bound the anchor to a small neighbourhood of the click (Chebyshev ≤ 2)
+        // so a bake cannot place kilometres from where the player aimed.
+        let (dx, dy, dz) = (
+            (anchor.x - inputs.place_pos.x).abs(),
+            (anchor.y - inputs.place_pos.y).abs(),
+            (anchor.z - inputs.place_pos.z).abs(),
+        );
+        if dx.max(dy).max(dz) > 2 {
+            return Some(None);
+        }
+        // World-integrity gate the host always owns (the guest can see neither
+        // gameplay bodies nor the save's replaceability): the cell must be LOADED
+        // — `block_if_loaded`, never `chunk_block`, which collapses an unloaded
+        // cell to replaceable air — and replaceable. `cur != block` is redundant
+        // for the usual non-replaceable furniture (a replaceable cell can't equal
+        // it) but guards the rare replaceable custom shape against a no-op
+        // self-replace that would still burn a re-bake.
+        match self.world.block_if_loaded(anchor.x, anchor.y, anchor.z) {
+            Some(cur) if cur.is_replaceable() && cur != block => {}
+            _ => return Some(None),
+        }
+        // The body-occupancy gate every engine placement path runs: a custom
+        // shape's solid boxes may not trap a player or mob. Use the cell's baked
+        // boxes if it has any, else the row's static collision.
+        let boxes = self
+            .world
+            .custom_shape_boxes(anchor)
+            .unwrap_or_else(|| block.collision_boxes());
+        if self.placement_occupied_by_body(s, anchor, boxes) {
+            return Some(None);
+        }
+        let plan = crate::world::placement::PlacementPlan {
+            anchor,
+            cells: vec![anchor],
+            write: crate::world::placement::PlacementWrite::Custom {
+                block_id: block.id(),
+            },
+        };
+        if !self.world.commit_placement(block, &plan, true) {
+            return Some(None);
+        }
+        self.sessions[s].player.inventory.decrement_selected();
+        Some(Some(anchor))
     }
 
     /// Whether the placed collision boxes at `cell` overlap a gameplay body that

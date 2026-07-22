@@ -20,5 +20,6 @@ mod replica_world;
 mod replication;
 mod riding;
 mod section_cache;
+mod furniture_mod;
 mod vehicles_mod;
 mod weather_mod;

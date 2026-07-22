@@ -502,6 +502,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         sneak: true,
         held: Some(ItemId(3)),
         held_count: 2,
+        pose_anchor: Some([0.5, 64.0, -3.5]),
     }));
     roundtrip(HostRet::Bytes(Some(vec![1, 2, 3])));
     roundtrip(GuestRet::Event {

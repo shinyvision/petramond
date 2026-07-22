@@ -18,7 +18,7 @@ pub(crate) mod remap;
 /// nothing else is parseable across a mismatch.
 // 19: menu drag/drop actions carry ordered logical slot identities.
 // 21: cursor throws are one `ThrowCursor { amount }` action.
-pub(crate) const PROTOCOL_VERSION: u16 = 21;
+pub(crate) const PROTOCOL_VERSION: u16 = 23;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

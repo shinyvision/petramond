@@ -140,12 +140,40 @@ pub(crate) struct PlayerStateRow {
     /// `SelfState::transform`): the client snaps interpolation instead of
     /// lerping across the jump.
     pub snap: bool,
-    /// The mob this player is riding — `(stable mob id, seat index)` — or
-    /// `None`. Clients GLUE a mounted body (their own included) to the
-    /// interpolated mob presentation at the species' seat offset instead of
-    /// lerping the row transform, so rider and mount can never visibly
-    /// separate.
-    pub mount: Option<(u64, u8)>,
+    /// The mount this player is riding, or `None`. Clients GLUE a mounted body
+    /// (their own included) to the mount's seat pose instead of lerping the
+    /// row transform, so rider and mount can never visibly separate.
+    pub mount: Option<PlayerMount>,
+}
+
+/// Wire form of a player's seat attachment.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) enum PlayerMount {
+    Mob {
+        id: u64,
+        seat: u8,
+    },
+    /// A static pose anchor: fixed world position, body yaw (player
+    /// convention), and the named pose (`mod_api::pose`; unknown values
+    /// render the rest pose).
+    Anchor {
+        pos: Vec3,
+        yaw: f32,
+        pose: u8,
+    },
+}
+
+impl PlayerMount {
+    pub(crate) fn from_mount(m: crate::mob::riding::Mount) -> Self {
+        match m.target {
+            crate::mob::riding::MountTarget::Mob(id) => PlayerMount::Mob { id, seat: m.seat },
+            crate::mob::riding::MountTarget::Anchor(a) => PlayerMount::Anchor {
+                pos: a.pos,
+                yaw: a.yaw,
+                pose: a.pose,
+            },
+        }
+    }
 }
 
 /// One-shot remote-player animation events, broadcast alongside the state

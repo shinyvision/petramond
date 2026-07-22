@@ -181,7 +181,10 @@ fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indice
         // A pane cracks over the SAME post/arm faces the chunk mesher emitted
         // (cell-local UVs), so the crack reads as a full block's decal with the
         // open parts cut out — like stairs and slabs, not a box around the cell.
-        crate::mesh::pane::shape_faces(mask, |min, max, face, _, _, _| {
+        let (post_lo, post_hi) = view
+            .connection
+            .unwrap_or((crate::pane::POST_LO, crate::pane::POST_HI));
+        crate::mesh::pane::shape_faces(post_lo, post_hi, mask, |min, max, face, _, _, _| {
             super::item_cube::push_cell_local_face(
                 verts,
                 indices,
@@ -197,7 +200,10 @@ fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indice
     } else if let Some(mask) = view.fence_mask {
         // A fence cracks over the SAME post/rail faces the chunk mesher emitted
         // (cell-local UVs) — the pane contract on the fence's shape list.
-        crate::mesh::fence::shape_faces(mask, |min, max, face, _| {
+        let (post_lo, post_hi) = view
+            .connection
+            .unwrap_or((crate::fence::POST_LO, crate::fence::POST_HI));
+        crate::mesh::fence::shape_faces(post_lo, post_hi, mask, |min, max, face, _| {
             super::item_cube::push_cell_local_face(
                 verts,
                 indices,
@@ -210,6 +216,25 @@ fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indice
                 super::lighting::DynLight::FULL,
             );
         });
+    } else if let Some(cb) = view.custom_boxes {
+        // A Layer-3 custom shape (a chair) cracks over its BAKED boxes with
+        // cell-local UVs, so the decal hugs the real legs/seat/backrest instead
+        // of a box floating over the cell's empty gaps.
+        for &(min, max) in cb.boxes.iter().take(cb.len as usize) {
+            for face in crate::mesh::face::Face::ALL {
+                super::item_cube::push_cell_local_face(
+                    verts,
+                    indices,
+                    tile,
+                    base,
+                    1.0,
+                    min,
+                    max,
+                    face,
+                    super::lighting::DynLight::FULL,
+                );
+            }
+        }
     } else {
         match view.visual_box {
             // A non-full-cube block (the chest) cracks over its inset visual box.
@@ -275,8 +300,10 @@ mod tests {
             slab_state: None,
             pane_mask: None,
             fence_mask: None,
+            connection: None,
             ladder_facing: None,
             model: None,
+            custom_boxes: None,
             stage: 4,
         };
         let n = build_break_overlay(&view, &mut v, &mut i);
@@ -320,8 +347,10 @@ mod tests {
             slab_state: None,
             pane_mask: None,
             fence_mask: None,
+            connection: None,
             ladder_facing: None,
             model: None,
+            custom_boxes: None,
             stage: 5,
         };
         let mut v = Vec::new();
@@ -387,8 +416,10 @@ mod tests {
             slab_state: Some(state),
             pane_mask: None,
             fence_mask: None,
+            connection: None,
             ladder_facing: None,
             model: None,
+            custom_boxes: None,
             stage: 6,
         };
         let mut v = Vec::new();
@@ -455,8 +486,10 @@ mod tests {
             slab_state: None,
             pane_mask: None,
             fence_mask: None,
+            connection: None,
             ladder_facing: None,
             model: Some((kind, offset, crate::block_model::DEFAULT_MODEL_FACING)),
+            custom_boxes: None,
             stage: 3,
         };
         let mut v = Vec::new();
@@ -718,8 +751,10 @@ mod tests {
             slab_state: None,
             pane_mask: None,
             fence_mask: None,
+            connection: None,
             ladder_facing: None,
             model: None,
+            custom_boxes: None,
             stage: 0,
         };
         build_break_overlay(&view, &mut v, &mut i);
@@ -730,5 +765,33 @@ mod tests {
         assert_eq!(v.len(), 24);
         assert_eq!(v.capacity(), cap_v, "vert buffer reused");
         assert_eq!(i.capacity(), cap_i, "index buffer reused");
+    }
+
+    #[test]
+    fn custom_shape_cracks_over_its_baked_boxes_not_the_empty_cell() {
+        use crate::game::presentation::{CustomCrackBoxes, MAX_CUSTOM_CRACK_BOXES};
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        let mut boxes = [([0.0; 3], [0.0; 3]); MAX_CUSTOM_CRACK_BOXES];
+        boxes[0] = ([0.1, 0.0, 0.1], [0.3, 0.5, 0.3]);
+        boxes[1] = ([0.7, 0.0, 0.7], [0.9, 0.5, 0.9]);
+        let view = BreakOverlayView {
+            block: IVec3::new(0, 0, 0),
+            visual_box: None,
+            stair_shape: None,
+            slab_state: None,
+            pane_mask: None,
+            fence_mask: None,
+            connection: None,
+            ladder_facing: None,
+            model: None,
+            custom_boxes: Some(CustomCrackBoxes { boxes, len: 2 }),
+            stage: 4,
+        };
+        let n = build_break_overlay(&view, &mut v, &mut i);
+        // TWO baked boxes × 6 cell-local faces × 4 verts — the crack hugs the
+        // shape's parts, NOT a single 24-vert cube spanning the empty cell.
+        assert_eq!(v.len(), 48);
+        assert_eq!(n, 72);
     }
 }

@@ -20,6 +20,11 @@ use crate::events::SimCtx;
 
 thread_local! {
     static ACTIVE_CTX: Cell<*mut ()> = const { Cell::new(std::ptr::null_mut()) };
+    /// Whether the active dispatch is READ-ONLY: the published `SimCtx` may be
+    /// queried but not mutated. Set for the `ShapePlacementPlan` dispatch, whose
+    /// ABI promises read-only world access — a mutating host call errors instead
+    /// of letting the guest edit the world it is being asked to validate against.
+    static READ_ONLY: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Restores the slot to `.0` when dropped (including on unwind).
@@ -31,12 +36,38 @@ impl Drop for Restore {
     }
 }
 
+/// Restores the read-only flag to `.0` when dropped (including on unwind).
+struct RestoreReadOnly(bool);
+
+impl Drop for RestoreReadOnly {
+    fn drop(&mut self) {
+        READ_ONLY.with(|c| c.set(self.0));
+    }
+}
+
 /// Publish `ctx` as the active simulation context while `f` runs (the guest
 /// dispatch). Nested `enter`s stack: the previous pointer is restored on exit.
 pub(super) fn enter<R>(ctx: &mut SimCtx<'_>, f: impl FnOnce() -> R) -> R {
     let prev = ACTIVE_CTX.with(|c| c.replace(ctx as *mut SimCtx<'_> as *mut ()));
     let _restore = Restore(prev);
     f()
+}
+
+/// [`enter`] for a READ-ONLY dispatch: the context is queryable but mutating
+/// host calls ([`crate::modding::host::guards::sim_call`]) are rejected. Used by
+/// the shape placement-plan dispatch.
+pub(super) fn enter_read_only<R>(ctx: &mut SimCtx<'_>, f: impl FnOnce() -> R) -> R {
+    let prev = ACTIVE_CTX.with(|c| c.replace(ctx as *mut SimCtx<'_> as *mut ()));
+    let prev_ro = READ_ONLY.with(|c| c.replace(true));
+    let _restore = Restore(prev);
+    let _restore_ro = RestoreReadOnly(prev_ro);
+    f()
+}
+
+/// Whether the active dispatch published a READ-ONLY context (mutating host
+/// calls must refuse).
+pub(super) fn read_only_active() -> bool {
+    READ_ONLY.with(|c| c.get())
 }
 
 /// Run `f` with the active [`SimCtx`], or return `None` when no guest dispatch

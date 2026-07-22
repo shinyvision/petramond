@@ -229,14 +229,15 @@ pub(crate) enum PostEvent {
     SectionLoaded {
         pos: SectionPos,
     },
-    /// A player left a mob seat — however it happened (sneak gesture, the
-    /// mount died/despawned/unloaded, the rider died, left, or turned
-    /// spectator, or a mod's `MobDismount`). The mounting mod uses this to
-    /// clean up its rider policy (who controls the vehicle); mounting itself
-    /// has no event — only a mod's own `MobMount` call starts a ride.
+    /// A player left a seat — however it happened (sneak gesture, the
+    /// mount died/despawned/unloaded or the block lost its seats, the rider
+    /// died, left, or turned spectator, or a mod's `MobDismount`). The
+    /// mounting mod uses this to clean up its rider policy (who controls the
+    /// vehicle); mounting itself has no event — only a mod's own mount call
+    /// starts a ride.
     PlayerDismounted {
         player: crate::server::player::PlayerId,
-        mob_id: u64,
+        mount: crate::mob::riding::Mount,
     },
     /// A key BECAME PRESENT in a live mob's tag map through the ABI tag
     /// surface (`MobTagSet` inserting a new key). Presence transitions only —

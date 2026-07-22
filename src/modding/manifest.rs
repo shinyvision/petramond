@@ -190,7 +190,7 @@ struct CatalogSpec {
     extra_validate: Option<fn(&str) -> Result<(), String>>,
 }
 
-const CATALOGS: [CatalogSpec; 9] = {
+const CATALOGS: [CatalogSpec; 10] = {
     const fn plain(rel: &'static str, array: &'static str, key_field: &'static str) -> CatalogSpec {
         CatalogSpec {
             rel,
@@ -220,6 +220,8 @@ const CATALOGS: [CatalogSpec; 9] = {
             row_filter: Some(("type", "crafting")),
             ..plain("recipes.json", "recipes", "recipe")
         },
+        // Layer-3 custom shape declarations (WASM-baked geometry).
+        plain("shapes.json", "shapes", "key"),
     ]
 };
 

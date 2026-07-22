@@ -1,0 +1,11 @@
+{
+  "models": [
+    {
+      "key": "furniture:chair",
+      "model_file": "models/chair.bbmodel",
+      "cells": [1, 2, 1],
+      "orientation": "left_to_right",
+      "fit": "native"
+    }
+  ]
+}

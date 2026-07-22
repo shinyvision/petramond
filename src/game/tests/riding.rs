@@ -13,7 +13,11 @@ fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_ride
     let mob_id = game.server.world.mobs().instances()[0].id();
     let player_id = game.server.sessions[0].id.0;
     game.server.sessions[0].player.teleport(seat);
-    assert!(game.server.world.riding_mut().mount(player_id, mob_id, 0));
+    assert!(game.server.world.riding_mut().mount(
+        player_id,
+        crate::mob::riding::MountTarget::Mob(mob_id),
+        0
+    ));
     game.server.sessions[0].mount = game.server.world.riding().mount_of(player_id);
 
     // Block the seat itself and every ordinary right/left/behind/ahead probe
@@ -112,7 +116,11 @@ fn mounted_snapshot_defers_when_no_terrain_state_is_known() {
     let seat = Vec3::new(8.0, 80.0, 8.0);
     let player_id = game.server.sessions[0].id.0;
     game.server.sessions[0].player.teleport(seat);
-    assert!(game.server.world.riding_mut().mount(player_id, 77, 0));
+    assert!(game.server.world.riding_mut().mount(
+        player_id,
+        crate::mob::riding::MountTarget::Mob(77),
+        0
+    ));
     game.server.sessions[0].mount = game.server.world.riding().mount_of(player_id);
 
     assert!(

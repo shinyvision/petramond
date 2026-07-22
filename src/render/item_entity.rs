@@ -216,6 +216,7 @@ fn push_spinning_cube(
         Vec3::splat(-half),
         ITEM_CUBE_SIZE,
         inst_light(inst),
+        false,
     );
     spin_into_world(verts, start, inst, offset);
 }

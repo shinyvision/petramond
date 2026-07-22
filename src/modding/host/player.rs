@@ -11,6 +11,16 @@ use super::entities::give_item;
 use super::guards::{batch_guard, finite3, item_by_name, sim_call, sim_query};
 use super::intern_mod_id;
 
+/// The pose anchor a player is pinned at, read LIVE from the riding registry
+/// (not the start-of-tick roster) so an occupancy check made right after a
+/// same-tick `PlayerPoseSet` already sees the seat taken.
+fn pose_anchor_of(world: &crate::world::World, id: u8) -> Option<[f32; 3]> {
+    match world.riding().mount_of(id)?.target {
+        crate::mob::riding::MountTarget::Anchor(a) => Some(a.pos.to_array()),
+        crate::mob::riding::MountTarget::Mob(_) => None,
+    }
+}
+
 /// Player calls (snapshot, damage/kill through the funnel, inventory,
 /// movement primitives).
 pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
@@ -45,6 +55,9 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                     .selected()
                     .map(|st| mod_api::ItemId(st.item.id())),
                 held_count: p.inventory.selected().map_or(0, |st| st.count),
+                pose_anchor: ctx
+                    .acting_player_id()
+                    .and_then(|id| pose_anchor_of(ctx.world, id.0)),
             })
         }),
         HostCall::Players => sim_query(|ctx| {
@@ -65,6 +78,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                             sneak: p.sneak,
                             held: p.held.map(|i| mod_api::ItemId(i.id())),
                             held_count: p.held_count,
+                            pose_anchor: pose_anchor_of(ctx.world, p.id),
                         },
                     })
                     .collect(),

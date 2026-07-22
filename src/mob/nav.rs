@@ -678,13 +678,17 @@ fn cell_shape(world: &World, c: IVec3) -> CellShape {
 /// outright. Partial shapes are the edge gate's business — treating them as
 /// solid walls off routes a body actually fits through (a ladder corridor),
 /// while treating them as air walks mobs into their boxes forever.
-/// The one BY-DESIGN exception is the fence: a fence cell always reads solid,
-/// so no route steps through it and the one-block jump from the ground is no
-/// foothold jump either (see [`nav_support_fn`] for the step-up caveat) — a
-/// lone fence is a wall here or no pen would hold.
+/// The one BY-DESIGN exception is a shape that DECLARES itself nav-solid through
+/// its [`ShapeSim::nav_reads_solid`](crate::block::ShapeSim) facet — the fence
+/// family, and any Layer-3 custom shape with `nav_solid` set. Such a cell always
+/// reads solid, so no route steps through it and the one-block jump from the
+/// ground is no foothold jump either (see [`nav_support_fn`] for the step-up
+/// caveat) — a lone fence/hedge is a wall here or no pen would hold.
 pub(super) fn nav_solid_fn(world: &World) -> impl Fn(IVec3) -> bool + '_ {
     move |c: IVec3| {
-        if crate::fence::is_fence(world.physics_block(c.x, c.y, c.z)) {
+        let block = world.physics_block(c.x, c.y, c.z);
+        let def = block.shape_kind_def();
+        if def.sim.nav_reads_solid(&def.params) {
             return true;
         }
         cell_shape(world, c) == CellShape::Full

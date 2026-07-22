@@ -2,7 +2,7 @@
 //! emitters, riding, kinematic drive, named animations, and dropped-item
 //! spawns.
 
-use mod_api::{MobAnimStateData, MobRidersData, MobSnapshot, PlayerId};
+use mod_api::{Facing, MobAnimStateData, MobRidersData, MobSnapshot, PlayerId};
 
 use crate::__rt::host_fn;
 
@@ -164,15 +164,32 @@ host_fn! {
     /// Seat a player in `seat` of a live mob (STABLE id). The engine validates
     /// mechanism (live mob, declared free seat, unmounted player) and slaves the
     /// rider from this tick; WHO may sit WHERE is your policy — usually decided
-    /// in a `mob_interact` handler. Every detach path (your [`mob_dismount`], the
-    /// engine's sneak gesture, death, despawn, leave) announces the
+    /// in an `interact_attempt` handler. Every detach path (your [`mob_dismount`],
+    /// the engine's sneak gesture, death, despawn, leave) announces the
     /// `player_dismounted` event.
     pub fn mob_mount(mob_id: u64, player_id: PlayerId, seat: u8) -> bool
         => MobMount { mob_id, player_id, seat } => Bool
 }
 
 host_fn! {
-    /// Unseat a player from whatever they ride. `false` = they were not mounted.
+    /// Pin a player in a named POSE at the world-space `anchor` (rider feet
+    /// origin), body facing `yaw` (player convention: yaw `0` faces `+Z`) —
+    /// the static-seat primitive behind chairs/benches/sofas. YOUR policy is
+    /// where poses exist (your own seat layout) and who takes one; the engine
+    /// owns mechanism: one pose per player, no two players on one exact
+    /// anchor, replication and every release valve (sneak gesture, death,
+    /// spectator, leave). Read occupancy back from the roster
+    /// ([`crate::players`] → `pose_anchor`), never from mirrored mod state.
+    /// Poses are transient and not tied to any block — release sitters
+    /// yourself when your furniture breaks ([`mob_dismount`]). Pose
+    /// vocabulary: [`mod_api::pose`].
+    pub fn player_pose_set(player_id: PlayerId, anchor: [f32; 3], yaw: f32, pose: u8) -> bool
+        => PlayerPoseSet { player_id, anchor, yaw, pose } => Bool
+}
+
+host_fn! {
+    /// Unseat a player from whatever holds them — a mob seat or a pose
+    /// anchor. `false` = they were not mounted or posed.
     pub fn mob_dismount(player_id: PlayerId) -> bool => MobDismount { player_id } => Bool
 }
 
@@ -181,6 +198,78 @@ host_fn! {
     /// order). `None` means the mob is missing/dead; a present zero capacity is a
     /// live non-rideable mob.
     pub fn mob_riders(mob_id: u64) -> Option<MobRidersData> => MobRiders { mob_id } => Riders
+}
+
+/// Map a point from a placed model group's unrotated FOOTPRINT space (origin
+/// at the footprint min corner, the space `models.json` seats/geometry are
+/// authored in) into world space — the exact transform the engine places
+/// model geometry with, so a computed pose anchor lands on the authored seat
+/// cushion under every facing. `base`/`facing` come from
+/// [`block_model_group`]; `footprint` is your model's declared `cells`.
+pub fn footprint_local_to_world(
+    base: [i32; 3],
+    footprint: [u8; 3],
+    facing: Facing,
+    local: [f32; 3],
+) -> [f32; 3] {
+    let (sx, sz) = (footprint[0] as f32, footprint[2] as f32);
+    let [x, y, z] = local;
+    let (rx, rz) = match facing {
+        Facing::North => (x, z),
+        Facing::South => (sx - x, sz - z),
+        Facing::East => (sz - z, x),
+        Facing::West => (z, sx - x),
+    };
+    [
+        base[0] as f32 + rx,
+        base[1] as f32 + y,
+        base[2] as f32 + rz,
+    ]
+}
+
+/// The PLAYER-convention body yaw (yaw `0` faces `+Z`) that faces the same
+/// way as a placed model's `facing` — what a seat computed with
+/// [`footprint_local_to_world`] passes to [`player_pose_set`].
+pub fn facing_player_yaw(facing: Facing) -> f32 {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    match facing {
+        Facing::North => PI,
+        Facing::South => 0.0,
+        Facing::East => FRAC_PI_2,
+        Facing::West => -FRAC_PI_2,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pinned against the ENGINE's `placement_transform_fp` convention
+    /// (North identity; South mirrors X and Z; East/West swap axes with one
+    /// mirror). If this drifts, computed pose anchors leave the authored
+    /// seat cushions on rotated placements.
+    #[test]
+    fn footprint_mapping_matches_the_engine_placement_transform() {
+        let fp = [1, 2, 1];
+        let local = [0.5, -0.25, 0.25];
+        let base = [10, 5, 10];
+        assert_eq!(
+            footprint_local_to_world(base, fp, Facing::North, local),
+            [10.5, 4.75, 10.25]
+        );
+        assert_eq!(
+            footprint_local_to_world(base, fp, Facing::South, local),
+            [10.5, 4.75, 10.75]
+        );
+        assert_eq!(
+            footprint_local_to_world(base, fp, Facing::East, local),
+            [10.75, 4.75, 10.5]
+        );
+        assert_eq!(
+            footprint_local_to_world(base, fp, Facing::West, local),
+            [10.25, 4.75, 10.5]
+        );
+    }
 }
 
 host_fn! {

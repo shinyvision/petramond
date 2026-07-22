@@ -8,7 +8,7 @@
 //! [`Block`]'s own (position-less) accessors answer the authored-origin cell. See
 //! [`crate::block_model`].
 
-use crate::block::{Aabb, Block, RenderShape};
+use crate::block::{Aabb, Block};
 use crate::block_model::{self, BlockModelKind};
 use crate::facing::Facing;
 use crate::mathh::{IVec3, Mat4, Vec3};
@@ -42,42 +42,14 @@ impl World {
     /// collision that must hug a multi-block correctly.
     #[inline]
     pub fn collision_boxes_at(&self, wx: i32, wy: i32, wz: i32) -> &'static [Aabb] {
+        // The per-shape resolve lives on the shape's `ShapeSim` facet (stateful
+        // families read their per-cell state / neighbours off `self`; the rest
+        // fall to the row's position-less boxes). Adding a shape adds a facet
+        // impl, not an arm here — see `block::shape_kind`.
         let block = self.physics_block(wx, wy, wz);
-        if let RenderShape::Model(kind) = block.render_shape() {
-            return block_model::collision_boxes_oriented(
-                kind,
-                self.model_offset_at(wx, wy, wz),
-                self.model_facing_at(wx, wy, wz),
-            );
-        }
-        if block.render_shape() == RenderShape::Stair {
-            return self.stair_boxes_at(wx, wy, wz);
-        }
-        if block.render_shape() == RenderShape::Slab {
-            return self.slab_boxes_at(wx, wy, wz);
-        }
-        // A pane's post + arms are resolved from its current neighbours (no stored
-        // state) — see `world::pane` / `crate::pane`.
-        if block.render_shape() == RenderShape::Pane {
-            return self.pane_boxes_at(IVec3::new(wx, wy, wz));
-        }
-        // A fence's post + arms likewise — see `world::fence` / `crate::fence`.
-        if block.render_shape() == RenderShape::Fence {
-            return self.fence_boxes_at(IVec3::new(wx, wy, wz));
-        }
-        // A door's thin slab sits on its facing edge, swinging to the adjacent edge when
-        // open — both read from the chunk door state (see `world::door` / `crate::door`).
-        if block.render_shape() == RenderShape::Door {
-            if let Some(state) = self.door_state_at(wx, wy, wz) {
-                return crate::door::collision_boxes(state);
-            }
-        }
-        // A ladder's thin panel is real collision (bumped into along the wall,
-        // standable on top of a column), resolved from its facing row.
-        if block.render_shape() == RenderShape::Ladder {
-            return crate::ladder::collision_boxes(block.panel_facing());
-        }
-        block.collision_boxes()
+        let k = block.shape_kind_def();
+        k.sim
+            .collision_boxes(&k.params, self, IVec3::new(wx, wy, wz), block)
     }
 
     /// Position-aware selection/TARGET box: a bbmodel block resolves its PER-CELL box
@@ -87,61 +59,13 @@ impl World {
     /// is the whole-model box — see [`model_outline_box`](Self::model_outline_box).
     #[inline]
     pub fn selection_box_at(&self, wx: i32, wy: i32, wz: i32) -> Option<([f32; 3], [f32; 3])> {
+        // Mirror of `collision_boxes_at` on the `ShapeRender` facet: the
+        // targeting box must agree with the real collision box, so both derive
+        // per-shape from the same per-cell state. See `block::shape_kind`.
         let block = Block::from_id(self.chunk_block(wx, wy, wz));
-        if let RenderShape::Model(kind) = block.render_shape() {
-            return block_model::selection_aabb_oriented(
-                kind,
-                self.model_offset_at(wx, wy, wz),
-                self.model_facing_at(wx, wy, wz),
-            );
-        }
-        if block.render_shape() == RenderShape::Stair {
-            return Some(([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]));
-        }
-        if block.render_shape() == RenderShape::Slab {
-            return self.slab_visual_aabb_at(wx, wy, wz);
-        }
-        // A pane targets the union of its resolved post + arms, so the outline and
-        // break overlay hug the connected shape rather than the whole cell.
-        if block.render_shape() == RenderShape::Pane {
-            let boxes = self.pane_boxes_at(IVec3::new(wx, wy, wz));
-            let mut mn = [f32::INFINITY; 3];
-            let mut mx = [f32::NEG_INFINITY; 3];
-            for b in boxes {
-                for i in 0..3 {
-                    mn[i] = mn[i].min(b.min[i]);
-                    mx[i] = mx[i].max(b.max[i]);
-                }
-            }
-            return Some((mn, mx));
-        }
-        // A fence targets the union of its resolved post + arms, same as a pane.
-        if block.render_shape() == RenderShape::Fence {
-            let boxes = self.fence_boxes_at(IVec3::new(wx, wy, wz));
-            let mut mn = [f32::INFINITY; 3];
-            let mut mx = [f32::NEG_INFINITY; 3];
-            for b in boxes {
-                for i in 0..3 {
-                    mn[i] = mn[i].min(b.min[i]);
-                    mx[i] = mx[i].max(b.max[i]);
-                }
-            }
-            return Some((mn, mx));
-        }
-        // A ladder targets its thin wall panel (facing-resolved from its row),
-        // so the raycast + break overlay hug the panel rather than the whole
-        // cell.
-        if block.render_shape() == RenderShape::Ladder {
-            return Some(crate::ladder::panel_aabb(block.panel_facing()));
-        }
-        // A door targets the thin slab where it actually is (closed/open edge), so the
-        // raycast + break overlay hug the panel rather than the whole cell.
-        if block.render_shape() == RenderShape::Door {
-            if let Some(state) = self.door_state_at(wx, wy, wz) {
-                return Some(crate::door::selection_aabb(state));
-            }
-        }
-        block.visual_aabb()
+        let k = block.shape_kind_def();
+        k.render
+            .selection_box(&k.params, self, IVec3::new(wx, wy, wz), block)
     }
 
     /// Is world-space point `p` inside a real collision box of its cell? The model-aware
@@ -162,7 +86,7 @@ impl World {
     /// than a per-cell cube. `None` for a non-model cell.
     pub fn model_outline_box(&self, pos: IVec3) -> Option<([f32; 3], [f32; 3])> {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        let RenderShape::Model(kind) = block.render_shape() else {
+        let Some(kind) = block.model_kind() else {
             return None;
         };
         let off = self.model_offset_at(pos.x, pos.y, pos.z);
@@ -223,7 +147,7 @@ impl World {
 
     /// Oriented form of [`place_model_block`](Self::place_model_block).
     pub fn place_model_block_facing(&mut self, base: IVec3, block: Block, facing: Facing) -> bool {
-        let RenderShape::Model(kind) = block.render_shape() else {
+        let Some(kind) = block.model_kind() else {
             return false;
         };
         let cells = block_model::oriented_footprint_cells(base, kind, facing);
@@ -257,7 +181,7 @@ impl World {
     /// rotated-footprint base, and every footprint cell. `None` for a non-model cell.
     pub fn model_group(&self, pos: IVec3) -> Option<(BlockModelKind, IVec3, Vec<IVec3>)> {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        let RenderShape::Model(kind) = block.render_shape() else {
+        let Some(kind) = block.model_kind() else {
             return None;
         };
         let off = self.model_offset_at(pos.x, pos.y, pos.z);
@@ -284,7 +208,7 @@ impl World {
         let Some((_, base, cells)) = self.model_group(pos) else {
             return false;
         };
-        let RenderShape::Model(new_kind) = new_block.render_shape() else {
+        let Some(new_kind) = new_block.model_kind() else {
             return false;
         };
         if Block::from_id(self.chunk_block(pos.x, pos.y, pos.z)) == new_block {

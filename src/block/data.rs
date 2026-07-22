@@ -11,6 +11,7 @@
 use std::sync::LazyLock;
 
 use super::definition::{BlockDef, BlockFlags};
+use super::shape_kind::{BlockShapeKind, ShapeFamily, ShapeKindDef};
 use super::{load, Block};
 
 /// Engine block names in frozen id order (`ENGINE_BLOCK_NAMES[id]` names
@@ -180,6 +181,30 @@ pub(super) fn from_id(id: u8) -> Block {
 #[inline]
 pub(super) fn def(block: Block) -> &'static BlockDef {
     &REGISTRY.defs[block.id() as usize]
+}
+
+/// The shape-kind registry row for `kind` (see [`super::shape_kind`]).
+#[inline]
+pub(super) fn shape_kind_def(kind: BlockShapeKind) -> &'static ShapeKindDef {
+    &REGISTRY.shape_kinds[kind.0 as usize]
+}
+
+/// The session-local shape-kind id for a registry `key`, or `None` — the
+/// `ResolveShape` host call's lookup. A linear scan over the small shape-kind
+/// table (dozens of rows), like the other name→id resolvers.
+pub(crate) fn shape_kind_id_by_key(key: &str) -> Option<u8> {
+    REGISTRY
+        .shape_kinds
+        .iter()
+        .position(|d| d.key == key)
+        .map(|i| i as u8)
+}
+
+/// Dense per-id [`ShapeFamily`] — the hot shape classifier, one small-array
+/// read (see the `shape_family` field on [`load::Registry`]).
+#[inline]
+pub(super) fn shape_family(id: u8) -> ShapeFamily {
+    REGISTRY.shape_family[id as usize]
 }
 
 /// Dense per-id copy of every block's [`BlockFlags`], indexed by raw block id.

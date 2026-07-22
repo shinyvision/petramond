@@ -111,7 +111,7 @@ pub struct Game {
     /// entity push are suspended and the body slaves per frame to the
     /// interpolated mount at the species' seat offset; movement INTENT keeps
     /// riding `PlayerUpdate` so the driving mod reads it server-side.
-    self_mount: Option<(u64, u8)>,
+    self_mount: Option<crate::net::protocol::PlayerMount>,
     /// The client-owned R-key placement-rotation cycle; its raw counter rides
     /// `PlayerUpdate.held_rotation` (the session keeps its own latched copy).
     held_rotation: HeldRotation,

@@ -72,17 +72,14 @@ impl World {
     /// still shed it (per Rachel: snow stays on any full block, and canopy snow must
     /// not shatter the tick after the weather mod lays it).
     fn fragile_supported(&self, pos: IVec3, block: Block) -> bool {
-        if block.render_shape() == crate::block::RenderShape::Torch {
+        if block.shape_family() == crate::block::ShapeFamily::Torch {
             return self.torch_supported_at(pos, self.torch_placement(pos));
         }
-        if block.render_shape() == crate::block::RenderShape::Ladder {
+        if block.shape_family() == crate::block::ShapeFamily::Ladder {
             return self.ladder_supported_at(pos, block.panel_facing());
         }
         let s = self.fragile_ground_cell(pos);
-        if matches!(
-            block.render_shape(),
-            crate::block::RenderShape::LoweredCube(_)
-        ) {
+        if block.shape_family() == crate::block::ShapeFamily::LoweredCube {
             return super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z));
         }
         self.physics_block(s.x, s.y, s.z).is_opaque()

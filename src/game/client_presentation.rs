@@ -6,7 +6,7 @@
 //! lives on the server thread); everything mutated is
 //! client-owned (particles, lids, swings, the mesh pump).
 
-use crate::block::{Block, RenderShape};
+use crate::block::{Block, ShapeFamily};
 use crate::mathh::{voxel_at, IVec3};
 
 use super::{Game, MINING_DUST_INTERVAL};
@@ -31,11 +31,11 @@ impl Game {
                     // pump's deltas (the break landed before the events).
                     let (sky, blk, warm) =
                         crate::server::breaking::break_light(&self.replica, pos, normal);
-                    match block.render_shape() {
-                        crate::block::RenderShape::Model(kind) => self
+                    match block.model_kind() {
+                        Some(kind) => self
                             .particles
                             .spawn_break_burst_model(pos, kind, sky, blk, warm),
-                        _ => self
+                        None => self
                             .particles
                             .spawn_break_burst_lit(pos, block, sky, blk, warm),
                     }
@@ -43,7 +43,7 @@ impl Game {
                     // state the sim can no longer clear). The event carries
                     // the mined cell — either half — so the LOWER cell (the
                     // swing key) is that cell or the one below.
-                    if block.render_shape() == RenderShape::Door {
+                    if block.shape_family() == ShapeFamily::Door {
                         self.door_swings.remove(&pos);
                         self.door_swings.remove(&(pos + IVec3::new(0, -1, 0)));
                     }
@@ -124,11 +124,11 @@ impl Game {
         let block = Block::from_id(world.chunk_block(h.block.x, h.block.y, h.block.z));
         let cell = h.block + h.normal;
         let (sky, blk, warm) = world.dynamic_light_at_world(cell.x, cell.y, cell.z);
-        match block.render_shape() {
-            RenderShape::Model(kind) => self
+        match block.model_kind() {
+            Some(kind) => self
                 .particles
                 .spawn_mining_model(h.block, h.normal, kind, sky, blk, warm),
-            _ => self
+            None => self
                 .particles
                 .spawn_mining_lit(h.block, h.normal, block, sky, blk, warm),
         }

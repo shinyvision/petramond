@@ -5,7 +5,7 @@
 //! the renderer derives transient particles from that. This keeps visual particles
 //! out of simulation, saves, and the fixed tick.
 
-use crate::block::{Block, ParticleEmitter, ParticleEmitterAnchor, RenderShape};
+use crate::block::{Block, ParticleEmitter, ParticleEmitterAnchor, ShapeFamily};
 use crate::block_model::{self, BlockModelKind};
 use crate::chunk::{section_local, SectionPos};
 use crate::facing::Facing;
@@ -40,7 +40,7 @@ impl World {
                 // anchor/offset); every row reports separately with a distinct
                 // seed stream so sibling schedules don't pulse in lockstep.
                 for (row_idx, &emitter) in rows.iter().enumerate() {
-                    let origin = if let RenderShape::Model(kind) = block.render_shape() {
+                    let origin = if let Some(kind) = block.model_kind() {
                         // A multi-cell model emits ONCE per placed group (from its
                         // authored-origin cell), at the FOOTPRINT-space anchor
                         // rotated by the placed facing — never once per occupied
@@ -110,7 +110,7 @@ fn emitter_anchor_local(
         ParticleEmitterAnchor::BlockCenter => Vec3::splat(0.5),
         ParticleEmitterAnchor::Local => Vec3::from_array(emitter.origin),
         ParticleEmitterAnchor::TorchTop => {
-            if block.render_shape() == crate::block::RenderShape::Torch {
+            if block.shape_family() == ShapeFamily::Torch {
                 section
                     .torch_placement(lx, ly, lz)
                     .model_transform()

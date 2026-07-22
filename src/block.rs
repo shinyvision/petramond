@@ -9,6 +9,7 @@ mod definition;
 mod interaction;
 mod load;
 mod shape;
+mod shape_kind;
 mod sounds;
 mod tags;
 #[cfg(test)]
@@ -16,6 +17,7 @@ mod tests;
 
 pub use behavior::BlockBehavior;
 pub(crate) use data::ENGINE_BLOCK_NAMES;
+pub(crate) use data::shape_kind_id_by_key;
 pub(crate) use definition::BlockMaterial;
 // ColorRamp rides the public `ParticleEmitter::color_ramp` field; only tests
 // currently name the type, so the lib build sees the re-export as unused.
@@ -26,7 +28,16 @@ pub use interaction::BlockInteraction;
 pub(crate) use interaction::builtin_claims_click;
 pub(crate) use load::validate_particle_emitter;
 pub(crate) use shape::BlockLightShape;
-pub use shape::{Aabb, RenderShape, CROP_PLANE_DROP, CROP_PLANE_INSET};
+pub use shape::{Aabb, CROP_PLANE_DROP, CROP_PLANE_INSET};
+pub use shape_kind::{BlockShapeKind, ShapeFamily, ShapeKindDef};
+pub use shape_kind::{ConnectionParams, ConnectionRule};
+pub use shape_kind::ItemRender;
+// The shape facet traits + Layer-2 param types are public API (the shape
+// dispatch surface / the Layer-2 loader's params); re-export the stable
+// `crate::block::` path even though in-crate consumers currently reach the
+// singletons through `ShapeKindDef` and name the params in `shape_kind`.
+#[allow(unused_imports)]
+pub use shape_kind::{DimensionParams, ShapeParams, ShapeRender, ShapeSim};
 pub use sounds::BlockSoundAction;
 pub use tags::BlockTag;
 

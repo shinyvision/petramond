@@ -1,4 +1,4 @@
-use crate::block::{Block, RenderShape};
+use crate::block::{Block, ShapeFamily};
 use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME};
 
 use super::super::face::{Face, FACES};
@@ -35,7 +35,7 @@ pub(super) fn pad_cube_fast_candidate(block: Block) -> bool {
         && block != Block::Cactus
         && block != Block::Glass
         && !block.is_translucent()
-        && block.render_shape() == RenderShape::Cube
+        && block.shape_family() == ShapeFamily::Cube
         && block != Block::Chest
 }
 

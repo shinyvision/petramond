@@ -6,6 +6,10 @@ use crate::data::{AiNodeCtx, AiNodeDecision, BlockHookKind, HostileSpawnCandidat
 use crate::events::{EventPayload, Outcome};
 use crate::ids::BlockId;
 use crate::sched::WorldgenStage;
+use crate::shape::{
+    BakedItemGeometry, BakedRenderCell, BakedSimCell, CellInput, PlaceInputsView,
+    ShapePlacementResult,
+};
 
 /// One worldgen block write: `(world position, block)`. Applied by the engine
 /// through a section-clipping sink — writes outside the dispatched section are
@@ -149,6 +153,40 @@ pub enum GuestCall {
         y: f32,
         delta: f32,
     },
+
+    // --- Procedural shape bakes (Layer 3) ---------------------------------------
+    /// Bake the DETERMINISTIC sim geometry (collision boxes + light aperture) for
+    /// every cell of one custom shape kind in a section, in one batch. Run on the
+    /// server `wasm` AND re-run against the client replica for prediction — each
+    /// cell's reply MUST be a pure function of that cell's [`CellInput`] (same
+    /// determinism contract as [`GuestCall::GenFeature`]; see the per-cell purity
+    /// note on the [`crate::shape`] module). → [`GuestRet::BakedSim`].
+    BakeShapeSim {
+        shape_kind: u8,
+        cells: Vec<CellInput>,
+    },
+    /// Bake the client RENDER geometry (the drawn boxes) for every cell of one
+    /// custom shape kind in a section. Client `client_wasm` only; no determinism
+    /// requirement. → [`GuestRet::BakedRender`].
+    BakeShapeRender {
+        shape_kind: u8,
+        cells: Vec<CellInput>,
+    },
+    /// Bake one block's ITEM geometry (icon / dropped / in-hand), once at load.
+    /// → [`GuestRet::BakedItem`].
+    BakeShapeItem {
+        shape_kind: u8,
+        block_id: BlockId,
+    },
+    /// Compute a custom shape's placement plan for one click — read-only world
+    /// access through the ordinary `GetBlock` host calls (mutating host calls
+    /// error during this dispatch). Placement is single-cell: the host accepts a
+    /// plan writing exactly one cell near the click. → [`GuestRet::ShapePlacement`].
+    ShapePlacementPlan {
+        shape_kind: u8,
+        block_id: BlockId,
+        inputs: PlaceInputsView,
+    },
 }
 
 /// Guest → host reply for a [`GuestCall`].
@@ -179,4 +217,20 @@ pub enum GuestRet {
     /// Reply to [`GuestCall::AiNode`]: the node's desires for this mob this
     /// tick (`None` = no opinion on anything, same as the default decision).
     AiDecision(Option<AiNodeDecision>),
+
+    // --- Procedural shape bakes (Layer 3) ---------------------------------------
+    /// Reply to [`GuestCall::BakeShapeSim`]: one [`BakedSimCell`] per input cell,
+    /// in order. An EMPTY reply means "no bake, use the static fallback" (a shape
+    /// that declines to bake, or a `client_wasm` implementing only the render
+    /// side); a wrong-but-NONZERO length is a protocol break that disables the
+    /// mod. Boxes are sanitized at ingest (see [`BakedSimCell`]).
+    BakedSim(Vec<BakedSimCell>),
+    /// Reply to [`GuestCall::BakeShapeRender`]: one [`BakedRenderCell`] per input
+    /// cell, in order. Empty = fallback, wrong-nonzero = protocol break (same
+    /// policy as [`GuestRet::BakedSim`]).
+    BakedRender(Vec<BakedRenderCell>),
+    /// Reply to [`GuestCall::BakeShapeItem`]: the block's item geometry.
+    BakedItem(BakedItemGeometry),
+    /// Reply to [`GuestCall::ShapePlacementPlan`]: the placement plan.
+    ShapePlacement(ShapePlacementResult),
 }

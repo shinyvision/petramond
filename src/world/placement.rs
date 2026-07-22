@@ -12,7 +12,7 @@
 //! body + replicated rows), so the rules take it as a closure over the cells
 //! and boxes the placed shape would occupy.
 
-use crate::block::{Aabb, Block, RenderShape};
+use crate::block::{Aabb, Block, ShapeFamily};
 use crate::block_state::{LogAxis, StairHalf, StairState};
 use crate::facing::Facing;
 use crate::mathh::IVec3;
@@ -57,6 +57,11 @@ pub(crate) enum PlacementWrite {
     Slab(SlabSlot),
     Door(Facing),
     Model(Facing),
+    /// A Layer-3 custom shape's placement (the shape's own WASM
+    /// `shape_placement_plan` decided orientation): a plain single-cell id write,
+    /// exactly like [`Cube`](Self::Cube). Placement is stateless — a custom cell
+    /// carries no per-cell KV, so there is no new section map to write.
+    Custom { block_id: u8 },
 }
 
 /// A validated placement: the cell it anchors on (the commit target — the
@@ -82,7 +87,7 @@ impl World {
         normal: IVec3,
         player_facing: Facing,
     ) -> Option<SlabSlot> {
-        if block.render_shape() != RenderShape::Slab {
+        if block.shape_family() != ShapeFamily::Slab {
             return None;
         }
         let looked_at = Block::from_id(self.chunk_block(hit.x, hit.y, hit.z));
@@ -105,8 +110,8 @@ impl World {
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> Option<PlacementPlan> {
         let p = inputs.place_pos;
-        match block.render_shape() {
-            RenderShape::Slab => {
+        match block.shape_family() {
+            ShapeFamily::Slab => {
                 // A stack lands in the CLICKED cell when the clicked face
                 // fronts the half it would fill; otherwise a fresh layer
                 // builds into the adjacent cell.
@@ -147,7 +152,8 @@ impl World {
             // marked directionalView, are oriented from the player's facing
             // through the model's own placement orientation; the anchor
             // shifts to the oriented base.
-            RenderShape::Model(kind) => {
+            ShapeFamily::Model => {
+                let kind = block.model_kind().expect("model family carries a model kind");
                 let oriented =
                     block.directional_view() || crate::block_model::instance(kind).cells.len() > 1;
                 let facing = if oriented {
@@ -183,7 +189,7 @@ impl World {
             // A door is a 2-tall thin block: both cells must be loaded +
             // replaceable with a floor to stand on, and the closed slab must
             // not trap a body. It sits on the edge nearest the placer.
-            RenderShape::Door => {
+            ShapeFamily::Door => {
                 if !self.door_footprint_clear(p) {
                     return None;
                 }
@@ -204,7 +210,7 @@ impl World {
                     write: PlacementWrite::Door(inputs.player_facing),
                 })
             }
-            RenderShape::Stair => {
+            ShapeFamily::Stair => {
                 let state = StairState::new(inputs.player_facing, inputs.stair_half);
                 if !self.placement_cell_open(p) {
                     return None;
@@ -221,11 +227,21 @@ impl World {
             // A pane occupies only its resolved post + arms, so the overlap
             // gate tests those thin boxes. No stored state: connections are
             // re-resolved from neighbours wherever the shape is read.
-            RenderShape::Pane => {
+            // A connection shape occupies only its resolved post + arms, so the
+            // overlap gate tests those thin boxes — from the BLOCK's own params,
+            // since the cell is still empty (a placed shape reads its own params
+            // via the collision facet). No stored state: connections re-resolve
+            // from neighbours wherever the shape is read.
+            ShapeFamily::Pane => {
                 if !self.placement_cell_open(p) {
                     return None;
                 }
-                if occupied(p, self.pane_boxes_at(p)) {
+                let c = block
+                    .shape_kind_def()
+                    .params
+                    .connection()
+                    .expect("pane carries connection params");
+                if occupied(p, self.connection_boxes_at(p, c, ShapeFamily::Pane)) {
                     return None;
                 }
                 Some(PlacementPlan {
@@ -234,13 +250,16 @@ impl World {
                     write: PlacementWrite::Cube,
                 })
             }
-            // A fence places exactly like a pane: the overlap gate tests its
-            // resolved post + arms, and there is no state to store.
-            RenderShape::Fence => {
+            ShapeFamily::Fence => {
                 if !self.placement_cell_open(p) {
                     return None;
                 }
-                if occupied(p, self.fence_boxes_at(p)) {
+                let c = block
+                    .shape_kind_def()
+                    .params
+                    .connection()
+                    .expect("fence carries connection params");
+                if occupied(p, self.connection_boxes_at(p, c, ShapeFamily::Fence)) {
                     return None;
                 }
                 Some(PlacementPlan {
@@ -269,7 +288,7 @@ impl World {
         // any angle stands a floor torch where the grass was. Keyed on the
         // shape, not the engine block: a pack row declaring the torch shape
         // gets the same mount rule.
-        let write = if block.render_shape() == RenderShape::Torch {
+        let write = if block.shape_family() == ShapeFamily::Torch {
             let tp = if inputs.replacing_in_place {
                 TorchPlacement::Floor
             } else {
@@ -279,7 +298,7 @@ impl World {
                 return None;
             }
             PlacementWrite::Torch(tp)
-        } else if block.render_shape() == RenderShape::Ladder {
+        } else if block.shape_family() == ShapeFamily::Ladder {
             // A ladder-shaped block only mounts on a vertical wall face and
             // needs a complete face behind its panel. The clicked face's
             // normal names the panel front even when replacing a plant in
@@ -289,7 +308,8 @@ impl World {
             if !self.ladder_supported_at(p, facing) {
                 return None;
             }
-            if occupied(p, crate::ladder::collision_boxes(facing)) {
+            let (t, h) = block.ladder_dims();
+            if occupied(p, crate::ladder::collision_boxes_dim(facing, t, h)) {
                 return None;
             }
             PlacementWrite::WallPanel(facing)
@@ -343,7 +363,7 @@ impl World {
         with_block_entities: bool,
     ) -> bool {
         let a = plan.anchor;
-        match plan.write {
+        match &plan.write {
             PlacementWrite::Cube => self.set_block_world(a.x, a.y, a.z, block),
             PlacementWrite::DirectionalCube(facing) => {
                 if !self.set_block_world(a.x, a.y, a.z, block) {
@@ -354,12 +374,12 @@ impl World {
                     // the engine containers; other directional cubes keep no
                     // stored facing (matching the pre-split server ladder).
                     if block == Block::Furnace {
-                        self.insert_furnace(a, facing);
+                        self.insert_furnace(a, *facing);
                     } else if block == Block::Chest {
-                        self.insert_chest(a, facing);
+                        self.insert_chest(a, *facing);
                     }
                 } else {
-                    self.insert_entity_facing(a, facing);
+                    self.insert_entity_facing(a, *facing);
                 }
                 true
             }
@@ -367,7 +387,7 @@ impl World {
                 if !self.set_block_world(a.x, a.y, a.z, block) {
                     return false;
                 }
-                self.insert_torch(a, tp);
+                self.insert_torch(a, *tp);
                 true
             }
             PlacementWrite::WallPanel(facing) => {
@@ -376,13 +396,18 @@ impl World {
                 // normal. One plain id write — nothing enters the
                 // entity-facing map, so a ladder never classifies its
                 // section as a block-entity section.
-                self.set_block_world(a.x, a.y, a.z, block.wall_panel_row(facing))
+                self.set_block_world(a.x, a.y, a.z, block.wall_panel_row(*facing))
             }
-            PlacementWrite::Log(axis) => self.place_log(a, block, axis),
-            PlacementWrite::Stair(state) => self.place_stair(a, block, state),
-            PlacementWrite::Slab(slot) => self.place_slab_layer(a, block, slot),
-            PlacementWrite::Door(facing) => self.place_door(a, block, facing),
-            PlacementWrite::Model(facing) => self.place_model_block_facing(a, block, facing),
+            PlacementWrite::Log(axis) => self.place_log(a, block, *axis),
+            PlacementWrite::Stair(state) => self.place_stair(a, block, *state),
+            PlacementWrite::Slab(slot) => self.place_slab_layer(a, block, *slot),
+            PlacementWrite::Door(facing) => self.place_door(a, block, *facing),
+            PlacementWrite::Model(facing) => self.place_model_block_facing(a, block, *facing),
+            PlacementWrite::Custom { block_id } => {
+                // Single-cell stateless custom placement: a plain id write at the
+                // anchor (re-dirties the cell's bake), exactly like Cube.
+                self.set_block_world(a.x, a.y, a.z, Block::from_id(*block_id))
+            }
         }
     }
 }

@@ -5,7 +5,7 @@
 //! than gathered per frame, so this is just thin world↔chunk wrappers for placement
 //! and breaking. Mirrors [`world::chest`](super::chest) minus the GUI/gather paths.
 
-use crate::block::RenderShape;
+use crate::block::ShapeFamily;
 use crate::mathh::IVec3;
 use crate::torch::TorchPlacement;
 
@@ -79,14 +79,14 @@ impl World {
         if block.is_opaque() {
             return true;
         }
-        match block.render_shape() {
-            RenderShape::Stair => {
+        match block.shape_family() {
+            ShapeFamily::Stair => {
                 let shape = self.stair_shape_at(support.x, support.y, support.z);
                 face_full(normal, kind, |ix, iy, iz| {
                     crate::stair::shape_half_cell_occupied(shape, ix, iy, iz)
                 })
             }
-            RenderShape::Slab => {
+            ShapeFamily::Slab => {
                 let state = self.slab_state_at(support.x, support.y, support.z);
                 if state.is_full() {
                     return true;
@@ -97,7 +97,7 @@ impl World {
             }
             // A fence always has its post: the flat post top holds a floor
             // torch. Its sides are never a complete 1×1 wall face.
-            RenderShape::Fence => kind == SupportKind::Floor,
+            ShapeFamily::Fence => kind == SupportKind::Floor,
             _ => false,
         }
     }

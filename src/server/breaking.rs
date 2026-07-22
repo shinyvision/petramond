@@ -1,4 +1,4 @@
-use crate::block::{Block, RenderShape};
+use crate::block::{Block, ShapeFamily};
 use crate::entity::DroppedItem;
 use crate::events::{BlockBreakPre, Outcome, PostEvent};
 use crate::item::ItemStack;
@@ -318,7 +318,7 @@ impl ServerGame {
             .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
             .map(|h| h.normal);
         let (sky, blk, _warm) = break_light(&self.world, event.pos, hit_normal);
-        let slab_drops = (event.block.render_shape() == RenderShape::Slab)
+        let slab_drops = (event.block.shape_family() == ShapeFamily::Slab)
             .then(|| self.world.slab_drop_stacks_at(event.pos));
         // A mod container is keyed at the block's container anchor — resolved
         // BEFORE the removal below clears the model-group metadata the anchor
@@ -326,9 +326,9 @@ impl ServerGame {
         let container_pos = self.world.container_anchor(event.pos);
         // A bbmodel block breaks as a whole: removing any cell clears every footprint
         // cell (the 2×2×1 workbench vanishes as one object, drops one item below).
-        if matches!(event.block.render_shape(), RenderShape::Model(_)) {
+        if event.block.shape_family() == ShapeFamily::Model {
             self.world.remove_model_block(event.pos);
-        } else if event.block.render_shape() == RenderShape::Door {
+        } else if event.block.shape_family() == ShapeFamily::Door {
             // A door breaks as a whole: removing either cell clears both halves and
             // drops one door item (the `spawn_drops` below). The client-side swing
             // animation entry dies with it, dropped from the `block_broken` event

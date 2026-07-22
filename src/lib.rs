@@ -26,6 +26,7 @@ mod camera;
 mod chunk;
 mod collision;
 mod column;
+mod connect;
 mod container;
 mod controls;
 mod crafting;

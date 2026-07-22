@@ -1,16 +1,20 @@
-//! Player-on-mob riding: the ATTACHMENT registry.
+//! Player riding: the ATTACHMENT registry.
 //!
-//! The engine owns the mechanism — which player sits in which seat of which
-//! mob, validated against the species' `seats` row data — while mount POLICY
-//! (who may sit where, who controls the mount, what riding does) stays with
-//! mods through the `MobMount`/`MobDismount`/`MobRiders` HostCalls. The
-//! registry lives on `World` so those calls can reach it through `SimCtx`;
-//! the per-tick consequences (slaving each rider's player to its seat,
-//! sneak-dismount, pruning dead/vanished mounts) run in the server's riding
-//! pass (`server::riding`), which reconciles sessions against this registry.
+//! The engine owns the mechanism — which player is attached to which mob seat
+//! (validated against `mobs.json` row `seats`) or pinned at which static pose
+//! anchor — while attachment POLICY (who may sit where, who controls the
+//! mount, where furniture seats exist) stays with mods through the
+//! `MobMount`/`PlayerPoseSet`/`MobDismount` HostCalls. The registry lives on
+//! `World` so those calls can reach it through `SimCtx`; the per-tick
+//! consequences (slaving each rider's player to its seat, sneak-dismount,
+//! pruning dead/vanished mounts) run in the server's riding pass
+//! (`server::riding`), which reconciles sessions against this registry.
 //!
-//! Riding is transient session state: it is never persisted, and a mob that
-//! dies, despawns, or unloads sheds its riders on the next riding pass.
+//! Riding is transient session state: it is never persisted. A mob that dies,
+//! despawns, or unloads sheds its riders on the next riding pass; a pose
+//! anchor is released only by the engine valves (sneak, death, spectator,
+//! leave) or the owning mod's detach call — furniture that breaks under a
+//! sitter is the MOD's release to make.
 
 use std::collections::BTreeMap;
 
@@ -19,17 +23,39 @@ use crate::player;
 
 const DISMOUNT_CLEARANCE: f32 = 0.45;
 
-/// One player's attachment: the STABLE mob id (never a storage index) and the
-/// seat index into the species' `seats` row list.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// A static world-space actor pose: the anchor the body pins at, the body
+/// yaw (player convention: yaw 0 faces `+Z`), and the named pose it holds
+/// (vocabulary: `mod_api::pose`; unknown values render the rest pose).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct PoseAnchor {
+    pub pos: Vec3,
+    pub yaw: f32,
+    pub pose: u8,
+}
+
+/// What a player is attached to.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum MountTarget {
+    /// Live mob, addressed by its stable session id.
+    Mob(u64),
+    /// A static pose anchor (the `PlayerPoseSet` primitive — furniture).
+    /// Target equality is the anchor value, so the registry's occupied-seat
+    /// rule doubles as "no two players on one exact anchor".
+    Anchor(PoseAnchor),
+}
+
+/// One player's attachment: the mount target and, for mob mounts, the seat
+/// index into the species' declared `seats` list (`0` for pose anchors —
+/// anchor identity is the anchor value itself).
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Mount {
-    pub mob_id: u64,
+    pub target: MountTarget,
     pub seat: u8,
 }
 
-/// Rotate a mob-local seat offset (`x` right, `y` up, `z` facing) into world
+/// Rotate a mount-local seat offset (`x` right, `y` up, `z` facing) into world
 /// space. Both authoritative slaving and client presentation use this exact
-/// transform.
+/// transform for mob seats.
 pub(crate) fn seat_world_pos(mob_pos: Vec3, mob_yaw: f32, seat: [f32; 3]) -> Vec3 {
     let (sy, cy) = mob_yaw.sin_cos();
     let facing = Vec3::new(-sy, 0.0, -cy);
@@ -125,7 +151,7 @@ fn player_body_aabb(feet: Vec3) -> ([f32; 3], [f32; 3]) {
 }
 
 /// The riding registry: player id → mount. BTreeMap so every iteration
-/// (occupancy checks, the riding pass, `MobRiders`) is deterministic.
+/// (occupancy checks, the riding pass, rider queries) is deterministic.
 #[derive(Default)]
 pub struct Riding {
     mounts: BTreeMap<u8, Mount>,
@@ -142,30 +168,30 @@ impl Riding {
         self.mounts.get(&player).copied()
     }
 
-    /// Every rider of `mob_id` as `(seat, player)`, in player-id order.
-    pub fn riders_of(&self, mob_id: u64) -> Vec<(u8, u8)> {
+    /// Every rider of `target` as `(seat, player)`, in player-id order.
+    pub fn riders_of(&self, target: MountTarget) -> Vec<(u8, u8)> {
         self.mounts
             .iter()
-            .filter(|(_, m)| m.mob_id == mob_id)
+            .filter(|(_, m)| m.target == target)
             .map(|(&player, m)| (m.seat, player))
             .collect()
     }
 
-    /// Whether `seat` of `mob_id` is taken.
-    pub fn seat_taken(&self, mob_id: u64, seat: u8) -> bool {
+    /// Whether `seat` of `target` is taken.
+    pub fn seat_taken(&self, target: MountTarget, seat: u8) -> bool {
         self.mounts
             .values()
-            .any(|m| m.mob_id == mob_id && m.seat == seat)
+            .any(|m| m.target == target && m.seat == seat)
     }
 
-    /// Attach `player` to `seat` of `mob_id`. Refused when the player is
+    /// Attach `player` to `seat` of `target`. Refused when the player is
     /// already mounted or the seat is taken — seat-count/liveness validation
-    /// against the mob itself is the caller's job (`World::try_mount_player`).
-    pub fn mount(&mut self, player: u8, mob_id: u64, seat: u8) -> bool {
-        if self.mounts.contains_key(&player) || self.seat_taken(mob_id, seat) {
+    /// against the mount itself is the caller's job.
+    pub fn mount(&mut self, player: u8, target: MountTarget, seat: u8) -> bool {
+        if self.mounts.contains_key(&player) || self.seat_taken(target, seat) {
             return false;
         }
-        self.mounts.insert(player, Mount { mob_id, seat });
+        self.mounts.insert(player, Mount { target, seat });
         true
     }
 
@@ -198,24 +224,30 @@ mod tests {
     #[test]
     fn one_seat_one_rider_one_mount_per_player() {
         let mut r = Riding::default();
-        assert!(r.mount(1, 77, 0));
-        assert!(!r.mount(2, 77, 0), "occupied seat refuses a second rider");
-        assert!(r.mount(2, 77, 1));
-        assert!(!r.mount(1, 88, 0), "a mounted player cannot mount again");
-        assert_eq!(r.riders_of(77), vec![(0, 1), (1, 2)]);
+        let boat = MountTarget::Mob(77);
+        let chair = MountTarget::Anchor(PoseAnchor {
+            pos: Vec3::new(1.5, 2.0, 3.5),
+            yaw: 0.0,
+            pose: 1,
+        });
+        assert!(r.mount(1, boat, 0));
+        assert!(!r.mount(2, boat, 0), "occupied seat refuses a second rider");
+        assert!(r.mount(2, boat, 1));
+        assert!(!r.mount(1, MountTarget::Mob(88), 0), "already mounted");
+        assert_eq!(r.riders_of(boat), vec![(0, 1), (1, 2)]);
         assert_eq!(
             r.dismount(1),
             Some(Mount {
-                mob_id: 77,
+                target: boat,
                 seat: 0
             })
         );
         assert_eq!(r.dismount(1), None);
-        assert!(r.mount(1, 88, 0));
+        assert!(r.mount(1, chair, 0));
         assert_eq!(
             r.mount_of(1),
             Some(Mount {
-                mob_id: 88,
+                target: chair,
                 seat: 0
             })
         );
@@ -224,7 +256,7 @@ mod tests {
             vec![(
                 1,
                 Mount {
-                    mob_id: 77,
+                    target: boat,
                     seat: 0
                 }
             )]
@@ -249,5 +281,28 @@ mod tests {
             (side - Vec3::new(10.0, 5.0, 9.0)).length() < 1e-4,
             "{side:?}"
         );
+    }
+
+    #[test]
+    fn two_players_cannot_share_one_exact_anchor() {
+        let mut r = Riding::default();
+        let anchor = |pose| {
+            MountTarget::Anchor(PoseAnchor {
+                pos: Vec3::new(4.5, 64.0, -2.6),
+                yaw: 1.0,
+                pose,
+            })
+        };
+        assert!(r.mount(1, anchor(1), 0));
+        assert!(
+            !r.mount(2, anchor(1), 0),
+            "an occupied anchor refuses a second body"
+        );
+        let nearby = MountTarget::Anchor(PoseAnchor {
+            pos: Vec3::new(4.5, 64.0, -2.4),
+            yaw: 1.0,
+            pose: 1,
+        });
+        assert!(r.mount(2, nearby, 0), "a distinct anchor is a distinct seat");
     }
 }

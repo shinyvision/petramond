@@ -5,30 +5,47 @@
 //! selection, and the placement overlap check all read the same
 //! `crate::pane::resolved_mask` the mesher renders from.
 
-use crate::block::Aabb;
+use crate::block::{Aabb, ConnectionRule, ShapeFamily};
 use crate::mathh::IVec3;
 
 use super::store::World;
 
 impl World {
-    /// The 4-bit connection mask a pane at `pos` has (or WOULD have — the cell's
-    /// current content is never read, so placement can ask before writing).
+    /// The 4-bit connection mask of the pane placed at `pos`, using its own rule
+    /// (a modded bar may connect differently than an engine pane). See
+    /// [`World::connection_mask_at`](crate::world::World::connection_mask_at).
     #[inline]
     pub fn pane_mask_at(&self, pos: IVec3) -> u8 {
-        crate::pane::resolved_mask(
-            pos,
-            |p| self.physics_block(p.x, p.y, p.z),
-            |p| self.stair_shape_at(p.x, p.y, p.z),
-            |p| self.slab_state_at(p.x, p.y, p.z).is_full(),
-        )
+        let block = self.physics_block(pos.x, pos.y, pos.z);
+        debug_assert_eq!(
+            block.shape_family(),
+            ShapeFamily::Pane,
+            "pane_mask_at on a non-pane cell"
+        );
+        // Silent default in release (see the fence twin): a non-pane cell falls
+        // back to the engine rule, the debug assert catches the misuse.
+        let rule = block
+            .shape_kind_def()
+            .params
+            .connection()
+            .map_or(ConnectionRule::SolidOrSame, |c| c.rule);
+        self.connection_mask_at(pos, ShapeFamily::Pane, rule)
     }
 
-    /// The collision/selection boxes for a pane at `pos`, shaped by its current
-    /// neighbours: the centre post, extended by full-height arms toward each
-    /// connected side.
+    /// The collision/selection boxes for the pane placed at `pos`, from its own
+    /// connection params.
     #[inline]
     pub fn pane_boxes_at(&self, pos: IVec3) -> &'static [Aabb] {
-        crate::pane::boxes_for_mask(self.pane_mask_at(pos))
+        let block = self.physics_block(pos.x, pos.y, pos.z);
+        debug_assert_eq!(
+            block.shape_family(),
+            ShapeFamily::Pane,
+            "pane_boxes_at on a non-pane cell"
+        );
+        match block.shape_kind_def().params.connection() {
+            Some(c) => self.connection_boxes_at(pos, c, ShapeFamily::Pane),
+            None => &[],
+        }
     }
 }
 

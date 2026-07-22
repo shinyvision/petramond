@@ -26,6 +26,7 @@ mod instance;
 pub(crate) mod manifest;
 pub(crate) mod modset;
 mod scope;
+mod shape_bake;
 
 /// The session's loaded recipe catalog, shared with the host so `RecipeResult`
 /// answers from the exact table the engine cooks from (same process-wide
@@ -417,6 +418,100 @@ impl ModHost {
                     .disable("returned a non-unit reply to a block behavior dispatch"),
             }
         }
+    }
+
+    /// Bake the SIM geometry of every dirty Layer-3 custom-shape cell: batch each
+    /// shape kind's cells to the owning pack's WASM ([`GuestCall::BakeShapeSim`])
+    /// and cache the collision boxes for the physics to read. A missing owner, a
+    /// disabled mod, or a wrong-shaped/short reply leaves the cells uncached, so
+    /// their collision falls back to the row's static boxes (the failure policy)
+    /// while placed world data stays intact.
+    pub(crate) fn bake_custom_shapes(&self, ctx: &mut SimCtx) {
+        let cells = ctx.world.drain_custom_bake_dirty();
+        if cells.is_empty() {
+            return;
+        }
+        // Group by (owning mod id, shape kind) — one batch dispatch per group.
+        // A BTreeMap (not HashMap) plus the position-sorted drain give a defined
+        // dispatch order server↔client: any state a bake touched would otherwise
+        // diverge and desync (the per-cell purity contract makes that a bug, but
+        // the ordered dispatch is the belt-and-braces).
+        let mut groups: std::collections::BTreeMap<(String, u8), Vec<super::world::CustomBakeCell>> =
+            std::collections::BTreeMap::new();
+        for cell in cells {
+            let mod_id = crate::registry::namespace(cell.shape_key)
+                .unwrap_or_default()
+                .to_owned();
+            groups
+                .entry((mod_id, cell.shape_kind))
+                .or_default()
+                .push(cell);
+        }
+        for ((mod_id, shape_kind), group) in groups {
+            let Some(inst) = self.instance_by_id(&mod_id) else {
+                continue;
+            };
+            let positions: Vec<crate::mathh::IVec3> = group.iter().map(|c| c.pos).collect();
+            let inputs: Vec<mod_api::CellInput> =
+                group.iter().map(shape_bake::cell_input).collect();
+            let call = GuestCall::BakeShapeSim {
+                shape_kind,
+                cells: inputs,
+            };
+            let reply = inst.lock().unwrap().call_guest(ctx, &call);
+            let Some(GuestRet::BakedSim(baked)) = reply else {
+                continue;
+            };
+            match shape_bake::ingest_sim_bake(&baked, positions.len()) {
+                shape_bake::BakeIngest::Apply(cells) => {
+                    for (pos, (boxes, aperture)) in positions.iter().zip(cells) {
+                        ctx.world.set_custom_bake(*pos, &boxes);
+                        ctx.world.set_custom_light_aperture(*pos, aperture);
+                    }
+                }
+                // An empty reply / disabled mod: cells stay uncached and fall
+                // back to their static collision boxes (the failure policy).
+                shape_bake::BakeIngest::Fallback => {}
+                shape_bake::BakeIngest::Disable(reason) => inst.lock().unwrap().disable(&reason),
+            }
+        }
+    }
+
+    /// Ask a Layer-3 custom shape's owning pack how to place it for one click
+    /// ([`GuestCall::ShapePlacementPlan`]) — the per-interaction placement
+    /// callback (not a hot path). `None` means no reachable owner (unknown
+    /// namespace or a disabled/trapped mod), so the caller falls back to the
+    /// ordinary engine placement ladder; a reachable owner always answers (the
+    /// SDK default accepts at the click cell).
+    pub(crate) fn shape_placement_plan(
+        &self,
+        ctx: &mut SimCtx,
+        shape_key: &str,
+        shape_kind: u8,
+        block_id: u8,
+        inputs: mod_api::PlaceInputsView,
+    ) -> Option<mod_api::ShapePlacementResult> {
+        let mod_id = crate::registry::namespace(shape_key)?;
+        let inst = self.instance_by_id(mod_id)?;
+        let call = GuestCall::ShapePlacementPlan {
+            shape_kind,
+            block_id: mod_api::BlockId(block_id),
+            inputs,
+        };
+        // Read-only scope: the placement plan validates against the world but
+        // must not mutate it (a mutating host call errors during this dispatch).
+        match inst.lock().unwrap().call_guest_read_only(ctx, &call) {
+            Some(GuestRet::ShapePlacement(result)) => Some(result),
+            _ => None,
+        }
+    }
+
+    /// The loaded instance of mod `id`, if any (custom-shape bake routing).
+    fn instance_by_id(&self, id: &str) -> Option<&SharedInstance> {
+        self.metas
+            .iter()
+            .position(|m| m.id == id)
+            .map(|i| &self.instances[i])
     }
 
     pub(crate) fn hostile_spawn_kind(

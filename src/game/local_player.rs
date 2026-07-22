@@ -142,7 +142,10 @@ impl Game {
     /// the slaved rider sits inside.
     pub(super) fn solid_entity_obstacles(&self) -> Vec<crate::collision::DynBox> {
         let alpha = self.tick_alpha();
-        let own_mount = self.self_mount.map(|(id, _)| id);
+        let own_mount = self.self_mount.and_then(|m| match m {
+            crate::net::protocol::PlayerMount::Mob { id, .. } => Some(id),
+            crate::net::protocol::PlayerMount::Anchor { .. } => None,
+        });
         let mut out = Vec::new();
         for entry in self.replicated_mobs.iter() {
             let row = &entry.curr;
@@ -159,28 +162,37 @@ impl Game {
         out
     }
 
-    /// The world-space seat position of `(mob id, seat)` on the INTERPOLATED
-    /// replicated mount this frame, or `None` when the mob isn't replicated
-    /// (yet) or the seat isn't declared — the caller keeps its current
-    /// transform and waits for the rows to agree.
-    fn mount_seat_pos(&self, (mob_id, seat): (u64, u8)) -> Option<Vec3> {
-        self.replicated_mobs
-            .interpolated_seat_pose(mob_id, seat, self.tick_alpha())
-            .map(|(pos, _)| pos)
+    /// The world-space seat position of a mount this frame, or `None` when the
+    /// mount isn't available yet — the caller keeps its current transform and
+    /// waits for the rows to agree.
+    fn mount_seat_pos(&self, mount: crate::net::protocol::PlayerMount) -> Option<Vec3> {
+        match mount {
+            crate::net::protocol::PlayerMount::Mob { id, seat } => self
+                .replicated_mobs
+                .interpolated_seat_pose(id, seat, self.tick_alpha())
+                .map(|(pos, _)| pos),
+            // A pose anchor is static world state: the wire pos IS the seat.
+            crate::net::protocol::PlayerMount::Anchor { pos, .. } => Some(pos),
+        }
     }
 
-    /// The BODY yaw a seated local player renders with: the interpolated
-    /// mount's facing in player-yaw space (mob yaw 0 faces `-Z`, player body
-    /// yaw 0 faces `+Z` — π apart). A rider sits square in its seat; only the
-    /// head follows the look (see `collect_player`).
+    /// The BODY yaw a seated local player renders with: the mount's facing in
+    /// player-yaw space (mob yaw 0 faces `-Z`, player body yaw 0 faces `+Z`
+    /// — π apart; a pose anchor already carries player-convention yaw). A
+    /// rider sits square in its seat; only the head follows the look (see
+    /// `collect_player`).
     pub(super) fn mount_body_yaw(&self) -> Option<f32> {
-        let (mob_id, seat) = self.self_mount?;
-        let (_, yaw) =
-            self.replicated_mobs
-                .interpolated_seat_pose(mob_id, seat, self.tick_alpha())?;
-        Some(crate::game::body_pose::wrap_angle(
-            yaw + std::f32::consts::PI,
-        ))
+        let mount = self.self_mount?;
+        let yaw = match mount {
+            crate::net::protocol::PlayerMount::Mob { id, seat } => {
+                self.replicated_mobs
+                    .interpolated_seat_pose(id, seat, self.tick_alpha())?
+                    .1
+                    + std::f32::consts::PI
+            }
+            crate::net::protocol::PlayerMount::Anchor { yaw, .. } => yaw,
+        };
+        Some(crate::game::body_pose::wrap_angle(yaw))
     }
 
     /// Per-frame push of the player out of overlapping soft bodies (mobs +
@@ -347,7 +359,10 @@ impl Game {
     /// a mob *behind* the block isn't targeted (the block occludes it).
     pub(super) fn closest_mob(&self, eye: Vec3, dir: Vec3, max_dist: f32) -> Option<(u64, f32)> {
         let limit = max_dist.min(player::REACH);
-        let own_mount = self.self_mount.map(|(id, _)| id);
+        let own_mount = self.self_mount.and_then(|m| match m {
+            crate::net::protocol::PlayerMount::Mob { id, .. } => Some(id),
+            crate::net::protocol::PlayerMount::Anchor { .. } => None,
+        });
         let alpha = self.tick_alpha();
         let bodies = self.replicated_mobs.iter().filter_map(|entry| {
             let row = &entry.curr;

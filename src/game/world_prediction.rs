@@ -35,6 +35,10 @@ impl Game {
                 .inventory
                 .selected()
                 .map_or(0, |st| st.count),
+            pose_anchor: self.self_mount.and_then(|m| match m {
+                crate::net::protocol::PlayerMount::Anchor { pos, .. } => Some(pos.to_array()),
+                crate::net::protocol::PlayerMount::Mob { .. } => None,
+            }),
         }
     }
 
@@ -261,7 +265,6 @@ impl Game {
     /// On predict: cell(s), hotbar decrement, hand pop, and a local
     /// `WorldEvent::BlockPlaced`.
     pub(super) fn try_predict_place_ghost(&mut self, sneak: bool) -> PlacePrediction {
-        use crate::block::RenderShape;
 
         let Some(look) = self.look else {
             return PlacePrediction::No;
@@ -398,11 +401,11 @@ impl Game {
         // shifted base) — and oriented/multi-cell models even when the base
         // happens to coincide. Plausible: the jab fires (the click WILL
         // place), the request ships unpredicted.
-        let oriented_model = match block.render_shape() {
-            RenderShape::Model(kind) => {
+        let oriented_model = match block.model_kind() {
+            Some(kind) => {
                 block.directional_view() || crate::block_model::instance(kind).cells.len() > 1
             }
-            _ => false,
+            None => false,
         };
         if plan.anchor != place_pos || oriented_model {
             return PlacePrediction::Plausible;

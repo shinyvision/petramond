@@ -27,7 +27,8 @@ use crate::item::{Drop, DropSpec, ItemType};
 use crate::registry::ContentNames;
 
 use super::definition::{self, BlockDef, BlockFlags, BlockMaterial, ParticleEmitter};
-use super::{behavior, Aabb, Block, BlockInteraction, BlockTag, RenderShape};
+use super::shape_kind::{self, RawShape, ShapeFamily, ShapeKindDef, ShapeKindInterner};
+use super::{behavior, Aabb, Block, BlockInteraction, BlockTag};
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct RawFile {
@@ -47,7 +48,7 @@ pub(super) struct RawBlockDef {
     /// table, NOT through `Block` serde, so the loader stays the one place
     /// ids are assigned.
     pub block: String,
-    pub shape: RenderShape,
+    pub shape: RawShape,
     pub flags: Vec<RawFlag>,
     /// Tag names: bare engine tags or namespaced `mod_id:name` pack tags
     /// (interned at load — see [`BlockTag::resolve`]).
@@ -235,8 +236,16 @@ pub(super) struct RawDrop {
 /// `data::emission`).
 pub(super) struct Registry {
     pub defs: &'static [BlockDef],
+    /// Session-local shape-kind table (see [`shape_kind`]); every
+    /// `BlockDef::shape_kind` indexes it.
+    pub shape_kinds: &'static [ShapeKindDef],
     pub flags: [BlockFlags; 256],
     pub emission: [u8; 256],
+    /// Dense per-id copy of each block's [`ShapeFamily`] — the hot classifier
+    /// the mesher/nav read per cell, one small-array read instead of the
+    /// `def()`→`shape_kind`→table double indirection (same rationale as
+    /// [`flags`](Self::flags)).
+    pub shape_family: [ShapeFamily; 256],
 }
 
 /// Load the registry from every `blocks.json` layer (base + mod packs, later
@@ -267,6 +276,9 @@ pub(super) fn parse_test_layers(texts: &[&str]) -> Result<Registry, String> {
 }
 
 pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Registry, String> {
+    // Every row's `shape` interns into this table during `convert`, deduping one
+    // shape-kind row per distinct family+params (see [`shape_kind`]).
+    let mut interner = shape_kind::ShapeKindInterner::new();
     let defs = crate::registry::resolve_catalog(
         texts,
         |text| serde_json::from_str::<RawFile>(text).map(|f| f.blocks),
@@ -275,22 +287,27 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
         "block",
         |r, id, _| {
             let key = r.block.clone();
-            convert(r, Block(id), names).map_err(|e| format!("block '{key}': {e}"))
+            convert(r, Block(id), names, &mut interner).map_err(|e| format!("block '{key}': {e}"))
         },
     )?;
     let defs: &'static [BlockDef] = Box::leak(defs.into_boxed_slice());
+    let shape_kinds: &'static [ShapeKindDef] = Box::leak(interner.into_table().into_boxed_slice());
     validate_stage_chains(defs)?;
     validate_facing_rows(defs)?;
     let mut flags = [BlockFlags::NONE; 256];
     let mut emission = [0u8; 256];
+    let mut shape_family = [ShapeFamily::Cube; 256];
     for d in defs {
         flags[d.block.id() as usize] = d.flags;
         emission[d.block.id() as usize] = d.emission;
+        shape_family[d.block.id() as usize] = shape_kinds[d.shape_kind.0 as usize].family;
     }
     Ok(Registry {
         defs,
+        shape_kinds,
         flags,
         emission,
+        shape_family,
     })
 }
 
@@ -384,7 +401,12 @@ fn parse_facing(name: &str) -> Result<Facing, String> {
     }
 }
 
-fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDef, String> {
+fn convert(
+    r: RawBlockDef,
+    block: Block,
+    names: &ContentNames,
+    interner: &mut ShapeKindInterner,
+) -> Result<BlockDef, String> {
     let behavior = behavior::by_name(&r.behavior)
         .ok_or_else(|| format!("unknown behavior '{}'", r.behavior))?;
     let interaction = r.interaction.resolve()?;
@@ -392,15 +414,18 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
         Tile::from_name(name).ok_or_else(|| format!("unknown tile '{name}'"))
     };
     let tiles = [tile(&r.tiles[0])?, tile(&r.tiles[1])?, tile(&r.tiles[2])?];
+    // Resolve the composable shape kind once; its family/params drive every
+    // shape-keyed flag and validation below, and it interns into the table.
+    let (family, params, shape_key) = r.shape.resolve()?;
     let mut flags = BlockFlags::NONE;
     for f in &r.flags {
         flags = flags.with(f.to_flag());
     }
     // Derived, not row-listed: the shape class the mesher needs as a dense flag.
-    if matches!(r.shape, RenderShape::Slab) {
+    if family == ShapeFamily::Slab {
         flags = flags.with(BlockFlags::SLAB);
     }
-    if let RenderShape::LoweredCube(h) = r.shape {
+    if let Some(h) = params.lowered_height() {
         if !(1..=15).contains(&h) {
             return Err(format!(
                 "lowered_cube height {h} out of range (1..=15 texels visible)"
@@ -511,7 +536,7 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
     // resolve. The converse is deliberately open: `interaction: "sleep"`
     // without the tag is a sleepable block that anchors no spawn.
     if tags.contains(&BlockTag::BED) {
-        if !matches!(r.shape, RenderShape::Model(_)) {
+        if family != ShapeFamily::Model {
             return Err(
                 "the 'bed' tag requires a model shape — bed-spawn bookkeeping resolves the \
                  bed through its model group"
@@ -552,7 +577,7 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
     // the pairing are load errors (mirroring front ⇔ directional_view).
     let panel_facing = match &r.panel_facing {
         None => {
-            if r.shape == RenderShape::Ladder {
+            if family == ShapeFamily::Ladder {
                 return Err(
                     "a ladder-shaped row must declare panel_facing (facing is block identity: \
                      one row per facing)"
@@ -562,7 +587,7 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
             None
         }
         Some(name) => {
-            if r.shape != RenderShape::Ladder {
+            if family != ShapeFamily::Ladder {
                 return Err("panel_facing requires the 'ladder' shape".into());
             }
             Some(parse_facing(name)?)
@@ -571,7 +596,7 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
     let facing_rows = match &r.facing_rows {
         None => None,
         Some(raw) => {
-            if r.shape != RenderShape::Ladder {
+            if family != ShapeFamily::Ladder {
                 return Err("facing_rows requires the 'ladder' shape".into());
             }
             let resolve = |name: &String| {
@@ -620,13 +645,14 @@ fn convert(r: RawBlockDef, block: Block, names: &ContentNames) -> Result<BlockDe
             Some(Box::leak(Box::new([*row])))
         }
     };
+    let shape_kind = interner.intern(family, params, shape_key)?;
     Ok(BlockDef {
         block,
         flags,
         tags: leak(tags),
         behavior,
         interaction,
-        shape: r.shape,
+        shape_kind,
         collision: leak(r.collision),
         emission: r.emission,
         particle_emitter,
@@ -840,6 +866,67 @@ mod tests {
         assert_eq!(def.drop.drops[0].item, ItemType::Cobblestone);
         // Engine ids are untouched by the addition.
         assert_eq!(reg.defs[Block::Stone.id() as usize].block, Block::Stone);
+    }
+
+    /// Layer 2: a `{"custom": {...}}` shape parameterizes an existing family
+    /// (fence/pane) from JSON — no WASM. The loader resolves it to a
+    /// `Connection` shape kind with the declared post dimensions + rule, and
+    /// rejects out-of-range / unknown / unsupported combinations.
+    #[test]
+    fn custom_connection_shapes_load_resolve_and_validate() {
+        use crate::block::ConnectionRule;
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let row = |name: &str, shape: &str| {
+            format!(
+                r#"{{ "blocks": [ {{ "block": "{name}", "shape": {shape}, "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [] }} ] }}"#
+            )
+        };
+        let engine = crate::block::ENGINE_BLOCK_NAMES.len();
+
+        // A fence-family wall with a thick centred post resolves to a Connection
+        // kind: offset (16-8)/2 = 4, so post 4/16..12/16, engine fence rule.
+        let wall = row("mymod:stone_wall", r#"{"custom": {"family": "fence", "post_thickness": 8}}"#);
+        let reg = parse_test_layers(&[&base, &wall]).expect("custom fence wall loads");
+        let def = &reg.defs[engine];
+        let sk = &reg.shape_kinds[def.shape_kind.0 as usize];
+        assert_eq!(sk.family, ShapeFamily::Fence);
+        let c = sk.params.connection().expect("connection params");
+        assert_eq!(c.post_lo, 4.0 / 16.0);
+        assert_eq!(c.post_hi, 12.0 / 16.0);
+        assert_eq!(c.rule, ConnectionRule::OpaqueOrSame);
+        // The box table's bare-post entry matches the declared post.
+        let post = crate::connect::boxes_for_mask(c.boxes, 0)[0];
+        assert_eq!(post.min, [4.0 / 16.0, 0.0, 4.0 / 16.0]);
+
+        // A pane-family bar with an explicit rule resolves to that rule.
+        let bar = row(
+            "mymod:iron_bars",
+            r#"{"custom": {"family": "pane", "post_thickness": 2, "connection_rule": "same_family_only"}}"#,
+        );
+        let reg = parse_test_layers(&[&base, &bar]).expect("custom pane bar loads");
+        let sk = &reg.shape_kinds[reg.defs[engine].shape_kind.0 as usize];
+        assert_eq!(sk.family, ShapeFamily::Pane);
+        assert_eq!(sk.params.connection().unwrap().rule, ConnectionRule::SameOnly);
+
+        // Validation failures.
+        for (shape, needle) in [
+            (r#"{"custom": {"family": "bogus"}}"#, "unknown custom shape family"),
+            (r#"{"custom": {"family": "fence", "post_thickness": 0}}"#, "post_thickness"),
+            (
+                r#"{"custom": {"family": "fence", "post_thickness": 10, "post_offset": 10}}"#,
+                "exceeds 16",
+            ),
+            (r#"{"custom": {"family": "fence", "connection_rule": "nope"}}"#, "unknown connection_rule"),
+            (r#"{"custom": {"family": "fence", "item_form": "nope"}}"#, "unknown item_form"),
+            (r#"{"custom": {"family": "pane", "item_form": "segment"}}"#, "requires the 'fence' family"),
+        ] {
+            let layer = row("mymod:bad", shape);
+            let err = parse_test_layers(&[&base, &layer])
+                .err()
+                .unwrap_or_else(|| panic!("{shape} must fail the load"));
+            assert!(err.contains(needle), "{shape}: {err}");
+        }
     }
 
     #[test]

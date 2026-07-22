@@ -103,7 +103,18 @@ impl World {
         if mob.is_dead() || seat as usize >= crate::mob::def(mob.kind).seats.len() {
             return false;
         }
-        self.riding.mount(player, mob_id, seat)
+        self.riding
+            .mount(player, crate::mob::riding::MountTarget::Mob(mob_id), seat)
+    }
+
+    /// Pin `player` at a static pose anchor — the `PlayerPoseSet` HostCall's
+    /// engine seam. The registry enforces one attachment per player and
+    /// refuses an exactly-occupied anchor (target equality); WHERE anchors
+    /// exist and who takes one is the calling mod's policy. Finite-value
+    /// validation happens at the host boundary.
+    pub fn try_mount_anchor(&mut self, player: u8, anchor: crate::mob::riding::PoseAnchor) -> bool {
+        self.riding
+            .mount(player, crate::mob::riding::MountTarget::Anchor(anchor), 0)
     }
 
     /// Advance the mobs one fixed game tick against an immutable view of the rest of

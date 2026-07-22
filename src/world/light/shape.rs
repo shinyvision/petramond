@@ -4,12 +4,17 @@ use crate::block_state::{SlabState, StairState};
 pub(super) enum SparseCellState {
     Stair { idx: usize, state: StairState },
     Slab { idx: usize, state: SlabState },
+    /// A Layer-3 custom shape's baked light opacity at `idx` (true = blocks
+    /// light like a full cube).
+    CustomAperture { idx: usize, opaque: bool },
 }
 
 #[derive(Default)]
 pub(super) struct ShapeStateSnapshot {
     stair_states: Option<Box<[u8]>>,
     slab_states: Option<Box<[SlabState]>>,
+    /// Per-cell custom-aperture opacity (true = opaque); absent cells pass light.
+    custom_apertures: Option<Box<[bool]>>,
 }
 
 impl ShapeStateSnapshot {
@@ -18,6 +23,7 @@ impl ShapeStateSnapshot {
     pub(super) fn from_sparse(states: &[SparseCellState], volume: usize) -> Self {
         let mut stair_states: Option<Box<[u8]>> = None;
         let mut slab_states: Option<Box<[SlabState]>> = None;
+        let mut custom_apertures: Option<Box<[bool]>> = None;
         for state in states {
             match *state {
                 SparseCellState::Stair { idx, state } => {
@@ -37,11 +43,20 @@ impl ShapeStateSnapshot {
                         .get_or_insert_with(|| vec![SlabState::EMPTY; volume].into_boxed_slice());
                     states[idx] = state;
                 }
+                SparseCellState::CustomAperture { idx, opaque } => {
+                    if idx >= volume {
+                        continue;
+                    }
+                    let states = custom_apertures
+                        .get_or_insert_with(|| vec![false; volume].into_boxed_slice());
+                    states[idx] = opaque;
+                }
             }
         }
         Self {
             stair_states,
             slab_states,
+            custom_apertures,
         }
     }
 
@@ -59,6 +74,13 @@ impl ShapeStateSnapshot {
             .and_then(|f| f.get(idx).copied())
             .map(|state| crate::slab::normalize_state(block, state))
             .unwrap_or_else(|| crate::slab::default_state(block))
+    }
+
+    fn custom_aperture_opaque(&self, idx: usize) -> bool {
+        self.custom_apertures
+            .as_ref()
+            .and_then(|f| f.get(idx).copied())
+            .unwrap_or(false)
     }
 }
 
@@ -116,6 +138,15 @@ impl<'a> LightCells<'a> {
                 dir.1,
                 dir.2,
             ),
+            // Coarse per-cell opacity from the SIM bake: an opaque custom cell
+            // blocks every quadrant (like a cube), an open one passes all.
+            BlockLightShape::CustomAperture => {
+                if self.states.custom_aperture_opaque(idx) {
+                    0
+                } else {
+                    0b1111
+                }
+            }
         }
     }
 }

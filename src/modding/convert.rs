@@ -277,9 +277,14 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
             api::EventPayload::SectionGenerated { pos: section(pos) }
         }
         PostEvent::SectionLoaded { pos } => api::EventPayload::SectionLoaded { pos: section(pos) },
-        PostEvent::PlayerDismounted { player, mob_id } => api::EventPayload::PlayerDismounted {
+        PostEvent::PlayerDismounted { player, mount } => api::EventPayload::PlayerDismounted {
             player_id: api::PlayerId(player.0),
-            mob_id,
+            mount: match mount.target {
+                crate::mob::riding::MountTarget::Mob(id) => api::MountTarget::Mob(id),
+                crate::mob::riding::MountTarget::Anchor(a) => {
+                    api::MountTarget::Anchor(a.pos.to_array())
+                }
+            },
         },
         PostEvent::MobTagAdded {
             id,

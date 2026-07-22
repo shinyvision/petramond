@@ -332,6 +332,17 @@ pub struct World {
     /// re-minting every session. Persisted in `level.dat`; BTreeSet so the
     /// encoding iterates in one deterministic order. Mutated on the tick only.
     pub(super) populated_columns: BTreeSet<ChunkPos>,
+    /// Per-cell baked SIM collision boxes for Layer-3 custom shapes — the sim
+    /// bake cache the collision facet reads (a miss falls back to the row's
+    /// static boxes, the failure policy). NOT persisted; re-baked from the pack
+    /// WASM on load/edit. Boxes are content-interned to `'static` so
+    /// `collision_boxes_at` keeps its `&'static` return (bounded by the shape's
+    /// distinct configurations, not by cell count). See `world::custom_bake`.
+    pub(super) custom_bake: FxHashMap<crate::mathh::IVec3, &'static [crate::block::Aabb]>,
+    /// Custom-shape cells needing a (re)bake — placed/edited since the last bake
+    /// pump run. The host drains this, dispatches the shape's WASM bake, and
+    /// fills `custom_bake`; a cell not in either falls back to its static boxes.
+    pub(super) custom_bake_dirty: FxHashSet<crate::mathh::IVec3>,
 }
 
 impl World {
@@ -429,6 +440,8 @@ impl World {
             keep_inventory: false,
             day_cycle_ticks: crate::server::daynight::DEFAULT_CYCLE_TICKS,
             populated_columns: BTreeSet::new(),
+            custom_bake: FxHashMap::default(),
+            custom_bake_dirty: FxHashSet::default(),
         }
     }
 

@@ -3,7 +3,7 @@ use crate::facing::Facing;
 use crate::item::DropSpec;
 
 use super::behavior::BlockBehavior;
-use super::{Aabb, Block, BlockInteraction, BlockTag, RenderShape};
+use super::{Aabb, Block, BlockInteraction, BlockShapeKind, BlockTag};
 
 // No `Debug`/`PartialEq`: the `behavior` trait object is neither, and nothing
 // compares or formats a whole `BlockDef` (callers read individual fields).
@@ -20,9 +20,11 @@ pub(super) struct BlockDef {
     pub behavior: &'static dyn BlockBehavior,
     /// What secondary-use does when the player right-clicks this placed block.
     pub interaction: BlockInteraction,
-    /// How this block is meshed — cube / cross-plant / torch. See
-    /// [`Block::render_shape`](super::Block::render_shape).
-    pub shape: RenderShape,
+    /// How this block is meshed / collided / placed: the composable shape kind
+    /// (family + parameters), interned by the loader from the row's `shape`
+    /// field. See [`Block::shape_family`](super::Block::shape_family) and
+    /// [`Block::shape_kind`](super::Block::shape_kind).
+    pub shape_kind: BlockShapeKind,
     /// Collision shape: cell-local AABBs (`&[]` = no collision). See
     /// [`Block::collision_boxes`](super::Block::collision_boxes).
     pub collision: &'static [Aabb],

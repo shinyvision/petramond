@@ -351,6 +351,14 @@ impl World {
         // Geometry samplers only; light-driven remeshes ride the server's
         // `LightData` install for exactly the sections whose cubes changed.
         self.queue_dirty_meshes_sampling_cell(delta.pos.x, delta.pos.y, delta.pos.z);
+        // Re-mark any Layer-3 custom-shape cell so the CLIENT bakes it (its own
+        // client_wasm) and predicts the same collision the server does.
+        self.mark_custom_bake_edit(
+            delta.pos.x,
+            delta.pos.y,
+            delta.pos.z,
+            Block::from_id(delta.block_id),
+        );
         self.vis_dirty = true;
     }
 

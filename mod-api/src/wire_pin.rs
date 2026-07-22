@@ -269,6 +269,11 @@ fn samples() -> Samples {
     });
     s.pin("HostCall::MobInfo", &HostCall::MobInfo { mob_id: 7 });
     s.pin("HostCall::MobCanReach", &HostCall::MobCanReach { mob_id: 7, cell: [1, -2, 3] });
+    s.pin("HostCall::ResolveShape", &HostCall::ResolveShape { key: "m:s".into() });
+    s.pin("HostCall::PlayerPoseSet", &HostCall::PlayerPoseSet {
+        player_id: PlayerId(1), anchor: [1.5, 2.0, -3.5], yaw: 0.5, pose: pose::SITTING,
+    });
+    s.pin("HostCall::BlockModelGroup", &HostCall::BlockModelGroup { pos: [1, 2, 3] });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -285,6 +290,7 @@ fn samples() -> Samples {
     s.pin("HostRet::Player", &HostRet::Player(PlayerSnapshot {
         pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, 0.0], yaw: 0.5, pitch: 0.25,
         health: 20, on_ground: true, spectator: false, sneak: true, held: Some(ItemId(2)), held_count: 3,
+        pose_anchor: Some([1.5, 2.0, -3.5]),
     }));
     s.pin("HostRet::Bytes", &HostRet::Bytes(Some(vec![1])));
     s.pin("HostRet::MobTag", &HostRet::MobTag(MobTagLookup::Value(MobTagValue::Bool(true))));
@@ -322,6 +328,9 @@ fn samples() -> Samples {
     s.pin("HostRet::Riders", &HostRet::Riders(Some(MobRidersData {
         capacity: 2, riders: vec![MobRiderData { seat: 0, player_id: PlayerId(1) }],
     })));
+    s.pin("HostRet::ModelGroup", &HostRet::ModelGroup(Some(ModelGroupData {
+        base: [1, -2, 3], facing: Facing::East,
+    })));
     s.pin("HostRet::PlayerInput", &HostRet::PlayerInput(Some(PlayerInputData {
         forward: 1.0, strafe: -1.0, jump: true, sneak: false, yaw: 0.5, pitch: 0.25,
     })));
@@ -335,6 +344,7 @@ fn samples() -> Samples {
         state: PlayerSnapshot {
             pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, 0.0], yaw: 0.5, pitch: 0.25,
             health: 20, on_ground: true, spectator: false, sneak: false, held: None, held_count: 0,
+            pose_anchor: None,
         },
     }]));
     s.pin("HostRet::EnvParams", &HostRet::EnvParams(vec![None, Some([1.0, 2.0, 3.0, 4.0])]));
@@ -408,6 +418,25 @@ fn samples() -> Samples {
     s.pin("GuestCall::ClientCanvasScroll", &GuestCall::ClientCanvasScroll {
         canvas_key: "m:c".into(), x: 1.0, y: 2.0, delta: -1.0,
     });
+    s.pin("GuestCall::BakeShapeSim", &GuestCall::BakeShapeSim {
+        shape_kind: 1,
+        cells: vec![CellInput {
+            world_pos: [1, 2, 3], block_id: BlockId(4),
+            neighbor_ids: [BlockId(0); 6],
+        }],
+    });
+    s.pin("GuestCall::BakeShapeRender", &GuestCall::BakeShapeRender {
+        shape_kind: 1,
+        cells: vec![CellInput {
+            world_pos: [1, 2, 3], block_id: BlockId(4),
+            neighbor_ids: [BlockId(0); 6],
+        }],
+    });
+    s.pin("GuestCall::BakeShapeItem", &GuestCall::BakeShapeItem { shape_kind: 1, block_id: BlockId(4) });
+    s.pin("GuestCall::ShapePlacementPlan", &GuestCall::ShapePlacementPlan {
+        shape_kind: 1, block_id: BlockId(4),
+        inputs: PlaceInputsView { hit: [0, 0, 0], normal: [0, 1, 0], place_pos: [0, 1, 0], player_facing: 0 },
+    });
 
     // --- GuestRet: every variant, declaration order --------------------------
     s.pin("GuestRet::Unit", &GuestRet::Unit);
@@ -423,6 +452,17 @@ fn samples() -> Samples {
         idle_anim: Some(1), attack: Some([2.0, 3.0]),
         tags: vec![MobTagWrite { key: "m:k".into(), value: Some(MobTagValue::Bool(true)) }],
     })));
+    s.pin("GuestRet::BakedSim", &GuestRet::BakedSim(vec![BakedSimCell {
+        collision_boxes: vec![ShapeAabb { min: [0.0, 0.0, 0.0], max: [1.0, 1.0, 1.0] }],
+        light_aperture: LightAperture::Open,
+    }]));
+    s.pin("GuestRet::BakedRender", &GuestRet::BakedRender(vec![BakedRenderCell {
+        boxes: vec![ShapeAabb { min: [0.0, 0.0, 0.0], max: [1.0, 1.0, 1.0] }],
+    }]));
+    s.pin("GuestRet::BakedItem", &GuestRet::BakedItem(BakedItemGeometry { boxes: vec![] }));
+    s.pin("GuestRet::ShapePlacement", &GuestRet::ShapePlacement(ShapePlacementResult {
+        accepted: true, anchor: [0, 1, 0], cells: vec![[0, 1, 0]],
+    }));
 
     // --- EventPayload: every variant, declaration order ----------------------
     s.pin("EventPayload::BlockPlacePre", &EventPayload::BlockPlacePre {
@@ -480,7 +520,10 @@ fn samples() -> Samples {
     s.pin("EventPayload::SectionGenerated", &EventPayload::SectionGenerated { pos: [1, 2, 3] });
     s.pin("EventPayload::SectionLoaded", &EventPayload::SectionLoaded { pos: [1, 2, 3] });
     s.pin("EventPayload::PlayerDismounted", &EventPayload::PlayerDismounted {
-        player_id: PlayerId(0), mob_id: 7,
+        player_id: PlayerId(0), mount: MountTarget::Mob(7),
+    });
+    s.pin("EventPayload::PlayerDismounted(anchor)", &EventPayload::PlayerDismounted {
+        player_id: PlayerId(0), mount: MountTarget::Anchor([1.5, 2.0, -3.5]),
     });
     s.pin("EventPayload::MobTagAdded", &EventPayload::MobTagAdded {
         mob_id: 7, kind: MobId(2), key: "m:k".into(), value: MobTagValue::I64(-3),
@@ -570,6 +613,7 @@ fn samples() -> Samples {
     s.pin("BlockHookKind::*", &vec![
         BlockHookKind::RandomTick, BlockHookKind::ScheduledTick, BlockHookKind::NeighborUpdate,
     ]);
+    s.pin("LightAperture::*", &vec![LightAperture::Opaque, LightAperture::Open]);
 
     s
 }
@@ -690,6 +734,9 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::FindBlocks", "6d010405080a0c020109"),
     ("HostCall::MobInfo", "6e07"),
     ("HostCall::MobCanReach", "6f07020306"),
+    ("HostCall::ResolveShape", "70036d3a73"),
+    ("HostCall::PlayerPoseSet", "71010000c03f00000040000060c00000003f01"),
+    ("HostCall::BlockModelGroup", "72020406"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -698,7 +745,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Blocks", "0502000102"),
     ("HostRet::Light", "0601010203"),
     ("HostRet::Mobs", "070101036d3a6b020000803f000000400000404000008040050000003f0000803f0000000000000040"),
-    ("HostRet::Player", "080000803f00000040000040400000000000000000000000000000003f0000803e28010001010203"),
+    ("HostRet::Player", "080000803f00000040000040400000000000000000000000000000003f0000803e28010001010203010000c03f00000040000060c0"),
     ("HostRet::Bytes", "09010101"),
     ("HostRet::MobTag", "0a020001"),
     ("HostRet::GuiValue", "0b01000000803f"),
@@ -714,21 +761,22 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Item", "150101"),
     ("HostRet::ClientStorageRead", "16010200010101"),
     ("HostRet::Riders", "170102010001"),
-    ("HostRet::PlayerInput", "18010000803f000080bf01000000003f0000803e"),
-    ("HostRet::MobAnimState", "19010000c03f0000403f0100000040"),
-    ("HostRet::MaybeByte", "1a0104"),
-    ("HostRet::MaybeI32", "1b010d"),
-    ("HostRet::Players", "1c01010000803f00000040000040400000000000000000000000000000003f0000803e280100000000"),
-    ("HostRet::EnvParams", "1d0200010000803f000000400000404000008040"),
-    ("HostRet::BlockList", "1e020109"),
-    ("HostRet::ItemList", "1f020109"),
-    ("HostRet::Names", "20020001036d3a62"),
-    ("HostRet::MobKind", "210101"),
-    ("HostRet::CollisionShape", "220102"),
-    ("HostRet::MobTags", "230101036d3a6b0001"),
-    ("HostRet::SpawnedMob", "240107"),
-    ("HostRet::FoundBlocks", "250101020306"),
-    ("HostRet::Mob", "260101036d3a6b020000803f000000400000404000008040050000003f0000803f0000000000000040"),
+    ("HostRet::ModelGroup", "180102030603"),
+    ("HostRet::PlayerInput", "19010000803f000080bf01000000003f0000803e"),
+    ("HostRet::MobAnimState", "1a010000c03f0000403f0100000040"),
+    ("HostRet::MaybeByte", "1b0104"),
+    ("HostRet::MaybeI32", "1c010d"),
+    ("HostRet::Players", "1d01010000803f00000040000040400000000000000000000000000000003f0000803e28010000000000"),
+    ("HostRet::EnvParams", "1e0200010000803f000000400000404000008040"),
+    ("HostRet::BlockList", "1f020109"),
+    ("HostRet::ItemList", "20020109"),
+    ("HostRet::Names", "21020001036d3a62"),
+    ("HostRet::MobKind", "220101"),
+    ("HostRet::CollisionShape", "230102"),
+    ("HostRet::MobTags", "240101036d3a6b0001"),
+    ("HostRet::SpawnedMob", "250107"),
+    ("HostRet::FoundBlocks", "260101020306"),
+    ("HostRet::Mob", "270101036d3a6b020000803f000000400000404000008040050000003f0000803f0000000000000040"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
@@ -742,6 +790,10 @@ const PINS: &[(&str, &str)] = &[
     ("GuestCall::ClientUi", "0a036d3a67000162"),
     ("GuestCall::ClientCanvas", "0b036d3a63000000803f0000004000"),
     ("GuestCall::ClientCanvasScroll", "0c036d3a630000803f00000040000080bf"),
+    ("GuestCall::BakeShapeSim", "0d010102040604000000000000"),
+    ("GuestCall::BakeShapeRender", "0e010102040604000000000000"),
+    ("GuestCall::BakeShapeItem", "0f0104"),
+    ("GuestCall::ShapePlacementPlan", "10010400000000020000020000"),
     ("GuestRet::Unit", "00"),
     ("GuestRet::Event", "01010801"),
     ("GuestRet::GenWrites", "020102040604"),
@@ -749,6 +801,10 @@ const PINS: &[(&str, &str)] = &[
     ("GuestRet::GenBiomes", "040103"),
     ("GuestRet::HostileSpawn", "0501036d3a6b"),
     ("GuestRet::AiDecision", "060101020406010000003f0000803e010101000000400000404001036d3a6b010001"),
+    ("GuestRet::BakedSim", "0701010000000000000000000000000000803f0000803f0000803f01"),
+    ("GuestRet::BakedRender", "0801010000000000000000000000000000803f0000803f0000803f"),
+    ("GuestRet::BakedItem", "0900"),
+    ("GuestRet::ShapePlacement", "0a0100020001000200"),
     ("EventPayload::BlockPlacePre", "000204060100"),
     ("EventPayload::BlockBreakPre", "010204060101"),
     ("EventPayload::InteractAttempt", "020102040601000200010700"),
@@ -766,7 +822,8 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::ContainerClosed", "0e05036d3a6700"),
     ("EventPayload::SectionGenerated", "0f020406"),
     ("EventPayload::SectionLoaded", "10020406"),
-    ("EventPayload::PlayerDismounted", "110007"),
+    ("EventPayload::PlayerDismounted", "11000007"),
+    ("EventPayload::PlayerDismounted(anchor)", "1100010000c03f00000040000060c0"),
     ("EventPayload::MobTagAdded", "120702036d3a6b0105"),
     ("EventPayload::MobTagRemoved", "130702036d3a6b0105"),
     ("Outcome::*", "020001"),
@@ -789,6 +846,7 @@ const PINS: &[(&str, &str)] = &[
     ("ClientCanvasElement::*", "0200036d3a690000803f00000040000040400000804001036d3a690000803f00000040"),
     ("ClientUiEvent::*", "0400016201016201740201620174030162020000803f0000004001"),
     ("BlockHookKind::*", "03000102"),
+    ("LightAperture::*", "020001"),
 ];
 
 #[test]

@@ -1,4 +1,4 @@
-use crate::block::{Block, RenderShape};
+use crate::block::{Block, ShapeFamily};
 use crate::block_state::LogAxis;
 use crate::chunk::{ChunkPos, SECTION_SIZE, WORLD_MIN_Y};
 use crate::column::NO_SURFACE;
@@ -13,12 +13,12 @@ impl World {
     /// corrective-cell sync so deny restores the full footprint.
     pub fn break_footprint_cells(&self, pos: IVec3) -> Vec<IVec3> {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        match block.render_shape() {
-            RenderShape::Model(_) => self
+        match block.shape_family() {
+            ShapeFamily::Model => self
                 .model_group(pos)
                 .map(|(_, _, cells)| cells)
                 .unwrap_or_else(|| vec![pos]),
-            RenderShape::Door => self
+            ShapeFamily::Door => self
                 .door_cells(pos)
                 .map(|(lower, upper)| vec![lower, upper])
                 .unwrap_or_else(|| vec![pos]),
@@ -40,11 +40,11 @@ impl World {
             .into_iter()
             .map(|c| (c, self.chunk_block(c.x, c.y, c.z)))
             .collect();
-        match block.render_shape() {
-            RenderShape::Model(_) => {
+        match block.shape_family() {
+            ShapeFamily::Model => {
                 let _ = self.remove_model_block(pos);
             }
-            RenderShape::Door => {
+            ShapeFamily::Door => {
                 let _ = self.remove_door(pos);
             }
             _ => {
@@ -110,6 +110,11 @@ impl World {
         // Re-mesh exactly the sections whose pads sample this cell so border
         // face culling, AO, and smooth light stay correct across seams.
         self.queue_dirty_meshes_sampling_cell(wx, wy, wz);
+        // A Layer-3 custom shape's bake depends on this cell's block + state, so
+        // drop the cached bake here + at each face neighbour and re-mark any
+        // custom cell dirty for the next bake pump (the same hook the replica's
+        // ingest calls, so client prediction bakes the same cells).
+        self.mark_custom_bake_edit(wx, wy, wz, b);
         // Plane openness may have changed; deep-visibility must re-evaluate.
         self.vis_dirty = true;
 

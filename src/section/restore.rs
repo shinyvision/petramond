@@ -157,6 +157,8 @@ impl Section {
             biome_tint_count: 0,
             particle_emitter_count: 0,
             light_emitter_count: 0,
+            shape_render: None,
+            light_apertures: None,
         };
         if let Some(metrics) = metrics {
             s.install_metrics(metrics);

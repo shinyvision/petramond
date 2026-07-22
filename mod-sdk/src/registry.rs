@@ -51,6 +51,17 @@ host_fn! {
 }
 
 host_fn! {
+    /// Resolve a block SHAPE-KIND registry key (`"petramond:fence"`,
+    /// `"mymod:gate"`) to the session-local `shape_kind` id the Layer-3 bake
+    /// calls carry (`bake_shape_sim`/`bake_shape_render`/`shape_placement_plan`)
+    /// — the shape twin of [`resolve_block`], so a mod with two custom shapes can
+    /// branch on which one a bake batch is for. `None` = no such shape kind.
+    /// Registry-only (legal on any instance); resolve once in [`Mod::init`] and
+    /// compare against the `shape_kind` argument (but NEVER persist the id).
+    pub fn resolve_shape(key: &str) -> Option<u8> => ResolveShape { key: key.into() } => MaybeByte
+}
+
+host_fn! {
     /// Resolve a mob species key (`"petramond:sheep"` — the same string
     /// [`spawn_mob`](crate::spawn_mob) and `MobSnapshot::key` speak) to its
     /// session-scoped [`MobId`] — the mob twin of [`resolve_item`], same

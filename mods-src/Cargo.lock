@@ -32,6 +32,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "furniture"
+version = "0.1.0"
+dependencies = [
+ "mod-sdk",
+]
+
+[[package]]
 name = "kitchen"
 version = "0.1.0"
 dependencies = [

@@ -437,7 +437,9 @@ pub(super) fn push_block_item_cube(
     origin: Vec3,
     size: f32,
 ) {
-    push_block_item_cube_lit(verts, indices, block, origin, size, DynLight::FULL);
+    // The only caller is the depthless icon-atlas bake, so a self-occluding
+    // custom shape sorts its boxes far→near here.
+    push_block_item_cube_lit(verts, indices, block, origin, size, DynLight::FULL, true);
 }
 
 /// As [`push_block_item_cube`] but lit by `skylight` (a held item / dropped stack samples
@@ -451,6 +453,7 @@ pub(super) fn push_block_item_cube_lit(
     origin: Vec3,
     size: f32,
     light: DynLight,
+    sort_for_icon: bool,
 ) {
     push_block_item_cube_lit_with_state(
         verts,
@@ -460,6 +463,7 @@ pub(super) fn push_block_item_cube_lit(
         origin,
         size,
         light,
+        sort_for_icon,
     );
 }
 
@@ -471,22 +475,27 @@ pub(super) fn push_block_item_cube_lit_with_state(
     origin: Vec3,
     size: f32,
     light: DynLight,
+    // Only the depthless icon pass needs a back-to-front painter sort of a
+    // custom shape's self-occluding boxes; the depth-tested hand/dropped forms
+    // pass `false`.
+    sort_for_icon: bool,
 ) {
+    use crate::block::ShapeFamily;
     let faces = block_icon_faces_with_state(block, state);
-    if block.render_shape() == crate::block::RenderShape::Stair {
+    if block.shape_family() == ShapeFamily::Stair {
         let stair = match state {
             HeldBlockState::Stair(state) => state,
             _ => StairState::new(crate::facing::Facing::South, Default::default()),
         };
         push_stair_item_lit(verts, indices, faces, stair, origin, size, light);
-    } else if block.render_shape() == crate::block::RenderShape::Slab {
+    } else if block.shape_family() == ShapeFamily::Slab {
         let slab = match state {
             HeldBlockState::Slab(state) => crate::slab::normalize_state(block, state),
             _ => crate::slab::default_state(block),
         };
         push_slab_item_lit(verts, indices, slab, origin, size, light);
-    } else if block.render_shape() == crate::block::RenderShape::Fence {
-        push_fence_item_lit(verts, indices, faces, origin, size, light);
+    } else if block.shape_family() == ShapeFamily::Fence {
+        push_fence_item_lit(verts, indices, block, faces, origin, size, light);
     } else if block == Block::Cactus {
         let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
         push_cactus_faces_lit(verts, indices, faces, origin, max, light);
@@ -496,6 +505,46 @@ pub(super) fn push_block_item_cube_lit_with_state(
             _ => LogAxis::Y,
         };
         push_log_cube_faces_lit(verts, indices, faces, axis, origin, size, light);
+    } else if block.shape_family() == ShapeFamily::Custom {
+        // A Layer-3 custom shape's item is its own baked item geometry
+        // (`BakeShapeItem`, cached at client-mod load): each cell-local box
+        // drawn as a textured cuboid of the block's tiles. A cache miss (no
+        // client bake / trapped / empty) falls back to the plain cube, so the
+        // item is never invisible.
+        match crate::render::item_shape_bake::item_bake(block.id()) {
+            Some(boxes) if !boxes.is_empty() => {
+                let mut order: Vec<&crate::block::Aabb> = boxes.iter().collect();
+                // The inventory ICON draws in the DEPTHLESS icon pass, so self-
+                // occluding boxes (a chair's backrest behind its seat) must be
+                // painted BACK-TO-FRONT: sort each box centre by its view depth
+                // along the shared iso view direction, ascending (far first). The
+                // depth-tested in-hand / dropped forms skip the sort entirely.
+                if sort_for_icon {
+                    let dir = crate::render::ui::icon::icon_view_dir();
+                    let depth = |b: &crate::block::Aabb| {
+                        let c = |i: usize| (b.min[i] + b.max[i]) * 0.5;
+                        dir.x * c(0) + dir.y * c(1) + dir.z * c(2)
+                    };
+                    order.sort_by(|a, b| {
+                        depth(a)
+                            .partial_cmp(&depth(b))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                }
+                // Each box face uses CELL-LOCAL UVs (`push_cell_local_face`, the
+                // stair-item path), so the block's tiles map carved-from-the-block
+                // — identical to the in-world mesh — instead of a full tile
+                // stretched onto every face by `push_box_faces_lit`.
+                for b in order {
+                    for (i, face) in ALL_FACES.into_iter().enumerate() {
+                        push_cell_local_face(
+                            verts, indices, faces[i], origin, size, b.min, b.max, face, light,
+                        );
+                    }
+                }
+            }
+            _ => push_cube_faces_lit(verts, indices, faces, origin, size, light),
+        }
     } else {
         push_cube_faces_lit(verts, indices, faces, origin, size, light);
     }
@@ -532,16 +581,25 @@ fn push_slab_item_lit(
 
 /// A fence item draws as a complete fence segment — two posts joined by the
 /// two rails from `crate::fence`'s item boxes — with cell-local UVs sampling
-/// the planks tile, so the icon / hand / drop all read as the placed shape.
+/// the planks tile, so the icon / hand / drop all read as the placed shape. The
+/// post/rail extents come from the shape's own connection params, so a modded
+/// wall's item matches its placed thickness.
 fn push_fence_item_lit(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
+    block: Block,
     faces: [Tile; 6],
     origin: Vec3,
     size: f32,
     light: DynLight,
 ) {
-    for post in crate::fence::ITEM_POSTS {
+    let (post_lo, post_hi) = block
+        .shape_kind_def()
+        .params
+        .connection()
+        .map(|c| (c.post_lo, c.post_hi))
+        .unwrap_or((crate::fence::POST_LO, crate::fence::POST_HI));
+    for post in crate::fence::item_posts(post_lo, post_hi) {
         for face in Face::ALL {
             push_cell_local_face(
                 verts,
@@ -557,7 +615,7 @@ fn push_fence_item_lit(
         }
     }
     // The rail ends butt against the post faces, so only the long faces draw.
-    for rail in crate::fence::ITEM_RAILS {
+    for rail in crate::fence::item_rails(post_lo, post_hi) {
         for face in [Face::NegY, Face::PosY, Face::NegZ, Face::PosZ] {
             push_cell_local_face(
                 verts,
@@ -824,6 +882,7 @@ mod tests {
             Vec3::ZERO,
             1.0,
             DynLight::FULL,
+            false,
         );
 
         assert_eq!(verts.len(), 24);

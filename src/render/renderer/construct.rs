@@ -436,6 +436,11 @@ async fn new_renderer_inner(
         mapped_at_creation: false,
     });
 
+    // A Layer-3 custom block's inventory icon is its baked ITEM geometry (a chair,
+    // not a plank cube), which comes from the pack's WASM — bake all installed
+    // custom item shapes into the item cache NOW, before the icon atlas reads it.
+    crate::modding::client::bake_installed_custom_item_geometry();
+
     // Bake every item's inventory icon into the icon atlas ONCE, here at init: the
     // cube/sprite icons through the depthless `model3d_pipe` and the bbmodel-block
     // icons through the depth-tested `model_icon_pipe` (these two pipelines are used

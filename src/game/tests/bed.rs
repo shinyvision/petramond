@@ -113,7 +113,11 @@ fn a_mounted_player_sets_spawn_but_cannot_start_sleeping() {
     make_night(&mut game);
     let player_id = game.server.sessions[0].id.0;
     let before = game.server.sessions[0].player.pos;
-    assert!(game.server.world.riding_mut().mount(player_id, 77, 0));
+    assert!(game.server.world.riding_mut().mount(
+        player_id,
+        crate::mob::riding::MountTarget::Mob(77),
+        0
+    ));
 
     let events = interact_with_bed(&mut game, base);
 

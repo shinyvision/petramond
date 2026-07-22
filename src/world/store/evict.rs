@@ -34,6 +34,7 @@ impl World {
         self.sealed_parked.remove(&pos);
         self.light_bakes.cancel(pos);
         self.light_edited_since_persist.remove(&pos);
+        self.evict_custom_bake_section(pos);
         self.mark_light_dirty_neighborhood(pos, false);
         self.mark_dirty_neighborhood(pos, false);
     }
@@ -96,6 +97,7 @@ impl World {
         self.awaited_overlays.retain(|sp| sp.chunk_pos() != pos);
         self.disk_primary_sections
             .retain(|sp| sp.chunk_pos() != pos);
+        self.evict_custom_bake_column(pos);
     }
 
     /// Drop all loaded sections, columns, meshes, and the in-flight gen set — the
@@ -144,6 +146,7 @@ impl World {
         self.pending_overlays.clear();
         self.awaited_overlays.clear();
         self.disk_primary_sections.clear();
+        self.clear_custom_bake();
         self.bump_terrain_revision();
     }
 }

@@ -89,6 +89,11 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
         HostCall::ItemInfo { item } => {
             HostRet::ItemInfo(crate::item::ItemType::by_name(&item).map(item_info_data))
         }
+        // The shape-kind resolver: like the block/item/mob resolvers, a key→id
+        // lookup over the process-wide registry, unknown key = `None`.
+        HostCall::ResolveShape { key } => {
+            HostRet::MaybeByte(crate::block::shape_kind_id_by_key(&key))
+        }
         other => HostRet::Error(format!(
             "non-registry call {other:?} mis-routed to handle_registry_call (host bug)"
         )),

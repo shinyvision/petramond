@@ -10,9 +10,7 @@
 //! (per-corner AO would smear on thin geometry).
 
 use crate::atlas::Tile;
-use crate::fence::{
-    POST_HI, POST_LO, RAIL_BOT_HI, RAIL_BOT_LO, RAIL_HI, RAIL_LO, RAIL_TOP_HI, RAIL_TOP_LO,
-};
+use crate::fence::{rail_cross, RAIL_BOT_HI, RAIL_BOT_LO, RAIL_TOP_HI, RAIL_TOP_LO};
 use crate::pane::{EAST, NORTH, SOUTH, WEST};
 use crate::torch::warm_tint;
 
@@ -43,29 +41,37 @@ impl FenceVertical {
 /// `visit(min, max, face, post_cap)`: `post_cap` marks the post's PosY/NegY
 /// caps — the only faces the mesher culls against the vertical neighbours
 /// (the overlay draws them all).
-pub(crate) fn shape_faces(mask: u8, mut visit: impl FnMut([f32; 3], [f32; 3], Face, bool)) {
-    let post = ([POST_LO, 0.0, POST_LO], [POST_HI, 1.0, POST_HI]);
+pub(crate) fn shape_faces(
+    post_lo: f32,
+    post_hi: f32,
+    mask: u8,
+    mut visit: impl FnMut([f32; 3], [f32; 3], Face, bool),
+) {
+    let post = ([post_lo, 0.0, post_lo], [post_hi, 1.0, post_hi]);
     for face in [Face::NegX, Face::PosX, Face::NegZ, Face::PosZ] {
         visit(post.0, post.1, face, false);
     }
     visit(post.0, post.1, Face::PosY, true);
     visit(post.0, post.1, Face::NegY, true);
 
+    // The rail cross-section tracks the post (a modded wall keeps rails on its
+    // own post), not fixed engine constants.
+    let (rail_lo, rail_hi) = rail_cross(post_lo, post_hi);
     // (side bit, arm runs along X?, arm span from cell edge to post face).
     for (bit, along_x, from, to) in [
-        (NORTH, false, 0.0, POST_LO),
-        (SOUTH, false, POST_HI, 1.0),
-        (WEST, true, 0.0, POST_LO),
-        (EAST, true, POST_HI, 1.0),
+        (NORTH, false, 0.0, post_lo),
+        (SOUTH, false, post_hi, 1.0),
+        (WEST, true, 0.0, post_lo),
+        (EAST, true, post_hi, 1.0),
     ] {
         if mask & bit == 0 {
             continue;
         }
         for (y_lo, y_hi) in [(RAIL_BOT_LO, RAIL_BOT_HI), (RAIL_TOP_LO, RAIL_TOP_HI)] {
             let (min, max) = if along_x {
-                ([from, y_lo, RAIL_LO], [to, y_hi, RAIL_HI])
+                ([from, y_lo, rail_lo], [to, y_hi, rail_hi])
             } else {
-                ([RAIL_LO, y_lo, from], [RAIL_HI, y_hi, to])
+                ([rail_lo, y_lo, from], [rail_hi, y_hi, to])
             };
             for face in [
                 Face::NegX,
@@ -97,6 +103,8 @@ pub(super) fn emit_fence_block(
     wx: i32,
     wy: i32,
     wz: i32,
+    post_lo: f32,
+    post_hi: f32,
     mask: u8,
     above: FenceVertical,
     below: FenceVertical,
@@ -112,7 +120,7 @@ pub(super) fn emit_fence_block(
     } else {
         warm_tint(tint, warm)
     };
-    shape_faces(mask, |min, max, face, post_cap| {
+    shape_faces(post_lo, post_hi, mask, |min, max, face, post_cap| {
         let hidden = match face {
             Face::PosY => post_cap && above.hides_post_cap(),
             Face::NegY => post_cap && below.hides_post_cap(),

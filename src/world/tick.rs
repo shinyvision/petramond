@@ -114,12 +114,12 @@ pub(super) fn edit_nav_equivalent(old: Block, new: Block) -> bool {
     }
     let static_shape = |b: Block| {
         matches!(
-            b.render_shape(),
-            crate::block::RenderShape::Cube
-                | crate::block::RenderShape::LoweredCube(_)
-                | crate::block::RenderShape::Cross
-                | crate::block::RenderShape::Crop
-                | crate::block::RenderShape::Torch
+            b.shape_family(),
+            crate::block::ShapeFamily::Cube
+                | crate::block::ShapeFamily::LoweredCube
+                | crate::block::ShapeFamily::Cross
+                | crate::block::ShapeFamily::Crop
+                | crate::block::ShapeFamily::Torch
         ) && !b.is_water()
     };
     static_shape(old) && static_shape(new) && old.collision_boxes() == new.collision_boxes()

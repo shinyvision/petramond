@@ -648,7 +648,11 @@ fn a_newly_boarded_player_cannot_attack_their_mount_before_mirror_reconciliation
     // Placement runs before Attack. A successful board therefore updates the
     // authoritative registry while the session mirror remains stale until
     // the later Riding pass.
-    assert!(game.server.world.riding_mut().mount(player_id, mob_id, 0));
+    assert!(game.server.world.riding_mut().mount(
+        player_id,
+        crate::mob::riding::MountTarget::Mob(mob_id),
+        0
+    ));
     assert!(game.server.sessions[0].mount.is_none());
     let mut events = TickEvents::default();
 

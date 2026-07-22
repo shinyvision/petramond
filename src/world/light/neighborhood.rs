@@ -58,6 +58,15 @@ pub(super) fn gather(pos: SectionPos, sections: &FxHashMap<SectionPos, Arc<Secti
                         state,
                     }
                 }));
+                if let Some(aps) = section.custom_light_apertures() {
+                    states.extend(aps.iter().map(|(&key, &opaque)| {
+                        let (lx, ly, lz) = crate::chunk::section_local(key as usize);
+                        SparseCellState::CustomAperture {
+                            idx: nbhd_idx(bx + lx, by + ly, bz + lz),
+                            opaque,
+                        }
+                    }));
+                }
             }
         }
     }

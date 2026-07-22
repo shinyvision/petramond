@@ -109,6 +109,7 @@ pub(super) fn build_hand_lit(
                         Vec3::new(-0.5, -0.5, -0.5),
                         1.0,
                         light,
+                        false,
                     );
                 }
                 Mat4::from_scale_rotation_translation(

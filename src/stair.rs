@@ -1,6 +1,6 @@
 //! Stair shape and orientation shared by placement, collision, selection, and meshing.
 
-use crate::block::{Aabb, Block, RenderShape};
+use crate::block::{Aabb, Block, ShapeFamily};
 use crate::block_state::{StairHalf, StairState};
 use crate::facing::Facing;
 use crate::mathh::{IVec3, Vec3};
@@ -182,7 +182,7 @@ pub fn half_cell_bounds(ix: usize, iy: usize, iz: usize) -> ([f32; 3], [f32; 3])
 
 #[inline]
 pub fn is_stair(block: Block) -> bool {
-    block.render_shape() == RenderShape::Stair
+    block.shape_family() == ShapeFamily::Stair
 }
 
 const fn make_shapes() -> [Shape; 16] {

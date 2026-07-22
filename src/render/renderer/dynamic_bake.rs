@@ -460,6 +460,7 @@ impl Renderer {
                             glam::Vec3::splat(-0.5),
                             1.0,
                             light,
+                            false,
                         );
                     }
                     crate::render::player_model::transform_positions(

@@ -24,6 +24,7 @@ mod events;
 mod ids;
 mod protocol;
 mod sched;
+mod shape;
 mod wire;
 
 #[cfg(test)]
@@ -35,6 +36,7 @@ pub use events::*;
 pub use ids::*;
 pub use protocol::*;
 pub use sched::*;
+pub use shape::*;
 /// Bulk byte payloads ride the wire as postcard bytes either way; this
 /// wrapper makes their (de)serialization a bulk copy instead of per-byte
 /// serde visits. Re-exported so the SDK and host name one type.

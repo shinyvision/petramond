@@ -1,7 +1,7 @@
 //! Sim-scoped world reads and writes: blocks, light, scheduled ticks,
 //! model-block swaps, and spawn-support queries.
 
-use mod_api::{BlockId, CollisionShape, LightData};
+use mod_api::{BlockId, CollisionShape, LightData, ModelGroupData};
 
 use crate::__rt::host_fn;
 
@@ -65,6 +65,16 @@ host_fn! {
     /// Run the cell's block behavior `scheduled_tick` in `delay` game ticks (first
     /// schedule per cell wins).
     pub fn schedule_tick(pos: [i32; 3], delay: u64) => ScheduleTick { pos, delay }
+}
+
+host_fn! {
+    /// The placed model-block GROUP at `pos` (any of its cells): the group's
+    /// base cell and placement facing — map your own footprint-space data
+    /// (seat layouts, machine fronts) into the world with
+    /// [`crate::footprint_local_to_world`]. `None` = no model group there or
+    /// the cell is unloaded.
+    pub fn block_model_group(pos: [i32; 3]) -> Option<ModelGroupData>
+        => BlockModelGroup { pos } => ModelGroup
 }
 
 host_fn! {

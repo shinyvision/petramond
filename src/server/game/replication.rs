@@ -90,7 +90,7 @@ impl ServerGame {
                     eating: sess.eating.is_some(),
                     hurt_recent: events.player_at(s).player_damaged,
                     snap: sess.tick_teleported,
-                    mount: sess.mount.map(|m| (m.mob_id, m.seat)),
+                    mount: sess.mount.map(crate::net::protocol::PlayerMount::from_mount),
                 }
             })
             .collect();

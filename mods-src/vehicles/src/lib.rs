@@ -162,9 +162,11 @@ impl Mod for Vehicles {
                     Outcome::Continue
                 }
             }
-            (ON_DISMOUNTED, EventPayload::PlayerDismounted { player_id, mob_id }) => {
-                if let Some(boat) = self.boats.get_mut(mob_id) {
-                    boat.riders.retain(|p| p != player_id);
+            (ON_DISMOUNTED, EventPayload::PlayerDismounted { player_id, mount }) => {
+                if let MountTarget::Mob(mob_id) = mount {
+                    if let Some(boat) = self.boats.get_mut(mob_id) {
+                        boat.riders.retain(|p| p != player_id);
+                    }
                 }
                 Outcome::Continue
             }
@@ -217,12 +219,8 @@ impl Vehicles {
     /// order (the first rider steers).
     /// Returns whether the player actually took a seat (the act-based claim).
     fn board(&mut self, mob_id: u64, player_id: PlayerId) -> bool {
-        let Some(seats) = mob_riders(mob_id) else {
-            return false;
-        };
-        let Some(seat) = (0..seats.capacity).find(|s| !seats.riders.iter().any(|r| r.seat == *s))
-        else {
-            return false; // full
+        let Some(seat) = mob_riders(mob_id).and_then(|seats| seats.first_free_seat()) else {
+            return false; // no such mob, or full
         };
         if !mob_mount(mob_id, player_id, seat) {
             return false; // already mounted / boat gone — the engine said no

@@ -13,7 +13,7 @@
 //! shade, like a thin object should be (per-corner AO would smear).
 
 use crate::atlas::Tile;
-use crate::pane::{EAST, HI, LO, NORTH, SOUTH, WEST};
+use crate::pane::{EAST, NORTH, SOUTH, WEST};
 use crate::torch::warm_tint;
 
 use super::face::Face;
@@ -63,6 +63,8 @@ pub(crate) enum PaneTile {
 /// to (`0` = the centre post; unused for side faces) — the mesher culls caps
 /// against the vertical neighbours per segment, the overlay draws them all.
 pub(crate) fn shape_faces(
+    post_lo: f32,
+    post_hi: f32,
     mask: u8,
     mut visit: impl FnMut([f32; 3], [f32; 3], Face, PaneTile, bool, u8),
 ) {
@@ -70,21 +72,21 @@ pub(crate) fn shape_faces(
     let (n, s) = (mask & NORTH != 0, mask & SOUTH != 0);
     let z_run = n || s;
     let x_run = w || e;
-    let z0 = if n { 0.0 } else { LO };
-    let z1 = if s { 1.0 } else { HI };
-    let x0 = if w { 0.0 } else { LO };
-    let x1 = if e { 1.0 } else { HI };
+    let z0 = if n { 0.0 } else { post_lo };
+    let z1 = if s { 1.0 } else { post_hi };
+    let x0 = if w { 0.0 } else { post_lo };
+    let x1 = if e { 1.0 } else { post_hi };
 
     if mask == 0 {
         // A bare post: four thin edge-strip sides.
-        let post = ([LO, 0.0, LO], [HI, 1.0, HI]);
+        let post = ([post_lo, 0.0, post_lo], [post_hi, 1.0, post_hi]);
         for face in [Face::NegX, Face::PosX, Face::NegZ, Face::PosZ] {
             visit(post.0, post.1, face, PaneTile::Edge, false, 0);
         }
     }
     if z_run {
         // The north-south run's broad glass faces, post included.
-        let (min, max) = ([LO, 0.0, z0], [HI, 1.0, z1]);
+        let (min, max) = ([post_lo, 0.0, z0], [post_hi, 1.0, z1]);
         visit(min, max, Face::NegX, PaneTile::Glass, false, 0);
         visit(min, max, Face::PosX, PaneTile::Glass, false, 0);
         // Unconnected ends show the edge strip — unless a crossing east-west run
@@ -99,7 +101,7 @@ pub(crate) fn shape_faces(
         }
     }
     if x_run {
-        let (min, max) = ([x0, 0.0, LO], [x1, 1.0, HI]);
+        let (min, max) = ([x0, 0.0, post_lo], [x1, 1.0, post_hi]);
         visit(min, max, Face::NegZ, PaneTile::Glass, false, 0);
         visit(min, max, Face::PosZ, PaneTile::Glass, false, 0);
         if !z_run {
@@ -113,18 +115,18 @@ pub(crate) fn shape_faces(
     }
 
     // Top/bottom caps, one per occupied segment so crossing runs never overlap.
-    // The edge tile's 2px strip runs vertically (u = the thin 7..9/16 span), so
+    // The edge tile's 2px strip runs vertically (u = the thin post span), so
     // north/south arm caps map with plain cell UVs while west/east arm caps swap
     // u/v to lay the strip along the arm.
-    let post = ([LO, 0.0, LO], [HI, 1.0, HI]);
+    let post = ([post_lo, 0.0, post_lo], [post_hi, 1.0, post_hi]);
     // (present, cap box min/max, arm segment bit, swap edge-strip u/v).
     type CapSegment = (bool, ([f32; 3], [f32; 3]), u8, bool);
     let segments: [CapSegment; 5] = [
         (true, post, 0, false),
-        (n, ([LO, 0.0, 0.0], [HI, 1.0, LO]), NORTH, false),
-        (s, ([LO, 0.0, HI], [HI, 1.0, 1.0]), SOUTH, false),
-        (w, ([0.0, 0.0, LO], [LO, 1.0, HI]), WEST, true),
-        (e, ([HI, 0.0, LO], [1.0, 1.0, HI]), EAST, true),
+        (n, ([post_lo, 0.0, 0.0], [post_hi, 1.0, post_lo]), NORTH, false),
+        (s, ([post_lo, 0.0, post_hi], [post_hi, 1.0, 1.0]), SOUTH, false),
+        (w, ([0.0, 0.0, post_lo], [post_lo, 1.0, post_hi]), WEST, true),
+        (e, ([post_hi, 0.0, post_lo], [1.0, 1.0, post_hi]), EAST, true),
     ];
     for (present, (min, max), seg, swap_uv) in segments {
         if !present {
@@ -142,6 +144,8 @@ pub(super) fn emit_pane_block(
     wx: i32,
     wy: i32,
     wz: i32,
+    post_lo: f32,
+    post_hi: f32,
     mask: u8,
     above: PaneVertical,
     below: PaneVertical,
@@ -158,7 +162,7 @@ pub(super) fn emit_pane_block(
     } else {
         warm_tint(tint, warm)
     };
-    shape_faces(mask, |min, max, face, pane_tile, swap_uv, seg| {
+    shape_faces(post_lo, post_hi, mask, |min, max, face, pane_tile, swap_uv, seg| {
         let hidden = match face {
             Face::PosY => above.hides_cap(seg),
             Face::NegY => below.hides_cap(seg),

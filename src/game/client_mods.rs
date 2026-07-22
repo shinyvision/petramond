@@ -26,6 +26,13 @@ impl Game {
         self.client_mods.frame(&self.replica, frame);
     }
 
+    /// Bake the SIM geometry of any Layer-3 custom-shape cells the replica
+    /// dirtied (server deltas ingested this frame) via their `client_wasm`, so
+    /// the client's physics/prediction reads the same collision the server does.
+    pub(crate) fn bake_client_custom_shapes(&mut self) {
+        self.client_mods.bake_custom_shapes(&mut self.replica);
+    }
+
     /// Dispatch a mod-registered bound action edge (`mod_id:action`) to its
     /// owning client mod.
     pub(crate) fn client_mod_action(&mut self, full_id: &str, pressed: bool) -> bool {

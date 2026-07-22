@@ -575,7 +575,10 @@ fn boat_inner() {
         .riding()
         .mount_of(player_id)
         .expect("an in-reach mob interaction boarded the boat");
-    assert_eq!(mount.mob_id, boat_id);
+    assert_eq!(
+        mount.target,
+        crate::mob::riding::MountTarget::Mob(boat_id)
+    );
 
     let start = hull_pose(&game).0;
     game.server.sessions[0].move_wishdir = Vec3::X;

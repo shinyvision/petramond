@@ -241,6 +241,33 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             player_id,
             seat,
         } => sim_query(|ctx| HostRet::Bool(ctx.world.try_mount_player(player_id.0, mob_id, seat))),
+        HostCall::PlayerPoseSet {
+            player_id,
+            anchor,
+            yaw,
+            pose,
+        } => {
+            let anchor = match finite3(anchor, "PlayerPoseSet.anchor") {
+                Ok(a) => a,
+                Err(e) => return e,
+            };
+            if !yaw.is_finite() {
+                return HostRet::Error("PlayerPoseSet: non-finite yaw".into());
+            }
+            if pose == 0 {
+                return HostRet::Bool(false); // reserved "no pose" value
+            }
+            sim_query(move |ctx| {
+                HostRet::Bool(ctx.world.try_mount_anchor(
+                    player_id.0,
+                    crate::mob::riding::PoseAnchor {
+                        pos: anchor,
+                        yaw,
+                        pose,
+                    },
+                ))
+            })
+        }
         HostCall::MobDismount { player_id } => {
             sim_query(|ctx| HostRet::Bool(ctx.world.riding_mut().dismount(player_id.0).is_some()))
         }
@@ -253,7 +280,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             let riders = ctx
                 .world
                 .riding()
-                .riders_of(mob_id)
+                .riders_of(crate::mob::riding::MountTarget::Mob(mob_id))
                 .into_iter()
                 .map(|(seat, player_id)| MobRiderData {
                     seat,
@@ -261,6 +288,20 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 })
                 .collect();
             HostRet::Riders(Some(MobRidersData { capacity, riders }))
+        }),
+        HostCall::BlockModelGroup { pos } => sim_query(|ctx| {
+            let p = crate::mathh::IVec3::new(pos[0], pos[1], pos[2]);
+            HostRet::ModelGroup(ctx.world.model_group(p).map(|(_, base, _)| {
+                mod_api::ModelGroupData {
+                    base: [base.x, base.y, base.z],
+                    facing: match ctx.world.model_facing_at(base.x, base.y, base.z) {
+                        crate::facing::Facing::North => mod_api::Facing::North,
+                        crate::facing::Facing::South => mod_api::Facing::South,
+                        crate::facing::Facing::West => mod_api::Facing::West,
+                        crate::facing::Facing::East => mod_api::Facing::East,
+                    },
+                }
+            }))
         }),
         HostCall::MobAnimState { mob_id, anim } => {
             if let Err(e) = anim_name_guard("MobAnimState", &anim) {

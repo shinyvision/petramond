@@ -100,28 +100,75 @@ pub struct MobSnapshot {
     pub vel: [f32; 3],
 }
 
-/// One rider of a mob, for [`HostCall::MobRiders`].
+/// What a player is attached to, for mount HostCalls and
+/// [`EventPayload::PlayerDismounted`].
+///
+/// [`EventPayload::PlayerDismounted`]: crate::EventPayload::PlayerDismounted
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
+pub enum MountTarget {
+    /// Live mob, addressed by its stable session id.
+    Mob(u64),
+    /// A static world-space pose anchor ([`HostCall::PlayerPoseSet`]) — the
+    /// anchor position the pose was pinned at.
+    ///
+    /// [`HostCall::PlayerPoseSet`]: crate::HostCall::PlayerPoseSet
+    Anchor([f32; 3]),
+}
+
+/// Named actor-pose vocabulary for [`HostCall::PlayerPoseSet`] (`0` is
+/// reserved). Unknown values pin the body in its ordinary rest pose — like a
+/// disabled pack, never an error.
+///
+/// [`HostCall::PlayerPoseSet`]: crate::HostCall::PlayerPoseSet
+pub mod pose {
+    /// Seated: thighs forward, shins down — chairs, benches, sofas.
+    pub const SITTING: u8 = 1;
+}
+
+/// One rider of a mount, for [`HostCall::MobRiders`].
 ///
 /// [`HostCall::MobRiders`]: crate::HostCall::MobRiders
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MobRiderData {
-    /// Seat index into the species' `seats` row list.
+    /// Seat index into the mount's declared `seats` list.
     pub seat: u8,
     /// The riding session.
     pub player_id: PlayerId,
 }
 
-/// Seat declaration and current occupants of one live mob, for
+/// Seat declaration and current occupants of one mount, for
 /// [`HostCall::MobRiders`].
 ///
 /// [`HostCall::MobRiders`]: crate::HostCall::MobRiders
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct MobRidersData {
-    /// Number of seats declared by the mob's species row. Valid seat indices
+    /// Number of seats declared by the mount's row. Valid seat indices
     /// are `0..capacity`.
     pub capacity: u8,
     /// Current occupants, in player-id order.
     pub riders: Vec<MobRiderData>,
+}
+
+impl MobRidersData {
+    /// The lowest declared seat index nobody occupies, or `None` when the
+    /// mount is full (or declares no seats) — the shared boarding pick.
+    pub fn first_free_seat(&self) -> Option<u8> {
+        (0..self.capacity).find(|s| !self.riders.iter().any(|r| r.seat == *s))
+    }
+}
+
+/// A placed model-block group's world placement, for
+/// [`HostCall::BlockModelGroup`] — everything block-local policy (a seat
+/// layout, a machine front) needs to map its own footprint-space data into
+/// the world.
+///
+/// [`HostCall::BlockModelGroup`]: crate::HostCall::BlockModelGroup
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ModelGroupData {
+    /// The group's BASE cell (the rotated footprint's min corner).
+    pub base: [i32; 3],
+    /// The placement facing the group was placed with.
+    pub facing: crate::Facing,
 }
 
 /// Authoritative playback state of one active named mob animation, for
@@ -190,6 +237,16 @@ pub struct PlayerSnapshot {
     /// The selected stack's count (0 = empty hand) — lets a consumer gate an
     /// atomic multi-item spend (the trough's three-wheat fill) exactly.
     pub held_count: u8,
+    /// The world-space anchor this player is pose-pinned at
+    /// ([`HostCall::PlayerPoseSet`]), or `None` when not posed. THE occupancy
+    /// read model for static seats: a consumer derives "is this seat taken"
+    /// by comparing its own seat anchors against the roster — the engine's
+    /// registry is always truth, so there is no mod-side bookkeeping to
+    /// desync. Anchors round-trip verbatim (`f32` bit-exact), so exact
+    /// equality against the anchor a mod passed is sound.
+    ///
+    /// [`HostCall::PlayerPoseSet`]: crate::HostCall::PlayerPoseSet
+    pub pose_anchor: Option<[f32; 3]>,
 }
 
 /// One entry of [`HostCall::Players`]: a connected player's session id plus

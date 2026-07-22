@@ -5,8 +5,8 @@
 //! sleeping, spectator, or departed rider), publishes completed detach transitions,
 //! reconciles each session's `mount` mirror, and slaves every rider's player
 //! to its seat.
-//! Mount/dismount POLICY stays with mods (`MobMount`/`MobDismount` HostCalls
-//! write the same registry); this pass owns only the physical consequences.
+//! Mount/dismount POLICY stays with mods (`MobMount`/`BlockMount`/`MobDismount`
+//! HostCalls write the same registry); this pass owns only the physical consequences.
 //!
 //! A mounted session's own movement integration is skipped in
 //! `tick_movement`; its movement INTENT still arrives every tick and is
@@ -16,7 +16,7 @@
 use crate::events::PostEvent;
 use crate::mathh::Vec3;
 use crate::mob::riding::{
-    dismount_spot, player_body_free, player_body_known_free, seat_world_pos, Mount,
+    dismount_spot, player_body_free, player_body_known_free, seat_world_pos, Mount, MountTarget,
 };
 use crate::player::{Player, PlayerInputSnapshot};
 
@@ -109,21 +109,28 @@ impl ServerGame {
             }
         }
 
-        // Registry-side valves: a mount whose mob is gone or dead, or whose
-        // player has no session anymore (left), detaches.
+        // Registry-side valves: a mount whose target is gone (dead mob), or
+        // whose player has no session anymore (left), detaches. A pose ANCHOR
+        // has no target to die — the engine deliberately doesn't know what
+        // furniture it belongs to; the owning mod releases sitters when its
+        // block breaks, and the session-side valves above stay the safety
+        // net.
         let stale: Vec<u8> = self
             .world
             .riding()
             .players()
             .filter_map(|p| {
                 let m = self.world.riding().mount_of(p)?;
-                let mob_live = self
-                    .world
-                    .mobs()
-                    .index_of_id(m.mob_id)
-                    .is_some_and(|idx| !self.world.mobs().instances()[idx].is_dead());
+                let mount_live = match m.target {
+                    MountTarget::Mob(mob_id) => self
+                        .world
+                        .mobs()
+                        .index_of_id(mob_id)
+                        .is_some_and(|idx| !self.world.mobs().instances()[idx].is_dead()),
+                    MountTarget::Anchor(_) => true,
+                };
                 let has_session = self.sessions.iter().any(|sess| sess.id.0 == p);
-                (!mob_live || !has_session).then_some(p)
+                (!mount_live || !has_session).then_some(p)
             })
             .collect();
         for p in stale {
@@ -156,7 +163,7 @@ impl ServerGame {
         for (player, mount) in detached {
             self.bus.emit(PostEvent::PlayerDismounted {
                 player: crate::server::player::PlayerId(player),
-                mob_id: mount.mob_id,
+                mount,
             });
         }
     }
@@ -203,15 +210,20 @@ impl ServerGame {
     /// tracker re-anchors every tick (leaving a boat mid-air is a fresh fall
     /// from there), and grounding is nominal.
     fn slave_rider_to_seat(&mut self, s: usize, m: Mount) {
-        let Some(idx) = self.world.mobs().index_of_id(m.mob_id) else {
-            return; // vanished this tick; the next pass detaches
+        let pos = match m.target {
+            MountTarget::Mob(mob_id) => {
+                let Some(idx) = self.world.mobs().index_of_id(mob_id) else {
+                    return; // vanished this tick; the next pass detaches
+                };
+                let mob = &self.world.mobs().instances()[idx];
+                let d = crate::mob::def(mob.kind);
+                let Some(&seat) = d.seats.get(m.seat as usize) else {
+                    return;
+                };
+                seat_world_pos(mob.pos, mob.yaw, seat)
+            }
+            MountTarget::Anchor(a) => a.pos,
         };
-        let mob = &self.world.mobs().instances()[idx];
-        let d = crate::mob::def(mob.kind);
-        let Some(&seat) = d.seats.get(m.seat as usize) else {
-            return;
-        };
-        let pos = seat_world_pos(mob.pos, mob.yaw, seat);
         let sess = &mut self.sessions[s];
         sess.player.pos = pos;
         sess.player.vel = Vec3::ZERO;

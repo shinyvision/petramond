@@ -10,7 +10,7 @@
 //! transform, targeting, and held intents; `PlayerAction`/menu actions latch the
 //! one-shot edges. The tick stages consume the latches exactly as before.
 
-use crate::block::RenderShape;
+use crate::block::ShapeFamily;
 use crate::block_state::{HeldBlockState, LogAxis, SlabState, StairHalf, StairState};
 use crate::controls::PointerButton;
 use crate::game::ContainerMenu;
@@ -114,13 +114,13 @@ impl HeldRotation {
         let Some(block) = selected.and_then(ItemType::as_block) else {
             return HeldBlockState::None;
         };
-        if block.render_shape() == RenderShape::Stair {
+        if block.shape_family() == ShapeFamily::Stair {
             return HeldBlockState::Stair(StairState::new(
                 crate::block_model::DEFAULT_MODEL_FACING,
                 self.stair_half(selected),
             ));
         }
-        if block.render_shape() == RenderShape::Slab {
+        if block.shape_family() == ShapeFamily::Slab {
             let slot = crate::slab::slot_for_rotation(
                 self.slab_rotation(selected),
                 IVec3::ZERO,
@@ -613,11 +613,11 @@ impl ConnectedPlayer {
 }
 
 fn rotatable_block(block: crate::block::Block) -> bool {
-    matches!(block.render_shape(), RenderShape::Stair | RenderShape::Slab) || block.is_log()
+    matches!(block.shape_family(), ShapeFamily::Stair | ShapeFamily::Slab) || block.is_log()
 }
 
 fn rotation_count(block: crate::block::Block) -> u8 {
-    if block.render_shape() == RenderShape::Slab {
+    if block.shape_family() == ShapeFamily::Slab {
         3
     } else {
         2

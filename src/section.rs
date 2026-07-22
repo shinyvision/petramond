@@ -160,6 +160,20 @@ pub struct Section {
     /// torches, lit furnaces, pack glow blocks). `0` lets the light flood's
     /// emitter gather skip this section without scanning its cells.
     light_emitter_count: u32,
+    /// Layer-3 custom-shape RENDER bake: per-cell baked BOXES a pack's
+    /// `client_wasm` produced, keyed by section-local index. `None` for the
+    /// common section (no custom shapes). `Arc` so a mesh job's snapshot keeps
+    /// reading it safely and a clone is cheap; NOT persisted (re-baked on the
+    /// client). The mesher draws each box face-by-face for `Custom`-family cells
+    /// (falling back to a cube on a miss).
+    shape_render: Option<Arc<std::collections::HashMap<u16, Box<[crate::block::Aabb]>>>>,
+    /// Layer-3 custom-shape SIM light aperture: per-cell "opaque to light" bit a
+    /// pack's `wasm` baked (`BakedSimCell.light_aperture`), keyed by section-local
+    /// index. `None` for the common section. Deterministic (server + every client
+    /// replica bake it identically), so the light flood reads the SAME value on
+    /// each side; NOT persisted (re-baked on load). The light snapshot gathers it
+    /// for `CustomAperture`-lit cells (absent = passes light until baked).
+    light_apertures: Option<Arc<std::collections::HashMap<u16, bool>>>,
 }
 
 /// A section's block-entity maps, keyed by section-local block index
@@ -230,7 +244,52 @@ impl Section {
             biome_tint_count: 0,
             particle_emitter_count: 0,
             light_emitter_count: 0,
+            shape_render: None,
+            light_apertures: None,
         }
+    }
+
+    /// The per-cell "opaque to light" bits of this section's baked custom-shape
+    /// apertures (empty when none), for the light snapshot to gather.
+    #[inline]
+    pub(crate) fn custom_light_apertures(&self) -> Option<&std::collections::HashMap<u16, bool>> {
+        self.light_apertures.as_deref()
+    }
+
+    /// Record a custom-shape cell's baked light aperture (`opaque` = blocks light
+    /// like a full cube). Returns whether it CHANGED, so the caller relights the
+    /// section only on a real transition (a gate toggling open/closed).
+    pub(crate) fn set_custom_light_aperture(&mut self, idx: u16, opaque: bool) -> bool {
+        let map = Arc::make_mut(self.light_apertures.get_or_insert_with(Default::default));
+        map.insert(idx, opaque) != Some(opaque)
+    }
+
+    /// Drop a cell's stored light aperture (the cell stopped being a custom
+    /// shape). Returns whether an entry was actually removed, so the caller
+    /// relights only on a real change.
+    pub(crate) fn clear_custom_light_aperture(&mut self, idx: u16) -> bool {
+        match self.light_apertures.as_ref() {
+            Some(map) if map.contains_key(&idx) => {
+                Arc::make_mut(self.light_apertures.as_mut().unwrap()).remove(&idx);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The baked render boxes for the custom-shape cell at section-local index
+    /// `idx`, or `None` when the cell has no render bake (the mesher then draws
+    /// the cube fallback).
+    #[inline]
+    pub fn shape_render_boxes(&self, idx: u16) -> Option<&[crate::block::Aabb]> {
+        self.shape_render.as_ref()?.get(&idx).map(|b| &b[..])
+    }
+
+    /// Record a custom-shape cell's freshly-baked render boxes (the client
+    /// render-bake pump). Bumps `mesh_revision` so the section remeshes.
+    pub(crate) fn set_shape_render(&mut self, idx: u16, boxes: Box<[crate::block::Aabb]>) {
+        Arc::make_mut(self.shape_render.get_or_insert_with(Default::default)).insert(idx, boxes);
+        self.mesh_revision += 1;
     }
 
     /// World-space origin (minimum corner) of this section.

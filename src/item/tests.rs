@@ -1,5 +1,5 @@
 use crate::atlas::Tile;
-use crate::block::{Block, RenderShape};
+use crate::block::{Block, ShapeFamily};
 
 use super::*;
 
@@ -205,7 +205,7 @@ fn item_tags_are_item_data() {
 }
 
 #[test]
-fn render_kind_matches_render_shape() {
+fn render_kind_matches_shape_family() {
     for &block in Block::all() {
         let item = ItemType::from_block(block);
         // A dynamic block with no linked item (e.g. a machine's lit
@@ -214,36 +214,17 @@ fn render_kind_matches_render_shape() {
         if item == ItemType::Air && block != Block::Air {
             continue;
         }
-        match block.render_shape() {
-            RenderShape::Cube => {
-                assert_eq!(
-                    item.render_kind(),
-                    ItemRenderKind::BlockCube(block),
-                    "{block:?}"
-                );
+        match block.shape_family() {
+            // Cube-drawn families (the plain cube, the true-geometry stair/slab/
+            // fence, and the lowered cube) render as a block cube in the slot.
+            ShapeFamily::Cube
+            | ShapeFamily::LoweredCube
+            | ShapeFamily::Stair
+            | ShapeFamily::Slab
+            | ShapeFamily::Fence => {
+                assert_eq!(item.render_kind(), ItemRenderKind::BlockCube(block), "{block:?}");
             }
-            RenderShape::LoweredCube(_) => {
-                assert_eq!(
-                    item.render_kind(),
-                    ItemRenderKind::BlockCube(block),
-                    "{block:?}"
-                );
-            }
-            RenderShape::Stair => {
-                assert_eq!(
-                    item.render_kind(),
-                    ItemRenderKind::BlockCube(block),
-                    "{block:?}"
-                );
-            }
-            RenderShape::Slab => {
-                assert_eq!(
-                    item.render_kind(),
-                    ItemRenderKind::BlockCube(block),
-                    "{block:?}"
-                );
-            }
-            RenderShape::Cross => {
+            ShapeFamily::Cross => {
                 assert_eq!(
                     item.render_kind(),
                     ItemRenderKind::Sprite(block.tiles()[0]),
@@ -252,46 +233,34 @@ fn render_kind_matches_render_shape() {
             }
             // Crop planters normally carry their own sprite (which wins);
             // either way the ITEM is always a flat sprite, never a cube.
-            RenderShape::Crop => {
+            ShapeFamily::Crop => {
                 assert!(
                     matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
                     "{block:?} crop items render as flat sprites"
                 );
             }
-            RenderShape::Torch => {
+            ShapeFamily::Torch => {
                 assert_eq!(
                     item.render_kind(),
                     ItemRenderKind::Sprite(Tile::named("torch")),
                     "{block:?}"
                 );
             }
-            RenderShape::Model(kind) => {
+            ShapeFamily::Model => {
+                let kind = block.model_kind().expect("model family");
                 assert_eq!(item.render_kind(), ItemRenderKind::Model(kind), "{block:?}");
             }
-            RenderShape::Door => {
+            // The thin / flat-art shapes render as a flat sprite (their row art).
+            ShapeFamily::Door | ShapeFamily::Pane | ShapeFamily::Ladder => {
                 assert!(
                     matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
-                    "{block:?} door renders as a flat sprite"
+                    "{block:?} renders as a flat sprite"
                 );
             }
-            RenderShape::Pane => {
-                assert!(
-                    matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
-                    "{block:?} pane renders as a flat sprite"
-                );
-            }
-            RenderShape::Fence => {
-                assert_eq!(
-                    item.render_kind(),
-                    ItemRenderKind::BlockCube(block),
-                    "{block:?}"
-                );
-            }
-            RenderShape::Ladder => {
-                assert!(
-                    matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
-                    "{block:?} ladder renders as a flat sprite"
-                );
+            // A Layer-3 custom shape's item defaults to a cube icon (a mod can
+            // bake its own item form; the default `ShapeRender` is a cube).
+            ShapeFamily::Custom => {
+                assert_eq!(item.render_kind(), ItemRenderKind::BlockCube(block), "{block:?}");
             }
         }
     }
