@@ -14,7 +14,9 @@
 //! seat is taken. The absorb is deliberate (an interact-doctrine exception):
 //! occupancy is invisible to the initiating client's replica, so a pass-when-
 //! full would let the client ghost a block placement the server then refuses.
-//! The CLIENT instance mirrors the same always-claim as a predictor.
+//! The CLIENT instance mirrors the same always-claim as a predictor. One PASS:
+//! a sneak click holding a placeable block defers to the placement consumer
+//! (sneak-to-build against a chair, like the farming harvest's sneak rule).
 //!
 //! Breaking furniture is the one release this mod owes the engine (a pose is
 //! not tied to any block): `block_broken` re-derives which former group the
@@ -82,10 +84,11 @@ impl Mod for Furniture {
                     ..
                 },
             ) => {
+                let actor = player_state();
                 let claimed = if self.client {
-                    self.predict_sit(*pos)
+                    self.predict_sit(*pos, &actor)
                 } else {
-                    self.try_sit(*pos, *player)
+                    self.try_sit(*pos, *player, &actor)
                 };
                 if claimed {
                     Outcome::Cancel
@@ -116,8 +119,12 @@ impl Furniture {
     /// the clicked piece. The claim is UNCONDITIONAL once the target is
     /// furniture — a fully occupied piece ABSORBS the click (see module docs)
     /// so the initiating client, which cannot see occupancy on its replica,
-    /// never mispredicts a placement.
-    fn try_sit(&self, pos: [i32; 3], player: PlayerId) -> bool {
+    /// never mispredicts a placement. One PASS: a sneak click holding a
+    /// placeable block defers to the placement consumer (sneak-to-build).
+    fn try_sit(&self, pos: [i32; 3], player: PlayerId, actor: &PlayerSnapshot) -> bool {
+        if actor.sneak && held_places_a_block(actor.held) {
+            return false;
+        }
         let Some(piece) = get_block(pos).and_then(|b| self.piece_for(b)) else {
             return false;
         };
@@ -143,15 +150,34 @@ impl Furniture {
 
     /// CLIENT: gate-only mirror of [`Self::try_sit`] over a replica read.
     /// Furniture claims every click (seat or absorb), so the mirror is exact
-    /// from the block id alone — no occupancy divergence is possible. A
+    /// from the block id alone — no occupancy divergence is possible — apart
+    /// from the same sneak+placeable pass the authoritative gate applies. A
     /// `None` replica cell never produces a claim.
-    fn predict_sit(&self, pos: [i32; 3]) -> bool {
+    fn predict_sit(&self, pos: [i32; 3], actor: &PlayerSnapshot) -> bool {
+        if actor.sneak && held_places_a_block(actor.held) {
+            return false;
+        }
         client_blocks_at(vec![pos])
             .into_iter()
             .next()
             .flatten()
             .is_some_and(|b| self.piece_for(b).is_some())
     }
+}
+
+/// Whether the held item places a block (its row carries a `block` link) —
+/// the gate the sneak-defer rule reads. Registry-only, legal on any
+/// instance; an unresolvable id reads as "not a block".
+fn held_places_a_block(held: Option<ItemId>) -> bool {
+    let Some(id) = held else {
+        return false;
+    };
+    item_names(vec![id])
+        .into_iter()
+        .next()
+        .flatten()
+        .and_then(|name| item_info(&name))
+        .is_some_and(|info| info.block.is_some())
 }
 
 /// Release every player still posed on the seats of the group the broken

@@ -304,15 +304,10 @@ pub(super) fn install_empty_chunk(game: &mut TestGame) {
 }
 
 /// Clear the world and install one chunk at (0,0) with a solid one-block
-/// floor of `floor` at y=63 — the flat island the mod child tests stand on.
+/// floor of `floor` at y=63, with the whole column pre-inserted as empty
+/// sections first, so the air ABOVE the floor reads as LOADED — sim reads
+/// treat unloaded air as absent.
 /// Takes the `World` directly so tests driving a bare world can use it too.
-pub(super) fn flat_floor(world: &mut crate::world::World, floor: crate::block::Block) {
-    install_flat_floor(world, floor, false);
-}
-
-/// [`flat_floor`], but with the whole column pre-inserted as empty sections
-/// first, so the air ABOVE the floor reads as LOADED — mod ground scans and
-/// sim reads treat unloaded air as absent.
 pub(super) fn flat_floor_loaded_air(world: &mut crate::world::World, floor: crate::block::Block) {
     install_flat_floor(world, floor, true);
 }

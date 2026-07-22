@@ -381,16 +381,6 @@ impl SurfaceDensitySystem {
         }
     }
 
-    /// Build a fresh per-operation climate-cell cache. Climate is continent-scale
-    /// low-frequency noise, so biome classification is memoized per shared 4×4
-    /// `ClimateSampleCell`: every column in a cell, and every coast-scan neighbour
-    /// that lands in it, reuses one sample+classify instead of recomputing. Output
-    /// stays a pure function of `(seed, cell)`, independent of call order.
-    #[cfg(test)]
-    pub(crate) fn climate_cells_for_test(&self) -> ClimateCellCache<'_> {
-        self.climate_cells()
-    }
-
     fn climate_cells(&self) -> ClimateCellCache<'_> {
         ClimateCellCache::new(
             ClimateSampler::new(self.density.graph()),

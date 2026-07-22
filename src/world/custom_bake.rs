@@ -160,47 +160,6 @@ impl World {
         !self.custom_bake_dirty.is_empty()
     }
 
-    /// The number of baked RENDER boxes cached for the custom cell at `pos` (0
-    /// when none) — the render-bake test probe.
-    #[cfg(test)]
-    pub(crate) fn custom_render_box_count(&self, pos: IVec3) -> usize {
-        let Some((sp, lx, ly, lz)) = Self::split_world(pos.x, pos.y, pos.z) else {
-            return 0;
-        };
-        self.sections
-            .get(&sp)
-            .and_then(|s| s.shape_render_boxes(crate::chunk::section_idx(lx, ly, lz) as u16))
-            .map_or(0, |b| b.len())
-    }
-
-    /// Drop the per-cell collision bake cache (as a fresh load would), so the
-    /// next read falls back to the static boxes — the reload-simulation probe.
-    #[cfg(test)]
-    pub(crate) fn clear_custom_bake_for_test(&mut self) {
-        self.custom_bake.clear();
-    }
-
-    /// Run the section-load custom-shape scan for the section holding `pos` — the
-    /// `note_section_loaded` re-bake path, exposed for reload tests.
-    #[cfg(test)]
-    pub(crate) fn scan_section_custom_bakes_for_test(&mut self, pos: IVec3) {
-        if let Some((sp, ..)) = Self::split_world(pos.x, pos.y, pos.z) {
-            self.scan_section_custom_bakes(sp);
-        }
-    }
-
-    /// The baked light-aperture opacity stored for the custom cell at `pos`
-    /// (`None` = never baked) — the SIM light-aperture test probe.
-    #[cfg(test)]
-    pub(crate) fn custom_light_aperture_opaque(&self, pos: IVec3) -> Option<bool> {
-        let (sp, lx, ly, lz) = Self::split_world(pos.x, pos.y, pos.z)?;
-        self.sections
-            .get(&sp)?
-            .custom_light_apertures()?
-            .get(&(crate::chunk::section_idx(lx, ly, lz) as u16))
-            .copied()
-    }
-
     /// Mark every Layer-3 custom-shape cell in a freshly-LOADED section dirty for
     /// baking. A section load (worldgen, streaming, client ingest, save reload)
     /// sets its cells in BULK, bypassing [`mark_custom_bake_edit`], so a chair

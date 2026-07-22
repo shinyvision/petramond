@@ -5,8 +5,6 @@ mod plan;
 mod recipe;
 mod station;
 
-#[cfg(test)]
-pub use load::load_recipes;
 pub use load::load_recipes_for;
 pub use plan::{craft, output_accepts, CraftFailure};
 pub(crate) use recipe::CraftingRecipeData;

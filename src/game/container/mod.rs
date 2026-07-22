@@ -33,10 +33,6 @@ mod tests {
         world
     }
 
-    fn recipes() -> Recipes {
-        crate::crafting::load_recipes()
-    }
-
     fn player_crafting_recipes(station: CraftingStation) -> Recipes {
         Recipes::new(
             vec![CraftingRecipe::new(

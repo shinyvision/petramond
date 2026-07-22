@@ -32,9 +32,3 @@ pub(crate) fn item_bake(block_id: u8) -> Option<Arc<[Aabb]>> {
 pub(crate) fn clear() {
     cache().lock().expect("item bake cache").clear();
 }
-
-/// Drop all cached item geometry — lets a test exercise a fresh startup bake.
-#[cfg(test)]
-pub(crate) fn clear_for_test() {
-    clear();
-}

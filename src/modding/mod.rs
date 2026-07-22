@@ -551,13 +551,6 @@ impl ModHost {
     }
 
     #[cfg(test)]
-    pub(crate) fn loaded(&self) -> usize {
-        self.instances.len()
-    }
-
-    /// Test observability for mod `index`: (disabled, successful guest
-    /// dispatches, host-call stats).
-    #[cfg(test)]
     pub(crate) fn probe(&self, index: usize) -> (bool, u64, host::HostStats) {
         let inst = self.instances[index].lock().unwrap();
         (inst.disabled(), inst.dispatches(), inst.stats())

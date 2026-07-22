@@ -174,11 +174,6 @@ pub(crate) fn stage_mods_fixture(tag: &str, ids: &[&str]) -> Option<PathBuf> {
     Some(root)
 }
 
-/// The monsters pack fixture.
-pub(crate) fn stage_monsters_fixture(tag: &str) -> Option<PathBuf> {
-    stage_mods_fixture(tag, &["monsters"])
-}
-
 /// Re-spawn the test binary on `test_path` (an `#[ignore]`d inner test) with
 /// `PETRAMOND_MODS` pointing at `root/mods`, then clean the fixture up.
 /// `PETRAMOND_DATA_DIR` is pinned to this process's shared test root (the one
