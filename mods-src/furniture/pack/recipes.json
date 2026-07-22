@@ -12,6 +12,16 @@
     },
     {
       "type": "crafting",
+      "recipe": "furniture:bench",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        { "item": "petramond:iron_ingot", "count": 4 },
+        { "tag": "petramond:planks", "count": 4 }
+      ],
+      "result": { "item": "furniture:bench", "count": 1 }
+    },
+    {
+      "type": "crafting",
       "recipe": "furniture:chain",
       "station": "petramond:furniture_workbench",
       "ingredients": [

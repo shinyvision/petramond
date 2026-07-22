@@ -10,6 +10,15 @@
       "block": "furniture:chair"
     },
     {
+      "item": "furniture:bench",
+      "key": "furniture:bench",
+      "name": "Bench",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 1.8, "roll": 0 },
+      "tags": [],
+      "block": "furniture:bench"
+    },
+    {
       "item": "furniture:chain",
       "key": "furniture:chain",
       "name": "Chain",

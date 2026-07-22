@@ -47,11 +47,18 @@ struct Piece {
     seats: &'static [[f32; 3]],
 }
 
-const PIECES: &[Piece] = &[Piece {
-    block: "furniture:chair",
-    footprint: [1, 2, 1],
-    seats: &[[0.5, -0.1, 0.25]],
-}];
+const PIECES: &[Piece] = &[
+    Piece {
+        block: "furniture:chair",
+        footprint: [1, 2, 1],
+        seats: &[[0.5, -0.1, 0.25]],
+    },
+    Piece {
+        block: "furniture:bench",
+        footprint: [2, 2, 1],
+        seats: &[[0.5, -0.1, 0.25], [1.5, -0.1, 0.25]],
+    },
+];
 
 const FACINGS: [Facing; 4] = [Facing::North, Facing::South, Facing::West, Facing::East];
 
@@ -262,8 +269,10 @@ impl Furniture {
             .map(|p| p.piece)
     }
 
-    /// Furniture consumer: seat the clicker in the first unoccupied seat of
-    /// the clicked piece. The claim is UNCONDITIONAL once the target is
+    /// Furniture consumer: seat the clicker in the free seat nearest the
+    /// clicked cell (horizontal distance to the seat's world anchor, so the
+    /// pick is facing-correct; declaration order breaks a tie). The claim is
+    /// UNCONDITIONAL once the target is
     /// furniture — a fully occupied piece ABSORBS the click (see module docs)
     /// so the initiating client, which cannot see occupancy on its replica,
     /// never mispredicts a placement. One PASS: a sneak click holding a
@@ -283,11 +292,16 @@ impl Furniture {
             .filter_map(|p| p.state.pose_anchor)
             .collect();
         let yaw = facing_player_yaw(group.facing);
-        for seat in piece.seats {
-            let anchor = footprint_local_to_world(group.base, piece.footprint, group.facing, *seat);
-            if occupied.contains(&anchor) {
-                continue;
-            }
+        let (cx, cz) = (pos[0] as f32 + 0.5, pos[2] as f32 + 0.5);
+        let mut free: Vec<(f32, [f32; 3])> = piece
+            .seats
+            .iter()
+            .map(|seat| footprint_local_to_world(group.base, piece.footprint, group.facing, *seat))
+            .filter(|anchor| !occupied.contains(anchor))
+            .map(|anchor| ((anchor[0] - cx).powi(2) + (anchor[2] - cz).powi(2), anchor))
+            .collect();
+        free.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap()); // stable: ties keep declaration order
+        for (_, anchor) in free {
             if player_pose_set(player, anchor, yaw, pose::SITTING) {
                 break;
             }

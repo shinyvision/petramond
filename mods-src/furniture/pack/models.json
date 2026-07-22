@@ -8,6 +8,13 @@
       "fit": "native"
     },
     {
+      "key": "furniture:bench",
+      "model_file": "models/bench.bbmodel",
+      "cells": [2, 2, 1],
+      "orientation": "left_to_right",
+      "fit": "fill"
+    },
+    {
       "key": "furniture:chandelier",
       "model_file": "models/chandelier.bbmodel",
       "cells": [3, 2, 3],
