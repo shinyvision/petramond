@@ -178,7 +178,7 @@ pub fn draw_rgba(
     scale: u8,
     color: [u8; 4],
 ) {
-    if width == 0 || rgba.len() % (width as usize * 4) != 0 {
+    if width == 0 || !rgba.len().is_multiple_of(width as usize * 4) {
         return;
     }
     let height = rgba.len() / (width as usize * 4);

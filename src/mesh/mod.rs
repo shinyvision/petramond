@@ -7,6 +7,7 @@
 //! AO across the face, giving the soft contact shadows in nooks and against
 //! adjacent blocks.
 
+mod boxset;
 mod builder;
 pub(crate) mod face;
 mod face_emit;

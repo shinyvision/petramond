@@ -32,6 +32,12 @@
 //! deterministic, so the ENGINE predicts it whole: the client runs the same
 //! plan + gates against its replica and ghosts the exact write — the mod
 //! ships no placement predictor of its own.
+//!
+//! The cauldron is the mod's second Layer-3 shape: one unoriented row whose
+//! bakes all return [`CAULDRON_BOXES`] — a hollow slate pot the mesher
+//! carves from the row's `[top,bottom,side]` tiles. Fluid contents (water,
+//! dyes) are planned as sibling rows sharing the shape kind, exactly like
+//! the chain's axis rows.
 
 use mod_sdk::*;
 
@@ -110,6 +116,46 @@ const PLATES: [[ShapeAabb; 2]; 3] = [
     ],
 ];
 
+/// Helper for the box tables: a [`ShapeAabb`] from authored 16ths.
+const fn px(min: [f32; 3], max: [f32; 3]) -> ShapeAabb {
+    ShapeAabb {
+        min: [min[0] / 16.0, min[1] / 16.0, min[2] / 16.0],
+        max: [max[0] / 16.0, max[1] / 16.0, max[2] / 16.0],
+    }
+}
+
+/// The cauldron: a hollow single-cell pot built from overlapping cuboids so
+/// the silhouette reads rounded — a pinwheel wall ring (butted contact faces
+/// stay fully buried), belly plates protruding past the walls with chamfered
+/// corners, and a slim overhanging LIP above a 2-px neck. The lip is a
+/// 2×2 cross-section ring (y 14..16, 2 thick) whose plan-view corners are
+/// cut 1×1 — the four side boxes each stop 1 short of the outline corners
+/// (they overlap in the corners instead of butting; the emitter's
+/// coincident-face tie-break draws each shared plane once) — so the rim
+/// reads rounded like the belly. The BOTTOM mirrors the same graduation:
+/// belly down to y 2, walls to y 1, and the inset floor slab (2 from every
+/// side) at y 0 — a rounded foot on all four corners. Cavity is x/z 3..13
+/// from y 3 up, open at the top, with a 1-px wall-top shelf visible inside
+/// the lip. ONE geometry source for the sim, render, and item bakes, like
+/// the chain's plates. Fluid states later become sibling rows sharing this
+/// shape kind (block id = state, the ladder-row pattern) with their own
+/// tiles; the bake then branches on the cell's block id.
+const CAULDRON_BOXES: [ShapeAabb; 13] = [
+    px([2.0, 0.0, 2.0], [14.0, 3.0, 14.0]),   // floor slab (cavity floor + inset foot)
+    px([1.0, 1.0, 1.0], [13.0, 14.0, 3.0]),   // wall ring, pinwheel
+    px([13.0, 1.0, 1.0], [15.0, 14.0, 13.0]),
+    px([3.0, 1.0, 13.0], [15.0, 14.0, 15.0]),
+    px([1.0, 1.0, 3.0], [3.0, 14.0, 15.0]),
+    px([2.0, 2.0, 0.5], [14.0, 12.0, 2.0]),   // belly plates (rounded bulge)
+    px([2.0, 2.0, 14.0], [14.0, 12.0, 15.5]),
+    px([0.5, 2.0, 2.0], [2.0, 12.0, 14.0]),
+    px([14.0, 2.0, 2.0], [15.5, 12.0, 14.0]),
+    px([1.0, 14.0, 0.0], [15.0, 16.0, 2.0]),  // lip ring, corners cut 1×1
+    px([1.0, 14.0, 14.0], [15.0, 16.0, 16.0]),
+    px([0.0, 14.0, 1.0], [2.0, 16.0, 15.0]),
+    px([14.0, 14.0, 1.0], [16.0, 16.0, 15.0]),
+];
+
 impl Chains {
     /// The row for a clicked face's normal: top/bottom hangs a vertical
     /// chain, a side face lays it along that face's axis (vanilla rule).
@@ -141,6 +187,8 @@ struct ResolvedPiece {
 struct Furniture {
     pieces: Vec<ResolvedPiece>,
     chains: Option<Chains>,
+    /// The cauldron's shape-kind id (`None`: pack content didn't load).
+    cauldron: Option<u8>,
     /// Running as the CLIENT instance: only PREDICT the sit claim against the
     /// replica — sim host calls are unavailable on this side.
     client: bool,
@@ -157,6 +205,7 @@ impl Mod for Furniture {
             .collect();
         self.client = runtime_side() == RuntimeSide::Client;
         self.chains = resolve_chains();
+        self.cauldron = resolve_shape("furniture:cauldron");
         register_event_handler(EventKind::InteractAttempt, 0, ON_INTERACT);
         if !self.client {
             register_event_handler(EventKind::BlockBroken, 0, ON_BLOCK_BROKEN);
@@ -195,52 +244,59 @@ impl Mod for Furniture {
         }
     }
 
-    /// Chain SIM bake (deterministic — server and client replica): the plate
-    /// pair for the cell's axis, oriented by its block id alone (a pure
-    /// function of the cell, per the bake purity rule). Light passes — the
-    /// plates are thin, so every cell reports the open aperture.
+    /// SIM bake (deterministic — server and client replica): the box list for
+    /// the cell's shape kind, a pure function of the cell's block id alone
+    /// (per the bake purity rule) — the chain's axis plates or the cauldron's
+    /// fixed pot. Light passes both: the chain's plates are thin and the
+    /// cauldron is open-topped, so every cell reports the open aperture.
     fn bake_shape_sim(&mut self, shape_kind: u8, cells: &[CellInput]) -> Vec<BakedSimCell> {
-        let Some(chains) = self.chains.as_ref().filter(|c| c.shape == shape_kind) else {
+        if !self.owns_shape(shape_kind) {
             return Vec::new();
-        };
+        }
         cells
             .iter()
             .map(|cell| BakedSimCell {
-                collision_boxes: chains.plates_for(cell.block_id),
+                collision_boxes: self.shape_boxes(shape_kind, cell.block_id),
                 light_aperture: LightAperture::Open,
             })
             .collect()
     }
 
-    /// Chain RENDER bake (client): the same plates the sim bake reports, so
-    /// the drawn boxes, the selection union, and the collision agree.
+    /// RENDER bake (client): the same boxes the sim bake reports, so the
+    /// drawn boxes, the selection union, and the collision agree.
     fn bake_shape_render(&mut self, shape_kind: u8, cells: &[CellInput]) -> Vec<BakedRenderCell> {
-        let Some(chains) = self.chains.as_ref().filter(|c| c.shape == shape_kind) else {
+        if !self.owns_shape(shape_kind) {
             return Vec::new();
-        };
+        }
         cells
             .iter()
             .map(|cell| BakedRenderCell {
-                boxes: chains.plates_for(cell.block_id),
+                boxes: self.shape_boxes(shape_kind, cell.block_id),
             })
             .collect()
     }
 
-    /// Chain ITEM bake (client, once at load): the icon / in-hand / dropped
-    /// form is always the VERTICAL plate pair, however the block row the
-    /// item links is oriented — a held chain reads like the vanilla item.
+    /// ITEM bake (client, once at load): the chain's icon / in-hand /
+    /// dropped form is always the VERTICAL plate pair, however the block row
+    /// the item links is oriented — a held chain reads like the vanilla
+    /// item. The cauldron is unoriented; its one box list is the item too.
     fn bake_shape_item(&mut self, shape_kind: u8, _block: BlockId) -> BakedItemGeometry {
-        let boxes = match self.chains.as_ref().filter(|c| c.shape == shape_kind) {
-            Some(_) => PLATES[0].to_vec(),
-            None => Vec::new(),
+        let boxes = if self.chains.as_ref().is_some_and(|c| c.shape == shape_kind) {
+            PLATES[0].to_vec()
+        } else if self.cauldron == Some(shape_kind) {
+            CAULDRON_BOXES.to_vec()
+        } else {
+            Vec::new()
         };
         BakedItemGeometry { boxes }
     }
 
-    /// Chain placement: accept the click cell and write the axis row for the
-    /// clicked face's normal (vertical off the top/bottom faces, north/south
-    /// or east/west off the side faces) as the plan's block override. The
-    /// host owns every world gate — loaded, replaceable, body occupancy.
+    /// Placement (chain + cauldron): accept the click cell; for a chain,
+    /// write the axis row for the clicked face's normal (vertical off the
+    /// top/bottom faces, north/south or east/west off the side faces) as the
+    /// plan's block override — the cauldron is unoriented and keeps the held
+    /// row (`block: None`). The host owns every world gate — loaded,
+    /// replaceable, body occupancy.
     fn shape_placement_plan(
         &mut self,
         shape_kind: u8,
@@ -262,6 +318,24 @@ impl Mod for Furniture {
 }
 
 impl Furniture {
+    /// Whether a bake dispatch's shape kind is one of this mod's shapes.
+    fn owns_shape(&self, shape_kind: u8) -> bool {
+        self.chains.as_ref().is_some_and(|c| c.shape == shape_kind)
+            || self.cauldron == Some(shape_kind)
+    }
+
+    /// The box list for a placed cell — the one geometry source the sim and
+    /// render bakes share so collision, selection, and the mesh can't drift.
+    fn shape_boxes(&self, shape_kind: u8, block: BlockId) -> Vec<ShapeAabb> {
+        if let Some(chains) = self.chains.as_ref().filter(|c| c.shape == shape_kind) {
+            return chains.plates_for(block);
+        }
+        if self.cauldron == Some(shape_kind) {
+            return CAULDRON_BOXES.to_vec();
+        }
+        Vec::new()
+    }
+
     fn piece_for(&self, block: BlockId) -> Option<&'static Piece> {
         self.pieces
             .iter()

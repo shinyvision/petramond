@@ -9,18 +9,20 @@ fn fence_rails_connect_and_never_show_end_faces() {
     let m_lone = mesh(&section_with(&[((8, 8, 8), Block::OakFence)]));
     assert_eq!(m_lone.opaque.len(), 24, "bare post: 4 sides + 2 caps");
 
-    // Two connected fences: each grows ONE rail pair toward the other, so per
-    // fence the post (6 quads) + one rail pair (2 rails × 4 long faces) = 14
-    // quads; the rails carry no end faces, so nothing lies on the shared
-    // cell-boundary plane.
+    // Two connected fences: each grows ONE rail pair toward the other. Per
+    // fence: the post's three free sides + two caps (5), the post side facing
+    // the rails split around the two buried rail-contact rects (7 — the
+    // box-set emitter removes the covered area instead of overdrawing it),
+    // and 2 rails × 4 long faces (8) = 20 quads; the rails carry no end
+    // faces, so nothing lies on the shared cell-boundary plane.
     let m_pair = mesh(&section_with(&[
         ((8, 8, 8), Block::OakFence),
         ((9, 8, 8), Block::OakFence),
     ]));
     assert_eq!(
         m_pair.opaque.len(),
-        112,
-        "connected pair: 14 quads per fence, no rail end caps"
+        160,
+        "connected pair: 20 quads per fence, no rail end caps"
     );
     let boundary = 9.0f32;
     let quad_on_boundary = m_pair

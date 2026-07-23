@@ -118,26 +118,32 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
         "the tread top must merge into a single quad (no mid-face seam)"
     );
 
+    // Corner-for-corner at equal z (the riser crease's self-AO darkens BOTH
+    // x ends of the crease equally, so compare like corners, not plane-wide
+    // extremes): the wall side is never brighter, and strictly darker
+    // somewhere on each top plane.
     for plane_y in [8.5, 9.0] {
         let plane: Vec<_> = m
             .opaque
             .iter()
             .filter(|v| shade_idx(v) == 0 && (v.pos[1] - plane_y).abs() < 1.0e-3)
             .collect();
-        let wall_side = plane
-            .iter()
-            .filter(|v| (v.pos[0] - 8.0).abs() < 1.0e-3)
-            .map(|v| ao_idx(v))
-            .max()
-            .unwrap();
-        let open_side = plane
-            .iter()
-            .filter(|v| (v.pos[0] - 9.0).abs() < 1.0e-3)
-            .map(|v| ao_idx(v))
-            .min()
-            .unwrap();
+        let mut strictly_darker = false;
+        for v in plane.iter().filter(|v| (v.pos[0] - 8.0).abs() < 1.0e-3) {
+            let partner = plane
+                .iter()
+                .find(|w| {
+                    (w.pos[0] - 9.0).abs() < 1.0e-3 && (w.pos[2] - v.pos[2]).abs() < 1.0e-3
+                })
+                .expect("matching open-side corner");
+            assert!(
+                ao_idx(v) <= ao_idx(partner),
+                "top plane at y {plane_y}: wall side must never be brighter"
+            );
+            strictly_darker |= ao_idx(v) < ao_idx(partner);
+        }
         assert!(
-            wall_side < open_side,
+            strictly_darker,
             "top plane at y {plane_y} must darken toward the wall"
         );
     }

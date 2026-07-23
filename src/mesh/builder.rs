@@ -6,7 +6,7 @@ use crate::section::Section;
 
 use super::tint;
 use super::vertex::ChunkMesh;
-use super::{fence, ladder, pane, slab, stair, torch};
+use super::torch;
 
 mod cube_face;
 mod exposed_masks;
@@ -15,7 +15,7 @@ mod model_block;
 mod pad;
 mod plant;
 
-pub(super) use cube_face::{cube_face_lighting, face_axes};
+pub(super) use cube_face::{corner_cast_probes, cube_face_lighting, face_axes, probe_worthy};
 pub(super) use pad::mesh_pad_idx;
 pub(crate) use pad::SectionMeshPad;
 

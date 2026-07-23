@@ -13,7 +13,7 @@
 //! side; collision/selection use the simpler post + full-height arm runs
 //! (pane-style, at the post's thickness).
 
-use crate::block::{Aabb, Block, ShapeFamily};
+use crate::block::Aabb;
 use crate::connect;
 use crate::mathh::{IVec3, Vec3, MAX_SELECTION_BOXES};
 
@@ -42,18 +42,6 @@ pub const RAIL_TOP_LO: f32 = 11.0 / 16.0;
 pub const RAIL_TOP_HI: f32 = 14.0 / 16.0;
 pub const RAIL_BOT_LO: f32 = 2.0 / 16.0;
 pub const RAIL_BOT_HI: f32 = 5.0 / 16.0;
-
-/// Whether `block` is a fence-family shape (an engine fence or a Layer-2 wall).
-/// The connection mask + boxes come from [`World::connection_mask_at`] /
-/// [`World::connection_boxes_at`] driven by the shape's own params; this is only
-/// the family test the mesher's vertical-cap culling and nav's wall rule use.
-///
-/// [`World::connection_mask_at`]: crate::world::World::connection_mask_at
-/// [`World::connection_boxes_at`]: crate::world::World::connection_boxes_at
-#[inline]
-pub fn is_fence(block: Block) -> bool {
-    block.shape_family() == ShapeFamily::Fence
-}
 
 /// Cell-local boxes lifted to world space for the selection outline (a fence
 /// has at most 2 runs, under the outline cap).

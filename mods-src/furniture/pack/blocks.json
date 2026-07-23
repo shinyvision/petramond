@@ -96,6 +96,25 @@
       "drops": [{ "item": "furniture:chain", "min": 1, "max": 1, "chance": 1.0 }]
     },
     {
+      "block": "furniture:cauldron",
+      "shape": "furniture:cauldron",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": ["furniture:cauldron_top", "furniture:cauldron_bottom", "furniture:cauldron_side"],
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 5.0,
+      "drops": [{ "item": "furniture:cauldron", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
       "block": "furniture:chandelier",
       "shape": {
         "model": "furniture:chandelier"

@@ -88,6 +88,17 @@ const HUSHJAW_SPACING: f32 = 32.0;
 ///   rarely means running into another.
 const HUSHJAW_CLAIM_PER_100: u64 = 10;
 
+/// Zombie crowding rules — the population cap says how many zombies the world
+/// holds; these say they may not all hold the same cavern. A candidate site is
+/// refused while this many zombies already stand within the radius, so the
+/// spawn pressure redistributes across the whole dark volume instead of
+/// piling a horde into one room (dark caves are the only admitted surface by
+/// day, and the despawn churn kept refilling the same rooms).
+/// The radius matches the zombie's `chase_player` radius: within it, every
+/// crowd member aggros together, so it is the natural "one encounter" scale.
+const ZOMBIE_CROWD_RADIUS: f32 = 24.0;
+const ZOMBIE_CROWD_LIMIT: usize = 4;
+
 /// 6-bit effective light strictly below this value allows a spawn. The value
 /// is intentionally below ordinary torch light, while still accepting caves
 /// with little or no sky/block light.
@@ -184,8 +195,20 @@ impl Mod for Monsters {
         if hushjaw_admits(candidate) {
             return Some(HUSHJAW_KEY.to_owned());
         }
-        Some(ZOMBIE_KEY.to_owned())
+        zombie_admits(candidate).then(|| ZOMBIE_KEY.to_owned())
     }
+}
+
+/// The zombie's one site rule beyond darkness: the local crowd gate — see the
+/// `ZOMBIE_CROWD_*` constants for the policy. The (host-crossing) radius query
+/// is the whole check, so it runs only for sites that already passed the light
+/// gate and the hushjaw claim.
+fn zombie_admits(candidate: &HostileSpawnCandidate) -> bool {
+    mobs_in_radius(candidate.pos, ZOMBIE_CROWD_RADIUS)
+        .iter()
+        .filter(|m| m.key == ZOMBIE_KEY)
+        .count()
+        < ZOMBIE_CROWD_LIMIT
 }
 
 /// The hushjaw's spawn rules on a dark, core-validated candidate site — see

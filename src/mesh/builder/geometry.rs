@@ -20,7 +20,8 @@ use super::cube_face::{
 use super::exposed_masks::{build_exposed_masks, mask_has, pad_cube_fast_candidate};
 use super::model_block::{emit_model_block, emit_model_contact};
 use super::pad::{mesh_pad_idx, SectionMeshPad};
-use super::plant::{emit_baked_boxes, emit_plant};
+use super::super::boxset::{emit_box_set, BoxSetScratch, MeshBox};
+use super::plant::emit_plant;
 use super::{LeafMeshMode, MeshOptions};
 
 #[allow(clippy::too_many_arguments)]
@@ -90,6 +91,149 @@ pub(super) fn section_geometry(
             && crate::world::water::is_still_source(water_at(wx, wy, wz))
     };
 
+    // The unified box-set emitter's scratch + box buffer (see mesh::boxset):
+    // every axis-aligned sub-cell shape family routes through it.
+    let mut box_scratch = BoxSetScratch::default();
+    let mut mesh_boxes: Vec<MeshBox> = Vec::new();
+
+    // A neighbour stair's resolved corner shape — the neighbour-of-neighbour
+    // read stair corner resolution, pane/fence connection, and occupancy
+    // queries share.
+    let stair_shape_at = |q: IVec3| {
+        crate::stair::resolved_shape(q, neighbour_stair_state(q.x, q.y, q.z), |r| {
+            crate::stair::is_stair(block_at(r.x, r.y, r.z))
+                .then(|| neighbour_stair_state(r.x, r.y, r.z))
+        })
+    };
+
+    // The cell-local occupancy boxes of the block at `p` — what the box-set
+    // emitter subtracts from a flush face so sub-cell geometry culls against
+    // sub-cell geometry (a fence cap on a slab, a chain continuing into the
+    // chain above). Whole opaque cells are handled by the cheaper solid cull
+    // and contribute nothing here; families with no box form (plants, torch,
+    // models, custom bakes across the section boundary) stay empty, which
+    // just means "no sub-cell cull", never a wrong cull.
+    let occupancy_boxes = |p: IVec3, out: &mut Vec<([f32; 3], [f32; 3])>| {
+        let nb = block_at(p.x, p.y, p.z);
+        match nb.shape_family() {
+            ShapeFamily::Stair => {
+                let shape = stair_shape_at(p);
+                out.extend(
+                    crate::stair::boxes_for_shape(shape)
+                        .iter()
+                        .map(|a| (a.min, a.max)),
+                );
+            }
+            ShapeFamily::Slab => {
+                if let Some(state) = slab_at(p.x, p.y, p.z) {
+                    for (slot, _) in crate::slab::layer_slots(state) {
+                        out.push(super::super::slab::slot_box(slot));
+                    }
+                }
+            }
+            ShapeFamily::Ladder => {
+                let (thickness, height) = nb.ladder_dims();
+                out.push(crate::ladder::panel_aabb_dim(
+                    nb.panel_facing(),
+                    thickness,
+                    height,
+                ));
+            }
+            ShapeFamily::Fence | ShapeFamily::Pane => {
+                if let Some(c) = nb.shape_kind_def().params.connection() {
+                    let family = nb.shape_family();
+                    let mask = crate::connect::resolved_mask(
+                        p,
+                        |q| block_at(q.x, q.y, q.z),
+                        &stair_shape_at,
+                        |q| slab_full_at(q.x, q.y, q.z),
+                        |b, dir, st, sl| crate::connect::connects(c.rule, family, b, dir, st, sl),
+                    );
+                    if family == ShapeFamily::Fence {
+                        super::super::fence::shape_boxes(c.post_lo, c.post_hi, mask, |mn, mx, _| {
+                            out.push((mn, mx))
+                        });
+                    } else {
+                        super::super::pane::shape_boxes(c.post_lo, c.post_hi, mask, |mn, mx, _| {
+                            out.push((mn, mx))
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    };
+
+    // The shared sub-cell AO occupancy query: does the cell hold solid matter
+    // overlapping the cell-local pocket AABB? Whole cell for opaque cubes /
+    // full stacks;
+    // half-cell state for partial slabs and stairs (the UNRESOLVED state
+    // shape — corner-join resolution reads the stair's own neighbours, which
+    // the pad mesher cannot reach, and the two meshers must agree
+    // byte-for-byte); the mask-free post for fences/panes (mask resolution is
+    // likewise out of the pad's reach — rails are thin and corner-distant
+    // anyway); the panel for ladders; the render-bake boxes for IN-SECTION
+    // custom cells (both meshers share `section`, so the restriction is
+    // parity-safe). Consumed by the cube gathers' cast probes AND the box
+    // emitter's out-of-cell probes, so casting and receiving are one rule.
+    let cell_matter = |cl: (i32, i32, i32), lo: [f32; 3], hi: [f32; 3]| -> bool {
+        let (cx, cy, cz) = cl;
+        let b = block_at(cx, cy, cz);
+        if b.occludes_ao() {
+            return true;
+        }
+        // Which half-cell octants the pocket overlaps, ORed over occupancy.
+        let any_octant = |occ: &dyn Fn(usize, usize, usize) -> bool| -> bool {
+            let touches = |a: usize, half: usize| {
+                if half == 0 {
+                    lo[a] < 0.5
+                } else {
+                    hi[a] > 0.5
+                }
+            };
+            (0..8).any(|o| {
+                let (ix, iy, iz) = (o & 1, (o >> 1) & 1, (o >> 2) & 1);
+                touches(0, ix) && touches(1, iy) && touches(2, iz) && occ(ix, iy, iz)
+            })
+        };
+        if b.is_slab() {
+            return slab_at(cx, cy, cz).is_some_and(|state| {
+                state.is_full()
+                    || any_octant(&|ix, iy, iz| crate::slab::half_cell_occupied(state, ix, iy, iz))
+            });
+        }
+        let overlaps = |mn: [f32; 3], mx: [f32; 3]| (0..3).all(|a| lo[a] < mx[a] && hi[a] > mn[a]);
+        match b.shape_family() {
+            ShapeFamily::Stair => {
+                let shape = crate::stair::shape(neighbour_stair_state(cx, cy, cz));
+                any_octant(&|ix, iy, iz| crate::stair::shape_half_cell_occupied(shape, ix, iy, iz))
+            }
+            ShapeFamily::Fence | ShapeFamily::Pane => {
+                b.shape_kind_def().params.connection().is_some_and(|c| {
+                    lo[0] < c.post_hi && hi[0] > c.post_lo && lo[2] < c.post_hi && hi[2] > c.post_lo
+                })
+            }
+            ShapeFamily::Ladder => {
+                let (thickness, height) = b.ladder_dims();
+                let (mn, mx) = crate::ladder::panel_aabb_dim(b.panel_facing(), thickness, height);
+                overlaps(mn, mx)
+            }
+            ShapeFamily::Custom => {
+                let (lx, ly, lz) = (cx - ox, cy - oy, cz - oz);
+                let range = 0..SECTION_SIZE as i32;
+                range.contains(&lx)
+                    && range.contains(&ly)
+                    && range.contains(&lz)
+                    && section
+                        .shape_render_boxes(
+                            section_idx(lx as usize, ly as usize, lz as usize) as u16
+                        )
+                        .is_some_and(|boxes| boxes.iter().any(|bx| overlaps(bx.min, bx.max)))
+            }
+            _ => false,
+        }
+    };
+
     // Reused per-thread greedy scratch: flat opaque cube faces are deferred here during the
     // cell scan, then merged into tiled quads after it. Taken out + put back so meshing
     // allocates nothing.
@@ -128,6 +272,19 @@ pub(super) fn section_geometry(
                 let wy = oy + ly as i32;
                 let wz = oz + lz as i32;
                 let ci = lz * SECTION_SIZE + lx;
+
+                // The box-set emitter's world hooks for this cell (zero-cost
+                // closures over the shared reads; only box-family cells call
+                // them).
+                let neighbor_solid = |face: Face| {
+                    let (dx, dy, dz) = face.dir();
+                    let nb = block_at(wx + dx, wy + dy, wz + dz);
+                    nb.is_opaque() || (nb.is_slab() && slab_full_at(wx + dx, wy + dy, wz + dz))
+                };
+                let neighbor_boxes = |face: Face, out: &mut Vec<([f32; 3], [f32; 3])>| {
+                    let (dx, dy, dz) = face.dir();
+                    occupancy_boxes(IVec3::new(wx + dx, wy + dy, wz + dz), out);
+                };
 
                 if matches!(shape, ShapeFamily::Cross | ShapeFamily::Crop) {
                     let tile = block.tiles()[0];
@@ -192,27 +349,34 @@ pub(super) fn section_geometry(
 
                 if shape == ShapeFamily::Ladder {
                     let tile = block.tiles()[0];
-                    let l = neighbour_light(wx, wy, wz) as u32;
-                    let bl = neighbour_blocklight(wx, wy, wz) as u32;
-                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
                     // The facing is the ROW's (one block row per facing) —
                     // the mesher reads row fields, never per-cell maps.
                     let facing = block.panel_facing();
                     let (thickness, height) = block.ladder_dims();
-                    super::ladder::emit_ladder_block(
+                    mesh_boxes.clear();
+                    super::super::ladder::push_mesh_box(
+                        &mut mesh_boxes,
+                        facing,
+                        thickness,
+                        height,
+                        tile,
+                        tint_tile(tile.world_tint(), ci),
+                    );
+                    emit_box_set(
                         &mut opaque,
                         &mut opaque_idx,
                         wx,
                         wy,
                         wz,
-                        facing,
-                        tile,
-                        tint_tile(tile.world_tint(), ci),
-                        sky6,
-                        block6,
-                        warm,
-                        thickness,
-                        height,
+                        &mesh_boxes,
+                        &mut box_scratch,
+                        &neighbor_solid,
+                        &neighbor_boxes,
+                        &cell_matter,
+                        &block_at,
+                        &slab_at,
+                        &neighbour_light,
+                        &neighbour_blocklight,
                     );
                     continue;
                 }
@@ -267,22 +431,33 @@ pub(super) fn section_geometry(
                 }
 
                 if shape == ShapeFamily::Stair {
-                    let [tile_top, tile_bot, tile_side] = block.tiles();
+                    let tiles = block.tiles();
                     let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
-                    let state = section.stair_state(lx, ly, lz);
-                    let shape = crate::stair::resolved_shape(IVec3::new(wx, wy, wz), state, |p| {
-                        crate::stair::is_stair(block_at(p.x, p.y, p.z))
-                            .then(|| neighbour_stair_state(p.x, p.y, p.z))
-                    });
-                    super::stair::emit_stair_block(
+                    let shape = crate::stair::resolved_shape(
+                        IVec3::new(wx, wy, wz),
+                        section.stair_state(lx, ly, lz),
+                        |p| {
+                            crate::stair::is_stair(block_at(p.x, p.y, p.z))
+                                .then(|| neighbour_stair_state(p.x, p.y, p.z))
+                        },
+                    );
+                    mesh_boxes.clear();
+                    mesh_boxes.extend(
+                        crate::stair::boxes_for_shape(shape)
+                            .iter()
+                            .map(|a| MeshBox::uniform(a.min, a.max, tiles, tint_for)),
+                    );
+                    emit_box_set(
                         &mut opaque,
                         &mut opaque_idx,
                         wx,
                         wy,
                         wz,
-                        shape,
-                        [tile_top, tile_bot, tile_side],
-                        &tint_for,
+                        &mesh_boxes,
+                        &mut box_scratch,
+                        &neighbor_solid,
+                        &neighbor_boxes,
+                        &cell_matter,
                         &block_at,
                         &slab_at,
                         &neighbour_light,
@@ -301,61 +476,40 @@ pub(super) fn section_geometry(
                         .params
                         .connection()
                         .expect("pane carries connection params");
-                    // A neighbour stair's resolved corner shape decides whether its
-                    // face toward the pane is complete — same neighbour-of-neighbour
-                    // read the stair's own corner resolution does.
-                    let stair_shape_at = |q: IVec3| {
-                        crate::stair::resolved_shape(q, neighbour_stair_state(q.x, q.y, q.z), |r| {
-                            crate::stair::is_stair(block_at(r.x, r.y, r.z))
-                                .then(|| neighbour_stair_state(r.x, r.y, r.z))
-                        })
-                    };
-                    let pane_mask_at = |p: IVec3| {
-                        crate::connect::resolved_mask(
-                            p,
-                            |q| block_at(q.x, q.y, q.z),
-                            &stair_shape_at,
-                            |q| slab_full_at(q.x, q.y, q.z),
-                            |nb, dir, st, sl| {
-                                crate::connect::connects(c.rule, ShapeFamily::Pane, nb, dir, st, sl)
-                            },
-                        )
-                    };
-                    let vertical = |dy: i32| {
-                        let vb = block_at(wx, wy + dy, wz);
-                        if vb == block {
-                            super::pane::PaneVertical::Pane(pane_mask_at(IVec3::new(
-                                wx,
-                                wy + dy,
-                                wz,
-                            )))
-                        } else if vb.is_opaque() || (vb.is_slab() && slab_full_at(wx, wy + dy, wz))
-                        {
-                            super::pane::PaneVertical::Solid
-                        } else {
-                            super::pane::PaneVertical::Open
-                        }
-                    };
-                    let l = neighbour_light(wx, wy, wz) as u32;
-                    let bl = neighbour_blocklight(wx, wy, wz) as u32;
-                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
-                    super::pane::emit_pane_block(
+                    let mask = crate::connect::resolved_mask(
+                        IVec3::new(wx, wy, wz),
+                        |q| block_at(q.x, q.y, q.z),
+                        &stair_shape_at,
+                        |q| slab_full_at(q.x, q.y, q.z),
+                        |nb, dir, st, sl| {
+                            crate::connect::connects(c.rule, ShapeFamily::Pane, nb, dir, st, sl)
+                        },
+                    );
+                    mesh_boxes.clear();
+                    super::super::pane::push_mesh_boxes(
+                        &mut mesh_boxes,
+                        c.post_lo,
+                        c.post_hi,
+                        mask,
+                        glass_tile,
+                        edge_tile,
+                        tint_tile(glass_tile.world_tint(), ci),
+                    );
+                    emit_box_set(
                         &mut opaque,
                         &mut opaque_idx,
                         wx,
                         wy,
                         wz,
-                        c.post_lo,
-                        c.post_hi,
-                        pane_mask_at(IVec3::new(wx, wy, wz)),
-                        vertical(1),
-                        vertical(-1),
-                        glass_tile,
-                        edge_tile,
-                        tint_tile(glass_tile.world_tint(), ci),
-                        sky6,
-                        block6,
-                        warm,
+                        &mesh_boxes,
+                        &mut box_scratch,
+                        &neighbor_solid,
+                        &neighbor_boxes,
+                        &cell_matter,
+                        &block_at,
+                        &slab_at,
+                        &neighbour_light,
+                        &neighbour_blocklight,
                     );
                     continue;
                 }
@@ -370,55 +524,39 @@ pub(super) fn section_geometry(
                         .params
                         .connection()
                         .expect("fence carries connection params");
-                    // A neighbour stair's resolved corner shape decides whether its
-                    // face toward the fence is complete — the pane arm's read.
-                    let stair_shape_at = |q: IVec3| {
-                        crate::stair::resolved_shape(q, neighbour_stair_state(q.x, q.y, q.z), |r| {
-                            crate::stair::is_stair(block_at(r.x, r.y, r.z))
-                                .then(|| neighbour_stair_state(r.x, r.y, r.z))
-                        })
-                    };
-                    let fence_mask_at = |p: IVec3| {
-                        crate::connect::resolved_mask(
-                            p,
-                            |q| block_at(q.x, q.y, q.z),
-                            &stair_shape_at,
-                            |q| slab_full_at(q.x, q.y, q.z),
-                            |nb, dir, st, sl| {
-                                crate::connect::connects(c.rule, ShapeFamily::Fence, nb, dir, st, sl)
-                            },
-                        )
-                    };
-                    let vertical = |dy: i32| {
-                        let vb = block_at(wx, wy + dy, wz);
-                        if crate::fence::is_fence(vb) {
-                            super::fence::FenceVertical::Fence
-                        } else if vb.is_opaque() || (vb.is_slab() && slab_full_at(wx, wy + dy, wz))
-                        {
-                            super::fence::FenceVertical::Solid
-                        } else {
-                            super::fence::FenceVertical::Open
-                        }
-                    };
-                    let l = neighbour_light(wx, wy, wz) as u32;
-                    let bl = neighbour_blocklight(wx, wy, wz) as u32;
-                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
-                    super::fence::emit_fence_block(
+                    let mask = crate::connect::resolved_mask(
+                        IVec3::new(wx, wy, wz),
+                        |q| block_at(q.x, q.y, q.z),
+                        &stair_shape_at,
+                        |q| slab_full_at(q.x, q.y, q.z),
+                        |nb, dir, st, sl| {
+                            crate::connect::connects(c.rule, ShapeFamily::Fence, nb, dir, st, sl)
+                        },
+                    );
+                    mesh_boxes.clear();
+                    super::super::fence::push_mesh_boxes(
+                        &mut mesh_boxes,
+                        c.post_lo,
+                        c.post_hi,
+                        mask,
+                        tiles,
+                        tint_tile(tiles[2].world_tint(), ci),
+                    );
+                    emit_box_set(
                         &mut opaque,
                         &mut opaque_idx,
                         wx,
                         wy,
                         wz,
-                        c.post_lo,
-                        c.post_hi,
-                        fence_mask_at(IVec3::new(wx, wy, wz)),
-                        vertical(1),
-                        vertical(-1),
-                        tiles,
-                        tint_tile(tiles[2].world_tint(), ci),
-                        sky6,
-                        block6,
-                        warm,
+                        &mesh_boxes,
+                        &mut box_scratch,
+                        &neighbor_solid,
+                        &neighbor_boxes,
+                        &cell_matter,
+                        &block_at,
+                        &slab_at,
+                        &neighbour_light,
+                        &neighbour_blocklight,
                     );
                     continue;
                 }
@@ -429,33 +567,28 @@ pub(super) fn section_geometry(
                 if shape == ShapeFamily::Custom {
                     if let Some(boxes) = section.shape_render_boxes(section_idx(lx, ly, lz) as u16) {
                         let tiles = block.tiles();
-                        let l = neighbour_light(wx, wy, wz) as u32;
-                        let bl = neighbour_blocklight(wx, wy, wz) as u32;
-                        let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
-                        let tint = warm_tint(tint_tile(tiles[2].world_tint(), ci), warm);
-                        // A baked box face flush to the cell boundary is culled
-                        // when the neighbour there is a full opaque occluder —
-                        // the ordinary cube-cull rule applied per box, so
-                        // furniture flush to a wall/floor emits no buried quads.
-                        let neighbor_opaque = |face: Face| {
-                            let (dx, dy, dz) = face.dir();
-                            let nb = block_at(wx + dx, wy + dy, wz + dz);
-                            nb.is_opaque()
-                                || (nb.is_slab() && slab_full_at(wx + dx, wy + dy, wz + dz))
-                        };
-                        emit_baked_boxes(
+                        let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
+                        mesh_boxes.clear();
+                        mesh_boxes.extend(
+                            boxes
+                                .iter()
+                                .map(|a| MeshBox::uniform(a.min, a.max, tiles, tint_for)),
+                        );
+                        emit_box_set(
                             &mut opaque,
                             &mut opaque_idx,
                             wx,
                             wy,
                             wz,
-                            boxes,
-                            tiles,
-                            tint,
-                            sky6,
-                            block6,
-                            warm,
-                            neighbor_opaque,
+                            &mesh_boxes,
+                            &mut box_scratch,
+                            &neighbor_solid,
+                            &neighbor_boxes,
+                            &cell_matter,
+                            &block_at,
+                            &slab_at,
+                            &neighbour_light,
+                            &neighbour_blocklight,
                         );
                         continue;
                     }
@@ -473,14 +606,27 @@ pub(super) fn section_geometry(
                     slab_as_cube = crate::slab::is_uniform_full_stack(state);
                     if !slab_as_cube {
                         let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
-                        super::slab::emit_slab_block(
+                        mesh_boxes.clear();
+                        for (slot, layer_block) in crate::slab::layer_slots(state) {
+                            let (min, max) = super::super::slab::slot_box(slot);
+                            mesh_boxes.push(MeshBox::uniform(
+                                min,
+                                max,
+                                layer_block.tiles(),
+                                tint_for,
+                            ));
+                        }
+                        emit_box_set(
                             &mut opaque,
                             &mut opaque_idx,
                             wx,
                             wy,
                             wz,
-                            state,
-                            &tint_for,
+                            &mesh_boxes,
+                            &mut box_scratch,
+                            &neighbor_solid,
+                            &neighbor_boxes,
+                            &cell_matter,
                             &block_at,
                             &slab_at,
                             &neighbour_light,
@@ -594,8 +740,18 @@ pub(super) fn section_geometry(
                                 corners,
                                 [base_x, base_y, base_z],
                             );
-                            let (ao, light6, block6, warm) =
-                                cube_face_lighting_pad(pad, face, fxp, fyp, fzp, f_l, f_bl, true);
+                            let (ao, light6, block6, warm) = cube_face_lighting_pad(
+                                pad,
+                                face,
+                                fxp,
+                                fyp,
+                                fzp,
+                                (wx + dx, wy + dy, wz + dz),
+                                f_l,
+                                f_bl,
+                                true,
+                                &cell_matter,
+                            );
                             let flat = ao[0] == ao[1]
                                 && ao[1] == ao[2]
                                 && ao[2] == ao[3]
@@ -801,6 +957,7 @@ pub(super) fn section_geometry(
                         &slab_at,
                         &neighbour_light,
                         &neighbour_blocklight,
+                        &cell_matter,
                     );
                     // Defer PLAIN opaque cube faces that are FLAT (all four corners share
                     // AO + light + warm) to the greedy merge — a run of them collapses into

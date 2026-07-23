@@ -222,12 +222,29 @@ pub(super) const FACES: [Face; 6] = Face::ALL;
 /// neighbours of the corner in the voxel plane just outside the face; `corner`
 /// is the diagonal one. Two solid edges bury the corner regardless of the
 /// diagonal, so that case is forced to 0 (the well-known special case).
-#[inline]
+#[cfg(test)]
 pub(super) fn vertex_ao(side1: bool, side2: bool, corner: bool) -> u32 {
-    if side1 && side2 {
+    quad_ao(false, side1, side2, corner)
+}
+
+/// [`vertex_ao`] generalized to all FOUR quadrants around a corner in the
+/// front slab, including the INTERIOR one (`q_int` — inside the face's own
+/// front cell, toward the face interior). Grid AO could assume the interior
+/// quadrant empty (matter in front of a cube face culls the face), but
+/// sub-cell matter can stand ON a face it doesn't cull, and the exposed part
+/// of that face must darken toward it. Symmetric in the quadrants, so two
+/// coplanar faces sharing a corner — each seeing the same four quadrants
+/// under different face-relative names — compute the SAME level: no seam at
+/// the cell boundary between a shape's supporting face and its neighbours.
+/// With `q_int = false` this is byte-identical to classic vertex AO (an
+/// opposite-quadrant pair buries the corner; otherwise one level per
+/// occupied quadrant).
+#[inline]
+pub(super) fn quad_ao(q_int: bool, side1: bool, side2: bool, corner: bool) -> u32 {
+    if (side1 && side2) || (q_int && corner) {
         0
     } else {
-        3 - (side1 as u32 + side2 as u32 + corner as u32)
+        3u32.saturating_sub(q_int as u32 + side1 as u32 + side2 as u32 + corner as u32)
     }
 }
 

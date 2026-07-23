@@ -4,6 +4,11 @@
       "key": "furniture:chain",
       "light_shape": "open",
       "grass_decay_eligible": false
+    },
+    {
+      "key": "furniture:cauldron",
+      "light_shape": "open",
+      "grass_decay_eligible": false
     }
   ]
 }

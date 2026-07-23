@@ -31,6 +31,15 @@
     },
     {
       "type": "crafting",
+      "recipe": "furniture:cauldron",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        { "item": "petramond:iron_ingot", "count": 6 }
+      ],
+      "result": { "item": "furniture:cauldron", "count": 1 }
+    },
+    {
+      "type": "crafting",
       "recipe": "furniture:chandelier",
       "station": "petramond:furniture_workbench",
       "ingredients": [

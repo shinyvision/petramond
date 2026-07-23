@@ -2,8 +2,8 @@
   "name": "Furniture",
   "id": "furniture",
   "version": "0.1.0",
-  "description": "Craftable furniture: a rideable bbmodel chair (sitting is mod policy over the engine actor-pose API), iron chains as a WASM-baked custom shape in three axis variants (vertical, north/south, east/west) oriented by the clicked face, and a torch-bright gold chandelier that hangs centred on the cell it is placed against.",
-  "summary": "A craftable rideable wooden chair, directional iron chains, and a light-giving chandelier.",
+  "description": "Craftable furniture: a rideable bbmodel chair (sitting is mod policy over the engine actor-pose API), iron chains as a WASM-baked custom shape in three axis variants (vertical, north/south, east/west) oriented by the clicked face, a torch-bright gold chandelier that hangs centred on the cell it is placed against, and a hollow slate cauldron (a second WASM-baked shape, the future dyeing vessel).",
+  "summary": "A craftable rideable wooden chair, directional iron chains, a light-giving chandelier, and a slate cauldron.",
   "wasm": "mod.wasm",
   "client_wasm": "mod.wasm"
 }

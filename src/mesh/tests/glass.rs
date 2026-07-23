@@ -29,15 +29,17 @@ fn pane_arms_connect_and_bury_shared_end_faces() {
     assert_eq!(m_lone.opaque.len(), 24, "bare post: 4 sides + 2 caps");
 
     // Two connected panes: per pane an east/west run (2 broad faces + 1 free-end
-    // edge strip) + post and arm caps (4) = 7 quads; nothing on the shared plane.
+    // edge strip) + the run's merged top/bottom caps (2) = 5 quads; nothing on
+    // the shared plane. (The box-set emitter caps the whole run once — the old
+    // per-segment post/arm caps are gone.)
     let m_pair = mesh(&section_with(&[
         ((8, 8, 8), Block::GlassPane),
         ((9, 8, 8), Block::GlassPane),
     ]));
     assert_eq!(
         m_pair.opaque.len(),
-        56,
-        "connected pair: 7 quads per pane, no faces at the shared boundary"
+        40,
+        "connected pair: 5 quads per pane, no faces at the shared boundary"
     );
     let boundary = 9.0f32;
     assert!(

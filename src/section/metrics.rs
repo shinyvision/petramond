@@ -22,13 +22,13 @@ fn metrics_bits() -> &'static [u8; 256] {
         for (i, b) in bits.iter_mut().enumerate() {
             let id = i as u8;
             let block = Block::from_id(id);
-            *b = (block.has_random_tick() as u8) * MB_RANDOM_TICK
-                | (block.is_opaque() as u8) * MB_OPAQUE
-                | ((id != 0) as u8) * MB_NON_AIR
-                | ((id == Block::Water.id()) as u8) * MB_WATER
-                | (Section::id_uses_biome_tint(id) as u8) * MB_BIOME_TINT
-                | (Section::id_has_particle_emitter(id) as u8) * MB_PARTICLE_EMITTER
-                | (Section::id_emits_light(id) as u8) * MB_LIGHT_EMITTER;
+            *b = ((block.has_random_tick() as u8) * MB_RANDOM_TICK)
+                | ((block.is_opaque() as u8) * MB_OPAQUE)
+                | (((id != 0) as u8) * MB_NON_AIR)
+                | (((id == Block::Water.id()) as u8) * MB_WATER)
+                | ((Section::id_uses_biome_tint(id) as u8) * MB_BIOME_TINT)
+                | ((Section::id_has_particle_emitter(id) as u8) * MB_PARTICLE_EMITTER)
+                | ((Section::id_emits_light(id) as u8) * MB_LIGHT_EMITTER);
         }
         bits
     });

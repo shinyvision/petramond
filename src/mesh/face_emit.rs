@@ -8,7 +8,7 @@ use crate::chunk::SKY_FULL;
 use crate::torch::{warm_amount, warm_tint};
 
 use super::builder::{mesh_pad_idx, SectionMeshPad};
-use super::face::{should_flip, vertex_ao, Face};
+use super::face::{quad_ao, should_flip, Face};
 use super::vertex::{
     pack_cell_uv, pack_normal_code, pack_tint, pack_vertex, pack_vertex2, Vertex,
     UV_MODE_CELL_LOCAL, UV_MODE_SHIFT,
@@ -121,20 +121,41 @@ pub(super) fn slab_corner_open(
     !crate::slab::half_cell_occupied(state, pick(dx, ux, vx), pick(dy, uy, vy), pick(dz, uz, vz))
 }
 
-pub(super) fn cube_face_lighting_pad(
+#[allow(clippy::too_many_arguments)]
+pub(super) fn cube_face_lighting_pad<P>(
     pad: &SectionMeshPad<'_>,
     face: Face,
     fx: usize,
     fy: usize,
     fz: usize,
+    // The front voxel's WORLD coords, for the sub-cell AO cast probes (the
+    // probe closure speaks world cells like the closure-path gather's).
+    wf: (i32, i32, i32),
     f_l: u32,
     f_bl: u32,
     smooth_light: bool,
-) -> ([u32; 4], [u32; 4], [u32; 4], [f32; 4]) {
+    probe: &P,
+) -> ([u32; 4], [u32; 4], [u32; 4], [f32; 4])
+where
+    P: Fn((i32, i32, i32), [f32; 3], [f32; 3]) -> bool,
+{
     let (ux, uy, uz) = face.ao_u();
     let (vx, vy, vz) = face.ao_v();
 
+    // Front cell's own sub-cell matter joins the interior quadrant — the
+    // closure gather's `front_probe`, mirrored for byte parity.
+    let front_probe = {
+        let fb = pad.block_at_pad(fx, fy, fz);
+        super::builder::probe_worthy(fb)
+            || (fb.is_slab() && {
+                let st =
+                    crate::slab::normalize_state(fb, pad.slab_states[mesh_pad_idx(fx, fy, fz)]);
+                !st.is_full()
+            })
+    };
+
     let mut occ = [[false; 3]; 3];
+    let mut probe_cell = [[false; 3]; 3];
     let mut opq = [[false; 3]; 3];
     let mut sky = [[0u32; 3]; 3];
     let mut blk = [[0u32; 3]; 3];
@@ -160,6 +181,8 @@ pub(super) fn cube_face_lighting_pad(
                 .then(|| crate::slab::normalize_state(cell, pad.slab_states[i]));
             let full_stack = slab_state.is_some_and(|s| s.is_full());
             occ[ia][ib] = cell.occludes_ao() || full_stack;
+            probe_cell[ia][ib] = !occ[ia][ib]
+                && (super::builder::probe_worthy(cell) || slab_state.is_some());
             if smooth_light {
                 opq[ia][ib] = cell.is_opaque() || full_stack;
                 if !opq[ia][ib] {
@@ -182,7 +205,42 @@ pub(super) fn cube_face_lighting_pad(
     for corner in 0..4 {
         let (su, sv) = signs[corner];
         let (iu, iv) = ((su + 1) as usize, (sv + 1) as usize);
-        ao[corner] = vertex_ao(occ[iu][1], occ[1][iv], occ[iu][iv]);
+        let (mut s1, mut s2, mut c) = (occ[iu][1], occ[1][iv], occ[iu][iv]);
+        let mut q_int = false;
+        if front_probe
+            || (probe_cell[iu][1] && !s1)
+            || (probe_cell[1][iv] && !s2)
+            || (probe_cell[iu][iv] && !c)
+        {
+            let pk = super::builder::corner_cast_probes(face, wf, su, sv);
+            let cell_of = |s_u: i32, s_v: i32| {
+                (
+                    wf.0 + s_u * ux + s_v * vx,
+                    wf.1 + s_u * uy + s_v * vy,
+                    wf.2 + s_u * uz + s_v * vz,
+                )
+            };
+            let local = |p: [f32; 3], cl: (i32, i32, i32)| {
+                [p[0] - cl.0 as f32, p[1] - cl.1 as f32, p[2] - cl.2 as f32]
+            };
+            if probe_cell[iu][1] && !s1 {
+                let cl = cell_of(su, 0);
+                s1 = probe(cl, local(pk[0].0, cl), local(pk[0].1, cl));
+            }
+            if probe_cell[1][iv] && !s2 {
+                let cl = cell_of(0, sv);
+                s2 = probe(cl, local(pk[1].0, cl), local(pk[1].1, cl));
+            }
+            if probe_cell[iu][iv] && !c {
+                let cl = cell_of(su, sv);
+                c = probe(cl, local(pk[2].0, cl), local(pk[2].1, cl));
+            }
+            if front_probe {
+                let cl = wf;
+                q_int = probe(cl, local(pk[3].0, cl), local(pk[3].1, cl));
+            }
+        }
+        ao[corner] = quad_ao(q_int, s1, s2, c);
         if !smooth_light {
             (light6[corner], block6[corner], warm[corner]) = flat;
             continue;

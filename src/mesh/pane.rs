@@ -1,52 +1,28 @@
 //! In-world geometry for a glass pane: a thin full-height post growing arms
 //! toward its connected sides (see `crate::pane` for the connection rules).
 //!
-//! Arms on one axis merge into a single run so a straight wall of panes is two
-//! long broad faces per cell, not per-arm strips. Faces at a connected cell edge
-//! are never emitted — the neighbour pane's run continues flush, or the
-//! neighbouring full face hides them — so glass reads as one continuous sheet.
-//! Unconnected ends, and the sides of a bare post, show the pane edge tile (the
-//! 2px strip), which also caps every segment top/bottom. Caps against a
-//! same-block pane above/below are culled per segment: only where the vertical
-//! neighbour actually continues that arm, so a longer arm below a shorter one
-//! keeps its exposed cap. Flat-lit at the cell's own light with directional face
-//! shade, like a thin object should be (per-corner AO would smear).
+//! [`shape_boxes`] is the ONE geometry source, a NON-overlapping box
+//! decomposition: arms on one axis merge into a single run (a straight wall
+//! of panes is two long broad faces per cell, not per-arm strips); when runs
+//! cross, the north-south run keeps the post and the east-west arms butt
+//! against it. The chunk mesher wraps the boxes into the unified
+//! [`super::boxset`] emitter — cap culling against the pane above/below, the
+//! junction's interior faces, everything buried is removed geometrically —
+//! and the break-crack overlay walks the same boxes through [`shape_faces`].
+//! Faces at a CONNECTED cell edge are declared never-emitted (the neighbour
+//! pane's run continues flush, or the connected block's complete face hides
+//! them — the connection RULE guarantees it, not local geometry).
+//!
+//! Unconnected ends, and the sides of a bare post, show the pane edge tile
+//! (the 2px strip), which also caps each box top/bottom. Smooth-lit like
+//! every box family (2026-07-23), so a glass wall shades continuously with
+//! the terrain it meets.
 
 use crate::atlas::Tile;
 use crate::pane::{EAST, NORTH, SOUTH, WEST};
-use crate::torch::warm_tint;
 
+use super::boxset::{FaceStyle, MeshBox};
 use super::face::Face;
-use super::plane::cell_uv;
-use super::vertex::{
-    pack_cell_uv, pack_normal_code, pack_tint, pack_vertex, pack_vertex2, Vertex,
-    UV_MODE_CELL_LOCAL,
-};
-use super::UV_MODE_SHIFT;
-
-/// What sits directly above/below a pane cell, for per-segment cap culling.
-#[derive(Copy, Clone)]
-pub(super) enum PaneVertical {
-    /// An opaque cube or full slab stack: every cap is hidden.
-    Solid,
-    /// The same pane block, with ITS resolved connection mask: the post and any
-    /// continued arm hide their caps; an arm the neighbour lacks keeps its cap.
-    Pane(u8),
-    /// Anything else: all caps are exposed.
-    Open,
-}
-
-impl PaneVertical {
-    /// Whether this vertical neighbour buries the cap of segment `seg`
-    /// (`0` = the centre post, else an arm's mask bit).
-    fn hides_cap(self, seg: u8) -> bool {
-        match self {
-            PaneVertical::Solid => true,
-            PaneVertical::Pane(mask) => seg == 0 || mask & seg != 0,
-            PaneVertical::Open => false,
-        }
-    }
-}
 
 /// Which tile a pane face samples: the glass sheet, or the 2px edge strip.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -55,18 +31,28 @@ pub(crate) enum PaneTile {
     Edge,
 }
 
-/// Visit every face of the connected pane shape for `mask`, in the mesher's
-/// emission order — the SINGLE face list shared by the chunk mesher and the
-/// break-crack overlay, so the crack is coincident with the mesh.
-/// `visit(min, max, face, tile, swap_uv, seg)`: `swap_uv` lays the edge strip
-/// along west/east arm caps; `seg` is the segment bit a PosY/NegY cap belongs
-/// to (`0` = the centre post; unused for side faces) — the mesher culls caps
-/// against the vertical neighbours per segment, the overlay draws them all.
-pub(crate) fn shape_faces(
+/// One box of the connected pane shape.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum PaneBox {
+    /// The bare centre post (no connections).
+    Post,
+    /// The north-south run, post included.
+    ZRun,
+    /// The east-west run, post included (no crossing north-south run).
+    XRun,
+    /// A west/east arm butting against a crossing north-south run.
+    ArmW,
+    ArmE,
+}
+
+/// Visit every box of the connected pane shape for `mask` — non-overlapping
+/// by construction. The SINGLE geometry source for the chunk mesher, the
+/// break-crack overlay, and neighbour-occupancy queries.
+pub(crate) fn shape_boxes(
     post_lo: f32,
     post_hi: f32,
     mask: u8,
-    mut visit: impl FnMut([f32; 3], [f32; 3], Face, PaneTile, bool, u8),
+    mut visit: impl FnMut([f32; 3], [f32; 3], PaneBox),
 ) {
     let (w, e) = (mask & WEST != 0, mask & EAST != 0);
     let (n, s) = (mask & NORTH != 0, mask & SOUTH != 0);
@@ -77,155 +63,110 @@ pub(crate) fn shape_faces(
     let x0 = if w { 0.0 } else { post_lo };
     let x1 = if e { 1.0 } else { post_hi };
 
-    if mask == 0 {
-        // A bare post: four thin edge-strip sides.
-        let post = ([post_lo, 0.0, post_lo], [post_hi, 1.0, post_hi]);
-        for face in [Face::NegX, Face::PosX, Face::NegZ, Face::PosZ] {
-            visit(post.0, post.1, face, PaneTile::Edge, false, 0);
-        }
+    if !z_run && !x_run {
+        visit([post_lo, 0.0, post_lo], [post_hi, 1.0, post_hi], PaneBox::Post);
+        return;
     }
     if z_run {
-        // The north-south run's broad glass faces, post included.
-        let (min, max) = ([post_lo, 0.0, z0], [post_hi, 1.0, z1]);
-        visit(min, max, Face::NegX, PaneTile::Glass, false, 0);
-        visit(min, max, Face::PosX, PaneTile::Glass, false, 0);
-        // Unconnected ends show the edge strip — unless a crossing east-west run
-        // exists, whose broad faces already cover those planes.
-        if !x_run {
-            if !n {
-                visit(min, max, Face::NegZ, PaneTile::Edge, false, 0);
-            }
-            if !s {
-                visit(min, max, Face::PosZ, PaneTile::Edge, false, 0);
-            }
+        visit([post_lo, 0.0, z0], [post_hi, 1.0, z1], PaneBox::ZRun);
+        if w {
+            visit([0.0, 0.0, post_lo], [post_lo, 1.0, post_hi], PaneBox::ArmW);
         }
-    }
-    if x_run {
-        let (min, max) = ([x0, 0.0, post_lo], [x1, 1.0, post_hi]);
-        visit(min, max, Face::NegZ, PaneTile::Glass, false, 0);
-        visit(min, max, Face::PosZ, PaneTile::Glass, false, 0);
-        if !z_run {
-            if !w {
-                visit(min, max, Face::NegX, PaneTile::Edge, false, 0);
-            }
-            if !e {
-                visit(min, max, Face::PosX, PaneTile::Edge, false, 0);
-            }
+        if e {
+            visit([post_hi, 0.0, post_lo], [1.0, 1.0, post_hi], PaneBox::ArmE);
         }
-    }
-
-    // Top/bottom caps, one per occupied segment so crossing runs never overlap.
-    // The edge tile's 2px strip runs vertically (u = the thin post span), so
-    // north/south arm caps map with plain cell UVs while west/east arm caps swap
-    // u/v to lay the strip along the arm.
-    let post = ([post_lo, 0.0, post_lo], [post_hi, 1.0, post_hi]);
-    // (present, cap box min/max, arm segment bit, swap edge-strip u/v).
-    type CapSegment = (bool, ([f32; 3], [f32; 3]), u8, bool);
-    let segments: [CapSegment; 5] = [
-        (true, post, 0, false),
-        (n, ([post_lo, 0.0, 0.0], [post_hi, 1.0, post_lo]), NORTH, false),
-        (s, ([post_lo, 0.0, post_hi], [post_hi, 1.0, 1.0]), SOUTH, false),
-        (w, ([0.0, 0.0, post_lo], [post_lo, 1.0, post_hi]), WEST, true),
-        (e, ([post_hi, 0.0, post_lo], [1.0, 1.0, post_hi]), EAST, true),
-    ];
-    for (present, (min, max), seg, swap_uv) in segments {
-        if !present {
-            continue;
-        }
-        visit(min, max, Face::PosY, PaneTile::Edge, swap_uv, seg);
-        visit(min, max, Face::NegY, PaneTile::Edge, swap_uv, seg);
+    } else {
+        visit([x0, 0.0, post_lo], [x1, 1.0, post_hi], PaneBox::XRun);
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn emit_pane_block(
-    opaque: &mut Vec<Vertex>,
-    opaque_idx: &mut Vec<u32>,
-    wx: i32,
-    wy: i32,
-    wz: i32,
+/// The per-face styling of one pane box: which tile it samples, whether the
+/// edge strip's u/v swap to lie along the run, or `None` for a face the pane
+/// never emits (a connected end). Shared by the mesher wrap and the overlay.
+fn face_styles(kind: PaneBox, mask: u8) -> [Option<(PaneTile, bool)>; 6] {
+    let (w, e) = (mask & WEST != 0, mask & EAST != 0);
+    let (n, s) = (mask & NORTH != 0, mask & SOUTH != 0);
+    let edge = Some((PaneTile::Edge, false));
+    let glass = Some((PaneTile::Glass, false));
+    let end = |connected: bool| if connected { None } else { edge };
+    let mut f = [None; 6];
+    match kind {
+        PaneBox::Post => {
+            f[Face::NegX as usize] = edge;
+            f[Face::PosX as usize] = edge;
+            f[Face::NegZ as usize] = edge;
+            f[Face::PosZ as usize] = edge;
+        }
+        PaneBox::ZRun => {
+            f[Face::NegX as usize] = glass;
+            f[Face::PosX as usize] = glass;
+            f[Face::NegZ as usize] = end(n);
+            f[Face::PosZ as usize] = end(s);
+        }
+        PaneBox::XRun => {
+            f[Face::NegZ as usize] = glass;
+            f[Face::PosZ as usize] = glass;
+            f[Face::NegX as usize] = end(w);
+            f[Face::PosX as usize] = end(e);
+        }
+        // Arms exist only when their side is connected: the outer end is a
+        // connected cell edge (never emitted), the inner end butts into the
+        // crossing run (buried; kept omitted so the overlay matches).
+        PaneBox::ArmW | PaneBox::ArmE => {
+            f[Face::NegZ as usize] = glass;
+            f[Face::PosZ as usize] = glass;
+        }
+    }
+    // Caps: the edge strip runs vertically (u = the thin post span), so
+    // boxes running along X swap u/v to lay the strip along the arm.
+    let cap_swap = matches!(kind, PaneBox::XRun | PaneBox::ArmW | PaneBox::ArmE);
+    f[Face::PosY as usize] = Some((PaneTile::Edge, cap_swap));
+    f[Face::NegY as usize] = Some((PaneTile::Edge, cap_swap));
+    f
+}
+
+/// Visit every drawable face of the connected pane shape — consumed by the
+/// break-crack overlay so the crack traces the mesh's faces (the overlay
+/// draws them all; the mesher's generic burial cull decides visibility).
+pub(crate) fn shape_faces(
     post_lo: f32,
     post_hi: f32,
     mask: u8,
-    above: PaneVertical,
-    below: PaneVertical,
-    glass_tile: Tile,
-    edge_tile: Tile,
-    tint: [f32; 3],
-    sky6: u32,
-    block6: u32,
-    warm: f32,
+    mut visit: impl FnMut([f32; 3], [f32; 3], Face, PaneTile, bool),
 ) {
-    let origin = [wx as f32, wy as f32, wz as f32];
-    let tint = if warm == 0.0 {
-        tint
-    } else {
-        warm_tint(tint, warm)
-    };
-    shape_faces(post_lo, post_hi, mask, |min, max, face, pane_tile, swap_uv, seg| {
-        let hidden = match face {
-            Face::PosY => above.hides_cap(seg),
-            Face::NegY => below.hides_cap(seg),
-            _ => false,
-        };
-        if hidden {
-            return;
+    shape_boxes(post_lo, post_hi, mask, |min, max, kind| {
+        let styles = face_styles(kind, mask);
+        for face in Face::ALL {
+            if let Some((tile, swap_uv)) = styles[face as usize] {
+                visit(min, max, face, tile, swap_uv);
+            }
         }
-        let tile = match pane_tile {
-            PaneTile::Glass => glass_tile,
-            PaneTile::Edge => edge_tile,
-        };
-        push_face(
-            opaque, opaque_idx, origin, min, max, face, tile, swap_uv, tint, sky6, block6,
-        );
     });
 }
 
-/// One flat quad from a cell-local `(min, max)` box + a [`Face`], with
-/// cell-local UVs and flat lighting — shared with the ladder mesher, which
-/// emits the same kind of thin cutout panel faces.
+/// The connected pane shape as [`MeshBox`]es for the unified emitter.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn push_face(
-    vbuf: &mut Vec<Vertex>,
-    ibuf: &mut Vec<u32>,
-    origin: [f32; 3],
-    min: [f32; 3],
-    max: [f32; 3],
-    face: Face,
-    tile: Tile,
-    swap_uv: bool,
+pub(super) fn push_mesh_boxes(
+    out: &mut Vec<MeshBox>,
+    post_lo: f32,
+    post_hi: f32,
+    mask: u8,
+    glass_tile: Tile,
+    edge_tile: Tile,
     tint: [f32; 3],
-    sky6: u32,
-    block6: u32,
 ) {
-    let world_min = [origin[0] + min[0], origin[1] + min[1], origin[2] + min[2]];
-    let world_max = [origin[0] + max[0], origin[1] + max[1], origin[2] + max[2]];
-    let corners = face.quad_box(world_min, world_max);
-    let local = face.quad_box(min, max);
-    let start = vbuf.len() as u32;
-    for (corner, pos) in corners.into_iter().enumerate() {
-        let [mut u, mut v] = cell_uv(face, local[corner]);
-        if swap_uv {
-            std::mem::swap(&mut u, &mut v);
-        }
-        vbuf.push(Vertex {
-            pos,
-            tint: pack_tint(tint),
-            // Flat AO (3 = unoccluded) with the face's directional shade: thin
-            // glass reads best evenly lit, but still distinguishes its sides.
-            packed: pack_vertex(
-                tile.index() as u32,
-                corner as u32,
-                face.shade_idx(),
-                0,
-                false,
-                3,
-                sky6,
-            ) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT),
-            packed2: pack_vertex2(block6)
-                | pack_cell_uv((u * 16.0).round() as u32, (v * 16.0).round() as u32)
-                | pack_normal_code(face.normal_code()),
+    shape_boxes(post_lo, post_hi, mask, |min, max, kind| {
+        let styles = face_styles(kind, mask);
+        let faces = styles.map(|s| {
+            s.map(|(tile, swap_uv)| FaceStyle {
+                tile: match tile {
+                    PaneTile::Glass => glass_tile,
+                    PaneTile::Edge => edge_tile,
+                },
+                swap_uv,
+                tint,
+            })
         });
-    }
-    ibuf.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+        out.push(MeshBox { min, max, faces });
+    });
 }

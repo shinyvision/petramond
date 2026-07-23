@@ -28,6 +28,15 @@
       "block": "furniture:chain"
     },
     {
+      "item": "furniture:cauldron",
+      "key": "furniture:cauldron",
+      "name": "Cauldron",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+      "tags": [],
+      "block": "furniture:cauldron"
+    },
+    {
       "item": "furniture:chandelier",
       "key": "furniture:chandelier",
       "name": "Chandelier",

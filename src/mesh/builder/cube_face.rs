@@ -4,7 +4,7 @@ use crate::block_state::{LogAxis, SlabState};
 use crate::chunk::SKY_FULL;
 use crate::facing::Facing;
 
-use super::super::face::{vertex_ao, Face};
+use super::super::face::{quad_ao, Face};
 use super::super::face_emit::{fold_light, fold_light_smooth, slab_corner_open};
 
 /// The horizontal cube face a directional block's front points to, for its
@@ -76,6 +76,105 @@ pub(super) fn log_side_cell_uvs(
     Some(uvs)
 }
 
+/// Whether a NON-occluding ring cell still deserves a sub-cell AO cast probe:
+/// the box-shape families (and partial slabs, handled by the caller) occupy
+/// part of their cell, so a corner pocket inside them can be solid even
+/// though the whole cell is not.
+#[inline]
+pub(in crate::mesh) fn probe_worthy(block: Block) -> bool {
+    matches!(
+        block.shape_family(),
+        crate::block::ShapeFamily::Stair
+            | crate::block::ShapeFamily::Fence
+            | crate::block::ShapeFamily::Pane
+            | crate::block::ShapeFamily::Ladder
+            | crate::block::ShapeFamily::Custom
+    )
+}
+
+/// The four sub-cell AO cast probe POCKETS of one face corner — the
+/// side-u / side-v / diagonal / interior quadrants of a
+/// [`PROBE_REACH`]-sized volume around the corner `(su, sv)` on the face
+/// fronted by world voxel `f`, lifted [`PROBE_LIFT`] off the face plane
+/// into the front region. Each
+/// pocket is an AABB `(lo, hi)` in WORLD space, overlap-tested against its
+/// ring cell's occupancy — the grid-AO generalization: for an opaque ring
+/// cell the whole-cell bit answers; for a box-family cell the pocket must
+/// overlap its actual matter. Pockets are VOLUMES, not points: an inset base
+/// (the cauldron's) still overlaps the edge-adjacent pockets, so casting is
+/// uniform along an edge instead of sparking only at diagonal corners. A
+/// fence's centred post overlaps no corner pocket and correctly casts
+/// nothing.
+///
+/// [`PROBE_LIFT`]: super::super::boxset::PROBE_LIFT
+/// [`PROBE_REACH`]: super::super::boxset::PROBE_REACH
+#[inline]
+pub(in crate::mesh) fn corner_cast_probes(
+    face: Face,
+    f: (i32, i32, i32),
+    su: i32,
+    sv: i32,
+) -> [([f32; 3], [f32; 3]); 4] {
+    use super::super::boxset::{PROBE_LIFT, PROBE_REACH};
+    let (dx, dy, dz) = face.dir();
+    let d = [dx, dy, dz];
+    let (ux, uy, uz) = face.ao_u();
+    let u = [ux, uy, uz];
+
+    // The corner's world position: on the face plane (the front voxel's
+    // boundary toward the cell), at the corner the (su, sv) signs pick.
+    let mut corner = [f.0 as f32, f.1 as f32, f.2 as f32];
+    for a in 0..3 {
+        if d[a] != 0 {
+            corner[a] += (d[a] < 0) as u32 as f32;
+        } else if u[a] != 0 {
+            corner[a] += (su > 0) as u32 as f32;
+        } else {
+            corner[a] += (sv > 0) as u32 as f32;
+        }
+    }
+    // Per pocket: the normal axis spans (lift, lift + reach) into the front
+    // region; a tangent spans REACH beyond the corner when the pocket lies
+    // on that side (`beyond`), else REACH back toward the face interior.
+    let pocket = |u_beyond: bool, v_beyond: bool| -> ([f32; 3], [f32; 3]) {
+        let mut lo = [0.0f32; 3];
+        let mut hi = [0.0f32; 3];
+        for a in 0..3 {
+            let (l, h) = if d[a] != 0 {
+                if d[a] > 0 {
+                    (corner[a] + PROBE_LIFT, corner[a] + PROBE_LIFT + PROBE_REACH)
+                } else {
+                    (corner[a] - PROBE_LIFT - PROBE_REACH, corner[a] - PROBE_LIFT)
+                }
+            } else {
+                let (sign, beyond) = if u[a] != 0 {
+                    (su, u_beyond)
+                } else {
+                    (sv, v_beyond)
+                };
+                let dir = if beyond { sign } else { -sign } as f32;
+                let end = corner[a] + dir * PROBE_REACH;
+                (corner[a].min(end), corner[a].max(end))
+            };
+            lo[a] = l;
+            hi[a] = h;
+        }
+        (lo, hi)
+    };
+    [
+        pocket(true, false),
+        pocket(false, true),
+        pocket(true, true),
+        // The INTERIOR quadrant — inside the front cell itself. Grid AO
+        // assumes it empty (matter in front of a cube face culls the face),
+        // but sub-cell matter STANDS on faces it doesn't cull: the exposed
+        // ring of the cell under a cauldron must darken toward the base
+        // rising from it, or it stays bright beside darkened neighbours (a
+        // hard edge at the cell boundary).
+        pocket(false, false),
+    ]
+}
+
 /// One cube face's per-corner AO + smooth light (skylight/block-light + warm amount),
 /// gathered from the shared 3×3 tangent-plane ring around the front voxel F ONCE. The
 /// four corners share these eight ring cells (each edge cell feeds two corners, each
@@ -86,8 +185,13 @@ pub(super) fn log_side_cell_uvs(
 ///
 /// Split from the vertex push so the greedy mesher can test a face for flatness (all four
 /// corners equal — the merge condition) before deciding to emit it per-cell or merge it.
+///
+/// `probe(cell, lo, hi)` is the sub-cell AO cast query — does the cell's
+/// occupancy overlap the cell-local pocket AABB (see [`corner_cast_probes`])?
+/// Consulted only for ring cells that are box-shape families or partial
+/// slabs, so pure cube/air neighbourhoods pay nothing.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::mesh) fn cube_face_lighting<B, S, L, K>(
+pub(in crate::mesh) fn cube_face_lighting<B, S, L, K, P>(
     face: Face,
     fx: i32,
     fy: i32,
@@ -99,17 +203,28 @@ pub(in crate::mesh) fn cube_face_lighting<B, S, L, K>(
     slab_at: &S,
     neighbour_light: &L,
     neighbour_blocklight: &K,
+    probe: &P,
 ) -> ([u32; 4], [u32; 4], [u32; 4], [f32; 4])
 where
     B: Fn(i32, i32, i32) -> Block,
     S: Fn(i32, i32, i32) -> Option<SlabState>,
     L: Fn(i32, i32, i32) -> u8,
     K: Fn(i32, i32, i32) -> u8,
+    P: Fn((i32, i32, i32), [f32; 3], [f32; 3]) -> bool,
 {
     let (ux, uy, uz) = face.ao_u();
     let (vx, vy, vz) = face.ao_v();
 
+    // Whether the FRONT cell itself holds sub-cell matter: its interior
+    // quadrant then joins the corner occlusion (the exposed ring of a face
+    // something box-shaped stands on).
+    let front_probe = {
+        let fb = block_at(fx, fy, fz);
+        probe_worthy(fb) || (fb.is_slab() && slab_at(fx, fy, fz).is_some_and(|st| !st.is_full()))
+    };
+
     let mut occ = [[false; 3]; 3];
+    let mut probe_cell = [[false; 3]; 3];
     let mut opq = [[false; 3]; 3];
     let mut sky = [[0u32; 3]; 3];
     let mut blk = [[0u32; 3]; 3];
@@ -138,6 +253,9 @@ where
             };
             let full_stack = slab_state.is_some_and(|s| s.is_full());
             occ[ia][ib] = cell.occludes_ao() || full_stack;
+            // A non-occluding cell that still holds sub-cell matter (a box
+            // shape, a partial slab) gets corner-probe casting below.
+            probe_cell[ia][ib] = !occ[ia][ib] && (probe_worthy(cell) || slab_state.is_some());
             if smooth_light {
                 opq[ia][ib] = cell.is_opaque() || full_stack;
                 if !opq[ia][ib] {
@@ -162,7 +280,42 @@ where
     for corner in 0..4 {
         let (su, sv) = signs[corner];
         let (iu, iv) = ((su + 1) as usize, (sv + 1) as usize);
-        ao[corner] = vertex_ao(occ[iu][1], occ[1][iv], occ[iu][iv]);
+        let (mut s1, mut s2, mut c) = (occ[iu][1], occ[1][iv], occ[iu][iv]);
+        let mut q_int = false;
+        if front_probe
+            || (probe_cell[iu][1] && !s1)
+            || (probe_cell[1][iv] && !s2)
+            || (probe_cell[iu][iv] && !c)
+        {
+            let pk = corner_cast_probes(face, (fx, fy, fz), su, sv);
+            let cell_of = |s_u: i32, s_v: i32| {
+                (
+                    fx + s_u * ux + s_v * vx,
+                    fy + s_u * uy + s_v * vy,
+                    fz + s_u * uz + s_v * vz,
+                )
+            };
+            let local = |p: [f32; 3], cl: (i32, i32, i32)| {
+                [p[0] - cl.0 as f32, p[1] - cl.1 as f32, p[2] - cl.2 as f32]
+            };
+            if probe_cell[iu][1] && !s1 {
+                let cl = cell_of(su, 0);
+                s1 = probe(cl, local(pk[0].0, cl), local(pk[0].1, cl));
+            }
+            if probe_cell[1][iv] && !s2 {
+                let cl = cell_of(0, sv);
+                s2 = probe(cl, local(pk[1].0, cl), local(pk[1].1, cl));
+            }
+            if probe_cell[iu][iv] && !c {
+                let cl = cell_of(su, sv);
+                c = probe(cl, local(pk[2].0, cl), local(pk[2].1, cl));
+            }
+            if front_probe {
+                let cl = (fx, fy, fz);
+                q_int = probe(cl, local(pk[3].0, cl), local(pk[3].1, cl));
+            }
+        }
+        ao[corner] = quad_ao(q_int, s1, s2, c);
         if !smooth_light {
             (light6[corner], block6[corner], warm[corner]) = flat;
             continue;

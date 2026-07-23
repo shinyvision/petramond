@@ -184,7 +184,7 @@ fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indice
         let (post_lo, post_hi) = view
             .connection
             .unwrap_or((crate::pane::POST_LO, crate::pane::POST_HI));
-        crate::mesh::pane::shape_faces(post_lo, post_hi, mask, |min, max, face, _, _, _| {
+        crate::mesh::pane::shape_faces(post_lo, post_hi, mask, |min, max, face, _, _| {
             super::item_cube::push_cell_local_face(
                 verts,
                 indices,
