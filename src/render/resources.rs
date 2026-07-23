@@ -196,6 +196,15 @@ pub struct GpuSectionMesh {
     /// be inferred from the model range.
     pub contact_vertex_start: u32,
     pub contact_vertex_count: u32,
+    /// Fingerprint of the section-local index streams (see
+    /// [`section_index_hash`]). Guards the vertex-only patch path: equal layer
+    /// counts pin every start offset, but NOT the index topology — plant quads
+    /// (12 indices per 4 vertices) interleave with inline cube faces in cell
+    /// order, and faces migrate between the inline and deferred-greedy
+    /// partitions as their merge keys change, so two meshes with identical
+    /// counts can wire vertices differently. Patching vertices under stale
+    /// indices collapses such quads to degenerate triangles.
+    pub index_hash: u64,
 }
 
 pub struct GpuColumnMesh {
@@ -596,6 +605,30 @@ fn patch_terrain_verts(
     patch_verts(queue, buf, vertex_start, &quantized)
 }
 
+/// FNV-1a over a section's SECTION-LOCAL index streams, all indexed layers in a
+/// fixed order. With per-layer counts already matched, equal hashes mean the
+/// column-buffer indices retained on the GPU (section-local + a vertex-start
+/// offset that count equality pins) are still valid for the new vertex data.
+fn section_index_hash(mesh: &ChunkMesh) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |stream: &[u32]| {
+        for &i in stream {
+            h ^= i as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        // Layer separator: streams of different layers must not concatenate
+        // into the same digest position.
+        h ^= 0xff;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    };
+    eat(&mesh.opaque_idx);
+    eat(&mesh.far_opaque_idx);
+    eat(&mesh.transparent_idx);
+    eat(&mesh.translucent_idx);
+    eat(&mesh.model_idx);
+    h
+}
+
 fn layer_sizes_match(mesh: &ChunkMesh, gpu: &GpuSectionMesh) -> bool {
     mesh.opaque.len() as u32 == gpu.opaque_vertex_count
         && mesh.opaque_idx.len() as u32 == gpu.opaque_idx_count
@@ -643,7 +676,8 @@ fn try_patch_column_verts(
         return false;
     }
     for (&(sp, mesh), &(psp, ref gpu)) in meshes.iter().zip(&prev.sections) {
-        if sp != psp || !layer_sizes_match(mesh, gpu) {
+        if sp != psp || !layer_sizes_match(mesh, gpu) || section_index_hash(mesh) != gpu.index_hash
+        {
             return false;
         }
     }
@@ -835,6 +869,7 @@ pub(super) fn upload_column_mesh(
                 model_vertex_count,
                 contact_vertex_start,
                 contact_vertex_count,
+                index_hash: section_index_hash(mesh),
             },
         ));
     }
@@ -926,5 +961,37 @@ pub(super) fn upload_column_mesh(
         col_ox,
         col_oz,
         sections,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The vertex-only patch path must refuse a mesh whose index TOPOLOGY
+    /// changed even when every layer count matches — count equality alone let
+    /// stale GPU indices collapse reordered plant quads (crop/grass planes
+    /// vanishing after an edit). The hash is the guard; these pin its
+    /// discriminating properties, not exact values.
+    #[test]
+    fn index_hash_distinguishes_equal_count_topologies() {
+        let mut a = crate::mesh::ChunkMesh::empty();
+        let mut b = crate::mesh::ChunkMesh::empty();
+        // Same index count, different wiring (a plant quad's double winding
+        // landing at a different vertex offset).
+        a.opaque_idx = vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7];
+        b.opaque_idx = vec![4, 5, 6, 4, 6, 7, 0, 1, 2, 0, 2, 3];
+        assert_ne!(section_index_hash(&a), section_index_hash(&b));
+        assert_eq!(section_index_hash(&a), section_index_hash(&a));
+    }
+
+    #[test]
+    fn index_hash_separates_layers() {
+        let mut a = crate::mesh::ChunkMesh::empty();
+        let mut b = crate::mesh::ChunkMesh::empty();
+        // Identical stream content in DIFFERENT layers must not collide.
+        a.opaque_idx = vec![0, 1, 2, 0, 2, 3];
+        b.transparent_idx = vec![0, 1, 2, 0, 2, 3];
+        assert_ne!(section_index_hash(&a), section_index_hash(&b));
     }
 }
