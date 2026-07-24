@@ -307,9 +307,11 @@ impl ShapeSim for StairFamily {
 }
 impl ShapeRender for StairFamily {
     fn occupies_pocket(&self, ctx: &ShapeCtx<'_>, lo: [f32; 3], hi: [f32; 3]) -> bool {
-        // The UNRESOLVED shape on purpose: corner-join resolution reads
-        // neighbours the pad mesher cannot see, and both meshers must agree.
-        let shape = crate::stair::shape(StairState::decode(ctx.nb.shape_state(ctx.pos).byte(0)));
+        // The REFINED shape — the same stored corner byte `boxes` draws.
+        // AO occupancy must track the geometry, not the placement: two
+        // placements refining to one corner shape must shade neighbours
+        // identically.
+        let shape = stair_shape_at(ctx.nb, ctx.pos);
         any_octant(lo, hi, &|ix, iy, iz| {
             crate::stair::shape_half_cell_occupied(shape, ix, iy, iz)
         })

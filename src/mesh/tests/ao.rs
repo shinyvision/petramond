@@ -263,6 +263,58 @@ fn slab_top_plane_ignores_matter_below_it() {
     );
 }
 
+/// AO is a function of the SHAPE, never the placement: the same outer-corner
+/// stair reached from two different placed facings must cast identical AO on
+/// its neighbours. Scene A places the corner facing WEST (refined by the
+/// victim straight stair on its +x high side); scene B places it facing NORTH
+/// (refined by a west helper on its +z high side, present in both scenes).
+/// Both refine to the same single-quadrant corner — only the placed byte
+/// differs — so the meshes must carry identical AO everywhere. Regression pin
+/// for `occupies_pocket` decoding the placed facing instead of the stored
+/// refined corner, which grew a phantom occupied quadrant that shadowed the
+/// straight neighbour only for one of the two placements.
+#[test]
+fn stair_corner_ao_is_placement_independent() {
+    let build = |corner_facing: Facing| {
+        let mut s = section_with(&[
+            ((9, 8, 8), Block::OakStairs),  // the corner under test
+            ((10, 8, 8), Block::OakStairs), // victim straight stair (north)
+            ((9, 8, 9), Block::OakStairs),  // scene-B refiner (west)
+        ]);
+        s.set_stair_facing(9, 8, 8, corner_facing);
+        s.set_stair_facing(10, 8, 8, Facing::North);
+        s.set_stair_facing(9, 8, 9, Facing::West);
+        s
+    };
+    let a = build(Facing::West);
+    let b = build(Facing::North);
+
+    // Both placements must refine to the SAME outer corner (one quadrant);
+    // anything else means the fixture no longer exercises the invariant.
+    let corner_a = refined(&a).cell_state(9, 8, 8).byte(1);
+    let corner_b = refined(&b).cell_state(9, 8, 8).byte(1);
+    assert_eq!(corner_a, corner_b, "both placements refine to one corner");
+    assert_eq!(corner_a.count_ones(), 1, "the corner is an outer corner");
+
+    let ao_set = |m: &ChunkMesh| {
+        let mut set: Vec<_> = m
+            .opaque
+            .iter()
+            .map(|v| {
+                let q = v.pos.map(|c| (c * 4.0).round() as i32);
+                (q, shade_idx(v), ao_idx(v))
+            })
+            .collect();
+        set.sort_unstable();
+        set
+    };
+    assert_eq!(
+        ao_set(&mesh(&a)),
+        ao_set(&mesh(&b)),
+        "identical refined shapes must shade identically regardless of placement"
+    );
+}
+
 /// The INTERIOR quadrant: sub-cell matter standing ON a face darkens the
 /// exposed part of that same face (its front cell holds the matter — grid
 /// AO never probes there), and the quadrant-symmetric rule makes the shared

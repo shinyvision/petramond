@@ -181,16 +181,15 @@ pub(super) fn section_geometry(
 
     // The shared sub-cell AO occupancy query: does the cell hold solid matter
     // overlapping the cell-local pocket AABB? Whole cell for opaque cubes /
-    // full stacks;
-    // half-cell state for partial slabs and stairs (the UNRESOLVED state
-    // shape — corner-join resolution reads the stair's own neighbours, which
-    // the pad mesher cannot reach, and the two meshers must agree
-    // byte-for-byte); the mask-free post for fences/panes (mask resolution is
-    // likewise out of the pad's reach — rails are thin and corner-distant
-    // anyway); the panel for ladders; the render-bake boxes for IN-SECTION
-    // custom cells (both meshers share `section`, so the restriction is
-    // parity-safe). Consumed by the cube gathers' cast probes AND the box
-    // emitter's out-of-cell probes, so casting and receiving are one rule.
+    // full stacks; half-cell REFINED state for partial slabs and stairs (the
+    // pad captures the stored refined bytes verbatim, so a stair's corner
+    // byte is a free decode here — occupancy must track the drawn shape, not
+    // the placed facing); the mask-free post for fences/panes (rails are thin
+    // and corner-distant anyway); the panel for ladders; the render-bake
+    // boxes for IN-SECTION custom cells (both meshers share `section`, so the
+    // restriction is parity-safe). Consumed by the cube gathers' cast probes
+    // AND the box emitter's out-of-cell probes, so casting and receiving are
+    // one rule.
     let cell_matter = |cl: (i32, i32, i32), lo: [f32; 3], hi: [f32; 3]| -> bool {
         let (cx, cy, cz) = cl;
         let b = block_at(cx, cy, cz);
