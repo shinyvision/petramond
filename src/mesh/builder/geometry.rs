@@ -152,10 +152,18 @@ pub(super) fn section_geometry(
     // models, custom bakes across the section boundary) stay empty, which
     // just means "no sub-cell cull", never a wrong cull.
     let occ_scratch = std::cell::RefCell::new(Vec::<ShapeBox>::new());
-    let occupancy_boxes = |p: IVec3, out: &mut Vec<([f32; 3], [f32; 3])>| {
+    let occupancy_boxes = |p: IVec3, cell_block: Block, out: &mut Vec<([f32; 3], [f32; 3])>| {
         let nb_block = block_at(p.x, p.y, p.z);
         let k = nb_block.shape_kind_def();
         if !k.resolves_to_boxes {
+            return;
+        }
+        // See-through texels cannot seal ANOTHER block's face: a cutout
+        // ladder panel flush on a stair would cull the stair's side and show
+        // a hole through the rungs. Same-block contact still culls — the
+        // glass/translucent convention the cube path uses — so stacked
+        // panes/chains keep their exact box-vs-box culls.
+        if (nb_block.is_transparent() || nb_block.is_translucent()) && nb_block != cell_block {
             return;
         }
         // The neighbour's own resolved boxes — the SAME producer the mesh
@@ -264,7 +272,7 @@ pub(super) fn section_geometry(
                 };
                 let neighbor_boxes = |face: Face, out: &mut Vec<([f32; 3], [f32; 3])>| {
                     let (dx, dy, dz) = face.dir();
-                    occupancy_boxes(IVec3::new(wx + dx, wy + dy, wz + dz), out);
+                    occupancy_boxes(IVec3::new(wx + dx, wy + dy, wz + dz), block, out);
                 };
 
                 if matches!(shape, ShapeFamily::Cross | ShapeFamily::Crop) {

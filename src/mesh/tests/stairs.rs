@@ -213,3 +213,33 @@ fn stair_mesh_uses_resolved_outside_corner_shape() {
         "the high-side perpendicular neighbour must render an outside corner"
     );
 }
+
+/// A see-through neighbour cannot seal a DIFFERENT block's flush face: a
+/// cutout ladder panel mounted flat against a stair's side used to subtract
+/// that whole side away, showing a hole through the rungs. The stair's side
+/// profile is L-shaped, so its tread-edge corner at y = x.5 exists only on
+/// the stair's own emitted face (the ladder panel's corners are integral) —
+/// its presence proves the face survived. Same-block contact still culls
+/// (the glass/translucent convention), pinned by the existing pane/chain
+/// cull tests.
+#[test]
+fn cutout_ladder_does_not_cull_the_stair_face_behind_it() {
+    let m = mesh_stairs(
+        &[
+            ((8, 8, 8), Block::OakStairs),
+            // Panel hugs its own -X wall: flush against the stair's +X face.
+            ((9, 8, 8), Block::LadderEast),
+        ],
+        &[((8, 8, 8), Facing::North)],
+    );
+    // Only the stair owns +X-facing geometry on the x = 9 plane: the ladder's
+    // front face sits at x = 9 + thickness and its wall-side face is a `None`
+    // style (never emitted). Position filters alone are ambiguous here — the
+    // stair's own Z-face corners lie on this plane too.
+    assert!(
+        m.opaque.iter().any(|v| {
+            (v.pos[0] - 9.0).abs() < 1.0e-3 && (v.packed2 >> 16) & 0x7 == 1
+        }),
+        "the stair's +X side face must draw behind the cutout ladder"
+    );
+}
