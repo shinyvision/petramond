@@ -130,10 +130,13 @@ impl RegionReader {
                 .ok_or_else(corrupt_region)?;
             if end > file_len
                 || records
-                    .insert(lidx, RecordLocation {
-                        offset: body_offset,
-                        len,
-                    })
+                    .insert(
+                        lidx,
+                        RecordLocation {
+                            offset: body_offset,
+                            len,
+                        },
+                    )
                     .is_some()
             {
                 return Err(corrupt_region());

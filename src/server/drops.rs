@@ -48,7 +48,7 @@ impl DropQueue {
         };
         let stack = match amount {
             ThrowAmount::All => stack,
-            ThrowAmount::One => ItemStack::new(stack.item, 1),
+            ThrowAmount::One => stack.restack(1),
         };
         self.pending.push((PendingDropAction::Cursor(stack), id));
         true
@@ -63,8 +63,7 @@ impl DropQueue {
             .min(cursor.count);
         if reserved > 0 {
             let remainder = cursor.count - reserved;
-            *inventory.cursor_mut() =
-                (remainder > 0).then_some(ItemStack::new(cursor.item, remainder));
+            *inventory.cursor_mut() = (remainder > 0).then_some(cursor.restack(remainder));
         }
         if let Some(stack) = inventory.stash_cursor_in_inventory() {
             self.queue_stack(stack);
@@ -85,7 +84,7 @@ impl DropQueue {
         let cursor = *inventory.cursor()?;
         let reserved = self.pending_cursor_throw_count(cursor.item);
         let count = cursor.count.saturating_sub(reserved);
-        (count > 0).then_some(ItemStack::new(cursor.item, count))
+        (count > 0).then_some(cursor.restack(count))
     }
 
     fn drain(&mut self) -> Vec<(PendingDropAction, Option<RequestId>)> {
@@ -142,12 +141,12 @@ impl ServerGame {
             return cell.take();
         }
         let stack = cell.as_mut()?;
-        let item = stack.item;
+        let one = stack.restack(1);
         stack.count -= 1;
         if stack.count == 0 {
             *cell = None;
         }
-        Some(ItemStack::new(item, 1))
+        Some(one)
     }
 
     fn consume_cursor_throw(&mut self, s: usize, stack: ItemStack) {

@@ -28,9 +28,10 @@ impl World {
                 {
                     continue;
                 }
-                let in_surface = self.column_gen.get(&cp).is_some_and(|col| {
-                    Self::surface_window_for_column(col, 2).contains(&cy)
-                });
+                let in_surface = self
+                    .column_gen
+                    .get(&cp)
+                    .is_some_and(|col| Self::surface_window_for_column(col, 2).contains(&cy));
                 if !in_surface {
                     drop_sections.push(SectionPos::new(cp.cx, cy, cp.cz));
                 }
@@ -66,9 +67,10 @@ impl World {
                     if vwindow.contains(&cy) {
                         continue;
                     }
-                    let in_surface = self.column_gen.get(&cp).is_some_and(|col| {
-                        Self::surface_window_for_column(col, 2).contains(&cy)
-                    });
+                    let in_surface = self
+                        .column_gen
+                        .get(&cp)
+                        .is_some_and(|col| Self::surface_window_for_column(col, 2).contains(&cy));
                     if !in_surface {
                         out.push(SectionPos::new(cp.cx, cy, cp.cz));
                     }

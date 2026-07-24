@@ -475,7 +475,14 @@ fn preserve_waypoint_path(
         return None;
     }
     let step = path::find_path_nav(
-        start, waypoint, params, solid, support, water, step_allowed, cell_cost,
+        start,
+        waypoint,
+        params,
+        solid,
+        support,
+        water,
+        step_allowed,
+        cell_cost,
     );
     if step.last() != Some(&waypoint) || step.len() > 2 {
         return None;
@@ -484,7 +491,14 @@ fn preserve_waypoint_path(
         return Some(step);
     }
     let suffix = path::find_path_nav(
-        waypoint, goal, params, solid, support, water, step_allowed, cell_cost,
+        waypoint,
+        goal,
+        params,
+        solid,
+        support,
+        water,
+        step_allowed,
+        cell_cost,
     );
     if suffix.first() != Some(&waypoint) || suffix.len() <= 1 {
         return None;
@@ -644,7 +658,11 @@ fn veer_side(wish: Vec3, d: Vec3, self_id: u64) -> f32 {
 
 fn veer(wish: Vec3, side: f32) -> Vec3 {
     let (sin, cos) = (side * UNSTICK_ANGLE).sin_cos();
-    Vec3::new(wish.x * cos + wish.z * sin, 0.0, wish.z * cos - wish.x * sin)
+    Vec3::new(
+        wish.x * cos + wish.z * sin,
+        0.0,
+        wish.z * cos - wish.x * sin,
+    )
 }
 
 /// How a cell's real collision reads for navigation.
@@ -749,7 +767,17 @@ pub(super) fn destination_reachable(
     let support = nav_support_fn(world, params.half_width);
     let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
     let step_allowed = partial_step_gate(world, params, height);
-    path::find_path_nav(start, dest, params, &solid, &support, &water, step_allowed, |_| 0).last()
+    path::find_path_nav(
+        start,
+        dest,
+        params,
+        &solid,
+        &support,
+        &water,
+        step_allowed,
+        |_| 0,
+    )
+    .last()
         == Some(&dest)
 }
 
@@ -1358,7 +1386,13 @@ mod tests {
             stone_world.set_block_world(x, 64, 1, Block::Stone);
         }
         let mut nav = Navigator::new(1, 0.25, 0.9);
-        nav.update_goal_when_supported(Some(goal), start, &stone_world, true, &NavObstacles::none());
+        nav.update_goal_when_supported(
+            Some(goal),
+            start,
+            &stone_world,
+            true,
+            &NavObstacles::none(),
+        );
         assert_eq!(
             nav.path().last(),
             Some(&goal),
@@ -1371,7 +1405,13 @@ mod tests {
             fence_world.set_block_world(x, 64, 1, Block::OakFence);
         }
         let mut nav = Navigator::new(1, 0.25, 0.9);
-        nav.update_goal_when_supported(Some(goal), start, &fence_world, true, &NavObstacles::none());
+        nav.update_goal_when_supported(
+            Some(goal),
+            start,
+            &fence_world,
+            true,
+            &NavObstacles::none(),
+        );
         assert_ne!(
             nav.path().last(),
             Some(&goal),
@@ -1394,12 +1434,8 @@ mod tests {
         for x in 0..12 {
             world.set_block_world(x, 64, 1, Block::OakFence);
         }
-        let mob = crate::mob::Instance::new(
-            crate::mob::Mob::Sheep,
-            Vec3::new(4.5, 64.0, 0.5),
-            0.0,
-            1,
-        );
+        let mob =
+            crate::mob::Instance::new(crate::mob::Mob::Sheep, Vec3::new(4.5, 64.0, 0.5), 0.0, 1);
         assert!(
             !mob_can_reach(&world, &mob, IVec3::new(4, 64, 2)),
             "grass beyond the fence is not a reachable destination"
@@ -1456,7 +1492,10 @@ mod tests {
         let pos = Vec3::new(3.5, 64.0, 0.95);
 
         let (raw, _) = nav.follow(pos, true);
-        assert!(raw.x > 0.9, "the raw wish presses east into the chest: {raw:?}");
+        assert!(
+            raw.x > 0.9,
+            "the raw wish presses east into the chest: {raw:?}"
+        );
 
         let mut nav = Navigator::new(2, 0.45, 1.4);
         nav.path = vec![IVec3::new(3, 64, 0), IVec3::new(5, 64, 0)];
@@ -1822,7 +1861,13 @@ mod tests {
         nav.goal = Some(first_goal);
         nav.path_reaches_goal = true;
 
-        nav.update_goal_when_supported(Some(moved_goal), start, &world, true, &NavObstacles::none());
+        nav.update_goal_when_supported(
+            Some(moved_goal),
+            start,
+            &world,
+            true,
+            &NavObstacles::none(),
+        );
         assert_eq!(
             nav.path().get(1),
             Some(&old_waypoint),
@@ -1921,9 +1966,21 @@ mod tests {
         let reachable = IVec3::new(2, 64, 1);
         let mut nav = Navigator::new(1, 0.25, 0.9);
 
-        nav.update_goal_when_supported(Some(unreachable), start, &world, true, &NavObstacles::none());
+        nav.update_goal_when_supported(
+            Some(unreachable),
+            start,
+            &world,
+            true,
+            &NavObstacles::none(),
+        );
         for _ in 0..REPATH_TICKS {
-            nav.update_goal_when_supported(Some(unreachable), start, &world, true, &NavObstacles::none());
+            nav.update_goal_when_supported(
+                Some(unreachable),
+                start,
+                &world,
+                true,
+                &NavObstacles::none(),
+            );
         }
         assert_eq!(
             nav.recomputes(),
@@ -1957,7 +2014,13 @@ mod tests {
 
         for expected in 2..=3 {
             for _ in 0..REPATH_TICKS - 1 {
-                nav.update_goal_when_supported(Some(goal), start, &world, true, &NavObstacles::none());
+                nav.update_goal_when_supported(
+                    Some(goal),
+                    start,
+                    &world,
+                    true,
+                    &NavObstacles::none(),
+                );
             }
             assert_eq!(
                 nav.recomputes(),

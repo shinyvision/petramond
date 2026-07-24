@@ -21,8 +21,7 @@ impl World {
     }
 
     pub(in crate::world) fn note_section_loaded(&mut self, pos: SectionPos) {
-        *self.section_column_cys.entry(pos.chunk_pos()).or_insert(0) |=
-            Self::column_cy_bit(pos.cy);
+        *self.section_column_cys.entry(pos.chunk_pos()).or_insert(0) |= Self::column_cy_bit(pos.cy);
         // A bulk section load bypasses the per-edit bake trigger, so mark any
         // Layer-3 custom-shape cells for a (re)bake now (a chair restored from
         // disk must rebuild its geometry, not sit on the static fallback).
@@ -50,7 +49,10 @@ impl World {
     #[inline]
     pub(in crate::world) fn insert_pending_section(&mut self, sp: SectionPos) -> bool {
         if self.pending_sections.insert(sp) {
-            *self.pending_section_columns.entry(sp.chunk_pos()).or_insert(0) += 1;
+            *self
+                .pending_section_columns
+                .entry(sp.chunk_pos())
+                .or_insert(0) += 1;
             true
         } else {
             false

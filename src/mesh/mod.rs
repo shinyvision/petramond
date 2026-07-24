@@ -33,7 +33,7 @@ pub use skylight::{compute_chunk_skylight, compute_chunk_skylight_with_neighbors
 pub(crate) use vertex::{
     pack_cell_uv, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT, UV_MODE_THIN_U, UV_MODE_THIN_V,
 };
-pub(crate) use vertex::{pack_tint, unpack_tint};
+pub(crate) use vertex::{pack_tint, unpack_tint, DYED_FLAG2};
 pub use vertex::{ChunkMesh, ContactShadowVertex, ModelVertex, TerrainVertex, Vertex, SHADES};
 
 #[cfg(test)]

@@ -55,6 +55,7 @@ impl ServerGame {
                 id: it.id,
                 item_id: it.stack.item.0,
                 count: it.stack.count,
+                data: crate::item::variant::blob(it.stack.variant).map(|b| (*b).clone()),
                 pos: it.pos,
                 spin: it.spin,
             })
@@ -83,6 +84,12 @@ impl ServerGame {
                     alive,
                     visible: alive && !sess.player.is_spectator(),
                     held_item: sess.selected_item().map(|item| item.0),
+                    held_data: sess
+                        .player
+                        .inventory
+                        .selected()
+                        .and_then(|st| crate::item::variant::blob(st.variant))
+                        .map(|b| (*b).clone()),
                     // The same overlay state `SelfState::mining` ships for the
                     // player's own hand: target cell + crack stage. Observers
                     // derive the arm-swing flag AND the remote crack overlay.
@@ -90,7 +97,9 @@ impl ServerGame {
                     eating: sess.eating.is_some(),
                     hurt_recent: events.player_at(s).player_damaged,
                     snap: sess.tick_teleported,
-                    mount: sess.mount.map(crate::net::protocol::PlayerMount::from_mount),
+                    mount: sess
+                        .mount
+                        .map(crate::net::protocol::PlayerMount::from_mount),
                 }
             })
             .collect();
@@ -169,13 +178,20 @@ impl ServerGame {
         events: &TickEvents,
         world_events: &[WorldEventMsg],
         deltas: &[BlockDelta],
+        kv_deltas: &[crate::net::protocol::CellKvDelta],
         shared: &SharedTickRows,
     ) -> TickUpdate {
         // Per-recipient delta filter: only sections this client holds.
         let mut block_deltas: Vec<BlockDelta> = deltas
             .iter()
             .filter(|d| self.sessions[s].terrain.covers(d.pos))
-            .copied()
+            .cloned()
+            .collect();
+        // Cell KV deltas ride the same recipient filter as block deltas.
+        let cell_kv_deltas: Vec<crate::net::protocol::CellKvDelta> = kv_deltas
+            .iter()
+            .filter(|d| self.sessions[s].terrain.covers(d.pos))
+            .cloned()
             .collect();
         // Corrective cell sync: the CURRENT state of cells a use click
         // disagreed about (no-op click, denied place) — how a client whose
@@ -219,6 +235,7 @@ impl ServerGame {
             tick: shared.tick,
             clock: shared.clock,
             block_deltas,
+            cell_kv_deltas,
             mobs: shared.mobs.clone(),
             items: shared.items.clone(),
             players: shared.players.clone(),
@@ -325,12 +342,7 @@ impl ServerGame {
                 .iter()
                 .copied()
                 .chain(std::iter::once(player.inventory.cursor().copied()))
-                .map(|slot| {
-                    slot.map(|st| ItemSlotWire {
-                        item_id: st.item.0,
-                        count: st.count,
-                    })
-                })
+                .map(|slot| slot.map(ItemSlotWire::from_stack))
                 .collect()
         });
         sess.last_sent_inventory_revision = Some(revision);
@@ -450,6 +462,7 @@ pub(crate) fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
             pos: ev.pos,
             block_id: ev.block.0,
             normal: ev.normal,
+            tint: ev.tint,
         });
     }
     for (pos, block) in world.block_placed.drain(..) {

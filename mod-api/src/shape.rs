@@ -9,16 +9,32 @@
 //! Positions are raw `[i32; 3]` and boxes raw `[f32; 3]` pairs, matching the
 //! rest of this crate (there is no `Aabb`/`IVec3` type on the wire).
 //!
-//! # Per-cell purity (HARD requirement — a violation is a multiplayer desync)
+//! # Per-cell purity (HARD requirement on the SIM side — a violation is a
+//! # multiplayer desync)
 //!
-//! Every bake reply MUST be a pure function of that cell's [`CellInput`]
-//! (`block_id` + the six `neighbor_ids`) and the `shape_kind`. The SIM bake runs
-//! on the server AND is re-run against each client's replica for prediction; the
-//! host groups a section's cells and iterates them in a defined order, but a bake
-//! that reads instance state (an `RngU64` stream, a counter, an arena bump) or
-//! the surrounding batch would diverge server↔client with no reproducibility.
-//! There is no per-cell state on the wire: the input is the cell's block and
-//! neighbours, nothing else.
+//! Every SIM bake reply MUST be a pure function of that cell's [`CellInput`]
+//! and the `shape_kind`. The SIM bake runs on the server AND is re-run against
+//! each client's replica for prediction; the host groups a section's cells and
+//! iterates them in a defined order, but a bake that reads instance state (an
+//! `RngU64` stream, a counter, an arena bump) or the surrounding batch would
+//! diverge server↔client with no reproducibility.
+//!
+//! ## Purity is about server/replica AGREEMENT, not "block ids only"
+//!
+//! [`CellInput`] carries the cell's own [`state`](CellInput::state) and its six
+//! [`neighbor_states`](CellInput::neighbor_states) — the opaque bytes of the
+//! shape kind's declared state key (`shapes.json` `"state_key"`), read from
+//! REPLICATED per-cell KV. A stateful family (a stair reading its neighbours'
+//! facings to resolve a corner) is therefore expressible: the state is
+//! replicated, applied before the bake pump runs, and a change to any cell
+//! re-bakes it AND its six neighbours, so the server and every replica bake
+//! from identical inputs. What purity forbids is reading UNreplicated or
+//! ambient state (an RNG, a wall clock, the batch) — never replicated per-cell
+//! state, which is exactly what the widened input now provides.
+//!
+//! The RENDER bake, being presentation-only, may additionally batch-read any
+//! replicated KV via `ClientCellKvAt` (e.g. tinting from a dye color); the sim
+//! bake sees only its declared state key, kept identical on both sides.
 //!
 //! # Shared bake crate (recommendation)
 //!
@@ -56,14 +72,24 @@ pub enum LightAperture {
 }
 
 /// The neighbourhood context of one cell handed to a bake — the same on the sim
-/// and render sides so a shape gets identical inputs each way. `neighbor_ids`
-/// are in `-x,+x,-y,+y,-z,+z` order. This is the ENTIRE bake input: a bake must
-/// be a pure function of it (see the module purity note).
+/// and render sides so a shape gets identical inputs each way. This is the
+/// ENTIRE bake input: a bake must be a pure function of it (see the module
+/// purity note).
+///
+/// `neighbor_ids` / `neighbor_states` are in `-x,+x,-y,+y,-z,+z` order.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CellInput {
     pub world_pos: [i32; 3],
     pub block_id: BlockId,
     pub neighbor_ids: [BlockId; 6],
+    /// This cell's per-cell shape state — the opaque bytes of the shape kind's
+    /// declared `state_key` (replicated cell KV), or `None` when the shape
+    /// declares no state key or the cell carries no value. What makes a
+    /// STATEFUL family (a stair's facing/half) expressible through the ABI.
+    pub state: Option<Vec<u8>>,
+    /// The same state for the six neighbours — a stair reads these to resolve
+    /// its corner shape. `None` per neighbour when absent.
+    pub neighbor_states: [Option<Vec<u8>>; 6],
 }
 
 /// One baked SIM cell (deterministic): the authoritative collision boxes the
@@ -74,16 +100,52 @@ pub struct BakedSimCell {
     pub light_aperture: LightAperture,
 }
 
+/// One drawn box of a render bake: its geometry plus an optional RGB multiply
+/// TINT (linear, `[r, g, b]` unorm8; `None` = untinted). The tint multiplies
+/// the box's sampled texels per vertex — the same lane biome grass/water
+/// tinting uses — so a shape can colorize part of itself from replicated
+/// state (a dye vat's fluid, stained panes) while its other boxes keep their
+/// authored tiles. `ao` scales how strongly ambient occlusion darkens this
+/// box's faces, in PERCENT (`None` = 100, the ordinary full effect; `0` =
+/// AO-immune) — the darkening is scaled within the engine's vertex-AO steps,
+/// so a fluid surface sitting inside a pot can stay bright while the pot
+/// keeps its creases. `dyed` picks the SAMPLING BASE the tint lands on:
+/// `false` = the box's authored tiles (a plain hue-preserving multiply —
+/// shading a colored texture darker); `true` = the tiles' dye-base twins
+/// (desaturated, brightness-normalized), so the tint can both dye and
+/// whiten — set it whenever the tint IS a dye color. Presentation-only:
+/// none of these fields exist on the sim side.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
+pub struct ShapeRenderBox {
+    pub aabb: ShapeAabb,
+    pub tint: Option<[u8; 3]>,
+    pub ao: Option<u8>,
+    pub dyed: bool,
+}
+
+impl From<ShapeAabb> for ShapeRenderBox {
+    /// An untinted, full-AO, undyed box — the ordinary case.
+    fn from(aabb: ShapeAabb) -> Self {
+        ShapeRenderBox {
+            aabb,
+            tint: None,
+            ao: None,
+            dyed: false,
+        }
+    }
+}
+
 /// One baked RENDER cell (client presentation): the axis-aligned boxes the
 /// mesher draws (each textured face-by-face from the block's own
 /// `[top, bottom, side]` tiles, carved-from-the-block like a stair, so a shape
-/// reuses its block's textures with no per-quad atlas reference on the wire).
+/// reuses its block's textures with no per-quad atlas reference on the wire),
+/// each optionally tinted ([`ShapeRenderBox`]).
 /// Voxel furniture is boxes; the box form gets correct lighting/AO/UV for free
 /// from the engine's shared plane-quad emitter. The selection/target box is the
 /// union of these boxes (engine-derived), not a wire field.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct BakedRenderCell {
-    pub boxes: Vec<ShapeAabb>,
+    pub boxes: Vec<ShapeRenderBox>,
 }
 
 /// The read-only placement context a custom shape's `ShapePlacementPlan`

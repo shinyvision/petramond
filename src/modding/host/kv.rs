@@ -6,7 +6,7 @@ use mod_api::{HostCall, HostRet};
 
 use crate::mathh::IVec3;
 
-use super::guards::{kv_write_guard, sim_call, sim_query};
+use super::guards::{kv_write_guard, sim_call, sim_query, CELL_KV_MAX_KEYS};
 
 /// Run one KV write behind [`kv_write_guard`], handing the key back to the
 /// operation when the guard passes (deletes guard with `value_len` 0).
@@ -47,6 +47,16 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
             guarded_write(mod_id, key, value.len(), |key| {
                 sim_query(|ctx| {
                     let p = IVec3::from(pos);
+                    // Aggregate cap: a NEW key on a cell already at the limit
+                    // is an error (overwrites always pass) — see
+                    // `CELL_KV_MAX_KEYS` for why cells must stay small.
+                    if ctx.world.cell_kv_get(p.x, p.y, p.z, &key).is_none()
+                        && ctx.world.cell_kv_count(p.x, p.y, p.z) >= CELL_KV_MAX_KEYS
+                    {
+                        return HostRet::Error(format!(
+                            "cell {p:?} already holds {CELL_KV_MAX_KEYS} KV keys"
+                        ));
+                    }
                     HostRet::Bool(ctx.world.cell_kv_set(p.x, p.y, p.z, key, value))
                 })
             })
@@ -77,8 +87,17 @@ mod tests {
     use crate::world::World;
 
     /// Run `f` with a live SimCtx published, as if inside a guest dispatch.
+    /// The world gets one flat-floored loaded chunk so section-cell KV writes
+    /// have a writable target.
     fn with_ctx(f: impl FnOnce()) {
         let mut world = World::new(1, 1);
+        let mut c = crate::chunk::Chunk::new(0, 0);
+        for z in 0..crate::chunk::CHUNK_SZ {
+            for x in 0..crate::chunk::CHUNK_SX {
+                c.set_block(x, 64, z, crate::block::Block::Stone);
+            }
+        }
+        world.insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), c);
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
@@ -212,5 +231,60 @@ mod tests {
             ),
             HostRet::Error(_)
         ));
+    }
+
+    /// The per-cell AGGREGATE cap: one more DISTINCT key on a cell already
+    /// holding `CELL_KV_MAX_KEYS` errors, while overwriting an existing key
+    /// at the cap passes (the cap bounds the map, not writes) and removing a
+    /// key frees a slot. The cap is what keeps every `BlockDelta` — which
+    /// ships the cell's whole KV map — a bounded wire payload.
+    #[test]
+    fn section_kv_caps_distinct_keys_per_cell() {
+        use crate::modding::host::guards::CELL_KV_MAX_KEYS;
+        let mut alpha = ModStoreData::new("alpha", 1);
+        with_ctx(|| {
+            let pos = [2, 65, 2];
+            let set = |m: &mut ModStoreData, key: String| {
+                handle_host_call(
+                    m,
+                    HostCall::SectionKvSet {
+                        pos,
+                        key,
+                        value: vec![1],
+                    },
+                )
+            };
+            for i in 0..CELL_KV_MAX_KEYS {
+                assert_eq!(
+                    set(&mut alpha, format!("alpha:k{i}")),
+                    HostRet::Bool(true),
+                    "key {i} fits under the cap"
+                );
+            }
+            assert!(
+                matches!(set(&mut alpha, "alpha:one_too_many".into()), HostRet::Error(_)),
+                "a new key beyond the cap is rejected"
+            );
+            assert_eq!(
+                set(&mut alpha, "alpha:k0".into()),
+                HostRet::Bool(true),
+                "overwriting an existing key at the cap passes"
+            );
+            assert_eq!(
+                handle_host_call(
+                    &mut alpha,
+                    HostCall::SectionKvDelete {
+                        pos,
+                        key: "alpha:k1".into(),
+                    },
+                ),
+                HostRet::Bool(true)
+            );
+            assert_eq!(
+                set(&mut alpha, "alpha:one_too_many".into()),
+                HostRet::Bool(true),
+                "a removal frees a slot"
+            );
+        });
     }
 }

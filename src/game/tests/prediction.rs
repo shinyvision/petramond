@@ -171,7 +171,10 @@ fn predicted_chest_slot_click_applies_immediately_and_survives_reconcile() {
     game.server.sessions[0]
         .player
         .inventory
-        .add(crate::item::ItemStack::new(crate::item::ItemType::Grass, 10));
+        .add(crate::item::ItemStack::new(
+            crate::item::ItemType::Grass,
+            10,
+        ));
     game.server.sessions[0].player.inventory.click_slot(0);
     let mut ev = TickEvents::default();
     game.server.open_chest_screen_for(0, pos, &mut ev);
@@ -236,9 +239,8 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
         .menu_click(MenuSlot::Chest(0), PointerButton::Secondary, false, false);
     game.game
         .menu_click(MenuSlot::Chest(0), PointerButton::Secondary, false, false);
-    let chest_count = |game: &TestGame| {
-        game.game.menu_view.chest.unwrap().slots[0].map(|stack| stack.count)
-    };
+    let chest_count =
+        |game: &TestGame| game.game.menu_view.chest.unwrap().slots[0].map(|stack| stack.count);
     let cursor_count = |game: &TestGame| {
         game.game
             .self_view
@@ -254,6 +256,7 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
         slots.push(Some(ItemSlotWire {
             item_id: grass.0,
             count: cursor,
+            data: None,
         }));
         SelfState {
             health: 20,
@@ -268,11 +271,11 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
         }
     };
     let chest_sync = |count: u8| {
-        let mut slots: Vec<Option<ItemSlotWire>> =
-            vec![None; crate::world::chest::CHEST_SLOTS];
+        let mut slots: Vec<Option<ItemSlotWire>> = vec![None; crate::world::chest::CHEST_SLOTS];
         slots[0] = Some(ItemSlotWire {
             item_id: grass.0,
             count,
+            data: None,
         });
         MenuSyncMsg {
             target: MenuTargetWire::Chest { pos, slots },
@@ -772,6 +775,7 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
             block_id: Block::Stone.0,
             water: None,
             state: None,
+            cell_kv: vec![],
         }],
         action_outcomes: vec![prediction::deny(id, ActionDenyReason::Denied)],
         ..Default::default()
@@ -1015,9 +1019,8 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
     // furniture chain, when the pack is installed). The engine ships no
     // custom rows, so without an installed pack there is nothing to pin.
     let Some(item) = crate::item::ItemType::all().iter().copied().find(|i| {
-        i.as_block().is_some_and(|b| {
-            !b.is_engine() && b.shape_family() == ShapeFamily::Custom
-        })
+        i.as_block()
+            .is_some_and(|b| !b.is_engine() && b.shape_family() == ShapeFamily::Custom)
     }) else {
         return;
     };
@@ -1253,9 +1256,9 @@ fn optimistic_ladder_place_commits_the_facing_row() {
             .replica
             .section_at_world_for_test(cell.x, cell.y, cell.z)
             .expect("ladder section")
-            .entity_facings()
+            .cell_states()
             .is_empty(),
-        "no entity-facing record — the ladder is not a block entity"
+        "no per-cell state record — the ladder's facing is block identity"
     );
 }
 

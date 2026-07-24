@@ -26,8 +26,7 @@ static MOD_STATIONS: Mutex<Vec<GuiKind>> = Mutex::new(Vec::new());
 impl CraftingStation {
     pub const Inventory: CraftingStation = CraftingStation(GuiKind::Inventory);
     pub const CraftingTable: CraftingStation = CraftingStation(GuiKind::CraftingTable);
-    pub const FurnitureWorkbench: CraftingStation =
-        CraftingStation(GuiKind::FurnitureWorkbench);
+    pub const FurnitureWorkbench: CraftingStation = CraftingStation(GuiKind::FurnitureWorkbench);
 
     pub const INVENTORY_KEY: &'static str = "petramond:inventory";
     pub const CRAFTING_TABLE_KEY: &'static str = "petramond:crafting_table";

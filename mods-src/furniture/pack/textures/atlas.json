@@ -3,6 +3,8 @@
     { "name": "furniture:chain_link", "file": "chain_link.png" },
     { "name": "furniture:chain_link_h", "file": "chain_link_h.png" },
     { "name": "furniture:cauldron_top", "file": "cauldron_top.png" },
+    { "name": "furniture:cauldron_water_top", "file": "cauldron_water_top.png" },
+    { "name": "furniture:cauldron_dye_top", "file": "cauldron_dye_top.png" },
     { "name": "furniture:cauldron_bottom", "file": "cauldron_bottom.png" },
     { "name": "furniture:cauldron_side", "file": "cauldron_side.png" }
   ]

@@ -68,11 +68,19 @@ async fn new_renderer_inner(
                 .expect("no compatible wgpu adapter available")
         }
     };
+    // The terrain tile array holds every tile PLUS its dye-base twin (2 ×
+    // tile count layers), which exceeds the default 256-layer limit. Request
+    // what the tile array actually needs, capped to what the adapter offers —
+    // an adapter that can't fit it fails create_texture with a clear count.
+    let mut required_limits = wgpu::Limits::default().using_alignment(adapter.limits());
+    required_limits.max_texture_array_layers = (2 * crate::atlas::Tile::count() as u32)
+        .max(required_limits.max_texture_array_layers)
+        .min(adapter.limits().max_texture_array_layers);
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: None,
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default().using_alignment(adapter.limits()),
+            required_limits,
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
@@ -102,7 +110,7 @@ async fn new_renderer_inner(
             fog_color: [0.60, 0.82, 1.00, 1.0],
             inv_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
             render_origin: [0.0; 4],
-            water_anim: crate::atlas::water_anim_uniform(),
+            atlas_anim: crate::atlas::atlas_anim_uniform(),
             // White sky colour at init = identity; the icon-atlas bake reads
             // this buffer, so baked UI icons stay untinted.
             sky_color: [1.0, 1.0, 1.0, 0.0],

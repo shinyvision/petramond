@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn stair_box_outline_removes_internal_join_but_keeps_step_edges() {
         let (boxes, len) =
-            crate::stair::world_boxes(IVec3::ZERO, crate::stair::boxes(Facing::South));
+            crate::connect::world_boxes(IVec3::ZERO, crate::stair::boxes(Facing::South));
         let outline = outline_vertices(SelectionShape::Boxes {
             boxes: SelectionBoxes { boxes, len },
         });

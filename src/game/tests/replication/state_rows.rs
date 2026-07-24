@@ -198,6 +198,7 @@ fn break_overlays_collect_own_and_visible_remote_miners() {
             alive: visible,
             visible,
             held_item: None,
+            held_data: None,
             mining,
             eating: false,
             hurt_recent: false,

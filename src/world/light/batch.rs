@@ -156,20 +156,11 @@ pub(in crate::world) fn snapshot_batch(
                 neighborhood::collect_section_emitters(npos, section, &mut emitters);
                 blocks[span_idx(dx, dy, dz)] = Some(section.blocks_arc());
                 let (bx, by, bz) = (dx * SECTION_SIZE, dy * SECTION_SIZE, dz * SECTION_SIZE);
-                states.extend(section.stair_states().iter().map(|(&key, &state)| {
-                    let (lx, ly, lz) = crate::chunk::section_local(key as usize);
-                    SparseCellState::Stair {
-                        idx: bidx(bx + lx, by + ly, bz + lz),
-                        state,
-                    }
-                }));
-                states.extend(section.slab_states().iter().map(|(&key, &state)| {
-                    let (lx, ly, lz) = crate::chunk::section_local(key as usize);
-                    SparseCellState::Slab {
-                        idx: bidx(bx + lx, by + ly, bz + lz),
-                        state,
-                    }
-                }));
+                super::shape::collect_shape_states(
+                    section,
+                    |lx, ly, lz| bidx(bx + lx, by + ly, bz + lz),
+                    &mut states,
+                );
             }
         }
     }

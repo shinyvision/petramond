@@ -40,14 +40,17 @@ pub struct Uniforms {
     /// Keeps GPU transform math camera-local while simulation/render data remains
     /// in absolute world coordinates.
     pub render_origin: [f32; 4],
-    /// Animated-water flipbook control for the block shader:
-    /// `(water_still_base_tile, water_flow_base_tile, frame_count, _)`. The
-    /// shader advances `base + floor(time*fps) % frames` over these two tiles.
-    pub water_anim: [u32; 4],
+    /// Atlas animation + dye-layout control for the block shader:
+    /// `(water_still_base_tile, water_flow_base_tile, frame_count, tile_count)`.
+    /// `xyz` drive the animated-water flipbook (the shader advances
+    /// `base + floor(time*fps) % frames` over the two water tiles); `w` is
+    /// the atlas TILE COUNT — the texture-array layer offset from any tile
+    /// to its dye-base twin for dyed vertices (packed2 bit 19).
+    pub atlas_anim: [u32; 4],
     /// `xyz` = the sim-owned sky light COLOUR (white `[1,1,1]` = identity; a
     /// day/night mod tints the night subtly blue), applied to the SKY lighting
     /// term only in `block.wgsl` / `model3d.wgsl` and to the `sky.wgsl` zenith.
-    /// `w` is reserved (0). Appended after `water_anim` so shaders declaring a
+    /// `w` is reserved (0). Appended after `atlas_anim` so shaders declaring a
     /// prefix of this struct stay layout-compatible.
     pub sky_color: [f32; 4],
     /// `xyz` = the unit sun direction (derived from the engine-owned

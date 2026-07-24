@@ -85,6 +85,18 @@ pub(super) struct BlockDef {
     /// normal. `None` on the non-placeable facing variants. Cross-validated
     /// at load (see `load::validate_facing_rows`).
     pub facing_rows: Option<&'static [Block; 4]>,
+    /// The row's namespaced consumer-data entries (`"data"` in `blocks.json`
+    /// plus every layer's `{"patch", "data"}` rows), sorted by key; each
+    /// value is the entry's canonical raw JSON text. The block interop
+    /// surface — read via `Block::data_value` and the
+    /// `BlockDataGet`/`BlocksWithData` host calls.
+    pub data: &'static [(&'static str, &'static str)],
+    /// Cell-KV keys this block carries across break/place: on break the
+    /// listed entries copy into the drop's per-stack instance data, on place
+    /// they copy back into cell KV (the `petramond:carry` data key, declared
+    /// by whichever pack owns the carried vocabulary — the engine is a
+    /// key-agnostic courier). Empty for almost every block.
+    pub carry: &'static [&'static str],
 }
 
 /// A row's composited side face: `base` drawn untinted with `overlay` blended

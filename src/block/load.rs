@@ -30,11 +30,6 @@ use super::definition::{self, BlockDef, BlockFlags, BlockMaterial, ParticleEmitt
 use super::shape_kind::{self, RawShape, ShapeFamily, ShapeKindDef, ShapeKindInterner};
 use super::{behavior, Aabb, Block, BlockInteraction, BlockTag};
 
-#[derive(Serialize, Deserialize)]
-pub(super) struct RawFile {
-    pub blocks: Vec<RawBlockDef>,
-}
-
 /// One block row as written in `blocks.json`: a field-for-field mirror of
 /// [`BlockDef`] with names in place of ids/pointers (the block itself, drops'
 /// items, tiles, behaviour) and owned `Vec`s in place of `'static` slices.
@@ -96,6 +91,12 @@ pub(super) struct RawBlockDef {
     /// the clicked face's normal. Only valid on `ladder`-shaped rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub facing_rows: Option<RawFacingRows>,
+    /// Namespaced consumer-data entries (`"ns:key": <any JSON>`): the block
+    /// interop surface, exactly the item rows' `data` field — a consuming
+    /// system's key, an opaque JSON value that consumer parses. Attachable to
+    /// EXISTING rows via `{"patch": ..., "data": ...}` rows.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub data: serde_json::Map<String, serde_json::Value>,
 }
 
 /// A row's `facing_rows` field: the four facing-sibling registry names.
@@ -279,17 +280,24 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
     // Every row's `shape` interns into this table during `convert`, deduping one
     // shape-kind row per distinct family+params (see [`shape_kind`]).
     let mut interner = shape_kind::ShapeKindInterner::new();
+    let patches = std::cell::RefCell::new(Vec::new());
     let defs = crate::registry::resolve_catalog(
         texts,
-        |text| serde_json::from_str::<RawFile>(text).map(|f| f.blocks),
-        |r| &r.block,
+        |text| crate::registry::parse_rows_with_patches(text, "blocks", &mut patches.borrow_mut()),
+        |r: &RawBlockDef| &r.block,
         &names.blocks,
         "block",
         |r, id, _| {
             let key = r.block.clone();
-            convert(r, Block(id), names, &mut interner).map_err(|e| format!("block '{key}': {e}"))
+            convert(r, Block(id), names, &mut interner, &patches.borrow())
+                .map_err(|e| format!("block '{key}': {e}"))
         },
     )?;
+    for p in patches.borrow().iter() {
+        if names.blocks.id(&p.patch).is_none() {
+            return Err(format!("data patch targets unknown block '{}'", p.patch));
+        }
+    }
     let defs: &'static [BlockDef] = Box::leak(defs.into_boxed_slice());
     let shape_kinds: &'static [ShapeKindDef] = Box::leak(interner.into_table().into_boxed_slice());
     validate_stage_chains(defs)?;
@@ -406,6 +414,7 @@ fn convert(
     block: Block,
     names: &ContentNames,
     interner: &mut ShapeKindInterner,
+    patches: &[crate::registry::RawDataPatch],
 ) -> Result<BlockDef, String> {
     let behavior = behavior::by_name(&r.behavior)
         .ok_or_else(|| format!("unknown behavior '{}'", r.behavior))?;
@@ -646,6 +655,23 @@ fn convert(
         }
     };
     let shape_kind = interner.intern(family, params, shape_key)?;
+    let data = crate::registry::compile_data_map(
+        names.blocks.name(block.id()).unwrap_or(""),
+        &r.data,
+        patches,
+    )?;
+    let carry: &'static [&'static str] =
+        match crate::registry::engine_data::<Vec<String>>(data, "petramond:carry")? {
+            None => &[],
+            Some(keys) => {
+                crate::registry::validate_namespaced_keys("petramond:carry", &keys)?;
+                leak(
+                    keys.into_iter()
+                        .map(|k| -> &'static str { String::leak(k) })
+                        .collect(),
+                )
+            }
+        };
     Ok(BlockDef {
         block,
         flags,
@@ -668,6 +694,8 @@ fn convert(
         grows_into: leak(grows_into),
         panel_facing,
         facing_rows,
+        data,
+        carry,
     })
 }
 
@@ -886,7 +914,10 @@ mod tests {
 
         // A fence-family wall with a thick centred post resolves to a Connection
         // kind: offset (16-8)/2 = 4, so post 4/16..12/16, engine fence rule.
-        let wall = row("mymod:stone_wall", r#"{"custom": {"family": "fence", "post_thickness": 8}}"#);
+        let wall = row(
+            "mymod:stone_wall",
+            r#"{"custom": {"family": "fence", "post_thickness": 8}}"#,
+        );
         let reg = parse_test_layers(&[&base, &wall]).expect("custom fence wall loads");
         let def = &reg.defs[engine];
         let sk = &reg.shape_kinds[def.shape_kind.0 as usize];
@@ -907,19 +938,37 @@ mod tests {
         let reg = parse_test_layers(&[&base, &bar]).expect("custom pane bar loads");
         let sk = &reg.shape_kinds[reg.defs[engine].shape_kind.0 as usize];
         assert_eq!(sk.family, ShapeFamily::Pane);
-        assert_eq!(sk.params.connection().unwrap().rule, ConnectionRule::SameOnly);
+        assert_eq!(
+            sk.params.connection().unwrap().rule,
+            ConnectionRule::SameOnly
+        );
 
         // Validation failures.
         for (shape, needle) in [
-            (r#"{"custom": {"family": "bogus"}}"#, "unknown custom shape family"),
-            (r#"{"custom": {"family": "fence", "post_thickness": 0}}"#, "post_thickness"),
+            (
+                r#"{"custom": {"family": "bogus"}}"#,
+                "unknown custom shape family",
+            ),
+            (
+                r#"{"custom": {"family": "fence", "post_thickness": 0}}"#,
+                "post_thickness",
+            ),
             (
                 r#"{"custom": {"family": "fence", "post_thickness": 10, "post_offset": 10}}"#,
                 "exceeds 16",
             ),
-            (r#"{"custom": {"family": "fence", "connection_rule": "nope"}}"#, "unknown connection_rule"),
-            (r#"{"custom": {"family": "fence", "item_form": "nope"}}"#, "unknown item_form"),
-            (r#"{"custom": {"family": "pane", "item_form": "segment"}}"#, "requires the 'fence' family"),
+            (
+                r#"{"custom": {"family": "fence", "connection_rule": "nope"}}"#,
+                "unknown connection_rule",
+            ),
+            (
+                r#"{"custom": {"family": "fence", "item_form": "nope"}}"#,
+                "unknown item_form",
+            ),
+            (
+                r#"{"custom": {"family": "pane", "item_form": "segment"}}"#,
+                "requires the 'fence' family",
+            ),
         ] {
             let layer = row("mymod:bad", shape);
             let err = parse_test_layers(&[&base, &layer])

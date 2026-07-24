@@ -95,7 +95,7 @@ fn can_smelt(slots: &[Option<ItemStack>], smelt: &impl Fn(ItemType) -> Option<It
     match smelt_result(slots, smelt) {
         Some(r) => match slot(slots, SLOT_OUTPUT) {
             None => true,
-            Some(o) => o.item == r.item && o.space_left() >= r.count,
+            Some(o) => o.can_stack_with(&r) && o.space_left() >= r.count,
         },
         None => false,
     }

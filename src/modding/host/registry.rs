@@ -94,6 +94,36 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
         HostCall::ResolveShape { key } => {
             HostRet::MaybeByte(crate::block::shape_kind_id_by_key(&key))
         }
+        // The row-data interop surface: opaque raw JSON a consuming system's
+        // key names — same never-interns contract as the tag queries.
+        HostCall::ItemDataGet { item, key } => HostRet::Bytes(
+            crate::item::ItemType(item.0)
+                .data_value(&key)
+                .map(|v| v.as_bytes().to_vec()),
+        ),
+        HostCall::ItemsWithData { key } => HostRet::ItemDataRows(
+            crate::item::ItemType::all()
+                .iter()
+                .filter_map(|i| {
+                    i.data_value(&key)
+                        .map(|v| (mod_api::ItemId(i.id()), v.to_owned()))
+                })
+                .collect(),
+        ),
+        HostCall::BlockDataGet { block, key } => HostRet::Bytes(
+            crate::block::Block::from_id(block.0)
+                .data_value(&key)
+                .map(|v| v.as_bytes().to_vec()),
+        ),
+        HostCall::BlocksWithData { key } => HostRet::BlockDataRows(
+            crate::block::Block::all()
+                .iter()
+                .filter_map(|b| {
+                    b.data_value(&key)
+                        .map(|v| (mod_api::BlockId(b.id()), v.to_owned()))
+                })
+                .collect(),
+        ),
         other => HostRet::Error(format!(
             "non-registry call {other:?} mis-routed to handle_registry_call (host bug)"
         )),

@@ -1,6 +1,7 @@
 use super::*;
 use crate::block::Block;
-use crate::block_state::SlabSplit;
+use crate::block_state::{LogAxis, SlabSplit, SlabState, StairState};
+use crate::facing::Facing;
 use crate::item::{ItemStack, ItemType};
 use crate::mathh::Vec3;
 
@@ -173,12 +174,11 @@ fn section_record_roundtrips_furnaces() {
 }
 
 #[test]
-fn decode_drops_facing_records_on_non_block_entity_cells() {
-    // A record written while ladder facing still lived in the entity-facing
-    // list (facing is a block ROW since the conversion): decode keeps the
-    // ladder id it names but drops the stale facing entry — otherwise a
-    // ladder-only section would re-classify as a block-entity section and
-    // re-enter the furnace/chest fan-out forever.
+fn foreign_state_bytes_never_decode_through_another_blocks_reader() {
+    // The unified store's ownership gate: state bytes written for one block
+    // kind must never decode through a different kind's typed reader — a
+    // stray facing byte on a ladder cell (which keeps facing as block
+    // identity) reads as the default, not as a front.
     let mut s = sec(0, 4, 0);
     s.set_block(3, 3, 3, Block::Ladder);
     s.insert_entity_facing(3, 3, 3, crate::facing::Facing::East);
@@ -191,9 +191,14 @@ fn decode_drops_facing_records_on_non_block_entity_cells() {
 
     assert_eq!(back.block_raw(3, 3, 3), Block::Ladder.id());
     assert_eq!(
-        back.entity_facings().len(),
-        1,
-        "the ladder's stale facing entry is dropped"
+        back.entity_facing(3, 3, 3),
+        crate::facing::Facing::North,
+        "a non-directional block's facing read answers the default"
+    );
+    assert_eq!(
+        back.stair_state(5, 3, 3),
+        crate::block_state::StairState::default(),
+        "a chest's facing byte never decodes as a stair state"
     );
     assert_eq!(
         back.entity_facing(5, 3, 3),

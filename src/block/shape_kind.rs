@@ -27,9 +27,15 @@ use crate::connect;
 mod custom;
 mod facets;
 mod families;
+mod neighborhood;
 
 pub use custom::{CustomLight, CustomShapeDef};
-pub use facets::{ItemRender, ShapeRender, ShapeSim};
+pub use facets::{
+    full_face_at, light_aperture_face, pack_light_apertures, FullFace, ItemRender, ShapeCtx,
+    ShapeRender, ShapeSim, LIGHT_APERTURES_OPEN,
+};
+
+pub use neighborhood::{CellCodec, CellView, ShapeNeighborhood, ShapeState, SHAPE_STATE_MAX};
 
 /// A block shape kind — a session-local id into the [`ShapeKindDef`] table
 /// (`shape_kind_def`). One id per distinct `(family, params)`; the id replaces
@@ -157,6 +163,14 @@ impl ShapeParams {
         }
     }
 
+    /// The per-cell state key a Layer-3 custom shape declares (`shapes.json`
+    /// `"state_key"`), or `None` — the cell-KV key the bake input carries for
+    /// the cell and its neighbours (see [`mod_api::CellInput`]).
+    #[inline]
+    pub fn state_key(&self) -> Option<&'static str> {
+        self.custom().and_then(|c| c.state_key)
+    }
+
     /// The custom-shape declaration, if this is a Layer-3 custom shape.
     #[inline]
     pub fn custom(&self) -> Option<&'static CustomShapeDef> {
@@ -242,8 +256,7 @@ pub struct ConnectionParams {
 // rows resolve without leaking a fresh table each (only a mod's custom shape
 // leaks). The dimensions match the historical `crate::fence` / `crate::pane`
 // consts exactly (6/16..10/16 fence post, 7/16..9/16 pane post).
-static ENGINE_FENCE_BOXES: [connect::Shape; 16] =
-    connect::make_shapes(6.0 / 16.0, 10.0 / 16.0);
+static ENGINE_FENCE_BOXES: [connect::Shape; 16] = connect::make_shapes(6.0 / 16.0, 10.0 / 16.0);
 static ENGINE_FENCE_PARAMS: ConnectionParams = ConnectionParams {
     post_lo: 6.0 / 16.0,
     post_hi: 10.0 / 16.0,
@@ -274,6 +287,18 @@ pub struct ShapeKindDef {
     pub sim: &'static dyn ShapeSim,
     /// Client presentation behavior (selection outline, item form).
     pub render: &'static dyn ShapeRender,
+    /// Placement behavior (which cells the write lands in, what state it
+    /// writes) — the seam that replaced the engine's per-family placement
+    /// match.
+    pub(crate) placement: &'static dyn facets::ShapePlacement,
+    /// Whether this family answers [`ShapeRender::boxes`] — the mesher's
+    /// per-cell gate. A plain field so the hot loop reads it without a
+    /// virtual call; set from the family at intern time.
+    pub resolves_to_boxes: bool,
+    /// Whether this family overrides [`ShapeSim::refine_state`] — the edit
+    /// cascade's per-cell gate, a plain field so every ordinary block edit
+    /// pays 7 lookups and no virtual calls when nothing shaped is nearby.
+    pub refines: bool,
 }
 
 /// The `shape` field of a `blocks.json` row, before resolution to a
@@ -389,17 +414,41 @@ impl RawShape {
     /// Resolve this raw shape to its `(family, params, canonical key)`.
     pub(crate) fn resolve(&self) -> Result<(ShapeFamily, ShapeParams, String), String> {
         Ok(match self {
-            RawShape::Cube => (ShapeFamily::Cube, ShapeParams::None, "petramond:cube".into()),
+            RawShape::Cube => (
+                ShapeFamily::Cube,
+                ShapeParams::None,
+                "petramond:cube".into(),
+            ),
             RawShape::LoweredCube(height) => (
                 ShapeFamily::LoweredCube,
                 ShapeParams::LoweredCube { height: *height },
                 format!("petramond:lowered_cube/{height}"),
             ),
-            RawShape::Cross => (ShapeFamily::Cross, ShapeParams::None, "petramond:cross".into()),
-            RawShape::Crop => (ShapeFamily::Crop, ShapeParams::None, "petramond:crop".into()),
-            RawShape::Torch => (ShapeFamily::Torch, ShapeParams::None, "petramond:torch".into()),
-            RawShape::Stair => (ShapeFamily::Stair, ShapeParams::None, "petramond:stair".into()),
-            RawShape::Slab => (ShapeFamily::Slab, ShapeParams::None, "petramond:slab".into()),
+            RawShape::Cross => (
+                ShapeFamily::Cross,
+                ShapeParams::None,
+                "petramond:cross".into(),
+            ),
+            RawShape::Crop => (
+                ShapeFamily::Crop,
+                ShapeParams::None,
+                "petramond:crop".into(),
+            ),
+            RawShape::Torch => (
+                ShapeFamily::Torch,
+                ShapeParams::None,
+                "petramond:torch".into(),
+            ),
+            RawShape::Stair => (
+                ShapeFamily::Stair,
+                ShapeParams::None,
+                "petramond:stair".into(),
+            ),
+            RawShape::Slab => (
+                ShapeFamily::Slab,
+                ShapeParams::None,
+                "petramond:slab".into(),
+            ),
             RawShape::Pane => (
                 ShapeFamily::Pane,
                 ShapeParams::Connection(&ENGINE_PANE_PARAMS),
@@ -410,13 +459,21 @@ impl RawShape {
                 ShapeParams::Connection(&ENGINE_FENCE_PARAMS),
                 "petramond:fence".into(),
             ),
-            RawShape::Ladder => (ShapeFamily::Ladder, ShapeParams::None, "petramond:ladder".into()),
+            RawShape::Ladder => (
+                ShapeFamily::Ladder,
+                ShapeParams::None,
+                "petramond:ladder".into(),
+            ),
             RawShape::Model(kind) => (
                 ShapeFamily::Model,
                 ShapeParams::Model { kind: *kind },
                 format!("petramond:model/{}", crate::block_model::def(*kind).key),
             ),
-            RawShape::Door => (ShapeFamily::Door, ShapeParams::None, "petramond:door".into()),
+            RawShape::Door => (
+                ShapeFamily::Door,
+                ShapeParams::None,
+                "petramond:door".into(),
+            ),
             RawShape::Custom(c) => c.resolve()?,
             RawShape::Named(key) => {
                 let def = custom::by_key(key).ok_or_else(|| {
@@ -675,13 +732,16 @@ impl ShapeKindInterner {
             ));
         }
         let id = self.table.len() as u8;
-        let (sim, render) = families::singletons(family);
+        let (sim, render, placement) = families::singletons(family);
         self.table.push(ShapeKindDef {
             key: Box::leak(key.clone().into_boxed_str()),
             family,
             params,
             sim,
             render,
+            placement,
+            resolves_to_boxes: families::resolves_to_boxes(family),
+            refines: families::refines(family),
         });
         self.index.insert(key, id);
         Ok(BlockShapeKind(id))
@@ -706,8 +766,14 @@ mod tests {
         assert!(matches!(de(r#""cube""#), RawShape::Cube));
         assert!(matches!(de(r#""fence""#), RawShape::Fence));
         assert!(matches!(de(r#""door""#), RawShape::Door));
-        assert!(matches!(de(r#"{"lowered_cube":15}"#), RawShape::LoweredCube(15)));
-        assert!(matches!(de(r#"{"custom":{"family":"fence"}}"#), RawShape::Custom(_)));
+        assert!(matches!(
+            de(r#"{"lowered_cube":15}"#),
+            RawShape::LoweredCube(15)
+        ));
+        assert!(matches!(
+            de(r#"{"custom":{"family":"fence"}}"#),
+            RawShape::Custom(_)
+        ));
         match de(r#""mymod:gate""#) {
             RawShape::Named(key) => assert_eq!(key, "mymod:gate"),
             _ => panic!("a namespaced string is a custom-shape reference"),
@@ -717,15 +783,16 @@ mod tests {
     }
 
     fn resolve_json(s: &str) -> Result<(ShapeFamily, ShapeParams, String), String> {
-        serde_json::from_str::<RawShape>(s).expect("parses").resolve()
+        serde_json::from_str::<RawShape>(s)
+            .expect("parses")
+            .resolve()
     }
 
     /// The Layer-2 secondary families (`cross`/`crop`/`wall_panel`) resolve to
     /// their engine family + `Dimensions` params, texels folded to fractions.
     #[test]
     fn custom_dimension_families_resolve_to_dimension_params() {
-        let (fam, params, _) =
-            resolve_json(r#"{"custom":{"family":"cross","inset":4}}"#).unwrap();
+        let (fam, params, _) = resolve_json(r#"{"custom":{"family":"cross","inset":4}}"#).unwrap();
         assert_eq!(fam, ShapeFamily::Cross);
         assert_eq!(params.dimensions().unwrap().inset, 4.0 / 16.0);
 

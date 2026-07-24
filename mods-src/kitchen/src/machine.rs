@@ -258,6 +258,7 @@ pub fn output_accepts(
         // read as "no headroom", not wrap around.
         Some(o) => {
             o.item == result.item
+                && o.data == result.data
                 && caches.max_stack_for(&o.item).saturating_sub(o.count) >= result.count
         }
     }
@@ -269,8 +270,8 @@ pub fn merge_output(output: &mut Option<ItemStackData>, result: &ItemStackData) 
     *output = Some(match output.take() {
         None => result.clone(),
         Some(o) => ItemStackData {
-            item: o.item,
             count: o.count + result.count,
+            ..o
         },
     });
 }
@@ -279,8 +280,8 @@ pub fn merge_output(output: &mut Option<ItemStackData>, result: &ItemStackData) 
 pub fn consume_one(slot: &mut Option<ItemStackData>) {
     if let Some(s) = slot.take() {
         *slot = (s.count > 1).then(|| ItemStackData {
-            item: s.item,
             count: s.count - 1,
+            ..s
         });
     }
 }

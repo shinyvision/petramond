@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use mod_api::{HostCall, HostRet, RuntimeSide};
 
-use crate::modding::host::guards::key_owned_by_namespace;
+use crate::modding::host::guards::{key_owned_by_namespace, KV_MAX_KEY_BYTES};
 use crate::modding::host::{ModStoreData, Phase};
 
 use super::scope as client_scope;
@@ -50,7 +50,11 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::BlocksByTag { .. }
         | HostCall::ItemsByTag { .. }
         | HostCall::ItemInfo { .. }
-        | HostCall::ResolveShape { .. } => true,
+        | HostCall::ResolveShape { .. }
+        | HostCall::ItemDataGet { .. }
+        | HostCall::ItemsWithData { .. }
+        | HostCall::BlockDataGet { .. }
+        | HostCall::BlocksWithData { .. } => true,
         // The client presentation surface (handled below).
         HostCall::ClientRegisterOverlay { .. }
         | HostCall::ClientRegisterKey { .. }
@@ -76,7 +80,8 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::ClientAmbientSet { .. }
         | HostCall::ClientLoopSet { .. }
         | HostCall::ClientMoodSet { .. }
-        | HostCall::ClientBlocksAt { .. } => true,
+        | HostCall::ClientBlocksAt { .. }
+        | HostCall::ClientCellKvAt { .. } => true,
         // The prediction seam (2026-07-21): a client instance may REGISTER
         // event handlers — the client runtime keeps only the predictable PRE
         // kinds (interact_attempt / block_place_pre / item_use_pre) as
@@ -289,6 +294,28 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                                 .block_if_stream_final(x, y, z)
                                 .map(|b| mod_api::BlockId(b.id()))
                         })
+                        .collect(),
+                )
+            })
+            .unwrap_or_else(|| HostRet::Error("no client replica is active".into()))
+        }
+        HostCall::ClientCellKvAt { key, cells } => {
+            if cells.len() > CLIENT_BLOCKS_QUERY_MAX {
+                return HostRet::Error(format!(
+                    "ClientCellKvAt cell count {} exceeds {CLIENT_BLOCKS_QUERY_MAX}",
+                    cells.len()
+                ));
+            }
+            // Reads cross namespaces (the KV interop contract); only the key's
+            // shape is validated, like the server-side KV read.
+            if key.is_empty() || key.len() > KV_MAX_KEY_BYTES {
+                return HostRet::Error(format!("invalid cell KV key '{key}'"));
+            }
+            client_scope::with_active(|world| {
+                HostRet::BytesMany(
+                    cells
+                        .iter()
+                        .map(|&[x, y, z]| world.cell_kv_get(x, y, z, &key).map(<[u8]>::to_vec))
                         .collect(),
                 )
             })

@@ -84,6 +84,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         item: "petramond:stick".into(),
         count: 4,
         pos: [0.5, 64.0, 0.5],
+        data: vec![("m:tint".into(), vec![9, 8, 7])],
     });
     roundtrip(HostCall::PlayerState);
     roundtrip(HostCall::DamagePlayer { amount: 4 });
@@ -93,6 +94,7 @@ fn abi_roundtrip_host_and_guest_calls() {
     roundtrip(HostCall::GiveItem {
         item: "petramond:diamond".into(),
         count: 1,
+        data: Vec::new(),
     });
     roundtrip(HostCall::SetHealth { value: 20 });
     roundtrip(HostCall::Teleport {
@@ -365,7 +367,9 @@ fn abi_roundtrip_host_and_guest_calls() {
     ))));
     roundtrip(HostRet::GuiValue(Some(GuiValue::I32(-3))));
     roundtrip(HostRet::GuiValue(None));
-    roundtrip(HostRet::MobTag(MobTagLookup::Value(MobTagValue::Bool(true))));
+    roundtrip(HostRet::MobTag(MobTagLookup::Value(MobTagValue::Bool(
+        true,
+    ))));
     roundtrip(HostRet::MobTag(MobTagLookup::Absent));
     roundtrip(HostRet::MobTag(MobTagLookup::MissingMob));
     roundtrip(HostRet::MobTags(Some(vec![

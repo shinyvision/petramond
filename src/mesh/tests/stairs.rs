@@ -94,7 +94,11 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
         if uv_mode(v) != UV_MODE_CELL_LOCAL {
             continue;
         }
-        let key = (v.pos.map(f32::to_bits), shade_idx(v), (v.packed2 >> 16) & 0x7);
+        let key = (
+            v.pos.map(f32::to_bits),
+            shade_idx(v),
+            (v.packed2 >> 16) & 0x7,
+        );
         // Ignore the per-quad corner index (bits 8..10); everything else —
         // tile, AO, sky light, block light, cell UV — must agree.
         let val = (v.packed & !(0x3 << 8), v.packed2);
@@ -132,9 +136,7 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
         for v in plane.iter().filter(|v| (v.pos[0] - 8.0).abs() < 1.0e-3) {
             let partner = plane
                 .iter()
-                .find(|w| {
-                    (w.pos[0] - 9.0).abs() < 1.0e-3 && (w.pos[2] - v.pos[2]).abs() < 1.0e-3
-                })
+                .find(|w| (w.pos[0] - 9.0).abs() < 1.0e-3 && (w.pos[2] - v.pos[2]).abs() < 1.0e-3)
                 .expect("matching open-side corner");
             assert!(
                 ao_idx(v) <= ao_idx(partner),

@@ -99,6 +99,7 @@ pub(crate) struct DroppedItemPresentation {
     pub(crate) prev_pos: Vec3,
     pub(crate) pos: Vec3,
     pub(crate) item: ItemType,
+    pub(crate) variant: crate::item::VariantId,
     pub(crate) count: u8,
     pub(crate) prev_spin: f32,
     pub(crate) spin: f32,
@@ -121,7 +122,7 @@ pub(crate) struct ParticlePresentation {
     pub(crate) atlas: ParticleAtlas,
     pub(crate) pos: Vec3,
     pub(crate) uv_min: [f32; 2],
-    pub(crate) uv_size: f32,
+    pub(crate) uv_size: [f32; 2],
     pub(crate) tint: [f32; 3],
     pub(crate) warm: u8,
     pub(crate) alpha: f32,
@@ -296,6 +297,14 @@ impl GamePresentationScratch {
                     prev_pos: entry.prev.pos,
                     pos: entry.curr.pos,
                     item: crate::item::ItemType(entry.curr.item_id),
+                    // Re-intern the row's blob (idempotent hash probe once the
+                    // variant exists); an unreadable blob renders plain.
+                    variant: entry
+                        .curr
+                        .data
+                        .as_deref()
+                        .and_then(crate::item::variant::intern_blob)
+                        .unwrap_or_default(),
                     count: entry.curr.count,
                     prev_spin: entry.prev.spin,
                     spin: entry.curr.spin,

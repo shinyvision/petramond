@@ -13,8 +13,12 @@ fn a_full_cube_under_a_snow_layer_culls_its_top_face() {
     // Every opaque emitter here pushes 4-vertex quads; group and classify.
     let quads: Vec<&[Vertex]> = m.opaque.chunks_exact(4).collect();
     let covers = |q: &[Vertex], x: f32, z: f32| {
-        let (mut xmin, mut xmax, mut zmin, mut zmax) =
-            (f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY);
+        let (mut xmin, mut xmax, mut zmin, mut zmax) = (
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        );
         for v in q {
             xmin = xmin.min(v.pos[0]);
             xmax = xmax.max(v.pos[0]);
@@ -38,10 +42,14 @@ fn a_full_cube_under_a_snow_layer_culls_its_top_face() {
     // The snow layer's own sunken top (y = 1 + 1/16) still renders.
     let snow_top = quads.iter().any(|q| {
         shade_idx(&q[0]) == 0
-            && q.iter().all(|v| (v.pos[1] - (1.0 + 1.0 / 16.0)).abs() < 1e-3)
+            && q.iter()
+                .all(|v| (v.pos[1] - (1.0 + 1.0 / 16.0)).abs() < 1e-3)
             && covers(q, 8.5, 8.5)
     });
-    assert!(snow_top, "the snow layer's own top face must keep rendering");
+    assert!(
+        snow_top,
+        "the snow layer's own top face must keep rendering"
+    );
 
     // An uncovered floor cell still has its top drawn (the cull is per cell).
     let open_top_covered = quads.iter().any(|q| {

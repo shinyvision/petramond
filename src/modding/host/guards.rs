@@ -11,8 +11,17 @@ use crate::modding::scope;
 
 /// Per-entry limits for the mod KV surfaces (world / section-cell / mob).
 /// Violations are [`HostRet::Error`] — a mod bug, surfaced loudly by the SDK.
-pub(super) const KV_MAX_KEY_BYTES: usize = 256;
+pub(in crate::modding) const KV_MAX_KEY_BYTES: usize = 256;
 pub(super) const KV_MAX_VALUE_BYTES: usize = 64 * 1024;
+
+/// Aggregate cap: distinct KV keys ON ONE CELL. Per-entry sizes alone don't
+/// bound a cell — every `BlockDelta` (including per-recipient corrective
+/// syncs) ships the cell's WHOLE KV map, so an unbounded key count would
+/// make each delta of that cell arbitrarily expensive. 16 is an order of
+/// magnitude above real per-cell state (the dye pot peaks at 2) while a
+/// maximal cell stays a bounded wire payload. Overwrites of an existing key
+/// always pass; only a NEW key beyond the cap errors.
+pub(super) const CELL_KV_MAX_KEYS: usize = 16;
 
 /// Element cap for every batched sim/registry call (`GetBlocks`, `SetBlocks`,
 /// `ContainerGetMany`, `ContainerSet` slots, the `*Names` reverse resolvers,
@@ -167,10 +176,48 @@ pub(super) fn item_name(item: ItemType) -> &'static str {
         .unwrap_or("?")
 }
 
-/// An engine stack as its ABI crossing (registry name + count).
+/// An engine stack as its ABI crossing (registry name + count + data).
 pub(super) fn item_stack_data(stack: crate::item::ItemStack) -> mod_api::ItemStackData {
+    let data = crate::item::variant::get(stack.variant)
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
     mod_api::ItemStackData {
         item: item_name(stack.item).to_owned(),
         count: stack.count,
+        data,
     }
+}
+
+/// An ABI instance-data list as an interned [`crate::item::VariantId`].
+/// Empty = `NONE`. A duplicate key, bare key, or over-cap map is a HARD error
+/// (`Err(HostRet::Error)` — loud mod bug, same shape as the KV size caps):
+/// silently degrading a write the mod asked for would fork its view of the
+/// stack from the engine's. A FULL variant table is NOT a mod bug — the map
+/// is well-formed, the process just ran out of ids — so it degrades to a
+/// plain stack with a warning instead of disabling the mod.
+pub(super) fn intern_abi_data(
+    what: &str,
+    data: &[(String, Vec<u8>)],
+) -> Result<crate::item::VariantId, mod_api::HostRet> {
+    use crate::item::variant;
+    if data.is_empty() {
+        return Ok(variant::VariantId::NONE);
+    }
+    let mut map = variant::VariantMap::new();
+    for (k, v) in data {
+        if map.insert(k.clone(), v.clone()).is_some() {
+            return Err(mod_api::HostRet::Error(format!(
+                "{what}: duplicate instance-data key '{k}'"
+            )));
+        }
+    }
+    if !variant::valid(&map) {
+        return Err(mod_api::HostRet::Error(format!(
+            "{what}: invalid instance data (bare key or over-cap map/value)"
+        )));
+    }
+    Ok(variant::intern(&map).unwrap_or_else(|| {
+        log::warn!("{what}: variant table full — stack degrades to plain");
+        variant::VariantId::NONE
+    }))
 }

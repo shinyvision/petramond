@@ -592,10 +592,7 @@ fn convert_spawn_tags(
             super::tags::HEALTH
         ));
     }
-    tags.insert(
-        super::tags::HEALTH.to_owned(),
-        MobTagValue::Float(health),
-    );
+    tags.insert(super::tags::HEALTH.to_owned(), MobTagValue::Float(health));
     Ok(Box::leak(Box::new(tags)))
 }
 

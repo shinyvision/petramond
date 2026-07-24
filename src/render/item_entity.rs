@@ -116,6 +116,7 @@ pub fn build_item_sprite_entities(
         if count == 0 {
             continue;
         }
+        super::item_model::dye_item_verts(scratch, inst.variant);
         let layers = (inst.count.max(1) as usize).min(STACK_MAX_LAYERS);
         let (s, c) = inst.spin.sin_cos();
         let bob_y = BOB_BASE + bob(inst.spin);
@@ -218,6 +219,8 @@ fn push_spinning_cube(
         inst_light(inst),
         false,
     );
+    // Instance-data tint (`petramond:tint`): one multiply over the fresh verts.
+    super::item_model::dye_block_verts(&mut verts[start..], inst.variant);
     spin_into_world(verts, start, inst, offset);
 }
 
@@ -277,6 +280,7 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::new(10.0, 64.0, -5.0),
             item: ItemType::Stone,
+            variant: crate::item::VariantId::NONE,
             count: 1,
             spin: 0.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
@@ -297,6 +301,7 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::new(3.0, 10.0, -2.0),
             item: ItemType::Poppy,
+            variant: crate::item::VariantId::NONE,
             count: 1,
             spin: 1.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
@@ -345,6 +350,7 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::ZERO,
             item: ItemType::Poppy,
+            variant: crate::item::VariantId::NONE,
             count: 3,
             spin: 0.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
@@ -383,6 +389,7 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::ZERO,
             item: ItemType::Dirt,
+            variant: crate::item::VariantId::NONE,
             count: 1,
             spin: 0.5,
             skylight: super::super::lighting::FULL_SKYLIGHT,
@@ -405,6 +412,7 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::ZERO,
             item: ItemType::Stone,
+            variant: crate::item::VariantId::NONE,
             count: 1,
             spin: 0.0,
             skylight: 12,
@@ -427,6 +435,7 @@ mod tests {
         let three = ItemEntityInstance {
             pos: Vec3::new(2.0, 5.0, 2.0),
             item: ItemType::Stone,
+            variant: crate::item::VariantId::NONE,
             count: 3,
             spin: 0.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,

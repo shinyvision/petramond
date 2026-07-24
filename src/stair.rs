@@ -3,10 +3,9 @@
 use crate::block::{Aabb, Block, ShapeFamily};
 use crate::block_state::{StairHalf, StairState};
 use crate::facing::Facing;
-use crate::mathh::{IVec3, Vec3};
+use crate::mathh::IVec3;
 
 pub const MAX_BOXES: usize = 3;
-pub type WorldBoxList = ([(Vec3, Vec3); MAX_BOXES], u8);
 
 const H: f32 = 0.5;
 
@@ -131,18 +130,45 @@ where
     boxes_for_shape(resolved_shape(pos, state, neighbour_stair))
 }
 
-#[inline]
-pub fn world_boxes(origin: IVec3, boxes: &[Aabb]) -> WorldBoxList {
-    let base = Vec3::new(origin.x as f32, origin.y as f32, origin.z as f32);
-    let mut out = [(Vec3::ZERO, Vec3::ZERO); MAX_BOXES];
-    let len = boxes.len().min(MAX_BOXES);
-    for (dst, b) in out.iter_mut().zip(boxes.iter()).take(len) {
-        *dst = (
-            base + Vec3::new(b.min[0], b.min[1], b.min[2]),
-            base + Vec3::new(b.max[0], b.max[1], b.max[2]),
-        );
+impl crate::block::CellView for StairShape {
+    fn owns(block: Block) -> bool {
+        is_stair(block)
     }
-    (out, len as u8)
+    /// The REFINED corner view of a stair cell's bytes (byte 1, written by
+    /// the refine cascade). `0` is the "not yet refined" sentinel — no placed
+    /// stair resolves to an empty quadrant mask — and falls back to the
+    /// straight shape the placed facing implies, so a state written before
+    /// the cascade ran (or a bare fixture) degrades to the unjoined stair,
+    /// never garbage.
+    fn from_cell(s: crate::block::ShapeState) -> Self {
+        let placed = StairState::decode(s.byte(0));
+        let mask = s.byte(1);
+        if mask == 0 {
+            return shape(placed);
+        }
+        StairShape {
+            mask,
+            half: placed.half,
+        }
+    }
+}
+
+/// Whether the face of `shape` with outward normal `dir` is a complete
+/// surface: every half-cell on that face occupied. The stair family's answer
+/// to the cross-family `full_face` question (a fence arm against the flat
+/// back, a wall torch on it, a ladder against it).
+pub fn face_full(shape: StairShape, dir: crate::mathh::IVec3) -> bool {
+    let occ = |ix, iy, iz| shape_half_cell_occupied(shape, ix, iy, iz);
+    if dir.x != 0 {
+        let ix = usize::from(dir.x > 0);
+        (0..2).all(|iy| (0..2).all(|iz| occ(ix, iy, iz)))
+    } else if dir.z != 0 {
+        let iz = usize::from(dir.z > 0);
+        (0..2).all(|ix| (0..2).all(|iy| occ(ix, iy, iz)))
+    } else {
+        let iy = usize::from(dir.y > 0);
+        (0..2).all(|ix| (0..2).all(|iz| occ(ix, iy, iz)))
+    }
 }
 
 #[inline]

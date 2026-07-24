@@ -27,6 +27,7 @@ mod tags;
 mod tests;
 mod tool;
 mod uses;
+pub mod variant;
 
 pub(crate) use data::ENGINE_ITEM_NAMES;
 pub use drops::{Drop, DropSpec};
@@ -39,6 +40,7 @@ pub use tags::ItemTag;
 pub use tool::FIST_DAMAGE;
 pub use tool::{attack_damage, Tool, ToolKind};
 pub use uses::{ItemUse, UseRay};
+pub use variant::VariantId;
 
 /// A registered item, identified by its opaque runtime id. Engine items own
 /// the low ids in a compiled, frozen order (the named consts below — save

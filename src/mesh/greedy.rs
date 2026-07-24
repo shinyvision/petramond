@@ -32,6 +32,9 @@ use super::vertex::{
 #[derive(Copy, Clone, PartialEq)]
 pub(super) struct FlatFace {
     pub(super) gen: u32,
+    /// Tile id, with the DYED flag folded into bit 31 (see
+    /// [`super::vertex::DYED_FLAG2`]) so it participates in the merge key and
+    /// splits back out at quad emit.
     pub(super) tile: u32,
     pub(super) ao: u32,
     pub(super) light6: u32,
@@ -208,12 +211,17 @@ fn push_greedy_quad(
     let shade_idx = face.shade_idx();
     let wh = ((w - 1) & 0xF) | (((h - 1) & 0xF) << 4);
     let start = opaque.len() as u32;
+    let dyed = if key.tile & (1 << 31) != 0 {
+        super::vertex::DYED_FLAG2
+    } else {
+        0
+    };
     for (corner, p) in corners.into_iter().enumerate() {
         opaque.push(Vertex {
             pos: p,
             tint: key.tint,
             packed: pack_vertex(
-                key.tile,
+                key.tile & 0xFF,
                 corner as u32,
                 shade_idx,
                 wh,
@@ -221,7 +229,7 @@ fn push_greedy_quad(
                 key.ao,
                 key.light6,
             ) | (UV_MODE_NONE << UV_MODE_SHIFT),
-            packed2: pack_vertex2(key.block6) | pack_normal_code(face.normal_code()),
+            packed2: pack_vertex2(key.block6) | pack_normal_code(face.normal_code()) | dyed,
         });
     }
     opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);

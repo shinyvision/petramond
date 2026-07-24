@@ -14,7 +14,6 @@ use glam::{Mat4, Vec3};
 
 use super::{pixel_to_ndc, push_solid, UiBuild, UiVertex};
 use crate::gui::SlotRect;
-use crate::item::ItemType;
 use petramond_text::tiny as ui_text;
 
 /// Record that `item` occupies slot pixel rect `r` this frame. The renderer
@@ -26,12 +25,30 @@ use petramond_text::tiny as ui_text;
 pub(super) fn push_slot_icon(
     build: &mut UiBuild,
     _screen: (u32, u32),
-    item: ItemType,
+    stack: &crate::item::ItemStack,
     r: SlotRect,
 ) {
-    build.icon_quads.push((item, r));
+    build
+        .icon_quads
+        .push((stack.item, r, stack_tint(stack), stack_dyed(stack)));
 }
 
+/// Whether the stack's icon should draw from its DYED atlas cell (the twin
+/// baked off the dye-base tiles, one per ITEM — never per variant) — exactly
+/// when a tint multiply applies.
+pub(super) fn stack_dyed(stack: &crate::item::ItemStack) -> bool {
+    crate::item::variant::tint(stack.variant).is_some()
+}
+
+/// The quad multiply color for a stack's icon: its `petramond:tint` instance
+/// data, or white. The COLOR applies at draw on the quad, so a thousand tints
+/// share the item's two baked cells (base + dye-base twin).
+pub(super) fn stack_tint(stack: &crate::item::ItemStack) -> [f32; 4] {
+    match crate::item::variant::tint(stack.variant) {
+        Some([r, g, b]) => [r, g, b, 1.0],
+        None => [1.0; 4],
+    }
+}
 
 /// The slot's center in NDC (y up). Shared by the iso + flat icon MVPs so an icon
 /// is always anchored at the geometric centre of its slot rect.
@@ -332,13 +349,11 @@ mod tests {
         // mappings (e.g. when calibrating the hand pass — the icon shows
         // std(RotY180 · rot), so preview a hand rotation Q by passing
         // rot = RotY180 · Q), swap the quats below.
-        let candidates: Vec<(String, BlockModelKind, Quat)> = [
-            BlockModelKind::FurnitureWorkbench,
-            BlockModelKind::Bed,
-        ]
-        .into_iter()
-        .map(|kind| (format!("{kind:?}"), kind, gui_rotation(kind)))
-        .collect();
+        let candidates: Vec<(String, BlockModelKind, Quat)> =
+            [BlockModelKind::FurnitureWorkbench, BlockModelKind::Bed]
+                .into_iter()
+                .map(|kind| (format!("{kind:?}"), kind, gui_rotation(kind)))
+                .collect();
 
         const CELL: usize = 460;
         let cols = 3usize;

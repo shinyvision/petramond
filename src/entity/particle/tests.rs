@@ -5,36 +5,63 @@ fn empty(_p: Vec3) -> bool {
     false
 }
 
+/// Every fleck patch must stay STRICTLY inside its tile rect on both axes and
+/// both edges, for every tile and both atlas halves (base + dye twin). A patch
+/// touching a tile boundary samples the ADJACENT tile under nearest filtering
+/// (the iron-ore-flashes-magenta-flower bug: the old scalar `uv_size` scaled V
+/// by tile WIDTH, overshooting into the tile below in the double-height atlas).
 #[test]
-fn atlas_uv_maps_into_the_tile_rect() {
-    let tile = Tile::from_name("stone").unwrap(); // any non-trivial tile
-    let [u0, v0, u1, v1] = atlas::tile_uv(tile);
-    let p = Particle {
-        pos: Vec3::ZERO,
-        vel: Vec3::ZERO,
-        skylight: 63,
-        blocklight: 0,
-        warm: 0,
-        tile,
-        model: None,
-        uv_min: [0.25, 0.5],
-        uv_size: 0.25,
-        tint: NO_TINT,
-        solid: false,
-        die_on_contact: false,
-        age: 0.0,
-        lifetime: 1.0,
-        size: 0.1,
-    };
-    let (abs_min, abs_size) = p.atlas_uv();
-    let tw = u1 - u0;
-    let th = v1 - v0;
-    assert!((abs_min[0] - (u0 + 0.25 * tw)).abs() < 1e-6);
-    assert!((abs_min[1] - (v0 + 0.5 * th)).abs() < 1e-6);
-    assert!((abs_size - 0.25 * tw).abs() < 1e-6);
-    // The whole patch stays inside the tile rect.
-    assert!(abs_min[0] >= u0 - 1e-6 && abs_min[0] + abs_size <= u1 + 1e-6);
-    assert!(abs_min[1] >= v0 - 1e-6 && abs_min[1] + abs_size <= v1 + 1e-6);
+fn atlas_uv_stays_strictly_inside_the_tile_rect() {
+    // Quarter of a base texel: comfortably above f32 rounding error at these
+    // magnitudes, below the half-texel inset the mapping guarantees.
+    let quarter_texel = 0.25 / atlas::TILE as f32;
+    for tile in Tile::all() {
+        let [u0, v0, u1, v1] = atlas::tile_uv(tile);
+        let (tw, th) = (u1 - u0, v1 - v0);
+        // Patch origins at the spawner's extremes (`patch_min` yields
+        // `[0, 1 - PATCH_FRAC)`; 1 - PATCH_FRAC itself is even more adverse).
+        for m in [0.0, 1.0 - PATCH_FRAC] {
+            for dyed in [false, true] {
+                let p = Particle {
+                    pos: Vec3::ZERO,
+                    vel: Vec3::ZERO,
+                    skylight: 63,
+                    blocklight: 0,
+                    warm: 0,
+                    tile,
+                    model: None,
+                    dyed,
+                    uv_min: [m, m],
+                    uv_size: [PATCH_FRAC; 2],
+                    tint: NO_TINT,
+                    solid: false,
+                    die_on_contact: false,
+                    age: 0.0,
+                    lifetime: 1.0,
+                    size: 0.1,
+                };
+                let (abs_min, abs_size) = p.atlas_uv();
+                let dye = if dyed { atlas::DYE_V_OFFSET } else { 0.0 };
+                let name = tile.name();
+                assert!(
+                    abs_min[0] > u0 + quarter_texel * tw
+                        && abs_min[0] + abs_size[0] < u1 - quarter_texel * tw,
+                    "{name} dyed={dyed} m={m}: U patch [{}, {}] escapes tile [{u0}, {u1}]",
+                    abs_min[0],
+                    abs_min[0] + abs_size[0],
+                );
+                assert!(
+                    abs_min[1] > v0 + dye + quarter_texel * th
+                        && abs_min[1] + abs_size[1] < v1 + dye - quarter_texel * th,
+                    "{name} dyed={dyed} m={m}: V patch [{}, {}] escapes tile [{}, {}]",
+                    abs_min[1],
+                    abs_min[1] + abs_size[1],
+                    v0 + dye,
+                    v1 + dye,
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -47,8 +74,9 @@ fn alpha_fades_at_end_of_life() {
         warm: 0,
         tile: Tile::from_name("grass_top").unwrap(),
         model: None,
+        dyed: false,
         uv_min: [0.0, 0.0],
-        uv_size: 0.25,
+        uv_size: [0.25; 2],
         tint: NO_TINT,
         solid: false,
         die_on_contact: false,
@@ -79,8 +107,9 @@ fn render_size_shrinks_during_fade() {
         warm: 0,
         tile: Tile::from_name("grass_top").unwrap(),
         model: None,
+        dyed: false,
         uv_min: [0.0, 0.0],
-        uv_size: 0.25,
+        uv_size: [0.25; 2],
         tint: NO_TINT,
         solid: false,
         die_on_contact: false,
@@ -151,8 +180,9 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
         warm: 0,
         tile: Tile::from_name("grass_top").unwrap(),
         model: None,
+        dyed: false,
         uv_min: [0.0; 2],
-        uv_size: 0.1,
+        uv_size: [0.1; 2],
         tint: NO_TINT,
         solid: false,
         die_on_contact: false,

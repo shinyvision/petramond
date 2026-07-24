@@ -18,12 +18,19 @@ fn cache() -> &'static Mutex<HashMap<u8, Arc<[Aabb]>>> {
 
 /// Record a custom block's baked item boxes (cell-local, `0.0..1.0`).
 pub(crate) fn set_item_bake(block_id: u8, boxes: Vec<Aabb>) {
-    cache().lock().expect("item bake cache").insert(block_id, boxes.into());
+    cache()
+        .lock()
+        .expect("item bake cache")
+        .insert(block_id, boxes.into());
 }
 
 /// The baked item boxes for a custom block, or `None` if it never baked one.
 pub(crate) fn item_bake(block_id: u8) -> Option<Arc<[Aabb]>> {
-    cache().lock().expect("item bake cache").get(&block_id).cloned()
+    cache()
+        .lock()
+        .expect("item bake cache")
+        .get(&block_id)
+        .cloned()
 }
 
 /// Drop all cached item geometry. Block ids are session-local, so this cache

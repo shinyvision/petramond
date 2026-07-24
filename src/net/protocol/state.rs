@@ -8,42 +8,39 @@ use super::{ActionOutcome, ItemSlotWire, MenuSyncMsg, Transform};
 /// A world cell changed. `block_id` is a wire block id; `water` the water meta
 /// byte when the cell holds water. Coalesced latest-wins per cell per tick,
 /// sent only for sections in the recipient's sent set.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BlockDelta {
     pub pos: IVec3,
     pub block_id: u8,
     pub water: Option<u8>,
-    /// The cell's sparse per-cell block state after the change, `None` when the
-    /// cell carries none (the replica then CLEARS any stale state, mirroring
-    /// `clear_on_block_change` server-side).
-    pub state: Option<CellState>,
+    /// The cell's opaque per-cell block state after the change, `None` when
+    /// the cell carries none (the replica then CLEARS any stale state,
+    /// mirroring `clear_on_block_change` server-side). Verbatim store bytes;
+    /// the id-masked ones are rewritten at the transport boundary
+    /// (`ShapeState::remap_ids`).
+    pub state: Option<crate::block::ShapeState>,
+    /// The cell's mod KV map after the change (empty for the common cell).
+    /// A delta ALWAYS carries the cell's current KV because the replica's
+    /// apply wipes the cell's KV exactly like a server-side write — without
+    /// this, a CORRECTIVE delta (a snapshot of an UNCHANGED cell) would
+    /// erase replica KV the server still holds (the gray-dye bug,
+    /// 2026-07-23). Sorted (BTreeMap iteration), so the wire is
+    /// deterministic.
+    pub cell_kv: Vec<(String, Vec<u8>)>,
 }
 
-/// One cell's sparse block state on the wire — the delta-sized sibling of
-/// [`SectionStatesPayload`], using the SAME save-codec per-entry encodings
-/// (`DoorState::encode`, `StairState::encode`, `SlabState::encode_meta` + raw
-/// layer BLOCK IDS, `LogAxis::to_u8`, `TorchPlacement::to_u8`,
-/// `Facing::to_u8`). A cell holds at most one of these; an oriented multi-cell
-/// model block folds its placed facing into [`CellState::ModelCell`].
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum CellState {
-    /// `DoorState::encode` byte (facing + open + which-half).
-    Door(u8),
-    /// `StairState::encode` byte.
-    Stair(u8),
-    /// `[SlabState::encode_meta, layer 0 block id, layer 1 block id]` — raw
-    /// session block ids, remapped at the transport boundary like
-    /// `SectionStatesPayload::slabs`.
-    Slab([u8; 3]),
-    /// `LogAxis::to_u8` byte.
-    LogAxis(u8),
-    /// `TorchPlacement::to_u8` byte.
-    Torch(u8),
-    /// `Facing::to_u8` byte — chest/furnace block-entity fronts.
-    Facing(u8),
-    /// A multi-cell model block's authored footprint offset + placed facing
-    /// (`Facing::to_u8`).
-    ModelCell { off: [u8; 3], facing: u8 },
+/// One per-cell mod KV change on the wire — the live-delta sibling of the
+/// section payload's whole-map `CellKvEntry` list: a server-side
+/// `SectionKvSet`/`SectionKvDelete` on a loaded section ships the new value
+/// (`None` = deleted) to every client holding the section. Applied AFTER the
+/// batch's block deltas (a block write wipes the cell's KV on both sides, so
+/// a same-tick write-block-then-KV lands in order). Coalesced latest-wins per
+/// `(pos, key)` per tick.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CellKvDelta {
+    pub pos: IVec3,
+    pub key: String,
+    pub value: Option<Vec<u8>>,
 }
 
 /// One live mob's replicated state as of the batch's tick — everything the
@@ -90,13 +87,16 @@ pub(crate) struct MobStateRow {
 
 /// One dropped item entity's replicated state as of the batch's tick — the
 /// `DroppedItemPresentation` fields minus light (client-sampled at `pos`).
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ItemStateRow {
     /// Stable per-spawn identity (`DroppedItem::id`).
     pub id: u64,
     /// Wire item id.
     pub item_id: u8,
     pub count: u8,
+    /// Canonical instance-data blob (`None` = plain stack) — see
+    /// [`super::ItemSlotWire::data`].
+    pub data: Option<Vec<u8>>,
     pub pos: Vec3,
     pub spin: f32,
 }
@@ -105,7 +105,7 @@ pub(crate) struct ItemStateRow {
 /// session's row is sent to every recipient (bytes are trivial); the client
 /// skips its OWN id (the local body renders from the predicted player). Light
 /// is client-sampled at `pos`, like mobs and items.
-#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct PlayerStateRow {
     pub id: PlayerId,
     /// `pos` is the feet position (the body model's `y = 0`).
@@ -122,6 +122,9 @@ pub(crate) struct PlayerStateRow {
     pub visible: bool,
     /// Selected hotbar item (wire item id); `None` for an empty hand.
     pub held_item: Option<u8>,
+    /// The held stack's canonical instance-data blob (`None` = plain) — so
+    /// observers tint the remote body's held item.
+    pub held_data: Option<Vec<u8>>,
     /// The in-progress mining target + crack stage (0..=9). Drives the remote
     /// body's looping arm swing (`is_some()`) AND the remote break (crack)
     /// overlay every observer renders. The recipient's OWN crack overlay is
@@ -251,6 +254,8 @@ pub(crate) enum WorldEventMsg {
         block_id: u8,
         /// The mined face (directional burst spread), when known.
         normal: Option<IVec3>,
+        /// The cell's `petramond:tint` at break time (burst fleck tint).
+        tint: Option<[u8; 3]>,
     },
     BlockPlaced {
         pos: IVec3,
@@ -396,6 +401,9 @@ pub(crate) struct TickUpdate {
     pub tick: u64,
     pub clock: u64,
     pub block_deltas: Vec<BlockDelta>,
+    /// This window's per-cell mod KV changes (loaded sections only), applied
+    /// after `block_deltas`.
+    pub cell_kv_deltas: Vec<CellKvDelta>,
     /// Every live mob's state (interest scoping lands with per-player
     /// streaming).
     pub mobs: Vec<MobStateRow>,

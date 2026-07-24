@@ -100,7 +100,7 @@ impl RemotePlayer {
         pose.reset_facing(row.transform.yaw);
         Self {
             name: String::new(),
-            prev: row,
+            prev: row.clone(),
             curr: row,
             pose,
             animator: HeldItemAnimator::default(),
@@ -163,12 +163,16 @@ impl RemotePlayers {
             }
             let mut entry = old
                 .remove(&row.id)
-                .unwrap_or_else(|| RemotePlayer::new(*row));
-            entry.prev = if row.snap { *row } else { entry.curr };
+                .unwrap_or_else(|| RemotePlayer::new(row.clone()));
+            entry.prev = if row.snap {
+                row.clone()
+            } else {
+                entry.curr.clone()
+            };
             if row.snap {
                 entry.pose.reset_facing(row.transform.yaw);
             }
-            entry.curr = *row;
+            entry.curr = row.clone();
             if row.hurt_recent {
                 entry.hurt_t = HURT_FLASH_SECS;
             }
@@ -211,6 +215,12 @@ impl RemotePlayers {
             let latch = std::mem::take(&mut p.latched);
             p.view = p.animator.update(HeldItemFrame {
                 item: p.curr.held_item.map(crate::item::ItemType),
+                variant: p
+                    .curr
+                    .held_data
+                    .as_deref()
+                    .and_then(crate::item::variant::intern_blob)
+                    .unwrap_or_default(),
                 // Held-rotation preview state isn't replicated; the default
                 // reads fine at held-mini-cube size.
                 block_state: Default::default(),
@@ -279,6 +289,7 @@ mod tests {
             alive: true,
             visible: true,
             held_item: None,
+            held_data: None,
             mining: None,
             eating: false,
             hurt_recent: false,

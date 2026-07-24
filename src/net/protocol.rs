@@ -46,11 +46,39 @@ pub(crate) struct Transform {
     pub pitch: f32,
 }
 
-/// One inventory slot on the wire. `item_id` is a wire item id.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// One inventory slot on the wire. `item_id` is a wire item id. `data` is the
+/// stack's canonical instance-data blob (`None` = plain stack, the ordinary
+/// case) — variant ids are process-local and never cross the wire; the
+/// receiver re-interns the blob.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ItemSlotWire {
     pub item_id: u8,
     pub count: u8,
+    pub data: Option<Vec<u8>>,
+}
+
+impl ItemSlotWire {
+    /// Encode a stack for the wire (blob resolved from the variant table).
+    pub(crate) fn from_stack(st: crate::item::ItemStack) -> Self {
+        ItemSlotWire {
+            item_id: st.item.0,
+            count: st.count,
+            data: crate::item::variant::blob(st.variant).map(|b| (*b).clone()),
+        }
+    }
+
+    /// Decode back to a stack, re-interning the blob. An unreadable blob
+    /// degrades to a plain stack (mirrors the save codec's policy).
+    pub(crate) fn to_stack(&self) -> crate::item::ItemStack {
+        let mut st = crate::item::ItemStack::new(crate::item::ItemType(self.item_id), self.count);
+        if let Some(blob) = &self.data {
+            match crate::item::variant::intern_blob(blob) {
+                Some(v) => st.variant = v,
+                None => log::warn!("wire slot: unreadable instance-data blob dropped"),
+            }
+        }
+        st
+    }
 }
 
 /// Client → server messages.

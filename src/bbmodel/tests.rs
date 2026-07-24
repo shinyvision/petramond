@@ -434,13 +434,15 @@ fn position_tracks_translate_the_bone() {
     let low = m.pose(dip, 1.0);
     let p0 = rest[0].transform_point3(Vec3::splat(2.0));
     let p1 = low[0].transform_point3(Vec3::splat(2.0));
-    assert!((p1.y - (p0.y - 3.0)).abs() < 1e-5, "the bone dips 3 units: {p0} -> {p1}");
+    assert!(
+        (p1.y - (p0.y - 3.0)).abs() < 1e-5,
+        "the bone dips 3 units: {p0} -> {p1}"
+    );
     assert!((p1.x - p0.x).abs() < 1e-5 && (p1.z - p0.z).abs() < 1e-5);
     // Clamped past the end (a held `once` frame keeps the offset).
     let held = m.pose(dip, 2.0);
     assert!((held[0].transform_point3(Vec3::splat(2.0)).y - p1.y).abs() < 1e-5);
 }
-
 
 /// The serialized bytes of a canonical compiled model, pinned against
 /// [`CompiledAsset::FORMAT_VERSION`]. The cache header treats an equal version
@@ -516,7 +518,10 @@ fn compiled_model_layout_change_requires_a_format_version_bump() {
 fn rest_bounds_cover_the_posed_geometry() {
     let m = owl();
     let (min, max) = m.rest_bounds();
-    assert!(max.x > min.x && max.y > min.y && max.z > min.z, "{min} {max}");
+    assert!(
+        max.x > min.x && max.y > min.y && max.z > min.z,
+        "{min} {max}"
+    );
 
     // Every posed cube corner lies inside the answered box.
     let pose = m.rest_pose();

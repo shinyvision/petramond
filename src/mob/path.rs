@@ -362,7 +362,16 @@ pub fn find_path(
     solid: impl Fn(IVec3) -> bool,
     water: impl Fn(IVec3) -> bool,
 ) -> Vec<IVec3> {
-    find_path_nav(start, goal, params, &solid, &solid, water, |_, _| true, |_| 0)
+    find_path_nav(
+        start,
+        goal,
+        params,
+        &solid,
+        &solid,
+        water,
+        |_, _| true,
+        |_| 0,
+    )
 }
 
 /// The full navigation search. Beyond [`find_path`]'s closures it takes:

@@ -232,7 +232,7 @@ fn self_state_ships_the_inventory_only_when_the_revision_moved() {
         .as_ref()
         .expect("a mutation re-ships the inventory");
     assert_eq!(
-        slots[0].map(|w| (w.item_id, w.count)),
+        slots[0].as_ref().map(|w| (w.item_id, w.count)),
         Some((ItemType::Stone.0, 5))
     );
 }
@@ -385,9 +385,7 @@ fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
         0,
         ClientToServer::MenuClick {
             slot: MenuSlotWire::Chest(0),
-            button: crate::net::protocol::button_to_wire(
-                crate::controls::PointerButton::Secondary,
-            ),
+            button: crate::net::protocol::button_to_wire(crate::controls::PointerButton::Secondary),
             shift: false,
             gather: false,
             request_id: 11,

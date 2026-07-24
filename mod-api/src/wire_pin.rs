@@ -71,11 +71,16 @@ fn samples() -> Samples {
     s.pin("HostCall::DespawnMob", &HostCall::DespawnMob { mob_id: 7 });
     s.pin("HostCall::SpawnItem", &HostCall::SpawnItem {
         item: "m:i".into(), count: 3, pos: [1.0, 2.0, 3.0],
+        data: Vec::new(),
     });
     s.pin("HostCall::PlayerState", &HostCall::PlayerState);
     s.pin("HostCall::DamagePlayer", &HostCall::DamagePlayer { amount: 2 });
     s.pin("HostCall::ApplyKnockback", &HostCall::ApplyKnockback { impulse: [1.0, 2.0, 3.0] });
-    s.pin("HostCall::GiveItem", &HostCall::GiveItem { item: "m:i".into(), count: 2 });
+    s.pin("HostCall::GiveItem", &HostCall::GiveItem {
+        item: "m:i".into(),
+        count: 2,
+        data: vec![("m:k".into(), vec![1, 2, 3])],
+    });
     s.pin("HostCall::SetHealth", &HostCall::SetHealth { value: 20 });
     s.pin("HostCall::Teleport", &HostCall::Teleport { pos: [1.0, 2.0, 3.0] });
     s.pin("HostCall::EmitSound", &HostCall::EmitSound {
@@ -135,7 +140,7 @@ fn samples() -> Samples {
     s.pin("HostCall::ContainerGet", &HostCall::ContainerGet { pos: [1, 2, 3] });
     s.pin("HostCall::ContainerSet", &HostCall::ContainerSet {
         pos: [1, 2, 3],
-        slots: vec![(0, Some(ItemStackData { item: "m:i".into(), count: 1 })), (1, None)],
+        slots: vec![(0, Some(ItemStackData { item: "m:i".into(), count: 1, data: Vec::new() })), (1, None)],
     });
     s.pin("HostCall::ItemInfo", &HostCall::ItemInfo { item: "m:i".into() });
     s.pin("HostCall::RecipeResult", &HostCall::RecipeResult {
@@ -274,6 +279,13 @@ fn samples() -> Samples {
         player_id: PlayerId(1), anchor: [1.5, 2.0, -3.5], yaw: 0.5, pose: pose::SITTING,
     });
     s.pin("HostCall::BlockModelGroup", &HostCall::BlockModelGroup { pos: [1, 2, 3] });
+    s.pin("HostCall::ClientCellKvAt", &HostCall::ClientCellKvAt {
+        key: "m:k".into(), cells: vec![[1, -2, 3]],
+    });
+    s.pin("HostCall::ItemDataGet", &HostCall::ItemDataGet { item: ItemId(3), key: "m:k".into() });
+    s.pin("HostCall::ItemsWithData", &HostCall::ItemsWithData { key: "m:k".into() });
+    s.pin("HostCall::BlockDataGet", &HostCall::BlockDataGet { block: BlockId(4), key: "m:k".into() });
+    s.pin("HostCall::BlocksWithData", &HostCall::BlocksWithData { key: "m:k".into() });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -296,7 +308,7 @@ fn samples() -> Samples {
     s.pin("HostRet::MobTag", &HostRet::MobTag(MobTagLookup::Value(MobTagValue::Bool(true))));
     s.pin("HostRet::GuiValue", &HostRet::GuiValue(Some(GuiValue::F32(1.0))));
     s.pin("HostRet::ContainerSlots", &HostRet::ContainerSlots(Some(vec![
-        Some(ItemStackData { item: "m:i".into(), count: 1 }), None,
+        Some(ItemStackData { item: "m:i".into(), count: 1, data: Vec::new() }), None,
     ])));
     s.pin("HostRet::ItemInfo", &HostRet::ItemInfo(Some(ItemInfoData {
         max_stack: 64, fuel_burn_ticks: 0, tags: vec!["t".into()],
@@ -309,7 +321,7 @@ fn samples() -> Samples {
         item_use: Some("bucket_fill".into()),
     })));
     s.pin("HostRet::ItemStack", &HostRet::ItemStack(Some(ItemStackData {
-        item: "m:i".into(), count: 2,
+        item: "m:i".into(), count: 2, data: Vec::new(),
     })));
     s.pin("HostRet::Effects", &HostRet::Effects(vec![EffectStateData {
         key: "m:e".into(), remaining: 9,
@@ -362,6 +374,9 @@ fn samples() -> Samples {
         index: 1, key: "m:k".into(), kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, vel: [1.0, 0.0, 2.0],
     })));
+    s.pin("HostRet::BytesMany", &HostRet::BytesMany(vec![Some(vec![1, 2]), None]));
+    s.pin("HostRet::ItemDataRows", &HostRet::ItemDataRows(vec![(ItemId(3), "{}".into())]));
+    s.pin("HostRet::BlockDataRows", &HostRet::BlockDataRows(vec![(BlockId(4), "{}".into())]));
 
     // --- GuestCall: every variant, declaration order -------------------------
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
@@ -423,6 +438,8 @@ fn samples() -> Samples {
         cells: vec![CellInput {
             world_pos: [1, 2, 3], block_id: BlockId(4),
             neighbor_ids: [BlockId(0); 6],
+            state: Some(vec![7]),
+            neighbor_states: [None, Some(vec![9]), None, None, None, None],
         }],
     });
     s.pin("GuestCall::BakeShapeRender", &GuestCall::BakeShapeRender {
@@ -430,6 +447,8 @@ fn samples() -> Samples {
         cells: vec![CellInput {
             world_pos: [1, 2, 3], block_id: BlockId(4),
             neighbor_ids: [BlockId(0); 6],
+            state: Some(vec![7]),
+            neighbor_states: [None, Some(vec![9]), None, None, None, None],
         }],
     });
     s.pin("GuestCall::BakeShapeItem", &GuestCall::BakeShapeItem { shape_kind: 1, block_id: BlockId(4) });
@@ -457,7 +476,12 @@ fn samples() -> Samples {
         light_aperture: LightAperture::Open,
     }]));
     s.pin("GuestRet::BakedRender", &GuestRet::BakedRender(vec![BakedRenderCell {
-        boxes: vec![ShapeAabb { min: [0.0, 0.0, 0.0], max: [1.0, 1.0, 1.0] }],
+        boxes: vec![ShapeRenderBox {
+            aabb: ShapeAabb { min: [0.0, 0.0, 0.0], max: [1.0, 1.0, 1.0] },
+            tint: Some([200, 30, 40]),
+            ao: Some(30),
+            dyed: true,
+        }],
     }]));
     s.pin("GuestRet::BakedItem", &GuestRet::BakedItem(BakedItemGeometry { boxes: vec![] }));
     s.pin("GuestRet::ShapePlacement", &GuestRet::ShapePlacement(ShapePlacementResult {
@@ -638,11 +662,11 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::MobsInRadius", "0d0000803f000000400000404000008040"),
     ("HostCall::DamageMob", "0e0700000040010000803f0000004000004040010200050a"),
     ("HostCall::DespawnMob", "0f07"),
-    ("HostCall::SpawnItem", "10036d3a69030000803f0000004000004040"),
+    ("HostCall::SpawnItem", "10036d3a69030000803f000000400000404000"),
     ("HostCall::PlayerState", "11"),
     ("HostCall::DamagePlayer", "1204"),
     ("HostCall::ApplyKnockback", "130000803f0000004000004040"),
-    ("HostCall::GiveItem", "14036d3a6902"),
+    ("HostCall::GiveItem", "14036d3a690201036d3a6b03010203"),
     ("HostCall::SetHealth", "1528"),
     ("HostCall::Teleport", "160000803f0000004000004040"),
     ("HostCall::EmitSound", "17036d3a73010000803f0000004000004040"),
@@ -672,7 +696,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::RegisterBlockBehavior", "2f036d3a6201"),
     ("HostCall::RegisterAiNode", "30036d3a6e02"),
     ("HostCall::ContainerGet", "31020406"),
-    ("HostCall::ContainerSet", "32020406020001036d3a69010100"),
+    ("HostCall::ContainerSet", "32020406020001036d3a6901000100"),
     ("HostCall::ItemInfo", "33036d3a69"),
     ("HostCall::RecipeResult", "34036d3a63036d3a69"),
     ("HostCall::EffectApply", "35036d3a6505"),
@@ -737,6 +761,11 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::ResolveShape", "70036d3a73"),
     ("HostCall::PlayerPoseSet", "71010000c03f00000040000060c00000003f01"),
     ("HostCall::BlockModelGroup", "72020406"),
+    ("HostCall::ClientCellKvAt", "73036d3a6b01020306"),
+    ("HostCall::ItemDataGet", "7403036d3a6b"),
+    ("HostCall::ItemsWithData", "75036d3a6b"),
+    ("HostCall::BlockDataGet", "7604036d3a6b"),
+    ("HostCall::BlocksWithData", "77036d3a6b"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -749,9 +778,9 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Bytes", "09010101"),
     ("HostRet::MobTag", "0a020001"),
     ("HostRet::GuiValue", "0b01000000803f"),
-    ("HostRet::ContainerSlots", "0c010201036d3a690100"),
+    ("HostRet::ContainerSlots", "0c010201036d3a69010000"),
     ("HostRet::ItemInfo", "0d014000010174014e010201077069636b61786501013c01036d3a6564010b6275636b65745f66696c6c"),
-    ("HostRet::ItemStack", "0e01036d3a6902"),
+    ("HostRet::ItemStack", "0e01036d3a690200"),
     ("HostRet::Effects", "0f01036d3a6509"),
     ("HostRet::Containers", "100201010000"),
     ("HostRet::RuntimeSide", "1102"),
@@ -777,6 +806,9 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::SpawnedMob", "250107"),
     ("HostRet::FoundBlocks", "260101020306"),
     ("HostRet::Mob", "270101036d3a6b020000803f000000400000404000008040050000003f0000803f0000000000000040"),
+    ("HostRet::BytesMany", "28020102010200"),
+    ("HostRet::ItemDataRows", "290103027b7d"),
+    ("HostRet::BlockDataRows", "2a0104027b7d"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
@@ -790,8 +822,8 @@ const PINS: &[(&str, &str)] = &[
     ("GuestCall::ClientUi", "0a036d3a67000162"),
     ("GuestCall::ClientCanvas", "0b036d3a63000000803f0000004000"),
     ("GuestCall::ClientCanvasScroll", "0c036d3a630000803f00000040000080bf"),
-    ("GuestCall::BakeShapeSim", "0d010102040604000000000000"),
-    ("GuestCall::BakeShapeRender", "0e010102040604000000000000"),
+    ("GuestCall::BakeShapeSim", "0d0101020406040000000000000101070001010900000000"),
+    ("GuestCall::BakeShapeRender", "0e0101020406040000000000000101070001010900000000"),
     ("GuestCall::BakeShapeItem", "0f0104"),
     ("GuestCall::ShapePlacementPlan", "10010400000000020000020000"),
     ("GuestRet::Unit", "00"),
@@ -802,7 +834,7 @@ const PINS: &[(&str, &str)] = &[
     ("GuestRet::HostileSpawn", "0501036d3a6b"),
     ("GuestRet::AiDecision", "060101020406010000003f0000803e010101000000400000404001036d3a6b010001"),
     ("GuestRet::BakedSim", "0701010000000000000000000000000000803f0000803f0000803f01"),
-    ("GuestRet::BakedRender", "0801010000000000000000000000000000803f0000803f0000803f"),
+    ("GuestRet::BakedRender", "0801010000000000000000000000000000803f0000803f0000803f01c81e28011e01"),
     ("GuestRet::BakedItem", "0900"),
     ("GuestRet::ShapePlacement", "0a01000200010002000102"),
     ("EventPayload::BlockPlacePre", "000204060100"),

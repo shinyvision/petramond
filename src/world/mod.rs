@@ -25,15 +25,17 @@ mod mesh_pool;
 mod mesh_queue;
 mod mobs;
 mod model;
+mod neighborhood;
 mod pane;
 mod particle_emitters;
 pub(crate) mod placement;
-mod shape_bake_validate;
 mod prediction_render;
 mod query;
 mod remote;
 mod render_handoff;
 pub(crate) mod sapling;
+mod shape_bake_validate;
+mod shape_refine;
 mod sim_guard;
 mod slab;
 mod snapshot;
@@ -46,9 +48,9 @@ mod torch;
 mod visibility;
 pub(crate) mod water;
 
+pub(crate) use custom_bake::CustomBakeCell;
 #[cfg(test)]
 pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
-pub(crate) use custom_bake::CustomBakeCell;
 pub(crate) use shape_bake_validate::ingest_shape_boxes;
 #[cfg(test)]
 pub(crate) use stream::split_generated_column;

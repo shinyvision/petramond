@@ -479,10 +479,10 @@ mod tests {
             .expect("live server accepts messages");
         handle.send(ClientToServer::KeepAlive).expect("live server");
 
-        let first = recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE)
-            .expect("a TickUpdate arrives");
-        let second = recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE)
-            .expect("ticks keep coming");
+        let first =
+            recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE).expect("a TickUpdate arrives");
+        let second =
+            recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE).expect("ticks keep coming");
         assert!(
             second.tick > first.tick,
             "the self-clocked loop advances the world tick"
@@ -540,7 +540,8 @@ mod tests {
         handle
             .send(ClientToServer::Pause(false))
             .expect("live server");
-        let resumed = recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE).expect("ticks resume");
+        let resumed =
+            recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE).expect("ticks resume");
         if let Some(last) = last_tick {
             assert!(resumed.tick > last, "the world advances again");
             // Pausing must not bank catch-up ticks (the accumulator is pinned).

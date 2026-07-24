@@ -1,51 +1,29 @@
-//! Glass panes at the world level: position-aware connection masks and boxes.
+//! Glass panes at the world level: the stored-mask front.
 //!
-//! A pane keeps no per-cell state — its connections are resolved from the
-//! current neighbours on every query (like stair corners), so collision,
-//! selection, and the placement overlap check all read the same
-//! `crate::pane::resolved_mask` the mesher renders from.
+//! A pane's connections are REFINED per-cell state (`ConnectionMask`),
+//! resolved by the edit cascade and stored in the cell — every read here is
+//! a free decode of the same bytes the mesher renders from.
 
-use crate::block::{Aabb, ConnectionRule, ShapeFamily};
+use crate::block::ShapeFamily;
 use crate::mathh::IVec3;
 
 use super::store::World;
 
 impl World {
-    /// The 4-bit connection mask of the pane placed at `pos`, using its own rule
-    /// (a modded bar may connect differently than an engine pane). See
-    /// [`World::connection_mask_at`](crate::world::World::connection_mask_at).
+    /// The refined 4-bit connection mask STORED for the pane placed at `pos`
+    /// — a cell-state decode, resolved by the edit cascade, never here.
     #[inline]
     pub fn pane_mask_at(&self, pos: IVec3) -> u8 {
-        let block = self.physics_block(pos.x, pos.y, pos.z);
         debug_assert_eq!(
-            block.shape_family(),
+            self.physics_block(pos.x, pos.y, pos.z).shape_family(),
             ShapeFamily::Pane,
             "pane_mask_at on a non-pane cell"
         );
-        // Silent default in release (see the fence twin): a non-pane cell falls
-        // back to the engine rule, the debug assert catches the misuse.
-        let rule = block
-            .shape_kind_def()
-            .params
-            .connection()
-            .map_or(ConnectionRule::SolidOrSame, |c| c.rule);
-        self.connection_mask_at(pos, ShapeFamily::Pane, rule)
-    }
-
-    /// The collision/selection boxes for the pane placed at `pos`, from its own
-    /// connection params.
-    #[inline]
-    pub fn pane_boxes_at(&self, pos: IVec3) -> &'static [Aabb] {
-        let block = self.physics_block(pos.x, pos.y, pos.z);
-        debug_assert_eq!(
-            block.shape_family(),
-            ShapeFamily::Pane,
-            "pane_boxes_at on a non-pane cell"
-        );
-        match block.shape_kind_def().params.connection() {
-            Some(c) => self.connection_boxes_at(pos, c, ShapeFamily::Pane),
-            None => &[],
-        }
+        use crate::block::CellView;
+        crate::connect::ConnectionMask::from_cell(crate::block::ShapeNeighborhood::shape_state(
+            self, pos,
+        ))
+        .0
     }
 }
 
@@ -67,6 +45,9 @@ mod tests {
     fn pane_connects_to_full_cubes_and_panes_but_not_tagged_irregulars() {
         let mut w = world();
         let p = IVec3::new(8, 64, 8);
+        // The probe shape is REAL: masks are refined per-cell state now, so
+        // the cell must hold the block whose state the cascade maintains.
+        assert!(w.set_block_world(p.x, p.y, p.z, Block::GlassPane));
         assert_eq!(w.pane_mask_at(p), 0, "isolated pane is a bare post");
 
         w.set_block_world(7, 64, 8, Block::Stone);
@@ -86,6 +67,9 @@ mod tests {
     fn pane_connects_to_a_stair_back_but_not_its_open_side() {
         let mut w = world();
         let p = IVec3::new(8, 64, 8);
+        // The probe shape is REAL: masks are refined per-cell state now, so
+        // the cell must hold the block whose state the cascade maintains.
+        assert!(w.set_block_world(p.x, p.y, p.z, Block::GlassPane));
         // Stair east of the pane, facing east: its flat high/back side faces the pane.
         assert!(w.place_stair(
             IVec3::new(9, 64, 8),
@@ -107,6 +91,9 @@ mod tests {
     fn pane_connects_to_a_full_slab_stack_but_not_a_single_slab() {
         let mut w = world();
         let p = IVec3::new(8, 64, 8);
+        // The probe shape is REAL: masks are refined per-cell state now, so
+        // the cell must hold the block whose state the cascade maintains.
+        assert!(w.set_block_world(p.x, p.y, p.z, Block::GlassPane));
         let n = IVec3::new(8, 64, 7);
         let slot = |index| crate::slab::SlabSlot {
             split: SlabSplit::Y,

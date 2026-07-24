@@ -176,6 +176,114 @@ pub(crate) fn resolve_catalog<R, D>(
     resolve_merged(merged, row_key, names, what, convert)
 }
 
+/// One `{"patch": "<row>", "data": {...}}` row from a catalog layer: attaches
+/// namespaced DATA entries to an EXISTING row — engine rows included, and
+/// deliberately across namespaces (a pack describing its target in a
+/// CONSUMER mod's vocabulary is the whole point; see [`compile_data_map`]).
+/// A patch can, by construction, touch ONLY the row's `data` map — never
+/// behavior, shape, or any other field.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RawDataPatch {
+    /// Registry name of the row being patched (must exist after all layers).
+    pub patch: String,
+    pub data: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Split one catalog layer's row array (`{"<array_key>": [...]}`) into full
+/// rows and data patches: an element carrying a `"patch"` field parses as
+/// [`RawDataPatch`] (pushed onto `patches`, layer order preserved), anything
+/// else as a full `R` row. Branching on the field FIRST keeps error messages
+/// precise (an untagged enum would collapse both failure modes into "no
+/// variant matched").
+pub(crate) fn parse_rows_with_patches<R: serde::de::DeserializeOwned>(
+    text: &str,
+    array_key: &str,
+    patches: &mut Vec<RawDataPatch>,
+) -> Result<Vec<R>, serde_json::Error> {
+    use serde::de::Error;
+    let file: serde_json::Value = serde_json::from_str(text)?;
+    let rows = file
+        .get(array_key)
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| serde_json::Error::custom(format!("missing '{array_key}' array")))?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        if row.get("patch").is_some() {
+            patches.push(serde_json::from_value(row.clone())?);
+        } else {
+            out.push(serde_json::from_value(row.clone())?);
+        }
+    }
+    Ok(out)
+}
+
+/// Bounds on a row's `data` map — interop metadata, not bulk storage.
+const DATA_KEYS_MAX: usize = 32;
+const DATA_VALUE_MAX: usize = 4096;
+
+/// Compile a row's `data` map — its own entries plus every [`RawDataPatch`]
+/// targeting it, applied in layer order with later keys winning — into the
+/// leaked sorted `(key, canonical JSON text)` slice the definition tables
+/// hold. Keys must be namespaced (`ns:name`); values are OPAQUE raw JSON the
+/// declaring pack writes in the CONSUMING mod's vocabulary (the item/block
+/// interop surface — e.g. `"furniture:pigment"` on a berries item). The
+/// engine validates only shape and bounds; a consumer parses what it
+/// understands and ignores the rest.
+pub(crate) fn compile_data_map(
+    row_name: &str,
+    base: &serde_json::Map<String, serde_json::Value>,
+    patches: &[RawDataPatch],
+) -> Result<&'static [(&'static str, &'static str)], String> {
+    let mut merged: Vec<(String, String)> = Vec::new();
+    let mut insert = |key: &str, value: &serde_json::Value| -> Result<(), String> {
+        let ok_part = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_graphic());
+        if !key
+            .split_once(':')
+            .is_some_and(|(ns, n)| ok_part(ns) && ok_part(n))
+        {
+            return Err(format!("data key '{key}' must be namespaced 'ns:name'"));
+        }
+        let text = value.to_string();
+        if text.len() > DATA_VALUE_MAX {
+            return Err(format!(
+                "data value for '{key}' is {} bytes; the limit is {DATA_VALUE_MAX}",
+                text.len()
+            ));
+        }
+        match merged.iter_mut().find(|(k, _)| k == key) {
+            Some((_, v)) => *v = text,
+            None => merged.push((key.to_owned(), text)),
+        }
+        Ok(())
+    };
+    for (k, v) in base {
+        insert(k, v)?;
+    }
+    for patch in patches.iter().filter(|p| p.patch == row_name) {
+        for (k, v) in &patch.data {
+            insert(k, v)?;
+        }
+    }
+    if merged.len() > DATA_KEYS_MAX {
+        return Err(format!(
+            "{} data keys; the limit is {DATA_KEYS_MAX}",
+            merged.len()
+        ));
+    }
+    merged.sort_by(|a, b| a.0.cmp(&b.0));
+    let leaked: Vec<(&'static str, &'static str)> = merged
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                &*Box::leak(k.into_boxed_str()),
+                &*Box::leak(v.into_boxed_str()),
+            )
+        })
+        .collect();
+    Ok(Box::leak(leaked.into_boxed_slice()))
+}
+
 fn parse_and_merge<R>(
     texts: &[&str],
     mut parse_layer: impl FnMut(&str) -> Result<Vec<R>, serde_json::Error>,
@@ -221,6 +329,37 @@ fn resolve_merged<R, D>(
             })
         })
         .collect()
+}
+
+/// Parse an ENGINE consumer's entry out of a row's compiled data slice —
+/// `petramond:fuel` / `petramond:tool` / `petramond:carry` are ordinary
+/// data-surface consumers whose consuming system happens to be the engine
+/// (the dogfooding rule). Absent = `None`; present-but-malformed = a load
+/// error (the engine parses its own vocabulary strictly, unlike a mod key it
+/// would ignore).
+pub(crate) fn engine_data<T: serde::de::DeserializeOwned>(
+    data: &'static [(&'static str, &'static str)],
+    key: &str,
+) -> Result<Option<T>, String> {
+    let Some((_, text)) = data.iter().find(|(k, _)| *k == key) else {
+        return Ok(None);
+    };
+    serde_json::from_str(text)
+        .map(Some)
+        .map_err(|e| format!("malformed '{key}' data: {e}"))
+}
+
+/// Validate an engine vocabulary entry that lists KV/instance-data keys
+/// (`petramond:carry`, `petramond:inherit`): every listed key must be
+/// namespaced. The one place the "no bare keys" rule for key-list entries
+/// lives.
+pub(crate) fn validate_namespaced_keys(what: &str, keys: &[String]) -> Result<(), String> {
+    for k in keys {
+        if namespace(k).is_none() {
+            return Err(format!("{what} lists bare key '{k}'"));
+        }
+    }
+    Ok(())
 }
 
 /// The catalog FILE frame around [`load_catalog`]/[`resolve_catalog`]: read
@@ -372,35 +511,42 @@ pub(crate) fn build_names(
     block_texts: &[&str],
     item_texts: &[&str],
 ) -> Result<ContentNames, String> {
-    #[derive(Deserialize)]
-    struct BlockKeys {
-        blocks: Vec<BlockKey>,
+    // Key pre-parse only: rows with a `"patch"` field register nothing (they
+    // attach data to an EXISTING row — see [`RawDataPatch`]), so they carry
+    // no key here.
+    fn layer_keys(
+        texts: &[&str],
+        file: &str,
+        array_key: &str,
+        key_field: &str,
+    ) -> Result<Vec<Vec<String>>, String> {
+        let mut out = Vec::new();
+        for (li, text) in texts.iter().enumerate() {
+            let err = |msg: String| format!("{file} layer #{li}: {msg}");
+            let value: serde_json::Value =
+                serde_json::from_str(text).map_err(|e| err(format!("invalid JSON: {e}")))?;
+            let rows = value
+                .get(array_key)
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| err(format!("expected a top-level '{array_key}' array")))?;
+            let mut keys = Vec::new();
+            for row in rows {
+                if row.get("patch").is_some() {
+                    continue;
+                }
+                keys.push(
+                    row.get(key_field)
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| err(format!("row has no string '{key_field}' key")))?
+                        .to_owned(),
+                );
+            }
+            out.push(keys);
+        }
+        Ok(out)
     }
-    #[derive(Deserialize)]
-    struct BlockKey {
-        block: String,
-    }
-    #[derive(Deserialize)]
-    struct ItemKeys {
-        items: Vec<ItemKey>,
-    }
-    #[derive(Deserialize)]
-    struct ItemKey {
-        item: String,
-    }
-
-    let mut block_keys = Vec::new();
-    for (li, text) in block_texts.iter().enumerate() {
-        let raw: BlockKeys = serde_json::from_str(text)
-            .map_err(|e| format!("blocks.json layer #{li}: invalid JSON: {e}"))?;
-        block_keys.push(raw.blocks.into_iter().map(|r| r.block).collect());
-    }
-    let mut item_keys = Vec::new();
-    for (li, text) in item_texts.iter().enumerate() {
-        let raw: ItemKeys = serde_json::from_str(text)
-            .map_err(|e| format!("items.json layer #{li}: invalid JSON: {e}"))?;
-        item_keys.push(raw.items.into_iter().map(|r| r.item).collect());
-    }
+    let block_keys = layer_keys(block_texts, "blocks.json", "blocks", "block")?;
+    let item_keys = layer_keys(item_texts, "items.json", "items", "item")?;
     Ok(ContentNames {
         blocks: NameTable::build(crate::block::ENGINE_BLOCK_NAMES, &block_keys, "block")?,
         items: NameTable::build(crate::item::ENGINE_ITEM_NAMES, &item_keys, "item")?,

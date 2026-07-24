@@ -66,7 +66,20 @@ host_fn! {
     /// Give the player items (by registry NAME) through the normal inventory
     /// fill; overflow drops at the player's feet. `false` = unknown item name.
     pub fn give_item(item: &str, count: u8) -> bool
-        => GiveItem { item: item.into(), count } => Bool
+        => GiveItem { item: item.into(), count, data: Vec::new() } => Bool
+}
+
+host_fn! {
+    /// [`give_item`] carrying per-stack instance data (namespaced key →
+    /// value bytes; ≤4 keys, ≤64-byte values — an over-cap map is a hard
+    /// error that disables the mod). Stacks merge only on byte-identical
+    /// data.
+    pub fn give_item_data(item: &str, count: u8, data: &[(&str, &[u8])]) -> bool
+        => GiveItem {
+            item: item.into(),
+            count,
+            data: data.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect(),
+        } => Bool
 }
 
 host_fn! {

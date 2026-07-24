@@ -3,6 +3,7 @@
 //! AO/smooth-light gather over the section pad, and the packed-vertex face pushes.
 
 use crate::atlas::Tile;
+use crate::block::CellView;
 use crate::block_state::SlabState;
 use crate::chunk::SKY_FULL;
 use crate::torch::{warm_amount, warm_tint};
@@ -88,7 +89,10 @@ pub(super) fn fold_light_smooth(sum_sky: u32, sum_block: u32, cnt: u32) -> (u32,
 /// describes its OPEN half, so it only feeds a corner whose touching half-cell
 /// octant is open: a wall base resting on a top-slab floor must not blend in
 /// the under-floor darkness sealed away behind the slab's solid top half.
-/// `SlabState::EMPTY` means "not a partial slab" — always open.
+/// `SlabState::EMPTY` means "not a partial slab" — always open. `front_half`
+/// is the ring-cell half along the normal on the face plane's FRONT side
+/// (the gather computes it from the plane height — an interior plane's front
+/// half differs from a boundary plane's).
 #[inline]
 pub(super) fn slab_corner_open(
     state: SlabState,
@@ -97,28 +101,28 @@ pub(super) fn slab_corner_open(
     b: i32,
     su: i32,
     sv: i32,
+    front_half: usize,
 ) -> bool {
     if state == SlabState::EMPTY {
         return true;
     }
-    // The touching octant: along the normal, the half against the face plane;
-    // along a tangent axis, the half toward the front voxel when the cell is
-    // offset there (a/b != 0), else the half on the corner's side.
+    // The touching octant: along the normal, the half in front of the face
+    // plane; along a tangent axis, the half toward the front voxel when the
+    // cell is offset there (a/b != 0), else the half on the corner's side.
     let hu = ((su > 0) != (a != 0)) as usize;
     let hv = ((sv > 0) != (b != 0)) as usize;
-    let (dx, dy, dz) = face.dir();
     let (ux, uy, uz) = face.ao_u();
     let (vx, vy, vz) = face.ao_v();
-    let pick = |d: i32, uc: i32, vc: i32| -> usize {
+    let pick = |uc: i32, vc: i32| -> usize {
         if uc != 0 {
             hu
         } else if vc != 0 {
             hv
         } else {
-            (d < 0) as usize
+            front_half
         }
     };
-    !crate::slab::half_cell_occupied(state, pick(dx, ux, vx), pick(dy, uy, vy), pick(dz, uz, vz))
+    !crate::slab::half_cell_occupied(state, pick(ux, vx), pick(uy, vy), pick(uz, vz))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -141,6 +145,12 @@ where
 {
     let (ux, uy, uz) = face.ao_u();
     let (vx, vy, vz) = face.ao_v();
+    // The pad path meshes cube faces only, always on the voxel boundary.
+    let plane = super::builder::boundary_plane(face, wf);
+    let front_half = {
+        let (dx, dy, dz) = face.dir();
+        (dx + dy + dz < 0) as usize
+    };
 
     // Front cell's own sub-cell matter joins the interior quadrant — the
     // closure gather's `front_probe`, mirrored for byte parity.
@@ -148,8 +158,12 @@ where
         let fb = pad.block_at_pad(fx, fy, fz);
         super::builder::probe_worthy(fb)
             || (fb.is_slab() && {
-                let st =
-                    crate::slab::normalize_state(fb, pad.slab_states[mesh_pad_idx(fx, fy, fz)]);
+                let st = crate::slab::normalize_state(
+                    fb,
+                    crate::block_state::SlabState::from_cell(
+                        pad.cell_states[mesh_pad_idx(fx, fy, fz)],
+                    ),
+                );
                 !st.is_full()
             })
     };
@@ -176,13 +190,16 @@ where
             // Full slab stacks occlude AO/light like opaque cubes; partial slab
             // states are kept for the per-corner octant gate below — mirrors the
             // closure-path gather in `cube_face_lighting` (byte parity).
-            let slab_state = cell
-                .is_slab()
-                .then(|| crate::slab::normalize_state(cell, pad.slab_states[i]));
+            let slab_state = cell.is_slab().then(|| {
+                crate::slab::normalize_state(
+                    cell,
+                    crate::block_state::SlabState::from_cell(pad.cell_states[i]),
+                )
+            });
             let full_stack = slab_state.is_some_and(|s| s.is_full());
             occ[ia][ib] = cell.occludes_ao() || full_stack;
-            probe_cell[ia][ib] = !occ[ia][ib]
-                && (super::builder::probe_worthy(cell) || slab_state.is_some());
+            probe_cell[ia][ib] =
+                !occ[ia][ib] && (super::builder::probe_worthy(cell) || slab_state.is_some());
             if smooth_light {
                 opq[ia][ib] = cell.is_opaque() || full_stack;
                 if !opq[ia][ib] {
@@ -212,7 +229,7 @@ where
             || (probe_cell[1][iv] && !s2)
             || (probe_cell[iu][iv] && !c)
         {
-            let pk = super::builder::corner_cast_probes(face, wf, su, sv);
+            let pk = super::builder::corner_cast_probes(face, wf, su, sv, plane);
             let cell_of = |s_u: i32, s_v: i32| {
                 (
                     wf.0 + s_u * ux + s_v * vx,
@@ -249,7 +266,7 @@ where
         let mut sum_block = f_bl;
         let mut cnt = 1u32;
         for (ia, ib, a, b) in [(iu, 1, su, 0), (1, iv, 0, sv), (iu, iv, su, sv)] {
-            if opq[ia][ib] || !slab_corner_open(slab[ia][ib], face, a, b, su, sv) {
+            if opq[ia][ib] || !slab_corner_open(slab[ia][ib], face, a, b, su, sv, front_half) {
                 continue;
             }
             sum += sky[ia][ib];
@@ -277,8 +294,10 @@ pub(super) fn push_cube_face_with_cell_uvs(
     light6: [u32; 4],
     block6: [u32; 4],
     warm: [f32; 4],
+    dyed: bool,
 ) -> [u32; 6] {
     let shade_idx = face.shade_idx();
+    let dyed = if dyed { super::vertex::DYED_FLAG2 } else { 0 };
     let packed_uv_mode = if cell_uvs.is_some() {
         UV_MODE_CELL_LOCAL
     } else {
@@ -313,7 +332,8 @@ pub(super) fn push_cube_face_with_cell_uvs(
             ) | (packed_uv_mode << UV_MODE_SHIFT),
             packed2: pack_vertex2(block6[corner])
                 | explicit_uv
-                | pack_normal_code(face.normal_code()),
+                | pack_normal_code(face.normal_code())
+                | dyed,
         });
     }
     // Flip the triangulation so the split runs along the darker diagonal -- keeps

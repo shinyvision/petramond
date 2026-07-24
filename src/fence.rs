@@ -14,8 +14,6 @@
 //! (pane-style, at the post's thickness).
 
 use crate::block::Aabb;
-use crate::connect;
-use crate::mathh::{IVec3, Vec3, MAX_SELECTION_BOXES};
 
 /// The post's horizontal extent: `4/16` across, centred in the cell.
 pub const POST_LO: f32 = 6.0 / 16.0;
@@ -42,13 +40,6 @@ pub const RAIL_TOP_LO: f32 = 11.0 / 16.0;
 pub const RAIL_TOP_HI: f32 = 14.0 / 16.0;
 pub const RAIL_BOT_LO: f32 = 2.0 / 16.0;
 pub const RAIL_BOT_HI: f32 = 5.0 / 16.0;
-
-/// Cell-local boxes lifted to world space for the selection outline (a fence
-/// has at most 2 runs, under the outline cap).
-#[inline]
-pub fn world_boxes(origin: IVec3, boxes: &[Aabb]) -> ([(Vec3, Vec3); MAX_SELECTION_BOXES], u8) {
-    connect::world_boxes(origin, boxes)
-}
 
 /// The out-of-world fence (inventory icon, held item, dropped stack): two posts
 /// at the cell's edges joined by the two rails — a complete fence segment in

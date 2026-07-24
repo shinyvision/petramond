@@ -14,10 +14,11 @@
 //! pane (per-corner AO would smear on thin geometry).
 
 use crate::atlas::Tile;
+use crate::block::Aabb;
 use crate::fence::{rail_cross, RAIL_BOT_HI, RAIL_BOT_LO, RAIL_TOP_HI, RAIL_TOP_LO};
 use crate::pane::{EAST, NORTH, SOUTH, WEST};
 
-use super::boxset::{FaceStyle, MeshBox};
+use super::boxset::{ShapeBox, ShapeFace};
 use super::face::Face;
 
 /// One box of the connected fence shape.
@@ -37,7 +38,11 @@ pub(crate) fn shape_boxes(
     mask: u8,
     mut visit: impl FnMut([f32; 3], [f32; 3], FenceBox),
 ) {
-    visit([post_lo, 0.0, post_lo], [post_hi, 1.0, post_hi], FenceBox::Post);
+    visit(
+        [post_lo, 0.0, post_lo],
+        [post_hi, 1.0, post_hi],
+        FenceBox::Post,
+    );
 
     // The rail cross-section tracks the post (a modded wall keeps rails on its
     // own post), not fixed engine constants.
@@ -98,10 +103,10 @@ pub(crate) fn shape_faces(
     });
 }
 
-/// The connected fence shape as [`MeshBox`]es for the unified emitter:
+/// The connected fence shape as [`ShapeBox`]es for the unified emitter:
 /// `[top, bottom, side]` tiles, rail end caps omitted.
-pub(super) fn push_mesh_boxes(
-    out: &mut Vec<MeshBox>,
+pub(crate) fn push_mesh_boxes(
+    out: &mut Vec<ShapeBox>,
     post_lo: f32,
     post_hi: f32,
     mask: u8,
@@ -110,7 +115,7 @@ pub(super) fn push_mesh_boxes(
 ) {
     shape_boxes(post_lo, post_hi, mask, |min, max, kind| {
         let style = |tile: Tile| {
-            Some(FaceStyle {
+            Some(ShapeFace {
                 tile,
                 swap_uv: false,
                 tint,
@@ -124,6 +129,11 @@ pub(super) fn push_mesh_boxes(
                 faces[face as usize] = None;
             }
         }
-        out.push(MeshBox { min, max, faces });
+        out.push(ShapeBox {
+            aabb: Aabb { min, max },
+            faces,
+            ao_strength: 1.0,
+            dyed: false,
+        });
     });
 }

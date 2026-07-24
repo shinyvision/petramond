@@ -200,6 +200,18 @@ pub(crate) fn shape_kind_id_by_key(key: &str) -> Option<u8> {
         .map(|i| i as u8)
 }
 
+/// Whether ANY registered shape kind declares `key` as its per-cell state key
+/// — the cheap gate the cell-KV write path checks before probing a
+/// neighbourhood for stateful custom shapes to re-bake. Almost every KV write
+/// carries an unrelated key, so the common case must cost one small-table
+/// scan, not seven world reads.
+pub(crate) fn state_key_declared(key: &str) -> bool {
+    REGISTRY
+        .shape_kinds
+        .iter()
+        .any(|d| d.params.state_key() == Some(key))
+}
+
 /// Dense per-id [`ShapeFamily`] — the hot shape classifier, one small-array
 /// read (see the `shape_family` field on [`load::Registry`]).
 #[inline]

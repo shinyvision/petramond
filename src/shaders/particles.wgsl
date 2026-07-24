@@ -19,7 +19,7 @@ struct Uniforms {
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
     render_origin: vec4<f32>,
-    water_anim: vec4<u32>,
+    atlas_anim: vec4<u32>,
     sky_color: vec4<f32>,
     // xyz = unit sun direction, w = daylight [0,1] (atmosphere sun-glow).
     sun_dir: vec4<f32>,

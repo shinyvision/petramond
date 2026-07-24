@@ -226,6 +226,7 @@ fn bake_item_entities(
     out.extend(items.iter().map(|d| ItemEntityInstance {
         pos: d.prev_pos.lerp(d.pos, alpha),
         item: d.item,
+        variant: d.variant,
         count: d.count,
         spin: lerp_angle(d.prev_spin, d.spin, alpha),
         skylight: d.skylight,
@@ -301,6 +302,7 @@ mod tests {
     /// A settled drop with `prev_pos == pos`, so it bakes to `pos` at any alpha.
     fn fresh_drop(pos: Vec3, item: ItemType) -> DroppedItemPresentation {
         DroppedItemPresentation {
+            variant: crate::item::VariantId::NONE,
             prev_pos: pos,
             pos,
             item,
@@ -317,7 +319,7 @@ mod tests {
             atlas,
             pos: Vec3::new(0.0, 64.0, 0.0),
             uv_min: [0.0, 0.0],
-            uv_size: 0.0625,
+            uv_size: [0.0625; 2],
             tint: [1.0, 1.0, 1.0],
             warm: 0,
             alpha: 1.0,

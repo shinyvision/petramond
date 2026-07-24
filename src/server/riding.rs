@@ -75,11 +75,7 @@ impl ServerGame {
                 spectator: sess.player.is_spectator(),
                 sneak: sess.sneaking(),
                 held: sess.selected_item(),
-                held_count: sess
-                    .player
-                    .inventory
-                    .selected()
-                    .map_or(0, |st| st.count),
+                held_count: sess.player.inventory.selected().map_or(0, |st| st.count),
             })
             .collect();
         roster.sort_by_key(|p| p.id);

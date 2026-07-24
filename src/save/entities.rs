@@ -8,13 +8,13 @@
 //! block/biome/water data; see `save::codec`.
 
 use crate::entity::DroppedItem;
-use crate::item::{ItemStack, ItemType};
 use crate::mathh::Vec3;
-use crate::save::codec::{put_f32, put_u16, put_u32, put_u8, Reader};
+use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u16, put_u32, Reader};
 
-/// Bytes per serialized entity: pos(12) + vel(12) + item(1) + count(1) +
-/// ticks_lived(4) + spin(4).
-const ENTITY_BYTES: usize = 34;
+/// Bytes per serialized entity: pos(12) + vel(12) + slot(4, plain stack) +
+/// ticks_lived(4) + spin(4). Data-bearing stacks append their blob past this;
+/// the constant is only a reserve hint.
+const ENTITY_BYTES: usize = 36;
 
 /// Append a `u16`-length-prefixed list of item entities to `buf`. The count is
 /// capped at `u16::MAX` (a chunk never holds anywhere near that many drops).
@@ -29,11 +29,7 @@ pub fn put_entities(buf: &mut Vec<u8>, items: &[DroppedItem]) {
         put_f32(buf, it.vel.x);
         put_f32(buf, it.vel.y);
         put_f32(buf, it.vel.z);
-        put_u8(
-            buf,
-            super::palette::active().item_to_disk(it.stack.item.id()),
-        );
-        put_u8(buf, it.stack.count);
+        put_item_slot(buf, Some(it.stack));
         put_u32(buf, it.ticks_lived);
         put_f32(buf, it.spin);
     }
@@ -48,14 +44,12 @@ pub fn get_entities(r: &mut Reader) -> Option<Vec<DroppedItem>> {
     for _ in 0..n {
         let pos = Vec3::new(r.f32()?, r.f32()?, r.f32()?);
         let vel = Vec3::new(r.f32()?, r.f32()?, r.f32()?);
-        let id = super::palette::active().item_from_disk(r.u8()?);
-        let count = r.u8()?;
+        let slot = get_item_slot(r)?;
         let ticks_lived = r.u32()?;
         let spin = r.f32()?;
-        let stack = ItemStack::new(ItemType::from_id(id), count);
-        if stack.is_empty() {
+        let Some(stack) = slot else {
             continue;
-        }
+        };
         let mut d = DroppedItem::new(pos, stack, 0);
         d.vel = vel;
         d.ticks_lived = ticks_lived;
@@ -68,6 +62,7 @@ pub fn get_entities(r: &mut Reader) -> Option<Vec<DroppedItem>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::item::{ItemStack, ItemType};
 
     #[test]
     fn entities_roundtrip_through_a_buffer() {
@@ -101,6 +96,26 @@ mod tests {
         assert_eq!(got[0].spin, 1.25);
         assert_eq!(got[1].stack, b.stack);
         assert_eq!(got[1].ticks_lived, 0);
+    }
+
+    #[test]
+    fn instance_data_survives_the_entity_roundtrip() {
+        use crate::item::variant;
+        let mut m = variant::VariantMap::new();
+        m.insert("petramond:tint".into(), vec![1, 2, 3]);
+        let v = variant::intern(&m).unwrap();
+        let d = DroppedItem::new(
+            Vec3::new(0.0, 64.0, 0.0),
+            crate::item::ItemStack::with_variant(ItemType::Stone, 2, v),
+            1,
+        );
+        let mut buf = Vec::new();
+        put_entities(&mut buf, &[d]);
+        let got = get_entities(&mut Reader::new(&buf)).expect("decodes");
+        assert_eq!(
+            got[0].stack.variant, v,
+            "the blob re-interns to the same id"
+        );
     }
 
     #[test]

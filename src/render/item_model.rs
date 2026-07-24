@@ -282,17 +282,50 @@ fn push_quad(
     }
 }
 
+/// Apply a stack's `petramond:tint` to already-built extruded-sprite verts:
+/// multiply the tint in and shift the UVs into the atlas's dye-base half
+/// (desaturated, peak-white twins), so the tint can both dye and whiten.
+/// No-op for a plain stack.
+pub(super) fn dye_item_verts(verts: &mut [ItemVertex], variant: crate::item::VariantId) {
+    let Some(t) = crate::item::variant::tint(variant) else {
+        return;
+    };
+    for v in verts.iter_mut() {
+        v.tint = [v.tint[0] * t[0], v.tint[1] * t[1], v.tint[2] * t[2]];
+        v.uv[1] += crate::atlas::DYE_V_OFFSET;
+    }
+}
+
+/// The packed-[`Vertex`] twin of [`dye_item_verts`]: apply a stack's
+/// `petramond:tint` to already-built block verts (held mini-cube, dropped
+/// cube, third-person hand) — multiply the tint in and set
+/// [`crate::mesh::DYED_FLAG2`] so the shader samples the dye-base twin.
+/// No-op for a plain stack. Every `Vertex` dye path routes through here so
+/// no caller can multiply without the flag (or vice versa).
+///
+/// [`Vertex`]: crate::mesh::Vertex
+pub(super) fn dye_block_verts(verts: &mut [crate::mesh::Vertex], variant: crate::item::VariantId) {
+    let Some(t) = crate::item::variant::tint(variant) else {
+        return;
+    };
+    for v in verts.iter_mut() {
+        let base = crate::mesh::unpack_tint(v.tint);
+        v.tint = crate::mesh::pack_tint([base[0] * t[0], base[1] * t[1], base[2] * t[2]]);
+        v.packed2 |= crate::mesh::DYED_FLAG2;
+    }
+}
+
+#[cfg(test)]
+pub fn build_extruded_item(tile: Tile, out: &mut Vec<ItemVertex>) -> u32 {
+    build_extruded_item_lit(tile, DynLight::FULL, LightEnv::IDENTITY, out)
+}
+
 /// Build the extruded held-item mesh for `tile` into `out` (cleared first,
 /// capacity reused — no growth once warmed). Returns the vertex count. The mesh
 /// is a non-indexed triangle list (the item3d pipeline draws it with `draw`).
 ///
 /// FRONT/BACK are the full tile (alpha-cutout in the shader); side walls are
 /// emitted per alpha-boundary texel edge with that texel's own sub-UV.
-#[cfg(test)]
-pub fn build_extruded_item(tile: Tile, out: &mut Vec<ItemVertex>) -> u32 {
-    build_extruded_item_lit(tile, DynLight::FULL, LightEnv::IDENTITY, out)
-}
-
 pub(super) fn build_extruded_item_lit(
     tile: Tile,
     light: DynLight,

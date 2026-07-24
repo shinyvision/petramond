@@ -294,7 +294,7 @@ impl Inventory {
             return;
         }
         match cursor {
-            None => *cursor = Some(ItemStack::new(output.item, moved)),
+            None => *cursor = Some(output.restack(moved)),
             Some(held) => held.count += moved,
         }
         output.count -= moved;
@@ -306,13 +306,12 @@ impl Inventory {
             (None, Some(mut s)) => {
                 // ceil(count / 2): the dragged half is the larger one.
                 let take = s.count - s.count / 2;
-                let item = s.item;
                 s.count -= take;
-                *cursor = Some(ItemStack::new(item, take));
+                *cursor = Some(s.restack(take));
                 *slot = (s.count > 0).then_some(s);
             }
             (Some(mut c), None) => {
-                *slot = Some(ItemStack::new(c.item, 1));
+                *slot = Some(c.restack(1));
                 c.count -= 1;
                 *cursor = (c.count > 0).then_some(c);
             }

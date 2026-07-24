@@ -9,7 +9,10 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use mod_api::{ClientFrameData, ClientUiEvent, EventKind, EventPayload, GuestCall, GuestRet, Outcome, PlayerSnapshot, RuntimeSide};
+use mod_api::{
+    ClientFrameData, ClientUiEvent, EventKind, EventPayload, GuestCall, GuestRet, Outcome,
+    PlayerSnapshot, RuntimeSide,
+};
 
 use crate::world::World;
 
@@ -136,7 +139,14 @@ impl ClientModRuntime {
                 } = reg
                 {
                     if predictable(event) {
-                        predictor_rows.push((priority, Predictor { kind: event, mod_index, handler_id }));
+                        predictor_rows.push((
+                            priority,
+                            Predictor {
+                                kind: event,
+                                mod_index,
+                                handler_id,
+                            },
+                        ));
                     } else {
                         log::warn!(
                             "client mod '{id}': event kind {event:?} is not predictable on a client instance; handler ignored"
@@ -336,7 +346,7 @@ impl ClientModRuntime {
         input: mod_api::CellInput,
     ) -> (
         Option<Vec<crate::block::Aabb>>,
-        Option<Box<[crate::block::Aabb]>>,
+        Option<Box<[crate::block::ShapeRenderBox]>>,
     ) {
         let Some(loaded) = self.owner_mod_mut(shape_key) else {
             return (None, None);
@@ -396,8 +406,10 @@ impl ClientModRuntime {
         // A BTreeMap (not HashMap) over the position-sorted drain gives the same
         // dispatch order the server uses (C1) — the SIM bake is cross-checked
         // against the server, so the two sides must dispatch identically.
-        let mut groups: std::collections::BTreeMap<(&'static str, u8), Vec<crate::world::CustomBakeCell>> =
-            std::collections::BTreeMap::new();
+        let mut groups: std::collections::BTreeMap<
+            (&'static str, u8),
+            Vec<crate::world::CustomBakeCell>,
+        > = std::collections::BTreeMap::new();
         for cell in cells {
             groups
                 .entry((cell.shape_key, cell.shape_kind))
@@ -405,15 +417,21 @@ impl ClientModRuntime {
                 .push(cell);
         }
         // Dispatch under an immutable world borrow, collect, then populate.
-        let mut baked_sim: Vec<(crate::mathh::IVec3, Vec<crate::block::Aabb>, mod_api::LightAperture)> =
+        let mut baked_sim: Vec<(
+            crate::mathh::IVec3,
+            Vec<crate::block::Aabb>,
+            mod_api::LightAperture,
+        )> = Vec::new();
+        let mut baked_render: Vec<(crate::mathh::IVec3, Box<[crate::block::ShapeRenderBox]>)> =
             Vec::new();
-        let mut baked_render: Vec<(crate::mathh::IVec3, Box<[crate::block::Aabb]>)> = Vec::new();
         for ((shape_key, shape_kind), group) in &groups {
             let Some(loaded) = self.owner_mod_mut(shape_key) else {
                 continue;
             };
-            let inputs: Vec<mod_api::CellInput> =
-                group.iter().map(crate::modding::shape_bake::cell_input).collect();
+            let inputs: Vec<mod_api::CellInput> = group
+                .iter()
+                .map(crate::modding::shape_bake::cell_input)
+                .collect();
             // SIM bake → collision (also cross-checked against the server). A
             // sanitation/protocol breach disables the mod; skip the render bake
             // explicitly rather than relying on the no-op-on-disabled path.
@@ -421,7 +439,9 @@ impl ClientModRuntime {
                 shape_kind: *shape_kind,
                 cells: inputs.clone(),
             };
-            if let Some(GuestRet::BakedSim(baked)) = loaded.instance.call_guest_client(world, &sim_call) {
+            if let Some(GuestRet::BakedSim(baked)) =
+                loaded.instance.call_guest_client(world, &sim_call)
+            {
                 match crate::modding::shape_bake::ingest_sim_bake(&baked, group.len()) {
                     crate::modding::shape_bake::BakeIngest::Apply(cells) => {
                         for (c, (boxes, aperture)) in group.iter().zip(cells) {

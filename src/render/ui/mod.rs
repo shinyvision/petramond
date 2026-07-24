@@ -59,14 +59,14 @@ pub struct UiBuild {
     pub hearts: Vec<UiVertex>,
     /// One `(item, slot rect)` per filled slot. The renderer resolves each to its
     /// pre-baked icon-atlas cell and emits a textured quad.
-    pub icon_quads: Vec<(ItemType, SlotRect)>,
+    pub icon_quads: Vec<(ItemType, SlotRect, [f32; 4], bool)>,
     /// Recipe-browser icons embedded in document hooks. Each carries the
     /// inherited scroll clip and whether the unavailable row should dim it.
     pub hook_icon_quads: Vec<HookIconQuad>,
     /// Stack-count digits (solid), drawn over the icons.
     pub counts: Vec<UiVertex>,
     /// Cursor-held item icon, drawn front-most.
-    pub drag_icon_quads: Vec<(ItemType, SlotRect)>,
+    pub drag_icon_quads: Vec<(ItemType, SlotRect, [f32; 4], bool)>,
     /// Cursor-held stack-count digits, drawn over the cursor icon.
     pub drag_counts: Vec<UiVertex>,
     /// The hurt-flash edge vignette (solid, per-vertex alpha gradient), drawn
@@ -168,15 +168,15 @@ fn push_doc_game_content(
             h: (slot.rect.h - 2.0 * inset).max(0.0),
         };
         let i = slot.index as usize;
-        let Some((item, count)) = slot_item(ui, slot.role, i) else {
+        let Some(stack) = slot_item(ui, slot.role, i) else {
             continue;
         };
-        if item == ItemType::Air || count == 0 {
+        if stack.item == ItemType::Air || stack.count == 0 {
             continue;
         }
-        icon::push_slot_icon(build, screen, item, r);
-        if count > 1 {
-            icon::push_count(&mut build.counts, screen, count, r, scale);
+        icon::push_slot_icon(build, screen, &stack, r);
+        if stack.count > 1 {
+            icon::push_count(&mut build.counts, screen, stack.count as u32, r, scale);
         }
     }
 
@@ -190,8 +190,8 @@ fn push_doc_game_content(
 
     // Cursor-held stack (drag/drop), front-most — only with a menu open.
     if ui.open {
-        if let Some((item, count)) = ui.cursor {
-            if item != ItemType::Air && count > 0 {
+        if let Some(stack) = ui.cursor {
+            if stack.item != ItemType::Air && stack.count > 0 {
                 let s = SLOT_PX * scale;
                 let (cx, cy) = ui.cursor_px;
                 let r = SlotRect {
@@ -200,9 +200,14 @@ fn push_doc_game_content(
                     w: s,
                     h: s,
                 };
-                build.drag_icon_quads.push((item, r));
-                if count > 1 {
-                    icon::push_count(&mut build.drag_counts, screen, count as u32, r, scale);
+                build.drag_icon_quads.push((
+                    stack.item,
+                    r,
+                    icon::stack_tint(&stack),
+                    icon::stack_dyed(&stack),
+                ));
+                if stack.count > 1 {
+                    icon::push_count(&mut build.drag_counts, screen, stack.count as u32, r, scale);
                 }
             }
         }
@@ -477,34 +482,19 @@ pub(super) fn intersect_rect(a: SlotRect, b: SlotRect) -> Option<SlotRect> {
 /// The game state filling slot `i` of `role`, as `(item, count)` — the one place
 /// that maps a slot role to its backing model. `None` for an empty slot or a
 /// decorative role.
-fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<(ItemType, u32)> {
-    let stack = |s: crate::item::ItemStack| (s.item, s.count as u32);
+fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<crate::item::ItemStack> {
     match role {
-        Role::Storage => ui
-            .chest
-            .and_then(|c| c.slots.get(i).copied().flatten())
-            .map(stack),
-        Role::Hotbar => ui
-            .slots
-            .get(i)
-            .copied()
-            .flatten()
-            .map(|(it, c)| (it, c as u32)),
-        Role::PlayerInv => ui
-            .slots
-            .get(HOTBAR_LEN + i)
-            .copied()
-            .flatten()
-            .map(|(it, c)| (it, c as u32)),
-        Role::CraftResult => ui.craft_output.map(|(it, c)| (it, c as u32)),
-        Role::FurnaceInput => ui.furnace.and_then(|f| f.input).map(stack),
-        Role::FurnaceFuel => ui.furnace.and_then(|f| f.fuel).map(stack),
-        Role::FurnaceOutput => ui.furnace.and_then(|f| f.output).map(stack),
+        Role::Storage => ui.chest.and_then(|c| c.slots.get(i).copied().flatten()),
+        Role::Hotbar => ui.slots.get(i).copied().flatten(),
+        Role::PlayerInv => ui.slots.get(HOTBAR_LEN + i).copied().flatten(),
+        Role::CraftResult => ui.craft_output,
+        Role::FurnaceInput => ui.furnace.and_then(|f| f.input),
+        Role::FurnaceFuel => ui.furnace.and_then(|f| f.fuel),
+        Role::FurnaceOutput => ui.furnace.and_then(|f| f.output),
         Role::Container => ui
             .container
             .as_ref()
-            .and_then(|c| c.slots.get(i).copied().flatten())
-            .map(stack),
+            .and_then(|c| c.slots.get(i).copied().flatten()),
         Role::Generic | Role::Other => None,
     }
 }
@@ -680,7 +670,7 @@ mod tests {
             active: 2,
             ..Default::default()
         };
-        s.slots[0] = Some((ItemType::Stone, 64));
+        s.slots[0] = Some(crate::item::ItemStack::new(ItemType::Stone, 64));
         s
     }
 
@@ -706,7 +696,7 @@ mod tests {
 
         // No solved document (and therefore no slots): game content draws nothing.
         let mut s = snap(GuiKind::Inventory, true);
-        s.cursor = Some((ItemType::Dirt, 12));
+        s.cursor = Some(crate::item::ItemStack::new(ItemType::Dirt, 12));
         build(&s, None, &mut b);
         assert!(b.icon_quads.is_empty() && b.drag_icon_quads.is_empty() && b.counts.is_empty());
     }
@@ -814,10 +804,10 @@ mod tests {
         let mut b = UiBuild::default();
         let mut s = snap(GuiKind::Inventory, true);
         let slots = [cell(Role::Hotbar, 0), cell(Role::Hotbar, 1)];
-        s.cursor = Some((ItemType::Dirt, 12));
+        s.cursor = Some(crate::item::ItemStack::new(ItemType::Dirt, 12));
         build(&s, Some(&slots), &mut b);
         assert_eq!(b.icon_quads.len(), 1, "only the filled cell draws an icon");
-        let (item, r) = b.icon_quads[0];
+        let (item, r, _color, _dyed) = b.icon_quads[0];
         assert_eq!(item, ItemType::Stone);
         let outer = cell(Role::Hotbar, 0).rect;
         assert!(

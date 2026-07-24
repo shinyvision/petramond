@@ -61,5 +61,8 @@ fn stacked_fences_bury_the_shared_post_cap() {
         .opaque
         .chunks(4)
         .any(|q| q.iter().all(|v| (v.pos[1] - seam).abs() < f32::EPSILON));
-    assert!(!cap_on_seam, "no cap may lie on the shared horizontal plane");
+    assert!(
+        !cap_on_seam,
+        "no cap may lie on the shared horizontal plane"
+    );
 }

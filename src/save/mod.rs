@@ -22,7 +22,6 @@ pub(crate) mod palette;
 pub mod player;
 mod region;
 pub mod settings;
-mod torch;
 mod worlds;
 
 #[cfg(test)]

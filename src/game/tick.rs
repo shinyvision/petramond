@@ -123,6 +123,9 @@ pub enum WorldEvent {
         pos: IVec3,
         block: Block,
         normal: Option<IVec3>,
+        /// The cell's `petramond:tint` KV at break time (the KV is wiped with
+        /// the block, so the burst tint must ride the event).
+        tint: Option<[u8; 3]>,
     },
     BlockPlaced {
         pos: IVec3,
@@ -268,6 +271,9 @@ pub(crate) struct BlockBrokenEvent {
     pub(crate) block: Block,
     /// The mined face (for directional burst spread), when known.
     pub(crate) normal: Option<IVec3>,
+    /// The cell's `petramond:tint` KV at break time (see
+    /// [`WorldEvent::BlockBroken`]).
+    pub(crate) tint: Option<[u8; 3]>,
 }
 
 /// The WORLD-anchored slice of what the tick did: non-lossy queues every

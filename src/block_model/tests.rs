@@ -413,9 +413,11 @@ fn compiled_block_model_layout_change_requires_a_format_version_bump() {
             "firstperson_righthand": { "rotation": [0, 15, 0] }
         }
     }"##;
-    let m =
-        BlockModel::compile(SRC.replace("\"URI\"", &format!("\"{GOLDEN_URI}\"")).as_bytes())
-            .expect("canonical block model compiles");
+    let m = BlockModel::compile(
+        SRC.replace("\"URI\"", &format!("\"{GOLDEN_URI}\""))
+            .as_bytes(),
+    )
+    .expect("canonical block model compiles");
     let bytes = bincode::serialize(&m).expect("serializes");
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     assert!(

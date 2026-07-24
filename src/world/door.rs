@@ -78,19 +78,20 @@ impl World {
             let Some(section) = self.sections.get(sp) else {
                 continue;
             };
-            let doors = section.doors();
-            if doors.is_empty() {
+            if section.cell_states().is_empty() {
                 continue;
             }
             let (ox, oy, oz) = section.origin_world();
-            for (&key, &state) in doors {
+            for &key in section.cell_states().keys() {
+                let (lx, ly, lz) = crate::chunk::section_local(key as usize);
+                // The gated wrapper answers `None` for every non-door state
+                // sharing the unified map (stairs, torch mounts, fronts).
+                let Some(state) = section.door_state(lx, ly, lz) else {
+                    continue;
+                };
                 if state.top {
                     continue; // emit once per door, from its lower cell
                 }
-                // Invert the section-local block index (idx = y*256 + z*16 + x).
-                let lx = (key & 0x0F) as usize;
-                let lz = ((key >> 4) & 0x0F) as usize;
-                let ly = (key >> 8) as usize;
                 // The door BlockDef row's [top, bottom, side] tiles: front-face art for
                 // each half, plus the distinct edge tile.
                 let [top, bottom, side] = Block::from_id(section.block_raw(lx, ly, lz)).tiles();

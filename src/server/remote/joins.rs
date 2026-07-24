@@ -149,12 +149,7 @@ fn self_restore_from(player: &crate::player::Player) -> SelfRestore {
             .iter()
             .copied()
             .chain(std::iter::once(player.inventory.cursor().copied()))
-            .map(|slot| {
-                slot.map(|st| ItemSlotWire {
-                    item_id: st.item.0,
-                    count: st.count,
-                })
-            })
+            .map(|slot| slot.map(ItemSlotWire::from_stack))
             .collect(),
         active_slot: player.inventory.active_slot(),
         craft_craftable_only: player.craft_craftable_only,

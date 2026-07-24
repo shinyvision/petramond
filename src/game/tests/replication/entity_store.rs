@@ -131,6 +131,7 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
                 id: 9,
                 item_id: ItemType::Dirt.0,
                 count: 1,
+                data: None,
                 pos: Vec3::new(x, 69.0, 0.0),
                 spin: 0.0,
             }],
@@ -149,6 +150,7 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
                 alive: true,
                 visible: true,
                 held_item: None,
+                held_data: None,
                 mining: None,
                 eating: false,
                 hurt_recent: false,
@@ -419,22 +421,24 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
     assert_ne!(id, 0, "entering the active set assigns a stable id");
 
     let batch1 = pump_one_tick(&mut game);
-    let row1 = *batch1
+    let row1 = batch1
         .items
         .iter()
         .find(|i| i.id == id)
-        .expect("the drop replicates");
+        .expect("the drop replicates")
+        .clone();
     assert_eq!(row1.item_id, ItemType::Dirt.0);
     assert_eq!(row1.count, 3);
     game.apply_tick_update(batch1);
     game.commit_replication_window_for_test();
 
     let batch2 = pump_one_tick(&mut game);
-    let row2 = *batch2
+    let row2 = batch2
         .items
         .iter()
         .find(|i| i.id == id)
-        .expect("still replicating");
+        .expect("still replicating")
+        .clone();
     game.apply_tick_update(batch2);
     game.commit_replication_window_for_test();
 

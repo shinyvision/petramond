@@ -2,17 +2,37 @@
 //! the post + full-height-arm box model that fences, panes, and the Layer-2
 //! parameterized wall/bar families all build from.
 //!
-//! A connection shape stores NO per-cell state — its shape is a 4-bit mask of
-//! horizontal connections resolved from the current neighbours every time it is
-//! queried (like stair corners), so placing or removing a neighbour reshapes it
-//! through the ordinary neighbourhood remesh with nothing to persist. Only the
-//! post thickness (the box extent) and the per-neighbour connection rule differ
-//! between families; both are parameters here, so a family is its dimensions +
-//! its `connects` predicate, not a copy of this module.
+//! A connection shape's 4-bit mask of horizontal connections is REFINED
+//! per-cell state: the edit cascade resolves it (through [`resolved_mask`] +
+//! the rule here) and stores it as a [`ConnectionMask`]; every read decodes
+//! the stored byte. Only the post thickness (the box extent) and the
+//! per-neighbour connection rule differ between families; both are
+//! parameters here, so a family is its dimensions + its `connects`
+//! predicate, not a copy of this module.
 
-use crate::block::{Aabb, Block, BlockTag, ConnectionRule, ShapeFamily};
+use crate::block::{Aabb, Block, BlockTag, ConnectionRule, FullFace, ShapeFamily};
 use crate::mathh::{IVec3, Vec3, MAX_SELECTION_BOXES};
-use crate::stair::StairShape;
+
+/// A connection shape's REFINED 4-bit mask as cell state — written by the
+/// fence/pane families' refine, decoded wherever the resolved arms are read.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct ConnectionMask(pub u8);
+
+impl crate::block::CellView for ConnectionMask {
+    fn owns(block: Block) -> bool {
+        // Any connection family (engine fence/pane or a parameterized
+        // wall/bar) — identified by its params, not a family list.
+        block.shape_kind_def().params.connection().is_some()
+    }
+    fn from_cell(s: crate::block::ShapeState) -> Self {
+        Self(s.byte(0) & 0b1111)
+    }
+}
+impl crate::block::CellCodec for ConnectionMask {
+    fn to_cell(&self) -> crate::block::ShapeState {
+        crate::block::ShapeState::new(&[self.0])
+    }
+}
 
 /// Connection-mask bits, one per horizontal side.
 pub const WEST: u8 = 0b0001;
@@ -30,32 +50,23 @@ pub const SIDES: [(u8, (i32, i32)); 4] = [
 
 /// Resolve the 4-bit connection mask for a connection shape at `pos` from its
 /// horizontal neighbours. Callers supply the neighbour reads so the same rules
-/// serve the world (collision/selection/placement) and the mesher (padded
-/// snapshot); `stair_shape`/`slab_full` are consulted lazily (only for stair /
-/// slab neighbours), so an expensive neighbour resolve happens only when the
-/// `connects` predicate actually asks. `connects` receives the neighbour block,
-/// the outgoing direction `(dx, dz)`, and thunks for that neighbour's resolved
-/// stair shape and full-slab flag.
-pub fn resolved_mask<B, T, L, C>(
-    pos: IVec3,
-    mut block_at: B,
-    mut stair_shape: T,
-    mut slab_full: L,
-    connects: C,
-) -> u8
+/// serve every asker; `full_face` is the neighbour FAMILY's answer to "is your
+/// face toward me a complete surface?" (`ShapeSim::full_face` — this module
+/// holds NO family knowledge), consulted lazily only when the rule needs
+/// geometry. `connects` receives the neighbour block, the outgoing direction
+/// `(dx, dz)`, and that thunk.
+pub fn resolved_mask<B, F, C>(pos: IVec3, mut block_at: B, mut full_face: F, connects: C) -> u8
 where
     B: FnMut(IVec3) -> Block,
-    T: FnMut(IVec3) -> StairShape,
-    L: FnMut(IVec3) -> bool,
-    C: Fn(Block, (i32, i32), &mut dyn FnMut() -> StairShape, &mut dyn FnMut() -> bool) -> bool,
+    F: FnMut(IVec3, (i32, i32)) -> Option<FullFace>,
+    C: Fn(Block, (i32, i32), &mut dyn FnMut() -> Option<FullFace>) -> bool,
 {
     let mut mask = 0;
     for (bit, (dx, dz)) in SIDES {
         let n = pos + IVec3::new(dx, 0, dz);
         let nb = block_at(n);
-        let mut st = || stair_shape(n);
-        let mut sl = || slab_full(n);
-        if connects(nb, (dx, dz), &mut st, &mut sl) {
+        let mut ff = || full_face(n, (dx, dz));
+        if connects(nb, (dx, dz), &mut ff) {
             mask |= bit;
         }
     }
@@ -64,18 +75,19 @@ where
 
 /// Whether a connection shape of `self_family` under `rule` grows an arm toward
 /// neighbour `nb` in outgoing direction `(dx, dz)`. Same-family shapes join
-/// under every rule but [`Never`](ConnectionRule::Never); the cube/stair/slab
-/// cases follow the rule (opaque vs solid cubes, full-face stairs, full slab
-/// stacks). The thunks are evaluated only for stair / slab neighbours. This is
-/// the single param-driven predicate the engine fence/pane and every Layer-2
-/// wall/bar pass to [`resolved_mask`].
+/// under every rule but [`Never`](ConnectionRule::Never); everything else asks
+/// the neighbour FAMILY for its face (`full_face`, lazy) and applies the
+/// rule's MATERIAL gate to full-cube faces only — the historical semantics
+/// (a wooden stair's complete back joins a wood-tight fence even though the
+/// stair block is not opaque; a glass CUBE joins only the glass-tight rule).
+/// This module holds no family knowledge: a mod family with a complete face
+/// joins with no engine edit.
 pub fn connects(
     rule: ConnectionRule,
     self_family: ShapeFamily,
     nb: Block,
-    (dx, dz): (i32, i32),
-    stair_shape: &mut dyn FnMut() -> StairShape,
-    slab_full: &mut dyn FnMut() -> bool,
+    (_dx, _dz): (i32, i32),
+    full_face: &mut dyn FnMut() -> Option<FullFace>,
 ) -> bool {
     if rule == ConnectionRule::Never {
         return false;
@@ -86,8 +98,9 @@ pub fn connects(
     }
     match rule {
         ConnectionRule::Never | ConnectionRule::SameOnly => false,
-        ConnectionRule::OpaqueOrSame | ConnectionRule::SolidOrSame => match nb.shape_family() {
-            ShapeFamily::Cube => {
+        ConnectionRule::OpaqueOrSame | ConnectionRule::SolidOrSame => match full_face() {
+            None => false,
+            Some(FullFace::Cube) => {
                 // The pane opt-out for cube-row blocks whose real shape is not
                 // the full cell (the inset cactus and chest).
                 if rule == ConnectionRule::SolidOrSame && nb.has_tag(BlockTag::NO_PANE_CONNECT) {
@@ -101,27 +114,9 @@ pub fn connects(
                     nb.is_solid()
                 }
             }
-            // The face the stair turns toward this shape must be a complete 1×1.
-            ShapeFamily::Stair => stair_side_face_full(stair_shape(), (-dx, -dz)),
-            // Only a full slab stack presents a complete face.
-            ShapeFamily::Slab => slab_full(),
-            _ => false,
+            // A partial shape whose face is complete joins by geometry alone.
+            Some(FullFace::Shaped) => true,
         },
-    }
-}
-
-/// Whether the stair side face with outward normal `(nx, nz)` is a complete 1x1
-/// square: every half-cell on that side of the resolved shape is occupied. The
-/// flat high/back side of a straight stair joins; the open or stepped sides do
-/// not. Shared by fence and pane (same face rule as wall torches).
-pub(crate) fn stair_side_face_full(shape: StairShape, (nx, nz): (i32, i32)) -> bool {
-    let occupied = |ix, iy, iz| crate::stair::shape_half_cell_occupied(shape, ix, iy, iz);
-    if nx != 0 {
-        let ix = usize::from(nx > 0);
-        (0..2).all(|iy| (0..2).all(|iz| occupied(ix, iy, iz)))
-    } else {
-        let iz = usize::from(nz > 0);
-        (0..2).all(|ix| (0..2).all(|iy| occupied(ix, iy, iz)))
     }
 }
 
@@ -246,9 +241,12 @@ mod tests {
         resolved_mask(
             IVec3::ZERO,
             &neighbour,
-            |_| StairShape::default(),
-            |_| false,
-            |nb, dir, st, sl| connects(rule, family, nb, dir, st, sl),
+            |q, (_dx, _dz)| {
+                // The test neighbourhood holds cubes only: their family
+                // answer is a full CUBE face (material gates then apply).
+                (neighbour(q).shape_family() == ShapeFamily::Cube).then_some(FullFace::Cube)
+            },
+            |nb, dir, ff| connects(rule, family, nb, dir, ff),
         )
     }
 
@@ -279,7 +277,11 @@ mod tests {
             "glass is solid-not-opaque and joins a pane"
         );
         for irregular in [Block::Cactus, Block::Chest] {
-            assert_eq!(east_mask(r, f, east(irregular)), 0, "{irregular:?} opts out");
+            assert_eq!(
+                east_mask(r, f, east(irregular)),
+                0,
+                "{irregular:?} opts out"
+            );
         }
     }
 
@@ -287,8 +289,14 @@ mod tests {
     fn same_only_and_never_rules() {
         let f = ShapeFamily::Fence;
         let east = |b| move |p| if p == EAST_CELL { b } else { Block::Air };
-        assert_eq!(east_mask(ConnectionRule::SameOnly, f, east(Block::OakFence)), EAST);
-        assert_eq!(east_mask(ConnectionRule::SameOnly, f, east(Block::Stone)), 0);
+        assert_eq!(
+            east_mask(ConnectionRule::SameOnly, f, east(Block::OakFence)),
+            EAST
+        );
+        assert_eq!(
+            east_mask(ConnectionRule::SameOnly, f, east(Block::Stone)),
+            0
+        );
         assert_eq!(
             east_mask(ConnectionRule::Never, f, east(Block::OakFence)),
             0,
@@ -298,14 +306,36 @@ mod tests {
 
     #[test]
     fn stair_joins_only_on_its_flat_back_side() {
+        // The stair family's face answer drives the join: geometry from
+        // `stair::face_full` (the family's own math), Shaped so no material
+        // gate applies — a wooden stair joins the wood-tight rule.
         let mask_for = |facing| {
+            let shape = crate::stair::shape(StairState::new(facing, StairHalf::Bottom));
             resolved_mask(
                 IVec3::ZERO,
-                |p| if p == EAST_CELL { Block::OakStairs } else { Block::Air },
-                |_| crate::stair::shape(StairState::new(facing, StairHalf::Bottom)),
-                |_| false,
-                |nb, dir, st, sl| {
-                    connects(ConnectionRule::OpaqueOrSame, ShapeFamily::Fence, nb, dir, st, sl)
+                |p| {
+                    if p == EAST_CELL {
+                        Block::OakStairs
+                    } else {
+                        Block::Air
+                    }
+                },
+                |q, (dx, dz)| {
+                    // Only the stair cell answers; air (every other side)
+                    // has no complete face in this fixture.
+                    (q == EAST_CELL)
+                        .then(|| crate::stair::face_full(shape, IVec3::new(-dx, 0, -dz)))
+                        .unwrap_or(false)
+                        .then_some(FullFace::Shaped)
+                },
+                |nb, dir, ff| {
+                    connects(
+                        ConnectionRule::OpaqueOrSame,
+                        ShapeFamily::Fence,
+                        nb,
+                        dir,
+                        ff,
+                    )
                 },
             )
         };
@@ -325,10 +355,26 @@ mod tests {
                     .iter()
                     .any(|b| b.min[axis] <= lo + 1e-6 && b.max[axis] >= hi - 1e-6)
             };
-            assert_eq!(mask & WEST != 0, reaches(0.0, 6.0 / 16.0, 0), "west {mask:04b}");
-            assert_eq!(mask & EAST != 0, reaches(10.0 / 16.0, 1.0, 0), "east {mask:04b}");
-            assert_eq!(mask & NORTH != 0, reaches(0.0, 6.0 / 16.0, 2), "north {mask:04b}");
-            assert_eq!(mask & SOUTH != 0, reaches(10.0 / 16.0, 1.0, 2), "south {mask:04b}");
+            assert_eq!(
+                mask & WEST != 0,
+                reaches(0.0, 6.0 / 16.0, 0),
+                "west {mask:04b}"
+            );
+            assert_eq!(
+                mask & EAST != 0,
+                reaches(10.0 / 16.0, 1.0, 0),
+                "east {mask:04b}"
+            );
+            assert_eq!(
+                mask & NORTH != 0,
+                reaches(0.0, 6.0 / 16.0, 2),
+                "north {mask:04b}"
+            );
+            assert_eq!(
+                mask & SOUTH != 0,
+                reaches(10.0 / 16.0, 1.0, 2),
+                "south {mask:04b}"
+            );
             for b in boxes {
                 for a in 0..3 {
                     assert!(b.min[a] >= 0.0 && b.max[a] <= 1.0 && b.min[a] < b.max[a]);

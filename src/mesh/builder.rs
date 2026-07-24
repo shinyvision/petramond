@@ -1,12 +1,12 @@
 use crate::block::Block;
 #[cfg(test)]
-use crate::block_state::{SlabState, StairState};
+use crate::block::ShapeState;
 use crate::chunk::SectionPos;
 use crate::section::Section;
 
 use super::tint;
-use super::vertex::ChunkMesh;
 use super::torch;
+use super::vertex::ChunkMesh;
 
 mod cube_face;
 mod exposed_masks;
@@ -15,7 +15,9 @@ mod model_block;
 mod pad;
 mod plant;
 
-pub(super) use cube_face::{corner_cast_probes, cube_face_lighting, face_axes, probe_worthy};
+pub(super) use cube_face::{
+    boundary_plane, corner_cast_probes, cube_face_lighting, face_axes, probe_worthy,
+};
 pub(super) use pad::mesh_pad_idx;
 pub(crate) use pad::SectionMeshPad;
 
@@ -54,8 +56,7 @@ pub fn build_section_mesh(
     section: &Section,
     pos: SectionPos,
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
-    neighbour_stair_state: impl Fn(i32, i32, i32) -> StairState,
-    neighbour_slab_state: impl Fn(i32, i32, i32) -> SlabState,
+    neighbour_cell_state: impl Fn(i32, i32, i32) -> ShapeState,
     neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
@@ -70,8 +71,7 @@ pub fn build_section_mesh(
         section,
         pos,
         &neighbour_block,
-        &neighbour_stair_state,
-        &neighbour_slab_state,
+        &neighbour_cell_state,
         &neighbour_water,
         &neighbour_light,
         &neighbour_blocklight,
@@ -87,8 +87,7 @@ pub fn build_section_mesh(
         section,
         pos,
         &neighbour_block,
-        &neighbour_stair_state,
-        &neighbour_slab_state,
+        &neighbour_cell_state,
         &neighbour_water,
         &neighbour_light,
         &neighbour_blocklight,
@@ -111,8 +110,7 @@ pub(crate) fn build_section_mesh_from_pad(
 ) -> ChunkMesh {
     let (ox, oy, oz) = pos.origin_world();
     let nb_block = |wx, wy, wz| pad.block_world(ox, oy, oz, wx, wy, wz);
-    let nb_stair_state = |wx, wy, wz| pad.stair_world(ox, oy, oz, wx, wy, wz);
-    let nb_slab_state = |wx, wy, wz| pad.slab_world(ox, oy, oz, wx, wy, wz);
+    let nb_cell_state = |wx, wy, wz| pad.cell_state_world(ox, oy, oz, wx, wy, wz);
     let nb_water = |wx, wy, wz| pad.water_world(ox, oy, oz, wx, wy, wz);
     let nb_biome = |wx, wz| pad.biome_world(ox, oz, wx, wz);
     let nb_skylight = |wx, wy, wz| pad.skylight_world(ox, oy, oz, wx, wy, wz);
@@ -125,8 +123,7 @@ pub(crate) fn build_section_mesh_from_pad(
         section,
         pos,
         nb_block,
-        nb_stair_state,
-        nb_slab_state,
+        nb_cell_state,
         nb_water,
         nb_skylight,
         nb_blocklight,
@@ -142,8 +139,7 @@ pub(crate) fn build_section_mesh_from_pad(
         section,
         pos,
         nb_block,
-        nb_stair_state,
-        nb_slab_state,
+        nb_cell_state,
         nb_water,
         nb_skylight,
         nb_blocklight,

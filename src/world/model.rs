@@ -297,6 +297,10 @@ impl World {
             self.queue_dirty_meshes_sampling_cell(c.x, c.y, c.z);
             // The matching relight ball rides along with each cell's announce.
             self.notify_block_and_neighbors(c.x, c.y, c.z);
+            // Refined shape state (the cell's own — a placed stair resolves
+            // its corner — and the neighbourhood's) re-resolves with the
+            // edit, exactly like the `set_block_world` lane.
+            self.refine_shape_states_around(c.x, c.y, c.z);
         }
         for ((wx, wz), change) in sky_changed {
             self.mark_sky_cover_edited_at(wx, wz, change);

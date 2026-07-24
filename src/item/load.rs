@@ -18,11 +18,6 @@ use crate::registry::ContentNames;
 use super::definition::ItemDef;
 use super::{HeldPose, ItemTag, ItemType, ItemUse, Tool, ToolKind};
 
-#[derive(Serialize, Deserialize)]
-pub(super) struct RawFile {
-    pub items: Vec<RawItemDef>,
-}
-
 /// One item row as written in `items.json`: a mirror of [`ItemDef`] with owned
 /// strings/Vecs. Pose floats ride as `f64` (JSON's native width) and narrow
 /// back to the exact `f32` their shortest decimal representation denotes.
@@ -63,12 +58,14 @@ pub(super) struct RawItemDef {
     /// [`UseRay`](super::UseRay)); absent = the normal water-transparent ray.
     #[serde(default, skip_serializing_if = "is_default_use_ray")]
     pub use_ray: super::UseRay,
-    /// Game ticks this item burns as furnace fuel; absent = not a fuel.
-    #[serde(default, skip_serializing_if = "u16_is_zero")]
-    pub fuel_burn_ticks: u16,
-    /// The mining tool this item acts as; absent = not a tool.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool: Option<RawTool>,
+    /// Namespaced consumer-data entries (`"ns:key": <any JSON>`): the item
+    /// interop surface. A key names a CONSUMING system's vocabulary — engine
+    /// consumers (`petramond:fuel`, `petramond:tool`) and mod consumers
+    /// (`furniture:pigment`) alike — and the value is opaque JSON that
+    /// consumer parses. Any pack may attach any consumer's key to its own
+    /// rows, or to EXISTING rows via `{"patch": ..., "data": ...}` rows.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub data: serde_json::Map<String, serde_json::Value>,
     /// Edible-item data (hold right mouse to eat); absent = not food.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub food: Option<RawFood>,
@@ -152,21 +149,25 @@ fn default_eat_ticks() -> u32 {
     60
 }
 
-fn u16_is_zero(v: &u16) -> bool {
-    *v == 0
-}
-
 fn is_default_use_ray(v: &super::UseRay) -> bool {
     *v == super::UseRay::default()
 }
 
-/// A tool declaration in `items.json`: family + material tier (1 = wooden,
+/// The `petramond:tool` data entry: family + material tier (1 = wooden,
 /// 2 = stone, 3 = iron, 4 = diamond).
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawTool {
     pub kind: ToolKind,
     pub tier: u8,
+}
+
+/// The `petramond:fuel` data entry: game ticks one of this item burns as
+/// furnace fuel.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawFuel {
+    pub burn_ticks: u16,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -207,10 +208,14 @@ pub(super) fn parse_layers(
     names: &ContentNames,
 ) -> Result<&'static [ItemDef], String> {
     let mut keys = std::collections::HashSet::new();
+    // Data patches split out of every layer during the parse (layer order
+    // preserved); the convert applies each row's matching patches. RefCell:
+    // the parse and convert closures both borrow the collection.
+    let patches = std::cell::RefCell::new(Vec::new());
     let defs = crate::registry::resolve_catalog(
         texts,
-        |text| serde_json::from_str::<RawFile>(text).map(|f| f.items),
-        |r| &r.item,
+        |text| crate::registry::parse_rows_with_patches(text, "items", &mut patches.borrow_mut()),
+        |r: &RawItemDef| &r.item,
         &names.items,
         "item",
         |r, id, _| {
@@ -221,13 +226,24 @@ pub(super) fn parse_layers(
                 ));
             }
             let name = r.item.clone();
-            convert(r, ItemType(id), names).map_err(|e| format!("item '{name}': {e}"))
+            convert(r, ItemType(id), names, &patches.borrow())
+                .map_err(|e| format!("item '{name}': {e}"))
         },
     )?;
+    for p in patches.borrow().iter() {
+        if names.items.id(&p.patch).is_none() {
+            return Err(format!("data patch targets unknown item '{}'", p.patch));
+        }
+    }
     Ok(Box::leak(defs.into_boxed_slice()))
 }
 
-fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDef, String> {
+fn convert(
+    r: RawItemDef,
+    item: ItemType,
+    names: &ContentNames,
+    patches: &[crate::registry::RawDataPatch],
+) -> Result<ItemDef, String> {
     if r.max_stack_size == 0 {
         return Err("max_stack_size must be positive".to_owned());
     }
@@ -282,7 +298,16 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
             },
         }),
     };
-    let tool = match &r.tool {
+    let data = crate::registry::compile_data_map(
+        names.items.name(item.0).unwrap_or(""),
+        &r.data,
+        patches,
+    )?;
+    // Fuel and tool are ordinary data-surface consumers whose system is the
+    // engine (furnace / mining) — same vocabulary a mod consumer uses.
+    let fuel_burn_ticks = crate::registry::engine_data::<RawFuel>(data, "petramond:fuel")?
+        .map_or(0, |f| f.burn_ticks);
+    let tool = match crate::registry::engine_data::<RawTool>(data, "petramond:tool")? {
         Some(t) => {
             if !(1..=4).contains(&t.tier) {
                 return Err(format!(
@@ -375,10 +400,11 @@ fn convert(r: RawItemDef, item: ItemType, names: &ContentNames) -> Result<ItemDe
         block,
         item_use,
         use_ray: r.use_ray,
-        fuel_burn_ticks: r.fuel_burn_ticks,
+        fuel_burn_ticks,
         tool,
         food,
         dropped_reaction,
+        data,
     })
 }
 
@@ -484,5 +510,60 @@ mod tests {
             .err()
             .unwrap()
             .contains("duplicate key"));
+    }
+}
+
+#[cfg(test)]
+mod data_tests {
+    use super::*;
+
+    /// The item-data interop surface end to end: a row's own `data` entries
+    /// compile; a later layer's `{"patch", "data"}` row attaches entries to an
+    /// EXISTING (engine) row and overrides earlier keys (later layer wins);
+    /// the engine's own fuel/tool consumers read the same surface; a patch
+    /// naming an unknown row is a load error.
+    #[test]
+    fn data_entries_load_and_patch_rows_merge_by_layer_order() {
+        let (base, _) =
+            crate::assets::read_base_text("items.json").expect("assets/items.json must ship");
+        let layer_a = r#"{"items": [
+            {"item": "mymod:berry", "key": "mymod:berry", "name": "Berry", "max_stack_size": 64,
+             "held_pose": {"pitch": 0, "yaw": 0, "roll": 0}, "tags": [],
+             "data": {"furniture:pigment": {"color": [1, 2, 3]}, "petramond:fuel": {"burn_ticks": 100}}},
+            {"patch": "petramond:poppy", "data": {"furniture:pigment": {"color": [222, 38, 28]}}}
+        ]}"#;
+        let layer_b = r#"{"items": [
+            {"patch": "mymod:berry", "data": {"furniture:pigment": {"color": [9, 9, 9]}}}
+        ]}"#;
+        let defs = parse_test_layers(&[&base, layer_a, layer_b]).expect("layers load");
+        let berry = &defs[crate::item::ENGINE_ITEM_NAMES.len()];
+        assert_eq!(
+            berry.data.iter().find(|(k, _)| *k == "furniture:pigment"),
+            Some(&("furniture:pigment", r#"{"color":[9,9,9]}"#)),
+            "the later layer's patch wins per key"
+        );
+        assert_eq!(
+            berry.fuel_burn_ticks, 100,
+            "engine fuel reads the data surface"
+        );
+        let poppy = &defs[ItemType::Poppy.id() as usize];
+        assert!(
+            poppy
+                .data
+                .iter()
+                .any(|(k, v)| *k == "furniture:pigment" && v.contains("222")),
+            "a patch attaches data to an engine row"
+        );
+        // The shipped tool rows still compile through `petramond:tool`.
+        let pick = &defs[ItemType::WoodenPickaxe.id() as usize];
+        assert_eq!(pick.tool.map(|t| t.tier), Some(1));
+
+        let bad = r#"{"items": [{"patch": "mymod:missing", "data": {"a:b": 1}}]}"#;
+        assert!(
+            parse_test_layers(&[&base, bad]).is_err(),
+            "unknown patch target"
+        );
+        let bare = r#"{"items": [{"patch": "petramond:poppy", "data": {"nonamespace": 1}}]}"#;
+        assert!(parse_test_layers(&[&base, bare]).is_err(), "bare data key");
     }
 }

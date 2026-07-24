@@ -390,9 +390,8 @@ fn emitter_birth_time(seed: u64, schedule: EmitterSchedule, seq: i64) -> f32 {
 /// shaded per-face. The caller does the capacity + alpha gating.
 fn push_particle_cube(inst: &ParticleInstance, env: LightEnv, verts: &mut Vec<ParticleVertex>) {
     let [u0, v0] = inst.uv_min;
-    let s = inst.uv_size;
-    let u1 = u0 + s;
-    let v1 = v0 + s;
+    let u1 = u0 + inst.uv_size[0];
+    let v1 = v0 + inst.uv_size[1];
     // Two-channel RGB light folds into the tint (shade keeps the directional
     // term), so a fleck drifting through torch light stays lit at night.
     let tint = lighting::fold_tint(

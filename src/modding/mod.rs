@@ -436,8 +436,10 @@ impl ModHost {
         // dispatch order server↔client: any state a bake touched would otherwise
         // diverge and desync (the per-cell purity contract makes that a bug, but
         // the ordered dispatch is the belt-and-braces).
-        let mut groups: std::collections::BTreeMap<(String, u8), Vec<super::world::CustomBakeCell>> =
-            std::collections::BTreeMap::new();
+        let mut groups: std::collections::BTreeMap<
+            (String, u8),
+            Vec<super::world::CustomBakeCell>,
+        > = std::collections::BTreeMap::new();
         for cell in cells {
             let mod_id = crate::registry::namespace(cell.shape_key)
                 .unwrap_or_default()
@@ -734,14 +736,12 @@ fn wire_event_handler(
                 }
             })
         }
-        EventKind::InteractAttempt => {
-            bus.on_interact_attempt(priority, move |ctx, ev| {
-                match call_event(&inst, ctx, handler_id, convert::interact_attempt(ev)) {
-                    Some((outcome, _)) => convert::outcome(outcome),
-                    None => Outcome::Continue,
-                }
-            })
-        }
+        EventKind::InteractAttempt => bus.on_interact_attempt(priority, move |ctx, ev| {
+            match call_event(&inst, ctx, handler_id, convert::interact_attempt(ev)) {
+                Some((outcome, _)) => convert::outcome(outcome),
+                None => Outcome::Continue,
+            }
+        }),
         EventKind::ItemUsePre => bus.on_item_use_pre(priority, move |ctx, ev| {
             match call_event(&inst, ctx, handler_id, convert::item_use_pre(ev)) {
                 Some((outcome, _)) => convert::outcome(outcome),

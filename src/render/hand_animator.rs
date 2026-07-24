@@ -129,6 +129,7 @@ impl HeldItemAnimator {
         let e = self.eat_blend * self.eat_blend * (3.0 - 2.0 * self.eat_blend);
         HeldItemView {
             item: frame.item,
+            variant: frame.variant,
             block_state: frame.block_state,
             swing: self.swing_t,
             swing_scale: self.swing_scale,
@@ -152,6 +153,7 @@ mod tests {
         };
         let view = anim.update(HeldItemFrame {
             item: None,
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
             broke_block: false,
@@ -167,6 +169,7 @@ mod tests {
 
         let settled = anim.update(HeldItemFrame {
             item: None,
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
             broke_block: false,
@@ -184,6 +187,7 @@ mod tests {
 
         let started = anim.update(HeldItemFrame {
             item: None,
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
             broke_block: true,
@@ -199,6 +203,7 @@ mod tests {
 
         let moving = anim.update(HeldItemFrame {
             item: None,
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
             broke_block: false,
@@ -214,6 +219,7 @@ mod tests {
 
         let settled = anim.update(HeldItemFrame {
             item: None,
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
             broke_block: false,
@@ -230,6 +236,7 @@ mod tests {
         let mut anim = HeldItemAnimator::default();
         let started = anim.update(HeldItemFrame {
             item: None,
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
             broke_block: false,
@@ -247,6 +254,7 @@ mod tests {
         // It carries through and settles like any one-shot swing.
         let settled = anim.update(HeldItemFrame {
             item: None,
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
             broke_block: false,
@@ -263,6 +271,7 @@ mod tests {
         let mut anim = HeldItemAnimator::default();
         let placed = anim.update(HeldItemFrame {
             item: Some(ItemType::Dirt),
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
             broke_block: false,
@@ -280,6 +289,7 @@ mod tests {
         // ...which completes and returns to rest within one swing period.
         let settled = anim.update(HeldItemFrame {
             item: Some(ItemType::Dirt),
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
             broke_block: false,
@@ -298,6 +308,7 @@ mod tests {
         let mut anim = HeldItemAnimator::default();
         let view = anim.update(HeldItemFrame {
             item: None,
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
             broke_block: false,
@@ -322,6 +333,7 @@ mod tests {
         let mut anim = HeldItemAnimator::default();
         let eat_frame = |dt: f32, progress: f32| HeldItemFrame {
             item: Some(ItemType::Stone),
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             mining: false,
             broke_block: false,
@@ -386,6 +398,7 @@ mod tests {
         let mut anim = HeldItemAnimator::default();
         let view = anim.update(HeldItemFrame {
             item: None,
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             mining: true,
             broke_block: false,

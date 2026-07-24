@@ -41,10 +41,7 @@ pub struct MenuReadModel<'a> {
 }
 
 fn slot_wire(slot: Option<ItemStack>) -> Option<ItemSlotWire> {
-    slot.map(|s| ItemSlotWire {
-        item_id: s.item.0,
-        count: s.count,
-    })
+    slot.map(ItemSlotWire::from_stack)
 }
 
 impl ServerGame {
@@ -140,12 +137,8 @@ impl ServerGame {
                 } => {
                     let dropped = {
                         let sess = &mut self.sessions[s];
-                        sess.menu.drop_slot(
-                            &mut self.world,
-                            &mut sess.player.inventory,
-                            slot,
-                            all,
-                        )
+                        sess.menu
+                            .drop_slot(&mut self.world, &mut sess.player.inventory, slot, all)
                     };
                     if let Some(stack) = dropped {
                         self.sessions[s].drop_queue.queue_stack(stack);

@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::chunk::section_idx;
 use crate::container::Container;
-use crate::facing::Facing;
 use crate::furnace::Furnace;
 use crate::item::{ItemStack, ItemType};
 
@@ -86,41 +85,6 @@ impl Section {
         match &self.entities {
             Some(e) => &e.furnaces,
             None => crate::block_state::empty_map!(Furnace),
-        }
-    }
-
-    /// Which way the facing block-entity (chest, furnace) at a cell points.
-    #[inline]
-    pub fn entity_facing(&self, x: usize, y: usize, z: usize) -> Facing {
-        self.entity_facings()
-            .get(&Self::block_entity_key(x, y, z))
-            .copied()
-            .unwrap_or_default()
-    }
-
-    pub fn insert_entity_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
-        self.entities_mut()
-            .entity_facings
-            .insert(Self::block_entity_key(x, y, z), facing);
-        self.modified = true;
-    }
-
-    pub fn take_entity_facing(&mut self, x: usize, y: usize, z: usize) {
-        if self
-            .entities
-            .as_deref_mut()
-            .and_then(|e| e.entity_facings.remove(&Self::block_entity_key(x, y, z)))
-            .is_some()
-        {
-            self.modified = true;
-        }
-    }
-
-    #[inline]
-    pub fn entity_facings(&self) -> &HashMap<u16, Facing> {
-        match &self.entities {
-            Some(e) => &e.entity_facings,
-            None => crate::block_state::empty_map!(Facing),
         }
     }
 

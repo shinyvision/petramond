@@ -482,8 +482,16 @@ mod tests {
     fn a_finished_one_shot_layer_retires_itself() {
         use crate::mob::model_meta::NamedAnimMeta;
         let named = [
-            NamedAnimMeta { name: "bite".into(), length: 0.2, looping: false },
-            NamedAnimMeta { name: "hum".into(), length: 0.2, looping: true },
+            NamedAnimMeta {
+                name: "bite".into(),
+                length: 0.2,
+                looping: false,
+            },
+            NamedAnimMeta {
+                name: "hum".into(),
+                length: 0.2,
+                looping: true,
+            },
         ];
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(owl.set_anim_active("bite", true));
@@ -493,9 +501,18 @@ mod tests {
             owl.apply_expression(1.0 / 60.0, owl_def(), &named, &BehaviorOutput::default());
         }
         let names: Vec<&str> = owl.active_anims().iter().map(|l| l.name.as_str()).collect();
-        assert!(!names.contains(&"bite"), "played-through one-shot retired: {names:?}");
-        assert!(names.contains(&"hum"), "a looping layer plays until deactivated");
-        assert!(names.contains(&"mystery"), "an unknown name is the mod's business");
+        assert!(
+            !names.contains(&"bite"),
+            "played-through one-shot retired: {names:?}"
+        );
+        assert!(
+            names.contains(&"hum"),
+            "a looping layer plays until deactivated"
+        );
+        assert!(
+            names.contains(&"mystery"),
+            "an unknown name is the mod's business"
+        );
 
         // A rate-0 hold is a deliberate pose — it never expires, and resuming
         // playback lets it finish and retire.
@@ -509,6 +526,9 @@ mod tests {
         for _ in 0..30 {
             owl.apply_expression(1.0 / 60.0, owl_def(), &named, &BehaviorOutput::default());
         }
-        assert!(owl.anim_state("bite").is_none(), "resumed playback finishes and retires");
+        assert!(
+            owl.anim_state("bite").is_none(),
+            "resumed playback finishes and retires"
+        );
     }
 }

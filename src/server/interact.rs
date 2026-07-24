@@ -55,7 +55,13 @@ enum Claim {
 /// The consumer registry, in claim order. Deterministic and data-shaped: a
 /// new engine capability is a new entry here (plus its client prediction
 /// rule), never a branch in the dispatcher.
-const CONSUMERS: &[fn(&mut ServerGame, usize, &InteractAttempt, &ClickMeta, &mut TickEvents) -> Claim] = &[
+const CONSUMERS: &[fn(
+    &mut ServerGame,
+    usize,
+    &InteractAttempt,
+    &ClickMeta,
+    &mut TickEvents,
+) -> Claim] = &[
     // Mods first: every attempt, sneak or not, block or mob — a handler's
     // Cancel is a claim (mod GUIs, boat boarding, the trough take-out).
     ServerGame::consume_mod_attempt,

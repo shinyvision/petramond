@@ -282,5 +282,17 @@ host_fn! {
     /// Spawn `count` of an item (by registry NAME) as a dropped-item entity at
     /// `pos`. `false` = unknown name or zero count.
     pub fn spawn_item(item: &str, count: u8, pos: [f32; 3]) -> bool
-        => SpawnItem { item: item.into(), count, pos } => Bool
+        => SpawnItem { item: item.into(), count, pos, data: Vec::new() } => Bool
+}
+
+host_fn! {
+    /// [`spawn_item`] carrying per-stack instance data (same rules as
+    /// `give_item_data`).
+    pub fn spawn_item_data(item: &str, count: u8, pos: [f32; 3], data: &[(&str, &[u8])]) -> bool
+        => SpawnItem {
+            item: item.into(),
+            count,
+            pos,
+            data: data.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect(),
+        } => Bool
 }

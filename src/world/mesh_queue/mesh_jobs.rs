@@ -74,8 +74,7 @@ impl World {
                             water: s.water_arc(),
                             skylight: s.skylight_arc(),
                             blocklight: s.blocklight_arc(),
-                            stair_states: sparse_state_snapshot(s.stair_states()),
-                            slab_states: sparse_state_snapshot(s.slab_states()),
+                            cell_states: sparse_state_snapshot(s.cell_states()),
                         });
                 }
             }

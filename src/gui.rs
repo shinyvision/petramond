@@ -274,15 +274,15 @@ pub struct UiSnapshot {
     pub kind: GuiKind,
     pub cursor_px: (f32, f32),
     pub active: u8,
-    /// One entry per inventory slot (`[0,9)` hotbar, `[9,36)` main grid):
-    /// `(item, count)`, or `None` for an empty slot.
-    pub slots: [Option<(ItemType, u8)>; TOTAL_SLOTS],
+    /// One entry per inventory slot (`[0,9)` hotbar, `[9,36)` main grid);
+    /// `None` for an empty slot.
+    pub slots: [Option<ItemStack>; TOTAL_SLOTS],
     /// The real player-crafting output, drawn in the take-only result slot.
-    pub craft_output: Option<(ItemType, u8)>,
+    pub craft_output: Option<ItemStack>,
     /// Filtered recipe rows, in the same order as the browser document list.
     pub craft_recipes: Vec<CraftingRecipeView>,
     /// The cursor-held stack (drag/drop), drawn at `cursor_px` when open.
-    pub cursor: Option<(ItemType, u8)>,
+    pub cursor: Option<ItemStack>,
     /// The open furnace's slots + progress gauges, or `None` when the open panel is
     /// not a furnace. When `Some`, the furnace panel is drawn instead of the grid.
     pub furnace: Option<FurnaceView>,

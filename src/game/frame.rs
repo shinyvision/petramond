@@ -22,6 +22,7 @@ pub(crate) struct ClientFrame<'a> {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct ClientHeldItem {
     pub(crate) item: Option<ItemType>,
+    pub(crate) variant: crate::item::VariantId,
     pub(crate) block_state: HeldBlockState,
     pub(crate) mining: bool,
     pub(crate) mining_block: Option<Block>,
@@ -51,6 +52,11 @@ impl Game {
             selection: self.look.map(|h| h.outline),
             held_item: ClientHeldItem {
                 item: view.inventory.selected().map(|s| s.item),
+                variant: view
+                    .inventory
+                    .selected()
+                    .map(|s| s.variant)
+                    .unwrap_or_default(),
                 block_state: self.held_block_state(),
                 mining,
                 mining_block,

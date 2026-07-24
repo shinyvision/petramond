@@ -1,6 +1,18 @@
+//! Typed fronts over the section's UNIFIED per-cell state store.
+//!
+//! Storage is one opaque map (`cell index -> ShapeState`); the two GENERIC
+//! accessors below are the only codec-aware machinery — each typed one-liner
+//! just names the view/codec type, whose byte vocabulary lives beside the
+//! type in its owner's module (`CellView`/`CellCodec`). Every read gates on
+//! `T::owns`, so a foreign cell's bytes decode as the type's defaults, never
+//! garbage; presence semantics (a door's stored all-zero pose, a vertical
+//! log's elided entry) live in each codec.
+
 use std::collections::{BTreeMap, HashMap};
 
-use crate::block_state::{LogAxis, SlabState, StairHalf, StairState};
+use crate::block::{CellCodec, CellView, ShapeState};
+use crate::block_model::ModelCellState;
+use crate::block_state::{EntityFront, LogAxis, SlabState, StairHalf, StairState};
 use crate::door::DoorState;
 use crate::facing::Facing;
 use crate::torch::TorchPlacement;
@@ -8,51 +20,80 @@ use crate::torch::TorchPlacement;
 use super::Section;
 
 impl Section {
+    /// The cell's raw opaque state — the seam/store read; typed consumers use
+    /// the gated generic accessors below.
     #[inline]
-    pub fn set_model_offset(&mut self, x: usize, y: usize, z: usize, offset: [u8; 3]) {
-        self.states.set_model_offset(x, y, z, offset);
-        self.dirty = true;
+    pub fn cell_state(&self, x: usize, y: usize, z: usize) -> ShapeState {
+        self.states.cell_state(x, y, z)
     }
+
+    /// Store a cell's raw opaque state (empty clears). The replication-apply
+    /// write: a delta ships the state bytes verbatim and lands them here.
+    pub fn set_cell_state(&mut self, x: usize, y: usize, z: usize, state: ShapeState) {
+        self.states.set_cell_state(x, y, z, state);
+        self.modified = true;
+    }
+
+    /// The whole unified state map (save codec, wire payload, light snapshot,
+    /// mesh-pad capture, per-kind render collectors).
+    #[inline]
+    pub fn cell_states(&self) -> &HashMap<u16, ShapeState> {
+        self.states.cell_states()
+    }
+
+    /// The cell's state decoded through `T`'s view, gated on `T::owns` — a
+    /// foreign cell answers `T`'s default semantics.
+    #[inline]
+    pub fn state_of<T: CellView>(&self, x: usize, y: usize, z: usize) -> T {
+        if T::owns(self.block(x, y, z)) {
+            T::from_cell(self.states.cell_state(x, y, z))
+        } else {
+            T::from_cell(ShapeState::NONE)
+        }
+    }
+
+    /// Store `v` through its codec (a default the codec elides clears the
+    /// entry).
+    pub fn set_state_of<T: CellCodec>(&mut self, x: usize, y: usize, z: usize, v: &T) {
+        self.states.set_cell_state(x, y, z, v.to_cell());
+        self.modified = true;
+    }
+
+    // --- Typed one-liner fronts (each is just a view/codec name) -----------
 
     #[inline]
     pub fn model_offset(&self, x: usize, y: usize, z: usize) -> [u8; 3] {
-        self.states.model_offset(x, y, z)
+        self.state_of::<ModelCellState>(x, y, z).offset
     }
 
     #[inline]
-    pub fn set_model_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
-        self.states.set_model_facing(x, y, z, facing);
+    pub fn set_model_offset(&mut self, x: usize, y: usize, z: usize, offset: [u8; 3]) {
+        let mut st = self.state_of::<ModelCellState>(x, y, z);
+        st.offset = offset;
+        self.set_state_of(x, y, z, &st);
         self.dirty = true;
     }
 
     #[inline]
     pub fn model_facing(&self, x: usize, y: usize, z: usize) -> Facing {
-        self.states.model_facing(x, y, z)
+        self.state_of::<ModelCellState>(x, y, z).facing
     }
 
     #[inline]
-    pub fn model_cells(&self) -> &HashMap<u16, [u8; 3]> {
-        self.states.model_cells()
-    }
-
-    #[inline]
-    pub fn model_facings(&self) -> &HashMap<u16, Facing> {
-        self.states.model_facings()
+    pub fn set_model_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
+        let mut st = self.state_of::<ModelCellState>(x, y, z);
+        st.facing = facing;
+        self.set_state_of(x, y, z, &st);
+        self.dirty = true;
     }
 
     #[inline]
     pub fn door_state(&self, x: usize, y: usize, z: usize) -> Option<DoorState> {
-        self.states.door_state(x, y, z)
+        self.state_of::<Option<DoorState>>(x, y, z)
     }
 
     pub fn set_door_state(&mut self, x: usize, y: usize, z: usize, state: DoorState) {
-        self.states.set_door_state(x, y, z, state);
-        self.modified = true;
-    }
-
-    #[inline]
-    pub fn doors(&self) -> &HashMap<u16, DoorState> {
-        self.states.doors()
+        self.set_state_of(x, y, z, &state);
     }
 
     #[inline]
@@ -66,27 +107,47 @@ impl Section {
 
     #[inline]
     pub fn stair_state(&self, x: usize, y: usize, z: usize) -> StairState {
-        self.states.stair_state(x, y, z)
+        self.state_of(x, y, z)
     }
 
     pub fn set_stair_state(&mut self, x: usize, y: usize, z: usize, state: StairState) {
-        self.states.set_stair_state(x, y, z, state);
-        self.modified = true;
+        self.set_state_of(x, y, z, &state);
+    }
+
+    #[inline]
+    pub fn slab_state(&self, x: usize, y: usize, z: usize) -> SlabState {
+        self.state_of(x, y, z)
+    }
+
+    pub fn set_slab_state(&mut self, x: usize, y: usize, z: usize, state: SlabState) {
+        self.set_state_of(x, y, z, &state);
     }
 
     #[inline]
     pub fn log_axis(&self, x: usize, y: usize, z: usize) -> LogAxis {
-        self.states.log_axis(x, y, z)
+        self.state_of(x, y, z)
     }
 
     pub fn set_log_axis(&mut self, x: usize, y: usize, z: usize, axis: LogAxis) {
-        self.states.set_log_axis(x, y, z, axis);
-        self.modified = true;
+        self.set_state_of(x, y, z, &axis);
     }
 
     #[inline]
-    pub fn log_axes(&self) -> &HashMap<u16, LogAxis> {
-        self.states.log_axes()
+    pub fn torch_placement(&self, x: usize, y: usize, z: usize) -> TorchPlacement {
+        self.state_of(x, y, z)
+    }
+
+    pub fn insert_torch(&mut self, x: usize, y: usize, z: usize, placement: TorchPlacement) {
+        self.set_state_of(x, y, z, &placement);
+    }
+
+    #[inline]
+    pub fn entity_facing(&self, x: usize, y: usize, z: usize) -> Facing {
+        self.state_of::<EntityFront>(x, y, z).0
+    }
+
+    pub fn insert_entity_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
+        self.set_state_of(x, y, z, &EntityFront(facing));
     }
 
     #[inline]
@@ -114,6 +175,23 @@ impl Section {
         self.states.cell_kv()
     }
 
+    /// The section's per-cell `petramond:tint` presentation entries as
+    /// cell-index → linear multiply color. Sparse (empty for almost every
+    /// section) — collected once per mesh build so the per-face lookup is a
+    /// probe only on sections that actually carry tints. Only well-formed
+    /// 3-byte values count.
+    pub fn cell_tint_map(&self) -> HashMap<u16, [f32; 3]> {
+        self.states
+            .cell_kv()
+            .iter()
+            .filter_map(|(&idx, map)| {
+                let v = map.get(crate::block::TINT_KV_KEY)?;
+                let [r, g, b]: [u8; 3] = v.as_slice().try_into().ok()?;
+                Some((idx, [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0]))
+            })
+            .collect()
+    }
+
     /// Detach one cell's whole mod-KV map — the state-preserving half of a
     /// model-block swap (see `World::swap_model_block`).
     pub fn cell_kv_take(
@@ -134,44 +212,5 @@ impl Section {
         map: BTreeMap<String, Vec<u8>>,
     ) {
         self.states.cell_kv_restore(x, y, z, map);
-    }
-
-    pub fn stair_states(&self) -> &HashMap<u16, StairState> {
-        self.states.stair_states()
-    }
-
-    #[inline]
-    pub fn slab_state(&self, x: usize, y: usize, z: usize) -> SlabState {
-        self.states.slab_state(x, y, z)
-    }
-
-    pub fn set_slab_state(&mut self, x: usize, y: usize, z: usize, state: SlabState) {
-        self.states.set_slab_state(x, y, z, state);
-        self.modified = true;
-    }
-
-    pub fn slab_states(&self) -> &HashMap<u16, SlabState> {
-        self.states.slab_states()
-    }
-
-    #[inline]
-    pub fn torch_placement(&self, x: usize, y: usize, z: usize) -> TorchPlacement {
-        self.states.torch_placement(x, y, z)
-    }
-
-    pub fn insert_torch(&mut self, x: usize, y: usize, z: usize, placement: TorchPlacement) {
-        self.states.insert_torch(x, y, z, placement);
-        self.modified = true;
-    }
-
-    pub fn take_torch(&mut self, x: usize, y: usize, z: usize) {
-        if self.states.take_torch(x, y, z) {
-            self.modified = true;
-        }
-    }
-
-    #[inline]
-    pub fn torches(&self) -> &HashMap<u16, TorchPlacement> {
-        self.states.torches()
     }
 }

@@ -3,7 +3,6 @@ use crate::audio::Sound;
 use crate::facing::Facing;
 use crate::item::{DropSpec, ItemType, ToolKind};
 
-use super::shape_kind::CustomLight;
 use super::{
     data, definition, sounds, Aabb, Block, BlockBehavior, BlockInteraction, BlockLightShape,
     BlockMaterial, BlockShapeKind, BlockSoundAction, BlockTag, ParticleEmitter, ShapeFamily,
@@ -59,34 +58,10 @@ impl Block {
         if self.is_opaque() {
             return BlockLightShape::OpaqueCube;
         }
-        match self.shape_family() {
-            ShapeFamily::Stair => BlockLightShape::Stair,
-            ShapeFamily::Slab => BlockLightShape::Slab,
-            // No partial-cell light shape for lowered cubes — the deliberate
-            // simplification, rounded to the nearer full case: a mostly-full
-            // cube (farmland, 15/16) blocks like a full cube, a thin cover
-            // (the snow layer, 1/16) blocks nothing. Anything else would
-            // darken the cell an entity standing ON a thin cover occupies.
-            ShapeFamily::LoweredCube => {
-                if self.lowered_height().unwrap_or(0) >= 8 {
-                    BlockLightShape::OpaqueCube
-                } else {
-                    BlockLightShape::Open
-                }
-            }
-            // A Layer-3 custom shape's declared light tier: the simple
-            // open/opaque_cube declarations, or the advanced per-cell aperture
-            // (`custom_aperture`) whose opacity the SIM bake supplies per cell
-            // through the light snapshot.
-            ShapeFamily::Custom => match self.shape_kind_def().params.custom() {
-                Some(c) if c.light_shape == CustomLight::OpaqueCube => BlockLightShape::OpaqueCube,
-                Some(c) if c.light_shape == CustomLight::CustomAperture => {
-                    BlockLightShape::CustomAperture
-                }
-                _ => BlockLightShape::Open,
-            },
-            _ => BlockLightShape::Open,
-        }
+        // The FAMILY classifies its own light participation (the engine holds
+        // no per-family arms here).
+        let k = self.shape_kind_def();
+        k.sim.light_shape(&k.params, self)
     }
 
     /// Whether direct full-strength skylight can continue straight down through
@@ -108,12 +83,18 @@ impl Block {
     pub(crate) fn has_same_light_behavior(self, other: Block) -> bool {
         let shape = self.light_shape();
         shape == other.light_shape()
-            && !matches!(
-                shape,
-                BlockLightShape::Stair | BlockLightShape::Slab | BlockLightShape::CustomAperture
-            )
+            && shape != BlockLightShape::Shaped
             && self.transmits_direct_skylight() == other.transmits_direct_skylight()
             && self.light_emission() == other.light_emission()
+    }
+
+    /// The row's AUTHORED collision boxes, with no shape resolution — the
+    /// base the default `ShapeSim::default_boxes` returns. Only the facet
+    /// default should call this; everything else wants
+    /// [`collision_boxes`](Self::collision_boxes).
+    #[inline]
+    pub(crate) fn row_collision(self) -> &'static [Aabb] {
+        self.def().collision
     }
 
     /// The block's collision shape: cell-local AABBs (`0.0..1.0`), a per-row
@@ -134,18 +115,10 @@ impl Block {
         if let Some(kind) = self.model_kind() {
             return crate::block_model::collision_boxes(kind, [0, 0, 0]);
         }
-        match self.shape_family() {
-            ShapeFamily::Stair => crate::stair::boxes(crate::block_model::DEFAULT_MODEL_FACING),
-            ShapeFamily::Slab => crate::slab::default_boxes(),
-            // The bare no-neighbour post, from the shape's own connection params.
-            ShapeFamily::Fence | ShapeFamily::Pane => {
-                match self.shape_kind_def().params.connection() {
-                    Some(c) => crate::connect::boxes_for_mask(c.boxes, 0),
-                    None => &[],
-                }
-            }
-            _ => self.def().collision,
-        }
+        // Every other shape answers for itself: a stair's default facing, a
+        // slab's half cell, a connection shape's bare post.
+        let k = self.shape_kind_def();
+        k.sim.default_boxes(&k.params, self)
     }
 
     /// Whether this block physically obstructs movement — i.e. has any collision
@@ -603,6 +576,34 @@ impl Block {
     #[inline]
     pub fn harvest_tier(self) -> u8 {
         self.def().harvest_tier
+    }
+
+    /// Whether targeting picks this block against its resolved collision
+    /// boxes (see `ShapeRender::picks_by_boxes`) instead of a single box or a
+    /// family-specific ray test.
+    #[inline]
+    pub fn picks_by_boxes(self) -> bool {
+        let k = self.shape_kind_def();
+        k.render.picks_by_boxes(&k.params)
+    }
+
+    /// The row's namespaced consumer-data entry `key` as raw JSON text, or
+    /// `None` — the block interop surface (`"data"` in `blocks.json` + patch
+    /// rows). Binary search over the sorted compiled slice.
+    /// The cell-KV keys this block carries across break/place (the
+    /// `petramond:carry` data entry, compiled at load). Empty for almost
+    /// every block.
+    #[inline]
+    pub fn carry(self) -> &'static [&'static str] {
+        self.def().carry
+    }
+
+    #[inline]
+    pub fn data_value(self, key: &str) -> Option<&'static str> {
+        let data = self.def().data;
+        data.binary_search_by(|(k, _)| (*k).cmp(key))
+            .ok()
+            .map(|i| data[i].1)
     }
 
     /// The [`Sound`](crate::audio::Sound) this block makes for `action` — mining,

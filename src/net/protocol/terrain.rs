@@ -152,23 +152,11 @@ pub(crate) struct LightPayload {
 /// lossless as a save/load roundtrip. Built/consumed by `world::remote`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SectionStatesPayload {
-    /// (cell, `DoorState::encode` byte)
-    pub doors: Vec<(u16, u8)>,
-    /// (cell, `StairState::encode` byte)
-    pub stairs: Vec<(u16, u8)>,
-    /// (cell, [`SlabState::encode_meta`, layer 0 block id, layer 1 block id])
-    /// — the save codec's 3-byte record, with RAW session block ids.
-    pub slabs: Vec<(u16, [u8; 3])>,
-    /// (cell, `LogAxis::to_u8` byte)
-    pub log_axes: Vec<(u16, u8)>,
-    /// (cell, `TorchPlacement::to_u8` byte)
-    pub torches: Vec<(u16, u8)>,
-    /// (cell, `Facing::to_u8` byte) — chest/furnace block-entity fronts.
-    pub entity_facings: Vec<(u16, u8)>,
-    /// (cell, `Facing::to_u8` byte) — oriented bbmodel blocks.
-    pub model_facings: Vec<(u16, u8)>,
-    /// (cell, authored footprint offset) for multi-cell model blocks.
-    pub model_cells: Vec<(u16, [u8; 3])>,
+    /// The section's UNIFIED per-cell block state, cell-sorted: verbatim
+    /// store bytes (opaque to the transport except the id-masked BLOCK-ID
+    /// bytes, rewritten through the block LUT at the boundary via
+    /// `ShapeState::remap_ids`).
+    pub cell_states: Vec<(u16, crate::block::ShapeState)>,
     /// Per-cell mod KV, preserved opaquely (entries sorted by key — the map
     /// is a `BTreeMap` section-side).
     pub cell_kv: Vec<CellKvEntry>,

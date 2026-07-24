@@ -1,14 +1,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use crate::block::Block;
-use crate::block_state::{BlockStates, LogAxis, SlabState, StairState};
+use crate::block::{Block, ShapeState};
+use crate::block_state::BlockStates;
 use crate::chunk::SECTION_VOLUME;
 use crate::container::Container;
-use crate::door::DoorState;
-use crate::facing::Facing;
 use crate::furnace::Furnace;
-use crate::torch::TorchPlacement;
 
 use super::{uniform_cube, BlockEntities, Section, SectionMetrics};
 
@@ -24,14 +21,7 @@ impl Section {
         water: Option<Box<[u8]>>,
         furnaces: HashMap<u16, Furnace>,
         containers: HashMap<u16, Container>,
-        entity_facings: HashMap<u16, Facing>,
-        torches: HashMap<u16, TorchPlacement>,
-        model_cells: HashMap<u16, [u8; 3]>,
-        model_facings: HashMap<u16, Facing>,
-        doors: HashMap<u16, DoorState>,
-        stairs: HashMap<u16, StairState>,
-        slabs: HashMap<u16, SlabState>,
-        log_axes: HashMap<u16, LogAxis>,
+        cell_states: HashMap<u16, ShapeState>,
         cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     ) -> Self {
         Self::from_shared(
@@ -42,14 +32,7 @@ impl Section {
             water.map(Arc::from),
             furnaces,
             containers,
-            entity_facings,
-            torches,
-            model_cells,
-            model_facings,
-            doors,
-            stairs,
-            slabs,
-            log_axes,
+            cell_states,
             cell_kv,
             None,
         )
@@ -66,14 +49,7 @@ impl Section {
         water: Option<Arc<[u8]>>,
         furnaces: HashMap<u16, Furnace>,
         containers: HashMap<u16, Container>,
-        entity_facings: HashMap<u16, Facing>,
-        torches: HashMap<u16, TorchPlacement>,
-        model_cells: HashMap<u16, [u8; 3]>,
-        model_facings: HashMap<u16, Facing>,
-        doors: HashMap<u16, DoorState>,
-        stairs: HashMap<u16, StairState>,
-        slabs: HashMap<u16, SlabState>,
-        log_axes: HashMap<u16, LogAxis>,
+        cell_states: HashMap<u16, ShapeState>,
         cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
         metrics: SectionMetrics,
     ) -> Self {
@@ -86,14 +62,7 @@ impl Section {
             water,
             furnaces,
             containers,
-            entity_facings,
-            torches,
-            model_cells,
-            model_facings,
-            doors,
-            stairs,
-            slabs,
-            log_axes,
+            cell_states,
             cell_kv,
             Some(metrics),
         )
@@ -108,38 +77,20 @@ impl Section {
         water: Option<Arc<[u8]>>,
         furnaces: HashMap<u16, Furnace>,
         containers: HashMap<u16, Container>,
-        entity_facings: HashMap<u16, Facing>,
-        torches: HashMap<u16, TorchPlacement>,
-        model_cells: HashMap<u16, [u8; 3]>,
-        model_facings: HashMap<u16, Facing>,
-        doors: HashMap<u16, DoorState>,
-        stairs: HashMap<u16, StairState>,
-        slabs: HashMap<u16, SlabState>,
-        log_axes: HashMap<u16, LogAxis>,
+        cell_states: HashMap<u16, ShapeState>,
         cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
         metrics: Option<SectionMetrics>,
     ) -> Self {
         let entities = BlockEntities {
             furnaces,
             containers,
-            entity_facings,
         };
         let mut s = Self {
             cx,
             cy,
             cz,
             blocks,
-            states: BlockStates::from_shared(
-                water,
-                torches,
-                model_cells,
-                model_facings,
-                doors,
-                stairs,
-                slabs,
-                log_axes,
-                cell_kv,
-            ),
+            states: BlockStates::from_shared(water, cell_states, cell_kv),
             entities: (!entities.is_empty()).then(|| Box::new(entities)),
             dirty: true,
             modified: false,

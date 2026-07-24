@@ -1,86 +1,66 @@
-use crate::block::{Block, BlockLightShape};
-use crate::block_state::{SlabState, StairState};
+use crate::block::{Block, BlockLightShape, LIGHT_APERTURES_OPEN};
 
-pub(super) enum SparseCellState {
-    Stair { idx: usize, state: StairState },
-    Slab { idx: usize, state: SlabState },
-    /// A Layer-3 custom shape's baked light opacity at `idx` (true = blocks
-    /// light like a full cube).
-    CustomAperture { idx: usize, opaque: bool },
+/// Collect a section's light-relevant per-cell apertures out of the UNIFIED
+/// state store: every `Shaped`-light cell's FAMILY answers its packed
+/// per-face apertures from its own stored state (`ShapeSim::light_apertures`)
+/// — no family knowledge here or anywhere downstream. Shared by the
+/// per-section and the batched light gathers so the two can't diverge.
+pub(super) fn collect_shape_states(
+    section: &crate::section::Section,
+    mut idx: impl FnMut(usize, usize, usize) -> usize,
+    states: &mut Vec<SparseCellState>,
+) {
+    for (&key, &state) in section.cell_states() {
+        let (lx, ly, lz) = crate::chunk::section_local(key as usize);
+        let block = section.block(lx, ly, lz);
+        if block.light_shape() != BlockLightShape::Shaped {
+            continue;
+        }
+        let k = block.shape_kind_def();
+        states.push(SparseCellState {
+            idx: idx(lx, ly, lz),
+            masks: k.sim.light_apertures(&k.params, block, state),
+        });
+    }
+}
+
+/// One shaped cell's packed per-face light apertures in snapshot index space
+/// (see `block::pack_light_apertures` for the layout). Family-answered at
+/// gather time; the flood only ever reads bits.
+pub(super) struct SparseCellState {
+    pub idx: usize,
+    pub masks: u32,
 }
 
 #[derive(Default)]
 pub(super) struct ShapeStateSnapshot {
-    stair_states: Option<Box<[u8]>>,
-    slab_states: Option<Box<[SlabState]>>,
-    /// Per-cell custom-aperture opacity (true = opaque); absent cells pass light.
-    custom_apertures: Option<Box<[bool]>>,
+    /// Per-cell packed apertures; absent cells (and an absent array) read
+    /// fully open — a `Shaped` cell missing its entry degrades to open, the
+    /// same fallback the baked custom aperture always had.
+    apertures: Option<Box<[u32]>>,
 }
 
 impl ShapeStateSnapshot {
     /// `volume` is the flood cube's cell count (48³ for a per-section bake, 64³ for
     /// a 2×2×2 batch bake); sparse indices are already in that cube's coordinates.
     pub(super) fn from_sparse(states: &[SparseCellState], volume: usize) -> Self {
-        let mut stair_states: Option<Box<[u8]>> = None;
-        let mut slab_states: Option<Box<[SlabState]>> = None;
-        let mut custom_apertures: Option<Box<[bool]>> = None;
+        let mut apertures: Option<Box<[u32]>> = None;
         for state in states {
-            match *state {
-                SparseCellState::Stair { idx, state } => {
-                    if idx >= volume {
-                        continue;
-                    }
-                    let states = stair_states.get_or_insert_with(|| {
-                        vec![StairState::default().encode(); volume].into_boxed_slice()
-                    });
-                    states[idx] = state.encode();
-                }
-                SparseCellState::Slab { idx, state } => {
-                    if idx >= volume {
-                        continue;
-                    }
-                    let states = slab_states
-                        .get_or_insert_with(|| vec![SlabState::EMPTY; volume].into_boxed_slice());
-                    states[idx] = state;
-                }
-                SparseCellState::CustomAperture { idx, opaque } => {
-                    if idx >= volume {
-                        continue;
-                    }
-                    let states = custom_apertures
-                        .get_or_insert_with(|| vec![false; volume].into_boxed_slice());
-                    states[idx] = opaque;
-                }
+            if state.idx >= volume {
+                continue;
             }
+            let cells = apertures
+                .get_or_insert_with(|| vec![LIGHT_APERTURES_OPEN; volume].into_boxed_slice());
+            cells[state.idx] = state.masks;
         }
-        Self {
-            stair_states,
-            slab_states,
-            custom_apertures,
-        }
+        Self { apertures }
     }
 
-    fn stair_state(&self, idx: usize) -> StairState {
-        self.stair_states
+    fn aperture_masks(&self, idx: usize) -> u32 {
+        self.apertures
             .as_ref()
             .and_then(|f| f.get(idx).copied())
-            .map(StairState::decode)
-            .unwrap_or_default()
-    }
-
-    fn slab_state(&self, idx: usize, block: Block) -> SlabState {
-        self.slab_states
-            .as_ref()
-            .and_then(|f| f.get(idx).copied())
-            .map(|state| crate::slab::normalize_state(block, state))
-            .unwrap_or_else(|| crate::slab::default_state(block))
-    }
-
-    fn custom_aperture_opaque(&self, idx: usize) -> bool {
-        self.custom_apertures
-            .as_ref()
-            .and_then(|f| f.get(idx).copied())
-            .unwrap_or(false)
+            .unwrap_or(LIGHT_APERTURES_OPEN)
     }
 }
 
@@ -129,23 +109,9 @@ impl<'a> LightCells<'a> {
         match block.light_shape() {
             BlockLightShape::OpaqueCube => 0,
             BlockLightShape::Open => 0b1111,
-            BlockLightShape::Stair => {
-                crate::stair::light_side_mask(self.states.stair_state(idx), dir.0, dir.1, dir.2)
-            }
-            BlockLightShape::Slab => crate::slab::light_side_mask(
-                self.states.slab_state(idx, block),
-                dir.0,
-                dir.1,
-                dir.2,
-            ),
-            // Coarse per-cell opacity from the SIM bake: an opaque custom cell
-            // blocks every quadrant (like a cube), an open one passes all.
-            BlockLightShape::CustomAperture => {
-                if self.states.custom_aperture_opaque(idx) {
-                    0
-                } else {
-                    0b1111
-                }
+            // The family answered at gather time; here it's a bit read.
+            BlockLightShape::Shaped => {
+                crate::block::light_aperture_face(self.states.aperture_masks(idx), dir)
             }
         }
     }

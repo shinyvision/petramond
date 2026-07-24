@@ -129,11 +129,15 @@ impl ParticlePatches {
     }
 }
 
-/// An ABSOLUTE model-atlas UV patch (`min`, square `size`) for one break/mining fleck of
-/// `kind`, chosen from its opaque texture patches by `r` (`0..1`). So a model block's
+/// An ABSOLUTE model-atlas UV patch (`min`, per-axis `size`) for one break/mining fleck
+/// of `kind`, chosen from its opaque texture patches by `r` (`0..1`). So a model block's
 /// flecks read as its own texture; falls back to the whole sheet if nothing scanned
 /// opaque. Shared by [`crate::entity::ParticleSystem`]'s model spawn paths.
-pub fn particle_patch(kind: BlockModelKind, r: f32) -> ([f32; 2], f32) {
+///
+/// The patch is inset half a sheet texel per side: the sheet stacks every kind's
+/// texture vertically, and a UV landing exactly on a stack boundary resolves
+/// (nearest filtering) to the NEIGHBOURING kind's texels.
+pub fn particle_patch(kind: BlockModelKind, r: f32) -> ([f32; 2], [f32; 2]) {
     let p = &PATCHES[kind.0 as usize];
     let at = atlas();
     let min_local = if p.mins.is_empty() {
@@ -145,7 +149,15 @@ pub fn particle_patch(kind: BlockModelKind, r: f32) -> ([f32; 2], f32) {
     let size = if p.mins.is_empty() { 1.0 } else { p.size_local };
     let amin = at.remap(kind, min_local);
     let amax = at.remap(kind, [min_local[0] + size, min_local[1] + size]);
-    (amin, (amax[0] - amin[0]).max(1e-4))
+    let (_, w, h) = at.texture();
+    let (hu, hv) = (0.5 / w as f32, 0.5 / h as f32);
+    (
+        [amin[0] + hu, amin[1] + hv],
+        [
+            (amax[0] - amin[0] - 2.0 * hu).max(1e-4),
+            (amax[1] - amin[1] - 2.0 * hv).max(1e-4),
+        ],
+    )
 }
 
 #[cfg(test)]

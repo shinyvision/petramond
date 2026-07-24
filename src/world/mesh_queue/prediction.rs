@@ -116,8 +116,7 @@ impl World {
                 lights.push(PredictionLightUnit::Batch { job, prev });
             } else {
                 for pos in members {
-                    let Some(job) =
-                        LightBakeJob::snapshot(0, pos, &self.sections, &self.columns)
+                    let Some(job) = LightBakeJob::snapshot(0, pos, &self.sections, &self.columns)
                     else {
                         return None;
                     };
@@ -260,8 +259,7 @@ impl World {
                         let cy = chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
                         b &= b - 1;
                         let pos = SectionPos::new(cx, cy, cz);
-                        if change.segment_gap(pos, wx, wz) <= SAMPLER_REACH && seen.insert(pos)
-                        {
+                        if change.segment_gap(pos, wx, wz) <= SAMPLER_REACH && seen.insert(pos) {
                             candidates.push(pos);
                         }
                     }

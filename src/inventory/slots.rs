@@ -1,4 +1,4 @@
-use crate::item::{ItemStack, ItemType};
+use crate::item::ItemStack;
 pub(crate) fn insert_into_slots(
     slots: &mut [Option<ItemStack>],
     mut stack: ItemStack,
@@ -26,7 +26,7 @@ pub(crate) fn insert_into_slots(
     for slot in slots.iter_mut() {
         if slot.is_none() {
             let put = stack.count.min(stack.item.max_stack_size());
-            *slot = Some(ItemStack::new(stack.item, put));
+            *slot = Some(stack.restack(put));
             stack.count -= put;
             if stack.count == 0 {
                 return None;
@@ -37,12 +37,14 @@ pub(crate) fn insert_into_slots(
     Some(stack)
 }
 
-/// How many items of `item` a storage cell can accept without swapping its
-/// contents. This is the placement capacity used by slot-drag distribution.
-pub(crate) fn slot_capacity(slot: &Option<ItemStack>, item: ItemType) -> u8 {
+/// How many items of `stack`'s identity a storage cell can accept without
+/// swapping its contents. This is the placement capacity used by slot-drag
+/// distribution. Identity includes the variant: data-bearing stacks never top
+/// up a plain stack of the same item (or vice versa).
+pub(crate) fn slot_capacity(slot: &Option<ItemStack>, stack: &ItemStack) -> u8 {
     match slot {
-        None => item.max_stack_size(),
-        Some(existing) if existing.item == item => existing.space_left(),
+        None => stack.item.max_stack_size(),
+        Some(existing) if existing.can_stack_with(stack) => existing.space_left(),
         Some(_) => 0,
     }
 }
@@ -101,10 +103,10 @@ pub(crate) fn place_cursor_count(
     let Some(mut held) = cursor.take() else {
         return 0;
     };
-    let moved = wanted.min(held.count).min(slot_capacity(slot, held.item));
+    let moved = wanted.min(held.count).min(slot_capacity(slot, &held));
     if moved > 0 {
         match slot {
-            None => *slot = Some(ItemStack::new(held.item, moved)),
+            None => *slot = Some(held.restack(moved)),
             Some(existing) => existing.count += moved,
         }
         held.count -= moved;
@@ -119,12 +121,12 @@ pub(crate) fn take_slot_stack(slot: &mut Option<ItemStack>, all: bool) -> Option
         return slot.take();
     }
     let stack = slot.as_mut()?;
-    let item = stack.item;
+    let one = stack.restack(1);
     stack.count -= 1;
     if stack.count == 0 {
         *slot = None;
     }
-    Some(ItemStack::new(item, 1))
+    Some(one)
 }
 
 /// Merge `src` into `dst`: fill an empty `dst`, top up a matching stack to

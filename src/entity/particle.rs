@@ -33,6 +33,18 @@ const NO_TINT: [f32; 3] = [1.0, 1.0, 1.0];
 /// icon/held-item path, picks the fixed temperate Plains colours since a fleck
 /// has no biome context.
 #[inline]
+/// Fold a cell's raw `petramond:tint` bytes into a fleck tint (multiply).
+fn mul_kv_tint(tint: [f32; 3], kv: Option<[u8; 3]>) -> [f32; 3] {
+    match kv {
+        Some([r, g, b]) => [
+            tint[0] * r as f32 / 255.0,
+            tint[1] * g as f32 / 255.0,
+            tint[2] * b as f32 / 255.0,
+        ],
+        None => tint,
+    }
+}
+
 fn tile_tint(tile: Tile) -> [f32; 3] {
     match tile.icon_tint() {
         Some(atlas::TileTint::Grass) => Biome::Plains.grass_color(),
@@ -83,8 +95,10 @@ pub struct Particle {
     /// Sub-tile patch origin in `[0, 1]` tile fractions (bottom-left) for a block fleck;
     /// the absolute model-atlas min for a model fleck.
     pub uv_min: [f32; 2],
-    /// Sub-tile patch edge length in tile fractions (block) / model-atlas units (model).
-    pub uv_size: f32,
+    /// Per-axis patch extent: tile fractions (block) / absolute atlas units (model).
+    /// Per-axis because neither atlas is square in normalized UV — the composed block
+    /// atlas is double-height (dye twins), so a tile's V span is roughly half its U span.
+    pub uv_size: [f32; 2],
     /// RGB tint multiplied into the fleck's atlas colour (foliage-green for a
     /// fleck cut from a grass/leaf tile, white otherwise). Classified per-fleck
     /// from [`tile`](Self::tile) so e.g. grass-top dust is green but the
@@ -95,6 +109,9 @@ pub struct Particle {
     /// atlas and presents [`tint`](Self::tint) as an alpha-blended cube through
     /// the same pass as looping-emitter particles, instead of a cutout fleck.
     pub solid: bool,
+    /// Sample the tile's dye-base twin (the fleck carries a `petramond:tint`
+    /// multiply — see the atlas's dye-base half). Block flecks only.
+    pub dyed: bool,
     /// Destroyed the instant it touches a collision box OR water, instead of
     /// settling on solids like terrain dust (burst rows opt in — a splash
     /// droplet vanishes into the pool it fell out of).
@@ -108,21 +125,38 @@ pub struct Particle {
 impl Particle {
     /// Absolute atlas UVs for this particle's sub-patch: `(uv_min, uv_size)` in
     /// normalized atlas space, ready for a render instance. Maps the sub-tile
-    /// patch into the tile's rect from [`atlas::tile_uv`].
+    /// patch into the tile's rect from [`atlas::tile_uv`], inset half a texel
+    /// per side so the sampled range stays STRICTLY inside the tile: an f32 sum
+    /// landing exactly on a tile boundary resolves (nearest filtering) to the
+    /// adjacent tile's texel — an iron-ore fleck flashing the flower tile next
+    /// to it in the atlas. Tile edges are texel edges at every mip, so strictly
+    /// inside at the base level is strictly inside at all levels.
     #[inline]
-    pub fn atlas_uv(&self) -> ([f32; 2], f32) {
-        // A model fleck already carries absolute model-atlas coords (the render side
-        // binds the model atlas for these); a block fleck maps its sub-patch into the
-        // block atlas tile rect.
+    pub fn atlas_uv(&self) -> ([f32; 2], [f32; 2]) {
+        // A model fleck already carries absolute model-atlas coords, inset at scan
+        // time (the render side binds the model atlas for these); a block fleck maps
+        // its sub-patch into the block atlas tile rect.
         if self.model.is_some() {
             return (self.uv_min, self.uv_size);
         }
         let [u0, v0, u1, v1] = atlas::tile_uv(self.tile);
         let tw = u1 - u0;
         let th = v1 - v0;
-        let abs_min = [u0 + self.uv_min[0] * tw, v0 + self.uv_min[1] * th];
-        // Tiles are square, so the patch's atlas-space size scales by tile width.
-        let abs_size = self.uv_size * tw;
+        // A dyed fleck samples the tile's dye-base twin (half a texture down).
+        let dye = if self.dyed { atlas::DYE_V_OFFSET } else { 0.0 };
+        // Half a texel in tile fractions; `span` maps `[0, 1]` into the inset rect.
+        let inset = 0.5 / atlas::TILE as f32;
+        let span = 1.0 - 2.0 * inset;
+        let abs_min = [
+            u0 + (inset + self.uv_min[0] * span) * tw,
+            v0 + dye + (inset + self.uv_min[1] * span) * th,
+        ];
+        // Per-axis: the composed atlas is double-height, so th ≈ tw / 2 — scaling
+        // both axes by tw would overshoot the tile bottom into the tile below.
+        let abs_size = [
+            self.uv_size[0] * span * tw,
+            self.uv_size[1] * span * th,
+        ];
         (abs_min, abs_size)
     }
 
@@ -333,7 +367,7 @@ impl ParticleSystem {
     /// [`spawn_mining_model`]: Self::spawn_mining_model
     #[cfg(test)]
     pub fn spawn_mining(&mut self, block_pos: IVec3, face_normal: IVec3, block: Block) {
-        self.spawn_mining_lit(block_pos, face_normal, block, 63, 0, 0);
+        self.spawn_mining_lit(block_pos, face_normal, block, 63, 0, 0, None);
     }
 
     /// Same as [`spawn_mining`](Self::spawn_mining), with caller-provided render
@@ -346,10 +380,12 @@ impl ParticleSystem {
         skylight: u8,
         blocklight: u8,
         warm: u8,
+        kv_tint: Option<[u8; 3]>,
     ) {
         let tile = Self::face_tile(block, face_normal);
-        // Tint by the sampled face tile (a top-face grass fleck greens; the side does not).
-        let tint = tile_tint(tile);
+        // Tint by the sampled face tile (a top-face grass fleck greens; the side does not),
+        // multiplied by the cell's `petramond:tint` (dyed wool dust matches the block).
+        let tint = mul_kv_tint(tile_tint(tile), kv_tint);
         let n = Vec3::new(
             face_normal.x as f32,
             face_normal.y as f32,
@@ -383,8 +419,9 @@ impl ParticleSystem {
                 warm,
                 tile,
                 model: None,
+                dyed: kv_tint.is_some(),
                 uv_min,
-                uv_size: PATCH_FRAC,
+                uv_size: [PATCH_FRAC; 2],
                 tint,
                 solid: false,
                 die_on_contact: false,
@@ -405,7 +442,7 @@ impl ParticleSystem {
     /// [`spawn_break_burst_model`]: Self::spawn_break_burst_model
     #[cfg(test)]
     pub fn spawn_break_burst(&mut self, block_pos: IVec3, block: Block) {
-        self.spawn_break_burst_lit(block_pos, block, 63, 0, 0);
+        self.spawn_break_burst_lit(block_pos, block, 63, 0, 0, None);
     }
 
     /// Same as [`spawn_break_burst`](Self::spawn_break_burst), with caller-provided
@@ -417,6 +454,7 @@ impl ParticleSystem {
         skylight: u8,
         blocklight: u8,
         warm: u8,
+        kv_tint: Option<[u8; 3]>,
     ) {
         let tiles = block.tiles();
         let center = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32)
@@ -442,8 +480,9 @@ impl ParticleSystem {
                 tiles[2]
             };
             // Tint per-fleck by the chosen tile, so a grass-top fleck greens but a
-            // side/dirt fleck of the same block stays its raw atlas colour.
-            let tint = tile_tint(tile);
+            // side/dirt fleck of the same block stays its raw atlas colour;
+            // the cell's `petramond:tint` multiplies on top (dyed wool).
+            let tint = mul_kv_tint(tile_tint(tile), kv_tint);
             let uv_min = self.patch_min();
             let lifetime = 1.0 + self.rand() * 2.0;
             self.push(Particle {
@@ -454,8 +493,9 @@ impl ParticleSystem {
                 warm,
                 tile,
                 model: None,
+                dyed: kv_tint.is_some(),
                 uv_min,
-                uv_size: PATCH_FRAC,
+                uv_size: [PATCH_FRAC; 2],
                 tint,
                 solid: false,
                 die_on_contact: false,
@@ -551,8 +591,9 @@ impl ParticleSystem {
                 // Atlas fields are inert for a solid particle.
                 tile: Tile::from_name("grass_top").unwrap(),
                 model: None,
+                dyed: false,
                 uv_min: [0.0, 0.0],
-                uv_size: PATCH_FRAC,
+                uv_size: [PATCH_FRAC; 2],
                 tint,
                 solid: true,
                 die_on_contact: spec.die_on_contact,
@@ -631,6 +672,7 @@ fn model_fleck(
         // keeps the field populated.
         tile: Tile::from_name("grass_top").unwrap(),
         model: Some(kind),
+        dyed: false,
         uv_min,
         uv_size,
         tint: NO_TINT,

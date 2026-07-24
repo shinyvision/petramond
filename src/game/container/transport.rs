@@ -9,7 +9,7 @@ use crate::controls::PointerButton;
 use crate::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
 use crate::gui::{FurnaceHit, GuiKind, MenuSlot, MAX_MENU_DRAG_SLOTS};
 use crate::inventory::{plan_drag_distribution, slot_capacity, take_slot_stack, Inventory};
-use crate::item::{ItemStack, ItemType};
+use crate::item::ItemStack;
 use crate::world::World;
 
 impl ContainerMenu {
@@ -37,7 +37,7 @@ impl ContainerMenu {
             hits,
             held.count,
             button == PointerButton::Secondary,
-            |slot| self.drag_capacity(world, inv, slot, held.item),
+            |slot| self.drag_capacity(world, inv, slot, &held),
         );
         for (slot, wanted) in plan {
             self.place_cursor_in(world, inv, slot, wanted);
@@ -84,12 +84,18 @@ impl ContainerMenu {
         }
     }
 
-    fn drag_capacity(&self, world: &World, inv: &Inventory, slot: MenuSlot, item: ItemType) -> u8 {
+    fn drag_capacity(
+        &self,
+        world: &World,
+        inv: &Inventory,
+        slot: MenuSlot,
+        held: &ItemStack,
+    ) -> u8 {
         match slot {
             MenuSlot::Inventory(i) => inv
                 .raw_slots()
                 .get(i)
-                .map(|cell| slot_capacity(cell, item))
+                .map(|cell| slot_capacity(cell, held))
                 .unwrap_or(0),
             MenuSlot::Furnace(_) | MenuSlot::Chest(_) | MenuSlot::Container(_) => {
                 let Some(i) = self.open_container_index(slot) else {
@@ -101,7 +107,7 @@ impl ContainerMenu {
                 self.container_pos()
                     .and_then(|pos| world.container_at(pos))
                     .and_then(|container| container.slots.get(i))
-                    .map(|cell| slot_capacity(cell, item))
+                    .map(|cell| slot_capacity(cell, held))
                     .unwrap_or(0)
             }
             MenuSlot::CraftResult | MenuSlot::Widget(_) => 0,

@@ -1,7 +1,7 @@
 //! Stackable slabs at the world level: position-aware state lookup, collision,
 //! placement, and drop material recovery.
 
-use crate::block::{Aabb, Block};
+use crate::block::Block;
 use crate::block_state::SlabState;
 use crate::item::ItemStack;
 use crate::mathh::IVec3;
@@ -21,16 +21,6 @@ impl World {
             }
             None => SlabState::EMPTY,
         }
-    }
-
-    #[inline]
-    pub fn slab_boxes_at(&self, wx: i32, wy: i32, wz: i32) -> &'static [Aabb] {
-        crate::slab::boxes_for_state(self.slab_state_at(wx, wy, wz))
-    }
-
-    #[inline]
-    pub fn slab_visual_aabb_at(&self, wx: i32, wy: i32, wz: i32) -> Option<([f32; 3], [f32; 3])> {
-        crate::slab::visual_aabb(self.slab_state_at(wx, wy, wz))
     }
 
     #[inline]

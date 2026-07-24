@@ -17,11 +17,6 @@ use super::station::CraftingStation;
 const EMBEDDED: &str = include_str!("../../assets/recipes.json");
 
 #[derive(Deserialize)]
-struct RawFile {
-    recipes: Vec<RawRecipe>,
-}
-
-#[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum RawRecipe {
     Crafting {
@@ -29,6 +24,8 @@ enum RawRecipe {
         station: String,
         ingredients: Vec<RawCraftingIngredient>,
         result: RawStack,
+        #[serde(default)]
+        data: serde_json::Map<String, serde_json::Value>,
     },
     Processing {
         class: String,
@@ -59,7 +56,9 @@ struct RawCraftingIngredient {
 }
 
 enum Converted {
-    Crafting(CraftingRecipe),
+    /// A crafting row plus its own raw `data` map — compiled AFTER all layers
+    /// parse, so patch rows from later packs can target it.
+    Crafting(CraftingRecipe, serde_json::Map<String, serde_json::Value>),
     Processing(ProcessingRecipe),
 }
 
@@ -80,8 +79,10 @@ fn load_layers(
     layers: impl IntoIterator<Item = (String, std::path::PathBuf, Option<String>)>,
     disabled: &std::collections::BTreeSet<String>,
 ) -> Recipes {
-    let mut crafting = Vec::new();
+    let mut crafting: Vec<(CraftingRecipe, serde_json::Map<String, serde_json::Value>)> =
+        Vec::new();
     let mut processing = Vec::new();
+    let mut patches = Vec::new();
     for (text, path, owner) in layers {
         if owner.as_ref().is_some_and(|id| disabled.contains(id)) {
             log::info!(
@@ -91,11 +92,39 @@ fn load_layers(
             continue;
         }
         log::info!("crafting recipes layer: {}", path.display());
-        let (c, p) = parse_for(&text, disabled, owner.as_deref());
+        let (c, p) = parse_for(&text, disabled, owner.as_deref(), &mut patches);
         crafting.extend(c);
         processing.extend(p);
     }
-    Recipes::new(crafting, processing)
+    // Compile each crafting row's data map now that every layer's patch rows
+    // are in (a patch targets the FINAL row, cross-namespace by design).
+    let mut compiled = Vec::with_capacity(crafting.len());
+    for (mut recipe, own) in crafting {
+        let entries = match crate::registry::compile_data_map(recipe.key(), &own, &patches) {
+            Ok(slice) => slice
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            Err(error) => {
+                log::error!("skipping recipe '{}': {error}", recipe.key());
+                continue;
+            }
+        };
+        if let Err(error) = recipe.set_data(entries) {
+            log::error!("skipping recipe '{}': {error}", recipe.key());
+            continue;
+        }
+        compiled.push(recipe);
+    }
+    for patch in &patches {
+        if !compiled.iter().any(|r| r.key() == patch.patch) {
+            log::error!(
+                "recipe patch targets unknown crafting recipe '{}'",
+                patch.patch
+            );
+        }
+    }
+    Recipes::new(compiled, processing)
 }
 
 fn read_recipe_layers() -> Vec<(String, std::path::PathBuf, Option<String>)> {
@@ -114,30 +143,42 @@ fn read_recipe_layers() -> Vec<(String, std::path::PathBuf, Option<String>)> {
 
 #[cfg(test)]
 fn parse(text: &str) -> (Vec<CraftingRecipe>, Vec<ProcessingRecipe>) {
-    parse_for(text, &std::collections::BTreeSet::new(), None)
+    let mut patches = Vec::new();
+    let (crafting, processing) =
+        parse_for(text, &std::collections::BTreeSet::new(), None, &mut patches);
+    (crafting.into_iter().map(|(r, _)| r).collect(), processing)
 }
 
+#[allow(clippy::type_complexity)]
 fn parse_for(
     text: &str,
     disabled: &std::collections::BTreeSet<String>,
     owner: Option<&str>,
-) -> (Vec<CraftingRecipe>, Vec<ProcessingRecipe>) {
-    let file: RawFile = match serde_json::from_str(text) {
-        Ok(file) => file,
-        Err(error) => {
-            log::error!("recipes.json is not valid JSON: {error}");
-            return (Vec::new(), Vec::new());
-        }
-    };
+    patches: &mut Vec<crate::registry::RawDataPatch>,
+) -> (
+    Vec<(CraftingRecipe, serde_json::Map<String, serde_json::Value>)>,
+    Vec<ProcessingRecipe>,
+) {
+    // Patch rows (`{"patch", "data"}`) split out before the tagged-enum
+    // parse, exactly like items/blocks; they register nothing and are exempt
+    // from the owner gate (cross-namespace attach is the point).
+    let rows: Vec<RawRecipe> =
+        match crate::registry::parse_rows_with_patches(text, "recipes", patches) {
+            Ok(rows) => rows,
+            Err(error) => {
+                log::error!("recipes.json is not valid JSON: {error}");
+                return (Vec::new(), Vec::new());
+            }
+        };
     let mut crafting = Vec::new();
     let mut processing = Vec::new();
-    for (index, raw) in file.recipes.into_iter().enumerate() {
+    for (index, raw) in rows.into_iter().enumerate() {
         if let Some(namespace) = disabled_namespace_in(&raw, disabled) {
             log::info!("skipping recipe #{index}: it references disabled mod '{namespace}'");
             continue;
         }
         match convert(raw, owner) {
-            Ok(Converted::Crafting(recipe)) => crafting.push(recipe),
+            Ok(Converted::Crafting(recipe, data)) => crafting.push((recipe, data)),
             Ok(Converted::Processing(recipe)) => processing.push(recipe),
             Err(error) => log::error!("skipping recipe #{index}: {error}"),
         }
@@ -152,6 +193,7 @@ fn convert(raw: RawRecipe, owner: Option<&str>) -> Result<Converted, String> {
             station,
             ingredients,
             result,
+            data,
         } => {
             validate_recipe_owner(&recipe, owner)?;
             let station = CraftingStation::from_key(&station)
@@ -161,15 +203,15 @@ fn convert(raw: RawRecipe, owner: Option<&str>) -> Result<Converted, String> {
                 .map(convert_ingredient)
                 .collect::<Result<_, _>>()?;
             let result_item = resolve_item(&result.item)?;
-            Ok(Converted::Crafting(CraftingRecipe::try_new(
-                recipe,
-                station,
-                ingredients,
-                ItemStack {
-                    item: result_item,
-                    count: result.count,
-                },
-            )?))
+            Ok(Converted::Crafting(
+                CraftingRecipe::try_new(
+                    recipe,
+                    station,
+                    ingredients,
+                    ItemStack::new(result_item, result.count),
+                )?,
+                data,
+            ))
         }
         RawRecipe::Processing {
             class,
@@ -264,6 +306,7 @@ fn disabled_namespace_in<'a>(
             station,
             ingredients,
             result,
+            ..
         } => hit(recipe)
             .or_else(|| hit(station))
             .or_else(|| {
@@ -372,7 +415,9 @@ mod tests {
             "ingredients":[{"item":"wheel:wheel_of_fortune","count":1}],
             "result":{"item":"petramond:stick","count":1}
         }] }"#;
-        assert!(parse_for(cross_ref, &disabled, None).0.is_empty());
+        assert!(parse_for(cross_ref, &disabled, None, &mut Vec::new())
+            .0
+            .is_empty());
 
         // This row mentions only engine content, so reference filtering alone
         // cannot remove it. Disabling its owning pack must remove the layer

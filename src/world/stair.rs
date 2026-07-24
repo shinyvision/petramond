@@ -1,6 +1,6 @@
 //! Directional stairs at the world level: position-aware facing lookup and placement.
 
-use crate::block::{Aabb, Block};
+use crate::block::Block;
 use crate::block_state::StairState;
 use crate::mathh::IVec3;
 use crate::stair::StairShape;
@@ -17,37 +17,17 @@ impl World {
         }
     }
 
-    /// The collision/render boxes for a stair as shaped by adjacent perpendicular
-    /// stairs. Corner-ness is derived, not saved, so old worlds remain compatible.
-    #[inline]
-    pub fn stair_boxes_at(&self, wx: i32, wy: i32, wz: i32) -> &'static [Aabb] {
-        let state = self.stair_state_at(wx, wy, wz);
-        self.resolved_stair_boxes(IVec3::new(wx, wy, wz), state)
-    }
-
-    /// Resolve the boxes a stair with `facing` would have at `pos`, using the current
-    /// neighbouring world state. Used both after placement and for placement overlap
-    /// checks before the block is written.
-    #[inline]
-    pub fn resolved_stair_boxes(&self, pos: IVec3, state: StairState) -> &'static [Aabb] {
-        crate::stair::resolved_boxes_state(pos, state, |p| self.stair_state_if_stair(p))
-    }
-
-    /// The corner-resolved shape of the stair at `pos` — the same shape
-    /// the chunk mesher renders from, so mask consumers (the break-crack overlay)
-    /// derive exactly the meshed shape.
+    /// The refined corner shape STORED for the stair at `pos` — the same
+    /// bytes the chunk mesher renders from, so mask consumers (the
+    /// break-crack overlay) decode exactly the meshed shape. Resolved by the
+    /// edit cascade, never here.
     #[inline]
     pub fn stair_shape_at(&self, wx: i32, wy: i32, wz: i32) -> StairShape {
-        let state = self.stair_state_at(wx, wy, wz);
-        crate::stair::resolved_shape(IVec3::new(wx, wy, wz), state, |p| {
-            self.stair_state_if_stair(p)
-        })
-    }
-
-    #[inline]
-    fn stair_state_if_stair(&self, pos: IVec3) -> Option<StairState> {
-        let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        crate::stair::is_stair(block).then(|| self.stair_state_at(pos.x, pos.y, pos.z))
+        use crate::block::CellView;
+        StairShape::from_cell(crate::block::ShapeNeighborhood::shape_state(
+            self,
+            IVec3::new(wx, wy, wz),
+        ))
     }
 
     /// Place a single-cell stair and record its facing before relighting/remeshing.

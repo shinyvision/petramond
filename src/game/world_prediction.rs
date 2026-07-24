@@ -30,11 +30,7 @@ impl Game {
                 .inventory
                 .selected()
                 .map(|st| mod_api::ItemId(st.item.id())),
-            held_count: self
-                .self_view
-                .inventory
-                .selected()
-                .map_or(0, |st| st.count),
+            held_count: self.self_view.inventory.selected().map_or(0, |st| st.count),
             pose_anchor: self.self_mount.and_then(|m| match m {
                 crate::net::protocol::PlayerMount::Anchor { pos, .. } => Some(pos.to_array()),
                 crate::net::protocol::PlayerMount::Mob { .. } => None,
@@ -97,6 +93,12 @@ impl Game {
         // `predicted` tells the server whether we presented (echo strip): a
         // track-only finish never played sound/burst, so its BlockBroken must
         // still come back over the wire.
+        // Read the cell's tint BEFORE the clear wipes its KV — the local
+        // burst event needs it (same capture the server does).
+        let broken_tint = self
+            .replica
+            .cell_kv_get(pos.x, pos.y, pos.z, crate::block::TINT_KV_KEY)
+            .and_then(|v| <[u8; 3]>::try_from(v).ok());
         let (request_id, predicted) = if self.prediction.can_predict() {
             match self.replica.clear_broken_block(pos) {
                 Some((block, cells)) => {
@@ -114,9 +116,12 @@ impl Game {
                     // Initial prediction blocks on the complete exact light ->
                     // mesh footprint so the click exposes no stale shading.
                     self.replica.present_predicted_edit(&cells);
-                    self.pending_events
-                        .world
-                        .push(WorldEvent::BlockBroken { pos, block, normal });
+                    self.pending_events.world.push(WorldEvent::BlockBroken {
+                        pos,
+                        block,
+                        normal,
+                        tint: broken_tint,
+                    });
                     (id, true)
                 }
                 // Cell already gone / unbreakable on the replica — still ask
@@ -237,9 +242,7 @@ impl Game {
         ) else {
             return false;
         };
-        let looked = Block::from_id(
-            self.replica.chunk_block(h.block.x, h.block.y, h.block.z),
-        );
+        let looked = Block::from_id(self.replica.chunk_block(h.block.x, h.block.y, h.block.z));
         let p = if looked.is_replaceable() && looked != Block::Air {
             h.block
         } else {
@@ -264,8 +267,33 @@ impl Game {
     /// they classify [`PlacePrediction::Plausible`] so the click still jabs.
     /// On predict: cell(s), hotbar decrement, hand pop, and a local
     /// `WorldEvent::BlockPlaced`.
-    pub(super) fn try_predict_place_ghost(&mut self, sneak: bool) -> PlacePrediction {
 
+    /// Predicted-place mirror of the server's carry restore: copy the held
+    /// stack's `petramond:carry` instance-data entries into REPLICA cell KV at
+    /// the anchor, so a carried tint renders the frame the ghost appears
+    /// instead of flashing plain until the server's KV delta lands (which
+    /// overwrites this with the authoritative value; a deny-rollback's block
+    /// restore wipes it like any block write).
+    fn predict_restore_carry(&mut self, block: crate::block::Block, anchor: IVec3) {
+        let carry = block.carry();
+        if carry.is_empty() {
+            return;
+        }
+        let Some(held) = self.self_view.inventory.selected() else {
+            return;
+        };
+        let Some(map) = crate::item::variant::get(held.variant) else {
+            return;
+        };
+        for &key in carry {
+            if let Some(v) = map.get(key) {
+                self.replica
+                    .cell_kv_set(anchor.x, anchor.y, anchor.z, key.to_owned(), v.clone());
+            }
+        }
+    }
+
+    pub(super) fn try_predict_place_ghost(&mut self, sneak: bool) -> PlacePrediction {
         let Some(look) = self.look else {
             return PlacePrediction::No;
         };
@@ -328,12 +356,11 @@ impl Game {
             // The server's pre-event position rule (minus slab stacking,
             // which no mod row participates in): replace-in-place targets
             // the clicked cell, anything else builds against the face.
-            let pre_pos =
-                if looked_at.is_replaceable() && looked_at != crate::block::Block::Air {
-                    look.block
-                } else {
-                    look.block + look.normal
-                };
+            let pre_pos = if looked_at.is_replaceable() && looked_at != crate::block::Block::Air {
+                look.block
+            } else {
+                look.block + look.normal
+            };
             let facing = crate::server::placement::facing_from_forward(self.player.forward());
             let payload = mod_api::EventPayload::BlockPlacePre {
                 pos: pre_pos.to_array(),
@@ -349,7 +376,8 @@ impl Game {
                 return PlacePrediction::No;
             }
             if block.shape_family() == crate::block::ShapeFamily::Custom {
-                if let Some(prediction) = self.try_predict_custom_place(sneak, block, look, pre_pos) {
+                if let Some(prediction) = self.try_predict_custom_place(sneak, block, look, pre_pos)
+                {
                     return prediction;
                 }
                 // No reachable owner: the server falls through to the
@@ -392,9 +420,8 @@ impl Game {
             place_pos,
             replacing_in_place: false,
             player_facing,
-            stair_half: self.held_rotation.stair_half(held),
-            slab_rotation: self.held_rotation.slab_rotation(held),
-            log_axis: self.held_rotation.log_axis_for_facing(held, player_facing),
+            held_rotation: self.held_rotation.clone(),
+            held,
         };
         let plan = self
             .replica
@@ -429,9 +456,8 @@ impl Game {
         // `cells` lists every replica cell the write touches, with its
         // previous id — the deny-rollback footprint.
         let previous_cells: Vec<(IVec3, u8)> = plan
-            .cells
-            .iter()
-            .map(|&c| (c, self.replica.chunk_block(c.x, c.y, c.z)))
+            .cells()
+            .map(|c| (c, self.replica.chunk_block(c.x, c.y, c.z)))
             .collect();
         let snapshot = prediction::PredictionSnapshot::World {
             inventory: Some(self.self_view.inventory.clone()),
@@ -442,7 +468,8 @@ impl Game {
         // containers — machine state is server-owned). Deny-rollback restores
         // the previous block ids, which wipes each cell's sparse state, so a
         // stale predicted state cannot leak.
-        let _ = self.replica.commit_placement(block, &plan, false);
+        let _ = self.replica.commit_placement(&plan, false);
+        self.predict_restore_carry(block, place_pos);
         // Same synchronous prediction presentation as breaking: exact local
         // light and geometry are installed before the ghost is exposed.
         self.replica.present_predicted_edit(&previous_cells);
@@ -486,25 +513,25 @@ impl Game {
         let actor = self.client_actor_snapshot(sneak);
         let result = {
             let Self {
-                client_mods, replica, ..
+                client_mods,
+                replica,
+                ..
             } = self;
             client_mods.placement_plan(replica, &actor, shape_key, shape_kind, block.id(), view)?
         };
         if !result.accepted {
             return Some(PlacePrediction::No);
         }
-        let Some((anchor, write_block)) = crate::world::placement::validate_custom_plan(
-            &result,
-            block,
-            shape_kind,
-            place_pos,
-        ) else {
+        let Some((anchor, write_block)) =
+            crate::world::placement::validate_custom_plan(&result, block, shape_kind, place_pos)
+        else {
             return Some(PlacePrediction::No);
         };
         // The replaceable gate (the server's `block_if_loaded` twin): an
         // unread replica cell reads as air — optimistic, and a stale read
         // rolls back like any engine ghost.
-        let cur = crate::block::Block::from_id(self.replica.chunk_block(anchor.x, anchor.y, anchor.z));
+        let cur =
+            crate::block::Block::from_id(self.replica.chunk_block(anchor.x, anchor.y, anchor.z));
         if !cur.is_replaceable() || cur == write_block {
             return Some(PlacePrediction::No);
         }
@@ -513,27 +540,17 @@ impl Game {
         // ghost collides and draws exactly from frame 0), falling back to the
         // replica's cached bake, then the row's static collision.
         let (sim_boxes, render_boxes) = {
-            let n = |dx, dy, dz| {
-                mod_api::BlockId(
-                    self.replica
-                        .physics_block(anchor.x + dx, anchor.y + dy, anchor.z + dz)
-                        .id(),
-                )
-            };
-            let input = mod_api::CellInput {
-                world_pos: anchor.to_array(),
-                block_id: mod_api::BlockId(write_block.id()),
-                neighbor_ids: [
-                    n(-1, 0, 0),
-                    n(1, 0, 0),
-                    n(0, -1, 0),
-                    n(0, 1, 0),
-                    n(0, 0, -1),
-                    n(0, 0, 1),
-                ],
-            };
+            // The hypothetical cell's bake input, from the SAME builder the
+            // server gate and both pumps use. The neighbours already carry
+            // their declared state; the anchor's own is whatever the placement
+            // will write (absent before commit, so the ghost bakes from
+            // neighbours + the default, then re-bakes on the authoritative
+            // state delta).
+            let input = self.replica.bake_cell_input(anchor, write_block);
             let Self {
-                client_mods, replica, ..
+                client_mods,
+                replica,
+                ..
             } = self;
             client_mods.bake_placement_geometry(replica, shape_key, shape_kind, input)
         };
@@ -553,22 +570,23 @@ impl Game {
             return Some(PlacePrediction::Plausible);
         }
         if !self.prediction.can_predict() {
-            return Some(PlacePrediction::TrackOnly(self.prediction.begin_track_only()));
+            return Some(PlacePrediction::TrackOnly(
+                self.prediction.begin_track_only(),
+            ));
         }
-        let plan = crate::world::placement::PlacementPlan {
+        let plan = crate::world::placement::PlacementPlan::single(
             anchor,
-            cells: vec![anchor],
-            write: crate::world::placement::PlacementWrite::Custom {
-                block_id: write_block.id(),
-            },
-        };
+            write_block,
+            crate::block::ShapeState::NONE,
+        );
         let previous_cells = vec![(anchor, cur.id())];
         let snapshot = prediction::PredictionSnapshot::World {
             inventory: Some(self.self_view.inventory.clone()),
             cells: previous_cells.clone(),
         };
         let id = self.prediction.begin(snapshot);
-        let _ = self.replica.commit_placement(block, &plan, false);
+        let _ = self.replica.commit_placement(&plan, false);
+        self.predict_restore_carry(block, anchor);
         // Install the eagerly baked geometry before presentation: the mesher
         // and the local physics read the same boxes the delta will re-bake.
         if let Some(b) = &sim_boxes {

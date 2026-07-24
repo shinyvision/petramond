@@ -589,7 +589,10 @@ mod tests {
         let _ = world.take_nav_changes();
         assert!(world.toggle_door(door).is_some());
         let (changed, overflow) = world.take_nav_changes();
-        assert!(!overflow && changed.contains(&door), "toggle invalidates: {changed:?}");
+        assert!(
+            !overflow && changed.contains(&door),
+            "toggle invalidates: {changed:?}"
+        );
     }
 
     #[test]

@@ -72,11 +72,23 @@ impl World {
     /// (a no-op if the section isn't loaded) — the client render-bake pump. The
     /// section keeps it (and bumps its mesh revision) so the next mesh job draws
     /// the baked geometry instead of the cube fallback.
-    pub(crate) fn set_custom_render_bake(&mut self, pos: IVec3, boxes: Box<[Aabb]>) {
+    pub(crate) fn set_custom_render_bake(
+        &mut self,
+        pos: IVec3,
+        boxes: Box<[crate::block::ShapeRenderBox]>,
+    ) {
         if let Some((sp, lx, ly, lz)) = Self::split_world(pos.x, pos.y, pos.z) {
             if let Some(section) = self.section_mut(sp) {
                 let idx = crate::chunk::section_idx(lx, ly, lz) as u16;
                 section.set_shape_render(idx, boxes);
+                // A fresh bake must ALWAYS end in a remesh. The revision bump
+                // above only re-triggers a mesh job already in flight — a
+                // block edit queues one on its own apply, but a KV-ONLY
+                // re-bake (a dye color change) has no other trigger, so
+                // without this the new geometry sat installed and undrawn
+                // until an unrelated edit queued the section (the
+                // stale-dye-color bug, 2026-07-23).
+                self.queue_dirty_meshes_sampling_cell(pos.x, pos.y, pos.z);
             }
         }
     }
@@ -112,6 +124,48 @@ impl World {
         self.custom_bake.remove(&pos);
     }
 
+    /// The ENTIRE wire input a Layer-3 bake receives for one cell: `block`'s
+    /// id (the CELL's id may not be written yet — placement bakes the
+    /// hypothetical cell), the six neighbour ids, and — for a shape declaring
+    /// a `state_key` — the replicated per-cell state of the cell and its six
+    /// neighbours, so a stateful shape resolves from STATE (a stair's facing),
+    /// not just block ids. ONE builder: the tick's bake pump, the server's
+    /// placement-plan gate, and the client place ghost all construct their
+    /// inputs here and therefore cannot drift.
+    pub(crate) fn bake_cell_input(&self, pos: IVec3, block: Block) -> mod_api::CellInput {
+        let n = |dx, dy, dz| {
+            mod_api::BlockId(self.physics_block(pos.x + dx, pos.y + dy, pos.z + dz).id())
+        };
+        let state_key = block.shape_kind_def().params.state_key();
+        let read = |dx: i32, dy: i32, dz: i32| {
+            state_key.and_then(|k| {
+                self.cell_kv_get(pos.x + dx, pos.y + dy, pos.z + dz, k)
+                    .map(|v| v.to_vec())
+            })
+        };
+        mod_api::CellInput {
+            world_pos: [pos.x, pos.y, pos.z],
+            block_id: mod_api::BlockId(block.id()),
+            neighbor_ids: [
+                n(-1, 0, 0),
+                n(1, 0, 0),
+                n(0, -1, 0),
+                n(0, 1, 0),
+                n(0, 0, -1),
+                n(0, 0, 1),
+            ],
+            state: read(0, 0, 0),
+            neighbor_states: [
+                read(-1, 0, 0),
+                read(1, 0, 0),
+                read(0, -1, 0),
+                read(0, 1, 0),
+                read(0, 0, -1),
+                read(0, 0, 1),
+            ],
+        }
+    }
+
     /// Take the custom-shape cells that need a (re)bake, each with the neighbour
     /// context a bake reads — cleared, so the host's bake pump processes each
     /// dirty cell once. Cells whose block is no longer a custom shape (broken
@@ -130,24 +184,12 @@ impl World {
                 if block.shape_family() != crate::block::ShapeFamily::Custom {
                     return None;
                 }
-                let n = |dx, dy, dz| {
-                    self.physics_block(pos.x + dx, pos.y + dy, pos.z + dz)
-                        .id()
-                };
                 Some(CustomBakeCell {
                     pos,
                     shape_kind: block.shape_kind().0,
                     // The shape's declaration key names the owning pack (namespace).
                     shape_key: block.shape_kind().key(),
-                    block_id: block.id(),
-                    neighbor_ids: [
-                        n(-1, 0, 0),
-                        n(1, 0, 0),
-                        n(0, -1, 0),
-                        n(0, 1, 0),
-                        n(0, 0, -1),
-                        n(0, 0, 1),
-                    ],
+                    input: self.bake_cell_input(pos, block),
                 })
             })
             .collect()
@@ -225,6 +267,39 @@ impl World {
         }
     }
 
+    /// A cell-KV write to `key` landed: re-bake every stateful custom shape in
+    /// the cell's neighbourhood that resolves from this state key, so a shape
+    /// reading a neighbour's state (a stair's corner from an adjacent facing)
+    /// refreshes. Its SIM bake derives collision from the state too, so the
+    /// authoritative side must invalidate, not just the render side. Called by
+    /// the host KV write path; the replica's KV ingest re-marks via
+    /// [`mark_custom_bake_edit`](Self::mark_custom_bake_edit).
+    pub(crate) fn remark_state_key_bakes(&mut self, wx: i32, wy: i32, wz: i32, key: &str) {
+        // Almost every cell-KV write carries a non-state key (a dye use count,
+        // an interop row): one registry scan skips the 7-cell world probe.
+        if !crate::block::state_key_declared(key) {
+            return;
+        }
+        for (dx, dy, dz) in [
+            (0, 0, 0),
+            (-1, 0, 0),
+            (1, 0, 0),
+            (0, -1, 0),
+            (0, 1, 0),
+            (0, 0, -1),
+            (0, 0, 1),
+        ] {
+            let p = IVec3::new(wx + dx, wy + dy, wz + dz);
+            let b = Block::from_id(self.chunk_block(p.x, p.y, p.z));
+            if b.shape_family() == ShapeFamily::Custom
+                && b.shape_kind_def().params.state_key() == Some(key)
+            {
+                self.invalidate_custom_bake(p);
+                self.custom_bake_dirty.insert(p);
+            }
+        }
+    }
+
     /// Clear a cell's stored baked light aperture (it stopped being a custom
     /// shape), relighting its section neighbourhood only on a real change.
     fn clear_custom_light_aperture(&mut self, pos: IVec3) {
@@ -268,14 +343,13 @@ impl World {
     }
 }
 
-/// One custom-shape cell awaiting a bake, with the neighbourhood a bake reads.
+/// One custom-shape cell awaiting a bake: the routing facts the pumps group
+/// dispatches by, plus the [ready wire input](World::bake_cell_input).
 pub(crate) struct CustomBakeCell {
     pub pos: IVec3,
     pub shape_kind: u8,
     pub shape_key: &'static str,
-    pub block_id: u8,
-    /// Neighbour block ids in `-x,+x,-y,+y,-z,+z` order.
-    pub neighbor_ids: [u8; 6],
+    pub input: mod_api::CellInput,
 }
 
 #[cfg(test)]

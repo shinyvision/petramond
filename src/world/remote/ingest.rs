@@ -4,16 +4,10 @@ use std::sync::Arc;
 use rustc_hash::FxHashSet;
 
 use crate::block::Block;
-use crate::block_state::{LogAxis, SlabState, StairState};
 use crate::chunk::{ChunkPos, SectionPos, SECTION_SIZE, SECTION_VOLUME};
-use crate::door::DoorState;
-use crate::facing::Facing;
-use crate::net::protocol::{BlockDelta, CellState, ColumnPayload, LightPayload, SectionPayload};
+use crate::net::protocol::{BlockDelta, ColumnPayload, LightPayload, SectionPayload};
 use crate::section::{Section, SectionSummary};
-use crate::torch::TorchPlacement;
 use crate::world::store::{LoadTarget, World, WorldRole};
-
-use super::map_entries;
 
 impl World {
     /// Install a column's replicated facts on a replica: biome + both height
@@ -130,16 +124,9 @@ impl World {
             // face is the block id (`furnace_lit` is its own row).
             HashMap::new(),
             HashMap::new(), // container slots replicate via menu sync
-            map_entries(&s.entity_facings, Facing::from_u8),
-            map_entries(&s.torches, TorchPlacement::from_u8),
-            map_entries(&s.model_cells, |off| off),
-            map_entries(&s.model_facings, Facing::from_u8),
-            map_entries(&s.doors, DoorState::decode),
-            map_entries(&s.stairs, StairState::decode),
-            map_entries(&s.slabs, |[meta, a, b]| {
-                SlabState::decode(meta, Block::from_id(a), Block::from_id(b))
-            }),
-            map_entries(&s.log_axes, LogAxis::from_u8),
+            // The unified state list installs verbatim — the transport already
+            // rewrote the id-masked bytes into this session's block ids.
+            s.cell_states.iter().copied().collect(),
             cell_kv,
             payload.metrics,
         );
@@ -274,10 +261,10 @@ impl World {
     /// only streams deltas for sections in the recipient's sent set; a race
     /// with an unload is benign).
     ///
-    /// Per-cell state: the block write already wipes the cell's sparse maps
-    /// (`clear_on_block_change`) and the chest/furnace front is retired
-    /// explicitly, mirroring the server's break funnels — so `state: None`
-    /// leaves the cell clean and `Some` re-installs exactly one entry.
+    /// Per-cell state: the block write already wipes the cell's unified state
+    /// (`clear_on_block_change`), mirroring the server's own write — so
+    /// `state: None` leaves the cell clean and `Some` re-installs the entry
+    /// verbatim (the transport already rewrote its id-masked bytes).
     pub(crate) fn apply_remote_delta(&mut self, delta: BlockDelta) {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
@@ -299,38 +286,15 @@ impl World {
             if let Some(meta) = delta.water {
                 section.set_water(lx, ly, lz, Block::from_id(delta.block_id), meta);
             }
-            section.take_entity_facing(lx, ly, lz);
-            match delta.state {
-                None => {}
-                Some(CellState::Door(b)) => {
-                    section.set_door_state(lx, ly, lz, DoorState::decode(b))
-                }
-                Some(CellState::Stair(b)) => {
-                    section.set_stair_state(lx, ly, lz, StairState::decode(b))
-                }
-                Some(CellState::Slab([meta, a, b])) => section.set_slab_state(
-                    lx,
-                    ly,
-                    lz,
-                    SlabState::decode(meta, Block::from_id(a), Block::from_id(b)),
-                ),
-                Some(CellState::LogAxis(b)) => {
-                    section.set_log_axis(lx, ly, lz, LogAxis::from_u8(b))
-                }
-                Some(CellState::Torch(b)) => {
-                    section.insert_torch(lx, ly, lz, TorchPlacement::from_u8(b))
-                }
-                Some(CellState::Facing(b)) => {
-                    section.insert_entity_facing(lx, ly, lz, Facing::from_u8(b));
-                }
-                Some(CellState::ModelCell { off, facing }) => {
-                    // The base cell's offset stays implicit (no [0,0,0] entry),
-                    // mirroring `place_model_block_facing`.
-                    if off != [0, 0, 0] {
-                        section.set_model_offset(lx, ly, lz, off);
-                    }
-                    section.set_model_facing(lx, ly, lz, Facing::from_u8(facing));
-                }
+            if let Some(state) = delta.state {
+                section.set_cell_state(lx, ly, lz, state);
+            }
+            // Re-install the cell's mod KV — the raw write wiped it exactly
+            // like a server-side write would, but this delta may be a
+            // CORRECTIVE snapshot of an unchanged cell whose KV the server
+            // still holds (the gray-dye bug): the delta carries the truth.
+            for (key, value) in delta.cell_kv {
+                section.cell_kv_set(lx, ly, lz, key, value);
             }
             // The raw write flagged light dirty; on a replica light is
             // server-owned — keep sampling the old cubes until the server's
@@ -360,6 +324,42 @@ impl World {
             Block::from_id(delta.block_id),
         );
         self.vis_dirty = true;
+    }
+
+    /// Replica-only: apply one live per-cell mod KV delta (the streamed twin
+    /// of the server's `cell_kv_set`/`cell_kv_remove`). Applied AFTER the
+    /// batch's block deltas — a block delta's raw write wiped the cell's KV
+    /// exactly like the server's own write, so a same-tick
+    /// write-block-then-KV sequence restores in order. A custom-shape cell is
+    /// re-marked for the client bake pump: replicated KV is presentation
+    /// state a render bake may derive from (a dye vat's fluid tint), so a
+    /// value change must re-bake and remesh even though no block changed.
+    pub(crate) fn apply_remote_cell_kv(&mut self, kv: crate::net::protocol::CellKvDelta) {
+        debug_assert!(
+            self.role == WorldRole::ClientReplica,
+            "remote KV deltas are the replica's ingest path"
+        );
+        let Some((pos, lx, ly, lz)) = Self::split_world(kv.pos.x, kv.pos.y, kv.pos.z) else {
+            return;
+        };
+        let Some(section) = self.section_mut(pos) else {
+            return;
+        };
+        let affects_mesh = crate::block::kv_key_affects_mesh(&kv.key);
+        match kv.value {
+            Some(value) => section.cell_kv_set(lx, ly, lz, kv.key, value),
+            None => {
+                section.cell_kv_remove(lx, ly, lz, &kv.key);
+            }
+        }
+        let block = Block::from_id(self.chunk_block(kv.pos.x, kv.pos.y, kv.pos.z));
+        self.mark_custom_bake_edit(kv.pos.x, kv.pos.y, kv.pos.z, block);
+        // Mesh-feeding presentation keys render through the ordinary mesher
+        // for NON-custom shapes (a dyed wool cube), which the custom-bake
+        // re-mark above does not cover — re-mesh the section directly.
+        if affects_mesh && block.shape_family() != crate::block::ShapeFamily::Custom {
+            self.queue_dirty_meshes_sampling_cell(kv.pos.x, kv.pos.y, kv.pos.z);
+        }
     }
 
     /// Replica-only: set the view centre that orders mesh/light work

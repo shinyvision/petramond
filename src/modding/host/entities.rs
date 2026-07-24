@@ -57,7 +57,8 @@ pub(super) fn mob_snapshot(index: usize, m: &crate::mob::Instance) -> MobSnapsho
 
 /// Entity calls (mob spawn/query/hurt/despawn, item drops).
 pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
-    match call {        HostCall::SpawnMob {
+    match call {
+        HostCall::SpawnMob {
             key,
             pos,
             yaw,
@@ -320,19 +321,30 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 }))
             })
         }
-        HostCall::SpawnItem { item, count, pos } => match finite3(pos, "SpawnItem.pos") {
+        HostCall::SpawnItem {
+            item,
+            count,
+            pos,
+            data,
+        } => match finite3(pos, "SpawnItem.pos") {
             Err(e) => e,
-            Ok(pos) => sim_query(|ctx| {
-                let Some(item) = item_by_name(&item) else {
-                    log::warn!("[mod {mod_id}] SpawnItem: unknown item '{item}'");
-                    return HostRet::Bool(false);
+            Ok(pos) => {
+                let variant = match super::guards::intern_abi_data("SpawnItem", &data) {
+                    Ok(v) => v,
+                    Err(e) => return e,
                 };
-                if count == 0 {
-                    return HostRet::Bool(false);
-                }
-                spawn_item_stacks(ctx, item, count, pos);
-                HostRet::Bool(true)
-            }),
+                sim_query(|ctx| {
+                    let Some(item) = item_by_name(&item) else {
+                        log::warn!("[mod {mod_id}] SpawnItem: unknown item '{item}'");
+                        return HostRet::Bool(false);
+                    };
+                    if count == 0 {
+                        return HostRet::Bool(false);
+                    }
+                    spawn_item_stacks(ctx, item, count, pos, variant);
+                    HostRet::Bool(true)
+                })
+            }
         },
         other => HostRet::Error(format!(
             "non-entity call {other:?} mis-routed to handle_entity_call (host bug)"
@@ -343,7 +355,13 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
 /// Spawn `count` of `item` as dropped entities at `pos`, splitting oversized
 /// counts into max-stack-size drops. Pop seeds derive from (tick, pos, i) so
 /// the spawn is deterministic without any Game-side counter.
-fn spawn_item_stacks(ctx: &mut SimCtx<'_>, item: ItemType, count: u8, pos: Vec3) {
+fn spawn_item_stacks(
+    ctx: &mut SimCtx<'_>,
+    item: ItemType,
+    count: u8,
+    pos: Vec3,
+    variant: crate::item::VariantId,
+) {
     let cell = crate::mathh::voxel_at(pos);
     let sky = ctx.world.skylight6_at_world(cell.x, cell.y, cell.z);
     let block = ctx.world.blocklight6_at_world(cell.x, cell.y, cell.z);
@@ -353,7 +371,7 @@ fn spawn_item_stacks(ctx: &mut SimCtx<'_>, item: ItemType, count: u8, pos: Vec3)
         let put = remaining.min(item.max_stack_size());
         remaining -= put;
         let seed = drop_seed(ctx.world.current_tick(), pos, i);
-        let mut drop = DroppedItem::new(pos, ItemStack::new(item, put), seed);
+        let mut drop = DroppedItem::new(pos, ItemStack::with_variant(item, put, variant), seed);
         drop.skylight = sky;
         drop.blocklight = block;
         ctx.world.spawn_item(drop);
@@ -375,12 +393,21 @@ fn drop_seed(tick: u64, pos: Vec3, i: u32) -> u32 {
 
 /// Give the player `count` of `item` through the normal inventory fill;
 /// whatever does not fit drops at the player's feet like any other overflow.
-pub(super) fn give_item(ctx: &mut SimCtx<'_>, item: ItemType, count: u8) {
+pub(super) fn give_item(
+    ctx: &mut SimCtx<'_>,
+    item: ItemType,
+    count: u8,
+    variant: crate::item::VariantId,
+) {
     let mut remaining = count;
     while remaining > 0 {
         let put = remaining.min(item.max_stack_size());
         remaining -= put;
-        if let Some(leftover) = ctx.player.inventory.add(ItemStack::new(item, put)) {
+        if let Some(leftover) = ctx
+            .player
+            .inventory
+            .add(ItemStack::with_variant(item, put, variant))
+        {
             let at = ctx.player.body_center();
             let seed = drop_seed(ctx.world.current_tick(), at, remaining as u32);
             let cell = crate::mathh::voxel_at(at);

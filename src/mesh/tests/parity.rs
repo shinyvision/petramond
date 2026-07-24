@@ -143,8 +143,7 @@ mod parallel_parity_tests {
                 section,
                 *pos,
                 nb,
-                |_, _, _| StairState::default(),
-                |_, _, _| SlabState::EMPTY,
+                |_, _, _| crate::block::ShapeState::NONE,
                 |_, _, _| 0,
                 nb_biome,
                 nb_light,
@@ -248,6 +247,9 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     section.set_block(2, 2, 2, Block::SnowLayer);
     section.set_block(12, 1, 4, Block::SnowLayer);
 
+    // Resolve stored shape states (stair corners, pane masks) the way the
+    // world's edit cascade would have — the fixture wrote raw cells.
+    let section = super::refined(&section);
     let block_at = |wx: i32, wy: i32, wz: i32| -> u8 {
         if in_section(wx, wy, wz) {
             section.block_raw(wx as usize, wy as usize, wz as usize)
@@ -272,18 +274,11 @@ fn pad_local_section_mesher_matches_closure_mesher() {
             0
         }
     };
-    let stair_at = |wx: i32, wy: i32, wz: i32| -> StairState {
+    let cell_state_at = |wx: i32, wy: i32, wz: i32| -> crate::block::ShapeState {
         if in_section(wx, wy, wz) {
-            section.stair_state(wx as usize, wy as usize, wz as usize)
+            section.cell_state(wx as usize, wy as usize, wz as usize)
         } else {
-            StairState::default()
-        }
-    };
-    let slab_at = |wx: i32, wy: i32, wz: i32| -> SlabState {
-        if in_section(wx, wy, wz) {
-            section.slab_state(wx as usize, wy as usize, wz as usize)
-        } else {
-            SlabState::EMPTY
+            crate::block::ShapeState::NONE
         }
     };
     let sky_at = |wx: i32, wy: i32, wz: i32| -> u8 {
@@ -304,8 +299,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
         &section,
         pos,
         block_at,
-        stair_at,
-        slab_at,
+        cell_state_at,
         water_at,
         biome_at,
         sky_at,
@@ -317,8 +311,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     let mut water = vec![0u8; PAD_VOL];
     let mut skylight = vec![SKY_FULL; PAD_VOL];
     let mut blocklight = vec![0u8; PAD_VOL];
-    let mut stair_states = vec![StairState::default().encode(); PAD_VOL];
-    let mut slab_states = vec![SlabState::EMPTY; PAD_VOL];
+    let mut cell_states = vec![crate::block::ShapeState::NONE; PAD_VOL];
     let loaded = vec![true; PAD_VOL];
     for py in 0..PAD {
         for pz in 0..PAD {
@@ -329,8 +322,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
                 water[i] = water_at(wx, wy, wz);
                 skylight[i] = sky_at(wx, wy, wz);
                 blocklight[i] = blocklight_at(wx, wy, wz);
-                stair_states[i] = stair_at(wx, wy, wz).encode();
-                slab_states[i] = slab_at(wx, wy, wz);
+                cell_states[i] = cell_state_at(wx, wy, wz);
             }
         }
     }
@@ -350,8 +342,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
             water: &water,
             skylight: &skylight,
             blocklight: &blocklight,
-            stair_states: &stair_states,
-            slab_states: &slab_states,
+            cell_states: &cell_states,
             loaded: &loaded,
             biome: &biome,
         },

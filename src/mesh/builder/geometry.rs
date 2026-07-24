@@ -1,8 +1,9 @@
 use glam::IVec3;
 
 use crate::atlas::Tile;
+use crate::block::CellView;
 use crate::block::{Block, ShapeFamily};
-use crate::block_state::{LogAxis, SlabState, StairState};
+use crate::block_state::{LogAxis, SlabState};
 use crate::chunk::{section_idx, SectionPos, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
 use crate::section::Section;
 use crate::torch::warm_tint;
@@ -14,13 +15,14 @@ use super::super::tint;
 use super::super::vertex::{pack_tint, ChunkMesh, ModelVertex, UV_MODE_NONE};
 use super::super::water::{self, SideVsWater, WaterSurface};
 
+use super::super::boxset::{emit_box_set, BoxSetScratch, ShapeBox};
 use super::cube_face::{
-    cube_face_lighting, cube_face_tile, face_axes, face_index, facing_face, log_side_cell_uvs,
+    boundary_plane, cube_face_lighting, cube_face_tile, face_axes, face_index, facing_face,
+    log_side_cell_uvs,
 };
 use super::exposed_masks::{build_exposed_masks, mask_has, pad_cube_fast_candidate};
 use super::model_block::{emit_model_block, emit_model_contact};
 use super::pad::{mesh_pad_idx, SectionMeshPad};
-use super::super::boxset::{emit_box_set, BoxSetScratch, MeshBox};
 use super::plant::emit_plant;
 use super::{LeafMeshMode, MeshOptions};
 
@@ -29,8 +31,7 @@ pub(super) fn section_geometry(
     section: &Section,
     pos: SectionPos,
     neighbour_block: impl Fn(i32, i32, i32) -> u8,
-    neighbour_stair_state: impl Fn(i32, i32, i32) -> StairState,
-    neighbour_slab_state: impl Fn(i32, i32, i32) -> SlabState,
+    neighbour_cell_state: impl Fn(i32, i32, i32) -> crate::block::ShapeState,
     neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
     neighbour_blocklight: impl Fn(i32, i32, i32) -> u8,
@@ -52,6 +53,40 @@ pub(super) fn section_geometry(
     let (ox, oy, oz) = pos.origin_world();
     let tint_tile = |kind, ci| tints.map_or(tint::NO_TINT, |t| t.tile(kind, ci));
     let tint_water = |ci| tints.map_or(tint::NO_TINT, |t| t.water[ci]);
+    // Per-cell `petramond:tint` presentation entries (replicated cell KV):
+    // a multiply into the vertex tint lane. Sparse — empty on almost every
+    // section, so the fast path is one `is_empty` test.
+    let cell_tints = section.cell_tint_map();
+    let kv_tint = |cell: usize, tint: [f32; 3]| -> [f32; 3] {
+        if cell_tints.is_empty() {
+            return tint;
+        }
+        match cell_tints.get(&(cell as u16)) {
+            Some(m) => [tint[0] * m[0], tint[1] * m[1], tint[2] * m[2]],
+            None => tint,
+        }
+    };
+    // Whether the cell carries a tint at all — tinted cells set the vertex
+    // dyed flag so faces sample their tiles' dye-base twins and the multiply
+    // lands on a desaturated, peak-white base.
+    let cell_tinted =
+        |cell: usize| !cell_tints.is_empty() && cell_tints.contains_key(&(cell as u16));
+    // The ONE place a cell's `petramond:tint` reaches box geometry: multiply
+    // it into every emitted face AND mark the box dyed (so the multiply lands
+    // on the tile's dye-base twin). Every box family gets both halves by
+    // construction. Threading the multiply through each family's own tint
+    // closure instead left four of six families flagging the dye base without
+    // ever multiplying, which rendered them whitened and untinted.
+    let apply_cell_tint = |boxes: &mut Vec<ShapeBox>, cell: usize| {
+        if cell_tints.is_empty() {
+            return;
+        }
+        if let Some(&m) = cell_tints.get(&(cell as u16)) {
+            for b in boxes.iter_mut() {
+                b.apply_tint(m);
+            }
+        }
+    };
 
     // Every block read is by world coord through the routing closure (in-section
     // and cross-section alike); out-of-world / unloaded reads return air.
@@ -59,15 +94,20 @@ pub(super) fn section_geometry(
         |wx: i32, wy: i32, wz: i32| -> Block { Block::from_id(neighbour_block(wx, wy, wz)) };
     let slab_at = |wx: i32, wy: i32, wz: i32| -> Option<SlabState> {
         let block = block_at(wx, wy, wz);
-        crate::slab::is_slab(block)
-            .then(|| crate::slab::normalize_state(block, neighbour_slab_state(wx, wy, wz)))
+        crate::slab::is_slab(block).then(|| {
+            crate::slab::normalize_state(
+                block,
+                SlabState::from_cell(neighbour_cell_state(wx, wy, wz)),
+            )
+        })
     };
     // "Cell holds a full slab stack" — callers gate on `is_slab` first (dense flag)
     // so this only pays a state lookup on actual slab cells. Full stacks cull and
     // occlude AO/light like opaque cubes; no normalize needed (a normalized default
     // is a single layer, never full).
-    let slab_full_at =
-        |wx: i32, wy: i32, wz: i32| -> bool { neighbour_slab_state(wx, wy, wz).is_full() };
+    let slab_full_at = |wx: i32, wy: i32, wz: i32| -> bool {
+        SlabState::from_cell(neighbour_cell_state(wx, wy, wz)).is_full()
+    };
     let water_at = |wx: i32, wy: i32, wz: i32| -> u8 { neighbour_water(wx, wy, wz) };
     let fluid_at = |wx: i32, wy: i32, wz: i32| -> Option<f32> {
         if block_at(wx, wy, wz) != Block::Water {
@@ -91,20 +131,18 @@ pub(super) fn section_geometry(
             && crate::world::water::is_still_source(water_at(wx, wy, wz))
     };
 
+    // The primitive seam every shape family reads the world through.
+    let nbh = MeshNeighborhood {
+        block: &neighbour_block,
+        cell_state: &neighbour_cell_state,
+        section,
+        origin: (ox, oy, oz),
+    };
+
     // The unified box-set emitter's scratch + box buffer (see mesh::boxset):
     // every axis-aligned sub-cell shape family routes through it.
     let mut box_scratch = BoxSetScratch::default();
-    let mut mesh_boxes: Vec<MeshBox> = Vec::new();
-
-    // A neighbour stair's resolved corner shape — the neighbour-of-neighbour
-    // read stair corner resolution, pane/fence connection, and occupancy
-    // queries share.
-    let stair_shape_at = |q: IVec3| {
-        crate::stair::resolved_shape(q, neighbour_stair_state(q.x, q.y, q.z), |r| {
-            crate::stair::is_stair(block_at(r.x, r.y, r.z))
-                .then(|| neighbour_stair_state(r.x, r.y, r.z))
-        })
-    };
+    let mut mesh_boxes: Vec<ShapeBox> = Vec::new();
 
     // The cell-local occupancy boxes of the block at `p` — what the box-set
     // emitter subtracts from a flush face so sub-cell geometry culls against
@@ -113,55 +151,32 @@ pub(super) fn section_geometry(
     // and contribute nothing here; families with no box form (plants, torch,
     // models, custom bakes across the section boundary) stay empty, which
     // just means "no sub-cell cull", never a wrong cull.
+    let occ_scratch = std::cell::RefCell::new(Vec::<ShapeBox>::new());
     let occupancy_boxes = |p: IVec3, out: &mut Vec<([f32; 3], [f32; 3])>| {
-        let nb = block_at(p.x, p.y, p.z);
-        match nb.shape_family() {
-            ShapeFamily::Stair => {
-                let shape = stair_shape_at(p);
-                out.extend(
-                    crate::stair::boxes_for_shape(shape)
-                        .iter()
-                        .map(|a| (a.min, a.max)),
-                );
-            }
-            ShapeFamily::Slab => {
-                if let Some(state) = slab_at(p.x, p.y, p.z) {
-                    for (slot, _) in crate::slab::layer_slots(state) {
-                        out.push(super::super::slab::slot_box(slot));
-                    }
-                }
-            }
-            ShapeFamily::Ladder => {
-                let (thickness, height) = nb.ladder_dims();
-                out.push(crate::ladder::panel_aabb_dim(
-                    nb.panel_facing(),
-                    thickness,
-                    height,
-                ));
-            }
-            ShapeFamily::Fence | ShapeFamily::Pane => {
-                if let Some(c) = nb.shape_kind_def().params.connection() {
-                    let family = nb.shape_family();
-                    let mask = crate::connect::resolved_mask(
-                        p,
-                        |q| block_at(q.x, q.y, q.z),
-                        &stair_shape_at,
-                        |q| slab_full_at(q.x, q.y, q.z),
-                        |b, dir, st, sl| crate::connect::connects(c.rule, family, b, dir, st, sl),
-                    );
-                    if family == ShapeFamily::Fence {
-                        super::super::fence::shape_boxes(c.post_lo, c.post_hi, mask, |mn, mx, _| {
-                            out.push((mn, mx))
-                        });
-                    } else {
-                        super::super::pane::shape_boxes(c.post_lo, c.post_hi, mask, |mn, mx, _| {
-                            out.push((mn, mx))
-                        });
-                    }
-                }
-            }
-            _ => {}
+        let nb_block = block_at(p.x, p.y, p.z);
+        let k = nb_block.shape_kind_def();
+        if !k.resolves_to_boxes {
+            return;
         }
+        // The neighbour's own resolved boxes — the SAME producer the mesh
+        // uses, so what culls a face is exactly what would have been drawn
+        // there. Presentation is irrelevant to an occupancy query, so the
+        // tint is a constant; the scratch keeps the per-face call allocation
+        // free.
+        let mut boxes = occ_scratch.borrow_mut();
+        boxes.clear();
+        let tint_for = |_: Tile| [1.0f32; 3];
+        k.render.boxes(
+            &crate::block::ShapeCtx {
+                nb: &nbh,
+                pos: p,
+                block: nb_block,
+                params: &k.params,
+                tint_for: &tint_for,
+            },
+            &mut boxes,
+        );
+        out.extend(boxes.iter().map(|b| (b.aabb.min, b.aabb.max)));
     };
 
     // The shared sub-cell AO occupancy query: does the cell hold solid matter
@@ -182,56 +197,22 @@ pub(super) fn section_geometry(
         if b.occludes_ao() {
             return true;
         }
-        // Which half-cell octants the pocket overlaps, ORed over occupancy.
-        let any_octant = |occ: &dyn Fn(usize, usize, usize) -> bool| -> bool {
-            let touches = |a: usize, half: usize| {
-                if half == 0 {
-                    lo[a] < 0.5
-                } else {
-                    hi[a] > 0.5
-                }
-            };
-            (0..8).any(|o| {
-                let (ix, iy, iz) = (o & 1, (o >> 1) & 1, (o >> 2) & 1);
-                touches(0, ix) && touches(1, iy) && touches(2, iz) && occ(ix, iy, iz)
-            })
-        };
-        if b.is_slab() {
-            return slab_at(cx, cy, cz).is_some_and(|state| {
-                state.is_full()
-                    || any_octant(&|ix, iy, iz| crate::slab::half_cell_occupied(state, ix, iy, iz))
-            });
-        }
-        let overlaps = |mn: [f32; 3], mx: [f32; 3]| (0..3).all(|a| lo[a] < mx[a] && hi[a] > mn[a]);
-        match b.shape_family() {
-            ShapeFamily::Stair => {
-                let shape = crate::stair::shape(neighbour_stair_state(cx, cy, cz));
-                any_octant(&|ix, iy, iz| crate::stair::shape_half_cell_occupied(shape, ix, iy, iz))
-            }
-            ShapeFamily::Fence | ShapeFamily::Pane => {
-                b.shape_kind_def().params.connection().is_some_and(|c| {
-                    lo[0] < c.post_hi && hi[0] > c.post_lo && lo[2] < c.post_hi && hi[2] > c.post_lo
-                })
-            }
-            ShapeFamily::Ladder => {
-                let (thickness, height) = b.ladder_dims();
-                let (mn, mx) = crate::ladder::panel_aabb_dim(b.panel_facing(), thickness, height);
-                overlaps(mn, mx)
-            }
-            ShapeFamily::Custom => {
-                let (lx, ly, lz) = (cx - ox, cy - oy, cz - oz);
-                let range = 0..SECTION_SIZE as i32;
-                range.contains(&lx)
-                    && range.contains(&ly)
-                    && range.contains(&lz)
-                    && section
-                        .shape_render_boxes(
-                            section_idx(lx as usize, ly as usize, lz as usize) as u16
-                        )
-                        .is_some_and(|boxes| boxes.iter().any(|bx| overlaps(bx.min, bx.max)))
-            }
-            _ => false,
-        }
+        // Everything below the whole-cell case is the FAMILY's answer: each
+        // one knows its own shape and its own parity constraints (see
+        // `ShapeRender::occupies_pocket`). The mesher only asks.
+        let k = b.shape_kind_def();
+        let tint_for = |_: Tile| [1.0f32; 3];
+        k.render.occupies_pocket(
+            &crate::block::ShapeCtx {
+                nb: &nbh,
+                pos: IVec3::new(cx, cy, cz),
+                block: b,
+                params: &k.params,
+                tint_for: &tint_for,
+            },
+            lo,
+            hi,
+        )
     };
 
     // Reused per-thread greedy scratch: flat opaque cube faces are deferred here during the
@@ -264,6 +245,7 @@ pub(super) fn section_geometry(
                 // Resolve the render shape once per cell (each call indexes the block
                 // table); the special-shape checks below and the cube fallthrough share it.
                 let shape = block.shape_family();
+                let kind = block.shape_kind_def();
                 if shape == ShapeFamily::Door {
                     continue;
                 }
@@ -347,38 +329,50 @@ pub(super) fn section_geometry(
                     continue;
                 }
 
-                if shape == ShapeFamily::Ladder {
-                    let tile = block.tiles()[0];
-                    // The facing is the ROW's (one block row per facing) —
-                    // the mesher reads row fields, never per-cell maps.
-                    let facing = block.panel_facing();
-                    let (thickness, height) = block.ladder_dims();
-                    mesh_boxes.clear();
-                    super::super::ladder::push_mesh_box(
-                        &mut mesh_boxes,
-                        facing,
-                        thickness,
-                        height,
-                        tile,
-                        tint_tile(tile.world_tint(), ci),
-                    );
-                    emit_box_set(
-                        &mut opaque,
-                        &mut opaque_idx,
-                        wx,
-                        wy,
-                        wz,
-                        &mesh_boxes,
-                        &mut box_scratch,
-                        &neighbor_solid,
-                        &neighbor_boxes,
-                        &cell_matter,
-                        &block_at,
-                        &slab_at,
-                        &neighbour_light,
-                        &neighbour_blocklight,
-                    );
-                    continue;
+                // Every box-shaped family resolves through its own facet: ONE
+                // producer, so the drawn boxes are the boxes collision and
+                // targeting read. Adding a family means implementing
+                // `ShapeRender::boxes`, not editing the mesher.
+                let mut slab_as_cube = false;
+                if kind.resolves_to_boxes {
+                    let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
+                    let ctx = crate::block::ShapeCtx {
+                        nb: &nbh,
+                        pos: IVec3::new(wx, wy, wz),
+                        block,
+                        params: &kind.params,
+                        tint_for: &tint_for,
+                    };
+                    // A family whose resolved form IS the material's full cube
+                    // (a uniform full slab stack) falls to the cube path so it
+                    // greedy-merges; the merge is load-bearing for streaming.
+                    slab_as_cube = kind.render.meshes_as_cube(&ctx);
+                    if !slab_as_cube {
+                        mesh_boxes.clear();
+                        kind.render.boxes(&ctx, &mut mesh_boxes);
+                        // Nothing resolved (an unbaked Layer-3 cell) falls
+                        // through to the cube path — the render fallback.
+                        if !mesh_boxes.is_empty() {
+                            apply_cell_tint(&mut mesh_boxes, section_idx(lx, ly, lz));
+                            emit_box_set(
+                                &mut opaque,
+                                &mut opaque_idx,
+                                wx,
+                                wy,
+                                wz,
+                                &mesh_boxes,
+                                &mut box_scratch,
+                                &neighbor_solid,
+                                &neighbor_boxes,
+                                &cell_matter,
+                                &block_at,
+                                &slab_at,
+                                &neighbour_light,
+                                &neighbour_blocklight,
+                            );
+                            continue;
+                        }
+                    }
                 }
 
                 if let Some(kind) = block.model_kind() {
@@ -430,212 +424,6 @@ pub(super) fn section_geometry(
                     continue;
                 }
 
-                if shape == ShapeFamily::Stair {
-                    let tiles = block.tiles();
-                    let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
-                    let shape = crate::stair::resolved_shape(
-                        IVec3::new(wx, wy, wz),
-                        section.stair_state(lx, ly, lz),
-                        |p| {
-                            crate::stair::is_stair(block_at(p.x, p.y, p.z))
-                                .then(|| neighbour_stair_state(p.x, p.y, p.z))
-                        },
-                    );
-                    mesh_boxes.clear();
-                    mesh_boxes.extend(
-                        crate::stair::boxes_for_shape(shape)
-                            .iter()
-                            .map(|a| MeshBox::uniform(a.min, a.max, tiles, tint_for)),
-                    );
-                    emit_box_set(
-                        &mut opaque,
-                        &mut opaque_idx,
-                        wx,
-                        wy,
-                        wz,
-                        &mesh_boxes,
-                        &mut box_scratch,
-                        &neighbor_solid,
-                        &neighbor_boxes,
-                        &cell_matter,
-                        &block_at,
-                        &slab_at,
-                        &neighbour_light,
-                        &neighbour_blocklight,
-                    );
-                    continue;
-                }
-
-                if shape == ShapeFamily::Pane {
-                    // [top, bottom, side] tiles = [edge, edge, glass].
-                    let [edge_tile, _bottom, glass_tile] = block.tiles();
-                    // Post dimensions + connection rule are shape-kind params, so a
-                    // modded bar/wall's post and connection behaviour ride here.
-                    let c = block
-                        .shape_kind_def()
-                        .params
-                        .connection()
-                        .expect("pane carries connection params");
-                    let mask = crate::connect::resolved_mask(
-                        IVec3::new(wx, wy, wz),
-                        |q| block_at(q.x, q.y, q.z),
-                        &stair_shape_at,
-                        |q| slab_full_at(q.x, q.y, q.z),
-                        |nb, dir, st, sl| {
-                            crate::connect::connects(c.rule, ShapeFamily::Pane, nb, dir, st, sl)
-                        },
-                    );
-                    mesh_boxes.clear();
-                    super::super::pane::push_mesh_boxes(
-                        &mut mesh_boxes,
-                        c.post_lo,
-                        c.post_hi,
-                        mask,
-                        glass_tile,
-                        edge_tile,
-                        tint_tile(glass_tile.world_tint(), ci),
-                    );
-                    emit_box_set(
-                        &mut opaque,
-                        &mut opaque_idx,
-                        wx,
-                        wy,
-                        wz,
-                        &mesh_boxes,
-                        &mut box_scratch,
-                        &neighbor_solid,
-                        &neighbor_boxes,
-                        &cell_matter,
-                        &block_at,
-                        &slab_at,
-                        &neighbour_light,
-                        &neighbour_blocklight,
-                    );
-                    continue;
-                }
-
-                if shape == ShapeFamily::Fence {
-                    let tiles = block.tiles();
-                    // Post dimensions + connection rule are shape-kind params, so a
-                    // modded wall's post and connection behaviour ride here without
-                    // touching the mesher.
-                    let c = block
-                        .shape_kind_def()
-                        .params
-                        .connection()
-                        .expect("fence carries connection params");
-                    let mask = crate::connect::resolved_mask(
-                        IVec3::new(wx, wy, wz),
-                        |q| block_at(q.x, q.y, q.z),
-                        &stair_shape_at,
-                        |q| slab_full_at(q.x, q.y, q.z),
-                        |nb, dir, st, sl| {
-                            crate::connect::connects(c.rule, ShapeFamily::Fence, nb, dir, st, sl)
-                        },
-                    );
-                    mesh_boxes.clear();
-                    super::super::fence::push_mesh_boxes(
-                        &mut mesh_boxes,
-                        c.post_lo,
-                        c.post_hi,
-                        mask,
-                        tiles,
-                        tint_tile(tiles[2].world_tint(), ci),
-                    );
-                    emit_box_set(
-                        &mut opaque,
-                        &mut opaque_idx,
-                        wx,
-                        wy,
-                        wz,
-                        &mesh_boxes,
-                        &mut box_scratch,
-                        &neighbor_solid,
-                        &neighbor_boxes,
-                        &cell_matter,
-                        &block_at,
-                        &slab_at,
-                        &neighbour_light,
-                        &neighbour_blocklight,
-                    );
-                    continue;
-                }
-
-                // A Layer-3 custom shape emits the boxes the client render bake
-                // produced (cached on the section); a cache miss / pre-bake / trap
-                // falls through to the cube path (the render fallback).
-                if shape == ShapeFamily::Custom {
-                    if let Some(boxes) = section.shape_render_boxes(section_idx(lx, ly, lz) as u16) {
-                        let tiles = block.tiles();
-                        let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
-                        mesh_boxes.clear();
-                        mesh_boxes.extend(
-                            boxes
-                                .iter()
-                                .map(|a| MeshBox::uniform(a.min, a.max, tiles, tint_for)),
-                        );
-                        emit_box_set(
-                            &mut opaque,
-                            &mut opaque_idx,
-                            wx,
-                            wy,
-                            wz,
-                            &mesh_boxes,
-                            &mut box_scratch,
-                            &neighbor_solid,
-                            &neighbor_boxes,
-                            &cell_matter,
-                            &block_at,
-                            &slab_at,
-                            &neighbour_light,
-                            &neighbour_blocklight,
-                        );
-                        continue;
-                    }
-                }
-
-                // A same-material full slab stack IS the material's full cube: fall
-                // through to the cube path (fast path + greedy merge included) so it
-                // culls, lights, and merges like one. Partial cells and mixed-material
-                // full stacks keep the per-layer emitter (preserving each layer's
-                // texture); full stacks of either kind still cull/occlude as opaque
-                // via `slab_full_at`.
-                let mut slab_as_cube = false;
-                if shape == ShapeFamily::Slab {
-                    let state = crate::slab::normalize_state(block, section.slab_state(lx, ly, lz));
-                    slab_as_cube = crate::slab::is_uniform_full_stack(state);
-                    if !slab_as_cube {
-                        let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
-                        mesh_boxes.clear();
-                        for (slot, layer_block) in crate::slab::layer_slots(state) {
-                            let (min, max) = super::super::slab::slot_box(slot);
-                            mesh_boxes.push(MeshBox::uniform(
-                                min,
-                                max,
-                                layer_block.tiles(),
-                                tint_for,
-                            ));
-                        }
-                        emit_box_set(
-                            &mut opaque,
-                            &mut opaque_idx,
-                            wx,
-                            wy,
-                            wz,
-                            &mesh_boxes,
-                            &mut box_scratch,
-                            &neighbor_solid,
-                            &neighbor_boxes,
-                            &cell_matter,
-                            &block_at,
-                            &slab_at,
-                            &neighbour_light,
-                            &neighbour_blocklight,
-                        );
-                        continue;
-                    }
-                }
-
                 let is_water = block == Block::Water;
                 let block_tiles = block.tiles();
                 // Row-declared side treatments, resolved once per cell — the
@@ -682,8 +470,9 @@ pub(super) fn section_geometry(
                         // Pad-local samples: ±1 neighbours stay inside SECTION_PAD.
                         let (plx, ply, plz) = (lx as i32, ly as i32, lz as i32);
                         let full = pad.water_fills_local(plx, ply, plz);
-                        let block_l =
-                            |nwx, nwy, nwz| pad.block_local(plx + nwx - wx, ply + nwy - wy, plz + nwz - wz);
+                        let block_l = |nwx, nwy, nwz| {
+                            pad.block_local(plx + nwx - wx, ply + nwy - wy, plz + nwz - wz)
+                        };
                         let fluid_l = |nwx, nwy, nwz| {
                             pad.fluid_height_local(plx + nwx - wx, ply + nwy - wy, plz + nwz - wz)
                         };
@@ -720,6 +509,7 @@ pub(super) fn section_geometry(
                                     (t, None, tint)
                                 }
                             };
+                            let tint = kv_tint(cell, tint);
                             let corners = quad_for(face, base_x, base_y, base_z);
                             let (dx, dy, dz) = face.dir();
                             let (fxp, fyp, fzp) = (
@@ -777,7 +567,9 @@ pub(super) fn section_geometry(
                                 let fi = face_index(face);
                                 greedy.faces[fi * SECTION_VOLUME + cell] = FlatFace {
                                     gen: greedy_gen,
-                                    tile: base_tile.index() as u32,
+                                    // Dyed flag in bit 31 (part of the merge key).
+                                    tile: base_tile.index() as u32
+                                        | ((cell_tinted(cell) as u32) << 31),
                                     ao: ao[0],
                                     light6: light6[0],
                                     block6: block6[0],
@@ -801,6 +593,7 @@ pub(super) fn section_geometry(
                                     light6,
                                     block6,
                                     warm,
+                                    cell_tinted(cell),
                                 );
                             }
                         }
@@ -905,6 +698,7 @@ pub(super) fn section_geometry(
                         let tint = tint_tile(t.world_tint(), ci);
                         (t, None, tint)
                     };
+                    let tint = kv_tint(section_idx(lx, ly, lz), tint);
 
                     let mut corners = if block == Block::Cactus {
                         cactus_quad(
@@ -950,6 +744,7 @@ pub(super) fn section_geometry(
                         fx,
                         fy,
                         fz,
+                        boundary_plane(face, (fx, fy, fz)),
                         f_l,
                         f_bl,
                         true,
@@ -989,7 +784,9 @@ pub(super) fn section_geometry(
                         let fi = face_index(face);
                         greedy.faces[fi * SECTION_VOLUME + section_idx(lx, ly, lz)] = FlatFace {
                             gen: greedy_gen,
-                            tile: base_tile.index() as u32,
+                            // Dyed flag in bit 31 (part of the merge key).
+                            tile: base_tile.index() as u32
+                                | ((cell_tinted(section_idx(lx, ly, lz)) as u32) << 31),
                             ao: ao[0],
                             light6: light6[0],
                             block6: block6[0],
@@ -1026,6 +823,7 @@ pub(super) fn section_geometry(
                             light6,
                             block6,
                             warm,
+                            cell_tinted(section_idx(lx, ly, lz)),
                         );
                         if is_water && matches!(face, Face::PosY) {
                             ibuf.extend_from_slice(&water::top_back_winding(tris));
@@ -1053,5 +851,49 @@ pub(super) fn section_geometry(
         contact,
         mesh_dirty: true,
         ..ChunkMesh::empty()
+    }
+}
+
+/// The chunk mesher's view of the primitive shape seam.
+///
+/// A mesh job runs on a WORKER thread over a padded section snapshot and has
+/// no `&World`; that is the reason box producers were once duplicated per
+/// consumer. Wrapping the pad's neighbour closures in `ShapeNeighborhood`
+/// lets a shape family resolve here through exactly the seam it uses on the
+/// sim thread, so one implementation serves both.
+struct MeshNeighborhood<'a, B, S> {
+    block: &'a B,
+    cell_state: &'a S,
+    section: &'a Section,
+    origin: (i32, i32, i32),
+}
+
+impl<B, S> crate::block::ShapeNeighborhood for MeshNeighborhood<'_, B, S>
+where
+    B: Fn(i32, i32, i32) -> u8,
+    S: Fn(i32, i32, i32) -> crate::block::ShapeState,
+{
+    fn block(&self, pos: IVec3) -> Block {
+        Block::from_id((self.block)(pos.x, pos.y, pos.z))
+    }
+
+    fn shape_state(&self, pos: IVec3) -> crate::block::ShapeState {
+        // ONE read of the unified store's pad capture — the seam ships the
+        // bytes verbatim; only the family owning the cell's block decodes.
+        (self.cell_state)(pos.x, pos.y, pos.z)
+    }
+
+    fn baked(&self, pos: IVec3) -> Option<&[crate::block::ShapeRenderBox]> {
+        // Only this section's bakes are in the snapshot; a custom neighbour
+        // across the boundary reads as unbaked, which means "no sub-cell
+        // cull" — never a wrong one.
+        let (ox, oy, oz) = self.origin;
+        let (lx, ly, lz) = (pos.x - ox, pos.y - oy, pos.z - oz);
+        let r = 0..SECTION_SIZE as i32;
+        if !(r.contains(&lx) && r.contains(&ly) && r.contains(&lz)) {
+            return None;
+        }
+        self.section
+            .shape_render_boxes(section_idx(lx as usize, ly as usize, lz as usize) as u16)
     }
 }

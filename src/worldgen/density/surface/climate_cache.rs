@@ -272,4 +272,3 @@ impl<'a> ClimateCellCache<'a> {
         uniform
     }
 }
-

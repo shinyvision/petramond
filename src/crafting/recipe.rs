@@ -79,6 +79,15 @@ pub struct CraftingRecipe {
     station: CraftingStation,
     ingredients: Vec<CraftingIngredient>,
     result: ItemStack,
+    /// The row's namespaced consumer-data entries (`(key, canonical JSON)`),
+    /// merged from the row's own `data` map and every patch row targeting it —
+    /// the recipe interop surface, same shape as item/block row data.
+    data: Vec<(String, String)>,
+    /// Compiled `petramond:inherit` entry: per-stack instance-data keys the
+    /// crafted output copies from the consumed ingredients. Ingredients that
+    /// carry one of these keys must AGREE on its value or the recipe does not
+    /// match (see `plan`).
+    inherit: Vec<String>,
 }
 
 impl CraftingRecipe {
@@ -94,6 +103,8 @@ impl CraftingRecipe {
             station,
             ingredients,
             result,
+            data: Vec::new(),
+            inherit: Vec::new(),
         }
     }
 
@@ -178,6 +189,8 @@ impl CraftingRecipe {
             station,
             ingredients,
             result,
+            data: Vec::new(),
+            inherit: Vec::new(),
         })
     }
 
@@ -195,6 +208,38 @@ impl CraftingRecipe {
 
     pub fn result(&self) -> ItemStack {
         self.result
+    }
+
+    /// The row's consumer-data entry `key` as raw JSON text, or `None` — the
+    /// recipe interop surface (`"data"` in `recipes.json` + patch rows).
+    pub fn data_value(&self, key: &str) -> Option<&str> {
+        self.data
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Instance-data keys the output inherits from consumed ingredients.
+    pub fn inherit(&self) -> &[String] {
+        &self.inherit
+    }
+
+    /// Attach the row's compiled data entries, parsing the engine's
+    /// `petramond:inherit` vocabulary strictly (a malformed entry fails the
+    /// row, like fuel/tool on items).
+    pub(crate) fn set_data(&mut self, data: Vec<(String, String)>) -> Result<(), String> {
+        let inherit = match data.iter().find(|(k, _)| k == "petramond:inherit") {
+            None => Vec::new(),
+            Some((_, text)) => {
+                let keys: Vec<String> = serde_json::from_str(text)
+                    .map_err(|e| format!("malformed 'petramond:inherit' data: {e}"))?;
+                crate::registry::validate_namespaced_keys("petramond:inherit", &keys)?;
+                keys
+            }
+        };
+        self.data = data;
+        self.inherit = inherit;
+        Ok(())
     }
 
     pub fn craftable_with(&self, inventory: &Inventory) -> bool {
@@ -230,15 +275,14 @@ impl CraftingRecipe {
                 use_mode,
             });
         }
-        Self::try_new(
+        let mut recipe = Self::try_new(
             data.recipe,
             station,
             ingredients,
-            ItemStack {
-                item: result_item,
-                count: data.result.count,
-            },
-        )
+            ItemStack::new(result_item, data.result.count),
+        )?;
+        recipe.set_data(data.data)?;
+        Ok(recipe)
     }
 
     pub(crate) fn to_data(&self) -> CraftingRecipeData {
@@ -271,6 +315,7 @@ impl CraftingRecipe {
                 item: self.result.item.key().to_owned(),
                 count: self.result.count,
             },
+            data: self.data.clone(),
         }
     }
 }
@@ -283,6 +328,10 @@ pub(crate) struct CraftingRecipeData {
     pub station: String,
     pub ingredients: Vec<CraftingIngredientData>,
     pub result: CraftingStackData,
+    /// The row's compiled consumer-data entries — shipped so a client
+    /// evaluates `petramond:inherit` (browser craftability) identically.
+    #[serde(default)]
+    pub data: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -398,10 +447,7 @@ pub struct Recipes {
 }
 
 impl Recipes {
-    pub fn new(
-        crafting: Vec<CraftingRecipe>,
-        processing: Vec<ProcessingRecipe>,
-    ) -> Self {
+    pub fn new(crafting: Vec<CraftingRecipe>, processing: Vec<ProcessingRecipe>) -> Self {
         let mut index: std::collections::HashMap<String, std::collections::HashMap<_, _>> =
             std::collections::HashMap::new();
         for recipe in processing {
@@ -436,7 +482,6 @@ impl Recipes {
     pub fn smelt(&self, input: ItemType) -> Option<ItemStack> {
         self.process(SMELTING_CLASS, input)
     }
-
 }
 
 fn item_by_key(key: &str) -> Option<ItemType> {
@@ -497,6 +542,7 @@ mod tests {
     fn joined_catalog_rejects_invalid_identity_capacity_and_empty_items() {
         let data =
             |recipe: &str, ingredient: CraftingIngredientData, result: &str| CraftingRecipeData {
+                data: Vec::new(),
                 recipe: recipe.into(),
                 station: CraftingStation::INVENTORY_KEY.into(),
                 ingredients: vec![ingredient],

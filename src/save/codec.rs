@@ -22,16 +22,13 @@ pub(crate) use primitives::{
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use crate::block_state::{LogAxis, SlabState, StairState};
+use crate::block::ShapeState;
 use crate::chunk::{SectionPos, SECTION_VOLUME};
 use crate::container::Container;
-use crate::door::DoorState;
 use crate::entity::DroppedItem;
-use crate::facing::Facing;
 use crate::furnace::Furnace;
 use crate::mob::SavedMob;
 use crate::section::Section;
-use crate::torch::TorchPlacement;
 
 use super::palette;
 
@@ -70,27 +67,31 @@ use super::palette;
 /// v11 retires the bed_frame block/item: every block id above 94 and item id
 /// above 119 shifted down by one, so older sections would decode to the
 /// wrong blocks/items. Clean break; dev worlds regenerate.
-const SECTION_REC_VERSION: u8 = 11;
+/// v13 UNIFIES per-cell block state: the seven typed lists (entity facings,
+/// torches, model cells/facings, doors, stairs, slabs, log axes — their flag
+/// bits are now RESERVED) collapse into ONE opaque cell-state list, each
+/// record `[header: len<<4 | id_mask][len bytes]` with id-masked bytes
+/// palette-translated. A new stateful block kind needs NO codec change.
+/// Clean break; dev worlds regenerate.
+const SECTION_REC_VERSION: u8 = 13;
 /// Oldest section-record version this build can still read.
-const SECTION_REC_MIN_VERSION: u8 = 11;
+const SECTION_REC_MIN_VERSION: u8 = 13;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
-const FLAG_HAS_ENTITY_FACINGS: u8 = 0x08;
-const FLAG_HAS_TORCHES: u8 = 0x10;
+/// The unified per-cell state list (v13+; the bit carried entity facings
+/// before the unification).
+const FLAG_HAS_CELL_STATES: u8 = 0x08;
+// 0x10 (torches), 0x40 (model cells), 0x80 (model facings): RESERVED — their
+// payloads ride the unified cell-state list since v13.
 const FLAG_HAS_MOBS: u8 = 0x20;
-const FLAG_HAS_MODEL_CELLS: u8 = 0x40;
-const FLAG_HAS_MODEL_FACINGS: u8 = 0x80;
 /// Second flags byte (chunk-record v3+). `0` for a v2 record (no such byte).
-/// Bit 0x01 is RESERVED: it carried the retired v5 sapling-stage map (stages
-/// are block rows since v6).
-const FLAG2_HAS_DOORS: u8 = 0x02;
-const FLAG2_HAS_STAIRS: u8 = 0x04;
+/// Bits 0x01 (v5 sapling stages), 0x02 (doors), 0x04 (stairs), 0x10 (log
+/// axes): RESERVED.
 const FLAG2_HAS_CELL_KV: u8 = 0x08;
-const FLAG2_HAS_LOG_AXES: u8 = 0x10;
 const FLAG2_HAS_CONTAINERS: u8 = 0x20;
-/// Third flags byte (section-record v4+). `0` for older records.
-const FLAG3_HAS_SLABS: u8 = 0x01;
+/// Third flags byte (section-record v4+). `0` for older records. Bit 0x01
+/// (slabs): RESERVED.
 /// Persisted baked light (skylight / block-light cubes, appended in that
 /// order). Written only when the section's light was CLEAN at snapshot time;
 /// an absent cube simply re-bakes on load, so no version bump is needed.
@@ -118,31 +119,12 @@ pub struct SectionSnapshot {
     /// Generic item-slot containers (chests, furnaces, mod container blocks),
     /// keyed by section-local block index. Empty for the common section.
     pub containers: HashMap<u16, Container>,
-    /// Facing block-entity orientations (chests, furnaces), keyed by
-    /// section-local block index. Empty for the common section.
-    pub entity_facings: HashMap<u16, Facing>,
-    /// Torch orientations in this section, keyed by section-local block index, so a
-    /// wall vs floor torch reloads the way it was placed. Empty for the common section.
-    pub torches: HashMap<u16, TorchPlacement>,
-    /// Multi-cell bbmodel occupancy: each non-zero authored footprint offset, so a
-    /// placed multi-block (the workbench) reloads as one object. Empty for the common
-    /// section. See `Section::model_cells`.
-    pub model_cells: HashMap<u16, [u8; 3]>,
-    /// Per-cell facing for oriented bbmodel blocks, keyed like `model_cells`. Empty for
-    /// old/non-directional model placements. See `Section::model_facings`.
-    pub model_facings: HashMap<u16, Facing>,
-    /// Door state (facing + open + which-half), keyed by section-local index, so a
-    /// placed door reloads on the same edge and in the same open/closed pose. Empty for
-    /// the common section. See `Section::doors` / [`crate::door`].
-    pub doors: HashMap<u16, DoorState>,
-    /// State of placed stairs, keyed by section-local index, so a stair reloads with
-    /// the same low/open side and top/bottom half.
-    pub stair_states: HashMap<u16, StairState>,
-    /// State of placed slabs, keyed by section-local index. Stores split axis plus
-    /// the material block in each occupied half so mixed slab stacks reload exactly.
-    pub slab_states: HashMap<u16, SlabState>,
-    /// Non-default log axes, keyed by section-local index. Missing logs are vertical.
-    pub log_axes: HashMap<u16, LogAxis>,
+    /// The UNIFIED per-cell block state (stair facing, slab layers, door
+    /// pose, torch mount, log axis, model offset+facing, chest/furnace
+    /// front), keyed by section-local block index — opaque bytes owned by
+    /// each block's codec; the id-masked bytes are the only ones this codec
+    /// touches (palette translation). Empty for the common section.
+    pub cell_states: HashMap<u16, ShapeState>,
     /// Baked skylight cube, captured only when the section's light was CLEAN
     /// (baked and not since invalidated) so a reload can skip the bake
     /// entirely. `None` re-bakes on load, exactly like the pre-persistence
@@ -176,14 +158,7 @@ impl SectionSnapshot {
             entities: Vec::new(),
             furnaces: s.furnaces().clone(),
             containers: s.containers().clone(),
-            entity_facings: s.entity_facings().clone(),
-            torches: s.torches().clone(),
-            model_cells: s.model_cells().clone(),
-            model_facings: s.model_facings().clone(),
-            doors: s.doors().clone(),
-            stair_states: s.stair_states().clone(),
-            slab_states: s.slab_states().clone(),
-            log_axes: s.log_axes().clone(),
+            cell_states: s.cell_states().clone(),
             skylight: (!s.light_dirty).then(|| s.skylight_arc()).flatten(),
             blocklight: (!s.light_dirty).then(|| s.blocklight_arc()).flatten(),
             cell_kv: s.cell_kv().clone(),
@@ -209,41 +184,20 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.furnaces.is_empty() {
         flags |= FLAG_HAS_FURNACES;
     }
-    if !s.entity_facings.is_empty() {
-        flags |= FLAG_HAS_ENTITY_FACINGS;
-    }
-    if !s.torches.is_empty() {
-        flags |= FLAG_HAS_TORCHES;
+    if !s.cell_states.is_empty() {
+        flags |= FLAG_HAS_CELL_STATES;
     }
     if !s.mobs.is_empty() {
         flags |= FLAG_HAS_MOBS;
     }
-    if !s.model_cells.is_empty() {
-        flags |= FLAG_HAS_MODEL_CELLS;
-    }
-    if !s.model_facings.is_empty() {
-        flags |= FLAG_HAS_MODEL_FACINGS;
-    }
     let mut flags2 = 0u8;
-    if !s.doors.is_empty() {
-        flags2 |= FLAG2_HAS_DOORS;
-    }
-    if !s.stair_states.is_empty() {
-        flags2 |= FLAG2_HAS_STAIRS;
-    }
     if !s.cell_kv.is_empty() {
         flags2 |= FLAG2_HAS_CELL_KV;
-    }
-    if !s.log_axes.is_empty() {
-        flags2 |= FLAG2_HAS_LOG_AXES;
     }
     if !s.containers.is_empty() {
         flags2 |= FLAG2_HAS_CONTAINERS;
     }
     let mut flags3 = 0u8;
-    if !s.slab_states.is_empty() {
-        flags3 |= FLAG3_HAS_SLABS;
-    }
     if s.skylight.is_some() {
         flags3 |= FLAG3_HAS_SKYLIGHT;
     }
@@ -266,40 +220,24 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     if !s.furnaces.is_empty() {
         super::furnace::put_furnaces(&mut payload, &s.furnaces);
     }
-    if !s.entity_facings.is_empty() {
-        put_indexed(&mut payload, &s.entity_facings, 1, |buf, facing| {
-            put_u8(buf, facing.to_u8());
+    if !s.cell_states.is_empty() {
+        // Each record is `[len<<4 | id_mask][len bytes]`; the id-masked bytes
+        // are BLOCK IDS and go through the palette like the block array —
+        // the ONLY interpretation this codec ever applies to state bytes.
+        put_indexed(&mut payload, &s.cell_states, 5, |buf, state| {
+            let bytes = state.bytes();
+            put_u8(buf, ((bytes.len() as u8) << 4) | state.id_mask());
+            for (i, &b) in bytes.iter().enumerate() {
+                if state.id_mask() & (1 << i) != 0 {
+                    put_u8(buf, pal.block_to_disk(b));
+                } else {
+                    put_u8(buf, b);
+                }
+            }
         });
-    }
-    if !s.torches.is_empty() {
-        super::torch::put_torches(&mut payload, &s.torches);
     }
     if !s.mobs.is_empty() {
         super::mobs::put_mobs(&mut payload, &s.mobs);
-    }
-    if !s.model_cells.is_empty() {
-        // Each record is the cell's 3-byte footprint offset (idx written by put_indexed).
-        put_indexed(&mut payload, &s.model_cells, 3, |buf, off| {
-            put_u8(buf, off[0]);
-            put_u8(buf, off[1]);
-            put_u8(buf, off[2]);
-        });
-    }
-    if !s.model_facings.is_empty() {
-        put_indexed(&mut payload, &s.model_facings, 1, |buf, facing| {
-            put_u8(buf, facing.to_u8());
-        });
-    }
-    if !s.doors.is_empty() {
-        // Each record is the cell's 1-byte packed door state (idx written by put_indexed).
-        put_indexed(&mut payload, &s.doors, 1, |buf, state| {
-            put_u8(buf, state.encode());
-        });
-    }
-    if !s.stair_states.is_empty() {
-        put_indexed(&mut payload, &s.stair_states, 1, |buf, state| {
-            put_u8(buf, state.encode());
-        });
     }
     if !s.cell_kv.is_empty() {
         // Each record is the cell's KV map (idx written by put_indexed);
@@ -308,20 +246,8 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
             put_kv_map(buf, map);
         });
     }
-    if !s.log_axes.is_empty() {
-        put_indexed(&mut payload, &s.log_axes, 1, |buf, axis| {
-            put_u8(buf, axis.to_u8());
-        });
-    }
     if !s.containers.is_empty() {
         super::container::put_containers(&mut payload, &s.containers);
-    }
-    if !s.slab_states.is_empty() {
-        put_indexed(&mut payload, &s.slab_states, 3, |buf, state| {
-            put_u8(buf, state.encode_meta());
-            put_u8(buf, pal.block_to_disk(state.layers[0].id()));
-            put_u8(buf, pal.block_to_disk(state.layers[1].id()));
-        });
     }
     if let Some(sky) = &s.skylight {
         payload.extend_from_slice(sky);
@@ -369,20 +295,24 @@ pub fn decode_section(
     } else {
         HashMap::new()
     };
-    let mut entity_facings = if flags & FLAG_HAS_ENTITY_FACINGS != 0 {
-        get_indexed(&mut r, |r| Some(Facing::from_u8(r.u8()?)))?
-    } else {
-        HashMap::new()
-    };
-    // Entity facings belong to directional-view block entities (chest/furnace
-    // fronts) only. Drop anything else: any surviving entry marks the section
-    // a block-entity section, and records written while ladders still stored
-    // their mount here would re-enter the furnace/chest fan-out for a cell
-    // whose facing now lives on its block row.
-    entity_facings
-        .retain(|&idx, _| crate::block::Block::from_id(blocks[idx as usize]).directional_view());
-    let torches = if flags & FLAG_HAS_TORCHES != 0 {
-        super::torch::get_torches(&mut r)?
+    let cell_states = if flags & FLAG_HAS_CELL_STATES != 0 {
+        get_indexed(&mut r, |r| {
+            let header = r.u8()?;
+            let (len, id_mask) = ((header >> 4) as usize, header & 0x0F);
+            if len > crate::block::SHAPE_STATE_MAX {
+                return None;
+            }
+            let mut bytes = [0u8; crate::block::SHAPE_STATE_MAX];
+            for (i, b) in bytes.iter_mut().take(len).enumerate() {
+                let raw = r.u8()?;
+                *b = if id_mask & (1 << i) != 0 {
+                    pal.block_from_disk(raw)
+                } else {
+                    raw
+                };
+            }
+            Some(ShapeState::with_ids(&bytes[..len], id_mask))
+        })?
     } else {
         HashMap::new()
     };
@@ -391,48 +321,13 @@ pub fn decode_section(
     } else {
         Vec::new()
     };
-    let model_cells = if flags & FLAG_HAS_MODEL_CELLS != 0 {
-        get_indexed(&mut r, |r| Some([r.u8()?, r.u8()?, r.u8()?]))?
-    } else {
-        HashMap::new()
-    };
-    let model_facings = if flags & FLAG_HAS_MODEL_FACINGS != 0 {
-        get_indexed(&mut r, |r| Some(Facing::from_u8(r.u8()?)))?
-    } else {
-        HashMap::new()
-    };
-    let doors = if flags2 & FLAG2_HAS_DOORS != 0 {
-        get_indexed(&mut r, |r| Some(DoorState::decode(r.u8()?)))?
-    } else {
-        HashMap::new()
-    };
-    let stair_states = if flags2 & FLAG2_HAS_STAIRS != 0 {
-        get_indexed(&mut r, |r| Some(StairState::decode(r.u8()?)))?
-    } else {
-        HashMap::new()
-    };
     let cell_kv = if flags2 & FLAG2_HAS_CELL_KV != 0 {
         get_indexed(&mut r, get_kv_map)?
     } else {
         HashMap::new()
     };
-    let log_axes = if flags2 & FLAG2_HAS_LOG_AXES != 0 {
-        get_indexed(&mut r, |r| Some(LogAxis::from_u8(r.u8()?)))?
-    } else {
-        HashMap::new()
-    };
     let containers = if flags2 & FLAG2_HAS_CONTAINERS != 0 {
         super::container::get_containers(&mut r)?
-    } else {
-        HashMap::new()
-    };
-    let slab_states = if flags3 & FLAG3_HAS_SLABS != 0 {
-        get_indexed(&mut r, |r| {
-            let meta = r.u8()?;
-            let a = crate::block::Block(pal.block_from_disk(r.u8()?));
-            let b = crate::block::Block(pal.block_from_disk(r.u8()?));
-            Some(SlabState::decode(meta, a, b))
-        })?
     } else {
         HashMap::new()
     };
@@ -454,14 +349,7 @@ pub fn decode_section(
         water,
         furnaces,
         containers,
-        entity_facings,
-        torches,
-        model_cells,
-        model_facings,
-        doors,
-        stair_states,
-        slab_states,
-        log_axes,
+        cell_states,
         cell_kv,
     );
     // Persisted clean light: seed the cache and clear `light_dirty`, so the

@@ -205,7 +205,12 @@ struct AtlasData {
     /// cutout (`block.wgsl` discards `a < 0.5`), or the block renders as a
     /// hole (the invisible-ice bug, 2026-07-16).
     min_alpha: Vec<u8>,
-    /// Composed base atlas, `cols*TILE × rows*TILE` RGBA.
+    /// Composed atlas, `cols*TILE × 2*rows*TILE` RGBA: the declared tiles in
+    /// the TOP half, and below them every tile's DYE-BASE twin (desaturated,
+    /// brightness-normalized — see [`dye_base_pixels`]) at the same (col, row).
+    /// Shaders sample the twin whenever a vertex carries the dyed flag; the
+    /// twin set is universal on purpose — the engine stays agnostic to WHAT
+    /// gets tinted, so every tile must be tintable.
     rgba: Vec<u8>,
     engine: EngineTiles,
 }
@@ -338,10 +343,12 @@ fn build(manifests: &[&str]) -> Result<AtlasData, String> {
     }
 
     // Square-ish atlas grid, same shape rule the old build-time composer used.
+    // The composed image is DOUBLE height: declared tiles on top, their
+    // dye-base twins below (same col/row + `rows`).
     let cols = (count as f32).sqrt().ceil() as u32;
     let rows = (count as u32).div_ceil(cols);
     let atlas_w = cols * TILE;
-    let atlas_h = rows * TILE;
+    let atlas_h = 2 * rows * TILE;
     let mut rgba = vec![0u8; (atlas_w * atlas_h * 4) as usize];
 
     let mut names = Vec::with_capacity(count);
@@ -355,12 +362,17 @@ fn build(manifests: &[&str]) -> Result<AtlasData, String> {
     for (i, cell) in cells.iter().enumerate() {
         let base_x = (i as u32 % cols) * TILE;
         let base_y = (i as u32 / cols) * TILE;
+        let dye_y = base_y + rows * TILE;
+        let dye = dye_base_pixels(&cell.pixels);
         let mut tile_min_alpha = u8::MAX;
         for y in 0..TILE {
             for x in 0..TILE {
                 let px = cell.pixels.get_pixel(x, y);
                 let dst = ((base_y + y) * atlas_w + base_x + x) as usize * 4;
                 rgba[dst..dst + 4].copy_from_slice(&px.0);
+                let dp = dye.get_pixel(x, y);
+                let ddst = ((dye_y + y) * atlas_w + base_x + x) as usize * 4;
+                rgba[ddst..ddst + 4].copy_from_slice(&dp.0);
                 tile_min_alpha = tile_min_alpha.min(px.0[3]);
             }
         }
@@ -420,6 +432,28 @@ fn build(manifests: &[&str]) -> Result<AtlasData, String> {
     })
 }
 
+/// The dye-base transform: desaturate to luminance, then scale so the
+/// brightest visible texel hits 255. A tint multiply over the result can
+/// reach the full dye color (white dye reads white); the base's own hue is
+/// discarded but its texture detail survives in the luminance.
+fn dye_base_pixels(src: &image::RgbaImage) -> image::RgbaImage {
+    let luma = |p: &image::Rgba<u8>| {
+        0.2126 * p.0[0] as f32 + 0.7152 * p.0[1] as f32 + 0.0722 * p.0[2] as f32
+    };
+    let max = src
+        .pixels()
+        .filter(|p| p.0[3] >= ALPHA_CUTOFF)
+        .map(|p| luma(p))
+        .fold(0.0f32, f32::max);
+    let scale = if max > 0.0 { 255.0 / max } else { 1.0 };
+    let mut out = src.clone();
+    for p in out.pixels_mut() {
+        let v = (luma(p) * scale).round().min(255.0) as u8;
+        p.0 = [v, v, v, p.0[3]];
+    }
+    out
+}
+
 fn tile_map_rgb(pixels: &image::RgbaImage) -> [u8; 3] {
     let mut sum = [0u64; 3];
     let mut weight = 0u64;
@@ -450,8 +484,15 @@ fn tile_map_rgb(pixels: &image::RgbaImage) -> [u8; 3] {
 /// disappearing under the shader's alpha test.
 pub fn decode_atlas_mips() -> (Vec<Vec<u8>>, u32, u32) {
     let d = data();
-    (build_atlas_mips(&d.rgba), d.cols * TILE, d.rows * TILE)
+    (build_atlas_mips(&d.rgba), d.cols * TILE, 2 * d.rows * TILE)
 }
+
+/// The normalized V offset from a tile's base rect ([`tile_uv`]) to its
+/// dye-base twin in the composed 2D atlas — exactly half, because the twin
+/// half doubles the height. Shaders/CPU paths add this when a
+/// `petramond:tint` multiply applies (`block.wgsl` mirrors the same rule as a
+/// layer offset on the texture array).
+pub const DYE_V_OFFSET: f32 = 0.5;
 
 /// Per-tile texture-ARRAY data for the terrain pipeline: one `TILE×TILE` layer per tile id,
 /// with a per-layer mip chain. Returned as `(levels, tile_size, layer_count)` where
@@ -463,7 +504,9 @@ pub fn decode_atlas_mips() -> (Vec<Vec<u8>>, u32, u32) {
 pub fn decode_atlas_array() -> (Vec<Vec<u8>>, u32, u32) {
     let d = data();
     let mips = build_atlas_mips(&d.rgba);
-    let layers = d.count as u32;
+    // Base layers `0..count`, then every tile's dye-base twin at
+    // `count + tile` — the layer offset `block.wgsl` adds for dyed vertices.
+    let layers = 2 * d.count as u32;
     let mut levels = Vec::with_capacity(mips.len());
     for (level, mip) in mips.iter().enumerate() {
         let t = (TILE >> level).max(1) as usize;
@@ -473,11 +516,15 @@ pub fn decode_atlas_array() -> (Vec<Vec<u8>>, u32, u32) {
         for tile in Tile::all() {
             let (col, row) = tile.grid();
             let (col, row) = (col as usize, row as usize);
-            let layer = tile.index();
-            for y in 0..t {
-                let src = ((row * t + y) * mip_w + col * t) * 4;
-                let dst = (layer * t * t + y * t) * 4;
-                buf[dst..dst + row_bytes].copy_from_slice(&mip[src..src + row_bytes]);
+            for (layer, row) in [
+                (tile.index(), row),
+                (d.count + tile.index(), row + d.rows as usize),
+            ] {
+                for y in 0..t {
+                    let src = ((row * t + y) * mip_w + col * t) * 4;
+                    let dst = (layer * t * t + y * t) * 4;
+                    buf[dst..dst + row_bytes].copy_from_slice(&mip[src..src + row_bytes]);
+                }
             }
         }
         levels.push(buf);
@@ -496,24 +543,26 @@ fn build_atlas_mips(base: &[u8]) -> Vec<Vec<u8>> {
         let dst_tile = (TILE >> level) as usize;
         let src_w = d.cols as usize * src_tile;
         let dst_w = d.cols as usize * dst_tile;
-        let dst_h = d.rows as usize * dst_tile;
+        let dst_h = 2 * d.rows as usize * dst_tile;
         let mut dst = vec![0u8; dst_w * dst_h * 4];
 
         for tile in Tile::all() {
             let (tile_col, tile_row) = tile.grid();
             let tile_col = tile_col as usize;
-            let tile_row = tile_row as usize;
-            for y in 0..dst_tile {
-                for x in 0..dst_tile {
-                    let px = downsample_mip_pixel(
-                        &mips[level - 1],
-                        src_w,
-                        tile_col * src_tile + x * 2,
-                        tile_row * src_tile + y * 2,
-                        d.fill_cutout_mips[tile.index()],
-                    );
-                    let di = ((tile_row * dst_tile + y) * dst_w + tile_col * dst_tile + x) * 4;
-                    dst[di..di + 4].copy_from_slice(&px);
+            // The tile's base cell, then its dye-base twin one grid-half down.
+            for tile_row in [tile_row as usize, tile_row as usize + d.rows as usize] {
+                for y in 0..dst_tile {
+                    for x in 0..dst_tile {
+                        let px = downsample_mip_pixel(
+                            &mips[level - 1],
+                            src_w,
+                            tile_col * src_tile + x * 2,
+                            tile_row * src_tile + y * 2,
+                            d.fill_cutout_mips[tile.index()],
+                        );
+                        let di = ((tile_row * dst_tile + y) * dst_w + tile_col * dst_tile + x) * 4;
+                        dst[di..di + 4].copy_from_slice(&px);
+                    }
                 }
             }
         }
@@ -586,17 +635,19 @@ fn div_round(n: u32, d: u32) -> u8 {
     ((n + d / 2) / d).min(255) as u8
 }
 
-/// Packs the animated-water flipbook control for the block shader's `water_anim`
+/// Packs the animated-water flipbook control for the block shader's `atlas_anim`
 /// uniform: `(still_base_tile, flow_base_tile, frame_count, 0)`. The two bases
 /// are the tile ids the mesher assigns to still/flow water tops & sides; the
 /// shader cycles `base + frame` over `frame_count` consecutive atlas tiles.
-pub fn water_anim_uniform() -> [u32; 4] {
+pub fn atlas_anim_uniform() -> [u32; 4] {
     let e = engine();
     [
         e.water_still.index() as u32,
         e.water_flow.index() as u32,
         e.water_still.anim_frames(),
-        0,
+        // `w`: the tile count — the texture-array layer offset from a tile to
+        // its dye-base twin (`block.wgsl` adds it for dyed vertices).
+        Tile::count() as u32,
     ]
 }
 
@@ -604,10 +655,13 @@ pub fn water_anim_uniform() -> [u32; 4] {
 pub fn tile_uv(tile: Tile) -> [f32; 4] {
     let d = data();
     let (col, row) = tile.grid();
+    // V is normalized against the DOUBLE-height composed atlas (declared
+    // tiles on top, dye-base twins below), so every base rect lands in the
+    // top half and the dyed sample is exactly `v + 0.5` (see `DYE_V_OFFSET`).
     let u0 = col as f32 / d.cols as f32;
-    let v0 = row as f32 / d.rows as f32;
+    let v0 = row as f32 / (2 * d.rows) as f32;
     let u1 = (col + 1) as f32 / d.cols as f32;
-    let v1 = (row + 1) as f32 / d.rows as f32;
+    let v1 = (row + 1) as f32 / (2 * d.rows) as f32;
     // No inset. Mips are generated per tile, and the atlas sampler still uses
     // nearest texel filtering, so there is no cross-tile bilinear bleed to guard
     // against; a half-texel inset shrank the edge texels to half-width, making
@@ -710,7 +764,10 @@ mod tests {
         // Forces the LazyLock: a bad manifest/texture set panics right here.
         let d = data();
         assert!(d.count > 0 && d.count <= 256);
-        assert_eq!(d.rgba.len(), (d.cols * TILE * d.rows * TILE * 4) as usize);
+        assert_eq!(
+            d.rgba.len(),
+            (d.cols * TILE * 2 * d.rows * TILE * 4) as usize
+        );
         // Names round-trip.
         for tile in Tile::all() {
             assert_eq!(Tile::from_name(tile.name()), Some(tile));
@@ -729,7 +786,7 @@ mod tests {
 
         for (level, mip) in mips.iter().enumerate() {
             let tile = TILE >> level;
-            assert_eq!(mip.len(), (d.cols * tile * d.rows * tile * 4) as usize);
+            assert_eq!(mip.len(), (d.cols * tile * 2 * d.rows * tile * 4) as usize);
         }
         assert_eq!(TILE >> (mips.len() - 1), 1);
     }
@@ -742,7 +799,7 @@ mod tests {
             d.fill_cutout_mips[leaves.index()],
             "oak_leaves must carry fill_cutout_mips"
         );
-        let mut base = vec![0u8; (d.cols * TILE * d.rows * TILE * 4) as usize];
+        let mut base = vec![0u8; (d.cols * TILE * 2 * d.rows * TILE * 4) as usize];
         let (col, row) = leaves.grid();
         let leaf_x = col * TILE;
         let leaf_y = row * TILE;

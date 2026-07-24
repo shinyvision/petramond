@@ -554,7 +554,6 @@ fn indices_with_tag_filters_by_presence_and_value_and_skips_the_dead() {
     );
 }
 
-
 #[test]
 fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
     use crate::block::Block;

@@ -19,9 +19,10 @@
 //! the terrain it meets.
 
 use crate::atlas::Tile;
+use crate::block::Aabb;
 use crate::pane::{EAST, NORTH, SOUTH, WEST};
 
-use super::boxset::{FaceStyle, MeshBox};
+use super::boxset::{ShapeBox, ShapeFace};
 use super::face::Face;
 
 /// Which tile a pane face samples: the glass sheet, or the 2px edge strip.
@@ -64,7 +65,11 @@ pub(crate) fn shape_boxes(
     let x1 = if e { 1.0 } else { post_hi };
 
     if !z_run && !x_run {
-        visit([post_lo, 0.0, post_lo], [post_hi, 1.0, post_hi], PaneBox::Post);
+        visit(
+            [post_lo, 0.0, post_lo],
+            [post_hi, 1.0, post_hi],
+            PaneBox::Post,
+        );
         return;
     }
     if z_run {
@@ -144,10 +149,10 @@ pub(crate) fn shape_faces(
     });
 }
 
-/// The connected pane shape as [`MeshBox`]es for the unified emitter.
+/// The connected pane shape as [`ShapeBox`]es for the unified emitter.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn push_mesh_boxes(
-    out: &mut Vec<MeshBox>,
+pub(crate) fn push_mesh_boxes(
+    out: &mut Vec<ShapeBox>,
     post_lo: f32,
     post_hi: f32,
     mask: u8,
@@ -158,7 +163,7 @@ pub(super) fn push_mesh_boxes(
     shape_boxes(post_lo, post_hi, mask, |min, max, kind| {
         let styles = face_styles(kind, mask);
         let faces = styles.map(|s| {
-            s.map(|(tile, swap_uv)| FaceStyle {
+            s.map(|(tile, swap_uv)| ShapeFace {
                 tile: match tile {
                     PaneTile::Glass => glass_tile,
                     PaneTile::Edge => edge_tile,
@@ -167,6 +172,11 @@ pub(super) fn push_mesh_boxes(
                 tint,
             })
         });
-        out.push(MeshBox { min, max, faces });
+        out.push(ShapeBox {
+            aabb: Aabb { min, max },
+            faces,
+            ao_strength: 1.0,
+            dyed: false,
+        });
     });
 }

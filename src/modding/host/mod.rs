@@ -481,7 +481,11 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::BlocksByTag { .. }
         | HostCall::ItemsByTag { .. }
         | HostCall::ItemInfo { .. }
-        | HostCall::ResolveShape { .. } => registry::handle_registry_call(call),
+        | HostCall::ResolveShape { .. }
+        | HostCall::ItemDataGet { .. }
+        | HostCall::ItemsWithData { .. }
+        | HostCall::BlockDataGet { .. }
+        | HostCall::BlocksWithData { .. } => registry::handle_registry_call(call),
         HostCall::RegisterWorldgenFeature { .. }
         | HostCall::RegisterStageReplacement { .. }
         | HostCall::RegisterGenerator { .. } => worldgen::handle_worldgen_call(data, call),
@@ -517,7 +521,8 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ClientAmbientSet { .. }
         | HostCall::ClientLoopSet { .. }
         | HostCall::ClientMoodSet { .. }
-        | HostCall::ClientBlocksAt { .. } => super::client::handle_client_call(data, call),
+        | HostCall::ClientBlocksAt { .. }
+        | HostCall::ClientCellKvAt { .. } => super::client::handle_client_call(data, call),
     }
 }
 

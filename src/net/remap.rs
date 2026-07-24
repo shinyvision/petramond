@@ -136,19 +136,19 @@ impl IdRemap {
             ServerToClient::SectionData(p) => {
                 remap_bytes(&mut p.blocks, |id| self.block(id));
                 p.metrics = crate::section::Section::metrics_from_blocks(&p.blocks.0);
-                // Slab records carry raw layer BLOCK IDS (the save codec's
-                // 3-byte entry) — rewrite them like the block buffer.
-                for (_, [_, a, b]) in &mut p.states.slabs {
-                    *a = self.block(*a);
-                    *b = self.block(*b);
+                // A cell state's id-masked bytes are raw BLOCK IDS (a slab's
+                // two layers) — rewrite them like the block buffer. GENERIC:
+                // the state declares its own id bytes, so a new stateful kind
+                // needs no arm here.
+                for (_, state) in &mut p.states.cell_states {
+                    state.remap_ids(|id| self.block(id));
                 }
             }
             ServerToClient::Tick(t) => {
                 for d in &mut t.block_deltas {
                     d.block_id = self.block(d.block_id);
-                    if let Some(crate::net::protocol::CellState::Slab([_, a, b])) = &mut d.state {
-                        *a = self.block(*a);
-                        *b = self.block(*b);
+                    if let Some(state) = &mut d.state {
+                        state.remap_ids(|id| self.block(id));
                     }
                 }
                 // Unknown mob/item rows are DROPPED (skip semantics — a
@@ -479,6 +479,7 @@ mod tests {
                     block_id: 0, // server 0 = local 1 after the rotation
                     water: None,
                     state: None,
+                    cell_kv: vec![],
                 },
                 // The slab record's layer bytes are raw BLOCK IDS and must
                 // rewrite like the id fields around them.
@@ -486,7 +487,8 @@ mod tests {
                     pos: IVec3::new(1, 64, 0),
                     block_id: 2,
                     water: None,
-                    state: Some(crate::net::protocol::CellState::Slab([0b0111, 2, 3])),
+                    state: Some(crate::block::ShapeState::with_ids(&[0b0111, 2, 3], 0b110)),
+                    cell_kv: vec![],
                 },
             ],
             ..Default::default()
@@ -498,12 +500,11 @@ mod tests {
         assert_eq!(t.block_deltas[0].block_id, 1 % n);
         assert_eq!(
             t.block_deltas[1].state,
-            Some(crate::net::protocol::CellState::Slab([
-                0b0111,
-                3 % n,
-                4 % n
-            ])),
-            "CellState::Slab layer ids rewrite through the block LUT"
+            Some(crate::block::ShapeState::with_ids(
+                &[0b0111, 3 % n, 4 % n],
+                0b110
+            )),
+            "id-masked state bytes rewrite through the block LUT"
         );
 
         let mut msg = ServerToClient::SectionData(Box::new(crate::net::protocol::SectionPayload {
@@ -518,7 +519,10 @@ mod tests {
             skylight: None,
             blocklight: None,
             states: crate::net::protocol::SectionStatesPayload {
-                slabs: vec![(9, [0b0111, 2, 3])],
+                cell_states: vec![(
+                    9,
+                    crate::block::ShapeState::with_ids(&[0b0111, 2, 3], 0b110),
+                )],
                 ..Default::default()
             },
         }));
@@ -528,9 +532,12 @@ mod tests {
         };
         assert_eq!(&p.blocks.0[..], &[1 % n, 2 % n, 3 % n]);
         assert_eq!(
-            p.states.slabs,
-            vec![(9, [0b0111, 3 % n, 4 % n])],
-            "SectionStatesPayload slab layer ids rewrite through the block LUT"
+            p.states.cell_states,
+            vec![(
+                9,
+                crate::block::ShapeState::with_ids(&[0b0111, 3 % n, 4 % n], 0b110)
+            )],
+            "SectionStatesPayload id-masked state bytes rewrite through the block LUT"
         );
     }
 
@@ -553,6 +560,7 @@ mod tests {
                 output: Some(ItemSlotWire {
                     item_id: 0,
                     count: 4,
+                    data: None,
                 }),
             },
         };
@@ -567,6 +575,7 @@ mod tests {
                 output: Some(ItemSlotWire {
                     item_id: unknown,
                     count: 1,
+                    data: None,
                 }),
             },
         };
@@ -613,6 +622,7 @@ mod tests {
             id: item_id as u64,
             item_id,
             count: 1,
+            data: None,
             pos: crate::mathh::Vec3::ZERO,
             spin: 0.0,
         };
@@ -631,6 +641,7 @@ mod tests {
             alive: true,
             visible: true,
             held_item,
+            held_data: None,
             mining: None,
             eating: false,
             hurt_recent: false,
@@ -650,10 +661,12 @@ mod tests {
                     Some(ItemSlotWire {
                         item_id: 2,
                         count: 4,
+                        data: None,
                     }),
                     Some(ItemSlotWire {
                         item_id: unknown_item,
                         count: 1,
+                        data: None,
                     }),
                 ]),
                 eating: None,
@@ -680,7 +693,7 @@ mod tests {
         let s = t.self_state.as_ref().expect("self state kept");
         assert_eq!(s.effects, vec![(0, 100)], "the unknown effect is dropped");
         let slots = s.inventory.as_ref().expect("inventory kept");
-        assert_eq!(slots[0].map(|w| w.item_id), Some(2));
+        assert_eq!(slots[0].as_ref().map(|w| w.item_id), Some(2));
         assert_eq!(slots[1], None, "an unknown inventory item reads empty");
     }
 }

@@ -543,22 +543,20 @@ impl Instance {
             // region covering its cell (a pen-mate may have filled this pen
             // already) — the lookup enforces region age, so a stale handle
             // can never short-circuit it. Only a miss floods.
-            let region = regions
-                .region_at(cell)
-                .or_else(|| {
-                    let step_allowed = super::nav::partial_step_gate(world, params, d.size.height);
-                    let loaded = |c: IVec3| world.physics_cell_final_at(c.x, c.y, c.z);
-                    confined::confined_region(
-                        cell,
-                        params,
-                        &solid,
-                        &support,
-                        &water,
-                        &step_allowed,
-                        &loaded,
-                    )
-                    .map(|r| regions.insert(r))
-                });
+            let region = regions.region_at(cell).or_else(|| {
+                let step_allowed = super::nav::partial_step_gate(world, params, d.size.height);
+                let loaded = |c: IVec3| world.physics_cell_final_at(c.x, c.y, c.z);
+                confined::confined_region(
+                    cell,
+                    params,
+                    &solid,
+                    &support,
+                    &water,
+                    &step_allowed,
+                    &loaded,
+                )
+                .map(|r| regions.insert(r))
+            });
             let confined = region.is_some();
             self.confined_region = region;
             if confined != self.is_confined() {
@@ -615,7 +613,10 @@ impl Instance {
             match value {
                 Some(v) => {
                     if self.tags.len() >= super::MAX_MOB_TAGS && !self.tags.contains_key(key) {
-                        log::warn!("mob {} tag map full; decision write '{key}' dropped", self.id);
+                        log::warn!(
+                            "mob {} tag map full; decision write '{key}' dropped",
+                            self.id
+                        );
                         continue;
                     }
                     self.tags_mut().insert(key.clone(), v.clone());

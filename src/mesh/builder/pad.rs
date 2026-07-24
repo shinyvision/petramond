@@ -1,5 +1,5 @@
-use crate::block::Block;
-use crate::block_state::{SlabState, StairState};
+use crate::block::CellView;
+use crate::block::{Block, ShapeState};
 use crate::chunk::{SECTION_SIZE, SKY_FULL, WORLD_MAX_Y, WORLD_MIN_Y};
 use crate::world::water as water_math;
 
@@ -22,8 +22,9 @@ pub(crate) struct SectionMeshPad<'a> {
     pub water: &'a [u8],
     pub skylight: &'a [u8],
     pub blocklight: &'a [u8],
-    pub stair_states: &'a [u8],
-    pub slab_states: &'a [SlabState],
+    /// The UNIFIED per-cell block state (opaque; decoded by the owning
+    /// family's codec gated on the cell's block).
+    pub cell_states: &'a [ShapeState],
     pub loaded: &'a [bool],
     pub biome: &'a [u8],
 }
@@ -36,7 +37,7 @@ impl SectionMeshPad<'_> {
 
     /// A slab cell with BOTH halves filled renders as a full block: it culls
     /// adjacent faces and occludes AO/light exactly like an opaque cube (the
-    /// closure paths make the same test through `neighbour_slab_state`).
+    /// closure paths make the same test through `neighbour_cell_state`).
     #[inline]
     pub(super) fn full_slab_stack_at_pad(
         &self,
@@ -45,7 +46,9 @@ impl SectionMeshPad<'_> {
         py: usize,
         pz: usize,
     ) -> bool {
-        block.is_slab() && self.slab_states[mesh_pad_idx(px, py, pz)].is_full()
+        block.is_slab()
+            && crate::block_state::SlabState::from_cell(self.cell_states[mesh_pad_idx(px, py, pz)])
+                .is_full()
     }
 
     #[inline]
@@ -66,7 +69,7 @@ impl SectionMeshPad<'_> {
     }
 
     #[inline]
-    pub(super) fn stair_world(
+    pub(super) fn cell_state_world(
         &self,
         ox: i32,
         oy: i32,
@@ -74,25 +77,9 @@ impl SectionMeshPad<'_> {
         wx: i32,
         wy: i32,
         wz: i32,
-    ) -> StairState {
+    ) -> ShapeState {
         self.world_idx(ox, oy, oz, wx, wy, wz)
-            .map_or(StairState::default(), |i| {
-                StairState::decode(self.stair_states[i])
-            })
-    }
-
-    #[inline]
-    pub(super) fn slab_world(
-        &self,
-        ox: i32,
-        oy: i32,
-        oz: i32,
-        wx: i32,
-        wy: i32,
-        wz: i32,
-    ) -> SlabState {
-        self.world_idx(ox, oy, oz, wx, wy, wz)
-            .map_or(SlabState::EMPTY, |i| self.slab_states[i])
+            .map_or(ShapeState::NONE, |i| self.cell_states[i])
     }
 
     #[inline]
@@ -216,8 +203,7 @@ impl SectionMeshPad<'_> {
             return false;
         };
         let i = mesh_pad_idx(px, py, pz);
-        Block::from_id(self.blocks[i]) == Block::Water
-            && water_math::is_still_source(self.water[i])
+        Block::from_id(self.blocks[i]) == Block::Water && water_math::is_still_source(self.water[i])
     }
 
     #[inline]

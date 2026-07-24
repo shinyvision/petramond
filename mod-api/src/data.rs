@@ -293,12 +293,19 @@ pub enum RuntimeSide {
 
 /// One item stack crossing the ABI: the item's registry NAME (the one
 /// mod-facing item identity — see the identity note on
-/// [`HostCall`](crate::HostCall)) + count.
+/// [`HostCall`](crate::HostCall)) + count + per-stack instance data.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ItemStackData {
     /// Registry name (`"petramond:coal"`, `"kitchen:raw_mutton"`).
     pub item: String,
     pub count: u8,
+    /// The stack's instance data: namespaced key → small opaque value, sorted
+    /// by key, empty = plain stack (the ordinary case). Stacks merge only on
+    /// byte-identical data; caps are tight (≤4 keys, ≤64-byte values) and an
+    /// over-cap or malformed map on a write call is a HARD error (mod bug).
+    /// Like registry row data, ANY namespaced consumer key may be attached —
+    /// describing an item in another system's vocabulary is the interop point.
+    pub data: Vec<(String, Vec<u8>)>,
 }
 
 /// One item's registry row (see [`HostCall::ItemInfo`]) — the stable,

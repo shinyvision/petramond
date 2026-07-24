@@ -44,26 +44,24 @@ pub(super) fn gather(pos: SectionPos, sections: &FxHashMap<SectionPos, Arc<Secti
                 let bx = ((dcx + 1) as usize) * SECTION_SIZE;
                 let by = ((dcy + 1) as usize) * SECTION_SIZE;
                 let bz = ((dcz + 1) as usize) * SECTION_SIZE;
-                states.extend(section.stair_states().iter().map(|(&key, &state)| {
-                    let (lx, ly, lz) = crate::chunk::section_local(key as usize);
-                    SparseCellState::Stair {
-                        idx: nbhd_idx(bx + lx, by + ly, bz + lz),
-                        state,
-                    }
-                }));
-                states.extend(section.slab_states().iter().map(|(&key, &state)| {
-                    let (lx, ly, lz) = crate::chunk::section_local(key as usize);
-                    SparseCellState::Slab {
-                        idx: nbhd_idx(bx + lx, by + ly, bz + lz),
-                        state,
-                    }
-                }));
+                super::shape::collect_shape_states(
+                    section,
+                    |lx, ly, lz| nbhd_idx(bx + lx, by + ly, bz + lz),
+                    &mut states,
+                );
                 if let Some(aps) = section.custom_light_apertures() {
+                    // A WASM shape's baked per-cell opacity, in the same
+                    // aperture currency the families answer: opaque blocks
+                    // every quadrant, open passes all.
                     states.extend(aps.iter().map(|(&key, &opaque)| {
                         let (lx, ly, lz) = crate::chunk::section_local(key as usize);
-                        SparseCellState::CustomAperture {
+                        SparseCellState {
                             idx: nbhd_idx(bx + lx, by + ly, bz + lz),
-                            opaque,
+                            masks: if opaque {
+                                0
+                            } else {
+                                crate::block::LIGHT_APERTURES_OPEN
+                            },
                         }
                     }));
                 }

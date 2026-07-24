@@ -35,16 +35,7 @@ impl Section {
             skylight: self.skylight_arc().map(SectionBytes),
             blocklight: self.blocklight_arc().map(SectionBytes),
             states: SectionStatesPayload {
-                doors: sorted_entries(self.doors(), |s| s.encode()),
-                stairs: sorted_entries(self.stair_states(), |s| s.encode()),
-                slabs: sorted_entries(self.slab_states(), |s| {
-                    [s.encode_meta(), s.layers[0].0, s.layers[1].0]
-                }),
-                log_axes: sorted_entries(self.log_axes(), |a| a.to_u8()),
-                torches: sorted_entries(self.torches(), |t| t.to_u8()),
-                entity_facings: sorted_entries(self.entity_facings(), |f| f.to_u8()),
-                model_facings: sorted_entries(self.model_facings(), |f| f.to_u8()),
-                model_cells: sorted_entries(self.model_cells(), |&off| off),
+                cell_states: sorted_entries(self.cell_states(), |&s| s),
                 cell_kv,
             },
         }

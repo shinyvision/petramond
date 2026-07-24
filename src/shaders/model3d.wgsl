@@ -38,7 +38,7 @@ struct FrameUniforms {
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
     render_origin: vec4<f32>,
-    water_anim: vec4<u32>,
+    atlas_anim: vec4<u32>,
     sky_color: vec4<f32>,
 };
 
@@ -138,7 +138,11 @@ fn vs_model(in: VsIn) -> VsOut {
     // fragment stage clamps them into the half-texel-inset bounds so edge
     // fragments of the magnified iso icons never sample the neighbour tile
     // (see inset_tile). Applied to BOTH the base uv and the grass-side overlay uv2.
-    let r = uv_rects[tile];
+    // Dyed vertices (packed2 bit 19) shift the tile rect into the dye-base
+    // half of the composed atlas (twins sit exactly half the texture down).
+    let dye_v = f32((in.packed2 >> 19u) & 0x1u) * 0.5;
+    var r = uv_rects[tile];
+    r = vec4<f32>(r.x, r.y + dye_v, r.z, r.w + dye_v);
     out.uv_bounds = inset_tile(r);
     if (uv_mode == UV_MODE_CELL_LOCAL) {
         let c = vec2<f32>(

@@ -324,6 +324,19 @@ impl ServerGame {
         // BEFORE the removal below clears the model-group metadata the anchor
         // lookup needs (same ordering constraint as the bed spawn point).
         let container_pos = self.world.container_anchor(event.pos);
+        // Carry courier (break side): snapshot the row's `petramond:carry`
+        // cell-KV entries BEFORE the removal below wipes the cell's KV, and
+        // stamp them onto the block's own item drops as instance data.
+        let carry_variant = self.carry_variant_at(event.pos, event.block);
+        let broken_tint = self
+            .world
+            .cell_kv_get(
+                event.pos.x,
+                event.pos.y,
+                event.pos.z,
+                crate::block::TINT_KV_KEY,
+            )
+            .and_then(|v| <[u8; 3]>::try_from(v).ok());
         // A bbmodel block breaks as a whole: removing any cell clears every footprint
         // cell (the 2×2×1 workbench vanishes as one object, drops one item below).
         if event.block.shape_family() == ShapeFamily::Model {
@@ -369,14 +382,19 @@ impl ServerGame {
             pos: event.pos,
             block: event.block,
             normal: hit_normal,
+            tint: broken_tint,
         });
         if event.harvested {
+            let own_item = crate::item::ItemType::from_block(event.block);
             if let Some(stacks) = slab_drops {
-                for stack in stacks {
+                for mut stack in stacks {
+                    if stack.item == own_item {
+                        stack.variant = carry_variant;
+                    }
                     self.spawn_item_stack(event.pos, stack, (sky, blk));
                 }
             } else {
-                self.spawn_drops(event.pos, event.block, (sky, blk));
+                self.spawn_drops(event.pos, event.block, (sky, blk), carry_variant);
             }
         }
         self.bus.emit(PostEvent::BlockBroken {
@@ -407,6 +425,9 @@ impl ServerGame {
                 pos,
                 block,
                 normal: None,
+                // Natural breaks: the world already cleared the cell (and its
+                // KV) before this drain — no tint to sample.
+                tint: None,
             });
             let (sky, blk, _warm) = self.world.dynamic_light_at_world(pos.x, pos.y, pos.z);
             // A natural break yields exactly what a bare-hand break would: most
@@ -415,7 +436,9 @@ impl ServerGame {
             // layer's shovel-only snowball) is lost — nobody dug it.
             let harvested = crate::mining::harvests(block, None);
             if harvested {
-                self.spawn_drops(pos, block, (sky, blk));
+                // Natural breaks carry nothing: the world cleared the cell
+                // (and its KV) before this drain runs.
+                self.spawn_drops(pos, block, (sky, blk), crate::item::VariantId::NONE);
             }
             // Sim-destroyed blocks are not cancellable (no pre event);
             // observers still hear about them.
@@ -428,7 +451,37 @@ impl ServerGame {
         }
     }
 
-    pub(crate) fn spawn_drops(&mut self, pos: IVec3, block: Block, (sky, blk): (u8, u8)) {
+    /// The interned instance-data variant a break of `block` at `pos` should
+    /// stamp onto the block's own item drop: the row's `petramond:carry` KV
+    /// entries, read while the cell still holds them. `NONE` when the row
+    /// carries nothing or the entries are absent.
+    pub(crate) fn carry_variant_at(&self, pos: IVec3, block: Block) -> crate::item::VariantId {
+        let carry = block.carry();
+        if carry.is_empty() {
+            return crate::item::VariantId::NONE;
+        }
+        let mut map = crate::item::variant::VariantMap::new();
+        for &key in carry {
+            if let Some(v) = self.world.cell_kv_get(pos.x, pos.y, pos.z, key) {
+                map.insert(key.to_owned(), v.to_vec());
+            }
+        }
+        if map.is_empty() {
+            return crate::item::VariantId::NONE;
+        }
+        crate::item::variant::intern(&map).unwrap_or_else(|| {
+            log::warn!("carry at {pos:?}: variant table full — drop loses its data");
+            crate::item::VariantId::NONE
+        })
+    }
+
+    pub(crate) fn spawn_drops(
+        &mut self,
+        pos: IVec3,
+        block: Block,
+        (sky, blk): (u8, u8),
+        carry_variant: crate::item::VariantId,
+    ) {
         let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
         for d in block.drop_spec().drops {
             self.spawn_counter = self.spawn_counter.wrapping_add(1);
@@ -451,7 +504,10 @@ impl ServerGame {
             if count == 0 {
                 continue;
             }
-            let stack = ItemStack::new(d.item, count);
+            let mut stack = ItemStack::new(d.item, count);
+            if d.item == crate::item::ItemType::from_block(block) {
+                stack.variant = carry_variant;
+            }
             let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
             drop.skylight = sky;
             drop.blocklight = blk;

@@ -5,7 +5,7 @@ fn inst(alpha: f32) -> ParticleInstance {
     ParticleInstance {
         pos: Vec3::new(1.0, 2.0, 3.0),
         uv_min: [0.1, 0.2],
-        uv_size: 0.05,
+        uv_size: [0.05; 2],
         tint: [1.0, 1.0, 1.0],
         alpha,
         size: 0.1,

@@ -38,6 +38,35 @@ pub struct DoorState {
     pub top: bool,
 }
 
+impl crate::block::CellView for Option<DoorState> {
+    fn owns(block: crate::block::Block) -> bool {
+        block.shape_family() == crate::block::ShapeFamily::Door
+    }
+    /// `None` when no state is stored (the length distinguishes it from the
+    /// valid all-zero pose byte) — readers then fall back to the row's static
+    /// form, the door's failure policy.
+    fn from_cell(s: crate::block::ShapeState) -> Self {
+        if s.is_empty() {
+            return None;
+        }
+        Some(DoorState::decode(s.byte(0)))
+    }
+}
+
+impl crate::block::CellView for DoorState {
+    fn owns(block: crate::block::Block) -> bool {
+        block.shape_family() == crate::block::ShapeFamily::Door
+    }
+    fn from_cell(s: crate::block::ShapeState) -> Self {
+        DoorState::decode(s.byte(0))
+    }
+}
+impl crate::block::CellCodec for DoorState {
+    fn to_cell(&self) -> crate::block::ShapeState {
+        crate::block::ShapeState::new(&[self.encode()])
+    }
+}
+
 impl DoorState {
     /// Pack into a byte for the chunk door map + save codec: bits 0..2 = facing,
     /// bit 2 = open, bit 3 = top.

@@ -90,8 +90,12 @@ impl Renderer {
         let mut verts = std::mem::take(&mut self.icon_quad_verts);
         verts.clear();
         if screen.0 != 0 && screen.1 != 0 {
-            for &(item, r) in &self.ui_build.icon_quads {
-                let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(item);
+            for &(item, r, color, dyed) in &self.ui_build.icon_quads {
+                let [u0, v0, u1, v1] = if dyed {
+                    self.icon_atlas.cell_uv_dyed(item)
+                } else {
+                    self.icon_atlas.cell_uv(item)
+                };
                 crate::render::ui::push_quad_uv(
                     &mut verts,
                     screen,
@@ -101,7 +105,7 @@ impl Renderer {
                     r.h,
                     [u0, v0],
                     [u1, v1],
-                    [1.0, 1.0, 1.0, 1.0],
+                    color,
                 );
             }
             for icon in &self.ui_build.hook_icon_quads {
@@ -124,8 +128,12 @@ impl Renderer {
                 );
             }
             let normal_icon_vertex_count = verts.len() as u32;
-            for &(item, r) in &self.ui_build.drag_icon_quads {
-                let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(item);
+            for &(item, r, color, dyed) in &self.ui_build.drag_icon_quads {
+                let [u0, v0, u1, v1] = if dyed {
+                    self.icon_atlas.cell_uv_dyed(item)
+                } else {
+                    self.icon_atlas.cell_uv(item)
+                };
                 crate::render::ui::push_quad_uv(
                     &mut verts,
                     screen,
@@ -135,7 +143,7 @@ impl Renderer {
                     r.h,
                     [u0, v0],
                     [u1, v1],
-                    [1.0, 1.0, 1.0, 1.0],
+                    color,
                 );
             }
             self.icon_quad_vertex_count = normal_icon_vertex_count;

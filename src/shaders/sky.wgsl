@@ -11,7 +11,7 @@ struct Uniforms {
     fog_color: vec4<f32>, // rgb = fog colour (CPU-dimmed/tinted); w = sky scale
     inv_view_proj: mat4x4<f32>,
     render_origin: vec4<f32>,
-    water_anim: vec4<u32>,
+    atlas_anim: vec4<u32>,
     sky_color: vec4<f32>, // rgb = sim sky-light colour (white = identity)
     sun_dir: vec4<f32>,   // xyz = unit sun direction, w = daylight [0,1]
 };

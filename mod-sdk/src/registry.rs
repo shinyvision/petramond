@@ -123,3 +123,37 @@ pub fn resolve_item_logged(name: &str) -> Option<ItemId> {
     }
     id
 }
+
+host_fn! {
+    /// The item row's consumer-data entry `key` as raw JSON text — the item
+    /// INTEROP surface: any pack attaches a CONSUMING system's namespaced
+    /// key to its own rows (or to existing rows via catalog patch rows), and
+    /// the consumer parses the opaque value ([`crate::json`]) and ignores
+    /// what it doesn't understand. Registry-only, legal on any instance.
+    /// `None` = no such entry.
+    pub fn item_data(item: ItemId, key: &str) -> Option<Vec<u8>>
+        => ItemDataGet { item, key: key.into() } => Bytes
+}
+
+host_fn! {
+    /// Every registered item carrying data entry `key`, with each row's raw
+    /// JSON value, in id order — the one-crossing enumeration a consumer
+    /// runs at init to build its table (the data twin of
+    /// [`items_by_tag`](crate::items_by_tag)). Registry-only, legal on any
+    /// instance.
+    pub fn items_with_data(key: &str) -> Vec<(ItemId, String)>
+        => ItemsWithData { key: key.into() } => ItemDataRows
+}
+
+host_fn! {
+    /// The block twin of [`item_data`]. Registry-only, legal on any instance.
+    pub fn block_data(block: BlockId, key: &str) -> Option<Vec<u8>>
+        => BlockDataGet { block, key: key.into() } => Bytes
+}
+
+host_fn! {
+    /// The block twin of [`items_with_data`]. Registry-only, legal on any
+    /// instance.
+    pub fn blocks_with_data(key: &str) -> Vec<(BlockId, String)>
+        => BlocksWithData { key: key.into() } => BlockDataRows
+}

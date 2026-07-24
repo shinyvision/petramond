@@ -106,7 +106,11 @@ impl Renderer {
         let ox = column_pos.cx * 16;
         let oz = column_pos.cz * 16;
         let min = glam::Vec3::new(ox as f32, (min_cy * 16) as f32, oz as f32);
-        let max = glam::Vec3::new((ox + 16) as f32, ((max_cy + 1) * 16) as f32, (oz + 16) as f32);
+        let max = glam::Vec3::new(
+            (ox + 16) as f32,
+            ((max_cy + 1) * 16) as f32,
+            (oz + 16) as f32,
+        );
         Self::aabb_visible(min, max, frustum, render_origin, cam_pos, fog)
     }
 

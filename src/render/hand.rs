@@ -144,6 +144,11 @@ pub(super) fn build_hand_lit(
             ));
         }
     }
+    // Instance-data tint (`petramond:tint`): multiply the held ITEM's verts.
+    // Never the bare arm — its solid path uses tint as the final skin color.
+    if view.item.is_some() {
+        super::item_model::dye_block_verts(verts, view.variant);
+    }
 
     let placement = if view.item.is_none() {
         bare_arm_placement(view, aspect)

@@ -8,11 +8,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use crate::block::Block;
+use crate::block::{Block, ShapeState};
 use crate::chunk::SECTION_VOLUME;
-use crate::door::DoorState;
 use crate::facing::Facing;
-use crate::torch::TorchPlacement;
 use crate::wire_enum::wire_enum;
 
 wire_enum! {
@@ -138,6 +136,53 @@ impl SlabState {
     }
 }
 
+impl crate::block::CellView for StairState {
+    fn owns(block: Block) -> bool {
+        crate::stair::is_stair(block)
+    }
+    fn from_cell(s: ShapeState) -> Self {
+        Self::decode(s.byte(0))
+    }
+}
+impl crate::block::CellCodec for StairState {
+    /// The PLACED bits only (byte 0); the refine cascade appends the corner
+    /// byte ([`crate::stair::StairShape`] is its read view).
+    fn to_cell(&self) -> ShapeState {
+        ShapeState::new(&[self.encode()])
+    }
+}
+
+impl crate::block::CellView for SlabState {
+    fn owns(block: Block) -> bool {
+        crate::slab::is_slab(block)
+    }
+    /// RAW (un-normalized) — readers normalize with the cell's block.
+    fn from_cell(s: ShapeState) -> Self {
+        if s.is_empty() {
+            return SlabState::EMPTY;
+        }
+        Self::decode(
+            s.byte(0),
+            Block::from_id(s.byte(1)),
+            Block::from_id(s.byte(2)),
+        )
+    }
+}
+impl crate::block::CellCodec for SlabState {
+    fn to_cell(&self) -> ShapeState {
+        if self.is_empty() {
+            // An empty stack clears its entry (the cell stops being a slab).
+            return ShapeState::NONE;
+        }
+        // The two layer bytes are BLOCK IDS, declared through the id mask so
+        // the save palette / net transport rewrite them generically.
+        ShapeState::with_ids(
+            &[self.encode_meta(), self.layers[0].id(), self.layers[1].id()],
+            0b110,
+        )
+    }
+}
+
 wire_enum! {
     pub enum LogAxis: u8 {
         X = 0,
@@ -145,6 +190,49 @@ wire_enum! {
         Z = 2,
     }
     default Y
+}
+
+impl crate::block::CellView for LogAxis {
+    fn owns(block: Block) -> bool {
+        block.is_log()
+    }
+    fn from_cell(s: ShapeState) -> Self {
+        // The default vertical axis is NOT the zero byte (`X` is 0), so
+        // absence is checked explicitly.
+        if s.is_empty() {
+            return LogAxis::default();
+        }
+        LogAxis::from_u8(s.byte(0))
+    }
+}
+impl crate::block::CellCodec for LogAxis {
+    fn to_cell(&self) -> ShapeState {
+        if *self == LogAxis::Y {
+            // Vertical stays stateless — worldgen forests never pay a record.
+            return ShapeState::NONE;
+        }
+        ShapeState::new(&[self.to_u8()])
+    }
+}
+
+/// A directional block-entity's front (chest/furnace) as cell state. Cell
+/// state like every other orientation — it survives a block-row swap only
+/// through `World::swap_block_skin`'s explicit carry.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct EntityFront(pub Facing);
+
+impl crate::block::CellView for EntityFront {
+    fn owns(block: Block) -> bool {
+        block.directional_view()
+    }
+    fn from_cell(s: ShapeState) -> Self {
+        Self(Facing::from_u8(s.byte(0)))
+    }
+}
+impl crate::block::CellCodec for EntityFront {
+    fn to_cell(&self) -> ShapeState {
+        ShapeState::new(&[self.0.to_u8()])
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -167,31 +255,24 @@ macro_rules! empty_map {
 }
 pub(crate) use empty_map;
 
-/// The eight sparse per-cell maps, boxed behind `Option` in [`BlockStates`]: the
-/// common generated section carries none of these, and their inline map headers
-/// (~380 bytes each section) dominated `size_of::<Section>()`.
+/// The two sparse per-cell stores, boxed behind `Option` in [`BlockStates`]:
+/// the common generated section carries neither, and inline map headers
+/// dominated `size_of::<Section>()`.
 #[derive(Clone, Default)]
 struct SparseStates {
-    torches: HashMap<u16, TorchPlacement>,
-    model_cells: HashMap<u16, [u8; 3]>,
-    model_facings: HashMap<u16, Facing>,
-    doors: HashMap<u16, DoorState>,
-    stairs: HashMap<u16, StairState>,
-    slabs: HashMap<u16, SlabState>,
-    log_axes: HashMap<u16, LogAxis>,
+    /// THE unified per-cell block state: one opaque [`ShapeState`] per
+    /// stateful cell (stair facing, slab layers, door pose, torch mount, log
+    /// axis, model offset+facing, chest/furnace front — every former typed
+    /// map). The bytes are meaningful only to the owning family/behavior's
+    /// codec (`crate::block::encode_*` / `decode_*`); the store, the save
+    /// record, and the replication delta never interpret them.
+    cell_states: HashMap<u16, ShapeState>,
     cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
 }
 
 impl SparseStates {
     fn is_empty(&self) -> bool {
-        self.torches.is_empty()
-            && self.model_cells.is_empty()
-            && self.model_facings.is_empty()
-            && self.doors.is_empty()
-            && self.stairs.is_empty()
-            && self.slabs.is_empty()
-            && self.log_axes.is_empty()
-            && self.cell_kv.is_empty()
+        self.cell_states.is_empty() && self.cell_kv.is_empty()
     }
 }
 
@@ -216,26 +297,13 @@ impl BlockStates {
         self.sparse.get_or_insert_default()
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_shared(
         water: Option<Arc<[u8]>>,
-        torches: HashMap<u16, TorchPlacement>,
-        model_cells: HashMap<u16, [u8; 3]>,
-        model_facings: HashMap<u16, Facing>,
-        doors: HashMap<u16, DoorState>,
-        stairs: HashMap<u16, StairState>,
-        slabs: HashMap<u16, SlabState>,
-        log_axes: HashMap<u16, LogAxis>,
+        cell_states: HashMap<u16, ShapeState>,
         cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>>,
     ) -> Self {
         let sparse = SparseStates {
-            torches,
-            model_cells,
-            model_facings,
-            doors,
-            stairs,
-            slabs,
-            log_axes,
+            cell_states,
             cell_kv,
         };
         let flowing_count = water
@@ -309,19 +377,14 @@ impl BlockStates {
             return;
         };
         let key = idx as u16;
-        s.model_cells.remove(&key);
-        s.model_facings.remove(&key);
-        s.doors.remove(&key);
-        s.stairs.remove(&key);
-        s.slabs.remove(&key);
-        s.log_axes.remove(&key);
-        s.torches.remove(&key);
-        // Mod cell KV is per-BLOCK state like everything above: a broken
+        s.cell_states.remove(&key);
+        // Mod cell KV is per-BLOCK state like the cell state above: a broken
         // machine's burn state must die with the block — air holds no data.
-        // (A same-footprint model swap that must KEEP the state carries it
-        // across explicitly — see `World::swap_model_block`. A disabled mod's
-        // KV is untouched by this: its sections load their KV wholesale, not
-        // through per-cell block writes.)
+        // (A block-row swap that must KEEP its per-cell state carries it
+        // across explicitly — see `World::swap_block_skin` /
+        // `World::swap_model_block`. A disabled mod's KV is untouched by
+        // this: its sections load their KV wholesale, not through per-cell
+        // block writes.)
         s.cell_kv.remove(&key);
     }
 
@@ -330,174 +393,42 @@ impl BlockStates {
         crate::chunk::section_idx(x, y, z) as u16
     }
 
+    /// The cell's opaque per-cell block state ([`ShapeState::NONE`] when it
+    /// carries none). The store never interprets the bytes.
     #[inline]
-    pub(crate) fn set_model_offset(&mut self, x: usize, y: usize, z: usize, offset: [u8; 3]) {
-        self.sparse_mut()
-            .model_cells
-            .insert(Self::key(x, y, z), offset);
-    }
-
-    #[inline]
-    pub(crate) fn model_offset(&self, x: usize, y: usize, z: usize) -> [u8; 3] {
-        self.model_cells()
-            .get(&Self::key(x, y, z))
-            .copied()
-            .unwrap_or([0, 0, 0])
-    }
-
-    #[inline]
-    pub(crate) fn set_model_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
-        self.sparse_mut()
-            .model_facings
-            .insert(Self::key(x, y, z), facing);
-    }
-
-    #[inline]
-    pub(crate) fn model_facing(&self, x: usize, y: usize, z: usize) -> Facing {
-        self.model_facings()
-            .get(&Self::key(x, y, z))
-            .copied()
-            .unwrap_or(crate::block_model::DEFAULT_MODEL_FACING)
-    }
-
-    #[inline]
-    pub(crate) fn model_cells(&self) -> &HashMap<u16, [u8; 3]> {
+    pub(crate) fn cell_state(&self, x: usize, y: usize, z: usize) -> ShapeState {
         match &self.sparse {
-            Some(s) => &s.model_cells,
-            None => empty_map!([u8; 3]),
+            Some(s) => s
+                .cell_states
+                .get(&Self::key(x, y, z))
+                .copied()
+                .unwrap_or(ShapeState::NONE),
+            None => ShapeState::NONE,
         }
     }
 
+    /// Store a cell's opaque state; an EMPTY state removes the entry. NOTE:
+    /// presence is meaningful (a door's all-zero pose byte is a valid stored
+    /// state) — only a zero-LENGTH state clears.
     #[inline]
-    pub(crate) fn model_facings(&self) -> &HashMap<u16, Facing> {
-        match &self.sparse {
-            Some(s) => &s.model_facings,
-            None => empty_map!(Facing),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn door_state(&self, x: usize, y: usize, z: usize) -> Option<DoorState> {
-        self.doors().get(&Self::key(x, y, z)).copied()
-    }
-
-    #[inline]
-    pub(crate) fn set_door_state(&mut self, x: usize, y: usize, z: usize, state: DoorState) {
-        self.sparse_mut().doors.insert(Self::key(x, y, z), state);
-    }
-
-    #[inline]
-    pub(crate) fn doors(&self) -> &HashMap<u16, DoorState> {
-        match &self.sparse {
-            Some(s) => &s.doors,
-            None => empty_map!(DoorState),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn stair_state(&self, x: usize, y: usize, z: usize) -> StairState {
-        self.stair_states()
-            .get(&Self::key(x, y, z))
-            .copied()
-            .unwrap_or_default()
-    }
-
-    #[inline]
-    pub(crate) fn set_stair_state(&mut self, x: usize, y: usize, z: usize, state: StairState) {
-        self.sparse_mut().stairs.insert(Self::key(x, y, z), state);
-    }
-
-    #[inline]
-    pub(crate) fn stair_states(&self) -> &HashMap<u16, StairState> {
-        match &self.sparse {
-            Some(s) => &s.stairs,
-            None => empty_map!(StairState),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn slab_state(&self, x: usize, y: usize, z: usize) -> SlabState {
-        self.slab_states()
-            .get(&Self::key(x, y, z))
-            .copied()
-            .unwrap_or_default()
-    }
-
-    #[inline]
-    pub(crate) fn set_slab_state(&mut self, x: usize, y: usize, z: usize, state: SlabState) {
+    pub(crate) fn set_cell_state(&mut self, x: usize, y: usize, z: usize, state: ShapeState) {
         let key = Self::key(x, y, z);
         if state.is_empty() {
             if let Some(s) = self.sparse.as_deref_mut() {
-                s.slabs.remove(&key);
+                s.cell_states.remove(&key);
             }
         } else {
-            self.sparse_mut().slabs.insert(key, state);
+            self.sparse_mut().cell_states.insert(key, state);
         }
     }
 
+    /// The whole unified per-cell state map (save codec, wire payload, light
+    /// snapshot, mesh-pad capture).
     #[inline]
-    pub(crate) fn slab_states(&self) -> &HashMap<u16, SlabState> {
+    pub(crate) fn cell_states(&self) -> &HashMap<u16, ShapeState> {
         match &self.sparse {
-            Some(s) => &s.slabs,
-            None => empty_map!(SlabState),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn log_axis(&self, x: usize, y: usize, z: usize) -> LogAxis {
-        self.log_axes()
-            .get(&Self::key(x, y, z))
-            .copied()
-            .unwrap_or_default()
-    }
-
-    #[inline]
-    pub(crate) fn set_log_axis(&mut self, x: usize, y: usize, z: usize, axis: LogAxis) {
-        let key = Self::key(x, y, z);
-        if axis == LogAxis::Y {
-            if let Some(s) = self.sparse.as_deref_mut() {
-                s.log_axes.remove(&key);
-            }
-        } else {
-            self.sparse_mut().log_axes.insert(key, axis);
-        }
-    }
-
-    #[inline]
-    pub(crate) fn log_axes(&self) -> &HashMap<u16, LogAxis> {
-        match &self.sparse {
-            Some(s) => &s.log_axes,
-            None => empty_map!(LogAxis),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn torch_placement(&self, x: usize, y: usize, z: usize) -> TorchPlacement {
-        self.torches()
-            .get(&Self::key(x, y, z))
-            .copied()
-            .unwrap_or_default()
-    }
-
-    #[inline]
-    pub(crate) fn insert_torch(&mut self, x: usize, y: usize, z: usize, placement: TorchPlacement) {
-        self.sparse_mut()
-            .torches
-            .insert(Self::key(x, y, z), placement);
-    }
-
-    #[inline]
-    pub(crate) fn take_torch(&mut self, x: usize, y: usize, z: usize) -> bool {
-        self.sparse
-            .as_deref_mut()
-            .is_some_and(|s| s.torches.remove(&Self::key(x, y, z)).is_some())
-    }
-
-    #[inline]
-    pub(crate) fn torches(&self) -> &HashMap<u16, TorchPlacement> {
-        match &self.sparse {
-            Some(s) => &s.torches,
-            None => empty_map!(TorchPlacement),
+            Some(s) => &s.cell_states,
+            None => empty_map!(ShapeState),
         }
     }
 

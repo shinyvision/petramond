@@ -71,11 +71,22 @@ impl ItemType {
     }
 
     /// How many game ticks this item burns as furnace fuel (`0` = not a fuel).
-    /// A property of the item (`"fuel_burn_ticks"` in `items.json`) — a furnace
+    /// Compiled from the row's `petramond:fuel` data entry — a furnace
     /// consuming it reads this, like mining reads [`tool`](Self::tool).
     #[inline]
     pub fn fuel_burn_ticks(self) -> u16 {
         self.def().fuel_burn_ticks
+    }
+
+    /// The row's namespaced consumer-data entry `key` as raw JSON text, or
+    /// `None` — the item interop surface (`"data"` in `items.json` + patch
+    /// rows). Binary search over the sorted compiled slice.
+    #[inline]
+    pub fn data_value(self, key: &str) -> Option<&'static str> {
+        let data = self.def().data;
+        data.binary_search_by(|(k, _)| (*k).cmp(key))
+            .ok()
+            .map(|i| data[i].1)
     }
 
     /// The right-click use this item's data row declares (`"use"` in

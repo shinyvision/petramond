@@ -26,7 +26,12 @@ impl Game {
     pub(super) fn apply_world_effects(&mut self, events: &[super::tick::WorldEvent]) {
         for ev in events {
             match *ev {
-                super::tick::WorldEvent::BlockBroken { pos, block, normal } => {
+                super::tick::WorldEvent::BlockBroken {
+                    pos,
+                    block,
+                    normal,
+                    tint,
+                } => {
                     // Sampled against the REPLICA, which already applied this
                     // pump's deltas (the break landed before the events).
                     let (sky, blk, warm) =
@@ -37,7 +42,7 @@ impl Game {
                             .spawn_break_burst_model(pos, kind, sky, blk, warm),
                         None => self
                             .particles
-                            .spawn_break_burst_lit(pos, block, sky, blk, warm),
+                            .spawn_break_burst_lit(pos, block, sky, blk, warm, tint),
                     }
                     // A broken door's swing entry dies with it (client-owned
                     // state the sim can no longer clear). The event carries
@@ -124,13 +129,16 @@ impl Game {
         let block = Block::from_id(world.chunk_block(h.block.x, h.block.y, h.block.z));
         let cell = h.block + h.normal;
         let (sky, blk, warm) = world.dynamic_light_at_world(cell.x, cell.y, cell.z);
+        let kv_tint = world
+            .cell_kv_get(h.block.x, h.block.y, h.block.z, crate::block::TINT_KV_KEY)
+            .and_then(|v| <[u8; 3]>::try_from(v).ok());
         match block.model_kind() {
             Some(kind) => self
                 .particles
                 .spawn_mining_model(h.block, h.normal, kind, sky, blk, warm),
             None => self
                 .particles
-                .spawn_mining_lit(h.block, h.normal, block, sky, blk, warm),
+                .spawn_mining_lit(h.block, h.normal, block, sky, blk, warm, kv_tint),
         }
     }
 

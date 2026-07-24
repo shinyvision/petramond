@@ -10,8 +10,8 @@ mod hand;
 mod hand_animator;
 mod item_cube;
 mod item_entity;
-pub(crate) mod item_shape_bake;
 mod item_model;
+pub(crate) mod item_shape_bake;
 mod lighting;
 mod mob_model;
 mod particles;
@@ -154,6 +154,8 @@ mod ui_frame_coherence_tests {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct HeldItemView {
     pub item: Option<ItemType>,
+    /// The held stack's instance-data variant (tint resolution at draw).
+    pub variant: crate::item::VariantId,
     pub block_state: HeldBlockState,
     /// 0..1 punch phase (sawtooth while mining, one-shot for a break/place).
     pub swing: f32,
@@ -177,6 +179,7 @@ impl Default for HeldItemView {
     fn default() -> Self {
         HeldItemView {
             item: None,
+            variant: crate::item::VariantId::NONE,
             block_state: HeldBlockState::None,
             swing: 0.0,
             swing_scale: 1.0,
@@ -192,6 +195,8 @@ impl Default for HeldItemView {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct HeldItemFrame {
     pub item: Option<ItemType>,
+    /// The held stack's instance-data variant (tint resolution at draw).
+    pub variant: crate::item::VariantId,
     pub block_state: HeldBlockState,
     pub mining: bool,
     /// True on the frame a block breaks, including instant hardness-0 blocks.
@@ -217,6 +222,8 @@ pub struct HeldItemFrame {
 pub struct ItemEntityInstance {
     pub pos: Vec3,
     pub item: ItemType,
+    /// The stack's instance-data variant (tint resolution at draw).
+    pub variant: crate::item::VariantId,
     /// Stack size. Drives how many layered geometries the pile draws (1..=5).
     pub count: u8,
     /// Y-axis spin in radians.
@@ -384,8 +391,9 @@ pub struct ParticleInstance {
     pub pos: Vec3,
     /// Absolute atlas uv of the patch's min corner.
     pub uv_min: [f32; 2],
-    /// Absolute atlas uv extent of the (square) patch.
-    pub uv_size: f32,
+    /// Absolute atlas uv extent of the patch, per axis (the atlas is not square
+    /// in normalized UV, so equal texel extents differ per axis).
+    pub uv_size: [f32; 2],
     /// RGB tint multiplied into the sampled atlas colour (foliage-green for a
     /// grass/leaf fleck, white otherwise), from `crate::entity::Particle::tint`.
     pub tint: [f32; 3],

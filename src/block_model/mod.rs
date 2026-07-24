@@ -70,3 +70,43 @@ use placement::oriented_cell_instance;
 /// Canonical bbmodel orientation: Blockbench model fronts face `-Z` (North).
 /// Old model placements that predate per-cell facing read as this unrotated orientation.
 pub const DEFAULT_MODEL_FACING: Facing = Facing::North;
+
+/// A model cell's per-cell state: its authored footprint offset plus the
+/// placed facing. Absence decodes to the footprint origin with the canonical
+/// facing (both encode to zero bytes).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ModelCellState {
+    pub offset: [u8; 3],
+    pub facing: Facing,
+}
+
+impl Default for ModelCellState {
+    fn default() -> Self {
+        Self {
+            offset: [0, 0, 0],
+            facing: DEFAULT_MODEL_FACING,
+        }
+    }
+}
+
+impl crate::block::CellView for ModelCellState {
+    fn owns(block: crate::block::Block) -> bool {
+        block.model_kind().is_some()
+    }
+    fn from_cell(s: crate::block::ShapeState) -> Self {
+        Self {
+            offset: [s.byte(0), s.byte(1), s.byte(2)],
+            facing: Facing::from_u8(s.byte(3)),
+        }
+    }
+}
+impl crate::block::CellCodec for ModelCellState {
+    fn to_cell(&self) -> crate::block::ShapeState {
+        crate::block::ShapeState::new(&[
+            self.offset[0],
+            self.offset[1],
+            self.offset[2],
+            self.facing.to_u8(),
+        ])
+    }
+}

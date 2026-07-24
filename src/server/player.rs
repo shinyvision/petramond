@@ -588,20 +588,16 @@ impl ConnectedPlayer {
         self.intent_sneak && self.intent_gameplay
     }
 
+    /// A snapshot of the raw held-rotation state for the placement inputs —
+    /// each family derives its own reading from it.
     #[inline]
-    pub(crate) fn held_stair_half(&self) -> StairHalf {
-        self.held_rotation.stair_half(self.selected_item())
+    pub(crate) fn held_rotation_snapshot(&self) -> HeldRotation {
+        self.held_rotation.clone()
     }
 
     #[inline]
     pub(crate) fn held_slab_rotation(&self) -> crate::slab::SlabRotation {
         self.held_rotation.slab_rotation(self.selected_item())
-    }
-
-    #[inline]
-    pub(crate) fn held_log_axis_for_facing(&self, facing: crate::facing::Facing) -> LogAxis {
-        self.held_rotation
-            .log_axis_for_facing(self.selected_item(), facing)
     }
 
     /// The in-progress eat as `(progress / eat_ticks)` in `[0, 1)`, or `None`.

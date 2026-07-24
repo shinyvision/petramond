@@ -75,7 +75,16 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                             );
                             return HostRet::Bool(false);
                         };
-                        (data.count > 0).then(|| crate::item::ItemStack::new(item, data.count))
+                        {
+                            let variant =
+                                match super::guards::intern_abi_data("ContainerSet", &data.data) {
+                                    Ok(v) => v,
+                                    Err(e) => return e,
+                                };
+                            (data.count > 0).then(|| {
+                                crate::item::ItemStack::with_variant(item, data.count, variant)
+                            })
+                        }
                     }
                 };
                 writes.push((i, stack));
@@ -186,6 +195,7 @@ mod tests {
                         Some(mod_api::ItemStackData {
                             item: "petramond:coal".into(),
                             count: 3,
+                            data: Vec::new(),
                         }),
                     )],
                 },

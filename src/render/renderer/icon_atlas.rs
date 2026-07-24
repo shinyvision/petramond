@@ -64,6 +64,8 @@ pub(super) struct IconAtlas {
     /// Atlas dimensions (px), for the UV math.
     width: f32,
     height: f32,
+    /// Item count at bake — a stack's DYED twin cell sits at `item_cells + id`.
+    item_cells: u32,
 }
 
 impl IconAtlas {
@@ -71,7 +73,17 @@ impl IconAtlas {
     /// v increases downward, matching the gui atlas). Exact integer cell edges so a
     /// Nearest-sampled quad never bleeds into a neighbour cell.
     pub fn cell_uv(&self, item: ItemType) -> [f32; 4] {
-        let i = item.id() as u32;
+        self.cell_uv_at(item.id() as u32)
+    }
+
+    /// The DYED twin cell for `item`: the same icon baked off the dye-base
+    /// tiles, for stacks carrying a `petramond:tint` (the UI multiplies the
+    /// tint on top).
+    pub fn cell_uv_dyed(&self, item: ItemType) -> [f32; 4] {
+        self.cell_uv_at(self.item_cells + item.id() as u32)
+    }
+
+    fn cell_uv_at(&self, i: u32) -> [f32; 4] {
         let col = i % COLS;
         let row = i / COLS;
         let x0 = (col * CELL) as f32;
@@ -126,7 +138,12 @@ pub(super) fn bake(
     uniform_buf: &wgpu::Buffer,
 ) -> IconAtlas {
     let count = ItemType::all().len() as u32;
-    let rows = count.div_ceil(COLS);
+    // Every item gets TWO cells: its ordinary icon at index `item id`, and a
+    // DYED twin at `count + id` — the same icon rendered off the atlas's
+    // dye-base tiles (desaturated, peak-white), which the UI multiplies by a
+    // stack's `petramond:tint`. Model (bbmodel) icons have no dye-base half
+    // in the model atlas, so their twin is a plain copy (the multiply alone).
+    let rows = (2 * count).div_ceil(COLS);
     let aw = COLS * CELL;
     let ah = rows * CELL;
 
@@ -226,6 +243,8 @@ pub(super) fn bake(
         }
         let i = item.id() as u32;
         let (col, row) = (i % COLS, i / COLS);
+        let di = count + i;
+        let (dcol, drow) = (di % COLS, di / COLS);
         match item.render_kind() {
             ItemRenderKind::BlockCube(block) => {
                 let index_start = cube_indices.len() as u32;
@@ -255,6 +274,36 @@ pub(super) fn bake(
                     index_count: cube_indices.len() as u32 - index_start,
                     mvp_offset,
                 });
+                // Dyed twin: same geometry re-pushed with the dyed flag, so
+                // model3d samples the dye-base tiles into the twin cell.
+                let dyed_start = cube_indices.len() as u32;
+                let vert_start = cube_verts.len();
+                if block == Block::Chest {
+                    push_chest_item_full(
+                        &mut cube_verts,
+                        &mut cube_indices,
+                        Vec3::splat(-0.5),
+                        1.0,
+                    );
+                } else {
+                    push_block_item_cube(
+                        &mut cube_verts,
+                        &mut cube_indices,
+                        block,
+                        Vec3::splat(-0.5),
+                        1.0,
+                    );
+                }
+                for v in cube_verts[vert_start..].iter_mut() {
+                    v.packed2 |= crate::mesh::DYED_FLAG2;
+                }
+                cube_icons.push(CubeIcon {
+                    col: dcol,
+                    row: drow,
+                    index_start: dyed_start,
+                    index_count: cube_indices.len() as u32 - dyed_start,
+                    mvp_offset,
+                });
             }
             ItemRenderKind::Sprite(tile) => {
                 let index_start = cube_indices.len() as u32;
@@ -269,16 +318,39 @@ pub(super) fn bake(
                     index_count: cube_indices.len() as u32 - index_start,
                     mvp_offset,
                 });
+                // Dyed twin (see the BlockCube arm).
+                let dyed_start = cube_indices.len() as u32;
+                let vert_start = cube_verts.len();
+                push_billboard_quad(&mut cube_verts, &mut cube_indices, tile, Vec3::ZERO, 1.0);
+                for v in cube_verts[vert_start..].iter_mut() {
+                    v.packed2 |= crate::mesh::DYED_FLAG2;
+                }
+                cube_icons.push(CubeIcon {
+                    col: dcol,
+                    row: drow,
+                    index_start: dyed_start,
+                    index_count: cube_indices.len() as u32 - dyed_start,
+                    mvp_offset,
+                });
             }
             ItemRenderKind::Model(kind) => {
                 let index_start = model_indices.len() as u32;
                 let mvp = model_icon_mvp(screen, cell_rect, kind);
                 build_block_model_icon(kind, mvp, &mut model_verts, &mut model_indices);
+                let index_count = model_indices.len() as u32 - index_start;
                 model_icons.push(ModelIcon {
                     col,
                     row,
                     index_start,
-                    index_count: model_indices.len() as u32 - index_start,
+                    index_count,
+                });
+                // Dyed twin = plain copy (no dye-base half in the model
+                // atlas); the UI's tint multiply still applies.
+                model_icons.push(ModelIcon {
+                    col: dcol,
+                    row: drow,
+                    index_start,
+                    index_count,
                 });
             }
         }
@@ -436,6 +508,7 @@ pub(super) fn bake(
         bind,
         width: aw as f32,
         height: ah as f32,
+        item_cells: count,
     }
 }
 

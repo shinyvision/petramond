@@ -203,7 +203,7 @@ fn replica_converges_on_payloads_and_deltas() {
         replica.install_remote_section(s);
     }
     for d in &deltas {
-        replica.apply_remote_delta(*d);
+        replica.apply_remote_delta(d.clone());
     }
     // A delta for a section nobody installed drops silently.
     replica.apply_remote_delta(BlockDelta {
@@ -211,6 +211,7 @@ fn replica_converges_on_payloads_and_deltas() {
         block_id: Block::Stone.id(),
         water: None,
         state: None,
+        cell_kv: vec![],
     });
     assert_eq!(replica.chunk_block(200, 65, 200), 0);
 
@@ -315,15 +316,12 @@ fn replica_converges_on_payloads_and_deltas() {
     );
 }
 
-/// Deltas carry the cell's sparse block STATE using
-/// the save-codec encodings, and a fresh replica applying them converges
-/// on every state map — placements whose state lands AFTER the announcing
-/// block write (chest facing, torch placement) included, because the drain
-/// re-reads the maps.
+/// Deltas carry the cell's OPAQUE unified block state verbatim, and a fresh
+/// replica applying them converges on every stateful kind — placements whose
+/// state lands AFTER the announcing block write (chest facing, torch
+/// placement) included, because the drain re-reads the store.
 #[test]
 fn deltas_carry_cell_state_and_replicas_converge_on_it() {
-    use crate::net::protocol::CellState;
-
     let (mut server, mut replica) = server_and_replica();
     // Converge on the pristine floor first (the delta path needs installed
     // sections on the replica).
@@ -378,30 +376,43 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
             .unwrap_or_else(|| panic!("delta logged at {pos:?}"))
             .state
     };
-    assert!(matches!(state_at(stair), Some(CellState::Stair(_))));
-    assert!(matches!(state_at(torch), Some(CellState::Torch(_))));
-    assert!(matches!(state_at(door), Some(CellState::Door(_))));
-    assert!(matches!(
-        state_at(door + IVec3::Y),
-        Some(CellState::Door(_))
-    ));
-    let Some(CellState::Slab([_, a, b])) = state_at(slab) else {
-        panic!("slab delta carries the 3-byte record");
-    };
+    let stair_state = state_at(stair).expect("stair delta carries state");
     assert_eq!(
-        (a, b),
+        <crate::block_state::StairState as crate::block::CellView>::from_cell(stair_state),
+        crate::block_state::StairState::new(Facing::South, crate::block_state::StairHalf::Top),
+        "placed bits ride the delta"
+    );
+    assert_ne!(
+        stair_state.byte(1),
+        0,
+        "the refined corner byte rides along (the edit cascade ran server-side)"
+    );
+    assert_eq!(
+        state_at(torch),
+        Some(crate::block::CellCodec::to_cell(&TorchPlacement::East))
+    );
+    assert!(state_at(door).is_some());
+    assert!(state_at(door + IVec3::Y).is_some());
+    let slab_state = state_at(slab).expect("slab delta carries state");
+    assert_eq!(
+        (slab_state.byte(1), slab_state.byte(2)),
         (Block::CobblestoneSlab.id(), Block::Air.id()),
         "slab layers ride as raw block ids"
     );
-    assert!(matches!(state_at(log), Some(CellState::LogAxis(_))));
-    assert!(matches!(state_at(model), Some(CellState::ModelCell { .. })));
+    assert_eq!(
+        slab_state.id_mask(),
+        0b110,
+        "the layer bytes are declared id references for the transport remap"
+    );
+    assert!(state_at(log).is_some());
+    assert!(state_at(model).is_some());
     assert!(
-        matches!(state_at(chest), Some(CellState::Facing(_))),
+        state_at(chest).is_some(),
         "the chest facing inserted AFTER set_block_world still rides the delta"
     );
 
     for d in &deltas {
-        replica.apply_remote_delta(*d);
+        replica.apply_remote_delta(d.clone());
     }
     assert_eq!(
         replica.stair_state_at(stair.x, stair.y, stair.z),
@@ -882,4 +893,101 @@ fn send_target_clamps_anchor_radius_to_the_world_budget() {
     };
     assert_eq!(key(64), key(4), "requests above the budget clamp to it");
     assert_ne!(key(2), key(4), "smaller requests shrink the send shape");
+}
+
+/// The live cell-KV delta lane: a server-side KV write/delete on a loaded
+/// section is captured (behind the replication gate), drains coalesced, and
+/// converges the replica — including the ordering contract with block
+/// deltas: a same-tick block flip WIPES the cell's KV on both sides, so the
+/// KV delta must apply after the block delta to survive.
+#[test]
+fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
+    let (mut server, mut replica) = server_and_replica();
+    for cp in server.columns.keys().copied().collect::<Vec<_>>() {
+        replica.install_remote_column(server.column_payload(cp).unwrap());
+    }
+    for s in server.sections.values() {
+        replica.install_remote_section(s.to_payload());
+    }
+
+    // Capture OFF: writes replicate nothing (the SP-no-clients fast path).
+    assert!(server.cell_kv_set(2, 65, 2, "testmod:color".into(), vec![1]));
+    assert!(server.take_cell_kv_deltas().is_empty());
+
+    server.set_replication_capture(true);
+    // The fill shape: block flip first, then the cell's KV — one tick. The
+    // covering block delta's drain-time KV snapshot carries the value; no
+    // separate KV delta is logged (it would be redundant).
+    assert!(server.set_block_world(2, 65, 2, Block::Stone));
+    assert!(server.cell_kv_set(2, 65, 2, "testmod:color".into(), vec![200, 30, 40]));
+    let blocks = server.take_block_deltas();
+    assert!(
+        server.take_cell_kv_deltas().is_empty(),
+        "a covering block delta subsumes the cell's KV deltas"
+    );
+    for d in blocks {
+        replica.apply_remote_delta(d);
+    }
+    assert_eq!(
+        replica.cell_kv_get(2, 65, 2, "testmod:color"),
+        Some(&[200u8, 30, 40][..]),
+        "the KV rides the block delta's snapshot"
+    );
+
+    // A value-only change (no block flip) and a delete both converge.
+    assert!(server.cell_kv_set(2, 65, 2, "testmod:color".into(), vec![9]));
+    for kv in server.take_cell_kv_deltas() {
+        replica.apply_remote_cell_kv(kv);
+    }
+    assert_eq!(
+        replica.cell_kv_get(2, 65, 2, "testmod:color"),
+        Some(&[9u8][..])
+    );
+    assert!(server.cell_kv_remove(2, 65, 2, "testmod:color"));
+    for kv in server.take_cell_kv_deltas() {
+        replica.apply_remote_cell_kv(kv);
+    }
+    assert_eq!(replica.cell_kv_get(2, 65, 2, "testmod:color"), None);
+
+    // A CORRECTIVE delta — `block_delta_at`'s snapshot of an UNCHANGED cell,
+    // shipped whenever a click resolves to nothing — must not erase replica
+    // KV the server still holds (the gray-dye bug, 2026-07-23): the delta
+    // carries the cell's KV map and re-installs it after its own wipe.
+    assert!(server.cell_kv_set(2, 65, 2, "testmod:color".into(), vec![5, 6, 7]));
+    for kv in server.take_cell_kv_deltas() {
+        replica.apply_remote_cell_kv(kv);
+    }
+    let corrective = server.block_delta_at(IVec3::new(2, 65, 2)).unwrap();
+    replica.apply_remote_delta(corrective);
+    assert_eq!(
+        replica.cell_kv_get(2, 65, 2, "testmod:color"),
+        Some(&[5u8, 6, 7][..]),
+        "a corrective snapshot must carry the cell's KV across its wipe"
+    );
+
+    // The GHOST-KV hazard, reversed order: a KV write logged BEFORE a
+    // same-tick block flip is stale — the flip wiped the cell's KV — so the
+    // block delta's capture must scrub it. Without the scrub the stale KV
+    // delta replays AFTER the block delta and resurrects a key on the
+    // replica that the server holds clean.
+    assert!(server.cell_kv_set(2, 65, 2, "testmod:ghost".into(), vec![1]));
+    assert!(server.set_block_world(2, 65, 2, Block::Dirt));
+    assert_eq!(server.cell_kv_get(2, 65, 2, "testmod:ghost"), None);
+    let blocks = server.take_block_deltas();
+    let kvs = server.take_cell_kv_deltas();
+    assert!(
+        kvs.is_empty(),
+        "the wiping block write scrubs the cell's pending KV deltas"
+    );
+    for d in blocks {
+        replica.apply_remote_delta(d);
+    }
+    for kv in kvs {
+        replica.apply_remote_cell_kv(kv);
+    }
+    assert_eq!(
+        replica.cell_kv_get(2, 65, 2, "testmod:ghost"),
+        None,
+        "no ghost KV survives on the replica after the wipe"
+    );
 }

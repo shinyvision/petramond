@@ -1,6 +1,5 @@
 use crate::entity::DroppedItem;
 use crate::events::{DamageSource, MobDamagePre, Outcome, PostEvent};
-use crate::item::ItemStack;
 use crate::mathh::{voxel_at, Vec3};
 use crate::mob::{def as mob_def, DeathDrop, MobAttack, MobDamageSound, MobFall, MobSoundCategory};
 
@@ -461,7 +460,7 @@ impl ServerGame {
             .request_pickups(requester, player_pos, |stack| {
                 let count = planned.fits_count(stack);
                 if count > 0 {
-                    let leftover = planned.add(ItemStack::new(stack.item, count));
+                    let leftover = planned.add(stack.restack(count));
                     debug_assert!(
                         leftover.is_none(),
                         "fits_count overestimated pickup capacity"

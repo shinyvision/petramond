@@ -203,11 +203,15 @@ pub enum HostCall {
     },
     /// Spawn `count` of an item (by registry NAME — the one mod-facing item
     /// identity, e.g. `"petramond:coal"`, `"farming:wheat"`) as a dropped-item
-    /// entity at `pos`. `false` = unknown name / zero count. → [`HostRet::Bool`].
+    /// entity at `pos`, carrying `data` as the stacks' instance data (empty =
+    /// plain; see [`ItemStackData::data`]). `false` = unknown name / zero
+    /// count; a malformed `data` map is [`HostRet::Error`]. →
+    /// [`HostRet::Bool`].
     SpawnItem {
         item: String,
         count: u8,
         pos: [f32; 3],
+        data: Vec<(String, Vec<u8>)>,
     },
 
     // --- player ---------------------------------------------------------------
@@ -235,10 +239,13 @@ pub enum HostCall {
     },
     /// Give the player `count` of an item (by registry NAME) through the normal
     /// inventory fill; whatever doesn't fit drops at the player's feet like any
-    /// other overflow. `false` = unknown name. → [`HostRet::Bool`].
+    /// other overflow, carrying `data` as the stack's instance data (empty =
+    /// plain; see [`ItemStackData::data`]). `false` = unknown name; a
+    /// malformed `data` map is [`HostRet::Error`]. → [`HostRet::Bool`].
     GiveItem {
         item: String,
         count: u8,
+        data: Vec<(String, Vec<u8>)>,
     },
     /// Overwrite the player's health (clamped to `0..=20` half-hearts),
     /// BYPASSING the damage funnel — this is the heal/set primitive, not a
@@ -1107,6 +1114,49 @@ pub enum HostCall {
     BlockModelGroup {
         pos: [i32; 3],
     },
+    /// CLIENT: read one per-cell KV `key` at each of `cells` from the REPLICA
+    /// — the cell-KV twin of [`HostCall::ClientBlocksAt`], and the read side
+    /// of the cell-KV replication lane (a server mod's `SectionKvSet` on a
+    /// loaded section streams to every client and lands here). Reply parallel
+    /// to `cells`; `None` = key absent or cell unknown to the replica.
+    /// Presentation-only state derivation (a render bake tinting from
+    /// replicated fluid state); reads may cross namespaces like every KV
+    /// read. Bounded batch (512 cells per call). → [`HostRet::BytesMany`].
+    ClientCellKvAt {
+        key: String,
+        cells: Vec<[i32; 3]>,
+    },
+    /// The item row's consumer-data entry `key` as raw JSON text — the item
+    /// INTEROP surface: a row's `data` map holds namespaced entries written
+    /// in a CONSUMING system's vocabulary (any pack may attach any
+    /// consumer's key to its own rows, or to existing rows via catalog
+    /// `{"patch", "data"}` rows; the engine's own `petramond:fuel` /
+    /// `petramond:tool` ride the same surface). The value is opaque —
+    /// the consumer parses what it understands and ignores the rest.
+    /// Registry-only (legal on any instance, any time). `Bytes(None)` =
+    /// no such entry. → [`HostRet::Bytes`].
+    ItemDataGet {
+        item: ItemId,
+        key: String,
+    },
+    /// Every registered item carrying data entry `key`, WITH each row's raw
+    /// JSON value, in id order — the enumeration a consumer runs once at
+    /// init to build its table (one crossing, like every batch call).
+    /// Registry-only. → [`HostRet::ItemDataRows`].
+    ItemsWithData {
+        key: String,
+    },
+    /// The block twin of [`HostCall::ItemDataGet`]. Registry-only.
+    /// → [`HostRet::Bytes`].
+    BlockDataGet {
+        block: BlockId,
+        key: String,
+    },
+    /// The block twin of [`HostCall::ItemsWithData`]. Registry-only.
+    /// → [`HostRet::BlockDataRows`].
+    BlocksWithData {
+        key: String,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -1205,4 +1255,13 @@ pub enum HostRet {
     FoundBlocks(Option<Vec<[i32; 3]>>),
     /// [`HostCall::MobInfo`]: the mob's snapshot; `None` = no such live mob.
     Mob(Option<MobSnapshot>),
+    /// [`HostCall::ClientCellKvAt`]: one value per requested cell, parallel
+    /// to the request (`None` = absent / cell unknown).
+    BytesMany(Vec<Option<Vec<u8>>>),
+    /// [`HostCall::ItemsWithData`]: every carrying item with its raw JSON
+    /// value, in id order.
+    ItemDataRows(Vec<(ItemId, String)>),
+    /// [`HostCall::BlocksWithData`]: every carrying block with its raw JSON
+    /// value, in id order.
+    BlockDataRows(Vec<(BlockId, String)>),
 }

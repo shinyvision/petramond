@@ -95,14 +95,20 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             Err(e) => e,
             Ok(impulse) => sim_call(|ctx| ctx.player.apply_knockback(impulse)),
         },
-        HostCall::GiveItem { item, count } => sim_query(|ctx| {
-            let Some(item_ty) = item_by_name(&item) else {
-                log::warn!("[mod {mod_id}] GiveItem: unknown item '{item}'");
-                return HostRet::Bool(false);
+        HostCall::GiveItem { item, count, data } => {
+            let variant = match super::guards::intern_abi_data("GiveItem", &data) {
+                Ok(v) => v,
+                Err(e) => return e,
             };
-            give_item(ctx, item_ty, count);
-            HostRet::Bool(true)
-        }),
+            sim_query(|ctx| {
+                let Some(item_ty) = item_by_name(&item) else {
+                    log::warn!("[mod {mod_id}] GiveItem: unknown item '{item}'");
+                    return HostRet::Bool(false);
+                };
+                give_item(ctx, item_ty, count, variant);
+                HostRet::Bool(true)
+            })
+        }
         // Atomic: only a selected stack holding at least `count` of `item`
         // consumes — the held stack IS the validation, so no registry check.
         HostCall::ConsumeHeld { item, count } => sim_query(|ctx| {

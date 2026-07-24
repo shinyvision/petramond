@@ -131,7 +131,10 @@ fn place_into_loaded_air_decrements_selected() {
             break;
         }
     }
-    assert!(loaded, "chunk (0,0) failed to load within the hard deadline");
+    assert!(
+        loaded,
+        "chunk (0,0) failed to load within the hard deadline"
+    );
 
     let p = IVec3::new(0, 200, 0);
     assert!(Block::from_id(game.server.world.chunk_block(p.x, p.y, p.z)).is_replaceable());

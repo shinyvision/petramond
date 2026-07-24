@@ -1,3 +1,4 @@
+use crate::block::CellView;
 use crate::block::{Block, ShapeFamily};
 use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME};
 
@@ -92,7 +93,9 @@ pub(super) fn build_exposed_masks(pad: &SectionMeshPad<'_>) -> ExposedMasks {
                 // MUST match the slab-branch fall-through in `section_geometry`.
                 let slab_as_cube = block.is_slab()
                     && crate::slab::is_uniform_full_stack(
-                        pad.slab_states[mesh_pad_idx(lx + 1, ly + 1, lz + 1)],
+                        crate::block_state::SlabState::from_cell(
+                            pad.cell_states[mesh_pad_idx(lx + 1, ly + 1, lz + 1)],
+                        ),
                     );
                 if !pad_cube_fast_candidate(block) && !slab_as_cube {
                     continue;

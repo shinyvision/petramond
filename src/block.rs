@@ -17,21 +17,29 @@ mod tests;
 
 pub use behavior::BlockBehavior;
 pub(crate) use data::ENGINE_BLOCK_NAMES;
-pub(crate) use data::shape_kind_id_by_key;
+pub(crate) use data::{shape_kind_id_by_key, state_key_declared};
 pub(crate) use definition::BlockMaterial;
 // ColorRamp rides the public `ParticleEmitter::color_ramp` field; only tests
 // currently name the type, so the lib build sees the re-export as unused.
 #[allow(unused_imports)]
 pub use definition::ColorRamp;
 pub use definition::{ParticleEmitter, ParticleEmitterAnchor};
-pub use interaction::BlockInteraction;
 pub(crate) use interaction::builtin_claims_click;
+pub use interaction::BlockInteraction;
 pub(crate) use load::validate_particle_emitter;
-pub(crate) use shape::BlockLightShape;
-pub use shape::{Aabb, CROP_PLANE_DROP, CROP_PLANE_INSET};
-pub use shape_kind::{BlockShapeKind, ShapeFamily, ShapeKindDef};
-pub use shape_kind::{ConnectionParams, ConnectionRule};
+pub use shape::BlockLightShape;
+pub use shape::{Aabb, ShapeBox, ShapeFace, ShapeRenderBox, CROP_PLANE_DROP, CROP_PLANE_INSET};
+pub use shape_kind::ConnectionRule;
 pub use shape_kind::ItemRender;
+pub use shape_kind::{
+    full_face_at, CellCodec, CellView, FullFace, ShapeCtx, ShapeNeighborhood, ShapeState,
+    SHAPE_STATE_MAX,
+};
+pub use shape_kind::{BlockShapeKind, ShapeFamily, ShapeKindDef};
+// `pack_light_apertures` is the producer half of the aperture currency
+// (families + light tests); the lib target only consumes.
+#[allow(unused_imports)]
+pub(crate) use shape_kind::{light_aperture_face, pack_light_apertures, LIGHT_APERTURES_OPEN};
 // The shape facet traits + Layer-2 param types are public API (the shape
 // dispatch surface / the Layer-2 loader's params); re-export the stable
 // `crate::block::` path even though in-crate consumers currently reach the
@@ -243,4 +251,20 @@ impl<'de> Deserialize<'de> for Block {
             .map(Block)
             .ok_or_else(|| serde::de::Error::custom(format!("unknown block '{name}'")))
     }
+}
+
+/// The engine-consumed presentation KV key: a cell (via cell KV) or an item
+/// stack (via instance data) carrying this key as 3 raw bytes `[r, g, b]`
+/// renders with that multiply tint. The engine knows nothing about what the
+/// tint MEANS — a mod writes it (dye, team color, whatever); the renderer
+/// consumes it.
+pub const TINT_KV_KEY: &str = "petramond:tint";
+
+/// Whether a cell-KV write/removal of `key` changes what the ORDINARY mesher
+/// bakes, so the touched section must re-mesh. The one place that knows which
+/// engine-consumed presentation keys feed the mesh — every KV write path
+/// (host, replica ingest) asks this instead of naming keys itself.
+#[inline]
+pub fn kv_key_affects_mesh(key: &str) -> bool {
+    key == TINT_KV_KEY
 }

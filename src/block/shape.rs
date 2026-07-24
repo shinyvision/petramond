@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::atlas::Tile;
+
 /// How far a crop plane ([`ShapeFamily::Crop`](super::ShapeFamily::Crop)) sits
 /// in from the cell faces it is perpendicular to (2/16 of a block). Shared by
 /// the mesher, the targeting ray, and the selection outline so they always
@@ -16,16 +18,15 @@ pub const CROP_PLANE_DROP: f32 = 1.0 / 16.0;
 /// shape category that `world::light` consumes; per-cell state, such as stair facing,
 /// still lives in the section and is interpreted by the lighting shape layer.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum BlockLightShape {
+pub enum BlockLightShape {
     Open,
     OpaqueCube,
-    Stair,
-    Slab,
-    /// A Layer-3 custom shape whose per-cell opacity comes from its SIM bake's
-    /// `light_aperture` (gathered into the light snapshot). Coarse: a cell is
-    /// opaque or open to light per the baked bit — the same nearer-full rounding
-    /// the lowered cube uses, without a per-quadrant mask.
-    CustomAperture,
+    /// The cell's light passage depends on its per-cell state: the light
+    /// snapshot carries the FAMILY-answered packed per-face apertures
+    /// (`ShapeSim::light_apertures` — stair steps, slab layers, a WASM
+    /// shape's baked opacity) and the flood consults them with no family
+    /// knowledge of its own.
+    Shaped,
 }
 
 /// One axis-aligned box of a block's collision shape, in CELL-LOCAL coordinates
@@ -37,4 +38,108 @@ pub(crate) enum BlockLightShape {
 pub struct Aabb {
     pub min: [f32; 3],
     pub max: [f32; 3],
+}
+
+/// One DRAWN box of a Layer-3 custom shape's render bake: geometry plus the
+/// per-box RGB multiply tint (`[1.0; 3]` = untinted, the ordinary case). The
+/// engine form of the wire `mod_api::ShapeRenderBox`; the mesher multiplies
+/// it into the box's per-vertex tint lane (the biome grass/water channel).
+/// Render-side only — collision, selection, and targeting never see it.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ShapeRenderBox {
+    pub aabb: Aabb,
+    pub tint: [f32; 3],
+    /// AO darkening strength for this box's faces (`1.0` = full, `0.0` =
+    /// AO-immune) — the engine form of the wire percentage.
+    pub ao_strength: f32,
+    /// Sample the tiles' dye-base twins so `tint` lands on a peak-white base
+    /// (see the wire field's doc) — an undyed tint stays a plain multiply
+    /// over the authored texels.
+    pub dyed: bool,
+}
+
+/// How one face of a [`ShapeBox`] is textured.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ShapeFace {
+    pub tile: Tile,
+    /// Swap the cell-local u/v (the pane edge strip laid along a W/E arm).
+    pub swap_uv: bool,
+    pub tint: [f32; 3],
+}
+
+/// One cell-local cuboid of a RESOLVED block shape — the family-agnostic
+/// geometry currency.
+///
+/// Every shape family answers with these and every consumer reads them: the
+/// chunk mesher, the collision sweep, the targeting ray, the selection
+/// outline, and the neighbour-occupancy cull. That is the whole point — the
+/// drawn boxes, the collided boxes and the aimed boxes are ONE list, so they
+/// cannot drift the way six independent per-family producers did.
+///
+/// Presentation lives on the box (`faces`, `dyed`, `ao_strength`) and the sim
+/// consumers simply ignore it; a headless server resolves the same boxes and
+/// never looks at a tile.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ShapeBox {
+    pub aabb: Aabb,
+    /// Indexed in canonical face order (`+X, -X, +Y, -Y, +Z, -Z`). `None` =
+    /// the family NEVER emits that face, whatever the geometry says — a fence
+    /// rail's end cap and a pane's connected end are guaranteed covered by the
+    /// connection RULE, not by local geometry, so subtraction alone could not
+    /// prove them hidden.
+    pub faces: [Option<ShapeFace>; 6],
+    /// How strongly AO darkens this box's faces: `1.0` = the ordinary full
+    /// effect, `0.0` = AO-immune. Scales the DARKENING within the 0..3
+    /// vertex-AO vocabulary, so a fluid surface inside a pot can sit bright
+    /// while the pot itself keeps its pockets and creases.
+    pub ao_strength: f32,
+    /// The box's faces sample their tiles' dye-base twins — set wherever a
+    /// `petramond:tint` multiply applies, so the tint lands on a peak-white
+    /// base and can whiten as well as dye.
+    pub dyed: bool,
+}
+
+impl ShapeBox {
+    /// A box textured like a cube: `[top, bottom, side]` tiles, one tint per
+    /// tile, plain UVs on every face, full AO, undyed.
+    pub fn uniform(aabb: Aabb, tiles: [Tile; 3], tint_for: impl Fn(Tile) -> [f32; 3]) -> Self {
+        let style = |tile: Tile| {
+            Some(ShapeFace {
+                tile,
+                swap_uv: false,
+                tint: tint_for(tile),
+            })
+        };
+        // Canonical face order: +X, -X, +Y, -Y, +Z, -Z.
+        let mut faces = [style(tiles[2]); 6];
+        faces[2] = style(tiles[0]);
+        faces[3] = style(tiles[1]);
+        ShapeBox {
+            aabb,
+            faces,
+            ao_strength: 1.0,
+            dyed: false,
+        }
+    }
+
+    /// The same box with its AO darkening scaled (`1.0` = default).
+    pub fn with_ao_strength(mut self, strength: f32) -> Self {
+        self.ao_strength = strength;
+        self
+    }
+
+    /// Multiply a presentation tint into every emitted face and mark the box
+    /// dyed, so the multiply lands on the tile's dye-base twin. The ONE place
+    /// a cell tint reaches box geometry — every family gets it by construction
+    /// instead of each remembering to fold it into its own tint closure.
+    pub fn apply_tint(&mut self, tint: [f32; 3]) {
+        self.dyed = true;
+        for face in self.faces.iter_mut().flatten() {
+            face.tint = [
+                face.tint[0] * tint[0],
+                face.tint[1] * tint[1],
+                face.tint[2] * tint[2],
+            ];
+        }
+    }
 }

@@ -166,6 +166,7 @@ impl App {
             let hand = std::mem::take(&mut self.hand);
             renderer.set_held_item(HeldItemFrame {
                 item: frame.held_item.item,
+                variant: frame.held_item.variant,
                 block_state: frame.held_item.block_state,
                 mining: frame.held_item.mining,
                 broke_block: hand.broke,

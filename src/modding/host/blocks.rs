@@ -399,11 +399,12 @@ mod tests {
         assert!(world.set_block_world(8, 64, 2, Block::OakLog));
         with_world_ctx(&mut world, || {
             let stone = vec![mod_api::BlockId(Block::Stone.id())];
-            let find = |store: &mut ModStoreData, min, max, blocks| {
-                match handle_host_call(store, HostCall::FindBlocks { min, max, blocks }) {
-                    HostRet::FoundBlocks(f) => f,
-                    other => panic!("expected FoundBlocks, got {other:?}"),
-                }
+            let find = |store: &mut ModStoreData, min, max, blocks| match handle_host_call(
+                store,
+                HostCall::FindBlocks { min, max, blocks },
+            ) {
+                HostRet::FoundBlocks(f) => f,
+                other => panic!("expected FoundBlocks, got {other:?}"),
             };
             assert_eq!(
                 find(&mut store, [0, 60, 0], [15, 70, 15], stone.clone()),

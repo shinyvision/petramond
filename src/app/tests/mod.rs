@@ -196,8 +196,7 @@ impl TestApp {
     }
 
     fn install_test_crafting_catalog(&mut self, recipes: Vec<crate::crafting::CraftingRecipe>) {
-        self.server.recipes =
-            crate::crafting::Recipes::new(recipes.clone(), Vec::new());
+        self.server.recipes = crate::crafting::Recipes::new(recipes.clone(), Vec::new());
         self.app
             .game
             .as_mut()
@@ -342,4 +341,3 @@ fn panel_gap_point(app: &mut App, screen: (u32, u32)) -> (f32, f32) {
     }
     panic!("no in-panel, off-slot point found");
 }
-

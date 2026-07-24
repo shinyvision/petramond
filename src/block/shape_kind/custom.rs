@@ -38,6 +38,12 @@ pub struct CustomShapeDef {
     pub nav_solid: bool,
     /// Whether the block participates in grass-decay / neighbour-update fan-out.
     pub grass_decay_eligible: bool,
+    /// The cell-KV key this shape's per-cell STATE lives under, or `None` for a
+    /// stateless shape (block-identity only, the chain/cauldron pattern). When
+    /// set, the bake input carries this key's replicated value for the cell and
+    /// its six neighbours ([`mod_api::CellInput::state`]), so the shape resolves
+    /// like a stair — from state, not just block id.
+    pub state_key: Option<&'static str>,
 }
 
 #[derive(Deserialize)]
@@ -51,6 +57,9 @@ struct RawCustomShapeDef {
     nav_profile: Option<String>,
     #[serde(default = "default_true")]
     grass_decay_eligible: bool,
+    /// The cell-KV key holding this shape's per-cell state; absent = stateless.
+    #[serde(default)]
+    state_key: Option<String>,
 }
 
 fn default_light() -> CustomLight {
@@ -88,6 +97,7 @@ fn defs() -> &'static [CustomShapeDef] {
                     light_shape: r.light_shape,
                     nav_solid: matches!(r.nav_profile.as_deref(), Some("solid")),
                     grass_decay_eligible: r.grass_decay_eligible,
+                    state_key: r.state_key.map(|k| -> &'static str { String::leak(k) }),
                 })
             },
         )
@@ -120,6 +130,7 @@ mod tests {
                     light_shape: r.light_shape,
                     nav_solid: matches!(r.nav_profile.as_deref(), Some("solid")),
                     grass_decay_eligible: r.grass_decay_eligible,
+                    state_key: r.state_key.map(|k| -> &'static str { String::leak(k) }),
                 })
             },
         )
@@ -131,7 +142,7 @@ mod tests {
     fn shapes_json_declares_custom_shapes_with_metadata_and_defaults() {
         let defs = parse(
             r#"{"shapes":[
-                {"key":"mymod:gate","light_shape":"opaque_cube","nav_profile":"solid","grass_decay_eligible":false},
+                {"key":"mymod:gate","light_shape":"opaque_cube","nav_profile":"solid","grass_decay_eligible":false,"state_key":"mymod:facing"},
                 {"key":"mymod:vine"}
             ]}"#,
         );
@@ -140,9 +151,13 @@ mod tests {
         assert_eq!(defs[0].light_shape, CustomLight::OpaqueCube);
         assert!(defs[0].nav_solid);
         assert!(!defs[0].grass_decay_eligible);
-        // Defaults: open light, non-solid nav, grass-decay eligible.
+        // A declared state key rides onto the shape def (the stateful-family
+        // primitive: the bake input carries this key's value per cell).
+        assert_eq!(defs[0].state_key, Some("mymod:facing"));
+        // Defaults: open light, non-solid nav, grass-decay eligible, stateless.
         assert_eq!(defs[1].light_shape, CustomLight::Open);
         assert!(!defs[1].nav_solid);
         assert!(defs[1].grass_decay_eligible);
+        assert_eq!(defs[1].state_key, None, "no state_key = stateless shape");
     }
 }

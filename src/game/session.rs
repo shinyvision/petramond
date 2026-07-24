@@ -237,7 +237,12 @@ pub(crate) fn build_session_inline(
     new_seed: u32,
     render_dist: i32,
 ) -> (ServerGame, ClientBootstrap) {
-    build_session_with_pool(world_name, new_seed, render_dist, Arc::new(JobPool::inline()))
+    build_session_with_pool(
+        world_name,
+        new_seed,
+        render_dist,
+        Arc::new(JobPool::inline()),
+    )
 }
 
 /// [`build_session`] over a caller-owned job pool. The in-process test

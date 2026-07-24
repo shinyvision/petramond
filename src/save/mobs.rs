@@ -226,15 +226,15 @@ mod tests {
             pos: Vec3::new(-3.0, 70.0, 8.0),
             yaw: -0.25,
             tags: BTreeMap::from([
-                (crate::mob::tags::CONFINED.to_owned(), MobTagValue::Bool(true)),
+                (
+                    crate::mob::tags::CONFINED.to_owned(),
+                    MobTagValue::Bool(true),
+                ),
                 (
                     crate::mob::tags::SHEAR_REGROW.to_owned(),
                     MobTagValue::Int(4321),
                 ),
-                (
-                    crate::mob::tags::HEALTH.to_owned(),
-                    MobTagValue::Float(3.5),
-                ),
+                (crate::mob::tags::HEALTH.to_owned(), MobTagValue::Float(3.5)),
                 ("farm:quality".to_owned(), MobTagValue::Int(7)),
             ]),
         };
@@ -248,7 +248,10 @@ mod tests {
             got[0], a,
             "species, position and facing survive the round-trip"
         );
-        assert_eq!(got[1], b, "the tag map (shear, health, mod keys) survives too");
+        assert_eq!(
+            got[1], b,
+            "the tag map (shear, health, mod keys) survives too"
+        );
     }
 
     #[test]

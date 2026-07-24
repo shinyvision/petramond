@@ -82,18 +82,19 @@ mod tests {
 
     #[test]
     fn a_committed_wall_panel_is_the_facing_row_and_no_block_entity() {
-        use crate::world::placement::{PlacementPlan, PlacementWrite};
+        use crate::world::placement::PlacementPlan;
         let mut w = world();
         let p = IVec3::new(8, 64, 8);
         let wall = crate::ladder::support_cell(p, Facing::East);
         w.set_block_world(wall.x, wall.y, wall.z, Block::Stone);
-        let plan = PlacementPlan {
-            anchor: p,
-            cells: vec![p],
-            write: PlacementWrite::WallPanel(Facing::East),
-        };
-        // The shared commit resolves the held (base) row to the facing sibling.
-        assert!(w.commit_placement(Block::Ladder, &plan, true));
+        // The ladder family's plan resolves the held (base) row to the facing
+        // sibling; the commit is the generic write path.
+        let plan = PlacementPlan::single(
+            p,
+            Block::Ladder.wall_panel_row(Facing::East),
+            crate::block::ShapeState::NONE,
+        );
+        assert!(w.commit_placement(&plan, true));
         assert_eq!(
             Block::from_id(w.chunk_block(p.x, p.y, p.z)),
             Block::LadderEast

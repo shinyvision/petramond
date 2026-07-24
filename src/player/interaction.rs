@@ -105,43 +105,27 @@ impl Player {
                     max: base + Vec3::from(mx),
                 };
             }
-        } else if hit_block.shape_family() == ShapeFamily::Stair {
-            let (boxes, len) = crate::stair::world_boxes(
-                hit.block,
-                world.stair_boxes_at(hit.block.x, hit.block.y, hit.block.z),
-            );
-            hit.outline = SelectionShape::Boxes {
-                boxes: SelectionBoxes { boxes, len },
-            };
-        } else if hit_block.shape_family() == ShapeFamily::Slab {
-            let (boxes, len) = crate::slab::world_boxes(
-                hit.block,
-                world.slab_boxes_at(hit.block.x, hit.block.y, hit.block.z),
-            );
-            hit.outline = SelectionShape::Boxes {
-                boxes: SelectionBoxes { boxes, len },
-            };
-        } else if hit_block.shape_family() == ShapeFamily::Pane {
-            // A pane outlines its resolved post + arm runs, so the wireframe hugs
-            // the connected shape the mesher drew, not the bare-post default.
-            let (boxes, len) = crate::pane::world_boxes(hit.block, world.pane_boxes_at(hit.block));
-            hit.outline = SelectionShape::Boxes {
-                boxes: SelectionBoxes { boxes, len },
-            };
-        } else if hit_block.shape_family() == ShapeFamily::Fence {
-            // A fence outlines its resolved post + arm runs, same as a pane.
-            let (boxes, len) =
-                crate::fence::world_boxes(hit.block, world.fence_boxes_at(hit.block));
-            hit.outline = SelectionShape::Boxes {
-                boxes: SelectionBoxes { boxes, len },
-            };
-        } else if hit_block.shape_family() == ShapeFamily::Custom {
-            // A custom shape may hold more boxes than the outline array (a chair
-            // is 7), so its wireframe is the single UNION box hugging the baked
-            // extent — the hit test above is still per-box precise.
+        } else if hit_block.picks_by_boxes() {
+            // Every box-set family outlines the boxes it actually resolved —
+            // a stair's corner steps, a slab's layers, a pane's / fence's
+            // connected post + arm runs, a Layer-3 bake's parts — so the
+            // wireframe hugs what the mesher drew rather than a bare default.
+            // Whether it draws as boxes or as one union box is a CAPACITY
+            // question, not a family one: past the outline array's width (a
+            // chair is 7 boxes) the union hugs the whole extent instead. The
+            // hit test above stays per-box precise either way.
             let boxes = world.collision_boxes_at(hit.block.x, hit.block.y, hit.block.z);
-            if !boxes.is_empty() {
-                let base = Vec3::new(hit.block.x as f32, hit.block.y as f32, hit.block.z as f32);
+            let base = Vec3::new(hit.block.x as f32, hit.block.y as f32, hit.block.z as f32);
+            if boxes.is_empty() {
+                // Nothing resolved (an unbaked Layer-3 cell, a connection row
+                // missing its params): keep the row's default outline rather
+                // than drawing an empty wireframe.
+            } else if boxes.len() <= crate::mathh::MAX_SELECTION_BOXES {
+                let (boxes, len) = crate::connect::world_boxes(hit.block, boxes);
+                hit.outline = SelectionShape::Boxes {
+                    boxes: SelectionBoxes { boxes, len },
+                };
+            } else {
                 let mut mn = [f32::INFINITY; 3];
                 let mut mx = [f32::NEG_INFINITY; 3];
                 for b in boxes {
@@ -251,33 +235,25 @@ impl Player {
             let block = block_at(ix, iy, iz);
             let t_exit = next_boundary_t(t_max);
             // The "solid body" selection branch: genuinely solid blocks plus the
-            // torch, the ladder, and the lowered cube (a walk-through thin cover
-            // like the snow layer is not solid, but still selectable by its
-            // visible box — the cross-plant case is handled separately below,
-            // like its render shape). Resolve the shape once: the def-table read
-            // is per stepped ray cell.
+            // shapes selectable by geometry the `solid` flag doesn't imply —
+            // the torch and ladder (own precise tests), the lowered cube (a
+            // walk-through thin cover like the snow layer, selectable by its
+            // visible box), and every box-set family (a decorative Layer-3
+            // chair is not a solid cube but must still be aimable; the facet
+            // covers a modded family with no engine edit). The cross-plant
+            // case is handled separately below, like its render shape.
+            // Resolve the shape once: the def-table read is per stepped cell.
             let shape = block.shape_family();
-            if block.is_solid()
+            let precise_only = block.picks_by_boxes()
                 || shape == ShapeFamily::Torch
-                || shape == ShapeFamily::Ladder
-                || shape == ShapeFamily::LoweredCube
-                // A Layer-3 custom shape (a chair, a lamp) is defined by its BAKE,
-                // not the `solid` flag — a decorative furniture piece is not a
-                // solid cube but must still be aimable. It always resolves through
-                // its baked boxes below, never as a full-cell entry hit.
-                || shape == ShapeFamily::Custom
-            {
+                || shape == ShapeFamily::Ladder;
+            if block.is_solid() || precise_only || shape == ShapeFamily::LoweredCube {
                 // A full cube fills its cell, so it stops the ray on entry. A
-                // custom-shaped block (the inset chest, the thin/tilted torch pole,
-                // the ladder panel) only registers when the ray actually crosses its
-                // shape — otherwise the ray sees past the empty parts of its cell.
-                if block.visual_aabb().is_none()
-                    && shape != ShapeFamily::Torch
-                    && shape != ShapeFamily::Stair
-                    && shape != ShapeFamily::Slab
-                    && shape != ShapeFamily::Ladder
-                    && shape != ShapeFamily::Custom
-                {
+                // shape with sub-cell geometry (the inset chest, the tilted
+                // torch pole, a stair's resolved steps) only registers when
+                // the ray actually crosses its precise shape — otherwise the
+                // ray sees past the empty parts of its cell.
+                if block.visual_aabb().is_none() && !precise_only {
                     return Some((hit(pos, entry_normal, block), t_enter));
                 }
                 if let Some(shape) = shape_hit(eye, dir, pos, block) {
@@ -449,54 +425,14 @@ fn precise_shape_hit(
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         return ray_vs_aabb_hit(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx));
     }
-    if block.shape_family() == ShapeFamily::Stair {
-        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-        return world
-            .stair_boxes_at(pos.x, pos.y, pos.z)
-            .iter()
-            .filter_map(|b| {
-                ray_vs_aabb_hit(eye, dir, base + Vec3::from(b.min), base + Vec3::from(b.max))
-            })
-            .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
-    }
-    if block.shape_family() == ShapeFamily::Slab {
-        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-        return world
-            .slab_boxes_at(pos.x, pos.y, pos.z)
-            .iter()
-            .filter_map(|b| {
-                ray_vs_aabb_hit(eye, dir, base + Vec3::from(b.min), base + Vec3::from(b.max))
-            })
-            .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
-    }
-    // A pane is picked against its resolved post + arm runs (neighbour-derived,
-    // like the stair's corner boxes), so the ray connects where the glass is.
-    if block.shape_family() == ShapeFamily::Pane {
-        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-        return world
-            .pane_boxes_at(pos)
-            .iter()
-            .filter_map(|b| {
-                ray_vs_aabb_hit(eye, dir, base + Vec3::from(b.min), base + Vec3::from(b.max))
-            })
-            .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
-    }
-    // A fence is picked against its resolved post + arm runs, same as a pane.
-    if block.shape_family() == ShapeFamily::Fence {
-        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
-        return world
-            .fence_boxes_at(pos)
-            .iter()
-            .filter_map(|b| {
-                ray_vs_aabb_hit(eye, dir, base + Vec3::from(b.min), base + Vec3::from(b.max))
-            })
-            .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
-    }
-    // A Layer-3 custom shape is picked against its BAKED boxes (the chair's legs
-    // /seat/backrest), so aiming through a gap misses and aiming at a part hits —
-    // the same box-set the physics collides. A cache miss reads the row's static
-    // fallback boxes, so it is always aimable somewhere.
-    if block.shape_family() == ShapeFamily::Custom {
+    // Every family whose real form is a BOX SET is picked against its resolved
+    // boxes: a stair's corner steps, a slab's layers, a pane's / fence's
+    // neighbour-derived post + arm runs, a Layer-3 bake's legs and seat. All of
+    // them resolve through the shape's own collision facet, so the aimed boxes
+    // ARE the collided boxes and aiming through a gap misses by construction.
+    // (A cache miss on a Layer-3 bake reads the row's static fallback, so a
+    // custom shape is always aimable somewhere.)
+    if block.picks_by_boxes() {
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
         return world
             .collision_boxes_at(pos.x, pos.y, pos.z)

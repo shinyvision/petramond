@@ -108,8 +108,8 @@ impl World {
                 continue;
             }
             let band_lo = band_lo_of(self, cp);
-            let near_xz = (cp.cx - target.center.cx).abs() <= 2
-                && (cp.cz - target.center.cz).abs() <= 2;
+            let near_xz =
+                (cp.cx - target.center.cx).abs() <= 2 && (cp.cz - target.center.cz).abs() <= 2;
             let mut b = bits;
             while b != 0 {
                 let cy = crate::chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;

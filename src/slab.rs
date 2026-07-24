@@ -5,7 +5,7 @@ use crate::block::{Aabb, Block};
 use crate::block_state::{SlabSplit, SlabState};
 use crate::facing::Facing;
 use crate::item::{ItemStack, ItemType};
-use crate::mathh::{IVec3, Vec3, MAX_SELECTION_BOXES};
+use crate::mathh::IVec3;
 
 const H: f32 = 0.5;
 const EMPTY_BOX: Aabb = Aabb {
@@ -84,18 +84,24 @@ pub fn default_boxes() -> &'static [Aabb] {
     boxes_for_state(default_state(Block::Dirt))
 }
 
-#[inline]
-pub fn world_boxes(origin: IVec3, boxes: &[Aabb]) -> ([(Vec3, Vec3); MAX_SELECTION_BOXES], u8) {
-    let base = Vec3::new(origin.x as f32, origin.y as f32, origin.z as f32);
-    let mut out = [(Vec3::ZERO, Vec3::ZERO); MAX_SELECTION_BOXES];
-    let len = boxes.len().min(MAX_SELECTION_BOXES);
-    for (dst, b) in out.iter_mut().zip(boxes.iter()) {
-        *dst = (
-            base + Vec3::new(b.min[0], b.min[1], b.min[2]),
-            base + Vec3::new(b.max[0], b.max[1], b.max[2]),
-        );
+/// Whether the face of `state` with outward normal `dir` is a complete
+/// surface: a full stack always, else every half-cell on that face occupied.
+/// The slab family's answer to the cross-family `full_face` question.
+pub fn face_full(state: SlabState, dir: crate::mathh::IVec3) -> bool {
+    if state.is_full() {
+        return true;
     }
-    (out, len as u8)
+    let occ = |ix, iy, iz| half_cell_occupied(state, ix, iy, iz);
+    if dir.x != 0 {
+        let ix = usize::from(dir.x > 0);
+        (0..2).all(|iy| (0..2).all(|iz| occ(ix, iy, iz)))
+    } else if dir.z != 0 {
+        let iz = usize::from(dir.z > 0);
+        (0..2).all(|ix| (0..2).all(|iy| occ(ix, iy, iz)))
+    } else {
+        let iy = usize::from(dir.y > 0);
+        (0..2).all(|ix| (0..2).all(|iz| occ(ix, iy, iz)))
+    }
 }
 
 #[inline]

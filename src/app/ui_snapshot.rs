@@ -2,7 +2,7 @@ use crate::app::AppScreen;
 use crate::game::Game;
 use crate::gui::{FurnaceHit, MenuSlot, UiSnapshot};
 use crate::inventory::{place_cursor_count, plan_drag_distribution, slot_capacity};
-use crate::item::{ItemStack, ItemType};
+use crate::item::ItemStack;
 
 pub(super) fn build(
     game: Option<&Game>,
@@ -24,8 +24,8 @@ pub(super) fn build(
     let menu = game.menu_read_model();
     let inv = menu.inventory;
     snapshot.active = inv.active_slot();
-    snapshot.craft_output = menu.craft_output.map(stack_tuple);
-    snapshot.cursor = inv.cursor().copied().map(stack_tuple);
+    snapshot.craft_output = menu.craft_output;
+    snapshot.cursor = inv.cursor().copied();
     snapshot.furnace = menu.furnace;
     snapshot.chest = menu.chest;
     snapshot.container = menu.container;
@@ -34,7 +34,7 @@ pub(super) fn build(
     snapshot.effects = game.player_effect_icons();
 
     for (i, slot) in snapshot.slots.iter_mut().enumerate() {
-        *slot = inv.slot(i).copied().map(stack_tuple);
+        *slot = inv.slot(i).copied();
     }
     if let Some((slots, button)) = drag_preview {
         apply_menu_drag_preview(&mut snapshot, slots, button);
@@ -50,41 +50,41 @@ pub(super) fn apply_menu_drag_preview(
     slots: &[MenuSlot],
     button: petramond_ui::PointerButton,
 ) {
-    let Some((item, held_count)) = snapshot.cursor else {
+    let Some(held) = snapshot.cursor else {
         return;
     };
     let specs = crate::gui::documents::container_slot_specs(snapshot.kind);
     let plan = plan_drag_distribution(
         slots,
-        held_count,
+        held.count,
         button == petramond_ui::PointerButton::Secondary,
-        |slot| preview_capacity(snapshot, &specs, slot, item),
+        |slot| preview_capacity(snapshot, &specs, slot, &held),
     );
-    let mut cursor = Some(ItemStack::new(item, held_count));
+    let mut cursor = Some(held);
     for (slot, wanted) in plan {
         preview_place(snapshot, &specs, &mut cursor, slot, wanted);
     }
-    snapshot.cursor = cursor.map(stack_tuple);
+    snapshot.cursor = cursor;
 }
 
 fn preview_capacity(
     snapshot: &UiSnapshot,
     specs: &[crate::container::SlotSpec],
     slot: MenuSlot,
-    item: ItemType,
+    held: &ItemStack,
 ) -> u8 {
     match slot {
         MenuSlot::Inventory(i) => snapshot
             .slots
             .get(i)
-            .map(|cell| slot_capacity(&cell.map(stack_from_tuple), item))
+            .map(|cell| slot_capacity(cell, held))
             .unwrap_or(0),
         MenuSlot::Furnace(hit) => snapshot
             .furnace
             .as_ref()
             .map(|furnace| match hit {
-                FurnaceHit::Input => slot_capacity(&furnace.input, item),
-                FurnaceHit::Fuel => slot_capacity(&furnace.fuel, item),
+                FurnaceHit::Input => slot_capacity(&furnace.input, held),
+                FurnaceHit::Fuel => slot_capacity(&furnace.fuel, held),
                 FurnaceHit::Output => 0,
             })
             .unwrap_or(0),
@@ -92,13 +92,13 @@ fn preview_capacity(
             .chest
             .as_ref()
             .and_then(|chest| chest.slots.get(i))
-            .map(|cell| slot_capacity(cell, item))
+            .map(|cell| slot_capacity(cell, held))
             .unwrap_or(0),
         MenuSlot::Container(i) if specs.get(i).is_some_and(|spec| !spec.take_only) => snapshot
             .container
             .as_ref()
             .and_then(|container| container.slots.get(i))
-            .map(|cell| slot_capacity(cell, item))
+            .map(|cell| slot_capacity(cell, held))
             .unwrap_or(0),
         MenuSlot::CraftResult | MenuSlot::Container(_) | MenuSlot::Widget(_) => 0,
     }
@@ -112,12 +112,9 @@ fn preview_place(
     wanted: u8,
 ) {
     if let MenuSlot::Inventory(i) = slot {
-        let Some(cell) = snapshot.slots.get_mut(i) else {
-            return;
-        };
-        let mut stack = cell.map(stack_from_tuple);
-        place_cursor_count(cursor, &mut stack, wanted);
-        *cell = stack.map(stack_tuple);
+        if let Some(cell) = snapshot.slots.get_mut(i) {
+            place_cursor_count(cursor, cell, wanted);
+        }
         return;
     }
 
@@ -145,12 +142,4 @@ fn preview_place(
     if let Some(cell) = cell {
         place_cursor_count(cursor, cell, wanted);
     }
-}
-
-fn stack_tuple(stack: ItemStack) -> (ItemType, u8) {
-    (stack.item, stack.count)
-}
-
-fn stack_from_tuple((item, count): (ItemType, u8)) -> ItemStack {
-    ItemStack::new(item, count)
 }

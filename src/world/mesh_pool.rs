@@ -12,7 +12,6 @@
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use crate::block_state::{SlabState, StairState};
 use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
 use crate::mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
 use crate::section::Section;
@@ -71,8 +70,9 @@ pub(super) struct NeighborSnap {
     pub water: Option<std::sync::Arc<[u8]>>,
     pub skylight: Option<std::sync::Arc<[u8]>>,
     pub blocklight: Option<std::sync::Arc<[u8]>>,
-    pub stair_states: Option<Box<[(u16, StairState)]>>,
-    pub slab_states: Option<Box<[(u16, SlabState)]>>,
+    /// The section's unified per-cell state entries (opaque; the mesher's
+    /// seam hands them to the owning family to decode).
+    pub cell_states: Option<Box<[(u16, crate::block::ShapeState)]>>,
 }
 
 /// A self-contained meshing job: the 3×3×3 neighbourhood as cheap field-`Arc` snapshots
@@ -195,8 +195,7 @@ struct Pad {
     water: Box<[u8]>,
     skylight: Box<[u8]>,
     blocklight: Box<[u8]>,
-    stair_states: Box<[u8]>,
-    slab_states: Box<[SlabState]>,
+    cell_states: Box<[crate::block::ShapeState]>,
     loaded: Box<[bool]>,
 }
 
@@ -207,21 +206,19 @@ impl Pad {
             water: vec![0u8; PAD_VOL].into_boxed_slice(),
             skylight: vec![SKY_FULL; PAD_VOL].into_boxed_slice(),
             blocklight: vec![0u8; PAD_VOL].into_boxed_slice(),
-            stair_states: vec![StairState::default().encode(); PAD_VOL].into_boxed_slice(),
-            slab_states: vec![SlabState::EMPTY; PAD_VOL].into_boxed_slice(),
+            cell_states: vec![crate::block::ShapeState::NONE; PAD_VOL].into_boxed_slice(),
             loaded: vec![false; PAD_VOL].into_boxed_slice(),
         }
     }
 
     /// Restore the freshly-allocated defaults (air / no water / full sky / no block
-    /// light / north stairs / not loaded) so a reused pad assembles byte-identically.
+    /// light / no cell state / not loaded) so a reused pad assembles byte-identically.
     fn reset(&mut self) {
         self.blocks.fill(0);
         self.water.fill(0);
         self.skylight.fill(SKY_FULL);
         self.blocklight.fill(0);
-        self.stair_states.fill(StairState::default().encode());
-        self.slab_states.fill(SlabState::EMPTY);
+        self.cell_states.fill(crate::block::ShapeState::NONE);
         self.loaded.fill(false);
     }
 }
@@ -251,8 +248,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         water,
         skylight,
         blocklight,
-        stair_states,
-        slab_states,
+        cell_states,
         loaded,
     } = pad;
 
@@ -332,13 +328,8 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                 let Some(s) = nbhd[nbhd_idx27(dx, dy, dz)].as_ref() else {
                     continue;
                 };
-                if let Some(states) = s.stair_states.as_ref() {
-                    scatter_border_states(states, (dx, dy, dz), |i, state| {
-                        stair_states[i] = state.encode();
-                    });
-                }
-                if let Some(states) = s.slab_states.as_ref() {
-                    scatter_border_states(states, (dx, dy, dz), |i, state| slab_states[i] = state);
+                if let Some(states) = s.cell_states.as_ref() {
+                    scatter_border_states(states, (dx, dy, dz), |i, state| cell_states[i] = state);
                 }
             }
         }
@@ -401,8 +392,7 @@ fn build(job: MeshJob, cancel: crate::worker::JobCancel) -> MeshDone {
                 water: &pad.water,
                 skylight: &pad.skylight,
                 blocklight: &pad.blocklight,
-                stair_states: &pad.stair_states,
-                slab_states: &pad.slab_states,
+                cell_states: &pad.cell_states,
                 loaded: &pad.loaded,
                 biome: &biome,
             },

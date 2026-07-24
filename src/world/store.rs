@@ -233,6 +233,11 @@ pub struct World {
     /// This tick's coalesced block/water changes, latest state per cell —
     /// drained by [`take_block_deltas`](Self::take_block_deltas).
     pub(super) block_delta_log: FxHashMap<crate::mathh::IVec3, crate::net::protocol::BlockDelta>,
+    /// This tick's coalesced per-cell mod KV changes, latest value per
+    /// `(pos, key)` — drained by
+    /// [`take_cell_kv_deltas`](Self::take_cell_kv_deltas). Captured behind
+    /// the same [`replication_capture`](Self::replication_capture) gate.
+    pub(super) cell_kv_delta_log: FxHashMap<(crate::mathh::IVec3, String), Option<Vec<u8>>>,
     /// Monotonic revision of "which sections exist / are stream-final": bumped
     /// on ingest, eviction, materialization, and in-flight-set changes. The
     /// per-connection terrain sender keys its wanted-vs-sent rescan on this
@@ -418,6 +423,7 @@ impl World {
             column_deep_band_los: FxHashMap::default(),
             replication_capture: false,
             block_delta_log: FxHashMap::default(),
+            cell_kv_delta_log: FxHashMap::default(),
             terrain_revision: 0,
             relight_demand: FxHashSet::default(),
             light_ship_log: FxHashSet::default(),

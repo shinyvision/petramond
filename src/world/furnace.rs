@@ -188,6 +188,12 @@ mod tests {
             Some(&[9u8][..]),
             "cell KV survives"
         );
+        assert_eq!(
+            world.sections.get(&spos).unwrap().entity_facing(8, 0, 8),
+            Facing::East,
+            "the facing (unified cell state, wiped by ordinary block writes) \
+             is carried across the row swap"
+        );
         // The lit row emits block light, so the swap re-dirties this section's
         // light. That would otherwise defer the texture-swap remesh behind the
         // async light bake, so re-settle the light synchronously here — exactly

@@ -183,6 +183,7 @@ impl Renderer {
                     self.light_env(),
                     &mut iv,
                 );
+                crate::render::item_model::dye_item_verts(&mut iv, self.held_item.variant);
                 // Warm the extruded held sprite by the block-light at the player, to
                 // match the warm tint static blocks + the model3d hand take near a
                 // torch/furnace. (Item entities reuse this builder but aren't warmed.)
@@ -463,6 +464,12 @@ impl Renderer {
                             false,
                         );
                     }
+                    // Instance-data tint on the held mini-cube (dyed wool in
+                    // a remote or third-person hand).
+                    crate::render::item_model::dye_block_verts(
+                        &mut block_verts[start..],
+                        held.variant,
+                    );
                     crate::render::player_model::transform_positions(
                         block_verts[start..].iter_mut().map(|v| &mut v.pos),
                         m,
@@ -479,6 +486,7 @@ impl Renderer {
                         env,
                         &mut sprite_scratch,
                     );
+                    crate::render::item_model::dye_item_verts(&mut sprite_scratch, held.variant);
                     crate::render::player_model::transform_positions(
                         sprite_scratch.iter_mut().map(|v| &mut v.pos),
                         m,

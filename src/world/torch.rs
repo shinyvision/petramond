@@ -5,7 +5,6 @@
 //! than gathered per frame, so this is just thin world↔chunk wrappers for placement
 //! and breaking. Mirrors [`world::chest`](super::chest) minus the GUI/gather paths.
 
-use crate::block::ShapeFamily;
 use crate::mathh::IVec3;
 use crate::torch::TorchPlacement;
 
@@ -27,13 +26,6 @@ impl World {
     pub fn insert_torch(&mut self, pos: IVec3, placement: TorchPlacement) {
         if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
             c.insert_torch(lx, ly, lz, placement);
-        }
-    }
-
-    /// Forget a broken torch's orientation. No-op if the owning chunk is not loaded.
-    pub fn take_torch(&mut self, pos: IVec3) {
-        if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
-            c.take_torch(lx, ly, lz);
         }
     }
 
@@ -72,33 +64,18 @@ impl World {
         self.mount_face_complete(support, normal, SupportKind::Wall)
     }
 
-    /// The per-shape face test behind [`block_supports_torch`](Self::block_supports_torch)
-    /// and [`wall_face_complete`](Self::wall_face_complete).
-    fn mount_face_complete(&self, support: IVec3, normal: IVec3, kind: SupportKind) -> bool {
-        let block = self.physics_block(support.x, support.y, support.z);
-        if block.is_opaque() {
-            return true;
-        }
-        match block.shape_family() {
-            ShapeFamily::Stair => {
-                let shape = self.stair_shape_at(support.x, support.y, support.z);
-                face_full(normal, kind, |ix, iy, iz| {
-                    crate::stair::shape_half_cell_occupied(shape, ix, iy, iz)
-                })
-            }
-            ShapeFamily::Slab => {
-                let state = self.slab_state_at(support.x, support.y, support.z);
-                if state.is_full() {
-                    return true;
-                }
-                face_full(normal, kind, |ix, iy, iz| {
-                    crate::slab::half_cell_occupied(state, ix, iy, iz)
-                })
-            }
-            // A fence always has its post: the flat post top holds a floor
-            // torch. Its sides are never a complete 1×1 wall face.
-            ShapeFamily::Fence => kind == SupportKind::Floor,
-            _ => false,
+    /// The face test behind [`block_supports_torch`](Self::block_supports_torch)
+    /// and [`wall_face_complete`](Self::wall_face_complete): the support
+    /// FAMILY answers whether its face toward the mount is complete
+    /// (`ShapeSim::full_face` — no family knowledge here); a full-cube face
+    /// additionally requires the opaque material, the historical mount rule.
+    fn mount_face_complete(&self, support: IVec3, normal: IVec3, _kind: SupportKind) -> bool {
+        match crate::block::full_face_at(self, support, normal) {
+            Some(crate::block::FullFace::Cube) => self
+                .physics_block(support.x, support.y, support.z)
+                .is_opaque(),
+            Some(crate::block::FullFace::Shaped) => true,
+            None => false,
         }
     }
 }
@@ -116,27 +93,6 @@ fn support_kind(normal: IVec3, placement: TorchPlacement) -> Option<SupportKind>
             Some(SupportKind::Wall)
         }
         _ => None,
-    }
-}
-
-fn face_full(
-    normal: IVec3,
-    kind: SupportKind,
-    occupied: impl Fn(usize, usize, usize) -> bool,
-) -> bool {
-    match kind {
-        SupportKind::Floor if normal == IVec3::new(0, 1, 0) => {
-            (0..2).all(|ix| (0..2).all(|iz| occupied(ix, 1, iz)))
-        }
-        SupportKind::Wall if normal.x != 0 => {
-            let ix = usize::from(normal.x > 0);
-            (0..2).all(|iy| (0..2).all(|iz| occupied(ix, iy, iz)))
-        }
-        SupportKind::Wall if normal.z != 0 => {
-            let iz = usize::from(normal.z > 0);
-            (0..2).all(|ix| (0..2).all(|iy| occupied(ix, iy, iz)))
-        }
-        _ => false,
     }
 }
 

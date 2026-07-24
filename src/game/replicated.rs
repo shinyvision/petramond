@@ -19,7 +19,7 @@ use glam::{Quat, Vec3};
 
 use crate::gui::{ChestView, ContainerView, FurnaceView, GuiStateMap};
 use crate::inventory::Inventory;
-use crate::item::{ItemStack, ItemType};
+use crate::item::ItemStack;
 use crate::mathh::IVec3;
 use crate::net::protocol::{
     ItemSlotWire, ItemStateRow, MenuSyncMsg, MenuTargetWire, MobStateRow, ModSpatialSoundMsg,
@@ -206,7 +206,7 @@ impl ReplicatedItems {
         for row in batch {
             let prev = match old.remove(&row.id) {
                 Some(entry) => entry.curr,
-                None => row,
+                None => row.clone(),
             };
             self.rows.insert(row.id, ReplicatedItem { prev, curr: row });
         }
@@ -337,8 +337,8 @@ impl Default for MenuView {
     }
 }
 
-fn stack_from_wire(slot: Option<ItemSlotWire>) -> Option<ItemStack> {
-    slot.map(|w| ItemStack::new(ItemType(w.item_id), w.count))
+fn stack_from_wire(slot: &Option<ItemSlotWire>) -> Option<ItemStack> {
+    slot.as_ref().map(ItemSlotWire::to_stack)
 }
 
 impl MenuView {
@@ -356,7 +356,7 @@ impl MenuView {
             }
             MenuTargetWire::Crafting { output } => {
                 self.gui_state = None;
-                self.craft_output = stack_from_wire(output);
+                self.craft_output = stack_from_wire(&output);
             }
             MenuTargetWire::Furnace {
                 slots,
@@ -366,9 +366,9 @@ impl MenuView {
             } => {
                 self.gui_state = None;
                 self.furnace = Some(FurnaceView {
-                    input: stack_from_wire(slots[0]),
-                    fuel: stack_from_wire(slots[1]),
-                    output: stack_from_wire(slots[2]),
+                    input: stack_from_wire(&slots[0]),
+                    fuel: stack_from_wire(&slots[1]),
+                    output: stack_from_wire(&slots[2]),
                     cook01,
                     burn01,
                 });
@@ -379,7 +379,7 @@ impl MenuView {
                     slots: [None; crate::world::chest::CHEST_SLOTS],
                 };
                 for (dst, src) in view.slots.iter_mut().zip(slots) {
-                    *dst = stack_from_wire(src);
+                    *dst = stack_from_wire(&src);
                 }
                 self.chest = Some(view);
             }
@@ -391,7 +391,7 @@ impl MenuView {
             } => {
                 self.container_kind = crate::gui::resolve_kind(&kind_key);
                 self.container = slots.map(|slots| ContainerView {
-                    slots: slots.into_iter().map(stack_from_wire).collect(),
+                    slots: slots.iter().map(stack_from_wire).collect(),
                 });
                 if let Some(entries) = gui_state {
                     self.gui_state = Some(Arc::new(
@@ -441,13 +441,12 @@ pub(crate) fn inventory_from_wire(
     let mut grid: [Option<ItemStack>; crate::inventory::TOTAL_SLOTS] =
         [None; crate::inventory::TOTAL_SLOTS];
     for (dst, src) in grid.iter_mut().zip(slots.iter()) {
-        *dst = src.map(|w| ItemStack::new(crate::item::ItemType(w.item_id), w.count));
+        *dst = src.as_ref().map(ItemSlotWire::to_stack);
     }
     let cursor = slots
         .get(crate::inventory::TOTAL_SLOTS)
-        .copied()
-        .flatten()
-        .map(|w| ItemStack::new(crate::item::ItemType(w.item_id), w.count));
+        .and_then(|s| s.as_ref())
+        .map(ItemSlotWire::to_stack);
     Inventory::from_parts(grid, cursor, active)
 }
 
@@ -740,8 +739,17 @@ impl Game {
     pub(crate) fn apply_tick_update(&mut self, update: Box<TickUpdate>) {
         let update = *update;
         self.replicated_tick = update.tick;
-        for delta in &update.block_deltas {
-            self.replica.apply_remote_delta(*delta);
+        // The batch's written cells, collected before the deltas are consumed
+        // (the rollback and place-ghost checks below both key on them).
+        let delta_cells: rustc_hash::FxHashSet<IVec3> =
+            update.block_deltas.iter().map(|d| d.pos).collect();
+        for delta in update.block_deltas {
+            self.replica.apply_remote_delta(delta);
+        }
+        // AFTER the block deltas: a block write wipes the cell's KV on both
+        // sides, so a same-batch write-block-then-KV sequence lands in order.
+        for kv in update.cell_kv_deltas {
+            self.replica.apply_remote_cell_kv(kv);
         }
         // Entity ROWS are STAGED, not applied: the committed prev→curr pair
         // under the render must never shift mid-segment (see `ReplicaClock`).
@@ -778,7 +786,9 @@ impl Game {
         let stale_inventory = self
             .prediction
             .awaits_inventory_authority(&update.action_outcomes);
-        let stale_menu = self.prediction.awaits_menu_authority(&update.action_outcomes);
+        let stale_menu = self
+            .prediction
+            .awaits_menu_authority(&update.action_outcomes);
         let adopted_inventory = !stale_inventory
             && update
                 .self_state
@@ -841,7 +851,7 @@ impl Game {
                     // authoritative delta at a cell wins over the rollback.
                     let mut restored = Vec::with_capacity(cells.len());
                     for (pos, prev_block_id) in cells {
-                        if update.block_deltas.iter().any(|d| d.pos == pos) {
+                        if delta_cells.contains(&pos) {
                             continue;
                         }
                         let before = self.replica.chunk_block(pos.x, pos.y, pos.z);
@@ -863,7 +873,7 @@ impl Game {
             }
         }
         if let Some((pos, _)) = self.place_ghost {
-            if update.block_deltas.iter().any(|d| d.pos == pos) {
+            if delta_cells.contains(&pos) {
                 self.place_ghost = None;
             }
         }
@@ -907,6 +917,7 @@ impl Game {
                 pos,
                 block_id,
                 normal,
+                tint,
             } => {
                 if suppress.contains(&pos) {
                     return;
@@ -915,6 +926,7 @@ impl Game {
                     pos,
                     block: crate::block::Block::from_id(block_id),
                     normal,
+                    tint,
                 });
             }
             WorldEventMsg::BlockPlaced { pos, block_id } => {

@@ -239,10 +239,7 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<SoundDef>, St
                 ));
             }
             if !(r.pitch.is_finite() && r.pitch > 0.0) {
-                return Err(format!(
-                    "sound '{}': pitch must be finite and > 0",
-                    r.sound
-                ));
+                return Err(format!("sound '{}': pitch must be finite and > 0", r.sound));
             }
             let variants: Vec<&'static str> = r
                 .variants

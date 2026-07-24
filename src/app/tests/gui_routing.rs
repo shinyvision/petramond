@@ -393,27 +393,27 @@ fn primary_drag_preview_redivides_slots_before_release() {
     app.set_pointer_button(crate::controls::PointerButton::Primary, true);
     app.drive_doc_menu(kind, screen, 0.1);
     let preview = app.menu_snapshot_for_test();
-    assert_eq!(preview.slots[9], Some((ItemType::Grass, 10)));
+    assert_eq!(preview.slots[9], Some(ItemStack::new(ItemType::Grass, 10)));
     assert!(preview.cursor.is_none());
 
     app.set_cursor_position(points[1].0, points[1].1);
     app.drive_doc_menu(kind, screen, 0.2);
     let preview = app.menu_snapshot_for_test();
-    assert_eq!(preview.slots[9], Some((ItemType::Grass, 5)));
-    assert_eq!(preview.slots[10], Some((ItemType::Grass, 5)));
+    assert_eq!(preview.slots[9], Some(ItemStack::new(ItemType::Grass, 5)));
+    assert_eq!(preview.slots[10], Some(ItemStack::new(ItemType::Grass, 5)));
 
     app.set_cursor_position(points[0].0, points[0].1);
     app.drive_doc_menu(kind, screen, 0.3);
     let preview = app.menu_snapshot_for_test();
-    assert_eq!(preview.slots[9], Some((ItemType::Grass, 5)));
-    assert_eq!(preview.slots[10], Some((ItemType::Grass, 5)));
+    assert_eq!(preview.slots[9], Some(ItemStack::new(ItemType::Grass, 5)));
+    assert_eq!(preview.slots[10], Some(ItemStack::new(ItemType::Grass, 5)));
 
     app.set_cursor_position(points[2].0, points[2].1);
     app.drive_doc_menu(kind, screen, 0.4);
     let preview = app.menu_snapshot_for_test();
-    assert_eq!(preview.slots[9], Some((ItemType::Grass, 3)));
-    assert_eq!(preview.slots[10], Some((ItemType::Grass, 3)));
-    assert_eq!(preview.slots[11], Some((ItemType::Grass, 4)));
+    assert_eq!(preview.slots[9], Some(ItemStack::new(ItemType::Grass, 3)));
+    assert_eq!(preview.slots[10], Some(ItemStack::new(ItemType::Grass, 3)));
+    assert_eq!(preview.slots[11], Some(ItemStack::new(ItemType::Grass, 4)));
     assert!(preview.cursor.is_none());
 
     assert_eq!(app.inventory().cursor().map(|stack| stack.count), Some(10));
@@ -424,9 +424,9 @@ fn primary_drag_preview_redivides_slots_before_release() {
     app.set_pointer_button(crate::controls::PointerButton::Primary, false);
     app.drive_doc_menu(kind, screen, 0.5);
     let released = app.menu_snapshot_for_test();
-    assert_eq!(released.slots[9], Some((ItemType::Grass, 3)));
-    assert_eq!(released.slots[10], Some((ItemType::Grass, 3)));
-    assert_eq!(released.slots[11], Some((ItemType::Grass, 4)));
+    assert_eq!(released.slots[9], Some(ItemStack::new(ItemType::Grass, 3)));
+    assert_eq!(released.slots[10], Some(ItemStack::new(ItemType::Grass, 3)));
+    assert_eq!(released.slots[11], Some(ItemStack::new(ItemType::Grass, 4)));
     assert!(
         released.cursor.is_none(),
         "release keeps the predicted frame"
@@ -458,17 +458,17 @@ fn secondary_drag_preview_places_one_on_each_new_slot_before_release() {
     app.set_pointer_button(crate::controls::PointerButton::Secondary, true);
     app.drive_doc_menu(kind, screen, 0.1);
     let preview = app.menu_snapshot_for_test();
-    assert_eq!(preview.slots[9], Some((ItemType::Grass, 1)));
-    assert_eq!(preview.cursor, Some((ItemType::Grass, 4)));
+    assert_eq!(preview.slots[9], Some(ItemStack::new(ItemType::Grass, 1)));
+    assert_eq!(preview.cursor, Some(ItemStack::new(ItemType::Grass, 4)));
 
     app.set_cursor_position(second.0, second.1);
     app.drive_doc_menu(kind, screen, 0.2);
     app.set_cursor_position(first.0, first.1);
     app.drive_doc_menu(kind, screen, 0.3);
     let preview = app.menu_snapshot_for_test();
-    assert_eq!(preview.slots[9], Some((ItemType::Grass, 1)));
-    assert_eq!(preview.slots[10], Some((ItemType::Grass, 1)));
-    assert_eq!(preview.cursor, Some((ItemType::Grass, 3)));
+    assert_eq!(preview.slots[9], Some(ItemStack::new(ItemType::Grass, 1)));
+    assert_eq!(preview.slots[10], Some(ItemStack::new(ItemType::Grass, 1)));
+    assert_eq!(preview.cursor, Some(ItemStack::new(ItemType::Grass, 3)));
 
     assert_eq!(app.inventory().cursor().map(|stack| stack.count), Some(5));
     assert!(app.inventory().slot(9).is_none());
@@ -477,9 +477,9 @@ fn secondary_drag_preview_places_one_on_each_new_slot_before_release() {
     app.set_pointer_button(crate::controls::PointerButton::Secondary, false);
     app.drive_doc_menu(kind, screen, 0.4);
     let released = app.menu_snapshot_for_test();
-    assert_eq!(released.slots[9], Some((ItemType::Grass, 1)));
-    assert_eq!(released.slots[10], Some((ItemType::Grass, 1)));
-    assert_eq!(released.cursor, Some((ItemType::Grass, 3)));
+    assert_eq!(released.slots[9], Some(ItemStack::new(ItemType::Grass, 1)));
+    assert_eq!(released.slots[10], Some(ItemStack::new(ItemType::Grass, 1)));
+    assert_eq!(released.cursor, Some(ItemStack::new(ItemType::Grass, 3)));
     app.apply_latched_actions_for_test();
     assert_eq!(app.inventory().slot(9).map(|stack| stack.count), Some(1));
     assert_eq!(app.inventory().slot(10).map(|stack| stack.count), Some(1));

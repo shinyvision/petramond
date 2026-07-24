@@ -9,7 +9,7 @@ use super::Game;
 use crate::controls::PointerButton;
 use crate::gui::{FurnaceHit, GuiKind, MenuSlot, MAX_MENU_DRAG_SLOTS};
 use crate::inventory::{plan_drag_distribution, slot_capacity};
-use crate::item::ItemType;
+use crate::item::ItemStack;
 use crate::net::protocol::{ClientToServer, MenuSlotWire};
 
 impl Game {
@@ -52,7 +52,7 @@ impl Game {
             slots,
             held.count,
             button == PointerButton::Secondary,
-            |slot| self.predicted_drag_capacity(&specs, slot, held.item),
+            |slot| self.predicted_drag_capacity(&specs, slot, &held),
         );
         for (slot, wanted) in plan {
             self.predicted_drag_place(&specs, slot, wanted);
@@ -63,7 +63,7 @@ impl Game {
         &self,
         specs: &[crate::container::SlotSpec],
         slot: MenuSlot,
-        item: ItemType,
+        held: &ItemStack,
     ) -> u8 {
         match slot {
             MenuSlot::Inventory(i) => self
@@ -71,15 +71,15 @@ impl Game {
                 .inventory
                 .raw_slots()
                 .get(i)
-                .map(|cell| slot_capacity(cell, item))
+                .map(|cell| slot_capacity(cell, held))
                 .unwrap_or(0),
             MenuSlot::Furnace(hit) => self
                 .menu_view
                 .furnace
                 .as_ref()
                 .map(|furnace| match hit {
-                    FurnaceHit::Input => slot_capacity(&furnace.input, item),
-                    FurnaceHit::Fuel => slot_capacity(&furnace.fuel, item),
+                    FurnaceHit::Input => slot_capacity(&furnace.input, held),
+                    FurnaceHit::Fuel => slot_capacity(&furnace.fuel, held),
                     FurnaceHit::Output => 0,
                 })
                 .unwrap_or(0),
@@ -88,14 +88,14 @@ impl Game {
                 .chest
                 .as_ref()
                 .and_then(|chest| chest.slots.get(i))
-                .map(|cell| slot_capacity(cell, item))
+                .map(|cell| slot_capacity(cell, held))
                 .unwrap_or(0),
             MenuSlot::Container(i) if specs.get(i).is_some_and(|spec| !spec.take_only) => self
                 .menu_view
                 .container
                 .as_ref()
                 .and_then(|container| container.slots.get(i))
-                .map(|cell| slot_capacity(cell, item))
+                .map(|cell| slot_capacity(cell, held))
                 .unwrap_or(0),
             MenuSlot::CraftResult | MenuSlot::Container(_) | MenuSlot::Widget(_) => 0,
         }

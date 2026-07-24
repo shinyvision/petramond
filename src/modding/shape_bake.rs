@@ -15,14 +15,11 @@
 use crate::block::Aabb;
 use crate::world::CustomBakeCell;
 
-/// The wire input for one dirty cell — the ENTIRE bake input (block + the six
-/// neighbour ids); there is no per-cell state on the wire.
+/// The wire input for one dirty cell — built once by
+/// `World::bake_cell_input` when the cell is drained, so every dispatcher
+/// ships the identical input.
 pub(in crate::modding) fn cell_input(c: &CustomBakeCell) -> mod_api::CellInput {
-    mod_api::CellInput {
-        world_pos: [c.pos.x, c.pos.y, c.pos.z],
-        block_id: mod_api::BlockId(c.block_id),
-        neighbor_ids: c.neighbor_ids.map(mod_api::BlockId),
-    }
+    c.input.clone()
 }
 
 /// The verdict on a batch bake reply.
@@ -70,14 +67,29 @@ pub(in crate::modding) fn ingest_sim_bake(
     })
 }
 
-/// Validate a RENDER bake reply into the drawn boxes per cell.
+/// Validate a RENDER bake reply into the drawn boxes per cell. The geometry
+/// runs the shared box sanitation; the per-box tint needs none (any unorm8
+/// triple is a valid multiply, `None` = untinted white).
 pub(in crate::modding) fn ingest_render_bake(
     baked: &[mod_api::BakedRenderCell],
     expected: usize,
-) -> BakeIngest<Box<[Aabb]>> {
+) -> BakeIngest<Box<[crate::block::ShapeRenderBox]>> {
     ingest(baked, expected, |c| {
-        crate::world::ingest_shape_boxes(&c.boxes)
-            .map(Vec::into_boxed_slice)
+        let aabbs: Vec<mod_api::ShapeAabb> = c.boxes.iter().map(|b| b.aabb).collect();
+        crate::world::ingest_shape_boxes(&aabbs)
+            .map(|clean| {
+                clean
+                    .into_iter()
+                    .zip(&c.boxes)
+                    .map(|(aabb, b)| crate::block::ShapeRenderBox {
+                        aabb,
+                        tint: b.tint.map_or([1.0; 3], |t| t.map(|v| f32::from(v) / 255.0)),
+                        ao_strength: b.ao.map_or(1.0, |p| (f32::from(p) / 100.0).clamp(0.0, 1.0)),
+                        dyed: b.dyed,
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice()
+            })
             .map_err(|e| format!("shape render bake {e}"))
     })
 }

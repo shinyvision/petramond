@@ -802,7 +802,3 @@ mod sea_ice_streaming {
         );
     }
 }
-
-
-
-

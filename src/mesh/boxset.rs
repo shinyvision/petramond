@@ -49,12 +49,11 @@
 //! from one subtraction share whole band edges; quads of one plane sample
 //! one shared light field, so seams are invisible.
 
-use crate::atlas::Tile;
 use crate::block::Block;
 use crate::block_state::SlabState;
 use crate::torch::warm_tint;
 
-use super::builder::{cube_face_lighting, face_axes};
+use super::builder::{boundary_plane, cube_face_lighting, face_axes};
 use super::face::{quad_ao, should_flip, Face, FACES};
 use super::plane::{cell_uv, PlaneLight};
 use super::vertex::{
@@ -63,47 +62,11 @@ use super::vertex::{
 };
 use super::UV_MODE_SHIFT;
 
-/// How one face of a [`MeshBox`] is textured.
-#[derive(Copy, Clone)]
-pub(super) struct FaceStyle {
-    pub tile: Tile,
-    /// Swap the cell-local u/v (the pane edge strip laid along a W/E arm).
-    pub swap_uv: bool,
-    pub tint: [f32; 3],
-}
-
-/// One cell-local cuboid of a block's shape. `faces` is indexed by
-/// `Face as usize` ([`Face::ALL`] order); `None` = the family never emits
-/// that face (a fence rail's end caps), regardless of coverage.
-#[derive(Copy, Clone)]
-pub(super) struct MeshBox {
-    pub min: [f32; 3],
-    pub max: [f32; 3],
-    pub faces: [Option<FaceStyle>; 6],
-}
-
-impl MeshBox {
-    /// A box textured like a cube: `[top, bottom, side]` tiles, one tint
-    /// per tile, plain UVs on every face.
-    pub(super) fn uniform(
-        min: [f32; 3],
-        max: [f32; 3],
-        tiles: [Tile; 3],
-        tint_for: impl Fn(Tile) -> [f32; 3],
-    ) -> Self {
-        let style = |tile: Tile| {
-            Some(FaceStyle {
-                tile,
-                swap_uv: false,
-                tint: tint_for(tile),
-            })
-        };
-        let mut faces = [style(tiles[2]); 6];
-        faces[Face::PosY as usize] = style(tiles[0]);
-        faces[Face::NegY as usize] = style(tiles[1]);
-        MeshBox { min, max, faces }
-    }
-}
+// The emitter's box vocabulary is the ENGINE-NEUTRAL shape currency (see
+// `block::shape`): every shape family resolves to the same `ShapeBox` list
+// that collision, targeting, and the occupancy cull read, so the drawn
+// geometry cannot drift from the collided geometry.
+pub(super) use crate::block::{ShapeBox, ShapeFace};
 
 /// An axis-aligned rectangle in a face's (u, v) plane.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -162,6 +125,12 @@ pub(super) struct BoxSetScratch {
     runs: Vec<(f32, f32)>,
     rects: Vec<Rect>,
     nb: Vec<([f32; 3], [f32; 3])>,
+    // Per-face plane light gathers, keyed by the plane's cell-local
+    // coordinate along the face normal: a face direction can hold SEVERAL
+    // distinct planes (a custom shape's floor and shelf), and the pockets a
+    // gather casts sit on its plane, so gathers at different heights must
+    // not share.
+    planes: Vec<(f32, PlaneLight)>,
 }
 
 /// Mesh one cell's box set. See the module doc for the model.
@@ -182,7 +151,7 @@ pub(super) fn emit_box_set<B, S, L, K>(
     wx: i32,
     wy: i32,
     wz: i32,
-    boxes: &[MeshBox],
+    boxes: &[ShapeBox],
     scratch: &mut BoxSetScratch,
     neighbor_solid: &dyn Fn(Face) -> bool,
     neighbor_boxes: &NeighborBoxesFn,
@@ -203,14 +172,18 @@ pub(super) fn emit_box_set<B, S, L, K>(
         let positive = matches!(face, Face::PosX | Face::PosY | Face::PosZ);
 
         // Per-face lazies: the whole-face solid cull, the neighbour box
-        // fetch, and the two plane light gathers (boundary / interior).
+        // fetch, and the per-plane light gathers.
         let mut solid: Option<bool> = None;
         let mut nb_fetched = false;
-        let mut plane_light: [Option<PlaneLight>; 2] = [None, None];
+        scratch.planes.clear();
 
         for (i, b) in boxes.iter().enumerate() {
             let Some(style) = b.faces[fi] else { continue };
-            let d = if positive { b.max[axis] } else { b.min[axis] };
+            let d = if positive {
+                b.aabb.max[axis]
+            } else {
+                b.aabb.min[axis]
+            };
             let flush = if positive { d >= 1.0 - T } else { d <= T };
 
             if flush {
@@ -229,10 +202,10 @@ pub(super) fn emit_box_set<B, S, L, K>(
             }
 
             let rect = Rect {
-                u0: b.min[ua],
-                v0: b.min[va],
-                u1: b.max[ua],
-                v1: b.max[va],
+                u0: b.aabb.min[ua],
+                v0: b.aabb.min[va],
+                u1: b.aabb.max[ua],
+                v1: b.aabb.max[va],
             };
 
             // Everything covering the space just in front of this face.
@@ -241,8 +214,8 @@ pub(super) fn emit_box_set<B, S, L, K>(
                 if j != i {
                     push_occluder(
                         &mut scratch.occ,
-                        o.min,
-                        o.max,
+                        o.aabb.min,
+                        o.aabb.max,
                         (axis, ua, va),
                         positive,
                         d,
@@ -282,19 +255,29 @@ pub(super) fn emit_box_set<B, S, L, K>(
                 continue;
             }
 
-            let pl_idx = flush as usize;
-            if plane_light[pl_idx].is_none() {
+            if !scratch.planes.iter().any(|(pd, _)| (pd - d).abs() <= T) {
                 let (dx, dy, dz) = face.dir();
                 let (fx, fy, fz) = if flush {
                     (wx + dx, wy + dy, wz + dz)
                 } else {
                     (wx, wy, wz)
                 };
+                let front = (fx, fy, fz);
+                // The gather's probe pockets sit ON the face plane — the
+                // voxel boundary when flush, the box's own plane height
+                // when interior (a slab top's pockets at 0.5, not the cell
+                // floor).
+                let plane = if flush {
+                    boundary_plane(face, front)
+                } else {
+                    [wx, wy, wz][axis] as f32 + d
+                };
                 let (ao, sky, block, warm) = cube_face_lighting(
                     face,
                     fx,
                     fy,
                     fz,
+                    plane,
                     neighbour_light(fx, fy, fz) as u32,
                     neighbour_blocklight(fx, fy, fz) as u32,
                     // The closed-underside rule (stairs, slabs): a NegY
@@ -307,14 +290,22 @@ pub(super) fn emit_box_set<B, S, L, K>(
                     neighbour_blocklight,
                     &matter,
                 );
-                plane_light[pl_idx] = Some(PlaneLight {
-                    ao,
-                    sky,
-                    block,
-                    warm,
-                });
+                scratch.planes.push((
+                    d,
+                    PlaneLight {
+                        ao,
+                        sky,
+                        block,
+                        warm,
+                    },
+                ));
             }
-            let pl = plane_light[pl_idx].as_ref().expect("just filled");
+            let pl = &scratch
+                .planes
+                .iter()
+                .find(|(pd, _)| (pd - d).abs() <= T)
+                .expect("just filled")
+                .1;
 
             for r_idx in 0..scratch.rects.len() {
                 let r = scratch.rects[r_idx];
@@ -342,6 +333,12 @@ pub(super) fn emit_box_set<B, S, L, K>(
                         (wx, wy, wz),
                         matter,
                     ));
+                    if b.ao_strength < 1.0 {
+                        // Scale the DARKENING, not the value: 3 stays 3, and
+                        // strength 0 lifts every corner to full brightness.
+                        let dark = (3 - ao) as f32 * b.ao_strength.max(0.0);
+                        ao = 3 - (dark.round() as u32).min(3);
+                    }
                     quad_ao[ci] = ao;
                     let (mut uu, mut vv) = (u, v);
                     if style.swap_uv {
@@ -352,14 +349,9 @@ pub(super) fn emit_box_set<B, S, L, K>(
                     } else {
                         warm_tint(style.tint, warm)
                     };
-                    let quant =
-                        |x: f32| ((x * 16.0).round() as i32).clamp(0, 16) as u32;
+                    let quant = |x: f32| ((x * 16.0).round() as i32).clamp(0, 16) as u32;
                     vbuf.push(Vertex {
-                        pos: [
-                            wx as f32 + lp[0],
-                            wy as f32 + lp[1],
-                            wz as f32 + lp[2],
-                        ],
+                        pos: [wx as f32 + lp[0], wy as f32 + lp[1], wz as f32 + lp[2]],
                         tint: pack_tint(tint),
                         packed: pack_vertex(
                             style.tile.index() as u32,
@@ -372,7 +364,8 @@ pub(super) fn emit_box_set<B, S, L, K>(
                         ) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT),
                         packed2: pack_vertex2(block6)
                             | pack_cell_uv(quant(uu), quant(vv))
-                            | pack_normal_code(face.normal_code()),
+                            | pack_normal_code(face.normal_code())
+                            | if b.dyed { super::vertex::DYED_FLAG2 } else { 0 },
                     });
                 }
                 let tris: [u32; 6] = if should_flip(quad_ao) {
@@ -482,7 +475,12 @@ fn subtract(
         runs.sort_by(|a, b| a.0.partial_cmp(&b.0).expect("finite runs"));
         let mut cursor = rect.u0;
         let push_run = |u0: f32, u1: f32, out: &mut Vec<Rect>| {
-            let r = Rect { u0, v0: va, u1, v1: vb };
+            let r = Rect {
+                u0,
+                v0: va,
+                u1,
+                v1: vb,
+            };
             if !r.is_empty() {
                 out.push(r);
             }
@@ -536,7 +534,7 @@ fn subtract(
 /// the lift keeps two flush boxes forming one continuous surface from
 /// shadowing their shared seam.
 fn probe_ao(
-    boxes: &[MeshBox],
+    boxes: &[ShapeBox],
     corner: [f32; 3],
     (axis, ua, va): (usize, usize, usize),
     positive: bool,
@@ -578,7 +576,7 @@ fn probe_ao(
         // matter; the lift owns continuation immunity).
         if boxes
             .iter()
-            .any(|b| (0..3).all(|a| plo[a] < b.max[a] && phi[a] > b.min[a]))
+            .any(|b| (0..3).all(|a| plo[a] < b.aabb.max[a] && phi[a] > b.aabb.min[a]))
         {
             return true;
         }
@@ -680,10 +678,12 @@ mod tests {
         assert!((area(&out) - 0.8).abs() < 1e-5);
     }
 
-    fn plain(min: [f32; 3], max: [f32; 3]) -> MeshBox {
+    fn plain(min: [f32; 3], max: [f32; 3]) -> ShapeBox {
         // The tile is irrelevant to these geometry tests; any atlas row works.
         let t = crate::atlas::Tile::named("stone");
-        MeshBox::uniform(min, max, [t, t, t], |_| [1.0, 1.0, 1.0])
+        ShapeBox::uniform(crate::block::Aabb { min, max }, [t, t, t], |_| {
+            [1.0, 1.0, 1.0]
+        })
     }
 
     /// The occluder rule: butting-in-front hides, butting-behind does not,
@@ -696,23 +696,59 @@ mod tests {
         let mut occ = vec![];
 
         // In front (butted at d): hides.
-        push_occluder(&mut occ, [0.5, 0.0, 0.0], [1.0, 1.0, 1.0], axes, true, 0.5, false, &rect_full);
+        push_occluder(
+            &mut occ,
+            [0.5, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            axes,
+            true,
+            0.5,
+            false,
+            &rect_full,
+        );
         assert_eq!(occ.len(), 1);
 
         // Behind (ends at d): does not hide without the coincidence tie.
         occ.clear();
-        push_occluder(&mut occ, [0.0, 0.0, 0.0], [0.5, 1.0, 1.0], axes, true, 0.5, false, &rect_full);
+        push_occluder(
+            &mut occ,
+            [0.0, 0.0, 0.0],
+            [0.5, 1.0, 1.0],
+            axes,
+            true,
+            0.5,
+            false,
+            &rect_full,
+        );
         assert!(occ.is_empty());
 
         // Behind + coincident + earlier: hides (the tie-break winner).
-        push_occluder(&mut occ, [0.0, 0.0, 0.0], [0.5, 1.0, 1.0], axes, true, 0.5, true, &rect_full);
+        push_occluder(
+            &mut occ,
+            [0.0, 0.0, 0.0],
+            [0.5, 1.0, 1.0],
+            axes,
+            true,
+            0.5,
+            true,
+            &rect_full,
+        );
         assert_eq!(occ.len(), 1);
 
         // Straddling (interpenetration): does NOT hide — cutout tiles may
         // show a face through the straddling box (the chain's crossing
         // plates), so only sealed flush contact culls.
         occ.clear();
-        push_occluder(&mut occ, [0.25, 0.0, 0.0], [0.75, 1.0, 1.0], axes, true, 0.5, false, &rect_full);
+        push_occluder(
+            &mut occ,
+            [0.25, 0.0, 0.0],
+            [0.75, 1.0, 1.0],
+            axes,
+            true,
+            0.5,
+            false,
+            &rect_full,
+        );
         assert!(occ.is_empty());
     }
 
@@ -753,7 +789,15 @@ mod tests {
         let axes = face_axes(Face::PosY);
         // The tread: the floor box's +Y face right of the riser.
         let tread = rect(0.5, 0.0, 1.0, 1.0); // u = X in [0.5, 1], v = Z
-        let crease = probe_ao(&stair, [0.5, 0.5, 0.5], axes, true, &tread, (0, 0, 0), &|_, _, _| false);
+        let crease = probe_ao(
+            &stair,
+            [0.5, 0.5, 0.5],
+            axes,
+            true,
+            &tread,
+            (0, 0, 0),
+            &|_, _, _| false,
+        );
         assert!(crease < 3, "tread corner against the riser must darken");
 
         // Two half boxes forming one flat top: the shared seam stays open.
@@ -762,7 +806,15 @@ mod tests {
             plain([0.5, 0.0, 0.0], [1.0, 1.0, 1.0]),
         ];
         let left_top = rect(0.0, 0.0, 0.5, 1.0);
-        let seam = probe_ao(&flat, [0.5, 1.0, 0.5], axes, true, &left_top, (0, 0, 0), &|_, _, _| false);
+        let seam = probe_ao(
+            &flat,
+            [0.5, 1.0, 0.5],
+            axes,
+            true,
+            &left_top,
+            (0, 0, 0),
+            &|_, _, _| false,
+        );
         assert_eq!(seam, 3, "coplanar continuation must not self-shadow");
     }
 }

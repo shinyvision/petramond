@@ -49,6 +49,8 @@
         { "tag": "petramond:planks", "count": 4 }
       ],
       "result": { "item": "furniture:chandelier", "count": 1 }
-    }
+    },
+    { "patch": "petramond:wool_stairs", "data": { "petramond:inherit": ["petramond:tint"] } },
+    { "patch": "petramond:wool_slab", "data": { "petramond:inherit": ["petramond:tint"] } }
   ]
 }

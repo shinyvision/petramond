@@ -245,6 +245,14 @@ pub(crate) fn registration_keys(dir: &std::path::Path) -> Result<Vec<String>, St
             .and_then(|v| v.as_array())
             .ok_or_else(|| format!("{rel}: expected a top-level '{}' array", spec.array))?;
         for (i, row) in rows.iter().enumerate() {
+            // A `{"patch": ..., "data": ...}` row attaches data to an
+            // EXISTING row — deliberately cross-namespace (describing your
+            // item in a consumer mod's vocabulary), so it REGISTERS nothing
+            // and is exempt from the ownership check. The loader validates
+            // its shape and target.
+            if row.get("patch").is_some() {
+                continue;
+            }
             if let Some((field, wanted)) = spec.row_filter {
                 if row.get(field).and_then(|v| v.as_str()) != Some(wanted) {
                     continue;

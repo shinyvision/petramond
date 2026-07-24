@@ -15,7 +15,6 @@ use crate::block::Block;
 use crate::block_state::BlockStates;
 use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
 use crate::container::Container;
-use crate::facing::Facing;
 use crate::furnace::Furnace;
 
 mod block_entities;
@@ -166,7 +165,7 @@ pub struct Section {
     /// reading it safely and a clone is cheap; NOT persisted (re-baked on the
     /// client). The mesher draws each box face-by-face for `Custom`-family cells
     /// (falling back to a cube on a miss).
-    shape_render: Option<Arc<std::collections::HashMap<u16, Box<[crate::block::Aabb]>>>>,
+    shape_render: Option<Arc<std::collections::HashMap<u16, Box<[crate::block::ShapeRenderBox]>>>>,
     /// Layer-3 custom-shape SIM light aperture: per-cell "opaque to light" bit a
     /// pack's `wasm` baked (`BakedSimCell.light_aperture`), keyed by section-local
     /// index. `None` for the common section. Deterministic (server + every client
@@ -184,15 +183,14 @@ struct BlockEntities {
     /// [`containers`](Self::containers) under the same key.
     furnaces: HashMap<u16, Furnace>,
     /// Generic item-slot containers — chests, furnaces, and mod container
-    /// blocks all store their stacks here.
+    /// blocks all store their stacks here. (A block-entity's FACING is
+    /// ordinary per-cell state in the unified cell store, not an entity map.)
     containers: HashMap<u16, Container>,
-    /// Which way a facing block-entity (chest, furnace) points.
-    entity_facings: HashMap<u16, Facing>,
 }
 
 impl BlockEntities {
     fn is_empty(&self) -> bool {
-        self.furnaces.is_empty() && self.containers.is_empty() && self.entity_facings.is_empty()
+        self.furnaces.is_empty() && self.containers.is_empty()
     }
 }
 
@@ -281,13 +279,17 @@ impl Section {
     /// `idx`, or `None` when the cell has no render bake (the mesher then draws
     /// the cube fallback).
     #[inline]
-    pub fn shape_render_boxes(&self, idx: u16) -> Option<&[crate::block::Aabb]> {
+    pub fn shape_render_boxes(&self, idx: u16) -> Option<&[crate::block::ShapeRenderBox]> {
         self.shape_render.as_ref()?.get(&idx).map(|b| &b[..])
     }
 
     /// Record a custom-shape cell's freshly-baked render boxes (the client
     /// render-bake pump). Bumps `mesh_revision` so the section remeshes.
-    pub(crate) fn set_shape_render(&mut self, idx: u16, boxes: Box<[crate::block::Aabb]>) {
+    pub(crate) fn set_shape_render(
+        &mut self,
+        idx: u16,
+        boxes: Box<[crate::block::ShapeRenderBox]>,
+    ) {
         Arc::make_mut(self.shape_render.get_or_insert_with(Default::default)).insert(idx, boxes);
         self.mesh_revision += 1;
     }

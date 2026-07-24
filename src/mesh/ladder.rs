@@ -11,9 +11,10 @@
 //! Smooth-lit like every box family (2026-07-23).
 
 use crate::atlas::Tile;
+use crate::block::Aabb;
 use crate::facing::Facing;
 
-use super::boxset::{FaceStyle, MeshBox};
+use super::boxset::{ShapeBox, ShapeFace};
 use super::face::Face;
 
 /// The face buried in the supporting wall for a ladder facing `facing`.
@@ -51,10 +52,10 @@ pub(crate) fn shape_faces_dim(
     }
 }
 
-/// The wall panel as a [`MeshBox`] for the unified emitter: one tile on
+/// The wall panel as a [`ShapeBox`] for the unified emitter: one tile on
 /// every face, the wall-side face omitted.
-pub(super) fn push_mesh_box(
-    out: &mut Vec<MeshBox>,
+pub(crate) fn push_mesh_box(
+    out: &mut Vec<ShapeBox>,
     facing: Facing,
     thickness: f32,
     height: f32,
@@ -62,11 +63,16 @@ pub(super) fn push_mesh_box(
     tint: [f32; 3],
 ) {
     let (min, max) = crate::ladder::panel_aabb_dim(facing, thickness, height);
-    let mut faces = [Some(FaceStyle {
+    let mut faces = [Some(ShapeFace {
         tile,
         swap_uv: false,
         tint,
     }); 6];
     faces[buried_face(facing) as usize] = None;
-    out.push(MeshBox { min, max, faces });
+    out.push(ShapeBox {
+        aabb: Aabb { min, max },
+        faces,
+        ao_strength: 1.0,
+        dyed: false,
+    });
 }

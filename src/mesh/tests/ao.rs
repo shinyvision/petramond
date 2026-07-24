@@ -173,7 +173,6 @@ fn fence_self_ao_at_rail_junctions_only() {
     );
 }
 
-
 /// The cast probes are pocket VOLUMES, not points: a neighbour whose matter
 /// is inset from the cell boundary (the cauldron's 1px-inset base) must
 /// still occlude the side pocket of an edge-adjacent floor corner. Point
@@ -189,13 +188,79 @@ fn cast_pockets_reach_an_inset_neighbour_base() {
     let base_lo = [1.0 / 16.0, 0.0, 1.0 / 16.0];
     let base_hi = [15.0 / 16.0, 3.0 / 16.0, 15.0 / 16.0];
     for sv in [-1, 1] {
-        let pockets = corner_cast_probes(Face::PosY, (0, 0, 0), 1, sv);
+        let pockets = corner_cast_probes(Face::PosY, (0, 0, 0), 1, sv, 0.0);
         // The side-u pocket, moved into the side cell's local frame.
         let (lo, hi) = pockets[0];
         let (lo, hi) = ([lo[0] - 1.0, lo[1], lo[2]], [hi[0] - 1.0, hi[1], hi[2]]);
         let overlap = (0..3).all(|a| lo[a] < base_hi[a] && hi[a] > base_lo[a]);
-        assert!(overlap, "sv={sv}: the edge pocket must reach the inset base");
+        assert!(
+            overlap,
+            "sv={sv}: the edge pocket must reach the inset base"
+        );
     }
+}
+
+/// A box family's INTERIOR plane takes AO from matter in FRONT of the plane
+/// only: a bottom slab's top face (y = 0.5) ignores its own bottom-half
+/// matter and the flush tops of neighbouring bottom slabs (a half-height
+/// floor is one continuous surface — no per-slab darkening), while a
+/// neighbouring TOP slab, whose matter rises above the plane, darkens the
+/// corners toward it exactly like a wall. Regression pin for the probe
+/// pockets being cast on the cell floor instead of the actual plane, which
+/// made every slab placed beside a slab darken it like a full cube.
+#[test]
+fn slab_top_plane_ignores_matter_below_it() {
+    let top_face_ao = |m: &ChunkMesh, x: f32| -> Vec<u32> {
+        m.opaque
+            .iter()
+            .filter(|v| {
+                shade_idx(v) == 0
+                    && (v.pos[1] - 8.5).abs() < 1e-3
+                    && v.pos[0] >= x - 1e-3
+                    && v.pos[0] <= x + 1.0 + 1e-3
+            })
+            .map(ao_idx)
+            .collect()
+    };
+
+    let m_lone = mesh(&section_with(&[((8, 8, 8), Block::StoneSlab)]));
+    let lone = top_face_ao(&m_lone, 8.0);
+    assert!(!lone.is_empty());
+    assert!(
+        lone.iter().all(|&a| a == 3),
+        "a lone slab's own bottom half must not shadow its top: {lone:?}"
+    );
+
+    let m_floor = mesh(&section_with(&[
+        ((7, 8, 8), Block::StoneSlab),
+        ((8, 8, 8), Block::StoneSlab),
+        ((9, 8, 8), Block::StoneSlab),
+        ((8, 8, 7), Block::StoneSlab),
+        ((8, 8, 9), Block::StoneSlab),
+    ]));
+    let center = top_face_ao(&m_floor, 8.0);
+    assert!(!center.is_empty());
+    assert!(
+        center.iter().all(|&a| a == 3),
+        "flush bottom-slab neighbours form one continuous floor: {center:?}"
+    );
+
+    let mut section = section_with(&[
+        ((8, 8, 8), Block::StoneSlab),
+        ((9, 8, 8), Block::StoneSlab),
+    ]);
+    section.set_slab_state(
+        9,
+        8,
+        8,
+        SlabState::single(SlabSplit::Y, 1, Block::StoneSlab),
+    );
+    let m_wall = mesh(&section);
+    let beside_wall = top_face_ao(&m_wall, 8.0);
+    assert!(
+        beside_wall.iter().any(|&a| a < 3),
+        "a top slab rises above the plane and must darken toward it: {beside_wall:?}"
+    );
 }
 
 /// The INTERIOR quadrant: sub-cell matter standing ON a face darkens the
@@ -230,14 +295,21 @@ fn matter_standing_on_a_face_darkens_it_seamlessly() {
         .iter()
         .filter(|v| shade_idx(v) == 0 && (v.pos[1] - 8.0).abs() < 1.0e-3)
         .collect();
-    let at_x = |x: f32| floor_top.iter().filter(move |v| (v.pos[0] - x).abs() < 1.0e-3);
+    let at_x = |x: f32| {
+        floor_top
+            .iter()
+            .filter(move |v| (v.pos[0] - x).abs() < 1.0e-3)
+    };
     let shared: Vec<u32> = at_x(8.0).map(|v| ao_idx(v)).collect();
     assert!(!shared.is_empty());
     assert!(
         shared.iter().all(|&a| a == shared[0]),
         "both faces must shade the shared boundary identically: {shared:?}"
     );
-    assert!(shared[0] < 3, "the boundary corners must darken toward the slab");
+    assert!(
+        shared[0] < 3,
+        "the boundary corners must darken toward the slab"
+    );
     assert!(
         at_x(7.0).chain(at_x(9.0)).all(|v| ao_idx(v) == 3),
         "far corners of both faces stay open"

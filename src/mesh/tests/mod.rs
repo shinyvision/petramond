@@ -1,8 +1,9 @@
 use super::*;
 use crate::block::Block;
-use crate::block_state::{SlabState, StairState};
+use crate::block_state::SlabState;
 use crate::chunk::{Chunk, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_SIZE, SKY_FULL};
 use crate::facing::Facing;
+use crate::mathh::IVec3;
 use crate::section::Section;
 
 // --- Fixtures ---------------------------------------------------------------
@@ -62,6 +63,61 @@ fn in_section(wx: i32, wy: i32, wz: i32) -> bool {
     r.contains(&wx) && r.contains(&wy) && r.contains(&wz)
 }
 
+/// Clone `section` with every refinable cell's stored shape state RESOLVED —
+/// the standalone-fixture twin of the world's edit-time refine cascade
+/// (`World::refine_shape_states_around`; these fixtures write raw section
+/// cells with no world, so no cascade ever ran). Out-of-section neighbours
+/// read as air, matching the mesh wrappers' closures.
+pub(super) fn refined(section: &Section) -> Section {
+    struct Nb<'a>(&'a Section);
+    impl crate::block::ShapeNeighborhood for Nb<'_> {
+        fn block(&self, p: IVec3) -> Block {
+            if in_section(p.x, p.y, p.z) {
+                Block::from_id(self.0.block_raw(p.x as usize, p.y as usize, p.z as usize))
+            } else {
+                Block::Air
+            }
+        }
+        fn shape_state(&self, p: IVec3) -> crate::block::ShapeState {
+            if in_section(p.x, p.y, p.z) {
+                self.0.cell_state(p.x as usize, p.y as usize, p.z as usize)
+            } else {
+                crate::block::ShapeState::NONE
+            }
+        }
+    }
+    let mut out = section.clone();
+    // Fixpoint sweeps: the refine dependency chain is two layers deep (see
+    // `world::shape_refine`), so three passes always settle.
+    for _ in 0..3 {
+        let mut writes = Vec::new();
+        {
+            let nb = Nb(&out);
+            for idx in 0..crate::chunk::SECTION_VOLUME {
+                let (lx, ly, lz) = crate::chunk::section_local(idx);
+                let block = Block::from_id(out.block_raw(lx, ly, lz));
+                let k = block.shape_kind_def();
+                if !k.refines {
+                    continue;
+                }
+                let pos = IVec3::new(lx as i32, ly as i32, lz as i32);
+                let cur = out.cell_state(lx, ly, lz);
+                let next = k.sim.refine_state(&k.params, &nb, pos, block, cur);
+                if next != cur {
+                    writes.push(((lx, ly, lz), next));
+                }
+            }
+        }
+        if writes.is_empty() {
+            break;
+        }
+        for ((lx, ly, lz), state) in writes {
+            out.set_cell_state(lx, ly, lz, state);
+        }
+    }
+    out
+}
+
 /// A section at (0, 0, 0) with the given blocks set on empty air.
 fn section_with(blocks: &[((usize, usize, usize), Block)]) -> Section {
     let mut section = Section::new(0, 0, 0);
@@ -89,6 +145,9 @@ fn mesh_with(
     sky: impl Fn(i32, i32, i32) -> u8,
     loaded: impl Fn(i32, i32, i32) -> bool,
 ) -> ChunkMesh {
+    // Standalone fixtures never ran the edit-time refine cascade: resolve
+    // the stored shape states (fence masks, stair corners) before meshing.
+    let section = &refined(section);
     build_section_mesh(
         section,
         SectionPos::new(0, 0, 0),
@@ -101,16 +160,9 @@ fn mesh_with(
         },
         |wx, wy, wz| {
             if in_section(wx, wy, wz) {
-                section.stair_state(wx as usize, wy as usize, wz as usize)
+                section.cell_state(wx as usize, wy as usize, wz as usize)
             } else {
-                StairState::default()
-            }
-        },
-        |wx, wy, wz| {
-            if in_section(wx, wy, wz) {
-                section.slab_state(wx as usize, wy as usize, wz as usize)
-            } else {
-                SlabState::EMPTY
+                crate::block::ShapeState::NONE
             }
         },
         |wx, wy, wz| {
@@ -149,8 +201,7 @@ fn mesh_in_scene(
         section,
         pos,
         block,
-        |_, _, _| StairState::default(),
-        |_, _, _| SlabState::EMPTY,
+        |_, _, _| crate::block::ShapeState::NONE,
         |_, _, _| 0,
         |_, _| 0,
         sky,
@@ -251,7 +302,8 @@ mod oriented_blocks;
 mod parity;
 mod seams;
 mod skylight;
-mod snow;
 mod slabs;
+mod snow;
 mod stairs;
+mod tint;
 mod water;

@@ -5,6 +5,7 @@ use crate::item::ItemType;
 fn bare_hand_builds_solid_cuboid() {
     let view = HeldItemView {
         item: None,
+        variant: crate::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -27,6 +28,7 @@ fn bare_hand_builds_solid_cuboid() {
 fn held_block_builds_textured_cube() {
     let view = HeldItemView {
         item: Some(ItemType::OakLog),
+        variant: crate::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -43,6 +45,7 @@ fn held_block_builds_textured_cube() {
 fn lit_hand_packs_sampled_skylight() {
     let view = HeldItemView {
         item: Some(ItemType::Stone),
+        variant: crate::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -69,6 +72,7 @@ fn held_sprite_emits_no_model3d_geometry() {
     // pipeline, NOT the model3d hand pass, so build_hand emits nothing.
     let view = HeldItemView {
         item: Some(ItemType::Poppy),
+        variant: crate::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -195,6 +199,7 @@ fn render_held_model_preview() {
     for (row, (label, item)) in items.iter().enumerate() {
         let view = HeldItemView {
             item: Some(*item),
+            variant: crate::item::VariantId::NONE,
             ..Default::default()
         };
         let (kind, mvp) = held_model(&view, aspect).expect("model item");
@@ -218,6 +223,7 @@ fn held_sprite_reports_tile_and_mvp() {
     // tile (and a finite MVP) for a sprite item and None otherwise.
     let poppy = HeldItemView {
         item: Some(ItemType::Poppy),
+        variant: crate::item::VariantId::NONE,
         ..Default::default()
     };
     let (tile, mvp) = held_sprite(&poppy, 16.0 / 9.0).expect("sprite reports a tile");
@@ -226,11 +232,13 @@ fn held_sprite_reports_tile_and_mvp() {
     // Bare hand + held block return None (they go through build_hand).
     let bare = HeldItemView {
         item: None,
+        variant: crate::item::VariantId::NONE,
         block_state: Default::default(),
         ..poppy
     };
     let block = HeldItemView {
         item: Some(ItemType::Stone),
+        variant: crate::item::VariantId::NONE,
         block_state: Default::default(),
         ..poppy
     };
@@ -243,10 +251,12 @@ fn build_hand_reuses_buffers_without_growth() {
     // The hand buffers are cleared + refilled each call, never reallocated.
     let block = HeldItemView {
         item: Some(ItemType::Stone),
+        variant: crate::item::VariantId::NONE,
         ..Default::default()
     };
     let bare = HeldItemView {
         item: None,
+        variant: crate::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -311,6 +321,7 @@ fn bare_hand_rest_is_anchored_lower_right() {
     let screens: [(u32, u32); 4] = [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)];
     let view = HeldItemView {
         item: None,
+        variant: crate::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -349,6 +360,7 @@ fn bare_hand_rest_is_anchored_lower_right() {
 fn bare_hand_rest_does_not_show_large_fist_cap() {
     let view = HeldItemView {
         item: None,
+        variant: crate::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -409,6 +421,7 @@ fn swing_punches_forward_instead_of_right_hooking() {
     let aspect = 16.0 / 9.0;
     let rest_view = HeldItemView {
         item: None,
+        variant: crate::item::VariantId::NONE,
         ..Default::default()
     };
     let early_view = HeldItemView {
@@ -473,6 +486,7 @@ fn arm_punch_hinges_the_fist_forward_from_the_shoulder() {
     let fist_local = Vec3::new(0.0, 6.0, 0.0); // +Y end of the arm cuboid
     let view = |swing| HeldItemView {
         item: None,
+        variant: crate::item::VariantId::NONE,
         block_state: Default::default(),
         swing,
         swing_scale: 1.0,
@@ -512,6 +526,7 @@ fn arm_punch_hinges_the_fist_forward_from_the_shoulder() {
 fn swing_and_place_change_the_mvp() {
     let rest = HeldItemView {
         item: Some(ItemType::Stone),
+        variant: crate::item::VariantId::NONE,
         ..Default::default()
     };
     let mid_punch = HeldItemView { swing: 0.5, ..rest };
@@ -562,6 +577,7 @@ fn render_held_item_preview() {
     for (item, file, eat, eat_bob, eat_near) in targets {
         let view = HeldItemView {
             item: Some(item),
+            variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
             swing: 0.0,
             swing_scale: 1.0,

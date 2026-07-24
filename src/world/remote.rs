@@ -39,8 +39,3 @@ fn sorted_entries<T, U>(map: &HashMap<u16, T>, mut f: impl FnMut(&T) -> U) -> Ve
     out.sort_unstable_by_key(|(cell, _)| *cell);
     out
 }
-
-/// Wire entries → sparse map (the install-side inverse of [`sorted_entries`]).
-fn map_entries<T, U: Copy>(entries: &[(u16, U)], mut f: impl FnMut(U) -> T) -> HashMap<u16, T> {
-    entries.iter().map(|&(cell, v)| (cell, f(v))).collect()
-}

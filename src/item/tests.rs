@@ -222,7 +222,11 @@ fn render_kind_matches_shape_family() {
             | ShapeFamily::Stair
             | ShapeFamily::Slab
             | ShapeFamily::Fence => {
-                assert_eq!(item.render_kind(), ItemRenderKind::BlockCube(block), "{block:?}");
+                assert_eq!(
+                    item.render_kind(),
+                    ItemRenderKind::BlockCube(block),
+                    "{block:?}"
+                );
             }
             ShapeFamily::Cross => {
                 assert_eq!(
@@ -260,7 +264,11 @@ fn render_kind_matches_shape_family() {
             // A Layer-3 custom shape's item defaults to a cube icon (a mod can
             // bake its own item form; the default `ShapeRender` is a cube).
             ShapeFamily::Custom => {
-                assert_eq!(item.render_kind(), ItemRenderKind::BlockCube(block), "{block:?}");
+                assert_eq!(
+                    item.render_kind(),
+                    ItemRenderKind::BlockCube(block),
+                    "{block:?}"
+                );
             }
         }
     }

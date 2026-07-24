@@ -17,6 +17,7 @@
 pub use mod_api::*;
 
 mod bytes;
+pub mod json;
 mod client;
 mod containers;
 mod core_calls;

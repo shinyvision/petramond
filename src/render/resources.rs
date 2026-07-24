@@ -732,52 +732,59 @@ pub(super) fn upload_column_mesh(
     prev: Option<GpuColumnMesh>,
     scratch: &mut ColumnUploadScratch,
 ) -> GpuColumnMesh {
-    let col_ox = meshes
-        .first()
-        .map(|(sp, _)| sp.cx * 16)
-        .unwrap_or(0);
-    let col_oz = meshes
-        .first()
-        .map(|(sp, _)| sp.cz * 16)
-        .unwrap_or(0);
+    let col_ox = meshes.first().map(|(sp, _)| sp.cx * 16).unwrap_or(0);
+    let col_oz = meshes.first().map(|(sp, _)| sp.cz * 16).unwrap_or(0);
 
-    let (p_ov, p_oi, p_fov, p_foi, p_tv, p_ti, p_lv, p_li, p_mv, p_mi, p_cv, p_origin, mut sections) =
-        match prev {
-            Some(g) if try_patch_column_verts(queue, meshes, &g) => {
-                // Layout unchanged: reuse the GPU column (buffers + section ranges).
-                return g;
-            }
-            Some(g) => (
-                g.opaque_vbuf,
-                g.opaque_ibuf,
-                g.far_opaque_vbuf,
-                g.far_opaque_ibuf,
-                g.transparent_vbuf,
-                g.transparent_ibuf,
-                g.translucent_vbuf,
-                g.translucent_ibuf,
-                g.model_vbuf,
-                g.model_ibuf,
-                g.contact_vbuf,
-                Some(g.origin_vbuf),
-                g.sections,
-            ),
-            None => (
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                Vec::new(),
-            ),
-        };
+    let (
+        p_ov,
+        p_oi,
+        p_fov,
+        p_foi,
+        p_tv,
+        p_ti,
+        p_lv,
+        p_li,
+        p_mv,
+        p_mi,
+        p_cv,
+        p_origin,
+        mut sections,
+    ) = match prev {
+        Some(g) if try_patch_column_verts(queue, meshes, &g) => {
+            // Layout unchanged: reuse the GPU column (buffers + section ranges).
+            return g;
+        }
+        Some(g) => (
+            g.opaque_vbuf,
+            g.opaque_ibuf,
+            g.far_opaque_vbuf,
+            g.far_opaque_ibuf,
+            g.transparent_vbuf,
+            g.transparent_ibuf,
+            g.translucent_vbuf,
+            g.translucent_ibuf,
+            g.model_vbuf,
+            g.model_ibuf,
+            g.contact_vbuf,
+            Some(g.origin_vbuf),
+            g.sections,
+        ),
+        None => (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Vec::new(),
+        ),
+    };
 
     scratch.clear();
     scratch.reserve_for(meshes);

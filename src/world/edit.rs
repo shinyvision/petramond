@@ -110,11 +110,15 @@ impl World {
         // Re-mesh exactly the sections whose pads sample this cell so border
         // face culling, AO, and smooth light stay correct across seams.
         self.queue_dirty_meshes_sampling_cell(wx, wy, wz);
-        // A Layer-3 custom shape's bake depends on this cell's block + state, so
+        // A WASM-resolved shape's bake depends on this cell's block + state, so
         // drop the cached bake here + at each face neighbour and re-mark any
-        // custom cell dirty for the next bake pump (the same hook the replica's
+        // such cell dirty for the next bake pump (the same hook the replica's
         // ingest calls, so client prediction bakes the same cells).
         self.mark_custom_bake_edit(wx, wy, wz, b);
+        // Natively-refined shapes (fence arms, stair corners) re-resolve NOW,
+        // synchronously, cascading through neighbours whose stored state
+        // changes — reads never resolve, they decode.
+        self.refine_shape_states_around(wx, wy, wz);
         // Plane openness may have changed; deep-visibility must re-evaluate.
         self.vis_dirty = true;
 
@@ -137,34 +141,33 @@ impl World {
     }
 
     /// Swap a placed cube block's id in place while PRESERVING everything else
-    /// the cell owns — the sibling block-entity maps (machine state, container,
-    /// entity facing; `set_block` never touches them) and the cell's mod KV
-    /// (which `set_block` clears, so it is carried across explicitly). The
-    /// cube sibling of [`World::swap_model_block`]: the same placed machine
-    /// changing costume (`furnace` ⇄ `furnace_lit`). Announces itself through
-    /// the ordinary block-write lanes (delta capture, relight, remesh, block
+    /// the cell owns — the sibling block-entity maps (machine state, container;
+    /// `set_block` never touches them) and the cell's per-cell STATE + mod KV
+    /// (which `set_block` clears, so both are carried across explicitly — the
+    /// facing of a lit-flipping furnace is cell state now). The cube sibling
+    /// of [`World::swap_model_block`]: the same placed machine changing
+    /// costume (`furnace` ⇄ `furnace_lit`). Announces itself through the
+    /// ordinary block-write lanes (delta capture, relight, remesh, block
     /// updates, save `modified`) — a skin swap needs no bespoke promotion.
     pub(crate) fn swap_block_skin(&mut self, pos: IVec3, to: Block) -> bool {
         let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
             return false;
         };
         let kv = chunk.cell_kv_take(lx, ly, lz);
-        if !self.set_block_world(pos.x, pos.y, pos.z, to) {
-            // The write was refused (stream-finality guard): put the KV back
-            // and leave the cell exactly as it was.
-            if let (Some(kv), Some((chunk, lx, ly, lz))) =
-                (kv, self.chunk_at_world_mut(pos.x, pos.y, pos.z))
-            {
+        let state = chunk.cell_state(lx, ly, lz);
+        // A refused write (stream-finality guard) leaves the old cell; a
+        // landed one cleared its state + KV. Either way the carried values
+        // are what the cell must hold afterwards.
+        let ok = self.set_block_world(pos.x, pos.y, pos.z, to);
+        if let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
+            if let Some(kv) = kv {
                 chunk.cell_kv_restore(lx, ly, lz, kv);
             }
-            return false;
-        }
-        if let Some(kv) = kv {
-            if let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
-                chunk.cell_kv_restore(lx, ly, lz, kv);
+            if !state.is_empty() {
+                chunk.set_cell_state(lx, ly, lz, state);
             }
         }
-        true
+        ok
     }
 
     /// How far (in cells, L1) the light change from replacing `old` with `new`

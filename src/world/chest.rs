@@ -50,21 +50,19 @@ impl World {
             let Some(section) = self.sections.get(sp) else {
                 continue;
             };
-            let facings = section.entity_facings();
-            if facings.is_empty() {
+            if section.cell_states().is_empty() {
                 continue;
             }
             let (ox, oy, oz) = section.origin_world();
-            for (&key, &facing) in facings {
-                // Facings are shared by every facing block-entity (furnaces
-                // too) — only chest cells get the dynamic chest model.
-                // Invert the section-local block index (idx = y*256 + z*16 + x).
-                let lx = (key & 0x0F) as usize;
-                let lz = ((key >> 4) & 0x0F) as usize;
-                let ly = (key >> 8) as usize;
+            for &key in section.cell_states().keys() {
+                // Facing state is shared by every directional block-entity
+                // (furnaces too) — only chest cells get the dynamic chest
+                // model, so gate on the block before decoding.
+                let (lx, ly, lz) = crate::chunk::section_local(key as usize);
                 if section.block(lx, ly, lz) != crate::block::Block::Chest {
                     continue;
                 }
+                let facing = section.entity_facing(lx, ly, lz);
                 let pos = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
                 let sky = self.skylight6_at_world(pos.x, pos.y, pos.z);
                 let block = self.blocklight6_at_world(pos.x, pos.y, pos.z);

@@ -23,7 +23,7 @@ struct Uniforms {
     fog_color: vec4<f32>,
     inv_view_proj: mat4x4<f32>,
     render_origin: vec4<f32>,
-    water_anim: vec4<u32>,
+    atlas_anim: vec4<u32>,
     // rgb = sim-owned sky light COLOUR (white = identity; night tints subtly
     // blue). Applied to the SKY term only — torch light keeps its warmth.
     sky_color: vec4<f32>,

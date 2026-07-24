@@ -103,6 +103,7 @@ fn representative_messages_roundtrip_through_postcard() {
             output: Some(ItemSlotWire {
                 item_id: 7,
                 count: 2,
+                data: None,
             }),
         },
     });
@@ -159,12 +160,12 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
         skylight: None,
         blocklight: None,
         states: SectionStatesPayload {
-            doors: vec![(4095, 7)],
-            slabs: vec![(9, [5, 3, 0])],
-            model_cells: vec![(80, [1, 0, 1])],
-            entity_facings: vec![(7, 2)],
+            cell_states: vec![
+                (4095, crate::block::ShapeState::new(&[7])),
+                (9, crate::block::ShapeState::with_ids(&[5, 3, 0], 0b110)),
+                (80, crate::block::ShapeState::new(&[1, 0, 1, 2])),
+            ],
             cell_kv: vec![(12, vec![("kitchen:burn".into(), vec![1, 2, 3])])],
-            ..Default::default()
         },
     };
     let bytes = postcard::to_allocvec(&ServerToClient::SectionData(Box::new(payload.clone())))
@@ -190,21 +191,33 @@ fn tick_updates_roundtrip() {
                 block_id: 9,
                 water: Some(0x87),
                 state: None,
+                cell_kv: vec![("furniture:dye".into(), vec![200, 30, 40])],
             },
             BlockDelta {
                 pos: IVec3::new(4, 65, 4),
                 block_id: 12,
                 water: None,
-                state: Some(CellState::Slab([1, 12, 0])),
+                state: Some(crate::block::ShapeState::with_ids(&[1, 12, 0], 0b110)),
+                cell_kv: vec![],
             },
             BlockDelta {
                 pos: IVec3::new(5, 65, 4),
                 block_id: 30,
                 water: None,
-                state: Some(CellState::ModelCell {
-                    off: [1, 0, 0],
-                    facing: 3,
-                }),
+                state: Some(crate::block::ShapeState::new(&[1, 0, 0, 3])),
+                cell_kv: vec![],
+            },
+        ],
+        cell_kv_deltas: vec![
+            CellKvDelta {
+                pos: IVec3::new(4, 65, 4),
+                key: "furniture:dye".into(),
+                value: Some(vec![200, 30, 40]),
+            },
+            CellKvDelta {
+                pos: IVec3::new(5, 65, 4),
+                key: "farming:sips".into(),
+                value: None,
             },
         ],
         mobs: vec![MobStateRow {
@@ -228,6 +241,7 @@ fn tick_updates_roundtrip() {
             id: 7,
             item_id: 3,
             count: 12,
+            data: None,
             pos: Vec3::new(0.5, 65.0, 0.5),
             spin: 1.25,
         }],
@@ -246,6 +260,7 @@ fn tick_updates_roundtrip() {
             alive: true,
             visible: true,
             held_item: Some(5),
+            held_data: None,
             mining: Some((IVec3::new(4, 70, -2), 6)),
             eating: false,
             hurt_recent: true,
@@ -265,6 +280,7 @@ fn tick_updates_roundtrip() {
                 Some(ItemSlotWire {
                     item_id: 5,
                     count: 64,
+                    data: None,
                 }),
                 None,
             ]),
@@ -291,6 +307,7 @@ fn tick_updates_roundtrip() {
                 pos: IVec3::new(4, 65, 4),
                 block_id: 12,
                 normal: Some(IVec3::Y),
+                tint: None,
             },
             WorldEventMsg::ItemPickedUp {
                 pos: Vec3::new(1.0, 65.0, 2.0),
@@ -326,6 +343,7 @@ fn tick_updates_roundtrip() {
                     Some(ItemSlotWire {
                         item_id: 5,
                         count: 3,
+                        data: None,
                     }),
                     None,
                 ]),

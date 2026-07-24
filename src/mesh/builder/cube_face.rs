@@ -96,7 +96,13 @@ pub(in crate::mesh) fn probe_worthy(block: Block) -> bool {
 /// side-u / side-v / diagonal / interior quadrants of a
 /// [`PROBE_REACH`]-sized volume around the corner `(su, sv)` on the face
 /// fronted by world voxel `f`, lifted [`PROBE_LIFT`] off the face plane
-/// into the front region. Each
+/// into the front region. `plane` is the face plane's WORLD coordinate along
+/// the face normal: the voxel boundary for cube faces
+/// ([`boundary_plane`]), but an INTERIOR height for a box family's inner
+/// planes (a slab's top at 0.5) — pockets must sit off the actual plane, or
+/// they probe matter BELOW it (the slab's own bottom half, the neighbouring
+/// slab it forms a continuous floor with) and shadow a face that nothing
+/// overhangs. Each
 /// pocket is an AABB `(lo, hi)` in WORLD space, overlap-tested against its
 /// ring cell's occupancy — the grid-AO generalization: for an opaque ring
 /// cell the whole-cell bit answers; for a box-family cell the pocket must
@@ -114,6 +120,7 @@ pub(in crate::mesh) fn corner_cast_probes(
     f: (i32, i32, i32),
     su: i32,
     sv: i32,
+    plane: f32,
 ) -> [([f32; 3], [f32; 3]); 4] {
     use super::super::boxset::{PROBE_LIFT, PROBE_REACH};
     let (dx, dy, dz) = face.dir();
@@ -121,12 +128,12 @@ pub(in crate::mesh) fn corner_cast_probes(
     let (ux, uy, uz) = face.ao_u();
     let u = [ux, uy, uz];
 
-    // The corner's world position: on the face plane (the front voxel's
-    // boundary toward the cell), at the corner the (su, sv) signs pick.
+    // The corner's world position: on the face plane, at the corner the
+    // (su, sv) signs pick.
     let mut corner = [f.0 as f32, f.1 as f32, f.2 as f32];
     for a in 0..3 {
         if d[a] != 0 {
-            corner[a] += (d[a] < 0) as u32 as f32;
+            corner[a] = plane;
         } else if u[a] != 0 {
             corner[a] += (su > 0) as u32 as f32;
         } else {
@@ -175,6 +182,16 @@ pub(in crate::mesh) fn corner_cast_probes(
     ]
 }
 
+/// The world coordinate (along the face normal) of a cube face's plane: the
+/// front voxel `f`'s boundary toward the cell it fronts.
+#[inline]
+pub(in crate::mesh) fn boundary_plane(face: Face, f: (i32, i32, i32)) -> f32 {
+    let (dx, dy, dz) = face.dir();
+    let (axis, _, _) = face_axes(face);
+    let d = [dx, dy, dz][axis];
+    [f.0, f.1, f.2][axis] as f32 + (d < 0) as u32 as f32
+}
+
 /// One cube face's per-corner AO + smooth light (skylight/block-light + warm amount),
 /// gathered from the shared 3×3 tangent-plane ring around the front voxel F ONCE. The
 /// four corners share these eight ring cells (each edge cell feeds two corners, each
@@ -196,6 +213,10 @@ pub(in crate::mesh) fn cube_face_lighting<B, S, L, K, P>(
     fx: i32,
     fy: i32,
     fz: i32,
+    // The face plane's world coordinate along the normal —
+    // `boundary_plane(face, f)` for cube faces, the actual plane height for a
+    // box family's interior planes (see `corner_cast_probes`).
+    plane: f32,
     f_l: u32,
     f_bl: u32,
     smooth_light: bool,
@@ -214,6 +235,23 @@ where
 {
     let (ux, uy, uz) = face.ao_u();
     let (vx, vy, vz) = face.ao_v();
+
+    // The ring-cell half along the normal that lies on the plane's FRONT
+    // side — what a partial slab's single light value must describe to feed
+    // a corner (see `slab_corner_open`). Boundary planes reproduce the
+    // fixed halves of old (front-half 0 for positive faces, 1 for
+    // negative); an interior plane at 0.5 flips them, so a neighbouring
+    // bottom slab's open-top light DOES feed the slab-top plane beside it.
+    let front_half = {
+        let (dx, dy, dz) = face.dir();
+        let (axis, _, _) = face_axes(face);
+        let plane_local = plane - [fx, fy, fz][axis] as f32;
+        if dx + dy + dz > 0 {
+            (plane_local >= 0.25) as usize
+        } else {
+            (plane_local > 0.75) as usize
+        }
+    };
 
     // Whether the FRONT cell itself holds sub-cell matter: its interior
     // quadrant then joins the corner occlusion (the exposed ring of a face
@@ -287,7 +325,7 @@ where
             || (probe_cell[1][iv] && !s2)
             || (probe_cell[iu][iv] && !c)
         {
-            let pk = corner_cast_probes(face, (fx, fy, fz), su, sv);
+            let pk = corner_cast_probes(face, (fx, fy, fz), su, sv, plane);
             let cell_of = |s_u: i32, s_v: i32| {
                 (
                     fx + s_u * ux + s_v * vx,
@@ -324,7 +362,7 @@ where
         let mut sum_block = f_bl;
         let mut cnt = 1u32;
         for (ia, ib, a, b) in [(iu, 1, su, 0), (1, iv, 0, sv), (iu, iv, su, sv)] {
-            if opq[ia][ib] || !slab_corner_open(slab[ia][ib], face, a, b, su, sv) {
+            if opq[ia][ib] || !slab_corner_open(slab[ia][ib], face, a, b, su, sv, front_half) {
                 continue;
             }
             sum += sky[ia][ib];

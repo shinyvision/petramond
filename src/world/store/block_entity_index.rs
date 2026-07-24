@@ -17,9 +17,15 @@ impl World {
     pub(in crate::world) fn refresh_block_entity_index(&mut self, pos: SectionPos) {
         let has = self.sections.get(&pos).is_some_and(|s| {
             !s.containers().is_empty()
-                || !s.doors().is_empty()
                 || !s.furnaces().is_empty()
-                || !s.entity_facings().is_empty()
+                // The render fan-outs (door slabs, chest lids) visit this
+                // index: a section belongs when any stateful cell is a door
+                // or a directional block-entity front.
+                || s.cell_states().keys().any(|&idx| {
+                    let (lx, ly, lz) = crate::chunk::section_local(idx as usize);
+                    let b = s.block(lx, ly, lz);
+                    b.shape_family() == crate::block::ShapeFamily::Door || b.directional_view()
+                })
         });
         if has {
             self.block_entity_sections.insert(pos);

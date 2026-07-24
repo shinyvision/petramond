@@ -63,6 +63,17 @@ host_fn! {
 }
 
 host_fn! {
+    /// Read one per-cell KV `key` at each of `cells` from the REPLICA, reply
+    /// parallel to `cells` (at most 512 per call) — the cell-KV twin of
+    /// [`client_blocks_at`], the read side of the cell-KV replication lane
+    /// (a server-side [`crate::section_kv_set`] on a loaded section streams
+    /// to every client and lands here). `None` = key absent or cell unknown.
+    /// Reads may cross namespaces like every KV read.
+    pub fn client_cell_kv_at(key: &str, cells: Vec<[i32; 3]>) -> Vec<Option<Vec<u8>>>
+        => ClientCellKvAt { key: key.into(), cells } => BytesMany
+}
+
+host_fn! {
     /// Overwrite one rectangle of an existing published client image in place:
     /// `origin`/`size` in image pixels, `rgba` = exactly `size` pixels of RGBA8.
     pub fn client_image_blit(key: &str, origin: [u16; 2], size: [u16; 2], rgba: Vec<u8>)

@@ -145,7 +145,7 @@ impl Renderer {
             ],
             inv_view_proj: inv_view_proj.to_cols_array_2d(),
             render_origin: [render_origin.x, render_origin.y, render_origin.z, 0.0],
-            water_anim: crate::atlas::water_anim_uniform(),
+            atlas_anim: crate::atlas::atlas_anim_uniform(),
             sky_color: [
                 effective_sky_color[0],
                 effective_sky_color[1],

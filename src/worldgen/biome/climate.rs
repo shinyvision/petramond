@@ -64,7 +64,6 @@ impl AxisRange {
             0.0
         }
     }
-
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -162,7 +161,6 @@ impl ClimateRect {
         let offset_distance = f64::from(self.offset) * f64::from(self.offset);
         surface_distance + offset_distance
     }
-
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -422,10 +420,6 @@ impl<'a> ClimateSampler<'a> {
         Some(ClimateSample { cell, climate })
     }
 }
-
-
-
-
 
 fn squared(value: f64) -> f64 {
     value * value

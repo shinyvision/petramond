@@ -15,8 +15,26 @@ impl World {
     pub(crate) fn set_replication_capture(&mut self, on: bool) {
         if !on {
             self.block_delta_log.clear();
+            self.cell_kv_delta_log.clear();
         }
         self.replication_capture = on;
+    }
+
+    /// Drain this tick's coalesced per-cell mod KV changes (latest value per
+    /// `(pos, key)`), sorted so the wire batch is deterministic. The
+    /// recipient applies them AFTER the same batch's block deltas — a block
+    /// write wipes the cell's KV on both sides, so a same-tick
+    /// write-block-then-KV sequence survives in order.
+    pub(crate) fn take_cell_kv_deltas(&mut self) -> Vec<crate::net::protocol::CellKvDelta> {
+        let mut out: Vec<_> = self
+            .cell_kv_delta_log
+            .drain()
+            .map(|((pos, key), value)| crate::net::protocol::CellKvDelta { pos, key, value })
+            .collect();
+        out.sort_unstable_by(|a, b| {
+            (a.pos.x, a.pos.y, a.pos.z, &a.key).cmp(&(b.pos.x, b.pos.y, b.pos.z, &b.key))
+        });
+        out
     }
 
     /// Drain this tick's coalesced block/water deltas (latest state per cell),
@@ -33,9 +51,29 @@ impl World {
             // recipient unloads it anyway.
             if self.section_loaded_at(d.pos.x, d.pos.y, d.pos.z) {
                 d.state = self.cell_state_at(d.pos.x, d.pos.y, d.pos.z);
+                d.cell_kv = self.cell_kv_map_at(d.pos.x, d.pos.y, d.pos.z);
             }
         }
         out
+    }
+
+    /// Snapshot a cell's whole mod KV map for the wire (sorted — BTreeMap
+    /// iteration), empty for the common no-KV cell. Every delta carries it:
+    /// the replica's apply wipes the cell's KV like a server-side write, so a
+    /// delta without it would erase KV the server still holds (the corrective
+    /// delta is a snapshot of an UNCHANGED cell — the gray-dye bug).
+    fn cell_kv_map_at(&self, wx: i32, wy: i32, wz: i32) -> Vec<(String, Vec<u8>)> {
+        let Some((pos, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
+            return Vec::new();
+        };
+        let Some(s) = self.sections.get(&pos) else {
+            return Vec::new();
+        };
+        let cell = section_idx(lx, ly, lz) as u16;
+        s.cell_kv()
+            .get(&cell)
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default()
     }
 
     /// Snapshot one cell's CURRENT content as a wire delta — the same shape
@@ -57,6 +95,7 @@ impl World {
             block_id,
             water,
             state: self.cell_state_at(pos.x, pos.y, pos.z),
+            cell_kv: self.cell_kv_map_at(pos.x, pos.y, pos.z),
         })
     }
 
@@ -70,6 +109,14 @@ impl World {
         let water = (block_id == Block::Water.id()).then(|| self.water_meta_world(wx, wy, wz));
         let pos = crate::mathh::IVec3::new(wx, wy, wz);
         let state = self.cell_state_at(wx, wy, wz);
+        // KV deltas already logged for this cell are STALE: the block write
+        // wiped the cell's KV, so replaying them after this delta would
+        // resurrect keys the server no longer holds (the replica applies KV
+        // deltas AFTER block deltas). Anything the cell still holds — or is
+        // written later this tick — ships in this delta's drain-time KV
+        // snapshot instead (`cell_kv_set` skips the log while this delta is
+        // pending).
+        self.cell_kv_delta_log.retain(|(p, _), _| *p != pos);
         self.block_delta_log.insert(
             pos,
             crate::net::protocol::BlockDelta {
@@ -77,60 +124,26 @@ impl World {
                 block_id,
                 water,
                 state,
+                // Re-read at the drain, like `state` (writes after the
+                // announce — the fill's KV — must reach the same delta).
+                cell_kv: Vec::new(),
             },
         );
     }
 
-    /// The cell's sparse per-cell block state as its wire [`CellState`], using
-    /// the save codec's per-entry encodings — the delta-sized twin of the maps
-    /// `Section::to_payload` ships whole. A cell carries at most one of these
-    /// (`clear_on_block_change` wipes them all on any block write); a model
-    /// cell folds its placed facing in.
-    ///
-    /// [`CellState`]: crate::net::protocol::CellState
+    /// The cell's opaque per-cell block state for the wire — the delta-sized
+    /// twin of the unified list `Section::to_payload` ships whole. Verbatim
+    /// store bytes; `None` when the cell carries no state.
     pub(super) fn cell_state_at(
         &self,
         wx: i32,
         wy: i32,
         wz: i32,
-    ) -> Option<crate::net::protocol::CellState> {
-        use crate::net::protocol::CellState;
+    ) -> Option<crate::block::ShapeState> {
         let (pos, lx, ly, lz) = Self::split_world(wx, wy, wz)?;
         let s = self.sections.get(&pos)?;
-        let cell = section_idx(lx, ly, lz) as u16;
-        // A model cell may carry offset, facing, or both (the BASE cell of an
-        // oriented multi-block records only its facing — offset [0,0,0] is
-        // implicit); either one makes it a ModelCell on the wire.
-        let model_off = s.model_cells().get(&cell).copied();
-        let model_facing = s.model_facings().get(&cell).copied();
-        if model_off.is_some() || model_facing.is_some() {
-            return Some(CellState::ModelCell {
-                off: model_off.unwrap_or([0, 0, 0]),
-                facing: model_facing.unwrap_or_default().to_u8(),
-            });
-        }
-        if let Some(d) = s.doors().get(&cell) {
-            return Some(CellState::Door(d.encode()));
-        }
-        if let Some(st) = s.stair_states().get(&cell) {
-            return Some(CellState::Stair(st.encode()));
-        }
-        if let Some(sl) = s.slab_states().get(&cell) {
-            return Some(CellState::Slab([
-                sl.encode_meta(),
-                sl.layers[0].0,
-                sl.layers[1].0,
-            ]));
-        }
-        if let Some(a) = s.log_axes().get(&cell) {
-            return Some(CellState::LogAxis(a.to_u8()));
-        }
-        if let Some(t) = s.torches().get(&cell) {
-            return Some(CellState::Torch(t.to_u8()));
-        }
-        if let Some(f) = s.entity_facings().get(&cell) {
-            return Some(CellState::Facing(f.to_u8()));
-        }
-        None
+        s.cell_states()
+            .get(&(section_idx(lx, ly, lz) as u16))
+            .copied()
     }
 }

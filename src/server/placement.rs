@@ -137,9 +137,8 @@ impl ServerGame {
             place_pos: p,
             replacing_in_place,
             player_facing,
-            stair_half: self.sessions[s].held_stair_half(),
-            slab_rotation: self.sessions[s].held_slab_rotation(),
-            log_axis: self.sessions[s].held_log_axis_for_facing(player_facing),
+            held_rotation: self.sessions[s].held_rotation_snapshot(),
+            held: self.sessions[s].selected_item(),
         };
         // A Layer-3 custom shape places through its OWN pack's WASM callback
         // (footprint + orientation + initial state are the shape's to decide),
@@ -157,9 +156,10 @@ impl ServerGame {
             .placement_plan(block, &inputs, &mut |cell, boxes| {
                 self.placement_occupied_by_body(s, cell, boxes)
             })?;
-        if !self.world.commit_placement(block, &plan, true) {
+        if !self.world.commit_placement(&plan, true) {
             return None;
         }
+        self.restore_carry(s, block, plan.anchor);
         self.sessions[s].player.inventory.decrement_selected();
         Some(plan.anchor)
     }
@@ -242,14 +242,10 @@ impl ServerGame {
                 mods,
                 ..
             } = self;
-            let n = |dx, dy, dz| {
-                mod_api::BlockId(world.physics_block(anchor.x + dx, anchor.y + dy, anchor.z + dz).id())
-            };
-            let input = mod_api::CellInput {
-                world_pos: anchor.to_array(),
-                block_id: mod_api::BlockId(write_block.id()),
-                neighbor_ids: [n(-1, 0, 0), n(1, 0, 0), n(0, -1, 0), n(0, 1, 0), n(0, 0, -1), n(0, 0, 1)],
-            };
+            // The hypothetical cell's bake input — the SAME builder the
+            // post-placement pump uses, so the gate and the pump bake from
+            // identical inputs by construction.
+            let input = world.bake_cell_input(anchor, write_block);
             let sess = &mut sessions[s];
             let mut ctx = SimCtx {
                 world,
@@ -270,18 +266,45 @@ impl ServerGame {
         if self.placement_occupied_by_body(s, anchor, boxes) {
             return Some(None);
         }
-        let plan = crate::world::placement::PlacementPlan {
+        // A stateless single-cell write of the plan's validated row (held or
+        // the sibling-row orientation override) — the same generic commit
+        // every family uses.
+        let plan = crate::world::placement::PlacementPlan::single(
             anchor,
-            cells: vec![anchor],
-            write: crate::world::placement::PlacementWrite::Custom {
-                block_id: write_block.id(),
-            },
-        };
-        if !self.world.commit_placement(block, &plan, true) {
+            write_block,
+            crate::block::ShapeState::NONE,
+        );
+        if !self.world.commit_placement(&plan, true) {
             return Some(None);
         }
+        self.restore_carry(s, block, anchor);
         self.sessions[s].player.inventory.decrement_selected();
         Some(Some(anchor))
+    }
+
+    /// Carry courier (place side): copy the held stack's instance-data
+    /// entries listed in the placed row's `petramond:carry` back into cell KV
+    /// at the anchor. Runs AFTER the commit (a block write wipes the cell's
+    /// KV) and BEFORE `decrement_selected` (the held stack still carries the
+    /// variant). A non-writable section refuses silently — the block stands,
+    /// its carried data is lost, same as any racing KV write.
+    fn restore_carry(&mut self, s: usize, block: Block, anchor: IVec3) {
+        let carry = block.carry();
+        if carry.is_empty() {
+            return;
+        }
+        let Some(held) = self.sessions[s].player.inventory.selected() else {
+            return;
+        };
+        let Some(map) = crate::item::variant::get(held.variant) else {
+            return;
+        };
+        for &key in carry {
+            if let Some(v) = map.get(key) {
+                self.world
+                    .cell_kv_set(anchor.x, anchor.y, anchor.z, key.to_owned(), v.clone());
+            }
+        }
     }
 
     /// Whether the placed collision boxes at `cell` overlap a gameplay body that

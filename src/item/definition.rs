@@ -49,14 +49,21 @@ pub(super) struct ItemDef {
     /// Which raycast this item's use click targets with (`"use_ray"`) — see
     /// [`super::UseRay`].
     pub use_ray: super::UseRay,
-    /// Game ticks this item burns as furnace fuel (`"fuel_burn_ticks"`;
-    /// `0` = not a fuel).
+    /// Game ticks this item burns as furnace fuel (`0` = not a fuel) —
+    /// compiled from the row's `petramond:fuel` data entry.
     pub fuel_burn_ticks: u16,
-    /// The mining tool this item acts as (`"tool": {kind, tier}`), or `None`.
+    /// The mining tool this item acts as, or `None` — compiled from the
+    /// row's `petramond:tool` data entry (`{kind, tier}`).
     pub tool: Option<Tool>,
     /// Edible-item data (`"food"` in `items.json`), or `None` for non-food.
     pub food: Option<super::FoodDef>,
     /// Dropped-entity environmental reaction (`"dropped_reaction"` in
     /// `items.json`), or `None` — see [`super::DroppedReaction`].
     pub dropped_reaction: Option<super::DroppedReaction>,
+    /// The row's namespaced consumer-data entries (`"data"` in `items.json`
+    /// plus every layer's `{"patch", "data"}` rows), sorted by key; each
+    /// value is the entry's canonical raw JSON text. The item interop
+    /// surface — read via [`super::ItemType::data_value`] and the
+    /// `ItemDataGet`/`ItemsWithData` host calls.
+    pub data: &'static [(&'static str, &'static str)],
 }

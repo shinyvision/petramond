@@ -12,7 +12,11 @@ fn shape_kinds_resolve_consistently_for_every_block() {
         let def = b.shape_kind().def();
         assert_eq!(b.shape_family(), def.family, "{b:?} LUT vs registry family");
         // The payload accessors are exactly the row's params.
-        assert_eq!(b.lowered_height(), def.params.lowered_height(), "{b:?} lowered");
+        assert_eq!(
+            b.lowered_height(),
+            def.params.lowered_height(),
+            "{b:?} lowered"
+        );
         assert_eq!(b.model_kind(), def.params.model_kind(), "{b:?} model");
         // Payloads exist iff the family carries them.
         assert_eq!(

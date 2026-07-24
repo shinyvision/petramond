@@ -89,11 +89,12 @@ pub(super) fn handle_tag_call(mod_id: &str, call: HostCall) -> HostRet {
             let Some(index) = live_mob(ctx, mob_id) else {
                 return HostRet::MobTags(None);
             };
-            HostRet::MobTags(ctx.world.mobs().mob_tags(index).map(|tags| {
-                tags.iter()
-                    .map(|(k, v)| (k.clone(), to_api(v)))
-                    .collect()
-            }))
+            HostRet::MobTags(
+                ctx.world
+                    .mobs()
+                    .mob_tags(index)
+                    .map(|tags| tags.iter().map(|(k, v)| (k.clone(), to_api(v))).collect()),
+            )
         }),
         HostCall::MobsWithTag { key, value } => sim_query(|ctx| {
             let want = value.map(from_api);

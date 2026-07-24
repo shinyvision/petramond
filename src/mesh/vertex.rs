@@ -171,15 +171,24 @@ pub(crate) fn pack_vertex(
 ///   0..6 block light (torches/furnaces, 0 dark..63 full)
 ///   | 6..16 cell-local uv ([`pack_cell_uv`], read only in [`UV_MODE_CELL_LOCAL`])
 ///   | 16..19 face-normal code ([`pack_normal_code`])
-///   | 19..32 RESERVED (zero)
+///   | 19 dyed flag ([`DYED_FLAG2`])
+///   | 20..32 RESERVED (zero)
 ///
 /// The block channel is 6 bits like the sky channel so the shader's `block_term`
-/// mirrors the sky curve exactly; the remaining 13 bits are reserved for future
+/// mirrors the sky curve exactly; the remaining 12 bits are reserved for future
 /// per-vertex data and MUST stay zero until a new owner is documented here.
 #[inline]
 pub(crate) fn pack_vertex2(block_light: u32) -> u32 {
     block_light & 0x3F
 }
+
+/// `Vertex::packed2` bit 19: the vertex samples its tile's DYE-BASE twin
+/// (desaturated, brightness-normalized — see `atlas`) instead of the base
+/// tile. Set by every emitter whose face carries a `petramond:tint` multiply,
+/// so the tint lands on a peak-white base and can both dye and whiten.
+/// `block.wgsl` resolves it as `layer + tile count` on the terrain texture
+/// array; `model3d.wgsl` as `v + 0.5` on the composed 2D atlas.
+pub(crate) const DYED_FLAG2: u32 = 1 << 19;
 
 /// Face-normal code, packed into `Vertex::packed2` bits 16..19: 0 = neutral (no
 /// world-space face direction — the shader keeps the classic `SHADES` shading),

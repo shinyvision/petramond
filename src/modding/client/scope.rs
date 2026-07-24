@@ -32,7 +32,10 @@ pub(in crate::modding) fn enter<R>(world: &World, f: impl FnOnce() -> R) -> R {
 
 /// Publish the acting player's snapshot for the duration of `f` (nested
 /// around the world scope by the prediction dispatch).
-pub(in crate::modding) fn enter_actor<R>(actor: mod_api::PlayerSnapshot, f: impl FnOnce() -> R) -> R {
+pub(in crate::modding) fn enter_actor<R>(
+    actor: mod_api::PlayerSnapshot,
+    f: impl FnOnce() -> R,
+) -> R {
     struct RestoreActor(Option<mod_api::PlayerSnapshot>);
     impl Drop for RestoreActor {
         fn drop(&mut self) {

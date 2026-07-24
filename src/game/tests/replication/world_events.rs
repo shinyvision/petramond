@@ -205,11 +205,13 @@ fn wire_break_for_a_presented_cell_is_suppressed_while_its_request_is_pending() 
                 pos: presented,
                 block_id: Block::Stone.0,
                 normal: None,
+                tint: None,
             },
             WorldEventMsg::BlockBroken {
                 pos: other,
                 block_id: Block::Stone.0,
                 normal: None,
+                tint: None,
             },
         ],
         ..Default::default()

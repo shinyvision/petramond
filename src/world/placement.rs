@@ -12,12 +12,10 @@
 //! body + replicated rows), so the rules take it as a closure over the cells
 //! and boxes the placed shape would occupy.
 
-use crate::block::{Aabb, Block, ShapeFamily};
-use crate::block_state::{LogAxis, StairHalf, StairState};
+use crate::block::{Aabb, Block, ShapeFamily, ShapeState};
 use crate::facing::Facing;
 use crate::mathh::IVec3;
 use crate::slab::{SlabRotation, SlabSlot};
-use crate::torch::TorchPlacement;
 
 use super::store::World;
 
@@ -35,45 +33,77 @@ pub(crate) struct PlaceInputs {
     /// (drops a replacing torch to the floor mount).
     pub replacing_in_place: bool,
     pub player_facing: Facing,
-    pub stair_half: StairHalf,
-    pub slab_rotation: SlabRotation,
-    /// The held log rotation already resolved against `player_facing`.
-    pub log_axis: LogAxis,
-}
-
-/// The per-shape state write a validated placement will commit.
-pub(crate) enum PlacementWrite {
-    /// A plain block id write (also panes: their connections carry no state).
-    Cube,
-    /// A directional-view cube (chest, furnace): block id + front facing.
-    DirectionalCube(Facing),
-    Torch(TorchPlacement),
-    /// A ladder-shaped wall panel: the facing selects the sibling BLOCK ROW
-    /// to commit (`Block::wall_panel_row` — facing is block identity, no
-    /// per-cell state).
-    WallPanel(Facing),
-    Log(LogAxis),
-    Stair(StairState),
-    Slab(SlabSlot),
-    Door(Facing),
-    Model(Facing),
-    /// A Layer-3 custom shape's placement (the shape's own WASM
-    /// `shape_placement_plan` decided orientation): a plain single-cell id write,
-    /// exactly like [`Cube`](Self::Cube). Placement is stateless — a custom cell
-    /// carries no per-cell KV, so there is no new section map to write.
-    /// `block_id` is the held row or the plan's validated sibling-row override
-    /// (orientation as block identity, e.g. a chain's axis row).
-    Custom { block_id: u8 },
+    /// The held block's raw placement-rotation state (the R-key cycle) plus
+    /// the held item it is armed on. GENERIC input-device state: each family
+    /// derives its own reading (a stair's half, a slab's row/column, a log's
+    /// axis) — the engine pre-derives nothing.
+    pub held_rotation: crate::server::player::HeldRotation,
+    pub held: Option<crate::item::ItemType>,
 }
 
 /// A validated placement: the cell it anchors on (the commit target — the
 /// clicked cell for a slab stack, the oriented base for a model, the lower
-/// cell for a door), every cell the write touches (the prediction ledger /
-/// rollback footprint), and the state write itself.
+/// cell for a door) and every `(cell, block, initial state)` the write lands.
+/// The commit is GENERIC: there is no per-family write vocabulary — a family
+/// expresses ANY placement as block ids plus opaque cell-state bytes, and the
+/// refine cascade resolves the neighbour-dependent remainder after the write.
+/// A family may write sibling block rows (a wall panel's facing row, a
+/// chain's axis row) or several cells (a door's pair, a model's footprint) —
+/// the engine never knows which family it is committing.
 pub(crate) struct PlacementPlan {
     pub anchor: IVec3,
-    pub cells: Vec<IVec3>,
-    pub write: PlacementWrite,
+    pub writes: Vec<(IVec3, Block, ShapeState)>,
+}
+
+impl PlacementPlan {
+    /// The common single-cell plan.
+    pub(crate) fn single(cell: IVec3, block: Block, state: ShapeState) -> Self {
+        Self {
+            anchor: cell,
+            writes: vec![(cell, block, state)],
+        }
+    }
+
+    /// Every cell the write touches — the prediction ledger / rollback
+    /// footprint.
+    pub(crate) fn cells(&self) -> impl Iterator<Item = IVec3> + '_ {
+        self.writes.iter().map(|&(c, _, _)| c)
+    }
+}
+
+/// A shape family's answer to a placement click — the SEAM that replaced the
+/// engine's per-family placement match. A family either fully owns the
+/// placement (a stair's facing+half, a slab's stack slot, a door's two cells)
+/// or defers to the generic single-cell path.
+pub(crate) enum PlacementOutcome {
+    /// The click cannot place here (no floor for a door, a slab cell already
+    /// full, a body in the way).
+    Refused,
+    /// This family has no bespoke placement: use the generic single-cell path
+    /// ([`World::general_placement_plan`]) — cube/log/directional blocks,
+    /// plants, and any family that never overrides.
+    General,
+    /// A fully-resolved placement.
+    Plan(PlacementPlan),
+}
+
+/// The placement seam every shape family implements. The engine holds NO
+/// per-family placement dispatch: `World::placement_plan` asks the cell's
+/// shape kind, and a mod family answers exactly as an engine one does.
+pub(crate) trait ShapePlacement: Send + Sync + 'static {
+    /// Resolve a placement of `block` for this click, or defer. Reads the
+    /// world for support/occupancy through `w`; `occupied` reports whether a
+    /// gameplay body overlaps the given boxes at a cell (side-specific — the
+    /// server's sessions+mobs, the client's predicted+replicated bodies).
+    fn placement_plan(
+        &self,
+        _w: &World,
+        _block: Block,
+        _inputs: &PlaceInputs,
+        _occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
+    ) -> PlacementOutcome {
+        PlacementOutcome::General
+    }
 }
 
 /// The SHARED validation of an accepted Layer-3 placement plan — evaluated
@@ -107,8 +137,8 @@ pub(crate) fn validate_custom_plan(
     // footprint is refused here — the host cannot yet atomically gate,
     // re-bake, or remove a multi-cell custom object, so shipping the wire
     // field is fine but honouring more than one cell is not.
-    let single_cell =
-        result.cells.is_empty() || (result.cells.len() == 1 && result.cells[0] == anchor.to_array());
+    let single_cell = result.cells.is_empty()
+        || (result.cells.len() == 1 && result.cells[0] == anchor.to_array());
     if !single_cell {
         return None;
     }
@@ -160,231 +190,68 @@ impl World {
         inputs: &PlaceInputs,
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> Option<PlacementPlan> {
-        let p = inputs.place_pos;
-        match block.shape_family() {
-            ShapeFamily::Slab => {
-                // A stack lands in the CLICKED cell when the clicked face
-                // fronts the half it would fill; otherwise a fresh layer
-                // builds into the adjacent cell.
-                let (target, slot) = match self.slab_stack_slot_in_hit(
-                    block,
-                    inputs.hit,
-                    inputs.slab_rotation,
-                    inputs.normal,
-                    inputs.player_facing,
-                ) {
-                    Some(slot) => (inputs.hit, slot),
-                    None => (
-                        p,
-                        crate::slab::slot_for_rotation(
-                            inputs.slab_rotation,
-                            inputs.normal,
-                            inputs.player_facing,
-                        ),
-                    ),
-                };
-                let target_block = Block::from_id(self.chunk_block(target.x, target.y, target.z));
-                if !crate::slab::is_slab(target_block) && !self.placement_cell_open(target) {
-                    return None;
-                }
-                let next = self.slab_layer_target_state(target, block, slot)?;
-                if occupied(target, crate::slab::boxes_for_state(next)) {
-                    return None;
-                }
-                Some(PlacementPlan {
-                    anchor: target,
-                    cells: vec![target],
-                    write: PlacementWrite::Slab(slot),
-                })
-            }
-            // A bbmodel block places its WHOLE footprint: every occupied cell
-            // must be loaded + replaceable AND clear of blocking bodies, or
-            // the placement fails as a unit. Multi-cell models, and models
-            // marked directionalView, are oriented from the player's facing
-            // through the model's own placement orientation; the anchor
-            // shifts to the oriented base. A `centered` model instead centres
-            // its footprint on the clicked cell (top layer — hanging fixtures
-            // grow downward) with the default facing, regardless of size.
-            ShapeFamily::Model => {
-                let kind = block.model_kind().expect("model family carries a model kind");
-                let centered = matches!(
-                    crate::block_model::def(kind).orientation,
-                    crate::block_model::PlacementOrientation::Centered
-                );
-                let oriented = !centered
-                    && (block.directional_view()
-                        || crate::block_model::instance(kind).cells.len() > 1);
-                let facing = if oriented {
-                    crate::block_model::def(kind)
-                        .orientation
-                        .apply(inputs.player_facing)
-                } else {
-                    crate::block_model::DEFAULT_MODEL_FACING
-                };
-                let base = if centered {
-                    crate::block_model::base_from_centered_anchor(p, kind)
-                } else if oriented {
-                    crate::block_model::base_from_front_left_anchor(p, kind, facing)
-                } else {
-                    p
-                };
-                if !self.model_footprint_clear_facing(base, kind, facing) {
-                    return None;
-                }
-                let footprint = crate::block_model::oriented_footprint_cells(base, kind, facing);
-                if footprint.iter().any(|&(c, off)| {
-                    occupied(
-                        c,
-                        crate::block_model::collision_boxes_oriented(kind, off, facing),
-                    )
-                }) {
-                    return None;
-                }
-                Some(PlacementPlan {
-                    anchor: base,
-                    cells: footprint.into_iter().map(|(c, _)| c).collect(),
-                    write: PlacementWrite::Model(facing),
-                })
-            }
-            // A door is a 2-tall thin block: both cells must be loaded +
-            // replaceable with a floor to stand on, and the closed slab must
-            // not trap a body. It sits on the edge nearest the placer.
-            ShapeFamily::Door => {
-                if !self.door_footprint_clear(p) {
-                    return None;
-                }
-                let upper = p + IVec3::new(0, 1, 0);
-                let closed = |top: bool| {
-                    crate::door::collision_boxes(crate::door::DoorState {
-                        facing: inputs.player_facing,
-                        open: false,
-                        top,
-                    })
-                };
-                if occupied(p, closed(false)) || occupied(upper, closed(true)) {
-                    return None;
-                }
-                Some(PlacementPlan {
-                    anchor: p,
-                    cells: vec![p, upper],
-                    write: PlacementWrite::Door(inputs.player_facing),
-                })
-            }
-            ShapeFamily::Stair => {
-                let state = StairState::new(inputs.player_facing, inputs.stair_half);
-                if !self.placement_cell_open(p) {
-                    return None;
-                }
-                if occupied(p, self.resolved_stair_boxes(p, state)) {
-                    return None;
-                }
-                Some(PlacementPlan {
-                    anchor: p,
-                    cells: vec![p],
-                    write: PlacementWrite::Stair(state),
-                })
-            }
-            // A pane occupies only its resolved post + arms, so the overlap
-            // gate tests those thin boxes. No stored state: connections are
-            // re-resolved from neighbours wherever the shape is read.
-            // A connection shape occupies only its resolved post + arms, so the
-            // overlap gate tests those thin boxes — from the BLOCK's own params,
-            // since the cell is still empty (a placed shape reads its own params
-            // via the collision facet). No stored state: connections re-resolve
-            // from neighbours wherever the shape is read.
-            ShapeFamily::Pane => {
-                if !self.placement_cell_open(p) {
-                    return None;
-                }
-                let c = block
-                    .shape_kind_def()
-                    .params
-                    .connection()
-                    .expect("pane carries connection params");
-                if occupied(p, self.connection_boxes_at(p, c, ShapeFamily::Pane)) {
-                    return None;
-                }
-                Some(PlacementPlan {
-                    anchor: p,
-                    cells: vec![p],
-                    write: PlacementWrite::Cube,
-                })
-            }
-            ShapeFamily::Fence => {
-                if !self.placement_cell_open(p) {
-                    return None;
-                }
-                let c = block
-                    .shape_kind_def()
-                    .params
-                    .connection()
-                    .expect("fence carries connection params");
-                if occupied(p, self.connection_boxes_at(p, c, ShapeFamily::Fence)) {
-                    return None;
-                }
-                Some(PlacementPlan {
-                    anchor: p,
-                    cells: vec![p],
-                    write: PlacementWrite::Cube,
-                })
-            }
-            _ => self.general_placement_plan(block, inputs, occupied),
+        // The family owns its placement — the engine holds no per-family
+        // placement dispatch. A family either resolves the plan, refuses, or
+        // defers to the generic single-cell path.
+        match block
+            .shape_kind_def()
+            .placement
+            .placement_plan(self, block, inputs, occupied)
+        {
+            PlacementOutcome::Plan(plan) => Some(plan),
+            PlacementOutcome::Refused => None,
+            PlacementOutcome::General => self.general_placement_plan(block, inputs, occupied),
         }
     }
 
-    /// The general (single-cell, non-shape-branched) arm of the ladder:
-    /// torch/ladder mount gates, the substrate gate, replaceability, and the
-    /// body gate against the block's own collision boxes.
-    fn general_placement_plan(
+    /// The generic single-cell placement path: the write a plain cube / log /
+    /// directional / plant block commits, gated by substrate, replaceability,
+    /// and body occupancy. Every family that does not override its placement
+    /// (and the torch / ladder families, which pre-gate then delegate here)
+    /// reaches this.
+    pub(crate) fn general_placement_plan(
         &self,
         block: Block,
         inputs: &PlaceInputs,
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> Option<PlacementPlan> {
-        let p = inputs.place_pos;
-        // A torch-shaped block only mounts on a floor or wall (never a
-        // ceiling) and needs a usable support face. When REPLACING a plant it
-        // always drops to the FLOOR of that cell — right-clicking grass from
-        // any angle stands a floor torch where the grass was. Keyed on the
-        // shape, not the engine block: a pack row declaring the torch shape
-        // gets the same mount rule.
-        let write = if block.shape_family() == ShapeFamily::Torch {
-            let tp = if inputs.replacing_in_place {
-                TorchPlacement::Floor
-            } else {
-                TorchPlacement::from_place_normal(inputs.normal)?
-            };
-            if !self.torch_supported_at(p, tp) {
-                return None;
-            }
-            PlacementWrite::Torch(tp)
-        } else if block.shape_family() == ShapeFamily::Ladder {
-            // A ladder-shaped block only mounts on a vertical wall face and
-            // needs a complete face behind its panel. The clicked face's
-            // normal names the panel front even when replacing a plant in
-            // place. The panel is real collision, so like every colliding
-            // shape it may not be placed inside a gameplay body.
-            let facing = Facing::from_horizontal_normal(inputs.normal)?;
-            if !self.ladder_supported_at(p, facing) {
-                return None;
-            }
-            let (t, h) = block.ladder_dims();
-            if occupied(p, crate::ladder::collision_boxes_dim(facing, t, h)) {
-                return None;
-            }
-            PlacementWrite::WallPanel(facing)
-        } else if block.is_log() {
-            PlacementWrite::Log(inputs.log_axis)
+        let state = if block.is_log() {
+            // The log's own reading of the held rotation; the default
+            // vertical axis stays stateless (the codec elides it).
+            let axis = inputs
+                .held_rotation
+                .log_axis_for_facing(inputs.held, inputs.player_facing);
+            crate::block::CellCodec::to_cell(&axis)
         } else if block.directional_view() {
-            PlacementWrite::DirectionalCube(inputs.player_facing)
+            crate::block::CellCodec::to_cell(&crate::block_state::EntityFront(inputs.player_facing))
         } else {
-            PlacementWrite::Cube
+            ShapeState::NONE
         };
+        self.finish_single_cell_placement(
+            block,
+            inputs.place_pos,
+            state,
+            block.collision_boxes(),
+            occupied,
+        )
+    }
+
+    /// The shared single-cell placement tail: substrate gate, replaceability,
+    /// and the body-occupancy gate against `boxes`. The generic path and the
+    /// torch / ladder families (which compute their own write + pre-gate)
+    /// finish here, so the gate rules live in exactly one place.
+    pub(crate) fn finish_single_cell_placement(
+        &self,
+        block: Block,
+        p: IVec3,
+        state: ShapeState,
+        boxes: &[Aabb],
+        occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
+    ) -> Option<PlacementPlan> {
         // Substrate gate: a block that roots in a particular ground places
         // only when the cell directly below is a ground it accepts. Blocks
-        // with no such rule accept anything; a torch is gated by its own
-        // support-face check above. Staying put once placed is the separate
-        // job of the FRAGILE behaviour.
+        // with no such rule accept anything. Staying put once placed is the
+        // separate job of the FRAGILE behaviour.
         let below = self.physics_block(p.x, p.y - 1, p.z);
         if !block.can_root_on(below) {
             return None;
@@ -399,76 +266,66 @@ impl World {
         // A block with no collision box (a torch, grass, a fern, …) traps
         // nothing, so it may be placed inside an entity; a block that WOULD
         // collide cannot be placed where its shape overlaps a gameplay body.
-        if occupied(p, block.collision_boxes()) {
+        if occupied(p, boxes) {
             return None;
         }
-        Some(PlacementPlan {
-            anchor: p,
-            cells: vec![p],
-            write,
-        })
+        Some(PlacementPlan::single(p, block, state))
     }
 
-    /// Commit a validated plan's world write — the same write on both sides,
-    /// which is what keeps a predicted ghost's mesh identical to the
-    /// authoritative delta that confirms it. `with_block_entities` is true on
-    /// the authoritative world (a placed chest/furnace gets its empty machine
-    /// state at once); the client replica passes false and records the front
-    /// facing only — container/furnace machine state is server-owned and
-    /// arrives with the delta.
+    /// Commit a validated plan's world write — ONE generic path for every
+    /// family, the same write on both sides, which is what keeps a predicted
+    /// ghost's mesh identical to the authoritative delta that confirms it.
+    /// Blocks + states land raw across the whole footprint first (the region
+    /// is consistent before any announce), then one region refresh relights,
+    /// remeshes, announces, and runs the refine cascade.
+    /// `with_block_entities` is true on the authoritative world (a placed
+    /// engine container fabricates its empty machine state at once); the
+    /// client replica passes false — container/furnace machine state is
+    /// server-owned and arrives with the delta. That fabrication is
+    /// block-ENTITY vocabulary (see `world::container`), not shape knowledge.
     pub(crate) fn commit_placement(
         &mut self,
-        block: Block,
         plan: &PlacementPlan,
         with_block_entities: bool,
     ) -> bool {
-        let a = plan.anchor;
-        match &plan.write {
-            PlacementWrite::Cube => self.set_block_world(a.x, a.y, a.z, block),
-            PlacementWrite::DirectionalCube(facing) => {
-                if !self.set_block_world(a.x, a.y, a.z, block) {
-                    return false;
-                }
-                if with_block_entities {
-                    // The authoritative side fabricates the block-entity for
-                    // the engine containers; other directional cubes keep no
-                    // stored facing (matching the pre-split server ladder).
-                    if block == Block::Furnace {
-                        self.insert_furnace(a, *facing);
-                    } else if block == Block::Chest {
-                        self.insert_chest(a, *facing);
-                    }
-                } else {
-                    self.insert_entity_facing(a, *facing);
-                }
-                true
-            }
-            PlacementWrite::Torch(tp) => {
-                if !self.set_block_world(a.x, a.y, a.z, block) {
-                    return false;
-                }
-                self.insert_torch(a, *tp);
-                true
-            }
-            PlacementWrite::WallPanel(facing) => {
-                // The facing IS the block row (the sapling-stage pattern):
-                // commit the sibling row whose panel fronts the clicked
-                // normal. One plain id write — nothing enters the
-                // entity-facing map, so a ladder never classifies its
-                // section as a block-entity section.
-                self.set_block_world(a.x, a.y, a.z, block.wall_panel_row(*facing))
-            }
-            PlacementWrite::Log(axis) => self.place_log(a, block, *axis),
-            PlacementWrite::Stair(state) => self.place_stair(a, block, *state),
-            PlacementWrite::Slab(slot) => self.place_slab_layer(a, block, *slot),
-            PlacementWrite::Door(facing) => self.place_door(a, block, *facing),
-            PlacementWrite::Model(facing) => self.place_model_block_facing(a, block, *facing),
-            PlacementWrite::Custom { block_id } => {
-                // Single-cell stateless custom placement: a plain id write at the
-                // anchor (re-dirties the cell's bake), exactly like Cube.
-                self.set_block_world(a.x, a.y, a.z, Block::from_id(*block_id))
+        for &(c, _, _) in &plan.writes {
+            if !self.materialize_section_at(c) {
+                return false;
             }
         }
+        let mut cells = Vec::with_capacity(plan.writes.len());
+        for &(c, b, state) in &plan.writes {
+            let Some((section, lx, ly, lz)) = self.chunk_at_world_mut(c.x, c.y, c.z) else {
+                return false;
+            };
+            section.set_block(lx, ly, lz, b);
+            if !state.is_empty() {
+                section.set_cell_state(lx, ly, lz, state);
+            }
+            section.modified = true;
+            cells.push(c);
+        }
+        for &(c, b, state) in &plan.writes {
+            // The WASM-bake fan-out + deep-visibility invalidation every
+            // block write owes (the cube path had them via `set_block_world`;
+            // the old per-family commits skipped them).
+            self.mark_custom_bake_edit(c.x, c.y, c.z, b);
+            if b.directional_view() {
+                self.note_block_entity_change(c);
+            }
+            if with_block_entities {
+                let facing =
+                    <crate::block_state::EntityFront as crate::block::CellView>::from_cell(state).0;
+                if b == Block::Furnace {
+                    self.insert_furnace(c, facing);
+                } else if b == Block::Chest {
+                    self.insert_chest(c, facing);
+                }
+            }
+        }
+        self.vis_dirty = true;
+        self.refresh_region(&cells);
+        true
     }
 }
 
@@ -476,7 +333,11 @@ impl World {
 mod tests {
     use super::*;
 
-    fn guest_plan(anchor: IVec3, cells: &[IVec3], block: Option<Block>) -> mod_api::ShapePlacementResult {
+    fn guest_plan(
+        anchor: IVec3,
+        cells: &[IVec3],
+        block: Option<Block>,
+    ) -> mod_api::ShapePlacementResult {
         mod_api::ShapePlacementResult {
             accepted: true,
             anchor: anchor.to_array(),
@@ -513,13 +374,13 @@ mod tests {
         // A wider footprint than the anchor cell is refused, as is a `cells`
         // list naming a different cell.
         let other = pp + IVec3::new(0, 1, 0);
-        assert!(validate_custom_plan(&guest_plan(pp, &[pp, other], None), held, kind, pp).is_none());
+        assert!(
+            validate_custom_plan(&guest_plan(pp, &[pp, other], None), held, kind, pp).is_none()
+        );
         assert!(validate_custom_plan(&guest_plan(pp, &[other], None), held, kind, pp).is_none());
         // The anchor is bounded to the click's neighbourhood (Chebyshev ≤ 2).
         let near = pp + IVec3::new(2, -2, 0);
-        assert!(
-            validate_custom_plan(&guest_plan(near, &[near], None), held, kind, pp).is_some()
-        );
+        assert!(validate_custom_plan(&guest_plan(near, &[near], None), held, kind, pp).is_some());
         let far = pp + IVec3::new(3, 0, 0);
         assert!(validate_custom_plan(&guest_plan(far, &[far], None), held, kind, pp).is_none());
     }

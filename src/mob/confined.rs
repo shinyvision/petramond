@@ -381,7 +381,10 @@ mod tests {
         assert!(!region.contains(IVec3::new(20, 64, 24)), "outside the wall");
         let mut sorted = region.cells.clone();
         sorted.sort_unstable_by_key(|c| (c.x, c.z, c.y));
-        assert_eq!(region.cells, sorted, "canonical order for deterministic picks");
+        assert_eq!(
+            region.cells, sorted,
+            "canonical order for deterministic picks"
+        );
     }
 
     #[test]

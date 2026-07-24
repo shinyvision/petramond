@@ -17,7 +17,7 @@ use super::face::Face;
 use super::plane::PlaneQuads;
 
 /// The cell-local half-cell box one slab layer slot occupies.
-pub(super) fn slot_box(slot: SlabSlot) -> ([f32; 3], [f32; 3]) {
+pub(crate) fn slot_box(slot: SlabSlot) -> ([f32; 3], [f32; 3]) {
     let mut min = [0.0f32; 3];
     let mut max = [1.0f32; 3];
     let axis = match slot.split {
@@ -50,7 +50,12 @@ pub(crate) fn layer_quads(state: SlabState, slot: SlabSlot, face: Face) -> Plane
                 let hidden = (0..2).contains(&nx)
                     && (0..2).contains(&ny)
                     && (0..2).contains(&nz)
-                    && crate::slab::half_cell_occupied(state, nx as usize, ny as usize, nz as usize);
+                    && crate::slab::half_cell_occupied(
+                        state,
+                        nx as usize,
+                        ny as usize,
+                        nz as usize,
+                    );
                 if hidden {
                     continue;
                 }

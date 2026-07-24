@@ -10,7 +10,7 @@ struct Uniforms {
     inv_view_proj: mat4x4<f32>,
     render_origin: vec4<f32>,
     // Animated-water flipbook: (still_base_tile, flow_base_tile, frame_count, _).
-    water_anim: vec4<u32>,
+    atlas_anim: vec4<u32>,
     // rgb = sim-owned sky light COLOUR (white = identity; mods tint the night
     // subtly blue). Applied to the SKY term only — torch light keeps its warmth.
     sky_color: vec4<f32>,
@@ -160,10 +160,10 @@ fn vs_common(pos: vec3<f32>, tint: vec3<f32>, packed: u32, packed2: u32) -> VsOu
     // Animate water: WaterStill / WaterFlow are the first of `frame_count`
     // consecutive flipbook tiles; advance base + frame over time.
     var atile = tile;
-    let frames = u.water_anim.z;
-    if (frames > 0u && (tile == u.water_anim.x || tile == u.water_anim.y)) {
+    let frames = u.atlas_anim.z;
+    if (frames > 0u && (tile == u.atlas_anim.x || tile == u.atlas_anim.y)) {
         var fps = WATER_STILL_FPS;
-        if (tile == u.water_anim.y) { fps = WATER_FLOW_FPS; }
+        if (tile == u.atlas_anim.y) { fps = WATER_FLOW_FPS; }
         atile = tile + (u32(floor(u.fog.z * fps)) % frames);
     }
 
@@ -172,7 +172,7 @@ fn vs_common(pos: vec3<f32>, tint: vec3<f32>, packed: u32, packed2: u32) -> VsOu
     // The flow tile carries shader-side data in `overlay_tile` (no grass overlay
     // on water): top faces rotate toward the flow heading; side faces crop to the
     // water height. Still-water tops/bottoms are not the flow tile, so untouched.
-    if (tile == u.water_anim.y) {
+    if (tile == u.atlas_anim.y) {
         if (shade_idx == 0u) {
             // TOP: rotate the tile about its centre by the flow heading so a cell
             // streaming into a corner points diagonally, not snapped to a cardinal.
@@ -215,19 +215,26 @@ fn vs_common(pos: vec3<f32>, tint: vec3<f32>, packed: u32, packed2: u32) -> VsOu
         // heading) and grass-side overlays reuse those bits for other data, so exclude
         // them (they are never greedy-merged by the mesher).
         let has_overlay = (packed >> 20u) & 0x1u;
-        if (has_overlay == 0u && tile != u.water_anim.x && tile != u.water_anim.y) {
+        if (has_overlay == 0u && tile != u.atlas_anim.x && tile != u.atlas_anim.y) {
             let gw = f32(((packed >> 12u) & 0xFu) + 1u);
             let gh = f32(((packed >> 16u) & 0xFu) + 1u);
             uv = corner_local(corner) * vec2<f32>(gw, gh);
         }
     }
     out.uv = uv;
-    out.layer = atile;
+    // Dyed vertices (packed2 bit 19) sample the tile's dye-base twin: the
+    // desaturated, brightness-normalized layers appended after the base set
+    // (offset = tile count, carried in atlas_anim.w). The overlay layer
+    // shifts with it so a dyed overlay-bearing face (a tinted grass side)
+    // resolves WHOLLY in the dye-base domain — one primitive, no half-dyed
+    // composite.
+    let dyed_off = ((packed2 >> 19u) & 0x1u) * u.atlas_anim.w;
+    out.layer = atile + dyed_off;
     // Overlay uv: only grass sides (full cube faces) composite an overlay, so the
     // plain corner uv is always correct here.
     out.uv2 = corner_local(corner);
     out.overlay = (packed >> 20u) & 0x1u;
-    out.overlay_layer = overlay_tile;
+    out.overlay_layer = overlay_tile + dyed_off;
 
     // Final vertex light = directional face shade * per-vertex AO *
     // max(sky term, block term), all smoothly interpolated so shadows and the
@@ -316,7 +323,7 @@ fn greedy_overlap_push(packed: u32, packed2: u32) -> vec3<f32> {
     let tile = packed & 0xFFu;
     let whf = (packed >> 12u) & 0xFFu;
     if (uv_mode != 0u || has_overlay == 1u || whf == 0u
-        || tile == u.water_anim.x || tile == u.water_anim.y) {
+        || tile == u.atlas_anim.x || tile == u.atlas_anim.y) {
         return vec3<f32>(0.0);
     }
     // corner_local -> {-1,+1} per tangent axis; du/dv map (u,v) quad space to
@@ -348,8 +355,13 @@ fn fs_opaque(in: VsOut) -> @location(0) vec4<f32> {
     if (in.overlay == 1u) {
         // Grass side: untinted dirt base + biome-tinted grayscale grass overlay,
         // composited by the overlay's alpha so the grass matches the tinted top.
+        // DYED faces (layer in the twin half, i.e. >= the tile count) tint the
+        // base too: the whole face is in the dye-base domain, so the one
+        // vertex tint (which folded the dye in at mesh time) applies uniformly.
         let ov = textureSample(atlas, samp, in.uv2, i32(in.overlay_layer));
-        rgb = mix(base.rgb, ov.rgb * in.tint, ov.a);
+        var b = base.rgb;
+        if (in.layer >= u.atlas_anim.w) { b = b * in.tint; }
+        rgb = mix(b, ov.rgb * in.tint, ov.a);
     } else {
         // Cutout: no asset authors texels in the 0.25..0.5 alpha band —
         // leaf fringes sit below 0.25, opaque art at 1.0, and TRANSLUCENT

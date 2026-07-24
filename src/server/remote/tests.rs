@@ -104,11 +104,10 @@ fn headless_disconnect_detaches_before_player_id_reuse() {
 
     let (first, _) = server.admit_remote_player("First", 16, &[]);
     assert_eq!(first.player_id, PlayerId(0));
-    assert!(server.world.riding_mut().mount(
-        0,
-        crate::mob::riding::MountTarget::Mob(77),
-        0
-    ));
+    assert!(server
+        .world
+        .riding_mut()
+        .mount(0, crate::mob::riding::MountTarget::Mob(77), 0));
     server.sessions[0].mount = server.world.riding().mount_of(0);
 
     assert_eq!(
@@ -265,7 +264,8 @@ fn full_lan_join_place_pause_gate_and_leave() {
         join.self_restore.inventory[0],
         Some(crate::net::protocol::ItemSlotWire {
             item_id: ItemType::Dirt.0,
-            count: 64
+            count: 64,
+            data: None,
         }),
         "the join restore carries the saved inventory"
     );

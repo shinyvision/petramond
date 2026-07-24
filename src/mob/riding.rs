@@ -303,6 +303,9 @@ mod tests {
             yaw: 1.0,
             pose: 1,
         });
-        assert!(r.mount(2, nearby, 0), "a distinct anchor is a distinct seat");
+        assert!(
+            r.mount(2, nearby, 0),
+            "a distinct anchor is a distinct seat"
+        );
     }
 }

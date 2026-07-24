@@ -293,11 +293,19 @@ mod tests {
     }
 
     fn stair_states(entries: &[(usize, Facing)]) -> ShapeStateSnapshot {
+        // The stair family's aperture answer, exactly as the gather packs it.
         let states = entries
             .iter()
-            .map(|&(idx, facing)| SparseCellState::Stair {
+            .map(|&(idx, facing)| SparseCellState {
                 idx,
-                state: StairState::new(facing, StairHalf::Bottom),
+                masks: crate::block::pack_light_apertures(|(dx, dy, dz)| {
+                    crate::stair::light_side_mask(
+                        StairState::new(facing, StairHalf::Bottom),
+                        dx,
+                        dy,
+                        dz,
+                    )
+                }),
             })
             .collect::<Vec<_>>();
         ShapeStateSnapshot::from_sparse(&states, NBHD_VOLUME)

@@ -20,6 +20,10 @@ pub(crate) struct CraftPlan {
     takes: Vec<(usize, u8)>,
     /// Returned items in deterministic ingredient-row order.
     remainders: Vec<(ItemType, u16)>,
+    /// Instance-data variant the crafted output carries: the recipe's
+    /// `inherit` keys copied from the consumed ingredients (`NONE` when the
+    /// recipe inherits nothing or no ingredient carries the keys).
+    output_variant: crate::item::VariantId,
 }
 
 #[derive(Copy, Clone)]
@@ -227,7 +231,7 @@ pub(crate) fn plan(recipe: &CraftingRecipe, inventory: &Inventory) -> Option<Cra
             }
         }
     }
-    let takes = per_slot
+    let takes: Vec<(usize, u8)> = per_slot
         .into_iter()
         .enumerate()
         .filter_map(|(slot, count)| {
@@ -237,7 +241,52 @@ pub(crate) fn plan(recipe: &CraftingRecipe, inventory: &Inventory) -> Option<Cra
             ))
         })
         .collect();
-    Some(CraftPlan { takes, remainders })
+
+    // Inherit pass: each inherited instance-data key is copied from the
+    // consumed ingredient stacks onto the output. Consumed stacks that carry
+    // the key must AGREE on its value — a disagreement (two wool colors in
+    // one craft) is "the recipe does not match", so the browser and the
+    // authoritative commit refuse identically.
+    let output_variant = if recipe.inherit().is_empty() {
+        crate::item::VariantId::NONE
+    } else {
+        let mut out = crate::item::variant::VariantMap::new();
+        for key in recipe.inherit() {
+            let mut chosen: Option<Vec<u8>> = None;
+            for &(slot, _) in &takes {
+                let Some(stack) = inventory.raw_slots()[slot] else {
+                    continue;
+                };
+                let Some(value) = crate::item::variant::value(stack.variant, key) else {
+                    continue;
+                };
+                match &chosen {
+                    None => chosen = Some(value),
+                    Some(prev) if *prev == value => {}
+                    Some(_) => return None,
+                }
+            }
+            if let Some(value) = chosen {
+                out.insert(key.clone(), value);
+            }
+        }
+        if out.is_empty() {
+            crate::item::VariantId::NONE
+        } else {
+            crate::item::variant::intern(&out).unwrap_or_else(|| {
+                log::warn!(
+                    "craft '{}': variant table full — output loses inherited data",
+                    recipe.key()
+                );
+                crate::item::VariantId::NONE
+            })
+        }
+    };
+    Some(CraftPlan {
+        takes,
+        remainders,
+        output_variant,
+    })
 }
 
 /// Whether one more full result of `recipe` fits `output`: the slot is empty,
@@ -269,6 +318,15 @@ pub fn craft(
         return Err(CraftFailure::OutputOccupied);
     }
     let plan = plan(recipe, inventory).ok_or(CraftFailure::MissingIngredients)?;
+    // A repeat-craft merges into the output stack, so the stack's variant
+    // must match what this craft would produce (a tint mismatch refuses like
+    // any other occupied output).
+    if output
+        .as_ref()
+        .is_some_and(|stack| stack.variant != plan.output_variant)
+    {
+        return Err(CraftFailure::OutputOccupied);
+    }
     if !inventory.consume_slots(&plan.takes) {
         return Err(CraftFailure::MissingIngredients);
     }
@@ -283,9 +341,10 @@ pub fn craft(
             count -= u16::from(put);
         }
     }
-    let result = recipe.result();
+    let mut result = recipe.result();
+    result.variant = plan.output_variant;
     *output = Some(match *output {
-        Some(stack) => ItemStack::new(stack.item, stack.count + result.count),
+        Some(stack) => stack.restack(stack.count + result.count),
         None => result,
     });
     Ok(overflow)
@@ -471,6 +530,54 @@ mod tests {
         assert_eq!(count(&inventory, ItemType::WoodenShovel), 1);
         assert_eq!(count(&inventory, ItemType::WaterBucket), 0);
         assert_eq!(count(&inventory, ItemType::WoodenBucket), 1);
+    }
+
+    #[test]
+    fn inherit_copies_agreeing_variants_and_refuses_disagreement() {
+        use crate::item::{variant, VariantId};
+        let tinted = |rgb: [u8; 3]| {
+            let mut m = variant::VariantMap::new();
+            m.insert("petramond:tint".into(), rgb.to_vec());
+            variant::intern(&m).unwrap()
+        };
+        let red = tinted([200, 10, 10]);
+        let mut recipe = recipe(vec![ingredient(
+            IngredientSelector::Item(ItemType::OakPlanks),
+            2,
+            IngredientUse::Consume,
+        )]);
+        recipe
+            .set_data(vec![(
+                "petramond:inherit".into(),
+                "[\"petramond:tint\"]".into(),
+            )])
+            .unwrap();
+
+        // Agreement: both consumed stacks carry the same tint — the output
+        // inherits it.
+        let mut inventory = Inventory::new();
+        inventory.add(ItemStack::with_variant(ItemType::OakPlanks, 1, red));
+        inventory.add(ItemStack::with_variant(ItemType::OakPlanks, 1, red));
+        let mut output = None;
+        craft(&recipe, &mut inventory, &mut output).expect("agreeing craft");
+        assert_eq!(output.unwrap().variant, red, "output inherits the tint");
+
+        // Disagreement: two colors in one craft = the recipe does not match.
+        let mut inventory = Inventory::new();
+        inventory.add(ItemStack::with_variant(ItemType::OakPlanks, 1, red));
+        inventory.add(ItemStack::with_variant(
+            ItemType::OakPlanks,
+            1,
+            tinted([10, 10, 200]),
+        ));
+        assert!(plan(&recipe, &inventory).is_none(), "disagreement refuses");
+
+        // Plain ingredients inherit nothing.
+        let mut inventory = Inventory::new();
+        inventory.add(ItemStack::new(ItemType::OakPlanks, 2));
+        let mut output = None;
+        craft(&recipe, &mut inventory, &mut output).expect("plain craft");
+        assert_eq!(output.unwrap().variant, VariantId::NONE);
     }
 
     #[test]

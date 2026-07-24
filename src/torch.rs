@@ -77,6 +77,21 @@ crate::wire_enum::wire_enum! {
     default Floor
 }
 
+impl crate::block::CellView for TorchPlacement {
+    fn owns(block: crate::block::Block) -> bool {
+        block.shape_family() == crate::block::ShapeFamily::Torch
+    }
+    fn from_cell(s: crate::block::ShapeState) -> Self {
+        // Absence decodes to the floor mount (the zero byte).
+        TorchPlacement::from_u8(s.byte(0))
+    }
+}
+impl crate::block::CellCodec for TorchPlacement {
+    fn to_cell(&self) -> crate::block::ShapeState {
+        crate::block::ShapeState::new(&[self.to_u8()])
+    }
+}
+
 impl TorchPlacement {
     /// The placement for a torch put against the face whose outward normal (pointing
     /// back toward the player, as [`RaycastHit`](crate::player) reports it) is

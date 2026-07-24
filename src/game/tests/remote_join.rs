@@ -14,6 +14,7 @@ fn join_data() -> Box<JoinData> {
     slots[2] = Some(ItemSlotWire {
         item_id: ItemType::Dirt.0,
         count: 12,
+        data: None,
     });
     Box::new(JoinData {
         player_id: PlayerId(3),

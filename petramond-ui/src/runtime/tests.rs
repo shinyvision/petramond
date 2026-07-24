@@ -309,8 +309,9 @@ fn ctrl_backspace_deletes_word_in_focused_input() {
         ctrl: true,
     }]);
     assert!(
-        ev.iter()
-            .any(|e| matches!(e, UiEvent::TextChanged { id, text } if id == "name" && text == "hi ")),
+        ev.iter().any(
+            |e| matches!(e, UiEvent::TextChanged { id, text } if id == "name" && text == "hi ")
+        ),
         "{ev:?}"
     );
 }
