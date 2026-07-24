@@ -28,12 +28,14 @@ pub(crate) use interaction::builtin_claims_click;
 pub use interaction::BlockInteraction;
 pub(crate) use load::validate_particle_emitter;
 pub use shape::BlockLightShape;
-pub use shape::{Aabb, ShapeBox, ShapeFace, ShapeRenderBox, CROP_PLANE_DROP, CROP_PLANE_INSET};
+pub use shape::{
+    Aabb, CellPart, ShapeBox, ShapeFace, ShapeRenderBox, CROP_PLANE_DROP, CROP_PLANE_INSET,
+};
 pub use shape_kind::ConnectionRule;
 pub use shape_kind::ItemRender;
 pub use shape_kind::{
     full_face_at, CellCodec, CellView, FullFace, ShapeCtx, ShapeNeighborhood, ShapeState,
-    SHAPE_STATE_MAX,
+    NO_PART_TINT, SHAPE_STATE_MAX,
 };
 pub use shape_kind::{BlockShapeKind, ShapeFamily, ShapeKindDef};
 // `pack_light_apertures` is the producer half of the aperture currency
@@ -260,11 +262,44 @@ impl<'de> Deserialize<'de> for Block {
 /// consumes it.
 pub const TINT_KV_KEY: &str = "petramond:tint";
 
+/// The separator between a cell-KV key and the [`CellPart`] it addresses.
+const PART_KEY_SEP: char = '#';
+
+/// The cell-KV key carrying `key` for sub-cell `part`.
+///
+/// Part 0 is the BARE key, so a single-part cell — every dyed cube, chair or
+/// stair — stores byte-identically to what it did before parts existed, and
+/// no save or protocol version moves. Higher parts suffix `#<n>`. Generic over
+/// the key: the suffix is a cell-KV ADDRESSING convention, not a tint one.
+pub fn part_kv_key(key: &str, part: CellPart) -> String {
+    if part == 0 {
+        key.to_owned()
+    } else {
+        format!("{key}{PART_KEY_SEP}{part}")
+    }
+}
+
+/// Split a stored cell-KV key back into its base key and the part it
+/// addresses. A key that does not end in a valid NON-ZERO part suffix is
+/// itself the base key at part 0 — including a literal `…#0`, which is not
+/// the canonical spelling ([`part_kv_key`] never emits it), so two different
+/// byte strings can never mean the same address.
+pub fn split_part_kv_key(stored: &str) -> (&str, CellPart) {
+    match stored.rsplit_once(PART_KEY_SEP) {
+        Some((base, suffix)) => match suffix.parse::<CellPart>() {
+            Ok(part) if part != 0 => (base, part),
+            _ => (stored, 0),
+        },
+        None => (stored, 0),
+    }
+}
+
 /// Whether a cell-KV write/removal of `key` changes what the ORDINARY mesher
 /// bakes, so the touched section must re-mesh. The one place that knows which
 /// engine-consumed presentation keys feed the mesh — every KV write path
-/// (host, replica ingest) asks this instead of naming keys itself.
+/// (host, replica ingest) asks this instead of naming keys itself. Any PART's
+/// tint feeds the mesh, so the base key is what is compared.
 #[inline]
 pub fn kv_key_affects_mesh(key: &str) -> bool {
-    key == TINT_KV_KEY
+    split_part_kv_key(key).0 == TINT_KV_KEY
 }

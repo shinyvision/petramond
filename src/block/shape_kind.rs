@@ -32,7 +32,7 @@ mod neighborhood;
 pub use custom::{CustomLight, CustomShapeDef};
 pub use facets::{
     full_face_at, light_aperture_face, pack_light_apertures, FullFace, ItemRender, ShapeCtx,
-    ShapeRender, ShapeSim, LIGHT_APERTURES_OPEN,
+    ShapeRender, ShapeSim, LIGHT_APERTURES_OPEN, NO_PART_TINT,
 };
 
 pub use neighborhood::{CellCodec, CellView, ShapeNeighborhood, ShapeState, SHAPE_STATE_MAX};

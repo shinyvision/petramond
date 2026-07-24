@@ -134,6 +134,7 @@ pub(crate) fn push_mesh_boxes(
             faces,
             ao_strength: 1.0,
             dyed: false,
+            part: 0,
         });
     });
 }

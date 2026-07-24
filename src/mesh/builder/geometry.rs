@@ -57,11 +57,22 @@ pub(super) fn section_geometry(
     // a multiply into the vertex tint lane. Sparse — empty on almost every
     // section, so the fast path is one `is_empty` test.
     let cell_tints = section.cell_tint_map();
-    let kv_tint = |cell: usize, tint: [f32; 3]| -> [f32; 3] {
+    // One cell's tint for one of its parts. A single-part cell (every cube,
+    // stair, chair — anything but a stacked slab) carries only part 0, so the
+    // scan ends on the first entry.
+    let part_tint = |cell: usize, part: crate::block::CellPart| -> Option<[f32; 3]> {
         if cell_tints.is_empty() {
-            return tint;
+            return None;
         }
-        match cell_tints.get(&(cell as u16)) {
+        cell_tints
+            .get(&(cell as u16))?
+            .iter()
+            .find(|&&(p, _)| p == part)
+            .map(|&(_, m)| m)
+    };
+    // The cube path is whole-cell by nature: it draws part 0's tint.
+    let kv_tint = |cell: usize, tint: [f32; 3]| -> [f32; 3] {
+        match part_tint(cell, 0) {
             Some(m) => [tint[0] * m[0], tint[1] * m[1], tint[2] * m[2]],
             None => tint,
         }
@@ -69,20 +80,22 @@ pub(super) fn section_geometry(
     // Whether the cell carries a tint at all — tinted cells set the vertex
     // dyed flag so faces sample their tiles' dye-base twins and the multiply
     // lands on a desaturated, peak-white base.
-    let cell_tinted =
-        |cell: usize| !cell_tints.is_empty() && cell_tints.contains_key(&(cell as u16));
+    let cell_tinted = |cell: usize| part_tint(cell, 0).is_some();
     // The ONE place a cell's `petramond:tint` reaches box geometry: multiply
     // it into every emitted face AND mark the box dyed (so the multiply lands
     // on the tile's dye-base twin). Every box family gets both halves by
     // construction. Threading the multiply through each family's own tint
     // closure instead left four of six families flagging the dye base without
     // ever multiplying, which rendered them whitened and untinted.
+    //
+    // Each box takes ITS OWN part's tint, so one cell can hold a dyed layer
+    // and a plain one (a white slab under an orange one) and each draws right.
     let apply_cell_tint = |boxes: &mut Vec<ShapeBox>, cell: usize| {
         if cell_tints.is_empty() {
             return;
         }
-        if let Some(&m) = cell_tints.get(&(cell as u16)) {
-            for b in boxes.iter_mut() {
+        for b in boxes.iter_mut() {
+            if let Some(m) = part_tint(cell, b.part) {
                 b.apply_tint(m);
             }
         }
@@ -181,6 +194,7 @@ pub(super) fn section_geometry(
                 block: nb_block,
                 params: &k.params,
                 tint_for: &tint_for,
+                part_tint: crate::block::NO_PART_TINT,
             },
             &mut boxes,
         );
@@ -216,6 +230,7 @@ pub(super) fn section_geometry(
                 block: b,
                 params: &k.params,
                 tint_for: &tint_for,
+                part_tint: crate::block::NO_PART_TINT,
             },
             lo,
             hi,
@@ -343,12 +358,14 @@ pub(super) fn section_geometry(
                 let mut slab_as_cube = false;
                 if kind.resolves_to_boxes {
                     let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
+                    let cell_part_tint = |part| part_tint(section_idx(lx, ly, lz), part);
                     let ctx = crate::block::ShapeCtx {
                         nb: &nbh,
                         pos: IVec3::new(wx, wy, wz),
                         block,
                         params: &kind.params,
                         tint_for: &tint_for,
+                        part_tint: &cell_part_tint,
                     };
                     // A family whose resolved form IS the material's full cube
                     // (a uniform full slab stack) falls to the cube path so it

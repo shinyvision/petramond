@@ -58,6 +58,20 @@ pub struct ShapeRenderBox {
     pub dyed: bool,
 }
 
+/// A cell's sub-cell PART id — the addressing unit for per-part cell data
+/// (today `petramond:tint`, tomorrow whatever a consumer keys per part).
+///
+/// Part `0` is the WHOLE-CELL part: every family but the stacking slab has
+/// exactly one, leaves this `0`, and addresses the bare un-suffixed KV keys,
+/// so nothing about an existing save or a dyed cube changes.
+///
+/// A family that DOES have several parts owns the numbering and must use the
+/// same numbers in [`super::ShapeRender::boxes`] ([`ShapeBox::part`]),
+/// [`super::ShapeSim::parts`], and its placement plan's writes. That agreement
+/// is the whole trick: it lets a courier address "the part this click filled"
+/// or "the part this drop came from" while knowing nothing about the family.
+pub type CellPart = u8;
+
 /// How one face of a [`ShapeBox`] is textured.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ShapeFace {
@@ -97,6 +111,10 @@ pub struct ShapeBox {
     /// `petramond:tint` multiply applies, so the tint lands on a peak-white
     /// base and can whiten as well as dye.
     pub dyed: bool,
+    /// Which sub-cell [`CellPart`] this box belongs to, so the mesher's tint
+    /// post-pass can give each part its own multiply. `0` for every
+    /// single-part family.
+    pub part: CellPart,
 }
 
 impl ShapeBox {
@@ -119,12 +137,21 @@ impl ShapeBox {
             faces,
             ao_strength: 1.0,
             dyed: false,
+            part: 0,
         }
     }
 
     /// The same box with its AO darkening scaled (`1.0` = default).
     pub fn with_ao_strength(mut self, strength: f32) -> Self {
         self.ao_strength = strength;
+        self
+    }
+
+    /// The same box assigned to a sub-cell [`CellPart`] — a multi-part family
+    /// tags each box with the part it draws so the tint post-pass can address
+    /// them separately.
+    pub fn with_part(mut self, part: CellPart) -> Self {
+        self.part = part;
         self
     }
 

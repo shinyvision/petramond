@@ -1,9 +1,8 @@
 //! Stackable slabs at the world level: position-aware state lookup, collision,
-//! placement, and drop material recovery.
+//! and placement.
 
 use crate::block::Block;
 use crate::block_state::SlabState;
-use crate::item::ItemStack;
 use crate::mathh::IVec3;
 use crate::slab::SlabSlot;
 
@@ -21,11 +20,6 @@ impl World {
             }
             None => SlabState::EMPTY,
         }
-    }
-
-    #[inline]
-    pub fn slab_drop_stacks_at(&self, pos: IVec3) -> Vec<ItemStack> {
-        crate::slab::drop_stacks(self.slab_state_at(pos.x, pos.y, pos.z))
     }
 
     #[inline]

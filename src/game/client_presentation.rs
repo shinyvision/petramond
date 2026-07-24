@@ -129,9 +129,7 @@ impl Game {
         let block = Block::from_id(world.chunk_block(h.block.x, h.block.y, h.block.z));
         let cell = h.block + h.normal;
         let (sky, blk, warm) = world.dynamic_light_at_world(cell.x, cell.y, cell.z);
-        let kv_tint = world
-            .cell_kv_get(h.block.x, h.block.y, h.block.z, crate::block::TINT_KV_KEY)
-            .and_then(|v| <[u8; 3]>::try_from(v).ok());
+        let kv_tint = world.cell_burst_tint(h.block);
         match block.model_kind() {
             Some(kind) => self
                 .particles

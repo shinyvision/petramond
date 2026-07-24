@@ -386,8 +386,9 @@ fn slabs_stack_horizontally_with_mixed_materials() {
     let state = game.server.world.slab_state_at(p.x, p.y, p.z);
     assert_eq!(state.split, SlabSplit::Y);
     assert_eq!(state.layers, [Block::DirtSlab, Block::CobblestoneSlab]);
+    let parts = game.server.world.cell_parts(p).expect("a slab cell is composed");
     assert_eq!(
-        game.server.world.slab_drop_stacks_at(p),
+        game.server.part_drop_stacks(p, &parts),
         vec![
             ItemStack::new(ItemType::DirtSlab, 1),
             ItemStack::new(ItemType::CobblestoneSlab, 1),
@@ -705,4 +706,111 @@ fn furnace_front_faces_the_player_on_placement() {
         facing_from_forward(Vec3::new(0.2, -0.9, 0.95)),
         Facing::North
     );
+}
+
+/// Stacking a second slab into a cell must not take the sitting layer's
+/// per-cell data with it.
+///
+/// A block write clears the cell's whole KV map, which is right when the cell
+/// is replaced and wrong here: the placement AUGMENTS the cell, so the layer
+/// already sitting there keeps its own data (its dye) while the newcomer's
+/// lands on the part it filled. Without this a white slab under an orange one
+/// came out orange on both halves — and dropped two orange slabs.
+#[test]
+fn stacking_a_slab_keeps_the_sitting_layers_data() {
+    use crate::block::{part_kv_key, TINT_KV_KEY};
+
+    let mut game = game_on_empty_chunk();
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+    let p = IVec3::new(4, 64, 4);
+
+    give(&mut game, ItemType::WoolSlab, 1);
+    game.server.sessions[0].look = Some(hit(p - IVec3::Y, IVec3::Y));
+    assert!(game.server.try_place_for_test(), "first slab places");
+
+    // Dye the sitting bottom layer (what the carry courier would have written).
+    let white = vec![255u8, 255, 255];
+    assert!(game
+        .server
+        .world
+        .cell_kv_set(p.x, p.y, p.z, TINT_KV_KEY.to_owned(), white.clone()));
+
+    give(&mut game, ItemType::WoolSlab, 1);
+    game.server.sessions[0].look = Some(hit(p, IVec3::Y));
+    assert!(game.server.try_place_for_test(), "second slab stacks");
+
+    let state = game.server.world.slab_state_at(p.x, p.y, p.z);
+    assert_eq!(state.layers, [Block::WoolSlab, Block::WoolSlab]);
+    assert_eq!(
+        game.server
+            .world
+            .cell_kv_get(p.x, p.y, p.z, TINT_KV_KEY)
+            .map(<[u8]>::to_vec),
+        Some(white),
+        "the bottom layer's data must survive the stacking write"
+    );
+    // The newcomer carried nothing, so the layer it filled stays plain — the
+    // two layers are addressed independently.
+    assert_eq!(
+        game.server
+            .world
+            .cell_kv_get(p.x, p.y, p.z, &part_kv_key(TINT_KV_KEY, 1)),
+        None,
+        "the newcomer's part must not inherit the sitting layer's data"
+    );
+}
+
+/// The slab family's part numbering has to be ONE numbering: the boxes the
+/// mesher tints, the parts the drop courier reads, and the part a placement
+/// claims all address the same layer. They are three separate impls, so
+/// nothing but a test stops them drifting — and drift here does not crash, it
+/// just quietly paints or drops the wrong layer.
+#[test]
+fn slab_parts_and_boxes_agree_on_the_layer_numbering() {
+    use crate::block::{ShapeCtx, NO_PART_TINT};
+
+    let mut game = game_on_empty_chunk();
+    let p = IVec3::new(4, 64, 4);
+    let world = &mut game.server.world;
+    for (index, block) in [(0, Block::DirtSlab), (1, Block::CobblestoneSlab)] {
+        assert!(world.place_slab_layer(
+            p,
+            block,
+            crate::slab::SlabSlot {
+                split: SlabSplit::Y,
+                index,
+            },
+        ));
+    }
+
+    let block = Block::from_id(world.chunk_block(p.x, p.y, p.z));
+    let k = block.shape_kind_def();
+    let parts = world.cell_parts(p).expect("a slab cell is composed");
+    assert_eq!(
+        parts,
+        vec![(0, Block::DirtSlab), (1, Block::CobblestoneSlab)],
+        "slot index IS the part number"
+    );
+
+    let tint_for = |_: crate::atlas::Tile| [1.0f32; 3];
+    let mut boxes = vec![];
+    k.render.boxes(
+        &ShapeCtx {
+            nb: world,
+            pos: p,
+            block,
+            params: &k.params,
+            tint_for: &tint_for,
+            part_tint: NO_PART_TINT,
+        },
+        &mut boxes,
+    );
+    assert_eq!(boxes.len(), parts.len(), "one box per part");
+    for (b, &(part, _)) in boxes.iter().zip(parts.iter()) {
+        assert_eq!(b.part, part, "box parts must match the family's part list");
+        // Part 0 is the lower half of the split axis, part 1 the upper — the
+        // ordering the placement plan and the mesher both assume.
+        let lower = b.aabb.min[1] < 0.25;
+        assert_eq!(lower, part == 0, "part {part} sits in the wrong half");
+    }
 }

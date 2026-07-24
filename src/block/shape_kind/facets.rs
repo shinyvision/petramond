@@ -16,7 +16,7 @@ use crate::atlas::Tile;
 use crate::block_model::BlockModelKind;
 use crate::mathh::IVec3;
 
-use super::super::{Aabb, Block, ShapeBox};
+use super::super::{Aabb, Block, CellPart, ShapeBox};
 use super::neighborhood::{ShapeNeighborhood, ShapeState};
 use super::ShapeParams;
 
@@ -40,7 +40,20 @@ pub struct ShapeCtx<'a> {
     /// rides the shared `ShapeBox::apply_tint` post-pass so no family can
     /// forget it.
     pub tint_for: &'a dyn Fn(crate::atlas::Tile) -> [f32; 3],
+    /// This cell's stored tint for one of its [`CellPart`]s, if any — supplied
+    /// by the caller because it comes from cell KV, which is not on the shape
+    /// seam. A family does NOT use this to colour its boxes (the post-pass
+    /// owns the multiply); it is here so a family that has SEVERAL parts can
+    /// answer questions only it can, like whether its parts agree closely
+    /// enough to mesh as one cube. Answers `None` on the geometry-only probe
+    /// paths (out-of-cell AO / occupancy), which never look at colour.
+    pub part_tint: &'a dyn Fn(CellPart) -> Option<[f32; 3]>,
 }
+
+/// The `part_tint` a geometry-only [`ShapeCtx`] carries: no cell is coloured
+/// on the AO / occupancy probe paths, and reaching a neighbour section's KV
+/// through the mesh pad is not possible anyway.
+pub const NO_PART_TINT: &dyn Fn(CellPart) -> Option<[f32; 3]> = &|_| None;
 
 /// A family's answer to [`ShapeSim::full_face`]: the face is complete, and it
 /// is (or is not) the face of a full cube. Material rules (opaque-only joins,
@@ -143,6 +156,27 @@ pub trait ShapeSim: Send + Sync + 'static {
         _block: Block,
         _dir: IVec3,
     ) -> Option<FullFace> {
+        None
+    }
+
+    /// The sub-cell [`CellPart`]s this cell is made of, each with the block
+    /// that part is made OF — the cross-family "what is in this cell" question
+    /// the couriers ask so they can address per-part data (a layer's tint) and
+    /// drop each part as its own material.
+    ///
+    /// `None` — the default, and the answer of every family but the stacking
+    /// slab — means the cell is ONE whole part of its own block: the couriers
+    /// use the bare KV keys and the drop is the row's ordinary drop spec.
+    /// `Some(list)` means the cell is COMPOSED, and each part drops the item
+    /// of its own block instead. The numbering must match the family's
+    /// [`ShapeBox::part`]s and its placement writes (see [`CellPart`]).
+    fn parts(
+        &self,
+        _params: &ShapeParams,
+        _nb: &dyn ShapeNeighborhood,
+        _pos: IVec3,
+        _block: Block,
+    ) -> Option<Vec<(CellPart, Block)>> {
         None
     }
 

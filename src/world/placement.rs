@@ -12,7 +12,7 @@
 //! body + replicated rows), so the rules take it as a closure over the cells
 //! and boxes the placed shape would occupy.
 
-use crate::block::{Aabb, Block, ShapeFamily, ShapeState};
+use crate::block::{Aabb, Block, CellPart, ShapeFamily, ShapeState};
 use crate::facing::Facing;
 use crate::mathh::IVec3;
 use crate::slab::{SlabRotation, SlabSlot};
@@ -41,9 +41,32 @@ pub(crate) struct PlaceInputs {
     pub held: Option<crate::item::ItemType>,
 }
 
+/// One cell a [`PlacementPlan`] writes: the block row and the opaque initial
+/// cell-state bytes, plus whether the write claims the WHOLE cell or just one
+/// of its parts.
+#[derive(Copy, Clone)]
+pub(crate) struct CellWrite {
+    pub cell: IVec3,
+    pub block: Block,
+    pub state: ShapeState,
+    /// The sub-cell [`CellPart`] this write claims — where the carry courier
+    /// lands the placed stack's data. `0` for every single-part family, which
+    /// is the bare, un-suffixed KV address.
+    pub part: CellPart,
+    /// Whether this write AUGMENTS the cell (adds a part to one that already
+    /// holds others) rather than replacing it whole.
+    ///
+    /// A block write clears the cell's whole KV map, which is exactly right
+    /// when the cell is being replaced — air holds no data — and wrong when a
+    /// second slab stacks into a dyed one, where it would silently eat the
+    /// sibling layer's colour. An augmenting write carries the map across;
+    /// the courier then overwrites only `part`'s own keys.
+    pub augments: bool,
+}
+
 /// A validated placement: the cell it anchors on (the commit target — the
 /// clicked cell for a slab stack, the oriented base for a model, the lower
-/// cell for a door) and every `(cell, block, initial state)` the write lands.
+/// cell for a door) and every [`CellWrite`] the write lands.
 /// The commit is GENERIC: there is no per-family write vocabulary — a family
 /// expresses ANY placement as block ids plus opaque cell-state bytes, and the
 /// refine cascade resolves the neighbour-dependent remainder after the write.
@@ -52,22 +75,66 @@ pub(crate) struct PlaceInputs {
 /// the engine never knows which family it is committing.
 pub(crate) struct PlacementPlan {
     pub anchor: IVec3,
-    pub writes: Vec<(IVec3, Block, ShapeState)>,
+    pub writes: Vec<CellWrite>,
 }
 
 impl PlacementPlan {
-    /// The common single-cell plan.
+    /// The common single-cell plan: a whole-cell write of the cell's one part.
     pub(crate) fn single(cell: IVec3, block: Block, state: ShapeState) -> Self {
         Self {
             anchor: cell,
-            writes: vec![(cell, block, state)],
+            writes: vec![Self::whole(cell, block, state)],
+        }
+    }
+
+    /// A single-cell plan whose write claims one sub-cell `part`. `augments`
+    /// is true when the cell already holds OTHER parts whose data must survive
+    /// the block write (stacking a second slab layer into a dyed cell), false
+    /// for a fresh cell that happens to fill a non-zero part (a lone top slab
+    /// hung under a ceiling).
+    pub(crate) fn single_part(
+        cell: IVec3,
+        block: Block,
+        state: ShapeState,
+        part: CellPart,
+        augments: bool,
+    ) -> Self {
+        Self {
+            anchor: cell,
+            writes: vec![CellWrite {
+                cell,
+                block,
+                state,
+                part,
+                augments,
+            }],
+        }
+    }
+
+    /// A whole-cell write of `block` at `cell`.
+    pub(crate) fn whole(cell: IVec3, block: Block, state: ShapeState) -> CellWrite {
+        CellWrite {
+            cell,
+            block,
+            state,
+            part: 0,
+            augments: false,
         }
     }
 
     /// Every cell the write touches — the prediction ledger / rollback
     /// footprint.
     pub(crate) fn cells(&self) -> impl Iterator<Item = IVec3> + '_ {
-        self.writes.iter().map(|&(c, _, _)| c)
+        self.writes.iter().map(|w| w.cell)
+    }
+
+    /// The part the ANCHOR write claims — what the carry courier restores
+    /// into.
+    pub(crate) fn anchor_part(&self) -> CellPart {
+        self.writes
+            .iter()
+            .find(|w| w.cell == self.anchor)
+            .map_or(0, |w| w.part)
     }
 }
 
@@ -288,24 +355,45 @@ impl World {
         plan: &PlacementPlan,
         with_block_entities: bool,
     ) -> bool {
-        for &(c, _, _) in &plan.writes {
-            if !self.materialize_section_at(c) {
+        for w in &plan.writes {
+            if !self.materialize_section_at(w.cell) {
                 return false;
             }
         }
         let mut cells = Vec::with_capacity(plan.writes.len());
-        for &(c, b, state) in &plan.writes {
+        for &CellWrite {
+            cell: c,
+            block: b,
+            state,
+            augments,
+            ..
+        } in &plan.writes
+        {
             let Some((section, lx, ly, lz)) = self.chunk_at_world_mut(c.x, c.y, c.z) else {
                 return false;
             };
+            // An AUGMENTING write adds a part to a cell that already holds
+            // others, so their data has to survive `set_block`'s wholesale KV
+            // clear (see `CellWrite::augments`). Detach + re-attach around the
+            // write; the courier then overwrites just the claimed part's keys.
+            let kept = augments.then(|| section.cell_kv_take(lx, ly, lz)).flatten();
             section.set_block(lx, ly, lz, b);
+            if let Some(map) = kept {
+                section.cell_kv_restore(lx, ly, lz, map);
+            }
             if !state.is_empty() {
                 section.set_cell_state(lx, ly, lz, state);
             }
             section.modified = true;
             cells.push(c);
         }
-        for &(c, b, state) in &plan.writes {
+        for &CellWrite {
+            cell: c,
+            block: b,
+            state,
+            ..
+        } in &plan.writes
+        {
             // The WASM-bake fan-out + deep-visibility invalidation every
             // block write owes (the cube path had them via `set_block_world`;
             // the old per-family commits skipped them).

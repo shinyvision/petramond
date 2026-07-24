@@ -95,10 +95,7 @@ impl Game {
         // still come back over the wire.
         // Read the cell's tint BEFORE the clear wipes its KV — the local
         // burst event needs it (same capture the server does).
-        let broken_tint = self
-            .replica
-            .cell_kv_get(pos.x, pos.y, pos.z, crate::block::TINT_KV_KEY)
-            .and_then(|v| <[u8; 3]>::try_from(v).ok());
+        let broken_tint = self.replica.cell_burst_tint(pos);
         let (request_id, predicted) = if self.prediction.can_predict() {
             match self.replica.clear_broken_block(pos) {
                 Some((block, cells)) => {
@@ -274,7 +271,12 @@ impl Game {
     /// instead of flashing plain until the server's KV delta lands (which
     /// overwrites this with the authoritative value; a deny-rollback's block
     /// restore wipes it like any block write).
-    fn predict_restore_carry(&mut self, block: crate::block::Block, anchor: IVec3) {
+    fn predict_restore_carry(
+        &mut self,
+        block: crate::block::Block,
+        anchor: IVec3,
+        part: crate::block::CellPart,
+    ) {
         let carry = block.carry();
         if carry.is_empty() {
             return;
@@ -287,8 +289,13 @@ impl Game {
         };
         for &key in carry {
             if let Some(v) = map.get(key) {
-                self.replica
-                    .cell_kv_set(anchor.x, anchor.y, anchor.z, key.to_owned(), v.clone());
+                self.replica.cell_kv_set(
+                    anchor.x,
+                    anchor.y,
+                    anchor.z,
+                    crate::block::part_kv_key(key, part),
+                    v.clone(),
+                );
             }
         }
     }
@@ -469,7 +476,7 @@ impl Game {
         // the previous block ids, which wipes each cell's sparse state, so a
         // stale predicted state cannot leak.
         let _ = self.replica.commit_placement(&plan, false);
-        self.predict_restore_carry(block, place_pos);
+        self.predict_restore_carry(block, place_pos, plan.anchor_part());
         // Same synchronous prediction presentation as breaking: exact local
         // light and geometry are installed before the ghost is exposed.
         self.replica.present_predicted_edit(&previous_cells);
@@ -586,7 +593,8 @@ impl Game {
         };
         let id = self.prediction.begin(snapshot);
         let _ = self.replica.commit_placement(&plan, false);
-        self.predict_restore_carry(block, anchor);
+        // A custom shape's placement is single-cell and whole: part 0.
+        self.predict_restore_carry(block, anchor, 0);
         // Install the eagerly baked geometry before presentation: the mesher
         // and the local physics read the same boxes the delta will re-bake.
         if let Some(b) = &sim_boxes {

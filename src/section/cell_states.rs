@@ -175,21 +175,35 @@ impl Section {
         self.states.cell_kv()
     }
 
-    /// The section's per-cell `petramond:tint` presentation entries as
-    /// cell-index → linear multiply color. Sparse (empty for almost every
-    /// section) — collected once per mesh build so the per-face lookup is a
-    /// probe only on sections that actually carry tints. Only well-formed
-    /// 3-byte values count.
-    pub fn cell_tint_map(&self) -> HashMap<u16, [f32; 3]> {
-        self.states
-            .cell_kv()
-            .iter()
-            .filter_map(|(&idx, map)| {
-                let v = map.get(crate::block::TINT_KV_KEY)?;
-                let [r, g, b]: [u8; 3] = v.as_slice().try_into().ok()?;
-                Some((idx, [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0]))
-            })
-            .collect()
+    /// The section's `petramond:tint` presentation entries as cell-index →
+    /// the cell's per-[`CellPart`](crate::block::CellPart) multiply colors.
+    /// Sparse (empty for almost every section) — collected once per mesh build
+    /// so the per-face lookup is a probe only on sections that actually carry
+    /// tints. Only well-formed 3-byte values count.
+    ///
+    /// A cell's list is sorted by part and almost always length 1 (part 0, the
+    /// bare key), so the per-box part lookup is a scan over a handful of
+    /// entries rather than a second hash.
+    pub fn cell_tint_map(&self) -> HashMap<u16, Vec<(crate::block::CellPart, [f32; 3])>> {
+        let mut out: HashMap<u16, Vec<(crate::block::CellPart, [f32; 3])>> = HashMap::new();
+        for (&idx, map) in self.states.cell_kv() {
+            for (key, v) in map {
+                let (base, part) = crate::block::split_part_kv_key(key);
+                if base != crate::block::TINT_KV_KEY {
+                    continue;
+                }
+                let Ok([r, g, b]) = <[u8; 3]>::try_from(v.as_slice()) else {
+                    continue;
+                };
+                out.entry(idx)
+                    .or_default()
+                    .push((part, [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0]));
+            }
+        }
+        for parts in out.values_mut() {
+            parts.sort_unstable_by_key(|&(part, _)| part);
+        }
+        out
     }
 
     /// Detach one cell's whole mod-KV map — the state-preserving half of a

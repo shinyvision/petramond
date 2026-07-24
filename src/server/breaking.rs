@@ -318,8 +318,15 @@ impl ServerGame {
             .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
             .map(|h| h.normal);
         let (sky, blk, _warm) = break_light(&self.world, event.pos, hit_normal);
-        let slab_drops = (event.block.shape_family() == ShapeFamily::Slab)
-            .then(|| self.world.slab_drop_stacks_at(event.pos));
+        // A COMPOSED cell (a slab stack) drops each of its parts as its own
+        // material, each stamped with that part's own carried data, so a white
+        // slab under an orange one comes back as one white and one orange —
+        // resolved BEFORE the removal below wipes the state and KV it reads.
+        // The engine asks the family; it does not know a slab from a stair.
+        let part_drops = self
+            .world
+            .cell_parts(event.pos)
+            .map(|parts| self.part_drop_stacks(event.pos, &parts));
         // A mod container is keyed at the block's container anchor — resolved
         // BEFORE the removal below clears the model-group metadata the anchor
         // lookup needs (same ordering constraint as the bed spawn point).
@@ -327,16 +334,8 @@ impl ServerGame {
         // Carry courier (break side): snapshot the row's `petramond:carry`
         // cell-KV entries BEFORE the removal below wipes the cell's KV, and
         // stamp them onto the block's own item drops as instance data.
-        let carry_variant = self.carry_variant_at(event.pos, event.block);
-        let broken_tint = self
-            .world
-            .cell_kv_get(
-                event.pos.x,
-                event.pos.y,
-                event.pos.z,
-                crate::block::TINT_KV_KEY,
-            )
-            .and_then(|v| <[u8; 3]>::try_from(v).ok());
+        let carry_variant = self.carry_variant_at(event.pos, event.block, 0);
+        let broken_tint = self.world.cell_burst_tint(event.pos);
         // A bbmodel block breaks as a whole: removing any cell clears every footprint
         // cell (the 2×2×1 workbench vanishes as one object, drops one item below).
         if event.block.shape_family() == ShapeFamily::Model {
@@ -385,16 +384,13 @@ impl ServerGame {
             tint: broken_tint,
         });
         if event.harvested {
-            let own_item = crate::item::ItemType::from_block(event.block);
-            if let Some(stacks) = slab_drops {
-                for mut stack in stacks {
-                    if stack.item == own_item {
-                        stack.variant = carry_variant;
+            match part_drops {
+                Some(stacks) => {
+                    for stack in stacks {
+                        self.spawn_item_stack(event.pos, stack, (sky, blk));
                     }
-                    self.spawn_item_stack(event.pos, stack, (sky, blk));
                 }
-            } else {
-                self.spawn_drops(event.pos, event.block, (sky, blk), carry_variant);
+                None => self.spawn_drops(event.pos, event.block, (sky, blk), carry_variant),
             }
         }
         self.bus.emit(PostEvent::BlockBroken {
@@ -453,16 +449,22 @@ impl ServerGame {
 
     /// The interned instance-data variant a break of `block` at `pos` should
     /// stamp onto the block's own item drop: the row's `petramond:carry` KV
-    /// entries, read while the cell still holds them. `NONE` when the row
-    /// carries nothing or the entries are absent.
-    pub(crate) fn carry_variant_at(&self, pos: IVec3, block: Block) -> crate::item::VariantId {
+    /// entries for sub-cell `part`, read while the cell still holds them.
+    /// `NONE` when the row carries nothing or the entries are absent.
+    pub(crate) fn carry_variant_at(
+        &self,
+        pos: IVec3,
+        block: Block,
+        part: crate::block::CellPart,
+    ) -> crate::item::VariantId {
         let carry = block.carry();
         if carry.is_empty() {
             return crate::item::VariantId::NONE;
         }
         let mut map = crate::item::variant::VariantMap::new();
         for &key in carry {
-            if let Some(v) = self.world.cell_kv_get(pos.x, pos.y, pos.z, key) {
+            let stored = crate::block::part_kv_key(key, part);
+            if let Some(v) = self.world.cell_kv_get(pos.x, pos.y, pos.z, &stored) {
                 map.insert(key.to_owned(), v.to_vec());
             }
         }
@@ -473,6 +475,36 @@ impl ServerGame {
             log::warn!("carry at {pos:?}: variant table full — drop loses its data");
             crate::item::VariantId::NONE
         })
+    }
+
+    /// The item stacks a COMPOSED cell drops: one per part, of that part's own
+    /// block, carrying that part's own data. Parts merge into one stack only
+    /// when they agree on BOTH item and instance data — two layers of the same
+    /// wool dyed differently are two stacks, which is the same rule
+    /// `can_stack_with` applies everywhere else.
+    pub(crate) fn part_drop_stacks(
+        &self,
+        pos: IVec3,
+        parts: &[(crate::block::CellPart, Block)],
+    ) -> Vec<crate::item::ItemStack> {
+        let mut stacks: Vec<crate::item::ItemStack> = Vec::new();
+        for &(part, block) in parts {
+            let item = crate::item::ItemType::from_block(block);
+            if item == crate::item::ItemType::Air {
+                continue;
+            }
+            let variant = self.carry_variant_at(pos, block, part);
+            match stacks
+                .iter_mut()
+                .find(|s| s.item == item && s.variant == variant)
+            {
+                Some(s) => {
+                    s.count = s.count.saturating_add(1).min(item.max_stack_size());
+                }
+                None => stacks.push(crate::item::ItemStack::with_variant(item, 1, variant)),
+            }
+        }
+        stacks
     }
 
     pub(crate) fn spawn_drops(

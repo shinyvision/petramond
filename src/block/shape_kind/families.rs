@@ -384,6 +384,25 @@ impl ShapeSim for SlabFamily {
             crate::slab::light_side_mask(st, dx, dy, dz)
         })
     }
+
+    /// A slab cell is composed of its filled layer slots, and the slot INDEX
+    /// is the part number — the same numbering `boxes` tags its boxes with and
+    /// the placement plan claims, so "the layer this click filled" and "the
+    /// layer this drop came from" address the same cell KV.
+    fn parts(
+        &self,
+        _p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        b: Block,
+    ) -> Option<Vec<(crate::block::CellPart, Block)>> {
+        let state = crate::slab::normalize_state(b, slab_state_at(nb, pos));
+        Some(
+            crate::slab::layer_slots(state)
+                .map(|(slot, block)| (slot.index as crate::block::CellPart, block))
+                .collect(),
+        )
+    }
 }
 impl ShapeRender for SlabFamily {
     fn occupies_pocket(&self, ctx: &ShapeCtx<'_>, lo: [f32; 3], hi: [f32; 3]) -> bool {
@@ -400,18 +419,24 @@ impl ShapeRender for SlabFamily {
         // merge is load-bearing for streaming perf). A mixed-material stack
         // keeps the per-layer boxes so each layer shows its own texture.
         let state = crate::slab::normalize_state(ctx.block, slab_state_at(ctx.nb, ctx.pos));
-        crate::slab::is_uniform_full_stack(state)
+        if !crate::slab::is_uniform_full_stack(state) {
+            return false;
+        }
+        // Same material, but the two layers may be DYED differently — then the
+        // cell is not one cube at all and the per-layer boxes have to draw it
+        // (the cube path has a single whole-cell tint). Only the family knows
+        // it has exactly these two parts to compare.
+        (ctx.part_tint)(0) == (ctx.part_tint)(1)
     }
 
     fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
         let state = crate::slab::normalize_state(ctx.block, slab_state_at(ctx.nb, ctx.pos));
         for (slot, layer_block) in crate::slab::layer_slots(state) {
             let (min, max) = crate::mesh::slab::slot_box(slot);
-            out.push(ShapeBox::uniform(
-                Aabb { min, max },
-                layer_block.tiles(),
-                ctx.tint_for,
-            ));
+            out.push(
+                ShapeBox::uniform(Aabb { min, max }, layer_block.tiles(), ctx.tint_for)
+                    .with_part(slot.index as crate::block::CellPart),
+            );
         }
     }
 
@@ -889,10 +914,16 @@ impl ShapePlacement for SlabFamily {
         }
         // The resulting stack is the write: representative block id + the
         // full layer state, whether this creates the cell or fills a half.
-        PlacementOutcome::Plan(PlacementPlan::single(
+        // The write claims the slot it filled, so its carried data lands on
+        // that layer; stacking into a cell that already holds a layer AUGMENTS
+        // it, keeping the sitting layer's colour instead of handing it the
+        // newcomer's.
+        PlacementOutcome::Plan(PlacementPlan::single_part(
             target,
             crate::slab::representative_block(next),
             next.to_cell(),
+            slot.index as crate::block::CellPart,
+            crate::slab::is_slab(target_block),
         ))
     }
 }
@@ -932,7 +963,10 @@ impl ShapePlacement for DoorFamily {
         };
         PlacementOutcome::Plan(PlacementPlan {
             anchor: p,
-            writes: vec![(p, block, half(false)), (upper, block, half(true))],
+            writes: vec![
+                PlacementPlan::whole(p, block, half(false)),
+                PlacementPlan::whole(upper, block, half(true)),
+            ],
         })
     }
 }
@@ -991,7 +1025,7 @@ impl ShapePlacement for ModelFamily {
             writes: footprint
                 .into_iter()
                 .map(|(c, off)| {
-                    (
+                    PlacementPlan::whole(
                         c,
                         block,
                         crate::block_model::ModelCellState {

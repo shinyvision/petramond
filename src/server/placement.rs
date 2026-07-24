@@ -4,7 +4,7 @@
 //! placement path owes.
 
 use super::game::ServerGame;
-use crate::block::{Aabb, Block, ShapeFamily};
+use crate::block::{Aabb, Block, CellPart, ShapeFamily};
 use crate::events::{BlockPlacePre, Outcome, PostEvent, SimCtx};
 use crate::facing::Facing;
 use crate::game::tick::TickEvents;
@@ -159,7 +159,7 @@ impl ServerGame {
         if !self.world.commit_placement(&plan, true) {
             return None;
         }
-        self.restore_carry(s, block, plan.anchor);
+        self.restore_carry(s, block, plan.anchor, plan.anchor_part());
         self.sessions[s].player.inventory.decrement_selected();
         Some(plan.anchor)
     }
@@ -277,18 +277,21 @@ impl ServerGame {
         if !self.world.commit_placement(&plan, true) {
             return Some(None);
         }
-        self.restore_carry(s, block, anchor);
+        // A custom shape's placement is single-cell and whole: part 0.
+        self.restore_carry(s, block, anchor, 0);
         self.sessions[s].player.inventory.decrement_selected();
         Some(Some(anchor))
     }
 
     /// Carry courier (place side): copy the held stack's instance-data
     /// entries listed in the placed row's `petramond:carry` back into cell KV
-    /// at the anchor. Runs AFTER the commit (a block write wipes the cell's
+    /// at the anchor, addressed to the PART the write claimed (so a slab
+    /// stacking into an occupied cell dyes its own layer and leaves the other
+    /// one alone). Runs AFTER the commit (a block write wipes the cell's
     /// KV) and BEFORE `decrement_selected` (the held stack still carries the
     /// variant). A non-writable section refuses silently — the block stands,
     /// its carried data is lost, same as any racing KV write.
-    fn restore_carry(&mut self, s: usize, block: Block, anchor: IVec3) {
+    fn restore_carry(&mut self, s: usize, block: Block, anchor: IVec3, part: CellPart) {
         let carry = block.carry();
         if carry.is_empty() {
             return;
@@ -301,8 +304,13 @@ impl ServerGame {
         };
         for &key in carry {
             if let Some(v) = map.get(key) {
-                self.world
-                    .cell_kv_set(anchor.x, anchor.y, anchor.z, key.to_owned(), v.clone());
+                self.world.cell_kv_set(
+                    anchor.x,
+                    anchor.y,
+                    anchor.z,
+                    crate::block::part_kv_key(key, part),
+                    v.clone(),
+                );
             }
         }
     }

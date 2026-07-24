@@ -260,3 +260,47 @@ fn is_terrain_solid_is_the_bare_ground_set() {
         assert!(!b.is_terrain_solid(), "{b:?} should NOT be terrain-solid");
     }
 }
+
+/// The per-part cell-KV addressing is a stable, ROUND-TRIPPING encoding with
+/// exactly one spelling per address.
+///
+/// It has to be: the key is what a placed slab layer's dye is stored under and
+/// what the break courier reads it back from, so a base key that survives the
+/// split as something else, or a second spelling of part 0, silently loses a
+/// player's colour rather than failing loudly.
+#[test]
+fn part_kv_keys_round_trip_with_one_spelling_per_address() {
+    use super::{kv_key_affects_mesh, part_kv_key, split_part_kv_key, TINT_KV_KEY};
+
+    for key in [TINT_KV_KEY, "mod:some_key", "mod:key#with#hashes"] {
+        for part in [0u8, 1, 2, 255] {
+            let stored = part_kv_key(key, part);
+            assert_eq!(
+                split_part_kv_key(&stored),
+                (key, part),
+                "{key:?} part {part} must survive the round trip"
+            );
+        }
+        // Part 0 IS the bare key — the whole reason existing dyed cubes and
+        // saves need no migration.
+        assert_eq!(part_kv_key(key, 0), key);
+    }
+
+    // A literal `#0` is not the canonical spelling of part 0, so it stays an
+    // opaque key of its own rather than aliasing the bare one.
+    assert_eq!(
+        split_part_kv_key("mod:key#0"),
+        ("mod:key#0", 0),
+        "a non-canonical `#0` must not alias the bare key"
+    );
+    // Neither does a non-numeric or out-of-range suffix.
+    for odd in ["mod:key#", "mod:key#x", "mod:key#256", "mod:key#-1"] {
+        assert_eq!(split_part_kv_key(odd), (odd, 0), "{odd:?}");
+    }
+
+    // Any PART's tint feeds the mesh, so a re-mesh is queued for all of them.
+    assert!(kv_key_affects_mesh(TINT_KV_KEY));
+    assert!(kv_key_affects_mesh(&part_kv_key(TINT_KV_KEY, 1)));
+    assert!(!kv_key_affects_mesh("mod:other"));
+    assert!(!kv_key_affects_mesh(&part_kv_key("mod:other", 1)));
+}

@@ -1,10 +1,9 @@
 //! Slab shape, stacking state, and material helpers shared by placement,
-//! collision, selection, lighting, meshing, and item drops.
+//! collision, selection, lighting, and meshing.
 
 use crate::block::{Aabb, Block};
 use crate::block_state::{SlabSplit, SlabState};
 use crate::facing::Facing;
-use crate::item::{ItemStack, ItemType};
 use crate::mathh::IVec3;
 
 const H: f32 = 0.5;
@@ -301,25 +300,6 @@ pub fn representative_block(state: SlabState) -> Block {
                 .then_with(|| a.id().cmp(&b.id()))
         })
         .unwrap_or(Block::Air)
-}
-
-pub fn drop_stacks(state: SlabState) -> Vec<ItemStack> {
-    let mut stacks: Vec<ItemStack> = Vec::new();
-    for (_, block) in layer_slots(state) {
-        let item = ItemType::from_block(block);
-        if item == ItemType::Air {
-            continue;
-        }
-        if let Some(stack) = stacks.iter_mut().find(|s| s.item == item) {
-            stack.count = stack
-                .count
-                .saturating_add(1)
-                .min(stack.item.max_stack_size());
-        } else {
-            stacks.push(ItemStack::new(item, 1));
-        }
-    }
-    stacks
 }
 
 /// A 2x2 mask of open half-face quadrants on a slab boundary.

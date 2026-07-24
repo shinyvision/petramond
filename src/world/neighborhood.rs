@@ -7,11 +7,43 @@
 //! serving both. Both adapters are a single unified-store read — the seam
 //! ships opaque bytes and NEVER interprets them.
 
-use crate::block::{Aabb, Block, ShapeNeighborhood, ShapeRenderBox, ShapeState};
+use crate::block::{Aabb, Block, CellPart, ShapeNeighborhood, ShapeRenderBox, ShapeState};
 use crate::chunk::section_idx;
 use crate::mathh::IVec3;
 
 use super::store::World;
+
+impl World {
+    /// The sub-cell parts the cell at `pos` is composed of, each with the
+    /// block it is made of — the family's own answer (see `ShapeSim::parts`).
+    /// `None` means the cell is one whole part of its own block, which is
+    /// every family but a stacking slab.
+    pub fn cell_parts(&self, pos: IVec3) -> Option<Vec<(CellPart, Block)>> {
+        let block = self.physics_block(pos.x, pos.y, pos.z);
+        let k = block.shape_kind_def();
+        k.sim.parts(&k.params, self, pos, block)
+    }
+
+    /// The tint the cell at `pos` presents for a break burst: the first part
+    /// carrying one, in part order. A single-part cell is just its bare
+    /// `petramond:tint`; a two-tone slab cell bursts in whichever layer is
+    /// dyed rather than in nothing at all.
+    pub fn cell_burst_tint(&self, pos: IVec3) -> Option<[u8; 3]> {
+        let read = |part: CellPart| {
+            self.cell_kv_get(
+                pos.x,
+                pos.y,
+                pos.z,
+                &crate::block::part_kv_key(crate::block::TINT_KV_KEY, part),
+            )
+            .and_then(|v| <[u8; 3]>::try_from(v).ok())
+        };
+        match self.cell_parts(pos) {
+            Some(parts) => parts.into_iter().find_map(|(part, _)| read(part)),
+            None => read(0),
+        }
+    }
+}
 
 impl ShapeNeighborhood for World {
     fn block(&self, pos: IVec3) -> Block {
