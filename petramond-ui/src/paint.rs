@@ -50,20 +50,47 @@ pub struct Batch {
 
 /// The CPU-built frame: every quad of one GUI in paint order. Buffers are
 /// reused across frames (cleared, capacity kept).
+///
+/// Batches split into two tiers at [`DrawList::overlay_start`]: the base
+/// document, then anything that floats above the host's own content (tooltip
+/// subtrees). The host draws the base tier, then its item icons, then the
+/// overlay tier — otherwise host content painted over the whole draw list
+/// would show through a floating panel.
 #[derive(Default, Debug)]
 pub struct DrawList {
     pub vertices: Vec<UiVertex>,
     pub batches: Vec<Batch>,
+    /// First overlay-tier batch index (== `batches.len()` when the frame has
+    /// no overlay).
+    pub overlay_start: usize,
 }
 
 impl DrawList {
     pub fn clear(&mut self) {
         self.vertices.clear();
         self.batches.clear();
+        self.overlay_start = 0;
     }
 
     pub fn is_empty(&self) -> bool {
         self.vertices.is_empty()
+    }
+
+    /// Close the base tier: every batch pushed from here on is overlay tier.
+    /// Sealing also stops batch merging across the boundary, so the two tiers
+    /// can always be drawn as separate ranges.
+    pub fn begin_overlay(&mut self) {
+        self.overlay_start = self.batches.len();
+    }
+
+    /// The base-tier batches (everything under the host's content).
+    pub fn base_batches(&self) -> &[Batch] {
+        &self.batches[..self.overlay_start.min(self.batches.len())]
+    }
+
+    /// The overlay-tier batches (everything over the host's content).
+    pub fn overlay_batches(&self) -> &[Batch] {
+        &self.batches[self.overlay_start.min(self.batches.len())..]
     }
 
     /// Push one quad given its four physical-px corners (tl, tr, br, bl) and
@@ -90,7 +117,10 @@ impl DrawList {
             v(br, uv_br),
             v(tr, uv_tr),
         ]);
-        match self.batches.last_mut() {
+        // Never merge across the tier boundary: the two ranges are drawn at
+        // different times.
+        let mergeable = self.batches.len() > self.overlay_start;
+        match self.batches.last_mut().filter(|_| mergeable) {
             Some(b) if b.tex == tex && b.clip == clip && b.start + b.count == start => {
                 b.count += 6;
             }
@@ -135,6 +165,10 @@ impl DrawList {
 pub struct Painter<'a> {
     pub list: &'a mut DrawList,
     pub scale: i32,
+    /// The font every text call measures AND samples. Carried explicitly
+    /// rather than read from the process default, so a host that paints a
+    /// theme it never installed still draws the glyphs it measured.
+    pub font: &'a crate::text::Font,
 }
 
 impl Painter<'_> {
@@ -322,22 +356,58 @@ impl Painter<'_> {
     /// not fit end in an ASCII ellipsis, and the box is intersected with any
     /// inherited scroll clip so labels never paint over adjacent widgets.
     pub fn text_ellipsized(&mut self, s: &str, rect: RectI, color: [f32; 4], clip: Option<RectI>) {
+        let k = self.scale;
+        self.ellipsized_at(s, rect, k, color, clip);
+    }
+
+    /// [`Self::text_ellipsized`] one gui-scale step smaller.
+    pub fn text_ellipsized_small(
+        &mut self,
+        s: &str,
+        rect: RectI,
+        color: [f32; 4],
+        clip: Option<RectI>,
+    ) {
+        let k = self.small_text_step();
+        self.ellipsized_at(s, rect, k, color, clip);
+    }
+
+    fn ellipsized_at(
+        &mut self,
+        s: &str,
+        rect: RectI,
+        k: i32,
+        color: [f32; 4],
+        clip: Option<RectI>,
+    ) {
         let clip = clip.map_or(rect, |inherited| inherited.intersect(rect));
         if clip.w == 0 || clip.h == 0 || rect.w <= 0 {
             return;
         }
-        let capacity = ((rect.w + 1) / crate::text::ADVANCE).max(0) as usize;
-        if capacity == 0 {
+        let font = self.font;
+        // Fit in FONT pixels: the box is logical, the run is drawn at `k`
+        // physical px per font pixel, so both steps share one rule.
+        let room_font_px = rect.w * self.scale / k.max(1);
+        if font.width(s) <= room_font_px {
+            self.text_at(s, rect.x, rect.y, k, color, Some(clip));
             return;
         }
-        if s.chars().count() <= capacity {
-            self.text(s, rect.x, rect.y, color, Some(clip));
+        // Reserve the ellipsis first, then fit what is left — with
+        // proportional glyphs the truncation point depends on the characters.
+        let dots = "...";
+        let room = room_font_px - font.width(dots);
+        if room <= 0 {
+            let dots = &dots[..font.fit_chars(dots, room_font_px)];
+            self.text_at(dots, rect.x, rect.y, k, color, Some(clip));
             return;
         }
-        let dots = capacity.min(3);
-        let mut shown: String = s.chars().take(capacity - dots).collect();
-        shown.extend(std::iter::repeat_n('.', dots));
-        self.text(&shown, rect.x, rect.y, color, Some(clip));
+        let kept = font.fit_chars(s, room);
+        if kept == 0 {
+            return;
+        }
+        let mut shown: String = s.chars().take(kept).collect();
+        shown.push_str(dots);
+        self.text_at(&shown, rect.x, rect.y, k, color, Some(clip));
     }
 
     pub fn text_input_view(
@@ -349,13 +419,24 @@ impl Painter<'_> {
         selection_color: [f32; 4],
         clip: Option<RectI>,
     ) {
+        let font = self.font;
+        // Char offsets from the editor -> measured x, so the caret and the
+        // selection always sit on the glyph boundaries they name.
+        let run_x = |chars: usize| -> i32 {
+            font.width(&view.text.chars().take(chars).collect::<String>())
+        };
+        // Caret and selection cover the text BODY, not the whole glyph box:
+        // the cell reserves headroom for accented capitals that ordinary text
+        // leaves empty, and a caret sized to it fills the input box.
+        let (body_top, body_h) = font.body_span();
         if let Some((s0, s1)) = view.selection {
+            let (x0, x1) = (run_x(s0), run_x(s1));
             self.solid(
                 RectI {
-                    x: x + s0 as i32 * crate::text::ADVANCE,
-                    y: y - 1,
-                    w: (s1 - s0) as i32 * crate::text::ADVANCE - 1,
-                    h: crate::text::GLYPH_H + 2,
+                    x: x + x0,
+                    y: y + body_top - 1,
+                    w: (x1 - x0 - 1).max(0),
+                    h: body_h + 2,
                 },
                 selection_color,
                 clip,
@@ -363,13 +444,12 @@ impl Painter<'_> {
         }
         self.text(&view.text, x, y, text_color, clip);
         if view.show_cursor {
-            let cx = x + view.cursor as i32 * crate::text::ADVANCE - 1;
             self.solid(
                 RectI {
-                    x: cx,
-                    y: y - 1,
+                    x: x + run_x(view.cursor) - 1,
+                    y: y + body_top,
                     w: 1,
-                    h: crate::text::GLYPH_H + 2,
+                    h: body_h,
                 },
                 text_color,
                 clip,
@@ -387,36 +467,64 @@ impl Painter<'_> {
         color: [f32; 4],
         clip: Option<RectI>,
     ) {
+        let k = text_scale.max(1) as i32 * self.scale;
+        self.text_at(s, x, y, k, color, clip);
+    }
+
+    /// Physical px per font pixel for text drawn one gui-scale step down.
+    /// A bitmap font has one crisp size, but the UI is drawn at an integer
+    /// scale, so a smaller INTEGER multiple is still exactly on the pixel
+    /// grid. At scale 1 there is no smaller step.
+    pub fn small_text_step(&self) -> i32 {
+        (self.scale - 1).max(1)
+    }
+
+    /// Single-line text one gui-scale step smaller (secondary text).
+    pub fn text_small(&mut self, s: &str, x: i32, y: i32, color: [f32; 4], clip: Option<RectI>) {
+        let k = self.small_text_step();
+        self.text_at(s, x, y, k, color, clip);
+    }
+
+    /// Emit one run at `k` PHYSICAL px per font pixel, from a logical origin.
+    fn text_at(
+        &mut self,
+        s: &str,
+        x: i32,
+        y: i32,
+        k: i32,
+        color: [f32; 4],
+        clip: Option<RectI>,
+    ) {
         let clip = self.phys_clip(clip);
-        let k = text_scale.max(1) as i32;
-        let (tw, th) = crate::text::atlas_size();
-        let mut cx = x;
+        let font = self.font;
+        let (tw, th) = font.atlas_size();
+        let (mut cx, py) = (x * self.scale, y * self.scale);
         for ch in s.chars() {
-            let src = crate::text::atlas_rect(ch);
-            let dst = RectI {
-                x: cx,
-                y,
-                w: crate::text::GLYPH_W * k,
-                h: crate::text::GLYPH_H * k,
-            };
+            let src = font.atlas_rect(ch);
             self.list.push_rect(
                 TexId::Font,
-                self.phys(dst),
+                [
+                    cx as f32,
+                    py as f32,
+                    (font.cell_w() * k) as f32,
+                    (font.line_h() * k) as f32,
+                ],
                 src.map(|v| v as f32),
                 (tw, th),
                 color,
                 clip,
             );
-            cx += crate::text::ADVANCE * k;
+            cx += font.advance(ch) * k;
         }
     }
 
     /// Word-wrapped text inside a logical rect (top-left aligned lines).
     pub fn text_wrapped(&mut self, s: &str, r: RectI, color: [f32; 4], clip: Option<RectI>) {
         let mut y = r.y;
-        for line in crate::text::wrap(s, r.w) {
+        let advance = self.font.line_advance();
+        for line in self.font.wrap(s, r.w) {
             self.text(&s[line], r.x, y, color, clip);
-            y += crate::text::LINE_ADVANCE;
+            y += advance;
         }
     }
 
@@ -485,19 +593,29 @@ mod tests {
     #[test]
     fn single_line_text_ellipsizes_and_clips_to_its_layout_box() {
         let mut dl = DrawList::default();
+        let font = crate::text::Font::builtin();
         let mut p = Painter {
             list: &mut dl,
             scale: 2,
+            font: &font,
         };
+        // Room for exactly "Abc..." at the current font.
         let rect = RectI {
             x: 4,
             y: 5,
-            w: crate::text::width_chars(6),
-            h: crate::text::GLYPH_H,
+            w: p.font.width("Abc..."),
+            h: p.font.line_h(),
         };
         p.text_ellipsized("A long recipe name", rect, [1.0; 4], None);
 
-        assert_eq!(dl.vertices.len(), 6 * 6, "three characters plus '...'");
+        // Whatever fits, the run always ends in the three-dot ellipsis and
+        // never exceeds the box it was measured against.
+        let glyphs = dl.vertices.len() / 6;
+        assert!(glyphs > 3, "some of the text survives: {glyphs}");
+        assert!(
+            glyphs <= "Abc...".chars().count(),
+            "truncation never overflows the box: {glyphs}"
+        );
         assert_eq!(
             dl.batches[0].clip,
             Some([8, 10, rect.w * 2, rect.h * 2]),
@@ -508,9 +626,11 @@ mod tests {
     #[test]
     fn batches_merge_on_same_tex_and_clip() {
         let mut dl = DrawList::default();
+        let font = crate::text::Font::builtin();
         let mut p = Painter {
             list: &mut dl,
             scale: 2,
+            font: &font,
         };
         p.solid(
             RectI {
@@ -565,9 +685,11 @@ mod tests {
     #[test]
     fn painter_scales_logical_to_physical() {
         let mut dl = DrawList::default();
+        let font = crate::text::Font::builtin();
         let mut p = Painter {
             list: &mut dl,
             scale: 3,
+            font: &font,
         };
         p.solid(
             RectI {
@@ -586,9 +708,11 @@ mod tests {
     #[test]
     fn cover_sprite_crops_source_without_squishing() {
         let mut dl = DrawList::default();
+        let font = crate::text::Font::builtin();
         let mut p = Painter {
             list: &mut dl,
             scale: 1,
+            font: &font,
         };
         p.cover_sprite(
             TexId::DocImage(0),
@@ -612,9 +736,11 @@ mod tests {
     #[test]
     fn nine_slice_emits_nine_cells_with_fixed_corners() {
         let mut dl = DrawList::default();
+        let font = crate::text::Font::builtin();
         let mut p = Painter {
             list: &mut dl,
             scale: 2,
+            font: &font,
         };
         p.nine_slice(
             TexId::ThemeAtlas,
@@ -642,9 +768,11 @@ mod tests {
     #[test]
     fn degenerate_nine_slice_collapses_middle() {
         let mut dl = DrawList::default();
+        let font = crate::text::Font::builtin();
         let mut p = Painter {
             list: &mut dl,
             scale: 1,
+            font: &font,
         };
         // Dst exactly two insets wide: no middle column.
         p.nine_slice(
@@ -667,9 +795,11 @@ mod tests {
     #[test]
     fn rotated_sprite_spins_around_the_pivot() {
         let mut dl = DrawList::default();
+        let font = crate::text::Font::builtin();
         let mut p = Painter {
             list: &mut dl,
             scale: 1,
+            font: &font,
         };
         // 90° around the rect centre maps tl -> tr.
         p.rotated_sprite(

@@ -6,14 +6,18 @@
     "type": "column",
     "style": "panel.large",
     "layout": {
-        "w": 220,
+      "w": 220,
       "pad": [4, 3, 4, 4],
-      "gap": 4,
+      "gap": 3,
       "align": "stretch",
       "anchor": { "h": "center", "v": "center" }
     },
     "children": [
-      { "type": "label", "text": "Crafting Table", "bind": { "text": "craft_station_title" } },
+      {
+        "type": "label",
+        "text": "Crafting Table",
+        "bind": { "text": "craft_station_title" }
+      },
       {
         "type": "row",
         "layout": { "gap": 2, "align": "stretch" },
@@ -48,20 +52,16 @@
         "axis": "vertical",
         "style": "panel.inset",
         "layout": {
-          "h": {
-            "grow": 1
-          },
-          "min_h": 48,
+          "h": { "grow": 1 },
+          "min_h": 40,
           "pad": [1, 1, 1, 1]
         },
         "children": [
           {
             "type": "list",
             "id": "craft_recipes_list",
-            "layout": {
-              "align": "stretch",
-              "gap": 1
-            },
+            "cols": 9,
+            "layout": { "align": "stretch", "gap": 1 },
             "bind": {
               "items": "craft_recipes",
               "selected": "craft_recipe_sel"
@@ -70,13 +70,12 @@
               {
                 "type": "button",
                 "id": "recipe",
+                "style": "slot.recipe",
                 "layout": {
-                  "w": { "grow": 1 },
-                  "h": 30,
-                  "pad": [3, 3, 3, 3],
-                  "gap": 4,
+                  "h": 18,
                   "dir": "row",
-                  "align": "center"
+                  "align": "center",
+                  "justify": "center"
                 },
                 "bind": { "enabled": "enabled" },
                 "children": [
@@ -84,25 +83,6 @@
                     "type": "hook",
                     "id": "recipe_result",
                     "layout": { "w": 16, "h": 16 }
-                  },
-                  {
-                    "type": "column",
-                    "layout": {
-                      "w": { "grow": 1 },
-                      "gap": 2,
-                      "align": "stretch"
-                    },
-                    "children": [
-                      {
-                        "type": "label",
-                        "bind": { "text": "name" }
-                      },
-                      {
-                        "type": "hook",
-                        "id": "recipe_ingredients",
-                        "layout": { "w": { "grow": 1 }, "h": 12 }
-                      }
-                    ]
                   }
                 ]
               }
@@ -114,10 +94,7 @@
         "type": "row",
         "layout": { "gap": 3, "align": "center" },
         "children": [
-          {
-            "type": "slot",
-            "role": "craft_result"
-          },
+          { "type": "slot", "role": "craft_result" },
           {
             "type": "button",
             "id": "craft",
@@ -133,18 +110,47 @@
         "type": "column",
         "layout": { "align": "center" },
         "children": [
-          {
-            "type": "slot_grid",
-            "role": "player_inv",
-            "cols": 9,
-            "rows": 3
-          },
+          { "type": "slot_grid", "role": "player_inv", "cols": 9, "rows": 3 },
           {
             "type": "slot_grid",
             "role": "hotbar",
             "cols": 9,
             "rows": 1,
             "layout": { "margin": [0, 2, 0, 0] }
+          }
+        ]
+      },
+      {
+        "type": "tooltip",
+        "style": "panel.inset",
+        "layout": {
+          "abs": { "x": 4, "y": 4 },
+          "pad": [3, 2, 3, 3],
+          "gap": 2,
+          "align": "stretch"
+        },
+        "bind": { "visible": "show_recipe_tip" },
+        "children": [
+          {
+            "type": "row",
+            "layout": { "gap": 3, "align": "center" },
+            "children": [
+              {
+                "type": "hook",
+                "id": "craft_tip_result",
+                "layout": { "w": 16, "h": 16 }
+              },
+              {
+                "type": "label",
+                "small": true,
+                "bind": { "text": "craft_tip_name" }
+              }
+            ]
+          },
+          {
+            "type": "hook",
+            "id": "craft_tip_ingredients",
+            "layout": { "w": { "grow": 1 }, "min_w": 84, "h": 12 }
           }
         ]
       }

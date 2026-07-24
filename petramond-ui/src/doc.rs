@@ -104,6 +104,16 @@ pub enum NodeKind {
         /// `wrap` is ignored when > 1.
         #[serde(default = "default_text_scale", skip_serializing_if = "is_one")]
         scale: u32,
+        /// Draw one GUI-SCALE STEP smaller — secondary text (a tooltip's
+        /// name, a caption) without a second font.
+        ///
+        /// A bitmap font has exactly one crisp size, so text cannot simply be
+        /// set smaller; but the whole UI is drawn at an integer scale, so
+        /// dropping this run from `scale` to `scale - 1` physical px per font
+        /// pixel keeps it exactly on the pixel grid. It has no effect at gui
+        /// scale 1, where there is no smaller step.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        small: bool,
     },
     /// An image beside the document (path relative to the document; a bound
     /// `image` key overrides the name per instance — list-row icons).
@@ -160,7 +170,17 @@ pub enum NodeKind {
         axis: ScrollAxis,
     },
     /// Repeats its single template child once per item in `bind.items`.
-    List,
+    ///
+    /// `cols` > 1 arranges the stamps as a fixed-column, row-major grid
+    /// instead of a single flow line: cells share the content width evenly
+    /// (integer remainder to the leading columns) and every cell is as tall as
+    /// the tallest stamp, so an icon grid stays aligned at any width. The
+    /// column count is fixed rather than wrapped-to-fit because a
+    /// width-dependent height cannot be measured before arrange.
+    List {
+        #[serde(default = "default_cols", skip_serializing_if = "is_one")]
+        cols: u32,
+    },
     /// One host-mapped slot (item cell) of `role`. `accepts` and `take_only`
     /// are host-interpreted slot semantics carried verbatim (the document
     /// runtime ignores them): which item groups quick-moves may route into
@@ -207,6 +227,16 @@ pub enum NodeKind {
     /// Layout-reserved, host-drawn region (hearts, item previews). The host
     /// reads its solved rect from the frame output by id.
     Hook,
+    /// A panel that floats at the pointer instead of taking part in flow: it
+    /// arranges at its natural size, offset from the cursor by `layout.abs`
+    /// (flipping to the other side rather than running off-screen), is never
+    /// clipped by an ancestor, never receives pointer input, and paints above
+    /// everything — including host content (see [`crate::DrawList`]).
+    ///
+    /// Visibility is ordinary host-bound state: bind `visible` and the tooltip
+    /// exists only on the frames the host wants it. Content is ordinary nodes,
+    /// so a tooltip carries no knowledge of what it describes.
+    Tooltip,
 }
 
 /// One tab of a [`NodeKind::TabBar`].
@@ -232,8 +262,9 @@ impl NodeKind {
                 | NodeKind::Row
                 | NodeKind::Column
                 | NodeKind::Scroll { .. }
-                | NodeKind::List
+                | NodeKind::List { .. }
                 | NodeKind::Button { .. }
+                | NodeKind::Tooltip
         )
     }
 
@@ -250,7 +281,7 @@ impl NodeKind {
                     interactive: true,
                     ..
                 }
-                | NodeKind::List
+                | NodeKind::List { .. }
                 | NodeKind::TabBar { .. }
                 | NodeKind::Hook
         )
@@ -272,7 +303,7 @@ impl NodeKind {
             NodeKind::Slider { .. } => "slider",
             NodeKind::TextInput { .. } => "text_input",
             NodeKind::Scroll { .. } => "scroll",
-            NodeKind::List => "list",
+            NodeKind::List { .. } => "list",
             NodeKind::Slot { .. } => "slot",
             NodeKind::SlotGrid { .. } => "slot_grid",
             NodeKind::Gauge { .. } => "gauge",
@@ -280,12 +311,25 @@ impl NodeKind {
             NodeKind::Alert { .. } => "alert",
             NodeKind::TabBar { .. } => "tab_bar",
             NodeKind::Hook => "hook",
+            NodeKind::Tooltip => "tooltip",
+        }
+    }
+
+    /// The fixed column count a `list` arranges its stamps in (1 = flow).
+    pub fn list_cols(&self) -> u32 {
+        match self {
+            NodeKind::List { cols } => (*cols).max(1),
+            _ => 1,
         }
     }
 }
 
 fn default_max_chars() -> usize {
     64
+}
+
+fn default_cols() -> u32 {
+    1
 }
 
 fn default_text_scale() -> u32 {

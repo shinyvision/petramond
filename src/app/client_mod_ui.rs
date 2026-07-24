@@ -529,8 +529,18 @@ fn append_layer(
     src: &petramond_ui::DrawList,
     images: &[DocImageSource],
 ) {
+    // Overlay-tier batches must stay last in the composed list, so a layer can
+    // only be appended while nothing has contributed an overlay tier yet. One
+    // layer is composed today; a second would have to splice its base tier in
+    // ahead of the first's overlay tier.
+    debug_assert_eq!(
+        dst.overlay_start,
+        dst.batches.len(),
+        "appending under an existing overlay tier would reorder the draw"
+    );
     let vertex_base = dst.vertices.len() as u32;
     let image_base = dst_images.len() as u16;
+    let overlay_start = dst.batches.len() + src.overlay_start;
     dst.vertices.extend_from_slice(&src.vertices);
     dst.batches.extend(src.batches.iter().map(|batch| {
         let mut batch = *batch;
@@ -540,6 +550,7 @@ fn append_layer(
         }
         batch
     }));
+    dst.overlay_start = overlay_start;
     dst_images.extend_from_slice(images);
 }
 

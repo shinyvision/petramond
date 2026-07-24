@@ -20,6 +20,9 @@ pub(super) struct DocBatch {
 #[derive(Default)]
 pub(super) struct DocUi {
     pub(super) batches: Vec<DocBatch>,
+    /// First overlay-tier batch (see [`petramond_ui::DrawList`]): base-tier
+    /// batches draw under the host's item icons, overlay-tier ones over them.
+    pub(super) overlay_start: usize,
     vbuf: Option<wgpu::Buffer>,
     verts: Vec<UiVertex>,
     theme_binds: Option<ThemeBinds>,
@@ -52,6 +55,7 @@ impl Renderer {
         screen: (u32, u32),
     ) {
         self.doc_ui.batches.clear();
+        self.doc_ui.overlay_start = 0;
         self.doc_ui.frame_images.clear();
         let Some(document) = document else {
             return;
@@ -98,6 +102,7 @@ impl Renderer {
                 count: b.count,
                 clip: b.clip,
             }));
+        self.doc_ui.overlay_start = draw.overlay_start.min(self.doc_ui.batches.len());
     }
 
     fn ensure_doc_theme_binds(&mut self) {
@@ -229,15 +234,36 @@ impl Renderer {
         (texture, bind)
     }
 
-    /// Draw the uploaded document UI inside the UI pass. The pipeline is
-    /// already set; each batch binds its texture and scissors its clip.
+    /// Draw the base tier of the uploaded document UI (everything under the
+    /// host's own item icons).
     pub(super) fn draw_doc_ui(&self, pass: &mut wgpu::RenderPass<'_>) {
+        let end = self.doc_ui.overlay_start;
+        self.draw_doc_batches(pass, &self.doc_ui.batches[..end]);
+    }
+
+    /// Draw the overlay tier: floating tooltip chrome, which has to cover the
+    /// host content the base tier drew under.
+    pub(super) fn draw_doc_ui_overlay(&self, pass: &mut wgpu::RenderPass<'_>) {
+        let start = self.doc_ui.overlay_start;
+        self.draw_doc_batches(pass, &self.doc_ui.batches[start..]);
+    }
+
+    pub(super) fn has_doc_overlay(&self) -> bool {
+        self.doc_ui.overlay_start < self.doc_ui.batches.len()
+    }
+
+    /// Draw a batch range inside the UI pass. The pipeline is already set;
+    /// each batch binds its texture and scissors its clip.
+    fn draw_doc_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[DocBatch]) {
         let (Some(vbuf), Some(binds)) = (&self.doc_ui.vbuf, &self.doc_ui.theme_binds) else {
             return;
         };
+        if batches.is_empty() {
+            return;
+        }
         let screen = self.prepared_ui_viewport.size;
         pass.set_vertex_buffer(0, vbuf.slice(..));
-        for batch in &self.doc_ui.batches {
+        for batch in batches {
             let bind =
                 match batch.tex {
                     petramond_ui::TexId::Solid => &self.icon_atlas.bind,

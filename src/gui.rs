@@ -175,12 +175,16 @@ pub struct SlotRect {
     pub h: f32,
 }
 
-/// A game-owned item-icon region embedded in a GUI document. Recipe-browser
-/// hooks carry their filtered row index; `clip` preserves scroll clipping.
+/// A game-owned item-icon region embedded in a GUI document. Grid-cell hooks
+/// carry their filtered row index; the detail and tooltip hooks describe one
+/// recipe the browser named in the snapshot, so they carry none.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DocHookKind {
+    /// One recipe-grid cell's result icon (`index` = filtered row).
     CraftRecipeResult,
-    CraftRecipeIngredients,
+    /// The hovered recipe's result icon / ingredient strip, in the tooltip.
+    CraftTipResult,
+    CraftTipIngredients,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -189,6 +193,9 @@ pub(crate) struct DocHook {
     pub(crate) index: usize,
     pub(crate) rect: SlotRect,
     pub(crate) clip: Option<SlotRect>,
+    /// The hook floats in a tooltip: its content draws in the overlay tier,
+    /// after the base tier's icons, so the grid never shows through it.
+    pub(crate) overlay: bool,
 }
 
 /// Integer GUI scale chosen from the screen size (vanilla-style auto scale): one
@@ -281,6 +288,8 @@ pub struct UiSnapshot {
     pub craft_output: Option<ItemStack>,
     /// Filtered recipe rows, in the same order as the browser document list.
     pub craft_recipes: Vec<CraftingRecipeView>,
+    /// The recipe under the cursor, shown in the floating tooltip.
+    pub craft_tip: Option<CraftingRecipeView>,
     /// The cursor-held stack (drag/drop), drawn at `cursor_px` when open.
     pub cursor: Option<ItemStack>,
     /// The open furnace's slots + progress gauges, or `None` when the open panel is
@@ -344,6 +353,7 @@ impl Default for UiSnapshot {
             slots: [None; TOTAL_SLOTS],
             craft_output: None,
             craft_recipes: Vec::new(),
+            craft_tip: None,
             cursor: None,
             furnace: None,
             chest: None,

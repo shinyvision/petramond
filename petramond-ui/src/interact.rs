@@ -132,7 +132,8 @@ impl Interact<'_> {
     }
 
     fn visible_at(&self, i: u32, x: f32, y: f32) -> bool {
-        widget::contains_f(self.solved.rects[i as usize], x, y)
+        !self.solved.overlay[i as usize]
+            && widget::contains_f(self.solved.rects[i as usize], x, y)
             && self.solved.clips[i as usize].is_none_or(|c| widget::contains_f(c, x, y))
     }
 
@@ -141,7 +142,7 @@ impl Interact<'_> {
     fn row_hit(&self, fs: &FrameState) -> Option<(u32, u32)> {
         let (x, y) = self.cur(fs);
         (0..self.tree.len() as u32).rev().find_map(|i| {
-            if !matches!(self.tree.get(i).node.kind, NodeKind::List) {
+            if !matches!(self.tree.get(i).node.kind, NodeKind::List { .. }) {
                 return None;
             }
             self.tree
@@ -294,10 +295,9 @@ impl Interact<'_> {
                         let pad = self.theme.metrics.button_pad;
                         let text_rect = widget::input_text_rect(rect, pad);
                         let visible = widget::input_visible_chars(text_rect.w);
-                        let x_rel = (x - text_rect.x as f32) * self.scale as f32;
-                        let advance = (crate::text::ADVANCE * self.scale) as f32;
+                        let x_rel = x - text_rect.x as f32;
                         if let Some(editor) = fs.editors.get_mut(&key) {
-                            let idx = editor.cursor_index_for_x(x_rel, advance, visible);
+                            let idx = editor.cursor_index_for_x(x_rel, visible);
                             let anchor = editor.begin_drag(idx, visible, fs.now);
                             fs.drag = Some(Drag::TextSelect { key, anchor });
                         }
@@ -399,10 +399,9 @@ impl Interact<'_> {
                     let pad = self.theme.metrics.button_pad;
                     let text_rect = widget::input_text_rect(rect, pad);
                     let visible = widget::input_visible_chars(text_rect.w);
-                    let x_rel = (x - text_rect.x as f32) * self.scale as f32;
-                    let advance = (crate::text::ADVANCE * self.scale) as f32;
+                    let x_rel = x - text_rect.x as f32;
                     if let Some(editor) = fs.editors.get_mut(&key) {
-                        let idx = editor.cursor_index_for_x(x_rel, advance, visible);
+                        let idx = editor.cursor_index_for_x(x_rel, visible);
                         editor.drag_to(anchor, idx, visible, fs.now);
                     }
                 }

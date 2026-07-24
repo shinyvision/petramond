@@ -15,7 +15,16 @@ const THEME_JSON: &str = "ui/theme/theme.json";
 static THEME: OnceLock<Arc<Theme>> = OnceLock::new();
 
 pub(crate) fn theme() -> Arc<Theme> {
-    THEME.get_or_init(load).clone()
+    THEME
+        .get_or_init(|| {
+            let theme = load();
+            // Text measurement, wrapping, caret hits and the CPU rasterizer
+            // all read the process-default font; install the theme's so what
+            // is measured is what the GPU atlas actually draws.
+            petramond_ui::text::install(theme.ui_font().clone());
+            theme
+        })
+        .clone()
 }
 
 fn load() -> Arc<Theme> {

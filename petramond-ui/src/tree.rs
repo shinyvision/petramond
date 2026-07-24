@@ -167,7 +167,7 @@ impl<'d> InstTree<'d> {
 
         let enabled = self.insts[idx as usize].enabled;
         let child_indices = match &node.kind {
-            NodeKind::List => {
+            NodeKind::List { .. } => {
                 let template = node.children.first();
                 let items =
                     node.bind

@@ -513,3 +513,92 @@ fn min_max_clamps_apply() {
     assert_eq!(s.rects[1].w, 40, "grow capped by max_w");
     assert_eq!(s.rects[2].w, 25, "natural raised to min_w");
 }
+
+fn solve_rows(json: &str, viewport: (i32, i32), items: usize) -> Solved {
+    let doc = Document::from_json(json).unwrap();
+    let mut state = UiState::new();
+    let rows: Vec<crate::state::UiMap> = (0..items).map(|_| crate::state::UiMap::new()).collect();
+    state.set("rows", UiValue::List(std::sync::Arc::new(rows)));
+    let tree = InstTree::expand(&doc, &state);
+    solve(&tree, &MockEnv, viewport, &|_| 0)
+}
+
+const GRID_DOC: &str = r#"{
+    "format": 1, "kind": "petramond:x", "class": "screen",
+    "root": { "type": "column", "layout": { "w": 100, "h": 100 }, "children": [
+        { "type": "list", "id": "grid", "cols": 4,
+          "layout": { "w": { "grow": 1 }, "gap": 2 },
+          "bind": { "items": "rows" },
+          "children": [
+            { "type": "hook", "id": "cell", "layout": { "w": 16, "h": 16 } }
+          ] }
+    ] }
+}"#;
+
+#[test]
+fn grid_list_splits_columns_exactly_and_wraps_row_major() {
+    // 100 wide, 4 columns, 2px gaps: 94 of content over 4 columns is 23 each
+    // with 2 left over, which goes +1 to the LEADING columns.
+    let s = solve_rows(GRID_DOC, (200, 200), 6);
+    let cells = &s.rects[2..];
+    assert_eq!(cells.len(), 6);
+    let widths: Vec<i32> = cells[..4].iter().map(|r| r.w).collect();
+    assert_eq!(widths, vec![24, 24, 23, 23]);
+    let xs: Vec<i32> = cells[..4].iter().map(|r| r.x - cells[0].x).collect();
+    assert_eq!(xs, vec![0, 26, 52, 77], "cells + gaps tile the row exactly");
+    let last = cells[3];
+    assert_eq!(
+        last.x + last.w - cells[0].x,
+        100,
+        "the grid fills its content width with no drift"
+    );
+
+    // Row 2 starts under row 1 at the uniform cell height + gap.
+    assert_eq!(cells[4].y - cells[0].y, 18);
+    assert_eq!(cells[4].x, cells[0].x, "row-major wrap returns to column 0");
+    assert_eq!(cells[5].x, cells[1].x);
+    assert_eq!(s.rects[1].h, 34, "natural height is 2 rows of 16 plus a gap");
+}
+
+#[test]
+fn a_partial_last_row_does_not_stretch_its_cells() {
+    let s = solve_rows(GRID_DOC, (200, 200), 5);
+    let cells = &s.rects[2..];
+    assert_eq!(cells.len(), 5);
+    assert_eq!(cells[4].w, cells[0].w, "the lone last-row cell keeps its column width");
+    assert_eq!(cells[4].x, cells[0].x);
+}
+
+#[test]
+fn tooltips_leave_the_flow_at_natural_size_and_unclipped() {
+    let json = r#"{
+        "format": 1, "kind": "petramond:x", "class": "screen",
+        "root": { "type": "scroll", "id": "sc", "layout": { "w": 100, "h": 40 }, "children": [
+            { "type": "checkbox", "id": "a" },
+            { "type": "tooltip", "id": "tip", "bind": { "visible": "show" },
+              "layout": { "w": 60, "h": 20 },
+              "children": [ { "type": "checkbox", "id": "inner" } ] },
+            { "type": "checkbox", "id": "b" }
+        ] }
+    }"#;
+    let doc = Document::from_json(json).unwrap();
+    let state = UiState::new();
+    let tree = InstTree::expand(&doc, &state);
+    let s = solve(&tree, &MockEnv, (200, 200), &|_| 0);
+
+    let (a, tip, b) = (s.rects[1], s.rects[2], s.rects[4]);
+    assert_eq!(
+        b.y - a.y,
+        10,
+        "the tooltip takes no space between its siblings"
+    );
+    assert_eq!((tip.w, tip.h), (60, 20), "tooltip arranges at its own size");
+
+    // The scroll clips its flow children but never the floating tooltip.
+    assert!(s.clips[1].is_some() && s.clips[4].is_some());
+    assert_eq!(s.clips[2], None);
+    assert_eq!(s.clips[3], None, "the clip exemption covers the subtree");
+
+    assert!(!s.overlay[1] && !s.overlay[4]);
+    assert!(s.overlay[2] && s.overlay[3], "the whole subtree is overlay");
+}

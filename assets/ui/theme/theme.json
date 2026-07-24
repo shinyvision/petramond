@@ -1,6 +1,10 @@
 {
   "format": 1,
   "atlas": "kit.png",
+  "font": {
+    "file": "../font/DepartureMono-Regular.otf",
+    "px": 11
+  },
   "palette": {
     "text": "#E8EDF2",
     "text_muted": "#93A3B1",
@@ -334,6 +338,53 @@
             1,
             1,
             1
+          ]
+        }
+      },
+      "label_color": "text"
+    },
+    "slot.recipe": {
+      "states": {
+        "default": {
+          "rect": [
+            141,
+            66,
+            18,
+            18
+          ],
+          "slice": [
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "hover": {
+          "rect": [
+            160,
+            66,
+            18,
+            18
+          ],
+          "slice": [
+            1,
+            1,
+            1,
+            1
+          ]
+        },
+        "selected": {
+          "rect": [
+            86,
+            91,
+            32,
+            26
+          ],
+          "slice": [
+            3,
+            3,
+            3,
+            3
           ]
         }
       },

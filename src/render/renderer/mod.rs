@@ -493,11 +493,13 @@ pub struct Renderer {
     /// Client-WASM images drawn directly in physical screen pixels (HUD
     /// overlays and the active modal canvas), outside document layout.
     client_overlays: client_overlay::ClientOverlays,
-    /// Solid-color quads (all stack-count digits) packed into one buffer:
-    /// normal counts `[0, counts)`, then drag counts. Drawn with the
-    /// icon-atlas bind (the solid sentinel skips the sampler anyway).
+    /// Solid-color quads (all stack-count digits) packed into one buffer in
+    /// draw order: normal counts `[0, counts)`, then tooltip counts, then drag
+    /// counts. Drawn with the icon-atlas bind (the solid sentinel skips the
+    /// sampler anyway).
     ui_solid_vbuf: wgpu::Buffer,
     ui_count_vertex_count: u32,
+    ui_overlay_count_vertex_count: u32,
     ui_drag_count_vertex_count: u32,
     /// The HUD chrome layers (hurt vignette, hearts, status effects, …), each
     /// a `UiBuild` vec + texture + vbuf drawn in list order by the UI pass.
@@ -517,7 +519,9 @@ pub struct Renderer {
     icon_quad_verts: Vec<UiVertex>,
     /// Vertex count of the icon quads uploaded this frame (`0` = no icons).
     icon_quad_vertex_count: u32,
-    /// Vertex count of the cursor-held icon quads appended after normal icons.
+    /// Vertex count of the tooltip icon quads appended after normal icons.
+    overlay_icon_quad_vertex_count: u32,
+    /// Vertex count of the cursor-held icon quads appended after those.
     drag_icon_quad_vertex_count: u32,
     /// Reusable CPU staging for the per-frame UI geometry (all quad buffers +
     /// overlay spans + icon-quad list), cleared + refilled each frame.

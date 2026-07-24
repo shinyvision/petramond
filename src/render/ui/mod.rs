@@ -65,6 +65,12 @@ pub struct UiBuild {
     pub hook_icon_quads: Vec<HookIconQuad>,
     /// Stack-count digits (solid), drawn over the icons.
     pub counts: Vec<UiVertex>,
+    /// Hook icons belonging to a floating tooltip. Drawn after the document's
+    /// overlay chrome, which itself draws after every base-tier icon — so a
+    /// tooltip covers the grid instead of the grid showing through it.
+    pub overlay_icon_quads: Vec<HookIconQuad>,
+    /// Digits over the overlay icons.
+    pub overlay_counts: Vec<UiVertex>,
     /// Cursor-held item icon, drawn front-most.
     pub drag_icon_quads: Vec<(ItemType, SlotRect, [f32; 4], bool)>,
     /// Cursor-held stack-count digits, drawn over the cursor icon.
@@ -84,6 +90,8 @@ impl UiBuild {
         self.icon_quads.clear();
         self.hook_icon_quads.clear();
         self.counts.clear();
+        self.overlay_icon_quads.clear();
+        self.overlay_counts.clear();
         self.drag_icon_quads.clear();
         self.drag_counts.clear();
         self.vignette.clear();
@@ -214,6 +222,29 @@ fn push_doc_game_content(
     }
 }
 
+/// The icon + digit buffers one hook draws into: the base tier, or the overlay
+/// tier that draws after it (tooltip content, which must cover the grid).
+struct HookTier<'a> {
+    icons: &'a mut Vec<HookIconQuad>,
+    counts: &'a mut Vec<UiVertex>,
+}
+
+impl UiBuild {
+    fn tier(&mut self, overlay: bool) -> HookTier<'_> {
+        if overlay {
+            HookTier {
+                icons: &mut self.overlay_icon_quads,
+                counts: &mut self.overlay_counts,
+            }
+        } else {
+            HookTier {
+                icons: &mut self.hook_icon_quads,
+                counts: &mut self.counts,
+            }
+        }
+    }
+}
+
 fn push_recipe_hook_content(
     ui: &UiSnapshot,
     build: &mut UiBuild,
@@ -221,17 +252,22 @@ fn push_recipe_hook_content(
     screen: (u32, u32),
     scale: f32,
 ) {
+    use crate::gui::DocHookKind as Kind;
     for hook in hooks {
-        let Some(recipe) = ui.craft_recipes.get(hook.index) else {
+        let recipe = match hook.kind {
+            Kind::CraftRecipeResult => ui.craft_recipes.get(hook.index),
+            Kind::CraftTipResult | Kind::CraftTipIngredients => ui.craft_tip.as_ref(),
+        };
+        let Some(recipe) = recipe else {
             continue;
         };
         match hook.kind {
-            crate::gui::DocHookKind::CraftRecipeResult => {
+            Kind::CraftRecipeResult | Kind::CraftTipResult => {
                 let side = hook.rect.w.min(hook.rect.h);
                 let Some(clip) = effective_hook_clip(*hook) else {
                     continue;
                 };
-                build.hook_icon_quads.push(HookIconQuad {
+                build.tier(hook.overlay).icons.push(HookIconQuad {
                     item: recipe.result,
                     rect: SlotRect {
                         x: hook.rect.x + (hook.rect.w - side) * 0.5,
@@ -243,7 +279,7 @@ fn push_recipe_hook_content(
                     dim: !recipe.craftable,
                 });
             }
-            crate::gui::DocHookKind::CraftRecipeIngredients => {
+            Kind::CraftTipIngredients => {
                 push_ingredient_strip(recipe, build, *hook, screen, scale);
             }
         }
@@ -268,6 +304,7 @@ fn push_ingredient_strip(
     let icon_side = layout.icon_side;
     let gap = 3.0 * scale;
     let mut x = hook.rect.x;
+    let tier = build.tier(hook.overlay);
     for (index, (ingredient, count)) in recipe.ingredients.iter().take(layout.visible).enumerate() {
         let icon_rect = SlotRect {
             x,
@@ -275,7 +312,7 @@ fn push_ingredient_strip(
             w: icon_side,
             h: icon_side,
         };
-        build.hook_icon_quads.push(HookIconQuad {
+        tier.icons.push(HookIconQuad {
             item: *ingredient,
             rect: icon_rect,
             clip,
@@ -284,7 +321,7 @@ fn push_ingredient_strip(
         x += icon_side + scale;
         let y = hook.rect.y + (hook.rect.h - tiny_text::GLYPH_H as f32 * scale) * 0.5;
         push_ingredient_count(
-            &mut build.counts,
+            tier.counts,
             screen,
             *count as u32,
             x,
@@ -304,7 +341,7 @@ fn push_ingredient_strip(
         }
         let y = hook.rect.y + (hook.rect.h - tiny_text::GLYPH_H as f32 * scale) * 0.5;
         push_prefixed_number(
-            &mut build.counts,
+            tier.counts,
             screen,
             layout.omitted.min(u32::MAX as usize) as u32,
             x,
@@ -701,65 +738,52 @@ mod tests {
         assert!(b.icon_quads.is_empty() && b.drag_icon_quads.is_empty() && b.counts.is_empty());
     }
 
-    #[test]
-    fn recipe_hooks_emit_result_ingredients_counts_and_scroll_clips() {
-        let mut snapshot = snap(GuiKind::Inventory, true);
-        snapshot.craft_recipes.push(crate::gui::CraftingRecipeView {
-            result: ItemType::Stick,
+    fn recipe(result: ItemType, craftable: bool) -> crate::gui::CraftingRecipeView {
+        crate::gui::CraftingRecipeView {
+            result,
             ingredients: vec![(ItemType::Coal, 2), (ItemType::Dirt, 3)],
-            craftable: false,
-        });
-        let clip = SlotRect {
-            x: 100.0,
-            y: 105.0,
-            w: 160.0,
-            h: 20.0,
-        };
+            craftable,
+        }
+    }
+
+    fn hook(
+        kind: crate::gui::DocHookKind,
+        rect: SlotRect,
+        clip: Option<SlotRect>,
+        overlay: bool,
+    ) -> crate::gui::DocHook {
+        crate::gui::DocHook {
+            kind,
+            index: 0,
+            rect,
+            clip,
+            overlay,
+        }
+    }
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> SlotRect {
+        SlotRect { x, y, w, h }
+    }
+
+    #[test]
+    fn recipe_grid_cells_dim_unaffordable_results_and_respect_scroll_clips() {
+        let mut snapshot = snap(GuiKind::Inventory, true);
+        snapshot.craft_recipes.push(recipe(ItemType::Stick, false));
+        let clip = rect(100.0, 105.0, 160.0, 20.0);
         let hooks = [
-            crate::gui::DocHook {
-                kind: crate::gui::DocHookKind::CraftRecipeResult,
-                index: 0,
-                rect: SlotRect {
-                    x: 100.0,
-                    y: 100.0,
-                    w: 20.0,
-                    h: 20.0,
-                },
-                clip: Some(clip),
-            },
-            crate::gui::DocHook {
-                kind: crate::gui::DocHookKind::CraftRecipeIngredients,
-                index: 0,
-                rect: SlotRect {
-                    x: 124.0,
-                    y: 105.0,
-                    w: 120.0,
-                    h: 14.0,
-                },
-                clip: Some(clip),
-            },
-            crate::gui::DocHook {
-                kind: crate::gui::DocHookKind::CraftRecipeResult,
-                index: 0,
-                rect: SlotRect {
-                    x: 100.0,
-                    y: 200.0,
-                    w: 20.0,
-                    h: 20.0,
-                },
-                clip: Some(clip),
-            },
-            crate::gui::DocHook {
-                kind: crate::gui::DocHookKind::CraftRecipeIngredients,
-                index: 0,
-                rect: SlotRect {
-                    x: 124.0,
-                    y: 200.0,
-                    w: 120.0,
-                    h: 14.0,
-                },
-                clip: Some(clip),
-            },
+            hook(
+                crate::gui::DocHookKind::CraftRecipeResult,
+                rect(100.0, 100.0, 20.0, 20.0),
+                Some(clip),
+                false,
+            ),
+            // Scrolled fully out of the viewport: no content at all.
+            hook(
+                crate::gui::DocHookKind::CraftRecipeResult,
+                rect(100.0, 200.0, 20.0, 20.0),
+                Some(clip),
+                false,
+            ),
         ];
         let mut build = UiBuild::default();
 
@@ -774,15 +798,91 @@ mod tests {
 
         assert_eq!(
             build.hook_icon_quads.len(),
-            3,
-            "fully clipped recipe rows emit no host content"
+            1,
+            "a fully clipped cell emits no host content"
         );
-        assert!(build.hook_icon_quads.iter().all(|icon| icon.dim));
-        assert!(build.hook_icon_quads.iter().all(|icon| icon.clip.is_some()));
+        assert!(build.hook_icon_quads[0].dim, "unaffordable results dim");
+        assert!(build.hook_icon_quads[0].clip.is_some());
+    }
+
+    /// The tooltip floats over the grid, and the host's icons draw after the
+    /// base document chrome — so tooltip content MUST land in the overlay
+    /// buffers, which draw after the overlay chrome, or the grid would show
+    /// through the panel.
+    #[test]
+    fn tooltip_hook_content_goes_to_the_overlay_tier_and_grid_content_does_not() {
+        let mut snapshot = snap(GuiKind::Inventory, true);
+        snapshot.craft_recipes.push(recipe(ItemType::Stick, true));
+        snapshot.craft_tip = Some(recipe(ItemType::Stone, true));
+        let hooks = [
+            hook(
+                crate::gui::DocHookKind::CraftRecipeResult,
+                rect(10.0, 10.0, 18.0, 18.0),
+                None,
+                false,
+            ),
+            hook(
+                crate::gui::DocHookKind::CraftTipResult,
+                rect(200.0, 200.0, 18.0, 18.0),
+                None,
+                true,
+            ),
+            hook(
+                crate::gui::DocHookKind::CraftTipIngredients,
+                rect(220.0, 200.0, 120.0, 14.0),
+                None,
+                true,
+            ),
+        ];
+        let mut build = UiBuild::default();
+
+        build_ui(
+            &snapshot,
+            SCREEN,
+            crate::gui::gui_scale(SCREEN),
+            None,
+            Some(&hooks),
+            &mut build,
+        );
+
+        // Base tier: the grid cells only.
+        let base: Vec<ItemType> = build.hook_icon_quads.iter().map(|q| q.item).collect();
+        assert!(base.contains(&ItemType::Stick), "{base:?}");
+        assert!(!base.contains(&ItemType::Stone), "tooltip leaked: {base:?}");
+
+        // Overlay tier: only the tooltip's result and ingredients.
+        let over: Vec<ItemType> = build.overlay_icon_quads.iter().map(|q| q.item).collect();
+        assert!(over.contains(&ItemType::Stone), "{over:?}");
+        assert!(!over.contains(&ItemType::Stick), "{over:?}");
         assert!(
-            !build.counts.is_empty(),
-            "ingredient ×N labels are host-drawn"
+            !build.overlay_counts.is_empty(),
+            "tooltip ×N labels draw over the tooltip panel, not under it"
         );
+    }
+
+    /// A hovered recipe the browser did not publish must draw nothing at all
+    /// rather than falling back to some other row.
+    #[test]
+    fn tooltip_hooks_draw_nothing_without_a_named_recipe() {
+        let mut snapshot = snap(GuiKind::Inventory, true);
+        snapshot.craft_recipes.push(recipe(ItemType::Stick, true));
+        let hooks = [hook(
+            crate::gui::DocHookKind::CraftTipIngredients,
+            rect(220.0, 200.0, 120.0, 14.0),
+            None,
+            true,
+        )];
+        let mut build = UiBuild::default();
+        build_ui(
+            &snapshot,
+            SCREEN,
+            crate::gui::gui_scale(SCREEN),
+            None,
+            Some(&hooks),
+            &mut build,
+        );
+        assert!(build.overlay_icon_quads.is_empty());
+        assert!(build.overlay_counts.is_empty());
     }
 
     #[test]

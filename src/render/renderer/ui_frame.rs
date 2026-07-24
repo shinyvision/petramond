@@ -44,24 +44,37 @@ impl Renderer {
         hooks: Option<&[crate::gui::DocHook]>,
     ) {
         self.ui_count_vertex_count = 0;
+        self.ui_overlay_count_vertex_count = 0;
         self.ui_drag_count_vertex_count = 0;
         self.icon_quad_vertex_count = 0;
+        self.overlay_icon_quad_vertex_count = 0;
         self.drag_icon_quad_vertex_count = 0;
 
         build_ui(content, screen, scale, slots, hooks, &mut self.ui_build);
         let cap = crate::render::pipeline::MAX_UI_VERTICES as usize;
         let vsize = std::mem::size_of::<UiVertex>();
 
-        // Solid quads packed into one buffer: normal stack counts, then the
+        // Solid quads packed into one buffer in draw order: normal stack
+        // counts, the tooltip's counts (after the overlay chrome), then the
         // cursor-held count (drawn after the cursor icon).
         let counts = &self.ui_build.counts;
+        let overlay_counts = &self.ui_build.overlay_counts;
         let drag_counts = &self.ui_build.drag_counts;
         if !counts.is_empty() && counts.len() <= cap {
             self.queue
                 .write_buffer(&self.ui_solid_vbuf, 0, bytemuck::cast_slice(counts));
             self.ui_count_vertex_count = counts.len() as u32;
         }
-        let off = self.ui_count_vertex_count as usize;
+        let mut off = self.ui_count_vertex_count as usize;
+        if !overlay_counts.is_empty() && off + overlay_counts.len() <= cap {
+            self.queue.write_buffer(
+                &self.ui_solid_vbuf,
+                (off * vsize) as u64,
+                bytemuck::cast_slice(overlay_counts),
+            );
+            self.ui_overlay_count_vertex_count = overlay_counts.len() as u32;
+            off += overlay_counts.len();
+        }
         if !drag_counts.is_empty() && off + drag_counts.len() <= cap {
             self.queue.write_buffer(
                 &self.ui_solid_vbuf,
@@ -108,26 +121,32 @@ impl Renderer {
                     color,
                 );
             }
-            for icon in &self.ui_build.hook_icon_quads {
-                let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(icon.item);
-                let Some((visible, uv_tl, uv_br)) =
-                    clipped_icon(icon.rect, icon.clip, [u0, v0, u1, v1])
-                else {
-                    continue;
-                };
-                crate::render::ui::push_quad_uv(
-                    &mut verts,
-                    screen,
-                    visible.x,
-                    visible.y,
-                    visible.w,
-                    visible.h,
-                    uv_tl,
-                    uv_br,
-                    [1.0, 1.0, 1.0, if icon.dim { 0.35 } else { 1.0 }],
-                );
-            }
+            let push_hooks = |verts: &mut Vec<UiVertex>,
+                              icons: &[crate::render::ui::HookIconQuad]| {
+                for icon in icons {
+                    let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(icon.item);
+                    let Some((visible, uv_tl, uv_br)) =
+                        clipped_icon(icon.rect, icon.clip, [u0, v0, u1, v1])
+                    else {
+                        continue;
+                    };
+                    crate::render::ui::push_quad_uv(
+                        verts,
+                        screen,
+                        visible.x,
+                        visible.y,
+                        visible.w,
+                        visible.h,
+                        uv_tl,
+                        uv_br,
+                        [1.0, 1.0, 1.0, if icon.dim { 0.35 } else { 1.0 }],
+                    );
+                }
+            };
+            push_hooks(&mut verts, &self.ui_build.hook_icon_quads);
             let normal_icon_vertex_count = verts.len() as u32;
+            push_hooks(&mut verts, &self.ui_build.overlay_icon_quads);
+            self.overlay_icon_quad_vertex_count = verts.len() as u32 - normal_icon_vertex_count;
             for &(item, r, color, dyed) in &self.ui_build.drag_icon_quads {
                 let [u0, v0, u1, v1] = if dyed {
                     self.icon_atlas.cell_uv_dyed(item)
@@ -147,7 +166,9 @@ impl Renderer {
                 );
             }
             self.icon_quad_vertex_count = normal_icon_vertex_count;
-            self.drag_icon_quad_vertex_count = verts.len() as u32 - normal_icon_vertex_count;
+            self.drag_icon_quad_vertex_count = verts.len() as u32
+                - normal_icon_vertex_count
+                - self.overlay_icon_quad_vertex_count;
         }
         if !verts.is_empty() {
             // Icon-quad geometry is bounded by the visible slots but GROW the buffer to

@@ -56,6 +56,10 @@ pub struct HookRectOut {
     pub key: InstKey,
     pub rect: RectI,
     pub clip: Option<RectI>,
+    /// The hook lives inside a floating `tooltip`: its content belongs to the
+    /// overlay tier, drawn after the base tier's host content
+    /// (see [`crate::DrawList`]).
+    pub overlay: bool,
 }
 
 #[derive(Default)]
@@ -72,6 +76,9 @@ pub struct FrameOutput {
     pub panel_rect: RectI,
     /// The slot cell under the cursor, if any.
     pub hover_slot: Option<(String, u32)>,
+    /// The list stamp under the cursor as `(list id, item index)` — the index
+    /// into the bound items, so the host can look the row's data up directly.
+    pub hover_item: Option<(String, u32)>,
 }
 
 impl FrameOutput {
@@ -101,6 +108,7 @@ impl UiRuntime {
         out.hooks.clear();
         out.slots.clear();
         out.hover_slot = None;
+        out.hover_item = None;
         out.panel_rect = RectI::ZERO;
         if args.screen.0 == 0 || args.screen.1 == 0 || args.scale <= 0 {
             return;
@@ -123,9 +131,10 @@ impl UiRuntime {
         let images = args.images;
         let env = ThemeEnv {
             theme: &self.theme,
+            gui_scale: scale,
             image_size: &|name| images.resolve(name).map(|(_, (w, h))| (w as i32, h as i32)),
         };
-        let solved = solve(&tree, &env, viewport, &|i| {
+        let mut solved = solve(&tree, &env, viewport, &|i| {
             tree.get(i)
                 .key
                 .as_ref()
@@ -158,7 +167,7 @@ impl UiRuntime {
         // enclosing scroll region to keep the selected row visible.
         for i in 0..tree.len() as u32 {
             let inst = tree.get(i);
-            if !matches!(inst.node.kind, NodeKind::List) {
+            if !matches!(inst.node.kind, NodeKind::List { .. }) {
                 continue;
             }
             let (Some(key), Some(selected)) = (inst.key.clone(), inst.selected) else {
@@ -218,8 +227,10 @@ impl UiRuntime {
 
         // Hover resolution for paint, from the post-input cursor.
         let (cx, cy) = (fs.cursor().0 / scale as f32, fs.cursor().1 / scale as f32);
+        place_tooltips(&tree, &mut solved, (cx as i32, cy as i32), viewport);
         let visible_at = |i: u32| {
-            widget::contains_f(solved.rects[i as usize], cx, cy)
+            !solved.overlay[i as usize]
+                && widget::contains_f(solved.rects[i as usize], cx, cy)
                 && solved.clips[i as usize].is_none_or(|c| widget::contains_f(c, cx, cy))
         };
         let hover = (0..tree.len() as u32)
@@ -239,7 +250,7 @@ impl UiRuntime {
             _ => None,
         });
         let row_hover = (0..tree.len() as u32).rev().find_map(|i| {
-            if !matches!(tree.get(i).node.kind, NodeKind::List) || !visible_at(i) {
+            if !matches!(tree.get(i).node.kind, NodeKind::List { .. }) || !visible_at(i) {
                 return None;
             }
             tree.get(i)
@@ -247,6 +258,23 @@ impl UiRuntime {
                 .iter()
                 .position(|&c| tree.get(c).enabled && visible_at(c))
                 .map(|row| (i, row as u32))
+        });
+        // The hovered stamp's ITEM index (not its position among the visible
+        // children — invisible stamps are dropped entirely). Unlike the hover
+        // FACE above this ignores `enabled`: a row you cannot activate can
+        // still describe itself, which is exactly when the description matters
+        // most.
+        out.hover_item = (0..tree.len() as u32).rev().find_map(|i| {
+            let inst = tree.get(i);
+            if !matches!(inst.node.kind, NodeKind::List { .. }) || !visible_at(i) {
+                return None;
+            }
+            let id = inst.key.as_ref()?.id.clone();
+            let item = inst
+                .children
+                .iter()
+                .find_map(|&c| visible_at(c).then(|| tree.get(c).item).flatten())?;
+            Some((id, item))
         });
         let tab_hover = hover.and_then(|i| match &tree.get(i).node.kind {
             NodeKind::TabBar { tabs } => {
@@ -290,6 +318,7 @@ impl UiRuntime {
         ctx.paint(&mut Painter {
             list: &mut out.draw,
             scale,
+            font: self.theme.ui_font(),
         });
 
         // Outputs the host layers content with, all in physical px.
@@ -309,6 +338,7 @@ impl UiRuntime {
                         key: key.clone(),
                         rect,
                         clip: solved.clips[i].map(phys),
+                        overlay: solved.overlay[i],
                     });
                 }
             }
@@ -333,6 +363,47 @@ impl UiRuntime {
                 .find(|s| s.inst == i)
                 .map(|s| (s.role.clone(), s.base + c))
         });
+    }
+}
+
+/// Move every solved `tooltip` subtree from the solver's provisional origin to
+/// the pointer, offset by the node's `abs`. A tooltip that would overflow an
+/// edge flips to the other side of the cursor instead of sliding along it, so
+/// it never covers the thing being pointed at; only a tooltip too large for
+/// the viewport clamps.
+fn place_tooltips(
+    tree: &InstTree<'_>,
+    solved: &mut crate::layout::Solved,
+    cursor: (i32, i32),
+    viewport: (i32, i32),
+) {
+    for i in 0..tree.len() as u32 {
+        if !matches!(tree.get(i).node.kind, NodeKind::Tooltip) {
+            continue;
+        }
+        let rect = solved.rects[i as usize];
+        let off = tree.get(i).layout.abs.unwrap_or(crate::doc::AbsPos { x: 0, y: 0 });
+        let flip = |cur: i32, off: i32, size: i32, limit: i32| {
+            let lead = cur + off;
+            let placed = if lead + size > limit {
+                cur - off - size
+            } else {
+                lead
+            };
+            placed.clamp(0, (limit - size).max(0))
+        };
+        let x = flip(cursor.0, off.x, rect.w, viewport.0);
+        let y = flip(cursor.1, off.y, rect.h, viewport.1);
+        let (dx, dy) = (x - rect.x, y - rect.y);
+        if (dx, dy) == (0, 0) {
+            continue;
+        }
+        let mut stack = vec![i];
+        while let Some(n) = stack.pop() {
+            solved.rects[n as usize].x += dx;
+            solved.rects[n as usize].y += dy;
+            stack.extend_from_slice(&tree.get(n).children);
+        }
     }
 }
 

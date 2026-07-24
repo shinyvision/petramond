@@ -175,6 +175,7 @@ pub fn layout_rects(
     state: &UiState,
     images: &DiskImages,
     viewport: (i32, i32),
+    gui_scale: i32,
 ) -> Vec<RectEntry> {
     // Pointer-identity map doc node -> path.
     let mut by_ptr: Vec<(*const petramond_ui::Node, NodePath)> = Vec::new();
@@ -194,6 +195,7 @@ pub fn layout_rects(
     }
     let env = ThemeEnv {
         theme,
+        gui_scale,
         image_size: &|name| images.resolve(name).map(|(_, (w, h))| (w as i32, h as i32)),
     };
     let solved = petramond_ui::solve(&tree, &env, viewport, &|_| 0);
@@ -256,7 +258,7 @@ mod tests {
         let theme = Theme::placeholder();
         let state = UiState::new();
         let images = DiskImages::empty();
-        let rects = layout_rects(&p.document, &theme, &state, &images, (400, 300));
+        let rects = layout_rects(&p.document, &theme, &state, &images, (400, 300), 1);
         // Root plus every child expands (no bindings hide anything).
         assert_eq!(rects.len(), 1 + p.document.root.children.len());
         assert_eq!(rects[0].path, Vec::<usize>::new());

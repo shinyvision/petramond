@@ -1,169 +1,130 @@
-//! Renderer-neutral Petramond text: glyph bitmaps, measurement, wrapping,
-//! atlas generation, and CPU rasterization.
+//! Renderer-neutral Petramond text: a loaded font's glyph bitmaps, metrics,
+//! measurement, wrapping, atlas generation, and CPU rasterization.
 //!
 //! Text is shared presentation infrastructure, not GUI infrastructure. GUI
-//! documents, canvas overlays, HUDs, and tools all consume this crate. The atlas generator
-//! turns the tables into a plain RGBA grid (ASCII 32..=126 plus a fallback
-//! cell), so paint samples a texture like any other — and a future theme can
-//! swap in a hand-drawn `font.png` of the same geometry.
+//! documents, canvas overlays, HUDs, and tools all consume this crate.
+//!
+//! Glyphs come from a real font FILE ([`Font::from_ttf`]), rasterized once to
+//! 1 bit at the font's design pixel size — so the UI can spell `×`, `ö` and
+//! `Æ` instead of falling back to a box, while still looking like it was drawn
+//! on a pixel grid. A hardcoded 5×7 ASCII table ([`Font::builtin`]) stays as
+//! the fallback for tests, the placeholder theme, and a pack whose font fails
+//! to load.
+//!
+//! There is exactly ONE UI font per process, so the free functions here read a
+//! process default that the host installs when it loads the theme
+//! ([`install`]). Call sites that hold a font (the GUI theme does) should use
+//! its methods directly.
 
+pub mod builtin;
+mod font;
 pub mod tiny;
 
-/// Glyph width in font-pixels.
-pub const GLYPH_W: i32 = 5;
-/// Glyph height in font-pixels.
-pub const GLYPH_H: i32 = 7;
-/// Horizontal advance per glyph (glyph + 1px gap).
-pub const ADVANCE: i32 = GLYPH_W + 1;
-/// Vertical advance between wrapped lines (glyph + 2px leading).
-pub const LINE_ADVANCE: i32 = GLYPH_H + 2;
+pub use font::{Font, FontError, Glyph, ATLAS_COLS};
 
-/// Width in font-pixels of a single-line run of `chars` characters.
-pub fn width_chars(chars: usize) -> i32 {
-    if chars == 0 {
-        0
-    } else {
-        chars as i32 * ADVANCE - 1
+use std::sync::{Arc, OnceLock, RwLock};
+
+fn slot() -> &'static RwLock<Arc<Font>> {
+    static SLOT: OnceLock<RwLock<Arc<Font>>> = OnceLock::new();
+    SLOT.get_or_init(|| RwLock::new(Arc::new(Font::builtin())))
+}
+
+/// Install the process-wide UI font. The host calls this once, when the theme
+/// loads; debug builds call it again when the theme is hot-reloaded.
+pub fn install(font: Arc<Font>) {
+    if let Ok(mut slot) = slot().write() {
+        *slot = font;
     }
 }
 
-/// Width in font-pixels of `s` on one line.
+/// The process-wide UI font (the built-in table until [`install`] runs).
+pub fn font() -> Arc<Font> {
+    slot()
+        .read()
+        .map(|slot| Arc::clone(&slot))
+        .unwrap_or_else(|_| Arc::new(Font::builtin()))
+}
+
+/// Height of a single line's glyph box, in font-pixels.
+pub fn line_h() -> i32 {
+    font().line_h()
+}
+
+/// Baseline-to-baseline distance between wrapped lines, in font-pixels.
+pub fn line_advance() -> i32 {
+    font().line_advance()
+}
+
+/// The uniform atlas cell width, in font-pixels. This is a GLYPH BOX, not an
+/// advance: proportional text must be measured, never multiplied.
+pub fn cell_w() -> i32 {
+    font().cell_w()
+}
+
+/// Pen advance of one character, in font-pixels.
+pub fn advance(ch: char) -> i32 {
+    font().advance(ch)
+}
+
+/// Width of `s` on one line, in font-pixels.
 pub fn width(s: &str) -> i32 {
-    width_chars(s.chars().count())
+    font().width(s)
 }
 
-/// Greedy word wrap: split `s` into lines of at most `max_w` font-pixels,
-/// breaking at spaces where possible and mid-word only when a word alone
-/// exceeds the width. Returns byte ranges into `s`. Never returns an empty
-/// vec (empty text = one empty line).
+/// Width of the first `byte_end` bytes of `s` — the caret x for an index.
+pub fn prefix_width(s: &str, byte_end: usize) -> i32 {
+    font().prefix_width(s, byte_end)
+}
+
+/// The byte index whose caret position is nearest `x` font-pixels.
+pub fn index_at_x(s: &str, x: i32) -> usize {
+    font().index_at_x(s, x)
+}
+
+/// How many leading characters of `s` fit in `max_w` font-pixels.
+pub fn fit_chars(s: &str, max_w: i32) -> usize {
+    font().fit_chars(s, max_w)
+}
+
+/// Greedy word wrap: byte ranges of lines at most `max_w` font-pixels wide.
 pub fn wrap(s: &str, max_w: i32) -> Vec<std::ops::Range<usize>> {
-    let per_line = ((max_w + 1) / ADVANCE).max(1) as usize;
-    let mut lines: Vec<std::ops::Range<usize>> = Vec::new();
-    let mut line_start = 0usize;
-    let mut line_chars = 0usize;
-    let mut last_space: Option<usize> = None; // byte index of last space on line
-    for (bi, ch) in s.char_indices() {
-        if line_chars + 1 > per_line {
-            let break_at = match last_space {
-                // Break after the space; the space itself is swallowed.
-                Some(sp) if sp >= line_start => {
-                    lines.push(line_start..sp);
-                    sp + 1
-                }
-                _ => {
-                    lines.push(line_start..bi);
-                    bi
-                }
-            };
-            line_start = break_at;
-            line_chars = s[line_start..bi].chars().count();
-            last_space = None;
-        }
-        if ch == ' ' {
-            last_space = Some(bi);
-        }
-        line_chars += 1;
-    }
-    lines.push(line_start..s.len());
-    lines
+    font().wrap(s, max_w)
 }
 
 /// Size in font-pixels of `s` wrapped to `max_w` (`None` = single line).
 pub fn measure(s: &str, max_w: Option<i32>) -> (i32, i32) {
-    match max_w {
-        None => (width(s), GLYPH_H),
-        Some(max_w) => {
-            let lines = wrap(s, max_w);
-            let w = lines
-                .iter()
-                .map(|r| width(&s[r.clone()]))
-                .max()
-                .unwrap_or(0);
-            let h = GLYPH_H + (lines.len() as i32 - 1) * LINE_ADVANCE;
-            (w, h)
-        }
-    }
+    font().measure(s, max_w)
 }
 
-/// `true` if cell `(col, row)` of `ch`'s 5×7 glyph is lit.
+/// `true` if cell `(col, row)` of `ch`'s glyph box is lit.
 pub fn glyph_cell(ch: char, col: i32, row: i32) -> bool {
-    if !(0..GLYPH_W).contains(&col) || !(0..GLYPH_H).contains(&row) {
-        return false;
-    }
-    let bits = glyph(ch)[row as usize];
-    (bits >> (GLYPH_W - 1 - col)) & 1 == 1
+    font().glyph_cell(ch, col, row)
 }
 
-// ---- font atlas -------------------------------------------------------------
-
-/// Codepoints covered by the atlas grid, in cell order: printable ASCII, then
-/// one trailing fallback cell every unknown character maps to.
-pub const ATLAS_FIRST: u32 = 32;
-pub const ATLAS_LAST: u32 = 126;
-pub const ATLAS_COLS: u32 = 16;
-
-/// Grid cell index of `ch` in the font atlas.
-pub fn atlas_cell(ch: char) -> u32 {
-    let cp = ch as u32;
-    if (ATLAS_FIRST..=ATLAS_LAST).contains(&cp) {
-        cp - ATLAS_FIRST
-    } else {
-        ATLAS_LAST - ATLAS_FIRST + 1
-    }
-}
-
-/// Total cells in the atlas (ASCII range + fallback).
-pub fn atlas_cells() -> u32 {
-    ATLAS_LAST - ATLAS_FIRST + 2
+/// The atlas pixel rect `[x, y, w, h]` of `ch`'s cell.
+pub fn atlas_rect(ch: char) -> [u32; 4] {
+    font().atlas_rect(ch)
 }
 
 /// Atlas pixel size `(w, h)`.
 pub fn atlas_size() -> (u32, u32) {
-    let rows = atlas_cells().div_ceil(ATLAS_COLS);
-    (ATLAS_COLS * GLYPH_W as u32, rows * GLYPH_H as u32)
-}
-
-/// The UV-space pixel rect `[x, y, w, h]` of `ch`'s atlas cell.
-pub fn atlas_rect(ch: char) -> [u32; 4] {
-    let cell = atlas_cell(ch);
-    let (cx, cy) = (cell % ATLAS_COLS, cell / ATLAS_COLS);
-    [
-        cx * GLYPH_W as u32,
-        cy * GLYPH_H as u32,
-        GLYPH_W as u32,
-        GLYPH_H as u32,
-    ]
+    font().atlas_size()
 }
 
 /// Generate the font atlas as tightly-packed RGBA (white glyphs on
 /// transparent), suitable for direct texture upload.
 pub fn build_atlas() -> (Vec<u8>, (u32, u32)) {
-    let (w, h) = atlas_size();
-    let mut rgba = vec![0u8; (w * h * 4) as usize];
-    let mut blit = |cell: u32, ch: char| {
-        let (cx, cy) = (cell % ATLAS_COLS, cell / ATLAS_COLS);
-        for row in 0..GLYPH_H {
-            for col in 0..GLYPH_W {
-                if glyph_cell(ch, col, row) {
-                    let px = cx * GLYPH_W as u32 + col as u32;
-                    let py = cy * GLYPH_H as u32 + row as u32;
-                    let i = ((py * w + px) * 4) as usize;
-                    rgba[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
-                }
-            }
-        }
-    };
-    for cp in ATLAS_FIRST..=ATLAS_LAST {
-        blit(cp - ATLAS_FIRST, char::from_u32(cp).unwrap());
-    }
-    blit(ATLAS_LAST - ATLAS_FIRST + 1, '\u{FFFD}'); // fallback cell ('?'-boxed glyph)
-    (rgba, (w, h))
+    font().build_atlas()
 }
 
 /// Pixel size of one single-line text run at integer glyph scale.
 pub fn measure_scaled(s: &str, scale: u8) -> [u32; 2] {
+    let font = font();
     let scale = scale.max(1) as u32;
-    [width(s).max(0) as u32 * scale, GLYPH_H as u32 * scale]
+    [
+        font.width(s).max(0) as u32 * scale,
+        font.line_h() as u32 * scale,
+    ]
 }
 
 /// Blend one single-line run into a straight-alpha RGBA8 image.
@@ -181,13 +142,14 @@ pub fn draw_rgba(
     if width == 0 || !rgba.len().is_multiple_of(width as usize * 4) {
         return;
     }
+    let font = font();
     let height = rgba.len() / (width as usize * 4);
     let scale = scale.max(1) as i32;
     let mut glyph_x = position[0];
     for ch in text.chars() {
-        for row in 0..GLYPH_H {
-            for col in 0..GLYPH_W {
-                if !glyph_cell(ch, col, row) {
+        for row in 0..font.line_h() {
+            for col in 0..font.cell_w() {
+                if !font.glyph_cell(ch, col, row) {
                     continue;
                 }
                 let left = glyph_x + col * scale;
@@ -199,7 +161,7 @@ pub fn draw_rgba(
                 }
             }
         }
-        glyph_x += ADVANCE * scale;
+        glyph_x += font.advance(ch) * scale;
     }
 }
 
@@ -224,184 +186,106 @@ fn blend_rgba_pixel(rgba: &mut [u8], width: usize, height: usize, x: i32, y: i32
     rgba[i + 3] = (out_a * 255.0).round() as u8;
 }
 
-fn glyph(ch: char) -> [u8; GLYPH_H as usize] {
-    if ch.is_ascii_lowercase() {
-        return lowercase_glyph(ch);
-    }
-    match ch.to_ascii_uppercase() {
-        'A' => [14, 17, 17, 31, 17, 17, 17],
-        'B' => [30, 17, 17, 30, 17, 17, 30],
-        'C' => [14, 17, 16, 16, 16, 17, 14],
-        'D' => [30, 17, 17, 17, 17, 17, 30],
-        'E' => [31, 16, 16, 30, 16, 16, 31],
-        'F' => [31, 16, 16, 30, 16, 16, 16],
-        'G' => [14, 17, 16, 23, 17, 17, 15],
-        'H' => [17, 17, 17, 31, 17, 17, 17],
-        'I' => [14, 4, 4, 4, 4, 4, 14],
-        'J' => [7, 2, 2, 2, 18, 18, 12],
-        'K' => [17, 18, 20, 24, 20, 18, 17],
-        'L' => [16, 16, 16, 16, 16, 16, 31],
-        'M' => [17, 27, 21, 21, 17, 17, 17],
-        'N' => [17, 25, 21, 19, 17, 17, 17],
-        'O' => [14, 17, 17, 17, 17, 17, 14],
-        'P' => [30, 17, 17, 30, 16, 16, 16],
-        'Q' => [14, 17, 17, 17, 21, 18, 13],
-        'R' => [30, 17, 17, 30, 20, 18, 17],
-        'S' => [15, 16, 16, 14, 1, 1, 30],
-        'T' => [31, 4, 4, 4, 4, 4, 4],
-        'U' => [17, 17, 17, 17, 17, 17, 14],
-        'V' => [17, 17, 17, 17, 17, 10, 4],
-        'W' => [17, 17, 17, 21, 21, 21, 10],
-        'X' => [17, 17, 10, 4, 10, 17, 17],
-        'Y' => [17, 17, 10, 4, 4, 4, 4],
-        'Z' => [31, 1, 2, 4, 8, 16, 31],
-        '0' => [14, 17, 19, 21, 25, 17, 14],
-        '1' => [4, 12, 4, 4, 4, 4, 14],
-        '2' => [14, 17, 1, 2, 4, 8, 31],
-        '3' => [30, 1, 1, 14, 1, 1, 30],
-        '4' => [2, 6, 10, 18, 31, 2, 2],
-        '5' => [31, 16, 16, 30, 1, 1, 30],
-        '6' => [14, 16, 16, 30, 17, 17, 14],
-        '7' => [31, 1, 2, 4, 8, 8, 8],
-        '8' => [14, 17, 17, 14, 17, 17, 14],
-        '9' => [14, 17, 17, 15, 1, 1, 14],
-        ' ' => [0, 0, 0, 0, 0, 0, 0],
-        '-' => [0, 0, 0, 31, 0, 0, 0],
-        '_' => [0, 0, 0, 0, 0, 0, 31],
-        '.' => [0, 0, 0, 0, 0, 4, 4],
-        ',' => [0, 0, 0, 0, 4, 4, 8],
-        ':' => [0, 4, 4, 0, 4, 4, 0],
-        ';' => [0, 4, 4, 0, 4, 4, 8],
-        '!' => [4, 4, 4, 4, 4, 0, 4],
-        '?' => [14, 17, 1, 2, 4, 0, 4],
-        '/' => [1, 1, 2, 4, 8, 16, 16],
-        '\\' => [16, 16, 8, 4, 2, 1, 1],
-        '\'' => [4, 4, 8, 0, 0, 0, 0],
-        '"' => [10, 10, 0, 0, 0, 0, 0],
-        '(' => [2, 4, 8, 8, 8, 4, 2],
-        ')' => [8, 4, 2, 2, 2, 4, 8],
-        '[' => [14, 8, 8, 8, 8, 8, 14],
-        ']' => [14, 2, 2, 2, 2, 2, 14],
-        '<' => [2, 4, 8, 16, 8, 4, 2],
-        '>' => [8, 4, 2, 1, 2, 4, 8],
-        '+' => [0, 4, 4, 31, 4, 4, 0],
-        '=' => [0, 0, 31, 0, 31, 0, 0],
-        '*' => [0, 21, 14, 31, 14, 21, 0],
-        '$' => [4, 15, 20, 14, 5, 30, 4],
-        '#' => [10, 31, 10, 10, 31, 10, 0],
-        '@' => [14, 17, 23, 21, 23, 16, 14],
-        '%' => [17, 1, 2, 4, 8, 16, 17],
-        '&' => [12, 18, 20, 8, 21, 18, 13],
-        '|' => [4, 4, 4, 4, 4, 4, 4],
-        '^' => [4, 10, 17, 0, 0, 0, 0],
-        '{' => [2, 4, 4, 8, 4, 4, 2],
-        '}' => [8, 4, 4, 2, 4, 4, 8],
-        '`' => [8, 4, 2, 0, 0, 0, 0],
-        '~' => [0, 0, 8, 21, 2, 0, 0],
-        _ => [14, 17, 1, 2, 4, 0, 4],
-    }
-}
-
-fn lowercase_glyph(ch: char) -> [u8; GLYPH_H as usize] {
-    match ch {
-        'a' => [0, 0, 14, 1, 15, 17, 15],
-        'b' => [16, 16, 22, 25, 17, 17, 30],
-        'c' => [0, 0, 14, 16, 16, 17, 14],
-        'd' => [1, 1, 13, 19, 17, 17, 15],
-        'e' => [0, 0, 14, 17, 31, 16, 14],
-        'f' => [6, 8, 8, 30, 8, 8, 8],
-        'g' => [0, 0, 14, 17, 15, 1, 14],
-        'h' => [16, 16, 22, 25, 17, 17, 17],
-        'i' => [4, 0, 12, 4, 4, 4, 14],
-        'j' => [2, 0, 2, 2, 2, 18, 12],
-        'k' => [16, 16, 18, 20, 24, 20, 18],
-        'l' => [4, 4, 4, 4, 4, 4, 4],
-        'm' => [0, 0, 26, 21, 21, 17, 17],
-        'n' => [0, 0, 22, 25, 17, 17, 17],
-        'o' => [0, 0, 14, 17, 17, 17, 14],
-        'p' => [0, 0, 30, 17, 30, 16, 16],
-        'q' => [0, 0, 13, 19, 15, 1, 1],
-        'r' => [0, 0, 22, 25, 16, 16, 16],
-        's' => [0, 0, 15, 16, 14, 1, 30],
-        't' => [8, 8, 30, 8, 8, 9, 6],
-        'u' => [0, 0, 17, 17, 17, 19, 13],
-        'v' => [0, 0, 17, 17, 17, 10, 4],
-        'w' => [0, 0, 17, 17, 21, 21, 10],
-        'x' => [0, 0, 17, 10, 4, 10, 17],
-        'y' => [0, 0, 17, 17, 15, 1, 14],
-        'z' => [0, 0, 31, 2, 4, 8, 31],
-        _ => [14, 17, 1, 2, 4, 0, 4],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The shipped font is what players read: it must load at its declared
+    /// size and cover the characters item names and UI copy actually use.
     #[test]
-    fn width_tracks_fixed_advance() {
-        assert_eq!(width(""), 0);
-        assert_eq!(width("A"), GLYPH_W);
-        assert_eq!(width("AB"), GLYPH_W * 2 + 1);
-    }
-
-    #[test]
-    fn wrap_breaks_at_spaces_and_hard_breaks_long_words() {
-        // 10 chars/line at max_w=59 (59+1)/6 = 10.
-        let s = "hello world again";
-        let lines = wrap(s, 59);
-        let texts: Vec<&str> = lines.iter().map(|r| &s[r.clone()]).collect();
-        assert_eq!(texts, vec!["hello", "world", "again"]);
-
-        let long = "abcdefghijklmno";
-        let lines = wrap(long, 59);
-        let texts: Vec<&str> = lines.iter().map(|r| &long[r.clone()]).collect();
-        assert_eq!(texts, vec!["abcdefghij", "klmno"]);
-    }
-
-    #[test]
-    fn measure_wrapped_height_uses_line_advance() {
-        let (w, h) = measure("hello world", Some(59));
-        assert_eq!(h, GLYPH_H + LINE_ADVANCE);
-        assert_eq!(w, width("hello"));
-        assert_eq!(measure("hi", None), (width("hi"), GLYPH_H));
-        assert_eq!(measure("", Some(30)), (0, GLYPH_H));
-    }
-
-    #[test]
-    fn atlas_covers_ascii_with_fallback() {
-        let (rgba, (w, h)) = build_atlas();
-        assert_eq!(rgba.len(), (w * h * 4) as usize);
-        // 'A' cell has lit pixels exactly matching the table.
-        let [ax, ay, ..] = atlas_rect('A');
-        let lit = |col: u32, row: u32| {
-            let i = (((ay + row) * w + ax + col) * 4) as usize;
-            rgba[i + 3] == 255
-        };
-        for row in 0..GLYPH_H {
-            for col in 0..GLYPH_W {
-                assert_eq!(
-                    lit(col as u32, row as u32),
-                    glyph_cell('A', col, row),
-                    "atlas('A') differs from table at {col},{row}"
-                );
-            }
+    fn the_shipped_font_loads_and_covers_european_latin() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../assets/ui/font/DepartureMono-Regular.otf"
+        ))
+        .expect("shipped font is vendored");
+        let font = Font::from_ttf(&bytes, 11.0).expect("shipped font rasterizes at its size");
+        for ch in "AZaz09 ×·—…'\"Ööäëéèñçßæø".chars() {
+            assert!(font.has_glyph(ch), "missing glyph {ch:?}");
         }
-        // Unknown chars share the one fallback cell.
-        assert_eq!(atlas_rect('🙂'), atlas_rect('\u{80}'));
-        assert_ne!(atlas_rect('🙂'), atlas_rect('?'));
+        assert!(font.glyph_count() > 200, "{}", font.glyph_count());
+        // Real glyph coverage costs room: accented capitals sit above the cap
+        // line and descenders below the baseline.
+        let builtin = Font::builtin();
+        assert!(font.line_h() > builtin.line_h());
+    }
+
+    /// The rasterizer reproduces the font's own pixel grid.
+    ///
+    /// These are the glyphs that caught it getting this wrong: `w`, `W` and
+    /// `M` each pack three one-pixel stems into five columns, so any
+    /// decimation that averages a cell instead of point-sampling its centre
+    /// merges them into a blob — `hushjaw` renders as `hushjau`. The expected
+    /// bitmaps are FreeType's hinted output for the same face and size.
+    #[test]
+    fn glyph_bitmaps_match_the_fonts_own_pixel_grid() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../assets/ui/font/DepartureMono-Regular.otf"
+        ))
+        .expect("shipped font is vendored");
+        let font = Font::from_ttf(&bytes, 11.0).expect("shipped font rasterizes");
+        let expect: &[(char, &[&str])] = &[
+            (
+                'w',
+                &["#.#.#", "#.#.#", "#.#.#", "#.#.#", "#.#.#", ".#.##"],
+            ),
+            (
+                'W',
+                &[
+                    "#...#", "#...#", "#...#", "#.#.#", "#.#.#", ".#.#.", ".#.#.", ".#.#.",
+                ],
+            ),
+            (
+                'M',
+                &[
+                    "#...#", "#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#",
+                ],
+            ),
+        ];
+        for (ch, want) in expect {
+            let got = trimmed_glyph(&font, *ch);
+            assert_eq!(&got, want, "{ch:?} rasterized as {got:#?}");
+        }
+        // One-pixel stems mean the advance leaves exactly one column of gap.
+        assert_eq!(font.advance('W'), 7);
+    }
+
+    /// A glyph's lit cells with the blank border trimmed off.
+    fn trimmed_glyph(font: &Font, ch: char) -> Vec<String> {
+        let lit = |x: i32, y: i32| font.glyph_cell(ch, x, y);
+        let rows: Vec<i32> = (0..font.line_h())
+            .filter(|&y| (0..font.cell_w()).any(|x| lit(x, y)))
+            .collect();
+        let cols: Vec<i32> = (0..font.cell_w())
+            .filter(|&x| (0..font.line_h()).any(|y| lit(x, y)))
+            .collect();
+        let (x0, x1) = (cols[0], *cols.last().unwrap());
+        rows.iter()
+            .map(|&y| {
+                (x0..=x1)
+                    .map(|x| if lit(x, y) { '#' } else { '.' })
+                    .collect()
+            })
+            .collect()
     }
 
     #[test]
-    fn cpu_raster_uses_shared_metrics_and_clips() {
-        let size = measure_scaled("A", 2);
-        assert_eq!(size, [10, 14]);
-        let mut rgba = vec![0; 10 * 14 * 4];
-        draw_rgba(&mut rgba, 10, "A", [0, 0], 2, [12, 34, 56, 255]);
-        assert!(rgba.chunks_exact(4).any(|pixel| pixel == [12, 34, 56, 255]));
+    fn a_broken_font_file_is_an_error_not_a_panic() {
+        assert!(Font::from_ttf(b"not a font", 10.0).is_err());
+        assert!(Font::from_ttf(&[], 10.0).is_err());
+    }
 
-        let mut clipped = vec![0; 4 * 4 * 4];
-        draw_rgba(&mut clipped, 4, "A", [-3, -3], 2, [255; 4]);
-        assert!(clipped.chunks_exact(4).any(|pixel| pixel[3] != 0));
+    #[test]
+    fn free_functions_read_the_installed_font() {
+        // The default is the built-in table until a host installs one.
+        assert_eq!(width("AB"), font().width("AB"));
+        assert_eq!(measure("hi", None), (width("hi"), line_h()));
     }
 }
+
+
+
+
+
+

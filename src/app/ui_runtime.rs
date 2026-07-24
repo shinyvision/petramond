@@ -207,13 +207,22 @@ impl AppUi {
     /// BEFORE the new screen's controller populates.
     pub fn ensure_active(&mut self, kind: GuiKind) {
         if self.active != Some(kind) {
-            self.fs.reset();
-            self.state.clear();
-            self.extra_images.clear();
-            self.dynamic_images.clear();
-            self.frame_stamp = None;
+            self.reset_screen_state();
             self.active = Some(kind);
         }
+    }
+
+    /// Everything ephemeral that belongs to ONE open screen. Hover included:
+    /// the next screen must not inherit a stamp index resolved against the
+    /// last one's document.
+    fn reset_screen_state(&mut self) {
+        self.fs.reset();
+        self.state.clear();
+        self.extra_images.clear();
+        self.dynamic_images.clear();
+        self.frame_stamp = None;
+        self.out.hover_slot = None;
+        self.out.hover_item = None;
     }
 
     /// Run one runtime frame for `kind`; queued input drains into this frame.
@@ -291,6 +300,18 @@ impl AppUi {
     /// The last frame's output (draw list + rects).
     pub fn out(&self) -> &FrameOutput {
         &self.out
+    }
+
+    /// The item index hovered in list `id` on the last solved frame. Hover is
+    /// resolved after input, so the value a populate pass reads is one frame
+    /// old — imperceptible for hover-revealed content, and it keeps hover out
+    /// of the solve it would otherwise have to precede.
+    pub fn hover_item(&self, id: &str) -> Option<usize> {
+        self.out
+            .hover_item
+            .as_ref()
+            .filter(|(list, _)| list == id)
+            .map(|(_, item)| *item as usize)
     }
 
     /// Resolve the current physical cursor position against the last solved
@@ -375,10 +396,16 @@ impl AppUi {
                 .filter_map(|hook| {
                     let kind = match hook.key.id.as_str() {
                         "recipe_result" => crate::gui::DocHookKind::CraftRecipeResult,
-                        "recipe_ingredients" => crate::gui::DocHookKind::CraftRecipeIngredients,
+                        "craft_tip_result" => crate::gui::DocHookKind::CraftTipResult,
+                        "craft_tip_ingredients" => crate::gui::DocHookKind::CraftTipIngredients,
                         _ => return None,
                     };
-                    let index = hook.key.item? as usize;
+                    // Only the grid cells are list stamps; the detail and
+                    // tooltip hooks describe the recipe the snapshot names.
+                    let index = match kind {
+                        crate::gui::DocHookKind::CraftRecipeResult => hook.key.item? as usize,
+                        _ => 0,
+                    };
                     let rect = crate::gui::SlotRect {
                         x: hook.rect.x as f32,
                         y: hook.rect.y as f32,
@@ -396,6 +423,7 @@ impl AppUi {
                         index,
                         rect,
                         clip,
+                        overlay: hook.overlay,
                     })
                 })
                 .collect(),
@@ -405,11 +433,7 @@ impl AppUi {
     /// Drop the active screen's ephemeral state (screen closed/changed).
     pub fn deactivate(&mut self) {
         if self.active.take().is_some() {
-            self.fs.reset();
-            self.state.clear();
-            self.extra_images.clear();
-            self.dynamic_images.clear();
-            self.frame_stamp = None;
+            self.reset_screen_state();
         }
         self.input.clear();
     }

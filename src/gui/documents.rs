@@ -435,6 +435,133 @@ mod tests {
         }
     }
 
+    /// The font's line box drives every document's vertical budget, so a font
+    /// swap (or one more label) must not push a shipped screen off the
+    /// smallest viewport the game scales to. Panels that legitimately scroll
+    /// absorb the difference; a panel that simply grew is a layout bug you
+    /// only see by opening that screen.
+    #[test]
+    fn every_shipped_document_fits_the_smallest_viewport() {
+        use petramond_ui::{FrameArgs, FrameOutput, FrameState, NoImages, UiRuntime, UiState};
+        const KINDS: &[GuiKind] = &[
+            GuiKind::Chest,
+            GuiKind::Inventory,
+            GuiKind::CraftingTable,
+            GuiKind::Furnace,
+            GuiKind::FurnitureWorkbench,
+            GuiKind::Title,
+            GuiKind::WorldSelect,
+            GuiKind::WorldSettings,
+            GuiKind::CreateWorld,
+            GuiKind::DeleteWorld,
+            GuiKind::Pause,
+            GuiKind::Sleep,
+            GuiKind::Death,
+            GuiKind::ConnectServer,
+            GuiKind::ModsMissing,
+            GuiKind::ConnectionLost,
+            GuiKind::Options,
+            GuiKind::OptionsSound,
+            GuiKind::OptionsControls,
+            GuiKind::OptionsGraphics,
+        ];
+        // 720p is the smallest common window; auto gui scale picks 3 there.
+        let screen = (1280u32, 720u32);
+        let scale = crate::gui::gui_scale(screen) as i32;
+        let viewport_h = screen.1 as i32 / scale;
+        let mut overflowing = Vec::new();
+        for kind in KINDS {
+            let Some(doc) = doc_for(*kind) else {
+                continue;
+            };
+            let runtime = UiRuntime::new(doc.doc, crate::gui::doc_theme::theme());
+            let mut fs = FrameState::new();
+            let mut out = FrameOutput::default();
+            runtime.frame(
+                FrameArgs {
+                    screen,
+                    scale,
+                    now: 0.0,
+                    state: &UiState::new(),
+                    input: &[],
+                    clipboard: None,
+                    images: &NoImages,
+                    dim: None,
+                    preview: None,
+                },
+                &mut fs,
+                &mut out,
+            );
+            let h = out.panel_rect.h / scale;
+            if h > viewport_h {
+                overflowing.push(format!("{kind:?}: {h} > {viewport_h}"));
+            }
+        }
+        assert!(overflowing.is_empty(), "documents overflow: {overflowing:?}");
+    }
+
+    /// The browser exists to stop the player scrolling and squinting, so the
+    /// grid has to actually show rows. Chrome added above it (a detail line, a
+    /// second label) comes straight out of this budget: the scroll is the only
+    /// grower, so it absorbs every pixel anything else takes.
+    #[test]
+    fn the_recipe_grid_shows_several_rows_at_the_smallest_viewport() {
+        use petramond_ui::{
+            FrameArgs, FrameOutput, FrameState, NoImages, UiMap, UiRuntime, UiState, UiValue,
+        };
+        let doc = doc_for(GuiKind::CraftingTable).expect("crafting table document loads");
+        let rows: Vec<UiMap> = (0..120)
+            .map(|_| {
+                let mut row = UiMap::new();
+                row.insert("enabled".into(), UiValue::Bool(true));
+                row
+            })
+            .collect();
+        let mut state = UiState::new();
+        state.set("craft_recipes", UiValue::List(Arc::new(rows)));
+        state.set("no_craft_results", UiValue::Bool(false));
+
+        let screen = (1280u32, 720u32);
+        let scale = crate::gui::gui_scale(screen) as i32;
+        let runtime = UiRuntime::new(doc.doc, crate::gui::doc_theme::theme());
+        let mut fs = FrameState::new();
+        let mut out = FrameOutput::default();
+        runtime.frame(
+            FrameArgs {
+                screen,
+                scale,
+                now: 0.0,
+                state: &state,
+                input: &[],
+                clipboard: None,
+                images: &NoImages,
+                dim: None,
+                preview: None,
+            },
+            &mut fs,
+            &mut out,
+        );
+
+        // Count distinct cell rows actually inside the scroll viewport.
+        let scroll = out.rect("craft_scroll").expect("scroll solves");
+        let mut tops: Vec<i32> = out
+            .named
+            .iter()
+            .filter(|(key, _)| key.id == "recipe")
+            .map(|(_, r)| r.y)
+            .filter(|y| *y >= scroll.y && *y < scroll.y + scroll.h)
+            .collect();
+        tops.sort_unstable();
+        tops.dedup();
+        // Three at 720p (the tightest case: the panel's 9-slice border alone
+        // costs 24 logical px), more at 1080p where the viewport is taller.
+        assert!(
+            tops.len() >= 3,
+            "only {} grid rows visible at 720p — the browser is being squeezed",
+            tops.len()
+        );
+    }
+
     #[test]
     fn crafting_table_browser_shrinks_before_inventory_leaves_the_viewport() {
         use petramond_ui::{

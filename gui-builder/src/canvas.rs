@@ -61,6 +61,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         &state,
         &app.images,
         viewport,
+        scale,
     );
 
     egui::ScrollArea::both()

@@ -732,3 +732,157 @@ fn stackable_output_keeps_craft_enabled_and_shift_crafts_the_maximum() {
         "a FULL output stack disables CRAFT until it is taken"
     );
 }
+
+/// Hover is the browser's whole discovery channel now that the grid shows
+/// icons only, and it has to work for the recipes you CANNOT afford — that is
+/// exactly when "what does this need?" matters.
+#[test]
+fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
+    let mut app = app();
+    app.install_test_crafting_recipe();
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280u32, 720u32);
+    search_recipes(&mut app, screen, "stick");
+
+    let (x, y) = cursor_over_widget(&mut app, screen, "recipe", Some(0));
+    app.set_cursor_position(x, y);
+    // One frame resolves the hover, the next repopulates from it.
+    app.solve_menu_frame_for_test(screen);
+    app.solve_menu_frame_for_test(screen);
+
+    assert_eq!(app.ui.state_mut().get_bool("show_recipe_tip"), Some(true));
+    let name = app
+        .ui
+        .state_mut()
+        .get_str("craft_tip_name")
+        .expect("tooltip names the result")
+        .to_owned();
+    assert!(name.contains("Stick"), "{name}");
+    assert!(name.contains('\u{d7}'), "result count is spelled out: {name}");
+
+    // The tooltip's own hooks are overlay-tier; the grid cell's is not.
+    let hooks = app.ui.doc_hooks();
+    let tip: Vec<_> = hooks
+        .iter()
+        .filter(|hook| {
+            matches!(
+                hook.kind,
+                crate::gui::DocHookKind::CraftTipResult
+                    | crate::gui::DocHookKind::CraftTipIngredients
+            )
+        })
+        .collect();
+    assert_eq!(tip.len(), 2, "tooltip result + ingredient strip");
+    assert!(tip.iter().all(|hook| hook.overlay));
+    assert!(hooks
+        .iter()
+        .filter(|hook| hook.kind == crate::gui::DocHookKind::CraftRecipeResult)
+        .all(|hook| !hook.overlay));
+
+    // Off the grid the tooltip goes away entirely.
+    let (x, y) = cursor_over_widget(&mut app, screen, "craft_search", None);
+    app.set_cursor_position(x, y);
+    app.solve_menu_frame_for_test(screen);
+    app.solve_menu_frame_for_test(screen);
+    assert_eq!(app.ui.state_mut().get_bool("show_recipe_tip"), Some(false));
+    assert!(app
+        .ui
+        .doc_hooks()
+        .iter()
+        .all(|hook| hook.kind != crate::gui::DocHookKind::CraftTipResult));
+}
+
+/// Selection is carried by the cell's own selected face, not by a detail
+/// line: spelling it out again cost two grid rows of the browser.
+#[test]
+fn selecting_a_recipe_arms_craft_without_a_detail_line() {
+    let mut app = app();
+    app.install_test_crafting_recipe();
+    app.add_to_inventory(ItemStack::new(ItemType::Coal, 1));
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280u32, 720u32);
+    search_recipes(&mut app, screen, "stick");
+
+    assert_eq!(app.ui.state_mut().get_i32("craft_recipe_sel"), Some(-1));
+    assert_eq!(app.ui.state_mut().get_bool("can_craft"), Some(false));
+
+    let (x, y) = cursor_over_widget(&mut app, screen, "recipe", Some(0));
+    app.set_cursor_position(x, y);
+    app.click_screen_for_test(screen, 0.1);
+    app.solve_menu_frame_for_test(screen);
+
+    // The grid binds `selected`, so the cell paints its selected face.
+    assert_eq!(app.ui.state_mut().get_i32("craft_recipe_sel"), Some(0));
+    assert_eq!(app.ui.state_mut().get_bool("can_craft"), Some(true));
+    assert!(
+        !app.ui
+            .out()
+            .named
+            .iter()
+            .any(|(key, _)| key.id.starts_with("craft_detail")),
+        "the detail row is gone from the document"
+    );
+}
+
+/// Nine cells to a row, in filtered order: a grid that silently dropped or
+/// reordered stamps would craft the wrong thing on click.
+#[test]
+fn the_recipe_grid_tiles_nine_cells_per_row_in_filtered_order() {
+    let mut app = app();
+    app.install_test_crafting_catalog(
+        (0..11)
+            .map(|i| {
+                super::test_recipe(
+                    &format!("test:row{i}"),
+                    ItemType::Coal,
+                    ItemStack::new(ItemType::Stick, 1),
+                )
+            })
+            .collect(),
+    );
+    app.add_to_inventory(ItemStack::new(ItemType::Coal, 64));
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280u32, 720u32);
+    app.solve_menu_frame_for_test(screen);
+
+    let cells: Vec<_> = (0..11)
+        .map(|i| {
+            app.ui
+                .out()
+                .named
+                .iter()
+                .find(|(key, _)| key.id == "recipe" && key.item == Some(i))
+                .unwrap_or_else(|| panic!("cell {i} stamped"))
+                .1
+        })
+        .collect();
+    for row in cells.chunks(9) {
+        assert!(
+            row.windows(2).all(|w| w[1].x > w[0].x && w[1].y == w[0].y),
+            "cells within a row advance left to right at one height"
+        );
+    }
+    assert!(cells[9].y > cells[0].y, "the tenth cell wraps to a new row");
+    assert_eq!(cells[9].x, cells[0].x, "and returns to the first column");
+    assert_eq!(cells[10].x, cells[1].x);
+
+    // A column count that squeezed cells below the icon size would crop every
+    // result, so the icon hook has to fit inside its own cell.
+    for (i, cell) in cells.iter().enumerate() {
+        let icon = app
+            .ui
+            .out()
+            .named
+            .iter()
+            .find(|(key, _)| key.id == "recipe_result" && key.item == Some(i as u32))
+            .unwrap_or_else(|| panic!("cell {i} reserves an icon hook"))
+            .1;
+        assert!(
+            icon.x >= cell.x
+                && icon.y >= cell.y
+                && icon.x + icon.w <= cell.x + cell.w
+                && icon.y + icon.h <= cell.y + cell.h,
+            "icon {icon:?} escapes cell {cell:?}"
+        );
+    }
+}

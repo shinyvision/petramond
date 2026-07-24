@@ -917,11 +917,16 @@ impl Renderer {
                 pass.draw(0..self.icon_quad_vertex_count, 0..1);
             }
         }
-        // UI OVERLAY / DRAG PASS: stack counts, then the cursor-held icon, then its
-        // count — keeping the whole dragged stack front-most.
+        // UI OVERLAY / DRAG PASS: stack counts, then the document's overlay
+        // tier (floating tooltip chrome) with its own icons and counts over
+        // the base tier's, then the cursor-held icon and its count — keeping
+        // the whole dragged stack front-most.
         if self.ui_count_vertex_count > 0
             || self.drag_icon_quad_vertex_count > 0
             || self.ui_drag_count_vertex_count > 0
+            || self.overlay_icon_quad_vertex_count > 0
+            || self.ui_overlay_count_vertex_count > 0
+            || self.has_doc_overlay()
         {
             let mut pass = color_depth_pass(
                 enc,
@@ -938,16 +943,32 @@ impl Renderer {
                 pass.set_vertex_buffer(0, self.ui_solid_vbuf.slice(..));
                 pass.draw(0..self.ui_count_vertex_count, 0..1);
             }
-            // Cursor-held icon, appended after the normal icons.
-            if self.drag_icon_quad_vertex_count > 0 {
+            // Floating tooltip chrome, over every base-tier icon and count.
+            self.draw_doc_ui_overlay(&mut pass);
+            // Its icons, appended after the normal icons.
+            if self.overlay_icon_quad_vertex_count > 0 {
                 let start = self.icon_quad_vertex_count;
+                pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
+                pass.set_vertex_buffer(0, self.icon_quad_vbuf.slice(..));
+                pass.draw(start..start + self.overlay_icon_quad_vertex_count, 0..1);
+            }
+            // Its counts (solid), packed after the normal counts.
+            if self.ui_overlay_count_vertex_count > 0 {
+                let start = self.ui_count_vertex_count;
+                pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
+                pass.set_vertex_buffer(0, self.ui_solid_vbuf.slice(..));
+                pass.draw(start..start + self.ui_overlay_count_vertex_count, 0..1);
+            }
+            // Cursor-held icon, appended after the tooltip icons.
+            if self.drag_icon_quad_vertex_count > 0 {
+                let start = self.icon_quad_vertex_count + self.overlay_icon_quad_vertex_count;
                 pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
                 pass.set_vertex_buffer(0, self.icon_quad_vbuf.slice(..));
                 pass.draw(start..start + self.drag_icon_quad_vertex_count, 0..1);
             }
-            // Cursor-held count (solid), packed after the normal counts.
+            // Cursor-held count (solid), packed after the tooltip counts.
             if self.ui_drag_count_vertex_count > 0 {
-                let start = self.ui_count_vertex_count;
+                let start = self.ui_count_vertex_count + self.ui_overlay_count_vertex_count;
                 pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
                 pass.set_vertex_buffer(0, self.ui_solid_vbuf.slice(..));
                 pass.draw(start..start + self.ui_drag_count_vertex_count, 0..1);

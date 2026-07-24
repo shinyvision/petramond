@@ -87,6 +87,7 @@
               {
                 "type": "list",
                 "id": "craft_recipes_list",
+                "cols": 9,
                 "layout": {
                   "align": "stretch",
                   "gap": 1
@@ -99,13 +100,12 @@
                   {
                     "type": "button",
                     "id": "recipe",
+                    "style": "slot.recipe",
                     "layout": {
-                      "w": { "grow": 1 },
-                      "h": 30,
-                      "pad": [3, 3, 3, 3],
-                      "gap": 4,
+                      "h": 18,
                       "dir": "row",
-                      "align": "center"
+                      "align": "center",
+                      "justify": "center"
                     },
                     "bind": { "enabled": "enabled" },
                     "children": [
@@ -113,25 +113,6 @@
                         "type": "hook",
                         "id": "recipe_result",
                         "layout": { "w": 16, "h": 16 }
-                      },
-                      {
-                        "type": "column",
-                        "layout": {
-                          "w": { "grow": 1 },
-                          "gap": 2,
-                          "align": "stretch"
-                        },
-                        "children": [
-                          {
-                            "type": "label",
-                            "bind": { "text": "name" }
-                          },
-                          {
-                            "type": "hook",
-                            "id": "recipe_ingredients",
-                            "layout": { "w": { "grow": 1 }, "h": 12 }
-                          }
-                        ]
                       }
                     ]
                   }
@@ -187,6 +168,40 @@
                 "layout": { "margin": [0, 2, 0, 0] }
               }
             ]
+          }
+        ]
+      },
+      {
+        "type": "tooltip",
+        "style": "panel.inset",
+        "layout": {
+          "abs": { "x": 4, "y": 4 },
+          "pad": [3, 2, 3, 3],
+          "gap": 2,
+          "align": "stretch"
+        },
+        "bind": { "visible": "show_recipe_tip" },
+        "children": [
+          {
+            "type": "row",
+            "layout": { "gap": 3, "align": "center" },
+            "children": [
+              {
+                "type": "hook",
+                "id": "craft_tip_result",
+                "layout": { "w": 16, "h": 16 }
+              },
+              {
+                "type": "label",
+                "small": true,
+                "bind": { "text": "craft_tip_name" }
+              }
+            ]
+          },
+          {
+            "type": "hook",
+            "id": "craft_tip_ingredients",
+            "layout": { "w": { "grow": 1 }, "min_w": 84, "h": 12 }
           }
         ]
       }

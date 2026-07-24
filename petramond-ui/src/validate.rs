@@ -139,7 +139,7 @@ fn walk<'a>(
     }
 
     match &node.kind {
-        NodeKind::List => {
+        NodeKind::List { cols } => {
             if node.children.len() != 1 {
                 issue(format!(
                     "list needs exactly one template child, has {}",
@@ -148,6 +148,19 @@ fn walk<'a>(
             }
             if node.bind.items.is_none() {
                 issue("list needs an 'items' binding".into());
+            }
+            if *cols == 0 {
+                issue("list cols must be >= 1".into());
+            }
+        }
+        NodeKind::Tooltip => {
+            if node.children.is_empty() {
+                issue("tooltip needs at least one child".into());
+            }
+            // Without a visibility bind a tooltip would follow the pointer on
+            // every frame of the screen's life.
+            if node.bind.visible.is_none() {
+                issue("tooltip needs a 'visible' binding (the host shows it)".into());
             }
         }
         NodeKind::Slot { role, .. } | NodeKind::SlotGrid { role, .. } if role.is_empty() => {

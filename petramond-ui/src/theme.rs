@@ -118,7 +118,9 @@ pub struct Theme {
     parts: BTreeMap<String, Part>,
     pub metrics: Metrics,
     pub atlas: ImageData,
+    /// The font's glyph atlas, generated from [`Theme::ui_font`].
     pub font: ImageData,
+    ui_font: std::sync::Arc<crate::text::Font>,
 }
 
 // ---- theme JSON --------------------------------------------------------------
@@ -130,10 +132,19 @@ struct ThemeJson {
     palette: BTreeMap<String, String>,
     atlas: String,
     #[serde(default)]
-    font: Option<String>,
+    font: Option<FontJson>,
     parts: BTreeMap<String, PartJson>,
     #[serde(default)]
     metrics: Metrics,
+}
+
+/// The theme's font: a real font FILE plus the pixel size it was designed
+/// for. A pixel font rasterized off its design grid loses whole stems, so the
+/// size is authored, never guessed.
+#[derive(Deserialize)]
+struct FontJson {
+    file: String,
+    px: f32,
 }
 
 #[derive(Deserialize)]
@@ -220,17 +231,31 @@ impl Theme {
             parts.insert(key, part);
         }
         let atlas = load_png(&t.atlas, read)?;
-        let font = match &t.font {
-            Some(path) => load_png(path, read)?,
-            None => builtin_font(),
+        let ui_font = match &t.font {
+            Some(font) => {
+                let bytes = read(&font.file)
+                    .ok_or_else(|| ThemeError(format!("font '{}' not found", font.file)))?;
+                crate::text::Font::from_ttf(&bytes, font.px)
+                    .map_err(|e| ThemeError(format!("font '{}': {e}", font.file)))?
+            }
+            None => crate::text::Font::builtin(),
         };
+        let (rgba, size) = ui_font.build_atlas();
         Ok(Theme {
             palette,
             parts,
             metrics: t.metrics,
             atlas,
-            font,
+            font: ImageData { rgba, size },
+            ui_font: std::sync::Arc::new(ui_font),
         })
+    }
+
+    /// The theme's UI font. The host installs this as the process default
+    /// ([`crate::text::install`]) once the theme is loaded, so the free
+    /// functions in `text` measure with the font that actually draws.
+    pub fn ui_font(&self) -> &std::sync::Arc<crate::text::Font> {
+        &self.ui_font
     }
 
     pub fn part(&self, key: &str) -> Option<&Part> {
@@ -349,10 +374,16 @@ fn builtin_font() -> ImageData {
 /// (image natural sizes live outside the theme).
 pub struct ThemeEnv<'a> {
     pub theme: &'a Theme,
+    /// The host's integer GUI scale — only `small` labels read it.
+    pub gui_scale: i32,
     pub image_size: &'a dyn Fn(&str) -> Option<(i32, i32)>,
 }
 
 impl LayoutEnv for ThemeEnv<'_> {
+    fn gui_scale(&self) -> i32 {
+        self.gui_scale.max(1)
+    }
+
     fn leaf_size(
         &self,
         node: &Node,
@@ -369,13 +400,26 @@ impl LayoutEnv for ThemeEnv<'_> {
                 .unwrap_or(fallback)
         };
         match &node.kind {
-            NodeKind::Label { wrap, scale, .. } => {
+            NodeKind::Label {
+                wrap, scale, small, ..
+            } => {
                 let text = text.unwrap_or("");
+                let font = self.theme.ui_font();
                 if *scale > 1 {
-                    let (w, h) = crate::text::measure(text, None);
+                    let (w, h) = font.measure(text, None);
                     (w * *scale as i32, h * *scale as i32)
+                } else if *small {
+                    // Drawn at `gui_scale - 1` physical px per font pixel, so
+                    // it occupies that fraction of the logical box. Round UP:
+                    // the reserved box must never be narrower than the ink.
+                    let step = (self.gui_scale() - 1).max(1);
+                    let full = self.gui_scale().max(1);
+                    let down = |v: i32| (v * step + full - 1) / full;
+                    let avail = avail_w.map(|w| w * self.gui_scale().max(1) / step);
+                    let (w, h) = font.measure(text, if *wrap { avail } else { None });
+                    (down(w), down(h))
                 } else {
-                    crate::text::measure(text, if *wrap { avail_w } else { None })
+                    font.measure(text, if *wrap { avail_w } else { None })
                 }
             }
             NodeKind::Button { icon, .. } => {
@@ -384,7 +428,7 @@ impl LayoutEnv for ThemeEnv<'_> {
                     .and_then(|k| self.theme.part(k))
                     .map(|p| p.natural().0)
                     .unwrap_or(0);
-                let text_w = crate::text::width(text.unwrap_or(""));
+                let text_w = self.theme.ui_font().width(text.unwrap_or(""));
                 let gap = if icon_w > 0 && text_w > 0 { 4 } else { 0 };
                 (icon_w + gap + text_w + m.button_pad * 2, m.button_h)
             }
@@ -413,8 +457,8 @@ impl LayoutEnv for ThemeEnv<'_> {
                 .and_then(|name| (self.image_size)(name))
                 .unwrap_or((0, 0)),
             NodeKind::Badge { .. } => {
-                let text_w = crate::text::width(text.unwrap_or(""));
-                let h = part_natural((0, crate::text::GLYPH_H + m.badge_pad * 2)).1;
+                let text_w = self.theme.ui_font().width(text.unwrap_or(""));
+                let h = part_natural((0, self.theme.ui_font().line_h() + m.badge_pad * 2)).1;
                 (text_w + m.badge_pad * 2, h)
             }
             NodeKind::TabBar { tabs } => {
@@ -444,8 +488,8 @@ impl LayoutEnv for ThemeEnv<'_> {
                     .unwrap_or((0, 0));
                 let gap = if icon.0 > 0 { 4 } else { 0 };
                 let chrome_w = insets[0] + icon.0 + gap + insets[2];
-                let text_avail = avail_w.map(|a| (a - chrome_w).max(crate::text::GLYPH_W));
-                let (text_w, text_h) = crate::text::measure(text.unwrap_or(""), text_avail);
+                let text_avail = avail_w.map(|a| (a - chrome_w).max(self.theme.ui_font().cell_w()));
+                let (text_w, text_h) = self.theme.ui_font().measure(text.unwrap_or(""), text_avail);
                 (
                     chrome_w + text_w,
                     insets[1] + icon.1.max(text_h) + insets[3],
@@ -780,6 +824,7 @@ impl Theme {
             metrics: Metrics::default(),
             atlas: atlas.finish(),
             font: builtin_font(),
+            ui_font: std::sync::Arc::new(crate::text::Font::builtin()),
         }
     }
 }
@@ -949,6 +994,7 @@ mod tests {
         let t = Theme::placeholder();
         let env = ThemeEnv {
             theme: &t,
+            gui_scale: 1,
             image_size: &|_| None,
         };
         let doc = Document::from_json(
@@ -980,6 +1026,7 @@ mod tests {
         let t = Theme::placeholder();
         let env = ThemeEnv {
             theme: &t,
+            gui_scale: 1,
             image_size: &|name| (name == "wheel.png").then_some((32, 32)),
         };
         let doc = Document::from_json(
@@ -998,7 +1045,7 @@ mod tests {
         let n = &doc.root.children;
         assert_eq!(
             env.leaf_size(&n[0], Some("OK"), None, None),
-            (crate::text::width("OK") + 12, 20)
+            (t.ui_font().width("OK") + 12, 20)
         );
         assert_eq!(env.leaf_size(&n[1], None, None, None), (10, 10));
         assert_eq!(env.leaf_size(&n[2], None, None, None), (18 * 9, 18));

@@ -284,6 +284,7 @@ impl App {
             ui_snapshot::build(Some(game), self.screen, self.pointer.cursor(), drag_preview);
         ui.craft_recipes
             .extend(self.crafting_browser.views().cloned());
+        ui.craft_tip = self.crafting_browser.tip_view().cloned();
         if let Some(kind) = doc_kind {
             ui.kind = kind;
         }

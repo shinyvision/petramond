@@ -136,7 +136,7 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
         "row" => NodeKind::Row,
         "column" => NodeKind::Column,
         "spacer" => NodeKind::Spacer,
-        "label" => NodeKind::Label { text: Some("Label".into()), wrap: false, scale: 1 },
+        "label" => NodeKind::Label { text: Some("Label".into()), wrap: false, scale: 1, small: false },
         "image" => NodeKind::Image { image: "image.png".into(), fit: Default::default(), interactive: false },
         "rotimage" => NodeKind::Rotimage { image: "image.png".into(), pivot: None },
         "button" => NodeKind::Button { text: Some("BUTTON".into()), icon: None },
@@ -145,7 +145,7 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
         "slider" => NodeKind::Slider { min: 0.0, max: 100.0, step: None },
         "text_input" => NodeKind::TextInput { placeholder: None, max_chars: 64 },
         "scroll" => NodeKind::Scroll { axis: petramond_ui::ScrollAxis::Vertical },
-        "list" => NodeKind::List,
+        "list" => NodeKind::List { cols: 1 },
         "slot" => NodeKind::Slot { role: "storage".into(), accepts: Vec::new(), take_only: false },
         "slot_grid" => NodeKind::SlotGrid { role: "storage".into(), cols: 9, rows: 3, accepts: Vec::new(), take_only: false },
         "gauge" => NodeKind::Gauge { mode: petramond_ui::GaugeMode::GrowLr },
@@ -158,6 +158,7 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
             ],
         },
         "hook" => NodeKind::Hook,
+        "tooltip" => NodeKind::Tooltip,
         _ => return None,
     };
     let mut node = Node::leaf(kind);
@@ -170,12 +171,22 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
     if let NodeKind::TabBar { .. } = node.kind {
         node.bind.selected = Some("tab_sel".into());
     }
-    if let NodeKind::List = node.kind {
+    if let NodeKind::Tooltip = node.kind {
+        node.bind.visible = Some("show_tooltip".into());
+        node.children.push(Node::leaf(NodeKind::Label {
+            text: Some("Tooltip".into()),
+            wrap: false,
+            scale: 1,
+            small: false,
+        }));
+    }
+    if let NodeKind::List { .. } = node.kind {
         node.bind.items = Some("items".into());
         node.children.push(Node::leaf(NodeKind::Label {
             text: Some("Row".into()),
             wrap: false,
             scale: 1,
+            small: false,
         }));
     }
     Some(node)
@@ -185,7 +196,7 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
 pub const NODE_TYPES: &[&str] = &[
     "frame", "row", "column", "spacer", "label", "image", "rotimage", "button", "checkbox",
     "toggle", "slider", "text_input", "scroll", "list", "tab_bar", "slot", "slot_grid", "gauge",
-    "badge", "alert", "hook",
+    "badge", "alert", "hook", "tooltip",
 ];
 
 /// Wrap the node at `path` in a fresh row/column container in place.

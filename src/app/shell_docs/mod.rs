@@ -213,8 +213,12 @@ impl App {
         self.ui.ensure_active(kind);
         let crafting_station = crate::crafting::CraftingStation::of_kind(kind);
         if let (Some(station), Some(game)) = (crafting_station, self.game.as_ref()) {
+            let hovered = self
+                .ui
+                .hover_item(crate::app::crafting_browser::RECIPE_LIST_ID);
             let mut state = std::mem::take(self.ui.state_mut());
-            self.crafting_browser.populate(game, station, &mut state);
+            self.crafting_browser
+                .populate(game, station, hovered, &mut state);
             *self.ui.state_mut() = state;
         }
         if let Some(game) = self.game.as_ref() {

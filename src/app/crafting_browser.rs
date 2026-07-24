@@ -1,10 +1,17 @@
 //! Presentation-only state for the searchable player-crafting browser.
 //!
-//! Search and selection deliberately stay out of the simulation. The server
-//! owns only the immutable joined catalog, inventory, and transient output;
-//! an explicit CRAFT request carries the selected stable recipe key. The
-//! craftable-only filter is the one preference that leaves this module: the
-//! toggle updates the game, which persists it in the world's player data.
+//! Search, hover and selection deliberately stay out of the simulation. The
+//! server owns only the immutable joined catalog, inventory, and transient
+//! output; an explicit CRAFT request carries the selected stable recipe key.
+//! The craftable-only filter is the one preference that leaves this module:
+//! the toggle updates the game, which persists it in the world's player data.
+//!
+//! The browser is a GRID of result icons: what a recipe is called and what it
+//! costs are revealed on HOVER (the floating tooltip), because a row per
+//! recipe only ever showed a handful of a catalog that grows combinatorially
+//! with material families. The selection is shown by the cell's own selected
+//! face — spelling it out again in a detail line cost two grid rows, which is
+//! the scrolling this grid exists to remove.
 
 use std::sync::Arc;
 
@@ -14,6 +21,9 @@ use crate::crafting::CraftingStation;
 use crate::game::Game;
 use crate::gui::CraftingRecipeView;
 
+/// The document id of the recipe grid, whose hovered stamp drives the tooltip.
+pub(super) const RECIPE_LIST_ID: &str = "craft_recipes_list";
+
 #[derive(Default)]
 pub(super) struct CraftingBrowser {
     search: String,
@@ -21,6 +31,9 @@ pub(super) struct CraftingBrowser {
     visible: Vec<VisibleRecipe>,
     rows: Arc<Vec<UiMap>>,
     cache_key: Option<BrowserCacheKey>,
+    /// Filtered-row index under the cursor, resolved each frame from the
+    /// previous frame's hovered grid stamp.
+    hovered: Option<usize>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -35,6 +48,8 @@ struct VisibleRecipe {
     key: String,
     view: CraftingRecipeView,
     craftable: bool,
+    /// Result name plus its `×N` count — the tooltip and detail headline.
+    label: String,
 }
 
 impl CraftingBrowser {
@@ -46,7 +61,18 @@ impl CraftingBrowser {
         self.visible.iter().map(|row| &row.view)
     }
 
-    pub(super) fn populate(&mut self, game: &Game, station: CraftingStation, state: &mut UiState) {
+    /// The hovered recipe, drawn in the floating tooltip.
+    pub(super) fn tip_view(&self) -> Option<&CraftingRecipeView> {
+        self.visible.get(self.hovered?).map(|row| &row.view)
+    }
+
+    pub(super) fn populate(
+        &mut self,
+        game: &Game,
+        station: CraftingStation,
+        hovered: Option<usize>,
+        state: &mut UiState,
+    ) {
         let menu = game.menu_read_model();
         let inventory = menu.inventory;
         let craftable_only = game.craft_craftable_only();
@@ -60,9 +86,9 @@ impl CraftingBrowser {
         if self.cache_key.as_ref() != Some(&next_key) {
             self.visible.clear();
             for recipe in game.crafting_catalog().at(station) {
-                let result = recipe.result().item;
+                let result = recipe.result();
                 if !next_key.query.is_empty()
-                    && !result.name().to_lowercase().contains(&next_key.query)
+                    && !result.item.name().to_lowercase().contains(&next_key.query)
                     && !recipe.key().to_lowercase().contains(&next_key.query)
                 {
                     continue;
@@ -81,28 +107,31 @@ impl CraftingBrowser {
                             .map(|item| (item, ingredient.count))
                     })
                     .collect();
+                let label = match result.count {
+                    1 => result.item.name().to_owned(),
+                    n => format!("{} \u{d7}{n}", result.item.name()),
+                };
                 self.visible.push(VisibleRecipe {
                     key: recipe.key().to_owned(),
                     view: CraftingRecipeView {
-                        result,
+                        result: result.item,
                         ingredients,
                         craftable,
                     },
                     craftable,
+                    label,
                 });
             }
-            // Craftable recipes lead the list; the stable sort keeps joined
-            // catalog order within each group.
+            // Craftable recipes lead the grid; the stable sort keeps joined
+            // catalog order within each group, so material families stay
+            // clustered instead of scattering across the cells.
             self.visible.sort_by_key(|row| !row.craftable);
             self.rows = Arc::new(
                 self.visible
                     .iter()
                     .map(|row| {
                         let mut map = UiMap::new();
-                        map.insert(
-                            "name".into(),
-                            UiValue::Str(row.view.result.name().to_owned()),
-                        );
+                        map.insert("name".into(), UiValue::Str(row.label.clone()));
                         map.insert("enabled".into(), UiValue::Bool(row.craftable));
                         map
                     })
@@ -111,6 +140,11 @@ impl CraftingBrowser {
             self.cache_key = Some(next_key);
         }
 
+        // A tooltip that follows the cursor would fight the held stack for the
+        // same pixels, so a drag suppresses it.
+        self.hovered = hovered
+            .filter(|&index| index < self.visible.len())
+            .filter(|_| inventory.cursor().is_none());
         let selected = self
             .selected
             .as_deref()
@@ -135,6 +169,13 @@ impl CraftingBrowser {
         state.set("can_craft", UiValue::Bool(can_craft));
         state.set("craft_filter_on", UiValue::Bool(craftable_only));
         state.set("no_craft_results", UiValue::Bool(self.visible.is_empty()));
+
+        let tip = self.hovered.and_then(|index| self.visible.get(index));
+        state.set("show_recipe_tip", UiValue::Bool(tip.is_some()));
+        state.set(
+            "craft_tip_name",
+            UiValue::Str(tip.map(|row| row.label.clone()).unwrap_or_default()),
+        );
     }
 
     /// UI enablement mirror of the server's output rule: empty output, or the

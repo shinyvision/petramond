@@ -280,7 +280,7 @@
       "name": "str",
       "enabled": "bool"
      },
-     "doc": "inventory-tier recipes after search + craftable-only filtering, craftable rows first"
+     "doc": "inventory-tier recipes after search + craftable-only filtering, craftable rows first; the browser grid stamps one icon cell per row"
     },
     "craft_recipe_sel": {
      "type": "i32",
@@ -297,15 +297,23 @@
     "no_craft_results": {
      "type": "bool",
      "doc": "search/filter has no matches"
+    },
+    "show_recipe_tip": {
+     "type": "bool",
+     "doc": "a grid cell is hovered: reveals the floating tooltip"
+    },
+    "craft_tip_name": {
+     "type": "str",
+     "doc": "hovered recipe's result name + ×count, shown in the tooltip (drawn one gui-scale step smaller)"
     }
    },
    "handles": {
     "craft_search": "text_input: filter recipes without firing gameplay bindings",
     "craft_filter": "toggle: show only recipes craftable with current resources",
-    "recipe": "click (per row): select the stable recipe key",
+    "recipe": "click (per grid cell): select the stable recipe key",
     "craft": "click: request one authoritative craft (shift: craft the maximum possible)"
    },
-   "notes": "container: inventory/output slots route automatically; recipe result and ingredient icons occupy host hooks"
+   "notes": "container: inventory/output slots route by role; recipe and tooltip icons occupy host hooks (recipe_result, craft_tip_result/_ingredients). The SELECTION is shown by the grid cell's own selected face, not by a detail line — that line cost two rows of the grid."
   },
   "petramond:crafting_table": {
    "state": {
@@ -319,7 +327,7 @@
       "name": "str",
       "enabled": "bool"
      },
-     "doc": "inventory- and table-tier recipes after search + craftable-only filtering, craftable rows first"
+     "doc": "inventory- and table-tier recipes after search + craftable-only filtering, craftable rows first; the browser grid stamps one icon cell per row"
     },
     "craft_recipe_sel": {
      "type": "i32",
@@ -336,15 +344,23 @@
     "no_craft_results": {
      "type": "bool",
      "doc": "search/filter has no matches"
+    },
+    "show_recipe_tip": {
+     "type": "bool",
+     "doc": "a grid cell is hovered: reveals the floating tooltip"
+    },
+    "craft_tip_name": {
+     "type": "str",
+     "doc": "hovered recipe's result name + ×count, shown in the tooltip (drawn one gui-scale step smaller)"
     }
    },
    "handles": {
     "craft_search": "text_input: filter recipes without firing gameplay bindings",
     "craft_filter": "toggle: show only recipes craftable with current resources",
-    "recipe": "click (per row): select the stable recipe key",
+    "recipe": "click (per grid cell): select the stable recipe key",
     "craft": "click: request one authoritative craft (shift: craft the maximum possible)"
    },
-   "notes": "container: inventory/output slots route by role; recipe icons occupy host hooks"
+   "notes": "container: inventory/output slots route by role; recipe and tooltip icons occupy host hooks (recipe_result, craft_tip_result/_ingredients). The SELECTION is shown by the grid cell's own selected face, not by a detail line — that line cost two rows of the grid."
   },
   "petramond:chest": {
    "state": {},
@@ -425,7 +441,7 @@
     },
     "connect_phase": {
      "type": "str",
-     "doc": "worker progress: \"Connecting\u2026\" then \"Joining world\u2026\""
+     "doc": "worker progress: \"Connecting…\" then \"Joining world…\""
     },
     "connecting": {
      "type": "bool",

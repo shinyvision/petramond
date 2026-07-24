@@ -6,3 +6,4 @@ description = "Renderer-neutral Petramond font metrics, layout, atlases, and ras
 license = "MIT"
 
 [dependencies]
+ab_glyph = "0.2.32"

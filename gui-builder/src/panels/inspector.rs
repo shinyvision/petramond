@@ -54,7 +54,7 @@ impl BindOptions {
             let Some(anc) = doc_edit::node_at(&app.proj.document.root, &path[..cut]) else {
                 continue;
             };
-            if !matches!(anc.kind, NodeKind::List) {
+            if !matches!(anc.kind, NodeKind::List { .. }) {
                 continue;
             }
             if let Some(key) = anc.bind.items.as_deref() {
@@ -396,13 +396,22 @@ struct KindCtx<'a> {
 
 fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool, ctx: &mut KindCtx<'_>) {
     match kind {
-        NodeKind::Label { text, wrap, scale } => {
+        NodeKind::Label {
+            text,
+            wrap,
+            scale,
+            small,
+        } => {
             text_prop(ui, "text", text, t, focus);
             ui.horizontal(|ui| {
                 let r = ui.checkbox(wrap, "wrap");
                 t.hit(r);
                 ui.label("scale");
                 t.hit(ui.add(DragValue::new(scale).range(1..=4)));
+                let r = ui
+                    .checkbox(small, "small")
+                    .on_hover_text("draw one gui-scale step smaller (secondary text)");
+                t.hit(r);
             });
         }
         NodeKind::Button { text, icon } => {
@@ -571,6 +580,13 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
                 }
             });
         }
+        NodeKind::List { cols } => {
+            ui.horizontal(|ui| {
+                ui.label("cols");
+                t.hit(ui.add(DragValue::new(cols).range(1..=32)));
+                ui.label("(1 = flow, >1 = row-major grid)");
+            });
+        }
         NodeKind::Slot { role, accepts, take_only } => {
             string_prop(ui, "role", role, t);
             slot_semantics(ui, accepts, take_only, t);
@@ -601,8 +617,8 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
         | NodeKind::Column
         | NodeKind::Spacer
         | NodeKind::Checkbox
-        | NodeKind::List
-        | NodeKind::Hook => {}
+        | NodeKind::Hook
+        | NodeKind::Tooltip => {}
     }
 }
 
@@ -681,7 +697,11 @@ fn layout_props(ui: &mut Ui, l: &mut LayoutProps, kind: &NodeKind, t: &mut Track
     // their own).
     if matches!(
         kind,
-        NodeKind::Frame | NodeKind::Button { .. } | NodeKind::Scroll { .. } | NodeKind::List
+        NodeKind::Frame
+        | NodeKind::Button { .. }
+        | NodeKind::Scroll { .. }
+        | NodeKind::List { .. }
+        | NodeKind::Tooltip
     ) {
         ui.horizontal(|ui| {
             ui.label("dir");

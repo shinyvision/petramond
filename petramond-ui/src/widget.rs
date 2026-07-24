@@ -172,13 +172,45 @@ pub(crate) fn slider_value_at(rect: RectI, x: f32, min: f32, max: f32, step: Opt
     v.clamp(min, max)
 }
 
-/// How many characters fit in a text input's inner width.
-pub(crate) fn input_visible_chars(inner_w: i32) -> usize {
-    if inner_w < crate::text::GLYPH_W {
-        0
+/// Which face a (possibly list-stamped) button paints.
+///
+/// A selected row falls back to the PRESSED face — a compound button has no
+/// resting "selected" look — but a part that authors a real `selected` face
+/// means it: selection is not the same state as being held down. Styling a
+/// grid cell as an item slot is exactly that case.
+pub(crate) fn button_face_state(
+    enabled: bool,
+    selected: bool,
+    pressed: bool,
+    hovered: bool,
+    has_selected_face: bool,
+) -> &'static str {
+    if !enabled {
+        "disabled"
+    } else if selected && has_selected_face {
+        "selected"
+    } else if pressed || selected {
+        "pressed"
+    } else if hovered {
+        "hover"
     } else {
-        ((inner_w + 1) / crate::text::ADVANCE) as usize
+        "default"
     }
+}
+
+/// How many characters an input `inner_w` logical px wide can show.
+///
+/// Derived from the WIDEST advance, never from the text currently in the
+/// box: the editor scrolls by character count, so a window measured against
+/// the current content collapses as you type — the box would show one glyph
+/// and re-scroll on every keystroke. The widest advance is the only bound
+/// that cannot overflow (and is exact for a monospace face).
+pub(crate) fn input_visible_chars(inner_w: i32) -> usize {
+    let font = crate::text::font();
+    if inner_w < font.cell_w() {
+        return 0;
+    }
+    (inner_w / font.max_advance().max(1)).max(1) as usize
 }
 
 /// The text interior of an input rect (theme-metric horizontal inset).
@@ -194,6 +226,27 @@ pub(crate) fn input_text_rect(rect: RectI, pad: i32) -> RectI {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The crafting grid styles its cells as item SLOTS, whose part has a
+    /// real `selected` face. Without this preference a selected cell asks for
+    /// `pressed`, the slot part has none, and it falls back to `default` —
+    /// the selection becomes invisible.
+    #[test]
+    fn an_authored_selected_face_wins_over_the_pressed_fallback() {
+        let with = |selected, pressed, hovered| {
+            button_face_state(true, selected, pressed, hovered, true)
+        };
+        let without = |selected, pressed, hovered| {
+            button_face_state(true, selected, pressed, hovered, false)
+        };
+        assert_eq!(with(true, false, false), "selected");
+        assert_eq!(without(true, false, false), "pressed");
+        // Everything else is unchanged by the preference.
+        assert_eq!(with(false, true, false), "pressed");
+        assert_eq!(with(false, false, true), "hover");
+        assert_eq!(with(false, false, false), "default");
+        assert_eq!(button_face_state(false, true, false, false, true), "disabled");
+    }
 
     #[test]
     fn scrollbar_absent_when_content_fits() {
@@ -266,9 +319,11 @@ mod tests {
     #[test]
     fn input_char_capacity_matches_font_advance() {
         assert_eq!(input_visible_chars(0), 0);
-        assert_eq!(input_visible_chars(crate::text::GLYPH_W), 1);
-        // 6 chars: 6*6-1 = 35 px.
-        assert_eq!(input_visible_chars(35), 6);
-        assert_eq!(input_visible_chars(34), 5);
+        assert_eq!(input_visible_chars(crate::text::cell_w()), 1);
+        // The window depends only on the box, so it cannot shrink as the
+        // text changes — that is what stranded the caret on the last glyph.
+        let six = crate::text::font().max_advance() * 6;
+        assert_eq!(input_visible_chars(six), 6);
+        assert_eq!(input_visible_chars(six - 1), 5);
     }
 }

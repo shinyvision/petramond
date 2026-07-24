@@ -50,6 +50,17 @@ pub(crate) struct PaintCtx<'a> {
 impl PaintCtx<'_> {
     pub fn paint(&self, p: &mut Painter<'_>) {
         self.node(ROOT, None, p);
+        // Floating tooltips paint last, in their own draw-list tier: the host
+        // layers its item icons over the base tier, so a tooltip painted in
+        // document order would have those icons showing through it.
+        // Unconditional, so "no tooltip this frame" is an EMPTY overlay tier
+        // rather than an unset boundary that would read as "all of it".
+        p.list.begin_overlay();
+        for i in 0..self.tree.len() as u32 {
+            if matches!(self.tree.get(i).node.kind, NodeKind::Tooltip) {
+                self.node(i, None, p);
+            }
+        }
     }
 
     fn node(&self, i: u32, row_state: Option<&str>, p: &mut Painter<'_>) {
@@ -98,7 +109,8 @@ impl PaintCtx<'_> {
             NodeKind::Frame
             | NodeKind::Row
             | NodeKind::Column
-            | NodeKind::List
+            | NodeKind::List { .. }
+            | NodeKind::Tooltip
             | NodeKind::Scroll { .. } => {
                 if let Some(part) = part {
                     let state = row_state.unwrap_or("default");
@@ -116,11 +128,15 @@ impl PaintCtx<'_> {
                 }
             }
             NodeKind::Spacer | NodeKind::Hook => {}
-            NodeKind::Label { wrap, scale, .. } => {
+            NodeKind::Label {
+                wrap, scale, small, ..
+            } => {
                 let text = inst.text.as_deref().unwrap_or("");
                 let color = label_color(part, inst.enabled);
                 if *scale > 1 {
                     p.text_scaled(text, rect.x, rect.y, *scale, color, clip);
+                } else if *small {
+                    p.text_ellipsized_small(text, rect, color, clip);
                 } else if *wrap {
                     p.text_wrapped(text, rect, color, clip);
                 } else {
@@ -168,15 +184,13 @@ impl PaintCtx<'_> {
             }
             NodeKind::Button { icon, .. } => {
                 let selected = row_state == Some("selected");
-                let state = if !inst.enabled {
-                    "disabled"
-                } else if pressed || selected {
-                    "pressed"
-                } else if hovered {
-                    "hover"
-                } else {
-                    "default"
-                };
+                let state = widget::button_face_state(
+                    inst.enabled,
+                    selected,
+                    pressed,
+                    hovered,
+                    part.is_some_and(|p| p.face_if("selected").is_some()),
+                );
                 let mut label_off = [0, 0];
                 if let Some(part) = part {
                     if let Some(face) = part.face(state) {
@@ -198,7 +212,7 @@ impl PaintCtx<'_> {
                 let icon_part = icon.as_deref().and_then(|k| self.theme.part(k));
                 let (icon_w, icon_h) = icon_part.map(|p| p.natural()).unwrap_or((0, 0));
                 let text = inst.text.as_deref().unwrap_or("");
-                let tw = crate::text::width(text);
+                let tw = self.theme.ui_font().width(text);
                 let gap = if icon_w > 0 && tw > 0 { 4 } else { 0 };
                 let block_w = icon_w + gap + tw;
                 let mut cx = rect.x + (rect.w - block_w) / 2 + label_off[0];
@@ -222,7 +236,7 @@ impl PaintCtx<'_> {
                     p.text(
                         text,
                         cx,
-                        rect.y + (rect.h - crate::text::GLYPH_H) / 2 + label_off[1],
+                        rect.y + (rect.h - self.theme.ui_font().line_h()) / 2 + label_off[1],
                         label_color(part, inst.enabled),
                         clip,
                     );
@@ -331,7 +345,7 @@ impl PaintCtx<'_> {
                 let pad = self.theme.metrics.button_pad;
                 let text_rect = widget::input_text_rect(rect, pad);
                 let visible = widget::input_visible_chars(text_rect.w);
-                let ty = rect.y + (rect.h - crate::text::GLYPH_H) / 2;
+                let ty = rect.y + (rect.h - self.theme.ui_font().line_h()) / 2;
                 let editor = inst.key.as_ref().and_then(|k| self.fs.editors.get(k));
                 match editor {
                     Some(editor) => {
@@ -473,7 +487,7 @@ impl PaintCtx<'_> {
                     let icon_part = tab.icon.as_deref().and_then(|k| self.theme.part(k));
                     let (icon_w, icon_h) = icon_part.map(|p| p.natural()).unwrap_or((0, 0));
                     let text = tab.label.as_deref().unwrap_or("");
-                    let tw = crate::text::width(text);
+                    let tw = self.theme.ui_font().width(text);
                     let igap = if icon_w > 0 && tw > 0 { 4 } else { 0 };
                     let block_w = icon_w + igap + tw;
                     let mut cx = cell.x + (cell.w - block_w) / 2;
@@ -497,7 +511,7 @@ impl PaintCtx<'_> {
                         p.text(
                             text,
                             cx,
-                            cell.y + (cell.h - crate::text::GLYPH_H) / 2,
+                            cell.y + (cell.h - self.theme.ui_font().line_h()) / 2,
                             label_color(part, inst.enabled),
                             clip,
                         );
@@ -517,11 +531,11 @@ impl PaintCtx<'_> {
                     );
                 }
                 if let Some(text) = inst.text.as_deref() {
-                    let tw = crate::text::width(text);
+                    let tw = self.theme.ui_font().width(text);
                     p.text(
                         text,
                         rect.x + (rect.w - tw) / 2,
-                        rect.y + (rect.h - crate::text::GLYPH_H) / 2,
+                        rect.y + (rect.h - self.theme.ui_font().line_h()) / 2,
                         label_color(part, inst.enabled),
                         clip,
                     );
@@ -572,8 +586,8 @@ impl PaintCtx<'_> {
                 if let Some(text) = inst.text.as_deref() {
                     // Wrap to the frame's interior; centre the wrapped block
                     // vertically (single lines land where they always did).
-                    let text_w = (rect.x + rect.w - insets[2] - tx).max(crate::text::GLYPH_W);
-                    let (_, block_h) = crate::text::measure(text, Some(text_w));
+                    let text_w = (rect.x + rect.w - insets[2] - tx).max(self.theme.ui_font().cell_w());
+                    let (_, block_h) = self.theme.ui_font().measure(text, Some(text_w));
                     p.text_wrapped(
                         text,
                         RectI {
@@ -590,8 +604,12 @@ impl PaintCtx<'_> {
         }
 
         // Children in arena order; list stamps carry their row face state.
-        let is_list = matches!(inst.node.kind, NodeKind::List);
+        // Tooltip children are skipped here and painted by the overlay pass.
+        let is_list = matches!(inst.node.kind, NodeKind::List { .. });
         for (row, &c) in inst.children.iter().enumerate() {
+            if matches!(self.tree.get(c).node.kind, NodeKind::Tooltip) {
+                continue;
+            }
             let child_row_state = if is_list {
                 let child_enabled = self.tree.get(c).enabled;
                 let selected = child_enabled && inst.selected == Some(row as i32);

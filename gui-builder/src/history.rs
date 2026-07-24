@@ -91,12 +91,12 @@ mod tests {
             kind: "petramond:test".into(),
             class: DocClass::Screen,
             compact_below_w: None,
-            root: Node::leaf(NodeKind::Label { text: Some(label.into()), wrap: false, scale: 1 }),
+            root: Node::leaf(NodeKind::Label { text: Some(label.into()), wrap: false, scale: 1, small: false }),
         }
     }
 
     fn set(d: &mut Document, label: &str) {
-        d.root.kind = NodeKind::Label { text: Some(label.into()), wrap: false, scale: 1 };
+        d.root.kind = NodeKind::Label { text: Some(label.into()), wrap: false, scale: 1, small: false };
     }
 
     #[test]

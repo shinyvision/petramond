@@ -83,7 +83,7 @@ impl Project {
         if kind != "petramond:hotbar" {
             let title = kind.split(':').last().unwrap_or(kind).replace('_', " ").to_uppercase();
             root.children
-                .push(Node::leaf(NodeKind::Label { text: Some(title), wrap: false, scale: 1 }));
+                .push(Node::leaf(NodeKind::Label { text: Some(title), wrap: false, scale: 1, small: false }));
         }
         for (role, count) in &contract.roles {
             let (cols, rows) = contracts::default_grid(*count);

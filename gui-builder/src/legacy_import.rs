@@ -243,7 +243,7 @@ fn abs_layout(rect: LegacyRect, sized: bool) -> LayoutProps {
 }
 
 fn todo_label(text: String, rect: LegacyRect) -> Node {
-    let mut n = Node::leaf(NodeKind::Label { text: Some(text), wrap: false, scale: 1 });
+    let mut n = Node::leaf(NodeKind::Label { text: Some(text), wrap: false, scale: 1, small: false });
     n.layout = abs_layout(rect, false);
     n
 }

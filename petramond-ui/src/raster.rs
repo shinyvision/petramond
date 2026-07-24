@@ -195,6 +195,7 @@ mod tests {
         Painter {
             list: &mut dl,
             scale: 2,
+            font: theme.ui_font(),
         }
         .solid(
             RectI {
@@ -237,6 +238,7 @@ mod tests {
         Painter {
             list: &mut dl,
             scale: 1,
+            font: theme.ui_font(),
         }
         .solid(
             RectI {
@@ -277,6 +279,7 @@ mod tests {
         Painter {
             list: &mut dl,
             scale: 1,
+            font: theme.ui_font(),
         }
         .solid(
             RectI {
@@ -310,6 +313,7 @@ mod tests {
         Painter {
             list: &mut dl,
             scale: 1,
+            font: theme.ui_font(),
         }
         .text("A", 0, 0, [1.0, 1.0, 1.0, 1.0], None);
         let tex = TextureSet {
@@ -320,9 +324,10 @@ mod tests {
         let size = (8, 8);
         let mut out = Vec::new();
         rasterize(&dl, &tex, size, [0, 0, 0, 255], &mut out);
-        for row in 0..crate::text::GLYPH_H {
-            for col in 0..crate::text::GLYPH_W {
-                let want = crate::text::glyph_cell('A', col, row);
+        let font = theme.ui_font();
+        for row in 0..font.line_h() {
+            for col in 0..font.cell_w() {
+                let want = font.glyph_cell('A', col, row);
                 let got = px(&out, size, col as u32, row as u32)[0] == 255;
                 assert_eq!(got, want, "glyph 'A' pixel ({col},{row})");
             }

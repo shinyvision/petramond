@@ -1181,3 +1181,280 @@ fn compact_breakpoint_swaps_node_layouts_by_viewport_width() {
         "below the breakpoint the compact layout stacks"
     );
 }
+
+// ---- grid lists + floating tooltips ----------------------------------------
+
+fn tip_doc(offset: bool) -> Arc<Document> {
+    let abs = if offset {
+        r#""abs": { "x": 4, "y": 4 }, "#
+    } else {
+        ""
+    };
+    Arc::new(
+        Document::from_json(
+            &format!(
+                r#"{{
+                "format": 1, "kind": "petramond:test_tip", "class": "screen",
+                "root": {{ "type": "column",
+                    "layout": {{ "w": 100, "h": 100, "anchor": {{ "h": "start", "v": "start" }} }},
+                    "children": [
+                        {{ "type": "list", "id": "grid", "cols": 3,
+                          "layout": {{ "w": {{ "grow": 1 }} }},
+                          "bind": {{ "items": "rows" }},
+                          "children": [
+                            {{ "type": "button", "id": "cell", "layout": {{ "h": 10 }},
+                              "bind": {{ "enabled": "enabled" }} }}
+                          ] }},
+                        {{ "type": "tooltip", "id": "tip", "style": "panel.large",
+                          "layout": {{ {abs}"w": 30, "h": 12 }},
+                          "bind": {{ "visible": "show_tip" }},
+                          "children": [ {{ "type": "label", "text": "Tip" }} ] }}
+                    ] }}
+            }}"#
+            ),
+        )
+        .unwrap(),
+    )
+}
+
+struct TipHarness {
+    rt: UiRuntime,
+    fs: FrameState,
+    out: FrameOutput,
+    state: UiState,
+    now: f64,
+}
+
+impl TipHarness {
+    /// `enabled` applies to every cell — a grid of unaffordable recipes is the
+    /// case the tooltip exists for.
+    fn new(cells: usize, enabled: bool) -> TipHarness {
+        TipHarness::with_offset(cells, enabled, true)
+    }
+
+    fn with_offset(cells: usize, enabled: bool, offset: bool) -> TipHarness {
+        let rows: Vec<UiMap> = (0..cells)
+            .map(|_| {
+                let mut m = UiMap::new();
+                m.insert("enabled".into(), UiValue::Bool(enabled));
+                m
+            })
+            .collect();
+        let mut state = UiState::new();
+        state.set("rows", UiValue::List(Arc::new(rows)));
+        state.set("show_tip", UiValue::Bool(true));
+        TipHarness {
+            rt: UiRuntime::new(tip_doc(offset), Arc::new(Theme::placeholder())),
+            fs: FrameState::new(),
+            out: FrameOutput::default(),
+            state,
+            now: 0.0,
+        }
+    }
+
+    fn frame(&mut self, screen: (u32, u32), input: &[InputEvent]) {
+        self.now += 0.05;
+        self.rt.frame(
+            FrameArgs {
+                screen,
+                scale: 1,
+                now: self.now,
+                state: &self.state,
+                input,
+                clipboard: None,
+                images: &NoImages,
+                dim: None,
+                preview: None,
+            },
+            &mut self.fs,
+            &mut self.out,
+        );
+    }
+}
+
+#[test]
+fn a_tooltip_follows_the_pointer_and_flips_instead_of_leaving_the_viewport() {
+    let mut h = TipHarness::new(3, true);
+    h.frame((200, 200), &[InputEvent::PointerMove { x: 50.0, y: 60.0 }]);
+    let tip = h.out.rect("tip").expect("tooltip solves");
+    assert_eq!((tip.x, tip.y), (54, 64), "offset by the node's abs");
+
+    // Near the right/bottom edge it flips to the other side of the cursor so
+    // it never covers what is being pointed at.
+    h.frame((200, 200), &[InputEvent::PointerMove { x: 190.0, y: 195.0 }]);
+    let tip = h.out.rect("tip").unwrap();
+    assert_eq!((tip.x, tip.y), (190 - 4 - 30, 195 - 4 - 12));
+    assert!(tip.x + tip.w <= 200 && tip.y + tip.h <= 200);
+}
+
+#[test]
+fn a_tooltip_never_takes_the_input_under_it() {
+    // No `abs` offset: the tooltip sits exactly on the pointer, which is the
+    // only way it can cover what the pointer is over.
+    let mut h = TipHarness::with_offset(3, true, false);
+    h.frame((200, 200), &[]);
+    let cell = h.out.rect("cell").expect("first cell solves");
+    let (cx, cy) = ((cell.x + cell.w / 2) as f32, (cell.y + cell.h / 2) as f32);
+
+    // The tooltip is now parked right on top of the cell it describes.
+    h.frame((200, 200), &[InputEvent::PointerMove { x: cx, y: cy }]);
+    let tip = h.out.rect("tip").unwrap();
+    assert!(
+        tip.contains(cx as i32, cy as i32),
+        "the test needs the tooltip over the cursor: {tip:?}"
+    );
+
+    h.frame((200, 200), &[down(cx, cy), up(cx, cy)]);
+    assert!(
+        h.out
+            .events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Click { id, item: Some(0), .. } if id == "cell")),
+        "the click reaches the cell under the tooltip: {:?}",
+        h.out.events
+    );
+    assert_eq!(h.out.hover_item.as_ref().map(|(id, i)| (id.as_str(), *i)), Some(("grid", 0)));
+}
+
+#[test]
+fn hovering_reports_the_item_even_when_the_stamp_is_disabled() {
+    let mut h = TipHarness::new(3, false);
+    h.frame((200, 200), &[]);
+    let cell = h.out.rect("cell").unwrap();
+    let (cx, cy) = ((cell.x + cell.w / 2) as f32, (cell.y + cell.h / 2) as f32);
+    h.frame((200, 200), &[InputEvent::PointerMove { x: cx, y: cy }]);
+    assert_eq!(
+        h.out.hover_item.as_ref().map(|(id, i)| (id.as_str(), *i)),
+        Some(("grid", 0)),
+        "an unaffordable recipe must still be able to explain itself"
+    );
+    assert!(
+        !h.out
+            .events
+            .iter()
+            .any(|e| matches!(e, UiEvent::Click { .. })),
+        "hovering is not activating"
+    );
+}
+
+#[test]
+fn tooltip_chrome_lands_in_the_overlay_tier_after_every_base_batch() {
+    let mut h = TipHarness::new(3, true);
+    h.frame((200, 200), &[InputEvent::PointerMove { x: 50.0, y: 60.0 }]);
+    let draw = &h.out.draw;
+    assert!(draw.overlay_start > 0, "the grid painted a base tier");
+    assert!(
+        !draw.overlay_batches().is_empty(),
+        "the tooltip painted an overlay tier"
+    );
+    // The host draws its own content between the two tiers, so the split must
+    // be a real vertex boundary and not a merged batch.
+    let last_base = draw.base_batches().last().unwrap();
+    let first_overlay = draw.overlay_batches().first().unwrap();
+    assert!(first_overlay.start >= last_base.start + last_base.count);
+
+    h.state.set("show_tip", UiValue::Bool(false));
+    h.frame((200, 200), &[]);
+    assert!(
+        h.out.draw.overlay_batches().is_empty(),
+        "a hidden tooltip contributes nothing"
+    );
+}
+
+/// A bitmap font has exactly one crisp size, so "smaller text" has to come
+/// from drawing at a smaller INTEGER multiple of the gui scale — never from
+/// resampling the glyphs, which would blur them.
+#[test]
+fn a_small_label_shrinks_by_one_gui_scale_step_and_never_clips_its_ink() {
+    let doc = Arc::new(
+        Document::from_json(
+            r#"{
+                "format": 1, "kind": "petramond:test_small", "class": "screen",
+                "root": { "type": "column", "layout": { "anchor": { "h": "start", "v": "start" } },
+                    "children": [
+                        { "type": "label", "id": "normal", "text": "Oak Door" },
+                        { "type": "label", "id": "small", "text": "Oak Door", "small": true }
+                    ] }
+            }"#,
+        )
+        .unwrap(),
+    );
+    let theme = Arc::new(Theme::placeholder());
+    let solve_at = |scale: i32| {
+        let rt = UiRuntime::new(doc.clone(), theme.clone());
+        let mut fs = FrameState::new();
+        let mut out = FrameOutput::default();
+        rt.frame(
+            FrameArgs {
+                screen: (400 * scale as u32, 400 * scale as u32),
+                scale,
+                now: 0.0,
+                state: &UiState::new(),
+                input: &[],
+                clipboard: None,
+                images: &NoImages,
+                dim: None,
+                preview: None,
+            },
+            &mut fs,
+            &mut out,
+        );
+        (out.rect("normal").unwrap(), out.rect("small").unwrap())
+    };
+
+    // At scale 1 there is no smaller step, so both are identical.
+    let (normal, small) = solve_at(1);
+    assert_eq!(normal.w, small.w, "no step to take at gui scale 1");
+
+    // At 3, the small run draws at 2 physical px per font pixel: two thirds.
+    let (normal, small) = solve_at(3);
+    assert!(small.w < normal.w, "{small:?} vs {normal:?}");
+    assert!(small.h < normal.h);
+    // Rects are physical here; the reserved box must still hold the ink.
+    let font = theme.ui_font();
+    let ink_w = font.width("Oak Door") * 2;
+    assert!(
+        small.w >= ink_w,
+        "reserved {} must not clip {ink_w} px of ink",
+        small.w
+    );
+    // ...and not by more than the rounding the integer step forces.
+    assert!(small.w - ink_w < 3, "reserved {} vs ink {ink_w}", small.w);
+}
+
+/// Typing must not strand the caret on the last glyph.
+///
+/// The visible window is a character COUNT, so deriving it from the text
+/// already in the box makes it collapse: an empty box fits "zero characters",
+/// which scrolls every keystroke out of view and shows only the one just
+/// typed. The window has to come from the box's width alone.
+#[test]
+fn typing_a_word_keeps_it_visible_instead_of_scrolling_to_the_last_glyph() {
+    let mut h = Harness::new();
+    h.frame(&[]);
+    let (x, y) = h.center("name");
+    h.frame(&[down(x, y), up(x, y)]);
+
+    for ch in "chest".chars() {
+        h.frame(&[InputEvent::Char { ch }]);
+    }
+    let shown = h
+        .fs
+        .editors
+        .values()
+        .next()
+        .expect("focused editor")
+        .render(
+            crate::widget::input_visible_chars(120),
+            true,
+            h.now,
+        );
+    assert_eq!(shown.text, "chest", "the whole word stays in view");
+    assert_eq!(shown.cursor, 5, "and the caret is after it");
+
+    // The window is a property of the box: a wider box shows more, and it
+    // never depends on what has been typed into it.
+    let font = crate::text::font();
+    assert_eq!(crate::widget::input_visible_chars(font.max_advance() * 3), 3);
+    assert_eq!(crate::widget::input_visible_chars(font.max_advance() * 9), 9);
+}

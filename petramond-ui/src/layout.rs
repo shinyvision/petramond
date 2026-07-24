@@ -90,6 +90,13 @@ pub trait LayoutEnv {
 
     fn slot_metrics(&self) -> SlotMetrics;
 
+    /// The host's integer GUI scale. Only text that opts into a smaller
+    /// step needs it: its logical size depends on how many physical pixels a
+    /// font pixel gets. Everything else measures scale-independently.
+    fn gui_scale(&self) -> i32 {
+        1
+    }
+
     /// A styled container's chrome insets `[l, t, r, b]` (its 9-slice border).
     /// Content is laid out INSIDE these automatically (border-box), so a
     /// framed panel never needs hand-tuned padding just to clear its border.
@@ -125,6 +132,10 @@ pub struct Solved {
     /// Per `scroll` instance: its flow content size (for offset clamping and
     /// thumb geometry).
     pub scroll_content: Vec<Option<(i32, i32)>>,
+    /// Whether the instance belongs to a floating `tooltip` subtree: painted
+    /// in the overlay tier and excluded from every hit test, so a panel that
+    /// follows the pointer can never swallow the input under it.
+    pub overlay: Vec<bool>,
 }
 
 impl Solved {
@@ -162,10 +173,12 @@ pub fn solve(
         env,
         scroll_offset,
         naturals: vec![(0, 0); n],
+        in_overlay: false,
         out: Solved {
             rects: vec![RectI::ZERO; n],
             clips: vec![None; n],
             scroll_content: vec![None; n],
+            overlay: vec![false; n],
         },
     };
     if n == 0 {
@@ -211,6 +224,8 @@ struct Solver<'t, 'd, 'e> {
     env: &'e dyn LayoutEnv,
     scroll_offset: &'e dyn Fn(u32) -> i32,
     naturals: Vec<(i32, i32)>,
+    /// Set while arranging a `tooltip` subtree (see [`Solved::overlay`]).
+    in_overlay: bool,
     out: Solved,
 }
 
@@ -283,7 +298,37 @@ impl Solver<'_, '_, '_> {
         let pad_w = pad[0] + pad[2];
         let pad_h = pad[1] + pad[3];
 
-        let mut natural = if node.lays_out_children() {
+        let cols = node.kind.list_cols();
+        let mut natural = if node.lays_out_children() && cols > 1 {
+            // Grid list: uniform cells, so the natural size is just the cell
+            // size times the grid extent. Stamp margins play no part — cells
+            // are the grid's, not the stamp's.
+            let content_avail_w = match l.w {
+                Size::Px(p) => Some((p - pad_w).max(0)),
+                _ => avail_w.map(|a| (a - pad_w).max(0)),
+            };
+            let cols_i = cols as i32;
+            let cell_hint = content_avail_w.map(|a| ((a - l.gap * (cols_i - 1)) / cols_i).max(0));
+            let (mut cell_w, mut cell_h) = (0i32, 0i32);
+            for &c in &inst.children {
+                let (cw, ch) = self.measure(c, cell_hint);
+                cell_w = cell_w.max(cw);
+                cell_h = cell_h.max(ch);
+            }
+            let n = inst.children.len() as i32;
+            let rows = (n + cols_i - 1) / cols_i;
+            let w = if n == 0 {
+                0
+            } else {
+                cell_w * cols_i + l.gap * (cols_i - 1)
+            };
+            let h = if rows == 0 {
+                0
+            } else {
+                cell_h * rows + l.gap * (rows - 1)
+            };
+            (w + pad_w, h + pad_h)
+        } else if node.lays_out_children() {
             let dir = inst.flow_dir();
             let main = Ax::of_dir(dir);
             let cross = Ax {
@@ -345,6 +390,7 @@ impl Solver<'_, '_, '_> {
     fn arrange(&mut self, idx: u32, rect: RectI, clip: Option<RectI>) {
         self.out.rects[idx as usize] = rect;
         self.out.clips[idx as usize] = clip;
+        self.out.overlay[idx as usize] = self.in_overlay;
         let tree = self.tree;
         let inst = tree.get(idx);
         let node = inst.node;
@@ -354,6 +400,10 @@ impl Solver<'_, '_, '_> {
         let l = inst.layout;
         let pad = content_pad(l, self.env.container_insets(node));
         let content = rect.inset(pad);
+        if node.kind.list_cols() > 1 {
+            self.arrange_grid(idx, content, clip);
+            return;
+        }
         let dir = inst.flow_dir();
         let main = Ax::of_dir(dir);
         let cross = Ax {
@@ -384,7 +434,7 @@ impl Solver<'_, '_, '_> {
             .children
             .iter()
             .copied()
-            .filter(|&c| tree.get(c).layout.abs.is_none())
+            .filter(|&c| tree.get(c).layout.abs.is_none() && !is_tooltip(tree, c))
             .collect();
 
         // Main-axis base sizes + grow weights. Inside a scroll node, grow is
@@ -608,6 +658,28 @@ impl Solver<'_, '_, '_> {
             }
         }
 
+        // Tooltips: out of flow entirely, at natural size and unclipped. The
+        // runtime moves each subtree to the pointer once the frame is solved —
+        // the solver has no cursor.
+        for &c in &inst.children {
+            if !is_tooltip(tree, c) {
+                continue;
+            }
+            let (nw, nh) = self.naturals[c as usize];
+            let was = std::mem::replace(&mut self.in_overlay, true);
+            self.arrange(
+                c,
+                RectI {
+                    x: content.x,
+                    y: content.y,
+                    w: nw,
+                    h: nh,
+                },
+                None,
+            );
+            self.in_overlay = was;
+        }
+
         // Absolute children: placed against the padded rect, out of flow,
         // natural/explicit size, unaffected by scroll offset.
         for &c in &inst.children {
@@ -615,6 +687,9 @@ impl Solver<'_, '_, '_> {
             let Some(abs) = cn.layout.abs else {
                 continue;
             };
+            if is_tooltip(tree, c) {
+                continue;
+            }
             let (nw, nh) = self.naturals[c as usize];
             let w = match cn.layout.w {
                 Size::Px(p) => p,
@@ -657,6 +732,49 @@ impl Solver<'_, '_, '_> {
                 Some((w + pad[0] + pad[2], h + pad[1] + pad[3]));
         }
     }
+
+    /// Arrange a grid list's stamps row-major into uniform cells filling
+    /// `content`. Columns split the width evenly with the integer remainder
+    /// going +1 to the leading columns (the same exact-sum rule grow shares
+    /// use), and every row is as tall as the tallest stamp, so cells stay on a
+    /// grid no matter how the panel is sized.
+    fn arrange_grid(&mut self, idx: u32, content: RectI, clip: Option<RectI>) {
+        let tree = self.tree;
+        let inst = tree.get(idx);
+        let cols = inst.node.kind.list_cols() as i32;
+        let gap = inst.layout.gap;
+        let children: Vec<u32> = inst.children.clone();
+
+        let inner_w = (content.w - gap * (cols - 1)).max(0);
+        let base_w = inner_w / cols;
+        let extra = inner_w - base_w * cols;
+        let col_w = |col: i32| base_w + i32::from(col < extra);
+        let col_x = |col: i32| content.x + base_w * col + extra.min(col) + gap * col;
+        let cell_h = children
+            .iter()
+            .map(|&c| self.naturals[c as usize].1)
+            .max()
+            .unwrap_or(0);
+
+        for (i, &c) in children.iter().enumerate() {
+            let (col, row) = (i as i32 % cols, i as i32 / cols);
+            self.arrange(
+                c,
+                RectI {
+                    x: col_x(col),
+                    y: content.y + row * (cell_h + gap),
+                    w: col_w(col),
+                    h: cell_h,
+                },
+                clip,
+            );
+        }
+    }
+}
+
+/// Whether instance `c` is a floating tooltip (its own subtree root).
+fn is_tooltip(tree: &InstTree<'_>, c: u32) -> bool {
+    matches!(tree.get(c).node.kind, NodeKind::Tooltip)
 }
 
 #[cfg(test)]
