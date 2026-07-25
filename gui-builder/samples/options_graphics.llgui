@@ -69,7 +69,7 @@
         {
           "type": "column",
           "layout": {
-            "w": 250,
+            "w": 270,
             "h": "auto",
             "pad": [
               10,
@@ -168,7 +168,7 @@
                   "type": "label",
                   "text": "View Distance",
                   "layout": {
-                    "w": 78,
+                    "w": 92,
                     "h": "auto",
                     "pad": [
                       0,
@@ -222,7 +222,7 @@
                 {
                   "type": "label",
                   "layout": {
-                    "w": 54,
+                    "w": 66,
                     "h": "auto",
                     "pad": [
                       0,
@@ -272,7 +272,7 @@
                   "id": "particles",
                   "type": "button",
                   "layout": {
-                    "w": 140,
+                    "w": 150,
                     "h": "auto",
                     "pad": [
                       0,

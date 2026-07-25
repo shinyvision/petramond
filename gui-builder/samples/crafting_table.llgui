@@ -384,6 +384,7 @@
             "dir": "column",
             "align": "stretch",
             "justify": "start",
+            "max_w": 150,
             "abs": {
               "x": 4,
               "y": 4

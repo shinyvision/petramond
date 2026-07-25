@@ -231,6 +231,7 @@
                                                             {
                                                                 "type": "label",
                                                                 "style": "label.muted",
+                                                                "small": true,
                                                                 "bind": {
                                                                     "text": "desc"
                                                                 }

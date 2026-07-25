@@ -608,3 +608,151 @@ fn tooltips_leave_the_flow_at_natural_size_and_unclipped() {
     assert!(!s.overlay[1] && !s.overlay[4]);
     assert!(s.overlay[2] && s.overlay[3], "the whole subtree is overlay");
 }
+
+/// The mods-list row: an icon, a text column, a spacer, and a toggle. Whatever
+/// a pack author writes in `desc` must not be able to shove the toggle off the
+/// panel — the player could not click it, and the label would paint across the
+/// screen. Bound text ellipsizes; that is what makes it the shock absorber.
+#[test]
+fn bound_text_gives_back_width_before_a_row_pushes_its_widgets_out() {
+    let json = r#"{
+        "format": 1, "kind": "petramond:x", "class": "screen",
+        "root": { "type": "row", "id": "row",
+            "layout": { "w": 100, "h": 20, "gap": 4, "align": "center" },
+            "children": [
+                { "type": "checkbox", "id": "icon" },
+                { "type": "column", "id": "text", "children": [
+                    { "type": "label", "id": "name", "bind": { "text": "name" } },
+                    { "type": "label", "id": "desc", "bind": { "text": "desc" } }
+                ] },
+                { "type": "spacer", "layout": { "w": { "grow": 1 } } },
+                { "type": "toggle", "id": "on" }
+            ] }
+    }"#;
+    let doc = Document::from_json(json).unwrap();
+    let mut state = UiState::new();
+    state.set("name", UiValue::Str("Furniture".into()));
+    state.set(
+        "desc",
+        UiValue::Str("A craftable chair, chains, and a cauldron".into()),
+    );
+    let tree = InstTree::expand(&doc, &state);
+    let s = solve(&tree, &MockEnv, (200, 200), &|_| 0);
+
+    let (row, toggle) = (s.rects[0], s.rects[6]);
+    assert_eq!(row.w, 100, "the row keeps its authored width");
+    assert!(
+        toggle.x + toggle.w <= row.x + row.w,
+        "toggle at {}..{} left the row {}..{}",
+        toggle.x,
+        toggle.x + toggle.w,
+        row.x,
+        row.x + row.w
+    );
+    // The cut reaches the labels themselves, not just the column around them:
+    // a column that shrank while its text kept its natural width would paint
+    // straight through the panel edge.
+    for (i, id) in [(3u32, "name"), (4, "desc")] {
+        let label = s.rects[i as usize];
+        assert!(
+            label.x + label.w <= row.x + row.w,
+            "{id} at {}..{} left the row",
+            label.x,
+            label.x + label.w
+        );
+    }
+}
+
+/// Authored text is a decision the layout owes the author: a caption that no
+/// longer fits is an authoring bug to fix in the document, not something to
+/// silently ellipsize. Only DATA shrinks.
+#[test]
+fn authored_text_keeps_its_width_while_bound_text_beside_it_shrinks() {
+    let json = r#"{
+        "format": 1, "kind": "petramond:x", "class": "screen",
+        "root": { "type": "row", "layout": { "w": 60, "h": 10 }, "children": [
+            { "type": "label", "id": "caption", "text": "Seed" },
+            { "type": "label", "id": "value", "bind": { "text": "seed" } }
+        ] }
+    }"#;
+    let doc = Document::from_json(json).unwrap();
+    let mut state = UiState::new();
+    state.set("seed", UiValue::Str("-8149203114772265771".into()));
+    let tree = InstTree::expand(&doc, &state);
+    let s = solve(&tree, &MockEnv, (200, 200), &|_| 0);
+
+    assert_eq!(s.rects[1].w, 24, "the authored caption keeps all 4 glyphs");
+    assert_eq!(
+        s.rects[2].w, 36,
+        "the bound value absorbs the whole deficit"
+    );
+}
+
+/// The options-screen shape: a panel inside a full-screen backdrop frame. The
+/// panel is AUTO-sized, so nothing forces it to notice a short viewport — and
+/// its Back button slides off the bottom of the screen, where no click can
+/// reach it. It has a `grow` scroll inside, which is the thing that should
+/// give; the panel has to pass the cut down to it.
+#[test]
+fn an_auto_panel_gives_height_back_through_the_grower_inside_it() {
+    let (s, _) = solve_doc(
+        r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "frame", "id": "screen",
+                "layout": { "w": { "grow": 1 }, "h": { "grow": 1 },
+                            "align": "center", "justify": "center" },
+                "children": [
+                    { "type": "column", "id": "panel", "layout": { "w": 80, "gap": 2 }, "children": [
+                        { "type": "label", "text": "Controls" },
+                        { "type": "scroll", "id": "list", "layout": { "h": { "grow": 1 }, "min_h": 12 },
+                          "children": [
+                            { "type": "checkbox", "id": "a" },
+                            { "type": "checkbox", "id": "b" },
+                            { "type": "checkbox", "id": "c" },
+                            { "type": "checkbox", "id": "d" }
+                        ] },
+                        { "type": "button", "id": "back", "text": "Back" }
+                    ] }
+                ] }
+        }"#,
+        (80, 60),
+    );
+    // Natural panel: label 9 + 2 + list 40 + 2 + button 20 = 73 in a 60 box.
+    // Arena order: 0 screen, 1 panel, 2 label, 3 scroll, 4..=7 cells, 8 button.
+    let (screen, panel, back) = (s.rects[0], s.rects[1], s.rects[8]);
+    assert_eq!(panel.h, 60, "the panel took the viewport's height, not 73");
+    assert!(
+        back.y + back.h <= screen.y + screen.h,
+        "Back at {}..{} left the screen {}..{}",
+        back.y,
+        back.y + back.h,
+        screen.y,
+        screen.y + screen.h
+    );
+    assert_eq!(s.rects[3].h, 27, "the scroll inside absorbed the whole cut");
+}
+
+/// The cut stops at a `Px` size: an author who wrote a number meant it, and
+/// silently squashing it would hide the layout bug instead of showing it.
+#[test]
+fn a_fixed_size_panel_never_gives_height_back() {
+    let (s, _) = solve_doc(
+        r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "frame",
+                "layout": { "w": { "grow": 1 }, "h": { "grow": 1 },
+                            "align": "center", "justify": "center" },
+                "children": [
+                    { "type": "column", "id": "panel", "layout": { "w": 80, "h": 90 }, "children": [
+                        { "type": "scroll", "id": "list", "layout": { "h": { "grow": 1 }, "min_h": 12 },
+                          "children": [ { "type": "checkbox", "id": "a" } ] }
+                    ] }
+                ] }
+        }"#,
+        (80, 60),
+    );
+    assert_eq!(
+        s.rects[1].h, 90,
+        "an authored height is kept, and overflows"
+    );
+}

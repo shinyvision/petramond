@@ -439,65 +439,48 @@ mod tests {
     /// swap (or one more label) must not push a shipped screen off the
     /// smallest viewport the game scales to. Panels that legitimately scroll
     /// absorb the difference; a panel that simply grew is a layout bug you
-    /// only see by opening that screen.
+    /// only see by opening that screen — and you see it as the Back button
+    /// sliced off the bottom edge, where nothing can click it.
+    ///
+    /// Check every instance against ITS PARENT, not the root. The root is
+    /// `grow`, so it is the viewport by construction and an assertion against
+    /// it can never fail — that is how the Controls panel grew past the bottom
+    /// of the screen unnoticed. Parent-relative also catches the half of the
+    /// problem the screen edge hides: a tab page that outgrows its panel
+    /// paints its last row straight through the buttons below it.
+    ///
+    /// Content inside a `scroll` is exempt — overflowing is what it is for.
     #[test]
     fn every_shipped_document_fits_the_smallest_viewport() {
-        use petramond_ui::{FrameArgs, FrameOutput, FrameState, NoImages, UiRuntime, UiState};
-        const KINDS: &[GuiKind] = &[
-            GuiKind::Chest,
-            GuiKind::Inventory,
-            GuiKind::CraftingTable,
-            GuiKind::Furnace,
-            GuiKind::FurnitureWorkbench,
-            GuiKind::Title,
-            GuiKind::WorldSelect,
-            GuiKind::WorldSettings,
-            GuiKind::CreateWorld,
-            GuiKind::DeleteWorld,
-            GuiKind::Pause,
-            GuiKind::Sleep,
-            GuiKind::Death,
-            GuiKind::ConnectServer,
-            GuiKind::ModsMissing,
-            GuiKind::ConnectionLost,
-            GuiKind::Options,
-            GuiKind::OptionsSound,
-            GuiKind::OptionsControls,
-            GuiKind::OptionsGraphics,
-        ];
-        // 720p is the smallest common window; auto gui scale picks 3 there.
-        let screen = (1280u32, 720u32);
-        let scale = crate::gui::gui_scale(screen) as i32;
-        let viewport_h = screen.1 as i32 / scale;
         let mut overflowing = Vec::new();
-        for kind in KINDS {
-            let Some(doc) = doc_for(*kind) else {
-                continue;
-            };
-            let runtime = UiRuntime::new(doc.doc, crate::gui::doc_theme::theme());
-            let mut fs = FrameState::new();
-            let mut out = FrameOutput::default();
-            runtime.frame(
-                FrameArgs {
-                    screen,
-                    scale,
-                    now: 0.0,
-                    state: &UiState::new(),
-                    input: &[],
-                    clipboard: None,
-                    images: &NoImages,
-                    dim: None,
-                    preview: None,
-                },
-                &mut fs,
-                &mut out,
-            );
-            let h = out.panel_rect.h / scale;
-            if h > viewport_h {
-                overflowing.push(format!("{kind:?}: {h} > {viewport_h}"));
+        for scale in [1i32, 3] {
+            for kind in SHELL_KINDS {
+                walk_solved(*kind, scale, Seed::Ordinary, |n| {
+                    // Tooltips are placed by the runtime, which clamps them;
+                    // `abs` children are deliberately out of flow.
+                    if n.floating || n.scrolled || n.rect.h == 0 {
+                        return;
+                    }
+                    if n.inst.layout.abs.is_some() {
+                        return;
+                    }
+                    let (top, bottom) = (n.parent.y, n.parent.y + n.parent.h);
+                    if n.rect.y < top || n.rect.y + n.rect.h > bottom {
+                        overflowing.push(format!(
+                            "{kind:?} @scale {scale}: {:?} spans {}..{} outside its parent's \
+                             {top}..{bottom}",
+                            n.inst.node.kind,
+                            n.rect.y,
+                            n.rect.y + n.rect.h,
+                        ));
+                    }
+                });
             }
         }
-        assert!(overflowing.is_empty(), "documents overflow: {overflowing:?}");
+        assert!(
+            overflowing.is_empty(),
+            "documents overflow: {overflowing:#?}"
+        );
     }
 
     /// The browser exists to stop the player scrolling and squinting, so the
@@ -741,6 +724,301 @@ mod tests {
         assert!(doc_container_specs(&doc("petramond:fuel")).is_ok());
         let err = doc_container_specs(&doc("doctest:no_such_tag")).unwrap_err();
         assert!(err.contains("unknown item tag"), "{err}");
+    }
+
+    /// How long a value to seed every catalog `str` key with.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Seed {
+        /// A pack author's longest real summary. Widths must survive it: a row
+        /// that cannot hold its text has to ellipsize, never push a widget out.
+        Long,
+        /// An ordinary value. HEIGHTS are judged against this — a wrapping
+        /// label with a fixed width grows without bound in long text, so
+        /// seeding long would only ever prove that arithmetic, not tell you
+        /// whether the screen's structure fits.
+        Ordinary,
+    }
+
+    /// Visibility keys a controller only ever sets one of. Seeding every bool
+    /// true would stack pages that never coexist — both tabs of World
+    /// Settings at once — and report an overflow no player can reach. Each
+    /// pair is checked BOTH ways instead (`Page::0` / `Page::1`).
+    const EXCLUSIVE: &[(&str, &str)] = &[
+        ("tab_world", "tab_mods"),
+        ("not_renaming", "renaming"),
+        ("lan_closed", "lan_open"),
+        ("is_host", "is_remote"),
+        ("has_selection", "no_worlds"),
+    ];
+
+    /// Keys whose whole point is an EMPTY screen ("No mod packs installed"),
+    /// which cannot be true while the list beside them is seeded with rows.
+    const EMPTY_STATE_KEYS: &[&str] = &["no_mods", "no_craft_results"];
+
+    /// Every catalog key of `kind` seeded, so a screen is judged with content
+    /// in it rather than empty. `page` picks a side of every [`EXCLUSIVE`]
+    /// pair.
+    fn seeded_state(kind: GuiKind, seed: Seed, page: usize) -> petramond_ui::UiState {
+        use petramond_ui::{UiMap, UiState, UiValue};
+        const LONG: &str =
+            "A craftable rideable wooden chair, directional iron chains, a light-giving \
+             chandelier, and a slate cauldron.";
+        const ORDINARY: &str = "Nexo Test World";
+        let (text, _) = crate::assets::read_base_text("ui/bindings.json").expect("catalog ships");
+        let v: serde_json::Value = serde_json::from_str(&text).expect("catalog is valid JSON");
+        let mut state = UiState::new();
+        let key = crate::gui::kind_key(kind).unwrap_or("");
+        let Some(keys) = v["kinds"][key]["state"].as_object() else {
+            return state;
+        };
+        let scalar = |ty: &str| match ty {
+            "str" => Some(UiValue::Str(match seed {
+                Seed::Long => LONG.into(),
+                Seed::Ordinary => ORDINARY.to_string(),
+            })),
+            "bool" => Some(UiValue::Bool(true)),
+            "i32" => Some(UiValue::I32(0)),
+            "f32" => Some(UiValue::F32(0.5)),
+            _ => None,
+        };
+        for (name, key) in keys {
+            let value = match key["type"].as_str() {
+                Some("list") => {
+                    let row: UiMap = key["item"]
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|(f, ty)| Some((f.clone(), scalar(ty.as_str()?)?)))
+                        .collect();
+                    UiValue::List(Arc::new(vec![row]))
+                }
+                Some(ty) => match scalar(ty) {
+                    Some(v) => v,
+                    None => continue,
+                },
+                None => continue,
+            };
+            state.set(name.clone(), value);
+        }
+        for (a, b) in EXCLUSIVE {
+            let (on, off) = match page {
+                0 => (a, b),
+                _ => (b, a),
+            };
+            if state.get(on).is_some() {
+                state.set((*on).to_string(), UiValue::Bool(true));
+            }
+            if state.get(off).is_some() {
+                state.set((*off).to_string(), UiValue::Bool(false));
+            }
+        }
+        for key in EMPTY_STATE_KEYS {
+            if state.get(key).is_some() {
+                state.set((*key).to_string(), UiValue::Bool(false));
+            }
+        }
+        state
+    }
+
+    /// Every screen the shell can put in front of a player, so the two text
+    /// guards below cover the whole surface rather than the screens someone
+    /// happened to open.
+    const SHELL_KINDS: &[GuiKind] = &[
+        GuiKind::Chest,
+        GuiKind::Inventory,
+        GuiKind::CraftingTable,
+        GuiKind::Furnace,
+        GuiKind::FurnitureWorkbench,
+        GuiKind::Title,
+        GuiKind::WorldSelect,
+        GuiKind::WorldSettings,
+        GuiKind::CreateWorld,
+        GuiKind::DeleteWorld,
+        GuiKind::Pause,
+        GuiKind::Sleep,
+        GuiKind::Death,
+        GuiKind::ConnectServer,
+        GuiKind::ModsMissing,
+        GuiKind::ConnectionLost,
+        GuiKind::Options,
+        GuiKind::OptionsSound,
+        GuiKind::OptionsControls,
+        GuiKind::OptionsGraphics,
+    ];
+
+    /// One solved instance handed to the guards below.
+    struct SolvedNode<'a, 'd> {
+        inst: &'a petramond_ui::Inst<'d>,
+        rect: petramond_ui::RectI,
+        root: petramond_ui::RectI,
+        /// The enclosing instance's box (the root's own box for the root).
+        parent: petramond_ui::RectI,
+        /// Inside a floating `tooltip` subtree (see `Solved::overlay`).
+        floating: bool,
+        /// Inside a `scroll` subtree, where overflowing IS the feature.
+        scrolled: bool,
+    }
+
+    /// Solve one shipped document with seeded dynamic text at `scale`, then
+    /// hand every instance to `check`.
+    fn walk_solved(
+        kind: GuiKind,
+        scale: i32,
+        seed: Seed,
+        mut check: impl FnMut(SolvedNode<'_, '_>),
+    ) {
+        for page in 0..2 {
+            walk_solved_page(kind, scale, seed, page, &mut check);
+        }
+    }
+
+    fn walk_solved_page(
+        kind: GuiKind,
+        scale: i32,
+        seed: Seed,
+        page: usize,
+        check: &mut impl FnMut(SolvedNode<'_, '_>),
+    ) {
+        use petramond_ui::{solve, InstTree, ThemeEnv};
+        let Some(doc) = doc_for(kind) else { return };
+        let theme = crate::gui::doc_theme::theme();
+        // The TIGHTEST viewport this scale ever solves into: `gui_scale` steps
+        // up only once the window holds another whole 320×240, so every scale
+        // bottoms out at that same logical box. Checking the wide end instead
+        // would let a panel that only fits on a big monitor pass.
+        let viewport = (320, 240);
+        let state = seeded_state(kind, seed, page);
+        // Resolve the responsive breakpoint exactly as the runtime does — a
+        // document that stacks below 360px must be judged in the form it will
+        // actually be arranged in.
+        let compact = doc.doc.compact_active(viewport.0);
+        let tree = InstTree::expand_form(&doc.doc, &state, compact);
+        let env = ThemeEnv {
+            theme: &theme,
+            gui_scale: scale,
+            image_size: &|_| None,
+        };
+        let solved = solve(&tree, &env, viewport, &|_| 0);
+        // A `scroll` anywhere above an instance means overflowing its box is
+        // the point, not a bug. Parents precede children in the arena.
+        let mut scrolled = vec![false; tree.len()];
+        for i in 0..tree.len() {
+            let inst = tree.get(i as u32);
+            if let Some(p) = inst.parent {
+                scrolled[i] = scrolled[p as usize]
+                    || matches!(tree.get(p).node.kind, petramond_ui::NodeKind::Scroll { .. });
+            }
+        }
+        for (i, &scrolled) in scrolled.iter().enumerate() {
+            let inst = tree.get(i as u32);
+            check(SolvedNode {
+                inst,
+                rect: solved.rects[i],
+                root: solved.rects[0],
+                parent: solved.rects[inst.parent.unwrap_or(0) as usize],
+                floating: solved.overlay[i],
+                scrolled,
+            });
+        }
+    }
+
+    /// AUTHORED label text must fit the box the document gives it. The font is
+    /// layout's only sizing input, so one font swap turns every box that was
+    /// tuned to the old metrics into "Master V..." at once — and an ellipsis
+    /// on a caption nobody can widen at runtime is a bug, not a graceful
+    /// degradation. Bound text (world names, pack summaries, key bindings) is
+    /// data and ellipsizes by design; it is deliberately not checked here.
+    #[test]
+    fn authored_label_text_fits_the_box_the_document_gives_it() {
+        use petramond_ui::NodeKind;
+        let theme = crate::gui::doc_theme::theme();
+        let mut clipped = Vec::new();
+        for scale in [1i32, 3] {
+            for kind in SHELL_KINDS {
+                walk_solved(*kind, scale, Seed::Long, |n| {
+                    let NodeKind::Label {
+                        text: Some(text),
+                        wrap,
+                        scale: 1,
+                        small,
+                    } = &n.inst.node.kind
+                    else {
+                        return;
+                    };
+                    // A run draws at `k` physical px per font pixel — one step
+                    // down for `small`. Convert both ways the way the solver
+                    // does, rounding the reservation UP.
+                    let k = match small {
+                        true => (scale - 1).max(1),
+                        false => scale,
+                    };
+                    let logical = |font_px: i32| (font_px * k + scale - 1) / scale;
+                    let font_px = |logical: i32| logical * scale / k;
+                    let font = theme.ui_font();
+                    let (need, have) = match wrap {
+                        // A wrapping label is bounded by its box HEIGHT: it is
+                        // the fixed-height ones (the remap hint) that clip.
+                        true => (
+                            logical(font.measure(text, Some(font_px(n.rect.w))).1),
+                            n.rect.h,
+                        ),
+                        false => (logical(font.width(text)), n.rect.w),
+                    };
+                    if need > have {
+                        clipped.push(format!(
+                            "{kind:?} @scale {scale}: {text:?} needs {need}px, box is {have}px"
+                        ));
+                    }
+                });
+            }
+        }
+        assert!(clipped.is_empty(), "clipped labels: {clipped:#?}");
+    }
+
+    /// However long the text that lands in a row, the row's WIDGETS stay on the
+    /// panel. Text is the layout's shock absorber (it ellipsizes); a checkbox
+    /// or a mod toggle pushed off the panel edge is unreachable, and a label
+    /// that keeps its natural width paints straight across the screen.
+    #[test]
+    fn long_dynamic_text_never_pushes_a_widget_off_its_screen() {
+        let mut escaped = Vec::new();
+        for scale in [1i32, 3] {
+            for kind in SHELL_KINDS {
+                walk_solved(*kind, scale, Seed::Long, |n| {
+                    // Tooltips float: the runtime places them at the pointer
+                    // and clamps them there, so the solver's parking spot says
+                    // nothing about where they land. Their WIDTH is bounded by
+                    // the document's `max_w`, checked below.
+                    if n.floating || n.rect.w == 0 {
+                        return;
+                    }
+                    if n.rect.x < n.root.x || n.rect.x + n.rect.w > n.root.x + n.root.w {
+                        escaped.push(format!(
+                            "{kind:?} @scale {scale}: {:?} spans {}..{} outside {}..{}",
+                            n.inst.node.kind,
+                            n.rect.x,
+                            n.rect.x + n.rect.w,
+                            n.root.x,
+                            n.root.x + n.root.w
+                        ));
+                    }
+                });
+            }
+        }
+        assert!(escaped.is_empty(), "off-screen widgets: {escaped:#?}");
+
+        // A floating panel is placed by the runtime, so what it owes is a
+        // bounded natural size: an unbounded one covers the screen the moment
+        // a pack ships a long recipe name.
+        let mut unbounded = Vec::new();
+        for kind in SHELL_KINDS {
+            walk_solved(*kind, 3, Seed::Long, |n| {
+                if matches!(n.inst.node.kind, petramond_ui::NodeKind::Tooltip) && n.rect.w > 160 {
+                    unbounded.push(format!("{kind:?}: floating panel is {}px wide", n.rect.w));
+                }
+            });
+        }
+        assert!(unbounded.is_empty(), "unbounded tooltips: {unbounded:#?}");
     }
 
     #[test]

@@ -45,3 +45,37 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
         _ => {}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Same class as the volume readout: engine copy in a fixed column that no
+    /// document guard can see. The widest is the view-distance ceiling.
+    #[test]
+    fn the_widest_view_distance_readout_fits_its_column() {
+        use petramond_ui::{solve, InstTree, ThemeEnv};
+        let doc = crate::gui::documents::doc_for(crate::gui::GuiKind::OptionsGraphics)
+            .expect("graphics document loads");
+        let theme = crate::gui::doc_theme::theme();
+        let mut state = UiState::new();
+        state.set("vd_label", UiValue::Str(format!("{} chunks", 48)));
+        let tree = InstTree::expand(&doc.doc, &state);
+        let env = ThemeEnv {
+            theme: &theme,
+            gui_scale: 3,
+            image_size: &|_| None,
+        };
+        let solved = solve(&tree, &env, (320, 240), &|_| 0);
+        let i = (0..tree.len() as u32)
+            .find(|i| tree.get(*i).node.bind.text.as_deref() == Some("vd_label"))
+            .expect("the readout is in the document");
+        let text = tree.get(i).text.as_deref().unwrap_or("");
+        let ink = theme.ui_font().width(text);
+        assert!(
+            ink <= solved.rects[i as usize].w,
+            "{text:?} needs {ink}px, column is {}px",
+            solved.rects[i as usize].w
+        );
+    }
+}

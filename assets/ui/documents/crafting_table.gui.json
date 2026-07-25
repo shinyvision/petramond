@@ -124,6 +124,7 @@
         "type": "tooltip",
         "style": "panel.inset",
         "layout": {
+          "max_w": 150,
           "abs": { "x": 4, "y": 4 },
           "pad": [3, 2, 3, 3],
           "gap": 2,

@@ -144,7 +144,7 @@
                   "type": "label",
                   "text": "Master Volume",
                   "layout": {
-                    "w": 78,
+                    "w": 92,
                     "h": "auto",
                     "pad": [
                       0,
@@ -198,7 +198,7 @@
                 {
                   "type": "label",
                   "layout": {
-                    "w": 26,
+                    "w": 30,
                     "h": "auto",
                     "pad": [
                       0,
@@ -249,7 +249,7 @@
                   "type": "label",
                   "text": "Sound Volume",
                   "layout": {
-                    "w": 78,
+                    "w": 92,
                     "h": "auto",
                     "pad": [
                       0,
@@ -303,7 +303,7 @@
                 {
                   "type": "label",
                   "layout": {
-                    "w": 26,
+                    "w": 30,
                     "h": "auto",
                     "pad": [
                       0,
@@ -354,7 +354,7 @@
                   "type": "label",
                   "text": "Music Volume",
                   "layout": {
-                    "w": 78,
+                    "w": 92,
                     "h": "auto",
                     "pad": [
                       0,
@@ -408,7 +408,7 @@
                 {
                   "type": "label",
                   "layout": {
-                    "w": 26,
+                    "w": 30,
                     "h": "auto",
                     "pad": [
                       0,

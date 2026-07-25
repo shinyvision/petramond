@@ -69,13 +69,13 @@
         {
           "type": "column",
           "layout": {
-            "w": 260,
+            "w": 280,
             "h": "auto",
             "pad": [
               10,
-              8,
+              6,
               10,
-              10
+              6
             ],
             "margin": [
               0,
@@ -83,7 +83,7 @@
               0,
               0
             ],
-            "gap": 6,
+            "gap": 4,
             "dir": "column",
             "align": "stretch",
             "justify": "start"
@@ -124,7 +124,7 @@
               "wrap": true,
               "layout": {
                 "w": "auto",
-                "h": 16,
+                "h": 30,
                 "pad": [
                   0,
                   0,
@@ -152,7 +152,9 @@
               "axis": "vertical",
               "layout": {
                 "w": "auto",
-                "h": 150,
+                "h": {
+                  "grow": 1
+                },
                 "pad": [
                   1,
                   1,

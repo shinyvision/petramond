@@ -67,7 +67,9 @@
           "type": "frame",
           "layout": {
             "w": 320,
-            "h": 260,
+            "h": {
+              "grow": 1
+            },
             "pad": [
               4,
               2,
@@ -83,7 +85,8 @@
             "gap": 4,
             "dir": "column",
             "align": "stretch",
-            "justify": "start"
+            "justify": "start",
+            "max_h": 260
           },
           "style": "panel.large",
           "children": [
@@ -306,421 +309,9 @@
               },
               "children": [
                 {
-                  "type": "row",
-                  "layout": {
-                    "w": "auto",
-                    "h": "auto",
-                    "pad": [
-                      3,
-                      1,
-                      3,
-                      1
-                    ],
-                    "margin": [
-                      0,
-                      0,
-                      0,
-                      0
-                    ],
-                    "gap": 8,
-                    "dir": "column",
-                    "align": "center",
-                    "justify": "start"
-                  },
-                  "bind": {
-                    "visible": "has_seed"
-                  },
-                  "children": [
-                    {
-                      "type": "label",
-                      "text": "Seed",
-                      "style": "label.muted"
-                    },
-                    {
-                      "type": "spacer",
-                      "layout": {
-                        "w": {
-                          "grow": 1
-                        },
-                        "h": "auto",
-                        "pad": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 0,
-                        "dir": "column",
-                        "justify": "start"
-                      }
-                    },
-                    {
-                      "type": "label",
-                      "bind": {
-                        "text": "seed_text"
-                      }
-                    },
-                    {
-                      "id": "copy_seed",
-                      "type": "button",
-                      "icon": "icon.copy",
-                      "layout": {
-                        "w": 16,
-                        "h": 16,
-                        "pad": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 0,
-                        "dir": "column",
-                        "justify": "start"
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "row",
-                  "layout": {
-                    "w": "auto",
-                    "h": "auto",
-                    "pad": [
-                      3,
-                      1,
-                      3,
-                      1
-                    ],
-                    "margin": [
-                      0,
-                      0,
-                      0,
-                      0
-                    ],
-                    "gap": 8,
-                    "dir": "column",
-                    "align": "center",
-                    "justify": "start"
-                  },
-                  "children": [
-                    {
-                      "type": "label",
-                      "text": "World size",
-                      "style": "label.muted"
-                    },
-                    {
-                      "type": "spacer",
-                      "layout": {
-                        "w": {
-                          "grow": 1
-                        },
-                        "h": "auto",
-                        "pad": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 0,
-                        "dir": "column",
-                        "justify": "start"
-                      }
-                    },
-                    {
-                      "type": "label",
-                      "bind": {
-                        "text": "world_size"
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "row",
-                  "layout": {
-                    "w": "auto",
-                    "h": "auto",
-                    "pad": [
-                      3,
-                      1,
-                      3,
-                      1
-                    ],
-                    "margin": [
-                      0,
-                      0,
-                      0,
-                      0
-                    ],
-                    "gap": 8,
-                    "dir": "column",
-                    "align": "center",
-                    "justify": "start"
-                  },
-                  "children": [
-                    {
-                      "type": "label",
-                      "text": "Day length"
-                    },
-                    {
-                      "type": "spacer",
-                      "layout": {
-                        "w": {
-                          "grow": 1
-                        },
-                        "h": "auto",
-                        "pad": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 0,
-                        "dir": "column",
-                        "justify": "start"
-                      }
-                    },
-                    {
-                      "type": "label",
-                      "style": "label.muted",
-                      "bind": {
-                        "text": "day_minutes_text"
-                      }
-                    },
-                    {
-                      "id": "day_minutes",
-                      "type": "slider",
-                      "min": 10.0,
-                      "max": 30.0,
-                      "step": 1.0,
-                      "layout": {
-                        "w": 90,
-                        "h": "auto",
-                        "pad": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 0,
-                        "dir": "column",
-                        "justify": "start"
-                      },
-                      "bind": {
-                        "value": "day_minutes"
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "row",
-                  "layout": {
-                    "w": "auto",
-                    "h": "auto",
-                    "pad": [
-                      3,
-                      1,
-                      3,
-                      1
-                    ],
-                    "margin": [
-                      0,
-                      0,
-                      0,
-                      0
-                    ],
-                    "gap": 8,
-                    "dir": "column",
-                    "align": "center",
-                    "justify": "start"
-                  },
-                  "children": [
-                    {
-                      "type": "column",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 2,
-                        "dir": "column",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Keep inventory on death"
-                        },
-                        {
-                          "type": "label",
-                          "text": "Your items stay with you when you die",
-                          "style": "label.muted"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "spacer",
-                      "layout": {
-                        "w": {
-                          "grow": 1
-                        },
-                        "h": "auto",
-                        "pad": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 0,
-                        "dir": "column",
-                        "justify": "start"
-                      }
-                    },
-                    {
-                      "id": "keep_inventory",
-                      "type": "checkbox",
-                      "bind": {
-                        "value": "keep_inventory"
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "row",
-                  "layout": {
-                    "w": "auto",
-                    "h": "auto",
-                    "pad": [
-                      3,
-                      1,
-                      3,
-                      1
-                    ],
-                    "margin": [
-                      0,
-                      0,
-                      0,
-                      0
-                    ],
-                    "gap": 8,
-                    "dir": "column",
-                    "align": "center",
-                    "justify": "start"
-                  },
-                  "children": [
-                    {
-                      "type": "column",
-                      "layout": {
-                        "w": "auto",
-                        "h": "auto",
-                        "pad": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 2,
-                        "dir": "column",
-                        "justify": "start"
-                      },
-                      "children": [
-                        {
-                          "type": "label",
-                          "text": "Open to LAN on load"
-                        },
-                        {
-                          "type": "label",
-                          "text": "Host on the local network automatically",
-                          "style": "label.muted"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "spacer",
-                      "layout": {
-                        "w": {
-                          "grow": 1
-                        },
-                        "h": "auto",
-                        "pad": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          0
-                        ],
-                        "gap": 0,
-                        "dir": "column",
-                        "justify": "start"
-                      }
-                    },
-                    {
-                      "id": "auto_lan",
-                      "type": "checkbox",
-                      "bind": {
-                        "value": "auto_lan"
-                      }
-                    }
-                  ]
-                },
-                {
-                  "type": "spacer",
+                  "id": "world_scroll",
+                  "type": "scroll",
+                  "axis": "vertical",
                   "layout": {
                     "w": "auto",
                     "h": {
@@ -740,8 +331,452 @@
                     ],
                     "gap": 0,
                     "dir": "column",
-                    "justify": "start"
-                  }
+                    "justify": "start",
+                    "min_h": 36
+                  },
+                  "children": [
+                    {
+                      "type": "column",
+                      "layout": {
+                        "w": "auto",
+                        "h": "auto",
+                        "pad": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "gap": 4,
+                        "dir": "column",
+                        "align": "stretch",
+                        "justify": "start"
+                      },
+                      "children": [
+                        {
+                          "type": "row",
+                          "layout": {
+                            "w": "auto",
+                            "h": "auto",
+                            "pad": [
+                              3,
+                              1,
+                              3,
+                              1
+                            ],
+                            "margin": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "gap": 8,
+                            "dir": "column",
+                            "align": "center",
+                            "justify": "start"
+                          },
+                          "bind": {
+                            "visible": "has_seed"
+                          },
+                          "children": [
+                            {
+                              "type": "label",
+                              "text": "Seed",
+                              "style": "label.muted"
+                            },
+                            {
+                              "type": "spacer",
+                              "layout": {
+                                "w": {
+                                  "grow": 1
+                                },
+                                "h": "auto",
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              }
+                            },
+                            {
+                              "type": "label",
+                              "bind": {
+                                "text": "seed_text"
+                              }
+                            },
+                            {
+                              "id": "copy_seed",
+                              "type": "button",
+                              "icon": "icon.copy",
+                              "layout": {
+                                "w": 16,
+                                "h": 16,
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "row",
+                          "layout": {
+                            "w": "auto",
+                            "h": "auto",
+                            "pad": [
+                              3,
+                              1,
+                              3,
+                              1
+                            ],
+                            "margin": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "gap": 8,
+                            "dir": "column",
+                            "align": "center",
+                            "justify": "start"
+                          },
+                          "children": [
+                            {
+                              "type": "label",
+                              "text": "World size",
+                              "style": "label.muted"
+                            },
+                            {
+                              "type": "spacer",
+                              "layout": {
+                                "w": {
+                                  "grow": 1
+                                },
+                                "h": "auto",
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              }
+                            },
+                            {
+                              "type": "label",
+                              "bind": {
+                                "text": "world_size"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "row",
+                          "layout": {
+                            "w": "auto",
+                            "h": "auto",
+                            "pad": [
+                              3,
+                              1,
+                              3,
+                              1
+                            ],
+                            "margin": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "gap": 8,
+                            "dir": "column",
+                            "align": "center",
+                            "justify": "start"
+                          },
+                          "children": [
+                            {
+                              "type": "label",
+                              "text": "Day length"
+                            },
+                            {
+                              "type": "spacer",
+                              "layout": {
+                                "w": {
+                                  "grow": 1
+                                },
+                                "h": "auto",
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              }
+                            },
+                            {
+                              "type": "label",
+                              "style": "label.muted",
+                              "bind": {
+                                "text": "day_minutes_text"
+                              }
+                            },
+                            {
+                              "id": "day_minutes",
+                              "type": "slider",
+                              "min": 10.0,
+                              "max": 30.0,
+                              "step": 1.0,
+                              "layout": {
+                                "w": 90,
+                                "h": "auto",
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              },
+                              "bind": {
+                                "value": "day_minutes"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "row",
+                          "layout": {
+                            "w": "auto",
+                            "h": "auto",
+                            "pad": [
+                              3,
+                              1,
+                              3,
+                              1
+                            ],
+                            "margin": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "gap": 8,
+                            "dir": "column",
+                            "align": "center",
+                            "justify": "start"
+                          },
+                          "children": [
+                            {
+                              "type": "column",
+                              "layout": {
+                                "w": "auto",
+                                "h": "auto",
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 2,
+                                "dir": "column",
+                                "justify": "start"
+                              },
+                              "children": [
+                                {
+                                  "type": "label",
+                                  "text": "Keep inventory on death"
+                                },
+                                {
+                                  "type": "label",
+                                  "text": "Your items stay with you when you die",
+                                  "small": true,
+                                  "style": "label.muted"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "spacer",
+                              "layout": {
+                                "w": {
+                                  "grow": 1
+                                },
+                                "h": "auto",
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              }
+                            },
+                            {
+                              "id": "keep_inventory",
+                              "type": "checkbox",
+                              "bind": {
+                                "value": "keep_inventory"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "row",
+                          "layout": {
+                            "w": "auto",
+                            "h": "auto",
+                            "pad": [
+                              3,
+                              1,
+                              3,
+                              1
+                            ],
+                            "margin": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "gap": 8,
+                            "dir": "column",
+                            "align": "center",
+                            "justify": "start"
+                          },
+                          "children": [
+                            {
+                              "type": "column",
+                              "layout": {
+                                "w": "auto",
+                                "h": "auto",
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 2,
+                                "dir": "column",
+                                "justify": "start"
+                              },
+                              "children": [
+                                {
+                                  "type": "label",
+                                  "text": "Open to LAN on load"
+                                },
+                                {
+                                  "type": "label",
+                                  "text": "Host on the local network automatically",
+                                  "small": true,
+                                  "style": "label.muted"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "spacer",
+                              "layout": {
+                                "w": {
+                                  "grow": 1
+                                },
+                                "h": "auto",
+                                "pad": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "margin": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "gap": 0,
+                                "dir": "column",
+                                "justify": "start"
+                              }
+                            },
+                            {
+                              "id": "auto_lan",
+                              "type": "checkbox",
+                              "bind": {
+                                "value": "auto_lan"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
                 }
               ]
             },
@@ -942,6 +977,7 @@
                                 },
                                 {
                                   "type": "label",
+                                  "small": true,
                                   "style": "label.muted",
                                   "bind": {
                                     "text": "desc"

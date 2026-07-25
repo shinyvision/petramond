@@ -544,8 +544,11 @@ impl Solver<'_, '_, '_> {
         // SHRINK: when space runs short, grow children give it back — down to
         // their `min_*` (else zero) — so a flexible scroll section absorbs the
         // deficit and shows its scrollbar instead of pushing siblings out.
-        // Only when every grower is at its minimum does content overflow.
-        if leftover < 0 && total_weight > 0 {
+        // When every grower is at its minimum, ELLIPSIZABLE TEXT gives back
+        // next (see [`text_shrinkable`]): a long name shortens instead of
+        // shoving the row's widgets off the panel. Only when neither is left
+        // does content overflow.
+        if leftover < 0 {
             let min_of = |i: usize| -> i32 {
                 let cl = tree.get(flow[i]).layout;
                 if main.horizontal {
@@ -556,33 +559,61 @@ impl Solver<'_, '_, '_> {
                 .max(0)
             };
             let mut deficit = -leftover;
-            while deficit > 0 {
-                let cands: Vec<usize> = (0..flow.len())
-                    .filter(|&i| weights[i] > 0 && bases[i] > min_of(i))
-                    .collect();
-                if cands.is_empty() {
-                    break;
+            // Tier 0 is the growers — including AUTO children with a grower
+            // inside them: an auto panel wrapped in a full-screen backdrop
+            // frame has to give back exactly like a panel that IS the root,
+            // or its scroll never learns the screen is short and the buttons
+            // below it slide off the bottom edge. Cutting the panel is safe
+            // because its own arrange then re-runs this pass and the grower
+            // inside takes the cut.
+            let mut weights = weights;
+            for i in 0..flow.len() {
+                if weights[i] == 0 && grower_inside(tree, flow[i], main.horizontal) {
+                    weights[i] = 1;
                 }
-                let wsum: i64 = cands.iter().map(|&i| weights[i] as i64).sum();
-                let mut cut_any = false;
-                for &i in &cands {
-                    let share = ((deficit as i64 * weights[i] as i64) / wsum).max(0) as i32;
-                    let cut = share.min(bases[i] - min_of(i)).min(deficit);
-                    if cut > 0 {
-                        bases[i] -= cut;
-                        deficit -= cut;
-                        cut_any = true;
+            }
+            // Tier 1 is the ellipsizable text beside them: text only absorbs
+            // along the axis it can ellipsize on, and only once the growers
+            // have nothing left to give.
+            let text_claims: Vec<u32> = match main.horizontal {
+                true => (0..flow.len())
+                    .map(|i| u32::from(weights[i] == 0 && text_shrinkable(tree, flow[i])))
+                    .collect(),
+                false => Vec::new(),
+            };
+            for claims in [&weights, &text_claims] {
+                if claims.is_empty() {
+                    continue;
+                }
+                let claim = |i: usize| claims[i];
+                while deficit > 0 {
+                    let cands: Vec<usize> = (0..flow.len())
+                        .filter(|&i| claim(i) > 0 && bases[i] > min_of(i))
+                        .collect();
+                    if cands.is_empty() {
+                        break;
                     }
-                }
-                if !cut_any {
-                    // Integer floors all rounded to zero: peel 1px at a time.
+                    let wsum: i64 = cands.iter().map(|&i| claim(i) as i64).sum();
+                    let mut cut_any = false;
                     for &i in &cands {
-                        if deficit == 0 {
-                            break;
+                        let share = ((deficit as i64 * claim(i) as i64) / wsum).max(0) as i32;
+                        let cut = share.min(bases[i] - min_of(i)).min(deficit);
+                        if cut > 0 {
+                            bases[i] -= cut;
+                            deficit -= cut;
+                            cut_any = true;
                         }
-                        let cut = 1.min(bases[i] - min_of(i));
-                        bases[i] -= cut;
-                        deficit -= cut;
+                    }
+                    if !cut_any {
+                        // Integer floors all rounded to zero: peel 1px at a time.
+                        for &i in &cands {
+                            if deficit == 0 {
+                                break;
+                            }
+                            let cut = 1.min(bases[i] - min_of(i));
+                            bases[i] -= cut;
+                            deficit -= cut;
+                        }
                     }
                 }
             }
@@ -620,6 +651,12 @@ impl Solver<'_, '_, '_> {
                 Size::Auto => {
                     if align == crate::doc::Align::Stretch {
                         stretch
+                    } else if cross.horizontal && text_shrinkable(tree, c) {
+                        // The other half of the shock absorber: a column that
+                        // gave width back has to hand the cut on to the text
+                        // inside it, or the label keeps its natural width and
+                        // paints straight out of the panel.
+                        nat_cross.min(stretch)
                     } else {
                         nat_cross
                     }
@@ -775,6 +812,56 @@ impl Solver<'_, '_, '_> {
 /// Whether instance `c` is a floating tooltip (its own subtree root).
 fn is_tooltip(tree: &InstTree<'_>, c: u32) -> bool {
     matches!(tree.get(c).node.kind, NodeKind::Tooltip)
+}
+
+/// Whether an AUTO-sized `c` has a `grow` child along this axis, somewhere
+/// below it, that would absorb a cut handed down to it. A `Px` size is the
+/// author's decision and never gives way; a `Grow` size is already a claim.
+fn grower_inside(tree: &InstTree<'_>, c: u32, horizontal: bool) -> bool {
+    let inst = tree.get(c);
+    let size = match horizontal {
+        true => inst.layout.w,
+        false => inst.layout.h,
+    };
+    match size {
+        Size::Px(_) => false,
+        Size::Grow(_) => true,
+        Size::Auto => {
+            inst.node.lays_out_children()
+                && inst.children.iter().any(|&g| {
+                    tree.get(g).layout.abs.is_none() && grower_inside(tree, g, horizontal)
+                })
+        }
+    }
+}
+
+/// Whether `c`'s WIDTH can be taken away without breaking a promise: a
+/// single-line widget showing BOUND text ellipsizes, so it is the one leaf
+/// that can absorb a deficit, and a container inherits the property from its
+/// flow children.
+///
+/// Bound text is data — a world name, a pack summary, a key binding — and its
+/// natural width is whatever happened to land in the box. Left unshrinkable it
+/// wins every space fight and shoves the row's real widgets off the panel.
+/// AUTHORED text is a decision the layout must keep, so it never shrinks; a
+/// caption that does not fit its panel is an authoring bug, not something to
+/// silently ellipsize.
+fn text_shrinkable(tree: &InstTree<'_>, c: u32) -> bool {
+    let inst = tree.get(c);
+    // An author-sized box is a decision too.
+    if matches!(inst.layout.w, Size::Px(_)) {
+        return false;
+    }
+    match inst.node.kind {
+        NodeKind::Label { wrap: false, .. } | NodeKind::Badge { .. } => {
+            inst.node.bind.text.is_some()
+        }
+        _ if inst.node.lays_out_children() => inst
+            .children
+            .iter()
+            .any(|&g| tree.get(g).layout.abs.is_none() && text_shrinkable(tree, g)),
+        _ => false,
+    }
 }
 
 #[cfg(test)]

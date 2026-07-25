@@ -698,24 +698,25 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     let screen = (1280, 720);
     app.screen = crate::app::AppScreen::OptionsControls;
 
-    // Arm Jump for remapping (rows near the top — the scroll viewport clips
-    // lower rows out of click reach).
+    // Arm Strafe Right for remapping. Use rows near the TOP: the list scroll
+    // takes what the panel has left over, so at 720p only the first four
+    // action rows are inside the viewport and clickable.
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.0);
-    click_bind_row(&mut app, "jump");
+    click_bind_row(&mut app, "strafe_right");
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.1);
-    assert_eq!(app.remap.as_deref(), Some("jump"));
+    assert_eq!(app.remap.as_deref(), Some("strafe_right"));
 
     // ESC cancels without touching the binding.
     assert!(app.remap_capture_key(KeyCode::Escape, true));
     assert_eq!(app.remap, None);
     assert_eq!(
-        app.settings.bindings.binding(BindableAction::Jump),
-        Binding::key(KeyCode::Space)
+        app.settings.bindings.binding(BindableAction::StrafeRight),
+        Binding::key(KeyCode::KeyD)
     );
 
     // Clicking one action then another switches the armed remap.
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.2);
-    click_bind_row(&mut app, "jump");
+    click_bind_row(&mut app, "strafe_right");
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.3);
     click_bind_row(&mut app, "strafe_left");
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.4);

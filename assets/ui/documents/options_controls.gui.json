@@ -39,14 +39,14 @@
     "type": "column",
     "style": "panel.large",
     "layout": {
-     "w": 260,
+     "w": 280,
      "pad": [
       10,
-      8,
+      6,
       10,
-      10
+      6
      ],
-     "gap": 6,
+     "gap": 4,
      "align": "stretch"
     },
     "children": [
@@ -68,7 +68,7 @@
       "style": "label.muted",
       "wrap": true,
       "layout": {
-       "h": 16
+       "h": 30
       },
       "bind": {
        "text": "remap_hint"
@@ -80,7 +80,9 @@
       "axis": "vertical",
       "style": "panel.inset",
       "layout": {
-       "h": 150,
+       "h": {
+        "grow": 1
+       },
        "min_h": 48,
        "pad": [
         1,

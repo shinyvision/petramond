@@ -31,7 +31,7 @@
           "h": {
             "grow": 1
           },
-          "min_h": 126,
+          "min_h": 113,
           "pad": [4, 3, 4, 4],
           "gap": 3,
           "align": "stretch"
@@ -80,7 +80,7 @@
               "h": {
                 "grow": 1
               },
-              "min_h": 48,
+              "min_h": 28,
               "pad": [1, 1, 1, 1]
             },
             "children": [
@@ -175,6 +175,7 @@
         "type": "tooltip",
         "style": "panel.inset",
         "layout": {
+          "max_w": 150,
           "abs": { "x": 4, "y": 4 },
           "pad": [3, 2, 3, 3],
           "gap": 2,

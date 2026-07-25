@@ -398,6 +398,7 @@
                                 },
                                 {
                                   "type": "label",
+                                  "small": true,
                                   "style": "label.muted",
                                   "bind": {
                                     "text": "desc"

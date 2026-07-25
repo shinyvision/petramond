@@ -99,7 +99,7 @@
             "dir": "column",
             "align": "stretch",
             "justify": "start",
-            "min_h": 126
+            "min_h": 113
           },
           "style": "panel.large",
           "children": [
@@ -242,7 +242,7 @@
                 "gap": 0,
                 "dir": "column",
                 "justify": "start",
-                "min_h": 48
+                "min_h": 28
               },
               "style": "panel.inset",
               "children": [
@@ -480,6 +480,7 @@
             "dir": "column",
             "align": "stretch",
             "justify": "start",
+            "max_w": 150,
             "abs": {
               "x": 4,
               "y": 4

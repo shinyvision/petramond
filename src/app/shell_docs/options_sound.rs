@@ -47,3 +47,38 @@ pub(super) fn handle(app: &mut App, ev: UiEvent) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The percent readout is engine copy in a fixed column, so no document
+    /// guard sees it — and a box too tight even for an ellipsis draws NOTHING,
+    /// which is how "100%" once rendered as blank. 100 is the widest value.
+    #[test]
+    fn the_widest_volume_readout_fits_its_column() {
+        use petramond_ui::{solve, InstTree, ThemeEnv};
+        let doc = crate::gui::documents::doc_for(crate::gui::GuiKind::OptionsSound)
+            .expect("sound document loads");
+        let theme = crate::gui::doc_theme::theme();
+        let mut state = UiState::new();
+        bind_volume(&mut state, "master_vol", "master_pct", 1.0);
+        let tree = InstTree::expand(&doc.doc, &state);
+        let env = ThemeEnv {
+            theme: &theme,
+            gui_scale: 3,
+            image_size: &|_| None,
+        };
+        let solved = solve(&tree, &env, (320, 240), &|_| 0);
+        let i = (0..tree.len() as u32)
+            .find(|i| tree.get(*i).node.bind.text.as_deref() == Some("master_pct"))
+            .expect("the readout is in the document");
+        let text = tree.get(i).text.as_deref().unwrap_or("");
+        let ink = theme.ui_font().width(text);
+        assert!(
+            ink <= solved.rects[i as usize].w,
+            "{text:?} needs {ink}px, column is {}px",
+            solved.rects[i as usize].w
+        );
+    }
+}

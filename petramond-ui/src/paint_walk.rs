@@ -233,13 +233,19 @@ impl PaintCtx<'_> {
                     cx += icon_w + gap;
                 }
                 if !text.is_empty() {
-                    p.text(
-                        text,
-                        cx,
-                        rect.y + (rect.h - self.theme.ui_font().line_h()) / 2 + label_off[1],
-                        label_color(part, inst.enabled),
-                        clip,
-                    );
+                    // Centred while the block fits; once it does not, the run
+                    // starts at the padding edge and ellipsizes into the face
+                    // instead of painting out of the button.
+                    let pad = self.theme.metrics.button_pad;
+                    let x = cx.max(rect.x + pad);
+                    let line_h = self.theme.ui_font().line_h();
+                    let line = RectI {
+                        x,
+                        y: rect.y + (rect.h - line_h) / 2 + label_off[1],
+                        w: (rect.x + rect.w - pad - x).max(0),
+                        h: line_h,
+                    };
+                    p.text_ellipsized(text, line, label_color(part, inst.enabled), clip);
                 }
             }
             NodeKind::Checkbox | NodeKind::Toggle { .. } => {
@@ -531,14 +537,17 @@ impl PaintCtx<'_> {
                     );
                 }
                 if let Some(text) = inst.text.as_deref() {
-                    let tw = self.theme.ui_font().width(text);
-                    p.text(
-                        text,
-                        rect.x + (rect.w - tw) / 2,
-                        rect.y + (rect.h - self.theme.ui_font().line_h()) / 2,
-                        label_color(part, inst.enabled),
-                        clip,
-                    );
+                    let font = self.theme.ui_font();
+                    let tw = font.width(text);
+                    let line = RectI {
+                        // Centred while it fits; once it does not, the run
+                        // starts at the edge and ellipsizes into the chip.
+                        x: rect.x + (rect.w - tw).max(0) / 2,
+                        y: rect.y + (rect.h - font.line_h()) / 2,
+                        w: rect.w - (rect.w - tw).max(0) / 2,
+                        h: font.line_h(),
+                    };
+                    p.text_ellipsized(text, line, label_color(part, inst.enabled), clip);
                 }
             }
             NodeKind::Alert { .. } => {

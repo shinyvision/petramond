@@ -37,7 +37,10 @@
                 "style": "panel.large",
                 "layout": {
                     "w": 320,
-                    "h": 260,
+                    "h": {
+                        "grow": 1
+                    },
+                    "max_h": 260,
                     "pad": [
                         4,
                         2,
@@ -159,233 +162,249 @@
                         },
                         "children": [
                             {
-                                "type": "row",
-                                "layout": {
-                                    "pad": [
-                                        3,
-                                        1,
-                                        3,
-                                        1
-                                    ],
-                                    "gap": 8,
-                                    "align": "center"
-                                },
-                                "bind": {
-                                    "visible": "has_seed"
-                                },
-                                "children": [
-                                    {
-                                        "type": "label",
-                                        "style": "label.muted",
-                                        "text": "Seed"
-                                    },
-                                    {
-                                        "type": "spacer",
-                                        "layout": {
-                                            "w": {
-                                                "grow": 1
-                                            }
-                                        }
-                                    },
-                                    {
-                                        "type": "label",
-                                        "bind": {
-                                            "text": "seed_text"
-                                        }
-                                    },
-                                    {
-                                        "id": "copy_seed",
-                                        "type": "button",
-                                        "icon": "icon.copy",
-                                        "layout": {
-                                            "w": 16,
-                                            "h": 16
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                "type": "row",
-                                "layout": {
-                                    "pad": [
-                                        3,
-                                        1,
-                                        3,
-                                        1
-                                    ],
-                                    "gap": 8,
-                                    "align": "center"
-                                },
-                                "children": [
-                                    {
-                                        "type": "label",
-                                        "style": "label.muted",
-                                        "text": "World size"
-                                    },
-                                    {
-                                        "type": "spacer",
-                                        "layout": {
-                                            "w": {
-                                                "grow": 1
-                                            }
-                                        }
-                                    },
-                                    {
-                                        "type": "label",
-                                        "bind": {
-                                            "text": "world_size"
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                "type": "row",
-                                "layout": {
-                                    "pad": [
-                                        3,
-                                        1,
-                                        3,
-                                        1
-                                    ],
-                                    "gap": 8,
-                                    "align": "center"
-                                },
-                                "children": [
-                                    {
-                                        "type": "label",
-                                        "text": "Day length"
-                                    },
-                                    {
-                                        "type": "spacer",
-                                        "layout": {
-                                            "w": {
-                                                "grow": 1
-                                            }
-                                        }
-                                    },
-                                    {
-                                        "type": "label",
-                                        "style": "label.muted",
-                                        "bind": {
-                                            "text": "day_minutes_text"
-                                        }
-                                    },
-                                    {
-                                        "id": "day_minutes",
-                                        "type": "slider",
-                                        "min": 10.0,
-                                        "max": 30.0,
-                                        "step": 1.0,
-                                        "layout": {
-                                            "w": 90
-                                        },
-                                        "bind": {
-                                            "value": "day_minutes"
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                "type": "row",
-                                "layout": {
-                                    "pad": [
-                                        3,
-                                        1,
-                                        3,
-                                        1
-                                    ],
-                                    "gap": 8,
-                                    "align": "center"
-                                },
-                                "children": [
-                                    {
-                                        "type": "column",
-                                        "layout": {
-                                            "gap": 2
-                                        },
-                                        "children": [
-                                            {
-                                                "type": "label",
-                                                "text": "Keep inventory on death"
-                                            },
-                                            {
-                                                "type": "label",
-                                                "style": "label.muted",
-                                                "text": "Your items stay with you when you die"
-                                            }
-                                        ]
-                                    },
-                                    {
-                                        "type": "spacer",
-                                        "layout": {
-                                            "w": {
-                                                "grow": 1
-                                            }
-                                        }
-                                    },
-                                    {
-                                        "id": "keep_inventory",
-                                        "type": "checkbox",
-                                        "bind": {
-                                            "value": "keep_inventory"
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                "type": "row",
-                                "layout": {
-                                    "pad": [
-                                        3,
-                                        1,
-                                        3,
-                                        1
-                                    ],
-                                    "gap": 8,
-                                    "align": "center"
-                                },
-                                "children": [
-                                    {
-                                        "type": "column",
-                                        "layout": {
-                                            "gap": 2
-                                        },
-                                        "children": [
-                                            {
-                                                "type": "label",
-                                                "text": "Open to LAN on load"
-                                            },
-                                            {
-                                                "type": "label",
-                                                "style": "label.muted",
-                                                "text": "Host on the local network automatically"
-                                            }
-                                        ]
-                                    },
-                                    {
-                                        "type": "spacer",
-                                        "layout": {
-                                            "w": {
-                                                "grow": 1
-                                            }
-                                        }
-                                    },
-                                    {
-                                        "id": "auto_lan",
-                                        "type": "checkbox",
-                                        "bind": {
-                                            "value": "auto_lan"
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                "type": "spacer",
+                                "id": "world_scroll",
+                                "type": "scroll",
+                                "axis": "vertical",
                                 "layout": {
                                     "h": {
                                         "grow": 1
+                                    },
+                                    "min_h": 36
+                                },
+                                "children": [
+                                    {
+                                        "type": "column",
+                                        "layout": {
+                                            "gap": 4,
+                                            "align": "stretch"
+                                        },
+                                        "children": [
+                                            {
+                                                "type": "row",
+                                                "layout": {
+                                                    "pad": [
+                                                        3,
+                                                        1,
+                                                        3,
+                                                        1
+                                                    ],
+                                                    "gap": 8,
+                                                    "align": "center"
+                                                },
+                                                "bind": {
+                                                    "visible": "has_seed"
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "label",
+                                                        "style": "label.muted",
+                                                        "text": "Seed"
+                                                    },
+                                                    {
+                                                        "type": "spacer",
+                                                        "layout": {
+                                                            "w": {
+                                                                "grow": 1
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "label",
+                                                        "bind": {
+                                                            "text": "seed_text"
+                                                        }
+                                                    },
+                                                    {
+                                                        "id": "copy_seed",
+                                                        "type": "button",
+                                                        "icon": "icon.copy",
+                                                        "layout": {
+                                                            "w": 16,
+                                                            "h": 16
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "row",
+                                                "layout": {
+                                                    "pad": [
+                                                        3,
+                                                        1,
+                                                        3,
+                                                        1
+                                                    ],
+                                                    "gap": 8,
+                                                    "align": "center"
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "label",
+                                                        "style": "label.muted",
+                                                        "text": "World size"
+                                                    },
+                                                    {
+                                                        "type": "spacer",
+                                                        "layout": {
+                                                            "w": {
+                                                                "grow": 1
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "label",
+                                                        "bind": {
+                                                            "text": "world_size"
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "row",
+                                                "layout": {
+                                                    "pad": [
+                                                        3,
+                                                        1,
+                                                        3,
+                                                        1
+                                                    ],
+                                                    "gap": 8,
+                                                    "align": "center"
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "label",
+                                                        "text": "Day length"
+                                                    },
+                                                    {
+                                                        "type": "spacer",
+                                                        "layout": {
+                                                            "w": {
+                                                                "grow": 1
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "label",
+                                                        "style": "label.muted",
+                                                        "bind": {
+                                                            "text": "day_minutes_text"
+                                                        }
+                                                    },
+                                                    {
+                                                        "id": "day_minutes",
+                                                        "type": "slider",
+                                                        "min": 10.0,
+                                                        "max": 30.0,
+                                                        "step": 1.0,
+                                                        "layout": {
+                                                            "w": 90
+                                                        },
+                                                        "bind": {
+                                                            "value": "day_minutes"
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "row",
+                                                "layout": {
+                                                    "pad": [
+                                                        3,
+                                                        1,
+                                                        3,
+                                                        1
+                                                    ],
+                                                    "gap": 8,
+                                                    "align": "center"
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "column",
+                                                        "layout": {
+                                                            "gap": 2
+                                                        },
+                                                        "children": [
+                                                            {
+                                                                "type": "label",
+                                                                "text": "Keep inventory on death"
+                                                            },
+                                                            {
+                                                                "type": "label",
+                                                                "style": "label.muted",
+                                                                "small": true,
+                                                                "text": "Your items stay with you when you die"
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        "type": "spacer",
+                                                        "layout": {
+                                                            "w": {
+                                                                "grow": 1
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "id": "keep_inventory",
+                                                        "type": "checkbox",
+                                                        "bind": {
+                                                            "value": "keep_inventory"
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "row",
+                                                "layout": {
+                                                    "pad": [
+                                                        3,
+                                                        1,
+                                                        3,
+                                                        1
+                                                    ],
+                                                    "gap": 8,
+                                                    "align": "center"
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "column",
+                                                        "layout": {
+                                                            "gap": 2
+                                                        },
+                                                        "children": [
+                                                            {
+                                                                "type": "label",
+                                                                "text": "Open to LAN on load"
+                                                            },
+                                                            {
+                                                                "type": "label",
+                                                                "style": "label.muted",
+                                                                "small": true,
+                                                                "text": "Host on the local network automatically"
+                                                            }
+                                                        ]
+                                                    },
+                                                    {
+                                                        "type": "spacer",
+                                                        "layout": {
+                                                            "w": {
+                                                                "grow": 1
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "id": "auto_lan",
+                                                        "type": "checkbox",
+                                                        "bind": {
+                                                            "value": "auto_lan"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        ]
                                     }
-                                }
+                                ]
                             }
                         ]
                     },
@@ -489,6 +508,7 @@
                                                             {
                                                                 "type": "label",
                                                                 "style": "label.muted",
+                                                                "small": true,
                                                                 "bind": {
                                                                     "text": "desc"
                                                                 }

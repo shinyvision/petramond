@@ -72,7 +72,7 @@
         "type": "label",
         "text": "Master Volume",
         "layout": {
-         "w": 78
+         "w": 92
         }
        },
        {
@@ -94,7 +94,7 @@
        {
         "type": "label",
         "layout": {
-         "w": 26
+         "w": 30
         },
         "bind": {
          "text": "master_pct"
@@ -113,7 +113,7 @@
         "type": "label",
         "text": "Sound Volume",
         "layout": {
-         "w": 78
+         "w": 92
         }
        },
        {
@@ -135,7 +135,7 @@
        {
         "type": "label",
         "layout": {
-         "w": 26
+         "w": 30
         },
         "bind": {
          "text": "sound_pct"
@@ -154,7 +154,7 @@
         "type": "label",
         "text": "Music Volume",
         "layout": {
-         "w": 78
+         "w": 92
         }
        },
        {
@@ -176,7 +176,7 @@
        {
         "type": "label",
         "layout": {
-         "w": 26
+         "w": 30
         },
         "bind": {
          "text": "music_pct"
