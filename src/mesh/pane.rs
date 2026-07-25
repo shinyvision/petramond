@@ -169,6 +169,7 @@ pub(crate) fn push_mesh_boxes(
                     PaneTile::Edge => edge_tile,
                 },
                 swap_uv,
+                uv_turns: 0,
                 tint,
             })
         });

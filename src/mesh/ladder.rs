@@ -66,6 +66,7 @@ pub(crate) fn push_mesh_box(
     let mut faces = [Some(ShapeFace {
         tile,
         swap_uv: false,
+        uv_turns: 0,
         tint,
     }); 6];
     faces[buried_face(facing) as usize] = None;

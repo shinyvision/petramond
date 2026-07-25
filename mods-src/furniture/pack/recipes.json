@@ -50,6 +50,27 @@
       ],
       "result": { "item": "furniture:chandelier", "count": 1 }
     },
+    {
+      "type": "crafting",
+      "recipe": "furniture:cabinet_shelf",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        { "item": "petramond:stone", "count": 4 },
+        { "tag": "petramond:planks", "count": 3 }
+      ],
+      "result": { "item": "furniture:cabinet_shelf", "count": 1 }
+    },
+    {
+      "type": "crafting",
+      "recipe": "furniture:cabinet",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        { "item": "furniture:cabinet_shelf", "count": 1 },
+        { "tag": "petramond:planks", "count": 3 },
+        { "item": "petramond:iron_ingot", "count": 1 }
+      ],
+      "result": { "item": "furniture:cabinet", "count": 1 }
+    },
     { "patch": "petramond:wool_stairs", "data": { "petramond:inherit": ["petramond:tint"] } },
     { "patch": "petramond:wool_slab", "data": { "petramond:inherit": ["petramond:tint"] } }
   ]

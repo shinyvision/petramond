@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::Aabb;
+use crate::atlas::Tile;
 use crate::block_model::BlockModelKind;
 use crate::connect;
 
@@ -290,6 +291,15 @@ pub struct BoxDef {
     /// emits whatever the geometry says — the cactus's cap plates draw only
     /// their outward cap, so the trunk shows no rim.
     pub faces: [bool; 6],
+    /// Per-face tile, `None` = the row's `[top, bottom, side]` (the plain
+    /// carved-from-my-own-block case every engine box shape wants).
+    ///
+    /// An override is what lets ONE cell draw several distinct authored
+    /// surfaces: cell-local UV pins a face's art to where the box sits in the
+    /// cell, so two boxes facing the same way through the same tile can only
+    /// ever show the nearer one's art. A cabinet's shelf and its counter top
+    /// both face up through the same footprint — they need two tiles, not one.
+    pub tiles: [Option<Tile>; 6],
     /// Whether this box is MATTER: it shadows (AO) and blocks light. `false`
     /// for a box that exists only to carry a face — the cactus's side planes
     /// span the whole cell so their faces are full width, but the body they
@@ -305,15 +315,90 @@ pub struct BoxDef {
 }
 
 /// The resolved parameters of a static box-set kind: the authored boxes, the
-/// collision slice precomputed out of them, and their union. One per distinct
-/// authored list.
+/// collision slice precomputed out of them, and their union — each in all four
+/// quarter turns about Y. One per distinct authored list.
+///
+/// A `directional_view` row turns its shape to the facing stored at placement,
+/// so every consumer needs the turned form and `collision_boxes` has to hand
+/// out a `&'static [Aabb]`. Resolving the four turns at LOAD is what makes
+/// that free: nothing rotates per cell, per frame, or per collision query.
+/// A shape with no facing only ever reads turn `0`, and a symmetric one
+/// resolves four identical (cheap, few-per-session) copies rather than making
+/// every reader ask whether turning applies.
 #[derive(Debug, PartialEq)]
 pub struct BoxSetParams {
-    pub boxes: &'static [BoxDef],
-    /// The `collides` boxes, ready to hand out as `&'static [Aabb]`.
-    pub collision: &'static [Aabb],
-    /// The union of every DRAWN box — the selection outline and target box.
-    pub bounds: Aabb,
+    turns: [&'static [BoxDef]; 4],
+    collision: [&'static [Aabb]; 4],
+    bounds: [Aabb; 4],
+}
+
+impl BoxSetParams {
+    /// The drawn boxes at `turns` quarter turns about Y (`0` = as authored).
+    #[inline]
+    pub fn boxes(&self, turns: u8) -> &'static [BoxDef] {
+        self.turns[(turns & 3) as usize]
+    }
+
+    /// The `collides` boxes at `turns`, ready to hand out.
+    #[inline]
+    pub fn collision(&self, turns: u8) -> &'static [Aabb] {
+        self.collision[(turns & 3) as usize]
+    }
+
+    /// The union of every DRAWN box at `turns` — the selection outline and
+    /// target box.
+    #[inline]
+    pub fn bounds(&self, turns: u8) -> Aabb {
+        self.bounds[(turns & 3) as usize]
+    }
+}
+
+/// Where each face lands after ONE quarter turn about Y: entry `i` of the
+/// turned box takes the authored box's face `FACE_BEFORE_TURN[i]`. The turn is
+/// `(x, z) -> (1 - z, x)`, so the authored `-Z` front comes to `+X`, matching
+/// [`Facing`](crate::facing::Facing)'s North → East step.
+const FACE_BEFORE_TURN: [usize; 6] = [5, 4, 2, 3, 0, 1];
+
+/// Where the AUTHORED front face (`-Z`, canonical index 5) sits after `turns`
+/// quarter turns — how a row's `front` tile finds its face on a turned box.
+/// The item cube needs no such lookup: it draws at two turns, which lands the
+/// front on `+Z`, exactly the index `block_icon_faces_with_state` already
+/// writes the front tile to.
+pub const FRONT_AFTER_TURN: [usize; 4] = [5, 0, 4, 1];
+
+/// The [`ShapeFace::uv_turns`](crate::block::ShapeFace::uv_turns) a box face
+/// needs once its shape is turned `turns` quarter turns about Y.
+///
+/// The four SIDE faces need none — a quarter turn carries a side face's
+/// cell-local UV to the next direction unchanged. `+Y`/`-Y` sample a fixed
+/// tile through a turned footprint, so their art must be turned back, and
+/// opposite ways because the two mappings are mirror images. Shared by the
+/// chunk mesh and the item cube so a turned shape textures the same in the
+/// world, the hand and the icon.
+pub fn face_uv_turns(face: usize, turns: u8) -> u8 {
+    match face {
+        2 => turns & 3,
+        3 => (4 - (turns & 3)) & 3,
+        _ => 0,
+    }
+}
+
+impl BoxDef {
+    /// This box turned one quarter about the cell's Y centre.
+    fn turned(&self) -> BoxDef {
+        let (min, max) = (self.aabb.min, self.aabb.max);
+        BoxDef {
+            aabb: Aabb {
+                min: [1.0 - max[2], min[1], min[0]],
+                max: [1.0 - min[2], max[1], max[0]],
+            },
+            faces: std::array::from_fn(|i| self.faces[FACE_BEFORE_TURN[i]]),
+            tiles: std::array::from_fn(|i| self.tiles[FACE_BEFORE_TURN[i]]),
+            occludes: self.occludes,
+            collides: self.collides,
+            double_sided: self.double_sided,
+        }
+    }
 }
 
 /// One shape-kind registry row: the family, its canonical key, the parameters
@@ -442,8 +527,15 @@ fn resolve_box_set(raw: &[RawBox]) -> Result<(ShapeFamily, ShapeParams, String),
             .map(|b| {
                 let t = |v: f32| (v * 16.0).round() as u8;
                 let faces: String = b.faces.iter().map(|&f| if f { '1' } else { '0' }).collect();
+                // Tiles are part of the shape's identity: two rows whose boxes
+                // agree but whose face art does not are different kinds.
+                let tiles: String = b
+                    .tiles
+                    .iter()
+                    .map(|t| t.map_or(String::new(), |t| format!(".{}", t.index())))
+                    .collect();
                 format!(
-                    "{},{},{}-{},{},{}:{faces}{}{}{}",
+                    "{},{},{}-{},{},{}:{faces}{}{}{}{tiles}",
                     t(b.aabb.min[0]),
                     t(b.aabb.min[1]),
                     t(b.aabb.min[2]),
@@ -458,24 +550,32 @@ fn resolve_box_set(raw: &[RawBox]) -> Result<(ShapeFamily, ShapeParams, String),
             .collect::<Vec<_>>()
             .join("/")
     );
-    let collision: Vec<Aabb> = boxes
-        .iter()
-        .filter(|b| b.collides)
-        .map(|b| b.aabb)
-        .collect();
-    let mut bounds = Aabb {
-        min: [f32::INFINITY; 3],
-        max: [f32::NEG_INFINITY; 3],
-    };
-    for b in &boxes {
-        for a in 0..3 {
-            bounds.min[a] = bounds.min[a].min(b.aabb.min[a]);
-            bounds.max[a] = bounds.max[a].max(b.aabb.max[a]);
-        }
+    let mut turns: [&'static [BoxDef]; 4] = [&[]; 4];
+    let mut turned = boxes;
+    for slot in turns.iter_mut() {
+        let next: Vec<BoxDef> = turned.iter().map(BoxDef::turned).collect();
+        *slot = Box::leak(std::mem::replace(&mut turned, next).into_boxed_slice());
     }
+    let collision = turns.map(|set| {
+        let c: Vec<Aabb> = set.iter().filter(|b| b.collides).map(|b| b.aabb).collect();
+        &*Box::leak(c.into_boxed_slice())
+    });
+    let bounds = turns.map(|set| {
+        let mut bounds = Aabb {
+            min: [f32::INFINITY; 3],
+            max: [f32::NEG_INFINITY; 3],
+        };
+        for b in set {
+            for a in 0..3 {
+                bounds.min[a] = bounds.min[a].min(b.aabb.min[a]);
+                bounds.max[a] = bounds.max[a].max(b.aabb.max[a]);
+            }
+        }
+        bounds
+    });
     let params: &'static BoxSetParams = Box::leak(Box::new(BoxSetParams {
-        boxes: Box::leak(boxes.into_boxed_slice()),
-        collision: Box::leak(collision.into_boxed_slice()),
+        turns,
+        collision,
         bounds,
     }));
     Ok((ShapeFamily::BoxSet, ShapeParams::BoxSet(params), key))
@@ -503,6 +603,12 @@ pub(crate) struct RawBox {
     /// individual `+x`/`-x`/`+y`/`-y`/`+z`/`-z`. Absent = all six.
     #[serde(default)]
     pub faces: Option<Vec<String>>,
+    /// Per-face tile overrides, keyed by the same face names as `faces`
+    /// (`{"up": "mymod:shelf_top"}`). Absent faces keep the row's
+    /// `[top, bottom, side]`. Naming a face the box does not draw is a load
+    /// error — it is always a typo, never a no-op worth shipping.
+    #[serde(default)]
+    pub tiles: Option<std::collections::BTreeMap<String, String>>,
     /// Whether the box is matter — shadows and blocks light (default yes).
     #[serde(default = "yes")]
     pub occludes: bool,
@@ -517,6 +623,28 @@ pub(crate) struct RawBox {
 
 fn yes() -> bool {
     true
+}
+
+/// The canonical face indices a box's face name covers (`+X, -X, +Y, -Y, +Z,
+/// -Z` order). One vocabulary for both `faces` and `tiles`, so a name that
+/// selects faces to draw selects the same faces to texture.
+fn face_group(name: &str) -> Result<&'static [usize], String> {
+    Ok(match name {
+        "all" => &[0, 1, 2, 3, 4, 5],
+        "sides" => &[0, 1, 4, 5],
+        "up" | "+y" => &[2],
+        "down" | "-y" => &[3],
+        "+x" => &[0],
+        "-x" => &[1],
+        "+z" => &[4],
+        "-z" => &[5],
+        other => {
+            return Err(format!(
+                "unknown box face '{other}' (expected all, sides, up, down, \
+                 or +x/-x/+y/-y/+z/-z)"
+            ))
+        }
+    })
 }
 
 impl RawBox {
@@ -545,29 +673,27 @@ impl RawBox {
         // Canonical face order: +X, -X, +Y, -Y, +Z, -Z.
         let mut faces = [self.faces.is_none(); 6];
         for name in self.faces.iter().flatten() {
-            let picked: &[usize] = match name.as_str() {
-                "all" => &[0, 1, 2, 3, 4, 5],
-                "sides" => &[0, 1, 4, 5],
-                "up" | "+y" => &[2],
-                "down" | "-y" => &[3],
-                "+x" => &[0],
-                "-x" => &[1],
-                "+z" => &[4],
-                "-z" => &[5],
-                other => {
-                    return Err(format!(
-                        "unknown box face '{other}' (expected all, sides, up, down, \
-                         or +x/-x/+y/-y/+z/-z)"
-                    ))
-                }
-            };
-            for &i in picked {
+            for &i in face_group(name)? {
                 faces[i] = true;
+            }
+        }
+        let mut tiles = [None; 6];
+        for (name, tile) in self.tiles.iter().flatten() {
+            let resolved =
+                Tile::from_name(tile).ok_or_else(|| format!("unknown box face tile '{tile}'"))?;
+            for &i in face_group(name)? {
+                if !faces[i] {
+                    return Err(format!(
+                        "box face tile '{name}' names a face the box does not draw"
+                    ));
+                }
+                tiles[i] = Some(resolved);
             }
         }
         Ok(BoxDef {
             aabb: Aabb { min, max },
             faces,
+            tiles,
             occludes: self.occludes,
             collides: self.collides,
             double_sided: self.double_sided,
@@ -973,25 +1099,28 @@ mod tests {
         .unwrap();
         assert_eq!(family, ShapeFamily::BoxSet);
         let set = params.box_set().expect("box set params");
-        assert_eq!(set.boxes.len(), 2);
-        assert_eq!(set.boxes[0].aabb.max, [1.0, 15.0 / 16.0, 1.0]);
-        assert_eq!(set.boxes[0].faces, [true; 6]);
-        assert!(set.boxes[0].collides);
+        assert_eq!(set.boxes(0).len(), 2);
+        assert_eq!(set.boxes(0)[0].aabb.max, [1.0, 15.0 / 16.0, 1.0]);
+        assert_eq!(set.boxes(0)[0].faces, [true; 6]);
+        assert!(set.boxes(0)[0].collides);
         // Face order is +X, -X, +Y, -Y, +Z, -Z.
         assert_eq!(
-            set.boxes[1].faces,
+            set.boxes(0)[1].faces,
             [false, false, true, false, false, false]
         );
         // Only the colliding box is collision; the outline is the drawn union.
-        assert_eq!(set.collision.len(), 1);
-        assert_eq!(set.bounds.max, [1.0, 1.0, 1.0]);
-        // Empty lists, inverted extents, out-of-range texels and unknown face
-        // names are load errors, not silently dropped values.
+        assert_eq!(set.collision(0).len(), 1);
+        assert_eq!(set.bounds(0).max, [1.0, 1.0, 1.0]);
+        // Empty lists, inverted extents, out-of-range texels, unknown face
+        // names and a tile on an undrawn face are load errors, not silently
+        // dropped values.
         for bad in [
             r#"{"boxes":[]}"#,
             r#"{"boxes":[{"from":[8,0,0],"to":[8,16,16]}]}"#,
             r#"{"boxes":[{"to":[17,16,16]}]}"#,
             r#"{"boxes":[{"faces":["sideways"]}]}"#,
+            r#"{"boxes":[{"tiles":{"up":"petramond:no_such_tile"}}]}"#,
+            r#"{"boxes":[{"faces":["up"],"tiles":{"down":"stone"}}]}"#,
         ] {
             assert!(resolve_json(bad).is_err(), "{bad}");
         }
@@ -1066,6 +1195,102 @@ mod tests {
         serde_json::from_str::<RawShape>(s)
             .expect("parses")
             .resolve()
+    }
+
+    /// Turning a box set is a quarter turn about Y — an order-4 action, so
+    /// four turns must land back on the authored list, geometry AND per-face
+    /// data together. This is what catches a face permutation that disagrees
+    /// with the extent swap: the individual turns still "look" plausible, but
+    /// a shape's front art walks off its front.
+    #[test]
+    fn four_quarter_turns_return_a_box_set_to_its_authored_form() {
+        // Deliberately asymmetric on every axis and per face, so a wrong
+        // permutation cannot coincide with the right one.
+        let (_, params, _) = resolve_json(
+            r#"{"boxes":[
+                 {"from":[1,2,3],"to":[5,14,7],"faces":["+x","up","-z"],
+                  "tiles":{"up":"stone","-z":"dirt"}},
+                 {"from":[0,0,9],"to":[16,1,16],"faces":["all"],"tiles":{"+x":"sand"}}
+               ]}"#,
+        )
+        .unwrap();
+        let set = params.box_set().expect("box set params");
+        let four: Vec<BoxDef> = set.boxes(3).iter().map(BoxDef::turned).collect();
+        assert_eq!(four, set.boxes(0), "four quarter turns is the identity");
+        // ...and no intermediate turn is: an authored front must actually move.
+        for t in 1..4 {
+            assert_ne!(set.boxes(0), set.boxes(t), "turn {t} must differ");
+        }
+        // One turn carries the authored -Z front to +X, matching Facing's
+        // North -> East step (the convention `FRONT_AFTER_TURN` encodes).
+        assert!(set.boxes(0)[0].faces[5] && set.boxes(1)[0].faces[FRONT_AFTER_TURN[1]]);
+        assert_eq!(
+            set.boxes(0)[0].tiles[5],
+            set.boxes(1)[0].tiles[FRONT_AFTER_TURN[1]],
+            "the front TILE travels with the front face"
+        );
+        // The collision and outline views are the same turn, not a stale
+        // authored copy.
+        for t in 0..4u8 {
+            let boxes = set.boxes(t);
+            let collision: Vec<_> = boxes
+                .iter()
+                .filter(|b| b.collides)
+                .map(|b| b.aabb)
+                .collect();
+            assert_eq!(set.collision(t), collision, "turn {t} collision");
+            for b in boxes {
+                for a in 0..3 {
+                    assert!(set.bounds(t).min[a] <= b.aabb.min[a], "turn {t} bounds");
+                    assert!(set.bounds(t).max[a] >= b.aabb.max[a], "turn {t} bounds");
+                }
+            }
+        }
+    }
+
+    /// The UV turn must exactly undo what turning the shape did to a face's
+    /// cell-local UV: sampling a turned box at the turned point has to land on
+    /// the same texel as sampling the authored box at the authored point, or a
+    /// tile authored once cannot serve all four facings.
+    ///
+    /// The sides come out right for free; `+Y`/`-Y` are the two that need the
+    /// correction, in OPPOSITE directions, which is exactly the pair a
+    /// hand-derived sign gets backwards.
+    #[test]
+    fn the_uv_turn_undoes_the_shape_turn_on_every_face() {
+        use crate::mesh::face::Face;
+        const FACES: [Face; 6] = Face::ALL;
+        use crate::mesh::plane::cell_uv;
+
+        // A cell-local point off-centre on every axis, so no symmetry can hide
+        // a mistake.
+        let authored = [3.0 / 16.0, 5.0 / 16.0, 6.0 / 16.0];
+        for turns in 0..4u8 {
+            // The same material point after `turns` quarter turns: the turn the
+            // box extents get, (x, z) -> (1 - z, x).
+            let mut p = authored;
+            for _ in 0..turns {
+                p = [1.0 - p[2], p[1], p[0]];
+            }
+            for (i, face) in FACES.into_iter().enumerate() {
+                // Face `i` of the turned box is authored face `a`; sampling the
+                // turned face at the turned point must land where the authored
+                // face sampled the authored point.
+                let want = cell_uv(FACES[FACE_BEFORE_TURN_N(i, turns)], authored);
+                let [u, v] = cell_uv(face, p);
+                let got = crate::block::ShapeFace::turn_uv(face_uv_turns(i, turns), u, v);
+                assert!(
+                    (got.0 - want[0]).abs() < 1e-5 && (got.1 - want[1]).abs() < 1e-5,
+                    "turn {turns} face {i}: sampled {got:?}, authored {want:?}"
+                );
+            }
+        }
+    }
+
+    /// Which authored face ends up at canonical index `i` after `turns`.
+    #[allow(non_snake_case)]
+    fn FACE_BEFORE_TURN_N(i: usize, turns: u8) -> usize {
+        (0..turns).fold(i, |f, _| FACE_BEFORE_TURN[f])
     }
 
     /// The Layer-2 secondary families (`cross`/`crop`/`wall_panel`) resolve to

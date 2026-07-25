@@ -486,24 +486,7 @@ pub(super) fn push_block_item_cube_lit_with_state(
         // item is never invisible.
         match crate::render::item_shape_bake::item_bake(block.id()) {
             Some(boxes) if !boxes.is_empty() => {
-                let mut order: Vec<&crate::block::Aabb> = boxes.iter().collect();
-                // The inventory ICON draws in the DEPTHLESS icon pass, so self-
-                // occluding boxes (a chair's backrest behind its seat) must be
-                // painted BACK-TO-FRONT: sort each box centre by its view depth
-                // along the shared iso view direction, ascending (far first). The
-                // depth-tested in-hand / dropped forms skip the sort entirely.
-                if sort_for_icon {
-                    let dir = crate::render::ui::icon::icon_view_dir();
-                    let depth = |b: &crate::block::Aabb| {
-                        let c = |i: usize| (b.min[i] + b.max[i]) * 0.5;
-                        dir.x * c(0) + dir.y * c(1) + dir.z * c(2)
-                    };
-                    order.sort_by(|a, b| {
-                        depth(a)
-                            .partial_cmp(&depth(b))
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                }
+                let order = icon_painter_order(&boxes, |b| b, sort_for_icon);
                 // Each box face uses CELL-LOCAL UVs (`push_cell_local_face`, the
                 // stair-item path), so the block's tiles map carved-from-the-block
                 // — identical to the in-world mesh — instead of a full tile
@@ -523,13 +506,29 @@ pub(super) fn push_block_item_cube_lit_with_state(
         // exactly as the placed shape is — one geometry source for the world
         // mesh, the icon, the hand and the drop. Faces the shape never emits
         // are skipped here too, so a cactus icon shows no rim.
-        for b in set.boxes {
+        //
+        // A shape with a FRONT draws half-turned: the authored front is `-Z`
+        // (the engine-wide convention, shared with model blocks) and the iso
+        // icon presents `+Y`/`-X`/`+Z`, so the authored form would show the
+        // viewer nothing but its back. This is the same correction a `.bbmodel`
+        // pack writes as a 180° yaw in its `gui` display transform.
+        let turns = if block.directional_view() { 2 } else { 0 };
+        for b in icon_painter_order(set.boxes(turns), |b| &b.aabb, sort_for_icon) {
             for (i, face) in ALL_FACES.into_iter().enumerate() {
                 if !b.faces[i] {
                     continue;
                 }
-                push_cell_local_face(
-                    verts, indices, faces[i], origin, size, b.aabb.min, b.aabb.max, face, light,
+                push_cell_local_face_turned(
+                    verts,
+                    indices,
+                    b.tiles[i].unwrap_or(faces[i]),
+                    origin,
+                    size,
+                    b.aabb.min,
+                    b.aabb.max,
+                    face,
+                    light,
+                    crate::block::face_uv_turns(i, turns),
                 );
             }
         }
@@ -656,6 +655,36 @@ fn push_stair_item_lit(
 /// the stair item cube (hand / drop / icon) and the stair break-crack overlay,
 /// so a stair reads as a cut-out full block everywhere it is drawn.
 #[allow(clippy::too_many_arguments)]
+/// The order a multi-box item form must be SUBMITTED in.
+///
+/// The inventory ICON draws in the DEPTHLESS icon pass, so self-occluding boxes
+/// (a chair's backrest behind its seat, a cabinet's back panel behind its door)
+/// have to be painted BACK-TO-FRONT: box centres sorted by view depth along the
+/// shared iso view direction, ascending. Back-face culling alone only settles
+/// each box against ITSELF, never one box against another. The depth-tested
+/// in-hand / dropped forms skip the sort entirely.
+fn icon_painter_order<'a, T>(
+    items: &'a [T],
+    aabb: impl Fn(&T) -> &crate::block::Aabb,
+    sort_for_icon: bool,
+) -> Vec<&'a T> {
+    let mut order: Vec<&T> = items.iter().collect();
+    if sort_for_icon {
+        let dir = crate::render::ui::icon::icon_view_dir();
+        let depth = |t: &T| {
+            let b = aabb(t);
+            let c = |i: usize| (b.min[i] + b.max[i]) * 0.5;
+            dir.x * c(0) + dir.y * c(1) + dir.z * c(2)
+        };
+        order.sort_by(|a, b| {
+            depth(a)
+                .partial_cmp(&depth(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+    order
+}
+
 pub(super) fn push_cell_local_face(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -667,6 +696,26 @@ pub(super) fn push_cell_local_face(
     face: Face,
     light: DynLight,
 ) {
+    push_cell_local_face_turned(verts, indices, tile, origin, size, min, max, face, light, 0);
+}
+
+/// [`push_cell_local_face`] with the cell-local UV turned `uv_turns` quarter
+/// turns — the item-side twin of the chunk mesher's
+/// [`ShapeFace::uv_turns`](crate::block::ShapeFace::uv_turns), so a turned box
+/// set's top and bottom art reads the same in the icon as in the world.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn push_cell_local_face_turned(
+    verts: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    tile: Tile,
+    origin: Vec3,
+    size: f32,
+    min: [f32; 3],
+    max: [f32; 3],
+    face: Face,
+    light: DynLight,
+    uv_turns: u8,
+) {
     let mn = origin + Vec3::new(min[0], min[1], min[2]) * size;
     let mx = origin + Vec3::new(max[0], max[1], max[2]) * size;
     let mat = foliage_tint::face_material(tile);
@@ -676,6 +725,7 @@ pub(super) fn push_cell_local_face(
     let local = face.quad_box(min, max);
     push_quad_with(verts, indices, corners, |corner, pos| {
         let [u, v] = crate::mesh::plane::cell_uv(face, local[corner]);
+        let (u, v) = crate::block::ShapeFace::turn_uv(uv_turns, u, v);
         Vertex {
             pos,
             tint: pack_tint(mat.tint),

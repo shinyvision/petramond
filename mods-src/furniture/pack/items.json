@@ -45,6 +45,24 @@
       "tags": [],
       "block": "furniture:chandelier"
     },
+    {
+      "item": "furniture:cabinet",
+      "key": "furniture:cabinet",
+      "name": "Cabinet",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+      "tags": [],
+      "block": "furniture:cabinet"
+    },
+    {
+      "item": "furniture:cabinet_shelf",
+      "key": "furniture:cabinet_shelf",
+      "name": "Cabinet Shelf",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+      "tags": [],
+      "block": "furniture:cabinet_shelf"
+    },
     { "patch": "petramond:dandelion", "data": { "furniture:pigment": { "color": [250, 224, 28] } } },
     { "patch": "petramond:poppy", "data": { "furniture:pigment": { "color": [222, 38, 28] } } },
     { "patch": "petramond:cornflower", "data": { "furniture:pigment": { "color": [40, 84, 232] } } },

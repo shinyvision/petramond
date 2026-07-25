@@ -6,6 +6,17 @@
     { "name": "furniture:cauldron_water_top", "file": "cauldron_water_top.png" },
     { "name": "furniture:cauldron_dye_top", "file": "cauldron_dye_top.png" },
     { "name": "furniture:cauldron_bottom", "file": "cauldron_bottom.png" },
-    { "name": "furniture:cauldron_side", "file": "cauldron_side.png" }
+    { "name": "furniture:cauldron_side", "file": "cauldron_side.png" },
+    { "name": "furniture:cabinet_front", "file": "cabinet_front.png" },
+    { "name": "furniture:cabinet_side", "file": "cabinet_side.png" },
+    { "name": "furniture:cabinet_top", "file": "cabinet_top.png" },
+    { "name": "furniture:cabinet_bottom", "file": "cabinet_bottom.png" },
+    { "name": "furniture:cabinet_shelf_front", "file": "cabinet_shelf_front.png" },
+    { "name": "furniture:cabinet_shelf_side", "file": "cabinet_shelf_side.png" },
+    { "name": "furniture:cabinet_shelf_top", "file": "cabinet_shelf_top.png" },
+    { "name": "furniture:cabinet_shelf_bottom", "file": "cabinet_shelf_bottom.png" },
+    { "name": "furniture:cabinet_shelf_board", "file": "cabinet_shelf_board.png" },
+    { "name": "furniture:cabinet_shelf_under", "file": "cabinet_shelf_under.png" },
+    { "name": "furniture:cabinet_shelf_floor", "file": "cabinet_shelf_floor.png" }
   ]
 }

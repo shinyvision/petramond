@@ -118,6 +118,7 @@ pub(crate) fn push_mesh_boxes(
             Some(ShapeFace {
                 tile,
                 swap_uv: false,
+                uv_turns: 0,
                 tint,
             })
         };

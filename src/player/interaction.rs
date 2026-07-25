@@ -91,20 +91,6 @@ impl Player {
                     max: Vec3::from(mx),
                 };
             }
-        } else if matches!(
-            hit_block.shape_family(),
-            ShapeFamily::Door | ShapeFamily::Ladder
-        ) {
-            // A door outlines the actual slab where it is (facing + open state), a
-            // ladder its wall panel (facing), so the wireframe + break crack hug the
-            // panel rather than the row's default box.
-            if let Some((mn, mx)) = world.selection_box_at(hit.block.x, hit.block.y, hit.block.z) {
-                let base = Vec3::new(hit.block.x as f32, hit.block.y as f32, hit.block.z as f32);
-                hit.outline = SelectionShape::Box {
-                    min: base + Vec3::from(mn),
-                    max: base + Vec3::from(mx),
-                };
-            }
         } else if hit_block.picks_by_boxes() {
             // Every box-set family outlines the boxes it actually resolved —
             // a stair's corner steps, a slab's layers, a pane's / fence's
@@ -139,6 +125,20 @@ impl Player {
                     max: base + Vec3::from(mx),
                 };
             }
+        } else if let Some((mn, mx)) = world.selection_box_at(hit.block.x, hit.block.y, hit.block.z)
+        {
+            // Everything else outlines its POSITION-AWARE box. The hit's own
+            // default came from `Block::visual_aabb`, which is position-LESS
+            // and so cannot see per-cell state: a door's swung slab, a ladder's
+            // panel, a turned box set. Reading the same facet through the world
+            // seam is a no-op for every shape that has no state to read, and
+            // the only thing that keeps a stateful shape's wireframe on the
+            // geometry it actually drew.
+            let base = Vec3::new(hit.block.x as f32, hit.block.y as f32, hit.block.z as f32);
+            hit.outline = SelectionShape::Box {
+                min: base + Vec3::from(mn),
+                max: base + Vec3::from(mx),
+            };
         }
         Some((hit, dist))
     }
@@ -444,8 +444,10 @@ fn precise_shape_hit(
             })
             .min_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
     }
-    // Any other custom-shaped solid (the chest) tests its inset visual box.
-    let (mn, mx) = block.visual_aabb()?;
+    // Any other custom-shaped solid (the chest) tests its inset visual box —
+    // through the world seam, so what the ray tests is what the wireframe drew
+    // even when the shape reads per-cell state (a turned box set).
+    let (mn, mx) = world.selection_box_at(pos.x, pos.y, pos.z)?;
     let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
     ray_vs_aabb_hit(eye, dir, base + Vec3::from(mn), base + Vec3::from(mx))
 }

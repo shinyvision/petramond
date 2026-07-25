@@ -171,6 +171,77 @@
       "hardness": 3.0,
       "drops": [{ "item": "furniture:chandelier", "min": 1, "max": 1, "chance": 1.0 }]
     },
+    {
+      "block": "furniture:cabinet",
+      "shape": {
+        "boxes": [
+          { "from": [0, 0, 14], "to": [16, 14, 16] },
+          { "from": [0, 0, 1], "to": [2, 14, 14] },
+          { "from": [14, 0, 1], "to": [16, 14, 14] },
+          { "from": [2, 1, 1], "to": [14, 14, 2] },
+          { "from": [2, 0, 1], "to": [14, 1, 14] },
+          { "from": [0, 14, 1], "to": [16, 16, 16] }
+        ]
+      },
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": ["furniture:cabinet_top", "furniture:cabinet_bottom", "furniture:cabinet_side"],
+      "front": "furniture:cabinet_front",
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 3.0,
+      "drops": [{ "item": "furniture:cabinet", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
+      "block": "furniture:cabinet_shelf",
+      "shape": {
+        "boxes": [
+          { "from": [0, 0, 14], "to": [16, 14, 16] },
+          { "from": [0, 0, 1], "to": [2, 14, 14] },
+          { "from": [14, 0, 1], "to": [16, 14, 14] },
+          {
+            "from": [2, 7, 1],
+            "to": [14, 9, 14],
+            "tiles": {
+              "up": "furniture:cabinet_shelf_board",
+              "down": "furniture:cabinet_shelf_under"
+            }
+          },
+          { "from": [0, 14, 1], "to": [16, 16, 16] },
+          {
+            "from": [0, 0, 1],
+            "to": [16, 1, 16],
+            "tiles": { "up": "furniture:cabinet_shelf_floor" }
+          }
+        ]
+      },
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "furniture:cabinet_shelf_top",
+        "furniture:cabinet_shelf_bottom",
+        "furniture:cabinet_shelf_side"
+      ],
+      "front": "furniture:cabinet_shelf_front",
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 3.0,
+      "drops": [{ "item": "furniture:cabinet_shelf", "min": 1, "max": 1, "chance": 1.0 }]
+    },
     { "patch": "petramond:wool_block", "data": { "petramond:carry": ["petramond:tint"] } },
     { "patch": "petramond:wool_stairs", "data": { "petramond:carry": ["petramond:tint"] } },
     { "patch": "petramond:wool_slab", "data": { "petramond:carry": ["petramond:tint"] } }

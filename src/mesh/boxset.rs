@@ -350,6 +350,7 @@ pub(super) fn emit_box_set<B, S, L, K>(
                     if style.swap_uv {
                         std::mem::swap(&mut uu, &mut vv);
                     }
+                    (uu, vv) = ShapeFace::turn_uv(style.uv_turns, uu, vv);
                     let tint = if warm == 0.0 {
                         style.tint
                     } else {

@@ -78,7 +78,33 @@ pub struct ShapeFace {
     pub tile: Tile,
     /// Swap the cell-local u/v (the pane edge strip laid along a W/E arm).
     pub swap_uv: bool,
+    /// Quarter turns (`0..4`) to rotate the cell-local UV by, applied after
+    /// [`swap_uv`](Self::swap_uv).
+    ///
+    /// A shape that turns about Y keeps the cell-local UV of its four SIDE
+    /// faces for free — the rotation carries a face's art to the next
+    /// direction unchanged — but its top and bottom faces sample the same
+    /// fixed tile through a turned footprint, so their art would stay pinned
+    /// to world north while the block turns. This is the correction, and it is
+    /// the only reason a tile can be authored once for all four facings
+    /// instead of four times.
+    pub uv_turns: u8,
     pub tint: [f32; 3],
+}
+
+impl ShapeFace {
+    /// Turn a cell-local UV by `turns` quarter turns — the transform
+    /// [`uv_turns`](Self::uv_turns) names, shared by every consumer that
+    /// samples a face (chunk mesh, item cube) so they cannot disagree.
+    #[inline]
+    pub fn turn_uv(turns: u8, u: f32, v: f32) -> (f32, f32) {
+        match turns & 3 {
+            1 => (v, 1.0 - u),
+            2 => (1.0 - u, 1.0 - v),
+            3 => (1.0 - v, u),
+            _ => (u, v),
+        }
+    }
 }
 
 /// One cell-local cuboid of a RESOLVED block shape — the family-agnostic
@@ -159,6 +185,7 @@ impl ShapeBox {
             Some(ShapeFace {
                 tile,
                 swap_uv: false,
+                uv_turns: 0,
                 tint: tint_for(tile),
             })
         };

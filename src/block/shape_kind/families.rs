@@ -14,7 +14,7 @@ use super::super::{Aabb, Block, ShapeBox};
 use super::facets::{union_box as union, ItemRender, ShapeCtx, ShapeRender, ShapeSim};
 use super::neighborhood::{ShapeNeighborhood, ShapeState};
 use super::{ConnectionParams, ItemForm, ShapeFamily, ShapeParams};
-use crate::block_state::{SlabState, StairState};
+use crate::block_state::{EntityFront, SlabState, StairState};
 use crate::facing::Facing;
 use crate::torch::TorchPlacement;
 use crate::world::placement::{PlaceInputs, PlacementOutcome, PlacementPlan, ShapePlacement};
@@ -191,20 +191,46 @@ fn box_set(p: &ShapeParams) -> &'static super::BoxSetParams {
     p.box_set().expect("a box-set family carries its boxes")
 }
 
+/// How far a box-set cell is turned about Y: the placement facing a
+/// `directional_view` row stores, as quarter turns from the authored form
+/// (whose front is `-Z`, matching [`Facing::North`]). A row with no facing
+/// never stores one and always reads `0`.
+fn box_set_turns(nb: &dyn ShapeNeighborhood, pos: IVec3, block: Block) -> u8 {
+    if !block.directional_view() {
+        return 0;
+    }
+    match state_of_at::<EntityFront>(nb, pos).0 {
+        Facing::North => 0,
+        Facing::East => 1,
+        Facing::South => 2,
+        Facing::West => 3,
+    }
+}
+
 impl ShapeSim for BoxSetFamily {
+    fn collision_boxes(
+        &self,
+        p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        block: Block,
+    ) -> &'static [Aabb] {
+        box_set(p).collision(box_set_turns(nb, pos, block))
+    }
+
     fn default_boxes(&self, p: &ShapeParams, _b: Block) -> &'static [Aabb] {
         // Per BOX: drawn matter always occludes light and AO, but a
         // decorative plate is walked through (mob spawning and the surface
         // probes deliberately skip non-colliding cover).
-        box_set(p).collision
+        box_set(p).collision(0)
     }
 
     fn occupies_pocket(
         &self,
         p: &ShapeParams,
-        _nb: &dyn ShapeNeighborhood,
-        _pos: IVec3,
-        _b: Block,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        b: Block,
         lo: [f32; 3],
         hi: [f32; 3],
     ) -> bool {
@@ -212,7 +238,7 @@ impl ShapeSim for BoxSetFamily {
         // obstructing, and a face plane spanning the cell carries a full-width
         // face without being a body.
         box_set(p)
-            .boxes
+            .boxes(box_set_turns(nb, pos, b))
             .iter()
             .filter(|d| d.occludes)
             .any(|d| overlaps(lo, hi, d.aabb.min, d.aabb.max))
@@ -227,22 +253,24 @@ impl ShapeSim for BoxSetFamily {
 }
 impl ShapeRender for BoxSetFamily {
     fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
-        let tiles = ctx.block.tiles();
-        out.extend(box_set(ctx.params).boxes.iter().map(|d| {
-            let mut b = ShapeBox::uniform(d.aabb, tiles, ctx.tint_for);
-            if !d.occludes {
-                b = b.as_face_carrier();
-            }
-            if d.double_sided {
-                b = b.double_sided();
-            }
-            for (face, draws) in b.faces.iter_mut().zip(d.faces) {
-                if !draws {
-                    *face = None;
-                }
-            }
-            b
-        }))
+        let turns = box_set_turns(ctx.nb, ctx.pos, ctx.block);
+        out.extend(
+            box_set(ctx.params)
+                .boxes(turns)
+                .iter()
+                .map(|d| box_set_box(d, turns, ctx.block, ctx.tint_for)),
+        )
+    }
+
+    fn selection_box(
+        &self,
+        p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        block: Block,
+    ) -> Option<([f32; 3], [f32; 3])> {
+        let b = box_set(p).bounds(box_set_turns(nb, pos, block));
+        Some((b.min, b.max))
     }
 
     fn default_selection_box(
@@ -252,7 +280,7 @@ impl ShapeRender for BoxSetFamily {
     ) -> Option<([f32; 3], [f32; 3])> {
         // The DRAWN extent, whether or not it collides — a walk-through cover
         // stays aimable, like a no-collision model block.
-        let b = box_set(p).bounds;
+        let b = box_set(p).bounds(0);
         Some((b.min, b.max))
     }
 
@@ -261,6 +289,44 @@ impl ShapeRender for BoxSetFamily {
         // the item reads as the block it will place.
         ItemRender::Geometry(block)
     }
+}
+
+/// One authored box as drawn geometry.
+///
+/// A box textures exactly like a cube of the same row — `[top, bottom, side]`
+/// plus the row's `front` on the face its placement facing points to — carved
+/// to the box's own extent. Only what no row-level tile can express is
+/// authored per box: a face the shape draws through a DIFFERENT surface than
+/// the cell's outside (a shelf under a counter top), which overrides. Plus the
+/// UV turn [`face_uv_turns`](super::face_uv_turns) prescribes.
+pub(crate) fn box_set_box(
+    d: &super::BoxDef,
+    turns: u8,
+    block: Block,
+    tint_for: &dyn Fn(crate::atlas::Tile) -> [f32; 3],
+) -> ShapeBox {
+    let mut b = ShapeBox::uniform(d.aabb, block.tiles(), tint_for);
+    if !d.occludes {
+        b = b.as_face_carrier();
+    }
+    if d.double_sided {
+        b = b.double_sided();
+    }
+    let front = block.front_tile();
+    for (i, face) in b.faces.iter_mut().enumerate() {
+        if !d.faces[i] {
+            *face = None;
+            continue;
+        }
+        let Some(style) = face else { continue };
+        let front = front.filter(|_| i == super::FRONT_AFTER_TURN[(turns & 3) as usize]);
+        if let Some(tile) = d.tiles[i].or(front) {
+            style.tile = tile;
+            style.tint = tint_for(tile);
+        }
+        style.uv_turns = super::face_uv_turns(i, turns);
+    }
+    b
 }
 
 /// The cross billboard plant (grass/fern/flower). No collision; its item is a
