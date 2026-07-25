@@ -29,7 +29,7 @@ fn uniform_full_slab_stack_meshes_like_the_full_cube_block() {
         mesh.opaque
             .iter()
             .map(|v| Vertex {
-                packed: v.packed & !0xFF,
+                packed: v.packed & !crate::mesh::vertex::TILE_MASK,
                 ..*v
             })
             .collect()

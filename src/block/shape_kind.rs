@@ -282,7 +282,7 @@ static ENGINE_PANE_PARAMS: ConnectionParams = ConnectionParams {
 };
 
 /// One authored box of a `{"boxes": [...]}` shape.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoxDef {
     /// Cell-local extent (`0.0..1.0` per axis).
     pub aabb: Aabb,
@@ -312,6 +312,24 @@ pub struct BoxDef {
     /// Draw the box's faces from both sides — see
     /// [`ShapeBox::double_sided`](crate::block::ShapeBox).
     pub double_sided: bool,
+    /// Per face: how many quarter turns the FRAME this face's art was authored
+    /// in sits ahead of the box's own frame. `0` everywhere for an authored
+    /// box (and for every turn of one, since a turn moves box and art
+    /// together); non-zero only on a face a CORNER form inherited from the
+    /// quarter-turned parent, whose art is one (or three) turns ahead.
+    ///
+    /// Everything frame-dependent about a face derives from this single
+    /// number, which is why it replaced a parallel `front_faces` array:
+    /// - the row's `front` tile belongs to the face at
+    ///   `FRONT_AFTER_TURN[(shape turns + this) & 3]`, so a corner form's
+    ///   front art wraps around two faces with no extra bookkeeping;
+    /// - [`face_uv_turns`] must counter-rotate a `±Y` face by the TOTAL turn
+    ///   `shape turns + this`, or an inherited top/bottom tile draws a quarter
+    ///   turn off.
+    ///
+    /// Permuted by [`turned`](BoxDef::turned) like every other per-face
+    /// attribute; the VALUE is a relative offset, so turning never changes it.
+    pub art_turns: [u8; 6],
 }
 
 /// The resolved parameters of a static box-set kind: the authored boxes, the
@@ -327,29 +345,53 @@ pub struct BoxDef {
 /// every reader ask whether turning applies.
 #[derive(Debug, PartialEq)]
 pub struct BoxSetParams {
-    turns: [&'static [BoxDef]; 4],
-    collision: [&'static [Aabb]; 4],
-    bounds: [Aabb; 4],
+    forms: [[&'static [BoxDef]; 5]; 4],
+    collision: [[&'static [Aabb]; 5]; 4],
+    bounds: [[Aabb; 5]; 4],
+    /// Whether this kind resolves CORNER forms from its perpendicular
+    /// same-kind neighbours (the row's `"corners": true`) — the stair rule
+    /// lifted from quadrant masks to box lists. `false` = the shape has one
+    /// form per turn and never refines.
+    pub corner_joins: bool,
 }
 
+/// A corner-joining cell's resolved form (stored in cell-state byte 1; byte 0
+/// stays the placed facing — the stair's identity/refined split):
+/// [`STRAIGHT`](CornerForm) `0`, outer corner `1`/`2`, inner corner `3`/`4`,
+/// where odd = the perpendicular neighbour faces one quarter turn CLOCKWISE of
+/// this cell and even = counter-clockwise. Resolved by the same neighbour rule
+/// stairs use; an out-of-range stored byte reads as straight.
+pub type CornerForm = u8;
+
 impl BoxSetParams {
-    /// The drawn boxes at `turns` quarter turns about Y (`0` = as authored).
+    /// An out-of-vocabulary stored byte (an old world's stale state, until
+    /// the load sweep rewrites it) reads as STRAIGHT — never a wrong corner.
     #[inline]
-    pub fn boxes(&self, turns: u8) -> &'static [BoxDef] {
-        self.turns[(turns & 3) as usize]
+    fn form_idx(form: CornerForm) -> usize {
+        if form > 4 {
+            0
+        } else {
+            form as usize
+        }
     }
 
-    /// The `collides` boxes at `turns`, ready to hand out.
+    /// The drawn boxes at `turns` quarter turns about Y (`0` = as authored)
+    /// in corner form `form`.
     #[inline]
-    pub fn collision(&self, turns: u8) -> &'static [Aabb] {
-        self.collision[(turns & 3) as usize]
+    pub fn boxes(&self, turns: u8, form: CornerForm) -> &'static [BoxDef] {
+        self.forms[(turns & 3) as usize][Self::form_idx(form)]
     }
 
-    /// The union of every DRAWN box at `turns` — the selection outline and
-    /// target box.
+    /// The `collides` boxes, ready to hand out.
     #[inline]
-    pub fn bounds(&self, turns: u8) -> Aabb {
-        self.bounds[(turns & 3) as usize]
+    pub fn collision(&self, turns: u8, form: CornerForm) -> &'static [Aabb] {
+        self.collision[(turns & 3) as usize][Self::form_idx(form)]
+    }
+
+    /// The union of every DRAWN box — the selection outline and target box.
+    #[inline]
+    pub fn bounds(&self, turns: u8, form: CornerForm) -> Aabb {
+        self.bounds[(turns & 3) as usize][Self::form_idx(form)]
     }
 }
 
@@ -360,10 +402,14 @@ impl BoxSetParams {
 const FACE_BEFORE_TURN: [usize; 6] = [5, 4, 2, 3, 0, 1];
 
 /// Where the AUTHORED front face (`-Z`, canonical index 5) sits after `turns`
-/// quarter turns — how a row's `front` tile finds its face on a turned box.
-/// The item cube needs no such lookup: it draws at two turns, which lands the
-/// front on `+Z`, exactly the index `block_icon_faces_with_state` already
-/// writes the front tile to.
+/// quarter turns — how a row's `front` tile finds its face. The draw indexes
+/// this by the face's TOTAL turn (the shape's plus the face's own
+/// [`BoxDef::art_turns`]), which is what lets a corner form's front art wrap
+/// around two faces that are different numbers of turns from the authored one.
+///
+/// The item cube needs no such lookup for the straight form: it draws at two
+/// turns, which lands the front on `+Z`, exactly the index
+/// `block_icon_faces_with_state` already writes the front tile to.
 pub const FRONT_AFTER_TURN: [usize; 4] = [5, 0, 4, 1];
 
 /// The [`ShapeFace::uv_turns`](crate::block::ShapeFace::uv_turns) a box face
@@ -397,8 +443,123 @@ impl BoxDef {
             occludes: self.occludes,
             collides: self.collides,
             double_sided: self.double_sided,
+            art_turns: std::array::from_fn(|i| self.art_turns[FACE_BEFORE_TURN[i]]),
         }
     }
+
+    /// This box with every face's art frame advanced `turns` quarter turns —
+    /// what a corner form's donor list needs so its inherited faces still know
+    /// which frame they were authored in (see [`art_turns`](Self::art_turns)).
+    fn art_advanced(&self, turns: u8) -> BoxDef {
+        BoxDef {
+            art_turns: self.art_turns.map(|t| (t + turns) & 3),
+            ..*self
+        }
+    }
+}
+
+/// Turn a whole box list by `turns` quarter turns.
+fn turned_list(list: &[BoxDef], turns: u8) -> Vec<BoxDef> {
+    let mut v: Vec<BoxDef> = list.to_vec();
+    for _ in 0..(turns & 3) {
+        v = v.iter().map(BoxDef::turned).collect();
+    }
+    v
+}
+
+/// The quarter-turned donor list a corner form composes against: turned
+/// geometry whose faces also REMEMBER they were authored one turn round.
+fn donor_list(list: &[BoxDef], turns: u8) -> Vec<BoxDef> {
+    turned_list(list, turns)
+        .iter()
+        .map(|b| b.art_advanced(turns))
+        .collect()
+}
+
+/// The INTERSECTION of two box lists — the OUTER corner form, exactly the
+/// stair rule's `back_mask & back_mask` lifted from quadrant masks to boxes:
+/// what remains is the matter both perpendicular orientations agree on, so the
+/// front treatment wraps around the turned side. Each result face inherits its
+/// style from the parent whose face plane it lies on (`self` preferred where
+/// both are coplanar — the top of a full-cell slab), including that parent's
+/// [`art_turns`](BoxDef::art_turns), which is how the turned parent's FRONT
+/// tile and UV frame reach the wrapped face.
+fn intersect_lists(a: &[BoxDef], b: &[BoxDef]) -> Vec<BoxDef> {
+    let mut out = Vec::new();
+    for pa in a {
+        for pb in b {
+            let mut r = pa.aabb;
+            for ax in 0..3 {
+                r.min[ax] = r.min[ax].max(pb.aabb.min[ax]);
+                r.max[ax] = r.max[ax].min(pb.aabb.max[ax]);
+            }
+            if (0..3).any(|ax| r.min[ax] >= r.max[ax]) {
+                continue;
+            }
+            // Face i of the result lies on pa's plane, pb's plane, or strictly
+            // inside one parent (then the OTHER parent's plane bounds it).
+            let mut piece = BoxDef { aabb: r, ..*pa };
+            for i in 0..6 {
+                let (axis, high) = [
+                    (0, true),
+                    (0, false),
+                    (1, true),
+                    (1, false),
+                    (2, true),
+                    (2, false),
+                ][i];
+                let plane = if high { r.max[axis] } else { r.min[axis] };
+                let of = |p: &BoxDef| {
+                    if high {
+                        p.aabb.max[axis] == plane
+                    } else {
+                        p.aabb.min[axis] == plane
+                    }
+                };
+                let parent = if of(pa) { pa } else { pb };
+                piece.faces[i] = parent.faces[i];
+                piece.tiles[i] = parent.tiles[i];
+                piece.art_turns[i] = parent.art_turns[i];
+            }
+            piece.occludes = pa.occludes && pb.occludes;
+            piece.collides = pa.collides && pb.collides;
+            piece.double_sided = pa.double_sided || pb.double_sided;
+            if !out.contains(&piece) {
+                out.push(piece);
+            }
+        }
+    }
+    out
+}
+
+/// The UNION of two box lists — the INNER corner form (`back_mask | back_mask`):
+/// simply both lists, `self` first so the coincident-plane tie-break keeps the
+/// straight parent's faces wherever the two overlap exactly (interpenetration
+/// is the box vocabulary's normal state; buried faces are harmless overdraw).
+/// Exact duplicates are dropped.
+fn union_lists(a: &[BoxDef], b: &[BoxDef]) -> Vec<BoxDef> {
+    let mut out: Vec<BoxDef> = a.to_vec();
+    for pb in b {
+        if !out.iter().any(|pa| pa.aabb == pb.aabb) {
+            out.push(*pb);
+        }
+    }
+    out
+}
+
+/// The union of every box's extent — a form's selection outline and target box.
+fn union_bounds(set: &[BoxDef]) -> Aabb {
+    let mut bounds = Aabb {
+        min: [f32::INFINITY; 3],
+        max: [f32::NEG_INFINITY; 3],
+    };
+    for b in set {
+        for a in 0..3 {
+            bounds.min[a] = bounds.min[a].min(b.aabb.min[a]);
+            bounds.max[a] = bounds.max[a].max(b.aabb.max[a]);
+        }
+    }
+    bounds
 }
 
 /// One shape-kind registry row: the family, its canonical key, the parameters
@@ -506,10 +667,13 @@ impl<'de> Deserialize<'de> for RawShape {
 const MAX_AUTHORED_BOXES: usize = crate::world::shape_bake_validate::MAX_SHAPE_BOXES;
 
 /// Resolve `{"boxes": [...]}` to its family, leaked params, and canonical key.
-/// The key spells the whole authored list, so two rows with identical boxes
-/// share ONE shape kind (every plain cactus is one row in the table) and two
-/// that differ never collide.
-fn resolve_box_set(raw: &[RawBox]) -> Result<(ShapeFamily, ShapeParams, String), String> {
+/// The key spells the whole authored list (and the corners flag), so two rows
+/// with identical boxes share ONE shape kind (every plain cactus is one row in
+/// the table) and two that differ never collide.
+fn resolve_box_set(
+    raw: &[RawBox],
+    corners: bool,
+) -> Result<(ShapeFamily, ShapeParams, String), String> {
     if raw.is_empty() {
         return Err("a 'boxes' shape needs at least one box".into());
     }
@@ -549,34 +713,76 @@ fn resolve_box_set(raw: &[RawBox]) -> Result<(ShapeFamily, ShapeParams, String),
             })
             .collect::<Vec<_>>()
             .join("/")
-    );
-    let mut turns: [&'static [BoxDef]; 4] = [&[]; 4];
-    let mut turned = boxes;
-    for slot in turns.iter_mut() {
-        let next: Vec<BoxDef> = turned.iter().map(BoxDef::turned).collect();
-        *slot = Box::leak(std::mem::replace(&mut turned, next).into_boxed_slice());
-    }
-    let collision = turns.map(|set| {
-        let c: Vec<Aabb> = set.iter().filter(|b| b.collides).map(|b| b.aabb).collect();
-        &*Box::leak(c.into_boxed_slice())
-    });
-    let bounds = turns.map(|set| {
-        let mut bounds = Aabb {
-            min: [f32::INFINITY; 3],
-            max: [f32::NEG_INFINITY; 3],
-        };
-        for b in set {
-            for a in 0..3 {
-                bounds.min[a] = bounds.min[a].min(b.aabb.min[a]);
-                bounds.max[a] = bounds.max[a].max(b.aabb.max[a]);
+    ) + if corners { "+corners" } else { "" };
+    // The AUTHORED-space forms, the stair rule lifted to box lists: straight,
+    // outer = self INTERSECT quarter-turned self (the matter both orientations
+    // agree on), inner = self UNION quarter-turned self — one clockwise and
+    // one counter-clockwise of each corner. A kind that does not corner-join
+    // has exactly ONE form; the five slots stay so indexing is uniform, but
+    // they share one list rather than five identical copies of it.
+    let authored: &'static [BoxDef] = Box::leak(boxes.clone().into_boxed_slice());
+    let mut authored_forms: [&'static [BoxDef]; 5] = [authored; 5];
+    if corners {
+        let cw = donor_list(&boxes, 1);
+        let ccw = donor_list(&boxes, 3);
+        let composed = [
+            intersect_lists(&boxes, &cw),
+            intersect_lists(&boxes, &ccw),
+            union_lists(&boxes, &cw),
+            union_lists(&boxes, &ccw),
+        ];
+        for (slot, list) in authored_forms[1..].iter_mut().zip(composed) {
+            if list.len() > MAX_AUTHORED_BOXES {
+                return Err(format!(
+                    "a corner form of this shape needs {} boxes (max {MAX_AUTHORED_BOXES})",
+                    list.len()
+                ));
             }
+            *slot = Box::leak(list.into_boxed_slice());
         }
-        bounds
-    });
+    }
+    // Every (turn, form) variant is resolved HERE, at load: composed in
+    // authored space, then the whole list is turned. Nothing composes or
+    // rotates per cell, per frame or per collision query, and
+    // `collision_boxes` can still hand out a `&'static`. Only the DISTINCT
+    // forms are turned and leaked — a plain box set pays four lists, not
+    // twenty identical ones.
+    let mut forms: [[&'static [BoxDef]; 5]; 4] = [[&[]; 5]; 4];
+    let mut collision: [[&'static [Aabb]; 5]; 4] = [[&[]; 5]; 4];
+    // Every slot is written below; this is only the array's initial value.
+    let mut bounds = [[Aabb {
+        min: [0.0; 3],
+        max: [0.0; 3],
+    }; 5]; 4];
+    for f in 0..if corners { 5 } else { 1 } {
+        let mut set: &'static [BoxDef] = authored_forms[f];
+        for (t, ((forms, collision), bounds)) in forms
+            .iter_mut()
+            .zip(collision.iter_mut())
+            .zip(bounds.iter_mut())
+            .enumerate()
+        {
+            if t > 0 {
+                set = Box::leak(turned_list(set, 1).into_boxed_slice());
+            }
+            forms[f] = set;
+            let c: Vec<Aabb> = set.iter().filter(|b| b.collides).map(|b| b.aabb).collect();
+            collision[f] = Box::leak(c.into_boxed_slice());
+            bounds[f] = union_bounds(set);
+        }
+    }
+    if !corners {
+        for t in 0..4 {
+            forms[t] = [forms[t][0]; 5];
+            collision[t] = [collision[t][0]; 5];
+            bounds[t] = [bounds[t][0]; 5];
+        }
+    }
     let params: &'static BoxSetParams = Box::leak(Box::new(BoxSetParams {
-        turns,
+        forms,
         collision,
         bounds,
+        corner_joins: corners,
     }));
     Ok((ShapeFamily::BoxSet, ShapeParams::BoxSet(params), key))
 }
@@ -697,6 +903,9 @@ impl RawBox {
             occludes: self.occludes,
             collides: self.collides,
             double_sided: self.double_sided,
+            // Authored geometry: every face's art is in the shape's own frame.
+            // Only a corner form's inherited faces ever offset this.
+            art_turns: [0; 6],
         })
     }
 }
@@ -741,14 +950,22 @@ pub(crate) struct RawCustomShape {
 
 impl RawShape {
     /// Resolve this raw shape to its `(family, params, canonical key)`.
-    pub(crate) fn resolve(&self) -> Result<(ShapeFamily, ShapeParams, String), String> {
+    /// `corners` is the row's corner-joining flag; only a box set consumes
+    /// it, so any other shape refuses it.
+    pub(crate) fn resolve(
+        &self,
+        corners: bool,
+    ) -> Result<(ShapeFamily, ShapeParams, String), String> {
+        if corners && !matches!(self, RawShape::Boxes(_)) {
+            return Err("'corners' requires a '{\"boxes\": [...]}' shape".into());
+        }
         Ok(match self {
             RawShape::Cube => (
                 ShapeFamily::Cube,
                 ShapeParams::None,
                 "petramond:cube".into(),
             ),
-            RawShape::Boxes(raw) => resolve_box_set(raw)?,
+            RawShape::Boxes(raw) => resolve_box_set(raw, corners)?,
             RawShape::Cross => (
                 ShapeFamily::Cross,
                 ShapeParams::None,
@@ -1066,7 +1283,7 @@ impl ShapeKindInterner {
             render,
             placement,
             resolves_to_boxes: families::resolves_to_boxes(family),
-            refines: families::refines(family),
+            refines: families::refines(family, &params),
         });
         self.index.insert(key, id);
         Ok(BlockShapeKind(id))
@@ -1099,18 +1316,18 @@ mod tests {
         .unwrap();
         assert_eq!(family, ShapeFamily::BoxSet);
         let set = params.box_set().expect("box set params");
-        assert_eq!(set.boxes(0).len(), 2);
-        assert_eq!(set.boxes(0)[0].aabb.max, [1.0, 15.0 / 16.0, 1.0]);
-        assert_eq!(set.boxes(0)[0].faces, [true; 6]);
-        assert!(set.boxes(0)[0].collides);
+        assert_eq!(set.boxes(0, 0).len(), 2);
+        assert_eq!(set.boxes(0, 0)[0].aabb.max, [1.0, 15.0 / 16.0, 1.0]);
+        assert_eq!(set.boxes(0, 0)[0].faces, [true; 6]);
+        assert!(set.boxes(0, 0)[0].collides);
         // Face order is +X, -X, +Y, -Y, +Z, -Z.
         assert_eq!(
-            set.boxes(0)[1].faces,
+            set.boxes(0, 0)[1].faces,
             [false, false, true, false, false, false]
         );
         // Only the colliding box is collision; the outline is the drawn union.
-        assert_eq!(set.collision(0).len(), 1);
-        assert_eq!(set.bounds(0).max, [1.0, 1.0, 1.0]);
+        assert_eq!(set.collision(0, 0).len(), 1);
+        assert_eq!(set.bounds(0, 0).max, [1.0, 1.0, 1.0]);
         // Empty lists, inverted extents, out-of-range texels, unknown face
         // names and a tile on an undrawn face are load errors, not silently
         // dropped values.
@@ -1194,7 +1411,14 @@ mod tests {
     fn resolve_json(s: &str) -> Result<(ShapeFamily, ShapeParams, String), String> {
         serde_json::from_str::<RawShape>(s)
             .expect("parses")
-            .resolve()
+            .resolve(false)
+    }
+
+    /// [`resolve_json`] with the row's corner-joining flag set.
+    fn resolve_corners(s: &str) -> Result<(ShapeFamily, ShapeParams, String), String> {
+        serde_json::from_str::<RawShape>(s)
+            .expect("parses")
+            .resolve(true)
     }
 
     /// Turning a box set is a quarter turn about Y — an order-4 action, so
@@ -1215,34 +1439,34 @@ mod tests {
         )
         .unwrap();
         let set = params.box_set().expect("box set params");
-        let four: Vec<BoxDef> = set.boxes(3).iter().map(BoxDef::turned).collect();
-        assert_eq!(four, set.boxes(0), "four quarter turns is the identity");
+        let four: Vec<BoxDef> = set.boxes(3, 0).iter().map(BoxDef::turned).collect();
+        assert_eq!(four, set.boxes(0, 0), "four quarter turns is the identity");
         // ...and no intermediate turn is: an authored front must actually move.
         for t in 1..4 {
-            assert_ne!(set.boxes(0), set.boxes(t), "turn {t} must differ");
+            assert_ne!(set.boxes(0, 0), set.boxes(t, 0), "turn {t} must differ");
         }
         // One turn carries the authored -Z front to +X, matching Facing's
         // North -> East step (the convention `FRONT_AFTER_TURN` encodes).
-        assert!(set.boxes(0)[0].faces[5] && set.boxes(1)[0].faces[FRONT_AFTER_TURN[1]]);
+        assert!(set.boxes(0, 0)[0].faces[5] && set.boxes(1, 0)[0].faces[FRONT_AFTER_TURN[1]]);
         assert_eq!(
-            set.boxes(0)[0].tiles[5],
-            set.boxes(1)[0].tiles[FRONT_AFTER_TURN[1]],
+            set.boxes(0, 0)[0].tiles[5],
+            set.boxes(1, 0)[0].tiles[FRONT_AFTER_TURN[1]],
             "the front TILE travels with the front face"
         );
         // The collision and outline views are the same turn, not a stale
         // authored copy.
         for t in 0..4u8 {
-            let boxes = set.boxes(t);
+            let boxes = set.boxes(t, 0);
             let collision: Vec<_> = boxes
                 .iter()
                 .filter(|b| b.collides)
                 .map(|b| b.aabb)
                 .collect();
-            assert_eq!(set.collision(t), collision, "turn {t} collision");
+            assert_eq!(set.collision(t, 0), collision, "turn {t} collision");
             for b in boxes {
                 for a in 0..3 {
-                    assert!(set.bounds(t).min[a] <= b.aabb.min[a], "turn {t} bounds");
-                    assert!(set.bounds(t).max[a] >= b.aabb.max[a], "turn {t} bounds");
+                    assert!(set.bounds(t, 0).min[a] <= b.aabb.min[a], "turn {t} bounds");
+                    assert!(set.bounds(t, 0).max[a] >= b.aabb.max[a], "turn {t} bounds");
                 }
             }
         }
@@ -1291,6 +1515,188 @@ mod tests {
     #[allow(non_snake_case)]
     fn FACE_BEFORE_TURN_N(i: usize, turns: u8) -> usize {
         (0..turns).fold(i, |f, _| FACE_BEFORE_TURN[f])
+    }
+
+    /// Whether face `i` of `b` draws the row's `front` tile once the shape is
+    /// turned `turns` — the exact predicate `families::box_set_box` applies,
+    /// restated here so these tests pin the BEHAVIOUR rather than the field it
+    /// happens to be derived from.
+    fn draws_front(b: &BoxDef, i: usize, turns: u8) -> bool {
+        i == FRONT_AFTER_TURN[((turns + b.art_turns[i]) & 3) as usize]
+    }
+
+    /// The corner forms are the stair rule lifted from quadrant masks to box
+    /// lists: OUTER = the shape intersected with its quarter-turned self (the
+    /// matter both perpendicular orientations agree on), INNER = the union.
+    /// Straight, lone, and end-of-run cells keep the AUTHORED geometry
+    /// untouched — corner joining must never change a shape's resting look
+    /// (the 2026-07-25 inset misdesign changed every isolated unit and is
+    /// exactly what this pins against).
+    #[test]
+    fn corner_forms_are_the_turned_intersection_and_union_of_the_shape() {
+        // A counter: full-cell top slab over a body whose front (`-Z`) is
+        // inset 2 texels.
+        let (_, params, key) = resolve_corners(
+            r#"{"boxes":[
+                 {"from":[0,14,0],"to":[16,16,16]},
+                 {"from":[0,0,2],"to":[16,14,16]}
+               ]}"#,
+        )
+        .unwrap();
+        let set = params.box_set().expect("box set params");
+        assert!(set.corner_joins);
+        assert!(key.ends_with("+corners"), "the flag is kind identity");
+        let t = |v: i32| v as f32 / 16.0;
+        // STRAIGHT is byte-identical to the authored list.
+        let straight = set.boxes(0, 0);
+        assert_eq!(straight.len(), 2);
+        assert_eq!(straight[1].aabb.min, [0.0, 0.0, t(2)]);
+        assert_eq!(straight[1].aabb.max, [1.0, t(14), 1.0]);
+        // OUTER: the body keeps only what a quarter-turned body also covers,
+        // so the front inset wraps around the turned side; the full-cell top
+        // stays whole. Form 1 = the perpendicular neighbour one turn
+        // clockwise (its front toward `+X` -> its body ends at x=14).
+        let outer = set.boxes(0, 1);
+        let body: Vec<_> = outer.iter().filter(|b| b.aabb.max[1] < 1.0).collect();
+        assert_eq!(body.len(), 1);
+        assert_eq!(body[0].aabb.min, [0.0, 0.0, t(2)]);
+        assert_eq!(body[0].aabb.max, [t(14), t(14), 1.0]);
+        // ...and the wrapped face inherits the turned parent's authoring
+        // FRAME, so the row's `front` tile lands on it too and the apron art
+        // continues around the corner. The draw asks exactly this question.
+        assert!(draws_front(body[0], 5, 0), "authored front still front");
+        assert!(
+            draws_front(body[0], 0, 0),
+            "wrapped +X face draws front art"
+        );
+        assert!(!draws_front(body[0], 1, 0), "back-side face stays side art");
+        // ...and that is what the DRAW puts on the face: TWO faces of one box
+        // carry the row's `front` tile, which no single turn index can name.
+        let furnace = crate::block::Block::Furnace;
+        let front = furnace.front_tile().expect("the furnace row has a front");
+        let drawn = families::box_set_box(body[0], 0, furnace, &|_| [1.0; 3]);
+        let tile_at = |i: usize| drawn.faces[i].expect("a drawn face").tile;
+        assert_eq!(tile_at(5), front, "authored front");
+        assert_eq!(tile_at(0), front, "wrapped corner front");
+        assert_eq!(
+            tile_at(1),
+            furnace.tiles()[2],
+            "the far side stays side art"
+        );
+        // INNER: the union — both bodies, straight parent first (coincident
+        // tie-break), duplicates (the identical top) dropped.
+        let inner = set.boxes(0, 3);
+        assert_eq!(inner.len(), 3, "top + both bodies");
+        assert_eq!(inner[1].aabb.max, [1.0, t(14), 1.0]);
+        assert_eq!(inner[2].aabb.max, [t(14), t(14), 1.0]);
+        // Turning distributes over the composition: form F at turn t is
+        // turn^t of form F at turn 0.
+        for form in 0..5u8 {
+            let expect: Vec<_> = set.boxes(0, form).iter().map(|b| b.turned()).collect();
+            assert_eq!(set.boxes(1, form), &expect[..], "form {form} turns whole");
+        }
+        // Collision follows the same variant; the outline never shrinks (the
+        // top spans the cell in every form).
+        assert_eq!(set.collision(0, 1).len(), 2);
+        assert_eq!(set.bounds(0, 1).max, [1.0; 3]);
+        // A stale stored byte past the vocabulary reads as STRAIGHT, never a
+        // panic or a garbage index (old worlds hold old bytes until the load
+        // sweep rewrites them).
+        assert_eq!(set.boxes(0, 9), set.boxes(0, 0));
+        // A plain box set: one form, no refinement, indexing still uniform —
+        // and the five slots SHARE one leaked list rather than holding five
+        // identical copies of it.
+        let (_, plain, _) = resolve_json(r#"{"boxes":[{"to":[16,15,16]}]}"#).unwrap();
+        let plain = plain.box_set().unwrap();
+        assert!(!plain.corner_joins);
+        for turns in 0..4u8 {
+            for form in 0..5 {
+                assert!(
+                    std::ptr::eq(plain.boxes(turns, form), plain.boxes(turns, 0)),
+                    "a formless kind must not leak a copy per form slot"
+                );
+                assert!(std::ptr::eq(
+                    plain.collision(turns, form),
+                    plain.collision(turns, 0)
+                ));
+            }
+        }
+        for b in plain.boxes(0, 0) {
+            assert_eq!(b.art_turns, [0; 6], "authored art is in its own frame");
+        }
+        // The flag off a boxes shape is a load error.
+        assert!(
+            serde_json::from_str::<RawShape>(r#""cube""#)
+                .unwrap()
+                .resolve(true)
+                .is_err(),
+            "'corners' requires a boxes shape"
+        );
+    }
+
+    /// A corner form's inherited face carries its PARENT's authoring frame,
+    /// and every frame-dependent decision must read that frame rather than the
+    /// cell's turn alone.
+    ///
+    /// The wrapped FRONT is covered above; this pins the other half, the `±Y`
+    /// UV counter-rotation. It needs a shape whose intersection is bounded by
+    /// the TURNED parent's top — the counter's two boxes are both full-cell or
+    /// both coplanar there, so they never expose it. With `face_uv_turns` read
+    /// off the cell's turn alone, this piece's inherited top tile draws a
+    /// quarter turn off, invisibly for symmetric art and wrongly for anything
+    /// else.
+    #[test]
+    fn an_inherited_top_face_is_uv_turned_by_its_parents_frame() {
+        // A low full-cell shelf with its own `up` art, under a tall half-depth
+        // riser. Turning the shelf is the identity; turning the riser is not.
+        let (_, params, _) = resolve_corners(
+            r#"{"boxes":[
+                 {"from":[0,0,0],"to":[16,6,16],"tiles":{"up":"stone"}},
+                 {"from":[0,0,0],"to":[16,16,8]}
+               ]}"#,
+        )
+        .unwrap();
+        let set = params.box_set().expect("box set params");
+        let t = |v: i32| v as f32 / 16.0;
+        // riser ∩ turn(shelf): the shelf's top bounds it, so its `+Y` face —
+        // tile and frame — comes from the TURNED shelf.
+        let outer = set.boxes(0, 1);
+        let piece = outer
+            .iter()
+            .find(|b| b.aabb.max == [1.0, t(6), t(8)])
+            .expect("riser clipped by the turned shelf");
+        assert_eq!(
+            piece.tiles[2],
+            Tile::from_name("stone"),
+            "inherited up tile"
+        );
+        assert_eq!(piece.art_turns[2], 1, "...authored one turn round");
+        // A face bounded by the shape's OWN box keeps frame 0 throughout.
+        let own = outer
+            .iter()
+            .find(|b| b.aabb.max == [1.0, t(6), 1.0])
+            .expect("shelf ∩ turned shelf");
+        assert_eq!(own.art_turns, [0; 6]);
+        // What actually matters is the DRAW: two tops of the same form, same
+        // tile, in the same cell, must be counter-rotated DIFFERENTLY because
+        // they were authored in different frames. Reading the cell's turn
+        // alone gives both `0` and is the bug this pins.
+        let drawn_top = |b: &BoxDef| {
+            families::box_set_box(b, 0, crate::block::Block::Stone, &|_| [1.0; 3]).faces[2]
+                .expect("a top face")
+                .uv_turns
+        };
+        assert_eq!(drawn_top(piece), 1, "inherited top turns with its parent");
+        assert_eq!(drawn_top(own), 0, "the shape's own top does not");
+        // The frame is a RELATIVE offset, so turning the whole form carries it
+        // to the face it followed and never changes its value.
+        let turned = set.boxes(1, 1);
+        let moved = turned
+            .iter()
+            .find(|b| b.aabb.min == [t(8), 0.0, 0.0] && b.aabb.max == [1.0, t(6), 1.0])
+            .expect("the same piece, one turn on");
+        assert_eq!(moved.art_turns[2], 1);
+        assert_eq!(moved.tiles[2], Tile::from_name("stone"));
     }
 
     /// The Layer-2 secondary families (`cross`/`crop`/`wall_panel`) resolve to

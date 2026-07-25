@@ -333,12 +333,16 @@ fn build(manifests: &[&str]) -> Result<AtlasData, String> {
     }
 
     let count = cells.len();
-    // The packed chunk vertex carries the tile id in 8 bits and the shader's
-    // uv-rect table is sized to match (`render::uniforms::UV_RECTS_LEN`), so
-    // the atlas cannot exceed 256 tiles without a vertex-format change.
-    if count > 256 {
+    // The packed chunk vertex carries the tile id in a fixed-width field and the
+    // shader's uv-rect table is sized to match, both derived from
+    // `mesh::MAX_TILES`, so the atlas cannot exceed it without a vertex-format
+    // change. NOTE this counts CELLS, not manifest rows: an animated strip
+    // expands to one cell per frame.
+    if count > crate::mesh::MAX_TILES {
         return Err(format!(
-            "atlas has {count} tiles; the packed chunk vertex stores tile ids in 8 bits (max 256 — see render::uniforms::UV_RECTS_LEN)"
+            "atlas has {count} tiles; the packed chunk vertex stores tile ids in {} bits (max {} — see mesh::MAX_TILES)",
+            crate::mesh::MAX_TILES.trailing_zeros(),
+            crate::mesh::MAX_TILES
         ));
     }
 

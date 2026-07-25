@@ -149,13 +149,13 @@ fn vs_common(pos: vec3<f32>, tint: vec3<f32>, packed: u32, packed2: u32) -> VsOu
     let local_pos = pos - u.render_origin.xyz;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
 
-    let tile = packed & 0xFFu;
-    let corner = (packed >> 8u) & 0x3u;
-    let shade_idx = (packed >> 10u) & 0x3u;
-    let overlay_tile = (packed >> 12u) & 0xFFu;
-    let ao = (packed >> 21u) & 0x3u;
-    let sky6 = (packed >> 23u) & 0x3Fu;
-    let uv_mode = (packed >> 29u) & 0x7u;
+    let tile = packed & 0x7FFu;
+    let corner = (packed >> 11u) & 0x3u;
+    let shade_idx = (packed >> 13u) & 0x3u;
+    let overlay_tile = (packed2 >> 20u) & 0x7FFu;
+    let ao = (packed >> 15u) & 0x3u;
+    let sky6 = (packed >> 17u) & 0x3Fu;
+    let uv_mode = (packed >> 23u) & 0x7u;
 
     // Animate water: WaterStill / WaterFlow are the first of `frame_count`
     // consecutive flipbook tiles; advance base + frame over time.
@@ -210,14 +210,14 @@ fn vs_common(pos: vec3<f32>, tint: vec3<f32>, packed: u32, packed2: u32) -> VsOu
         uv = cell_local_uv(packed2);
     } else {
         // uv_mode == NONE: plain cube face. A greedy-merged quad packs (W-1, H-1) into
-        // bits 12..20 so its layer tiles W×H across the merge under the REPEAT sampler;
+        // packed2 bits 20..28 so its layer tiles W×H across the merge under the REPEAT sampler;
         // a normal 1×1 face has 0 there → ×(1,1), a no-op. Water tops/sides (flow
         // heading) and grass-side overlays reuse those bits for other data, so exclude
         // them (they are never greedy-merged by the mesher).
-        let has_overlay = (packed >> 20u) & 0x1u;
+        let has_overlay = (packed >> 26u) & 0x1u;
         if (has_overlay == 0u && tile != u.atlas_anim.x && tile != u.atlas_anim.y) {
-            let gw = f32(((packed >> 12u) & 0xFu) + 1u);
-            let gh = f32(((packed >> 16u) & 0xFu) + 1u);
+            let gw = f32(((packed2 >> 20u) & 0xFu) + 1u);
+            let gh = f32(((packed2 >> 24u) & 0xFu) + 1u);
             uv = corner_local(corner) * vec2<f32>(gw, gh);
         }
     }
@@ -233,7 +233,7 @@ fn vs_common(pos: vec3<f32>, tint: vec3<f32>, packed: u32, packed2: u32) -> VsOu
     // Overlay uv: only grass sides (full cube faces) composite an overlay, so the
     // plain corner uv is always correct here.
     out.uv2 = corner_local(corner);
-    out.overlay = (packed >> 20u) & 0x1u;
+    out.overlay = (packed >> 26u) & 0x1u;
     out.overlay_layer = overlay_tile + dyed_off;
 
     // Final vertex light = directional face shade * per-vertex AO *
@@ -318,10 +318,10 @@ fn vs_terrain(in: VsInTerrain) -> VsOut {
 // uv-mode NONE, no overlay, not a water tile — and a nonzero (W-1, H-1) field,
 // so 1×1 faces (which never form T-junctions) stay mathematically exact.
 fn greedy_overlap_push(packed: u32, packed2: u32) -> vec3<f32> {
-    let uv_mode = (packed >> 29u) & 0x7u;
-    let has_overlay = (packed >> 20u) & 0x1u;
-    let tile = packed & 0xFFu;
-    let whf = (packed >> 12u) & 0xFFu;
+    let uv_mode = (packed >> 23u) & 0x7u;
+    let has_overlay = (packed >> 26u) & 0x1u;
+    let tile = packed & 0x7FFu;
+    let whf = (packed2 >> 20u) & 0xFFu;
     if (uv_mode != 0u || has_overlay == 1u || whf == 0u
         || tile == u.atlas_anim.x || tile == u.atlas_anim.y) {
         return vec3<f32>(0.0);
@@ -329,7 +329,7 @@ fn greedy_overlap_push(packed: u32, packed2: u32) -> vec3<f32> {
     // corner_local -> {-1,+1} per tangent axis; du/dv map (u,v) quad space to
     // world axes per face (normal code 1..=6, Face::ALL order — the same
     // corner order as Face::quad_box).
-    let c = corner_local((packed >> 8u) & 0x3u) * 2.0 - vec2<f32>(1.0, 1.0);
+    let c = corner_local((packed >> 11u) & 0x3u) * 2.0 - vec2<f32>(1.0, 1.0);
     var du = vec3<f32>(0.0);
     var dv = vec3<f32>(0.0);
     switch ((packed2 >> 16u) & 0x7u) {

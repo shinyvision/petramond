@@ -104,6 +104,72 @@ mod terrain_vertex_tests {
         assert_eq!(t.packed2, v.packed2);
         assert_eq!(std::mem::size_of::<TerrainVertex>(), 20);
     }
+
+    /// The packed words are decoded by HAND-MIRRORED WGSL (`block.wgsl`,
+    /// `model3d.wgsl`, `break_overlay.wgsl`), which no Rust test can execute —
+    /// a shift that drifts between the two is invisible until something renders
+    /// wrong. So this mirrors the shaders' decode and round-trips every field
+    /// at its extremes, including a tile id ABOVE the old 8-bit ceiling (the
+    /// whole point of the widening) and the overlay payload in its new home.
+    /// If you move a field, update this decode to match the shader you edited.
+    #[test]
+    fn packed_words_round_trip_through_the_shaders_decode() {
+        let cases = [
+            (0u32, 0u32, 0u32, 0u32, 0u32, false, 0u32),
+            (255, 3, 3, 3, 63, true, 0x7FF),
+            // Past the old cap: the id the 8-bit field could not hold.
+            (256, 1, 2, 1, 31, false, 1),
+            (TILE_MASK, 2, 1, 2, 17, true, OVERLAY_MASK),
+        ];
+        for (tile, corner, shade, ao, sky, has_overlay, overlay) in cases {
+            let packed = pack_vertex(tile, corner, shade, has_overlay, ao, sky);
+            let packed2 = pack_vertex2(45) | pack_overlay(overlay) | pack_normal_code(5);
+            // --- mirror of the WGSL decode ---
+            assert_eq!(packed & 0x7FF, tile, "tile");
+            assert_eq!((packed >> 11) & 0x3, corner, "corner");
+            assert_eq!((packed >> 13) & 0x3, shade, "shade");
+            assert_eq!((packed >> 15) & 0x3, ao, "ao");
+            assert_eq!((packed >> 17) & 0x3F, sky, "sky");
+            assert_eq!((packed >> 26) & 0x1, has_overlay as u32, "has_overlay");
+            assert_eq!((packed2 >> 20) & 0x7FF, overlay, "overlay payload");
+            assert_eq!(packed2 & 0x3F, 45, "block light");
+            assert_eq!((packed2 >> 16) & 0x7, 5, "normal code");
+            // The UV mode is OR-ed in above the fields by every emitter, so it
+            // must not collide with them.
+            let with_mode = packed | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT);
+            assert_eq!((with_mode >> 23) & 0x7, UV_MODE_CELL_LOCAL, "uv mode");
+            assert_eq!(with_mode & !(0x7 << 23), packed, "uv mode overlaps a field");
+        }
+    }
+
+    /// The greedy merge span shares the overlay payload, and `block.wgsl` reads
+    /// its two nibbles at fixed shifts (`packed2 >> 20` and `>> 24`). Mirror
+    /// that decode and round-trip both extremes: an off-by-one word or shift
+    /// here is a stretched-texture bug nothing else catches.
+    #[test]
+    fn the_greedy_span_round_trips_through_the_shaders_decode() {
+        for (w, h) in [(1u32, 1u32), (16, 1), (1, 16), (16, 16), (5, 11)] {
+            let packed2 = pack_vertex2(9) | pack_overlay(pack_greedy_span(w, h));
+            assert_eq!(unpack_greedy_span(packed2), (w, h));
+            // --- mirror of the WGSL decode ---
+            assert_eq!(((packed2 >> 20) & 0xF) + 1, w, "gw");
+            assert_eq!(((packed2 >> 24) & 0xF) + 1, h, "gh");
+            // A 1×1 face must leave the payload zero: `greedy_overlap_push`
+            // gates the T-junction nudge on a NONZERO payload.
+            assert_eq!(
+                (packed2 >> OVERLAY_SHIFT2) & OVERLAY_MASK == 0,
+                (w, h) == (1, 1),
+            );
+        }
+    }
+
+    /// The atlas cap, the shader uv-rect table and the tile field must describe
+    /// the same ceiling — the drift that would silently truncate tile ids.
+    #[test]
+    fn the_tile_field_sizes_the_atlas_cap_and_the_uv_rect_table() {
+        assert_eq!(MAX_TILES, TILE_MASK as usize + 1);
+        assert_eq!(crate::render::uniforms::UV_RECTS_LEN, MAX_TILES);
+    }
 }
 
 /// Pack a linear RGB tint (each channel `0..=1` — warm/biome tints never
@@ -134,34 +200,97 @@ pub(crate) fn unpack_tint(tint: u32) -> [f32; 3] {
 /// field meanings) routes through here, so the layout is defined in exactly one
 /// place.
 ///
-/// Bit layout (mirrored by hand in `src/shaders/block.wgsl` and `model3d.wgsl`):
-///   0..8 tile id | 8..10 corner (0..3) | 10..12 shade index (into `SHADES`)
-///   12..20 overlay tile | 20 has-overlay flag | 21..23 AO (0 dark..3 bright)
-///   23..29 SKYLIGHT ONLY (0 dark..63 full sky) | 29..32 UV mode
+/// Bit layout — the constants below are the ONE definition, mirrored by hand in
+/// `src/shaders/block.wgsl`, `model3d.wgsl` and `break_overlay.wgsl`:
+///   0..11 tile id | 11..13 corner (0..3) | 13..15 shade index (into `SHADES`)
+///   15..17 AO (0 dark..3 bright) | 17..23 SKYLIGHT ONLY (0 dark..63 full sky)
+///   23..26 UV mode | 26 has-overlay flag | 27..32 free
 ///
 /// Torch/block light moved to `packed2` bits 0..6 (see [`pack_vertex2`]) so the
 /// shader can dim the sky term (day/night mods) without dimming torch light.
-///
-/// `overlay`/`has_overlay` are the raw 12..20 payload and the bit-20 flag: a grass
-/// SIDE sets them to `(GrassSideOverlay, true)`; a flowing-water TOP reuses the
-/// same 8 bits to carry its quantized flow heading with `has_overlay = false` (so
-/// the fragment shader composites no overlay); everything else passes `(0, false)`.
+/// The overlay PAYLOAD lives in `packed2` too (see [`pack_overlay`]) — it is
+/// itself a tile id, so it had to widen with the tile field and no longer fits
+/// beside it.
 #[inline]
 pub(crate) fn pack_vertex(
     tile: u32,
     corner: u32,
     shade_idx: u32,
-    overlay: u32,
     has_overlay: bool,
     ao: u32,
     light: u32,
 ) -> u32 {
-    tile | (corner << 8)
-        | (shade_idx << 10)
-        | (overlay << 12)
-        | ((has_overlay as u32) << 20)
-        | (ao << 21)
-        | (light << 23)
+    debug_assert!(tile <= TILE_MASK, "tile id exceeds the packed field");
+    (tile & TILE_MASK)
+        | (corner << CORNER_SHIFT)
+        | (shade_idx << SHADE_SHIFT)
+        | (ao << AO_SHIFT)
+        | (light << SKY_SHIFT)
+        | if has_overlay { OVERLAY_FLAG } else { 0 }
+}
+
+/// Width of the `packed` tile-id field. 11 bits addresses 2048 atlas tiles —
+/// the cap `atlas::build` enforces and `render::uniforms::UV_RECTS_LEN` sizes
+/// its table to. An OVERLAY tile id is the same currency and gets the same
+/// width in `packed2`.
+pub(crate) const TILE_BITS: u32 = 11;
+pub(crate) const TILE_MASK: u32 = (1 << TILE_BITS) - 1;
+/// How many atlas tiles the vertex format can address — the ONE definition the
+/// atlas loader's cap and the shader uv-rect table both derive from, so the
+/// three cannot drift.
+pub const MAX_TILES: usize = 1 << TILE_BITS;
+pub(crate) const CORNER_SHIFT: u32 = 11;
+pub(crate) const SHADE_SHIFT: u32 = 13;
+pub(crate) const AO_SHIFT: u32 = 15;
+pub(crate) const SKY_SHIFT: u32 = 17;
+
+/// `Vertex::packed` bit 26. In the chunk pass it means "composite the overlay
+/// payload"; the model3d pass, which never composites overlays, reuses the same
+/// bit as [`SOLID_COLOR_FLAG`](crate::render::SOLID_COLOR_FLAG).
+pub(crate) const OVERLAY_FLAG: u32 = 1 << 26;
+
+/// The overlay payload's home in `packed2`, bits 20..31.
+///
+/// Three meanings share it, exactly as they shared the old `packed` 12..20: a
+/// grass SIDE carries its overlay TILE ID (with `has_overlay` set); a greedy
+/// quad carries its merged span as `(w - 1) | (h - 1) << 4`; a flowing-water TOP
+/// carries its quantized flow heading. All three are read only by the pass that
+/// wrote them.
+pub(crate) const OVERLAY_SHIFT2: u32 = 20;
+pub(crate) const OVERLAY_MASK: u32 = (1 << TILE_BITS) - 1;
+
+/// Fold an overlay payload into `Vertex::packed2` — see [`OVERLAY_SHIFT2`].
+#[inline]
+pub(crate) fn pack_overlay(payload: u32) -> u32 {
+    debug_assert!(payload <= OVERLAY_MASK, "overlay payload exceeds its field");
+    (payload & OVERLAY_MASK) << OVERLAY_SHIFT2
+}
+
+/// A greedy-merged quad's span as an overlay payload: `(w - 1) | (h - 1) << 4`,
+/// each 4 bits (a merge never exceeds one 16-cell section axis). The shader
+/// multiplies the corner uv by it so one tile REPEATs across the merge.
+///
+/// Paired with [`unpack_greedy_span`] so the emitter, the tests and the WGSL
+/// mirror all describe one layout — spelling the two nibbles out by hand is
+/// how the height read silently drifted onto the AO/sky bits when the payload
+/// moved words.
+#[inline]
+pub(crate) fn pack_greedy_span(w: u32, h: u32) -> u32 {
+    debug_assert!(
+        (1..=16).contains(&w) && (1..=16).contains(&h),
+        "span 1..=16"
+    );
+    ((w - 1) & 0xF) | (((h - 1) & 0xF) << 4)
+}
+
+/// The `(w, h)` a greedy quad's `packed2` word carries — the exact read
+/// `block.wgsl` performs. Nothing in the engine decodes this (the GPU does),
+/// so it exists as the encoder's inverse for the tests that pin the layout.
+#[cfg(test)]
+#[inline]
+pub(crate) fn unpack_greedy_span(packed2: u32) -> (u32, u32) {
+    let payload = (packed2 >> OVERLAY_SHIFT2) & OVERLAY_MASK;
+    ((payload & 0xF) + 1, ((payload >> 4) & 0xF) + 1)
 }
 
 /// Fold the second-word attributes into `Vertex::packed2` — the SINGLE owner of
@@ -172,10 +301,10 @@ pub(crate) fn pack_vertex(
 ///   | 6..16 cell-local uv ([`pack_cell_uv`], read only in [`UV_MODE_CELL_LOCAL`])
 ///   | 16..19 face-normal code ([`pack_normal_code`])
 ///   | 19 dyed flag ([`DYED_FLAG2`])
-///   | 20..32 RESERVED (zero)
+///   | 20..31 overlay payload ([`pack_overlay`]) | 31 RESERVED (zero)
 ///
 /// The block channel is 6 bits like the sky channel so the shader's `block_term`
-/// mirrors the sky curve exactly; the remaining 12 bits are reserved for future
+/// mirrors the sky curve exactly; the one remaining bit is reserved for future
 /// per-vertex data and MUST stay zero until a new owner is documented here.
 #[inline]
 pub(crate) fn pack_vertex2(block_light: u32) -> u32 {
@@ -211,7 +340,7 @@ pub(crate) fn pack_cell_uv(u16ths: u32, v16ths: u32) -> u32 {
 }
 
 /// Packed UV mode field, shared by `block.wgsl` and dynamic block geometry.
-pub(crate) const UV_MODE_SHIFT: u32 = 29;
+pub(crate) const UV_MODE_SHIFT: u32 = 23;
 pub(crate) const UV_MODE_NONE: u32 = 0;
 pub(crate) const UV_MODE_THIN_U: u32 = 1;
 pub(crate) const UV_MODE_THIN_V: u32 = 2;

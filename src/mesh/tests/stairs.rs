@@ -101,7 +101,10 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
         );
         // Ignore the per-quad corner index (bits 8..10); everything else —
         // tile, AO, sky light, block light, cell UV — must agree.
-        let val = (v.packed & !(0x3 << 8), v.packed2);
+        let val = (
+            v.packed & !(0x3 << crate::mesh::vertex::CORNER_SHIFT),
+            v.packed2,
+        );
         if let Some(prev) = seen.insert(key, val) {
             assert_eq!(
                 prev, val,

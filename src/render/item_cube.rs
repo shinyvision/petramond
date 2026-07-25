@@ -8,30 +8,30 @@
 //! variants pack sampled world skylight for hand/items while keeping AO = 3.
 //!
 //! ## Packing conventions (shared with `block.wgsl`'s `packed` layout)
-//! The vertex packs word 1 as
-//! `0..8 tile | 8..10 corner | 10..12 shade | 12..20 overlay | 20 flag | 21..23 AO | 23..29 SKYlight | 29..32 UV mode`
-//! and word 2 (`packed2`) as `0..6 block light | 6..16 cell-local uv | rest
-//! reserved`. For the textured path ([`cube_textured`], [`billboard_quad`]) we set
-//! the tile, corner, shade, AO = 3, skylight = 63.
+//! The bit positions live in `mesh::vertex` and this module encodes through
+//! those constants — see [`mesh::pack_vertex`](crate::mesh::Vertex) for the
+//! layout of both words. For the textured path ([`cube_textured`],
+//! [`billboard_quad`]) we set the tile, corner, shade, AO = 3, skylight = 63.
 //!
 //! ### Out-of-world foliage tint + grass-side overlay
 //! Icons / held items / dropped cubes have no biome context, so foliage greens
 //! using a single fixed temperate colour from [`foliage_tint`]. Each cube face is
 //! classified exactly like the chunk mesher: grass-top / short-grass / fern get
 //! the grass tint; all leaves get the foliage tint; grass-block SIDES render as a
-//! dirt base plus the tinted grayscale `GrassSideOverlay` — its tile is packed in
-//! bits 12..20 with the has-overlay flag at **bit 20** (the same overlay-composite
-//! path the chunk mesher uses, which `model3d.wgsl` mirrors). Note bit 20 is
-//! overloaded: in the textured path it means "has grass-side overlay"; the
-//! solid-color path ([`cube_solid`]) reuses the same bit for [`SOLID_COLOR_FLAG`].
+//! dirt base plus the tinted grayscale `GrassSideOverlay` — its tile rides the
+//! `packed2` overlay payload with the has-overlay flag set (the same
+//! overlay-composite path the chunk mesher uses, which `model3d.wgsl` mirrors).
+//! Note that flag bit is overloaded: in the textured path it means "has
+//! grass-side overlay"; the solid-color path ([`cube_solid`]) reuses it for
+//! [`SOLID_COLOR_FLAG`].
 //! The two never collide because a solid cuboid carries no tile/overlay and the
 //! shader reads the flag only on the appropriate branch.
 //!
 //! ### Solid-color sentinel ([`SOLID_COLOR_FLAG`])
 //! The skin hand has no texture. [`cube_solid`] packs the RGB tint into the
 //! `tint` field (as every textured vertex already carries a tint) and sets the
-//! reserved flag at **bit 20** (the chunk mesher's "has-overlay" bit, which has
-//! no meaning in the model3d pipeline). The STEP 2 model3d fragment shader reads
+//! chunk mesher's "has-overlay" bit, which has no meaning in the model3d
+//! pipeline. The STEP 2 model3d fragment shader reads
 //! this bit: when set it outputs the interpolated `tint` directly (solid color,
 //! atlas ignored); when clear it samples the atlas at the reconstructed uv. Keep
 //! this convention identical between this module and `model3d.wgsl`.
@@ -47,13 +47,13 @@ use crate::mesh::{pack_cell_uv, pack_tint, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_S
 
 use glam::Vec3;
 
-/// Bit 20 of `Vertex::packed`: when set, the model3d fragment shader treats the
-/// vertex's `tint` as the final solid color and ignores the atlas. Mirrors the
-/// chunk-mesher "has-overlay" bit position, which is unused by the model3d pass.
-pub const SOLID_COLOR_FLAG: u32 = 1 << 20;
+/// When set, the model3d fragment shader treats the vertex's `tint` as the
+/// final solid color and ignores the atlas. Mirrors the chunk-mesher
+/// "has-overlay" bit position, which is unused by the model3d pass.
+pub const SOLID_COLOR_FLAG: u32 = crate::mesh::OVERLAY_FLAG;
 
-/// Max AO (no occlusion) packed into bits 21..23.
-const FULL_AO: u32 = 3 << 21;
+/// Max AO (no occlusion).
+const FULL_AO: u32 = 3 << crate::mesh::AO_SHIFT;
 
 /// The six cube faces (`PosX, NegX, PosY, NegY, PosZ, NegZ`). Dynamic geometry
 /// shares the chunk mesher's [`mesh::face::Face`](crate::mesh::face::Face): its
@@ -65,21 +65,34 @@ const ALL_FACES: [Face; 6] = Face::ALL;
 
 #[inline]
 fn face_bits_textured_lit(mat: FaceMaterial, face: Face, skylight: u8) -> u32 {
-    let (ov_tile, ov_flag) = match mat.overlay_tile {
-        Some(o) => (o.index() as u32, 1u32),
-        None => (0, 0),
-    };
     (mat.base_tile.index() as u32)
-        | (face.shade_idx() << 10)
-        | (ov_tile << 12)
-        | (ov_flag << 20)
+        | (face.shade_idx() << crate::mesh::SHADE_SHIFT)
+        | if mat.overlay_tile.is_some() {
+            crate::mesh::OVERLAY_FLAG
+        } else {
+            0
+        }
         | FULL_AO
         | lighting::skylight_bits(skylight)
 }
 
+/// The `packed2` companion to [`face_bits_textured_lit`]: the overlay TILE lives
+/// in the second word (see `mesh::pack_overlay`), so a material with one must
+/// contribute to both.
+#[inline]
+fn face_bits2(mat: FaceMaterial) -> u32 {
+    match mat.overlay_tile {
+        Some(o) => crate::mesh::pack_overlay(o.index() as u32),
+        None => 0,
+    }
+}
+
 #[inline]
 fn face_bits_solid_lit(face: Face, skylight: u8) -> u32 {
-    (face.shade_idx() << 10) | FULL_AO | lighting::skylight_bits(skylight) | SOLID_COLOR_FLAG
+    (face.shade_idx() << crate::mesh::SHADE_SHIFT)
+        | FULL_AO
+        | lighting::skylight_bits(skylight)
+        | SOLID_COLOR_FLAG
 }
 
 /// The base quad emitter: append 4 verts (one per corner via `vertex(corner,
@@ -113,7 +126,7 @@ fn push_quad(
     push_quad_with(verts, indices, corners, |corner, pos| Vertex {
         pos,
         tint: pack_tint(tint),
-        packed: base_bits | ((corner as u32) << 8),
+        packed: base_bits | ((corner as u32) << crate::mesh::CORNER_SHIFT),
         packed2,
     });
 }
@@ -152,7 +165,7 @@ fn push_quad_cell_uvs(
         Vertex {
             pos,
             tint: pack_tint(tint),
-            packed: base_bits | ((corner as u32) << 8),
+            packed: base_bits | ((corner as u32) << crate::mesh::CORNER_SHIFT),
             packed2: packed2 | pack_cell_uv(u, v),
         }
     });
@@ -268,7 +281,7 @@ pub(super) fn push_box_faces_lit(
             face.quad_box(min.to_array(), max.to_array()),
             mat.tint,
             face_bits_textured_lit(mat, face, light.sky),
-            lighting::blocklight_word(light.block),
+            lighting::blocklight_word(light.block) | face_bits2(mat),
         );
     }
 }
@@ -286,7 +299,7 @@ fn push_log_cube_faces_lit(
     for (tile, face) in faces.into_iter().zip(ALL_FACES) {
         let mat = foliage_tint::face_material(tile);
         let corners = face.quad_box(origin.to_array(), max.to_array());
-        let word2 = lighting::blocklight_word(light.block);
+        let word2 = lighting::blocklight_word(light.block) | face_bits2(mat);
         if let Some(cell_uvs) = log_side_cell_uvs(axis, face) {
             push_quad_cell_uvs(
                 verts,
@@ -340,9 +353,9 @@ pub(super) fn orient_faces_to_block(verts: &mut [Vertex], start: usize, facing: 
     }
 }
 
-/// Packed bit shift for the UV mode field (bits 29..32, above the 6-bit skylight
-/// that tops out at bit 28). Dynamic thin geometry uses 1 = crop U and 2 = crop V;
-/// chunk-meshed stairs use the remaining modes for cell-local side UVs.
+/// Packed bit shift for the UV mode field. Dynamic thin geometry uses 1 = crop U
+/// and 2 = crop V; chunk-meshed stairs use the remaining modes for cell-local
+/// side UVs.
 pub(super) const UV_SLICE_SHIFT: u32 = UV_MODE_SHIFT;
 
 /// As [`push_box_faces_lit`] but, per face (`ALL_FACES` order):
@@ -351,7 +364,7 @@ pub(super) const UV_SLICE_SHIFT: u32 = UV_MODE_SHIFT;
 ///   physical side from either side). Mirroring is pure UV: the quad's corner indices
 ///   are swapped left↔right (`[1,0,3,2]`), flipping `u`, no geometry/winding change.
 /// - applies a thin-face UV-SLICE mode from `slice_mode` (0 none, 1 crop-U, 2 crop-V),
-///   packed into bits 29..32 ([`UV_SLICE_SHIFT`]) so the shader crops a 3/16-deep face
+///   packed at [`UV_SLICE_SHIFT`] so the shader crops a 3/16-deep face
 ///   to a matching strip of its tile instead of squishing the whole tile flat — used
 ///   by the door's thin side (crop-U) and top/bottom edge (crop-V) faces.
 pub(super) fn push_box_faces_lit_mirrored(
@@ -373,7 +386,7 @@ pub(super) fn push_box_faces_lit_mirrored(
         let mat = foliage_tint::face_material(tile);
         let corners = face.quad_box(min.to_array(), max.to_array());
         let bits = face_bits_textured_lit(mat, face, light.sky) | (slice << UV_SLICE_SHIFT);
-        let word2 = lighting::blocklight_word(light.block);
+        let word2 = lighting::blocklight_word(light.block) | face_bits2(mat);
         if mir {
             push_quad_uflip(verts, indices, corners, mat.tint, bits, word2);
         } else {
@@ -398,7 +411,7 @@ fn push_quad_uflip(
     push_quad_with(verts, indices, corners, |corner, pos| Vertex {
         pos,
         tint: pack_tint(tint),
-        packed: base_bits | (MIRROR[corner] << 8),
+        packed: base_bits | (MIRROR[corner] << crate::mesh::CORNER_SHIFT),
         packed2,
     });
 }
@@ -513,7 +526,7 @@ pub(super) fn push_block_item_cube_lit_with_state(
         // viewer nothing but its back. This is the same correction a `.bbmodel`
         // pack writes as a 180° yaw in its `gui` display transform.
         let turns = if block.directional_view() { 2 } else { 0 };
-        for b in icon_painter_order(set.boxes(turns), |b| &b.aabb, sort_for_icon) {
+        for b in icon_painter_order(set.boxes(turns, 0), |b| &b.aabb, sort_for_icon) {
             for (i, face) in ALL_FACES.into_iter().enumerate() {
                 if !b.faces[i] {
                     continue;
@@ -528,7 +541,12 @@ pub(super) fn push_block_item_cube_lit_with_state(
                     b.aabb.max,
                     face,
                     light,
-                    crate::block::face_uv_turns(i, turns),
+                    // The face's TOTAL turn, the same rule the chunk mesher
+                    // applies. The item always draws form 0, whose art is all
+                    // in the shape's own frame, so this is an identity today —
+                    // stated anyway so the two paths cannot diverge if the item
+                    // ever draws a composed form.
+                    crate::block::face_uv_turns(i, (turns + b.art_turns[i]) & 3),
                 );
             }
         }
@@ -720,7 +738,7 @@ pub(super) fn push_cell_local_face_turned(
     let mx = origin + Vec3::new(max[0], max[1], max[2]) * size;
     let mat = foliage_tint::face_material(tile);
     let bits = face_bits_textured_lit(mat, face, light.sky) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT);
-    let word2 = lighting::blocklight_word(light.block);
+    let word2 = lighting::blocklight_word(light.block) | face_bits2(mat);
     let corners = face.quad_box(mn.to_array(), mx.to_array());
     let local = face.quad_box(min, max);
     push_quad_with(verts, indices, corners, |corner, pos| {
@@ -729,7 +747,7 @@ pub(super) fn push_cell_local_face_turned(
         Vertex {
             pos,
             tint: pack_tint(mat.tint),
-            packed: bits | ((corner as u32) << 8),
+            packed: bits | ((corner as u32) << crate::mesh::CORNER_SHIFT),
             packed2: word2 | pack_cell_uv((u * 16.0).round() as u32, (v * 16.0).round() as u32),
         }
     });
@@ -828,7 +846,7 @@ pub fn push_billboard_quad(
     // short-grass sprites get the fixed grass tint (flowers stay untinted).
     let tint = foliage_tint::face_material(tile).tint;
     let base = (tile.index() as u32)
-        | (Face::PosY.shade_idx() << 10)
+        | (Face::PosY.shade_idx() << crate::mesh::SHADE_SHIFT)
         | FULL_AO
         | lighting::skylight_bits(lighting::FULL_SKYLIGHT);
     push_quad(verts, indices, front, tint, base, 0);
@@ -887,17 +905,17 @@ mod tests {
         ];
         let (v, _) = cube_textured(tiles, Vec3::ZERO, 1.0);
         // Faces emitted in ALL_FACES order: PosX, NegX, PosY, NegY, PosZ, NegZ.
-        // 4 verts per face; the tile id is bits 0..8 of `packed`.
-        let face_tile = |face_idx: usize| (v[face_idx * 4].packed & 0xFF) as u8;
+        // 4 verts per face; the tile id is the low field of `packed`.
+        let face_tile = |face_idx: usize| v[face_idx * 4].packed & crate::mesh::vertex::TILE_MASK;
         // PosX (side), NegX (side)
-        assert_eq!(face_tile(0), Tile::named("stone").index() as u8);
-        assert_eq!(face_tile(1), Tile::named("stone").index() as u8);
+        assert_eq!(face_tile(0), Tile::named("stone").index() as u32);
+        assert_eq!(face_tile(1), Tile::named("stone").index() as u32);
         // PosY (top), NegY (bottom)
-        assert_eq!(face_tile(2), Tile::named("grass_top").index() as u8);
-        assert_eq!(face_tile(3), Tile::named("dirt").index() as u8);
+        assert_eq!(face_tile(2), Tile::named("grass_top").index() as u32);
+        assert_eq!(face_tile(3), Tile::named("dirt").index() as u32);
         // PosZ (side), NegZ (side)
-        assert_eq!(face_tile(4), Tile::named("stone").index() as u8);
-        assert_eq!(face_tile(5), Tile::named("stone").index() as u8);
+        assert_eq!(face_tile(4), Tile::named("stone").index() as u32);
+        assert_eq!(face_tile(5), Tile::named("stone").index() as u32);
     }
 
     #[test]
@@ -975,9 +993,9 @@ mod tests {
         let (v, _) = cube_textured([Tile::named("stone"); 3], Vec3::ZERO, 1.0);
         for vert in &v {
             // skylight (bits 23..29) is full (63).
-            assert_eq!((vert.packed >> 23) & 0x3F, 63);
+            assert_eq!((vert.packed >> crate::mesh::vertex::SKY_SHIFT) & 0x3F, 63);
             // AO (bits 21..23) is full (3).
-            assert_eq!((vert.packed >> 21) & 0x3, 3);
+            assert_eq!((vert.packed >> crate::mesh::vertex::AO_SHIFT) & 0x3, 3);
             // textured path never sets the solid-color flag.
             assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0);
         }
@@ -986,7 +1004,8 @@ mod tests {
     #[test]
     fn cube_textured_face_shade_indices_match_mesher() {
         let (v, _) = cube_textured([Tile::named("stone"); 3], Vec3::ZERO, 1.0);
-        let shade = |face_idx: usize| (v[face_idx * 4].packed >> 10) & 0x3;
+        let shade =
+            |face_idx: usize| (v[face_idx * 4].packed >> crate::mesh::vertex::SHADE_SHIFT) & 0x3;
         assert_eq!(shade(0), 2); // PosX
         assert_eq!(shade(1), 2); // NegX
         assert_eq!(shade(2), 0); // PosY (top, brightest)
@@ -1006,7 +1025,7 @@ mod tests {
         for vert in &v {
             assert_eq!(vert.packed & SOLID_COLOR_FLAG, SOLID_COLOR_FLAG);
             assert_eq!(vert.tint, pack_tint(tint));
-            assert_eq!((vert.packed >> 23) & 0x3F, 63);
+            assert_eq!((vert.packed >> crate::mesh::vertex::SKY_SHIFT) & 0x3F, 63);
         }
     }
 
@@ -1017,8 +1036,8 @@ mod tests {
         assert_eq!(i.len(), 12);
         for vert in &v {
             assert_eq!(
-                (vert.packed & 0xFF) as u8,
-                Tile::named("poppy").index() as u8
+                vert.packed & crate::mesh::vertex::TILE_MASK,
+                Tile::named("poppy").index() as u32
             );
             assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0);
         }
@@ -1041,19 +1060,19 @@ mod tests {
         // Top face (PosY = index 2): GrassTop tinted green, no overlay.
         let top = &v[2 * 4];
         assert_eq!(
-            (top.packed & 0xFF) as u8,
-            Tile::named("grass_top").index() as u8
+            top.packed & crate::mesh::vertex::TILE_MASK,
+            Tile::named("grass_top").index() as u32
         );
         assert_eq!(top.tint, pack_tint(grass));
         assert_eq!(top.packed & SOLID_COLOR_FLAG, 0, "top has no overlay flag");
 
         // Side faces (PosX 0, NegX 1, PosZ 4, NegZ 5): dirt base + tinted
-        // grass-side overlay (bit 20 = has-overlay), overlay tile in bits 12..20.
+        // grass-side overlay: the has-overlay flag in word 1, the tile in word 2.
         for idx in [0usize, 1, 4, 5] {
             let s = &v[idx * 4];
             assert_eq!(
-                (s.packed & 0xFF) as u8,
-                Tile::named("dirt").index() as u8,
+                s.packed & crate::mesh::vertex::TILE_MASK,
+                Tile::named("dirt").index() as u32,
                 "side base = dirt"
             );
             // Bit 20 (overlay flag) set; overlay tile = GrassSideOverlay.
@@ -1063,8 +1082,9 @@ mod tests {
                 "side has overlay flag"
             );
             assert_eq!(
-                ((s.packed >> 12) & 0xFF) as u8,
-                Tile::named("grass_side_overlay").index() as u8,
+                (s.packed2 >> crate::mesh::vertex::OVERLAY_SHIFT2)
+                    & crate::mesh::vertex::OVERLAY_MASK,
+                Tile::named("grass_side_overlay").index() as u32,
                 "side overlay tile = grass-side overlay"
             );
             assert_eq!(s.tint, pack_tint(grass), "side overlay tinted green");
@@ -1072,7 +1092,10 @@ mod tests {
 
         // Bottom face (NegY = index 3): plain dirt, untinted, no overlay.
         let bot = &v[3 * 4];
-        assert_eq!((bot.packed & 0xFF) as u8, Tile::named("dirt").index() as u8);
+        assert_eq!(
+            bot.packed & crate::mesh::vertex::TILE_MASK,
+            Tile::named("dirt").index() as u32
+        );
         assert_eq!(bot.tint, pack_tint(foliage_tint::NO_TINT));
         assert_eq!(bot.packed & SOLID_COLOR_FLAG, 0);
     }
@@ -1083,8 +1106,8 @@ mod tests {
         let foliage = foliage_tint::default_foliage_color();
         for vert in &v {
             assert_eq!(
-                (vert.packed & 0xFF) as u8,
-                Tile::named("oak_leaves").index() as u8
+                vert.packed & crate::mesh::vertex::TILE_MASK,
+                Tile::named("oak_leaves").index() as u32
             );
             assert_eq!(vert.tint, pack_tint(foliage));
             assert_eq!(vert.packed & SOLID_COLOR_FLAG, 0, "leaves carry no overlay");

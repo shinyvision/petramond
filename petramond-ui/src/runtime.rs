@@ -382,7 +382,11 @@ fn place_tooltips(
             continue;
         }
         let rect = solved.rects[i as usize];
-        let off = tree.get(i).layout.abs.unwrap_or(crate::doc::AbsPos { x: 0, y: 0 });
+        let off = tree
+            .get(i)
+            .layout
+            .abs
+            .unwrap_or(crate::doc::AbsPos { x: 0, y: 0 });
         let flip = |cur: i32, off: i32, size: i32, limit: i32| {
             let lead = cur + off;
             let placed = if lead + size > limit {

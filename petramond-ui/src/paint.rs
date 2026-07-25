@@ -486,15 +486,7 @@ impl Painter<'_> {
     }
 
     /// Emit one run at `k` PHYSICAL px per font pixel, from a logical origin.
-    fn text_at(
-        &mut self,
-        s: &str,
-        x: i32,
-        y: i32,
-        k: i32,
-        color: [f32; 4],
-        clip: Option<RectI>,
-    ) {
+    fn text_at(&mut self, s: &str, x: i32, y: i32, k: i32, color: [f32; 4], clip: Option<RectI>) {
         let clip = self.phys_clip(clip);
         let font = self.font;
         let (tw, th) = font.atlas_size();

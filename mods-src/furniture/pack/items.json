@@ -63,12 +63,51 @@
       "tags": [],
       "block": "furniture:cabinet_shelf"
     },
-    { "patch": "petramond:dandelion", "data": { "furniture:pigment": { "color": [250, 224, 28] } } },
+    {
+      "item": "furniture:counter",
+      "key": "furniture:counter",
+      "name": "Counter",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+      "tags": [],
+      "block": "furniture:counter"
+    },
+    {
+      "item": "furniture:counter_shelf",
+      "key": "furniture:counter_shelf",
+      "name": "Counter Shelf",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+      "tags": [],
+      "block": "furniture:counter_shelf"
+    },
+    {
+      "item": "furniture:counter_cabinet",
+      "key": "furniture:counter_cabinet",
+      "name": "Counter Cabinet",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 0, "roll": 0 },
+      "tags": [],
+      "block": "furniture:counter_cabinet"
+    },
+    {
+      "patch": "petramond:dandelion",
+      "data": { "furniture:pigment": { "color": [250, 224, 28] } }
+    },
     { "patch": "petramond:poppy", "data": { "furniture:pigment": { "color": [222, 38, 28] } } },
-    { "patch": "petramond:cornflower", "data": { "furniture:pigment": { "color": [40, 84, 232] } } },
+    {
+      "patch": "petramond:cornflower",
+      "data": { "furniture:pigment": { "color": [40, 84, 232] } }
+    },
     { "patch": "petramond:allium", "data": { "furniture:pigment": { "color": [170, 90, 225] } } },
-    { "patch": "petramond:azure_bluet", "data": { "furniture:pigment": { "color": [244, 244, 234], "dilute": true } } },
-    { "patch": "petramond:oxeye_daisy", "data": { "furniture:pigment": { "color": [255, 255, 255], "dilute": true } } },
+    {
+      "patch": "petramond:azure_bluet",
+      "data": { "furniture:pigment": { "color": [244, 244, 234], "dilute": true } }
+    },
+    {
+      "patch": "petramond:oxeye_daisy",
+      "data": { "furniture:pigment": { "color": [255, 255, 255], "dilute": true } }
+    },
     { "patch": "petramond:red_tulip", "data": { "furniture:pigment": { "color": [224, 48, 36] } } },
     { "patch": "petramond:wool_block", "data": { "furniture:dyeable": true } },
     { "patch": "petramond:wool_stairs", "data": { "furniture:dyeable": true } },

@@ -48,6 +48,21 @@ pub(super) struct RawBlockDef {
     /// Tag names: bare engine tags or namespaced `mod_id:name` pack tags
     /// (interned at load — see [`BlockTag::resolve`]).
     pub tags: Vec<String>,
+    /// Whether this box-set shape resolves CORNER forms from perpendicular
+    /// same-kind neighbours, the way stairs do (`"corners": true`); see
+    /// `shape_kind::BoxSetParams`.
+    ///
+    /// A ROW field rather than a key inside `shape`, like `front` and
+    /// `collision`: `{"boxes": [...]}` is externally tagged with an array
+    /// payload, so it has no room for sibling keys, and half of what this
+    /// declares is a row-level question anyway. Its two legality rules are
+    /// therefore split by necessity — `RawShape::resolve` rejects it on a
+    /// non-`boxes` shape (only a box set can compose corner forms), and
+    /// [`convert`] rejects it without `directional_view` (a corner is a
+    /// meeting of two FACINGS, so with no stored facing the rule never fires
+    /// and the flag would be dead data). Both are load errors.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub corners: bool,
     pub behavior: String,
     pub interaction: RawInteraction,
     pub collision: Vec<Aabb>,
@@ -247,6 +262,12 @@ pub(super) struct Registry {
     /// `def()`→`shape_kind`→table double indirection (same rationale as
     /// [`flags`](Self::flags)).
     pub shape_family: [ShapeFamily; 256],
+    /// Dense per-id copy of [`ShapeKindDef::refines`] — the refine cascade's
+    /// and the load sweep's per-cell gate. The sweep walks whole sections' id
+    /// buffers looking for refining cells, so this MUST NOT cost the
+    /// `def()`→`shape_kind`→table chain per byte (same rationale as
+    /// [`shape_family`](Self::shape_family)).
+    pub shape_refines: [bool; 256],
 }
 
 /// Load the registry from every `blocks.json` layer (base + mod packs, later
@@ -305,10 +326,13 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
     let mut flags = [BlockFlags::NONE; 256];
     let mut emission = [0u8; 256];
     let mut shape_family = [ShapeFamily::Cube; 256];
+    let mut shape_refines = [false; 256];
     for d in defs {
         flags[d.block.id() as usize] = d.flags;
         emission[d.block.id() as usize] = d.emission;
-        shape_family[d.block.id() as usize] = shape_kinds[d.shape_kind.0 as usize].family;
+        let kind = &shape_kinds[d.shape_kind.0 as usize];
+        shape_family[d.block.id() as usize] = kind.family;
+        shape_refines[d.block.id() as usize] = kind.refines;
     }
     Ok(Registry {
         defs,
@@ -316,6 +340,7 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
         flags,
         emission,
         shape_family,
+        shape_refines,
     })
 }
 
@@ -425,7 +450,7 @@ fn convert(
     let tiles = [tile(&r.tiles[0])?, tile(&r.tiles[1])?, tile(&r.tiles[2])?];
     // Resolve the composable shape kind once; its family/params drive every
     // shape-keyed flag and validation below, and it interns into the table.
-    let (family, params, shape_key) = r.shape.resolve()?;
+    let (family, params, shape_key) = r.shape.resolve(r.corners)?;
     let mut flags = BlockFlags::NONE;
     for f in &r.flags {
         flags = flags.with(f.to_flag());
@@ -438,6 +463,11 @@ fn convert(
         flags = flags.with(BlockFlags::BOX_SHAPE);
     }
     if family == ShapeFamily::BoxSet {
+        // A corner is a meeting of two facings; without a stored facing the
+        // rule never fires and the flag is dead data.
+        if r.corners && !flags.is_directional_view() {
+            return Err("'corners' requires the 'directional_view' flag".into());
+        }
         // A sub-cell shape must not claim to be an opaque full cube: neighbours
         // would cull the faces toward it and open an x-ray slit over its gaps.
         if flags.is_opaque() {

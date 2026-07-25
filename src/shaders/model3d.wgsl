@@ -55,7 +55,7 @@ const UV_MODE_CELL_LOCAL: u32 = 3u;
 
 @group(0) @binding(0) var<uniform> m: MvpUniform;
 // uv-rect table identical to block.wgsl: (u0,v0,u1,v1) per tile. SELECT only.
-@group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 256>;
+@group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 2048>;
 @group(0) @binding(2) var<uniform> frame: FrameUniforms;
 @group(1) @binding(0) var atlas: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
@@ -126,13 +126,13 @@ fn vs_model(in: VsIn) -> VsOut {
     var out: VsOut;
     out.clip = m.mvp * vec4<f32>(in.pos, 1.0);
 
-    let tile = in.packed & 0xFFu;
-    let corner = (in.packed >> 8u) & 0x3u;
-    let shade_idx = (in.packed >> 10u) & 0x3u;
-    let overlay_tile = (in.packed >> 12u) & 0xFFu;
-    let ao = (in.packed >> 21u) & 0x3u;
-    let sky6 = (in.packed >> 23u) & 0x3Fu;
-    let uv_mode = (in.packed >> 29u) & 0x7u;
+    let tile = in.packed & 0x7FFu;
+    let corner = (in.packed >> 11u) & 0x3u;
+    let shade_idx = (in.packed >> 13u) & 0x3u;
+    let overlay_tile = (in.packed2 >> 20u) & 0x7FFu;
+    let ao = (in.packed >> 15u) & 0x3u;
+    let sky6 = (in.packed >> 17u) & 0x3Fu;
+    let uv_mode = (in.packed >> 23u) & 0x7u;
 
     // Reconstruct uvs from the FULL tile rect (texel-exact mapping); the
     // fragment stage clamps them into the half-texel-inset bounds so edge
@@ -173,7 +173,7 @@ fn vs_model(in: VsIn) -> VsOut {
         shades[shade_idx] * ao_lut[ao] * max(sky_term, vec3<f32>(block_term)),
     );
     out.tint = in.tint;
-    out.flag = (in.packed >> 20u) & 0x1u;
+    out.flag = (in.packed >> 26u) & 0x1u;
     out.overlay_tile = overlay_tile;
     return out;
 }

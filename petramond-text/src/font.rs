@@ -485,10 +485,7 @@ impl Font {
 
     pub fn atlas_size(&self) -> (u32, u32) {
         let rows = self.cells.div_ceil(ATLAS_COLS);
-        (
-            ATLAS_COLS * self.cell_w as u32,
-            rows * self.cell_h as u32,
-        )
+        (ATLAS_COLS * self.cell_w as u32, rows * self.cell_h as u32)
     }
 
     /// The atlas pixel rect `[x, y, w, h]` of `ch`'s cell.

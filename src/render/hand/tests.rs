@@ -61,7 +61,11 @@ fn lit_hand_packs_sampled_skylight() {
 
     assert!(!v.is_empty());
     for vert in &v {
-        assert_eq!((vert.packed >> 23) & 0x3F, 9, "sky channel in word 1");
+        assert_eq!(
+            (vert.packed >> crate::mesh::vertex::SKY_SHIFT) & 0x3F,
+            9,
+            "sky channel in word 1"
+        );
         assert_eq!(vert.packed2 & 0x3F, 5, "block channel in word 2");
     }
 }

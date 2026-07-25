@@ -14,24 +14,26 @@ use crate::section::Section;
 // skylight and loadedness default to uniform full sky and everything-loaded
 // unless a test overrides them.
 
+// Decoders read the ENCODER's own constants, so a layout change moves both
+// halves together instead of silently rotting the assertions.
 fn shade_idx(v: &Vertex) -> u32 {
-    (v.packed >> 10) & 0x3
+    (v.packed >> super::vertex::SHADE_SHIFT) & 0x3
 }
 
-/// Word 1's light bits (23..29) — SKY-ONLY since the channel split; every scene
-/// in these tests is sky-lit (no emitters), so it also equals the total light.
+/// Word 1's SKY light — sky-only since the channel split; every scene in these
+/// tests is sky-lit (no emitters), so it also equals the total light.
 fn light6(v: &Vertex) -> u32 {
-    (v.packed >> 23) & 0x3F
+    (v.packed >> super::vertex::SKY_SHIFT) & 0x3F
 }
 
-/// AO bits (word 1, 21..23).
+/// AO bits.
 fn ao_idx(v: &Vertex) -> u32 {
-    (v.packed >> 21) & 0x3
+    (v.packed >> super::vertex::AO_SHIFT) & 0x3
 }
 
-/// Tile id bits (word 1, 0..8).
+/// Tile id bits.
 fn tile_idx(v: &Vertex) -> u32 {
-    v.packed & 0xFF
+    v.packed & super::vertex::TILE_MASK
 }
 
 fn uv_mode(v: &Vertex) -> u32 {

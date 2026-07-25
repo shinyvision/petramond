@@ -557,7 +557,10 @@ fn grid_list_splits_columns_exactly_and_wraps_row_major() {
     assert_eq!(cells[4].y - cells[0].y, 18);
     assert_eq!(cells[4].x, cells[0].x, "row-major wrap returns to column 0");
     assert_eq!(cells[5].x, cells[1].x);
-    assert_eq!(s.rects[1].h, 34, "natural height is 2 rows of 16 plus a gap");
+    assert_eq!(
+        s.rects[1].h, 34,
+        "natural height is 2 rows of 16 plus a gap"
+    );
 }
 
 #[test]
@@ -565,7 +568,10 @@ fn a_partial_last_row_does_not_stretch_its_cells() {
     let s = solve_rows(GRID_DOC, (200, 200), 5);
     let cells = &s.rects[2..];
     assert_eq!(cells.len(), 5);
-    assert_eq!(cells[4].w, cells[0].w, "the lone last-row cell keeps its column width");
+    assert_eq!(
+        cells[4].w, cells[0].w,
+        "the lone last-row cell keeps its column width"
+    );
     assert_eq!(cells[4].x, cells[0].x);
 }
 

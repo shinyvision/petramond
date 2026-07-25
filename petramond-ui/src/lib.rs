@@ -46,6 +46,3 @@ pub use text_edit::{TextClipboard, TextInput, TextInputRender};
 pub use theme::{ImageData, Part, PartFace, Theme, ThemeEnv, ThemeError};
 pub use tree::{Inst, InstKey, InstTree};
 pub use validate::{DocIssue, SlotContract, StyleLookup};
-
-
-

@@ -11,7 +11,7 @@ use crate::torch::{warm_amount, warm_tint};
 use super::builder::{mesh_pad_idx, SectionMeshPad};
 use super::face::{quad_ao, should_flip, Face};
 use super::vertex::{
-    pack_cell_uv, pack_normal_code, pack_tint, pack_vertex, pack_vertex2, Vertex,
+    pack_cell_uv, pack_normal_code, pack_overlay, pack_tint, pack_vertex, pack_vertex2, Vertex,
     UV_MODE_CELL_LOCAL, UV_MODE_SHIFT,
 };
 
@@ -312,12 +312,12 @@ pub(super) fn push_cube_face_with_cell_uvs(
                 base_tile.index() as u32,
                 corner as u32,
                 shade_idx,
-                overlay,
                 has_overlay,
                 ao[corner],
                 light6[corner],
             ) | (packed_uv_mode << UV_MODE_SHIFT),
             packed2: pack_vertex2(block6[corner])
+                | pack_overlay(overlay)
                 | explicit_uv
                 | pack_normal_code(face.normal_code())
                 | dyed,

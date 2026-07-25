@@ -32,7 +32,7 @@ const WATER_TINT: vec3<f32> = vec3<f32>(0.42, 0.62, 0.85);
 @group(0) @binding(0) var<uniform> u: Uniforms;
 // Unused by particles (uv is absolute, per-vertex) but declared so this pipeline
 // can reuse the block pipeline's `uniform_bind` bind group unchanged.
-@group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 256>;
+@group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 2048>;
 @group(1) @binding(0) var atlas: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
 

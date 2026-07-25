@@ -59,7 +59,7 @@ pub(super) fn emit_torch(
                 pos: [wp.x, wp.y, wp.z],
                 tint: pack_tint(tint),
                 // Flat-lit (shade index 0, AO 3) like a cross-plant: no overlay.
-                packed: pack_vertex(tile.index() as u32, corner as u32, 0, 0, false, 3, sky6),
+                packed: pack_vertex(tile.index() as u32, corner as u32, 0, false, 3, sky6),
                 packed2: pack_vertex2(block6),
             });
         }

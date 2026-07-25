@@ -23,7 +23,7 @@ mod scene;
 mod selection;
 mod shader_pack;
 mod ui;
-mod uniforms;
+pub(crate) mod uniforms;
 
 pub use crate::game::presentation::BreakOverlayView;
 pub(crate) use hand_animator::HeldItemAnimator;

@@ -9,7 +9,8 @@ use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME};
 use super::builder::face_axes;
 use super::face::{Face, FACES};
 use super::vertex::{
-    pack_normal_code, pack_vertex, pack_vertex2, Vertex, UV_MODE_NONE, UV_MODE_SHIFT,
+    pack_greedy_span, pack_normal_code, pack_overlay, pack_vertex, pack_vertex2, Vertex,
+    UV_MODE_NONE, UV_MODE_SHIFT,
 };
 
 // Long greedy edges can meet subdivided neighbour faces as T-junctions, which rasterize
@@ -195,7 +196,7 @@ pub(super) fn emit_greedy_quads(
 }
 
 /// Push one greedy-merged quad: four flat vertices over the world box `[min,max]` with the
-/// merge extents `(w,h)` packed into the overlay-tile bits (`(W-1) | (H-1)<<4`), which the
+/// merge extents `(w,h)` in the overlay payload ([`pack_greedy_span`]), which the
 /// block shader reads to tile the layer. Uniform AO ⇒ no diagonal flip (default winding).
 fn push_greedy_quad(
     opaque: &mut Vec<Vertex>,
@@ -209,7 +210,6 @@ fn push_greedy_quad(
 ) {
     let corners = face.quad_box(min, max);
     let shade_idx = face.shade_idx();
-    let wh = ((w - 1) & 0xF) | (((h - 1) & 0xF) << 4);
     let start = opaque.len() as u32;
     let dyed = if key.tile & (1 << 31) != 0 {
         super::vertex::DYED_FLAG2
@@ -221,15 +221,17 @@ fn push_greedy_quad(
             pos: p,
             tint: key.tint,
             packed: pack_vertex(
-                key.tile & 0xFF,
+                key.tile & super::vertex::TILE_MASK,
                 corner as u32,
                 shade_idx,
-                wh,
                 false,
                 key.ao,
                 key.light6,
             ) | (UV_MODE_NONE << UV_MODE_SHIFT),
-            packed2: pack_vertex2(key.block6) | pack_normal_code(face.normal_code()) | dyed,
+            packed2: pack_vertex2(key.block6)
+                | pack_overlay(pack_greedy_span(w, h))
+                | pack_normal_code(face.normal_code())
+                | dyed,
         });
     }
     opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);

@@ -233,19 +233,20 @@ mod tests {
     /// the selection becomes invisible.
     #[test]
     fn an_authored_selected_face_wins_over_the_pressed_fallback() {
-        let with = |selected, pressed, hovered| {
-            button_face_state(true, selected, pressed, hovered, true)
-        };
-        let without = |selected, pressed, hovered| {
-            button_face_state(true, selected, pressed, hovered, false)
-        };
+        let with =
+            |selected, pressed, hovered| button_face_state(true, selected, pressed, hovered, true);
+        let without =
+            |selected, pressed, hovered| button_face_state(true, selected, pressed, hovered, false);
         assert_eq!(with(true, false, false), "selected");
         assert_eq!(without(true, false, false), "pressed");
         // Everything else is unchanged by the preference.
         assert_eq!(with(false, true, false), "pressed");
         assert_eq!(with(false, false, true), "hover");
         assert_eq!(with(false, false, false), "default");
-        assert_eq!(button_face_state(false, true, false, false, true), "disabled");
+        assert_eq!(
+            button_face_state(false, true, false, false, true),
+            "disabled"
+        );
     }
 
     #[test]

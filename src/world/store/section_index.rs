@@ -26,6 +26,10 @@ impl World {
         // Layer-3 custom-shape cells for a (re)bake now (a chair restored from
         // disk must rebuild its geometry, not sit on the static fallback).
         self.scan_section_custom_bakes(pos);
+        // ...and re-refine the section's refining cells, so stored refined
+        // state placed under an older vocabulary heals instead of rendering
+        // stale forever (authoritative sides only — see the sweep's doc).
+        self.refine_section_shapes(pos);
     }
 
     #[inline]

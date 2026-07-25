@@ -38,6 +38,24 @@ impl Block {
         data::shape_family(self.id())
     }
 
+    /// Whether this block's shape kind resolves refined per-cell state from its
+    /// neighbours ([`ShapeKindDef::refines`]) — the edit cascade's and the
+    /// load sweep's gate. Dense per-id LUT like [`shape_family`](Self::shape_family):
+    /// the cascade asks it seven times per edit and the load sweep asks it once
+    /// per cell of a whole section, neither of which may pay a `def()` load.
+    #[inline]
+    pub fn shape_refines(self) -> bool {
+        Self::id_refines_shape(self.id())
+    }
+
+    /// [`shape_refines`](Self::shape_refines) straight off a raw block id — for
+    /// a bulk scan over a section's id buffer, which has no `Block` in hand and
+    /// must not build one per cell.
+    #[inline]
+    pub fn id_refines_shape(id: u8) -> bool {
+        data::shape_refines(id)
+    }
+
     /// The bbmodel kind of a [`Model`](ShapeFamily::Model) block, or `None` for
     /// any other family — the shape-kind param accessor for the model kind.
     #[inline]

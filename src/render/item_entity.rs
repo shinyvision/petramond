@@ -422,7 +422,11 @@ mod tests {
         build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
 
         for vert in &v {
-            assert_eq!((vert.packed >> 23) & 0x3F, 12, "sky channel in word 1");
+            assert_eq!(
+                (vert.packed >> crate::mesh::vertex::SKY_SHIFT) & 0x3F,
+                12,
+                "sky channel in word 1"
+            );
             assert_eq!(vert.packed2 & 0x3F, 7, "block channel in word 2");
         }
     }

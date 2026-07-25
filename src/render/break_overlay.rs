@@ -309,10 +309,10 @@ mod tests {
         let n = build_break_overlay(&view, &mut v, &mut i);
         assert_eq!(v.len(), 24);
         assert_eq!(n, 36);
-        // Every face uses DestroyStage4 (tile id in bits 0..8 of packed).
-        let want = Tile::from_name("destroy_stage_4").unwrap().index() as u8;
+        // Every face uses DestroyStage4 (the tile id is `packed`'s low field).
+        let want = Tile::from_name("destroy_stage_4").unwrap().index() as u32;
         for vert in &v {
-            assert_eq!((vert.packed & 0xFF) as u8, want);
+            assert_eq!(vert.packed & crate::mesh::vertex::TILE_MASK, want);
         }
         // Coincident, not inflated: the cube spans the block cell [3,4] on x
         // *exactly*, so its faces sit on the chunk mesh's faces and the crack wins
@@ -387,7 +387,8 @@ mod tests {
             .iter()
             .filter(|vert| {
                 // NegY faces only (shade index 3): side faces also touch y == 60.
-                (vert.packed >> 10) & 0x3 == 3 && (vert.pos[1] - 60.0).abs() < 1e-6
+                (vert.packed >> crate::mesh::vertex::SHADE_SHIFT) & 0x3 == 3
+                    && (vert.pos[1] - 60.0).abs() < 1e-6
             })
             .collect();
         assert_eq!(bottom.len(), 4, "underside crack must be a single quad");
@@ -441,7 +442,7 @@ mod tests {
             // Side-face verts (X or Z shade groups) sit in the cell's lower
             // half, so their cell-local v spans 8..=16 — the lower half of the
             // tile — instead of restarting at 0 (which would stretch the decal).
-            let shade = (vert.packed >> 10) & 0x3;
+            let shade = (vert.packed >> crate::mesh::vertex::SHADE_SHIFT) & 0x3;
             if shade == 1 || shade == 2 {
                 let v16 = (vert.packed2 >> 11) & 0x1F;
                 assert!(

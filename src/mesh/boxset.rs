@@ -364,7 +364,6 @@ pub(super) fn emit_box_set<B, S, L, K>(
                             style.tile.index() as u32,
                             ci as u32,
                             face.shade_idx(),
-                            0,
                             false,
                             ao,
                             sky6,

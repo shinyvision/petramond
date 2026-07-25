@@ -1191,9 +1191,8 @@ fn tip_doc(offset: bool) -> Arc<Document> {
         ""
     };
     Arc::new(
-        Document::from_json(
-            &format!(
-                r#"{{
+        Document::from_json(&format!(
+            r#"{{
                 "format": 1, "kind": "petramond:test_tip", "class": "screen",
                 "root": {{ "type": "column",
                     "layout": {{ "w": 100, "h": 100, "anchor": {{ "h": "start", "v": "start" }} }},
@@ -1211,8 +1210,7 @@ fn tip_doc(offset: bool) -> Arc<Document> {
                           "children": [ {{ "type": "label", "text": "Tip" }} ] }}
                     ] }}
             }}"#
-            ),
-        )
+        ))
         .unwrap(),
     )
 }
@@ -1281,7 +1279,10 @@ fn a_tooltip_follows_the_pointer_and_flips_instead_of_leaving_the_viewport() {
 
     // Near the right/bottom edge it flips to the other side of the cursor so
     // it never covers what is being pointed at.
-    h.frame((200, 200), &[InputEvent::PointerMove { x: 190.0, y: 195.0 }]);
+    h.frame(
+        (200, 200),
+        &[InputEvent::PointerMove { x: 190.0, y: 195.0 }],
+    );
     let tip = h.out.rect("tip").unwrap();
     assert_eq!((tip.x, tip.y), (190 - 4 - 30, 195 - 4 - 12));
     assert!(tip.x + tip.w <= 200 && tip.y + tip.h <= 200);
@@ -1313,7 +1314,10 @@ fn a_tooltip_never_takes_the_input_under_it() {
         "the click reaches the cell under the tooltip: {:?}",
         h.out.events
     );
-    assert_eq!(h.out.hover_item.as_ref().map(|(id, i)| (id.as_str(), *i)), Some(("grid", 0)));
+    assert_eq!(
+        h.out.hover_item.as_ref().map(|(id, i)| (id.as_str(), *i)),
+        Some(("grid", 0))
+    );
 }
 
 #[test]
@@ -1438,23 +1442,24 @@ fn typing_a_word_keeps_it_visible_instead_of_scrolling_to_the_last_glyph() {
     for ch in "chest".chars() {
         h.frame(&[InputEvent::Char { ch }]);
     }
-    let shown = h
-        .fs
-        .editors
-        .values()
-        .next()
-        .expect("focused editor")
-        .render(
-            crate::widget::input_visible_chars(120),
-            true,
-            h.now,
-        );
+    let shown =
+        h.fs.editors
+            .values()
+            .next()
+            .expect("focused editor")
+            .render(crate::widget::input_visible_chars(120), true, h.now);
     assert_eq!(shown.text, "chest", "the whole word stays in view");
     assert_eq!(shown.cursor, 5, "and the caret is after it");
 
     // The window is a property of the box: a wider box shows more, and it
     // never depends on what has been typed into it.
     let font = crate::text::font();
-    assert_eq!(crate::widget::input_visible_chars(font.max_advance() * 3), 3);
-    assert_eq!(crate::widget::input_visible_chars(font.max_advance() * 9), 9);
+    assert_eq!(
+        crate::widget::input_visible_chars(font.max_advance() * 3),
+        3
+    );
+    assert_eq!(
+        crate::widget::input_visible_chars(font.max_advance() * 9),
+        9
+    );
 }

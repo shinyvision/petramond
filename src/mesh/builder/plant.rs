@@ -43,7 +43,7 @@ pub(super) fn emit_plant(
             opaque.push(Vertex {
                 pos: *p,
                 tint: pack_tint(tint),
-                packed: pack_vertex(tile.index() as u32, corner as u32, 0, 0, false, 3, sky6),
+                packed: pack_vertex(tile.index() as u32, corner as u32, 0, false, 3, sky6),
                 packed2: pack_vertex2(block6),
             });
         }

@@ -219,6 +219,14 @@ pub(super) fn shape_family(id: u8) -> ShapeFamily {
     REGISTRY.shape_family[id as usize]
 }
 
+/// Dense per-id [`ShapeKindDef::refines`] — the refine cascade's per-cell gate
+/// (see the `shape_refines` field on [`load::Registry`]). An id past the
+/// registry reads `false`, matching the `Air` its `Block::from_id` resolves to.
+#[inline]
+pub(super) fn shape_refines(id: u8) -> bool {
+    REGISTRY.shape_refines[id as usize]
+}
+
 /// Dense per-id STATE-FREE light apertures: what each block's shape blocks
 /// with no world context. The light flood reads it for every `Shaped` cell the
 /// sparse state gather did not cover — which is every cell of a stateless

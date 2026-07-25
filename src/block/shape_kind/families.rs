@@ -199,12 +199,33 @@ fn box_set_turns(nb: &dyn ShapeNeighborhood, pos: IVec3, block: Block) -> u8 {
     if !block.directional_view() {
         return 0;
     }
-    match state_of_at::<EntityFront>(nb, pos).0 {
+    turns_for(state_of_at::<EntityFront>(nb, pos).0)
+}
+
+fn turns_for(facing: Facing) -> u8 {
+    match facing {
         Facing::North => 0,
         Facing::East => 1,
         Facing::South => 2,
         Facing::West => 3,
     }
+}
+
+/// A box-set cell's stored corner form (byte 1), or straight when the shape
+/// does not corner-join. Byte 0 is the placed facing and is never refined —
+/// the stair's identity/refined split.
+///
+/// Reads the form off the params the facet was ALREADY handed rather than
+/// re-deriving them from the block: `occupies_pocket` calls this once per AO
+/// probe corner and once per light-aperture quadrant, and neither may pay a
+/// `def()` load. An out-of-vocabulary byte (an old world's stale state, until
+/// the load sweep rewrites it) is clamped by the accessors — see
+/// [`BoxSetParams::boxes`](super::BoxSetParams::boxes).
+fn box_set_form(p: &ShapeParams, nb: &dyn ShapeNeighborhood, pos: IVec3) -> super::CornerForm {
+    if !box_set(p).corner_joins {
+        return 0;
+    }
+    nb.shape_state(pos).byte(1)
 }
 
 impl ShapeSim for BoxSetFamily {
@@ -215,14 +236,14 @@ impl ShapeSim for BoxSetFamily {
         pos: IVec3,
         block: Block,
     ) -> &'static [Aabb] {
-        box_set(p).collision(box_set_turns(nb, pos, block))
+        box_set(p).collision(box_set_turns(nb, pos, block), box_set_form(p, nb, pos))
     }
 
     fn default_boxes(&self, p: &ShapeParams, _b: Block) -> &'static [Aabb] {
         // Per BOX: drawn matter always occludes light and AO, but a
         // decorative plate is walked through (mob spawning and the surface
         // probes deliberately skip non-colliding cover).
-        box_set(p).collision(0)
+        box_set(p).collision(0, 0)
     }
 
     fn occupies_pocket(
@@ -238,7 +259,7 @@ impl ShapeSim for BoxSetFamily {
         // obstructing, and a face plane spanning the cell carries a full-width
         // face without being a body.
         box_set(p)
-            .boxes(box_set_turns(nb, pos, b))
+            .boxes(box_set_turns(nb, pos, b), box_set_form(p, nb, pos))
             .iter()
             .filter(|d| d.occludes)
             .any(|d| overlaps(lo, hi, d.aabb.min, d.aabb.max))
@@ -250,13 +271,58 @@ impl ShapeSim for BoxSetFamily {
         // blocks light and a thin cover only shadows what it covers.
         crate::block::BlockLightShape::Shaped
     }
+
+    fn refine_state(
+        &self,
+        p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        block: Block,
+        state: ShapeState,
+    ) -> ShapeState {
+        if !box_set(p).corner_joins {
+            return state;
+        }
+        // Byte 0 (the placed facing) is IDENTITY and never refined; byte 1 is
+        // the corner form — the stair's identity/refined split, resolved by
+        // the SAME neighbour rule stairs use (`crate::stair::resolved_shape`):
+        // a perpendicular same-kind neighbour BEHIND makes an outer corner, IN
+        // FRONT an inner corner, else straight. Reading only neighbours'
+        // PLACED facings keeps the cascade acyclic, exactly like stairs.
+        let facing = state_of_at::<EntityFront>(nb, pos).0;
+        let own_kind = block.shape_kind();
+        let neighbour_facing = |q: IVec3| -> Option<Facing> {
+            let nb_block = nb.block(q);
+            (nb_block.shape_kind() == own_kind)
+                .then(|| state_of_at::<EntityFront>(nb, q).0)
+                .filter(|g| g.dir().dot(facing.dir()) == 0)
+        };
+        // Odd forms = the neighbour faces one quarter turn CLOCKWISE of us.
+        let side = |g: Facing| -> u8 {
+            if turns_for(g) == (turns_for(facing) + 1) & 3 {
+                0
+            } else {
+                1
+            }
+        };
+        let behind = -facing.dir();
+        let form = if let Some(g) = neighbour_facing(pos + behind) {
+            1 + side(g)
+        } else if let Some(g) = neighbour_facing(pos - behind) {
+            3 + side(g)
+        } else {
+            0
+        };
+        ShapeState::new(&[state.byte(0), form])
+    }
 }
 impl ShapeRender for BoxSetFamily {
     fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
         let turns = box_set_turns(ctx.nb, ctx.pos, ctx.block);
+        let form = box_set_form(ctx.params, ctx.nb, ctx.pos);
         out.extend(
             box_set(ctx.params)
-                .boxes(turns)
+                .boxes(turns, form)
                 .iter()
                 .map(|d| box_set_box(d, turns, ctx.block, ctx.tint_for)),
         )
@@ -269,7 +335,7 @@ impl ShapeRender for BoxSetFamily {
         pos: IVec3,
         block: Block,
     ) -> Option<([f32; 3], [f32; 3])> {
-        let b = box_set(p).bounds(box_set_turns(nb, pos, block));
+        let b = box_set(p).bounds(box_set_turns(nb, pos, block), box_set_form(p, nb, pos));
         Some((b.min, b.max))
     }
 
@@ -280,7 +346,7 @@ impl ShapeRender for BoxSetFamily {
     ) -> Option<([f32; 3], [f32; 3])> {
         // The DRAWN extent, whether or not it collides — a walk-through cover
         // stays aimable, like a no-collision model block.
-        let b = box_set(p).bounds(0);
+        let b = box_set(p).bounds(0, 0);
         Some((b.min, b.max))
     }
 
@@ -319,12 +385,19 @@ pub(crate) fn box_set_box(
             continue;
         }
         let Some(style) = face else { continue };
-        let front = front.filter(|_| i == super::FRONT_AFTER_TURN[(turns & 3) as usize]);
+        // This face's art lives in a frame `d.art_turns[i]` quarter turns
+        // ahead of the shape's own, so both frame-dependent decisions read the
+        // TOTAL turn: which face carries the row's `front` (a corner form's
+        // wrapped face is a different number of turns from the authored one
+        // than its siblings, which is why a single turn-index lookup could not
+        // express it) and how far a `±Y` tile must be counter-rotated.
+        let art_turns = (turns + d.art_turns[i]) & 3;
+        let front = front.filter(|_| i == super::FRONT_AFTER_TURN[art_turns as usize]);
         if let Some(tile) = d.tiles[i].or(front) {
             style.tile = tile;
             style.tint = tint_for(tile);
         }
-        style.uv_turns = super::face_uv_turns(i, turns);
+        style.uv_turns = super::face_uv_turns(i, art_turns);
     }
     b
 }
@@ -1352,9 +1425,13 @@ pub(super) fn resolves_to_boxes(family: ShapeFamily) -> bool {
 /// [`ShapeKindDef::refines`] so the edit cascade's per-cell gate is a field
 /// read. Adding a neighbour-refined family means adding it HERE and
 /// implementing `refine_state`, nothing in the cascade.
-pub(super) fn refines(family: ShapeFamily) -> bool {
-    matches!(
-        family,
-        ShapeFamily::Stair | ShapeFamily::Pane | ShapeFamily::Fence
-    )
+pub(super) fn refines(family: ShapeFamily, params: &ShapeParams) -> bool {
+    match family {
+        ShapeFamily::Stair | ShapeFamily::Pane | ShapeFamily::Fence => true,
+        // Per KIND, not per family: only a box set that actually declares a
+        // connect group has anything to refine, so farmland and the snow layer
+        // keep the cascade's cheap "nothing shaped nearby" path.
+        ShapeFamily::BoxSet => params.box_set().is_some_and(|s| s.corner_joins),
+        _ => false,
+    }
 }

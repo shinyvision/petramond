@@ -26,7 +26,7 @@ struct Uniforms {
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
-@group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 256>;
+@group(0) @binding(1) var<uniform> uv_rects: array<vec4<f32>, 2048>;
 @group(1) @binding(0) var atlas: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
 
@@ -66,9 +66,9 @@ fn vs_break(in: VsIn) -> VsOut {
     var out: VsOut;
     let local_pos = in.pos - u.render_origin.xyz;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
-    let tile = in.packed & 0xFFu;
-    let corner = (in.packed >> 8u) & 0x3u;
-    let uv_mode = (in.packed >> 29u) & 0x7u;
+    let tile = in.packed & 0x7FFu;
+    let corner = (in.packed >> 11u) & 0x3u;
+    let uv_mode = (in.packed >> 23u) & 0x7u;
     let r = uv_rects[tile];
     if (uv_mode == UV_MODE_CELL_LOCAL) {
         let c = vec2<f32>(

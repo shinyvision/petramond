@@ -16,13 +16,26 @@ pub fn fog_range(render_dist_chunks: i32) -> (f32, f32) {
 pub const UNDERWATER_FOG_START: f32 = 0.5;
 pub const UNDERWATER_FOG_END: f32 = 22.0;
 
-/// Fixed size of the uv-rect table shared with the vertex shader (`block.wgsl`
-/// declares `array<vec4<f32>, UV_RECTS_LEN>` — keep that literal in sync). Sized
-/// to the 8-bit tile-id field (`packed` bits 0..8), so the whole content catalogue
-/// fits without a shader edit. 256 × vec4<f32> = 4 KiB, well under the 16 KiB
-/// minimum uniform-block size guaranteed by WebGPU. The `pipeline.rs`
-/// `assert!(TILE_COUNT <= UV_RECTS_LEN)` is the compile-time guard.
-pub const UV_RECTS_LEN: usize = 256;
+/// Fixed size of the uv-rect table shared with the vertex shader. Sized
+/// straight from the packed vertex's tile-id field ([`crate::mesh::MAX_TILES`])
+/// so the whole content catalogue fits without a shader edit, and so widening
+/// that field cannot leave the table behind. The
+/// `pipeline.rs` `assert!(TILE_COUNT <= UV_RECTS_LEN)` is the runtime guard
+/// that the catalogue fits the table.
+///
+/// The WGSL side spells the length as a LITERAL (`array<vec4<f32>, 2048>`) in
+/// every shader bound to this group — WGSL cannot read a Rust constant, so
+/// `uv_rect_table_length_matches_every_shader` re-reads the shader sources and
+/// pins them to this value.
+pub const UV_RECTS_LEN: usize = crate::mesh::MAX_TILES;
+
+/// The binding must fit `wgpu::Limits::default().max_uniform_buffer_binding_size`
+/// (64 KiB) — which is what `render::renderer::construct` requests, so a table
+/// past it would fail device creation on every adapter rather than fall back.
+/// At 2048 tiles the table is 32 KiB; the next widening of the tile field would
+/// trip this instead of shipping.
+const _: () = assert!(UV_RECTS_LEN * 16 <= 65536);
+
 pub const SHADER_PARAM_SLOTS: usize = 16;
 
 #[repr(C, align(16))]
@@ -65,4 +78,47 @@ pub struct Uniforms {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ShaderParams {
     pub values: [[f32; 4]; SHADER_PARAM_SLOTS],
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UV_RECTS_LEN;
+
+    /// Every shader bound to the block group-0 layout declares the uv-rect
+    /// table's length as a WGSL literal, which no Rust constant can reach. A
+    /// shader left behind at the old length silently reads (or fails to
+    /// validate) past the table when the tile field widens, so re-read the
+    /// sources and pin the literal.
+    #[test]
+    fn uv_rect_table_length_matches_every_shader() {
+        // Every shader declaring binding 1 of the shared block group.
+        let sources = [
+            ("block.wgsl", include_str!("../shaders/block.wgsl")),
+            ("model3d.wgsl", include_str!("../shaders/model3d.wgsl")),
+            (
+                "break_overlay.wgsl",
+                include_str!("../shaders/break_overlay.wgsl"),
+            ),
+            ("particles.wgsl", include_str!("../shaders/particles.wgsl")),
+        ];
+        let want = format!("array<vec4<f32>, {UV_RECTS_LEN}>");
+        let mut declared = 0;
+        for (name, src) in sources {
+            for line in src.lines() {
+                if !line.contains("uv_rects") || !line.contains("array<vec4<f32>") {
+                    continue;
+                }
+                declared += 1;
+                assert!(
+                    line.contains(&want),
+                    "{name} declares uv_rects as `{}`, not `{want}`",
+                    line.trim()
+                );
+            }
+        }
+        // block.wgsl computes its uvs from the atlas directly and declares no
+        // table; the other three do. A source that stops declaring it (or a
+        // new one that starts) should be reflected here deliberately.
+        assert_eq!(declared, 3, "shaders declaring the uv-rect table");
+    }
 }

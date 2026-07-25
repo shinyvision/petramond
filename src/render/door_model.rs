@@ -188,7 +188,7 @@ mod tests {
         );
         // Faces are emitted per box in ALL_FACES order [PosX, NegX, PosY, NegY, PosZ, NegZ],
         // 4 verts each; read the first vert of each face in the lower box.
-        let slice = |face_idx: usize| (v[face_idx * 4].packed >> 29) & 0x3;
+        let slice = |face_idx: usize| (v[face_idx * 4].packed >> crate::mesh::UV_MODE_SHIFT) & 0x3;
         assert_eq!(slice(0), 1, "PosX side edge crops U");
         assert_eq!(slice(1), 1, "NegX side edge crops U");
         assert_eq!(slice(2), 2, "PosY top edge crops V");

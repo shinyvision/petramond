@@ -226,10 +226,7 @@ mod tests {
         .expect("shipped font is vendored");
         let font = Font::from_ttf(&bytes, 11.0).expect("shipped font rasterizes");
         let expect: &[(char, &[&str])] = &[
-            (
-                'w',
-                &["#.#.#", "#.#.#", "#.#.#", "#.#.#", "#.#.#", ".#.##"],
-            ),
+            ('w', &["#.#.#", "#.#.#", "#.#.#", "#.#.#", "#.#.#", ".#.##"]),
             (
                 'W',
                 &[
@@ -283,9 +280,3 @@ mod tests {
         assert_eq!(measure("hi", None), (width("hi"), line_h()));
     }
 }
-
-
-
-
-
-

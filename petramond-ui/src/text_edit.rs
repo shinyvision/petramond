@@ -358,7 +358,6 @@ impl TextInput {
             .min(self.len_chars())
     }
 
-
     pub fn begin_drag(&mut self, index: usize, visible_chars: usize, now: f64) -> usize {
         self.cursor = index.min(self.len_chars());
         self.selection_anchor = Some(self.cursor);

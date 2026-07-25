@@ -13,7 +13,7 @@ const FINAL_MIN: f32 = 0.006;
 
 #[inline]
 pub(super) fn skylight_bits(skylight: u8) -> u32 {
-    (skylight.min(FULL_SKYLIGHT) as u32) << 23
+    (skylight.min(FULL_SKYLIGHT) as u32) << crate::mesh::SKY_SHIFT
 }
 
 /// The `Vertex::packed2` word for a block-light level (bits 0..6; the rest of

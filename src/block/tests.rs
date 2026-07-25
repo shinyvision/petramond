@@ -79,12 +79,12 @@ fn a_box_set_derives_every_box_from_its_authored_shape() {
         checked += 1;
         assert_eq!(
             b.visual_aabb(),
-            Some((set.bounds(0).min, set.bounds(0).max)),
+            Some((set.bounds(0, 0).min, set.bounds(0, 0).max)),
             "{b:?} outlines the drawn union"
         );
         let collision: Vec<_> = b.collision_boxes().to_vec();
         let expect: Vec<_> = set
-            .boxes(0)
+            .boxes(0, 0)
             .iter()
             .filter(|d| d.collides)
             .map(|d| d.aabb)

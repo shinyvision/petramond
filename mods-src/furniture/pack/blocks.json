@@ -2,16 +2,9 @@
   "blocks": [
     {
       "block": "furniture:chair",
-      "shape": {
-        "model": "furniture:chair"
-      },
-      "flags": [
-        "directional_view",
-        "solid"
-      ],
-      "tags": [
-        "no_grass_decay"
-      ],
+      "shape": { "model": "furniture:chair" },
+      "flags": ["directional_view", "solid"],
+      "tags": ["no_grass_decay"],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
@@ -24,16 +17,9 @@
     },
     {
       "block": "furniture:bench",
-      "shape": {
-        "model": "furniture:bench"
-      },
-      "flags": [
-        "directional_view",
-        "solid"
-      ],
-      "tags": [
-        "no_grass_decay"
-      ],
+      "shape": { "model": "furniture:bench" },
+      "flags": ["directional_view", "solid"],
+      "tags": ["no_grass_decay"],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
@@ -47,9 +33,7 @@
     {
       "block": "furniture:chain",
       "shape": "furniture:chain",
-      "flags": [
-        "transparent"
-      ],
+      "flags": ["transparent"],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
@@ -64,9 +48,7 @@
     {
       "block": "furniture:chain_ns",
       "shape": "furniture:chain",
-      "flags": [
-        "transparent"
-      ],
+      "flags": ["transparent"],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
@@ -81,9 +63,7 @@
     {
       "block": "furniture:chain_ew",
       "shape": "furniture:chain",
-      "flags": [
-        "transparent"
-      ],
+      "flags": ["transparent"],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
@@ -98,12 +78,8 @@
     {
       "block": "furniture:cauldron",
       "shape": "furniture:cauldron",
-      "flags": [
-        "transparent"
-      ],
-      "tags": [
-        "no_grass_decay"
-      ],
+      "flags": ["transparent"],
+      "tags": ["no_grass_decay"],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
@@ -117,17 +93,17 @@
     {
       "block": "furniture:cauldron_water",
       "shape": "furniture:cauldron",
-      "flags": [
-        "transparent"
-      ],
-      "tags": [
-        "no_grass_decay"
-      ],
+      "flags": ["transparent"],
+      "tags": ["no_grass_decay"],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["furniture:cauldron_water_top", "furniture:cauldron_bottom", "furniture:cauldron_side"],
+      "tiles": [
+        "furniture:cauldron_water_top",
+        "furniture:cauldron_bottom",
+        "furniture:cauldron_side"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 5.0,
@@ -136,17 +112,17 @@
     {
       "block": "furniture:cauldron_dye",
       "shape": "furniture:cauldron",
-      "flags": [
-        "transparent"
-      ],
-      "tags": [
-        "no_grass_decay"
-      ],
+      "flags": ["transparent"],
+      "tags": ["no_grass_decay"],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["furniture:cauldron_dye_top", "furniture:cauldron_bottom", "furniture:cauldron_side"],
+      "tiles": [
+        "furniture:cauldron_dye_top",
+        "furniture:cauldron_bottom",
+        "furniture:cauldron_side"
+      ],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 5.0,
@@ -154,12 +130,8 @@
     },
     {
       "block": "furniture:chandelier",
-      "shape": {
-        "model": "furniture:chandelier"
-      },
-      "flags": [
-        "solid"
-      ],
+      "shape": { "model": "furniture:chandelier" },
+      "flags": ["solid"],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
@@ -183,16 +155,13 @@
           { "from": [0, 14, 1], "to": [16, 16, 16] }
         ]
       },
-      "flags": [
-        "solid",
-        "directional_view"
-      ],
+      "flags": ["solid", "directional_view"],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["furniture:cabinet_top", "furniture:cabinet_bottom", "furniture:cabinet_side"],
+      "tiles": ["furniture:cabinet_top", "furniture:unit_bottom", "furniture:cabinet_side"],
       "front": "furniture:cabinet_front",
       "material": "stone",
       "harvest_tier": 1,
@@ -209,10 +178,7 @@
           {
             "from": [2, 7, 1],
             "to": [14, 9, 14],
-            "tiles": {
-              "up": "furniture:cabinet_shelf_board",
-              "down": "furniture:cabinet_shelf_under"
-            }
+            "tiles": { "up": "furniture:shelf_board", "down": "furniture:shelf_under" }
           },
           { "from": [0, 14, 1], "to": [16, 16, 16] },
           {
@@ -222,25 +188,106 @@
           }
         ]
       },
-      "flags": [
-        "solid",
-        "directional_view"
-      ],
+      "flags": ["solid", "directional_view"],
       "tags": [],
       "behavior": "inert",
       "interaction": "none",
       "collision": [],
       "emission": 0,
       "tiles": [
-        "furniture:cabinet_shelf_top",
+        "furniture:cabinet_top",
         "furniture:cabinet_shelf_bottom",
-        "furniture:cabinet_shelf_side"
+        "furniture:cabinet_side"
       ],
       "front": "furniture:cabinet_shelf_front",
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 3.0,
       "drops": [{ "item": "furniture:cabinet_shelf", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
+      "block": "furniture:counter",
+      "shape": {
+        "boxes": [
+          { "from": [0, 14, 0], "to": [16, 16, 16] },
+          { "from": [0, 0, 2], "to": [16, 14, 16] }
+        ]
+      },
+      "flags": ["solid", "directional_view"],
+      "tags": [],
+      "corners": true,
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": ["furniture:counter_top", "furniture:unit_bottom", "furniture:counter_side"],
+      "front": "furniture:counter_front",
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 3.0,
+      "drops": [{ "item": "furniture:counter", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
+      "block": "furniture:counter_shelf",
+      "shape": {
+        "boxes": [
+          { "from": [0, 14, 0], "to": [16, 16, 16] },
+          { "from": [0, 0, 14], "to": [16, 14, 16] },
+          { "from": [0, 0, 2], "to": [2, 14, 14] },
+          { "from": [14, 0, 2], "to": [16, 14, 14] },
+          {
+            "from": [2, 0, 2],
+            "to": [14, 1, 14],
+            "tiles": { "up": "furniture:counter_shelf_floor" }
+          },
+          {
+            "from": [2, 7, 2],
+            "to": [14, 9, 14],
+            "tiles": { "up": "furniture:shelf_board", "down": "furniture:shelf_under" }
+          }
+        ]
+      },
+      "flags": ["solid", "directional_view"],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "furniture:counter_top",
+        "furniture:counter_shelf_bottom",
+        "furniture:counter_side"
+      ],
+      "front": "furniture:counter_shelf_front",
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 3.0,
+      "drops": [{ "item": "furniture:counter_shelf", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
+      "block": "furniture:counter_cabinet",
+      "shape": {
+        "boxes": [
+          { "from": [0, 14, 0], "to": [16, 16, 16] },
+          { "from": [0, 0, 14], "to": [16, 14, 16] },
+          { "from": [0, 0, 2], "to": [2, 14, 14] },
+          { "from": [14, 0, 2], "to": [16, 14, 14] },
+          { "from": [2, 0, 2], "to": [14, 1, 14] },
+          { "from": [2, 1, 2], "to": [14, 14, 3] }
+        ]
+      },
+      "flags": ["solid", "directional_view"],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": ["furniture:counter_top", "furniture:unit_bottom", "furniture:counter_side"],
+      "front": "furniture:counter_cabinet_front",
+      "material": "stone",
+      "harvest_tier": 1,
+      "hardness": 3.0,
+      "drops": [{ "item": "furniture:counter_cabinet", "min": 1, "max": 1, "chance": 1.0 }]
     },
     { "patch": "petramond:wool_block", "data": { "petramond:carry": ["petramond:tint"] } },
     { "patch": "petramond:wool_stairs", "data": { "petramond:carry": ["petramond:tint"] } },

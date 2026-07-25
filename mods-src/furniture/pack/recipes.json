@@ -24,18 +24,14 @@
       "type": "crafting",
       "recipe": "furniture:chain",
       "station": "petramond:furniture_workbench",
-      "ingredients": [
-        { "item": "petramond:iron_ingot", "count": 2 }
-      ],
+      "ingredients": [{ "item": "petramond:iron_ingot", "count": 2 }],
       "result": { "item": "furniture:chain", "count": 6 }
     },
     {
       "type": "crafting",
       "recipe": "furniture:cauldron",
       "station": "petramond:furniture_workbench",
-      "ingredients": [
-        { "item": "petramond:iron_ingot", "count": 6 }
-      ],
+      "ingredients": [{ "item": "petramond:iron_ingot", "count": 6 }],
       "result": { "item": "furniture:cauldron", "count": 1 }
     },
     {
@@ -70,6 +66,37 @@
         { "item": "petramond:iron_ingot", "count": 1 }
       ],
       "result": { "item": "furniture:cabinet", "count": 1 }
+    },
+    {
+      "type": "crafting",
+      "recipe": "furniture:counter",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        { "item": "petramond:cobblestone", "count": 3 },
+        { "tag": "petramond:planks", "count": 3 }
+      ],
+      "result": { "item": "furniture:counter", "count": 1 }
+    },
+    {
+      "type": "crafting",
+      "recipe": "furniture:counter_shelf",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        { "item": "petramond:cobblestone", "count": 2 },
+        { "tag": "petramond:planks", "count": 5 }
+      ],
+      "result": { "item": "furniture:counter_shelf", "count": 1 }
+    },
+    {
+      "type": "crafting",
+      "recipe": "furniture:counter_cabinet",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        { "item": "furniture:counter_shelf", "count": 1 },
+        { "tag": "petramond:planks", "count": 3 },
+        { "item": "petramond:iron_ingot", "count": 1 }
+      ],
+      "result": { "item": "furniture:counter_cabinet", "count": 1 }
     },
     { "patch": "petramond:wool_stairs", "data": { "petramond:inherit": ["petramond:tint"] } },
     { "patch": "petramond:wool_slab", "data": { "petramond:inherit": ["petramond:tint"] } }

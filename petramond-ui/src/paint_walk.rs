@@ -586,7 +586,8 @@ impl PaintCtx<'_> {
                 if let Some(text) = inst.text.as_deref() {
                     // Wrap to the frame's interior; centre the wrapped block
                     // vertically (single lines land where they always did).
-                    let text_w = (rect.x + rect.w - insets[2] - tx).max(self.theme.ui_font().cell_w());
+                    let text_w =
+                        (rect.x + rect.w - insets[2] - tx).max(self.theme.ui_font().cell_w());
                     let (_, block_h) = self.theme.ui_font().measure(text, Some(text_w));
                     p.text_wrapped(
                         text,

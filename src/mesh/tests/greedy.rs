@@ -16,10 +16,8 @@ fn greedy_merges_flat_floor_into_tiled_quads() {
         .filter(|v| shade_idx(v) == 0 && (v.pos[1] - 1.0).abs() < 1e-3)
         .collect();
     assert_eq!(top.len(), 4, "flat 16×16 top should merge into one quad");
-    let w = ((top[0].packed >> 12) & 0xF) + 1;
-    let h = ((top[0].packed >> 16) & 0xF) + 1;
     assert_eq!(
-        (w, h),
+        crate::mesh::vertex::unpack_greedy_span(top[0].packed2),
         (16, 16),
         "merged top quad must tile its layer 16×16"
     );
