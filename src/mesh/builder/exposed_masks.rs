@@ -28,19 +28,27 @@ pub(super) fn mask_has(masks: &ExposedMasks, face: Face, cell: usize) -> bool {
 
 #[inline]
 pub(super) fn pad_cube_fast_candidate(block: Block) -> bool {
-    // Glass stays on the per-face path: its glass-vs-glass cull (interior faces
-    // of a glass wall) isn't representable in the opaque-rows exposure masks.
-    // Translucent blocks (ice) stay there too — same-block cull plus the
-    // alpha-blended buffer, neither of which the fast path emits.
+    // A block that merges with itself (glass, ice) stays on the per-face path:
+    // that same-block cull isn't representable in the opaque-rows exposure
+    // masks. Translucent blocks also need the alpha-blended buffer, which the
+    // fast path does not emit. Sub-cell shapes never reach here at all — they
+    // are not the cube family.
     block != Block::Water
-        && block != Block::Cactus
-        && block != Block::Glass
+        && !block.merges_with_self()
         && !block.is_translucent()
         && block.shape_family() == ShapeFamily::Cube
         && block != Block::Chest
 }
 
-pub(super) fn build_exposed_masks(pad: &SectionMeshPad<'_>) -> ExposedMasks {
+/// `seals_floor(world_pos)`: does that cell's own geometry seal the boundary
+/// under it? The SAME seam the per-face path asks (`boxset::cell_seals_face`),
+/// passed in rather than re-derived here so the two paths cannot disagree —
+/// their agreement is what `mesh::tests::parity` pins.
+pub(super) fn build_exposed_masks(
+    pad: &SectionMeshPad<'_>,
+    origin: (i32, i32, i32),
+    seals_floor: &dyn Fn(crate::mathh::IVec3) -> bool,
+) -> ExposedMasks {
     const CENTER_BITS: u32 = (1u32 << SECTION_SIZE) - 1;
 
     #[inline]
@@ -59,9 +67,11 @@ pub(super) fn build_exposed_masks(pad: &SectionMeshPad<'_>) -> ExposedMasks {
 
     let mut masks = [[0u64; FACE_MASK_WORDS]; FACES.len()];
     let mut opaque_rows = [0u32; SECTION_PAD * SECTION_PAD];
-    // Blocks whose full 1×1 base covers the face BELOW them (lowered cubes:
-    // snow layer, farmland) without being opaque. Only the PosY cull may read
-    // this — a lowered cube covers nothing sideways or upward.
+    // Cells whose own geometry seals the boundary BENEATH them without being
+    // opaque — a lowered cube's floor-flush base, a mod shape with one. Only
+    // the PosY cull may read this: a sealed face in the other five directions
+    // is plain overdraw, while a sealed top that still draws z-fights the
+    // nearly-coplanar cover above it.
     let mut covers_below_rows = [0u32; SECTION_PAD * SECTION_PAD];
     for py in 0..SECTION_PAD {
         for pz in 0..SECTION_PAD {
@@ -71,7 +81,15 @@ pub(super) fn build_exposed_masks(pad: &SectionMeshPad<'_>) -> ExposedMasks {
                 let block = pad.block_at_pad(px, py, pz);
                 if block.is_opaque() || pad.full_slab_stack_at_pad(block, px, py, pz) {
                     row |= 1u32 << px;
-                } else if block.is_lowered_cube() {
+                // Air is the overwhelming majority of pad cells; testing it
+                // here keeps them off the shape seam entirely.
+                } else if block != Block::Air
+                    && seals_floor(crate::mathh::IVec3::new(
+                        origin.0 - 1 + px as i32,
+                        origin.1 - 1 + py as i32,
+                        origin.2 - 1 + pz as i32,
+                    ))
+                {
                     covers_row |= 1u32 << px;
                 }
             }

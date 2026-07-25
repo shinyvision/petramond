@@ -55,6 +55,105 @@ pub struct ShapeCtx<'a> {
 /// through the mesh pad is not possible anyway.
 pub const NO_PART_TINT: &dyn Fn(CellPart) -> Option<[f32; 3]> = &|_| None;
 
+/// The world a shape sees when there IS no world: air everywhere, no state.
+/// Resolves a shape's position-LESS answers — the light twin of
+/// [`ShapeSim::default_boxes`], used to bake the per-block-id default aperture
+/// table at load. A stateful family reads its own default state through it (a
+/// stair answers its default facing), which is exactly the fallback a cell
+/// with no stored state should get.
+pub struct NoNeighborhood;
+
+impl ShapeNeighborhood for NoNeighborhood {
+    fn block(&self, _pos: IVec3) -> Block {
+        Block::Air
+    }
+    fn shape_state(&self, _pos: IVec3) -> ShapeState {
+        ShapeState::NONE
+    }
+}
+
+/// The half-cell octant `(ix, iy, iz)` as a cell-local AABB — the quantization
+/// unit shared by sub-cell occupancy and the light apertures, so "does my
+/// matter fill this octant" has ONE meaning.
+#[inline]
+pub fn octant_box(ix: usize, iy: usize, iz: usize) -> ([f32; 3], [f32; 3]) {
+    let lo = [ix as f32 * 0.5, iy as f32 * 0.5, iz as f32 * 0.5];
+    (
+        [lo[0], lo[1], lo[2]],
+        [lo[0] + 0.5, lo[1] + 0.5, lo[2] + 0.5],
+    )
+}
+
+/// Half-extent of a light aperture probe: HALF A TEXEL, so a box authored on
+/// the 1/16 grid is either hit squarely or missed cleanly.
+const APERTURE_PROBE: f32 = 1.0 / 32.0;
+
+/// What a light aperture probes for quadrant `(ix, iy, iz)`: a small box at
+/// the CENTRE of that quadrant, pressed against the cell boundary its `axis`
+/// face lies on.
+///
+/// Centre, not the whole quadrant, and boundary, not the volume behind it —
+/// both halves are load-bearing, and both were learned from playtest:
+/// - probing the whole octant VOLUME reads farmland (15/16 tall) as sealing
+///   its own top, which floods its cell black and drags every neighbouring
+///   face's smooth light down with it;
+/// - probing the whole quadrant's boundary RECT reads a cactus as sealed on
+///   all four sides, because its cap plates clip the extreme texel of each
+///   quadrant edge — the same black cell, for the same reason.
+///
+/// A quadrant is coarse (a quarter of a face); asking "is there matter in the
+/// middle of it, right against the boundary" is the answer that matches what
+/// the shape looks like from outside.
+fn aperture_probe(axis: usize, ix: usize, iy: usize, iz: usize) -> ([f32; 3], [f32; 3]) {
+    let (qlo, qhi) = octant_box(ix, iy, iz);
+    let mut lo = [0.0f32; 3];
+    let mut hi = [0.0f32; 3];
+    for a in 0..3 {
+        let centre = (qlo[a] + qhi[a]) * 0.5;
+        lo[a] = centre - APERTURE_PROBE;
+        hi[a] = centre + APERTURE_PROBE;
+    }
+    if [ix, iy, iz][axis] == 0 {
+        lo[axis] = 0.0;
+        hi[axis] = APERTURE_PROBE;
+    } else {
+        lo[axis] = 1.0 - APERTURE_PROBE;
+        hi[axis] = 1.0;
+    }
+    (lo, hi)
+}
+
+/// The aperture quadrant bit of octant `(ix, iy, iz)` on the face whose normal
+/// runs along `axis`.
+#[inline]
+fn aperture_bit(axis: usize, ix: usize, iy: usize, iz: usize) -> u8 {
+    let (a, b) = match axis {
+        0 => (iz, iy),
+        1 => (ix, iz),
+        _ => (ix, iy),
+    };
+    1u8 << (b * 2 + a)
+}
+
+/// The union of a box list as a selection box: `None` for an empty list (there
+/// is nothing to outline) and for an exact full unit cube (the default
+/// selection already IS the cell). The one place box lists collapse to an
+/// outline, shared by every family that outlines what it collides with.
+pub fn union_box(boxes: &[Aabb]) -> Option<([f32; 3], [f32; 3])> {
+    if boxes.is_empty() {
+        return None;
+    }
+    let mut mn = [f32::INFINITY; 3];
+    let mut mx = [f32::NEG_INFINITY; 3];
+    for b in boxes {
+        for i in 0..3 {
+            mn[i] = mn[i].min(b.min[i]);
+            mx[i] = mx[i].max(b.max[i]);
+        }
+    }
+    (mn != [0.0; 3] || mx != [1.0; 3]).then_some((mn, mx))
+}
+
 /// A family's answer to [`ShapeSim::full_face`]: the face is complete, and it
 /// is (or is not) the face of a full cube. Material rules (opaque-only joins,
 /// the pane opt-out tag, a mount's opacity requirement) bind CUBE faces only —
@@ -63,6 +162,20 @@ pub const NO_PART_TINT: &dyn Fn(CellPart) -> Option<[f32; 3]> = &|_| None;
 pub enum FullFace {
     Cube,
     Shaped,
+}
+
+/// Whether the shape at `pos` LIES FLAT on its cell floor — its matter fills
+/// every bottom octant, so the cell rests on the ground the way a cover or a
+/// plate does rather than rooting in it like a plant. Asked of the shape, so a
+/// mod block shaped like a cover behaves like one with no engine edit.
+pub fn rests_flat_on_floor(nb: &dyn ShapeNeighborhood, pos: IVec3, block: Block) -> bool {
+    let k = block.shape_kind_def();
+    (0..2).all(|ix| {
+        (0..2).all(|iz| {
+            let (lo, hi) = octant_box(ix, 0, iz);
+            k.sim.occupies_pocket(&k.params, nb, pos, block, lo, hi)
+        })
+    })
 }
 
 /// Ask the family at `q` whether its face with outward normal `dir` is
@@ -212,13 +325,71 @@ pub trait ShapeSim: Send + Sync + 'static {
         crate::block::BlockLightShape::Open
     }
 
-    /// The cell's packed per-face light apertures, derived from its OWN
-    /// stored state — see [`pack_light_apertures`] for the layout. Gathered
-    /// into the light snapshot for every `Shaped` cell, so the flood consults
-    /// family-answered bits and holds no family knowledge. Deterministic (the
-    /// server's light bake is authoritative).
-    fn light_apertures(&self, _params: &ShapeParams, _block: Block, _state: ShapeState) -> u32 {
-        LIGHT_APERTURES_OPEN
+    /// Whether this cell's matter overlaps the cell-local pocket `(lo, hi)` —
+    /// the sub-cell occupancy oracle. It is pure GEOMETRY (no tiles, no
+    /// presentation), which is why it lives on the sim side: the mesher's AO
+    /// probes and the light flood's apertures are the same question asked by
+    /// two consumers, and answering it twice is how they drift.
+    ///
+    /// A family answers at whatever granularity its shape warrants, and the
+    /// granularity is DELIBERATE, not laziness: stairs and slabs answer by
+    /// half-cell OCTANT, because AO is quantized to 0..3, because the light
+    /// apertures are quantized to quadrants anyway, and because the two
+    /// meshers must agree byte for byte.
+    fn occupies_pocket(
+        &self,
+        _params: &ShapeParams,
+        _nb: &dyn ShapeNeighborhood,
+        _pos: IVec3,
+        _block: Block,
+        _lo: [f32; 3],
+        _hi: [f32; 3],
+    ) -> bool {
+        false
+    }
+
+    /// The cell's packed per-face light apertures — see
+    /// [`pack_light_apertures`] for the layout. Read for every `Shaped` cell,
+    /// so the flood consults family-answered bits and holds no family
+    /// knowledge. Deterministic (the server's light bake is authoritative).
+    ///
+    /// The default DERIVES them from [`occupies_pocket`](Self::occupies_pocket):
+    /// a face quadrant is open exactly when nothing sits against the boundary
+    /// in the middle of it (see [`aperture_probe`]). No family should override
+    /// this — "what
+    /// blocks light" is "what matter is there", and a second hand-written
+    /// answer is a second thing to keep in sync (stairs and slabs each had
+    /// one, and the stair's silently used its PLACED shape, not its refined
+    /// one).
+    fn light_apertures(
+        &self,
+        params: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        block: Block,
+    ) -> u32 {
+        pack_light_apertures(|dir| {
+            let d = [dir.0, dir.1, dir.2];
+            let Some(axis) = d.iter().position(|&c| c != 0) else {
+                return 0;
+            };
+            let layer = usize::from(d[axis] > 0);
+            let mut open = 0u8;
+            for iy in 0..2 {
+                for iz in 0..2 {
+                    for ix in 0..2 {
+                        if [ix, iy, iz][axis] != layer {
+                            continue;
+                        }
+                        let (lo, hi) = aperture_probe(axis, ix, iy, iz);
+                        if !self.occupies_pocket(params, nb, pos, block, lo, hi) {
+                            open |= aperture_bit(axis, ix, iy, iz);
+                        }
+                    }
+                }
+            }
+            open
+        })
     }
 
     /// Whether navigation reads a cell of this shape as solid even though its
@@ -237,15 +408,34 @@ pub trait ShapeRender: Send + Sync + 'static {
     /// [`World::selection_box_at`]. `None` = the full-cube default. Must agree
     /// with [`ShapeSim::collision_boxes`] so "aim inside the outline" hits the
     /// real box — which is why it reads through the same primitive seam.
-    /// Default is the row's [`Block::visual_aabb`].
+    /// Default is the family's position-less
+    /// [`default_selection_box`](Self::default_selection_box).
     fn selection_box(
         &self,
-        _params: &ShapeParams,
+        params: &ShapeParams,
         _nb: &dyn ShapeNeighborhood,
         _pos: IVec3,
         block: Block,
     ) -> Option<([f32; 3], [f32; 3])> {
-        block.visual_aabb()
+        self.default_selection_box(params, block)
+    }
+
+    /// The position-LESS selection box: what this shape targets and outlines
+    /// with no world context — the render twin of
+    /// [`ShapeSim::default_boxes`], and the resolve behind
+    /// [`Block::visual_aabb`]. `None` = an ordinary full cube (which needs no
+    /// outline of its own) or a cell with nothing to aim at.
+    ///
+    /// The default is the union of the row's collision boxes, so a shape that
+    /// COLLIDES with what it draws needs nothing here. A shape whose visible
+    /// form is deliberately not its collision — a walk-through thin cover, a
+    /// no-collision bbmodel — overrides, which is what keeps it aimable.
+    fn default_selection_box(
+        &self,
+        _params: &ShapeParams,
+        block: Block,
+    ) -> Option<([f32; 3], [f32; 3])> {
+        union_box(block.collision_boxes())
     }
 
     /// Resolve this cell's drawn box set — THE box producer for a box-shaped
@@ -256,20 +446,6 @@ pub trait ShapeRender: Send + Sync + 'static {
     /// Default: no boxes. A family whose form is not a box set (full cube,
     /// plants, torch, bbmodel) leaves it alone and draws through its own path.
     fn boxes(&self, _ctx: &ShapeCtx<'_>, _out: &mut Vec<ShapeBox>) {}
-
-    /// Whether this cell's matter overlaps the cell-local pocket `(lo, hi)` —
-    /// the sub-cell AO occupancy oracle, consumed by the cube gathers' cast
-    /// probes AND the box emitter's out-of-cell probes, so casting and
-    /// receiving speak one rule.
-    ///
-    /// A family answers at whatever granularity its shape warrants, and the
-    /// granularity is DELIBERATE, not laziness: stairs and slabs answer by
-    /// half-cell OCTANT off their UNRESOLVED state, because AO is quantized
-    /// to 0..3 and because corner-join resolution reads neighbours the pad
-    /// mesher cannot reach — the two meshers must agree byte for byte.
-    fn occupies_pocket(&self, _ctx: &ShapeCtx<'_>, _lo: [f32; 3], _hi: [f32; 3]) -> bool {
-        false
-    }
 
     /// Whether THIS cell's resolved form is exactly the material's full cube,
     /// so it should mesh through the cube fast path (greedy merge included)
@@ -312,7 +488,7 @@ pub enum ItemRender {
     ItemSprite,
     /// A specific atlas tile as a flat sprite (a plant's top tile).
     Tile(Tile),
-    /// A plain full-cube icon (cube, lowered cube).
+    /// A plain full-cube icon (the plain cube).
     Cube(Block),
     /// True baked geometry built from the family + the held state (stair, slab,
     /// fence) — the same helpers the chunk mesher uses.

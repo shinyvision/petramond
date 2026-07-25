@@ -120,6 +120,55 @@ fn raycast_target_selection_cases() {
     }
 }
 
+/// A walk-through cover (a lowered cube whose shape declares no collision) is
+/// selectable by its VISIBLE box, not by its collision: aiming at the cover
+/// hits it, and a ray passing above the box misses. The DDA reaches it because
+/// the shape answers with a box at all, not because the engine names its
+/// family.
+#[test]
+fn raycast_targets_a_walk_through_cover_by_its_visible_box() {
+    let blocks = |x: i32, y: i32, z: i32| {
+        if (x, y, z) == (2, 64, 0) {
+            Block::SnowLayer
+        } else {
+            Block::Air
+        }
+    };
+    assert!(
+        Block::SnowLayer.collision_boxes().is_empty(),
+        "the fixture only means anything while the cover is walk-through"
+    );
+    // What `precise_shape_hit` does for a shape that is not a box SET: test
+    // the family's own visible box.
+    let precise = |e, d, pos: IVec3, block: Block| {
+        let (mn, mx) = block.visual_aabb()?;
+        let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+        interaction::ray_vs_aabb_hit(e, d, base + Vec3::from(mn), base + Vec3::from(mx))
+    };
+
+    // Just above the floor, inside the 1/16 cover: a hit on the cover's cell.
+    let (hit, _) = Player::raycast_blocks_core(
+        Vec3::new(0.5, 64.03, 0.5),
+        Vec3::new(1.0, 0.0, 0.0),
+        &blocks,
+        &precise,
+    )
+    .expect("the cover is selectable");
+    assert_eq!(hit.block, IVec3::new(2, 64, 0));
+
+    // Above the cover's box: the ray passes clean over it.
+    assert!(
+        Player::raycast_blocks_core(
+            Vec3::new(0.5, 64.5, 0.5),
+            Vec3::new(1.0, 0.0, 0.0),
+            &blocks,
+            &precise,
+        )
+        .is_none(),
+        "a ray above a thin cover must not select it"
+    );
+}
+
 #[test]
 fn raycast_hits_a_plants_selection_box_without_pixel_precision() {
     let blocks = |x: i32, y: i32, z: i32| {

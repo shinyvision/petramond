@@ -403,33 +403,9 @@ fn push_quad_uflip(
     });
 }
 
-/// As [`push_box_faces_lit`] but recessing the four side faces 1/16 inward (via
-/// [`cactus_quad`](crate::mesh::face::cactus_quad)) so the box reads as a cactus —
-/// the icon / held / dropped counterpart of the chunk mesher's inset cactus.
-fn push_cactus_faces_lit(
-    verts: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    faces: [Tile; 6],
-    min: Vec3,
-    max: Vec3,
-    light: DynLight,
-) {
-    for (tile, face) in faces.into_iter().zip(ALL_FACES) {
-        let mat = foliage_tint::face_material(tile);
-        push_quad(
-            verts,
-            indices,
-            crate::mesh::face::cactus_quad(face, min.to_array(), max.to_array()),
-            mat.tint,
-            face_bits_textured_lit(mat, face, light.sky),
-            lighting::blocklight_word(light.block),
-        );
-    }
-}
-
 /// Append `block` as an inventory / held / dropped cube into `[origin, origin+size]`,
-/// full-bright. The single entry point so every place a block is drawn as a small cube
-/// shares the cactus special-case (its recessed spiny sides); see the `_lit` variant.
+/// full-bright. The single entry point so every place a block is drawn as a small
+/// cube draws the SHAPE's own geometry; see the `_lit` variant.
 pub(super) fn push_block_item_cube(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -444,8 +420,8 @@ pub(super) fn push_block_item_cube(
 
 /// As [`push_block_item_cube`] but lit by `skylight` (a held item / dropped stack samples
 /// world light). Per-face tiles come from [`block_icon_faces`] (so a furnace shows its
-/// front); the cactus draws via [`push_cactus_faces_lit`] so its inset sides match the
-/// placed block, every other block is a plain cube.
+/// front); a shaped block draws its own boxes so the item matches the block it
+/// places, every other block is a plain cube.
 pub(super) fn push_block_item_cube_lit(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -496,9 +472,6 @@ pub(super) fn push_block_item_cube_lit_with_state(
         push_slab_item_lit(verts, indices, slab, origin, size, light);
     } else if block.shape_family() == ShapeFamily::Fence {
         push_fence_item_lit(verts, indices, block, faces, origin, size, light);
-    } else if block == Block::Cactus {
-        let max = Vec3::new(origin.x + size, origin.y + size, origin.z + size);
-        push_cactus_faces_lit(verts, indices, faces, origin, max, light);
     } else if block.is_log() {
         let axis = match state {
             HeldBlockState::Log(axis) => axis,
@@ -544,6 +517,21 @@ pub(super) fn push_block_item_cube_lit_with_state(
                 }
             }
             _ => push_cube_faces_lit(verts, indices, faces, origin, size, light),
+        }
+    } else if let Some(set) = block.shape_kind_def().params.box_set() {
+        // A static box set's item IS its boxes, carved from the block's tiles
+        // exactly as the placed shape is — one geometry source for the world
+        // mesh, the icon, the hand and the drop. Faces the shape never emits
+        // are skipped here too, so a cactus icon shows no rim.
+        for b in set.boxes {
+            for (i, face) in ALL_FACES.into_iter().enumerate() {
+                if !b.faces[i] {
+                    continue;
+                }
+                push_cell_local_face(
+                    verts, indices, faces[i], origin, size, b.aabb.min, b.aabb.max, face, light,
+                );
+            }
         }
     } else {
         push_cube_faces_lit(verts, indices, faces, origin, size, light);

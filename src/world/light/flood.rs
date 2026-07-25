@@ -292,20 +292,38 @@ mod tests {
         clip_cube(&light, NBHD, (SECTION_SIZE, SECTION_SIZE, SECTION_SIZE))
     }
 
+    /// One stair cell, as the shape seam sees it — the fixture's stand-in for
+    /// a section, so the apertures come from the real family facet.
+    struct OneStair(crate::block::ShapeState);
+
+    impl crate::block::ShapeNeighborhood for OneStair {
+        fn block(&self, _pos: crate::mathh::IVec3) -> Block {
+            Block::OakStairs
+        }
+        fn shape_state(&self, _pos: crate::mathh::IVec3) -> crate::block::ShapeState {
+            self.0
+        }
+    }
+
     fn stair_states(entries: &[(usize, Facing)]) -> ShapeStateSnapshot {
-        // The stair family's aperture answer, exactly as the gather packs it.
+        // The stair family's aperture answer, exactly as the gather asks for it.
+        let k = Block::OakStairs.shape_kind().def();
         let states = entries
             .iter()
-            .map(|&(idx, facing)| SparseCellState {
-                idx,
-                masks: crate::block::pack_light_apertures(|(dx, dy, dz)| {
-                    crate::stair::light_side_mask(
-                        StairState::new(facing, StairHalf::Bottom),
-                        dx,
-                        dy,
-                        dz,
-                    )
-                }),
+            .map(|&(idx, facing)| {
+                let nb = OneStair(crate::block::CellCodec::to_cell(&StairState::new(
+                    facing,
+                    StairHalf::Bottom,
+                )));
+                SparseCellState {
+                    idx,
+                    masks: k.sim.light_apertures(
+                        &k.params,
+                        &nb,
+                        crate::mathh::IVec3::ZERO,
+                        Block::OakStairs,
+                    ),
+                }
             })
             .collect::<Vec<_>>();
         ShapeStateSnapshot::from_sparse(&states, NBHD_VOLUME)

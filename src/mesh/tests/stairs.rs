@@ -237,9 +237,9 @@ fn cutout_ladder_does_not_cull_the_stair_face_behind_it() {
     // style (never emitted). Position filters alone are ambiguous here — the
     // stair's own Z-face corners lie on this plane too.
     assert!(
-        m.opaque.iter().any(|v| {
-            (v.pos[0] - 9.0).abs() < 1.0e-3 && (v.packed2 >> 16) & 0x7 == 1
-        }),
+        m.opaque
+            .iter()
+            .any(|v| { (v.pos[0] - 9.0).abs() < 1.0e-3 && (v.packed2 >> 16) & 0x7 == 1 }),
         "the stair's +X side face must draw behind the cutout ladder"
     );
 }

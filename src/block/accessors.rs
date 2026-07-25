@@ -38,19 +38,19 @@ impl Block {
         data::shape_family(self.id())
     }
 
-    /// The visible height (texels, `1..=15`) of a [`LoweredCube`](ShapeFamily::LoweredCube)
-    /// block, or `None` for any other family — the shape-kind param accessor for
-    /// the sunken-top height.
-    #[inline]
-    pub fn lowered_height(self) -> Option<u8> {
-        self.shape_kind_def().params.lowered_height()
-    }
-
     /// The bbmodel kind of a [`Model`](ShapeFamily::Model) block, or `None` for
     /// any other family — the shape-kind param accessor for the model kind.
     #[inline]
     pub fn model_kind(self) -> Option<crate::block_model::BlockModelKind> {
         self.shape_kind_def().params.model_kind()
+    }
+
+    /// This block's light apertures with NO world context — what its shape
+    /// blocks on its own. The flood's fallback for a `Shaped` cell that
+    /// carries no per-cell state, which is every cell of a stateless shape.
+    #[inline]
+    pub(crate) fn default_light_apertures(self) -> u32 {
+        data::default_light_apertures(self.id())
     }
 
     #[inline]
@@ -132,44 +132,21 @@ impl Block {
         !self.collision_boxes().is_empty()
     }
 
-    /// The visual bounding box (cell-local) for a non-full-cube block — the union of
-    /// its [`collision_boxes`](Self::collision_boxes) — used for the selection outline
-    /// and the break-crack overlay so they hug the block's actual shape. `None` = an
-    /// ordinary full cube (or a non-colliding block), which needs no special outline.
+    /// The visual bounding box (cell-local) for a non-full-cube block — used for
+    /// the selection outline, the raycast's precise test, and the break-crack
+    /// overlay so they hug the block's actual shape. `None` = an ordinary full
+    /// cube (or a block with nothing to aim at), which needs no special outline.
+    ///
+    /// Position-LESS: the SHAPE answers for itself
+    /// ([`ShapeRender::default_selection_box`]), so a walk-through thin cover
+    /// and a no-collision bbmodel stay selectable while everything else
+    /// outlines what it collides with. The per-cell outline of a stateful shape
+    /// (a multi-cell model, a door's swung slab) is resolved by
+    /// [`World::selection_box_at`](crate::world::World::selection_box_at).
     #[inline]
     pub fn visual_aabb(self) -> Option<([f32; 3], [f32; 3])> {
-        // A bbmodel block outlines its MODEL's selection box (raycast target + black
-        // wireframe + break overlay), independent of its collision — so a walk-through
-        // (no-collision) model block is still selectable. Position-LESS: answers the
-        // footprint-origin cell; the per-cell outline of a multi-block is resolved by
-        // [`World::selection_box_at`](crate::world::World::selection_box_at). See `block_model`.
-        if let Some(kind) = self.model_kind() {
-            return crate::block_model::selection_aabb(kind, [0, 0, 0]);
-        }
-        // A lowered cube's visible box IS its shape, independent of collision —
-        // so a walk-through thin cover (the snow layer) is still selectable,
-        // like a no-collision model block.
-        if let Some(h) = self.lowered_height() {
-            return Some(([0.0, 0.0, 0.0], [1.0, h as f32 / 16.0, 1.0]));
-        }
-        let boxes = self.collision_boxes();
-        if boxes.is_empty() {
-            return None;
-        }
-        let mut mn = [f32::INFINITY; 3];
-        let mut mx = [f32::NEG_INFINITY; 3];
-        for b in boxes {
-            for i in 0..3 {
-                mn[i] = mn[i].min(b.min[i]);
-                mx[i] = mx[i].max(b.max[i]);
-            }
-        }
-        // A full unit cube needs no special outline (the default selection is a cube).
-        if mn == [0.0; 3] && mx == [1.0; 3] {
-            None
-        } else {
-            Some((mn, mx))
-        }
+        let k = self.shape_kind_def();
+        k.render.default_selection_box(&k.params, self)
     }
 
     #[inline]
@@ -220,6 +197,13 @@ impl Block {
     #[inline]
     pub fn is_leaves(self) -> bool {
         self.has_tag(BlockTag::LEAVES)
+    }
+
+    /// Whether a face against ANOTHER CELL OF THIS SAME BLOCK is drawn at all.
+    /// See [`BlockTag::MERGES_WITH_SELF`].
+    #[inline]
+    pub fn merges_with_self(self) -> bool {
+        self.has_tag(BlockTag::MERGES_WITH_SELF)
     }
 
     /// Whether this is any tree-log variant. A log keeps nearby leaves alive: a
@@ -290,12 +274,14 @@ impl Block {
         data::flags(self.id()).is_slab()
     }
 
-    /// Shape-class test the mesher's exposure masks run per pad cell (a
-    /// lowered cube's full 1×1 base culls the top face of the block beneath
-    /// it); same dense-flag rationale as [`is_slab`](Self::is_slab).
+    /// Whether this block's form is a BOX SET, so its sub-cell geometry has to
+    /// be asked of the shape (`ShapeRender::boxes` / `occupies_pocket`) rather
+    /// than read as a whole-or-empty cell. Loader-derived from the shape
+    /// kind's `resolves_to_boxes`, so it cannot disagree with it; same dense-flag
+    /// rationale as [`is_slab`](Self::is_slab).
     #[inline]
-    pub fn is_lowered_cube(self) -> bool {
-        data::flags(self.id()).is_lowered_cube()
+    pub fn has_box_shape(self) -> bool {
+        data::flags(self.id()).has_box_shape()
     }
 
     /// Does this block cast ambient occlusion? Full opaque cubes always do, and

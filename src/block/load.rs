@@ -430,23 +430,39 @@ fn convert(
     for f in &r.flags {
         flags = flags.with(f.to_flag());
     }
-    // Derived, not row-listed: the shape class the mesher needs as a dense flag.
+    // Derived, not row-listed: the shape classes the mesher needs as dense flags.
     if family == ShapeFamily::Slab {
         flags = flags.with(BlockFlags::SLAB);
     }
-    if let Some(h) = params.lowered_height() {
-        if !(1..=15).contains(&h) {
-            return Err(format!(
-                "lowered_cube height {h} out of range (1..=15 texels visible)"
-            ));
-        }
-        // The sunken top means neighbours must keep their faces toward this
-        // block — an opaque lowered cube would cull them and open a 1-texel
-        // x-ray slit over its top.
+    if shape_kind::family_resolves_to_boxes(family) {
+        flags = flags.with(BlockFlags::BOX_SHAPE);
+    }
+    if family == ShapeFamily::BoxSet {
+        // A sub-cell shape must not claim to be an opaque full cube: neighbours
+        // would cull the faces toward it and open an x-ray slit over its gaps.
         if flags.is_opaque() {
-            return Err("a lowered_cube row must not carry the 'opaque' flag".into());
+            return Err("a 'boxes' row must not carry the 'opaque' flag".into());
         }
-        flags = flags.with(BlockFlags::LOWERED_CUBE);
+        // Whole-cell AO would override the shape's own per-pocket answer and
+        // shadow neighbours as if the gaps were filled.
+        if flags.occludes_ao() {
+            return Err(
+                "a 'boxes' row must not carry the 'ao_occluder' flag — its shape answers \
+                        occlusion per box"
+                    .into(),
+            );
+        }
+        // The SHAPE is the geometry: the box list already says what collides
+        // (per box), so an authored box could only restate or contradict it.
+        // Same contract as every other box-shaped family.
+        if !r.collision.is_empty() {
+            return Err(
+                "a 'boxes' row derives its collision from the shape; author \
+                        \"collision\": [] and set \"collides\": false on any box that should be \
+                        walked through"
+                    .into(),
+            );
+        }
     }
     let drops: Vec<Drop> = r
         .drops

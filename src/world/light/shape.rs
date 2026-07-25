@@ -1,4 +1,4 @@
-use crate::block::{Block, BlockLightShape, LIGHT_APERTURES_OPEN};
+use crate::block::{Block, BlockLightShape};
 
 /// Collect a section's light-relevant per-cell apertures out of the UNIFIED
 /// state store: every `Shaped`-light cell's FAMILY answers its packed
@@ -10,18 +10,51 @@ pub(super) fn collect_shape_states(
     mut idx: impl FnMut(usize, usize, usize) -> usize,
     states: &mut Vec<SparseCellState>,
 ) {
-    for (&key, &state) in section.cell_states() {
+    let nb = SectionCells(section);
+    for &key in section.cell_states().keys() {
         let (lx, ly, lz) = crate::chunk::section_local(key as usize);
         let block = section.block(lx, ly, lz);
         if block.light_shape() != BlockLightShape::Shaped {
             continue;
         }
         let k = block.shape_kind_def();
+        let pos = crate::mathh::IVec3::new(lx as i32, ly as i32, lz as i32);
         states.push(SparseCellState {
             idx: idx(lx, ly, lz),
-            masks: k.sim.light_apertures(&k.params, block, state),
+            masks: k.sim.light_apertures(&k.params, &nb, pos, block),
         });
     }
+}
+
+/// The shape seam over ONE section, in section-local coordinates. A shape's
+/// apertures come from its own cell's state (that is what makes them a pure
+/// per-cell function), so a view that answers air outside the section is
+/// exact rather than merely conservative.
+struct SectionCells<'a>(&'a crate::section::Section);
+
+impl crate::block::ShapeNeighborhood for SectionCells<'_> {
+    fn block(&self, pos: crate::mathh::IVec3) -> Block {
+        match local(pos) {
+            Some((x, y, z)) => self.0.block(x, y, z),
+            None => Block::Air,
+        }
+    }
+
+    fn shape_state(&self, pos: crate::mathh::IVec3) -> crate::block::ShapeState {
+        match local(pos) {
+            Some((x, y, z)) => self.0.cell_state(x, y, z),
+            None => crate::block::ShapeState::NONE,
+        }
+    }
+}
+
+fn local(pos: crate::mathh::IVec3) -> Option<(usize, usize, usize)> {
+    let n = crate::chunk::SECTION_SIZE as i32;
+    ((0..n).contains(&pos.x) && (0..n).contains(&pos.y) && (0..n).contains(&pos.z)).then_some((
+        pos.x as usize,
+        pos.y as usize,
+        pos.z as usize,
+    ))
 }
 
 /// One shaped cell's packed per-face light apertures in snapshot index space
@@ -32,11 +65,16 @@ pub(super) struct SparseCellState {
     pub masks: u32,
 }
 
+/// A cell with no gathered entry. Aperture words use only the low 24 bits, so
+/// this can never collide with a real mask; it means "ask the block", not
+/// "fully open" — a stateless shaped cell (a cover, a cactus) is never
+/// gathered and must still block light through its own shape.
+const NO_ENTRY: u32 = u32::MAX;
+
 #[derive(Default)]
 pub(super) struct ShapeStateSnapshot {
-    /// Per-cell packed apertures; absent cells (and an absent array) read
-    /// fully open — a `Shaped` cell missing its entry degrades to open, the
-    /// same fallback the baked custom aperture always had.
+    /// Per-cell packed apertures; a cell with no entry falls back to its
+    /// block's state-free apertures.
     apertures: Option<Box<[u32]>>,
 }
 
@@ -49,18 +87,21 @@ impl ShapeStateSnapshot {
             if state.idx >= volume {
                 continue;
             }
-            let cells = apertures
-                .get_or_insert_with(|| vec![LIGHT_APERTURES_OPEN; volume].into_boxed_slice());
+            let cells = apertures.get_or_insert_with(|| vec![NO_ENTRY; volume].into_boxed_slice());
             cells[state.idx] = state.masks;
         }
         Self { apertures }
     }
 
-    fn aperture_masks(&self, idx: usize) -> u32 {
-        self.apertures
-            .as_ref()
-            .and_then(|f| f.get(idx).copied())
-            .unwrap_or(LIGHT_APERTURES_OPEN)
+    /// The gathered masks for a cell, or the BLOCK's own state-free apertures
+    /// when it has none. A stateless shaped cell (a cover, a cactus) never
+    /// appears in the sparse gather at all, so this fallback — not
+    /// "fully open" — is what makes its shape block light.
+    fn aperture_masks(&self, idx: usize, block: Block) -> u32 {
+        match self.apertures.as_ref().and_then(|f| f.get(idx).copied()) {
+            Some(masks) if masks != NO_ENTRY => masks,
+            _ => block.default_light_apertures(),
+        }
     }
 }
 
@@ -111,7 +152,7 @@ impl<'a> LightCells<'a> {
             BlockLightShape::Open => 0b1111,
             // The family answered at gather time; here it's a bit read.
             BlockLightShape::Shaped => {
-                crate::block::light_aperture_face(self.states.aperture_masks(idx), dir)
+                crate::block::light_aperture_face(self.states.aperture_masks(idx, block), dir)
             }
         }
     }

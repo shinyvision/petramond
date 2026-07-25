@@ -212,7 +212,16 @@
     {
       "block": "petramond:snow_layer",
       "shape": {
-        "lowered_cube": 1
+        "boxes": [
+          {
+            "to": [
+              16,
+              1,
+              16
+            ],
+            "collides": false
+          }
+        ]
       },
       "flags": [],
       "tags": [
@@ -1546,7 +1555,8 @@
         "ao_occluder"
       ],
       "tags": [
-        "slippery"
+        "slippery",
+        "merges_with_self"
       ],
       "behavior": "inert",
       "interaction": "none",
@@ -1592,7 +1602,8 @@
       ],
       "tags": [
         "slippery",
-        "melts"
+        "melts",
+        "merges_with_self"
       ],
       "behavior": "inert",
       "interaction": "none",
@@ -2060,10 +2071,81 @@
     },
     {
       "block": "petramond:cactus",
-      "shape": "cube",
+      "shape": {
+        "boxes": [
+          {
+            "from": [
+              1,
+              0,
+              1
+            ],
+            "to": [
+              15,
+              16,
+              15
+            ],
+            "faces": [
+              "down"
+            ]
+          },
+          {
+            "from": [
+              1,
+              0,
+              0
+            ],
+            "to": [
+              15,
+              16,
+              16
+            ],
+            "faces": [
+              "+x",
+              "-x"
+            ],
+            "occludes": false,
+            "collides": false,
+            "double_sided": true
+          },
+          {
+            "from": [
+              0,
+              0,
+              1
+            ],
+            "to": [
+              16,
+              16,
+              15
+            ],
+            "faces": [
+              "+z",
+              "-z"
+            ],
+            "occludes": false,
+            "collides": false,
+            "double_sided": true
+          },
+          {
+            "from": [
+              0,
+              15,
+              0
+            ],
+            "to": [
+              16,
+              16,
+              16
+            ],
+            "faces": [
+              "up"
+            ],
+            "collides": false
+          }
+        ]
+      },
       "flags": [
-        "solid",
-        "ao_occluder"
+        "solid"
       ],
       "tags": [
         "fragile",
@@ -2072,20 +2154,7 @@
       ],
       "behavior": "fragile",
       "interaction": "none",
-      "collision": [
-        {
-          "min": [
-            0.0625,
-            0,
-            0.0625
-          ],
-          "max": [
-            0.9375,
-            1,
-            0.9375
-          ]
-        }
-      ],
+      "collision": [],
       "emission": 0,
       "tiles": [
         "cactus_top",
@@ -4113,7 +4182,8 @@
         "transparent"
       ],
       "tags": [
-        "no_grass_decay"
+        "no_grass_decay",
+        "merges_with_self"
       ],
       "behavior": "inert",
       "interaction": "none",

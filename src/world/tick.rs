@@ -116,7 +116,7 @@ pub(super) fn edit_nav_equivalent(old: Block, new: Block) -> bool {
         matches!(
             b.shape_family(),
             crate::block::ShapeFamily::Cube
-                | crate::block::ShapeFamily::LoweredCube
+                | crate::block::ShapeFamily::BoxSet
                 | crate::block::ShapeFamily::Cross
                 | crate::block::ShapeFamily::Crop
                 | crate::block::ShapeFamily::Torch

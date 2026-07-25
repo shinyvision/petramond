@@ -64,13 +64,17 @@ impl World {
         pos - IVec3::new(0, 1, 0)
     }
 
-    /// Whether the fragile block at `pos` still has something to stand on: plants use
-    /// the old full-opaque ground rule, torches and ladders use the same mounted-face
-    /// test as their placement, and lowered-cube covers (the snow layer and any pack
-    /// block shaped like it) rest on ANY full collision cube — a dusting sits on
-    /// leaves or glass just as well as on soil, while stairs, slabs, and model blocks
-    /// still shed it (per Rachel: snow stays on any full block, and canopy snow must
-    /// not shatter the tick after the weather mod lays it).
+    /// Whether the fragile block at `pos` still has something to stand on:
+    /// torches and ladders use the same mounted-face test as their placement,
+    /// a block that LIES FLAT on its floor rests on ANY full collision cube,
+    /// and everything else (the plants) keeps the full-opaque ground rule.
+    ///
+    /// "Lies flat" is the shape's own answer — its matter fills the whole
+    /// floor of its cell — not a family name: a dusting of snow sits on leaves
+    /// or glass just as well as on soil, while stairs, slabs, and model blocks
+    /// shed it (per Rachel: snow stays on any full block, and canopy snow must
+    /// not shatter the tick after the weather mod lays it), and a pack block
+    /// shaped like a cover behaves the same with no engine edit.
     fn fragile_supported(&self, pos: IVec3, block: Block) -> bool {
         if block.shape_family() == crate::block::ShapeFamily::Torch {
             return self.torch_supported_at(pos, self.torch_placement(pos));
@@ -79,7 +83,7 @@ impl World {
             return self.ladder_supported_at(pos, block.panel_facing());
         }
         let s = self.fragile_ground_cell(pos);
-        if block.shape_family() == crate::block::ShapeFamily::LoweredCube {
+        if crate::block::rests_flat_on_floor(self, pos, block) {
             return super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z));
         }
         self.physics_block(s.x, s.y, s.z).is_opaque()

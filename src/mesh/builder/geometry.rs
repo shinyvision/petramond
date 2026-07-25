@@ -8,14 +8,14 @@ use crate::chunk::{section_idx, SectionPos, SECTION_SIZE, SECTION_VOLUME, SKY_FU
 use crate::section::Section;
 use crate::torch::warm_tint;
 
-use super::super::face::{cactus_quad, quad_for, Face, FACES};
+use super::super::face::{quad_for, Face, FACES};
 use super::super::face_emit::{cube_face_lighting_pad, fold_light, push_cube_face_with_cell_uvs};
 use super::super::greedy::{emit_greedy_quads, FlatFace, GreedyScratch, GREEDY};
 use super::super::tint;
 use super::super::vertex::{pack_tint, ChunkMesh, ModelVertex, UV_MODE_NONE};
 use super::super::water::{self, SideVsWater, WaterSurface};
 
-use super::super::boxset::{emit_box_set, BoxSetScratch, ShapeBox};
+use super::super::boxset::{cell_seals_face, emit_box_set, BoxSetScratch, ShapeBox};
 use super::cube_face::{
     boundary_plane, cube_face_lighting, cube_face_tile, face_axes, face_index, facing_face,
     log_side_cell_uvs,
@@ -198,7 +198,26 @@ pub(super) fn section_geometry(
             },
             &mut boxes,
         );
-        out.extend(boxes.iter().map(|b| (b.aabb.min, b.aabb.max)));
+        out.extend(
+            boxes
+                .iter()
+                .filter(|b| b.occludes)
+                .map(|b| (b.aabb.min, b.aabb.max)),
+        );
+    };
+
+    // "Does the cell above seal my top face?" — the cube path's only
+    // sub-cell neighbour cull, asked of the NEIGHBOUR's own resolved boxes
+    // (`boxset::cell_seals_face`), so it names no family and a mod shape with
+    // a floor-flush base gets it for free. A sealed top face is invisible, and
+    // a nearly-coplanar one is worse than invisible: a snow layer's top sits
+    // 1/16 above its carrier's and the two z-fight from far above.
+    // Deliberately PosY-only — a sealed face in the other five directions is
+    // plain overdraw, never a visible artifact.
+    let seal_scratch = std::cell::RefCell::new((Vec::<ShapeBox>::new(), BoxSetScratch::default()));
+    let seals_floor = |p: IVec3| -> bool {
+        let (boxes, scratch) = &mut *seal_scratch.borrow_mut();
+        cell_seals_face(&nbh, p, Face::NegY, boxes, scratch)
     };
 
     // The shared sub-cell AO occupancy query: does the cell hold solid matter
@@ -220,21 +239,11 @@ pub(super) fn section_geometry(
         }
         // Everything below the whole-cell case is the FAMILY's answer: each
         // one knows its own shape and its own parity constraints (see
-        // `ShapeRender::occupies_pocket`). The mesher only asks.
+        // `ShapeSim::occupies_pocket`). The mesher only asks — and asks the
+        // same oracle the light flood's apertures come from.
         let k = b.shape_kind_def();
-        let tint_for = |_: Tile| [1.0f32; 3];
-        k.render.occupies_pocket(
-            &crate::block::ShapeCtx {
-                nb: &nbh,
-                pos: IVec3::new(cx, cy, cz),
-                block: b,
-                params: &k.params,
-                tint_for: &tint_for,
-                part_tint: crate::block::NO_PART_TINT,
-            },
-            lo,
-            hi,
-        )
+        k.sim
+            .occupies_pocket(&k.params, &nbh, IVec3::new(cx, cy, cz), b, lo, hi)
     };
 
     // Reused per-thread greedy scratch: flat opaque cube faces are deferred here during the
@@ -251,7 +260,7 @@ pub(super) fn section_geometry(
     let greedy_gen = greedy.begin();
     let exposed_masks = pad
         .filter(|_| options.leaf_mesh_mode == LeafMeshMode::Detailed)
-        .map(build_exposed_masks);
+        .map(|pad| build_exposed_masks(pad, (ox, oy, oz), &seals_floor));
 
     for ly in 0..SECTION_SIZE {
         for lz in 0..SECTION_SIZE {
@@ -634,50 +643,27 @@ pub(super) fn section_geometry(
 
                     let is_water_top = is_water && matches!(face, Face::PosY);
                     let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
-                    let is_cactus_side = block == Block::Cactus && is_side;
-                    // A lowered cube's top plane sits INSIDE the cell — nothing
-                    // above can ever cover it, so it is exempt from the
-                    // neighbour cull (the block-above's bottom face still draws
-                    // since lowered rows are non-opaque: no x-ray slit).
-                    let lowered = block.lowered_height();
-                    let is_lowered_top = lowered.is_some() && matches!(face, Face::PosY);
-                    // A lowered cube's full 1×1 base sits flush on the cell
-                    // floor, so for the face BENEATH it it covers exactly like
-                    // an opaque cube (a snow layer's carrier top would z-fight
-                    // the layer from far above otherwise).
-                    let nb_covers_below = matches!(face, Face::PosY) && nb.is_lowered_cube();
                     let nb_solid = nb.is_opaque()
                         || (nb.is_slab() && slab_full_at(nwx, nwy, nwz))
-                        || nb_covers_below;
-                    if nb_solid && !is_water_top && !is_cactus_side && !is_lowered_top {
+                        || (matches!(face, Face::PosY) && seals_floor(IVec3::new(nwx, nwy, nwz)));
+                    if nb_solid && !is_water_top {
                         continue;
                     }
                     if is_water && is_side && !neighbour_loaded(nwx, nwy, nwz) {
                         continue;
                     }
-                    if options.leaf_mesh_mode == LeafMeshMode::Simplified
-                        && block == Block::OakLeaves
-                        && nb == Block::OakLeaves
-                    {
+                    // A block that MERGES WITH ITSELF draws no interior face
+                    // against its own kind: a glass wall reads as one pane
+                    // rather than stacked frames, and an ice sheet as one
+                    // volume rather than double-blended slabs. Leaves opt out
+                    // — their interior faces are the canopy's depth — except
+                    // under the Simplified leaf LOD, which asks for exactly
+                    // this cull.
+                    let merges = block.merges_with_self()
+                        || (options.leaf_mesh_mode == LeafMeshMode::Simplified
+                            && block.is_leaves());
+                    if merges && nb == block {
                         continue;
-                    }
-                    // Two adjacent glass blocks share no visible face: cull both
-                    // sides so a glass wall reads as one pane, not stacked frames.
-                    if block == Block::Glass && nb == Block::Glass {
-                        continue;
-                    }
-                    // Same rule for a translucent block against itself (ice
-                    // against ice): interior faces would double-blend, so the
-                    // frozen sheet reads as one volume, not stacked slabs.
-                    if block.is_translucent() && nb == block {
-                        continue;
-                    }
-                    // Two flush lowered cubes share no visible side either: the
-                    // neighbour's body covers my whole (equally short) face.
-                    if let (Some(h), Some(nh)) = (lowered, nb.lowered_height()) {
-                        if is_side && nh >= h {
-                            continue;
-                        }
                     }
                     let mut water_exposed_step = false;
                     if let Some(ws) = &water_surface {
@@ -724,24 +710,7 @@ pub(super) fn section_geometry(
                     };
                     let tint = kv_tint(section_idx(lx, ly, lz), tint);
 
-                    let mut corners = if block == Block::Cactus {
-                        cactus_quad(
-                            face,
-                            [base_x, base_y, base_z],
-                            [base_x + 1.0, base_y + 1.0, base_z + 1.0],
-                        )
-                    } else {
-                        quad_for(face, base_x, base_y, base_z)
-                    };
-                    if let Some(h) = lowered {
-                        // Sink the visible top: the top face drops to h/16 and
-                        // side faces shorten with it (full tile compressed a
-                        // texel, like the cactus insets — no UV plumbing).
-                        let top = base_y + h as f32 / 16.0;
-                        for c in &mut corners {
-                            c[1] = c[1].min(top);
-                        }
-                    }
+                    let mut corners = quad_for(face, base_x, base_y, base_z);
                     if let Some(ws) = &water_surface {
                         ws.warp_quad(&mut corners, base_x, base_y, base_z, water_exposed_step);
                     }

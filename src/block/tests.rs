@@ -1,6 +1,103 @@
 use super::{Block, BlockInteraction, BlockMaterial, ShapeFamily};
 use crate::item::ItemType;
 
+/// Light apertures are DERIVED from the shape's own occupancy, not written
+/// per family: a face quadrant is open exactly where nothing seals the
+/// boundary behind it. Pins the quadrant bit layout and the derivation
+/// against shapes whose open half is obvious by inspection — a bottom slab
+/// (open above, sealed below, upper side quadrants only) and a bottom stair
+/// (sealed toward its riser, open toward its tread).
+#[test]
+fn light_apertures_are_derived_from_the_shape_occupancy() {
+    use crate::block::{light_aperture_face, CellCodec, ShapeNeighborhood, ShapeState};
+    use crate::block_state::{SlabSplit, SlabState, StairHalf, StairState};
+    use crate::facing::Facing;
+    use crate::mathh::IVec3;
+
+    struct OneCell(Block, ShapeState);
+    impl ShapeNeighborhood for OneCell {
+        fn block(&self, _pos: IVec3) -> Block {
+            self.0
+        }
+        fn shape_state(&self, _pos: IVec3) -> ShapeState {
+            self.1
+        }
+    }
+    let masks = |block: Block, state: ShapeState| {
+        let k = block.shape_kind().def();
+        k.sim
+            .light_apertures(&k.params, &OneCell(block, state), IVec3::ZERO, block)
+    };
+    let face = |block, state, dir| light_aperture_face(masks(block, state), dir);
+
+    let slab = SlabState::single(SlabSplit::Y, 0, Block::DirtSlab).to_cell();
+    assert_eq!(face(Block::DirtSlab, slab, (0, -1, 0)), 0, "sealed below");
+    assert_eq!(face(Block::DirtSlab, slab, (0, 1, 0)), 0b1111, "open above");
+    assert_eq!(
+        face(Block::DirtSlab, slab, (1, 0, 0)),
+        0b1100,
+        "only the upper side quadrants are open"
+    );
+    let full = SlabState {
+        split: SlabSplit::Y,
+        layers: [Block::DirtSlab, Block::StoneSlab],
+    }
+    .to_cell();
+    assert_eq!(
+        face(Block::DirtSlab, full, (0, 1, 0)),
+        0,
+        "a full stack seals"
+    );
+
+    let east = StairState::new(Facing::East, StairHalf::Bottom).to_cell();
+    assert_eq!(
+        face(Block::OakStairs, east, (0, -1, 0)),
+        0,
+        "solid underside"
+    );
+    assert_eq!(face(Block::OakStairs, east, (-1, 0, 0)), 0, "riser side");
+    assert_ne!(face(Block::OakStairs, east, (1, 0, 0)), 0, "tread side");
+    assert_ne!(
+        face(Block::OakStairs, east, (0, 1, 0)),
+        0,
+        "open over tread"
+    );
+}
+
+/// A static box set has ONE geometry source: its authored boxes. The row
+/// cannot author collision (the loader refuses it), so the drawn boxes, the
+/// collided boxes and the selection outline are all the same list and cannot
+/// drift — and a box that declares it does not collide still draws, still
+/// outlines, and still blocks light.
+#[test]
+fn a_box_set_derives_every_box_from_its_authored_shape() {
+    let mut checked = 0;
+    for &b in Block::all() {
+        let Some(set) = b.shape_kind().def().params.box_set() else {
+            continue;
+        };
+        checked += 1;
+        assert_eq!(
+            b.visual_aabb(),
+            Some((set.bounds.min, set.bounds.max)),
+            "{b:?} outlines the drawn union"
+        );
+        let collision: Vec<_> = b.collision_boxes().to_vec();
+        let expect: Vec<_> = set
+            .boxes
+            .iter()
+            .filter(|d| d.collides)
+            .map(|d| d.aabb)
+            .collect();
+        assert_eq!(collision, expect, "{b:?} collides as its colliding boxes");
+        // Drawn matter blocks light whether or not it collides: a shape that
+        // fills its floor seals the face below it.
+        let sealed = crate::block::light_aperture_face(b.default_light_apertures(), (0, -1, 0));
+        assert_eq!(sealed, 0, "{b:?} floor-flush box must block light downward");
+    }
+    assert!(checked >= 2, "expected the engine's own box-set rows");
+}
+
 /// The shape-kind registry resolves every block to a valid, self-consistent
 /// kind: the dense family LUT (`shape_family`) agrees with the registry row
 /// (`shape_kind().family`), the payload accessors agree with the row's params,
@@ -12,17 +109,12 @@ fn shape_kinds_resolve_consistently_for_every_block() {
         let def = b.shape_kind().def();
         assert_eq!(b.shape_family(), def.family, "{b:?} LUT vs registry family");
         // The payload accessors are exactly the row's params.
-        assert_eq!(
-            b.lowered_height(),
-            def.params.lowered_height(),
-            "{b:?} lowered"
-        );
         assert_eq!(b.model_kind(), def.params.model_kind(), "{b:?} model");
         // Payloads exist iff the family carries them.
         assert_eq!(
-            b.lowered_height().is_some(),
-            b.shape_family() == ShapeFamily::LoweredCube,
-            "{b:?} lowered payload matches family"
+            def.params.box_set().is_some(),
+            b.shape_family() == ShapeFamily::BoxSet,
+            "{b:?} box payload matches family"
         );
         assert_eq!(
             b.model_kind().is_some(),
@@ -41,7 +133,8 @@ fn shape_kinds_resolve_consistently_for_every_block() {
         (Block::OakFence, ShapeFamily::Fence),
         (Block::Ladder, ShapeFamily::Ladder),
         (Block::OakDoor, ShapeFamily::Door),
-        (Block::SnowLayer, ShapeFamily::LoweredCube),
+        (Block::SnowLayer, ShapeFamily::BoxSet),
+        (Block::Cactus, ShapeFamily::BoxSet),
         (Block::Bed, ShapeFamily::Model),
     ] {
         assert_eq!(b.shape_family(), family, "{b:?}");

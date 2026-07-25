@@ -302,47 +302,6 @@ pub fn representative_block(state: SlabState) -> Block {
         .unwrap_or(Block::Air)
 }
 
-/// A 2x2 mask of open half-face quadrants on a slab boundary.
-#[inline]
-pub fn light_side_mask(state: SlabState, dx: i32, dy: i32, dz: i32) -> u8 {
-    let dir = [dx, dy, dz];
-    let Some(axis) = dir.iter().position(|&d| d != 0) else {
-        return 0;
-    };
-    let layer = usize::from(dir[axis] > 0);
-    let mut open = 0u8;
-    for iy in 0..2 {
-        for iz in 0..2 {
-            for ix in 0..2 {
-                let idx = [ix, iy, iz];
-                if idx[axis] == layer && !half_cell_occupied(state, ix, iy, iz) {
-                    open |= aperture_bit(axis, ix, iy, iz);
-                }
-            }
-        }
-    }
-    open
-}
-
-#[inline]
-fn aperture_bit(axis: usize, ix: usize, iy: usize, iz: usize) -> u8 {
-    match axis {
-        0 => quadrant_bit(iz, iy),
-        1 => quadrant_bit(ix, iz),
-        _ => quadrant_bit(ix, iy),
-    }
-}
-
-#[inline]
-fn quadrant_bit(a: usize, b: usize) -> u8 {
-    match (a, b) {
-        (0, 0) => 0b0001,
-        (1, 0) => 0b0010,
-        (0, 1) => 0b0100,
-        _ => 0b1000,
-    }
-}
-
 const fn make_shapes() -> [[[Aabb; 1]; 4]; 3] {
     [
         make_split_shapes(SlabSplit::X),
@@ -421,32 +380,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn slab_light_masks_match_the_open_half() {
-        let bottom = SlabState::single(SlabSplit::Y, 0, Block::DirtSlab);
-        assert_eq!(
-            light_side_mask(bottom, 0, -1, 0),
-            0,
-            "bottom slab blocks light from below"
-        );
-        assert_eq!(
-            light_side_mask(bottom, 0, 1, 0),
-            0b1111,
-            "bottom slab leaves the full top boundary open"
-        );
-        assert_eq!(
-            light_side_mask(bottom, 1, 0, 0),
-            0b1100,
-            "side boundaries leave only the upper quadrants open"
-        );
-
-        let full = SlabState {
-            split: SlabSplit::Y,
-            layers: [Block::DirtSlab, Block::StoneSlab],
-        };
-        assert_eq!(light_side_mask(full, 0, 1, 0), 0);
-        assert_eq!(light_side_mask(full, 1, 0, 0), 0);
     }
 }

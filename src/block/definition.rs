@@ -338,6 +338,14 @@ impl BlockFlags {
     /// row. The player physics probes the support block's grip every sub-step,
     /// same rationale as [`CLIMBABLE`](Self::CLIMBABLE).
     pub const SLIPPERY: BlockFlags = BlockFlags(1 << 7);
+    /// Derived by the loader from the shape kind's `resolves_to_boxes`, never
+    /// listed in a data row: this block's form is a BOX SET, so a consumer
+    /// that cares about sub-cell geometry must ask the shape instead of
+    /// reading the cell as whole-or-empty. The mesher's AO ring gathers test
+    /// it per neighbour cell and the exposure masks per pad cell, so it needs
+    /// the answer without a `def()` big-table read, same rationale as
+    /// [`SLAB`](Self::SLAB).
+    pub const BOX_SHAPE: BlockFlags = BlockFlags(1 << 9);
     /// Row-listed: this block renders ALPHA-BLENDED in the transparent pass
     /// with its texture's own authored alpha (ice) — unlike `transparent`
     /// cutout blocks (glass), whose texels are all-or-nothing and render in
@@ -345,12 +353,6 @@ impl BlockFlags {
     /// it stay visible) and its texture must sit BELOW the cutout threshold
     /// (see `block_tiles_match_their_render_pass_alpha_contract`'s translucent half).
     pub const TRANSLUCENT: BlockFlags = BlockFlags(1 << 8);
-    /// Derived by the loader from `shape == lowered_cube`, never listed in a
-    /// data row. The mesher's exposure masks test every pad cell for "does the
-    /// block above cover the face below" (a lowered cube's full 1×1 base is
-    /// flush with the cell floor) and need the shape class without a `def()`
-    /// big-table read, same rationale as [`SLAB`](Self::SLAB).
-    pub const LOWERED_CUBE: BlockFlags = BlockFlags(1 << 9);
 
     #[inline]
     pub const fn with(self, flag: BlockFlags) -> BlockFlags {
@@ -403,8 +405,8 @@ impl BlockFlags {
     }
 
     #[inline]
-    pub const fn is_lowered_cube(self) -> bool {
-        self.contains(BlockFlags::LOWERED_CUBE)
+    pub const fn has_box_shape(self) -> bool {
+        self.contains(BlockFlags::BOX_SHAPE)
     }
 
     #[inline]

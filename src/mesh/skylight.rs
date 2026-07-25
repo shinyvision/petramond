@@ -202,7 +202,7 @@ fn compute_chunk_skylight_inner<'a>(
                             M_OPAQUE
                         } else if b == Block::Water {
                             M_WATER
-                        } else if b == Block::OakLeaves {
+                        } else if b.is_leaves() {
                             M_LEAF
                         } else {
                             M_AIR

@@ -32,6 +32,7 @@ static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
     "melts",
     "sapling",
     "bed",
+    "merges_with_self",
 ]);
 
 impl BlockTag {
@@ -127,6 +128,12 @@ impl BlockTag {
     /// the bookkeeping resolves the bed through its model group, and a spawn
     /// is only ever set by a sleep click.
     pub const BED: BlockTag = BlockTag(17);
+    /// A see-through block whose faces AGAINST ITSELF are never drawn, so a
+    /// run of it reads as one volume rather than stacked panes — glass and
+    /// ice. The opposite choice is deliberate for leaves, whose interior faces
+    /// are what give a canopy depth, so this is a row opt-in rather than
+    /// anything derived from the render pass.
+    pub const MERGES_WITH_SELF: BlockTag = BlockTag(18);
 
     /// Resolve a `blocks.json` row tag name (see [`crate::registry::TagTable`]).
     pub(crate) fn resolve(name: &str) -> Result<BlockTag, String> {

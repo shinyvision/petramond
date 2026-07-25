@@ -59,3 +59,46 @@ fn a_full_cube_under_a_snow_layer_culls_its_top_face() {
     });
     assert!(open_top_covered, "uncovered floor tops must still render");
 }
+
+/// The covers-below cull is GEOMETRIC, not family-keyed: whatever resolves a
+/// box flush on its own floor that covers the whole cell footprint seals the
+/// face beneath it. A bottom slab is neither opaque nor a lowered cube and
+/// must seal; the same slab flipped to the TOP half must not — proving the
+/// answer is read off the cell's resolved boxes and not off its row.
+#[test]
+fn any_floor_flush_neighbour_seals_the_face_beneath_it() {
+    let carrier_top_drawn = |slot: usize| {
+        let mut section = floor_section(Block::Stone);
+        section.set_block(8, 1, 8, Block::StoneSlab);
+        section.set_slab_state(
+            8,
+            1,
+            8,
+            SlabState::single(crate::block_state::SlabSplit::Y, slot, Block::StoneSlab),
+        );
+        mesh(&section).opaque.chunks_exact(4).any(|q| {
+            let span = |a: usize| {
+                q.iter()
+                    .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| {
+                        (lo.min(v.pos[a]), hi.max(v.pos[a]))
+                    })
+            };
+            let (x0, x1) = span(0);
+            let (z0, z1) = span(2);
+            shade_idx(&q[0]) == 0
+                && q.iter().all(|v| (v.pos[1] - 1.0).abs() < 1e-3)
+                && x0 < 8.5
+                && 8.5 < x1
+                && z0 < 8.5
+                && 8.5 < z1
+        })
+    };
+    assert!(
+        !carrier_top_drawn(0),
+        "a bottom slab's base seals the carrier's top face"
+    );
+    assert!(
+        carrier_top_drawn(1),
+        "a TOP slab leaves the carrier's top face exposed"
+    );
+}

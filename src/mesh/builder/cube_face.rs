@@ -77,19 +77,13 @@ pub(super) fn log_side_cell_uvs(
 }
 
 /// Whether a NON-occluding ring cell still deserves a sub-cell AO cast probe:
-/// the box-shape families (and partial slabs, handled by the caller) occupy
-/// part of their cell, so a corner pocket inside them can be solid even
-/// though the whole cell is not.
+/// a box-shaped cell occupies only part of itself, so a corner pocket inside
+/// it can be solid even though the whole cell is not. Reads the loader-derived
+/// dense flag rather than listing families, so a new box family — engine or
+/// mod — casts sub-cell AO the moment it resolves to boxes.
 #[inline]
 pub(in crate::mesh) fn probe_worthy(block: Block) -> bool {
-    matches!(
-        block.shape_family(),
-        crate::block::ShapeFamily::Stair
-            | crate::block::ShapeFamily::Fence
-            | crate::block::ShapeFamily::Pane
-            | crate::block::ShapeFamily::Ladder
-            | crate::block::ShapeFamily::Custom
-    )
+    block.has_box_shape()
 }
 
 /// The four sub-cell AO cast probe POCKETS of one face corner — the
@@ -256,10 +250,7 @@ where
     // Whether the FRONT cell itself holds sub-cell matter: its interior
     // quadrant then joins the corner occlusion (the exposed ring of a face
     // something box-shaped stands on).
-    let front_probe = {
-        let fb = block_at(fx, fy, fz);
-        probe_worthy(fb) || (fb.is_slab() && slab_at(fx, fy, fz).is_some_and(|st| !st.is_full()))
-    };
+    let front_probe = probe_worthy(block_at(fx, fy, fz));
 
     let mut occ = [[false; 3]; 3];
     let mut probe_cell = [[false; 3]; 3];
@@ -293,7 +284,7 @@ where
             occ[ia][ib] = cell.occludes_ao() || full_stack;
             // A non-occluding cell that still holds sub-cell matter (a box
             // shape, a partial slab) gets corner-probe casting below.
-            probe_cell[ia][ib] = !occ[ia][ib] && (probe_worthy(cell) || slab_state.is_some());
+            probe_cell[ia][ib] = !occ[ia][ib] && probe_worthy(cell);
             if smooth_light {
                 opq[ia][ib] = cell.is_opaque() || full_stack;
                 if !opq[ia][ib] {

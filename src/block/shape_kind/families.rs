@@ -11,7 +11,7 @@ use crate::mathh::IVec3;
 use crate::world::World;
 
 use super::super::{Aabb, Block, ShapeBox};
-use super::facets::{ItemRender, ShapeCtx, ShapeRender, ShapeSim};
+use super::facets::{union_box as union, ItemRender, ShapeCtx, ShapeRender, ShapeSim};
 use super::neighborhood::{ShapeNeighborhood, ShapeState};
 use super::{ConnectionParams, ItemForm, ShapeFamily, ShapeParams};
 use crate::block_state::{SlabState, StairState};
@@ -154,23 +154,6 @@ fn item_from_form(form: ItemForm, block: Block) -> ItemRender {
     }
 }
 
-/// The union AABB of a box list (pane/fence selection outline), or `None` when
-/// empty.
-fn union(boxes: &[Aabb]) -> Option<([f32; 3], [f32; 3])> {
-    if boxes.is_empty() {
-        return None;
-    }
-    let mut mn = [f32::INFINITY; 3];
-    let mut mx = [f32::NEG_INFINITY; 3];
-    for b in boxes {
-        for i in 0..3 {
-            mn[i] = mn[i].min(b.min[i]);
-            mx[i] = mx[i].max(b.max[i]);
-        }
-    }
-    Some((mn, mx))
-}
-
 // --- Cube / lowered cube / plants / torch: sim + render defaults ----------------
 
 /// Plain full cube — every facet is the trait default except the face
@@ -192,25 +175,93 @@ impl ShapeSim for CubeFamily {
 }
 impl ShapeRender for CubeFamily {}
 
-/// A lowered cube: its collision box and lowered visual box are row data, so
-/// the defaults (`Block::collision_boxes` / `Block::visual_aabb`) are correct.
-pub struct LoweredCubeFamily;
-impl ShapeSim for LoweredCubeFamily {
-    fn light_shape(&self, p: &ShapeParams, b: Block) -> crate::block::BlockLightShape {
-        // No partial-cell light shape — the deliberate simplification,
-        // rounded to the nearer full case: a mostly-full cube (farmland,
-        // 15/16) blocks like a full cube, a thin cover (the snow layer,
-        // 1/16) blocks nothing. Anything else would darken the cell an
-        // entity standing ON a thin cover occupies.
-        let _ = p;
-        if b.lowered_height().unwrap_or(0) >= 8 {
-            crate::block::BlockLightShape::OpaqueCube
-        } else {
-            crate::block::BlockLightShape::Open
-        }
+/// A STATIC BOX SET — the one family for any block whose form is a fixed list
+/// of axis-aligned boxes authored as data (`{"boxes": [...]}`): farmland and
+/// the snow layer (one box), the cactus (an inset trunk plus its two cap
+/// plates), a mod's dirt path or pressure plate. The authored list is the
+/// WHOLE geometry source: mesh, collision, outline, targeting, AO and light
+/// apertures all resolve from it, so a row can neither restate nor contradict
+/// its own shape.
+pub struct BoxSetFamily;
+
+/// The box list of a box-set kind — a family invariant, so an absence is a
+/// loader bug.
+#[inline]
+fn box_set(p: &ShapeParams) -> &'static super::BoxSetParams {
+    p.box_set().expect("a box-set family carries its boxes")
+}
+
+impl ShapeSim for BoxSetFamily {
+    fn default_boxes(&self, p: &ShapeParams, _b: Block) -> &'static [Aabb] {
+        // Per BOX: drawn matter always occludes light and AO, but a
+        // decorative plate is walked through (mob spawning and the surface
+        // probes deliberately skip non-colliding cover).
+        box_set(p).collision
+    }
+
+    fn occupies_pocket(
+        &self,
+        p: &ShapeParams,
+        _nb: &dyn ShapeNeighborhood,
+        _pos: IVec3,
+        _b: Block,
+        lo: [f32; 3],
+        hi: [f32; 3],
+    ) -> bool {
+        // The MATTER boxes, collide-or-not: a snow cover shadows without
+        // obstructing, and a face plane spanning the cell carries a full-width
+        // face without being a body.
+        box_set(p)
+            .boxes
+            .iter()
+            .filter(|d| d.occludes)
+            .any(|d| overlaps(lo, hi, d.aabb.min, d.aabb.max))
+    }
+
+    fn light_shape(&self, _p: &ShapeParams, _b: Block) -> crate::block::BlockLightShape {
+        // Always shaped: the apertures fall out of the boxes (the trait
+        // default derives them from `occupies_pocket`), so a full-cell box set
+        // blocks light and a thin cover only shadows what it covers.
+        crate::block::BlockLightShape::Shaped
     }
 }
-impl ShapeRender for LoweredCubeFamily {}
+impl ShapeRender for BoxSetFamily {
+    fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
+        let tiles = ctx.block.tiles();
+        out.extend(box_set(ctx.params).boxes.iter().map(|d| {
+            let mut b = ShapeBox::uniform(d.aabb, tiles, ctx.tint_for);
+            if !d.occludes {
+                b = b.as_face_carrier();
+            }
+            if d.double_sided {
+                b = b.double_sided();
+            }
+            for (face, draws) in b.faces.iter_mut().zip(d.faces) {
+                if !draws {
+                    *face = None;
+                }
+            }
+            b
+        }))
+    }
+
+    fn default_selection_box(
+        &self,
+        p: &ShapeParams,
+        _block: Block,
+    ) -> Option<([f32; 3], [f32; 3])> {
+        // The DRAWN extent, whether or not it collides — a walk-through cover
+        // stays aimable, like a no-collision model block.
+        let b = box_set(p).bounds;
+        Some((b.min, b.max))
+    }
+
+    fn item_render(&self, _p: &ShapeParams, block: Block) -> ItemRender {
+        // The icon / dropped / in-hand forms draw the shape's own boxes, so
+        // the item reads as the block it will place.
+        ItemRender::Geometry(block)
+    }
+}
 
 /// The cross billboard plant (grass/fern/flower). No collision; its item is a
 /// flat sprite of the top tile.
@@ -296,27 +347,26 @@ impl ShapeSim for StairFamily {
         crate::block::BlockLightShape::Shaped
     }
 
-    fn light_apertures(&self, _p: &ShapeParams, _b: Block, state: ShapeState) -> u32 {
-        // The PLACED bits drive light (the historical coarse choice — corner
-        // joins don't re-light).
-        let placed = StairState::from_cell(state);
-        super::facets::pack_light_apertures(|(dx, dy, dz)| {
-            crate::stair::light_side_mask(placed, dx, dy, dz)
-        })
-    }
-}
-impl ShapeRender for StairFamily {
-    fn occupies_pocket(&self, ctx: &ShapeCtx<'_>, lo: [f32; 3], hi: [f32; 3]) -> bool {
+    fn occupies_pocket(
+        &self,
+        _p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        _b: Block,
+        lo: [f32; 3],
+        hi: [f32; 3],
+    ) -> bool {
         // The REFINED shape — the same stored corner byte `boxes` draws.
-        // AO occupancy must track the geometry, not the placement: two
-        // placements refining to one corner shape must shade neighbours
-        // identically.
-        let shape = stair_shape_at(ctx.nb, ctx.pos);
+        // Occupancy must track the geometry, not the placement: two
+        // placements refining to one corner shape must shade (and light)
+        // neighbours identically.
+        let shape = stair_shape_at(nb, pos);
         any_octant(lo, hi, &|ix, iy, iz| {
             crate::stair::shape_half_cell_occupied(shape, ix, iy, iz)
         })
     }
-
+}
+impl ShapeRender for StairFamily {
     fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
         let tiles = ctx.block.tiles();
         let shape = stair_shape_at(ctx.nb, ctx.pos);
@@ -378,11 +428,20 @@ impl ShapeSim for SlabFamily {
         crate::block::BlockLightShape::Shaped
     }
 
-    fn light_apertures(&self, _p: &ShapeParams, b: Block, state: ShapeState) -> u32 {
-        let st = crate::slab::normalize_state(b, SlabState::from_cell(state));
-        super::facets::pack_light_apertures(|(dx, dy, dz)| {
-            crate::slab::light_side_mask(st, dx, dy, dz)
-        })
+    fn occupies_pocket(
+        &self,
+        _p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        b: Block,
+        lo: [f32; 3],
+        hi: [f32; 3],
+    ) -> bool {
+        let state = crate::slab::normalize_state(b, slab_state_at(nb, pos));
+        state.is_full()
+            || any_octant(lo, hi, &|ix, iy, iz| {
+                crate::slab::half_cell_occupied(state, ix, iy, iz)
+            })
     }
 
     /// A slab cell is composed of its filled layer slots, and the slot INDEX
@@ -405,14 +464,6 @@ impl ShapeSim for SlabFamily {
     }
 }
 impl ShapeRender for SlabFamily {
-    fn occupies_pocket(&self, ctx: &ShapeCtx<'_>, lo: [f32; 3], hi: [f32; 3]) -> bool {
-        let state = crate::slab::normalize_state(ctx.block, slab_state_at(ctx.nb, ctx.pos));
-        state.is_full()
-            || any_octant(lo, hi, &|ix, iy, iz| {
-                crate::slab::half_cell_occupied(state, ix, iy, iz)
-            })
-    }
-
     fn meshes_as_cube(&self, ctx: &ShapeCtx<'_>) -> bool {
         // A same-material full stack IS the material's full cube: it falls to
         // the cube path so it culls, lights, and GREEDY-MERGES like one (the
@@ -492,15 +543,23 @@ impl ShapeSim for PaneFamily {
         ))
         .to_cell()
     }
-}
-impl ShapeRender for PaneFamily {
-    fn occupies_pocket(&self, ctx: &ShapeCtx<'_>, lo: [f32; 3], hi: [f32; 3]) -> bool {
-        // The mask-free POST: mask resolution is out of the pad's reach, and
-        // rails are thin and corner-distant anyway.
-        let c = conn(ctx.params);
+
+    fn occupies_pocket(
+        &self,
+        p: &ShapeParams,
+        _nb: &dyn ShapeNeighborhood,
+        _pos: IVec3,
+        _b: Block,
+        lo: [f32; 3],
+        hi: [f32; 3],
+    ) -> bool {
+        // The mask-free POST: rails are thin and corner-distant, and a mask
+        // read would make the answer differ between the two meshers.
+        let c = conn(p);
         lo[0] < c.post_hi && hi[0] > c.post_lo && lo[2] < c.post_hi && hi[2] > c.post_lo
     }
-
+}
+impl ShapeRender for PaneFamily {
     fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
         // [top, bottom, side] tiles = [edge, edge, glass].
         let [edge_tile, _bottom, glass_tile] = ctx.block.tiles();
@@ -585,13 +644,21 @@ impl ShapeSim for FenceFamily {
     fn nav_reads_solid(&self, _p: &ShapeParams) -> bool {
         true
     }
-}
-impl ShapeRender for FenceFamily {
-    fn occupies_pocket(&self, ctx: &ShapeCtx<'_>, lo: [f32; 3], hi: [f32; 3]) -> bool {
-        let c = conn(ctx.params);
+
+    fn occupies_pocket(
+        &self,
+        p: &ShapeParams,
+        _nb: &dyn ShapeNeighborhood,
+        _pos: IVec3,
+        _b: Block,
+        lo: [f32; 3],
+        hi: [f32; 3],
+    ) -> bool {
+        let c = conn(p);
         lo[0] < c.post_hi && hi[0] > c.post_lo && lo[2] < c.post_hi && hi[2] > c.post_lo
     }
-
+}
+impl ShapeRender for FenceFamily {
     fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
         let tiles = ctx.block.tiles();
         let c = conn(ctx.params);
@@ -636,14 +703,22 @@ impl ShapeSim for LadderFamily {
         let (t, h) = b.ladder_dims();
         crate::ladder::collision_boxes_dim(b.panel_facing(), t, h)
     }
-}
-impl ShapeRender for LadderFamily {
-    fn occupies_pocket(&self, ctx: &ShapeCtx<'_>, lo: [f32; 3], hi: [f32; 3]) -> bool {
-        let (thickness, height) = ctx.block.ladder_dims();
-        let (mn, mx) = crate::ladder::panel_aabb_dim(ctx.block.panel_facing(), thickness, height);
+
+    fn occupies_pocket(
+        &self,
+        _p: &ShapeParams,
+        _nb: &dyn ShapeNeighborhood,
+        _pos: IVec3,
+        b: Block,
+        lo: [f32; 3],
+        hi: [f32; 3],
+    ) -> bool {
+        let (thickness, height) = b.ladder_dims();
+        let (mn, mx) = crate::ladder::panel_aabb_dim(b.panel_facing(), thickness, height);
         overlaps(lo, hi, mn, mx)
     }
-
+}
+impl ShapeRender for LadderFamily {
     fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
         let tile = ctx.block.tiles()[0];
         let (thickness, height) = ctx.block.ladder_dims();
@@ -699,6 +774,18 @@ impl ShapeRender for ModelFamily {
         let st = model_state_at(nb, pos);
         crate::block_model::selection_aabb_oriented(kind, st.offset, st.facing)
     }
+
+    fn default_selection_box(
+        &self,
+        p: &ShapeParams,
+        _block: Block,
+    ) -> Option<([f32; 3], [f32; 3])> {
+        // The MODEL's box, independent of collision — a walk-through model
+        // block is still selectable. Position-less: the footprint-origin cell.
+        let kind = p.model_kind().expect("model family carries a model kind");
+        crate::block_model::selection_aabb(kind, [0, 0, 0])
+    }
+
     fn item_render(&self, p: &ShapeParams, _block: Block) -> ItemRender {
         ItemRender::Model(p.model_kind().expect("model family carries a model kind"))
     }
@@ -773,16 +860,24 @@ impl ShapeSim for CustomFamily {
     fn nav_reads_solid(&self, p: &ShapeParams) -> bool {
         p.custom().is_some_and(|c| c.nav_solid)
     }
+
+    fn occupies_pocket(
+        &self,
+        _p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        _b: Block,
+        lo: [f32; 3],
+        hi: [f32; 3],
+    ) -> bool {
+        // The SIM bake's boxes: the authoritative matter, and the only cache
+        // a headless light bake can reach. A render-only box (a fluid surface
+        // inside a pot) deliberately casts nothing.
+        nb.baked_collision(pos)
+            .is_some_and(|boxes| boxes.iter().any(|bx| overlaps(lo, hi, bx.min, bx.max)))
+    }
 }
 impl ShapeRender for CustomFamily {
-    fn occupies_pocket(&self, ctx: &ShapeCtx<'_>, lo: [f32; 3], hi: [f32; 3]) -> bool {
-        ctx.nb.baked(ctx.pos).is_some_and(|boxes| {
-            boxes
-                .iter()
-                .any(|bx| overlaps(lo, hi, bx.aabb.min, bx.aabb.max))
-        })
-    }
-
     fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
         // A Layer-3 shape draws what its WASM bake produced. No bake reachable
         // (never baked, trapped, or outside the caller's window) emits nothing,
@@ -826,7 +921,7 @@ impl ShapeRender for CustomFamily {
 // --- Singletons + binding -------------------------------------------------------
 
 static CUBE: CubeFamily = CubeFamily;
-static LOWERED_CUBE: LoweredCubeFamily = LoweredCubeFamily;
+static BOX_SET: BoxSetFamily = BoxSetFamily;
 static CROSS: CrossFamily = CrossFamily;
 static CROP: CropFamily = CropFamily;
 static TORCH: TorchFamily = TorchFamily;
@@ -839,17 +934,15 @@ static MODEL: ModelFamily = ModelFamily;
 static DOOR: DoorFamily = DoorFamily;
 static CUSTOM: CustomFamily = CustomFamily;
 
-/// The `(sim, render)` facet singletons for `family` — the binding
-/// `shape_kind::build` stamps onto every [`ShapeKindDef`](super::ShapeKindDef).
 // --- Placement: each family owns its own, dispatched by the registry --------
 //
 // The engine's former per-family placement match now lives here as
-// `ShapePlacement` impls. Cube / lowered cube / cross / crop / custom keep the
-// trait default (`General` — the generic single-cell path); the shapes with
-// bespoke placement override.
+// `ShapePlacement` impls. Cube / box set / cross / crop / custom keep the
+// trait default (the generic single-cell path); the shapes with bespoke
+// placement override.
 
 impl ShapePlacement for CubeFamily {}
-impl ShapePlacement for LoweredCubeFamily {}
+impl ShapePlacement for BoxSetFamily {}
 impl ShapePlacement for CrossFamily {}
 impl ShapePlacement for CropFamily {}
 impl ShapePlacement for CustomFamily {}
@@ -1157,7 +1250,7 @@ pub(super) fn singletons(
 ) {
     match family {
         ShapeFamily::Cube => (&CUBE, &CUBE, &CUBE),
-        ShapeFamily::LoweredCube => (&LOWERED_CUBE, &LOWERED_CUBE, &LOWERED_CUBE),
+        ShapeFamily::BoxSet => (&BOX_SET, &BOX_SET, &BOX_SET),
         ShapeFamily::Cross => (&CROSS, &CROSS, &CROSS),
         ShapeFamily::Crop => (&CROP, &CROP, &CROP),
         ShapeFamily::Torch => (&TORCH, &TORCH, &TORCH),
@@ -1179,7 +1272,8 @@ pub(super) fn singletons(
 pub(super) fn resolves_to_boxes(family: ShapeFamily) -> bool {
     matches!(
         family,
-        ShapeFamily::Stair
+        ShapeFamily::BoxSet
+            | ShapeFamily::Stair
             | ShapeFamily::Slab
             | ShapeFamily::Pane
             | ShapeFamily::Fence

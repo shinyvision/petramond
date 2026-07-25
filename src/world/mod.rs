@@ -34,7 +34,7 @@ mod query;
 mod remote;
 mod render_handoff;
 pub(crate) mod sapling;
-mod shape_bake_validate;
+pub(crate) mod shape_bake_validate;
 mod shape_refine;
 mod sim_guard;
 mod slab;

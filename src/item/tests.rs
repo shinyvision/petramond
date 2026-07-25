@@ -218,7 +218,7 @@ fn render_kind_matches_shape_family() {
             // Cube-drawn families (the plain cube, the true-geometry stair/slab/
             // fence, and the lowered cube) render as a block cube in the slot.
             ShapeFamily::Cube
-            | ShapeFamily::LoweredCube
+            | ShapeFamily::BoxSet
             | ShapeFamily::Stair
             | ShapeFamily::Slab
             | ShapeFamily::Fence => {

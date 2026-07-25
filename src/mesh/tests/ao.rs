@@ -245,10 +245,7 @@ fn slab_top_plane_ignores_matter_below_it() {
         "flush bottom-slab neighbours form one continuous floor: {center:?}"
     );
 
-    let mut section = section_with(&[
-        ((8, 8, 8), Block::StoneSlab),
-        ((9, 8, 8), Block::StoneSlab),
-    ]);
+    let mut section = section_with(&[((8, 8, 8), Block::StoneSlab), ((9, 8, 8), Block::StoneSlab)]);
     section.set_slab_state(
         9,
         8,

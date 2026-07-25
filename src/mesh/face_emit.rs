@@ -154,19 +154,7 @@ where
 
     // Front cell's own sub-cell matter joins the interior quadrant — the
     // closure gather's `front_probe`, mirrored for byte parity.
-    let front_probe = {
-        let fb = pad.block_at_pad(fx, fy, fz);
-        super::builder::probe_worthy(fb)
-            || (fb.is_slab() && {
-                let st = crate::slab::normalize_state(
-                    fb,
-                    crate::block_state::SlabState::from_cell(
-                        pad.cell_states[mesh_pad_idx(fx, fy, fz)],
-                    ),
-                );
-                !st.is_full()
-            })
-    };
+    let front_probe = super::builder::probe_worthy(pad.block_at_pad(fx, fy, fz));
 
     let mut occ = [[false; 3]; 3];
     let mut probe_cell = [[false; 3]; 3];
@@ -198,8 +186,7 @@ where
             });
             let full_stack = slab_state.is_some_and(|s| s.is_full());
             occ[ia][ib] = cell.occludes_ao() || full_stack;
-            probe_cell[ia][ib] =
-                !occ[ia][ib] && (super::builder::probe_worthy(cell) || slab_state.is_some());
+            probe_cell[ia][ib] = !occ[ia][ib] && super::builder::probe_worthy(cell);
             if smooth_light {
                 opq[ia][ib] = cell.is_opaque() || full_stack;
                 if !opq[ia][ib] {

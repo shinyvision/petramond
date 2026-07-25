@@ -21,6 +21,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::Aabb;
 use crate::block_model::BlockModelKind;
 use crate::connect;
 
@@ -31,8 +32,9 @@ mod neighborhood;
 
 pub use custom::{CustomLight, CustomShapeDef};
 pub use facets::{
-    full_face_at, light_aperture_face, pack_light_apertures, FullFace, ItemRender, ShapeCtx,
-    ShapeRender, ShapeSim, LIGHT_APERTURES_OPEN, NO_PART_TINT,
+    full_face_at, light_aperture_face, pack_light_apertures, rests_flat_on_floor, FullFace,
+    ItemRender, NoNeighborhood, ShapeCtx, ShapeRender, ShapeSim, LIGHT_APERTURES_OPEN,
+    NO_PART_TINT,
 };
 
 pub use neighborhood::{CellCodec, CellView, ShapeNeighborhood, ShapeState, SHAPE_STATE_MAX};
@@ -88,7 +90,11 @@ impl std::fmt::Debug for BlockShapeKind {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ShapeFamily {
     Cube,
-    LoweredCube,
+    /// A static list of axis-aligned boxes authored as data — farmland, the
+    /// snow layer, the cactus, a mod's dirt path. The ONE family for a fixed
+    /// sub-cell shape; anything neighbour-dependent is a resolver family, and
+    /// anything procedural is [`Custom`](Self::Custom).
+    BoxSet,
     Cross,
     Crop,
     Torch,
@@ -115,8 +121,9 @@ pub enum ShapeParams {
     /// No parameters — the family is self-describing (cube, cross, torch,
     /// stair, slab, door, ladder).
     None,
-    /// A lowered cube's visible height in texels (`1..=15`).
-    LoweredCube { height: u8 },
+    /// A static box set's authored boxes (`{"boxes": [...]}`), behind a
+    /// `&'static` so [`ShapeParams`] stays a cheap `Copy`.
+    BoxSet(&'static BoxSetParams),
     /// A bbmodel block's model kind.
     Model { kind: BlockModelKind },
     /// A parameterized connection shape (fence or pane): the post dimensions,
@@ -136,11 +143,11 @@ pub enum ShapeParams {
 }
 
 impl ShapeParams {
-    /// The lowered-cube visible height, if this is a lowered-cube kind.
+    /// The authored boxes, if this is a static box-set kind.
     #[inline]
-    pub fn lowered_height(&self) -> Option<u8> {
+    pub fn box_set(&self) -> Option<&'static BoxSetParams> {
         match self {
-            ShapeParams::LoweredCube { height } => Some(*height),
+            ShapeParams::BoxSet(b) => Some(b),
             _ => None,
         }
     }
@@ -273,6 +280,42 @@ static ENGINE_PANE_PARAMS: ConnectionParams = ConnectionParams {
     boxes: &ENGINE_PANE_BOXES,
 };
 
+/// One authored box of a `{"boxes": [...]}` shape.
+#[derive(Debug, PartialEq)]
+pub struct BoxDef {
+    /// Cell-local extent (`0.0..1.0` per axis).
+    pub aabb: Aabb,
+    /// Which of the six faces this box DRAWS, in canonical face order
+    /// (`+X, -X, +Y, -Y, +Z, -Z`). A `false` face is one the shape NEVER
+    /// emits whatever the geometry says — the cactus's cap plates draw only
+    /// their outward cap, so the trunk shows no rim.
+    pub faces: [bool; 6],
+    /// Whether this box is MATTER: it shadows (AO) and blocks light. `false`
+    /// for a box that exists only to carry a face — the cactus's side planes
+    /// span the whole cell so their faces are full width, but the body they
+    /// show is the inset trunk, and treating the planes as matter would shadow
+    /// the ground like a full cube and seal the cell's own light out.
+    pub occludes: bool,
+    /// Whether this box obstructs movement. Independent of `occludes`: a snow
+    /// cover is matter you walk through, a face plane is neither.
+    pub collides: bool,
+    /// Draw the box's faces from both sides — see
+    /// [`ShapeBox::double_sided`](crate::block::ShapeBox).
+    pub double_sided: bool,
+}
+
+/// The resolved parameters of a static box-set kind: the authored boxes, the
+/// collision slice precomputed out of them, and their union. One per distinct
+/// authored list.
+#[derive(Debug, PartialEq)]
+pub struct BoxSetParams {
+    pub boxes: &'static [BoxDef],
+    /// The `collides` boxes, ready to hand out as `&'static [Aabb]`.
+    pub collision: &'static [Aabb],
+    /// The union of every DRAWN box — the selection outline and target box.
+    pub bounds: Aabb,
+}
+
 /// One shape-kind registry row: the family, its canonical key, the parameters
 /// that distinguish this kind from others of the same family, and the facet
 /// singletons consumers dispatch through.
@@ -313,7 +356,7 @@ pub struct ShapeKindDef {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RawShape {
     Cube,
-    LoweredCube(u8),
+    Boxes(Vec<RawBox>),
     Cross,
     Crop,
     Torch,
@@ -360,15 +403,175 @@ impl<'de> Deserialize<'de> for RawShape {
         #[derive(Deserialize)]
         #[serde(rename_all = "snake_case")]
         enum Tagged {
-            LoweredCube(u8),
+            Boxes(Vec<RawBox>),
             Model(BlockModelKind),
             Custom(RawCustomShape),
         }
         match serde_json::from_value::<Tagged>(value).map_err(D::Error::custom)? {
-            Tagged::LoweredCube(h) => Ok(RawShape::LoweredCube(h)),
+            Tagged::Boxes(b) => Ok(RawShape::Boxes(b)),
             Tagged::Model(kind) => Ok(RawShape::Model(kind)),
             Tagged::Custom(custom) => Ok(RawShape::Custom(custom)),
         }
+    }
+}
+
+/// The most boxes one authored shape may list. Shares the guest-bake cap: a
+/// static shape and a WASM-baked one land in the same mesher and the same
+/// per-cell budget.
+const MAX_AUTHORED_BOXES: usize = crate::world::shape_bake_validate::MAX_SHAPE_BOXES;
+
+/// Resolve `{"boxes": [...]}` to its family, leaked params, and canonical key.
+/// The key spells the whole authored list, so two rows with identical boxes
+/// share ONE shape kind (every plain cactus is one row in the table) and two
+/// that differ never collide.
+fn resolve_box_set(raw: &[RawBox]) -> Result<(ShapeFamily, ShapeParams, String), String> {
+    if raw.is_empty() {
+        return Err("a 'boxes' shape needs at least one box".into());
+    }
+    if raw.len() > MAX_AUTHORED_BOXES {
+        return Err(format!(
+            "a 'boxes' shape may list at most {MAX_AUTHORED_BOXES} boxes, got {}",
+            raw.len()
+        ));
+    }
+    let boxes: Vec<BoxDef> = raw.iter().map(RawBox::resolve).collect::<Result<_, _>>()?;
+    let key = format!(
+        "#boxes/{}",
+        boxes
+            .iter()
+            .map(|b| {
+                let t = |v: f32| (v * 16.0).round() as u8;
+                let faces: String = b.faces.iter().map(|&f| if f { '1' } else { '0' }).collect();
+                format!(
+                    "{},{},{}-{},{},{}:{faces}{}{}{}",
+                    t(b.aabb.min[0]),
+                    t(b.aabb.min[1]),
+                    t(b.aabb.min[2]),
+                    t(b.aabb.max[0]),
+                    t(b.aabb.max[1]),
+                    t(b.aabb.max[2]),
+                    if b.collides { "c" } else { "" },
+                    if b.occludes { "o" } else { "" },
+                    if b.double_sided { "d" } else { "" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+    );
+    let collision: Vec<Aabb> = boxes
+        .iter()
+        .filter(|b| b.collides)
+        .map(|b| b.aabb)
+        .collect();
+    let mut bounds = Aabb {
+        min: [f32::INFINITY; 3],
+        max: [f32::NEG_INFINITY; 3],
+    };
+    for b in &boxes {
+        for a in 0..3 {
+            bounds.min[a] = bounds.min[a].min(b.aabb.min[a]);
+            bounds.max[a] = bounds.max[a].max(b.aabb.max[a]);
+        }
+    }
+    let params: &'static BoxSetParams = Box::leak(Box::new(BoxSetParams {
+        boxes: Box::leak(boxes.into_boxed_slice()),
+        collision: Box::leak(collision.into_boxed_slice()),
+        bounds,
+    }));
+    Ok((ShapeFamily::BoxSet, ShapeParams::BoxSet(params), key))
+}
+
+/// Whether a family resolves to a box set — the shape-kind row's
+/// [`resolves_to_boxes`](ShapeKindDef::resolves_to_boxes), reachable at LOAD
+/// time (before the kind table is installed) so the loader can mirror it onto
+/// the dense block flags.
+pub(crate) fn family_resolves_to_boxes(family: ShapeFamily) -> bool {
+    families::resolves_to_boxes(family)
+}
+
+/// One box of a `{"boxes": [...]}` shape, as authored. Extents are TEXELS
+/// (`0..=16`); `from` defaults to the cell origin and `to` to the far corner,
+/// so a plain full cube is `{}` and farmland is `{"to": [16, 15, 16]}`.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RawBox {
+    #[serde(default)]
+    pub from: Option<[u8; 3]>,
+    #[serde(default)]
+    pub to: Option<[u8; 3]>,
+    /// Which faces this box draws: any of `up`, `down`, `sides`, `all`, or the
+    /// individual `+x`/`-x`/`+y`/`-y`/`+z`/`-z`. Absent = all six.
+    #[serde(default)]
+    pub faces: Option<Vec<String>>,
+    /// Whether the box is matter — shadows and blocks light (default yes).
+    #[serde(default = "yes")]
+    pub occludes: bool,
+    /// Whether the box obstructs movement (default yes).
+    #[serde(default = "yes")]
+    pub collides: bool,
+    /// Draw the box's faces from both sides (default no) — for a CUTOUT face
+    /// whose art must stay whole from every angle.
+    #[serde(default)]
+    pub double_sided: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl RawBox {
+    /// Resolve to the engine form, validating extents and face names.
+    fn resolve(&self) -> Result<BoxDef, String> {
+        let texel = |v: u8, name: &str| -> Result<f32, String> {
+            if v > 16 {
+                return Err(format!("box {name} {v} out of range (0..=16 texels)"));
+            }
+            Ok(v as f32 / 16.0)
+        };
+        let from = self.from.unwrap_or([0, 0, 0]);
+        let to = self.to.unwrap_or([16, 16, 16]);
+        let mut min = [0.0f32; 3];
+        let mut max = [0.0f32; 3];
+        for a in 0..3 {
+            min[a] = texel(from[a], "from")?;
+            max[a] = texel(to[a], "to")?;
+            if from[a] >= to[a] {
+                return Err(format!(
+                    "box axis {a} is empty ({} .. {}) — 'from' must be below 'to'",
+                    from[a], to[a]
+                ));
+            }
+        }
+        // Canonical face order: +X, -X, +Y, -Y, +Z, -Z.
+        let mut faces = [self.faces.is_none(); 6];
+        for name in self.faces.iter().flatten() {
+            let picked: &[usize] = match name.as_str() {
+                "all" => &[0, 1, 2, 3, 4, 5],
+                "sides" => &[0, 1, 4, 5],
+                "up" | "+y" => &[2],
+                "down" | "-y" => &[3],
+                "+x" => &[0],
+                "-x" => &[1],
+                "+z" => &[4],
+                "-z" => &[5],
+                other => {
+                    return Err(format!(
+                        "unknown box face '{other}' (expected all, sides, up, down, \
+                         or +x/-x/+y/-y/+z/-z)"
+                    ))
+                }
+            };
+            for &i in picked {
+                faces[i] = true;
+            }
+        }
+        Ok(BoxDef {
+            aabb: Aabb { min, max },
+            faces,
+            occludes: self.occludes,
+            collides: self.collides,
+            double_sided: self.double_sided,
+        })
     }
 }
 
@@ -419,11 +622,7 @@ impl RawShape {
                 ShapeParams::None,
                 "petramond:cube".into(),
             ),
-            RawShape::LoweredCube(height) => (
-                ShapeFamily::LoweredCube,
-                ShapeParams::LoweredCube { height: *height },
-                format!("petramond:lowered_cube/{height}"),
-            ),
+            RawShape::Boxes(raw) => resolve_box_set(raw)?,
             RawShape::Cross => (
                 ShapeFamily::Cross,
                 ShapeParams::None,
@@ -766,10 +965,36 @@ mod tests {
         assert!(matches!(de(r#""cube""#), RawShape::Cube));
         assert!(matches!(de(r#""fence""#), RawShape::Fence));
         assert!(matches!(de(r#""door""#), RawShape::Door));
-        assert!(matches!(
-            de(r#"{"lowered_cube":15}"#),
-            RawShape::LoweredCube(15)
-        ));
+        // A box list: extents default to the whole cell, faces to all six,
+        // and a box may declare that it draws without obstructing.
+        let (family, params, _) = resolve_json(
+            r#"{"boxes":[{"to":[16,15,16]},{"from":[0,15,0],"faces":["up"],"collides":false}]}"#,
+        )
+        .unwrap();
+        assert_eq!(family, ShapeFamily::BoxSet);
+        let set = params.box_set().expect("box set params");
+        assert_eq!(set.boxes.len(), 2);
+        assert_eq!(set.boxes[0].aabb.max, [1.0, 15.0 / 16.0, 1.0]);
+        assert_eq!(set.boxes[0].faces, [true; 6]);
+        assert!(set.boxes[0].collides);
+        // Face order is +X, -X, +Y, -Y, +Z, -Z.
+        assert_eq!(
+            set.boxes[1].faces,
+            [false, false, true, false, false, false]
+        );
+        // Only the colliding box is collision; the outline is the drawn union.
+        assert_eq!(set.collision.len(), 1);
+        assert_eq!(set.bounds.max, [1.0, 1.0, 1.0]);
+        // Empty lists, inverted extents, out-of-range texels and unknown face
+        // names are load errors, not silently dropped values.
+        for bad in [
+            r#"{"boxes":[]}"#,
+            r#"{"boxes":[{"from":[8,0,0],"to":[8,16,16]}]}"#,
+            r#"{"boxes":[{"to":[17,16,16]}]}"#,
+            r#"{"boxes":[{"faces":["sideways"]}]}"#,
+        ] {
+            assert!(resolve_json(bad).is_err(), "{bad}");
+        }
         assert!(matches!(
             de(r#"{"custom":{"family":"fence"}}"#),
             RawShape::Custom(_)
@@ -780,6 +1005,61 @@ mod tests {
         }
         // A bare (non-namespaced) unknown string is not a valid shape.
         assert!(serde_json::from_str::<RawShape>(r#""bogus""#).is_err());
+    }
+
+    /// Apertures ask whether matter SEALS a boundary, not whether it fills the
+    /// octant behind it. A cover that stops a texel short of its top must read
+    /// OPEN above — otherwise its own cell floods to black, the sunken top the
+    /// mesher draws inside that cell samples the dark, and every neighbouring
+    /// face averages its smooth light against a cell that is plainly lit
+    /// (the 2026-07-25 black-farmland playtest bug).
+    #[test]
+    fn a_cover_that_stops_short_of_its_top_stays_open_to_the_light() {
+        let apertures = |json: &str| {
+            let (family, params, _) = resolve_json(json).unwrap();
+            let (sim, ..) = families::singletons(family);
+            sim.light_apertures(
+                &params,
+                &facets::NoNeighborhood,
+                crate::mathh::IVec3::ZERO,
+                crate::block::Block::Air,
+            )
+        };
+        // 15/16 tall: fills most of its top octant, seals none of its top face.
+        let farmland = apertures(r#"{"boxes":[{"to":[16,15,16]}]}"#);
+        assert_eq!(
+            light_aperture_face(farmland, (0, 1, 0)),
+            0b1111,
+            "an unsealed top must let light in"
+        );
+        assert_eq!(
+            light_aperture_face(farmland, (0, -1, 0)),
+            0,
+            "its floor-flush base still seals downward"
+        );
+        assert_eq!(
+            light_aperture_face(farmland, (1, 0, 0)),
+            0,
+            "its sides reach the boundary on both halves"
+        );
+        // An inset column under an overhanging cap: sealed top and bottom, but
+        // its SIDES stay open. The cap clips the extreme texel of every side
+        // quadrant, so a probe over the whole quadrant would call the cell
+        // sealed and black it out — the cactus half of the same playtest bug.
+        let capped = apertures(
+            r#"{"boxes":[{"from":[1,0,1],"to":[15,16,15]},{"from":[0,15,0],"faces":["up"]}]}"#,
+        );
+        assert_eq!(light_aperture_face(capped, (0, 1, 0)), 0, "the cap seals");
+        assert_eq!(
+            light_aperture_face(capped, (0, -1, 0)),
+            0,
+            "the trunk seals its own floor"
+        );
+        assert_eq!(
+            light_aperture_face(capped, (1, 0, 0)),
+            0b1111,
+            "an inset trunk leaves its recessed sides open to the light"
+        );
     }
 
     fn resolve_json(s: &str) -> Result<(ShapeFamily, ShapeParams, String), String> {

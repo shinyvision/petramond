@@ -3,31 +3,25 @@
     {
       "block": "farming:farmland_dry",
       "shape": {
-        "lowered_cube": 15
+        "boxes": [
+          {
+            "to": [
+              16,
+              15,
+              16
+            ]
+          }
+        ]
       },
       "flags": [
-        "solid",
-        "ao_occluder"
+        "solid"
       ],
       "tags": [
         "no_pane_connect"
       ],
       "behavior": "farming:farmland",
       "interaction": "none",
-      "collision": [
-        {
-          "min": [
-            0,
-            0,
-            0
-          ],
-          "max": [
-            1,
-            0.9375,
-            1
-          ]
-        }
-      ],
+      "collision": [],
       "emission": 0,
       "tiles": [
         "farming:farmland_dry",
@@ -49,31 +43,25 @@
     {
       "block": "farming:farmland_wet",
       "shape": {
-        "lowered_cube": 15
+        "boxes": [
+          {
+            "to": [
+              16,
+              15,
+              16
+            ]
+          }
+        ]
       },
       "flags": [
-        "solid",
-        "ao_occluder"
+        "solid"
       ],
       "tags": [
         "no_pane_connect"
       ],
       "behavior": "farming:farmland",
       "interaction": "none",
-      "collision": [
-        {
-          "min": [
-            0,
-            0,
-            0
-          ],
-          "max": [
-            1,
-            0.9375,
-            1
-          ]
-        }
-      ],
+      "collision": [],
       "emission": 0,
       "tiles": [
         "farming:farmland_wet",
@@ -407,31 +395,25 @@
     {
       "block": "farming:farmland_fertile_dry",
       "shape": {
-        "lowered_cube": 15
+        "boxes": [
+          {
+            "to": [
+              16,
+              15,
+              16
+            ]
+          }
+        ]
       },
       "flags": [
-        "solid",
-        "ao_occluder"
+        "solid"
       ],
       "tags": [
         "no_pane_connect"
       ],
       "behavior": "farming:farmland",
       "interaction": "none",
-      "collision": [
-        {
-          "min": [
-            0,
-            0,
-            0
-          ],
-          "max": [
-            1,
-            0.9375,
-            1
-          ]
-        }
-      ],
+      "collision": [],
       "emission": 0,
       "tiles": [
         "farming:farmland_fertile_dry",
@@ -453,31 +435,25 @@
     {
       "block": "farming:farmland_fertile_wet",
       "shape": {
-        "lowered_cube": 15
+        "boxes": [
+          {
+            "to": [
+              16,
+              15,
+              16
+            ]
+          }
+        ]
       },
       "flags": [
-        "solid",
-        "ao_occluder"
+        "solid"
       ],
       "tags": [
         "no_pane_connect"
       ],
       "behavior": "farming:farmland",
       "interaction": "none",
-      "collision": [
-        {
-          "min": [
-            0,
-            0,
-            0
-          ],
-          "max": [
-            1,
-            0.9375,
-            1
-          ]
-        }
-      ],
+      "collision": [],
       "emission": 0,
       "tiles": [
         "farming:farmland_fertile_wet",

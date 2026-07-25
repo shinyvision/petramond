@@ -115,9 +115,43 @@ pub struct ShapeBox {
     /// post-pass can give each part its own multiply. `0` for every
     /// single-part family.
     pub part: CellPart,
+    /// Whether this box is MATTER — part of the block's body — rather than a
+    /// bare carrier for a face. Matter shadows, blocks light, buries a
+    /// neighbour's face and hides what is behind it; a face carrier does none
+    /// of that. The cactus's side planes span the whole cell so their faces
+    /// come out full width, but the body they show is the inset trunk: count
+    /// them as matter and the cactus shadows the ground like a full cube,
+    /// seals its own cell dark, and punches holes in the faces of whatever
+    /// stands beside it.
+    pub occludes: bool,
+    /// Draw this box's faces from BOTH sides (the back winding too), so they
+    /// survive back-face culling.
+    ///
+    /// For a cutout face this is what keeps the art whole from every angle:
+    /// the cactus's side tile is transparent along its edge columns EXCEPT
+    /// where the spines poke out, so through the near face's notches you see
+    /// the far face's spines instead of the sky. Single-sided, half the spines
+    /// vanish the moment you strafe past.
+    pub double_sided: bool,
 }
 
 impl ShapeBox {
+    /// The neutral box: no geometry, no faces, ordinary matter. The base a
+    /// family fills in with `..ShapeBox::PLAIN` when it builds per-face styles
+    /// by hand, so a new presentation field does not touch every producer.
+    pub const PLAIN: ShapeBox = ShapeBox {
+        aabb: Aabb {
+            min: [0.0; 3],
+            max: [1.0; 3],
+        },
+        faces: [None; 6],
+        ao_strength: 1.0,
+        dyed: false,
+        part: 0,
+        occludes: true,
+        double_sided: false,
+    };
+
     /// A box textured like a cube: `[top, bottom, side]` tiles, one tint per
     /// tile, plain UVs on every face, full AO, undyed.
     pub fn uniform(aabb: Aabb, tiles: [Tile; 3], tint_for: impl Fn(Tile) -> [f32; 3]) -> Self {
@@ -138,7 +172,23 @@ impl ShapeBox {
             ao_strength: 1.0,
             dyed: false,
             part: 0,
+            occludes: true,
+            double_sided: false,
         }
+    }
+
+    /// The same box drawn from both sides (see
+    /// [`double_sided`](Self::double_sided)).
+    pub fn double_sided(mut self) -> Self {
+        self.double_sided = true;
+        self
+    }
+
+    /// The same box as a bare FACE CARRIER rather than matter (see
+    /// [`occludes`](Self::occludes)).
+    pub fn as_face_carrier(mut self) -> Self {
+        self.occludes = false;
+        self
     }
 
     /// The same box with its AO darkening scaled (`1.0` = default).

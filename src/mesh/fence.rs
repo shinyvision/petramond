@@ -132,9 +132,7 @@ pub(crate) fn push_mesh_boxes(
         out.push(ShapeBox {
             aabb: Aabb { min, max },
             faces,
-            ao_strength: 1.0,
-            dyed: false,
-            part: 0,
+            ..ShapeBox::PLAIN
         });
     });
 }

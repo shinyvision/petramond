@@ -383,39 +383,6 @@ fn back_mask(facing: Facing) -> u8 {
     }
 }
 
-/// A 2x2 mask of the open half-face quadrants on a stair boundary. The light flood
-/// intersects the two cells' masks; light crosses only where their gaps overlap.
-#[inline]
-pub fn light_side_mask(state: StairState, dx: i32, dy: i32, dz: i32) -> u8 {
-    let shape = shape(state);
-    let dir = [dx, dy, dz];
-    let Some(axis) = dir.iter().position(|&d| d != 0) else {
-        return 0;
-    };
-    let layer = usize::from(dir[axis] > 0);
-    let mut open = 0u8;
-    for iy in 0..2 {
-        for iz in 0..2 {
-            for ix in 0..2 {
-                let idx = [ix, iy, iz];
-                if idx[axis] == layer && !shape_half_cell_occupied(shape, ix, iy, iz) {
-                    open |= aperture_bit(axis, ix, iy, iz);
-                }
-            }
-        }
-    }
-    open
-}
-
-#[inline]
-fn aperture_bit(axis: usize, ix: usize, iy: usize, iz: usize) -> u8 {
-    match axis {
-        0 => quadrant_bit(iz, iy),
-        1 => quadrant_bit(ix, iz),
-        _ => quadrant_bit(ix, iy),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,28 +504,5 @@ mod tests {
             _ => None,
         });
         assert_eq!(inside, back_mask(Facing::South) | back_mask(Facing::West));
-    }
-
-    #[test]
-    fn stair_light_masks_match_the_cut_out_gap() {
-        let east = StairState::new(Facing::East, StairHalf::Bottom);
-        assert_eq!(light_side_mask(east, -1, 0, 0), 0);
-        assert_ne!(light_side_mask(east, 1, 0, 0), 0);
-        assert_ne!(light_side_mask(east, 0, 1, 0), 0);
-        assert_eq!(light_side_mask(east, 0, -1, 0), 0);
-
-        let east_top = StairState::new(Facing::East, StairHalf::Top);
-        assert_ne!(light_side_mask(east_top, 0, -1, 0), 0);
-        assert_eq!(light_side_mask(east_top, 0, 1, 0), 0);
-
-        let north_side_gap =
-            light_side_mask(StairState::new(Facing::North, StairHalf::Bottom), 1, 0, 0);
-        let south_side_gap =
-            light_side_mask(StairState::new(Facing::South, StairHalf::Bottom), -1, 0, 0);
-        assert_eq!(
-            north_side_gap & south_side_gap,
-            0,
-            "two partial side gaps on opposite stair halves should not connect"
-        );
     }
 }

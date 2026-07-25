@@ -236,24 +236,26 @@ impl Player {
             let t_exit = next_boundary_t(t_max);
             // The "solid body" selection branch: genuinely solid blocks plus the
             // shapes selectable by geometry the `solid` flag doesn't imply —
-            // the torch and ladder (own precise tests), the lowered cube (a
-            // walk-through thin cover like the snow layer, selectable by its
-            // visible box), and every box-set family (a decorative Layer-3
-            // chair is not a solid cube but must still be aimable; the facet
-            // covers a modded family with no engine edit). The cross-plant
-            // case is handled separately below, like its render shape.
-            // Resolve the shape once: the def-table read is per stepped cell.
+            // the torch and ladder (own precise tests), every box-set family (a
+            // decorative Layer-3 chair is not a solid cube but must still be
+            // aimable), and anything whose SHAPE offers a box to aim at even
+            // though it does not collide (a walk-through thin cover like the
+            // snow layer, a no-collision model block). All three are facet
+            // answers, so a modded family needs no engine edit here. The
+            // cross-plant case is handled separately below, like its render
+            // shape. Resolve both once: the table reads are per stepped cell.
             let shape = block.shape_family();
             let precise_only = block.picks_by_boxes()
                 || shape == ShapeFamily::Torch
                 || shape == ShapeFamily::Ladder;
-            if block.is_solid() || precise_only || shape == ShapeFamily::LoweredCube {
+            let shape_box = block.visual_aabb();
+            if block.is_solid() || precise_only || shape_box.is_some() {
                 // A full cube fills its cell, so it stops the ray on entry. A
                 // shape with sub-cell geometry (the inset chest, the tilted
                 // torch pole, a stair's resolved steps) only registers when
                 // the ray actually crosses its precise shape — otherwise the
                 // ray sees past the empty parts of its cell.
-                if block.visual_aabb().is_none() && !precise_only {
+                if shape_box.is_none() && !precise_only {
                     return Some((hit(pos, entry_normal, block), t_enter));
                 }
                 if let Some(shape) = shape_hit(eye, dir, pos, block) {

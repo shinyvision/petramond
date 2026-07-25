@@ -219,7 +219,13 @@ pub(super) fn emit_box_set<B, S, L, K>(
                         (axis, ua, va),
                         positive,
                         d,
-                        j < i,
+                        // The coincidence tie-break only settles WHICH of two
+                        // boxes draws a shared plane. A box that never emits
+                        // this face has no claim on it and must not suppress
+                        // the box that does — otherwise a cap plate flush with
+                        // the body it caps loses its only face (the cactus's
+                        // invisible top, 2026-07-25).
+                        j < i && o.faces[fi].is_some(),
                         &rect,
                     );
                 }
@@ -374,9 +380,102 @@ pub(super) fn emit_box_set<B, S, L, K>(
                     [0, 1, 2, 0, 2, 3]
                 };
                 ibuf.extend(tris.map(|t| start + t));
+                if b.double_sided {
+                    // The back winding of the SAME vertices: exactly one of
+                    // the two survives back-face culling for any given view,
+                    // so this costs indices and never overdraw.
+                    ibuf.extend(super::water::top_back_winding(tris).map(|t| start + t));
+                }
             }
         }
     }
+}
+
+/// Whether the cell at `pos` SEALS the whole 1×1 cell boundary its `face`
+/// lies on — i.e. its own geometry completely covers that boundary rectangle
+/// with view-blocking material.
+///
+/// This is the CUBE path's counterpart of the emitter's flush subtraction:
+/// both ask the ONE box producer, so a cube face is culled exactly where a
+/// neighbour's resolved geometry would have covered it, with no family named
+/// anywhere. A see-through neighbour never seals (its texels cannot hide
+/// another block's face — the glass convention [`occupancy_boxes`] uses), and
+/// a family with no box form answers `false`, which is overdraw and never a
+/// hole.
+pub(in crate::mesh) fn cell_seals_face(
+    nb: &dyn crate::block::ShapeNeighborhood,
+    pos: glam::IVec3,
+    face: Face,
+    boxes: &mut Vec<ShapeBox>,
+    scratch: &mut BoxSetScratch,
+) -> bool {
+    let block = nb.block(pos);
+    if block == Block::Air {
+        return false;
+    }
+    let k = block.shape_kind_def();
+    if !k.resolves_to_boxes || block.is_transparent() || block.is_translucent() {
+        return false;
+    }
+    boxes.clear();
+    let tint_for = |_: crate::atlas::Tile| [1.0f32; 3];
+    k.render.boxes(
+        &crate::block::ShapeCtx {
+            nb,
+            pos,
+            block,
+            params: &k.params,
+            tint_for: &tint_for,
+            part_tint: crate::block::NO_PART_TINT,
+        },
+        boxes,
+    );
+    covers_boundary(boxes, face, scratch)
+}
+
+/// Whether `boxes` cover the whole 1×1 cell-boundary rectangle their `face`
+/// lies on. Only boxes FLUSH on that boundary can contribute; the coverage
+/// test is the emitter's own rect subtraction, so a shape tiling its floor
+/// with several boxes seals exactly like one that uses a single slab.
+fn covers_boundary(boxes: &[ShapeBox], face: Face, scratch: &mut BoxSetScratch) -> bool {
+    let (axis, ua, va) = face_axes(face);
+    let positive = matches!(face, Face::PosX | Face::PosY | Face::PosZ);
+    scratch.occ.clear();
+    for b in boxes.iter().filter(|b| b.occludes) {
+        // A box only seals if it OWNS the boundary plane; a face the family
+        // never emits still seals (the matter is there either way).
+        let d = if positive {
+            b.aabb.max[axis]
+        } else {
+            b.aabb.min[axis]
+        };
+        if if positive { d < 1.0 - T } else { d > T } {
+            continue;
+        }
+        scratch.occ.push(Rect {
+            u0: b.aabb.min[ua],
+            v0: b.aabb.min[va],
+            u1: b.aabb.max[ua],
+            v1: b.aabb.max[va],
+        });
+    }
+    if scratch.occ.is_empty() {
+        return false;
+    }
+    let unit = Rect {
+        u0: 0.0,
+        v0: 0.0,
+        u1: 1.0,
+        v1: 1.0,
+    };
+    subtract(
+        unit,
+        &scratch.occ,
+        &mut scratch.cuts,
+        &mut scratch.runs,
+        &mut scratch.rects,
+    );
+    scratch.rects.is_empty()
 }
 
 /// If the box `(omin, omax)` hides part of a face at plane `d` (normal along
@@ -576,6 +675,7 @@ fn probe_ao(
         // matter; the lift owns continuation immunity).
         if boxes
             .iter()
+            .filter(|b| b.occludes)
             .any(|b| (0..3).all(|a| plo[a] < b.aabb.max[a] && phi[a] > b.aabb.min[a]))
         {
             return true;

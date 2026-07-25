@@ -219,6 +219,33 @@ pub(super) fn shape_family(id: u8) -> ShapeFamily {
     REGISTRY.shape_family[id as usize]
 }
 
+/// Dense per-id STATE-FREE light apertures: what each block's shape blocks
+/// with no world context. The light flood reads it for every `Shaped` cell the
+/// sparse state gather did not cover — which is every cell of a stateless
+/// shape (a cover, a cactus, a mod's plate) — so it is baked once instead of
+/// re-derived per flood step.
+///
+/// Baked in its OWN lazy rather than inside [`REGISTRY`]: a family resolving
+/// its shape reads ordinary `Block` accessors, and those read the registry, so
+/// deriving this during the registry's own initialisation deadlocks it.
+#[inline]
+pub(super) fn default_light_apertures(id: u8) -> u32 {
+    static APERTURES: LazyLock<[u32; 256]> = LazyLock::new(|| {
+        let mut table = [crate::block::LIGHT_APERTURES_OPEN; 256];
+        for &block in all() {
+            let k = block.shape_kind_def();
+            table[block.id() as usize] = k.sim.light_apertures(
+                &k.params,
+                &crate::block::NoNeighborhood,
+                crate::mathh::IVec3::ZERO,
+                block,
+            );
+        }
+        table
+    });
+    APERTURES[id as usize]
+}
+
 /// Dense per-id copy of every block's [`BlockFlags`], indexed by raw block id.
 ///
 /// The mesher/light hot loops test `is_opaque`/`occludes_ao` on neighbour ids tens of

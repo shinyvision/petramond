@@ -34,8 +34,8 @@ pub use shape::{
 pub use shape_kind::ConnectionRule;
 pub use shape_kind::ItemRender;
 pub use shape_kind::{
-    full_face_at, CellCodec, CellView, FullFace, ShapeCtx, ShapeNeighborhood, ShapeState,
-    NO_PART_TINT, SHAPE_STATE_MAX,
+    full_face_at, rests_flat_on_floor, CellCodec, CellView, FullFace, NoNeighborhood, ShapeCtx,
+    ShapeNeighborhood, ShapeState, NO_PART_TINT, SHAPE_STATE_MAX,
 };
 pub use shape_kind::{BlockShapeKind, ShapeFamily, ShapeKindDef};
 // `pack_light_apertures` is the producer half of the aperture currency
