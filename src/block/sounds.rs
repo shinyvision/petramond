@@ -78,12 +78,38 @@ pub static STONE: BlockSoundSet = BlockSoundSet {
 
 /// Dirt: dirt, grass (a smotherable dirt), gravel, and every other
 /// `BlockMaterial::Dirt` block. Mining loops the dirt "punch"; break and place use
-/// the dirt break/place sounds; the step slot awaits its asset. Sand is a separate
-/// material and stays silent until it gets its own set.
+/// the dirt break/place sounds; the step slot awaits its asset.
 pub static DIRT: BlockSoundSet = BlockSoundSet {
     dig: Some(Sound::DirtPunch),
     break_: Some(Sound::DirtBreak),
     place: Some(Sound::DirtPlace),
+    step: None,
+};
+
+/// Sand-family: everything `BlockMaterial::Sand` — sand, red sand, clay, the
+/// exploration pack's cave silt, and the snow layer/block (which are
+/// shovel-classed as sand, so they inherit this set; a crunchier snow would be
+/// its own material, not a per-block exception here). Mining loops the sand
+/// "punch"; break and place use the sand break/place sounds; the step slot
+/// awaits its asset.
+pub static SAND: BlockSoundSet = BlockSoundSet {
+    dig: Some(Sound::SandPunch),
+    break_: Some(Sound::SandBreak),
+    place: Some(Sound::SandPlace),
+    step: None,
+};
+
+/// Plant matter: LEAVES (`BlockMaterial::Foliage`) and every cross plant
+/// (`BlockMaterial::Plant` — grass, flowers, saplings, the cactus, crops, the
+/// exploration pack's cave flora and vines). Two materials because they mine
+/// differently — a plant pairs with shears, leaves with the bare hand — but
+/// they are the same matter and rustle the same, the way `Ice` shares the glass
+/// set. The step slot awaits its asset; most plant matter has no collision to
+/// step on anyway.
+pub static LEAF: BlockSoundSet = BlockSoundSet {
+    dig: Some(Sound::LeafPunch),
+    break_: Some(Sound::LeafBreak),
+    place: Some(Sound::LeafPlace),
     step: None,
 };
 

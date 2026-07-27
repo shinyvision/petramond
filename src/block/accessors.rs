@@ -706,6 +706,10 @@ impl Block {
             BlockMaterial::Wood => &sounds::WOOD,
             BlockMaterial::Stone | BlockMaterial::Ore => &sounds::STONE,
             BlockMaterial::Dirt => &sounds::DIRT,
+            BlockMaterial::Sand => &sounds::SAND,
+            // Leaves are hand-mined and plants pair with shears, but both are
+            // plant matter and rustle alike (the Ice/Glass precedent below).
+            BlockMaterial::Plant | BlockMaterial::Foliage => &sounds::LEAF,
             // Ice mines like stone (see `preferred_tool`) but SOUNDS like
             // glass — the sound follows the shatter, not the pickaxe.
             BlockMaterial::Glass | BlockMaterial::Ice => &sounds::GLASS,

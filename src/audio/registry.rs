@@ -73,6 +73,19 @@ impl Sound {
     pub const GlassBreak: Sound = Sound(21);
     /// A glass-family block was placed into the world.
     pub const GlassPlace: Sound = Sound(22);
+    /// Mining hit on a sand-family block (sand, red sand, clay, silt, snow) —
+    /// the punch loop.
+    pub const SandPunch: Sound = Sound(23);
+    /// A sand-family block finished breaking.
+    pub const SandBreak: Sound = Sound(24);
+    /// A sand-family block was placed into the world.
+    pub const SandPlace: Sound = Sound(25);
+    /// Mining hit on plant matter (leaves and every cross plant) — the punch loop.
+    pub const LeafPunch: Sound = Sound(26);
+    /// Plant matter finished breaking.
+    pub const LeafBreak: Sound = Sound(27);
+    /// Plant matter was placed into the world.
+    pub const LeafPlace: Sound = Sound(28);
 }
 
 /// Engine sound names in frozen id order (`ENGINE_SOUND_NAMES[id]` names
@@ -101,6 +114,12 @@ const ENGINE_SOUND_NAMES: &[&str] = &[
     "petramond:glass_punch",
     "petramond:glass_break",
     "petramond:glass_place",
+    "petramond:sand_punch",
+    "petramond:sand_break",
+    "petramond:sand_place",
+    "petramond:leaf_punch",
+    "petramond:leaf_break",
+    "petramond:leaf_place",
 ];
 
 impl std::fmt::Debug for Sound {

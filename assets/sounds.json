@@ -59,6 +59,64 @@
       "category": "block"
     },
     {
+      "sound": "petramond:sand_punch",
+      "variants": [
+        "sounds/sand_punch_1.ogg",
+        "sounds/sand_punch_2.ogg",
+        "sounds/sand_punch_3.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:sand_break",
+      "variants": [
+        "sounds/sand_break.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:sand_place",
+      "variants": [
+        "sounds/sand_place.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:leaf_punch",
+      "variants": [
+        "sounds/leaf_punch_1.ogg",
+        "sounds/leaf_punch_2.ogg",
+        "sounds/leaf_punch_3.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:leaf_break",
+      "variants": [
+        "sounds/leaf_break.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:leaf_place",
+      "variants": [
+        "sounds/leaf_place.ogg"
+      ],
+      "gain": 1.0,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
       "sound": "petramond:item_pickup",
       "variants": [
         "sounds/item_pickup.ogg"
