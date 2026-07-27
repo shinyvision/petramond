@@ -100,6 +100,22 @@ pub struct FeatureWindows {
 }
 
 impl ColumnGen {
+    /// Resident heap bytes of this column's gen data, for the memory census.
+    pub fn memory_bytes(&self) -> u64 {
+        let base = std::mem::size_of::<Self>()
+            + self.biome.len()
+            + self.mesh_biome.len()
+            + self.surf.len() * 4
+            + self.top_surf.len() * 4;
+        let windows = self.feature_windows.as_ref().map_or(0, |w| {
+            std::mem::size_of::<FeatureWindows>()
+                + w.candidates.surf.capacity() * 4
+                + w.candidates.biomes.capacity() * std::mem::size_of::<crate::biome::Biome>()
+                + w.support.as_ref().map_or(0, |s| s.capacity_bytes())
+        });
+        (base + windows) as u64
+    }
+
     #[inline]
     pub fn cx(&self) -> i32 {
         self.cx

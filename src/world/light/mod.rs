@@ -27,17 +27,21 @@ pub(in crate::world) fn region_bit(dx: i32, dy: i32, dz: i32) -> u32 {
 /// All 27 region bits set: every sampling neighbour saw a change.
 pub(in crate::world) const REGION_ALL: u32 = (1 << 27) - 1;
 
-/// An all-dark cube, for diffing a dropped (`None`, reads-as-zero) block-light
+/// An all-dark cube, for diffing a dropped (`None`, reads-as-dark) block-light
 /// buffer against a previously cached one.
-pub(in crate::world) static ZERO_CUBE: [u8; crate::chunk::SECTION_VOLUME] =
-    [0; crate::chunk::SECTION_VOLUME];
+pub(in crate::world) static ZERO_CUBE: [crate::light::LightRgb; crate::chunk::SECTION_VOLUME] =
+    [crate::light::LightRgb::ZERO; crate::chunk::SECTION_VOLUME];
 
 /// Which mesh-sampling regions differ between an old and a freshly baked light
 /// cube: the bit for delta `d` is set when a changed cell lies on the border
 /// plane/edge/corner the neighbour at `d` samples through its one-cell mesh
 /// pad (the centre bit: any change at all). `old = None` reads as the uniform
 /// `fallback` the live accessors use for an absent cube.
-pub(in crate::world) fn cube_region_changes(old: Option<&[u8]>, new: &[u8], fallback: u8) -> u32 {
+pub(in crate::world) fn cube_region_changes<T: Copy + PartialEq>(
+    old: Option<&[T]>,
+    new: &[T],
+    fallback: T,
+) -> u32 {
     #[inline]
     fn axis_bits(local: usize) -> u32 {
         // Bit 0: delta −1, bit 1: delta 0, bit 2: delta +1 along one axis.
@@ -102,14 +106,6 @@ pub(in crate::world) fn cube_region_changes(old: Option<&[u8]>, new: &[u8], fall
         }
     }
     mask
-}
-
-/// Temporary perf-session diagnostics (see `tooling::stream::stage_stats`).
-pub(crate) fn stage_stats() -> (
-    &'static std::sync::atomic::AtomicU64,
-    &'static std::sync::atomic::AtomicU64,
-) {
-    (&queue::LIGHT_STAGE_NS, &queue::LIGHT_STAGE_JOBS)
 }
 
 /// Side length of the light flood neighbourhood (3 sections).

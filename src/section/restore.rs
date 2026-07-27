@@ -106,7 +106,7 @@ impl Section {
             non_air_count: 0,
             water_count: 0,
             biome_tint_count: 0,
-            particle_emitter_count: 0,
+            particle_emitter_cells: Vec::new(),
             light_emitter_count: 0,
             shape_render: None,
             light_apertures: None,

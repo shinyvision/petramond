@@ -758,7 +758,10 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
         .expect("tooltip names the result")
         .to_owned();
     assert!(name.contains("Stick"), "{name}");
-    assert!(name.contains('\u{d7}'), "result count is spelled out: {name}");
+    assert!(
+        name.contains('\u{d7}'),
+        "result count is spelled out: {name}"
+    );
 
     // The tooltip's own hooks are overlay-tier; the grid cell's is not.
     let hooks = app.ui.doc_hooks();

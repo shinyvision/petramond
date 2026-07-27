@@ -3,6 +3,7 @@ use crate::block::Block;
 use crate::block_state::{LogAxis, SlabState};
 use crate::chunk::SKY_FULL;
 use crate::facing::Facing;
+use crate::light::{BlockLight6, LightRgb};
 
 use super::super::face::{quad_ao, Face};
 use super::super::face_emit::{fold_light, fold_light_smooth, slab_corner_open};
@@ -54,6 +55,24 @@ pub(super) fn cube_face_tile(
 #[inline]
 fn uv_16ths(value: f32) -> u32 {
     (value.clamp(0.0, 1.0) * 16.0).round() as u32
+}
+
+/// Whether a log's side cell-local UVs apply to this face — exactly
+/// `log_side_cell_uvs(..).is_some()`, asked WITHOUT the quad corners so a
+/// greedy-mergeable face never builds them.
+#[inline]
+pub(super) fn log_side_uvs_apply(axis: LogAxis, face: Face) -> bool {
+    let axis_idx = match axis {
+        LogAxis::X => 0,
+        LogAxis::Y => return false,
+        LogAxis::Z => 2,
+    };
+    let normal_idx = match face {
+        Face::PosX | Face::NegX => 0,
+        Face::PosY | Face::NegY => 1,
+        Face::PosZ | Face::NegZ => 2,
+    };
+    normal_idx != axis_idx
 }
 
 #[inline]
@@ -186,7 +205,7 @@ pub(in crate::mesh) fn boundary_plane(face: Face, f: (i32, i32, i32)) -> f32 {
     [f.0, f.1, f.2][axis] as f32 + (d < 0) as u32 as f32
 }
 
-/// One cube face's per-corner AO + smooth light (skylight/block-light + warm amount),
+/// One cube face's per-corner AO + smooth light (skylight + coloured block light),
 /// gathered from the shared 3×3 tangent-plane ring around the front voxel F ONCE. The
 /// four corners share these eight ring cells (each edge cell feeds two corners, each
 /// diagonal one), so a single gather replaces per-corner re-reads. `occ` = AO occluders
@@ -212,19 +231,19 @@ pub(in crate::mesh) fn cube_face_lighting<B, S, L, K, P>(
     // box family's interior planes (see `corner_cast_probes`).
     plane: f32,
     f_l: u32,
-    f_bl: u32,
+    f_bl: LightRgb,
     smooth_light: bool,
     block_at: &B,
     slab_at: &S,
     neighbour_light: &L,
     neighbour_blocklight: &K,
     probe: &P,
-) -> ([u32; 4], [u32; 4], [u32; 4], [f32; 4])
+) -> ([u32; 4], [u32; 4], [BlockLight6; 4])
 where
     B: Fn(i32, i32, i32) -> Block,
     S: Fn(i32, i32, i32) -> Option<SlabState>,
     L: Fn(i32, i32, i32) -> u8,
-    K: Fn(i32, i32, i32) -> u8,
+    K: Fn(i32, i32, i32) -> LightRgb,
     P: Fn((i32, i32, i32), [f32; 3], [f32; 3]) -> bool,
 {
     let (ux, uy, uz) = face.ao_u();
@@ -256,7 +275,7 @@ where
     let mut probe_cell = [[false; 3]; 3];
     let mut opq = [[false; 3]; 3];
     let mut sky = [[0u32; 3]; 3];
-    let mut blk = [[0u32; 3]; 3];
+    let mut blk = [[LightRgb::ZERO; 3]; 3];
     let mut slab = [[SlabState::EMPTY; 3]; 3];
     for a in -1i32..=1 {
         for b in -1i32..=1 {
@@ -269,27 +288,30 @@ where
                 fz + a * uz + b * vz,
             );
             let cell = block_at(cx, cy, cz);
+            // ONE dense flag word per ring cell: the four shape questions
+            // below are bit tests off it, not four separate table lookups.
+            let cf = cell.flags();
             let (ia, ib) = ((a + 1) as usize, (b + 1) as usize);
             // A full slab stack occludes AO and carries no light, exactly like an
             // opaque cube — without this it darkens corners twice (it blocks the
             // light flood, then still enters the smooth-light mean as a dark open
             // cell). Partial slab states are kept for the per-corner octant gate
             // below. The dense `is_slab` flag gates the state lookup.
-            let slab_state = if cell.is_slab() {
+            let slab_state = if cf.is_slab() {
                 slab_at(cx, cy, cz)
             } else {
                 None
             };
             let full_stack = slab_state.is_some_and(|s| s.is_full());
-            occ[ia][ib] = cell.occludes_ao() || full_stack;
+            occ[ia][ib] = cf.occludes_ao() || full_stack;
             // A non-occluding cell that still holds sub-cell matter (a box
             // shape, a partial slab) gets corner-probe casting below.
-            probe_cell[ia][ib] = !occ[ia][ib] && probe_worthy(cell);
+            probe_cell[ia][ib] = !occ[ia][ib] && cf.has_box_shape();
             if smooth_light {
-                opq[ia][ib] = cell.is_opaque() || full_stack;
+                opq[ia][ib] = cf.is_opaque() || full_stack;
                 if !opq[ia][ib] {
                     sky[ia][ib] = neighbour_light(cx, cy, cz) as u32;
-                    blk[ia][ib] = neighbour_blocklight(cx, cy, cz) as u32;
+                    blk[ia][ib] = neighbour_blocklight(cx, cy, cz);
                     if let Some(state) = slab_state {
                         slab[ia][ib] = state;
                     }
@@ -303,9 +325,8 @@ where
     let signs = face.ao_signs();
     let mut ao = [3u32; 4];
     let mut light6 = [0u32; 4];
-    let mut block6 = [0u32; 4];
-    let mut warm = [0f32; 4];
-    let flat = fold_light(f_l, f_bl, SKY_FULL as u32);
+    let mut block6 = [BlockLight6::DARK; 4];
+    let flat = fold_light(f_l, f_bl.channels().map(u32::from), SKY_FULL as u32);
     for corner in 0..4 {
         let (su, sv) = signs[corner];
         let (iu, iv) = ((su + 1) as usize, (sv + 1) as usize);
@@ -346,23 +367,27 @@ where
         }
         ao[corner] = quad_ao(q_int, s1, s2, c);
         if !smooth_light {
-            (light6[corner], block6[corner], warm[corner]) = flat;
+            (light6[corner], block6[corner]) = flat;
             continue;
         }
         let mut sum = f_l;
-        let mut sum_block = f_bl;
+        // Per-channel mean: hues average in the linear light space only.
+        let mut sum_block = f_bl.channels().map(u32::from);
         let mut cnt = 1u32;
         for (ia, ib, a, b) in [(iu, 1, su, 0), (1, iv, 0, sv), (iu, iv, su, sv)] {
             if opq[ia][ib] || !slab_corner_open(slab[ia][ib], face, a, b, su, sv, front_half) {
                 continue;
             }
             sum += sky[ia][ib];
-            sum_block += blk[ia][ib];
+            let c = blk[ia][ib];
+            sum_block[0] += c.r() as u32;
+            sum_block[1] += c.g() as u32;
+            sum_block[2] += c.b() as u32;
             cnt += 1;
         }
-        (light6[corner], block6[corner], warm[corner]) = fold_light_smooth(sum, sum_block, cnt);
+        (light6[corner], block6[corner]) = fold_light_smooth(sum, sum_block, cnt);
     }
-    (ao, light6, block6, warm)
+    (ao, light6, block6)
 }
 
 /// A cube face's `(normal, U, V)` local axes (0=X, 1=Y, 2=Z), derived from `Face::quad_box`

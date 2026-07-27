@@ -136,6 +136,11 @@ pub struct AiCtx<'a> {
     pub half_width: f32,
     /// Read-only world, for sampling standable destinations / line-of-sight.
     pub world: &'a World,
+    /// This tick's shared reachability-probe budget (see
+    /// `nav::REACH_PROBE_TICK_BUDGET`), or `None` for an unbudgeted context.
+    /// A policy that samples destinations must DEFER when it runs out, never
+    /// treat the refusal as a verdict.
+    pub reach: Option<&'a super::nav::ReachBudget>,
     /// The NEAREST player's session id — pairs with [`player_pos`](Self::player_pos);
     /// what a player-anchored behavior (chase, melee fallback) targets.
     pub player_id: crate::server::player::PlayerId,

@@ -2,7 +2,9 @@ use crate::atlas::Tile;
 use crate::block::ShapeFamily;
 
 use super::super::face::{crop_quads, cross_quads};
-use super::super::vertex::{pack_tint, pack_vertex, pack_vertex2, Vertex};
+use crate::light::BlockLight6;
+
+use super::super::vertex::{pack_vertex, Vertex};
 
 /// Emit a billboard plant — the X cross (two diagonal quads) or the planted
 /// crop lattice (four axis-aligned quads, see `crop_quads`) — into the opaque
@@ -14,7 +16,6 @@ use super::super::vertex::{pack_tint, pack_vertex, pack_vertex2, Vertex};
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_plant(
     opaque: &mut Vec<Vertex>,
-    opaque_idx: &mut Vec<u32>,
     shape: ShapeFamily,
     bx: f32,
     y: f32,
@@ -22,7 +23,7 @@ pub(super) fn emit_plant(
     tile: Tile,
     tint: [f32; 3],
     sky6: u32,
-    block6: u32,
+    block: BlockLight6,
     inset: f32,
     drop: f32,
 ) {
@@ -36,18 +37,19 @@ pub(super) fn emit_plant(
         &cross
     };
     // Flat-lit: shade index 0 (top, no directional darkening), AO = 3, no overlay;
-    // `pack_vertex`/`pack_vertex2` own the bit layouts.
+    // `pack_vertex` and `BlockLight6` own the bit layouts.
     for plane in planes {
         let start = opaque.len() as u32;
         for (corner, p) in plane.iter().enumerate() {
             opaque.push(Vertex {
                 pos: *p,
-                tint: pack_tint(tint),
-                packed: pack_vertex(tile.index() as u32, corner as u32, 0, false, 3, sky6),
-                packed2: pack_vertex2(block6),
+                tint: block.tint_word(tint),
+                packed: pack_vertex(tile.index() as u32, corner as u32, 0, false, 3, sky6)
+                    | block.packed_bits(),
+                packed2: block.packed2_bits(),
             });
         }
-        opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
-        opaque_idx.extend_from_slice(&[start, start + 2, start + 1, start, start + 3, start + 2]);
+        // A plant plane is seen from both sides.
+        crate::mesh::vertex::push_back_face(opaque, start);
     }
 }

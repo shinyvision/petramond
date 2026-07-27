@@ -1421,6 +1421,22 @@ pub(super) fn resolves_to_boxes(family: ShapeFamily) -> bool {
     )
 }
 
+/// Whether a family's CELL COLLISION is fully determined by the block id —
+/// i.e. it does NOT override [`ShapeSim::collision_boxes`], so the trait
+/// default (the row's position-less boxes) is the whole answer. Mirrored onto
+/// [`ShapeKindDef::collision_state_free`] so the per-id collision table can be
+/// baked once and every cell probe skips the virtual resolve.
+///
+/// SAFE BY DEFAULT: a family listed here that later grows a per-cell
+/// `collision_boxes` override must be removed from this list, and
+/// `collision_state_free_kinds_resolve_identically` fails until it is.
+pub(super) fn collision_is_state_free(family: ShapeFamily) -> bool {
+    matches!(
+        family,
+        ShapeFamily::Cube | ShapeFamily::Cross | ShapeFamily::Crop | ShapeFamily::Torch
+    )
+}
+
 /// Whether a family overrides [`ShapeSim::refine_state`] — mirrored onto
 /// [`ShapeKindDef::refines`] so the edit cascade's per-cell gate is a field
 /// read. Adding a neighbour-refined family means adding it HERE and

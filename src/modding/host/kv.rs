@@ -262,7 +262,10 @@ mod tests {
                 );
             }
             assert!(
-                matches!(set(&mut alpha, "alpha:one_too_many".into()), HostRet::Error(_)),
+                matches!(
+                    set(&mut alpha, "alpha:one_too_many".into()),
+                    HostRet::Error(_)
+                ),
                 "a new key beyond the cap is rejected"
             );
             assert_eq!(

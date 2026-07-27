@@ -92,6 +92,9 @@ pub(super) struct TickState {
     /// world that never drains (a pure client) cannot grow it unbounded.
     nav_changes: Vec<IVec3>,
     nav_changes_overflow: bool,
+    /// Bumped by every announced nav-relevant change (see
+    /// [`World::nav_revision`]).
+    nav_revision: u64,
 }
 
 /// Cap on the per-tick nav-change buffer (see [`TickState::nav_changes`]).
@@ -331,6 +334,11 @@ impl World {
     /// funnels that never pass the announce choke point — the door toggle
     /// flips collision through the door map with no block write.
     pub(super) fn push_nav_change(&mut self, pos: IVec3) {
+        // Monotonic witness that SOMETHING navigationally relevant changed —
+        // the coarse half of the confinement re-check gate (see
+        // `mob::confined`). Bumped even when the buffer has overflowed: the
+        // positions are lost, the fact is not.
+        self.sim.nav_revision = self.sim.nav_revision.wrapping_add(1);
         if self.sim.nav_changes_overflow {
             return;
         }
@@ -346,6 +354,13 @@ impl World {
     /// (see [`TickState::nav_changes`]): every position announced since the
     /// last drain, plus whether the buffer overflowed (positions unknown —
     /// the consumer must invalidate everything).
+    /// A counter that moves whenever anything a mob could walk on or through
+    /// changed. Cheap staleness witness for verdicts derived from terrain.
+    #[inline]
+    pub(crate) fn nav_revision(&self) -> u64 {
+        self.sim.nav_revision
+    }
+
     pub(super) fn take_nav_changes(&mut self) -> (Vec<IVec3>, bool) {
         let overflow = self.sim.nav_changes_overflow;
         self.sim.nav_changes_overflow = false;
@@ -457,6 +472,9 @@ impl World {
     /// earlier anchor is skipped, so overlapping discs stay deterministic and
     /// tick once.
     fn random_tick_sections(&mut self) {
+        // Bring the random-tickable index up to date with this tick's edits
+        // before it is read (see `World::random_tick_dirty`).
+        self.repair_random_tick_index();
         let Some(primary) = self.last_load_target else {
             return;
         };
@@ -492,13 +510,24 @@ impl World {
                     }) {
                         continue;
                     }
-                    for cy in Self::column_section_range() {
+                    // Walk the column's RANDOM-TICKABLE section bitset,
+                    // ascending cy: the set and the order are exactly the
+                    // sections the old `loaded ∧ has_random_tickable` pair
+                    // admitted, so the RNG draw sequence — and every
+                    // random-tick outcome — is identical, but a stack of plain
+                    // stone costs one map read for the whole column instead of
+                    // a `Section` deref per loaded section.
+                    let mut cys = self
+                        .section_column_rt
+                        .get(&crate::chunk::ChunkPos::new(cx, cz))
+                        .copied()
+                        .unwrap_or(0);
+                    while cys != 0 {
+                        let cy = crate::chunk::SECTION_MIN_CY + cys.trailing_zeros() as i32;
+                        cys &= cys - 1;
                         let Some(section) = self.sections.get(&SectionPos::new(cx, cy, cz)) else {
                             continue;
                         };
-                        if !section.has_random_tickable() {
-                            continue;
-                        }
                         let (ox, oy, oz) = SectionPos::new(cx, cy, cz).origin_world();
                         let blocks = section.blocks_slice();
                         for _ in 0..RANDOM_TICK_SPEED {
@@ -557,6 +586,100 @@ mod tests {
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         world.last_load_target = Some(LoadTarget::new(0, 4, 0, 4));
         world
+    }
+
+    /// The random-tickable index, re-derived from scratch — what
+    /// `repair_random_tick_index` must always agree with.
+    fn brute_random_tick_index(world: &World) -> Vec<(ChunkPos, u32)> {
+        let mut out: std::collections::BTreeMap<(i32, i32), u32> = Default::default();
+        for (pos, section) in &world.sections {
+            if section.has_random_tickable() {
+                *out.entry((pos.cx, pos.cz)).or_insert(0) |= World::column_cy_bit(pos.cy);
+            }
+        }
+        out.into_iter()
+            .map(|((cx, cz), bits)| (ChunkPos::new(cx, cz), bits))
+            .collect()
+    }
+
+    fn live_random_tick_index(world: &World) -> Vec<(ChunkPos, u32)> {
+        let mut out: Vec<(ChunkPos, u32)> = world
+            .section_column_rt
+            .iter()
+            .map(|(&p, &b)| (p, b))
+            .collect();
+        out.sort_by_key(|(p, _)| (p.cx, p.cz));
+        assert!(out.iter().all(|(_, b)| *b != 0), "empty column entry kept");
+        out
+    }
+
+    /// The random-tick scan walks a per-column bitset of sections that hold
+    /// something tickable; the index is repaired from the edits announced
+    /// since the last tick, so a stale bit would silently stop (or resurrect)
+    /// leaf decay and crop growth in a whole 16³ section.
+    #[test]
+    fn random_tickable_index_matches_a_full_rederive_through_edits() {
+        let mut world = world_with_centered_chunk();
+        world.repair_random_tick_index();
+        assert!(live_random_tick_index(&world).is_empty());
+
+        // First tickable cell in a section: the bit appears.
+        let leaf = IVec3::new(8, 70, 8);
+        world.set_block_world(leaf.x, leaf.y, leaf.z, Block::OakLeaves);
+        world.repair_random_tick_index();
+        assert_eq!(
+            live_random_tick_index(&world),
+            brute_random_tick_index(&world)
+        );
+        assert_eq!(live_random_tick_index(&world).len(), 1);
+
+        // A second one in the SAME section, then in another: the bit survives
+        // the first removal and only clears when the section runs dry.
+        let leaf2 = IVec3::new(9, 71, 8);
+        let far = IVec3::new(8, 40, 8);
+        world.set_block_world(leaf2.x, leaf2.y, leaf2.z, Block::OakLeaves);
+        world.set_block_world(far.x, far.y, far.z, Block::OakLeaves);
+        world.repair_random_tick_index();
+        assert_eq!(
+            live_random_tick_index(&world),
+            brute_random_tick_index(&world)
+        );
+
+        world.set_block_world(leaf.x, leaf.y, leaf.z, Block::Air);
+        world.repair_random_tick_index();
+        assert_eq!(
+            live_random_tick_index(&world),
+            brute_random_tick_index(&world)
+        );
+        assert_eq!(live_random_tick_index(&world).len(), 1);
+
+        world.set_block_world(leaf2.x, leaf2.y, leaf2.z, Block::Air);
+        world.set_block_world(far.x, far.y, far.z, Block::Air);
+        world.repair_random_tick_index();
+        assert_eq!(
+            live_random_tick_index(&world),
+            brute_random_tick_index(&world)
+        );
+        assert!(live_random_tick_index(&world).is_empty());
+    }
+
+    /// Unloading a section must retire its bit: the scan would otherwise index
+    /// a column stack that no longer exists.
+    #[test]
+    fn random_tickable_index_retires_an_unloaded_section() {
+        let mut world = world_with_centered_chunk();
+        let leaf = IVec3::new(8, 70, 8);
+        world.set_block_world(leaf.x, leaf.y, leaf.z, Block::OakLeaves);
+        world.repair_random_tick_index();
+        assert_eq!(live_random_tick_index(&world).len(), 1);
+
+        world.remove_column(ChunkPos::new(0, 0));
+        world.repair_random_tick_index();
+        assert_eq!(
+            live_random_tick_index(&world),
+            brute_random_tick_index(&world)
+        );
+        assert!(live_random_tick_index(&world).is_empty());
     }
 
     /// Fire one leaf random tick at `p` through the public behaviour path.

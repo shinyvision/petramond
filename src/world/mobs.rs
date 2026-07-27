@@ -62,10 +62,10 @@ impl World {
         }
     }
 
-    fn mob_render_light_at(&self, pos: Vec3) -> (u8, u8) {
+    fn mob_render_light_at(&self, pos: Vec3) -> (u8, crate::light::BlockLight6) {
         let c = voxel_at(pos + Vec3::new(0.0, 0.3, 0.0));
         let sky = self.skylight6_at_world(c.x, c.y, c.z);
-        let block = self.blocklight6_at_world(c.x, c.y, c.z);
+        let block = crate::light::BlockLight6::from_x2(self.blocklight_rgb_at_world(c.x, c.y, c.z));
         (sky, block)
     }
 
@@ -137,6 +137,9 @@ impl World {
             self.mobs.discard_noises();
             return crate::mob::MobTickEvents::default();
         }
+        // One shared reachability-probe budget per tick, spent by whichever
+        // mobs (and mod ABI calls) ask — see `mob::nav::REACH_PROBE_TICK_BUDGET`.
+        self.reach_budget().refill();
         let freeze_unloaded = self.save.is_some();
         let mut mobs = std::mem::take(&mut self.mobs);
         let attacks = mobs.tick(dt, self, anchors, freeze_unloaded);

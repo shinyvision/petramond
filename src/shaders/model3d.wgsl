@@ -5,22 +5,23 @@
 // dynamic-offset uniform at group(0) binding(0). group(1) is the block atlas
 // (texture + sampler), same shape as block.wgsl's atlas_bind.
 //
-// Vertex format is the shared 32-byte mesh::Vertex (see block.wgsl's VsIn). The
-// `packed` word folds tile / corner / shade / solid-flag / AO / skylight; this
-// shader reconstructs the uv (SELECTING from the uv_rects table — never
-// recomputing) and the face shade, exactly like the chunk pipeline, so a held
-// block is textured identically to the world block.
+// Vertex format is the shared 24-byte mesh::Vertex (see block.wgsl's VsIn). The
+// `packed` word folds tile / corner / shade / solid-flag / AO / skylight plus
+// the block light's chroma high nibble; this shader reconstructs the uv
+// (SELECTING from the uv_rects table — never recomputing) and the face shade,
+// exactly like the chunk pipeline, so a held block is textured identically to
+// the world block.
 //
-// Bit 20 is overloaded (mirrors block_model's packing):
-//  - solid cuboid (skin hand, SOLID_COLOR_FLAG): bit 20 set, NO tile / NO overlay
+// `packed` bit 26 is overloaded (mirrors block_model's packing):
+//  - solid cuboid (skin hand, SOLID_COLOR_FLAG): bit 26 set, NO tile / NO overlay
 //    tile (both 0) -> output the interpolated vertex `tint` directly.
-//  - grass-block side: bit 20 set + a real overlay tile in bits 12..20 -> sample
-//    the dirt base + tinted grayscale grass-side overlay and composite (exactly
-//    like block.wgsl::fs_opaque), so out-of-world grass sides green to match the
-//    top.
-//  - bit 20 clear: sample the atlas tile * face shade * tint (leaves/grass-top
+//  - grass-block side: bit 26 set + a real overlay tile in packed2 bits 20..31 ->
+//    sample the dirt base + tinted grayscale grass-side overlay and composite
+//    (exactly like block.wgsl::fs_opaque), so out-of-world grass sides green to
+//    match the top.
+//  - bit 26 clear: sample the atlas tile * face shade * tint (leaves/grass-top
 //    foliage tint, or untinted blocks/flowers).
-// The two bit-20 cases are told apart by whether the overlay tile is non-zero
+// The two set-bit cases are told apart by whether the overlay tile is non-zero
 // (the solid path packs no tiles at all).
 
 struct MvpUniform {
@@ -47,7 +48,7 @@ const SKY_MIN: f32 = 0.02;
 const FINAL_MIN: f32 = 0.006;
 const SKY_GAMMA: f32 = 3.0;
 
-// Mirror of block.wgsl's CELL_LOCAL UV mode (packed bits 29..32): the vertex
+// Mirror of block.wgsl's CELL_LOCAL UV mode (packed bits 23..26): the vertex
 // carries an explicit tile-local UV in packed2 bits 6..11 / 11..16 (1/16ths).
 // Stair item cubes use it so their partial faces sample the matching
 // sub-rectangle of the tile instead of restarting it per quad.
@@ -62,13 +63,16 @@ const UV_MODE_CELL_LOCAL: u32 = 3u;
 
 struct VsIn {
     @location(0) pos:  vec3<f32>,
-    @location(1) tint: vec3<f32>,
-    // bits 0..8 = tile id, 8..10 = corner, 10..12 = shade index, 12..20 = overlay
-    // tile, 20 = flag (solid-color OR has grass-side overlay), 21..23 = AO,
-    // 23..29 = SKYlight, 29..32 = UV mode (only CELL_LOCAL is honoured here).
+    // rgb = albedo tint; a = the block light's chroma low byte (block_light_rgb).
+    @location(1) tint: vec4<f32>,
+    // bits 0..11 = tile id, 11..13 = corner, 13..15 = shade index, 15..17 = AO,
+    // 17..23 = SKYlight, 23..26 = UV mode (only CELL_LOCAL is honoured here),
+    // 26 = flag (solid-color OR has grass-side overlay),
+    // 27..31 = block-light chroma high nibble, 31 = free.
     @location(2) packed: u32,
-    // Second packed word: bits 0..6 = block (torch) light, 6..16 = cell-local uv
-    // (CELL_LOCAL mode only), rest reserved (zero).
+    // Second packed word: bits 0..6 = block light RED, 6..16 = cell-local uv
+    // (CELL_LOCAL mode only), 16..19 = face normal code (unused here),
+    // 19 = dyed flag, 20..31 = overlay payload (tile id), 31 = free.
     @location(3) packed2: u32,
 };
 
@@ -121,6 +125,19 @@ fn corner_uv(r: vec4<f32>, corner: u32) -> vec2<f32> {
     return vec2<f32>(r.x, r.y);
 }
 
+// Mirror of block.wgsl's block_light_rgb: RED in packed2 bits 0..6, GREEN and
+// BLUE in the 12-bit chroma word split 8 + 4 across the tint alpha lane and
+// packed bits 27..31, each XOR the red channel (see `mesh::vertex::BlockLight6`)
+// — so colourless light writes no chroma bits at all. The lane audit in
+// `mesh::vertex` fails if this decode and the Rust encoders drift.
+fn block_light_rgb(packed: u32, packed2: u32, chroma_lo: f32) -> vec3<f32> {
+    let r = packed2 & 0x3Fu;
+    let chroma = u32(round(chroma_lo * 255.0)) | (((packed >> 27u) & 0xFu) << 8u);
+    let g = (chroma & 0x3Fu) ^ r;
+    let b = ((chroma >> 6u) & 0x3Fu) ^ r;
+    return vec3<f32>(f32(r), f32(g), f32(b)) / 63.0;
+}
+
 @vertex
 fn vs_model(in: VsIn) -> VsOut {
     var out: VsOut;
@@ -162,17 +179,17 @@ fn vs_model(in: VsIn) -> VsOut {
     // night-invariant. See block.wgsl for the identity argument.
     var shades = array<f32, 4>(1.0, 0.85, 0.75, 0.55);
     var ao_lut = array<f32, 4>(0.25, 0.45, 0.70, 1.0);
-    let block6 = in.packed2 & 0x3Fu;
     let sky = f32(sky6) / 63.0;
-    let blk = f32(block6) / 63.0;
+    let blk = block_light_rgb(in.packed, in.packed2, in.tint.a);
     let sky_term =
         mix(SKY_MIN, 1.0, pow(sky, SKY_GAMMA) * frame.fog_color.w) * frame.sky_color.rgb;
-    let block_term = mix(SKY_MIN, 1.0, pow(blk, SKY_GAMMA));
+    // Per channel, each riding its own SKY_MIN floor (see block.wgsl).
+    let block_term = mix(vec3<f32>(SKY_MIN), vec3<f32>(1.0), blk * blk * blk);
     out.light = max(
         vec3<f32>(FINAL_MIN),
-        shades[shade_idx] * ao_lut[ao] * max(sky_term, vec3<f32>(block_term)),
+        shades[shade_idx] * ao_lut[ao] * max(sky_term, block_term),
     );
-    out.tint = in.tint;
+    out.tint = in.tint.rgb;
     out.flag = (in.packed >> 26u) & 0x1u;
     out.overlay_tile = overlay_tile;
     return out;

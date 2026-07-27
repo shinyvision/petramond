@@ -59,7 +59,7 @@ fn edits_in_total_darkness_skip_light_invalidation_entirely() {
     {
         let s = world.section_mut(pos).unwrap();
         s.set_skylight(vec![0u8; SECTION_VOLUME].into());
-        s.set_blocklight(vec![0u8; SECTION_VOLUME].into());
+        s.set_blocklight(vec![crate::light::LightRgb::ZERO; SECTION_VOLUME].into());
     }
     // The fixture insert demands a bake; only the edits below are under test.
     world.relight_demand.clear();
@@ -126,7 +126,7 @@ fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
             }
         }
         s.set_skylight(vec![0u8; SECTION_VOLUME].into());
-        s.set_blocklight(vec![0u8; SECTION_VOLUME].into());
+        s.set_blocklight(vec![crate::light::LightRgb::ZERO; SECTION_VOLUME].into());
         s.mark_light_clean();
         world.insert_section_for_test(sp, s);
         world.section_mut(sp).expect("loaded").modified = true;
@@ -381,12 +381,12 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
     let mut top_section = Section::new(top.cx, top.cy, top.cz);
     top_section.set_block(shaft_x, 0, shaft_z, Block::Dirt);
     top_section.set_skylight(vec![0u8; SECTION_VOLUME].into());
-    top_section.set_blocklight(vec![0u8; SECTION_VOLUME].into());
+    top_section.set_blocklight(vec![crate::light::LightRgb::ZERO; SECTION_VOLUME].into());
     top_section.dirty = false;
 
     let mut lower_section = Section::new(lower.cx, lower.cy, lower.cz);
     lower_section.set_skylight(vec![0u8; SECTION_VOLUME].into());
-    lower_section.set_blocklight(vec![0u8; SECTION_VOLUME].into());
+    lower_section.set_blocklight(vec![crate::light::LightRgb::ZERO; SECTION_VOLUME].into());
     lower_section.dirty = false;
 
     world.sections.insert(top, Arc::new(top_section));

@@ -14,12 +14,26 @@
 //!
 //! Sky shortcuts are preserved per member: a `Full`/`Dark` classified member never
 //! pays for the flood, and a group with no flooding member floods nothing.
+//!
+//! Colour does not weaken the reach argument: every CHANNEL decays 2 per step
+//! independently and no channel exceeds the row's `emission`, so each channel's
+//! influence is bounded by the same 15 cells the scalar cell was. The bound
+//! that matters is per channel, and it holds per channel.
+//!
+//! The ≥3-member grouping threshold (`stream::settle`) is unchanged by the
+//! wider cell. It comes from 64³ / 48³ = 2.37: below three members the shared
+//! cube touches more cells than separate floods would. Widening the block cell
+//! scales the batch cube and the per-section cubes by the SAME factor, so the
+//! ratio — and therefore the break-even count — is invariant; and the BFS
+//! itself visits the same cells in both, which is where the measured 2× came
+//! from in the first place.
 
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-use crate::chunk::{section_idx, ChunkPos, SectionPos, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
+use crate::chunk::{section_idx, ChunkPos, SectionPos, SECTION_SIZE, SKY_FULL};
 use crate::column::Column;
+use crate::light::LightRgb;
 use crate::mathh::IVec3;
 use crate::section::Section;
 
@@ -61,14 +75,14 @@ pub(in crate::world) struct LightBatchJob {
     states: Vec<SparseCellState>,
     /// `BDIM`² sky-cover map, gathered only when a member needs the sky flood.
     surface: Option<Box<[i32]>>,
-    emitters: Vec<(IVec3, u8)>,
+    emitters: Vec<(IVec3, LightRgb)>,
 }
 
 pub(in crate::world) struct LightBatchOutput {
     pub pos: SectionPos,
     pub revision: u64,
     pub skylight: Arc<[u8]>,
-    pub blocklight: Arc<[u8]>,
+    pub blocklight: Arc<[LightRgb]>,
 }
 
 impl LightBatchJob {
@@ -222,7 +236,6 @@ thread_local! {
 }
 
 pub(in crate::world) fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBatchOutput> {
-    let t_stage = std::time::Instant::now();
     let LightBatchJob {
         base,
         members,
@@ -243,6 +256,9 @@ pub(in crate::world) fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBat
             assemble_blocks(&blocks, block_buf);
         }
         let states = ShapeStateSnapshot::from_sparse(&states, BVOL);
+        // Every member sits in the group box; light that cannot reach it is
+        // work the flood need not do.
+        let keep = flood::Keep::new(SECTION_SIZE, SECTION_SIZE * (1 + GROUP as usize));
         let (box_, boy, boz) = base.origin_world();
         let member_off = |m: &BatchMember| {
             (
@@ -260,14 +276,15 @@ pub(in crate::world) fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBat
                 boy - SECTION_SIZE as i32,
                 BDIM,
                 cells,
+                keep,
                 surface,
                 flood_scratch,
             );
             members
                 .iter()
                 .map(|m| match m.sky {
-                    SkyClass::Full => vec![SKY_FULL; SECTION_VOLUME].into(),
-                    SkyClass::Dark => vec![0u8; SECTION_VOLUME].into(),
+                    SkyClass::Full => crate::section::uniform_cube(SKY_FULL),
+                    SkyClass::Dark => crate::section::uniform_cube(0),
                     SkyClass::Flood => flood::clip_cube(cube, BDIM, member_off(m)),
                 })
                 .collect()
@@ -275,8 +292,8 @@ pub(in crate::world) fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBat
             members
                 .iter()
                 .map(|m| match m.sky {
-                    SkyClass::Full => vec![SKY_FULL; SECTION_VOLUME].into(),
-                    _ => vec![0u8; SECTION_VOLUME].into(),
+                    SkyClass::Full => crate::section::uniform_cube(SKY_FULL),
+                    _ => crate::section::uniform_cube(0),
                 })
                 .collect()
         };
@@ -284,11 +301,8 @@ pub(in crate::world) fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBat
         // Block light: one joint flood; every member clips its own cube (emitters
         // beyond a member's reach contribute nothing to its 16³, so this matches
         // the per-section result byte for byte).
-        let block_cubes: Vec<Arc<[u8]>> = if emitters.is_empty() {
-            members
-                .iter()
-                .map(|_| vec![0u8; SECTION_VOLUME].into())
-                .collect()
+        let block_cubes: Vec<Arc<[LightRgb]>> = if emitters.is_empty() {
+            members.iter().map(|_| crate::light::dark_cube()).collect()
         } else {
             let cells = LightCells::new(&block_buf[..], &states, BDIM);
             let origin = (
@@ -296,19 +310,12 @@ pub(in crate::world) fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBat
                 boy - SECTION_SIZE as i32,
                 boz - SECTION_SIZE as i32,
             );
-            let cube = flood::block_light_cube(origin, BDIM, cells, &emitters, flood_scratch);
+            let cube = flood::block_light_cube(origin, BDIM, cells, keep, &emitters, flood_scratch);
             members
                 .iter()
                 .map(|m| flood::clip_cube(cube, BDIM, member_off(m)))
                 .collect()
         };
-
-        super::queue::LIGHT_STAGE_NS.fetch_add(
-            t_stage.elapsed().as_nanos() as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        super::queue::LIGHT_STAGE_JOBS
-            .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
 
         members
             .iter()
@@ -326,6 +333,8 @@ pub(in crate::world) fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBat
 
 #[cfg(test)]
 mod tests {
+    use crate::chunk::SECTION_VOLUME;
+
     use super::super::queue::{run_light_bake, LightBakeJob};
     use super::*;
     use crate::block::Block;
@@ -452,24 +461,36 @@ mod tests {
             let batched = run_light_bake_batch(job);
             assert_eq!(batched.len(), member_positions.len());
 
-            let report_first_diff = |label: &str, pos: SectionPos, got: &[u8], want: &[u8]| {
+            fn report_first_diff<T: PartialEq + std::fmt::Debug>(
+                label: &str,
+                round: usize,
+                pos: SectionPos,
+                got: &[T],
+                want: &[T],
+            ) {
                 for i in 0..SECTION_VOLUME {
                     if got[i] != want[i] {
                         let (lx, ly, lz) = crate::chunk::section_local(i);
                         panic!(
                             "{label} mismatch at {pos:?} cell ({lx},{ly},{lz}) in round \
-                             {round}: batched {} vs per-section {}",
+                             {round}: batched {:?} vs per-section {:?}",
                             got[i], want[i]
                         );
                     }
                 }
-            };
+            }
             for out in batched {
                 let job = LightBakeJob::snapshot_unchecked(1, out.pos, &sections, &columns)
                     .expect("per-section snapshot");
                 let want = run_light_bake(job);
-                report_first_diff("skylight", out.pos, &out.skylight, &want.skylight);
-                report_first_diff("block light", out.pos, &out.blocklight, &want.blocklight);
+                report_first_diff("skylight", round, out.pos, &out.skylight, &want.skylight);
+                report_first_diff(
+                    "block light",
+                    round,
+                    out.pos,
+                    &out.blocklight,
+                    &want.blocklight,
+                );
             }
         }
     }

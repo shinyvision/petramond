@@ -1,0 +1,836 @@
+{
+  "blocks": [
+    {
+      "block": "exploration:mushroom_stem",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "exploration:mushroom_stem_top",
+        "exploration:mushroom_stem_top",
+        "exploration:mushroom_stem"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 0.6,
+      "drops": [
+        {
+          "item": "exploration:mushroom_stem",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:glowcap_pink",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 30,
+      "light_color": [
+        1.0,
+        0.77,
+        0.85
+      ],
+      "tiles": [
+        "exploration:glowcap_pink",
+        "exploration:glowcap_pink",
+        "exploration:glowcap_pink"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [
+        {
+          "item": "exploration:glowcap_pink",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:glowcap_blue",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 30,
+      "light_color": [
+        0.7,
+        0.85,
+        1.0
+      ],
+      "tiles": [
+        "exploration:glowcap_blue",
+        "exploration:glowcap_blue",
+        "exploration:glowcap_blue"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [
+        {
+          "item": "exploration:glowcap_blue",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:glowcap_magenta",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 30,
+      "light_color": [
+        0.97,
+        0.74,
+        1.0
+      ],
+      "tiles": [
+        "exploration:glowcap_magenta",
+        "exploration:glowcap_magenta",
+        "exploration:glowcap_magenta"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [
+        {
+          "item": "exploration:glowcap_magenta",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:glowcap_purple",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 30,
+      "light_color": [
+        0.82,
+        0.75,
+        1.0
+      ],
+      "tiles": [
+        "exploration:glowcap_purple",
+        "exploration:glowcap_purple",
+        "exploration:glowcap_purple"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [
+        {
+          "item": "exploration:glowcap_purple",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:cave_moss",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "monsters:spawn_proof",
+        "exploration:cave_soil"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "exploration:cave_moss",
+        "exploration:cave_moss_bottom",
+        "exploration:cave_moss_side"
+      ],
+      "material": "dirt",
+      "harvest_tier": 0,
+      "hardness": 0.4,
+      "drops": [
+        {
+          "item": "exploration:cave_moss",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:hanging_vine",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect",
+        "climbable"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "exploration:hanging_vine",
+        "exploration:hanging_vine",
+        "exploration:hanging_vine"
+      ],
+      "material": "plant",
+      "harvest_tier": 1,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:hanging_vine",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ],
+      "support": "above"
+    },
+    {
+      "block": "exploration:glow_vine_blue",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect",
+        "climbable"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 15,
+      "light_color": [
+        0.7,
+        0.85,
+        1.0
+      ],
+      "particle_emitter": "exploration:spores_blue",
+      "tiles": [
+        "exploration:glow_vine_blue",
+        "exploration:glow_vine_blue",
+        "exploration:glow_vine_blue"
+      ],
+      "material": "plant",
+      "harvest_tier": 1,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:glow_vine_blue",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ],
+      "support": "above"
+    },
+    {
+      "block": "exploration:glow_vine_magenta",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect",
+        "climbable"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 15,
+      "light_color": [
+        0.97,
+        0.74,
+        1.0
+      ],
+      "particle_emitter": "exploration:spores_magenta",
+      "tiles": [
+        "exploration:glow_vine_magenta",
+        "exploration:glow_vine_magenta",
+        "exploration:glow_vine_magenta"
+      ],
+      "material": "plant",
+      "harvest_tier": 1,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:glow_vine_magenta",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ],
+      "support": "above"
+    },
+    {
+      "block": "exploration:glow_vine_pink",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect",
+        "climbable"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 15,
+      "light_color": [
+        1.0,
+        0.77,
+        0.85
+      ],
+      "particle_emitter": "exploration:spores_pink",
+      "tiles": [
+        "exploration:glow_vine_pink",
+        "exploration:glow_vine_pink",
+        "exploration:glow_vine_pink"
+      ],
+      "material": "plant",
+      "harvest_tier": 1,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:glow_vine_pink",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ],
+      "support": "above"
+    },
+    {
+      "block": "exploration:glow_vine_purple",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect",
+        "climbable"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 15,
+      "light_color": [
+        0.82,
+        0.75,
+        1.0
+      ],
+      "particle_emitter": "exploration:spores_purple",
+      "tiles": [
+        "exploration:glow_vine_purple",
+        "exploration:glow_vine_purple",
+        "exploration:glow_vine_purple"
+      ],
+      "material": "plant",
+      "harvest_tier": 1,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:glow_vine_purple",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ],
+      "support": "above"
+    },
+    {
+      "block": "exploration:cave_flower_pink",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect"
+      ],
+      "roots_on": [
+        "soil",
+        "exploration:cave_soil"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 13,
+      "light_color": [
+        1.0,
+        0.77,
+        0.85
+      ],
+      "particle_emitter": "exploration:spores_pink",
+      "tiles": [
+        "exploration:cave_flower_pink",
+        "exploration:cave_flower_pink",
+        "exploration:cave_flower_pink"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:cave_flower_pink",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:cave_flower_blue",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect"
+      ],
+      "roots_on": [
+        "soil",
+        "exploration:cave_soil"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 13,
+      "light_color": [
+        0.7,
+        0.85,
+        1.0
+      ],
+      "particle_emitter": "exploration:spores_blue",
+      "tiles": [
+        "exploration:cave_flower_blue",
+        "exploration:cave_flower_blue",
+        "exploration:cave_flower_blue"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:cave_flower_blue",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:cave_flower_magenta",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect"
+      ],
+      "roots_on": [
+        "soil",
+        "exploration:cave_soil"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 13,
+      "light_color": [
+        0.97,
+        0.74,
+        1.0
+      ],
+      "particle_emitter": "exploration:spores_magenta",
+      "tiles": [
+        "exploration:cave_flower_magenta",
+        "exploration:cave_flower_magenta",
+        "exploration:cave_flower_magenta"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:cave_flower_magenta",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:cave_flower_purple",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect"
+      ],
+      "roots_on": [
+        "soil",
+        "exploration:cave_soil"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 13,
+      "light_color": [
+        0.82,
+        0.75,
+        1.0
+      ],
+      "particle_emitter": "exploration:spores_purple",
+      "tiles": [
+        "exploration:cave_flower_purple",
+        "exploration:cave_flower_purple",
+        "exploration:cave_flower_purple"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:cave_flower_purple",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:sporeshroom_pink",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect"
+      ],
+      "roots_face": "full_cube",
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 15,
+      "light_color": [
+        1.0,
+        0.77,
+        0.85
+      ],
+      "particle_emitter": "exploration:spores_pink",
+      "tiles": [
+        "exploration:sporeshroom_pink",
+        "exploration:sporeshroom_pink",
+        "exploration:sporeshroom_pink"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:sporeshroom_pink",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:sporeshroom_blue",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect"
+      ],
+      "roots_face": "full_cube",
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 15,
+      "light_color": [
+        0.7,
+        0.85,
+        1.0
+      ],
+      "particle_emitter": "exploration:spores_blue",
+      "tiles": [
+        "exploration:sporeshroom_blue",
+        "exploration:sporeshroom_blue",
+        "exploration:sporeshroom_blue"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:sporeshroom_blue",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:sporeshroom_magenta",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect"
+      ],
+      "roots_face": "full_cube",
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 15,
+      "light_color": [
+        0.97,
+        0.74,
+        1.0
+      ],
+      "particle_emitter": "exploration:spores_magenta",
+      "tiles": [
+        "exploration:sporeshroom_magenta",
+        "exploration:sporeshroom_magenta",
+        "exploration:sporeshroom_magenta"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:sporeshroom_magenta",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:sporeshroom_purple",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "no_pane_connect"
+      ],
+      "roots_face": "full_cube",
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 15,
+      "light_color": [
+        0.82,
+        0.75,
+        1.0
+      ],
+      "particle_emitter": "exploration:spores_purple",
+      "tiles": [
+        "exploration:sporeshroom_purple",
+        "exploration:sporeshroom_purple",
+        "exploration:sporeshroom_purple"
+      ],
+      "material": "plant",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:sporeshroom_purple",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:cave_silt",
+      "shape": "cube",
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "monsters:spawn_proof",
+        "exploration:cave_soil"
+      ],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "exploration:cave_silt",
+        "exploration:cave_silt",
+        "exploration:cave_silt"
+      ],
+      "material": "sand",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [
+        {
+          "item": "exploration:cave_silt",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    }
+  ]
+}

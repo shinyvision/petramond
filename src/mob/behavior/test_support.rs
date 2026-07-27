@@ -12,6 +12,7 @@ use crate::world::World;
 /// the fields they vary (the fields are `pub`).
 pub(crate) fn ctx<'a>(world: &'a World, rng: &'a mut MobRng) -> AiCtx<'a> {
     AiCtx {
+        reach: None,
         mob_id: 1,
         pos: Vec3::ZERO,
         cell: IVec3::ZERO,

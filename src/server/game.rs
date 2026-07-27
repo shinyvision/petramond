@@ -97,6 +97,10 @@ pub(crate) struct ServerGame {
     /// Mob loot tables (from `assets/loot_tables.json`), rolled when a mob dies to
     /// spawn its dropped items. Loaded once at world load, like [`recipes`](Self::recipes).
     pub(crate) loot: LootTables,
+    /// Memo for the hostile-spawn plan's player/terrain half (see
+    /// [`crate::mob::HostileSpawnCache`]) — the planner runs every tick, its
+    /// chunk-neighbourhood scans do not.
+    pub(crate) hostile_spawn_cache: crate::mob::HostileSpawnCache,
     /// The modding event bus: pre events dispatch at their decision sites,
     /// post events queue and drain at tick-stage boundaries. Engine handlers
     /// register before any mod's.

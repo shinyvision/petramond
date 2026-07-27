@@ -24,9 +24,14 @@
 //!   - ENTRANCES: a low-frequency 3-D gate lets the spaghetti field breach the
 //!     surface where a real tunnel already approaches it. The mouth is narrow at
 //!     the surface and widens downward to normal tunnel thickness.
-//!   - CAVE BIOME: a very-low-frequency 3-D field partitions the underground into
-//!     cave biomes (regular stone vs. marble). Marble caves line every carved
-//!     surface with a shell of marble (see `CAVE_LINING_SHELL`).
+//!   - UNDERGROUND BIOME: a very-low-frequency 3-D field is the PARTITION AXIS
+//!     the underground biomes live on. Which band belongs to which biome, what
+//!     it lines its walls with, and how roomy its caves are is DATA
+//!     (`assets/underground_biomes.json`, compiled by
+//!     `worldgen::data::underground`) — nothing here names a biome. A row may
+//!     scale the radius carvers (`caliber.tunnel`), offset the cavern threshold
+//!     (`caliber.cheese`), and scale BOTH lining shells (`lining.shell`); the
+//!     entrance carver is deliberately never modulated.
 
 use crate::chunk::{SEA_LEVEL, SECTION_SIZE, WORLD_MIN_Y};
 
@@ -40,6 +45,14 @@ pub const SALT_CAVE_NOODLE_A: u32 = 0xE07;
 pub const SALT_CAVE_NOODLE_B: u32 = 0xE08;
 pub const SALT_CAVE_BIOME: u32 = 0xE09;
 pub const SALT_CAVE_BRANCH: u32 = 0xE0A;
+
+/// Interior-field lattice spacing in blocks. Section (16) and chunk origins are
+/// multiples of this, so batch lattices land exactly on section corners, and
+/// every path — per-section carve, whole-chunk carve, per-point surface walk —
+/// reads identical values. It also bounds how sharply any lattice-sampled term
+/// may ramp before it shows octahedral facets, which is why the loader for
+/// data-declared carve terms measures their feather widths against it.
+pub const CAVE_LATTICE_STEP: i32 = 4;
 
 // --- Spaghetti ----------------------------------------------------------------
 /// Low frequency = long sweeping tunnels with ~90-block winding wavelength.
@@ -97,16 +110,24 @@ pub const CAVE_ENTRANCE_GATE_SURFACE_T: f64 = 0.0;
 pub const CAVE_ENTRANCE_GATE_DEEP_T: f64 = 0.02;
 pub const CAVE_ENTRANCE_MIN_SURFACE_Y: i32 = SEA_LEVEL + 3;
 
-// --- Cave biomes -----------------------------------------------------------------
-/// Very low frequency: cave biome regions span a few hundred blocks, taller than
-/// wide so one biome tends to own a whole vertical cave system.
+// --- Underground biomes -----------------------------------------------------------
+/// Very low frequency: underground-biome regions span a few hundred blocks,
+/// taller than wide so one biome tends to own a whole vertical cave system.
+/// The BANDS of this field are data, not constants — see the module docs.
 pub const CAVE_BIOME_FREQ: f64 = 0.0045;
 pub const CAVE_BIOME_FREQ_Y: f64 = 0.0027;
-/// Marble caves where the biome field exceeds this (~1/5 of the underground).
-pub const CAVE_BIOME_MARBLE_T: f64 = 0.17;
+/// The magnitude the cave-biome field can actually REACH. `sample_biome` returns
+/// one raw OpenSimplex sample — no scaling, no octave stacking — and the lattice
+/// blend is convex, so no voxel reads past the sampler's own range. Measured at
+/// these frequencies over ±40k blocks and six salted seeds: [−0.5373, 0.5374],
+/// which a dense raw sweep agrees with. A band missing this interval entirely
+/// can never generate, so the loader rejects it. Give the field an octave or a
+/// gain and this has to be re-measured.
+pub const CAVE_BIOME_FIELD_MAX: f64 = 0.55;
 /// Wall-lining shell width, in noise units ABOVE each carver's carve threshold: a
 /// solid voxel whose carve metric is within the shell of the threshold hugs the
-/// cave wall, so a marble cave paints it marble. ~1–2 blocks at these gradients.
+/// cave wall, so a biome with a lining block paints it. ~1–2 blocks at these
+/// gradients; a row's `lining.shell` scales it.
 pub const CAVE_LINING_SHELL: f64 = 0.022;
 /// Cheese has a shallower gradient, so its shell is separate (~2–3 blocks).
 pub const CAVE_CHEESE_LINING_SHELL: f64 = 0.030;

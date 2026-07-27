@@ -6,6 +6,9 @@ mod crosshair;
 mod door_model;
 mod effect_icons;
 mod foliage_tint;
+mod geometry_arena;
+mod gpu_mem;
+mod gpu_timer;
 mod hand;
 mod hand_animator;
 mod item_cube;
@@ -27,8 +30,11 @@ pub(crate) mod uniforms;
 
 pub use crate::game::presentation::BreakOverlayView;
 pub(crate) use hand_animator::HeldItemAnimator;
+pub(crate) use renderer::new_offscreen_renderer;
 pub(crate) use renderer::new_renderer_from_target;
-pub use renderer::Renderer;
+#[allow(unused_imports)]
+pub use renderer::TerrainMemory;
+pub use renderer::{RenderedFrame, Renderer};
 
 pub(crate) use scene::Scene;
 
@@ -231,7 +237,7 @@ pub struct ItemEntityInstance {
     /// 6-bit skylight sampled from the world at the dropped item's position.
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    pub blocklight: u8,
+    pub blocklight: crate::light::BlockLight6,
 }
 
 /// One animated mob to draw in the world this frame: a species (`kind`) posed at
@@ -262,7 +268,7 @@ pub struct MobRenderInstance {
     /// 6-bit skylight sampled from the world at the mob's position.
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    pub blocklight: u8,
+    pub blocklight: crate::light::BlockLight6,
     /// Hurt-flash intensity in `[0, 1]`: tints the mob red after a non-lethal hit,
     /// fading out. `0` for an unhurt or dead mob.
     pub hurt: f32,
@@ -320,7 +326,7 @@ pub struct PlayerRenderInstance {
     pub hurt: f32,
     /// 6-bit two-channel light sampled at the player.
     pub skylight: u8,
-    pub blocklight: u8,
+    pub blocklight: crate::light::BlockLight6,
 }
 
 /// One REMOTE player's body + held item to draw this frame, already
@@ -352,7 +358,7 @@ struct ChestInstance {
     /// 6-bit skylight sampled from the world at the chest's cell.
     skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    blocklight: u8,
+    blocklight: crate::light::BlockLight6,
 }
 
 /// A placed door to draw in the world this frame: a 2-tall thin slab on the `facing`
@@ -379,7 +385,7 @@ struct DoorInstance {
     /// 6-bit skylight sampled from the world at the door's lower cell.
     skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    blocklight: u8,
+    blocklight: crate::light::BlockLight6,
 }
 
 /// A single terrain particle cube to draw this frame. `uv_min` / `uv_size` are
@@ -403,7 +409,7 @@ pub struct ParticleInstance {
     /// 6-bit skylight sampled from the world at the particle position.
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    pub blocklight: u8,
+    pub blocklight: crate::light::BlockLight6,
 }
 
 /// One SOLID-COLOR simulated particle this frame (an emitter-burst droplet —
@@ -420,16 +426,13 @@ pub struct SolidParticleInstance {
     pub stretch: f32,
     /// 6-bit light sampled at the particle, folded into the color.
     pub skylight: u8,
-    pub blocklight: u8,
+    pub blocklight: crate::light::BlockLight6,
 }
 
-/// One loaded block-row particle emitter to draw this frame. The renderer turns this
-/// declarative row into transient translucent cube particles; no state is persisted.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ParticleEmitterInstance {
-    pub origin: Vec3,
-    pub emitter: crate::block::ParticleEmitter,
-    pub seed: u64,
-    pub skylight: u8,
-    pub blocklight: u8,
-}
+/// One VISIBLE particle emitter to draw this frame (a block row's or a mob's).
+/// The renderer turns this declarative row into transient translucent cube
+/// particles; no state is persisted.
+///
+/// The same row the gather produces — the frame carries one emitter type end to
+/// end, so nothing between the world and the vertex builder is a re-map.
+pub use crate::world::PlacedEmitter as ParticleEmitterInstance;

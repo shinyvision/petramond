@@ -121,28 +121,28 @@ impl Renderer {
                     color,
                 );
             }
-            let push_hooks = |verts: &mut Vec<UiVertex>,
-                              icons: &[crate::render::ui::HookIconQuad]| {
-                for icon in icons {
-                    let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(icon.item);
-                    let Some((visible, uv_tl, uv_br)) =
-                        clipped_icon(icon.rect, icon.clip, [u0, v0, u1, v1])
-                    else {
-                        continue;
-                    };
-                    crate::render::ui::push_quad_uv(
-                        verts,
-                        screen,
-                        visible.x,
-                        visible.y,
-                        visible.w,
-                        visible.h,
-                        uv_tl,
-                        uv_br,
-                        [1.0, 1.0, 1.0, if icon.dim { 0.35 } else { 1.0 }],
-                    );
-                }
-            };
+            let push_hooks =
+                |verts: &mut Vec<UiVertex>, icons: &[crate::render::ui::HookIconQuad]| {
+                    for icon in icons {
+                        let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(icon.item);
+                        let Some((visible, uv_tl, uv_br)) =
+                            clipped_icon(icon.rect, icon.clip, [u0, v0, u1, v1])
+                        else {
+                            continue;
+                        };
+                        crate::render::ui::push_quad_uv(
+                            verts,
+                            screen,
+                            visible.x,
+                            visible.y,
+                            visible.w,
+                            visible.h,
+                            uv_tl,
+                            uv_br,
+                            [1.0, 1.0, 1.0, if icon.dim { 0.35 } else { 1.0 }],
+                        );
+                    }
+                };
             push_hooks(&mut verts, &self.ui_build.hook_icon_quads);
             let normal_icon_vertex_count = verts.len() as u32;
             push_hooks(&mut verts, &self.ui_build.overlay_icon_quads);
@@ -166,9 +166,8 @@ impl Renderer {
                 );
             }
             self.icon_quad_vertex_count = normal_icon_vertex_count;
-            self.drag_icon_quad_vertex_count = verts.len() as u32
-                - normal_icon_vertex_count
-                - self.overlay_icon_quad_vertex_count;
+            self.drag_icon_quad_vertex_count =
+                verts.len() as u32 - normal_icon_vertex_count - self.overlay_icon_quad_vertex_count;
         }
         if !verts.is_empty() {
             // Icon-quad geometry is bounded by the visible slots but GROW the buffer to

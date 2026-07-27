@@ -142,6 +142,9 @@ pub struct App {
     /// wall-clock start (the 200 ms window is real time, not ticks — a paused
     /// or slowed sim must not stretch it). Presentation-only.
     heart_wiggle: Option<HeartWiggle>,
+    /// Returns the allocator's free pages to the OS once terrain settles (see
+    /// [`crate::memory`]).
+    heap_reclaim: crate::memory::IdleHeapReclaim,
     worlds: Vec<crate::save::WorldInfo>,
     selected_world: Option<usize>,
     /// The World Settings session for the selected world (`None` unless the
@@ -257,6 +260,7 @@ impl App {
             sleep_interact_hand_t: 0.0,
             prev_heart_health: None,
             heart_wiggle: None,
+            heap_reclaim: Default::default(),
             worlds: Vec::new(),
             selected_world: None,
             world_settings: None,

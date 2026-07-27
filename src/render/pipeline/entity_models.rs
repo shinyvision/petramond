@@ -88,9 +88,11 @@ pub(super) fn create_mob_pipeline(
 }
 
 /// world-model pipeline (chunk bbmodel-block stream).
-/// `ModelVertex`: the ItemVertex attributes + a (sky, block) light pair at
-/// @location(4), so `fs_world_model` can scale the sky term by the sim's
-/// day/night state at draw time (chunk meshes don't rebake at sunset).
+/// `ModelVertex`: pos/uv/shade plus a (sky, block rgb) light vector at
+/// @location(3), so `fs_world_model` can scale the sky term by the sim's
+/// day/night state at draw time (chunk meshes don't rebake at sunset) and apply
+/// the block light's colour per channel. No per-vertex tint: a model block's
+/// colour comes from its own texture, and its light rides the light vector.
 pub(super) fn create_world_model_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -120,14 +122,9 @@ pub(super) fn create_world_model_pipeline(
             shader_location: 2,
         },
         wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x3,
+            format: wgpu::VertexFormat::Float32x4,
             offset: 24,
             shader_location: 3,
-        },
-        wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x2,
-            offset: 36,
-            shader_location: 4,
         },
     ];
     let world_model_vbuf_layout = wgpu::VertexBufferLayout {

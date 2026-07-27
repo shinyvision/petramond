@@ -114,6 +114,18 @@ pub fn resolve_block_logged(name: &str) -> Option<BlockId> {
     id
 }
 
+/// [`resolve_mob`] that also logs a "not registered" line on `None` — the
+/// species twin of [`resolve_block_logged`]. A mob SNAPSHOT names its species
+/// by id, never by string, so a pack that reasons about a species resolves its
+/// key once here and compares ids.
+pub fn resolve_mob_logged(name: &str) -> Option<MobId> {
+    let id = resolve_mob(name);
+    if id.is_none() {
+        crate::log(&format!("mob '{name}' is not registered"));
+    }
+    id
+}
+
 /// [`resolve_item`] that also logs a "not registered" line on `None` — the
 /// item twin of [`resolve_block_logged`].
 pub fn resolve_item_logged(name: &str) -> Option<ItemId> {

@@ -73,9 +73,14 @@ use super::palette;
 /// record `[header: len<<4 | id_mask][len bytes]` with id-masked bytes
 /// palette-translated. A new stateful block kind needs NO codec change.
 /// Clean break; dev worlds regenerate.
-const SECTION_REC_VERSION: u8 = 13;
+/// v14 widens the persisted BLOCK-LIGHT cube from one byte per cell to one
+/// packed RGB `u16` (little-endian, `crate::light::LightRgb`): block light
+/// carries colour now. Skylight is untouched. Clean break — a v13 record's
+/// 4096-byte block-light blob is half the length this build reads; dev worlds
+/// regenerate.
+const SECTION_REC_VERSION: u8 = 14;
 /// Oldest section-record version this build can still read.
-const SECTION_REC_MIN_VERSION: u8 = 13;
+const SECTION_REC_MIN_VERSION: u8 = 14;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
@@ -130,9 +135,10 @@ pub struct SectionSnapshot {
     /// entirely. `None` re-bakes on load, exactly like the pre-persistence
     /// behaviour.
     pub skylight: Option<Arc<[u8]>>,
-    /// Baked block-light cube; independent of `skylight` presence on the wire
-    /// but only ever written alongside it (absent = no emitter in range).
-    pub blocklight: Option<Arc<[u8]>>,
+    /// Baked block-light cube (packed RGB cells); independent of `skylight`
+    /// presence on the wire but only ever written alongside it (absent = no
+    /// emitter in range).
+    pub blocklight: Option<Arc<[crate::light::LightRgb]>>,
     /// Per-cell mod KV entries (`mod_id:key` → bytes), keyed by section-local
     /// index. Opaque to the engine and PRESERVED byte-exact through load/save —
     /// unknown keys are never dropped, so an absent mod's data survives. See
@@ -253,7 +259,7 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
         payload.extend_from_slice(sky);
     }
     if let Some(bl) = &s.blocklight {
-        payload.extend_from_slice(bl);
+        payload.extend_from_slice(&crate::light::to_le_bytes(bl));
     }
     deflate(&payload)
 }
@@ -337,7 +343,7 @@ pub fn decode_section(
         None
     };
     let blocklight = if flags3 & FLAG3_HAS_BLOCKLIGHT != 0 {
-        Some(r.bytes(SECTION_VOLUME)?)
+        Some(crate::light::from_le_bytes(r.bytes(SECTION_VOLUME * 2)?)?)
     } else {
         None
     };

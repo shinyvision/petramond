@@ -10,7 +10,7 @@ fn inst(alpha: f32) -> ParticleInstance {
         alpha,
         size: 0.1,
         skylight: lighting::FULL_SKYLIGHT,
-        blocklight: 0,
+        blocklight: crate::light::BlockLight6::DARK,
     }
 }
 
@@ -32,12 +32,12 @@ fn emitter_inst() -> ParticleEmitterInstance {
             alpha: [0.8, 0.8],
             fade_power: 2.0,
             shrink_power: 1.0,
-            fullbright: true,
+            self_lit: 1.0,
             spiral: [0.0, 0.0],
         },
         seed: 0x1234_5678_9ABC_DEF0,
         skylight: 0,
-        blocklight: 0,
+        blocklight: crate::light::BlockLight6::DARK,
     }
 }
 
@@ -123,7 +123,13 @@ fn sampled_light_folds_into_the_particle_tint() {
     build_particles(std::slice::from_ref(&dark), &mut v);
 
     assert_eq!(v[2 * 4].shade, 1.0, "shade stays directional-only");
-    let expect = lighting::light_rgb(DynLight { sky: 0, block: 0 }, LightEnv::IDENTITY);
+    let expect = lighting::light_rgb(
+        DynLight {
+            sky: 0,
+            block: crate::light::BlockLight6::DARK,
+        },
+        LightEnv::IDENTITY,
+    );
     assert_eq!(v[2 * 4].tint, expect, "unlit sample dims the tint");
     assert!(expect[0] < 1.0);
 }
@@ -170,6 +176,54 @@ fn block_emitter_particles_rise_shrink_and_fade() {
         max_alpha(&old) < max_alpha(&young),
         "emitter particles fade as they age"
     );
+}
+
+/// Bake one emitter particle and return the red channel of its tint. Both of
+/// [`emitter_inst`]'s colour endpoints have red 1.0, so that channel IS the
+/// light factor the row resolved to.
+fn emitter_light_factor(self_lit: f32, skylight: u8) -> f32 {
+    let mut inst = emitter_inst();
+    inst.emitter.self_lit = self_lit;
+    inst.skylight = skylight;
+    let (mut verts, mut scratch) = (Vec::new(), Vec::new());
+    build_transparent_emitter_particles(
+        std::slice::from_ref(&inst),
+        &[],
+        one_live_emitter_time(&inst, 0.25),
+        Vec3::ZERO,
+        LightEnv::IDENTITY,
+        1.0,
+        &mut verts,
+        &mut scratch,
+    );
+    verts[0].tint[0]
+}
+
+/// The MIDDLE of `self_lit`'s range is the part worth pinning: a partly
+/// self-lit mote must still dim with the room (or it is just the old
+/// `fullbright` flag) while never falling to the unlit-cave floor (or it is
+/// just an ordinary particle). A `max(sample, self_lit)` spelling satisfies
+/// both endpoints and loses the response over the whole lower half.
+#[test]
+fn self_lit_particles_dim_with_the_room_without_reaching_the_cave_floor() {
+    let (dark, lit) = (0, lighting::FULL_SKYLIGHT);
+    let floor = emitter_light_factor(0.0, dark);
+    assert!(floor < 0.1, "an unlit cave is nearly black: {floor}");
+
+    let half_dark = emitter_light_factor(0.5, dark);
+    let half_lit = emitter_light_factor(0.5, lit);
+    assert!(
+        (half_dark - 0.5).abs() < 0.02,
+        "half self-lit reads about half bright in the dark: {half_dark}"
+    );
+    assert!(
+        half_dark < half_lit,
+        "half self-lit still responds to the room: {half_dark} vs {half_lit}"
+    );
+
+    // 1.0 is exactly the flag it replaced: world light cannot reach it.
+    assert_eq!(emitter_light_factor(1.0, dark), 1.0);
+    assert_eq!(emitter_light_factor(1.0, lit), 1.0);
 }
 
 #[test]

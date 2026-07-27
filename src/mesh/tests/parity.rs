@@ -147,7 +147,7 @@ mod parallel_parity_tests {
                 |_, _, _| 0,
                 nb_biome,
                 nb_light,
-                |_, _, _| 0,
+                |_, _, _| crate::light::LightRgb::ZERO,
                 |_, _, _| true,
             )
         };
@@ -160,17 +160,14 @@ mod parallel_parity_tests {
                 bytemuck::cast_slice::<Vertex, u8>(&s.opaque),
                 bytemuck::cast_slice::<Vertex, u8>(&p.opaque),
             );
-            assert_eq!(s.opaque_idx, p.opaque_idx);
             assert_eq!(
                 bytemuck::cast_slice::<Vertex, u8>(&s.transparent),
                 bytemuck::cast_slice::<Vertex, u8>(&p.transparent),
             );
-            assert_eq!(s.transparent_idx, p.transparent_idx);
             assert_eq!(
                 bytemuck::cast_slice::<Vertex, u8>(&s.far_opaque),
                 bytemuck::cast_slice::<Vertex, u8>(&p.far_opaque),
             );
-            assert_eq!(s.far_opaque_idx, p.far_opaque_idx);
         }
     }
 }
@@ -290,8 +287,15 @@ fn pad_local_section_mesher_matches_closure_mesher() {
             (18 + (wx * 3 + wy * 5 + wz * 7).rem_euclid(13)) as u8
         }
     };
-    let blocklight_at =
-        |wx: i32, wy: i32, wz: i32| -> u8 { ((wx + wy * 2 + wz * 3).rem_euclid(5) * 2) as u8 };
+    // A COLOURED per-cell light, so the pad path and the closure path must agree
+    // on every channel, not just on brightness.
+    let blocklight_at = |wx: i32, wy: i32, wz: i32| -> crate::light::LightRgb {
+        crate::light::LightRgb::new(
+            ((wx + wy * 2 + wz * 3).rem_euclid(5) * 2) as u8,
+            ((wx * 2 + wy + wz * 5).rem_euclid(7) * 2) as u8,
+            ((wx * 3 + wy * 7 + wz).rem_euclid(4) * 2) as u8,
+        )
+    };
     let biome_at = |_: i32, _: i32| -> u8 { 0 };
     let loaded_at = |_: i32, _: i32, _: i32| -> bool { true };
 
@@ -310,7 +314,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     let mut blocks = vec![0u8; PAD_VOL];
     let mut water = vec![0u8; PAD_VOL];
     let mut skylight = vec![SKY_FULL; PAD_VOL];
-    let mut blocklight = vec![0u8; PAD_VOL];
+    let mut blocklight = vec![crate::light::LightRgb::ZERO; PAD_VOL];
     let mut cell_states = vec![crate::block::ShapeState::NONE; PAD_VOL];
     let loaded = vec![true; PAD_VOL];
     for py in 0..PAD {
@@ -352,17 +356,14 @@ fn pad_local_section_mesher_matches_closure_mesher() {
         bytemuck::cast_slice::<Vertex, u8>(&serial.opaque),
         bytemuck::cast_slice::<Vertex, u8>(&pad.opaque)
     );
-    assert_eq!(serial.opaque_idx, pad.opaque_idx);
     assert_eq!(
         bytemuck::cast_slice::<Vertex, u8>(&serial.transparent),
         bytemuck::cast_slice::<Vertex, u8>(&pad.transparent)
     );
-    assert_eq!(serial.transparent_idx, pad.transparent_idx);
     assert_eq!(
         bytemuck::cast_slice::<Vertex, u8>(&serial.far_opaque),
         bytemuck::cast_slice::<Vertex, u8>(&pad.far_opaque)
     );
-    assert_eq!(serial.far_opaque_idx, pad.far_opaque_idx);
     assert_eq!(
         bytemuck::cast_slice::<ModelVertex, u8>(&serial.model),
         bytemuck::cast_slice::<ModelVertex, u8>(&pad.model)

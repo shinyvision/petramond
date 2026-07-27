@@ -214,22 +214,66 @@ pub(crate) fn body_fits_at(world: &World, kind: Mob, feet: IVec3) -> bool {
     body_clear(feet, params, &water)
 }
 
+/// The terrain half of [`hostile_spawn_plan`], memoized.
+///
+/// The census gate walks a 19x19 chunk square per player and the spawnable set
+/// a 17x17 one — every tick, for an answer that can only change when a player
+/// crosses a chunk border or terrain streams in or out. Both are re-derived
+/// only when one of those two inputs moves.
+///
+/// Only CHUNK-GRAINED facts may be memoized under that key: the anchors
+/// themselves carry each player's exact position (their altitude picks the
+/// candidate scan band), so they are rebuilt from live positions every tick.
+#[derive(Default)]
+pub(crate) struct HostileSpawnCache {
+    key: Option<(Vec<ChunkPos>, u64)>,
+    /// Per player, in `player_positions` order: did the census gate pass?
+    census_ready: Vec<bool>,
+    spawnable_chunks: Vec<ChunkPos>,
+}
+
+impl HostileSpawnCache {
+    fn refresh(&mut self, world: &World, player_positions: &[Vec3]) {
+        let anchor_chunks: Vec<ChunkPos> =
+            player_positions.iter().map(|&p| chunk_pos_at(p)).collect();
+        let key = (anchor_chunks, world.terrain_revision());
+        if self.key.as_ref() == Some(&key) {
+            return;
+        }
+        self.census_ready = player_positions
+            .iter()
+            .map(|&pos| mob_census_ready(world, pos))
+            .collect();
+        let chunks: Vec<ChunkPos> = key
+            .0
+            .iter()
+            .copied()
+            .zip(&self.census_ready)
+            .filter_map(|(chunk, &ready)| ready.then_some(chunk))
+            .collect();
+        self.spawnable_chunks =
+            hostile_spawnable_chunks(&chunks, |chunk| world.chunk_loaded(chunk.cx, chunk.cz));
+        self.key = Some(key);
+    }
+}
+
 pub(crate) fn hostile_spawn_plan(
     world: &World,
+    cache: &mut HostileSpawnCache,
     player_positions: &[Vec3],
 ) -> Option<HostileSpawnPlan> {
-    let anchors: Vec<_> = player_positions
+    cache.refresh(world, player_positions);
+    let anchors: Vec<HostileSpawnAnchor> = player_positions
         .iter()
         .copied()
-        .filter(|&pos| mob_census_ready(world, pos))
-        .map(HostileSpawnAnchor::new)
+        .zip(&cache.census_ready)
+        .filter_map(|(pos, &ready)| ready.then(|| HostileSpawnAnchor::new(pos)))
         .collect();
     if anchors.is_empty() {
         return None;
     }
 
-    let spawnable_chunks =
-        hostile_spawnable_chunks(&anchors, |chunk| world.chunk_loaded(chunk.cx, chunk.cz));
+    let spawnable_chunks = cache.spawnable_chunks.clone();
     if spawnable_chunks.is_empty() {
         return None;
     }
@@ -420,15 +464,15 @@ fn nearest_anchor_pos(anchors: &[HostileSpawnAnchor], pos: Vec3) -> Option<Vec3>
 }
 
 fn hostile_spawnable_chunks(
-    anchors: &[HostileSpawnAnchor],
+    anchor_chunks: &[ChunkPos],
     mut loaded: impl FnMut(ChunkPos) -> bool,
 ) -> Vec<ChunkPos> {
     let mut chunks = Vec::new();
     let mut seen = FxHashSet::default();
-    for anchor in anchors {
+    for anchor in anchor_chunks {
         for dz in -HOSTILE_SPAWN_CHUNK_RADIUS..=HOSTILE_SPAWN_CHUNK_RADIUS {
             for dx in -HOSTILE_SPAWN_CHUNK_RADIUS..=HOSTILE_SPAWN_CHUNK_RADIUS {
-                let chunk = ChunkPos::new(anchor.chunk.cx + dx, anchor.chunk.cz + dz);
+                let chunk = ChunkPos::new(anchor.cx + dx, anchor.cz + dz);
                 if loaded(chunk) && seen.insert(chunk) {
                     chunks.push(chunk);
                 }
@@ -723,8 +767,8 @@ mod tests {
 
     #[test]
     fn hostile_spawnable_chunks_deduplicate_overlapping_players() {
-        let a = HostileSpawnAnchor::new(Vec3::new(0.5, 64.0, 0.5));
-        let b = HostileSpawnAnchor::new(Vec3::new(16.5, 64.0, 0.5));
+        let a = chunk_pos_at(Vec3::new(0.5, 64.0, 0.5));
+        let b = chunk_pos_at(Vec3::new(16.5, 64.0, 0.5));
 
         let solo = hostile_spawnable_chunks(&[a], |_| true);
         let together = hostile_spawnable_chunks(&[a, b], |_| true);
@@ -752,7 +796,7 @@ mod tests {
             world.insert_empty_column_for_test(ChunkPos::new(dx, dz));
         }
 
-        let plan = hostile_spawn_plan(&world, &[ready, loading])
+        let plan = hostile_spawn_plan(&world, &mut HostileSpawnCache::default(), &[ready, loading])
             .expect("the ready player's loaded neighborhood can spawn");
         assert_eq!(plan.anchors.len(), 1);
         assert_eq!(plan.anchors[0].chunk, ChunkPos::new(0, 0));

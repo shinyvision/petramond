@@ -44,7 +44,7 @@ impl World {
     /// every loaded chest to `out` (cleared first). The transient lid open angle is
     /// filled in by the caller (it's client-side animation, not world state). Visits
     /// only the block-entity section index, not every loaded section.
-    pub fn collect_chests(&self, out: &mut Vec<(IVec3, Facing, u8, u8)>) {
+    pub fn collect_chests(&self, out: &mut Vec<(IVec3, Facing, u8, crate::light::BlockLight6)>) {
         out.clear();
         for sp in &self.block_entity_sections {
             let Some(section) = self.sections.get(sp) else {
@@ -65,7 +65,9 @@ impl World {
                 let facing = section.entity_facing(lx, ly, lz);
                 let pos = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
                 let sky = self.skylight6_at_world(pos.x, pos.y, pos.z);
-                let block = self.blocklight6_at_world(pos.x, pos.y, pos.z);
+                let block = crate::light::BlockLight6::from_x2(
+                    self.blocklight_rgb_at_world(pos.x, pos.y, pos.z),
+                );
                 out.push((pos, facing, sky, block));
             }
         }

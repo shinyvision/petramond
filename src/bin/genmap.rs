@@ -776,6 +776,12 @@ fn main() {
     let center_x = args.next().and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
     let proj = args.next().and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
 
+    // Held for the whole run: the packs' worldgen hooks stay installed only as
+    // long as this guard lives. Without it every mode previews a world with the
+    // packs' DATA applied but none of their worldgen CODE run — a picture that
+    // looks right and is not the world the game generates.
+    let _mods = petramond::tooling::mods::load(seed);
+
     match mode.as_str() {
         "biome" => render_topdown(seed, &out, true),
         // macro <stride>: km-scale biome+relief overview straight from the

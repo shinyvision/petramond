@@ -125,6 +125,8 @@ impl World {
         self.mesh_columns.clear();
         self.mesh_column_cys.clear();
         self.section_column_cys.clear();
+        self.section_column_rt.clear();
+        self.random_tick_dirty.clear();
         self.mesh_upload_revisions.clear();
         self.mesh_upload_dirty_columns.clear();
         self.mesh_release_after.clear();

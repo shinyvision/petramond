@@ -8,6 +8,7 @@ use super::tint;
 use super::torch;
 use super::vertex::ChunkMesh;
 
+mod cell_class;
 mod cube_face;
 mod exposed_masks;
 mod geometry;
@@ -18,8 +19,8 @@ mod plant;
 pub(super) use cube_face::{
     boundary_plane, corner_cast_probes, cube_face_lighting, face_axes, probe_worthy,
 };
-pub(super) use pad::mesh_pad_idx;
 pub(crate) use pad::SectionMeshPad;
+pub(super) use pad::{mesh_pad_idx, MESH_PAD_SIDE};
 
 use geometry::section_geometry;
 
@@ -60,7 +61,7 @@ pub fn build_section_mesh(
     neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_biome: impl Fn(i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
-    neighbour_blocklight: impl Fn(i32, i32, i32) -> u8,
+    neighbour_blocklight: impl Fn(i32, i32, i32) -> crate::light::LightRgb,
     neighbour_loaded: impl Fn(i32, i32, i32) -> bool,
 ) -> ChunkMesh {
     let tints = section.has_biome_tint_blocks().then(|| {
@@ -96,9 +97,8 @@ pub fn build_section_mesh(
         MeshOptions::FAR_LEAVES,
         None,
     );
-    if far.opaque_idx.len() < mesh.opaque_idx.len() {
+    if far.opaque.len() < mesh.opaque.len() {
         mesh.far_opaque = far.opaque;
-        mesh.far_opaque_idx = far.opaque_idx;
     }
     mesh
 }
@@ -148,9 +148,8 @@ pub(crate) fn build_section_mesh_from_pad(
         MeshOptions::FAR_LEAVES,
         None,
     );
-    if far.opaque_idx.len() < mesh.opaque_idx.len() {
+    if far.opaque.len() < mesh.opaque.len() {
         mesh.far_opaque = far.opaque;
-        mesh.far_opaque_idx = far.opaque_idx;
     }
     mesh
 }

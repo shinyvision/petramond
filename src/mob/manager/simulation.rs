@@ -50,6 +50,9 @@ pub(super) struct PushBody {
     pos: Vec3,
     yaw: f32,
     size: super::MobSize,
+    /// Horizontal radius past which this body provably cannot overlap another
+    /// (mirrors `body_geometry`'s compound bound), for the sweep broadphase.
+    reach: f32,
 }
 
 /// A melee strike a mob landed this tick. Drained from [`Mobs::tick`] by
@@ -132,6 +135,76 @@ static MOB_META: LazyLock<Vec<MobMeta>> = LazyLock::new(|| {
         })
         .collect()
 });
+
+/// The horizontal radius `body_geometry`'s compound push bound uses. Kept
+/// identical to it: the sweep is only sound while it is an upper bound on the
+/// narrow phase's own reach.
+fn push_reach(size: super::MobSize) -> f32 {
+    size.half_length
+        .unwrap_or(size.half_width)
+        .hypot(size.half_width)
+}
+
+#[cfg(test)]
+impl PushBody {
+    pub(super) fn pos(self) -> Vec3 {
+        self.pos
+    }
+    pub(super) fn yaw(self) -> f32 {
+        self.yaw
+    }
+    pub(super) fn size(self) -> super::MobSize {
+        self.size
+    }
+}
+
+/// Build a push body from raw geometry — the broadphase test's fixture.
+#[cfg(test)]
+pub(super) fn push_body_for_test(pos: Vec3, yaw: f32, size: super::MobSize) -> PushBody {
+    PushBody {
+        pos,
+        yaw,
+        size,
+        reach: push_reach(size),
+    }
+}
+
+/// Every pair of participating bodies (as ranks into `order`) whose push
+/// bounds could overlap, in the same order the exhaustive nested scan visits
+/// them: `(rank_a, rank_b)` ascending, `rank_a < rank_b`.
+///
+/// The sweep is one axis: sorted by x, a pair is only possible while the x gap
+/// is under the two bodies' combined horizontal reach, and the widest body in
+/// the set bounds the partner's half. That bound is exactly the one
+/// `body_geometry`'s compound test applies, so no overlapping pair can be
+/// missed — the narrow phase still runs on every candidate and decides.
+pub(super) fn overlap_pairs(
+    bodies: &[Option<PushBody>],
+    order: &[usize],
+    sweep: &mut Vec<(f32, u32)>,
+    pairs: &mut Vec<(u32, u32)>,
+) {
+    sweep.clear();
+    pairs.clear();
+    let mut max_reach = 0.0f32;
+    for (rank, &i) in order.iter().enumerate() {
+        let body = bodies[i].expect("order holds participating bodies only");
+        max_reach = max_reach.max(body.reach);
+        sweep.push((body.pos.x, rank as u32));
+    }
+    sweep.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+    for p in 0..sweep.len() {
+        let (x, ra) = sweep[p];
+        let span = bodies[order[ra as usize]].expect("participating").reach + max_reach;
+        for &(qx, rb) in &sweep[p + 1..] {
+            if qx - x >= span {
+                break;
+            }
+            pairs.push((ra.min(rb), ra.max(rb)));
+        }
+    }
+    pairs.sort_unstable();
+}
 
 impl Mobs {
     /// Advance every mob by one game tick (passing each its species' idle-animation
@@ -410,7 +483,8 @@ impl Mobs {
             }
             let c = voxel_at(mob.pos + Vec3::new(0.0, 0.3, 0.0));
             mob.skylight = world.skylight6_at_world(c.x, c.y, c.z);
-            mob.blocklight = world.blocklight6_at_world(c.x, c.y, c.z);
+            mob.blocklight =
+                crate::light::BlockLight6::from_x2(world.blocklight_rgb_at_world(c.x, c.y, c.z));
         }
         self.ticked_scratch = ticked;
         self.motion_finish_scratch = motion_finish;
@@ -443,10 +517,14 @@ impl Mobs {
         let mut bodies = std::mem::take(&mut self.push_scratch);
         bodies.clear();
         bodies.extend(self.list.iter().map(|m| {
-            is_pushable(m, world, freeze_unloaded).then(|| PushBody {
-                pos: m.pos,
-                yaw: m.yaw,
-                size: def(m.kind).size,
+            is_pushable(m, world, freeze_unloaded).then(|| {
+                let size = def(m.kind).size;
+                PushBody {
+                    pos: m.pos,
+                    yaw: m.yaw,
+                    size,
+                    reach: push_reach(size),
+                }
             })
         }));
         let mut ids = std::mem::take(&mut self.id_scratch);
@@ -466,25 +544,34 @@ impl Mobs {
         // Resolve each mob pair once. A compound body contributes its deepest
         // segment contact only, then the pair's one separation is applied
         // equally and oppositely to whichever members are soft.
-        for (rank, &i) in order.iter().enumerate() {
-            let a = bodies[i].unwrap();
-            for &j in &order[rank + 1..] {
-                let b = bodies[j].unwrap();
-                let Some(push_a) =
-                    super::body_separation(a.pos, a.yaw, a.size, b.pos, b.yaw, b.size)
-                else {
-                    continue;
-                };
-                if def(self.list[i].kind).collision != super::MobCollision::Solid {
-                    pushes[i] += push_a;
-                }
-                if def(self.list[j].kind).collision != super::MobCollision::Solid {
-                    pushes[j] -= push_a;
-                }
-                contacts[i].push(super::EntityRef::Mob(ids[j]));
-                contacts[j].push(super::EntityRef::Mob(ids[i]));
+        //
+        // The candidate pairs come from a one-axis sweep, not the full N²
+        // scan: bodies are spread over the loaded world and the overlapping
+        // pairs are a vanishing fraction of them, while the N² form doubles
+        // its cost every time the population does. The pairs are re-sorted
+        // into the same (rank, rank) order the nested scan visited, so the
+        // accumulated push sums and the contact lists are unchanged.
+        let mut sweep = std::mem::take(&mut self.push_sweep_scratch);
+        let mut pairs = std::mem::take(&mut self.push_pair_scratch);
+        overlap_pairs(&bodies, &order, &mut sweep, &mut pairs);
+        for &(ra, rb) in &pairs {
+            let (i, j) = (order[ra as usize], order[rb as usize]);
+            let (a, b) = (bodies[i].unwrap(), bodies[j].unwrap());
+            let Some(push_a) = super::body_separation(a.pos, a.yaw, a.size, b.pos, b.yaw, b.size)
+            else {
+                continue;
+            };
+            if def(self.list[i].kind).collision != super::MobCollision::Solid {
+                pushes[i] += push_a;
             }
+            if def(self.list[j].kind).collision != super::MobCollision::Solid {
+                pushes[j] -= push_a;
+            }
+            contacts[i].push(super::EntityRef::Mob(ids[j]));
+            contacts[j].push(super::EntityRef::Mob(ids[i]));
         }
+        self.push_sweep_scratch = sweep;
+        self.push_pair_scratch = pairs;
 
         // Players are ordinary one-box bodies. Solid mobs still record touch
         // but receive no soft push, and the reverse player reaction remains a

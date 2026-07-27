@@ -1,4 +1,7 @@
-//! Camera-following ambient particle volumes — precipitation.
+//! Camera-following ambient particle volumes — precipitation, and the
+//! INTERIOR volumes (drifting motes, dust) the same derive serves once a
+//! bundle opts out of the two outdoor assumptions: the per-column
+//! precipitation ceiling (`kill`) and the full-skylight constant (`light`).
 //!
 //! An `ambient` bundle (see [`crate::particle_emitters`]) is DERIVED, not
 //! simulated: every frame, each active drive re-computes its particle set as
@@ -21,7 +24,9 @@ use rustc_hash::FxHashMap;
 use glam::Vec3;
 
 use crate::entity::hash01;
-use crate::particle_emitters::{AmbientHit, AmbientSpec, BurstSpec};
+use crate::particle_emitters::{
+    AmbientHit, AmbientKill, AmbientLight, AmbientMotion, AmbientSpec, BurstSpec,
+};
 use crate::world::World;
 
 use super::presentation::{ParticleAtlas, ParticlePresentation};
@@ -39,7 +44,8 @@ const SPLASH_DROPLETS: usize = 4;
 /// simulated burst pool's gravity so a derived splash reads the same.
 const SPLASH_GRAVITY: f32 = 12.0;
 /// Precipitation only exists under open sky, so it carries full skylight and
-/// lets the ordinary sky lanes darken it at night.
+/// lets the ordinary sky lanes darken it at night. A bundle that can sit
+/// indoors asks for `light: "world"` instead.
 const SKY_OPEN_LIGHT: u8 = 63;
 /// Fraction of the fall over which a fresh particle fades in at the band top.
 const EDGE_FADE: f32 = 0.08;
@@ -72,9 +78,10 @@ pub(crate) struct AmbientDrives {
     /// f64 accumulator only keeps the ERROR from compounding.
     clock: f64,
     last_time: Option<f32>,
-    /// Per-collect column cache: kill height (cell top face) + column biome
-    /// per world column, or `None` for unloaded/all-air columns.
-    ceilings: FxHashMap<(i32, i32), Option<(f32, u8)>>,
+    /// Per-collect column cache: kill height (cell top face, absent when the
+    /// column blocks nothing) + column biome per world column, or `None` for
+    /// unloaded columns.
+    ceilings: FxHashMap<(i32, i32), Option<(Option<f32>, u8)>>,
 }
 
 impl AmbientDrives {
@@ -206,20 +213,39 @@ fn wrap_center(v: f32, d: f32) -> f32 {
     v.rem_euclid(d) - d * 0.5
 }
 
-/// The kill height (blocking cell's TOP face) plus the column BIOME for the
-/// column containing world `(x, z)`, cached per collect. The biome feeds the
-/// bundle's per-column filter — the rain/snow divide at a border is exact.
+/// The kill height (blocking cell's TOP face, `None` when the column blocks
+/// nothing) plus the column BIOME, for the column containing world `(x, z)`,
+/// cached per collect. `None` = the column is not loaded. The biome feeds the
+/// bundle's per-column filter — the rain/snow divide at a border is exact —
+/// and is readable independently of the kill height, since a bundle may
+/// declare a filter without asking for a ceiling kill.
+fn column_info(
+    world: &World,
+    cache: &mut FxHashMap<(i32, i32), Option<(Option<f32>, u8)>>,
+    x: f32,
+    z: f32,
+) -> Option<(Option<f32>, u8)> {
+    let key = (x.floor() as i32, z.floor() as i32);
+    *cache.entry(key).or_insert_with(|| {
+        let biome = world.biome_at_world(key.0, key.1)?;
+        let kill = world
+            .precipitation_ceiling_y(key.0, key.1)
+            .map(|y| y as f32 + 1.0);
+        Some((kill, biome))
+    })
+}
+
+/// The kill height for a column that must have one — the precipitation path's
+/// original contract (`None` for unloaded columns AND for columns that block
+/// nothing).
 fn column_ceiling(
     world: &World,
-    cache: &mut FxHashMap<(i32, i32), Option<(f32, u8)>>,
+    cache: &mut FxHashMap<(i32, i32), Option<(Option<f32>, u8)>>,
     x: f32,
     z: f32,
 ) -> Option<(f32, u8)> {
-    let key = (x.floor() as i32, z.floor() as i32);
-    *cache.entry(key).or_insert_with(|| {
-        let kill = world.precipitation_ceiling_y(key.0, key.1)? as f32 + 1.0;
-        Some((kill, world.biome_at_world(key.0, key.1).unwrap_or(0)))
-    })
+    let (kill, biome) = column_info(world, cache, x, z)?;
+    Some((kill?, biome))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -231,7 +257,7 @@ fn derive_volume(
     wind: [f32; 2],
     adv: [f32; 2],
     world: &World,
-    ceilings: &mut FxHashMap<(i32, i32), Option<(f32, u8)>>,
+    ceilings: &mut FxHashMap<(i32, i32), Option<(Option<f32>, u8)>>,
     cam: Vec3,
     time: f32,
     out: &mut Vec<ParticlePresentation>,
@@ -240,6 +266,11 @@ fn derive_volume(
     let diameter = spec.radius * 2.0;
     let span = spec.height[0] + spec.height[1];
     let y_top = cam.y + spec.height[1];
+    // A volume's vertical extent is the `height` BAND, never the horizontal
+    // diameter: a cavern is far wider than it is tall, and wrapping Y over
+    // `diameter` would park most of the budget in the rock above the ceiling.
+    let volume = spec.motion == AmbientMotion::Volume;
+    let band_mid = y_top - span * 0.5;
     let wind_x = wind[0] * spec.drift_wind;
     let wind_z = wind[1] * spec.drift_wind;
     // The splash-anchor correction below rewinds the advection by a bounded
@@ -263,8 +294,15 @@ fn derive_volume(
         let cycle_idx = cycle_pos.floor();
         let t_cycle = cycle_pos - cycle_idx;
         // Per-cycle reseed: each pass down the band lands in a fresh column,
-        // so the volume never visibly repeats.
-        let cseed = seed ^ (cycle_idx as i64 as u64).wrapping_mul(0xA24B_AED4_963E_E407);
+        // so the volume never visibly repeats. A world-anchored volume must
+        // NOT reseed — its column is part of the mote's world position, and
+        // re-drawing it would teleport the mote sideways every time it fell
+        // through the vertical wrap.
+        let cseed = if volume {
+            seed
+        } else {
+            seed ^ (cycle_idx as i64 as u64).wrapping_mul(0xA24B_AED4_963E_E407)
+        };
         // World-anchored column, drifting with the wind, wrapped into the
         // camera box so the volume follows without dragging its contents.
         let base_x = hash01(cseed ^ 0x03) * diameter + adv_x;
@@ -367,25 +405,60 @@ fn derive_volume(
                     } else {
                         (0.0, 0.0)
                     };
-                    derive_splash(burst, hseed, hx + fh_x, kill_y, hz + fh_z, age, out);
+                    let light = match spec.light {
+                        AmbientLight::Sky => (SKY_OPEN_LIGHT, crate::light::BlockLight6::DARK),
+                        AmbientLight::World => world.dynamic_light_at_world(
+                            hx.floor() as i32,
+                            kill_y.floor() as i32,
+                            hz.floor() as i32,
+                        ),
+                    };
+                    derive_splash(burst, hseed, hx + fh_x, kill_y, hz + fh_z, age, light, out);
                 }
             }
         }
         if dist_sq > spec.radius * spec.radius {
             continue; // square → disc thinning
         }
-        // Unloaded column: show nothing rather than rain through structures.
-        let Some((kill_y, biome)) = column_ceiling(world, ceilings, x, z) else {
-            continue;
+        // A fall sweeps the band from the top; a volume sinks from a
+        // world-anchored height and wraps back in at the top, which is what
+        // keeps the field standing still while the player jumps through it.
+        // `t_band` is the shared 0-at-the-top position the edge fade reads,
+        // so the wrap is hidden by the same ramp that hides a fresh drop.
+        let (y, t_band) = if volume {
+            let base_y = hash01(seed ^ 0x0A) * span - fall_speed * time;
+            let y = band_mid + wrap_center(base_y - band_mid, span);
+            (y, (y_top - y) / span)
+        } else {
+            (y_top - t_cycle * span, t_cycle)
         };
-        // The bundle's per-column biome filter: at a biome border, rain and
-        // snow bundles draw their divide column-exactly.
-        if !crate::particle_emitters::biome_allowed(&spec.biome_allow, biome) {
+        let (cx, cy, cz) = (x.floor() as i32, y.floor() as i32, z.floor() as i32);
+        // An interior volume's equivalent of "do not rain under a roof":
+        // a mote that would sit inside the wall is not drawn. Rejecting it
+        // here also keeps it out of the shared cube budget — in a cavern
+        // roughly a third of the band is rock.
+        if spec.kill == AmbientKill::Interior && world.blocks_movement_at(cx, cy, cz) {
             continue;
         }
-        let y = y_top - t_cycle * span;
-        if y <= kill_y {
-            continue; // landed: the splash block above already showed it
+        if spec.kill == AmbientKill::Ceiling || spec.biome_allow.is_some() {
+            // Unloaded column: show nothing rather than rain through
+            // structures.
+            let Some((kill_y, biome)) = column_info(world, ceilings, x, z) else {
+                continue;
+            };
+            // The bundle's per-column biome filter: at a biome border, rain
+            // and snow bundles draw their divide column-exactly.
+            if !crate::particle_emitters::biome_allowed(&spec.biome_allow, biome) {
+                continue;
+            }
+            if spec.kill == AmbientKill::Ceiling {
+                // A column that blocks nothing has no kill height, and the
+                // precipitation contract is to show nothing there.
+                let Some(kill_y) = kill_y else { continue };
+                if y <= kill_y {
+                    continue; // landed: the splash block above showed it
+                }
+            }
         }
         let mix = if spec.color_bias == 1.0 {
             hash01(seed ^ 0x07) // powf(x, 1.0) == x, and powf is not cheap
@@ -396,26 +469,30 @@ fn derive_volume(
         // Fade in at the band top and out at the band bottom so particles
         // never pop into view — the bottom fade only ever shows when the
         // ground lies below the band (a camera high in the air).
-        alpha *= (t_cycle / EDGE_FADE).min(1.0);
-        alpha *= ((1.0 - t_cycle) / EDGE_FADE).min(1.0);
+        alpha *= (t_band / EDGE_FADE).min(1.0);
+        alpha *= ((1.0 - t_band) / EDGE_FADE).min(1.0);
+        let (skylight, blocklight) = match spec.light {
+            AmbientLight::Sky => (SKY_OPEN_LIGHT, crate::light::BlockLight6::DARK),
+            AmbientLight::World => world.dynamic_light_at_world(cx, cy, cz),
+        };
         out.push(ParticlePresentation {
             atlas: ParticleAtlas::Solid,
             pos: Vec3::new(x, y, z),
             uv_min: [0.0, 0.0],
             uv_size: [0.0; 2],
             tint: mix3(spec.color[0], spec.color[1], mix),
-            warm: 0,
             alpha,
             size: lerp_range(spec.size, hash01(seed ^ 0x08)),
             stretch: spec.stretch,
-            skylight: SKY_OPEN_LIGHT,
-            blocklight: 0,
+            skylight,
+            blocklight,
         });
     }
 }
 
 /// Closed-form splash: a few droplets on parametric launch arcs from the
 /// burst bundle's data, alive for their rolled lifetimes after the hit.
+#[allow(clippy::too_many_arguments)]
 fn derive_splash(
     burst: &BurstSpec,
     cseed: u64,
@@ -423,6 +500,7 @@ fn derive_splash(
     kill_y: f32,
     z: f32,
     age: f32,
+    light: (u8, crate::light::BlockLight6),
     out: &mut Vec<ParticlePresentation>,
 ) {
     if age < 0.0 {
@@ -450,12 +528,11 @@ fn derive_splash(
             uv_min: [0.0, 0.0],
             uv_size: [0.0; 2],
             tint: mix3(burst.color[0], burst.color[1], mix),
-            warm: 0,
             alpha: 0.9 * (1.0 - t),
             size: lerp_range(burst.size, hash01(dseed ^ 0x15)) * (1.0 - 0.5 * t),
             stretch: 1.0,
-            skylight: SKY_OPEN_LIGHT,
-            blocklight: 0,
+            skylight: light.0,
+            blocklight: light.1,
         });
     }
 }
@@ -479,6 +556,9 @@ mod tests {
             color: [[0.5, 0.6, 0.7], [0.7, 0.8, 0.9]],
             color_bias: 1.0,
             hit,
+            motion: AmbientMotion::Precipitation,
+            kill: AmbientKill::Ceiling,
+            light: AmbientLight::Sky,
             biomes: Vec::new(),
             exclude_biomes: Vec::new(),
             biome_allow: None,
@@ -800,6 +880,324 @@ mod tests {
             displacement_frames > 1500,
             "the displacement assertion must not be vacuous ({displacement_frames})"
         );
+    }
+
+    /// A 3×3-chunk box: stone floor at y=64, stone roof at y=80, air between.
+    fn roofed_world() -> crate::world::World {
+        use crate::block::Block;
+        use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+        let mut world = crate::world::World::new(0, 1);
+        for cz in -1..=1 {
+            for cx in -1..=1 {
+                let mut c = Chunk::new(cx, cz);
+                for z in 0..CHUNK_SZ {
+                    for x in 0..CHUNK_SX {
+                        c.set_block(x, 64, z, Block::Stone);
+                        c.set_block(x, 80, z, Block::Stone);
+                    }
+                }
+                world.insert_chunk_for_test(ChunkPos::new(cx, cz), c);
+            }
+        }
+        world
+    }
+
+    /// THE reason an interior volume exists. Every enclosed space in the world
+    /// sits under some column's precipitation ceiling, so a `kill: "ceiling"`
+    /// bundle derives NOTHING down there however it is tuned.
+    /// `kill: "interior"` fills the band around the camera regardless, and
+    /// still refuses the cells inside the rock.
+    #[test]
+    fn an_interior_volume_derives_where_precipitation_cannot() {
+        let world = roofed_world();
+        // The camera sits between the floor and the roof, the way a player
+        // stands in a cave: the whole band is under the ceiling.
+        let cam = Vec3::new(8.0, 70.0, 8.0);
+        let mut spec = rain_spec(AmbientHit::Die);
+        spec.height = [6.0, 6.0];
+        let mut ceilings = FxHashMap::default();
+        let mut counts = [0usize; 2];
+        for (i, kill) in [AmbientKill::Ceiling, AmbientKill::Interior]
+            .into_iter()
+            .enumerate()
+        {
+            spec.kill = kill;
+            for step in 0..20 {
+                let mut out = Vec::new();
+                ceilings.clear();
+                derive_volume(
+                    &spec,
+                    None,
+                    7,
+                    1.0,
+                    [0.0, 0.0],
+                    [0.0, 0.0],
+                    &world,
+                    &mut ceilings,
+                    cam,
+                    step as f32 * 0.11,
+                    &mut out,
+                );
+                counts[i] += out.len();
+            }
+        }
+        assert_eq!(counts[0], 0, "precipitation cannot exist under a roof");
+        assert!(
+            counts[1] > 500,
+            "an interior volume fills the band anyway, got {}",
+            counts[1]
+        );
+        // …and it still refuses to draw inside the walls. The band's bottom
+        // metre is the stone floor, so this is not a vacuous assertion.
+        let mut out = Vec::new();
+        ceilings.clear();
+        derive_volume(
+            &spec,
+            None,
+            7,
+            1.0,
+            [0.0, 0.0],
+            [0.0, 0.0],
+            &world,
+            &mut ceilings,
+            cam,
+            3.0,
+            &mut out,
+        );
+        assert!(
+            out.iter().all(|p| p.pos.y >= 65.0),
+            "no mote inside the floor"
+        );
+        assert!(
+            out.len() < (spec.count_per_intensity * 0.79) as usize,
+            "the floor must actually reject motes ({} of {})",
+            out.len(),
+            spec.count_per_intensity
+        );
+    }
+
+    /// The lighting knob, which is what stops an interior volume from being a
+    /// field of glowing dots in a pitch-dark cave: `light: "world"` samples
+    /// the cell, `light: "sky"` keeps the precipitation constant.
+    #[test]
+    fn world_lit_motes_take_the_cells_own_light() {
+        use crate::chunk::SECTION_VOLUME;
+        use crate::light::{BlockLight6, LightRgb};
+        let mut world = roofed_world();
+        // Bake the band the camera stands in DARK, then flood ONE chunk's
+        // section with a coloured emitter's light. A constant would pass a
+        // dark-only assertion; only a positional sample can tell the two
+        // halves of this fixture apart.
+        let lamp = LightRgb::new(28, 6, 24);
+        for cz in -1..=1i32 {
+            for cx in -1..=1i32 {
+                let section = world
+                    .section_at_world_mut_for_test(cx * 16, 70, cz * 16)
+                    .expect("the band's section is loaded");
+                section.set_skylight(vec![0u8; SECTION_VOLUME].into());
+                if (cx, cz) == (0, 0) {
+                    section.set_blocklight(vec![lamp; SECTION_VOLUME].into());
+                }
+            }
+        }
+        let cam = Vec3::new(8.0, 70.0, 8.0);
+        let mut spec = rain_spec(AmbientHit::Die);
+        spec.height = [6.0, 6.0];
+        spec.kill = AmbientKill::Interior;
+        let sample = |spec: &AmbientSpec| {
+            let mut out = Vec::new();
+            let mut ceilings = FxHashMap::default();
+            derive_volume(
+                spec,
+                None,
+                7,
+                1.0,
+                [0.0, 0.0],
+                [0.0, 0.0],
+                &world,
+                &mut ceilings,
+                cam,
+                1.0,
+                &mut out,
+            );
+            assert!(!out.is_empty());
+            out
+        };
+        spec.light = AmbientLight::Sky;
+        for p in sample(&spec) {
+            assert_eq!(p.skylight, SKY_OPEN_LIGHT);
+            assert_eq!(p.blocklight, BlockLight6::DARK);
+        }
+        spec.light = AmbientLight::World;
+        let (mut dark, mut lit) = (0usize, 0usize);
+        for p in sample(&spec) {
+            assert_eq!(p.skylight, 0, "a sealed room has no skylight");
+            let in_lamp = (0.0..16.0).contains(&p.pos.x) && (0.0..16.0).contains(&p.pos.z);
+            if in_lamp {
+                assert_eq!(p.blocklight, BlockLight6::from_x2(lamp));
+                lit += 1;
+            } else {
+                assert_eq!(
+                    p.blocklight,
+                    BlockLight6::DARK,
+                    "a mote outside the lit chunk must stay dark"
+                );
+                dark += 1;
+            }
+        }
+        assert!(
+            lit > 20 && dark > 20,
+            "both halves populated ({lit}/{dark})"
+        );
+    }
+
+    /// THE anchoring contract, and the bug Rachel played into: a `volume`
+    /// bundle's motes keep their WORLD positions while the camera moves —
+    /// jumping must not carry the field along — yet the body still follows
+    /// the player so it is always populated around them. A `precipitation`
+    /// bundle deliberately keeps the old camera-relative band in Y.
+    ///
+    /// Invisible in a still frame, so this test is the only real proof.
+    #[test]
+    fn a_volume_is_world_anchored_while_precipitation_rides_the_camera() {
+        // Open air well above the fixture's floor: every mote survives, so
+        // the two frames hold the same motes and nothing else can explain a
+        // difference.
+        let world = crate::world::testutil::flat_world();
+        let base_cam = Vec3::new(8.0, 120.0, 8.0);
+        let mut spec = rain_spec(AmbientHit::Die);
+        spec.count_per_intensity = 400.0;
+        spec.max_count = 400;
+        spec.height = [8.0, 10.0];
+        spec.fall_speed = [0.22, 0.5];
+        spec.flutter = [0.55, 0.06];
+        spec.kill = AmbientKill::Interior;
+        spec.light = AmbientLight::World;
+        let span = spec.height[0] + spec.height[1];
+        let time = 37.0;
+        let sample = |spec: &AmbientSpec, cam: Vec3| {
+            let mut out = Vec::new();
+            let mut ceilings = FxHashMap::default();
+            derive_volume(
+                spec,
+                None,
+                7,
+                1.0,
+                [0.0, 0.0],
+                [0.0, 0.0],
+                &world,
+                &mut ceilings,
+                cam,
+                time,
+                &mut out,
+            );
+            assert!(out.len() > 100, "the fixture must derive a real field");
+            out.iter().map(|p| p.pos).collect::<Vec<_>>()
+        };
+        // Fraction of `b` that still sits at a position present in `a`,
+        // identified by the two axes the camera did not move along.
+        let anchored = |a: &[Vec3], b: &[Vec3], axis: usize| -> f32 {
+            let others: Vec<usize> = (0..3).filter(|i| *i != axis).collect();
+            let kept = b
+                .iter()
+                .filter(|p| {
+                    a.iter().any(|q| {
+                        others.iter().all(|i| (p[*i] - q[*i]).abs() < 1e-4)
+                            && (p[axis] - q[axis]).abs() < 1e-3
+                    })
+                })
+                .count();
+            kept as f32 / b.len() as f32
+        };
+
+        for (motion, expect_anchored) in [
+            (AmbientMotion::Volume, true),
+            (AmbientMotion::Precipitation, false),
+        ] {
+            spec.motion = motion;
+            let jump = 1.25; // roughly a player's jump apex
+            let base = sample(&spec, base_cam);
+            let jumped = sample(&spec, base_cam + Vec3::new(0.0, jump, 0.0));
+            let held = anchored(&base, &jumped, 1);
+            if expect_anchored {
+                // Only the motes that wrapped past the band edge may move,
+                // i.e. at most jump/span of them.
+                assert!(
+                    held > 1.0 - jump / span - 0.02,
+                    "a volume must keep its motes' world height through a jump (kept {held})"
+                );
+            } else {
+                assert!(
+                    held < 0.05,
+                    "precipitation keeps its camera-relative band (kept {held})"
+                );
+            }
+            // Either way the body follows the player: still populated, still
+            // inside the band and the disc around the NEW camera.
+            let cam = base_cam + Vec3::new(0.0, jump, 0.0);
+            for p in &jumped {
+                assert!(
+                    p.y >= cam.y - spec.height[0] - 1e-3 && p.y <= cam.y + spec.height[1] + 1e-3,
+                    "mote outside the band around the new camera (y={})",
+                    p.y
+                );
+                let (dx, dz) = (p.x - cam.x, p.z - cam.z);
+                assert!(dx * dx + dz * dz <= (spec.radius + 1e-3).powi(2));
+            }
+            // Control: the HORIZONTAL anchor both kinds already had. If the
+            // helper could not detect anchoring at all, this would fail too.
+            let strafed = sample(&spec, base_cam + Vec3::new(3.0, 0.0, 0.0));
+            let held_x = anchored(&base, &strafed, 0);
+            // A 3-block strafe swaps ~12% of the disc for fresh motes, so
+            // this is loose by construction; it is here to prove the helper
+            // can SEE anchoring, not to measure it.
+            assert!(
+                held_x > 0.75,
+                "{motion:?}: motes must keep their world X when the camera strafes ({held_x})"
+            );
+        }
+    }
+
+    /// A volume must be populated wherever the player is, including far from
+    /// where it was last derived — the wrap, not a lattice, is what makes the
+    /// world anchor affordable.
+    #[test]
+    fn a_teleported_camera_still_stands_in_a_full_volume() {
+        let world = crate::world::testutil::flat_world();
+        let mut spec = rain_spec(AmbientHit::Die);
+        spec.motion = AmbientMotion::Volume;
+        spec.height = [8.0, 10.0];
+        spec.kill = AmbientKill::Interior;
+        spec.light = AmbientLight::World;
+        let mut ceilings = FxHashMap::default();
+        // All well above the fixture's floor: below it the world reads as
+        // virtual stone and the interior kill would (correctly) empty the band.
+        for cam_y in [120.0f32, 200.0, 90.0] {
+            let mut out = Vec::new();
+            ceilings.clear();
+            derive_volume(
+                &spec,
+                None,
+                7,
+                1.0,
+                [0.0, 0.0],
+                [0.0, 0.0],
+                &world,
+                &mut ceilings,
+                Vec3::new(8.0, cam_y, 8.0),
+                101.0,
+                &mut out,
+            );
+            assert!(
+                out.len() > 100,
+                "the volume follows to y={cam_y} ({} motes)",
+                out.len()
+            );
+            for p in &out {
+                assert!(p.pos.y >= cam_y - spec.height[0] - 1e-3);
+                assert!(p.pos.y <= cam_y + spec.height[1] + 1e-3);
+            }
+        }
     }
 
     /// The per-column biome filter: a bundle whose allow-set excludes the

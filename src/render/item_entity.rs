@@ -172,7 +172,6 @@ pub fn build_item_model_entities(
                 transform,
                 inst_light(inst),
                 env,
-                0,
                 None,
                 verts,
                 indices,
@@ -284,7 +283,7 @@ mod tests {
             count: 1,
             spin: 0.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
         };
         let n = build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
         assert_eq!(v.len(), 24, "one textured cube = 24 verts");
@@ -305,7 +304,7 @@ mod tests {
             count: 1,
             spin: 1.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
         };
         let mut v = Vec::new();
         let mut i = Vec::new();
@@ -354,7 +353,7 @@ mod tests {
             count: 3,
             spin: 0.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
         };
         let mut scratch = Vec::new();
         let mut sv = Vec::new();
@@ -393,7 +392,7 @@ mod tests {
             count: 1,
             spin: 0.5,
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
         };
         build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
         let (cap_v, cap_i) = (v.capacity(), i.capacity());
@@ -416,7 +415,7 @@ mod tests {
             count: 1,
             spin: 0.0,
             skylight: 12,
-            blocklight: 7,
+            blocklight: crate::light::BlockLight6::grey(7),
         };
 
         build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
@@ -443,7 +442,7 @@ mod tests {
             count: 3,
             spin: 0.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
         };
         let n = build_item_entities(std::slice::from_ref(&three), &mut v, &mut i);
         assert_eq!(v.len(), 24 * 3, "3-stack = 3 layered cubes");

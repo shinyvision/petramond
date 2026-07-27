@@ -446,6 +446,17 @@ impl TagTable {
         if let Some(i) = self.engine.iter().position(|n| *n == bare) {
             return Ok(i as u8);
         }
+        // The engine namespace is RESERVED, exactly as it is for content names
+        // (see `NameTable::build`): without this, `petramond:leeves` interns a
+        // brand-new tag nothing carries, so a typo in a row — or a pack
+        // squatting an engine term — fails silently instead of loudly.
+        if name.starts_with("petramond:") {
+            return Err(format!(
+                "unknown tag '{name}' — the 'petramond:' namespace is reserved for engine tags \
+                 ({}); a mod tag must carry its own 'mod_id:' prefix",
+                self.engine.join(", ")
+            ));
+        }
         if !is_namespaced(name) {
             return Err(format!(
                 "unknown tag '{name}' (engine tags: {}; mod tags must be namespaced 'mod_id:name')",
@@ -586,6 +597,16 @@ mod tests {
         assert!(
             t.resolve("orees").is_err(),
             "a bare unknown is a typo'd engine tag, never a silent new tag"
+        );
+        assert!(
+            t.resolve("petramond:fuell").is_err(),
+            "the engine namespace is reserved: a typo there must not intern a \
+             dead tag that nothing carries and nothing reports"
+        );
+        assert_eq!(
+            t.lookup("petramond:fuell"),
+            None,
+            "and the query side never sees one either"
         );
     }
 

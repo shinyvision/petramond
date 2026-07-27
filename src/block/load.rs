@@ -26,7 +26,9 @@ use crate::facing::Facing;
 use crate::item::{Drop, DropSpec, ItemType};
 use crate::registry::ContentNames;
 
-use super::definition::{self, BlockDef, BlockFlags, BlockMaterial, ParticleEmitter};
+use super::definition::{
+    self, BlockDef, BlockFlags, BlockMaterial, ParticleEmitter, RootsFace, SupportDir,
+};
 use super::shape_kind::{self, RawShape, ShapeFamily, ShapeKindDef, ShapeKindInterner};
 use super::{behavior, Aabb, Block, BlockInteraction, BlockTag};
 
@@ -66,7 +68,26 @@ pub(super) struct RawBlockDef {
     pub behavior: String,
     pub interaction: RawInteraction,
     pub collision: Vec<Aabb>,
+    /// RANGE of the block light this row radiates, on the engine's ×2 scale
+    /// (`0` = not an emitter). Legal on any row, `opaque` full cubes included:
+    /// a cell's own matter blocks light passing THROUGH it, never the light it
+    /// makes itself.
     pub emission: u8,
+    /// HUE of the block light this row radiates: linear RGB, each channel
+    /// `0.0..=1.0`, as a fraction of [`emission`](Self::emission). Optional and
+    /// WHITE by default, so a row that says nothing keeps the colourless light
+    /// every row had before the field existed.
+    ///
+    /// `emission` alone stays the light's RANGE (the flood decays 2 per step
+    /// from it, per channel), so a colour only ever DIMS channels relative to
+    /// it — `[1, 0.42, 0.27]` reaches as far in red as a white light of the
+    /// same emission would, and runs out of blue much sooner. NOTE that the
+    /// hue resolution is `emission` steps on the ×2 scale, so a subtle tint on
+    /// a bright row has few values to choose from. Only legal on an emitter row:
+    /// a hue with no light behind it is dead data, and the mistake it catches
+    /// is colouring `furnace` instead of `furnace_lit`.
+    #[serde(default = "white_light", skip_serializing_if = "is_white_light")]
+    pub light_color: [f64; 3],
     #[serde(default)]
     pub particle_emitter: Option<RawEmitterRef>,
     pub tiles: [String; 3],
@@ -112,6 +133,29 @@ pub(super) struct RawBlockDef {
     /// EXISTING rows via `{"patch": ..., "data": ...}` rows.
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub data: serde_json::Map<String, serde_json::Value>,
+    /// Which neighbouring cell holds this block up: `"below"` (the default —
+    /// the ground a plant roots in) or `"above"` (the ceiling a hanging block
+    /// grows down from). Read by the `fragile` break rule and by the
+    /// placement substrate gate, so a row that hangs breaks with its ceiling
+    /// and cannot be placed into thin air. A row that says nothing keeps the
+    /// ground rule every row had before the field existed.
+    #[serde(default, skip_serializing_if = "SupportDir::is_default")]
+    pub support: SupportDir,
+    /// Ground tag names this block may be PLACED on, any one of which
+    /// satisfies the gate (`["soil", "mymod:ashes"]`). The OPEN half of the
+    /// substrate rule: a pack invents its own ground category by tagging the
+    /// rows it owns and naming that tag here. Unions with the `RootsIn*` tags;
+    /// a row that names a tag no loaded block carries is a load error, since
+    /// that typo would otherwise be a plant that can never be placed anywhere.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roots_on: Vec<String>,
+    /// What the support cell's face toward this block must look like:
+    /// `"any"` (the default — no shape requirement) or `"full_cube"` (a
+    /// complete opaque cube face, so partial shapes and air refuse it).
+    /// Independent of the `RootsIn*` tags, which gate the support's MATERIAL;
+    /// a row may declare either, both, or neither.
+    #[serde(default, skip_serializing_if = "RootsFace::is_default")]
+    pub roots_face: RootsFace,
 }
 
 /// A row's `facing_rows` field: the four facing-sibling registry names.
@@ -153,6 +197,62 @@ pub(super) struct RawGrowthChoice {
 
 fn default_growth_weight() -> f64 {
     1.0
+}
+
+/// The `light_color` a row that names none carries: WHITE, the one canonical
+/// colourless value. It reproduces the pre-colour behaviour exactly — all three
+/// channels land back on `emission` with no rounding.
+fn white_light() -> [f64; 3] {
+    [1.0, 1.0, 1.0]
+}
+
+fn is_white_light(c: &[f64; 3]) -> bool {
+    *c == white_light()
+}
+
+/// Resolve a row's `emission` + `light_color` into the PER-CHANNEL emission the
+/// light flood seeds, on the same x2 integer scale as `emission` itself.
+///
+/// White is exact by construction (`emission * 1.0` needs no rounding), and no
+/// channel can exceed `emission` — the flood's reach, and with it the batch
+/// bake's halo-width invariant, stays bounded by the scalar the emitter scan
+/// already gates on.
+///
+/// Light a row cannot possibly radiate is a LOAD error, not a quiet nothing:
+/// every way of writing one is caught here.
+fn resolve_emission_rgb(emission: u8, color: [f64; 3]) -> Result<[u8; 3], String> {
+    // A light CELL holds five bits per channel, exactly covering the engine's
+    // 0..=SKY_FULL scale. A row brighter than that does not clamp, it WRAPS —
+    // `emission: 32` would seed zero and the lamp would silently go out — so it
+    // is rejected here, before any of it reaches the flood.
+    if emission > crate::chunk::SKY_FULL {
+        return Err(format!(
+            "emission {emission} exceeds the maximum light level {} — brighter than full daylight",
+            crate::chunk::SKY_FULL
+        ));
+    }
+    if is_white_light(&color) {
+        return Ok([emission; 3]);
+    }
+    if emission == 0 {
+        return Err(
+            "light_color on a row that emits no light (emission 0) — put it on the LIT row"
+                .to_string(),
+        );
+    }
+    for (axis, c) in ["r", "g", "b"].iter().zip(color) {
+        if !(c.is_finite() && (0.0..=1.0).contains(&c)) {
+            return Err(format!("light_color.{axis} must be within 0.0..=1.0"));
+        }
+    }
+    let rgb: [u8; 3] = std::array::from_fn(|i| (emission as f64 * color[i]).round() as u8);
+    if rgb == [0; 3] {
+        return Err(format!(
+            "light_color scales emission {emission} to zero on every channel — the emitter \
+             scan would count a cell that floods no light"
+        ));
+    }
+    Ok(rgb)
 }
 
 /// A row's `particle_emitter` field: a `particle_emitters.json` bundle KEY
@@ -257,6 +357,12 @@ pub(super) struct Registry {
     pub shape_kinds: &'static [ShapeKindDef],
     pub flags: [BlockFlags; 256],
     pub emission: [u8; 256],
+    /// Dense per-id PER-CHANNEL emission (`emission` scaled by the row's
+    /// `light_color`), same rationale as [`emission`](Self::emission): the
+    /// light flood's emitter gather reads it per cell over whole sections and
+    /// must never touch the big `BlockDef` table to do it. 256 entries because
+    /// a block id IS a `u8` everywhere it is stored.
+    pub emission_rgb: [[u8; 3]; 256],
     /// Dense per-id copy of each block's [`ShapeFamily`] — the hot classifier
     /// the mesher/nav read per cell, one small-array read instead of the
     /// `def()`→`shape_kind`→table double indirection (same rationale as
@@ -268,7 +374,18 @@ pub(super) struct Registry {
     /// `def()`→`shape_kind`→table chain per byte (same rationale as
     /// [`shape_family`](Self::shape_family)).
     pub shape_refines: [bool; 256],
+    /// Dense per-id TAG BITSET (bit `tag.0`). `Block::has_tag` is asked
+    /// several times per cell by the mesher (`is_log`, `is_leaves`,
+    /// `merges_with_self`, `is_snow_cover`) and once per neighbour by the
+    /// terrain rules, and the honest form of the answer — a `contains` scan
+    /// over the row's heap tag slice behind a big-table `def()` load — is a
+    /// pointer chase and a loop. Tag ids at or past 128 (only reachable with
+    /// an implausible number of mod tags) fall back to that scan.
+    pub tag_bits: [u128; 256],
 }
+
+/// Highest tag id the dense [`Registry::tag_bits`] set can hold.
+pub(super) const TAG_BITS_MAX: u8 = 127;
 
 /// Load the registry from every `blocks.json` layer (base + mod packs, later
 /// packs replacing rows by block — see [`crate::assets::read_layers`]),
@@ -323,13 +440,22 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
     let shape_kinds: &'static [ShapeKindDef] = Box::leak(interner.into_table().into_boxed_slice());
     validate_stage_chains(defs)?;
     validate_facing_rows(defs)?;
+    validate_roots_on(defs)?;
     let mut flags = [BlockFlags::NONE; 256];
     let mut emission = [0u8; 256];
+    let mut emission_rgb = [[0u8; 3]; 256];
     let mut shape_family = [ShapeFamily::Cube; 256];
     let mut shape_refines = [false; 256];
+    let mut tag_bits = [0u128; 256];
     for d in defs {
+        for t in d.tags {
+            if t.id() <= TAG_BITS_MAX {
+                tag_bits[d.block.id() as usize] |= 1u128 << t.id();
+            }
+        }
         flags[d.block.id() as usize] = d.flags;
         emission[d.block.id() as usize] = d.emission;
+        emission_rgb[d.block.id() as usize] = d.emission_rgb;
         let kind = &shape_kinds[d.shape_kind.0 as usize];
         shape_family[d.block.id() as usize] = kind.family;
         shape_refines[d.block.id() as usize] = kind.refines;
@@ -339,8 +465,10 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
         shape_kinds,
         flags,
         emission,
+        emission_rgb,
         shape_family,
         shape_refines,
+        tag_bits,
     })
 }
 
@@ -373,6 +501,23 @@ fn validate_stage_chains(defs: &[BlockDef]) -> Result<(), String> {
                 "block {}: its next_stage chain never reaches a final grows_into stage (cycle?)",
                 name(d)
             ));
+        }
+    }
+    Ok(())
+}
+
+/// A substrate tag nothing carries is a plant that can never be placed, and
+/// the tag vocabulary is open strings agreed between packs — so the ONE place
+/// a misspelt category can surface is here, at load, by name.
+fn validate_roots_on(defs: &[BlockDef]) -> Result<(), String> {
+    for d in defs {
+        for tag in d.roots_on {
+            if !defs.iter().any(|g| g.tags.contains(tag)) {
+                return Err(format!(
+                    "block {:?}: roots_on names tag {tag:?}, which no loaded block carries",
+                    d.block
+                ));
+            }
         }
     }
     Ok(())
@@ -727,6 +872,7 @@ fn convert(
         shape_kind,
         collision: leak(r.collision),
         emission: r.emission,
+        emission_rgb: resolve_emission_rgb(r.emission, r.light_color)?,
         particle_emitter,
         tiles,
         front,
@@ -742,6 +888,14 @@ fn convert(
         facing_rows,
         data,
         carry,
+        support: r.support,
+        roots_on: leak(
+            r.roots_on
+                .iter()
+                .map(|t| BlockTag::resolve(t))
+                .collect::<Result<Vec<_>, String>>()?,
+        ),
+        roots_face: r.roots_face,
     })
 }
 
@@ -842,6 +996,10 @@ pub(crate) fn validate_particle_emitter(e: &ParticleEmitter) -> Result<(), Strin
     if e.spiral[0] < 0.0 {
         return Err("particle_emitter.spiral radius must be >= 0".into());
     }
+    finite("self_lit", e.self_lit)?;
+    if !(0.0..=1.0).contains(&e.self_lit) {
+        return Err("particle_emitter.self_lit must be in 0..=1".into());
+    }
     Ok(())
 }
 
@@ -918,6 +1076,99 @@ mod tests {
         );
     }
 
+    /// One `mymod:lamp` row with the given `flags` / `emission` / `light_color`
+    /// fields, layered over the shipped table.
+    fn lamp_layer(flags: &str, emission: u8, light_color: &str) -> String {
+        format!(
+            r#"{{ "blocks": [ {{ "block": "mymod:lamp", "shape": "cube", "flags": [{flags}], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{{"min": [0, 0, 0], "max": [1, 1, 1]}}], "emission": {emission}{light_color}, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [] }} ] }}"#
+        )
+    }
+
+    /// The resolved per-channel emission of a glowing full cube.
+    fn lamp_emission_rgb(emission: u8, light_color: &str) -> Result<[u8; 3], String> {
+        let flags = r#""solid", "opaque", "ao_occluder""#;
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let reg = parse_test_layers(&[&base, &lamp_layer(flags, emission, light_color)])?;
+        Ok(reg.defs[crate::block::ENGINE_BLOCK_NAMES.len()].emission_rgb)
+    }
+
+    /// A light COLOUR is a fraction of `emission`, never a second intensity:
+    /// `emission` alone stays the light's range, so the scalar the emitter scan
+    /// gates on remains an upper bound for every channel. A colour that could
+    /// raise a channel above it would let coloured light out-reach the halo the
+    /// batched bake sizes from that same scalar.
+    ///
+    /// Also pins the two ends the gate depends on: white is EXACT (no rounding
+    /// drift away from the pre-colour behaviour), and "emits nothing" is the
+    /// same answer scalar and per-channel.
+    #[test]
+    fn a_light_colour_rations_its_emission_and_never_exceeds_it() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let reg = parse(&base).expect("base table loads");
+        for d in reg.defs {
+            let peak = d.emission_rgb.iter().copied().max().unwrap_or(0);
+            assert!(
+                peak <= d.emission,
+                "{:?} radiates {peak} on its brightest channel but declares emission {}",
+                d.block,
+                d.emission
+            );
+            assert_eq!(
+                d.emission == 0,
+                d.emission_rgb == [0; 3],
+                "{:?}: scalar and per-channel disagree on whether it emits",
+                d.block
+            );
+        }
+        // Absent and explicitly-white are the same canonical colourless light,
+        // and both reproduce the scalar exactly on all three channels.
+        assert_eq!(lamp_emission_rgb(28, ""), Ok([28; 3]));
+        assert_eq!(
+            lamp_emission_rgb(28, r#", "light_color": [1.0, 1.0, 1.0]"#),
+            Ok([28; 3])
+        );
+        assert_eq!(
+            lamp_emission_rgb(28, r#", "light_color": [1.0, 0.5, 0.0]"#),
+            Ok([28, 14, 0])
+        );
+    }
+
+    /// The three ways a `light_color` is data that cannot mean anything, each a
+    /// LOAD error rather than a silently odd light.
+    #[test]
+    fn a_meaningless_light_colour_fails_the_load() {
+        // Out of the 0..=1 fraction range: an intensity smuggled into the hue.
+        let err = lamp_emission_rgb(28, r#", "light_color": [1.5, 1.0, 1.0]"#)
+            .expect_err("out-of-range channel refused");
+        assert!(err.contains("0.0..=1.0"), "{err}");
+        // A hue on a row with no light behind it — the mistake is colouring the
+        // UNLIT row of a lit/unlit pair.
+        let err = lamp_emission_rgb(0, r#", "light_color": [1.0, 0.5, 0.0]"#)
+            .expect_err("colour on a non-emitter refused");
+        assert!(err.contains("emission 0"), "{err}");
+        // Scaled to nothing: `has_light_emitters` would count the cell and the
+        // flood would seed zero.
+        let err = lamp_emission_rgb(1, r#", "light_color": [0.2, 0.2, 0.2]"#)
+            .expect_err("colour that rounds every channel to zero refused");
+        assert!(err.contains("zero on every channel"), "{err}");
+    }
+
+    /// A light cell carries five bits per channel — exactly the engine's
+    /// `0..=SKY_FULL` range and not one level more. An `emission` above it
+    /// WRAPS rather than clamps (`32` seeds `0`, a lamp that silently emits
+    /// nothing), so the loader must refuse it, colour or no colour.
+    #[test]
+    fn an_emission_brighter_than_full_daylight_fails_the_load() {
+        let over = crate::chunk::SKY_FULL + 1;
+        for colour in ["", r#", "light_color": [1.0, 0.5, 0.2]"#] {
+            let err = lamp_emission_rgb(over, colour).expect_err("over-bright emission refused");
+            assert!(err.contains("exceeds the maximum light level"), "{err}");
+        }
+        assert!(lamp_emission_rgb(crate::chunk::SKY_FULL, "").is_ok());
+    }
+
     #[test]
     fn namespaced_pack_row_registers_a_new_block() {
         let (base, _) =
@@ -940,6 +1191,62 @@ mod tests {
         assert_eq!(def.drop.drops[0].item, ItemType::Cobblestone);
         // Engine ids are untouched by the addition.
         assert_eq!(reg.defs[Block::Stone.id() as usize].block, Block::Stone);
+    }
+
+    /// Support DIRECTION is row data with a silent-typo-proof contract: every
+    /// row that says nothing keeps `below` (so the whole shipped table is
+    /// unchanged by the field existing), `"above"` resolves, and a
+    /// misspelled direction fails the LOAD rather than quietly reverting the
+    /// row to the ground rule — which would look exactly like the hanging
+    /// support never having been implemented.
+    #[test]
+    fn a_row_declares_which_cell_holds_it_up() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let vine = |support: &str| {
+            format!(
+                r#"{{ "blocks": [ {{ "block": "mymod:vine", "shape": "cross", "flags": ["transparent"], "tags": ["fragile"], "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0{support}, "tiles": ["poppy", "poppy", "poppy"], "material": "plant", "harvest_tier": 0, "hardness": 0, "drops": [] }} ] }}"#
+            )
+        };
+        let engine = crate::block::ENGINE_BLOCK_NAMES.len();
+        let dir = |support: &str| {
+            parse_test_layers(&[&base, &vine(support)]).map(|reg| reg.defs[engine].support)
+        };
+        assert_eq!(dir(""), Ok(definition::SupportDir::Below));
+        assert_eq!(
+            dir(r#", "support": "above""#),
+            Ok(definition::SupportDir::Above)
+        );
+        assert!(dir(r#", "support": "sideways""#).is_err());
+        // Nothing in the shipped table opts in, so the field costs it nothing.
+        let shipped = parse(&base).expect("base table loads");
+        assert!(shipped.defs.iter().all(|d| d.support.is_default()));
+    }
+
+    /// The OPEN half of the substrate gate. A pack names a ground category by
+    /// tag, so the contract that matters is the typo one: a tag string is
+    /// agreed between two packs and nothing else in the pipeline would ever
+    /// mention it again, so a misspelling has to fail the LOAD rather than
+    /// ship a plant that can be placed nowhere.
+    #[test]
+    fn roots_on_names_ground_tags_and_refuses_a_tag_nothing_carries() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let ground = r#"{ "block": "mymod:ash", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["mymod:ashen"], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 1, "drops": [] }"#;
+        let plant = |roots_on: &str| {
+            format!(
+                r#"{{ "blocks": [ {ground}, {{ "block": "mymod:ashbloom", "shape": "cross", "flags": ["transparent"], "tags": ["fragile"], "roots_on": {roots_on}, "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0, "tiles": ["poppy", "poppy", "poppy"], "material": "plant", "harvest_tier": 0, "hardness": 0, "drops": [] }} ] }}"#
+            )
+        };
+        let engine = crate::block::ENGINE_BLOCK_NAMES.len();
+        let reg = parse_test_layers(&[&base, &plant(r#"["mymod:ashen", "soil"]"#)])
+            .expect("a tag some row carries resolves");
+        let bloom = &reg.defs[engine + 1];
+        assert_eq!(bloom.roots_on.len(), 2);
+        assert!(
+            parse_test_layers(&[&base, &plant(r#"["mymod:ashn"]"#)]).is_err(),
+            "a substrate tag no block carries must fail the load"
+        );
     }
 
     /// Layer 2: a `{"custom": {...}}` shape parameterizes an existing family
@@ -1028,7 +1335,7 @@ mod tests {
     fn namespaced_block_rows_can_declare_particle_emitters() {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        let layer = r#"{ "blocks": [ { "block": "mymod:spark", "shape": "cube", "flags": ["solid"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "particle_emitter": { "anchor": "block_top", "rate": [1.0, 2.0], "lifetime": [0.2, 0.4], "size": [0.02, 0.05], "spawn_box": [0.1, 0.0, 0.1], "velocity": [0.0, 0.2, 0.0], "velocity_jitter": [0.03, 0.02, 0.03], "color": [[1.0, 0.2, 0.0], [1.0, 1.0, 0.2]], "alpha": [0.2, 0.6], "fullbright": true }, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [] } ] }"#;
+        let layer = r#"{ "blocks": [ { "block": "mymod:spark", "shape": "cube", "flags": ["solid"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "particle_emitter": { "anchor": "block_top", "rate": [1.0, 2.0], "lifetime": [0.2, 0.4], "size": [0.02, 0.05], "spawn_box": [0.1, 0.0, 0.1], "velocity": [0.0, 0.2, 0.0], "velocity_jitter": [0.03, 0.02, 0.03], "color": [[1.0, 0.2, 0.0], [1.0, 1.0, 0.2]], "alpha": [0.2, 0.6], "self_lit": 1.0 }, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [] } ] }"#;
         let reg = parse_test_layers(&[&base, layer]).expect("particle emitter row loads");
         let def = &reg.defs[crate::block::ENGINE_BLOCK_NAMES.len()];
         assert!(

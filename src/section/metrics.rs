@@ -130,8 +130,18 @@ impl Section {
             Self::id_has_particle_emitter(old_id),
             Self::id_has_particle_emitter(new_id),
         ) {
-            (false, true) => self.particle_emitter_count += 1,
-            (true, false) => self.particle_emitter_count -= 1,
+            (false, true) => {
+                let cell = crate::chunk::section_idx(x, y, z) as u16;
+                if let Err(at) = self.particle_emitter_cells.binary_search(&cell) {
+                    self.particle_emitter_cells.insert(at, cell);
+                }
+            }
+            (true, false) => {
+                let cell = crate::chunk::section_idx(x, y, z) as u16;
+                if let Ok(at) = self.particle_emitter_cells.binary_search(&cell) {
+                    self.particle_emitter_cells.remove(at);
+                }
+            }
             _ => {}
         }
         match (Self::id_emits_light(old_id), Self::id_emits_light(new_id)) {
@@ -212,8 +222,23 @@ impl Section {
         self.non_air_count = metrics.non_air_count;
         self.water_count = metrics.water_count;
         self.biome_tint_count = metrics.biome_tint_count;
-        self.particle_emitter_count = metrics.particle_emitter_count;
         self.light_emitter_count = metrics.light_emitter_count;
+        // Rebuilding the sparse emitter index needs a second pass over the
+        // cells, but the histogram has already told us whether there is
+        // anything to find — so only the rare emitter-bearing section pays it.
+        let mut cells = std::mem::take(&mut self.particle_emitter_cells);
+        cells.clear();
+        if metrics.particle_emitter_count > 0 {
+            cells.reserve(metrics.particle_emitter_count as usize);
+            cells.extend(
+                self.blocks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &id)| Self::id_has_particle_emitter(id))
+                    .map(|(i, _)| i as u16),
+            );
+        }
+        self.particle_emitter_cells = cells;
     }
 
     pub(crate) fn stream_metrics(&self) -> SectionMetrics {
@@ -224,7 +249,7 @@ impl Section {
             non_air_count: self.non_air_count,
             water_count: self.water_count,
             biome_tint_count: self.biome_tint_count,
-            particle_emitter_count: self.particle_emitter_count,
+            particle_emitter_count: self.particle_emitter_cells.len() as u32,
             light_emitter_count: self.light_emitter_count,
         }
     }
@@ -318,7 +343,14 @@ impl Section {
     /// Whether this section contains any block-row particle emitter.
     #[inline]
     pub fn has_particle_emitters(&self) -> bool {
-        self.particle_emitter_count > 0
+        !self.particle_emitter_cells.is_empty()
+    }
+
+    /// Section-local indices of every cell whose block row declares a particle
+    /// emitter, ascending. Presentation walks this instead of the dense ids.
+    #[inline]
+    pub fn particle_emitter_cells(&self) -> &[u16] {
+        &self.particle_emitter_cells
     }
 
     /// Whether this section holds any block-LIGHT-emitting cell (row

@@ -14,6 +14,14 @@ impl World {
 }
 
 impl TerrainRenderHandoff<'_> {
+    /// Whether terrain still has streaming, meshing or upload work in flight —
+    /// the "not settled" signal behind idle-only frame work.
+    pub(crate) fn is_streaming(&self) -> bool {
+        self.world.has_dirty_meshes()
+            || !self.world.mesh_upload_dirty_columns.is_empty()
+            || self.world.has_pending_stream_work()
+    }
+
     pub(crate) fn has_column_mesh(&self, pos: ChunkPos) -> bool {
         self.world.column_has_mesh(pos)
     }

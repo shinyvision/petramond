@@ -15,14 +15,26 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::chunk::{ChunkPos, SECTION_SIZE};
-use crate::save::codec::{deflate, inflate, put_u32, put_u8, Reader};
+use crate::save::codec::{deflate, inflate, put_u32, put_u64, put_u8, Reader};
 use crate::save::region::{REGION_SHIFT, REGION_SIZE};
 
-/// Bumped to 4 when the unreachable cherry-grove biome was removed (biome ids
-/// above it shifted): older records describe surfaces the current generator no
-/// longer produces, so they are rejected and regenerated. No upgrade path —
-/// this is a disposable cache.
-pub(crate) const VERSION: u8 = 5;
+/// Bumped to 6 when underground biomes became data-driven: a pack row can now
+/// change cave shape, which moves `top_surf`. Older records describe surfaces
+/// the current generator no longer produces, so they are rejected and
+/// regenerated. No upgrade path — this is a disposable cache.
+///
+/// 7: the caliber feather now ramps off the carvable floor rather than off a
+/// row's declared band floor, which reshapes caves at the bottom of any row
+/// banded below it — engine drift the table fingerprint cannot see.
+pub(crate) const VERSION: u8 = 7;
+
+/// Fingerprint of the loaded underground-biome table, stamped beside the seed.
+/// A version byte only catches ENGINE drift; installing, removing, or retuning
+/// a pack that reshapes caves changes no version but does change `top_surf`,
+/// and without this the cache would happily serve the stale columns.
+fn table_fingerprint() -> u64 {
+    crate::worldgen::data::underground::table().fingerprint
+}
 const CELLS: usize = SECTION_SIZE * SECTION_SIZE;
 const MESH_BIOME_SIDE: usize = SECTION_SIZE + 4;
 const MESH_BIOME_CELLS: usize = MESH_BIOME_SIDE * MESH_BIOME_SIDE;
@@ -73,15 +85,17 @@ pub fn parse_cache_name(path: &Path) -> Option<(i32, i32)> {
     Some((a.parse().ok()?, b.parse().ok()?))
 }
 
-/// Encode one record: `[version, seed, biome, surf, top_surf, scalars]`, deflated.
+/// Encode one record: `[version, seed, table fingerprint, biome, surf,
+/// top_surf, scalars]`, deflated.
 pub fn encode_record(rec: &ColumnGenRecord) -> Vec<u8> {
     debug_assert_eq!(rec.biome.len(), CELLS);
     debug_assert_eq!(rec.mesh_biome.len(), MESH_BIOME_CELLS);
     debug_assert_eq!(rec.surf.len(), CELLS);
     debug_assert_eq!(rec.top_surf.len(), CELLS);
-    let mut payload = Vec::with_capacity(1 + 4 + CELLS * 9 + MESH_BIOME_CELLS + 20);
+    let mut payload = Vec::with_capacity(1 + 12 + CELLS * 9 + MESH_BIOME_CELLS + 20);
     put_u8(&mut payload, VERSION);
     put_u32(&mut payload, rec.seed);
+    put_u64(&mut payload, table_fingerprint());
     payload.extend_from_slice(&rec.biome);
     payload.extend_from_slice(&rec.mesh_biome);
     for &v in rec.surf.iter().chain(rec.top_surf.iter()) {
@@ -100,11 +114,12 @@ pub fn encode_record(rec: &ColumnGenRecord) -> Vec<u8> {
 }
 
 /// Decode a record for `pos`. `None` (regenerate instead) on any corruption,
-/// version drift, or a seed that doesn't match the live world.
+/// version drift, a seed that doesn't match the live world, or an
+/// underground-biome table that no longer matches the one that wrote it.
 pub fn decode_record(pos: ChunkPos, seed: u32, blob: &[u8]) -> Option<ColumnGenRecord> {
     let payload = inflate(blob)?;
     let mut r = Reader::new(&payload);
-    if r.u8()? != VERSION || r.u32()? != seed {
+    if r.u8()? != VERSION || r.u32()? != seed || r.u64()? != table_fingerprint() {
         return None;
     }
     let biome: Box<[u8]> = r.bytes(CELLS)?.into();

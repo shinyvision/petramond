@@ -110,14 +110,8 @@ impl DayNightCycle {
     fn publish(&mut self, world: &mut World) {
         let t = day_fraction(self.clock, self.cycle);
         let t_bytes = t.to_le_bytes();
-        let day = daylight(t);
         let phase = ((self.clock / self.cycle) % MOON_PHASES) as f32;
-        let sky_scale = NIGHT_SKY_SCALE + (1.0 - NIGHT_SKY_SCALE) * day;
-        let sky_color = [
-            lerp(NIGHT_SKY_COLOR[0], 1.0, day),
-            lerp(NIGHT_SKY_COLOR[1], 1.0, day),
-            lerp(NIGHT_SKY_COLOR[2], 1.0, day),
-        ];
+        let (time_param, light_param) = sky_params(t, phase);
 
         world.mod_kv_set(CLOCK_KEY.into(), self.clock.to_le_bytes().to_vec());
         world.mod_kv_set(TIME_KEY.into(), t_bytes.to_vec());
@@ -126,12 +120,29 @@ impl DayNightCycle {
         self.published_clock = Some(self.clock);
         self.published_time = Some(t_bytes);
 
-        world.set_shader_param(SKY_TIME_PARAM.into(), [t, day, phase, 0.0]);
-        world.set_shader_param(
-            SKY_LIGHT_PARAM.into(),
-            [sky_scale, sky_color[0], sky_color[1], sky_color[2]],
-        );
+        world.set_shader_param(SKY_TIME_PARAM.into(), time_param);
+        world.set_shader_param(SKY_LIGHT_PARAM.into(), light_param);
     }
+}
+
+/// The two sky shader params for a point in the cycle: `petramond:time`
+/// (`[fraction, daylight, moon phase, 0]`) and `petramond:light`
+/// (`[sky scale, r, g, b]`). Derived here rather than inline in `publish` so
+/// anything that drives the sky from a clock — the live cycle, an offscreen
+/// capture — gets the same sky for the same fraction.
+pub(crate) fn sky_params(day_fraction: f32, moon_phase: f32) -> ([f32; 4], [f32; 4]) {
+    let t = day_fraction.rem_euclid(1.0);
+    let day = daylight(t);
+    let scale = NIGHT_SKY_SCALE + (1.0 - NIGHT_SKY_SCALE) * day;
+    (
+        [t, day, moon_phase, 0.0],
+        [
+            scale,
+            lerp(NIGHT_SKY_COLOR[0], 1.0, day),
+            lerp(NIGHT_SKY_COLOR[1], 1.0, day),
+            lerp(NIGHT_SKY_COLOR[2], 1.0, day),
+        ],
+    )
 }
 
 /// Whether it is night per the published `petramond:is_night` KV (day fraction in

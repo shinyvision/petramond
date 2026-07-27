@@ -71,12 +71,16 @@ impl PredictionMeshResult {
     }
 }
 
+/// The pair of light cubes one section carries: skylight and packed-RGB block
+/// light, either of which may be absent (never baked).
+type LightCubes = (Option<Arc<[u8]>>, Option<Arc<[crate::light::LightRgb]>>);
+
 /// One candidate light bake plus the cubes it would replace, so the runner
 /// can diff the fresh bake against them and prune meshes nothing sampled.
 pub(super) struct PredictionLightJob {
     pub job: LightBakeJob,
     pub prev_skylight: Option<Arc<[u8]>>,
-    pub prev_blocklight: Option<Arc<[u8]>>,
+    pub prev_blocklight: Option<Arc<[crate::light::LightRgb]>>,
 }
 
 /// Per-unit light work for a prediction bundle: a lone 48³ bake, or one
@@ -86,7 +90,7 @@ pub(super) enum PredictionLightUnit {
     Batch {
         job: LightBatchJob,
         /// Pre-bake cubes in the same order as [`LightBatchJob::member_positions`].
-        prev: Vec<(Option<Arc<[u8]>>, Option<Arc<[u8]>>)>,
+        prev: Vec<LightCubes>,
     },
 }
 
@@ -325,7 +329,8 @@ fn run_prediction_terrain(
     // geometry samplers, plus every section a changed light region reaches
     // through the one-cell mesh pad. Unchanged-light candidates drop here.
     let mut needed: FxHashSet<SectionPos> = always_mesh.into_iter().collect();
-    let mut baked: FxHashMap<SectionPos, (Arc<[u8]>, Arc<[u8]>)> = FxHashMap::default();
+    let mut baked: FxHashMap<SectionPos, (Arc<[u8]>, Arc<[crate::light::LightRgb]>)> =
+        FxHashMap::default();
     for light in &light_results {
         if light.mask == 0 {
             continue;
@@ -389,7 +394,7 @@ fn run_prediction_terrain(
 fn finish_prediction_light(
     result: LightBakeResult,
     prev_skylight: Option<Arc<[u8]>>,
-    prev_blocklight: Option<Arc<[u8]>>,
+    prev_blocklight: Option<Arc<[crate::light::LightRgb]>>,
 ) -> PredictionLightResult {
     let first_bake = prev_skylight.is_none();
     let mask = if first_bake {
@@ -399,7 +404,11 @@ fn finish_prediction_light(
             prev_skylight.as_deref(),
             &result.skylight,
             crate::chunk::SKY_FULL,
-        ) | super::light::cube_region_changes(prev_blocklight.as_deref(), &result.blocklight, 0)
+        ) | super::light::cube_region_changes(
+            prev_blocklight.as_deref(),
+            &result.blocklight,
+            crate::light::LightRgb::ZERO,
+        )
     };
     PredictionLightResult {
         result,

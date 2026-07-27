@@ -54,7 +54,16 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::ItemDataGet { .. }
         | HostCall::ItemsWithData { .. }
         | HostCall::BlockDataGet { .. }
-        | HostCall::BlocksWithData { .. } => true,
+        | HostCall::BlocksWithData { .. }
+        | HostCall::ResolveUndergroundBiome { .. }
+        // Pure (world seed, position) → the underground-biome partition, the
+        // same answer the carver reads. It touches no simulation state and no
+        // loaded section, and a client instance is constructed with the real
+        // world seed on both paths (`JoinData::seed` on a remote join,
+        // `World::seed` locally), so the answer is identical to the server's.
+        // This is the underground twin of `client_biome_at`.
+        | HostCall::UndergroundBiomeAt { .. }
+        | HostCall::UndergroundBiomesInBox { .. } => true,
         // The client presentation surface (handled below).
         HostCall::ClientRegisterOverlay { .. }
         | HostCall::ClientRegisterKey { .. }
@@ -166,6 +175,11 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::FindBlocks { .. }
         | HostCall::MobInfo { .. }
         | HostCall::MobCanReach { .. }
+        // `terrain_solid_at` runs the density surface and the cave carve per
+        // position — a generation-cost query, not a field sample, and nothing
+        // presentation-side has a use for it. (`underground_biome_at`, which
+        // is a cheap partition lookup, is legal above.)
+        | HostCall::TerrainSolidAt { .. }
         | HostCall::Players => false,
     }
 }

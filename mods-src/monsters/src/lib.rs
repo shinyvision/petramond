@@ -9,6 +9,12 @@
 //!   Daylight comes from `petramond:time`, using the same smooth dawn/dusk curve as
 //!   core day/night. Dark caves can spawn monsters during the day; torch/block
 //!   light blocks the spawn.
+//! - **Spawn-proof surfaces**: a dark site is still refused when the block
+//!   under the feet carries the `monsters:spawn_proof` block tag. Membership
+//!   is pure data — any pack lists the tag on any of its `blocks.json` rows
+//!   (the mushroom caverns' moss does, so a grove stays serene until the
+//!   player breaks its floor) — and with nothing tagged anywhere this rule
+//!   costs nothing and changes nothing.
 //! - **Hushjaw spawning**: on a dark site, the hushjaw claims the spawn when
 //!   the site is deep (feet Y below −16), at least 32 blocks from the nearest
 //!   player (the candidate's own `nearest_player_dist` — multiplayer-correct),
@@ -73,6 +79,12 @@ const ZOMBIE_KEY: &str = "monsters:zombie";
 const HUSHJAW_KEY: &str = "monsters:hushjaw";
 const TIME_KEY: &str = "petramond:time";
 const WATER_BLOCK: &str = "petramond:water";
+
+/// Block tag marking a surface no hostile spawns ON. Any pack lists it on any
+/// `blocks.json` row and that block is spawn-proof everywhere in the world,
+/// with no code change here and none in the engine — which knows neither this
+/// tag nor any block that carries it. See [`SpawnProof`].
+const SPAWN_PROOF_TAG: &str = "monsters:spawn_proof";
 
 /// Hushjaw spawn rules — a deep-cave apex predator, deliberately never near
 /// the surface, the player, or its own kind:
@@ -152,6 +164,19 @@ struct Monsters {
     /// The engine water block, resolved once — a burning zombie standing in
     /// it snuffs out instantly.
     water: Option<BlockId>,
+    /// Surfaces no hostile spawns on, resolved once from the tag.
+    spawn_proof: SpawnProof,
+    /// This pack's species ids, resolved once. A mob snapshot names its
+    /// species by ID, never by string — a crowd query answers dozens per
+    /// tick and a heap string each would be the marshalling's whole cost.
+    species: Species,
+}
+
+/// The species ids this pack reasons about, resolved once at init.
+#[derive(Default, Copy, Clone)]
+struct Species {
+    zombie: Option<MobId>,
+    hushjaw: Option<MobId>,
 }
 
 impl Mod for Monsters {
@@ -161,7 +186,19 @@ impl Mod for Monsters {
         register_tick_system(Stage::Spawning, AttachSide::After, 20, MONSTERS_TICK_SYSTEM);
         register_hostile_spawner(0, MONSTERS_HOSTILE_SPAWNER);
         self.water = resolve_block_logged(WATER_BLOCK);
-        log("initialized: hostile spawner (zombie + hushjaw) + sunburn");
+        // ONE crossing for the whole membership, at init — the house pattern
+        // for tag-driven policy. The count is logged because a tag name is a
+        // string agreed across two packs: a typo on either side is not a load
+        // error anywhere, and this number is the only place it shows up.
+        self.spawn_proof = SpawnProof::new(blocks_by_tag(SPAWN_PROOF_TAG));
+        self.species = Species {
+            zombie: resolve_mob_logged(ZOMBIE_KEY),
+            hushjaw: resolve_mob_logged(HUSHJAW_KEY),
+        };
+        log(&format!(
+            "initialized: hostile spawner (zombie + hushjaw) + sunburn, {} spawn-proof surfaces",
+            self.spawn_proof.count
+        ));
     }
 
     fn tick_system(&mut self, _system_id: u32) {
@@ -184,29 +221,70 @@ impl Mod for Monsters {
         candidate: &HostileSpawnCandidate,
     ) -> Option<String> {
         let daylight = daylight_factor_from_daynight()?;
-        if effective_light(candidate.sky_light, candidate.block_light, daylight)
-            >= SPAWN_LIGHT_THRESHOLD
-        {
-            return None;
-        }
-        // The hushjaw gets first claim on the deep dark; everything else that
-        // is dark enough is a zombie site (core still enforces species caps on
-        // whatever key we return).
-        if hushjaw_admits(candidate) {
-            return Some(HUSHJAW_KEY.to_owned());
-        }
-        zombie_admits(candidate).then(|| ZOMBIE_KEY.to_owned())
+        site_species(
+            candidate,
+            daylight,
+            &self.spawn_proof,
+            self.species,
+            &|| get_block(ground_cell(candidate.cell)),
+            &|| splitmix64_mix(rng_u64("hushjaw_claim")),
+            &|pos, radius| mobs_in_radius(pos, radius),
+        )
+        .map(str::to_owned)
     }
+}
+
+/// The whole site-admission policy, as a PURE function of what the host said.
+/// The host-crossing inputs arrive as closures because the ORDER of the gates
+/// is itself policy: the light check is free, the spawn-proof floor costs at
+/// most one block read, and each crowd query walks a radius — so a lit site
+/// pays nothing, a mossy one pays one read, and only a site that could really
+/// hold a monster pays for the crowd walks. Evaluating any of them eagerly
+/// would pay for gates the site never reaches. (Being pure is also what makes
+/// it testable: host functions are `unreachable!()` off wasm.)
+fn site_species(
+    candidate: &HostileSpawnCandidate,
+    daylight: f32,
+    spawn_proof: &SpawnProof,
+    species: Species,
+    ground: &dyn Fn() -> Option<BlockId>,
+    claim_roll: &dyn Fn() -> u64,
+    nearby: &dyn Fn([f32; 3], f32) -> Vec<MobSnapshot>,
+) -> Option<&'static str> {
+    if effective_light(candidate.sky_light, candidate.block_light, daylight)
+        >= SPAWN_LIGHT_THRESHOLD
+    {
+        return None;
+    }
+    if spawn_proof.refuses(ground) {
+        return None;
+    }
+    // The hushjaw gets first claim on the deep dark; everything else that
+    // is dark enough is a zombie site (core still enforces species caps on
+    // whatever key we return).
+    if hushjaw_admits(candidate, species, claim_roll, nearby) {
+        return Some(HUSHJAW_KEY);
+    }
+    zombie_admits(candidate, species, nearby).then_some(ZOMBIE_KEY)
+}
+
+/// The cell a body standing at `cell` has under its feet.
+fn ground_cell(cell: [i32; 3]) -> [i32; 3] {
+    [cell[0], cell[1] - 1, cell[2]]
 }
 
 /// The zombie's one site rule beyond darkness: the local crowd gate — see the
 /// `ZOMBIE_CROWD_*` constants for the policy. The (host-crossing) radius query
 /// is the whole check, so it runs only for sites that already passed the light
 /// gate and the hushjaw claim.
-fn zombie_admits(candidate: &HostileSpawnCandidate) -> bool {
-    mobs_in_radius(candidate.pos, ZOMBIE_CROWD_RADIUS)
+fn zombie_admits(
+    candidate: &HostileSpawnCandidate,
+    species: Species,
+    nearby: &dyn Fn([f32; 3], f32) -> Vec<MobSnapshot>,
+) -> bool {
+    nearby(candidate.pos, ZOMBIE_CROWD_RADIUS)
         .iter()
-        .filter(|m| m.key == ZOMBIE_KEY)
+        .filter(|m| Some(m.kind) == species.zombie)
         .count()
         < ZOMBIE_CROWD_LIMIT
 }
@@ -216,19 +294,81 @@ fn zombie_admits(candidate: &HostileSpawnCandidate) -> bool {
 /// the pure position checks pass, and the (host-crossing) spacing query runs
 /// only for claimed sites, so quiet ticks stay cheap and the RNG stream is a
 /// deterministic function of the deterministic candidate sequence.
-fn hushjaw_admits(candidate: &HostileSpawnCandidate) -> bool {
+fn hushjaw_admits(
+    candidate: &HostileSpawnCandidate,
+    species: Species,
+    claim_roll: &dyn Fn() -> u64,
+    nearby: &dyn Fn([f32; 3], f32) -> Vec<MobSnapshot>,
+) -> bool {
     if candidate.cell[1] >= HUSHJAW_BELOW_Y {
         return false;
     }
     if candidate.nearest_player_dist < HUSHJAW_MIN_PLAYER_DIST {
         return false;
     }
-    if splitmix64_mix(rng_u64("hushjaw_claim")) % 100 >= HUSHJAW_CLAIM_PER_100 {
+    if claim_roll() % 100 >= HUSHJAW_CLAIM_PER_100 {
         return false;
     }
-    mobs_in_radius(candidate.pos, HUSHJAW_SPACING)
+    nearby(candidate.pos, HUSHJAW_SPACING)
         .iter()
-        .all(|m| m.key != HUSHJAW_KEY)
+        .all(|m| Some(m.kind) != species.hushjaw)
+}
+
+/// The surfaces a hostile refuses to spawn ON — the block under the feet —
+/// as a dense per-block-id table.
+///
+/// Membership is data: ANY pack marks ANY block spawn-proof by listing
+/// [`SPAWN_PROOF_TAG`] on its `blocks.json` row. No block and no pack is named
+/// here, and with nothing tagged the table is empty and this mod behaves
+/// exactly as it did before the rule existed.
+///
+/// A `BlockId` is a u8, so the whole id space is 256 bytes — the dense-table
+/// shape the engine uses for its own per-id lookups. The lookup is not the
+/// cost on this path (the block read that feeds it crosses the host boundary),
+/// but a constant-time table means the cost cannot grow as packs tag more
+/// surfaces. Built once in `init` from the tag reply; there is no registry
+/// lazy in the guest for it to deadlock against.
+struct SpawnProof {
+    proof: [bool; 256],
+    /// How many surfaces are marked — logged at init as the only signal that
+    /// the tag string actually matched something.
+    count: usize,
+}
+
+impl Default for SpawnProof {
+    fn default() -> Self {
+        Self {
+            proof: [false; 256],
+            count: 0,
+        }
+    }
+}
+
+impl SpawnProof {
+    fn new(blocks: Vec<BlockId>) -> Self {
+        let mut set = Self::default();
+        for b in blocks {
+            if !set.proof[b.0 as usize] {
+                set.proof[b.0 as usize] = true;
+                set.count += 1;
+            }
+        }
+        set
+    }
+
+    /// Whether the floor a body would stand on refuses the spawn. Reads the
+    /// world only when some pack actually marked something.
+    ///
+    /// An UNREADABLE floor refuses. This deliberately inverts the `in_water`
+    /// convention below: core admitted the site from a merely LOADED cell
+    /// while a mod's `get_block` is stream-final, so the gap is exactly the
+    /// moment a player first descends into a fresh cavern — the most visible
+    /// moment there is. A skipped spawn costs nothing (32 attempts a tick, 20
+    /// ticks a second); a monster in a cavern that promised safety is the bug
+    /// this rule exists to prevent.
+    fn refuses(&self, ground: &dyn Fn() -> Option<BlockId>) -> bool {
+        self.count > 0 && ground().is_none_or(|b| self.proof[b.0 as usize])
+    }
 }
 
 impl Monsters {
@@ -246,7 +386,8 @@ impl Monsters {
         let roll = rng_u64("sunburn");
         let water = self.water;
         let mut extinguished: Vec<u64> = Vec::new();
-        for mob in near.iter().filter(|m| m.key == ZOMBIE_KEY) {
+        let zombie = self.species.zombie;
+        for mob in near.iter().filter(|m| Some(m.kind) == zombie) {
             let Some(burn) = self.burning.get_mut(&mob.id) else {
                 // Not burning. Roll first, then the pure rain check (any
                 // rain-band cloud overhead occludes the sun — engine
@@ -442,3 +583,117 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 }
 
 register_mod!(Monsters);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two block ids that mean nothing to this mod beyond the tag reply — the
+    /// point of the seam is that it never learns which is which.
+    const MOSS: BlockId = BlockId(200);
+    const STONE: BlockId = BlockId(3);
+
+    /// A site core already validated as physically spawnable: pitch dark, far
+    /// from the player, and shallow enough that the hushjaw never claims it,
+    /// so the only thing left to vary is the floor.
+    fn dark_site() -> HostileSpawnCandidate {
+        HostileSpawnCandidate {
+            pos: [8.5, 20.0, 8.5],
+            cell: [8, 20, 8],
+            combined_light: 0,
+            sky_light: 0,
+            block_light: 0,
+            nearest_player_dist: 40.0,
+        }
+    }
+
+    /// An empty neighbourhood: no crowd, no rival hushjaw.
+    fn alone(_pos: [f32; 3], _radius: f32) -> Vec<MobSnapshot> {
+        Vec::new()
+    }
+
+    /// The hushjaw's claim roll, losing.
+    fn no_claim() -> u64 {
+        HUSHJAW_CLAIM_PER_100
+    }
+
+    fn species_over(proof: &SpawnProof, ground: Option<BlockId>) -> Option<&'static str> {
+        site_species(
+            &dark_site(),
+            1.0,
+            proof,
+            Species::default(),
+            &|| ground,
+            &no_claim,
+            &alone,
+        )
+    }
+
+    #[test]
+    fn a_spawn_proof_floor_refuses_a_site_that_is_otherwise_perfect() {
+        let proof = SpawnProof::new(vec![MOSS]);
+        assert_eq!(species_over(&proof, Some(MOSS)), None, "moss refuses");
+        // The same site with the moss broken away: this is the gameplay —
+        // mine the floor of a serene cavern and it becomes dangerous.
+        assert_eq!(
+            species_over(&proof, Some(STONE)),
+            Some(ZOMBIE_KEY),
+            "the site was otherwise perfect, so the FLOOR is what refused it"
+        );
+        // Stream-finality fail-safe. The most likely thing a later
+        // simplification gets backwards, and it leaks spawns exactly when a
+        // player first walks into a freshly streamed cavern.
+        assert_eq!(
+            species_over(&proof, None),
+            None,
+            "an unreadable floor refuses"
+        );
+        // The pre-existing gates still fire, in front of this one.
+        let lit = HostileSpawnCandidate {
+            block_light: 30,
+            ..dark_site()
+        };
+        let stone = || Some(STONE);
+        assert_eq!(
+            site_species(
+                &lit,
+                1.0,
+                &proof,
+                Species::default(),
+                &stone,
+                &no_claim,
+                &alone
+            ),
+            None,
+            "a lit site is still refused"
+        );
+    }
+
+    #[test]
+    fn an_unmarked_world_neither_changes_behaviour_nor_reads_the_floor() {
+        let reads = std::cell::Cell::new(0u32);
+        let ground = || {
+            reads.set(reads.get() + 1);
+            Some(MOSS)
+        };
+        let none = SpawnProof::default();
+        assert_eq!(
+            site_species(
+                &dark_site(),
+                1.0,
+                &none,
+                Species::default(),
+                &ground,
+                &no_claim,
+                &alone
+            ),
+            Some(ZOMBIE_KEY),
+            "with nothing tagged, every previously-good site is still good"
+        );
+        assert_eq!(
+            reads.get(),
+            0,
+            "and the world is never read — no pack pays for a rule it does not use"
+        );
+    }
+}

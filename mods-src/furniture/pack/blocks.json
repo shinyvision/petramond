@@ -137,6 +137,7 @@
       "interaction": "none",
       "collision": [],
       "emission": 28,
+      "light_color": [1.0, 1.0, 0.96],
       "tiles": ["furniture:chain_link", "furniture:chain_link", "furniture:chain_link"],
       "material": "stone",
       "harvest_tier": 1,

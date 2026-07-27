@@ -20,6 +20,23 @@ pub(super) enum SideVsWater {
     ExposedStep,
 }
 
+/// Classify a water side face toward a neighbouring water cell. The face is kept
+/// (as the exposed step) only when this cell is full to the top while the
+/// neighbour's surface is recessed — otherwise the two surfaces meet and it culls.
+///
+/// Takes the cell's `fills_cell` answer rather than a whole [`WaterSurface`]:
+/// this decides the CULL, and a submerged cell (the bulk of an ocean) culls
+/// every face, so the surface resolve behind it — sixteen corner-height
+/// samples plus a flow gradient — must not be paid to reach this answer.
+#[inline]
+pub(super) fn side_vs_water(full: bool, is_side: bool, neighbour_full: bool) -> SideVsWater {
+    if is_side && full && !neighbour_full {
+        SideVsWater::ExposedStep
+    } else {
+        SideVsWater::Cull
+    }
+}
+
 /// The resolved surface shape of one water cell, computed once before its faces are
 /// emitted.
 pub(super) struct WaterSurface {
@@ -109,18 +126,6 @@ impl WaterSurface {
         self.top_angle
     }
 
-    /// Classify a water side face toward a neighbouring water cell. The face is kept
-    /// (as the exposed step) only when this cell is full to the top while the
-    /// neighbour's surface is recessed — otherwise the two surfaces meet and it culls.
-    #[inline]
-    pub(super) fn side_against_water(&self, is_side: bool, neighbour_full: bool) -> SideVsWater {
-        if is_side && self.full && !neighbour_full {
-            SideVsWater::ExposedStep
-        } else {
-            SideVsWater::Cull
-        }
-    }
-
     /// Warp a face's quad corners to the water surface in place. TOP verts go to
     /// their corner's surface height so the top slopes and every side's top edge
     /// meets it exactly (a full cell spans the whole block). Exposed-step faces
@@ -149,12 +154,4 @@ impl WaterSurface {
             }
         }
     }
-}
-
-/// The reverse-winding triangles for a water TOP face's `tris`. The transparent
-/// pass is back-face culled, so the surface also needs the reverse winding to stay
-/// visible from underneath when submerged. Side/bottom faces stay single-sided.
-#[inline]
-pub(super) fn top_back_winding(tris: [u32; 6]) -> [u32; 6] {
-    [tris[0], tris[2], tris[1], tris[3], tris[5], tris[4]]
 }

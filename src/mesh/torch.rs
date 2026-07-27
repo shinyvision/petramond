@@ -10,21 +10,21 @@
 //! so it stays visibly glowing even in an unlit cave.
 
 use crate::atlas::Tile;
+use crate::light::BlockLight6;
 use crate::mathh::Vec3;
 use crate::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
 
 use super::face::Face;
-use super::vertex::{pack_tint, pack_vertex, pack_vertex2, Vertex};
+use super::vertex::{pack_vertex, Vertex};
 
 /// Append the torch pole at the cell whose world origin is `(bx, by, bz)`, oriented
 /// by `placement`, textured with `side_tile` (body) + `top_tile` (flame), tinted by
-/// `tint`, and flat-lit at the packed 6-bit channels: `sky6` (cell skylight, dims
-/// with the environment sky scale) and `block6` (the torch's own emission — night-
-/// invariant, so the pole keeps glowing in a dark cave / at night).
+/// `tint`, and flat-lit at the packed channels: `sky6` (cell skylight, dims with
+/// the environment sky scale) and `block` (the torch's own emission COLOUR —
+/// night-invariant, so the pole keeps glowing in a dark cave / at night).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_torch(
     opaque: &mut Vec<Vertex>,
-    opaque_idx: &mut Vec<u32>,
     bx: f32,
     by: f32,
     bz: f32,
@@ -33,7 +33,7 @@ pub(super) fn emit_torch(
     top_tile: Tile,
     tint: [f32; 3],
     sky6: u32,
-    block6: u32,
+    block: BlockLight6,
 ) {
     // Local model box: base at the origin, ±POLE_HALF across, POLE_HEIGHT tall. The
     // placement transform maps it into cell space; the cell's world origin is added
@@ -52,17 +52,16 @@ pub(super) fn emit_torch(
         (Face::NegZ, side_tile),
         (Face::PosY, top_tile),
     ] {
-        let start = opaque.len() as u32;
         for (corner, lp) in face.quad_box(lo, hi).into_iter().enumerate() {
             let wp = origin + xform.transform_point3(Vec3::new(lp[0], lp[1], lp[2]));
             opaque.push(Vertex {
                 pos: [wp.x, wp.y, wp.z],
-                tint: pack_tint(tint),
+                tint: block.tint_word(tint),
                 // Flat-lit (shade index 0, AO 3) like a cross-plant: no overlay.
-                packed: pack_vertex(tile.index() as u32, corner as u32, 0, false, 3, sky6),
-                packed2: pack_vertex2(block6),
+                packed: pack_vertex(tile.index() as u32, corner as u32, 0, false, 3, sky6)
+                    | block.packed_bits(),
+                packed2: block.packed2_bits(),
             });
         }
-        opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
     }
 }

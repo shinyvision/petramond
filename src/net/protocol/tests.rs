@@ -148,6 +148,13 @@ fn representative_messages_roundtrip_through_postcard() {
 #[test]
 fn arc_backed_section_payloads_roundtrip_byte_exact() {
     let blocks: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    // A COLOURED light cube: two bytes per cell, all three channels distinct,
+    // so a lane slip or an endianness flip in `SectionLight` cannot pass.
+    let light: Vec<crate::light::LightRgb> = (0..4096u32)
+        .map(|i| {
+            crate::light::LightRgb::new((i % 31) as u8, (i / 7 % 31) as u8, (i / 53 % 31) as u8)
+        })
+        .collect();
     let payload = SectionPayload {
         pos: SectionPos {
             cx: -3,
@@ -158,7 +165,9 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
         metrics: Default::default(),
         water: None,
         skylight: None,
-        blocklight: None,
+        blocklight: Some(crate::net::protocol::SectionLight(Arc::from(
+            light.into_boxed_slice(),
+        ))),
         states: SectionStatesPayload {
             cell_states: vec![
                 (4095, crate::block::ShapeState::new(&[7])),
@@ -178,6 +187,10 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
     // The local path never serializes: cloning the message bumps the Arc.
     let cloned = payload.clone();
     assert!(Arc::ptr_eq(&cloned.blocks.0, &payload.blocks.0));
+    assert!(Arc::ptr_eq(
+        &cloned.blocklight.unwrap().0,
+        &payload.blocklight.unwrap().0
+    ));
 }
 
 #[test]

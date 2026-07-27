@@ -72,7 +72,10 @@ impl World {
     /// is skipped (the renderer builds both halves from the lower entry). Mirrors
     /// [`collect_chests`](Self::collect_chests); the swing angle is paired in later from
     /// `Game::door_swing_angle`.
-    pub fn collect_doors(&self, out: &mut Vec<(IVec3, DoorState, [Tile; 3], u8, u8)>) {
+    pub fn collect_doors(
+        &self,
+        out: &mut Vec<(IVec3, DoorState, [Tile; 3], u8, crate::light::BlockLight6)>,
+    ) {
         out.clear();
         for sp in &self.block_entity_sections {
             let Some(section) = self.sections.get(sp) else {
@@ -97,7 +100,9 @@ impl World {
                 let [top, bottom, side] = Block::from_id(section.block_raw(lx, ly, lz)).tiles();
                 let pos = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
                 let sky = self.skylight6_at_world(pos.x, pos.y, pos.z);
-                let block = self.blocklight6_at_world(pos.x, pos.y, pos.z);
+                let block = crate::light::BlockLight6::from_x2(
+                    self.blocklight_rgb_at_world(pos.x, pos.y, pos.z),
+                );
                 out.push((pos, state, [bottom, top, side], sky, block));
             }
         }

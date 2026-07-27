@@ -80,11 +80,206 @@ pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32)
     chunk
 }
 
+/// The underground biome owning each world position for `seed` — the same
+/// partition the cave carver's wall lining and caliber read, so it answers
+/// before any section exists. Purely positional: no loaded world, no order
+/// dependence. This is the engine side of the mod ABI's `UndergroundBiomeAt`.
+pub(crate) fn underground_biomes_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u8> {
+    let field = cave_field(seed);
+    let clamped: Vec<[i32; 3]> = positions.iter().map(|p| clamp_query(*p)).collect();
+    let mut out = Vec::new();
+    field.underground_biome_at_batch(&clamped, &mut out);
+    out
+}
+
+/// The conservative set of underground biome ids that can own a cell inside the
+/// inclusive world box — the engine side of the mod ABI's
+/// `UndergroundBiomesInBox`. An id it omits provably does not occur in the box,
+/// so a mod whose content belongs to one biome can reject a whole dispatch on
+/// it instead of asking cell by cell.
+pub(crate) fn underground_biomes_in_box(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<u8> {
+    let (lo, hi) = (clamp_query(lo), clamp_query(hi));
+    let box_lo = std::array::from_fn(|a| lo[a].min(hi[a]));
+    let box_hi = std::array::from_fn(|a| lo[a].max(hi[a]));
+    cave_field(seed)
+        .underground_biome_ids_in_box(box_lo, box_hi)
+        .ids()
+}
+
+/// Is the generated terrain solid at each world position for `seed`? The
+/// engine side of the mod ABI's `TerrainSolidAt`.
+///
+/// Solid means what the fill+carve stages leave behind: at or below the
+/// column's density surface, and not cut away by a carver. Air and water are
+/// both `false`; features (scatter, vegetation, trees, mod writes) are not
+/// included, because they are not positional — they depend on a stage having
+/// run.
+///
+/// This exists so a cross-section structure can make ONE acceptance decision
+/// that every section agrees on, the way an engine feature's `is_anchored`
+/// gate reads only the surface model and never chunk content. Reading the
+/// dispatching section's own snapshot cannot do that: cells outside it are
+/// unknown, so each section would answer differently for the same origin.
+///
+/// Surfaces come from the shared feature-window tile memo — the SAME values
+/// the carve stage reads — so the answer cannot drift from the blocks a
+/// section actually receives. Queries arrive in columns, so one tile is kept
+/// hot rather than re-fetched per cell.
+pub(crate) fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
+    const TILE: i32 = crate::chunk::CHUNK_SX as i32;
+
+    let caves = cave_field(seed);
+    let surface = surface_system(seed);
+    let mut tile: Option<(i32, i32, Vec<i32>)> = None;
+    // Pair each position with its column surface first (one tile fetch per
+    // 16×16 run), then answer the carve question for the whole batch at once —
+    // one lattice per spatial bucket instead of one per position.
+    let mut queries: Vec<([i32; 3], i32)> = Vec::with_capacity(positions.len());
+    // Positions the carve question cannot even apply to (above the column
+    // surface, or below the carve floor).
+    let mut no_carve = vec![false; positions.len()];
+    for (i, p) in positions.iter().enumerate() {
+        let [x, y, z] = clamp_query(*p);
+        let (tcx, tcz) = (x.div_euclid(TILE), z.div_euclid(TILE));
+        if !matches!(&tile, Some((cx, cz, _)) if *cx == tcx && *cz == tcz) {
+            let (_, raw) = feature::cached_feature_region(
+                &surface,
+                &caves,
+                seed,
+                tcx * TILE,
+                tcz * TILE,
+                TILE as usize,
+                TILE as usize,
+            );
+            tile = Some((tcx, tcz, raw));
+        }
+        let raw = &tile.as_ref().expect("tile just filled").2;
+        let surf_y = raw[((z - tcz * TILE) * TILE + (x - tcx * TILE)) as usize];
+        no_carve[i] = y > surf_y || y < noise::settings::CAVE_MIN_Y;
+        queries.push(([x, y, z], surf_y));
+    }
+    let mut carved = Vec::new();
+    caves.cave_carved_batch(&queries, &mut carved);
+    (0..positions.len())
+        .map(|i| {
+            let (_, surf_y) = queries[i];
+            queries[i].0[1] <= surf_y && (no_carve[i] || !carved[i])
+        })
+        .collect()
+}
+
+/// Guest-supplied coordinates are clamped before any positional query: the
+/// cave lattice scales them by its step, so a position near the integer limits
+/// would overflow that multiply, and no host call may be steered into
+/// arithmetic UB by a mod. Y is clamped to the world column.
+fn clamp_query(p: [i32; 3]) -> [i32; 3] {
+    /// Leaves room for the lattice's `(cell + 1) * LATTICE_STEP` scaling.
+    const HORIZONTAL_LIMIT: i32 = i32::MAX / 8;
+    [
+        p[0].clamp(-HORIZONTAL_LIMIT, HORIZONTAL_LIMIT),
+        p[1].clamp(crate::chunk::WORLD_MIN_Y, crate::chunk::WORLD_MAX_Y - 1),
+        p[2].clamp(-HORIZONTAL_LIMIT, HORIZONTAL_LIMIT),
+    ]
+}
+
+/// A `CaveField` is ten OpenSimplex permutation tables, so it is memoized in
+/// ONE slot keyed by seed rather than rebuilt per call; sessions are serial,
+/// and a seed change self-evicts.
+fn cave_field(seed: u32) -> std::sync::Arc<noise::height::CaveField> {
+    use std::sync::{Arc, Mutex};
+    static SLOT: Mutex<Option<(u32, Arc<noise::height::CaveField>)>> = Mutex::new(None);
+    let mut slot = SLOT.lock().unwrap();
+    match slot.as_ref() {
+        Some((s, field)) if *s == seed => Arc::clone(field),
+        _ => {
+            let field = Arc::new(noise::height::CaveField::new(seed));
+            *slot = Some((seed, Arc::clone(&field)));
+            field
+        }
+    }
+}
+
+/// The density graph behind the surface heights, memoized like [`cave_field`]:
+/// building it is the expensive part of a generator, and the terrain query
+/// would otherwise pay for it on every batch.
+fn surface_system(seed: u32) -> std::sync::Arc<density::surface::SurfaceDensitySystem> {
+    use std::sync::{Arc, Mutex};
+    static SLOT: Mutex<Option<(u32, Arc<density::surface::SurfaceDensitySystem>)>> =
+        Mutex::new(None);
+    let mut slot = SLOT.lock().unwrap();
+    match slot.as_ref() {
+        Some((s, sys)) if *s == seed => Arc::clone(sys),
+        _ => {
+            let sys = Arc::new(density::surface::SurfaceDensitySystem::new(seed));
+            *slot = Some((seed, Arc::clone(&sys)));
+            sys
+        }
+    }
+}
+
 #[cfg(all(test, feature = "worldgen-tests"))]
 mod tests {
     use super::*;
     use crate::block::Block;
     use crate::chunk::{CHUNK_SX, CHUNK_SZ, SEA_LEVEL};
+
+    /// The positional terrain query PROMISES the blocks a section will
+    /// actually get. A mod uses it to decide, once, whether a structure that
+    /// spans sections exists at all, so a drift between the query and the
+    /// fill+carve pipeline puts mod content inside rock or floating in air —
+    /// with nothing on either side to notice. Deep sections only: vegetation
+    /// and trees add blocks the query deliberately does not model.
+    #[test]
+    fn the_terrain_query_matches_the_blocks_a_section_receives() {
+        use crate::chunk::SectionPos;
+        use crate::chunk::SECTION_SIZE;
+
+        let seed = 0x0E58_1000;
+        let gen = driver::ChunkGenerator::new(seed);
+        let mut checked = 0usize;
+        let mut open = 0usize;
+        for (cx, cz) in [(0, 0), (3, -2), (-5, 7)] {
+            let col = gen.generate_column_gen(cx, cz);
+            for cy in [-4, -3, -2] {
+                let section = gen.generate_section(SectionPos::new(cx, cy, cz), &col);
+                let (ox, oy, oz) = section.origin_world();
+                let mut probe = Vec::with_capacity(SECTION_SIZE.pow(3));
+                for ly in 0..SECTION_SIZE {
+                    for lz in 0..SECTION_SIZE {
+                        for lx in 0..SECTION_SIZE {
+                            probe.push([ox + lx as i32, oy + ly as i32, oz + lz as i32]);
+                        }
+                    }
+                }
+                let solid = terrain_solid_at(seed, &probe);
+                let mut i = 0;
+                for ly in 0..SECTION_SIZE {
+                    for lz in 0..SECTION_SIZE {
+                        for lx in 0..SECTION_SIZE {
+                            let id = section.block_raw(lx, ly, lz);
+                            let is_solid = id != Block::Air.id() && id != Block::Water.id();
+                            assert_eq!(
+                                solid[i],
+                                is_solid,
+                                "query says solid={} but section {:?} holds block {id} at {:?}",
+                                solid[i],
+                                (cx, cy, cz),
+                                probe[i]
+                            );
+                            open += usize::from(!is_solid);
+                            checked += 1;
+                            i += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(checked > 0);
+        assert!(
+            open > 0,
+            "no carved cell in the sample; the test is vacuous"
+        );
+    }
 
     /// A generator whose shared noise cache has been warmed by neighbouring chunks
     /// must produce byte-identical output to a generator that computes every column

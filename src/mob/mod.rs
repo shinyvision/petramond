@@ -50,10 +50,11 @@ pub(crate) use load::validate_brain_extensions;
 pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop};
 pub use nav::mob_can_reach;
+pub(crate) use nav::ReachBudget;
 pub use noise::{player_steps_are_audible, Noise, NoiseKind};
 pub(crate) use spawn::{
     body_fits_at as spawn_body_fits_at, hostile_attempt_sites, hostile_kind_has_room,
-    hostile_spawn_plan, HOSTILE_SPAWN_ATTEMPTS, PASSIVE_SPAWN_INTERVAL_TICKS,
+    hostile_spawn_plan, HostileSpawnCache, HOSTILE_SPAWN_ATTEMPTS, PASSIVE_SPAWN_INTERVAL_TICKS,
 };
 
 use std::sync::LazyLock;

@@ -1,8 +1,9 @@
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-use crate::chunk::{ChunkPos, SectionPos, SECTION_VOLUME};
+use crate::chunk::{ChunkPos, SectionPos};
 use crate::column::Column;
+use crate::light::LightRgb;
 use crate::mathh::IVec3;
 use crate::section::Section;
 
@@ -28,7 +29,7 @@ pub(in crate::world) struct LightBakeJob {
     revision: u64,
     sky: SkyPlan,
     nbhd: Option<neighborhood::Snapshot>,
-    emitters: Vec<(IVec3, u8)>,
+    emitters: Vec<(IVec3, LightRgb)>,
 }
 
 pub(in crate::world) struct LightBakeResult {
@@ -36,7 +37,7 @@ pub(in crate::world) struct LightBakeResult {
     pub pos: SectionPos,
     pub revision: u64,
     pub skylight: Arc<[u8]>,
-    pub blocklight: Arc<[u8]>,
+    pub blocklight: Arc<[LightRgb]>,
 }
 
 impl LightBakeResult {
@@ -210,15 +211,7 @@ thread_local! {
     });
 }
 
-/// Total worker nanoseconds and jobs spent on light bakes — temporary perf-session
-/// diagnostics read by the out-of-tree streaming profiler.
-pub(crate) static LIGHT_STAGE_NS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-pub(crate) static LIGHT_STAGE_JOBS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
 pub(in crate::world) fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
-    let t_stage = std::time::Instant::now();
     let LightBakeJob {
         id,
         pos,
@@ -242,8 +235,8 @@ pub(in crate::world) fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
             .unwrap_or_default();
 
         let skylight = match sky {
-            SkyPlan::Full => vec![crate::chunk::SKY_FULL; SECTION_VOLUME].into(),
-            SkyPlan::Dark => vec![0u8; SECTION_VOLUME].into(),
+            SkyPlan::Full => crate::section::uniform_cube(crate::chunk::SKY_FULL),
+            SkyPlan::Dark => crate::section::uniform_cube(0),
             SkyPlan::Flood { surface } => {
                 let blocks =
                     blocks.expect("a flooding skylight bake carries its neighbourhood blocks");
@@ -257,7 +250,7 @@ pub(in crate::world) fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
         };
 
         let blocklight = if emitters.is_empty() {
-            vec![0u8; SECTION_VOLUME].into()
+            crate::light::dark_cube()
         } else {
             let blocks = blocks.expect("a block-light bake carries its neighbourhood blocks");
             flood::block_light(
@@ -268,11 +261,6 @@ pub(in crate::world) fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
             )
         };
 
-        LIGHT_STAGE_NS.fetch_add(
-            t_stage.elapsed().as_nanos() as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        LIGHT_STAGE_JOBS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         LightBakeResult {
             id,
             pos,

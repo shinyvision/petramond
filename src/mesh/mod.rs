@@ -40,7 +40,7 @@ pub use vertex::MAX_TILES;
 pub(crate) use vertex::{
     pack_overlay, AO_SHIFT, CORNER_SHIFT, OVERLAY_FLAG, SHADE_SHIFT, SKY_SHIFT,
 };
-pub(crate) use vertex::{pack_tint, unpack_tint, DYED_FLAG2};
+pub(crate) use vertex::{pack_tint, retint, unpack_tint, DYED_FLAG2};
 pub use vertex::{ChunkMesh, ContactShadowVertex, ModelVertex, TerrainVertex, Vertex, SHADES};
 
 #[cfg(test)]

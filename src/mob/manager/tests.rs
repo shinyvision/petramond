@@ -603,3 +603,66 @@ fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
     world.tick_mobs(0.05, &anchors);
     assert!(!confined(&world), "a gap in the fence frees the pen-mate");
 }
+
+/// The push pass's sweep broadphase may narrow the candidate set but must
+/// never LOSE a pair the narrow phase would have separated — a dropped pair is
+/// two mobs standing inside each other, and it would only show up in a crowd.
+#[test]
+fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
+    use crate::mathh::Vec3;
+    use crate::mob::{def, Mob};
+
+    let kinds: Vec<Mob> = crate::mob::defs().iter().map(|d| d.mob).collect();
+    let mut rng = 0x1234_5678_9abc_def0u64;
+    let mut next = || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        (rng >> 11) as f32 / (1u64 << 53) as f32
+    };
+    // A dense cluster (overlaps guaranteed) plus a scattered field.
+    let bodies: Vec<Option<super::simulation::PushBody>> = (0..160)
+        .map(|i| {
+            let kind = kinds[i % kinds.len()];
+            let size = def(kind).size;
+            let spread = if i % 3 == 0 { 3.0 } else { 40.0 };
+            let pos = Vec3::new(
+                (next() - 0.5) * spread,
+                (next() - 0.5) * 4.0,
+                (next() - 0.5) * spread,
+            );
+            Some(super::simulation::push_body_for_test(
+                pos,
+                next() * 6.28,
+                size,
+            ))
+        })
+        .collect();
+    let order: Vec<usize> = (0..bodies.len()).collect();
+    let (mut sweep, mut pairs) = (Vec::new(), Vec::new());
+    super::simulation::overlap_pairs(&bodies, &order, &mut sweep, &mut pairs);
+
+    assert!(pairs.windows(2).all(|w| w[0] < w[1]), "sorted and deduped");
+    let mut kept = 0usize;
+    for ra in 0..order.len() {
+        for rb in ra + 1..order.len() {
+            let a = bodies[order[ra]].unwrap();
+            let b = bodies[order[rb]].unwrap();
+            if super::body_separation(a.pos(), a.yaw(), a.size(), b.pos(), b.yaw(), b.size())
+                .is_some()
+            {
+                kept += 1;
+                assert!(
+                    pairs.binary_search(&(ra as u32, rb as u32)).is_ok(),
+                    "broadphase dropped overlapping pair {ra}/{rb}"
+                );
+            }
+        }
+    }
+    assert!(kept > 20, "fixture must actually produce overlaps: {kept}");
+    assert!(
+        pairs.len() < order.len() * (order.len() - 1) / 4,
+        "broadphase should reject most pairs, kept {}",
+        pairs.len()
+    );
+}

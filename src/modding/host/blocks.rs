@@ -189,6 +189,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                     combined: ctx.world.combined_light6_at_world(p.x, p.y, p.z),
                     sky: ctx.world.skylight6_at_world(p.x, p.y, p.z),
                     block: ctx.world.blocklight6_at_world(p.x, p.y, p.z),
+                    block_rgb: ctx.world.blocklight6_rgb_at_world(p.x, p.y, p.z),
                 }
             }))
         }),

@@ -502,13 +502,10 @@ fn queue_mob_sound(
     }
 }
 
-/// The two 6-bit light channels `(sky6, block6)` for dynamic geometry at a world
-/// position, so the held item, particles, and dropped items are lit by torches
-/// just like the static blocks around them (and torch light survives the night).
-pub(crate) fn light_at_pos(world: &World, pos: Vec3) -> (u8, u8) {
+/// The two 6-bit light channels `(sky6, block)` for dynamic geometry at a world
+/// position, so the held item, particles, and dropped items are lit — and
+/// coloured — by nearby emitters just like the static blocks around them.
+pub(crate) fn light_at_pos(world: &World, pos: Vec3) -> (u8, crate::light::BlockLight6) {
     let c = voxel_at(pos);
-    (
-        world.skylight6_at_world(c.x, c.y, c.z),
-        world.blocklight6_at_world(c.x, c.y, c.z),
-    )
+    world.dynamic_light_at_world(c.x, c.y, c.z)
 }

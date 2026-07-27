@@ -584,6 +584,11 @@ pub struct ShapeKindDef {
     /// per-cell gate. A plain field so the hot loop reads it without a
     /// virtual call; set from the family at intern time.
     pub resolves_to_boxes: bool,
+    /// Whether this kind's cell collision is fully determined by the block id
+    /// (see [`families::collision_is_state_free`]) — a plain field so
+    /// `World::collision_boxes_at` and the navigation probes can take the
+    /// baked per-id table instead of a virtual resolve.
+    pub collision_state_free: bool,
     /// Whether this family overrides [`ShapeSim::refine_state`] — the edit
     /// cascade's per-cell gate, a plain field so every ordinary block edit
     /// pays 7 lookups and no virtual calls when nothing shaped is nearby.
@@ -1283,6 +1288,7 @@ impl ShapeKindInterner {
             render,
             placement,
             resolves_to_boxes: families::resolves_to_boxes(family),
+            collision_state_free: families::collision_is_state_free(family),
             refines: families::refines(family, &params),
         });
         self.index.insert(key, id);
@@ -1298,6 +1304,52 @@ impl ShapeKindInterner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The per-id collision table ([`Block::static_collision_boxes`]) is only
+    /// sound while every kind flagged [`ShapeKindDef::collision_state_free`]
+    /// really answers the same boxes with and without a cell to read. A family
+    /// that grows a per-cell `collision_boxes` override must leave
+    /// `families::collision_is_state_free` — and this is what says so.
+    #[test]
+    fn collision_state_free_kinds_resolve_identically() {
+        use crate::block::Block;
+        use crate::chunk::ChunkPos;
+        use crate::world::World;
+        let mut world = World::new(0, 1);
+        world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+        // Neighbours that a state-reading family WOULD react to (a fence arm, a
+        // stair corner, a pane join), so a mis-flagged kind cannot pass by
+        // being surrounded by air.
+        world.set_block_world(8, 64, 8, Block::Stone);
+        world.set_block_world(9, 65, 8, Block::Stone);
+        world.set_block_world(8, 65, 9, Block::OakFence);
+        for &block in Block::all() {
+            let k = block.shape_kind_def();
+            let Some(baked) = block.static_collision_boxes() else {
+                assert!(
+                    !k.collision_state_free,
+                    "block id {} ({}) is flagged state-free but has no baked boxes",
+                    block.id(),
+                    k.key
+                );
+                continue;
+            };
+            for pos in [
+                crate::mathh::IVec3::new(8, 65, 8),
+                crate::mathh::IVec3::new(8, 66, 8),
+                crate::mathh::IVec3::new(3, 70, 12),
+            ] {
+                let live = k.sim.collision_boxes(&k.params, &world, pos, block);
+                assert_eq!(
+                    baked,
+                    live,
+                    "block id {} ({}) resolves per cell at {pos:?} but is flagged state-free",
+                    block.id(),
+                    k.key
+                );
+            }
+        }
+    }
 
     /// `RawShape` accepts the engine family strings, the parameterized tagged
     /// forms, and a bare NAMESPACED string as a Layer-3 custom-shape reference —

@@ -24,37 +24,6 @@ const WALL_PIVOT_Y: f32 = 3.5 / 16.0;
 /// Lean of a wall torch from vertical, in radians (22.5°, per the feature spec).
 const WALL_TILT: f32 = 22.5 * std::f32::consts::PI / 180.0;
 
-/// Warm hue that emitter (torch/furnace) block-light multiplies into a surface's
-/// tint. The cool channels sit below 1 so a lit surface reads orange-yellow; red
-/// stays full so the light only warms, never darkens. Shared by the chunk mesher
-/// (static blocks) and the render side (hand, held item, particles) so warm light
-/// looks the same everywhere.
-pub const TORCH_TINT: [f32; 3] = [1.0, 0.82, 0.52];
-/// How strongly a fully block-lit, sky-dark surface warms toward [`TORCH_TINT`]
-/// (0 = none, 1 = full). Kept modest for a "subtle yellow glow".
-pub const TORCH_WARM_STRENGTH: f32 = 0.6;
-
-/// Multiply `base` toward [`TORCH_TINT`] by `warm` (0..1): `0` leaves it unchanged,
-/// `1` fully warms it. Tints a surface yellow in proportion to torch/furnace light.
-#[inline]
-pub fn warm_tint(base: [f32; 3], warm: f32) -> [f32; 3] {
-    let w = warm.clamp(0.0, 1.0);
-    [
-        base[0] * (1.0 - w + w * TORCH_TINT[0]),
-        base[1] * (1.0 - w + w * TORCH_TINT[1]),
-        base[2] * (1.0 - w + w * TORCH_TINT[2]),
-    ]
-}
-
-/// The warm-tint amount (0..[`TORCH_WARM_STRENGTH`]) for a cell with normalized
-/// skylight `sky01` and block-light `block01` (each `0..1`): proportional to how
-/// much block-light reaches it AND to how UNlit-by-sky it is — a fully skylit cell
-/// takes no yellow. The single warmth formula shared by the mesher and render.
-#[inline]
-pub fn warm_amount(sky01: f32, block01: f32) -> f32 {
-    block01 * (1.0 - sky01) * TORCH_WARM_STRENGTH
-}
-
 crate::wire_enum::wire_enum! {
     /// How a placed torch is oriented in its cell. A `Floor` torch stands vertical and
     /// centered on the block below it; a wall torch is mounted on one side of the cell

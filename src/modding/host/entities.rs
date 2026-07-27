@@ -45,7 +45,6 @@ fn magnitude_guard(call: &str, field: &str, value: f32, max: f32) -> Result<(), 
 pub(super) fn mob_snapshot(index: usize, m: &crate::mob::Instance) -> MobSnapshot {
     MobSnapshot {
         index: index as u32,
-        key: crate::mob::def(m.kind).key.to_owned(),
         kind: mod_api::MobId(m.kind.0),
         pos: m.pos.to_array(),
         health: m.health(),
@@ -103,17 +102,17 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                     return HostRet::Error("MobsInRadius: non-finite radius".into());
                 }
                 let r2 = radius * radius;
-                HostRet::Mobs(
-                    ctx.world
-                        .mobs()
-                        .instances()
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, m)| !m.is_dead())
-                        .filter(|(_, m)| (m.pos - pos).length_squared() <= r2)
-                        .map(|(i, m)| mob_snapshot(i, m))
-                        .collect(),
-                )
+                let out = ctx
+                    .world
+                    .mobs()
+                    .instances()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| !m.is_dead())
+                    .filter(|(_, m)| (m.pos - pos).length_squared() <= r2)
+                    .map(|(i, m)| mob_snapshot(i, m))
+                    .collect();
+                HostRet::Mobs(out)
             }),
         },
         HostCall::DamageMob {
@@ -364,7 +363,9 @@ fn spawn_item_stacks(
 ) {
     let cell = crate::mathh::voxel_at(pos);
     let sky = ctx.world.skylight6_at_world(cell.x, cell.y, cell.z);
-    let block = ctx.world.blocklight6_at_world(cell.x, cell.y, cell.z);
+    let block = crate::light::BlockLight6::from_x2(
+        ctx.world.blocklight_rgb_at_world(cell.x, cell.y, cell.z),
+    );
     let mut remaining = count;
     let mut i = 0u32;
     while remaining > 0 {
@@ -413,7 +414,9 @@ pub(super) fn give_item(
             let cell = crate::mathh::voxel_at(at);
             let mut drop = DroppedItem::new(at, leftover, seed);
             drop.skylight = ctx.world.skylight6_at_world(cell.x, cell.y, cell.z);
-            drop.blocklight = ctx.world.blocklight6_at_world(cell.x, cell.y, cell.z);
+            drop.blocklight = crate::light::BlockLight6::from_x2(
+                ctx.world.blocklight_rgb_at_world(cell.x, cell.y, cell.z),
+            );
             ctx.world.spawn_item(drop);
         }
     }
@@ -444,7 +447,7 @@ mod tests {
             .section_at_world_mut_for_test(8, 64, 8)
             .expect("fixture loads the spawn section");
         section.set_skylight(vec![0; SECTION_VOLUME].into());
-        section.set_blocklight(vec![0; SECTION_VOLUME].into());
+        section.set_blocklight(vec![crate::light::LightRgb::ZERO; SECTION_VOLUME].into());
 
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
@@ -474,7 +477,7 @@ mod tests {
 
         let mob = &world.mobs().instances()[0];
         assert_eq!(mob.skylight, 0);
-        assert_eq!(mob.blocklight, 0);
+        assert_eq!(mob.blocklight, crate::light::BlockLight6::DARK);
     }
 
     #[test]

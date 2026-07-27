@@ -286,6 +286,16 @@ fn samples() -> Samples {
     s.pin("HostCall::ItemsWithData", &HostCall::ItemsWithData { key: "m:k".into() });
     s.pin("HostCall::BlockDataGet", &HostCall::BlockDataGet { block: BlockId(4), key: "m:k".into() });
     s.pin("HostCall::BlocksWithData", &HostCall::BlocksWithData { key: "m:k".into() });
+    s.pin("HostCall::ResolveUndergroundBiome", &HostCall::ResolveUndergroundBiome { key: "m:u".into() });
+    s.pin("HostCall::UndergroundBiomeAt", &HostCall::UndergroundBiomeAt {
+        positions: vec![[1, -2, 3]],
+    });
+    s.pin("HostCall::TerrainSolidAt", &HostCall::TerrainSolidAt {
+        positions: vec![[1, -2, 3]],
+    });
+    s.pin("HostCall::UndergroundBiomesInBox", &HostCall::UndergroundBiomesInBox {
+        lo: [1, -2, 3], hi: [4, 5, -6],
+    });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -294,7 +304,7 @@ fn samples() -> Samples {
     s.pin("HostRet::Bool", &HostRet::Bool(true));
     s.pin("HostRet::Block", &HostRet::Block(Some(BlockId(1))));
     s.pin("HostRet::Blocks", &HostRet::Blocks(vec![None, Some(BlockId(2))]));
-    s.pin("HostRet::Light", &HostRet::Light(Some(LightData { combined: 1, sky: 2, block: 3 })));
+    s.pin("HostRet::Light", &HostRet::Light(Some(LightData { combined: 1, sky: 2, block: 3, block_rgb: [3, 2, 1] })));
     s.pin("HostRet::Mobs", &HostRet::Mobs(vec![MobSnapshot {
         index: 1, key: "m:k".into(), kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, vel: [1.0, 0.0, 2.0],
@@ -377,6 +387,8 @@ fn samples() -> Samples {
     s.pin("HostRet::BytesMany", &HostRet::BytesMany(vec![Some(vec![1, 2]), None]));
     s.pin("HostRet::ItemDataRows", &HostRet::ItemDataRows(vec![(ItemId(3), "{}".into())]));
     s.pin("HostRet::BlockDataRows", &HostRet::BlockDataRows(vec![(BlockId(4), "{}".into())]));
+    s.pin("HostRet::UndergroundBiomes", &HostRet::UndergroundBiomes(vec![0, 2]));
+    s.pin("HostRet::TerrainSolid", &HostRet::TerrainSolid(vec![true, false]));
 
     // --- GuestCall: every variant, declaration order -------------------------
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
@@ -766,13 +778,17 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::ItemsWithData", "75036d3a6b"),
     ("HostCall::BlockDataGet", "7604036d3a6b"),
     ("HostCall::BlocksWithData", "77036d3a6b"),
+    ("HostCall::ResolveUndergroundBiome", "78036d3a75"),
+    ("HostCall::UndergroundBiomeAt", "7901020306"),
+    ("HostCall::TerrainSolidAt", "7a01020306"),
+    ("HostCall::UndergroundBiomesInBox", "7b020306080a0b"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
     ("HostRet::Bool", "0301"),
     ("HostRet::Block", "040101"),
     ("HostRet::Blocks", "0502000102"),
-    ("HostRet::Light", "0601010203"),
+    ("HostRet::Light", "0601010203030201"),
     ("HostRet::Mobs", "070101036d3a6b020000803f000000400000404000008040050000003f0000803f0000000000000040"),
     ("HostRet::Player", "080000803f00000040000040400000000000000000000000000000003f0000803e28010001010203010000c03f00000040000060c0"),
     ("HostRet::Bytes", "09010101"),
@@ -809,6 +825,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::BytesMany", "28020102010200"),
     ("HostRet::ItemDataRows", "290103027b7d"),
     ("HostRet::BlockDataRows", "2a0104027b7d"),
+    ("HostRet::UndergroundBiomes", "2b020002"),
+    ("HostRet::TerrainSolid", "2c020100"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),

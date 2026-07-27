@@ -301,7 +301,11 @@ impl ServerGame {
         }
 
         let player_positions: Vec<_> = anchors.iter().map(|a| a.pos).collect();
-        let Some(plan) = crate::mob::hostile_spawn_plan(&self.world, &player_positions) else {
+        let Some(plan) = crate::mob::hostile_spawn_plan(
+            &self.world,
+            &mut self.hostile_spawn_cache,
+            &player_positions,
+        ) else {
             return;
         };
 

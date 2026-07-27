@@ -1,0 +1,107 @@
+{
+  "emitters": [
+    {
+      "emitter": "exploration:spores_pink",
+      "particles": [
+        {
+          "anchor": "block_center",
+          "offset": [0, 0.15, 0],
+          "rate": [0.12, 0.36],
+          "lifetime": [10.0, 18.0],
+          "size": [0.056, 0.112],
+          "shrink_power": 0.3,
+          "spawn_box": [0.35, 0.3, 0.35],
+          "velocity": [0, 0.012, 0],
+          "velocity_jitter": [0.36, 0.21, 0.36],
+          "spiral": [1.0, 0.05],
+          "color": [[1.0, 0.62, 0.8], [1.0, 0.93, 0.97]],
+          "alpha": [0.45, 0.8],
+          "fade_power": 0.6,
+          "self_lit": 0.5
+        }
+      ]
+    },
+    {
+      "emitter": "exploration:spores_blue",
+      "particles": [
+        {
+          "anchor": "block_center",
+          "offset": [0, 0.15, 0],
+          "rate": [0.12, 0.36],
+          "lifetime": [10.0, 18.0],
+          "size": [0.056, 0.112],
+          "shrink_power": 0.3,
+          "spawn_box": [0.35, 0.3, 0.35],
+          "velocity": [0, 0.012, 0],
+          "velocity_jitter": [0.36, 0.21, 0.36],
+          "spiral": [1.0, 0.05],
+          "color": [[0.48, 0.7, 1.0], [0.86, 0.94, 1.0]],
+          "alpha": [0.45, 0.8],
+          "fade_power": 0.6,
+          "self_lit": 0.5
+        }
+      ]
+    },
+    {
+      "emitter": "exploration:spores_magenta",
+      "particles": [
+        {
+          "anchor": "block_center",
+          "offset": [0, 0.15, 0],
+          "rate": [0.12, 0.36],
+          "lifetime": [10.0, 18.0],
+          "size": [0.056, 0.112],
+          "shrink_power": 0.3,
+          "spawn_box": [0.35, 0.3, 0.35],
+          "velocity": [0, 0.012, 0],
+          "velocity_jitter": [0.36, 0.21, 0.36],
+          "spiral": [1.0, 0.05],
+          "color": [[0.92, 0.5, 1.0], [0.98, 0.88, 1.0]],
+          "alpha": [0.45, 0.8],
+          "fade_power": 0.6,
+          "self_lit": 0.5
+        }
+      ]
+    },
+    {
+      "emitter": "exploration:spores_purple",
+      "particles": [
+        {
+          "anchor": "block_center",
+          "offset": [0, 0.15, 0],
+          "rate": [0.12, 0.36],
+          "lifetime": [10.0, 18.0],
+          "size": [0.056, 0.112],
+          "shrink_power": 0.3,
+          "spawn_box": [0.35, 0.3, 0.35],
+          "velocity": [0, 0.012, 0],
+          "velocity_jitter": [0.36, 0.21, 0.36],
+          "spiral": [1.0, 0.05],
+          "color": [[0.66, 0.52, 1.0], [0.9, 0.88, 1.0]],
+          "alpha": [0.45, 0.8],
+          "fade_power": 0.6,
+          "self_lit": 0.5
+        }
+      ]
+    },
+    {
+      "emitter": "exploration:spore_drift",
+      "ambient": {
+        "count_per_intensity": 200,
+        "max_count": 1310,
+        "motion": "volume",
+        "radius": 16,
+        "height": [8, 10],
+        "fall_speed": [0.22, 0.5],
+        "drift_wind": 1.0,
+        "flutter": [0.55, 0.06],
+        "size": [0.02, 0.08],
+        "stretch": 1.0,
+        "alpha": [0.45, 0.9],
+        "color": [[0.82, 0.79, 0.92], [1.0, 0.96, 0.9]],
+        "kill": "interior",
+        "light": "world"
+      }
+    }
+  ]
+}

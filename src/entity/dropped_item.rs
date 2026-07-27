@@ -69,7 +69,7 @@ pub struct DroppedItem {
     /// long-lived item piles.
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    pub blocklight: u8,
+    pub blocklight: crate::light::BlockLight6,
     /// Game ticks this item has been alive (advanced once per fixed tick by the
     /// world entity step, paused while its chunk is unloaded). Gates the pickup
     /// delay and drives the despawn timer; persisted with the owning chunk so the
@@ -112,7 +112,7 @@ impl DroppedItem {
             vel,
             stack,
             skylight: 63,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
             ticks_lived: 0,
             pickup_requested: None,
             spin,
@@ -140,7 +140,7 @@ impl DroppedItem {
             vel,
             stack,
             skylight: 63,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
             ticks_lived: 0,
             pickup_requested: None,
             spin: 0.0,

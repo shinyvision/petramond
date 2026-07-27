@@ -303,6 +303,23 @@ impl World {
         )
     }
 
+    /// Whether the support at `s` presents the face shape `block`'s row
+    /// demands, `normal` pointing from the support toward the placed cell.
+    /// The support FAMILY answers the geometry (`ShapeSim::full_face`), so no
+    /// family is named here; the opaque test is the same material rule a wall
+    /// mount applies to a cube face, and is what keeps air, glass and leaves
+    /// out of the accept set.
+    fn roots_face_ok(&self, block: Block, normal: IVec3, s: IVec3, ground: Block) -> bool {
+        match block.roots_face() {
+            crate::block::RootsFace::Any => true,
+            crate::block::RootsFace::FullCube => {
+                ground.is_opaque()
+                    && crate::block::full_face_at(self, s, normal)
+                        == Some(crate::block::FullFace::Cube)
+            }
+        }
+    }
+
     /// The shared single-cell placement tail: substrate gate, replaceability,
     /// and the body-occupancy gate against `boxes`. The generic path and the
     /// torch / ladder families (which compute their own write + pre-gate)
@@ -316,11 +333,32 @@ impl World {
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> Option<PlacementPlan> {
         // Substrate gate: a block that roots in a particular ground places
-        // only when the cell directly below is a ground it accepts. Blocks
-        // with no such rule accept anything. Staying put once placed is the
-        // separate job of the FRAGILE behaviour.
-        let below = self.physics_block(p.x, p.y - 1, p.z);
-        if !block.can_root_on(below) {
+        // only when its SUPPORT cell — the one its row declares, below for a
+        // plant and above for a hanging block — holds a ground it accepts.
+        // Blocks with no such rule accept anything. Staying put once placed is
+        // the separate job of the FRAGILE behaviour, which reads the same cell.
+        let s = block.support_dir().support_cell(p);
+        let ground = self.physics_block(s.x, s.y, s.z);
+        if !block.can_root_on(ground) {
+            return None;
+        }
+        // …and the SHAPE half of the same gate: the support's face toward this
+        // cell. The direction falls out of the declared support cell, so a
+        // hanging row reads its ceiling's underside with no second rule.
+        if !self.roots_face_ok(block, p - s, s, ground) {
+            return None;
+        }
+        // A HANGING fragile row has no substrate vocabulary to gate on:
+        // `roots_on` names GROUNDS and this row's support is a ceiling, so the
+        // two rules above accept open air and the FRAGILE tick would shatter
+        // the block one tick later — eating the item. Gate it on the fragile
+        // rule itself, so placement and survival agree by construction (the
+        // ladder's rule, which the torch and ladder families already reach
+        // through their own pre-gate).
+        if block.is_fragile()
+            && block.support_dir() == crate::block::SupportDir::Above
+            && !self.fragile_supported(p, block)
+        {
             return None;
         }
         let target = Block::from_id(self.chunk_block(p.x, p.y, p.z));

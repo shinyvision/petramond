@@ -101,7 +101,6 @@ impl Renderer {
                     &self.held_item,
                     aspect,
                     self.held_item_light(),
-                    self.held_item_warm,
                     &mut hv,
                     &mut hi,
                 );
@@ -151,7 +150,6 @@ impl Renderer {
                     glam::Mat4::IDENTITY,
                     self.held_item_light(),
                     self.light_env(),
-                    self.held_item_warm,
                     None,
                     &mut tv,
                     &mut ti,
@@ -184,15 +182,6 @@ impl Renderer {
                     &mut iv,
                 );
                 crate::render::item_model::dye_item_verts(&mut iv, self.held_item.variant);
-                // Warm the extruded held sprite by the block-light at the player, to
-                // match the warm tint static blocks + the model3d hand take near a
-                // torch/furnace. (Item entities reuse this builder but aren't warmed.)
-                if self.held_item_warm > 0 {
-                    let w = self.held_item_warm as f32 / 255.0;
-                    for v in iv.iter_mut() {
-                        v.tint = crate::torch::warm_tint(v.tint, w);
-                    }
-                }
                 let cap = crate::render::pipeline::MAX_ITEM3D_VERTICES as usize;
                 if count > 0 && iv.len() <= cap {
                     self.queue
@@ -503,7 +492,6 @@ impl Renderer {
                         m,
                         light,
                         env,
-                        0,
                         None,
                         &mut model_verts,
                         &mut model_indices,
@@ -582,36 +570,20 @@ impl Renderer {
             block_v
         };
 
-        // Block-row particle emitters (torch flames and mod-content emitters): cull the
-        // emitter envelope first, then synthesize alpha-blended cubes sorted far-to-near.
-        self.particle_emitter_visible.clear();
-        let fog = self.terrain_cull_dist();
-        let fog_sq = fog * fog;
-        // Particles option "off": no looping-emitter particles at all (burst
-        // solids are silenced at their game-side spawn, the same option).
-        let emitters_enabled = self.particle_density > 0.0;
-        for inst in &self.particle_emitters {
-            if !emitters_enabled {
-                break;
-            }
-            let (min, max) = emitter_world_bounds(inst);
-            if !visible_world_aabb(min, max) {
-                continue;
-            }
-            if aabb_distance_sq(self.cam_pos, min, max) > fog_sq {
-                continue;
-            }
-            self.particle_emitter_visible.push(*inst);
-        }
-        self.particle_emitter_visible.sort_by(|a, b| {
-            let da = (a.origin - self.cam_pos).length_squared();
-            let db = (b.origin - self.cam_pos).length_squared();
+        // Particle emitters (torch flames, mod content, burning mobs). The set
+        // arrives already culled against this frame's view volume — the gather
+        // holds the same frustum and fog distance published by `update_uniforms`
+        // above — so all that is left is the far-to-near order the alpha-blended
+        // cubes are built in.
+        let cam_pos = self.cam_pos;
+        self.particle_emitters.sort_by(|a, b| {
+            let da = (a.origin - cam_pos).length_squared();
+            let db = (b.origin - cam_pos).length_squared();
             da.total_cmp(&db)
         });
-        let emitters = &self.particle_emitter_visible;
+        let emitters = &self.particle_emitters;
         let solids = &self.solid_particles;
         let time = self.visual_time;
-        let cam_pos = self.cam_pos;
         let density = self.particle_density;
         self.emitter_particle_draw.bake(
             &self.device,
@@ -631,20 +603,4 @@ impl Renderer {
             },
         );
     }
-}
-
-fn emitter_world_bounds(inst: &ParticleEmitterInstance) -> (glam::Vec3, glam::Vec3) {
-    let e = inst.emitter;
-    let max_life = e.lifetime[1].max(e.lifetime[0]);
-    let max_size = e.size[1].max(e.size[0]);
-    let velocity = glam::Vec3::from_array(e.velocity);
-    let jitter = glam::Vec3::from_array(e.velocity_jitter);
-    let travel = glam::Vec3::new(
-        velocity.x.abs() + jitter.x,
-        velocity.y.abs() + jitter.y,
-        velocity.z.abs() + jitter.z,
-    ) * max_life;
-    let spawn = glam::Vec3::from_array(e.spawn_box);
-    let extent = spawn + travel + glam::Vec3::splat(max_size + 0.05);
-    (inst.origin - extent, inst.origin + extent)
 }

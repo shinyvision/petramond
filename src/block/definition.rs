@@ -31,6 +31,10 @@ pub(super) struct BlockDef {
     /// Block-light radiated when active, on the x2 scale (`0` = non-emitter). See
     /// [`Block::light_emission`](super::Block::light_emission).
     pub emission: u8,
+    /// [`emission`](Self::emission) split per RGB channel by the row's
+    /// `light_color` hue — `[emission; 3]` for the white default. See
+    /// [`Block::light_emission_rgb`](super::Block::light_emission_rgb).
+    pub emission_rgb: [u8; 3],
     /// Optional visual-only cube particle emitter rows declared by this block row —
     /// either a referenced `particle_emitters.json` bundle's rows or one inline row.
     /// Presentation data: it never changes simulation state and is intentionally
@@ -97,6 +101,82 @@ pub(super) struct BlockDef {
     /// by whichever pack owns the carried vocabulary — the engine is a
     /// key-agnostic courier). Empty for almost every block.
     pub carry: &'static [&'static str],
+    /// Which neighbouring cell holds this block up (see [`SupportDir`]).
+    pub support: SupportDir,
+    /// Ground tags this block accepts to be PLACED on, ANY of which satisfies
+    /// it — the open-vocabulary half of the substrate gate, so a pack declares
+    /// "I grow on whatever carries my own `ns:tag`" without the engine
+    /// learning the category. Empty on almost every row; combines with the
+    /// `RootsIn*` tags by union (see [`Block::can_root_on`](super::Block::can_root_on)).
+    pub roots_on: &'static [BlockTag],
+    /// What the SUPPORT cell's face toward this block has to look like for a
+    /// placement to be allowed (see [`RootsFace`]).
+    pub roots_face: RootsFace,
+}
+
+/// Which neighbouring cell a block's SUPPORT is in: the cell that has to hold
+/// something for it to stay put, and the cell its placement substrate gate
+/// reads.
+///
+/// A row DECLARES this; nothing derives it from a family or a block id. A
+/// standing plant is held from below, a hanging block from above, and the
+/// engine never learns which rows are which.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SupportDir {
+    /// The cell BELOW — the ground a plant roots in. What every row that
+    /// declares nothing keeps.
+    #[default]
+    Below,
+    /// The cell ABOVE — the ceiling a hanging block grows down from.
+    Above,
+}
+
+/// A GEOMETRIC requirement on the face a placement rests against — the
+/// companion of the `RootsIn*` tags, which ask what the support is MADE of.
+///
+/// The two axes are independent on purpose: "grows on fertile ground" is
+/// membership and belongs in tags, "needs something whole under it" is shape
+/// and cannot be a tag at all, since one row's cell answers differently
+/// depending on the state it resolved to (a stair's top face, a fence post's).
+/// The family answers through [`ShapeSim::full_face`](super::ShapeSim), so a
+/// row that declares this learns nothing about which families exist.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RootsFace {
+    /// No shape requirement — what every row that declares nothing keeps.
+    #[default]
+    Any,
+    /// A complete face of UNSHAPED matter: the support must answer
+    /// [`FullFace::Cube`](super::FullFace) and be opaque, so planks, stone and
+    /// grass hold the block while a fence, stair, slab, glass pane — or air —
+    /// do not. Opacity is the same material rule a wall mount applies to a
+    /// cube face; without it the block would take root on glass and leaves.
+    FullCube,
+}
+
+impl RootsFace {
+    /// Whether this is the `any` every silent row carries (the loader's
+    /// round-trip skip).
+    pub(super) fn is_default(&self) -> bool {
+        *self == RootsFace::Any
+    }
+}
+
+impl SupportDir {
+    /// The support cell of a block occupying `pos`.
+    pub fn support_cell(self, pos: crate::mathh::IVec3) -> crate::mathh::IVec3 {
+        match self {
+            SupportDir::Below => pos - crate::mathh::IVec3::Y,
+            SupportDir::Above => pos + crate::mathh::IVec3::Y,
+        }
+    }
+
+    /// Whether this is the `below` every silent row carries (the loader's
+    /// round-trip skip).
+    pub(super) fn is_default(&self) -> bool {
+        *self == SupportDir::Below
+    }
 }
 
 /// A row's composited side face: `base` drawn untinted with `overlay` blended
@@ -180,9 +260,15 @@ pub struct ParticleEmitter {
     /// (red/charcoal) end shrinks into invisibility before it reads.
     #[serde(default = "default_shrink_power")]
     pub shrink_power: f32,
-    /// If true, particle colors are not dimmed by sampled world light.
+    /// How much of its brightness the particle provides ITSELF, `0..=1`. The
+    /// light sampled at the anchor is mixed toward full bright by this
+    /// fraction: `0` (the default) is an ordinary lit particle that goes black
+    /// in an unlit cave, `1` ignores world light entirely (flames, sparks), and
+    /// an intermediate value still dims with the room but bottoms out above the
+    /// cave floor — a mote that reads as faintly luminous without lying about
+    /// how lit the room is.
     #[serde(default)]
-    pub fullbright: bool,
+    pub self_lit: f32,
     /// `[radius, revolutions_per_second]` — each particle orbits the emitter's
     /// vertical axis while it rises, so a column of particles twirls upward.
     /// Both values are OUTER/NOMINAL: every particle deterministically draws its
@@ -314,7 +400,7 @@ pub(crate) enum BlockMaterial {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(super) struct BlockFlags(u16);
+pub(crate) struct BlockFlags(u16);
 
 impl BlockFlags {
     /// No material properties at all (air). Replaceability is no longer a flag —
@@ -365,7 +451,7 @@ impl BlockFlags {
     }
 
     #[inline]
-    pub const fn is_opaque(self) -> bool {
+    pub(crate) const fn is_opaque(self) -> bool {
         self.contains(BlockFlags::OPAQUE)
     }
 

@@ -8,6 +8,7 @@ mod block_deltas;
 pub(crate) mod chest;
 mod column_heightmaps;
 mod container;
+mod cursor;
 mod custom_bake;
 pub(crate) mod door;
 mod edit;
@@ -48,6 +49,7 @@ mod torch;
 mod visibility;
 pub(crate) mod water;
 
+pub(crate) use cursor::SectionCursor;
 pub(crate) use custom_bake::CustomBakeCell;
 #[cfg(test)]
 pub use entities::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
@@ -55,27 +57,14 @@ pub(crate) use shape_bake_validate::ingest_shape_boxes;
 #[cfg(test)]
 pub(crate) use stream::split_generated_column;
 
+pub use ladder::Climb;
+pub use particle_emitters::{emitter_envelope, PlacedEmitter};
 pub use query::CollisionShapeClass;
 pub(crate) use render_handoff::TerrainRenderHandoff;
 pub(crate) use store::VERTICAL_LOAD_RADIUS;
 pub(crate) use store::{LoadAnchor, WorldRole};
-pub use store::{World, RENDER_DIST};
+pub use store::{MemoryCensus, World, RENDER_DIST};
 pub(crate) use stream::StreamEvent;
-
-/// Temporary perf-session diagnostics (see `tooling::stream::stage_stats`).
-pub(crate) fn mesh_stage_stats() -> (
-    &'static std::sync::atomic::AtomicU64,
-    &'static std::sync::atomic::AtomicU64,
-) {
-    (&mesh_pool::MESH_STAGE_NS, &mesh_pool::MESH_STAGE_JOBS)
-}
-
-pub(crate) fn light_stage_stats() -> (
-    &'static std::sync::atomic::AtomicU64,
-    &'static std::sync::atomic::AtomicU64,
-) {
-    light::stage_stats()
-}
 
 #[cfg(test)]
 pub(crate) mod testutil {

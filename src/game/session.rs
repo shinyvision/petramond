@@ -429,6 +429,7 @@ fn build_server_with_pool(
 
     let has_local_session = local.is_some();
     let mut server = ServerGame {
+        hostile_spawn_cache: Default::default(),
         world,
         sessions: local.into_iter().collect(),
         has_local_session,

@@ -241,13 +241,12 @@ impl Renderer {
         self.crosshair_visible = visible;
     }
 
-    /// Store the two-channel light + warm-tint amount to apply to the first-person
-    /// hand / held item (so it brightens AND warms near torches/furnaces, and torch
+    /// Store the two-channel light to apply to the first-person hand / held item
+    /// (so it brightens AND takes the colour of nearby block light, and block
     /// light keeps it lit at night).
-    pub fn set_held_item_light(&mut self, skylight: u8, blocklight: u8, warm: u8) {
+    pub fn set_held_item_light(&mut self, skylight: u8, blocklight: crate::light::BlockLight6) {
         self.held_item_skylight = skylight.min(crate::render::lighting::FULL_SKYLIGHT);
-        self.held_item_blocklight = blocklight.min(crate::render::lighting::FULL_SKYLIGHT);
-        self.held_item_warm = warm;
+        self.held_item_blocklight = blocklight;
     }
 
     /// Store the dropped item-entities to draw this frame. Reuses the existing
@@ -354,7 +353,6 @@ impl Renderer {
         self.particles.clear();
         self.model_particles.clear();
         self.particle_emitters.clear();
-        self.particle_emitter_visible.clear();
         self.chests.clear();
         self.doors.clear();
         self.mobs.clear();
@@ -369,6 +367,14 @@ impl Renderer {
         self.player_item_draw.index_count = 0;
         self.player_model_item_draw.index_count = 0;
         self.player_block_item_draw.index_count = 0;
+    }
+
+    /// True while terrain columns are still queued for GPU upload. Uploads are
+    /// spread over frames to protect frame time, so a caller that must draw the
+    /// COMPLETE terrain in one shot pumps [`Renderer::sync_meshes`] until this
+    /// clears.
+    pub(crate) fn terrain_uploads_pending(&self) -> bool {
+        !self.terrain_upload_pending.is_empty()
     }
 
     /// Synchronize GPU meshes with the terrain CPU meshes.
@@ -442,6 +448,9 @@ impl Renderer {
         let queue = &self.queue;
         let columns = &mut self.terrain_columns;
         let upload_scratch = &mut self.terrain_upload_scratch;
+        let origins = &mut self.column_origins;
+        let arena = &mut self.geometry;
+        let quad_index = &mut self.quad_index;
         let start = std::time::Instant::now();
         let mut uploaded_columns = 0usize;
         let mut attempts = 0usize;
@@ -499,7 +508,16 @@ impl Renderer {
                     false
                 } else {
                     let prev = columns.remove(&column);
-                    let gpu = upload_column_mesh(device, queue, &meshes, prev, upload_scratch);
+                    let gpu = upload_column_mesh(
+                        device,
+                        queue,
+                        &meshes,
+                        prev,
+                        upload_scratch,
+                        origins,
+                        arena,
+                        quad_index,
+                    );
                     columns.insert(column, gpu);
                     true
                 }
@@ -522,10 +540,16 @@ impl Renderer {
             }
         }
         let terrain_columns = &self.terrain_columns;
+        // A section that lost its far mesh must lose its LOD state too: the
+        // planner only consults (and only maintains) the map for sections that
+        // still own one.
         self.far_leaf_lod_state.retain(|sp, _| {
-            terrain_columns
-                .get(&sp.chunk_pos())
-                .is_some_and(|column| column.sections.iter().any(|(pos, _)| pos == sp))
+            terrain_columns.get(&sp.chunk_pos()).is_some_and(|column| {
+                column
+                    .sections
+                    .iter()
+                    .any(|(pos, s)| pos == sp && s.far_opaque_vertex_count > 0)
+            })
         });
     }
 }

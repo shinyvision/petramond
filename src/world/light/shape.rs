@@ -97,20 +97,26 @@ impl ShapeStateSnapshot {
     /// when it has none. A stateless shaped cell (a cover, a cactus) never
     /// appears in the sparse gather at all, so this fallback — not
     /// "fully open" — is what makes its shape block light.
-    fn aperture_masks(&self, idx: usize, block: Block) -> u32 {
-        match self.apertures.as_ref().and_then(|f| f.get(idx).copied()) {
-            Some(masks) if masks != NO_ENTRY => masks,
-            _ => block.default_light_apertures(),
-        }
+    fn apertures(&self) -> Option<&[u32]> {
+        self.apertures.as_deref()
     }
 }
 
+/// The flood's view of one cube of cells: block ids plus the sparse per-cell
+/// aperture overrides, resolved through the dense [`crate::block::light_cells`]
+/// table.
+///
+/// The flood relaxes tens of millions of edges per world load, so a cell's
+/// light word must cost ONE 1 KB-table read — never a registry `BlockDef`
+/// load and a virtual `ShapeSim::light_apertures` call, which is what asking
+/// `Block::light_shape` per edge used to pay.
 #[derive(Copy, Clone)]
 pub(super) struct LightCells<'a> {
     blocks: &'a [u8],
-    states: &'a ShapeStateSnapshot,
-    /// Cube side length in cells (48 per-section, 64 for a 2×2×2 batch).
-    dim: usize,
+    /// Per-cell aperture overrides, `NO_ENTRY` where the block's own answer
+    /// stands. Present only when the gather found a stateful shaped cell.
+    apertures: Option<&'a [u32]>,
+    cells: &'static [u32; 256],
 }
 
 impl<'a> LightCells<'a> {
@@ -118,42 +124,22 @@ impl<'a> LightCells<'a> {
         debug_assert_eq!(blocks.len(), dim * dim * dim);
         Self {
             blocks,
-            states,
-            dim,
+            apertures: states.apertures(),
+            cells: crate::block::light_cells(),
         }
     }
 
+    /// The cell's packed six-face aperture word (low 24 bits) plus the
+    /// [`crate::block::LIGHT_CELL_DIRECT_SKY`] flag.
     #[inline]
-    fn idx(self, x: usize, y: usize, z: usize) -> usize {
-        (y * self.dim + z) * self.dim + x
-    }
-
-    pub(super) fn can_cross(
-        self,
-        from: (usize, usize, usize),
-        to: (usize, usize, usize),
-        dir: (i32, i32, i32),
-    ) -> bool {
-        let fi = self.idx(from.0, from.1, from.2);
-        let ti = self.idx(to.0, to.1, to.2);
-        let from_mask = self.side_aperture(fi, dir);
-        let to_mask = self.side_aperture(ti, (-dir.0, -dir.1, -dir.2));
-        from_mask & to_mask != 0
-    }
-
-    pub(super) fn transmits_direct_skylight(self, at: (usize, usize, usize)) -> bool {
-        Block::from_id(self.blocks[self.idx(at.0, at.1, at.2)]).transmits_direct_skylight()
-    }
-
-    fn side_aperture(self, idx: usize, dir: (i32, i32, i32)) -> u8 {
-        let block = Block::from_id(self.blocks[idx]);
-        match block.light_shape() {
-            BlockLightShape::OpaqueCube => 0,
-            BlockLightShape::Open => 0b1111,
-            // The family answered at gather time; here it's a bit read.
-            BlockLightShape::Shaped => {
-                crate::block::light_aperture_face(self.states.aperture_masks(idx, block), dir)
-            }
+    pub(super) fn word(self, idx: usize) -> u32 {
+        let w = self.cells[self.blocks[idx] as usize];
+        if w & crate::block::LIGHT_CELL_SHAPED == 0 {
+            return w;
+        }
+        match self.apertures {
+            Some(a) if a[idx] != NO_ENTRY => a[idx] | (w & crate::block::LIGHT_CELL_DIRECT_SKY),
+            _ => w,
         }
     }
 }

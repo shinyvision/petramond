@@ -547,7 +547,8 @@ mod tests {
         };
         let visible = open_history_visible_lines();
         let first_y = open_history_first_line_y(panel, visible);
-        let last_y = first_y + visible.saturating_sub(1) as i32 * petramond_ui::text::line_advance();
+        let last_y =
+            first_y + visible.saturating_sub(1) as i32 * petramond_ui::text::line_advance();
 
         assert!(first_y >= panel.y + PAD);
         assert!(last_y + petramond_ui::text::line_h() <= panel.y + panel.h - PAD);

@@ -1,0 +1,264 @@
+{
+  "items": [
+    {
+      "item": "exploration:mushroom_stem",
+      "key": "exploration:mushroom_stem",
+      "name": "Mushroom Stem",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:mushroom_stem"
+    },
+    {
+      "item": "exploration:glowcap_pink",
+      "key": "exploration:glowcap_pink",
+      "name": "Glowcap Pink",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:glowcap_pink"
+    },
+    {
+      "item": "exploration:glowcap_blue",
+      "key": "exploration:glowcap_blue",
+      "name": "Glowcap Blue",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:glowcap_blue"
+    },
+    {
+      "item": "exploration:glowcap_magenta",
+      "key": "exploration:glowcap_magenta",
+      "name": "Glowcap Magenta",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:glowcap_magenta"
+    },
+    {
+      "item": "exploration:glowcap_purple",
+      "key": "exploration:glowcap_purple",
+      "name": "Glowcap Purple",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:glowcap_purple"
+    },
+    {
+      "item": "exploration:cave_moss",
+      "key": "exploration:cave_moss",
+      "name": "Cave Moss",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:cave_moss"
+    },
+    {
+      "item": "exploration:cave_flower_pink",
+      "key": "exploration:cave_flower_pink",
+      "name": "Cave Flower Pink",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:cave_flower_pink"
+    },
+    {
+      "item": "exploration:cave_flower_blue",
+      "key": "exploration:cave_flower_blue",
+      "name": "Cave Flower Blue",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:cave_flower_blue"
+    },
+    {
+      "item": "exploration:cave_flower_magenta",
+      "key": "exploration:cave_flower_magenta",
+      "name": "Cave Flower Magenta",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:cave_flower_magenta"
+    },
+    {
+      "item": "exploration:cave_flower_purple",
+      "key": "exploration:cave_flower_purple",
+      "name": "Cave Flower Purple",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:cave_flower_purple"
+    },
+    {
+      "item": "exploration:sporeshroom_pink",
+      "key": "exploration:sporeshroom_pink",
+      "name": "Sporeshroom Pink",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:sporeshroom_pink"
+    },
+    {
+      "item": "exploration:sporeshroom_blue",
+      "key": "exploration:sporeshroom_blue",
+      "name": "Sporeshroom Blue",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:sporeshroom_blue"
+    },
+    {
+      "item": "exploration:sporeshroom_magenta",
+      "key": "exploration:sporeshroom_magenta",
+      "name": "Sporeshroom Magenta",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:sporeshroom_magenta"
+    },
+    {
+      "item": "exploration:sporeshroom_purple",
+      "key": "exploration:sporeshroom_purple",
+      "name": "Sporeshroom Purple",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:sporeshroom_purple"
+    },
+    {
+      "item": "exploration:cave_silt",
+      "key": "exploration:cave_silt",
+      "name": "Cave Silt",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:cave_silt"
+    },
+    {
+      "item": "exploration:hanging_vine",
+      "key": "exploration:hanging_vine",
+      "name": "Hanging Vine",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:hanging_vine"
+    },
+    {
+      "item": "exploration:glow_vine_blue",
+      "key": "exploration:glow_vine_blue",
+      "name": "Glow Vine Blue",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:glow_vine_blue"
+    },
+    {
+      "item": "exploration:glow_vine_magenta",
+      "key": "exploration:glow_vine_magenta",
+      "name": "Glow Vine Magenta",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:glow_vine_magenta"
+    },
+    {
+      "item": "exploration:glow_vine_pink",
+      "key": "exploration:glow_vine_pink",
+      "name": "Glow Vine Pink",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:glow_vine_pink"
+    },
+    {
+      "item": "exploration:glow_vine_purple",
+      "key": "exploration:glow_vine_purple",
+      "name": "Glow Vine Purple",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:glow_vine_purple"
+    }
+  ]
+}

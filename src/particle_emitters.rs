@@ -144,6 +144,26 @@ pub struct AmbientSpec {
     /// (`{"burst": "ns:key"}` — resolved and shape-checked at load).
     #[serde(default)]
     pub hit: AmbientHit,
+    /// How a particle MOVES, and therefore what its position is anchored to.
+    /// `"precipitation"` (default) falls through the band from the camera's
+    /// own ceiling; `"volume"` is a world-anchored drifting body of motes.
+    #[serde(default)]
+    pub motion: AmbientMotion,
+    /// Where a particle STOPS. `"ceiling"` (default) is precipitation: each
+    /// column kills at its topmost movement-blocking or water cell, so
+    /// nothing falls under a roof. `"interior"` is what a volume that lives
+    /// INDOORS (drifting motes, dust, ash) needs instead — no column
+    /// ceiling, and a particle is dropped where it would sit inside a wall.
+    #[serde(default)]
+    pub kill: AmbientKill,
+    /// Where a particle's light comes from. `"sky"` (default) is
+    /// precipitation: sky-open by construction, so full skylight and the
+    /// ordinary sky lanes dim it at night. `"world"` samples the real
+    /// skylight + coloured block light at each particle, which is what any
+    /// volume that can sit in the dark needs — motes go black in an unlit
+    /// pocket and light up next to a lamp.
+    #[serde(default)]
+    pub light: AmbientLight,
     /// Column-biome filter (at most one of the two, names from the stable
     /// biome vocabulary): particles derive only over columns whose biome is
     /// in `biomes` (or NOT in `exclude_biomes`). How rain and snow draw an
@@ -184,6 +204,54 @@ pub enum AmbientHit {
     Die,
     /// Show a stateless splash derived from this BURST bundle's data.
     Burst(String),
+}
+
+/// How an ambient volume's particles are anchored and move.
+///
+/// The two kinds differ in ONE thing: which axes are world-anchored. Both
+/// wrap the world-anchored axes into the camera's box, so the body follows
+/// the player without dragging its contents along.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AmbientMotion {
+    /// A FALL: X and Z are world-anchored, Y is the camera-relative band the
+    /// particle sweeps top-to-bottom before recycling. A raindrop's height is
+    /// already meaningful (it starts over the camera and dies on the ground),
+    /// so it needs no vertical anchor.
+    #[default]
+    Precipitation,
+    /// A BODY of drifting motes: all three axes are world-anchored, and Y
+    /// wraps into the `height` band exactly as X/Z wrap into `radius`. Without
+    /// this the band re-centres on the camera every frame and the whole field
+    /// rides the player's jump.
+    Volume,
+}
+
+/// Where an ambient volume's particles stop.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AmbientKill {
+    /// At the column's precipitation ceiling (topmost movement-blocking or
+    /// water cell) — falls on roofs and lakes, never under them.
+    #[default]
+    Ceiling,
+    /// No column ceiling at all; a particle is dropped only where the cell it
+    /// occupies blocks movement. The interior twin of the ceiling rule: every
+    /// enclosed space in the world sits UNDER some column's ceiling, so a
+    /// precipitation volume can never show indoors however it is tuned, and
+    /// what an indoor volume actually needs is "not inside the wall".
+    Interior,
+}
+
+/// Where an ambient volume's particles take their light.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AmbientLight {
+    /// Full skylight — correct for anything that only exists under open sky.
+    #[default]
+    Sky,
+    /// The world's own sampled skylight + coloured block light.
+    World,
 }
 
 /// One bundle row as written in `particle_emitters.json`: exactly one of
@@ -400,6 +468,18 @@ fn validate_ambient(key: &str, a: &AmbientSpec) -> Result<(), String> {
     }
     if !a.color_bias.is_finite() || !(0.25..=8.0).contains(&a.color_bias) {
         return err("color_bias must be in 0.25..=8");
+    }
+    // A splash is derived AT the kill height; an interior volume has no
+    // impact plane to derive it at, so the pair is a load error rather than a
+    // silently ignored field.
+    if a.kill == AmbientKill::Interior && a.hit != AmbientHit::Die {
+        return err("kill 'interior' has no impact point, so hit must be 'die'");
+    }
+    // A splash is solved from the fall's cycle — when the drop crossed the
+    // column's kill height. A world-anchored volume has no fall to solve, so
+    // the pair is a load error rather than a silently wrong crown.
+    if a.motion == AmbientMotion::Volume && a.hit != AmbientHit::Die {
+        return err("motion 'volume' does not fall onto anything, so hit must be 'die'");
     }
     Ok(())
 }
@@ -680,6 +760,11 @@ mod tests {
                 "a hit bundle that is not a burst",
             ),
             (ambient(r#""die""#, "200"), "an out-of-range radius"),
+            (
+                ambient(r#"{"burst": "petramond:water_splash"}"#, "24")
+                    .replace(r#""radius": 24"#, r#""radius": 24, "kill": "interior""#),
+                "a splash with no impact point (kill 'interior')",
+            ),
             (
                 r#"{"emitters": [{"emitter": "mymod:rainfall",
                     "ambient": {"count_per_intensity": 600, "max_count": 1500,

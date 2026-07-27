@@ -767,7 +767,7 @@ mod tests {
     fn manifest_loads_and_engine_tiles_resolve() {
         // Forces the LazyLock: a bad manifest/texture set panics right here.
         let d = data();
-        assert!(d.count > 0 && d.count <= 256);
+        assert!(d.count > 0 && d.count <= crate::mesh::MAX_TILES);
         assert_eq!(
             d.rgba.len(),
             (d.cols * TILE * 2 * d.rows * TILE * 4) as usize

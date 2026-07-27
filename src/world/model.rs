@@ -47,6 +47,12 @@ impl World {
         // fall to the row's position-less boxes). Adding a shape adds a facet
         // impl, not an arm here — see `block::shape_kind`.
         let block = self.physics_block(wx, wy, wz);
+        // Plain terrain (cube, plant, crop, torch) collides as its block id
+        // alone says, so it answers from the dense per-id table without a
+        // shape lookup or a virtual resolve.
+        if let Some(boxes) = block.static_collision_boxes() {
+            return boxes;
+        }
         let k = block.shape_kind_def();
         k.sim
             .collision_boxes(&k.params, self, IVec3::new(wx, wy, wz), block)

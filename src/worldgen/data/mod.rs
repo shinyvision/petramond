@@ -4,3 +4,4 @@
 //! `worldgen::biome`.
 
 pub mod features;
+pub mod underground;

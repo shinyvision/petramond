@@ -3,23 +3,68 @@
 //! The game/runtime modules stay crate-internal; binaries under `src/bin` are
 //! separate crates, so they use this narrow surface.
 
-// TEMPORARY (perf session scratch, do not commit): re-exposes the live `World`
-// for the out-of-tree streaming profiler while there is an active measurement
-// question. Remove together with src/bin/streamprofile.rs.
+/// The live `World`, for dev tools that must observe or drive real streaming
+/// rather than a re-derivation of it — generation/light/mesh pumping, the
+/// resident-memory census, and deterministic ticking.
 pub mod stream {
-    pub use crate::world::World;
+    pub use crate::world::{MemoryCensus, World};
 
-    /// (mesh ns, mesh jobs, light ns, light jobs) — temporary perf-session diagnostics.
-    pub fn stage_stats() -> (u64, u64, u64, u64) {
-        use std::sync::atomic::Ordering::Relaxed;
-        let (mesh_ns, mesh_jobs) = crate::world::mesh_stage_stats();
-        let (light_ns, light_jobs) = crate::world::light_stage_stats();
-        (
-            mesh_ns.load(Relaxed),
-            mesh_jobs.load(Relaxed),
-            light_ns.load(Relaxed),
-            light_jobs.load(Relaxed),
-        )
+    /// Run `n` deterministic game ticks over a streamed world.
+    ///
+    /// A containment audit has no other honest way to ask "does this water
+    /// move": the fluid sim only ever acts on the tick, and re-deriving its
+    /// spread rules in a tool would just be a mirror that can go stale.
+    pub fn tick(world: &mut World, n: u32) {
+        let recipes = crate::crafting::Recipes::default();
+        for _ in 0..n {
+            world.game_tick(&recipes);
+        }
+    }
+}
+
+pub mod scene;
+
+/// Loading the installed mod packs so a dev tool generates the SAME world the
+/// game does.
+///
+/// Mod worldgen hooks are installed by `ModHost::initialize`, whose only other
+/// caller is the game session. Without this a headless tool silently generates
+/// a world with every pack's DATA applied but none of its worldgen CODE run —
+/// which looks convincing and is wrong, the worst failure mode a preview tool
+/// can have.
+pub mod mods {
+    /// A loaded mod set with its worldgen hooks installed process-wide.
+    ///
+    /// Hold it for as long as you generate: dropping it releases the mod
+    /// instances the installed hooks borrow.
+    pub struct WorldgenMods {
+        _host: crate::modding::ModHost,
+    }
+
+    /// Load every enabled pack's wasm for `seed` and install its worldgen
+    /// hooks.
+    ///
+    /// The init call wants a full simulation context, so this builds a
+    /// THROWAWAY one — a scratch world, a player at the origin, an empty GUI
+    /// map and bus. Only registrations survive the call; the scratch state is
+    /// dropped immediately.
+    pub fn load(seed: u32) -> WorldgenMods {
+        let mut host = crate::modding::ModHost::load(seed, &Default::default());
+        let mut world = crate::world::World::new(seed, 4);
+        let mut player = crate::player::Player::new(glam::Vec3::new(0.0, 80.0, 0.0));
+        let mut gui = crate::gui::empty_gui_state();
+        let mut bus = crate::events::EventBus::default();
+        let mut systems = crate::events::TickSystems::default();
+        let mut sound = 1u64;
+        host.initialize(
+            &mut world,
+            &mut player,
+            &mut gui,
+            &mut bus,
+            &mut systems,
+            &mut sound,
+        );
+        WorldgenMods { _host: host }
     }
 }
 
@@ -29,6 +74,18 @@ pub mod biome {
 
 pub mod block {
     pub use crate::block::Block;
+
+    /// Runtime id of a namespaced block row key (`"petramond:torch"`), or
+    /// `None` when no loaded catalog layer declares it. Ids shift as packs
+    /// change, so tools must resolve by name rather than hardcode numbers.
+    pub fn id_by_name(name: &str) -> Option<u8> {
+        crate::registry::names().blocks.id(name)
+    }
+
+    /// The row key a runtime block id came from.
+    pub fn name_of(id: u8) -> Option<&'static str> {
+        crate::registry::names().blocks.name(id)
+    }
 }
 
 // Tile colour data, re-exported so dev tools (genmap) can derive block map
@@ -54,6 +111,30 @@ pub mod worldgen {
 
     pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
         crate::worldgen::generate_chunk(seed, cx, cz)
+    }
+
+    /// The underground biome owning each position — the SAME answer the
+    /// carver's lining and caliber read. A per-biome census needs it: judging
+    /// "did this row line every floor in its territory" by proximity to the
+    /// row's own lining block silently counts the neighbouring biome's rim as
+    /// a miss.
+    pub fn underground_biome_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u8> {
+        crate::worldgen::underground_biomes_at(seed, positions)
+    }
+
+    /// The underground-biome id registered under `name`.
+    pub fn underground_biome_id(name: &str) -> Option<u8> {
+        crate::worldgen::data::underground::id_by_name(name)
+    }
+
+    /// Whether the generated terrain is solid at each position — the same
+    /// answer a mod's `terrain_solid_at` gets. A pack that mixes this with the
+    /// section snapshot (positional for a neighbour in the next section,
+    /// `GenCtx::block` for its own cells) is only sound where the two coincide,
+    /// and that is a property of the INSTALLED set, not of bare terrain, so it
+    /// wants an instrument outside the engine's own parity test.
+    pub fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
+        crate::worldgen::terrain_solid_at(seed, positions)
     }
 
     // Cubic per-section generation, re-exported so dev tools (genmap's deep

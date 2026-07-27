@@ -271,11 +271,10 @@ fn append_emitter_particles(
     .round() as usize;
     let active = active.min(MAX_ACTIVE_PER_EMITTER);
     let latest = ((time - schedule.phase) / schedule.base_gap).floor() as i64 + 2;
-    let light = if e.fullbright {
-        [1.0, 1.0, 1.0]
-    } else {
-        lighting::light_rgb(DynLight::new(inst.skylight, inst.blocklight), env)
-    };
+    let light = lighting::fold_self_lit(
+        lighting::light_rgb(DynLight::new(inst.skylight, inst.blocklight), env),
+        e.self_lit,
+    );
     for back in 0..active {
         if out.len() >= MAX_PARTICLE_CUBES {
             break;

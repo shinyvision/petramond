@@ -67,6 +67,10 @@ pub struct Mobs {
     push_velocity_scratch: Vec<Vec3>,
     /// Push participants in stable-id order.
     push_order_scratch: Vec<usize>,
+    /// Broadphase scratch for [`super::simulation`]'s push pass: the
+    /// x-sorted sweep list and the candidate pairs it yields.
+    push_sweep_scratch: Vec<(f32, u32)>,
+    push_pair_scratch: Vec<(u32, u32)>,
     /// Whether an instance actually ran this tick (frozen instances do not).
     ticked_scratch: Vec<bool>,
     /// Pre-integration ground state and post-healing peer-motion start for
@@ -124,6 +128,8 @@ impl Mobs {
             push_scratch: Vec::new(),
             push_velocity_scratch: Vec::new(),
             push_order_scratch: Vec::new(),
+            push_sweep_scratch: Vec::new(),
+            push_pair_scratch: Vec::new(),
             ticked_scratch: Vec::new(),
             motion_finish_scratch: Vec::new(),
             solid_motion_scratch: Vec::new(),

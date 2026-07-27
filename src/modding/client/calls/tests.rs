@@ -120,6 +120,44 @@ fn weather_era_server_calls_stay_server_side() {
     }
 }
 
+/// `underground_biome_at` is a pure `(world seed, position)` partition, so a
+/// presentation mod may ask which cave biome the camera is in and must get
+/// the SERVER's answer — that is what lets a client mod drive an ambient
+/// volume over an underground biome. Its sibling `terrain_solid_at` runs the
+/// carve per position and stays server-side.
+#[test]
+fn the_underground_biome_partition_answers_on_a_client_instance() {
+    let mut client = client_data("underground-biome");
+    let mut server = ModStoreData::new("weathertest", 7);
+    let positions = vec![[0, -40, 0], [400, -30, -400], [-90, -20, 610]];
+    let ask = |data: &mut ModStoreData| match handle_host_call(
+        data,
+        HostCall::UndergroundBiomeAt {
+            positions: positions.clone(),
+        },
+    ) {
+        HostRet::UndergroundBiomes(v) => v,
+        other => panic!("expected the biome ids, got {other:?}"),
+    };
+    assert_eq!(
+        ask(&mut client),
+        ask(&mut server),
+        "the client must see the same partition the carver did"
+    );
+    assert!(
+        matches!(
+            handle_host_call(
+                &mut client,
+                HostCall::TerrainSolidAt {
+                    positions: positions.clone()
+                }
+            ),
+            HostRet::Error(_)
+        ),
+        "the carve query stays server-side"
+    );
+}
+
 #[test]
 fn client_instances_are_capability_isolated_and_namespace_their_state() {
     let mut data = ModStoreData::new_for_side(

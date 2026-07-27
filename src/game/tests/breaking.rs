@@ -12,7 +12,7 @@ fn stone_pickaxe_harvests_iron_as_raw_iron() {
     game.server.spawn_drops(
         IVec3::new(0, 64, 0),
         Block::IronOre,
-        (15, 0),
+        (15, crate::light::BlockLight6::DARK),
         crate::item::VariantId::NONE,
     );
     assert_eq!(game.server.world.item_entities().len(), 1);
@@ -28,7 +28,7 @@ fn copper_ore_drops_two_to_four_raw_copper() {
     game.server.spawn_drops(
         IVec3::new(1, 64, 1),
         Block::CopperOre,
-        (15, 0),
+        (15, crate::light::BlockLight6::DARK),
         crate::item::VariantId::NONE,
     );
     let drops = game.server.world.item_entities();

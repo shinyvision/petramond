@@ -7,13 +7,27 @@ use super::*;
 /// ladder's face.
 mod ladder_fixture {
     use crate::facing::Facing;
+    use crate::world::Climb;
 
     pub fn solid(x: i32, y: i32, _z: i32) -> bool {
         y < 64 || (x >= 2 && (64..=70).contains(&y))
     }
 
-    pub fn ladder(x: i32, y: i32, _z: i32) -> Option<Facing> {
-        (x == 1 && (64..=70).contains(&y)).then_some(Facing::West)
+    pub fn ladder(x: i32, y: i32, _z: i32) -> Option<Climb> {
+        (x == 1 && (64..=70).contains(&y)).then_some(Climb::Panel(Facing::West))
+    }
+
+    /// A FREE-hanging climbable — a vine curtain, which declares no
+    /// `panel_facing` and so offers no wall to press into. Unlike the ladder
+    /// fixture this fills every column over the floor, so walking cannot carry
+    /// the body out of the climbable cells and confound the test.
+    pub fn vine(_x: i32, y: i32, _z: i32) -> Option<Climb> {
+        (64..=70).contains(&y).then_some(Climb::Free)
+    }
+
+    /// Bare ground, no wall — the vine hangs in open air.
+    pub fn ground(_x: i32, y: i32, _z: i32) -> bool {
+        y < 64
     }
 }
 
@@ -143,4 +157,42 @@ fn a_ladder_catches_a_fall_and_lowers_it_gently() {
         pl.take_fall_distance() < 1.0,
         "a ladder breaks the fall like water"
     );
+}
+
+/// A FREE-hanging climbable (a vine curtain) has no wall behind it, so the jump
+/// button is its only ascent. The trap this pins: `Block::panel_facing` defaults
+/// to North on rows that declare none, so routing the grip through it would
+/// silently make walking one arbitrary compass direction climb a vine — which is
+/// why the no-jump half pushes all four ways.
+#[test]
+fn a_free_hanging_climbable_ascends_on_jump_and_on_no_other_input() {
+    use ladder_fixture::{ground, vine};
+    let run = |wishdir: Vec3, jump: bool| {
+        let input = Input {
+            wishdir,
+            jump,
+            sprint: false,
+            sneak: false,
+        };
+        let mut pl = p(Vec3::new(1.5, 65.0, 0.5));
+        for _ in 0..120 {
+            pl.update_core_climb(1.0 / 60.0, &ground, &dry, &vine, input);
+        }
+        pl.pos.y
+    };
+
+    let jumped = run(Vec3::ZERO, true);
+    assert!(jumped > 66.0, "holding jump climbs a vine: y={jumped}");
+    let hung = run(Vec3::ZERO, false);
+    assert!(
+        (64.0..65.0).contains(&hung),
+        "letting go slides down the vine at climb speed rather than falling: y={hung}"
+    );
+
+    for d in [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z] {
+        let walked = run(d, false);
+        assert!(walked < 65.0, "pushing {d:?} must not climb a vine: y={walked}");
+        let both = run(d, true);
+        assert!(both > 66.0, "walking while holding jump still climbs: y={both}");
+    }
 }

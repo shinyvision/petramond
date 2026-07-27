@@ -35,7 +35,7 @@ pub(crate) mod body_pose;
 mod client_mods;
 mod client_presentation;
 pub(crate) mod container;
-mod environment;
+pub(crate) mod environment;
 mod frame;
 mod local_player;
 mod menu_prediction;
@@ -433,8 +433,9 @@ impl Game {
     }
 
     /// Apply the particles graphics option to the client-local fleck system
-    /// (mining dust, break/splash bursts). Presentation-only; looping-emitter
-    /// particles are the renderer's half of the same option.
+    /// (mining dust, break/splash bursts). Presentation-only; the same scale
+    /// gates the looping-emitter gather and thins each emitter's active
+    /// particle window in the renderer.
     pub fn set_particles_mode(&mut self, mode: crate::save::client::ParticlesMode) {
         self.particles.set_count_scale(mode.density());
     }

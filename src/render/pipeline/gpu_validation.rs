@@ -41,37 +41,43 @@ fn packed_vertex_pipeline_validates() {
     // a filtering sampler, and a uniform buffer sized to `Uniforms`. The
     // factory never samples or reads these in this test — it only builds bind
     // groups + pipelines — so 1x1 placeholders are sufficient to validate.
-    let tex = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("test atlas"),
-        size: wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
+    let tex = crate::render::gpu_mem::create_texture(
+        &device,
+        &wgpu::TextureDescriptor {
+            label: Some("test atlas"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
         },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
+    );
     let atlas_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
     // A 1-layer D2Array view for the terrain pipeline's tile-array bind (matches the
     // real `D2Array` BGL). A D2 texture with one layer views fine as D2Array.
-    let array_tex = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("test atlas array"),
-        size: wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
+    let array_tex = crate::render::gpu_mem::create_texture(
+        &device,
+        &wgpu::TextureDescriptor {
+            label: Some("test atlas array"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
         },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
+    );
     let array_view = array_tex.create_view(&wgpu::TextureViewDescriptor {
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
@@ -113,9 +119,9 @@ fn packed_vertex_pipeline_validates() {
 
     let err = pollster::block_on(device.pop_error_scope());
     assert!(err.is_none(), "real-pipeline validation error: {err:?}");
-    // Confirm the assumption baked into the packing: tile ids fit in 8 bits
-    // (also enforced by the atlas loader at composition time).
-    assert!(Tile::count() <= 256);
+    // Confirm the assumption baked into the packing: tile ids fit the packed
+    // word's tile field (also enforced by the atlas loader at composition time).
+    assert!(Tile::count() <= crate::mesh::MAX_TILES);
     // Stride sanity: the compressed block vertex is exactly 24 bytes
     // (unorm8 tint + two packed u32 words).
     assert_eq!(std::mem::size_of::<Vertex>(), 24);
@@ -126,4 +132,7 @@ fn packed_vertex_pipeline_validates() {
         std::mem::size_of::<crate::render::item_model::ItemVertex>(),
         36
     );
+    // world-model vertex stride must match ITS declared attribute layout
+    // (pos f32x3 @0, uv f32x2 @12, shade f32 @20, light f32x4 @24 = 40 bytes).
+    assert_eq!(std::mem::size_of::<crate::mesh::ModelVertex>(), 40);
 }

@@ -16,7 +16,7 @@ fn spawn_drops_dirt_yields_one_drop() {
     game.server.spawn_drops(
         IVec3::new(2, 3, 4),
         Block::Dirt,
-        (17, 0),
+        (17, crate::light::BlockLight6::DARK),
         crate::item::VariantId::NONE,
     );
     assert_eq!(game.server.world.item_entities().len(), 1);

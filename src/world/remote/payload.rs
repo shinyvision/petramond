@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
 use crate::net::protocol::{
-    ColumnPayload, LightPayload, SectionBytes, SectionPayload, SectionStatesPayload,
+    ColumnPayload, LightPayload, SectionBytes, SectionLight, SectionPayload, SectionStatesPayload,
 };
 use crate::section::Section;
 use crate::world::store::World;
@@ -33,7 +33,7 @@ impl Section {
             metrics: self.stream_metrics(),
             water: self.water_arc().map(SectionBytes),
             skylight: self.skylight_arc().map(SectionBytes),
-            blocklight: self.blocklight_arc().map(SectionBytes),
+            blocklight: self.blocklight_arc().map(SectionLight),
             states: SectionStatesPayload {
                 cell_states: sorted_entries(self.cell_states(), |&s| s),
                 cell_kv,
@@ -105,7 +105,7 @@ impl World {
         Some(LightPayload {
             pos,
             skylight: SectionBytes(s.skylight_arc()?),
-            blocklight: s.blocklight_arc().map(SectionBytes),
+            blocklight: s.blocklight_arc().map(SectionLight),
         })
     }
 }

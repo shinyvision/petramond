@@ -59,13 +59,15 @@ const UV_MODE_CELL_LOCAL: u32 = 3u;
 
 struct VsIn {
     @location(0) pos:  vec3<f32>,
-    @location(1) tint: vec3<f32>,
-    // bits 0..8 = tile id, 8..10 = corner, 10..12 = shade index,
-    // 12..20 = overlay tile, 20 = has-overlay, 21..23 = AO, 23..29 = SKYlight,
-    // 29..32 = UV mode.
+    // rgb = albedo tint; a = the block light's chroma low byte (block_light_rgb).
+    @location(1) tint: vec4<f32>,
+    // bits 0..11 = tile id, 11..13 = corner, 13..15 = shade index, 15..17 = AO,
+    // 17..23 = SKYlight, 23..26 = UV mode, 26 = has-overlay,
+    // 27..31 = block-light chroma high nibble, 31 = free.
     @location(2) packed: u32,
-    // Second packed word: bits 0..6 = block (torch) light, 6..16 = cell-local uv
-    // (CELL_LOCAL mode only), rest reserved (zero).
+    // Second packed word: bits 0..6 = block light RED, 6..16 = cell-local uv
+    // (CELL_LOCAL mode only), 16..19 = face normal code, 19 = dyed flag,
+    // 20..31 = overlay payload (tile id / greedy span), 31 = free.
     @location(3) packed2: u32,
 };
 
@@ -74,7 +76,7 @@ struct VsIn {
 struct VsInTerrain {
     // xyz = fixed-point pos; w = padding (wgpu has no i16x3 vertex format).
     @location(0) pos_q: vec4<i32>,
-    @location(1) tint: vec3<f32>,
+    @location(1) tint: vec4<f32>,
     @location(2) packed: u32,
     @location(3) packed2: u32,
     @location(4) col_origin: vec4<f32>,
@@ -144,7 +146,21 @@ fn cell_local_uv(packed2: u32) -> vec2<f32> {
     ) / 16.0;
 }
 
-fn vs_common(pos: vec3<f32>, tint: vec3<f32>, packed: u32, packed2: u32) -> VsOut {
+// The vertex's BLOCK light, per channel in 0..1. RED rides packed2 bits 0..6;
+// GREEN and BLUE ride a 12-bit chroma word split 8 + 4 between the tint's alpha
+// lane and packed bits 27..31, each stored XOR the red channel — so colourless
+// light writes no chroma bits at all and a white-lit vertex is bit-identical to
+// the pre-colour engine's. Hand-mirrored from `mesh::vertex::BlockLight6`; the
+// lane audit in `mesh::vertex` fails if the two drift.
+fn block_light_rgb(packed: u32, packed2: u32, chroma_lo: f32) -> vec3<f32> {
+    let r = packed2 & 0x3Fu;
+    let chroma = u32(round(chroma_lo * 255.0)) | (((packed >> 27u) & 0xFu) << 8u);
+    let g = (chroma & 0x3Fu) ^ r;
+    let b = ((chroma >> 6u) & 0x3Fu) ^ r;
+    return vec3<f32>(f32(r), f32(g), f32(b)) / 63.0;
+}
+
+fn vs_common(pos: vec3<f32>, tint: vec4<f32>, packed: u32, packed2: u32) -> VsOut {
     var out: VsOut;
     let local_pos = pos - u.render_origin.xyz;
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
@@ -251,20 +267,24 @@ fn vs_common(pos: vec3<f32>, tint: vec3<f32>, packed: u32, packed2: u32) -> VsOu
     //   - SKY term: scaled by fog_color.w (the sim's sky scale) INSIDE the mix so
     //     scale 1.0 is exactly identity and scale 0 bottoms out at the SKY_MIN cave
     //     floor; tinted by sky_color.rgb (white = identity).
-    //   - BLOCK term (torches/furnaces): the SAME curve but night-invariant — no
-    //     scale, no tint — so torchlit surfaces keep their day brightness at night.
-    //     At scale 1.0 + white sky, max(sky_term, block_term) == the old single-
-    //     channel term of max(sky6, block6): the curve is monotone, so max commutes
-    //     through it. (The warm HUE still rides the CPU-baked tint.)
+    //   - BLOCK term (torches, glowing plants): the SAME curve but night-invariant
+    //     — no scale, no sky tint — so lit surfaces keep their day brightness at
+    //     night. It is evaluated PER CHANNEL off the emitter's own colour, and
+    //     each channel rides its own mix(SKY_MIN, ..) floor: a saturated purple's
+    //     green channel bottoms out at the cave floor, never BELOW it (which would
+    //     read as a black-green cast darker than an unlit cave). For colourless
+    //     light the three channels are equal, so max(sky_term, block_term) == the
+    //     old single-channel term of max(sky6, block6): the curve is monotone, so
+    //     max commutes through it.
     //   - FINAL_MIN floors the darkest possible pixel: "very dark, not pitch black".
     var shades = array<f32, 4>(1.0, 0.85, 0.75, 0.55);
     var ao_lut = array<f32, 4>(0.25, 0.45, 0.70, 1.0);
-    let block6 = packed2 & 0x3Fu;
     let sky = f32(sky6) / 63.0;
-    let blk = f32(block6) / 63.0;
+    let blk = block_light_rgb(packed, packed2, tint.a);
     let sky_curve = pow(sky, SKY_GAMMA);
     let sky_term = mix(SKY_MIN, 1.0, sky_curve * u.fog_color.w) * u.sky_color.rgb;
-    let block_term = mix(SKY_MIN, 1.0, pow(blk, SKY_GAMMA));
+    // SKY_GAMMA is exactly 3: three multiplies, not three transcendental pows.
+    let block_term = mix(vec3<f32>(SKY_MIN), vec3<f32>(1.0), blk * blk * blk);
     let ncode = (packed2 >> 16u) & 0x7u;
     var face_shade = vec3<f32>(shades[shade_idx]);
     if (ncode != 0u) {
@@ -278,17 +298,21 @@ fn vs_common(pos: vec3<f32>, tint: vec3<f32>, packed: u32, packed2: u32) -> VsOu
     }
     out.light = max(
         vec3<f32>(FINAL_MIN),
-        face_shade * ao_lut[ao] * max(sky_term, vec3<f32>(block_term)),
+        face_shade * ao_lut[ao] * max(sky_term, block_term),
     );
-    // Noon-equivalent light level (scale 1.0, white sky, no AO) for the cel
+    // Noon-equivalent light LEVEL (scale 1.0, white sky, no AO) for the cel
     // bands: the banding pattern must not slide around as the sim dims the sky
     // term, and AO stays a smooth multiplier so corners keep contact shadow.
+    // Deliberately SCALAR — the block channel folds to its brightest component
+    // first. A per-channel band steps each channel at a different threshold and
+    // fringes every band edge with colour.
     let sky_noon = mix(SKY_MIN, 1.0, sky_curve);
-    out.cel_drive = max(sky_noon, block_term);
+    let blk_lum = max(blk.r, max(blk.g, blk.b));
+    out.cel_drive = max(sky_noon, mix(SKY_MIN, 1.0, blk_lum * blk_lum * blk_lum));
     out.ncode = ncode;
 
     out.view = local_pos - u.cam_pos.xyz;
-    out.tint = tint;
+    out.tint = tint.rgb;
     out.world_pos = pos;
     return out;
 }

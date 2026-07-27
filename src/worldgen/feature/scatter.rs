@@ -133,7 +133,12 @@ const fn grid3(
 ///   - iron is a Grid3 vein (≤9 ore in a 3×3 layer) across the WHOLE depth, at
 ///     the same veins-per-volume rate as before — as common, less plentiful;
 ///   - diamond is a Grid3 vein on a depth ramp: absent above y 14, increasingly
-///     likely toward the floor, yet rare even there.
+///     likely toward the floor, yet rare even there;
+///   - marble is a decorative stone flavour over the whole underground, and is
+///     placed LAST so it can only claim cells still Stone after every ore — the
+///     ore counts above are tuned and must not move because a stone flavour was
+///     added. (Vein RNG is keyed on the config's SALT, not its index, so the
+///     position in this table changes write ORDER only.)
 static CONFIGS: &[ScatterConfig] = &[
     // Underground dirt / gravel pockets, all the way down.
     blob(Block::Dirt, 0xA1_0005, 9, 33, WORLD_MIN_Y, 130),
@@ -153,6 +158,9 @@ static CONFIGS: &[ScatterConfig] = &[
         16,
         Some(DepthRamp { max_chance: 1.0 }),
     ),
+    // Decorative stone flavour. Marble used to be reachable only from the walls
+    // of its own cave biome; it is ordinary stone-hosted rock now.
+    blob(Block::Marble, 0xA1_0007, 8, 33, WORLD_MIN_Y, 130),
 ];
 
 /// Place all underground veins for `chunk`. Pure function of `(seed, cx, cz)`.

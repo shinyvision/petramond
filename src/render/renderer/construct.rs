@@ -15,7 +15,13 @@ pub(crate) async fn new_renderer_from_target(
 ) -> Renderer {
     let instance = wgpu::Instance::new(&instance_descriptor());
     let surface = instance.create_surface(target).expect("create surface");
-    new_renderer_inner(instance, surface, width, height).await
+    let adapter = request_adapter(&instance, Some(&surface)).await;
+    let (device, queue) = request_device(&adapter).await;
+    let config = surface
+        .get_default_config(&adapter, width, height)
+        .expect("surface config");
+    surface.configure(&device, &config);
+    new_renderer_inner(Some(surface), device, queue, config)
 }
 
 /// Instance descriptor selecting native backends (Vulkan/Metal/DX12/GL).
@@ -38,19 +44,17 @@ pub(in crate::render) fn instance_descriptor() -> wgpu::InstanceDescriptor {
     desc
 }
 
-async fn new_renderer_inner(
-    instance: wgpu::Instance,
-    surface: wgpu::Surface<'static>,
-    width: u32,
-    height: u32,
-) -> Renderer {
-    // Try a high-performance adapter first. If it fails entirely (no adapter
-    // compatible with the surface), retry with force_fallback_adapter to accept
-    // the software/lowest-tier adapter rather than panicking.
-    let adapter = match instance
+/// Adapter pick shared by every renderer bring-up: a high-performance adapter
+/// first, then the forced fallback (software) one rather than panicking.
+/// `surface` is `None` for a surfaceless renderer, which constrains nothing.
+pub(super) async fn request_adapter(
+    instance: &wgpu::Instance,
+    surface: Option<&wgpu::Surface<'static>>,
+) -> wgpu::Adapter {
+    match instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
+            compatible_surface: surface,
             force_fallback_adapter: false,
         })
         .await
@@ -61,39 +65,56 @@ async fn new_renderer_inner(
             instance
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::LowPower,
-                    compatible_surface: Some(&surface),
+                    compatible_surface: surface,
                     force_fallback_adapter: true,
                 })
                 .await
                 .expect("no compatible wgpu adapter available")
         }
-    };
-    // The terrain tile array holds every tile PLUS its dye-base twin (2 ×
-    // tile count layers), which exceeds the default 256-layer limit. Request
-    // what the tile array actually needs, capped to what the adapter offers —
-    // an adapter that can't fit it fails create_texture with a clear count.
+    }
+}
+
+/// The device every renderer needs. The terrain tile array holds every tile
+/// PLUS its dye-base twin (2 × tile count layers), which exceeds the default
+/// 256-layer limit — request what the tile array actually needs, capped to what
+/// the adapter offers, so an adapter that can't fit it fails `create_texture`
+/// with a clear count instead of silently truncating.
+pub(super) async fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
     let mut required_limits = wgpu::Limits::default().using_alignment(adapter.limits());
     required_limits.max_texture_array_layers = (2 * crate::atlas::Tile::count() as u32)
         .max(required_limits.max_texture_array_layers)
         .min(adapter.limits().max_texture_array_layers);
-    let (device, queue) = adapter
+    // Timestamp queries are requested only when the GPU-timing instrument is
+    // switched on, so an ordinary run asks for no optional feature at all.
+    let mut required_features = wgpu::Features::empty();
+    if super::super::gpu_timer::GpuTimer::wanted() {
+        required_features |= adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+    }
+    adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: None,
-            required_features: wgpu::Features::empty(),
+            required_features,
             required_limits,
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
         })
         .await
-        .expect("device");
+        .expect("device")
+}
 
-    let config = surface
-        .get_default_config(&adapter, width, height)
-        .expect("surface config");
+/// Build every pipeline/atlas/model resource and assemble the `Renderer`.
+/// `config` carries the frame geometry + colour format; `surface` is `None`
+/// for a surfaceless renderer, which changes nothing else.
+pub(super) fn new_renderer_inner(
+    surface: Option<wgpu::Surface<'static>>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+) -> Renderer {
+    let (width, height) = (config.width, config.height);
     let format = config.format;
     let sample_count = 1u32;
-    surface.configure(&device, &config);
 
     let (_atlas_texture, atlas_view, atlas_sampler) = create_atlas(&device, &queue);
     let (_atlas_array_texture, atlas_array_view, atlas_array_sampler) =
@@ -565,11 +586,17 @@ async fn new_renderer_inner(
         ),
     ];
 
+    let gpu_timer = super::super::gpu_timer::GpuTimer::new(&device, &queue);
+    let column_origins = super::super::resources::ColumnOrigins::new(&device);
+    let quad_index = super::super::resources::QuadIndexBuffer::new(&device, &queue);
+
     Renderer {
         surface,
         device,
         queue,
         config,
+        gpu_timer,
+        offscreen_target: None,
         suboptimal_retried: false,
         sky_pipe: pipelines.sky_pipe,
         sky_bind: pipelines.sky_bind,
@@ -592,6 +619,7 @@ async fn new_renderer_inner(
         opaque_pipe: pipelines.opaque_pipe,
         translucent_pipe: pipelines.translucent_pipe,
         transparent_pipe: pipelines.transparent_pipe,
+        transparent_two_sided_pipe: pipelines.transparent_two_sided_pipe,
         scene_color,
         grade_pipe: pipelines.grade_pipe,
         grade_bgl: pipelines.grade_bgl,
@@ -708,6 +736,9 @@ async fn new_renderer_inner(
         ),
         depth,
         terrain_columns: HashMap::new(),
+        column_origins,
+        geometry: super::super::geometry_arena::GeometryArena::new(),
+        quad_index,
         terrain_upload_pending: HashMap::new(),
         terrain_upload_heap: BinaryHeap::new(),
         terrain_upload_frame: 0,
@@ -739,13 +770,11 @@ async fn new_renderer_inner(
         hand_shake: [0.0, 0.0],
         held_item_anim: HeldItemAnimator::default(),
         held_item_skylight: crate::render::lighting::FULL_SKYLIGHT,
-        held_item_blocklight: 0,
-        held_item_warm: 0,
+        held_item_blocklight: crate::light::BlockLight6::DARK,
         item_entities: Vec::new(),
         particles: Vec::new(),
         model_particles: Vec::new(),
         particle_emitters: Vec::new(),
-        particle_emitter_visible: Vec::new(),
         particle_density: 1.0,
         particle_block_vertex_count: 0,
         viewport_generation: 1,
@@ -801,7 +830,9 @@ impl Renderer {
         self.config.width = width;
         self.config.height = height;
         self.viewport_generation = self.viewport_generation.wrapping_add(1).max(1);
-        self.surface.configure(&self.device, &self.config);
+        if let Some(surface) = &self.surface {
+            surface.configure(&self.device, &self.config);
+        }
         self.recreate_scene_targets();
         self.crosshair_drawn_size = (0, 0);
         // A real size change earns a fresh suboptimal-retry (render()).

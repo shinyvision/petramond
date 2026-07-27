@@ -22,9 +22,10 @@ fn color_depth_pass<'a>(
     encoder: &'a mut wgpu::CommandEncoder,
     view: &'a wgpu::TextureView,
     depth: &'a wgpu::TextureView,
-    label: &str,
+    label: &'static str,
     color_load: wgpu::LoadOp<wgpu::Color>,
     depth_load: Option<wgpu::LoadOp<f32>>,
+    timer: Option<&'a gpu_timer::GpuTimer>,
 ) -> wgpu::RenderPass<'a> {
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
@@ -45,7 +46,7 @@ fn color_depth_pass<'a>(
             }),
             stencil_ops: None,
         }),
-        timestamp_writes: None,
+        timestamp_writes: timer.and_then(|t| t.pass(label)),
         occlusion_query_set: None,
     })
 }
@@ -94,12 +95,7 @@ impl Renderer {
         cam_pos: glam::Vec3,
         fog: f32,
     ) -> bool {
-        let mut min_cy = i32::MAX;
-        let mut max_cy = i32::MIN;
-        for &(sp, _) in &column.sections {
-            min_cy = min_cy.min(sp.cy);
-            max_cy = max_cy.max(sp.cy);
-        }
+        let (min_cy, max_cy) = column.cy_span;
         if min_cy > max_cy {
             return false;
         }
@@ -165,27 +161,29 @@ impl Renderer {
                 let c = glam::Vec3::new(ox as f32 + 8.0, oy as f32 + 8.0, oz as f32 + 8.0);
                 let dist_sq = (cam - c).length_squared();
                 column_dist_sq = column_dist_sq.min(dist_sq);
-                column_has_opaque |= section.opaque_idx_count > 0;
+                column_has_opaque |= section.opaque_vertex_count > 0;
                 column_has_model |= section.model_idx_count > 0;
                 // Contact visibility is its OWN presence bit: a multi-cell
                 // model's contact triangles can sit in a section whose model
                 // index range is empty.
                 column_has_contact |= section.contact_vertex_count > 0;
                 any_model_visible |= section.model_idx_count > 0;
-                any_transparent_visible |=
-                    section.transparent_idx_count > 0 || section.translucent_idx_count > 0;
-                let was_far_lod_active = far_leaf_lod_state.get(&sp).copied().unwrap_or(false);
-                let use_far_leaf_lod = far_leaf_lod_active(
-                    dist_sq,
-                    (section.origin.0, section.origin.2),
-                    section.far_opaque_idx_count > 0,
-                    was_far_lod_active,
-                );
-                if use_far_leaf_lod {
-                    far_leaf_lod_state.insert(sp, true);
-                } else {
-                    far_leaf_lod_state.remove(&sp);
-                }
+                any_transparent_visible |= section.transparent_vertex_count > 0
+                    || section.transparent_ts_vertex_count > 0
+                    || section.translucent_vertex_count > 0;
+                // Only a section that OWNS a far mesh can be in the LOD state
+                // map, so a section without one never touches the hash table —
+                // which is nearly all of them, every frame.
+                let use_far_leaf_lod = section.far_opaque_vertex_count > 0 && {
+                    let was_active = far_leaf_lod_state.get(&sp).copied().unwrap_or(false);
+                    let now_active = far_leaf_lod_active(dist_sq, (ox, oz), true, was_active);
+                    if now_active {
+                        far_leaf_lod_state.insert(sp, true);
+                    } else if was_active {
+                        far_leaf_lod_state.remove(&sp);
+                    }
+                    now_active
+                };
                 any_far_lod_active |= use_far_leaf_lod;
                 order.push(VisibleSection {
                     dist_sq,
@@ -193,38 +191,77 @@ impl Renderer {
                     opaque_batched: false,
                     model_batched: false,
                     use_far_leaf_lod,
-                    opaque_index_start: section.opaque_index_start,
-                    opaque_idx_count: section.opaque_idx_count,
-                    far_opaque_index_start: section.far_opaque_index_start,
-                    far_opaque_idx_count: section.far_opaque_idx_count,
-                    transparent_index_start: section.transparent_index_start,
-                    transparent_idx_count: section.transparent_idx_count,
-                    translucent_index_start: section.translucent_index_start,
-                    translucent_idx_count: section.translucent_idx_count,
+                    opaque_vertex_start: section.opaque_vertex_start,
+                    opaque_quads: section.opaque_vertex_count / 4,
+                    far_opaque_vertex_start: section.far_opaque_vertex_start,
+                    far_opaque_quads: section.far_opaque_vertex_count / 4,
+                    transparent_vertex_start: section.transparent_vertex_start,
+                    transparent_quads: section.transparent_vertex_count / 4,
+                    transparent_ts_vertex_start: section.transparent_ts_vertex_start,
+                    transparent_ts_quads: section.transparent_ts_vertex_count / 4,
+                    translucent_vertex_start: section.translucent_vertex_start,
+                    translucent_quads: section.translucent_vertex_count / 4,
                     model_index_start: section.model_index_start,
                     model_idx_count: section.model_idx_count,
                 });
             }
-            if column_has_opaque && !any_far_lod_active && column.opaque_idx_count > 0 {
-                for item in &mut order[first_section..] {
-                    item.opaque_batched = true;
-                }
+            let opaque_batched =
+                column_has_opaque && !any_far_lod_active && column.opaque_quads > 0;
+            let model_batched = column_has_model && column.model_idx_count > 0;
+            if opaque_batched {
                 opaque_columns.push((column_dist_sq, *column_pos));
             }
-            if column_has_model && column.model_idx_count > 0 {
-                for item in &mut order[first_section..] {
-                    item.model_batched = true;
-                }
+            if model_batched {
                 model_columns.push((column_dist_sq, *column_pos));
             }
             if column_has_contact && column.contact_vertex_count > 0 {
                 contact_columns.push((column_dist_sq, *column_pos));
             }
+            // Drop the sections whose every layer is either empty or covered by
+            // a whole-column draw: the per-section pass loops would skip them,
+            // and they are the great majority — carrying them costs a 60-byte
+            // move in the sort and a rejected branch in four encode loops.
+            let mut w = first_section;
+            for r in first_section..order.len() {
+                let mut item = order[r];
+                item.opaque_batched = opaque_batched;
+                item.model_batched = model_batched;
+                let opaque_left = !opaque_batched
+                    && if item.use_far_leaf_lod {
+                        item.far_opaque_quads
+                    } else {
+                        item.opaque_quads
+                    } > 0;
+                let model_left = !model_batched && item.model_idx_count > 0;
+                if opaque_left
+                    || model_left
+                    || item.transparent_quads > 0
+                    || item.transparent_ts_quads > 0
+                    || item.translucent_quads > 0
+                {
+                    order[w] = item;
+                    w += 1;
+                }
+            }
+            order.truncate(w);
         }
-        order.sort_by(|a, b| a.dist_sq.total_cmp(&b.dist_sq));
-        opaque_columns.sort_by(|a, b| a.0.total_cmp(&b.0));
-        model_columns.sort_by(|a, b| a.0.total_cmp(&b.0));
-        contact_columns.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // Distance alone is not a total order: equidistant columns are common
+        // (a symmetric view), and `terrain_columns` is a HashMap, so a stable
+        // sort would leave ties in per-process hash order. That makes the
+        // back-to-front transparent pass blend equidistant columns in a
+        // different order run to run. Break ties on the column position so the
+        // draw order is a function of the scene, not of the hash seed.
+        order.sort_by(|a, b| {
+            a.dist_sq
+                .total_cmp(&b.dist_sq)
+                .then_with(|| a.column_pos.cmp(&b.column_pos))
+        });
+        let by_dist_then_pos = |a: &(f32, ChunkPos), b: &(f32, ChunkPos)| {
+            a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1))
+        };
+        opaque_columns.sort_by(by_dist_then_pos);
+        model_columns.sort_by(by_dist_then_pos);
+        contact_columns.sort_by(by_dist_then_pos);
         self.terrain_planned_gpu_revision = self.terrain_gpu_revision;
         self.terrain_planned_view_key = Some(self.terrain_view_key.clone());
         self.terrain_plan_any_model = any_model_visible;
@@ -275,24 +312,30 @@ impl Renderer {
                     a: 1.0,
                 }),
                 Some(wgpu::LoadOp::Clear(1.0)),
+                self.gpu_timer.as_ref(),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             pass.set_pipeline(&self.opaque_pipe);
+            // Two binds for the whole pass: every column draw picks its origin
+            // row with `first_instance`, and every draw's triangulation comes
+            // from the shared quad index buffer with the section's first vertex
+            // as `base_vertex`.
+            pass.set_vertex_buffer(1, self.column_origins.buffer().slice(..));
+            pass.set_index_buffer(self.quad_index.slice(), wgpu::IndexFormat::Uint32);
             for (_, pos) in opaque_columns {
                 let Some(col) = self.terrain_columns.get(pos) else {
                     continue;
                 };
-                if col.opaque_idx_count == 0 {
+                if col.opaque_quads == 0 {
                     continue;
                 }
-                if let (Some(vb), Some(ib)) = (&col.opaque_vbuf, &col.opaque_ibuf) {
-                    pass.set_vertex_buffer(0, vb.slice(..));
-                    pass.set_vertex_buffer(1, col.origin_vbuf.slice(..));
-                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                if let Some(vb) = &col.opaque_vbuf {
+                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
                     stats.opaque_draws += 1;
-                    stats.opaque_indices += col.opaque_idx_count as u64;
-                    pass.draw_indexed(0..col.opaque_idx_count, 0, 0..1);
+                    stats.opaque_indices += col.opaque_quads as u64 * 6;
+                    let slot = col.origin_slot.index();
+                    pass.draw_indexed(0..col.opaque_quads * 6, 0, slot..slot + 1);
                 }
             }
             for item in order.iter() {
@@ -303,31 +346,28 @@ impl Renderer {
                     continue;
                 };
                 // near -> far (early-Z)
-                let (vbuf, ibuf, index_start, idx_count) = if item.use_far_leaf_lod {
+                let (vbuf, vertex_start, quads) = if item.use_far_leaf_lod {
                     (
                         &col.far_opaque_vbuf,
-                        &col.far_opaque_ibuf,
-                        item.far_opaque_index_start,
-                        item.far_opaque_idx_count,
+                        item.far_opaque_vertex_start,
+                        item.far_opaque_quads,
                     )
                 } else {
                     (
                         &col.opaque_vbuf,
-                        &col.opaque_ibuf,
-                        item.opaque_index_start,
-                        item.opaque_idx_count,
+                        item.opaque_vertex_start,
+                        item.opaque_quads,
                     )
                 };
-                if idx_count == 0 {
+                if quads == 0 {
                     continue;
                 }
-                if let (Some(vb), Some(ib)) = (vbuf, ibuf) {
-                    pass.set_vertex_buffer(0, vb.slice(..));
-                    pass.set_vertex_buffer(1, col.origin_vbuf.slice(..));
-                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                if let Some(vb) = vbuf {
+                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
                     stats.opaque_draws += 1;
-                    stats.opaque_indices += idx_count as u64;
-                    pass.draw_indexed(index_start..index_start + idx_count, 0, 0..1);
+                    stats.opaque_indices += quads as u64 * 6;
+                    let slot = col.origin_slot.index();
+                    pass.draw_indexed(0..quads * 6, vertex_start as i32, slot..slot + 1);
                 }
             }
         }
@@ -348,6 +388,7 @@ impl Renderer {
                 "contact shadow pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
             );
             pass.set_pipeline(&self.contact_pipe);
             pass.set_bind_group(0, &self.uniform_bind, &[]);
@@ -359,7 +400,7 @@ impl Renderer {
                     continue;
                 }
                 if let Some(vb) = &col.contact_vbuf {
-                    pass.set_vertex_buffer(0, vb.slice(..));
+                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
                     pass.draw(0..col.contact_vertex_count, 0..1);
                 }
             }
@@ -376,6 +417,7 @@ impl Renderer {
                 "sky pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
             );
             pass.set_pipeline(&self.sky_pipe);
             pass.set_bind_group(0, &self.sky_bind, &[]);
@@ -395,6 +437,7 @@ impl Renderer {
                 "model pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.model_atlas_bind, &[]);
@@ -410,8 +453,11 @@ impl Renderer {
                     continue;
                 }
                 if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
-                    pass.set_vertex_buffer(0, vb.slice(..));
-                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
+                    pass.set_index_buffer(
+                        self.geometry.slice(&ib.alloc, ib.len),
+                        wgpu::IndexFormat::Uint32,
+                    );
                     pass.draw_indexed(0..col.model_idx_count, 0, 0..1);
                 }
             }
@@ -423,8 +469,11 @@ impl Renderer {
                     continue;
                 };
                 if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
-                    pass.set_vertex_buffer(0, vb.slice(..));
-                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
+                    pass.set_index_buffer(
+                        self.geometry.slice(&ib.alloc, ib.len),
+                        wgpu::IndexFormat::Uint32,
+                    );
                     pass.draw_indexed(
                         item.model_index_start..item.model_index_start + item.model_idx_count,
                         0,
@@ -451,6 +500,7 @@ impl Renderer {
                 "item entity pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
@@ -472,6 +522,7 @@ impl Renderer {
                 "chest+door pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
@@ -497,6 +548,7 @@ impl Renderer {
                 "mob pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             for g in &self.mob_gpu {
@@ -543,29 +595,32 @@ impl Renderer {
                 "translucent block pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             pass.set_pipeline(&self.translucent_pipe);
+            // One bind for the whole pass: every column draw picks its
+            // origin row with `first_instance`.
+            pass.set_vertex_buffer(1, self.column_origins.buffer().slice(..));
+            pass.set_index_buffer(self.quad_index.slice(), wgpu::IndexFormat::Uint32);
             for item in order.iter() {
-                if item.translucent_idx_count == 0 {
+                if item.translucent_quads == 0 {
                     continue;
                 }
                 let Some(col) = self.terrain_columns.get(&item.column_pos) else {
                     continue;
                 };
                 // near -> far: depth-writing, so early-Z applies like opaque.
-                if let (Some(vb), Some(ib)) = (&col.translucent_vbuf, &col.translucent_ibuf) {
-                    pass.set_vertex_buffer(0, vb.slice(..));
-                    pass.set_vertex_buffer(1, col.origin_vbuf.slice(..));
-                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                if let Some(vb) = &col.translucent_vbuf {
+                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
                     stats.transparent_draws += 1;
-                    stats.transparent_indices += item.translucent_idx_count as u64;
+                    stats.transparent_indices += item.translucent_quads as u64 * 6;
+                    let slot = col.origin_slot.index();
                     pass.draw_indexed(
-                        item.translucent_index_start
-                            ..item.translucent_index_start + item.translucent_idx_count,
-                        0,
-                        0..1,
+                        0..item.translucent_quads * 6,
+                        item.translucent_vertex_start as i32,
+                        slot..slot + 1,
                     );
                 }
             }
@@ -587,6 +642,7 @@ impl Renderer {
                 "break overlay pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
@@ -611,6 +667,7 @@ impl Renderer {
                 "particle pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             // Block-atlas flecks: the leading index range via the standard draw.
@@ -647,30 +704,60 @@ impl Renderer {
                 "transparent pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
-            pass.set_pipeline(&self.transparent_pipe);
+            // One bind for the whole pass: every column draw picks its
+            // origin row with `first_instance`.
+            pass.set_vertex_buffer(1, self.column_origins.buffer().slice(..));
+            pass.set_index_buffer(self.quad_index.slice(), wgpu::IndexFormat::Uint32);
+            // Water side faces cull their backs, water TOPS do not (they must
+            // stay visible from underneath). Sections almost never carry both,
+            // so tracking the bound pipeline keeps this at one switch per pass
+            // in practice. `None` until the first draw binds one: a render pass
+            // starts with NO pipeline, so seeding this with a side is a draw
+            // without a pipeline whenever that side happens to come first.
+            let mut two_sided_bound: Option<bool> = None;
             for item in order.iter().rev() {
-                if item.transparent_idx_count == 0 {
+                if item.transparent_quads == 0 && item.transparent_ts_quads == 0 {
                     continue;
                 }
                 let Some(col) = self.terrain_columns.get(&item.column_pos) else {
                     continue;
                 };
+                let slot = col.origin_slot.index();
                 // far -> near (alpha order)
-                if let (Some(vb), Some(ib)) = (&col.transparent_vbuf, &col.transparent_ibuf) {
-                    pass.set_vertex_buffer(0, vb.slice(..));
-                    pass.set_vertex_buffer(1, col.origin_vbuf.slice(..));
-                    pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                for (vbuf, start, quads, two_sided) in [
+                    (
+                        &col.transparent_vbuf,
+                        item.transparent_vertex_start,
+                        item.transparent_quads,
+                        false,
+                    ),
+                    (
+                        &col.transparent_ts_vbuf,
+                        item.transparent_ts_vertex_start,
+                        item.transparent_ts_quads,
+                        true,
+                    ),
+                ] {
+                    if quads == 0 {
+                        continue;
+                    }
+                    let Some(vb) = vbuf else { continue };
+                    if two_sided_bound != Some(two_sided) {
+                        pass.set_pipeline(if two_sided {
+                            &self.transparent_two_sided_pipe
+                        } else {
+                            &self.transparent_pipe
+                        });
+                        two_sided_bound = Some(two_sided);
+                    }
+                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
                     stats.transparent_draws += 1;
-                    stats.transparent_indices += item.transparent_idx_count as u64;
-                    pass.draw_indexed(
-                        item.transparent_index_start
-                            ..item.transparent_index_start + item.transparent_idx_count,
-                        0,
-                        0..1,
-                    );
+                    stats.transparent_indices += quads as u64 * 6;
+                    pass.draw_indexed(0..quads * 6, start as i32, slot..slot + 1);
                 }
             }
         }
@@ -708,6 +795,10 @@ impl Renderer {
                         }),
                         stencil_ops: None,
                     }),
+                    timestamp_writes: self
+                        .gpu_timer
+                        .as_ref()
+                        .and_then(|t| t.pass("env depth downsample")),
                     ..Default::default()
                 });
                 pass.set_pipeline(&self.env_scaler.down_pipe);
@@ -730,6 +821,10 @@ impl Renderer {
                         },
                     })],
                     depth_stencil_attachment: None,
+                    timestamp_writes: self
+                        .gpu_timer
+                        .as_ref()
+                        .and_then(|t| t.pass("environment pass")),
                     ..Default::default()
                 });
                 for env in self.env_passes.iter().filter(|env| !env.dormant) {
@@ -747,6 +842,7 @@ impl Renderer {
                     "env composite pass",
                     wgpu::LoadOp::Load,
                     None,
+                    self.gpu_timer.as_ref(),
                 );
                 pass.set_pipeline(&self.env_scaler.comp_pipe);
                 pass.set_bind_group(0, &self.env_comp_bind, &[]);
@@ -768,6 +864,7 @@ impl Renderer {
                 "emitter particle pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
@@ -785,6 +882,7 @@ impl Renderer {
                 "outline pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
             );
             pass.set_pipeline(&self.outline_pipe);
             pass.set_bind_group(0, &self.outline_bind, &[]);
@@ -811,6 +909,7 @@ impl Renderer {
                 "hand pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Clear(1.0)),
+                self.gpu_timer.as_ref(),
             );
             // Bare arm / held block (model3d, depth-enabled hand variant).
             if self.hand_index_count > 0 {
@@ -848,6 +947,7 @@ impl Renderer {
                 "grade pass",
                 wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                 None,
+                self.gpu_timer.as_ref(),
             );
             pass.set_pipeline(&self.grade_pipe);
             pass.set_bind_group(0, &self.grade_bind, &[]);
@@ -862,6 +962,7 @@ impl Renderer {
                 "crosshair pass",
                 wgpu::LoadOp::Load,
                 None,
+                self.gpu_timer.as_ref(),
             );
             pass.set_pipeline(&self.crosshair_pipe);
             pass.set_vertex_buffer(0, self.crosshair_vbuf.slice(..));
@@ -885,6 +986,7 @@ impl Renderer {
                 "ui pass",
                 wgpu::LoadOp::Load,
                 None,
+                self.gpu_timer.as_ref(),
             );
             pass.set_pipeline(&self.ui_pipe);
             let draw_layers = |pass: &mut wgpu::RenderPass<'_>, under: bool| {
@@ -935,6 +1037,7 @@ impl Renderer {
                 "ui overlay / drag pass",
                 wgpu::LoadOp::Load,
                 None,
+                self.gpu_timer.as_ref(),
             );
             pass.set_pipeline(&self.ui_pipe);
             // Normal stack counts (solid), at the head of the solid buffer.

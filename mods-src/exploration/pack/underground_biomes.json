@@ -1,0 +1,62 @@
+{
+  "underground_biomes": [
+    {
+      "underground_biome": "exploration:mushroom_cavern",
+      "field": [
+        0.24,
+        1.0
+      ],
+      "y": [
+        -64,
+        -16
+      ],
+      "lining": {
+        "block": "exploration:cave_moss",
+        "shell": 1.4,
+        "faces": {
+          "floor_depth": 2,
+          "floor": {
+            "weight": 1.0
+          },
+          "wall": {
+            "weight": 0.75
+          },
+          "ceiling": {
+            "weight": 0.25
+          },
+          "floor_under": {
+            "block": "exploration:cave_silt"
+          }
+        }
+      },
+      "caliber": {
+        "tunnel": 1.6,
+        "cheese": 0.22,
+        "blend": [
+          0.02,
+          8.0
+        ]
+      },
+      "chamber": {
+        "lattice": 64,
+        "one_in": 1,
+        "radius": [
+          10,
+          14
+        ],
+        "flatten": 0.45,
+        "sill": 0.75,
+        "feather": 9,
+        "strength": 1.0,
+        "lobes": 3,
+        "lobe_spread": 0.7,
+        "lobe_scale": [
+          0.55,
+          0.8
+        ],
+        "tunnel": 2.0,
+        "rim_noise": 1.5
+      }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "Exploration",
+  "id": "exploration",
+  "version": "0.1.0",
+  "description": "Rare mushroom caverns deep underground: cathedral-scale rooms of moss and hanging vines, lit by giant bioluminescent mushrooms in pink, blue, magenta and purple.",
+  "summary": "Adds rare glowing mushroom caverns.",
+  "wasm": "mod.wasm",
+  "client_wasm": "mod.wasm"
+}

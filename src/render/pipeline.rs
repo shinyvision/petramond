@@ -75,6 +75,7 @@ pub(super) struct PipelineResources {
     pub opaque_pipe: wgpu::RenderPipeline,
     pub translucent_pipe: wgpu::RenderPipeline,
     pub transparent_pipe: wgpu::RenderPipeline,
+    pub transparent_two_sided_pipe: wgpu::RenderPipeline,
     /// Absolute-`Vertex` opaque pipe for chests / doors / item entities.
     pub dynamic_opaque_pipe: wgpu::RenderPipeline,
     /// Full-screen colour-grade pass: reads the offscreen scene texture, writes
@@ -327,14 +328,15 @@ pub(super) fn create_pipeline_resources(
         attributes: &item3d_vbuf_attrs,
     };
 
-    let (opaque_pipe, translucent_pipe, transparent_pipe) = create_terrain_pipelines(
-        device,
-        format,
-        sample_count,
-        &shader,
-        &shared.array_layout,
-        &[terrain_vbuf_layout, terrain_origin_layout],
-    );
+    let (opaque_pipe, translucent_pipe, transparent_pipe, transparent_two_sided_pipe) =
+        create_terrain_pipelines(
+            device,
+            format,
+            sample_count,
+            &shader,
+            &shared.array_layout,
+            &[terrain_vbuf_layout, terrain_origin_layout],
+        );
     // Absolute-pos opaque pipe for chests / doors / item entities (same FS as
     // terrain opaque; `vs_main` keeps world-space f32 positions).
     let dynamic_opaque_targets = builders::color_target(
@@ -420,6 +422,7 @@ pub(super) fn create_pipeline_resources(
         opaque_pipe,
         translucent_pipe,
         transparent_pipe,
+        transparent_two_sided_pipe,
         dynamic_opaque_pipe,
         grade_pipe,
         grade_bgl,

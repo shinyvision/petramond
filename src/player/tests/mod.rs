@@ -27,7 +27,7 @@ fn dry(_x: i32, _y: i32, _z: i32) -> bool {
 }
 
 /// No ladders anywhere -- the climb predicate for tests off the ladder.
-fn no_ladder(_x: i32, _y: i32, _z: i32) -> Option<crate::facing::Facing> {
+fn no_ladder(_x: i32, _y: i32, _z: i32) -> Option<crate::world::Climb> {
     None
 }
 

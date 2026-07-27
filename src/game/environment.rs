@@ -7,10 +7,7 @@ use crate::world::environment::ShaderParamMap;
 use crate::world::World;
 
 use super::Game;
-
-/// Deep, murky blue the world fades to (fog + clear colour) when the camera eye
-/// is underwater.
-const UNDERWATER_FOG_COLOR: [f32; 3] = [0.04, 0.16, 0.30];
+use crate::render::uniforms::UNDERWATER_FOG_COLOR;
 
 /// Require the camera eye to sit this far below an open water surface before the
 /// underwater shader/fog kicks in. This keeps shallow flowing films from tinting
@@ -32,32 +29,40 @@ impl Game {
         // Fog/underwater follow the RENDERED camera: a third-person boom dipping
         // into water must show underwater fog even while the player's eye is dry.
         let eye = self.render_camera().pos;
-        let underwater = camera_eye_underwater(&self.replica, eye);
-        let env = self.replica.environment();
-
-        let fog = if underwater {
-            UNDERWATER_FOG_COLOR
-        } else {
-            self.blended_sky_fog_color(eye.x, eye.z)
-        };
-
-        GameEnvironment {
-            fog,
-            underwater,
-            time: (now % 3600.0) as f32,
-            shader_params: env.shader_params().clone(),
-        }
-    }
-
-    fn blended_sky_fog_color(&self, x: f32, z: f32) -> [f32; 3] {
-        blended_fog_color(x, z, |wx, wz| {
+        let (fog, underwater) = camera_fog(&self.replica, eye, |wx, wz| {
             if let Some(id) = self.replica.column_biome(wx, wz) {
                 return Biome::from_id(id);
             }
 
             self.fallback_world.biome_at(wx, wz)
-        })
+        });
+
+        GameEnvironment {
+            fog,
+            underwater,
+            time: (now % 3600.0) as f32,
+            shader_params: self.replica.environment().shader_params().clone(),
+        }
     }
+}
+
+/// Fog colour and the underwater flag for an eye at `eye` in `world` — the two
+/// environment inputs a renderer driver hands to `update_uniforms`. `biome_at`
+/// is a parameter because the game reads its replica (falling back to the
+/// generator for columns it has not received), while a driver holding a plain
+/// world reads that world directly.
+pub(crate) fn camera_fog(
+    world: &World,
+    eye: Vec3,
+    biome_at: impl FnMut(i32, i32) -> Biome,
+) -> ([f32; 3], bool) {
+    let underwater = camera_eye_underwater(world, eye);
+    let fog = if underwater {
+        UNDERWATER_FOG_COLOR
+    } else {
+        blended_fog_color(eye.x, eye.z, biome_at)
+    };
+    (fog, underwater)
 }
 
 fn camera_eye_underwater(world: &World, eye: Vec3) -> bool {

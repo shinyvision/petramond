@@ -8,9 +8,11 @@ use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME};
 
 use super::builder::face_axes;
 use super::face::{Face, FACES};
+use crate::light::BlockLight6;
+
 use super::vertex::{
-    pack_greedy_span, pack_normal_code, pack_overlay, pack_vertex, pack_vertex2, Vertex,
-    UV_MODE_NONE, UV_MODE_SHIFT,
+    pack_greedy_span, pack_normal_code, pack_overlay, pack_vertex, Vertex, UV_MODE_NONE,
+    UV_MODE_SHIFT,
 };
 
 // Long greedy edges can meet subdivided neighbour faces as T-junctions, which rasterize
@@ -24,7 +26,7 @@ use super::vertex::{
 
 /// A flat (uniform-across-corners) opaque cube face, recorded per (direction, cell) so a
 /// run of identical adjacent faces can collapse into ONE tiled quad (greedy meshing). Only
-/// faces whose four corners share the same AO + light + tint + tile qualify — then the merged
+/// faces whose four corners share the same AO + light (every channel) + tint + tile qualify — then the merged
 /// quad, drawn flat with its layer tiled W×H (REPEAT sampler), is pixel-identical to the
 /// per-cell faces it replaces. `gen` matches the current build's generation for a live face
 /// (a generation counter avoids re-zeroing the whole 6×4096 scratch every section — the fixed
@@ -37,20 +39,48 @@ pub(super) struct FlatFace {
     /// [`super::vertex::DYED_FLAG2`]) so it participates in the merge key and
     /// splits back out at quad emit.
     pub(super) tile: u32,
-    pub(super) ao: u32,
-    pub(super) light6: u32,
-    /// Second light channel (block light) — merges require BOTH channels equal, so
-    /// a merged quad's `packed2` word is exact for every cell it replaces.
-    pub(super) block6: u32,
+    /// AO (2 bits) | sky light (6) | the block-light CHANNELS (18), packed into
+    /// one word. Merges require every one of them equal, so a merged quad's
+    /// light is exact for every cell it replaces (and two cells lit by
+    /// different colours at the same brightness never merge). Packed rather
+    /// than three fields because this scratch is 6×4096 entries — the cell
+    /// scan writes into it scattered across six planes, so its size is cache
+    /// footprint on the mesher's hottest write.
+    pub(super) shade: u32,
+    /// The finished `Vertex::tint` word (albedo lanes + the chroma low byte), so a
+    /// merged quad is byte-identical to the per-cell faces it replaces.
     pub(super) tint: u32,
+}
+
+const SHADE_LIGHT6_SHIFT: u32 = 2;
+const SHADE_BLOCK_SHIFT: u32 = 8;
+
+impl FlatFace {
+    #[inline]
+    pub(super) fn shade(ao: u32, light6: u32, block: BlockLight6) -> u32 {
+        ao | (light6 << SHADE_LIGHT6_SHIFT) | (block.bits() << SHADE_BLOCK_SHIFT)
+    }
+
+    #[inline]
+    fn ao(self) -> u32 {
+        self.shade & 0b11
+    }
+
+    #[inline]
+    fn light6(self) -> u32 {
+        (self.shade >> SHADE_LIGHT6_SHIFT) & 0x3F
+    }
+
+    #[inline]
+    fn block(self) -> BlockLight6 {
+        BlockLight6::from_bits(self.shade >> SHADE_BLOCK_SHIFT)
+    }
 }
 
 const FLAT_ABSENT: FlatFace = FlatFace {
     gen: 0,
     tile: 0,
-    ao: 0,
-    light6: 0,
-    block6: 0,
+    shade: 0,
     tint: 0,
 };
 
@@ -107,7 +137,6 @@ thread_local! {
 pub(super) fn emit_greedy_quads(
     scratch: &mut GreedyScratch,
     opaque: &mut Vec<Vertex>,
-    opaque_idx: &mut Vec<u32>,
     ox: i32,
     oy: i32,
     oz: i32,
@@ -188,7 +217,7 @@ pub(super) fn emit_greedy_quads(
                         (oy + lmax[1]) as f32,
                         (oz + lmax[2]) as f32,
                     ];
-                    push_greedy_quad(opaque, opaque_idx, face, min, max, key, w as u32, h as u32);
+                    push_greedy_quad(opaque, face, min, max, key, w as u32, h as u32);
                 }
             }
         }
@@ -200,7 +229,6 @@ pub(super) fn emit_greedy_quads(
 /// block shader reads to tile the layer. Uniform AO ⇒ no diagonal flip (default winding).
 fn push_greedy_quad(
     opaque: &mut Vec<Vertex>,
-    opaque_idx: &mut Vec<u32>,
     face: Face,
     min: [f32; 3],
     max: [f32; 3],
@@ -210,7 +238,6 @@ fn push_greedy_quad(
 ) {
     let corners = face.quad_box(min, max);
     let shade_idx = face.shade_idx();
-    let start = opaque.len() as u32;
     let dyed = if key.tile & (1 << 31) != 0 {
         super::vertex::DYED_FLAG2
     } else {
@@ -225,14 +252,14 @@ fn push_greedy_quad(
                 corner as u32,
                 shade_idx,
                 false,
-                key.ao,
-                key.light6,
-            ) | (UV_MODE_NONE << UV_MODE_SHIFT),
-            packed2: pack_vertex2(key.block6)
+                key.ao(),
+                key.light6(),
+            ) | key.block().packed_bits()
+                | (UV_MODE_NONE << UV_MODE_SHIFT),
+            packed2: key.block().packed2_bits()
                 | pack_overlay(pack_greedy_span(w, h))
                 | pack_normal_code(face.normal_code())
                 | dyed,
         });
     }
-    opaque_idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
 }

@@ -107,43 +107,49 @@ fn an_inset_face_spans_the_whole_cell_so_no_corner_is_left_open() {
     );
 }
 
-/// A DOUBLE-SIDED box face emits the back winding of the same vertices, so it
-/// survives back-face culling from either side. The cactus's side tile is
-/// transparent along its edge columns except where the spines poke out, so
-/// through the near face's notches you must see the far face's spines rather
-/// than the sky — single-sided, half the spines vanish as you strafe past.
+/// A DOUBLE-SIDED box face appends its four corners a second time in reverse
+/// order, so the same plane survives back-face culling from either side. The
+/// cactus's side tile is transparent along its edge columns except where the
+/// spines poke out, so through the near face's notches you must see the far
+/// face's spines rather than the sky — single-sided, half the spines vanish as
+/// you strafe past.
 #[test]
 fn a_double_sided_face_emits_both_windings_over_one_set_of_vertices() {
     let mut section = floor_section(Block::Sand);
     section.set_block(8, 1, 8, Block::Cactus);
     let m = mesh(&section);
 
-    // The inset +X face: its quad appears once in the vertex buffer but twice
-    // in the index buffer, wound both ways.
-    let start = m
+    // The inset +X face: the same four corner positions appear as TWO quads in
+    // the vertex buffer, and the implied triangulation gives them opposite
+    // windings (the second quad's corner order is the first's reversed).
+    let quads: Vec<usize> = m
         .opaque
         .chunks_exact(4)
-        .position(|q| {
+        .enumerate()
+        .filter(|(_, q)| {
             q.iter()
                 .all(|v| (v.pos[0] - (8.0 + 15.0 / 16.0)).abs() < 1e-3)
         })
-        .expect("expected the inset +X face") as u32
-        * 4;
-    let tris: Vec<&[u32]> = m
-        .opaque_idx
-        .chunks_exact(3)
-        .filter(|t| t.iter().all(|&i| (start..start + 4).contains(&i)))
+        .map(|(i, _)| i)
         .collect();
-    assert_eq!(tris.len(), 4, "two triangles per side, got {tris:?}");
-    // Every front triangle has a mirrored twin.
-    for t in &tris {
-        let flipped = [t[0], t[2], t[1]];
-        assert!(
-            tris.iter()
-                .any(|o| { (0..3).any(|r| (0..3).all(|k| o[(k + r) % 3] == flipped[k])) }),
-            "triangle {t:?} has no back-wound twin"
-        );
-    }
+    assert_eq!(
+        quads.len(),
+        2,
+        "expected the inset +X face twice, got {quads:?}"
+    );
+    let front: Vec<[f32; 3]> = m.opaque[quads[0] * 4..quads[0] * 4 + 4]
+        .iter()
+        .map(|v| v.pos)
+        .collect();
+    let back: Vec<[f32; 3]> = m.opaque[quads[1] * 4..quads[1] * 4 + 4]
+        .iter()
+        .map(|v| v.pos)
+        .collect();
+    assert_eq!(
+        back,
+        [front[0], front[3], front[2], front[1]],
+        "the back copy must be the front corners in reverse order"
+    );
 }
 
 /// A box that carries a face without being MATTER must not shadow or seal:

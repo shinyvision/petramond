@@ -25,17 +25,37 @@ impl World {
         self.wall_face_complete(crate::ladder::support_cell(pos, facing), dir)
     }
 
-    /// The climbable cell sample the player physics probes each sub-step: the
-    /// facing of a climbable block at the cell, or `None` when the cell holds
-    /// none (or its section is unloaded). One section lookup and a dense flag
-    /// read gate it — no `def()` table walk until the cell actually climbs;
-    /// the facing then comes off the row of the id already fetched, so no
+    /// The climbable cell sample the player physics probes each sub-step: how
+    /// the block at the cell is climbed, or `None` when the cell holds no
+    /// climbable block (or its section is unloaded). One section lookup and a
+    /// dense flag read gate it — no `def()` table walk until the cell actually
+    /// climbs; the grip then comes off the row of the id already fetched, so no
     /// second per-cell map traversal exists at all.
-    pub fn climbable_facing_at(&self, x: i32, y: i32, z: i32) -> Option<Facing> {
+    pub fn climb_at(&self, x: i32, y: i32, z: i32) -> Option<Climb> {
         let (s, lx, ly, lz) = self.chunk_at_world(x, y, z)?;
         let block = Block::from_id(s.block_raw(lx, ly, lz));
-        block.is_climbable().then(|| block.panel_facing())
+        block.is_climbable().then(|| match block.declared_panel_facing() {
+            Some(facing) => Climb::Panel(facing),
+            None => Climb::Free,
+        })
     }
+}
+
+/// How a climbable cell is ascended — ROW DATA, not a block-kind check.
+///
+/// A wall panel declares a `panel_facing` (only the `ladder` shape may), so
+/// pressing into the wall it hangs on climbs it. A row without one hangs free
+/// in the air — the exploration pack's vine curtains — where there is no
+/// direction to press, so the jump button is the only way up. Deriving this
+/// from the DECLARED facing rather than [`Block::panel_facing`] is the whole
+/// point: that accessor defaults to North, which would make walking south
+/// climb a vine.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Climb {
+    /// Press toward this facing's wall, or hold jump.
+    Panel(Facing),
+    /// Hold jump.
+    Free,
 }
 
 #[cfg(test)]
@@ -112,11 +132,11 @@ mod tests {
     fn climbable_query_reads_the_facing_row() {
         let mut w = world();
         let p = IVec3::new(8, 64, 8);
-        assert_eq!(w.climbable_facing_at(p.x, p.y, p.z), None);
+        assert_eq!(w.climb_at(p.x, p.y, p.z), None);
         w.set_block_world(p.x, p.y, p.z, Block::LadderSouth);
-        assert_eq!(w.climbable_facing_at(p.x, p.y, p.z), Some(Facing::South));
+        assert_eq!(w.climb_at(p.x, p.y, p.z), Some(Climb::Panel(Facing::South)));
         // A non-climbable block never answers.
         w.set_block_world(p.x, p.y, p.z, Block::Stone);
-        assert_eq!(w.climbable_facing_at(p.x, p.y, p.z), None);
+        assert_eq!(w.climb_at(p.x, p.y, p.z), None);
     }
 }

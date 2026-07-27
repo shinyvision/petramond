@@ -43,7 +43,6 @@ fn uniform_full_slab_stack_meshes_like_the_full_cube_block() {
         bytemuck::cast_slice::<Vertex, u8>(&scrub_tile(&cube)),
         "a same-material full stack must emit the full cube block's exact mesh"
     );
-    assert_eq!(slab.opaque_idx, cube.opaque_idx);
 }
 
 /// A mixed-material full stack still covers the whole cell like a full block but

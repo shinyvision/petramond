@@ -1207,7 +1207,9 @@
         "opaque",
         "ao_occluder"
       ],
-      "tags": [],
+      "tags": [
+        "soil"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [
@@ -2497,6 +2499,7 @@
         "roots_in_soil",
         "roots_in_stone"
       ],
+      "roots_face": "full_cube",
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
@@ -2529,6 +2532,7 @@
         "roots_in_soil",
         "roots_in_stone"
       ],
+      "roots_face": "full_cube",
       "behavior": "fragile",
       "interaction": "none",
       "collision": [],
@@ -2923,6 +2927,11 @@
         }
       ],
       "emission": 28,
+      "light_color": [
+        1.0,
+        1.0,
+        0.96
+      ],
       "tiles": [
         "furnace_top",
         "furnace_top",
@@ -2999,6 +3008,11 @@
       "interaction": "none",
       "collision": [],
       "emission": 28,
+      "light_color": [
+        1.0,
+        1.0,
+        0.96
+      ],
       "particle_emitter": "petramond:torch_flame",
       "tiles": [
         "torch_top",

@@ -1,4 +1,5 @@
-use crate::camera::{Camera, Frustum};
+use super::gpu_timer;
+use crate::camera::{Camera, Frustum, ViewVolume};
 use crate::chunk::{ChunkPos, SectionPos};
 use crate::mathh::SelectionShape;
 use crate::world::TerrainRenderHandoff;
@@ -15,6 +16,7 @@ mod dynamic_draw;
 mod frame_state;
 mod icon_atlas;
 mod lod;
+mod offscreen;
 mod passes;
 mod ui_frame;
 
@@ -24,6 +26,8 @@ pub(crate) use construct::new_renderer_from_target;
 use dynamic_draw::{DynamicDraw, DynamicVertexDraw};
 use icon_atlas::IconAtlas;
 use lod::far_leaf_lod_active;
+pub(crate) use offscreen::new_offscreen_renderer;
+pub use offscreen::RenderedFrame;
 
 use super::break_overlay::build_break_overlays;
 use super::chest_model::build_chests;
@@ -38,7 +42,8 @@ use super::particles::{build_particles_split, build_transparent_emitter_particle
 use super::pipeline::{create_pipeline_resources, EnvPassResources};
 use super::resources::{
     create_atlas, create_atlas_array, create_depth, create_gui_panel, create_model_texture,
-    create_scene_color, upload_column_mesh, ColumnUploadScratch, GpuColumnMesh, GpuSectionMesh,
+    create_scene_color, upload_column_mesh, ColumnOrigins, ColumnUploadScratch, GpuColumnMesh,
+    GpuSectionMesh,
 };
 use super::selection::outline_vertices;
 use super::ui::{build_ui, UiBuild, UiVertex};
@@ -66,30 +71,24 @@ struct PendingTerrainUpload {
     deadline: u64,
 }
 
-#[inline]
-fn aabb_distance_sq(p: glam::Vec3, min: glam::Vec3, max: glam::Vec3) -> f32 {
-    let dx = if p.x < min.x {
-        min.x - p.x
-    } else if p.x > max.x {
-        p.x - max.x
-    } else {
-        0.0
-    };
-    let dy = if p.y < min.y {
-        min.y - p.y
-    } else if p.y > max.y {
-        p.y - max.y
-    } else {
-        0.0
-    };
-    let dz = if p.z < min.z {
-        min.z - p.z
-    } else if p.z > max.z {
-        p.z - max.z
-    } else {
-        0.0
-    };
-    dx * dx + dy * dy + dz * dz
+pub(crate) use crate::camera::aabb_distance_sq;
+
+/// Terrain GPU-memory census (see [`Renderer::terrain_memory`]).
+#[derive(Copy, Clone, Debug)]
+pub struct TerrainMemory {
+    /// VRAM the geometry arena reserves.
+    pub arena_bytes: u64,
+    pub arena_blocks: usize,
+    /// Arena bytes reserved but not held by any live column.
+    pub arena_free: u64,
+    /// Arena bytes handed out to live column layers (size-class rounded).
+    pub suballocated: u64,
+    /// Of those, the bytes a draw actually reads.
+    pub used: u64,
+    pub live_allocs: usize,
+    /// Fresh suballocations since process start — the churn a sizing policy
+    /// trades against.
+    pub suballocs_since_start: u64,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -107,14 +106,18 @@ pub(in crate::render) struct VisibleSection {
     opaque_batched: bool,
     model_batched: bool,
     use_far_leaf_lod: bool,
-    opaque_index_start: u32,
-    opaque_idx_count: u32,
-    far_opaque_index_start: u32,
-    far_opaque_idx_count: u32,
-    transparent_index_start: u32,
-    transparent_idx_count: u32,
-    translucent_index_start: u32,
-    translucent_idx_count: u32,
+    /// Base vertex + quad count of the section's implied-triangulation opaque
+    /// streams (see [`crate::mesh::QuadIdx`]).
+    opaque_vertex_start: u32,
+    opaque_quads: u32,
+    far_opaque_vertex_start: u32,
+    far_opaque_quads: u32,
+    transparent_vertex_start: u32,
+    transparent_quads: u32,
+    transparent_ts_vertex_start: u32,
+    transparent_ts_quads: u32,
+    translucent_vertex_start: u32,
+    translucent_quads: u32,
     model_index_start: u32,
     model_idx_count: u32,
 }
@@ -172,10 +175,18 @@ struct EnvPass {
 }
 
 pub struct Renderer {
-    surface: wgpu::Surface<'static>,
+    /// The presentation swapchain, or `None` for a surfaceless renderer (see
+    /// `offscreen`) that draws into its own texture and never presents.
+    /// `config` describes the frame geometry + colour format either way.
+    surface: Option<wgpu::Surface<'static>>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    /// Opt-in per-pass GPU timing (`PETRAMOND_GPU_TIMING=1`); `None` normally.
+    gpu_timer: Option<gpu_timer::GpuTimer>,
+    /// Reusable colour target for repeated surfaceless frames (tooling); built
+    /// on first use so a windowed renderer never allocates it.
+    offscreen_target: Option<(u32, u32, wgpu::TextureView)>,
     /// The swapchain was rebuilt in response to a suboptimal acquire and came
     /// back STILL suboptimal — stop retrying (some drivers, e.g. NVIDIA on
     /// Wayland, report suboptimal permanently; reconfiguring every frame would
@@ -214,6 +225,8 @@ pub struct Renderer {
     sky_color: [f32; 3],
     opaque_pipe: wgpu::RenderPipeline,
     translucent_pipe: wgpu::RenderPipeline,
+    /// Water TOP faces: the transparent pipeline with culling off.
+    transparent_two_sided_pipe: wgpu::RenderPipeline,
     transparent_pipe: wgpu::RenderPipeline,
     /// Offscreen scene-colour target the world passes render into; the grade
     /// pass reads it and writes the swapchain. Recreated with `depth` on resize.
@@ -373,6 +386,13 @@ pub struct Renderer {
     emitter_particle_draw: DynamicVertexDraw,
     depth: wgpu::TextureView,
     terrain_columns: HashMap<ChunkPos, GpuColumnMesh>,
+    /// Shared instance-step table of per-column world XZ origins, bound once
+    /// per terrain pass; each column draw selects its row via `first_instance`.
+    column_origins: ColumnOrigins,
+    /// Suballocated GPU storage every packed terrain column's geometry lives in.
+    geometry: super::geometry_arena::GeometryArena,
+    /// Shared index buffer for the implied-triangulation terrain streams.
+    quad_index: super::resources::QuadIndexBuffer,
     /// Persistent upload work. World dirtiness is level-triggered, so the set
     /// deduplicates columns while the heap preserves their first useful priority.
     terrain_upload_pending: HashMap<ChunkPos, PendingTerrainUpload>,
@@ -432,8 +452,7 @@ pub struct Renderer {
     hand_shake: [f32; 2],
     held_item_anim: HeldItemAnimator,
     held_item_skylight: u8,
-    held_item_blocklight: u8,
-    held_item_warm: u8,
+    held_item_blocklight: crate::light::BlockLight6,
     /// Dropped item-entities to draw in the world this frame.
     item_entities: Vec<ItemEntityInstance>,
     /// Block-atlas particle cubes to draw this frame.
@@ -445,9 +464,9 @@ pub struct Renderer {
     /// emitter cubes' alpha-blended bake.
     solid_particles: Vec<SolidParticleInstance>,
     /// Loaded block-row particle emitters to synthesize into translucent cube particles.
+    /// This frame's VISIBLE emitters — the gather culls, so the bake only
+    /// depth-sorts them.
     particle_emitters: Vec<ParticleEmitterInstance>,
-    /// Frustum/fog-visible subset of `particle_emitters`.
-    particle_emitter_visible: Vec<ParticleEmitterInstance>,
     /// See [`Renderer::set_particle_density`].
     particle_density: f32,
     /// Vertex count of the BLOCK-atlas portion of `particle_draw` this frame (the split
@@ -566,6 +585,19 @@ impl Renderer {
         self.fog_end + TERRAIN_FOG_CULL_PAD
     }
 
+    /// What this frame can draw, as published by the last
+    /// [`update_uniforms`](Self::update_uniforms): the culling frustum and the
+    /// fog cull distance. Hand it to a per-frame gather so the gather's cost
+    /// tracks what is visible instead of what is loaded.
+    pub fn view_volume(&self) -> ViewVolume {
+        ViewVolume::new(
+            self.frustum,
+            self.render_origin,
+            self.cam_pos,
+            self.terrain_cull_dist(),
+        )
+    }
+
     /// Emitter-derived particle density from the particles graphics option
     /// (`0` = off, `0.5` = reduced, `1` = full). Scales each looping emitter's
     /// active-particle count; zero skips emitter baking entirely.
@@ -605,8 +637,108 @@ impl Renderer {
         )
     }
 
+    /// Mean GPU nanoseconds per pass over the frames measured since the last
+    /// [`Renderer::reset_gpu_profile`], as `(label, total_ns, frames)`. Empty
+    /// unless `PETRAMOND_GPU_TIMING` is set.
+    pub fn gpu_profile(&self) -> Vec<(&'static str, f64, u32)> {
+        self.gpu_timer
+            .as_ref()
+            .map(|t| t.report())
+            .unwrap_or_default()
+    }
+
+    /// Where the packed terrain columns' GPU memory actually is. The
+    /// renderer's dominant VRAM consumer at high render distance, and the
+    /// number that says whether an allocation-policy change paid.
+    pub fn terrain_memory(&self) -> TerrainMemory {
+        let mut suballocated = 0u64;
+        let mut live_allocs = 0usize;
+        let mut used = 0u64;
+        for col in self.terrain_columns.values() {
+            for b in [
+                &col.opaque_vbuf,
+                &col.far_opaque_vbuf,
+                &col.transparent_vbuf,
+                &col.transparent_ts_vbuf,
+                &col.translucent_vbuf,
+                &col.model_vbuf,
+                &col.model_ibuf,
+                &col.contact_vbuf,
+            ] {
+                if let Some(b) = b {
+                    suballocated += b.alloc.capacity();
+                    used += b.len;
+                    live_allocs += 1;
+                }
+            }
+        }
+        TerrainMemory {
+            arena_bytes: self.geometry.reserved_bytes(),
+            arena_free: self.geometry.free_bytes(),
+            arena_blocks: self.geometry.block_count(),
+            suballocated,
+            used,
+            live_allocs,
+            suballocs_since_start: super::resources::TERRAIN_SUBALLOCS
+                .load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    /// `(bytes, count)` of every GPU texture created this process (see
+    /// [`crate::render::gpu_mem`]). Gross, not net: resize-replaced targets are
+    /// counted each time.
+    pub fn texture_memory(&self) -> (u64, u64) {
+        super::gpu_mem::texture_totals()
+    }
+
+    /// Texture bytes per descriptor label, largest first.
+    pub fn texture_memory_by_label(&self) -> Vec<(String, u64)> {
+        super::gpu_mem::texture_by_label()
+    }
+
+    /// Terrain draw work submitted by the last encoded frame:
+    /// `(opaque draws, opaque indices, transparent draws, transparent indices)`.
+    pub fn last_terrain_draws(&self) -> (u32, u64, u32, u64) {
+        let s = self.last_stats;
+        (
+            s.opaque_draws,
+            s.opaque_indices,
+            s.transparent_draws,
+            s.transparent_indices,
+        )
+    }
+
+    /// Mean CPU nanoseconds per frame stage, same shape as [`Renderer::gpu_profile`].
+    pub fn cpu_profile(&self) -> Vec<(&'static str, f64, u32)> {
+        self.gpu_timer
+            .as_ref()
+            .map(|t| t.report_cpu())
+            .unwrap_or_default()
+    }
+
+    pub fn reset_gpu_profile(&self) {
+        if let Some(t) = &self.gpu_timer {
+            t.reset();
+        }
+    }
+
     pub fn render(&mut self) {
-        let frame = match self.surface.get_current_texture() {
+        let Some(frame) = self.acquire_swapchain_frame() else {
+            return;
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        self.encode_frame(&view);
+        frame.present();
+    }
+
+    /// The swapchain image to draw into, or `None` when this frame draws
+    /// nothing: a surfaceless renderer, or a swapchain that needed rebuilding
+    /// first.
+    fn acquire_swapchain_frame(&mut self) -> Option<wgpu::SurfaceTexture> {
+        let surface = self.surface.as_ref()?;
+        match surface.get_current_texture() {
             // A suboptimal frame still presents (with a per-present driver
             // warning), but the swapchain no longer matches the surface —
             // rebuild it once and draw from the fresh one next frame. The
@@ -615,29 +747,37 @@ impl Renderer {
             Ok(t) if t.suboptimal && !self.suboptimal_retried => {
                 self.suboptimal_retried = true;
                 drop(t);
-                self.surface.configure(&self.device, &self.config);
-                return;
+                surface.configure(&self.device, &self.config);
+                None
             }
             Ok(t) => {
                 self.suboptimal_retried = t.suboptimal;
-                t
+                Some(t)
             }
             // Stale/lost swapchain (a resize or compositor change the events
             // haven't delivered yet): reconfigure at the current size and let
             // the next frame draw.
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
-                self.surface.configure(&self.device, &self.config);
-                return;
+                surface.configure(&self.device, &self.config);
+                None
             }
-            Err(_) => return,
-        };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+            Err(_) => None,
+        }
+    }
 
+    /// Everything between "here is the colour target" and "the GPU has this
+    /// frame": the per-frame CPU bakes, draw planning, pass encoding, submit.
+    /// Target-agnostic, so the windowed swapchain and an offscreen capture
+    /// share one frame graph.
+    fn encode_frame(&mut self, view: &wgpu::TextureView) {
+        let mark = std::time::Instant::now;
+        let t = mark();
         self.refresh_overlay_buffers();
         self.prepare_held_item();
         self.bake_world_instances();
+        if let Some(g) = &self.gpu_timer {
+            g.cpu_stage("cpu: bake world instances", t.elapsed().as_nanos() as f64);
+        }
 
         let mut enc = self
             .device
@@ -650,15 +790,20 @@ impl Renderer {
         let mut opaque_columns = std::mem::take(&mut self.opaque_column_order);
         let mut model_columns = std::mem::take(&mut self.model_column_order);
         let mut contact_columns = std::mem::take(&mut self.contact_column_order);
+        let t = mark();
         let (mut stats, any_model_visible, any_transparent_visible) = self.plan_draw_order(
             &mut order,
             &mut opaque_columns,
             &mut model_columns,
             &mut contact_columns,
         );
+        if let Some(g) = &self.gpu_timer {
+            g.cpu_stage("cpu: plan draw order", t.elapsed().as_nanos() as f64);
+        }
+        let t = mark();
         self.encode_passes(
             &mut enc,
-            &view,
+            view,
             &order,
             &opaque_columns,
             &model_columns,
@@ -667,12 +812,29 @@ impl Renderer {
             any_model_visible,
             any_transparent_visible,
         );
+        if let Some(g) = &self.gpu_timer {
+            g.cpu_stage("cpu: encode passes", t.elapsed().as_nanos() as f64);
+        }
         self.draw_order = order;
         self.opaque_column_order = opaque_columns;
         self.model_column_order = model_columns;
         self.contact_column_order = contact_columns;
-        self.queue.submit(std::iter::once(enc.finish()));
+        if let Some(t) = &self.gpu_timer {
+            t.finish_frame(&mut enc);
+        }
+        let t = mark();
+        let cb = enc.finish();
+        if let Some(g) = &self.gpu_timer {
+            g.cpu_stage("cpu: encoder finish", t.elapsed().as_nanos() as f64);
+        }
+        let t = mark();
+        self.queue.submit(std::iter::once(cb));
+        if let Some(g) = &self.gpu_timer {
+            g.cpu_stage("cpu: queue submit", t.elapsed().as_nanos() as f64);
+        }
+        if let Some(t) = &self.gpu_timer {
+            t.after_submit(&self.device);
+        }
         self.last_stats = stats;
-        frame.present();
     }
 }

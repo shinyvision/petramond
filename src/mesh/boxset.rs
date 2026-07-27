@@ -51,15 +51,11 @@
 
 use crate::block::Block;
 use crate::block_state::SlabState;
-use crate::torch::warm_tint;
 
 use super::builder::{boundary_plane, cube_face_lighting, face_axes};
 use super::face::{quad_ao, should_flip, Face, FACES};
 use super::plane::{cell_uv, PlaneLight};
-use super::vertex::{
-    pack_cell_uv, pack_normal_code, pack_tint, pack_vertex, pack_vertex2, Vertex,
-    UV_MODE_CELL_LOCAL,
-};
+use super::vertex::{pack_cell_uv, pack_normal_code, pack_vertex, Vertex, UV_MODE_CELL_LOCAL};
 use super::UV_MODE_SHIFT;
 
 // The emitter's box vocabulary is the ENGINE-NEUTRAL shape currency (see
@@ -147,7 +143,6 @@ pub(super) struct BoxSetScratch {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_box_set<B, S, L, K>(
     vbuf: &mut Vec<Vertex>,
-    ibuf: &mut Vec<u32>,
     wx: i32,
     wy: i32,
     wz: i32,
@@ -164,7 +159,7 @@ pub(super) fn emit_box_set<B, S, L, K>(
     B: Fn(i32, i32, i32) -> Block,
     S: Fn(i32, i32, i32) -> Option<SlabState>,
     L: Fn(i32, i32, i32) -> u8,
-    K: Fn(i32, i32, i32) -> u8,
+    K: Fn(i32, i32, i32) -> crate::light::LightRgb,
 {
     for face in FACES {
         let fi = face as usize;
@@ -278,14 +273,14 @@ pub(super) fn emit_box_set<B, S, L, K>(
                 } else {
                     [wx, wy, wz][axis] as f32 + d
                 };
-                let (ao, sky, block, warm) = cube_face_lighting(
+                let (ao, sky, block) = cube_face_lighting(
                     face,
                     fx,
                     fy,
                     fz,
                     plane,
                     neighbour_light(fx, fy, fz) as u32,
-                    neighbour_blocklight(fx, fy, fz) as u32,
+                    neighbour_blocklight(fx, fy, fz),
                     // The closed-underside rule (stairs, slabs): a NegY
                     // plane must not smooth sky from cells beside a dark
                     // cell below.
@@ -296,15 +291,7 @@ pub(super) fn emit_box_set<B, S, L, K>(
                     neighbour_blocklight,
                     &matter,
                 );
-                scratch.planes.push((
-                    d,
-                    PlaneLight {
-                        ao,
-                        sky,
-                        block,
-                        warm,
-                    },
-                ));
+                scratch.planes.push((d, PlaneLight { ao, sky, block }));
             }
             let pl = &scratch
                 .planes
@@ -325,11 +312,17 @@ pub(super) fn emit_box_set<B, S, L, K>(
                 max3[va] = r.v1;
                 let local = face.quad_box(min3, max3);
 
-                let start = vbuf.len() as u32;
+                // The corner rotation that expresses the darker AO diagonal
+                // (see `face_emit::push_cube_face_with_cell_uvs`) needs every
+                // corner's AO before any vertex is written, so the corners are
+                // sampled first and emitted second.
                 let mut quad_ao = [3u32; 4];
+                let mut sky = [0u32; 4];
+                let mut light = [crate::light::BlockLight6::DARK; 4];
+                let mut uvs = [(0u32, 0u32); 4];
                 for (ci, lp) in local.into_iter().enumerate() {
                     let [u, v] = cell_uv(face, lp);
-                    let (mut ao, sky6, block6, warm) = pl.sample(u, v);
+                    let (mut ao, sky6, block) = pl.sample(u, v);
                     ao = ao.min(probe_ao(
                         boxes,
                         lp,
@@ -346,45 +339,45 @@ pub(super) fn emit_box_set<B, S, L, K>(
                         ao = 3 - (dark.round() as u32).min(3);
                     }
                     quad_ao[ci] = ao;
+                    sky[ci] = sky6;
+                    light[ci] = block;
                     let (mut uu, mut vv) = (u, v);
                     if style.swap_uv {
                         std::mem::swap(&mut uu, &mut vv);
                     }
                     (uu, vv) = ShapeFace::turn_uv(style.uv_turns, uu, vv);
-                    let tint = if warm == 0.0 {
-                        style.tint
-                    } else {
-                        warm_tint(style.tint, warm)
-                    };
                     let quant = |x: f32| ((x * 16.0).round() as i32).clamp(0, 16) as u32;
+                    uvs[ci] = (quant(uu), quant(vv));
+                }
+                let start = vbuf.len() as u32;
+                let rot = usize::from(should_flip(quad_ao));
+                for k in 0..4usize {
+                    let ci = (k + rot) & 3;
+                    let lp = local[ci];
                     vbuf.push(Vertex {
                         pos: [wx as f32 + lp[0], wy as f32 + lp[1], wz as f32 + lp[2]],
-                        tint: pack_tint(tint),
+                        tint: light[ci].tint_word(style.tint),
                         packed: pack_vertex(
                             style.tile.index() as u32,
                             ci as u32,
                             face.shade_idx(),
                             false,
-                            ao,
-                            sky6,
-                        ) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT),
-                        packed2: pack_vertex2(block6)
-                            | pack_cell_uv(quant(uu), quant(vv))
+                            quad_ao[ci],
+                            sky[ci],
+                        ) | light[ci].packed_bits()
+                            | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT),
+                        packed2: light[ci].packed2_bits()
+                            | pack_cell_uv(uvs[ci].0, uvs[ci].1)
                             | pack_normal_code(face.normal_code())
                             | if b.dyed { super::vertex::DYED_FLAG2 } else { 0 },
                     });
                 }
-                let tris: [u32; 6] = if should_flip(quad_ao) {
-                    [0, 1, 3, 1, 2, 3]
-                } else {
-                    [0, 1, 2, 0, 2, 3]
-                };
-                ibuf.extend(tris.map(|t| start + t));
                 if b.double_sided {
-                    // The back winding of the SAME vertices: exactly one of
-                    // the two survives back-face culling for any given view,
-                    // so this costs indices and never overdraw.
-                    ibuf.extend(super::water::top_back_winding(tris).map(|t| start + t));
+                    // Seen from either side: the cactus's side tile is
+                    // transparent along its edge columns except where the
+                    // spines poke out, so a single-sided plane loses half the
+                    // spines as you strafe past.
+                    super::vertex::push_back_face(vbuf, start);
                 }
             }
         }
@@ -410,13 +403,12 @@ pub(in crate::mesh) fn cell_seals_face(
     scratch: &mut BoxSetScratch,
 ) -> bool {
     let block = nb.block(pos);
-    if block == Block::Air {
+    // Dense flags first: the shape-kind row behind `resolves_to_boxes` is a
+    // big-table load, and almost every cell asked here is rejected.
+    if !block.has_box_shape() || block.is_transparent() || block.is_translucent() {
         return false;
     }
     let k = block.shape_kind_def();
-    if !k.resolves_to_boxes || block.is_transparent() || block.is_translucent() {
-        return false;
-    }
     boxes.clear();
     let tint_for = |_: crate::atlas::Tile| [1.0f32; 3];
     k.render.boxes(

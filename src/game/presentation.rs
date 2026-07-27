@@ -9,14 +9,16 @@ use std::sync::Arc;
 use glam::{IVec3, Quat, Vec3};
 
 use crate::atlas::Tile;
-use crate::block::{Block, ParticleEmitter, ShapeFamily};
+use crate::block::{Block, ShapeFamily};
 use crate::block_model::BlockModelKind;
+use crate::camera::ViewVolume;
 use crate::door::DoorState;
 use crate::facing::Facing;
 use crate::item::ItemType;
 use crate::mob::Mob;
 use crate::render::{PlayerRenderInstance, RemotePlayerRender};
 use crate::stair::StairShape;
+use crate::world::PlacedEmitter;
 
 use super::remote_players;
 use super::Game;
@@ -81,7 +83,7 @@ pub(crate) struct ChestPresentation {
     pub(crate) facing: Facing,
     pub(crate) lid_progress: f32,
     pub(crate) skylight: u8,
-    pub(crate) blocklight: u8,
+    pub(crate) blocklight: crate::light::BlockLight6,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -91,7 +93,7 @@ pub(crate) struct DoorPresentation {
     pub(crate) tiles: [Tile; 3],
     pub(crate) swing_progress: f32,
     pub(crate) skylight: u8,
-    pub(crate) blocklight: u8,
+    pub(crate) blocklight: crate::light::BlockLight6,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -104,7 +106,7 @@ pub(crate) struct DroppedItemPresentation {
     pub(crate) prev_spin: f32,
     pub(crate) spin: f32,
     pub(crate) skylight: u8,
-    pub(crate) blocklight: u8,
+    pub(crate) blocklight: crate::light::BlockLight6,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -124,23 +126,13 @@ pub(crate) struct ParticlePresentation {
     pub(crate) uv_min: [f32; 2],
     pub(crate) uv_size: [f32; 2],
     pub(crate) tint: [f32; 3],
-    pub(crate) warm: u8,
     pub(crate) alpha: f32,
     pub(crate) size: f32,
     /// Vertical cube elongation (1 = a cube; ambient rain streaks stretch).
     /// Only the Solid atlas path honors it.
     pub(crate) stretch: f32,
     pub(crate) skylight: u8,
-    pub(crate) blocklight: u8,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) struct ParticleEmitterPresentation {
-    pub(crate) origin: Vec3,
-    pub(crate) emitter: ParticleEmitter,
-    pub(crate) seed: u64,
-    pub(crate) skylight: u8,
-    pub(crate) blocklight: u8,
+    pub(crate) blocklight: crate::light::BlockLight6,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -160,7 +152,7 @@ pub(crate) struct MobPresentation {
     pub(crate) prev_head_pitch: f32,
     pub(crate) head_pitch: f32,
     pub(crate) skylight: u8,
-    pub(crate) blocklight: u8,
+    pub(crate) blocklight: crate::light::BlockLight6,
     pub(crate) hurt_flash: f32,
     pub(crate) dead: bool,
     pub(crate) shorn: bool,
@@ -204,14 +196,16 @@ pub(crate) struct PlayerPresentation {
     /// head toward `body_yaw`.
     pub(crate) sleeping: bool,
     pub(crate) skylight: u8,
-    pub(crate) blocklight: u8,
+    pub(crate) blocklight: crate::light::BlockLight6,
 }
 
 pub(crate) struct GamePresentation<'a> {
     pub(crate) tick_alpha: f32,
     pub(crate) item_entities: &'a [DroppedItemPresentation],
     pub(crate) particles: &'a [ParticlePresentation],
-    pub(crate) particle_emitters: &'a [ParticleEmitterPresentation],
+    /// Every emitter — block rows and mobs alike — whose particles are inside
+    /// this frame's view volume, already culled by the gather.
+    pub(crate) particle_emitters: &'a [PlacedEmitter],
     pub(crate) chests: &'a [ChestPresentation],
     pub(crate) doors: &'a [DoorPresentation],
     pub(crate) mobs: &'a [MobPresentation],
@@ -221,7 +215,7 @@ pub(crate) struct GamePresentation<'a> {
     /// second translation buys anything).
     pub(crate) remote_players: &'a [RemotePlayerRender],
     pub(crate) player: Option<PlayerPresentation>,
-    pub(crate) held_item_light: (u8, u8, u8),
+    pub(crate) held_item_light: (u8, crate::light::BlockLight6),
     /// Every break (crack) overlay to draw this frame: the LOCAL player's own
     /// mining target plus each visible remote's replicated one, capped at the
     /// [`MAX_BREAK_OVERLAYS`] nearest to the camera.
@@ -239,10 +233,9 @@ pub(crate) struct GamePresentationScratch {
     pub(crate) ambient: super::ambient::AmbientDrives,
     item_entities: Vec<DroppedItemPresentation>,
     particles: Vec<ParticlePresentation>,
-    particle_emitter_rows: Vec<(Vec3, ParticleEmitter, u64, u8, u8)>,
-    particle_emitters: Vec<ParticleEmitterPresentation>,
-    chest_rows: Vec<(IVec3, Facing, u8, u8)>,
-    door_rows: Vec<(IVec3, DoorState, [Tile; 3], u8, u8)>,
+    particle_emitters: Vec<PlacedEmitter>,
+    chest_rows: Vec<(IVec3, Facing, u8, crate::light::BlockLight6)>,
+    door_rows: Vec<(IVec3, DoorState, [Tile; 3], u8, crate::light::BlockLight6)>,
     chests: Vec<ChestPresentation>,
     doors: Vec<DoorPresentation>,
     mobs: Vec<MobPresentation>,
@@ -256,17 +249,24 @@ impl GamePresentationScratch {
     }
 
     /// `now` is the app render clock — the same seconds looping emitters
-    /// animate on; the ambient volumes derive against it.
-    pub(crate) fn snapshot<'a>(&'a mut self, game: &Game, now: f32) -> GamePresentation<'a> {
+    /// animate on; the ambient volumes derive against it. `view` is the volume
+    /// the frame will actually draw, so gathers that can be large cull against
+    /// it instead of handing the renderer everything that is loaded.
+    pub(crate) fn snapshot<'a>(
+        &'a mut self,
+        game: &Game,
+        now: f32,
+        view: &ViewVolume,
+    ) -> GamePresentation<'a> {
         let tick_alpha = game.tick_alpha();
         self.collect_item_entities(game);
         self.collect_particles(game);
         self.collect_ambient(game, now);
-        self.collect_particle_emitters(game);
+        self.collect_particle_emitters(game, view);
         self.collect_chests(game);
         self.collect_doors(game);
         self.collect_mobs(game, tick_alpha);
-        self.collect_mob_emitters(tick_alpha);
+        self.collect_mob_emitters(tick_alpha, view);
         self.collect_remote_players(game, tick_alpha);
         self.collect_break_overlays(game);
 
@@ -309,7 +309,9 @@ impl GamePresentationScratch {
                     prev_spin: entry.prev.spin,
                     spin: entry.curr.spin,
                     skylight: world.skylight6_at_world(c.x, c.y, c.z),
-                    blocklight: world.blocklight6_at_world(c.x, c.y, c.z),
+                    blocklight: crate::light::BlockLight6::from_x2(
+                        world.blocklight_rgb_at_world(c.x, c.y, c.z),
+                    ),
                 }
             }));
     }
@@ -331,7 +333,6 @@ impl GamePresentationScratch {
                     uv_min,
                     uv_size,
                     tint: particle.tint,
-                    warm: particle.warm,
                     alpha: particle.alpha(),
                     size: particle.render_size(),
                     stretch: 1.0,
@@ -356,20 +357,16 @@ impl GamePresentationScratch {
         );
     }
 
-    fn collect_particle_emitters(&mut self, game: &Game) {
+    /// Looping emitters exist only to make particles, so the particles
+    /// graphics option gates the gather itself — off costs nothing at all,
+    /// like every other particle producer.
+    fn collect_particle_emitters(&mut self, game: &Game, view: &ViewVolume) {
+        if game.particles.count_scale() <= 0.0 {
+            self.particle_emitters.clear();
+            return;
+        }
         game.replica
-            .collect_particle_emitters(&mut self.particle_emitter_rows);
-        self.particle_emitters.clear();
-        self.particle_emitters
-            .extend(self.particle_emitter_rows.iter().map(
-                |&(origin, emitter, seed, skylight, blocklight)| ParticleEmitterPresentation {
-                    origin,
-                    emitter,
-                    seed,
-                    skylight,
-                    blocklight,
-                },
-            ));
+            .collect_particle_emitters(view, &mut self.particle_emitters);
     }
 
     fn collect_chests(&mut self, game: &Game) {
@@ -429,7 +426,9 @@ impl GamePresentationScratch {
                 prev_head_pitch: prev.head_pitch,
                 head_pitch: curr.head_pitch,
                 skylight: world.skylight6_at_world(c.x, c.y, c.z),
-                blocklight: world.blocklight6_at_world(c.x, c.y, c.z),
+                blocklight: crate::light::BlockLight6::from_x2(
+                    world.blocklight_rgb_at_world(c.x, c.y, c.z),
+                ),
                 hurt_flash: crate::mob::hurt_flash01(prev.hurt_timer, curr.hurt_timer, tick_alpha),
                 dead: curr.dead,
                 shorn: curr.shorn,
@@ -468,7 +467,10 @@ impl GamePresentationScratch {
     /// block-emitter list collected earlier this frame, after `collect_mobs` so
     /// it reads the replicated ids. A ragdolling corpse keeps its ids, so a mob
     /// that burned to death keeps burning through its ragdoll.
-    fn collect_mob_emitters(&mut self, tick_alpha: f32) {
+    fn collect_mob_emitters(&mut self, tick_alpha: f32, view: &ViewVolume) {
+        if self.mobs.is_empty() {
+            return;
+        }
         for m in &self.mobs {
             if m.emitters.is_empty() {
                 continue;
@@ -481,8 +483,13 @@ impl GamePresentationScratch {
                 };
                 for emitter in bundle.rows {
                     stream += 1;
-                    self.particle_emitters.push(ParticleEmitterPresentation {
-                        origin: feet + Vec3::from_array(emitter.offset),
+                    let origin = feet + Vec3::from_array(emitter.offset);
+                    let envelope = crate::world::emitter_envelope(emitter);
+                    if !view.aabb_visible(origin - envelope, origin + envelope) {
+                        continue;
+                    }
+                    self.particle_emitters.push(PlacedEmitter {
+                        origin,
                         emitter: *emitter,
                         // Distinct deterministic stream per mob and per row, so
                         // sibling rows' schedules don't pulse in lockstep.
@@ -564,7 +571,9 @@ impl GamePresentationScratch {
                     seated: p.curr.mount.is_some_and(mount_renders_seated),
                     hurt: p.hurt_flash01(),
                     skylight: world.skylight6_at_world(c.x, c.y, c.z),
-                    blocklight: world.blocklight6_at_world(c.x, c.y, c.z),
+                    blocklight: crate::light::BlockLight6::from_x2(
+                        world.blocklight_rgb_at_world(c.x, c.y, c.z),
+                    ),
                 },
                 held: p.view,
             });
@@ -645,7 +654,7 @@ fn collect_player(game: &Game) -> Option<PlayerPresentation> {
     if !game.third_person_enabled() || game.third_person.cam.is_none() {
         return None;
     }
-    let (skylight, blocklight, _warm) = game.held_item_light();
+    let (skylight, blocklight) = game.held_item_light();
     // The body shares the first-person camera's auto-step vertical easing (a
     // negative, settling lag) so stepping up a ledge glides instead of popping.
     let mut pos = game.player.pos;

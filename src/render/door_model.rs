@@ -129,7 +129,7 @@ mod tests {
             top_tile: Tile::named("oak_door_top"),
             side_tile: Tile::named("oak_planks"),
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
         }
     }
 

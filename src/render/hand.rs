@@ -59,14 +59,13 @@ pub fn build_hand(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
 ) -> Mat4 {
-    build_hand_lit(view, aspect, DynLight::FULL, 0, verts, indices)
+    build_hand_lit(view, aspect, DynLight::FULL, verts, indices)
 }
 
 pub(super) fn build_hand_lit(
     view: &HeldItemView,
     aspect: f32,
     light: DynLight,
-    warm: u8,
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
 ) -> Mat4 {
@@ -131,19 +130,6 @@ pub(super) fn build_hand_lit(
         },
     };
 
-    // Warm the whole hand by the block-light it sits in — one post-pass over the
-    // freshly built verts — so a held block / bare arm reads warm near a torch or
-    // furnace, not just brighter. (A sprite item emits no model3d verts here; it is
-    // warmed on the item3d side instead.)
-    if warm > 0 {
-        let w = warm as f32 / 255.0;
-        for v in verts.iter_mut() {
-            v.tint = crate::mesh::pack_tint(crate::torch::warm_tint(
-                crate::mesh::unpack_tint(v.tint),
-                w,
-            ));
-        }
-    }
     // Instance-data tint (`petramond:tint`): multiply the held ITEM's verts.
     // Never the bare arm — its solid path uses tint as the final skin color.
     if view.item.is_some() {

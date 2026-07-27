@@ -351,7 +351,7 @@ fn pumped_mob_batches_become_interpolated_presentation_rows() {
     game.commit_replication_window_for_test();
 
     let mut scratch = GamePresentationScratch::new();
-    let presentation = scratch.snapshot(&game, 0.0);
+    let presentation = scratch.snapshot(&game, 0.0, &crate::camera::ViewVolume::unbounded());
     let row = presentation
         .mobs
         .iter()
@@ -396,7 +396,7 @@ fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
         "an id absent from the batch drops from the store"
     );
     let mut scratch = GamePresentationScratch::new();
-    let presentation = scratch.snapshot(&game, 0.0);
+    let presentation = scratch.snapshot(&game, 0.0, &crate::camera::ViewVolume::unbounded());
     assert!(
         !presentation.mobs.iter().any(|m| m.id == id),
         "and from the presentation rows"
@@ -443,7 +443,7 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
     game.commit_replication_window_for_test();
 
     let mut scratch = GamePresentationScratch::new();
-    let presentation = scratch.snapshot(&game, 0.0);
+    let presentation = scratch.snapshot(&game, 0.0, &crate::camera::ViewVolume::unbounded());
     let row = presentation
         .item_entities
         .iter()

@@ -161,7 +161,7 @@ impl ServerGame {
         let climbing = !in_water
             && self
                 .world
-                .climbable_facing_at(
+                .climb_at(
                     pos.x.floor() as i32,
                     pos.y.floor() as i32,
                     pos.z.floor() as i32,

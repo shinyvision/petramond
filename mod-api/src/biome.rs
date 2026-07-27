@@ -8,9 +8,13 @@
 //! never copied numeric literals; the engine pins this table against its own
 //! biome registry, so a drift fails an engine test, not a mod at runtime.
 //!
-//! When biomes become data-driven (explicitly future work), pack biomes will
-//! get a name-resolution call like `ResolveBlock`; this vocabulary stays valid
-//! for the engine rows.
+//! When SURFACE biomes become data-driven (explicitly future work), pack
+//! biomes will get a name-resolution call like `ResolveBlock`; this vocabulary
+//! stays valid for the engine rows. UNDERGROUND biomes already went that way
+//! and are the precedent: they are pack-extensible, so the ABI speaks NAMES
+//! and session ids ([`HostCall::ResolveUndergroundBiome`](crate::HostCall) +
+//! `UndergroundBiomeAt`) and there is deliberately no frozen name table here
+//! for them.
 
 /// Engine biome names, indexed by `id - 1` (biome ids start at 1; 0 is
 /// unused). Append-only, mirroring the engine's biome table.

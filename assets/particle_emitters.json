@@ -14,7 +14,7 @@
           "velocity_jitter": [0.05, 0.05, 0.05],
           "color": [[1, 0.34, 0.04], [1, 0.95, 0.22]],
           "alpha": [0.2, 0.42],
-          "fullbright": true
+          "self_lit": 1.0
         }
       ]
     },
@@ -33,7 +33,7 @@
           "alpha": [0.8, 0.95],
           "fade_power": 0.7,
           "shrink_power": 0.45,
-          "fullbright": true,
+          "self_lit": 1.0,
           "spiral": [0.12, 0.45]
         },
         {
@@ -68,7 +68,7 @@
           "alpha": [0.8, 0.95],
           "fade_power": 0.7,
           "shrink_power": 0.45,
-          "fullbright": true,
+          "self_lit": 1.0,
           "spiral": [0.12, 0.45]
         },
         {
@@ -83,7 +83,7 @@
           "alpha": [0.8, 0.95],
           "fade_power": 0.7,
           "shrink_power": 0.45,
-          "fullbright": true,
+          "self_lit": 1.0,
           "spiral": [0.12, 0.45]
         },
         {

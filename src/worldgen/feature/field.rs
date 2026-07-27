@@ -222,6 +222,10 @@ impl SurfaceHeights {
         Self { x0, z0, w, surf }
     }
 
+    pub(crate) fn capacity_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.surf.capacity() * 4
+    }
+
     pub(crate) fn at(&self, wx: i32, wz: i32) -> i32 {
         debug_assert!(
             bounds_contains(self.x0, self.z0, self.w, self.w, wx, wz),

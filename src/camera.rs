@@ -87,6 +87,84 @@ impl Frustum {
     }
 }
 
+/// Squared distance from `p` to the nearest point of the box `[min,max]`
+/// (zero inside it).
+#[inline]
+pub fn aabb_distance_sq(p: Vec3, min: Vec3, max: Vec3) -> f32 {
+    let dx = if p.x < min.x {
+        min.x - p.x
+    } else if p.x > max.x {
+        p.x - max.x
+    } else {
+        0.0
+    };
+    let dy = if p.y < min.y {
+        min.y - p.y
+    } else if p.y > max.y {
+        p.y - max.y
+    } else {
+        0.0
+    };
+    let dz = if p.z < min.z {
+        min.z - p.z
+    } else if p.z > max.z {
+        p.z - max.z
+    } else {
+        0.0
+    };
+    dx * dx + dy * dy + dz * dz
+}
+
+/// What a frame can actually draw: the view frustum plus the distance past
+/// which nothing is drawn.
+///
+/// Per-frame gathers take one of these so their cost tracks what is VISIBLE
+/// rather than what is loaded — a loaded-but-off-screen region is rejected by
+/// one box test instead of being walked, and the work each survivor causes
+/// (light sampling, row building, the copies downstream) is never paid for
+/// something that will not be drawn.
+#[derive(Copy, Clone, Debug)]
+pub struct ViewVolume {
+    frustum: Frustum,
+    /// The frustum's planes are expressed relative to this origin — the
+    /// renderer keeps view coordinates small for float precision, so boxes
+    /// have to be rebased the same way before testing.
+    origin: Vec3,
+    eye: Vec3,
+    cull_dist_sq: f32,
+}
+
+impl ViewVolume {
+    pub fn new(frustum: Frustum, origin: Vec3, eye: Vec3, cull_dist: f32) -> Self {
+        Self {
+            frustum,
+            origin,
+            eye,
+            cull_dist_sq: cull_dist * cull_dist,
+        }
+    }
+
+    /// Admits everything, for callers that have no camera (headless tools,
+    /// tests) or none yet.
+    pub fn unbounded() -> Self {
+        Self::new(Frustum::permissive(), Vec3::ZERO, Vec3::ZERO, f32::INFINITY)
+    }
+
+    /// The camera position, for distance ordering by the same callers that cull.
+    #[inline]
+    pub fn eye(&self) -> Vec3 {
+        self.eye
+    }
+
+    /// Is any part of the world-space box `[min,max]` drawn this frame?
+    #[inline]
+    pub fn aabb_visible(&self, min: Vec3, max: Vec3) -> bool {
+        self.frustum
+            .aabb_visible(min - self.origin, max - self.origin)
+            && aabb_distance_sq(self.eye, min, max) <= self.cull_dist_sq
+    }
+}
+
 #[derive(Clone)]
 pub struct Camera {
     pub pos: Vec3,

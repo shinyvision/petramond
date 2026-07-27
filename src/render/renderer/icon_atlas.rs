@@ -148,26 +148,29 @@ pub(super) fn bake(
     let ah = rows * CELL;
 
     // --- Atlas color texture (surface sRGB format) + Nearest sampler + UI bind. ---
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("icon atlas"),
-        size: wgpu::Extent3d {
-            width: aw,
-            height: ah,
-            depth_or_array_layers: 1,
+    let texture = crate::render::gpu_mem::create_texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some("icon atlas"),
+            size: wgpu::Extent3d {
+                width: aw,
+                height: ah,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: if std::env::var_os("PETRAMOND_DUMP_ICON_ATLAS").is_some() {
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
+            } else {
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
+            },
+            view_formats: &[],
         },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: if std::env::var_os("PETRAMOND_DUMP_ICON_ATLAS").is_some() {
-            wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC
-        } else {
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
-        },
-        view_formats: &[],
-    });
+    );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("icon atlas sampler"),
@@ -196,20 +199,23 @@ pub(super) fn bake(
 
     // Full-atlas depth buffer for Pass B (the model icons' z resolves their draw
     // order). Pass A is depthless and never touches it.
-    let depth = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("icon atlas depth"),
-        size: wgpu::Extent3d {
-            width: aw,
-            height: ah,
-            depth_or_array_layers: 1,
+    let depth = crate::render::gpu_mem::create_texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some("icon atlas depth"),
+            size: wgpu::Extent3d {
+                width: aw,
+                height: ah,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
         },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
+    );
     let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
 
     // The square 64×64 cell every icon's MVP is auto-framed to (undistorted).

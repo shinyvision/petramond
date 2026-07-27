@@ -37,6 +37,75 @@ host_fn! {
     pub fn register_generator(callback_id: u32) => RegisterGenerator { callback_id }
 }
 
+host_fn! {
+    /// Resolve an UNDERGROUND-BIOME registry name (`"petramond:marble"`, your
+    /// own `"mymod:mushroom_cavern"` row in `underground_biomes.json`) to its
+    /// session-scoped id — the underground twin of
+    /// [`resolve_block`](crate::resolve_block). Registry-only, so it is legal
+    /// on worldgen instances; `None` = no such row. Resolve once in
+    /// [`Mod::init`], keep the id in mod state, never persist it.
+    pub fn resolve_underground_biome(key: &str) -> Option<u8>
+        => ResolveUndergroundBiome { key: key.into() } => MaybeByte
+}
+
+host_fn! {
+    /// The underground biome id owning each world position, parallel to
+    /// `positions` (at most 4096 per call). A pure function of position — the
+    /// same partition the cave carver's wall lining and caliber read — so it
+    /// is seam-safe inside a worldgen feature and needs no loaded section. A
+    /// position no row claims answers `0`, the fallback biome.
+    ///
+    /// Query the candidate ANCHOR of each origin (a handful of positions per
+    /// section), never every cell: this is an ABI crossing, not a field
+    /// sampler.
+    ///
+    /// Legal on a CLIENT instance too (the underground twin of
+    /// [`client_biome_at`](crate::client_biome_at)) — a client mod may ask
+    /// which cave biome the camera stands in, and gets the same answer the
+    /// server would. Same batching rule: a presentation mod should sample the
+    /// camera every few frames, not every frame.
+    pub fn underground_biome_at(positions: Vec<[i32; 3]>) -> Vec<u8>
+        => UndergroundBiomeAt { positions } => UndergroundBiomes
+}
+
+host_fn! {
+    /// Which underground biomes CAN own a cell inside the inclusive world box
+    /// `lo..=hi` — the bounded, conservative form of
+    /// [`underground_biome_at`]. An id the reply OMITS provably owns nothing
+    /// in the box; an id it lists may still be absent.
+    ///
+    /// Use it as the FIRST thing a one-biome worldgen feature does. Worldgen
+    /// dispatches every registered feature for every section it generates, so
+    /// a feature that only decorates its own underground biome otherwise pays
+    /// its whole candidate gather — and a per-cell biome batch — in the vast
+    /// majority of sections that hold none of its territory. One box query
+    /// over the dispatch's entire reach rejects those for a bounded cost that
+    /// does not grow with the number of candidates.
+    pub fn underground_biomes_in_box(lo: [i32; 3], hi: [i32; 3]) -> Vec<u8>
+        => UndergroundBiomesInBox { lo, hi } => UndergroundBiomes
+}
+
+host_fn! {
+    /// Whether the generated TERRAIN is solid at each world position, parallel
+    /// to `positions` (at most 4096 per call). `false` = air or water. A pure
+    /// function of (world seed, position) — the density surface minus the cave
+    /// carve — so, like [`underground_biome_at`], it answers before any
+    /// section exists and every section's dispatch gets the same answer.
+    ///
+    /// This is how a structure that spans sections makes ONE acceptance
+    /// decision. [`GenCtx::block`] cannot: it answers `None` outside the
+    /// dispatching section, so the same origin would be accepted by some
+    /// sections and rejected by others, and the structure comes out in
+    /// fragments. Use `block` for per-cell clipping (only the owner's cells),
+    /// this for the decision.
+    ///
+    /// Terrain only: ore veins, vegetation, trees and other mods' writes are
+    /// not positional and are not included. Same batching rule — query the
+    /// handful of cells a decision needs, never a volume.
+    pub fn terrain_solid_at(positions: Vec<[i32; 3]>) -> Vec<bool>
+        => TerrainSolidAt { positions } => TerrainSolid
+}
+
 /// One worldgen dispatch's inputs, with the accessors a well-behaved feature
 /// needs. See the seam/determinism contract below — the engine cannot check it
 /// for you; a violation shows up as features cut off at section borders.
@@ -65,6 +134,11 @@ host_fn! {
 /// [`GenCtx::for_each_origin`] with a margin equal to the feature's horizontal
 /// reach). Surface-anchored features should keep margin 0 and write only in
 /// the origin's own column.
+///
+/// [`underground_biome_at`] is a pure function of position too, so it is a
+/// legal decision input on the same footing as [`GenRng::positional`] — a
+/// cross-section feature may gate on "is this anchor inside my cave biome" and
+/// every section's call re-derives the same answer.
 pub struct GenCtx {
     pub(crate) section_pos: [i32; 3],
     pub(crate) seed: u32,
@@ -75,6 +149,36 @@ pub struct GenCtx {
 }
 
 impl GenCtx {
+    /// Build a dispatch context by hand, so a mod can UNIT-TEST its
+    /// `gen_feature` without a running engine.
+    ///
+    /// Worldgen is the one mod surface where a bug is both easy to write and
+    /// expensive to see — a seam violation shows up as features sliced at
+    /// section borders, hours later, in a screenshot. Being able to call your
+    /// own feature over a synthetic section and assert on the writes is worth
+    /// far more than any amount of staring at the seam contract.
+    ///
+    /// `blocks` must be 4096 (`y*256 + z*16 + x`) or empty for the stages that
+    /// carry no snapshot; `surface_heights` and `biomes` must be 256
+    /// (`z*16 + x`) or empty.
+    pub fn for_test(
+        section_pos: [i32; 3],
+        seed: u32,
+        blocks: Vec<u8>,
+        surface_heights: Vec<i32>,
+        biomes: Vec<u8>,
+        sea_level: i32,
+    ) -> GenCtx {
+        GenCtx {
+            section_pos,
+            seed,
+            blocks,
+            surface_heights,
+            biomes,
+            sea_level,
+        }
+    }
+
     /// Section coordinates (16³ units).
     pub fn section_pos(&self) -> [i32; 3] {
         self.section_pos

@@ -17,13 +17,6 @@ use crate::mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
 use crate::section::Section;
 use crate::worker::JobPool;
 
-/// Total worker nanoseconds and jobs spent building section meshes — temporary
-/// perf-session diagnostics read by the out-of-tree streaming profiler.
-pub(crate) static MESH_STAGE_NS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-pub(crate) static MESH_STAGE_JOBS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
-
 /// Padded neighbourhood side length: the section (16) plus one cell of border on each
 /// face — all the mesher's face-culling / AO / smooth-light sampling ever reaches.
 pub(super) const PAD: usize = SECTION_SIZE + 2;
@@ -69,7 +62,7 @@ pub(super) struct NeighborSnap {
     pub blocks: std::sync::Arc<[u8]>,
     pub water: Option<std::sync::Arc<[u8]>>,
     pub skylight: Option<std::sync::Arc<[u8]>>,
-    pub blocklight: Option<std::sync::Arc<[u8]>>,
+    pub blocklight: Option<std::sync::Arc<[crate::light::LightRgb]>>,
     /// The section's unified per-cell state entries (opaque; the mesher's
     /// seam hands them to the owning family to decode).
     pub cell_states: Option<Box<[(u16, crate::block::ShapeState)]>>,
@@ -98,7 +91,7 @@ impl MeshJob {
         &mut self,
         pos: SectionPos,
         skylight: Arc<[u8]>,
-        blocklight: Arc<[u8]>,
+        blocklight: Arc<[crate::light::LightRgb]>,
     ) {
         let (dx, dy, dz) = (
             pos.cx - self.pos.cx,
@@ -194,7 +187,7 @@ struct Pad {
     blocks: Box<[u8]>,
     water: Box<[u8]>,
     skylight: Box<[u8]>,
-    blocklight: Box<[u8]>,
+    blocklight: Box<[crate::light::LightRgb]>,
     cell_states: Box<[crate::block::ShapeState]>,
     loaded: Box<[bool]>,
 }
@@ -205,7 +198,7 @@ impl Pad {
             blocks: vec![0u8; PAD_VOL].into_boxed_slice(),
             water: vec![0u8; PAD_VOL].into_boxed_slice(),
             skylight: vec![SKY_FULL; PAD_VOL].into_boxed_slice(),
-            blocklight: vec![0u8; PAD_VOL].into_boxed_slice(),
+            blocklight: vec![crate::light::LightRgb::ZERO; PAD_VOL].into_boxed_slice(),
             cell_states: vec![crate::block::ShapeState::NONE; PAD_VOL].into_boxed_slice(),
             loaded: vec![false; PAD_VOL].into_boxed_slice(),
         }
@@ -217,7 +210,7 @@ impl Pad {
         self.blocks.fill(0);
         self.water.fill(0);
         self.skylight.fill(SKY_FULL);
-        self.blocklight.fill(0);
+        self.blocklight.fill(crate::light::LightRgb::ZERO);
         self.cell_states.fill(crate::block::ShapeState::NONE);
         self.loaded.fill(false);
     }
@@ -307,7 +300,10 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                         blocks[pi] = s.blocks[li];
                         water[pi] = s.water.as_ref().map_or(0, |w| w[li]);
                         skylight[pi] = s.skylight.as_ref().map_or(SKY_FULL, |s| s[li]);
-                        blocklight[pi] = s.blocklight.as_ref().map_or(0, |b| b[li]);
+                        blocklight[pi] = s
+                            .blocklight
+                            .as_ref()
+                            .map_or(crate::light::LightRgb::ZERO, |b| b[li]);
                         loaded[pi] = true;
                     }
                     None => {
@@ -369,7 +365,6 @@ fn pad_border(d: i32, c: usize) -> Option<usize> {
 
 /// Build one section mesh from its owned snapshot.
 fn build(job: MeshJob, cancel: crate::worker::JobCancel) -> MeshDone {
-    let t_stage = std::time::Instant::now();
     let MeshJob {
         pos,
         revision,
@@ -398,13 +393,6 @@ fn build(job: MeshJob, cancel: crate::worker::JobCancel) -> MeshDone {
             },
         ))
     });
-    if mesh.is_some() {
-        MESH_STAGE_NS.fetch_add(
-            t_stage.elapsed().as_nanos() as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        MESH_STAGE_JOBS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
     MeshDone {
         pos,
         revision,

@@ -25,8 +25,11 @@ pub use super::load_targets::{LoadAnchor, RENDER_DIST, VERTICAL_LOAD_RADIUS};
 
 mod block_entity_index;
 mod evict;
+mod memory;
 mod mesh_index;
 mod section_index;
+
+pub use memory::MemoryCensus;
 
 #[cfg(test)]
 mod fixtures;
@@ -97,6 +100,22 @@ pub struct World {
     /// section install/evict so planners (terrain send) iterate real stacks
     /// instead of probing the full vertical world range per wanted column.
     pub(super) section_column_cys: FxHashMap<ChunkPos, u32>,
+    /// Per-column bitset of loaded section `cy` values that hold at least one
+    /// RANDOM-TICKABLE cell — the random-tick scan's working set. A derived
+    /// index over `sections`: `random_tick_dirty` names the sections whose bit
+    /// may be stale (any `section_mut` handout, any install), and the scan
+    /// repairs those before it walks. Kept separate from
+    /// [`section_column_cys`](Self::section_column_cys) so an underground
+    /// stack of plain stone costs the scan nothing at all.
+    pub(super) section_column_rt: FxHashMap<ChunkPos, u32>,
+    /// Sections whose [`section_column_rt`](Self::section_column_rt) bit may
+    /// be stale. Bounded by the loaded section count (it is a set).
+    pub(super) random_tick_dirty: FxHashSet<SectionPos>,
+    /// This tick's shared navigation reachability-probe budget (see
+    /// `mob::nav::REACH_PROBE_TICK_BUDGET`), refilled by `tick_mobs`. It lives
+    /// here because both askers — the mob brains and the mod ABI's
+    /// `MobCanReach` — hold only `&World` when they ask.
+    nav_probe_budget: crate::mob::ReachBudget,
     /// Changes whenever a section mesh enters or leaves a packed GPU column.
     /// The renderer uses it to coalesce consecutive sibling completions.
     pub(super) mesh_upload_revisions: FxHashMap<ChunkPos, u64>,
@@ -382,6 +401,9 @@ impl World {
             mesh_columns: FxHashSet::default(),
             mesh_column_cys: FxHashMap::default(),
             section_column_cys: FxHashMap::default(),
+            section_column_rt: FxHashMap::default(),
+            random_tick_dirty: FxHashSet::default(),
+            nav_probe_budget: crate::mob::ReachBudget::default(),
             mesh_upload_revisions: FxHashMap::default(),
             mesh_upload_dirty_columns: FxHashSet::default(),
             mesh_release_after: FxHashMap::default(),
@@ -585,6 +607,12 @@ impl World {
 
     /// See [`terrain_revision`](Self::terrain_revision) (field docs).
     #[inline]
+    pub(crate) fn terrain_revision(&self) -> u64 {
+        self.terrain_revision
+    }
+
+    /// See [`terrain_revision`](Self::terrain_revision) (field docs).
+    #[inline]
     pub(super) fn bump_terrain_revision(&mut self) {
         self.terrain_revision = self.terrain_revision.wrapping_add(1);
     }
@@ -679,8 +707,24 @@ impl World {
         Some((s, lx, ly, lz))
     }
 
+    /// This tick's shared navigation probe budget.
+    #[inline]
+    pub(crate) fn reach_budget(&self) -> &crate::mob::ReachBudget {
+        &self.nav_probe_budget
+    }
+
+    /// The loaded section at `pos` — the cursor's raw resolve.
+    #[inline]
+    pub(super) fn section_ref(&self, pos: SectionPos) -> Option<&Section> {
+        self.sections.get(&pos).map(|s| &**s)
+    }
+
     #[inline]
     pub(super) fn section_mut(&mut self, pos: SectionPos) -> Option<&mut Section> {
+        // Any handout may change what the section holds, so its
+        // random-tickable bit is now unproven (see `section_column_rt`).
+        // Cheap and rare next to the per-tick scan it keeps exact.
+        self.random_tick_dirty.insert(pos);
         self.sections.get_mut(&pos).map(Arc::make_mut)
     }
 

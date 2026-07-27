@@ -220,7 +220,7 @@ fn break_overlays_collect_own_and_visible_remote_miners() {
         .apply(&rows, &[], own_id, &HashMap::new());
 
     let mut scratch = GamePresentationScratch::new();
-    let presentation = scratch.snapshot(&game, 0.0);
+    let presentation = scratch.snapshot(&game, 0.0, &crate::camera::ViewVolume::unbounded());
     let overlays = presentation.break_overlays;
     assert_eq!(overlays.len(), 2, "own + the one visible remote miner");
     assert!(

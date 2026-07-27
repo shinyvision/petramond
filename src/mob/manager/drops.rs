@@ -10,7 +10,7 @@ pub struct DeathDrop {
     pub kind: Mob,
     pub pos: Vec3,
     pub skylight: u8,
-    pub blocklight: u8,
+    pub blocklight: crate::light::BlockLight6,
 }
 
 /// What a successful shear yields, so `Game` can spawn the drop (like [`DeathDrop`],
@@ -22,7 +22,7 @@ pub struct ShearDrop {
     pub count: u8,
     pub pos: Vec3,
     pub skylight: u8,
-    pub blocklight: u8,
+    pub blocklight: crate::light::BlockLight6,
 }
 
 impl Mobs {

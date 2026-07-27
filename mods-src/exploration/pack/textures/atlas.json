@@ -1,0 +1,96 @@
+{
+  "tiles": [
+    {
+      "name": "exploration:cave_flower_blue",
+      "file": "cave_flower_blue.png"
+    },
+    {
+      "name": "exploration:cave_flower_magenta",
+      "file": "cave_flower_magenta.png"
+    },
+    {
+      "name": "exploration:cave_flower_pink",
+      "file": "cave_flower_pink.png"
+    },
+    {
+      "name": "exploration:cave_flower_purple",
+      "file": "cave_flower_purple.png"
+    },
+    {
+      "name": "exploration:cave_moss",
+      "file": "cave_moss.png"
+    },
+    {
+      "name": "exploration:cave_moss_side",
+      "file": "cave_moss_side.png"
+    },
+    {
+      "name": "exploration:cave_moss_bottom",
+      "file": "cave_moss_bottom.png"
+    },
+    {
+      "name": "exploration:cave_silt",
+      "file": "cave_silt.png"
+    },
+    {
+      "name": "exploration:glow_vine_blue",
+      "file": "glow_vine_blue.png"
+    },
+    {
+      "name": "exploration:glow_vine_magenta",
+      "file": "glow_vine_magenta.png"
+    },
+    {
+      "name": "exploration:glow_vine_pink",
+      "file": "glow_vine_pink.png"
+    },
+    {
+      "name": "exploration:glow_vine_purple",
+      "file": "glow_vine_purple.png"
+    },
+    {
+      "name": "exploration:glowcap_blue",
+      "file": "glowcap_blue.png"
+    },
+    {
+      "name": "exploration:glowcap_magenta",
+      "file": "glowcap_magenta.png"
+    },
+    {
+      "name": "exploration:glowcap_pink",
+      "file": "glowcap_pink.png"
+    },
+    {
+      "name": "exploration:glowcap_purple",
+      "file": "glowcap_purple.png"
+    },
+    {
+      "name": "exploration:hanging_vine",
+      "file": "hanging_vine.png"
+    },
+    {
+      "name": "exploration:mushroom_stem",
+      "file": "mushroom_stem.png"
+    },
+    {
+      "name": "exploration:mushroom_stem_top",
+      "file": "mushroom_stem_top.png"
+    },
+    {
+      "name": "exploration:sporeshroom_blue",
+      "file": "sporeshroom_blue.png"
+    },
+    {
+      "name": "exploration:sporeshroom_magenta",
+      "file": "sporeshroom_magenta.png"
+    },
+    {
+      "name": "exploration:sporeshroom_pink",
+      "file": "sporeshroom_pink.png"
+    },
+    {
+      "name": "exploration:sporeshroom_purple",
+      "file": "sporeshroom_purple.png"
+    }
+  ]
+}

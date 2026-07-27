@@ -4,9 +4,9 @@ use crate::facing::Facing;
 use crate::item::{DropSpec, ItemType, ToolKind};
 
 use super::{
-    data, definition, sounds, Aabb, Block, BlockBehavior, BlockInteraction, BlockLightShape,
-    BlockMaterial, BlockShapeKind, BlockSoundAction, BlockTag, ParticleEmitter, ShapeFamily,
-    ShapeKindDef, ENGINE_BLOCK_NAMES,
+    data, definition, sounds, Aabb, Block, BlockBehavior, BlockFlags, BlockInteraction,
+    BlockLightShape, BlockMaterial, BlockShapeKind, BlockSoundAction, BlockTag, ParticleEmitter,
+    ShapeFamily, ShapeKindDef, SupportDir, ENGINE_BLOCK_NAMES,
 };
 
 impl Block {
@@ -66,6 +66,9 @@ impl Block {
     /// This block's light apertures with NO world context — what its shape
     /// blocks on its own. The flood's fallback for a `Shaped` cell that
     /// carries no per-cell state, which is every cell of a stateless shape.
+    /// Consumed by the shape/light TESTS; the flood reads the same values
+    /// through the fused `block::light_cells` table.
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn default_light_apertures(self) -> u32 {
         data::default_light_apertures(self.id())
@@ -103,7 +106,10 @@ impl Block {
         shape == other.light_shape()
             && shape != BlockLightShape::Shaped
             && self.transmits_direct_skylight() == other.transmits_direct_skylight()
-            && self.light_emission() == other.light_emission()
+            // PER CHANNEL: two emitters of equal strength but different hue are
+            // not light-equivalent, and skipping the relight would leave the
+            // old colour pooled on the walls.
+            && self.light_emission_rgb() == other.light_emission_rgb()
     }
 
     /// The row's AUTHORED collision boxes, with no shape resolution — the
@@ -137,6 +143,25 @@ impl Block {
         // slab's half cell, a connection shape's bare post.
         let k = self.shape_kind_def();
         k.sim.default_boxes(&k.params, self)
+    }
+
+    /// This block's CELL collision when the shape's boxes are fully determined
+    /// by the block id; `None` when they must be resolved against the cell (a
+    /// stair corner, a fence's arms, a door's swing, a box set's stored form).
+    /// The fast path behind [`World::collision_boxes_at`](crate::world::World::collision_boxes_at)
+    /// and the navigation cell probes — for plain terrain it replaces a shape
+    /// lookup plus a virtual resolve with one dense array read.
+    #[inline]
+    pub fn static_collision_boxes(self) -> Option<&'static [Aabb]> {
+        data::static_collision_boxes(self.0)
+    }
+
+    /// Whether navigation reads a cell of this block as solid regardless of its
+    /// real boxes (the fence family's wall rule) — the per-id bake of
+    /// [`ShapeSim::nav_reads_solid`](crate::block::ShapeSim::nav_reads_solid).
+    #[inline]
+    pub fn nav_reads_solid(self) -> bool {
+        data::nav_reads_solid(self.0)
     }
 
     /// Whether this block physically obstructs movement — i.e. has any collision
@@ -196,7 +221,7 @@ impl Block {
     /// well; membership itself lives per-row in the data table.
     #[inline]
     pub fn has_tag(self, tag: BlockTag) -> bool {
-        self.def().tags.contains(&tag)
+        data::has_tag(self.id(), tag)
     }
 
     /// Whether this is a natural terrain-solid block: the bare-ground set
@@ -284,6 +309,14 @@ impl Block {
         data::flags(self.id()).is_opaque()
     }
 
+    /// This block's whole dense flag word. The mesher's AO/light ring gather
+    /// asks four shape questions about every ring cell; taking the word once
+    /// makes them four bit tests instead of four table lookups.
+    #[inline]
+    pub(crate) fn flags(self) -> BlockFlags {
+        data::flags(self.id())
+    }
+
     /// Shape-class test the mesher runs per lighting-ring cell; the dense flag
     /// table answers it without a `def()` big-table read. Loader-derived from
     /// the slab family, so it cannot disagree with [`shape_family`](Self::shape_family).
@@ -331,13 +364,25 @@ impl Block {
     /// skylight flood-fill uses (`SKY_FULL` = 30 = full daylight = level 15). `0` for
     /// non-emitters. A torch is level 14 (`28` on the x2 scale): bright enough to
     /// light a cave, but one notch under open daylight so a lit cell still reads as
-    /// "indoors" and takes the warm block-light tint. Emission is pure row data —
+    /// "indoors" and is lit by nearby block light. Emission is pure row data —
     /// a stateful emitter (the furnace) is two rows, with the emission on the lit
     /// one, and "turning on" is a row swap. The light flood's emitter scan reads
     /// this per cell, so it goes through the dense per-id table.
     #[inline]
     pub fn light_emission(self) -> u8 {
         data::emission(self.id())
+    }
+
+    /// Block-light this block radiates PER RGB CHANNEL, on the same x2 scale as
+    /// [`light_emission`](Self::light_emission): the row's `emission` split by
+    /// its `light_color` hue. `[emission; 3]` for the white default, so a row
+    /// that names no colour is bit-identical to the pre-colour behaviour.
+    ///
+    /// No channel exceeds `light_emission`, which keeps the scalar the emitter
+    /// scan gates on an upper bound for every channel's flood reach.
+    #[inline]
+    pub fn light_emission_rgb(self) -> [u8; 3] {
+        data::emission_rgb(self.id())
     }
 
     /// The tile drawn on the horizontal face this block's placed entity facing
@@ -410,11 +455,21 @@ impl Block {
     /// row per facing, like sapling stages), so the mesher, the panel
     /// collision/targeting, and the climb probe all read it off the row of
     /// the id they already fetched — no per-cell state anywhere. The default
-    /// on rows that declare none (climbable non-panel rows, e.g. a future
-    /// vine) is [`Facing::North`].
+    /// on rows that declare none (climbable non-panel rows — the exploration
+    /// vines) is [`Facing::North`]; anything that would let the player ACT on
+    /// the facing must use [`declared_panel_facing`](Self::declared_panel_facing)
+    /// instead, or that default becomes a real direction.
     #[inline]
     pub fn panel_facing(self) -> Facing {
         self.def().panel_facing.unwrap_or_default()
+    }
+
+    /// The row's `panel_facing` as DECLARED — `None` for a row that has no
+    /// wall behind it. Only the `ladder` shape may declare one (load-enforced),
+    /// so this is exactly "is this a wall panel or a free-hanging block".
+    #[inline]
+    pub fn declared_panel_facing(self) -> Option<Facing> {
+        self.def().panel_facing
     }
 
     /// A wall-panel's `(thickness, height)` in cell fractions: the Layer-2
@@ -483,12 +538,33 @@ impl Block {
         let soil = self.has_tag(BlockTag::ROOTS_IN_SOIL);
         let sand = self.has_tag(BlockTag::ROOTS_IN_SAND);
         let stone = self.has_tag(BlockTag::ROOTS_IN_STONE);
-        if !(soil || sand || stone) {
+        // `roots_on` is the same question asked in the open vocabulary, so it
+        // joins the union rather than narrowing it.
+        let named = self.def().roots_on;
+        if !(soil || sand || stone) && named.is_empty() {
             return true; // no substrate rule — stands on anything
         }
         (soil && ground.has_tag(BlockTag::SOIL))
             || (sand && ground.has_tag(BlockTag::SAND))
             || (stone && ground.material() == BlockMaterial::Stone)
+            || named.iter().any(|t| ground.has_tag(*t))
+    }
+
+    /// Which neighbouring cell holds this block up — the row's `support`
+    /// (see [`SupportDir`]). The one answer both the fragile break rule and
+    /// the placement substrate gate ask, so a hanging block reads its ceiling
+    /// everywhere a standing one reads its ground.
+    #[inline]
+    pub fn support_dir(self) -> SupportDir {
+        self.def().support
+    }
+
+    /// The SHAPE its support face must have for this block to be placed (see
+    /// [`RootsFace`]) — the geometric half of the substrate gate, asked
+    /// alongside [`can_root_on`](Self::can_root_on)'s material half.
+    #[inline]
+    pub fn roots_face(self) -> crate::block::RootsFace {
+        self.def().roots_face
     }
 
     /// Whether a placed directional block should rotate its authored front toward the

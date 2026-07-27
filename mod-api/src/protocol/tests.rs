@@ -483,6 +483,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         combined: 63,
         sky: 63,
         block: 40,
+        block_rgb: [40, 12, 33],
     })));
     roundtrip(HostRet::Light(None));
     roundtrip(HostRet::Mobs(vec![MobSnapshot {

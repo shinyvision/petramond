@@ -36,6 +36,12 @@ static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
 ]);
 
 impl BlockTag {
+    /// The raw tag id — the bit index in the dense per-block tag set.
+    #[inline]
+    pub(super) const fn id(self) -> u8 {
+        self.0
+    }
+
     /// Any tree-leaves block: takes random ticks and decays when cut off, and
     /// counts as the support that keeps an adjacent leaf alive.
     pub const LEAVES: BlockTag = BlockTag(0);
@@ -91,10 +97,12 @@ impl BlockTag {
     /// (see `crate::pane`); this tag is the per-row opt-out for blocks whose
     /// cube row overstates their geometry.
     pub const NO_PANE_CONNECT: BlockTag = BlockTag(11);
-    /// A block the player climbs by moving into its mounted face or holding jump
-    /// while their body occupies its cell — the ladder. The player physics reads
-    /// it through [`World::climbable_facing_at`](crate::world::World); the climb
-    /// speed and feel live in `player::movement`, never per-block.
+    /// A block the player climbs while their body occupies its cell — the
+    /// ladder, and the exploration pack's vine curtains. A row that declares a
+    /// `panel_facing` also climbs by pressing INTO its wall; one that does not
+    /// hangs free, so holding jump is its only ascent. The player physics reads
+    /// both through [`World::climb_at`](crate::world::World); the climb speed
+    /// and feel live in `player::movement`, never per-block.
     pub const CLIMBABLE: BlockTag = BlockTag(12);
     /// A blanket of snow covering the cell — the snow layer and the snow block.
     /// Grass renders its snowy side texture while a snow-cover block sits

@@ -16,6 +16,10 @@ pub fn fog_range(render_dist_chunks: i32) -> (f32, f32) {
 pub const UNDERWATER_FOG_START: f32 = 0.5;
 pub const UNDERWATER_FOG_END: f32 = 22.0;
 
+/// Deep, murky blue the world fades to (fog + clear colour) when the camera eye
+/// is submerged — the colour half of the band above.
+pub const UNDERWATER_FOG_COLOR: [f32; 3] = [0.04, 0.16, 0.30];
+
 /// Fixed size of the uv-rect table shared with the vertex shader. Sized
 /// straight from the packed vertex's tile-id field ([`crate::mesh::MAX_TILES`])
 /// so the whole content catalogue fits without a shader edit, and so widening

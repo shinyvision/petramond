@@ -24,7 +24,7 @@ use rustc_hash::FxHashMap;
 use crate::block::Aabb;
 use crate::collision;
 use crate::mathh::{IVec3, Vec3};
-use crate::world::World;
+use crate::world::{SectionCursor, World};
 
 use super::brain::AiMob;
 use super::path::{self, PathParams};
@@ -232,10 +232,11 @@ impl Navigator {
         obstacles: &NavObstacles,
         goal_changed: bool,
     ) {
-        let solid = nav_solid_fn(world);
-        let support = nav_support_fn(world, self.half_width);
-        let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
-        let step_allowed = partial_step_gate(world, self.params, self.height);
+        let cursor = world.cursor();
+        let solid = nav_solid_fn(&cursor);
+        let support = nav_support_fn(&cursor, self.half_width);
+        let water = nav_water_fn(&cursor);
+        let step_allowed = partial_step_gate(&cursor, self.params, self.height);
         let costs = entity_cell_costs(obstacles, start);
         let cell_cost = |c: IVec3| costs.get(&c).copied().unwrap_or(0);
         let old_waypoint = (self.index < self.path.len()).then(|| self.path[self.index]);
@@ -688,10 +689,6 @@ fn classify_boxes(boxes: &[Aabb]) -> CellShape {
     }
 }
 
-fn cell_shape(world: &World, c: IVec3) -> CellShape {
-    classify_boxes(world.collision_boxes_at(c.x, c.y, c.z))
-}
-
 /// The coarse `solid` probe for cell navigation: only FULL cells block a cell
 /// outright. Partial shapes are the edge gate's business — treating them as
 /// solid walls off routes a body actually fits through (a ladder corridor),
@@ -702,15 +699,34 @@ fn cell_shape(world: &World, c: IVec3) -> CellShape {
 /// reads solid, so no route steps through it and the one-block jump from the
 /// ground is no foothold jump either (see [`nav_support_fn`] for the step-up
 /// caveat) — a lone fence/hedge is a wall here or no pen would hold.
-pub(super) fn nav_solid_fn(world: &World) -> impl Fn(IVec3) -> bool + '_ {
+pub(super) fn nav_solid_fn<'c, 'w>(
+    cur: &'c SectionCursor<'w>,
+) -> impl Fn(IVec3) -> bool + use<'c, 'w> {
     move |c: IVec3| {
-        let block = world.physics_block(c.x, c.y, c.z);
-        let def = block.shape_kind_def();
-        if def.sim.nav_reads_solid(&def.params) {
+        // ONE cell read serves both questions: the nav-solid declaration and
+        // the box classification are per-id facts for every shape whose
+        // collision is state-free, and the rest resolve from the block we
+        // already hold.
+        let block = cur.physics_block(c);
+        if block.nav_reads_solid() {
             return true;
         }
-        cell_shape(world, c) == CellShape::Full
+        classify_boxes(cur.boxes_of(c, block)) == CellShape::Full
     }
+}
+
+/// The `water` probe every navigation search shares.
+pub(super) fn nav_water_fn<'c, 'w>(
+    cur: &'c SectionCursor<'w>,
+) -> impl Fn(IVec3) -> bool + use<'c, 'w> {
+    move |c: IVec3| cur.water_cell(c)
+}
+
+/// The streaming-finality probe cell searches gate on.
+pub(super) fn nav_loaded_fn<'c, 'w>(
+    cur: &'c SectionCursor<'w>,
+) -> impl Fn(IVec3) -> bool + use<'c, 'w> {
+    move |c: IVec3| cur.cell_final(c)
 }
 
 /// The `support` probe: can this cell bear the feet of a body CENTRED in its
@@ -724,11 +740,14 @@ pub(super) fn nav_solid_fn(world: &World) -> impl Fn(IVec3) -> bool + '_ {
 /// uncrossable because its cell is `solid` and the edge gate refuses the
 /// one-block sweep from the ground — while a step placed beside the fence
 /// opens the honest flat route over its top, as it physically should.
-pub(super) fn nav_support_fn(world: &World, half_width: f32) -> impl Fn(IVec3) -> bool + '_ {
+pub(super) fn nav_support_fn<'c, 'w>(
+    cur: &'c SectionCursor<'w>,
+    half_width: f32,
+) -> impl Fn(IVec3) -> bool + use<'c, 'w> {
     let hw = half_width.max(0.05).min(0.5);
     let (lo, hi) = (0.5 - hw, 0.5 + hw);
     move |c: IVec3| {
-        let boxes = world.collision_boxes_at(c.x, c.y, c.z);
+        let boxes = cur.collision_boxes(c);
         match classify_boxes(boxes) {
             CellShape::Empty => false,
             CellShape::Full => true,
@@ -747,6 +766,63 @@ pub(super) fn nav_support_fn(world: &World, half_width: f32) -> impl Fn(IVec3) -
 /// reachable counts as unreachable.
 pub const REACH_PROBE_NODES: usize = 600;
 
+/// Expansions every reachability probe in ONE game tick may spend BETWEEN
+/// THEM ([`ReachBudget`]).
+///
+/// A probe that succeeds costs a few dozen expansions (wander destinations sit
+/// inside a local radius); a probe that FAILS pays the entire
+/// [`REACH_PROBE_NODES`] budget, and several mobs can fail in the same tick —
+/// which is what produced this simulation's worst ticks by a wide margin, an
+/// order of magnitude above its median. The budget lets ordinary traffic
+/// through untouched (twenty-odd successful probes fit) while capping how much
+/// FAILURE one tick can absorb at roughly one full probe.
+///
+/// A probe refused for budget is DEFERRED, never answered: the asking policy
+/// simply does not pick a destination this tick and rolls again on the next
+/// one, 50 ms later. Verdicts are never altered — a probe that runs runs with
+/// the full [`REACH_PROBE_NODES`] cap and answers exactly what it always did.
+pub const REACH_PROBE_TICK_BUDGET: usize = 1200;
+
+/// Fixed per-probe charge against [`REACH_PROBE_TICK_BUDGET`], in the same
+/// units as expansions: what a probe costs before it expands anything.
+const PROBE_SETUP_CHARGE: usize = 40;
+
+/// The tick-scoped expansion budget shared by every reachability probe (see
+/// [`REACH_PROBE_TICK_BUDGET`]). Interior mutability so the AI context can
+/// carry it by shared reference alongside the world; `None` in a context means
+/// "unbudgeted" (unit fixtures, the mod ABI's explicit `MobCanReach`).
+pub struct ReachBudget {
+    remaining: std::cell::Cell<usize>,
+}
+
+/// A fresh budget starts FULL, so a world that has never ticked (unit
+/// fixtures, a mod probing at init) answers probes instead of deferring them.
+impl Default for ReachBudget {
+    fn default() -> Self {
+        ReachBudget {
+            remaining: std::cell::Cell::new(REACH_PROBE_TICK_BUDGET),
+        }
+    }
+}
+
+impl ReachBudget {
+    /// Refill for a new tick — the mob manager calls this once per tick.
+    pub fn refill(&self) {
+        self.remaining.set(REACH_PROBE_TICK_BUDGET);
+    }
+
+    fn spend(&self, nodes: usize) {
+        self.remaining
+            .set(self.remaining.get().saturating_sub(nodes));
+    }
+
+    /// A probe may only START when the budget can cover its WORST case, so a
+    /// tick can absorb at most one full-cost failure however many probes ask.
+    fn available(&self) -> bool {
+        self.remaining.get() >= REACH_PROBE_NODES
+    }
+}
+
 /// Whether a body (`params`, physical `height`) standing at foothold `start`
 /// can genuinely path to `dest` within [`REACH_PROBE_NODES`]. Entity
 /// soft-costs are deliberately absent: bodies never make a spot unreachable,
@@ -755,30 +831,37 @@ pub const REACH_PROBE_NODES: usize = 600;
 /// partial routes toward unreachable goals (chases must crowd their target),
 /// which parks a mob against the obstacle when the goal was a picked CELL, so
 /// every cell-picking policy must ask this first.
+///
+/// `None` when `budget` is present and spent: the answer is UNKNOWN this tick
+/// and the caller must defer, not guess (see [`REACH_PROBE_TICK_BUDGET`]).
 pub(super) fn destination_reachable(
     world: &World,
     start: IVec3,
     dest: IVec3,
     mut params: PathParams,
     height: f32,
-) -> bool {
+    budget: Option<&ReachBudget>,
+) -> Option<bool> {
+    if let Some(b) = budget {
+        if !b.available() {
+            return None;
+        }
+    }
     params.max_nodes = REACH_PROBE_NODES;
-    let solid = nav_solid_fn(world);
-    let support = nav_support_fn(world, params.half_width);
-    let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
-    let step_allowed = partial_step_gate(world, params, height);
-    path::find_path_nav(
-        start,
-        dest,
-        params,
-        &solid,
-        &support,
-        &water,
-        step_allowed,
-        |_| 0,
-    )
-    .last()
-        == Some(&dest)
+    let cursor = world.cursor();
+    let solid = nav_solid_fn(&cursor);
+    let support = nav_support_fn(&cursor, params.half_width);
+    let water = nav_water_fn(&cursor);
+    let step_allowed = partial_step_gate(&cursor, params, height);
+    let (out, nodes) =
+        path::reachable_nav(start, dest, params, &solid, &support, &water, step_allowed);
+    if let Some(b) = budget {
+        // Charged with its SETUP too: a probe that answers in twenty
+        // expansions still built a cursor, four closures and two memo tables,
+        // so expansions alone under-price a burst of cheap probes.
+        b.spend(nodes + PROBE_SETUP_CHARGE);
+    }
+    Some(out)
 }
 
 /// [`destination_reachable`] for a live mob instance: probes from the mob's
@@ -788,9 +871,10 @@ pub(super) fn destination_reachable(
 pub fn mob_can_reach(world: &World, mob: &super::Instance, dest: IVec3) -> bool {
     let d = super::def(mob.kind);
     let params = PathParams::for_body(d.size.head_cells(), d.size.half_width);
-    let solid = nav_solid_fn(world);
-    let support = nav_support_fn(world, d.size.half_width);
-    let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
+    let cursor = world.cursor();
+    let solid = nav_solid_fn(&cursor);
+    let support = nav_support_fn(&cursor, d.size.half_width);
+    let water = nav_water_fn(&cursor);
     let feet = crate::mathh::voxel_at(mob.pos);
     let in_water = water(feet) || water(feet - IVec3::Y);
     let start = path::navigation_cell_with(
@@ -803,14 +887,26 @@ pub fn mob_can_reach(world: &World, mob: &super::Instance, dest: IVec3) -> bool 
         &water,
     )
     .unwrap_or(feet);
-    destination_reachable(world, start, dest, params, d.size.height)
+    // The mod ABI shares the tick's probe budget (a husbandry sweep can ask
+    // for dozens of probes in one tick); a refusal reads as "not reachable",
+    // which is what the asking policies already do with a spot they cannot
+    // prove — they re-roll on their next heartbeat.
+    destination_reachable(
+        world,
+        start,
+        dest,
+        params,
+        d.size.height,
+        Some(world.reach_budget()),
+    )
+    .unwrap_or(false)
 }
 
 /// The collision boxes navigation must sweep against in `c` — the PARTIAL
 /// shapes only. Full cubes are already resolved exactly by the cell probes and
 /// empty cells contribute nothing, so both answer an empty slice.
-fn nav_partial_boxes(world: &World, c: IVec3) -> &'static [Aabb] {
-    let boxes = world.collision_boxes_at(c.x, c.y, c.z);
+fn nav_partial_boxes(cur: &SectionCursor<'_>, c: IVec3) -> &'static [Aabb] {
+    let boxes = cur.collision_boxes(c);
     match classify_boxes(boxes) {
         CellShape::Partial => boxes,
         CellShape::Empty | CellShape::Full => &[],
@@ -821,8 +917,8 @@ fn nav_partial_boxes(world: &World, c: IVec3) -> &'static [Aabb] {
 /// the floor cell's base: 1.0 for a full cube (or water/air — feet at the
 /// cell base), a partial floor's highest box top otherwise (a slab-top
 /// foothold stands half a block below its cell base).
-fn floor_top(world: &World, floor: IVec3) -> f32 {
-    let boxes = world.collision_boxes_at(floor.x, floor.y, floor.z);
+fn floor_top(cur: &SectionCursor<'_>, floor: IVec3) -> f32 {
+    let boxes = cur.collision_boxes(floor);
     if boxes.is_empty() {
         return 1.0;
     }
@@ -846,12 +942,17 @@ fn floor_top(world: &World, floor: IVec3) -> f32 {
 /// where partial shapes actually are. Shared with `mob::confined`, whose
 /// reachability fill must agree with the routes this gate admits (a lone
 /// fence refuses the jump from below; a step beside it opens the way over).
-pub(super) fn partial_step_gate<'w>(
-    world: &'w World,
+pub(super) fn partial_step_gate<'c, 'w>(
+    cur: &'c SectionCursor<'w>,
     params: PathParams,
     height: f32,
-) -> impl Fn(IVec3, IVec3) -> bool + 'w {
+) -> impl Fn(IVec3, IVec3) -> bool + use<'c, 'w> {
     let cache: RefCell<FxHashMap<IVec3, &'static [Aabb]>> = RefCell::new(FxHashMap::default());
+    // The fast-path scan below only asks "does this cell hold a partial shape",
+    // which is one bit — and it asks it for the same cells over and over as a
+    // search sweeps a neighbourhood. Keep that on the cheap direct-mapped memo
+    // and leave the boxes cache to the rare accurate sweep.
+    let partial_here = path::CellMemo::<1024>::default();
     let height = height.max(0.5);
     move |from: IVec3, to: IVec3| {
         let dx = (to.x - from.x) as f32;
@@ -863,7 +964,7 @@ pub(super) fn partial_step_gate<'w>(
             *cache
                 .borrow_mut()
                 .entry(IVec3::new(x, y, z))
-                .or_insert_with(|| nav_partial_boxes(world, IVec3::new(x, y, z)))
+                .or_insert_with(|| nav_partial_boxes(cur, IVec3::new(x, y, z)))
         };
         // Fast path: no partial shape anywhere the body could touch during this
         // step (both columns, floor through head, padded for wide bodies).
@@ -877,7 +978,9 @@ pub(super) fn partial_step_gate<'w>(
         'scan: for x in (from.x.min(to.x) - pad)..=(from.x.max(to.x) + pad) {
             for z in (from.z.min(to.z) - pad)..=(from.z.max(to.z) + pad) {
                 for y in y_lo..=y_hi {
-                    if !boxes_at(x, y, z).is_empty() {
+                    let here = partial_here
+                        .get(IVec3::new(x, y, z), |c| !boxes_at(c.x, c.y, c.z).is_empty());
+                    if here {
                         // A DIAGONAL step near a partial shape at body level is
                         // refused outright: the sweep below is axis-ordered
                         // (X then Z), which can clear an L-shaped path while
@@ -904,7 +1007,7 @@ pub(super) fn partial_step_gate<'w>(
 
         // Accurate sweep: the body starts standing at `from` (feet on the real
         // floor top) and must travel the full horizontal move.
-        let feet = (from.y - 1) as f32 + floor_top(world, from - IVec3::Y);
+        let feet = (from.y - 1) as f32 + floor_top(cur, from - IVec3::Y);
         let cx = from.x as f32 + 0.5;
         let cz = from.z as f32 + 0.5;
         let min = [cx - half_width, feet, cz - half_width];
@@ -918,7 +1021,7 @@ pub(super) fn partial_step_gate<'w>(
         // Destination pose: standing at `to` must not intersect a partial shape
         // (the sweep runs at `from`'s level, so a jump-up's landing pose needs
         // its own check).
-        let dest_feet = (to.y - 1) as f32 + floor_top(world, to - IVec3::Y);
+        let dest_feet = (to.y - 1) as f32 + floor_top(cur, to - IVec3::Y);
         let tx = to.x as f32 + 0.5;
         let tz = to.z as f32 + 0.5;
         let dmin = [tx - half_width, dest_feet + 1e-3, tz - half_width];

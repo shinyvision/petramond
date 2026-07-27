@@ -53,6 +53,7 @@
       },
       "collision": [],
       "emission": 28,
+      "light_color": [1.0, 1.0, 0.96],
       "tiles": [
         "stone",
         "stone",
@@ -124,7 +125,7 @@
           0.35,
           0.7
         ],
-        "fullbright": true
+        "self_lit": 1.0
       }
     },
     {

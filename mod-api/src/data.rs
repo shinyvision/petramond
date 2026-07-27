@@ -70,11 +70,13 @@ pub struct MobSnapshot {
     /// Live-set list position THIS TICK — an intra-tick join key only, never
     /// an address (calls take [`id`](Self::id)).
     pub index: u32,
-    /// The species' key (`"petramond:owl"`, `"zombies:zombie"`).
-    pub key: String,
-    /// The species' session id — the compact form of `key`, matching the
-    /// `kind` in event payloads ([`EventPayload::MobDied`] etc.); bridge with
-    /// [`HostCall::ResolveMob`] / [`HostCall::MobNames`].
+    /// The species' session id, matching the `kind` in event payloads
+    /// ([`EventPayload::MobDied`] etc.). Deliberately the ONLY species field:
+    /// a snapshot carries no `"pack:species"` string, because a crowd query
+    /// answers dozens of snapshots per tick and a heap string per mob is the
+    /// most expensive thing in the whole marshalling. Resolve a key ONCE with
+    /// [`HostCall::ResolveMob`] (or [`HostCall::MobNames`] for the reverse)
+    /// and compare ids.
     ///
     /// [`EventPayload::MobDied`]: crate::EventPayload::MobDied
     /// [`HostCall::ResolveMob`]: crate::HostCall::ResolveMob
@@ -398,7 +400,15 @@ pub struct EffectStateData {
 pub struct LightData {
     pub combined: u8,
     pub sky: u8,
+    /// Block-light BRIGHTNESS. Unchanged by coloured light: it is the strongest
+    /// channel of [`block_rgb`](Self::block_rgb), so a light-level rule
+    /// (crop growth, hostile spawning) means what it always meant.
     pub block: u8,
+    /// Per-channel block light, same scale. `block == max(block_rgb)`, and
+    /// colourless light is `[block; 3]` — so a mod only needs to look here if
+    /// it cares about the HUE (a plant that only grows under blue glow).
+    /// Skylight has no per-channel form; it is white by construction.
+    pub block_rgb: [u8; 3],
 }
 
 /// The collision-shape CLASS of a world cell (see

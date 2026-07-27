@@ -85,6 +85,50 @@ impl PathParams {
     }
 }
 
+/// Direct-mapped memo for a pure per-cell predicate over ONE search.
+///
+/// Both cell searches ask the same cell many times over — a flood asks each
+/// neighbour from up to four sides, and A*'s diagonal rule re-asks the two
+/// orthogonals it just tested — while the predicate itself is a whole
+/// support/solid/water probe stack. A fixed table keyed by a cell hash turns
+/// the repeats into two array reads; a collision simply recomputes, so the
+/// answer is always the predicate's own.
+pub struct CellMemo<const N: usize> {
+    key: [std::cell::Cell<IVec3>; N],
+    val: [std::cell::Cell<bool>; N],
+}
+
+/// A cell coordinate no probe can ever ask about, so an untouched slot misses.
+const MEMO_EMPTY: IVec3 = IVec3::new(i32::MIN, i32::MIN, i32::MIN);
+
+impl<const N: usize> Default for CellMemo<N> {
+    fn default() -> Self {
+        assert!(N.is_power_of_two());
+        CellMemo {
+            key: [const { std::cell::Cell::new(MEMO_EMPTY) }; N],
+            val: [const { std::cell::Cell::new(false) }; N],
+        }
+    }
+}
+
+impl<const N: usize> CellMemo<N> {
+    #[inline]
+    pub fn get(&self, c: IVec3, compute: impl FnOnce(IVec3) -> bool) -> bool {
+        let h = (c.x as u32)
+            .wrapping_mul(0x9E37_79B9)
+            .wrapping_add((c.y as u32).wrapping_mul(0x85EB_CA6B))
+            .wrapping_add((c.z as u32).wrapping_mul(0xC2B2_AE35));
+        let slot = (h >> 13) as usize & (N - 1);
+        if self.key[slot].get() == c {
+            return self.val[slot].get();
+        }
+        let v = compute(c);
+        self.key[slot].set(c);
+        self.val[slot].set(v);
+        v
+    }
+}
+
 /// Is `cell` a foothold — a cell a mob can stand in? Its floor (the cell below)
 /// blocks movement under the whole body footprint, and the `head` cells from `cell`
 /// upward are clear for that footprint.
@@ -400,7 +444,12 @@ pub fn find_path_nav(
     // A cell is a foothold if its floor *supports* it (solid ground, a partial
     // shape's top, or the water surface) and the body fits above. Submerged
     // water cells are passable, not footholds.
-    let foothold = |c: IVec3| is_navigation_foothold_with(c, params, solid, support, &water);
+    let memo = CellMemo::<2048>::default();
+    let foothold = |c: IVec3| {
+        memo.get(c, |c| {
+            is_navigation_foothold_with(c, params, solid, support, &water)
+        })
+    };
 
     if !foothold(start) {
         return Vec::new();
@@ -430,6 +479,7 @@ pub fn find_path_nav(
     let mut best = start;
     let mut best_h = h(start);
     let mut expanded = 0usize;
+    let mut steps: Vec<(IVec3, u32)> = Vec::with_capacity(8);
 
     while let Some(Reverse((_, g_at_pop, pos_arr))) = open.pop() {
         let current = IVec3::from_array(pos_arr);
@@ -452,14 +502,16 @@ pub fn find_path_nav(
             break;
         }
 
-        for (next, step_cost) in neighbors(
+        neighbors(
             current,
             &params,
             &foothold,
             &passable_col,
             solid,
             &step_allowed,
-        ) {
+            &mut steps,
+        );
+        for &(next, step_cost) in &steps {
             let tentative = g_score[&current]
                 .saturating_add(step_cost)
                 .saturating_add(cell_cost(next));
@@ -475,9 +527,94 @@ pub fn find_path_nav(
     reconstruct(&came_from, best)
 }
 
+/// Whether `goal` is reachable from `start` within `params.max_nodes`
+/// expansions, and how many expansions that verdict cost.
+///
+/// The same search as [`find_path_nav`] — same order, same admissible octile
+/// heuristic, same neighbour rules — minus everything only a ROUTE needs: no
+/// predecessor map, no closest-cell fallback, no reconstruction. A probe that
+/// FAILS pays the whole budget, and the predecessor map alone is four hash
+/// inserts per expansion, so a reachability question answers for a fraction of
+/// what asking for the path costs. The verdict is identical by construction:
+/// dropping `came_from` cannot change which cells the open set pops.
+///
+/// The expansion count is what a caller throttling probes across one tick
+/// charges against its budget (see `mob::nav::ReachBudget`).
+#[allow(clippy::too_many_arguments)]
+pub fn reachable_nav(
+    start: IVec3,
+    goal: IVec3,
+    params: PathParams,
+    solid: &impl Fn(IVec3) -> bool,
+    support: &impl Fn(IVec3) -> bool,
+    water: impl Fn(IVec3) -> bool,
+    step_allowed: impl Fn(IVec3, IVec3) -> bool,
+) -> (bool, usize) {
+    let passable_col = |c: IVec3| body_clear(c, params, solid);
+    let memo = CellMemo::<2048>::default();
+    let foothold = |c: IVec3| {
+        memo.get(c, |c| {
+            is_navigation_foothold_with(c, params, solid, support, &water)
+        })
+    };
+
+    if !foothold(start) {
+        return (false, 0);
+    }
+    if start == goal {
+        return (true, 0);
+    }
+
+    let h = |c: IVec3| -> u32 {
+        let dx = (c.x - goal.x).unsigned_abs();
+        let dz = (c.z - goal.z).unsigned_abs();
+        let (lo, hi) = if dx < dz { (dx, dz) } else { (dz, dx) };
+        COST_DIAG * lo + COST_FLAT * (hi - lo)
+    };
+
+    let mut g_score: FxHashMap<IVec3, u32> = FxHashMap::default();
+    let mut open: BinaryHeap<Reverse<(u32, u32, [i32; 3])>> = BinaryHeap::new();
+    g_score.insert(start, 0);
+    open.push(Reverse((h(start), 0, start.to_array())));
+
+    let mut expanded = 0usize;
+    let mut steps: Vec<(IVec3, u32)> = Vec::with_capacity(8);
+    while let Some(Reverse((_, g_at_pop, pos_arr))) = open.pop() {
+        let current = IVec3::from_array(pos_arr);
+        if g_at_pop > *g_score.get(&current).unwrap_or(&u32::MAX) {
+            continue;
+        }
+        if current == goal {
+            return (true, expanded);
+        }
+        expanded += 1;
+        if expanded >= params.max_nodes {
+            break;
+        }
+        neighbors(
+            current,
+            &params,
+            &foothold,
+            &passable_col,
+            solid,
+            &step_allowed,
+            &mut steps,
+        );
+        for &(next, step_cost) in &steps {
+            let tentative = g_at_pop.saturating_add(step_cost);
+            if tentative < *g_score.get(&next).unwrap_or(&u32::MAX) {
+                g_score.insert(next, tentative);
+                open.push(Reverse((tentative + h(next), tentative, next.to_array())));
+            }
+        }
+    }
+    (false, expanded)
+}
+
 /// The walkable neighbours of foothold `a`: for each cardinal direction, exactly one
 /// of step-flat / jump-up-one / descend (first ground within `max_drop`), or nothing
 /// if that direction is blocked.
+#[allow(clippy::too_many_arguments)]
 fn neighbors(
     a: IVec3,
     params: &PathParams,
@@ -485,9 +622,10 @@ fn neighbors(
     passable_col: &impl Fn(IVec3) -> bool,
     solid: &impl Fn(IVec3) -> bool,
     step_allowed: &impl Fn(IVec3, IVec3) -> bool,
-) -> Vec<(IVec3, u32)> {
+    out: &mut Vec<(IVec3, u32)>,
+) {
     const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
-    let mut out = Vec::with_capacity(4);
+    out.clear();
     for (dx, dz) in DIRS {
         let side = a + IVec3::new(dx, 0, dz);
 
@@ -539,7 +677,6 @@ fn neighbors(
             out.push((target, COST_DIAG));
         }
     }
-    out
 }
 
 /// Walk `came_from` back from `end` to the start and return the cells in

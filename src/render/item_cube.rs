@@ -64,7 +64,7 @@ const FULL_AO: u32 = 3 << crate::mesh::AO_SHIFT;
 const ALL_FACES: [Face; 6] = Face::ALL;
 
 #[inline]
-fn face_bits_textured_lit(mat: FaceMaterial, face: Face, skylight: u8) -> u32 {
+fn face_bits_textured_lit(mat: FaceMaterial, face: Face, light: DynLight) -> u32 {
     (mat.base_tile.index() as u32)
         | (face.shade_idx() << crate::mesh::SHADE_SHIFT)
         | if mat.overlay_tile.is_some() {
@@ -73,12 +73,18 @@ fn face_bits_textured_lit(mat: FaceMaterial, face: Face, skylight: u8) -> u32 {
             0
         }
         | FULL_AO
-        | lighting::skylight_bits(skylight)
+        | lighting::skylight_bits(light.sky)
+        | light.block.packed_bits()
 }
 
 /// The `packed2` companion to [`face_bits_textured_lit`]: the overlay TILE lives
 /// in the second word (see `mesh::pack_overlay`), so a material with one must
 /// contribute to both.
+///
+/// Block light rides THREE words — `packed_bits` (chroma high nibble) above,
+/// `packed2_bits` (red) beside this, and `tint_word` (chroma low byte) on the
+/// tint — so every quad emitter here has to write all three or a coloured lamp
+/// renders grey on held/dropped/placed dynamic geometry.
 #[inline]
 fn face_bits2(mat: FaceMaterial) -> u32 {
     match mat.overlay_tile {
@@ -88,10 +94,11 @@ fn face_bits2(mat: FaceMaterial) -> u32 {
 }
 
 #[inline]
-fn face_bits_solid_lit(face: Face, skylight: u8) -> u32 {
+fn face_bits_solid_lit(face: Face, light: DynLight) -> u32 {
     (face.shade_idx() << crate::mesh::SHADE_SHIFT)
         | FULL_AO
-        | lighting::skylight_bits(skylight)
+        | lighting::skylight_bits(light.sky)
+        | light.block.packed_bits()
         | SOLID_COLOR_FLAG
 }
 
@@ -119,13 +126,13 @@ fn push_quad(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
     corners: [[f32; 3]; 4],
-    tint: [f32; 3],
+    tint: u32,
     base_bits: u32,
     packed2: u32,
 ) {
     push_quad_with(verts, indices, corners, |corner, pos| Vertex {
         pos,
-        tint: pack_tint(tint),
+        tint,
         packed: base_bits | ((corner as u32) << crate::mesh::CORNER_SHIFT),
         packed2,
     });
@@ -156,7 +163,7 @@ fn push_quad_cell_uvs(
     indices: &mut Vec<u32>,
     corners: [[f32; 3]; 4],
     cell_uvs: [(u32, u32); 4],
-    tint: [f32; 3],
+    tint: u32,
     base_bits: u32,
     packed2: u32,
 ) {
@@ -164,7 +171,7 @@ fn push_quad_cell_uvs(
         let (u, v) = cell_uvs[corner];
         Vertex {
             pos,
-            tint: pack_tint(tint),
+            tint,
             packed: base_bits | ((corner as u32) << crate::mesh::CORNER_SHIFT),
             packed2: packed2 | pack_cell_uv(u, v),
         }
@@ -279,9 +286,9 @@ pub(super) fn push_box_faces_lit(
             verts,
             indices,
             face.quad_box(min.to_array(), max.to_array()),
-            mat.tint,
-            face_bits_textured_lit(mat, face, light.sky),
-            lighting::blocklight_word(light.block) | face_bits2(mat),
+            light.block.tint_word(mat.tint),
+            face_bits_textured_lit(mat, face, light),
+            light.block.packed2_bits() | face_bits2(mat),
         );
     }
 }
@@ -299,16 +306,15 @@ fn push_log_cube_faces_lit(
     for (tile, face) in faces.into_iter().zip(ALL_FACES) {
         let mat = foliage_tint::face_material(tile);
         let corners = face.quad_box(origin.to_array(), max.to_array());
-        let word2 = lighting::blocklight_word(light.block) | face_bits2(mat);
+        let word2 = light.block.packed2_bits() | face_bits2(mat);
         if let Some(cell_uvs) = log_side_cell_uvs(axis, face) {
             push_quad_cell_uvs(
                 verts,
                 indices,
                 corners,
                 cell_uvs,
-                mat.tint,
-                face_bits_textured_lit(mat, face, light.sky)
-                    | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT),
+                light.block.tint_word(mat.tint),
+                face_bits_textured_lit(mat, face, light) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT),
                 word2,
             );
         } else {
@@ -316,8 +322,8 @@ fn push_log_cube_faces_lit(
                 verts,
                 indices,
                 corners,
-                mat.tint,
-                face_bits_textured_lit(mat, face, light.sky),
+                light.block.tint_word(mat.tint),
+                face_bits_textured_lit(mat, face, light),
                 word2,
             );
         }
@@ -385,12 +391,13 @@ pub(super) fn push_box_faces_lit_mirrored(
     {
         let mat = foliage_tint::face_material(tile);
         let corners = face.quad_box(min.to_array(), max.to_array());
-        let bits = face_bits_textured_lit(mat, face, light.sky) | (slice << UV_SLICE_SHIFT);
-        let word2 = lighting::blocklight_word(light.block) | face_bits2(mat);
+        let bits = face_bits_textured_lit(mat, face, light) | (slice << UV_SLICE_SHIFT);
+        let word2 = light.block.packed2_bits() | face_bits2(mat);
+        let tint = light.block.tint_word(mat.tint);
         if mir {
-            push_quad_uflip(verts, indices, corners, mat.tint, bits, word2);
+            push_quad_uflip(verts, indices, corners, tint, bits, word2);
         } else {
-            push_quad(verts, indices, corners, mat.tint, bits, word2);
+            push_quad(verts, indices, corners, tint, bits, word2);
         }
     }
 }
@@ -403,14 +410,14 @@ fn push_quad_uflip(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
     corners: [[f32; 3]; 4],
-    tint: [f32; 3],
+    tint: u32,
     base_bits: u32,
     packed2: u32,
 ) {
     const MIRROR: [u32; 4] = [1, 0, 3, 2];
     push_quad_with(verts, indices, corners, |corner, pos| Vertex {
         pos,
-        tint: pack_tint(tint),
+        tint,
         packed: base_bits | (MIRROR[corner] << crate::mesh::CORNER_SHIFT),
         packed2,
     });
@@ -737,8 +744,8 @@ pub(super) fn push_cell_local_face_turned(
     let mn = origin + Vec3::new(min[0], min[1], min[2]) * size;
     let mx = origin + Vec3::new(max[0], max[1], max[2]) * size;
     let mat = foliage_tint::face_material(tile);
-    let bits = face_bits_textured_lit(mat, face, light.sky) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT);
-    let word2 = lighting::blocklight_word(light.block) | face_bits2(mat);
+    let bits = face_bits_textured_lit(mat, face, light) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT);
+    let word2 = light.block.packed2_bits() | face_bits2(mat);
     let corners = face.quad_box(mn.to_array(), mx.to_array());
     let local = face.quad_box(min, max);
     push_quad_with(verts, indices, corners, |corner, pos| {
@@ -746,7 +753,7 @@ pub(super) fn push_cell_local_face_turned(
         let (u, v) = crate::block::ShapeFace::turn_uv(uv_turns, u, v);
         Vertex {
             pos,
-            tint: pack_tint(mat.tint),
+            tint: light.block.tint_word(mat.tint),
             packed: bits | ((corner as u32) << crate::mesh::CORNER_SHIFT),
             packed2: word2 | pack_cell_uv((u * 16.0).round() as u32, (v * 16.0).round() as u32),
         }
@@ -797,9 +804,9 @@ pub(super) fn push_cube_solid_lit(
             verts,
             indices,
             face.quad_box(origin.to_array(), max.to_array()),
-            tint,
-            face_bits_solid_lit(face, light.sky),
-            lighting::blocklight_word(light.block),
+            light.block.tint_word(tint),
+            face_bits_solid_lit(face, light),
+            light.block.packed2_bits(),
         );
     }
 }
@@ -849,6 +856,7 @@ pub fn push_billboard_quad(
         | (Face::PosY.shade_idx() << crate::mesh::SHADE_SHIFT)
         | FULL_AO
         | lighting::skylight_bits(lighting::FULL_SKYLIGHT);
+    let tint = pack_tint(tint);
     push_quad(verts, indices, front, tint, base, 0);
     push_quad(verts, indices, back, tint, base, 0);
 }

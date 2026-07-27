@@ -17,20 +17,20 @@ fn water_side_faces_at_unloaded_streaming_edges_are_culled() {
     let loaded_air = edge_water_mesh(true);
     let unloaded = edge_water_mesh(false);
 
+    // The TOP face rides its own cull-none stream (it must stay visible from
+    // below), so the back-face-culled stream carries the other five.
     assert_eq!(
-        loaded_air.transparent.len(),
+        loaded_air.transparent.len() + loaded_air.transparent_two_sided.len(),
         24,
         "loaded neighbour air keeps all water faces visible"
     );
     assert_eq!(
-        unloaded.transparent.len(),
+        unloaded.transparent.len() + unloaded.transparent_two_sided.len(),
         20,
         "unloaded neighbour culls only the streaming-edge water side"
     );
-    // The TOP face is emitted in both windings (back-face-culled transparent pass
-    // keeps the surface visible from below), so each adds 6 extra indices.
-    assert_eq!(loaded_air.transparent_idx.len(), 36 + 6);
-    assert_eq!(unloaded.transparent_idx.len(), 30 + 6);
+    assert_eq!(loaded_air.transparent_two_sided.len(), 4, "one top face");
+    assert_eq!(unloaded.transparent_two_sided.len(), 4, "one top face");
 }
 
 /// Still water uses the still tile and renders at the (recessed) full height;

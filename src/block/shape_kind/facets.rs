@@ -211,7 +211,9 @@ pub fn pack_light_apertures(mut mask: impl FnMut((i32, i32, i32)) -> u8) -> u32 
 }
 
 /// The 4-bit quadrant mask for the face with outward normal `dir`, out of a
-/// packed aperture word.
+/// packed aperture word. The flood inlines this bit read against its fused
+/// cell word; the shape/light tests are the remaining callers.
+#[allow(dead_code)]
 #[inline]
 pub fn light_aperture_face(masks: u32, dir: (i32, i32, i32)) -> u8 {
     let i = match dir {

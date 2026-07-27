@@ -196,7 +196,7 @@ mod tests {
             facing,
             lid01,
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
         }
     }
 

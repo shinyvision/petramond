@@ -14,6 +14,7 @@ pub(super) fn create_terrain_pipelines(
     wgpu::RenderPipeline,
     wgpu::RenderPipeline,
     wgpu::RenderPipeline,
+    wgpu::RenderPipeline,
 ) {
     let opaque_targets = color_target(
         format,
@@ -76,5 +77,25 @@ pub(super) fn create_terrain_pipelines(
         Some(DepthPreset::WriteLess),
         sample_count,
     );
-    (opaque_pipe, translucent_pipe, transparent_pipe)
+    // Water TOP faces: same blend/depth as the water pass, culling OFF so one
+    // set of triangles is visible from above and from underneath.
+    let transparent_two_sided_pipe = world_pipeline(
+        device,
+        "terrain transparent two-sided pipe",
+        array_layout,
+        shader,
+        "vs_terrain",
+        "fs_transparent",
+        vbuf_layouts,
+        &transparent_targets,
+        wgpu::PrimitiveState::default(),
+        Some(DepthPreset::ReadLess),
+        sample_count,
+    );
+    (
+        opaque_pipe,
+        translucent_pipe,
+        transparent_pipe,
+        transparent_two_sided_pipe,
+    )
 }

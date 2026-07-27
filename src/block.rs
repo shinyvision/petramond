@@ -18,12 +18,12 @@ mod tests;
 pub use behavior::BlockBehavior;
 pub(crate) use data::ENGINE_BLOCK_NAMES;
 pub(crate) use data::{shape_kind_id_by_key, state_key_declared};
-pub(crate) use definition::BlockMaterial;
+pub(crate) use definition::{BlockFlags, BlockMaterial};
 // ColorRamp rides the public `ParticleEmitter::color_ramp` field; only tests
 // currently name the type, so the lib build sees the re-export as unused.
 #[allow(unused_imports)]
 pub use definition::ColorRamp;
-pub use definition::{ParticleEmitter, ParticleEmitterAnchor};
+pub use definition::{ParticleEmitter, ParticleEmitterAnchor, RootsFace, SupportDir};
 pub(crate) use interaction::builtin_claims_click;
 pub use interaction::BlockInteraction;
 pub(crate) use load::validate_particle_emitter;
@@ -40,8 +40,14 @@ pub use shape_kind::{
 };
 // `pack_light_apertures` is the producer half of the aperture currency
 // (families + light tests); the lib target only consumes.
+pub(crate) use data::light_cells;
 #[allow(unused_imports)]
 pub(crate) use shape_kind::{light_aperture_face, pack_light_apertures, LIGHT_APERTURES_OPEN};
+
+/// [`light_cells`] flag: this id's per-cell state can override its apertures.
+pub(crate) const LIGHT_CELL_SHAPED: u32 = 1 << 31;
+/// [`light_cells`] flag: [`Block::transmits_direct_skylight`].
+pub(crate) const LIGHT_CELL_DIRECT_SKY: u32 = 1 << 30;
 // The shape facet traits + Layer-2 param types are public API (the shape
 // dispatch surface / the Layer-2 loader's params); re-export the stable
 // `crate::block::` path even though in-crate consumers currently reach the

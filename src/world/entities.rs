@@ -142,7 +142,9 @@ impl DroppedItems {
             let after = voxel_at(it.pos);
             if before != after {
                 it.skylight = world.skylight6_at_world(after.x, after.y, after.z);
-                it.blocklight = world.blocklight6_at_world(after.x, after.y, after.z);
+                it.blocklight = crate::light::BlockLight6::from_x2(
+                    world.blocklight_rgb_at_world(after.x, after.y, after.z),
+                );
             }
             // Row-declared environmental reaction (`DroppedReaction`): only
             // items whose row declares one pay the environment probe. The

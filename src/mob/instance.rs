@@ -76,7 +76,7 @@ pub struct Instance {
     pub head_pitch: f32,
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    pub blocklight: u8,
+    pub blocklight: crate::light::BlockLight6,
     /// Previous-tick pose, for render interpolation.
     pub prev_pos: Vec3,
     pub prev_yaw: f32,
@@ -136,6 +136,15 @@ pub struct Instance {
     /// world); a block change drops the cache entry, which forces this mob's
     /// re-check off-cadence.
     confined_region: Option<std::sync::Arc<confined::ConfinedRegion>>,
+    /// Where this mob last PROVED itself free, and the world's nav revision at
+    /// that moment — the two inputs of the free-verdict staleness gate (see
+    /// [`confined::free_verdict_stale`]). `u64::MAX` until the first check, so
+    /// a newborn always checks.
+    confined_checked_at: IVec3,
+    confined_checked_rev: u64,
+    /// Ticks a free verdict has been carried unproven, so it is re-proven at
+    /// [`confined::FREE_CHECK_INTERVAL`] regardless.
+    confined_free_age: u16,
     /// ACTIVE particle-emitter bundles by catalog id (`crate::particle_emitters`),
     /// sorted, at most [`super::MAX_ACTIVE_MOB_EMITTERS`]. Presentation-only
     /// state toggled by mods through the `MobEmitterSet` HostCall, replicated
@@ -209,7 +218,7 @@ impl Instance {
             head_yaw: 0.0,
             head_pitch: 0.0,
             skylight: 63,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
             prev_pos: pos,
             prev_yaw: yaw,
             prev_anim_time: 0.0,
@@ -230,6 +239,9 @@ impl Instance {
             tags: std::sync::Arc::new(d.tags.clone()),
             confined_cooldown: ((seed % confined::CHECK_INTERVAL as u64) as u8).max(1),
             confined_region: None,
+            confined_checked_at: IVec3::ZERO,
+            confined_checked_rev: u64::MAX,
+            confined_free_age: 0,
             active_emitters: Vec::new(),
             active_anims: Vec::new(),
             drive: None,
@@ -496,11 +508,15 @@ impl Instance {
         // `solid` = cells whose boxes fill the whole cell, `support` = cells
         // with any collision at all (a slab, a bed, a ladder column can bear
         // feet without blanket-blocking their cell). See `mob::nav`.
-        let solid = super::nav::nav_solid_fn(world);
-        let support = super::nav::nav_support_fn(world, d.size.half_width);
+        // ONE cursor serves every probe this mob makes this tick — the
+        // confinement fill, the navigation-cell resolve, the brain's picks and
+        // the navigator's search all walk the same neighbourhood.
+        let cursor = world.cursor();
+        let solid = super::nav::nav_solid_fn(&cursor);
+        let support = super::nav::nav_support_fn(&cursor, d.size.half_width);
         // The model-aware box source for body collision (legs/top of a bbmodel block).
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
-        let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
+        let water = super::nav::nav_water_fn(&cursor);
         // On or in water — feet submerged, or resting on the surface (water just
         // below). Stays true while the mob floats at the surface; drives idle-animation
         // suppression and allows path refreshes while swimming.
@@ -537,15 +553,39 @@ impl Instance {
         if region_dropped {
             self.confined_region = None;
         }
-        if (self.confined_cooldown == 0 || region_dropped) && self.on_ground && !in_water {
+        // A mob already known FREE re-proves it only when something that could
+        // have changed the answer happened (see `confined::free_verdict_stale`);
+        // a CONFINED mob always re-evaluates, because its answer comes from the
+        // shared region cache and costs a membership test, not a fill.
+        let nav_rev = world.nav_revision();
+        let verdict_stale = region_dropped
+            || self.confined_region.is_some()
+            || confined::free_verdict_stale(
+                cell,
+                self.confined_checked_at,
+                nav_rev,
+                self.confined_checked_rev,
+                self.confined_free_age,
+            );
+        let due = self.confined_cooldown == 0 || region_dropped;
+        if due && !verdict_stale {
+            self.confined_cooldown = confined::CHECK_INTERVAL;
+            self.confined_free_age = self
+                .confined_free_age
+                .saturating_add(confined::CHECK_INTERVAL as u16);
+        }
+        if due && verdict_stale && self.on_ground && !in_water {
+            self.confined_checked_at = cell;
+            self.confined_checked_rev = nav_rev;
+            self.confined_free_age = 0;
             let params = path::PathParams::for_body(d.size.head_cells(), d.size.half_width);
             // Steady state for a penned mob: the shared cache still holds a
             // region covering its cell (a pen-mate may have filled this pen
             // already) — the lookup enforces region age, so a stale handle
             // can never short-circuit it. Only a miss floods.
             let region = regions.region_at(cell).or_else(|| {
-                let step_allowed = super::nav::partial_step_gate(world, params, d.size.height);
-                let loaded = |c: IVec3| world.physics_cell_final_at(c.x, c.y, c.z);
+                let step_allowed = super::nav::partial_step_gate(&cursor, params, d.size.height);
+                let loaded = super::nav::nav_loaded_fn(&cursor);
                 confined::confined_region(
                     cell,
                     params,
@@ -575,6 +615,7 @@ impl Instance {
         let nav_idle = self.nav.is_idle();
         let decision = {
             let mut ctx = AiCtx {
+                reach: Some(world.reach_budget()),
                 mob_id: self.id,
                 pos: self.pos,
                 cell,

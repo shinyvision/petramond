@@ -1,13 +1,36 @@
 use crate::block::CellView;
-use crate::block::{Block, ShapeFamily};
 use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME};
 
 use super::super::face::{Face, FACES};
+use super::cell_class::{FAST_CUBE, PAD_OPAQUE, PAD_SEALS, PAD_SLAB, SKIP};
 use super::cube_face::face_index;
 use super::pad::{mesh_pad_idx, SectionMeshPad, SECTION_PAD};
 
 const FACE_MASK_WORDS: usize = SECTION_VOLUME / u64::BITS as usize;
-pub(super) type ExposedMasks = [[u64; FACE_MASK_WORDS]; FACES.len()];
+
+/// Per-face exposure bitsets plus the derived WORK bitset the cell scan
+/// iterates.
+pub(super) struct ExposedMasks {
+    faces: [[u64; FACE_MASK_WORDS]; FACES.len()],
+    /// Per `(ly, lz)` row, the X positions the cell scan must actually visit:
+    /// every non-air cell that is not a cube fast-path candidate, plus the
+    /// candidates that draw at least one face. A buried solid row is ZERO, so
+    /// the scan skips all sixteen cells without touching them — which is most
+    /// of every underground section.
+    visit: [u16; SECTION_SIZE * SECTION_SIZE],
+}
+
+/// The scan's fallback when no exposure masks were built (the far-leaf LOD
+/// pass, which has no pad): visit every cell.
+pub(super) const VISIT_ALL: [u16; SECTION_SIZE * SECTION_SIZE] =
+    [u16::MAX; SECTION_SIZE * SECTION_SIZE];
+
+impl ExposedMasks {
+    #[inline]
+    pub(super) fn visit_rows(&self) -> &[u16; SECTION_SIZE * SECTION_SIZE] {
+        &self.visit
+    }
+}
 
 #[inline]
 fn mask_bit(i: usize) -> (usize, u64) {
@@ -17,27 +40,13 @@ fn mask_bit(i: usize) -> (usize, u64) {
 #[inline]
 fn mask_set(masks: &mut ExposedMasks, face: Face, cell: usize) {
     let (word, bit) = mask_bit(cell);
-    masks[face_index(face)][word] |= bit;
+    masks.faces[face_index(face)][word] |= bit;
 }
 
 #[inline]
 pub(super) fn mask_has(masks: &ExposedMasks, face: Face, cell: usize) -> bool {
     let (word, bit) = mask_bit(cell);
-    masks[face_index(face)][word] & bit != 0
-}
-
-#[inline]
-pub(super) fn pad_cube_fast_candidate(block: Block) -> bool {
-    // A block that merges with itself (glass, ice) stays on the per-face path:
-    // that same-block cull isn't representable in the opaque-rows exposure
-    // masks. Translucent blocks also need the alpha-blended buffer, which the
-    // fast path does not emit. Sub-cell shapes never reach here at all — they
-    // are not the cube family.
-    block != Block::Water
-        && !block.merges_with_self()
-        && !block.is_translucent()
-        && block.shape_family() == ShapeFamily::Cube
-        && block != Block::Chest
+    masks.faces[face_index(face)][word] & bit != 0
 }
 
 /// `seals_floor(world_pos)`: does that cell's own geometry seal the boundary
@@ -57,7 +66,15 @@ pub(super) fn build_exposed_masks(
     }
 
     #[inline]
-    fn set_face_row(masks: &mut ExposedMasks, face: Face, ly: usize, lz: usize, mut bits: u32) {
+    fn set_face_row(
+        masks: &mut ExposedMasks,
+        exposed: &mut u32,
+        face: Face,
+        ly: usize,
+        lz: usize,
+        mut bits: u32,
+    ) {
+        *exposed |= bits;
         while bits != 0 {
             let lx = bits.trailing_zeros() as usize;
             mask_set(masks, face, section_idx(lx, ly, lz));
@@ -65,7 +82,12 @@ pub(super) fn build_exposed_masks(
         }
     }
 
-    let mut masks = [[0u64; FACE_MASK_WORDS]; FACES.len()];
+    let pad_class = super::cell_class::pad_classes();
+    let classes = super::cell_class::cell_classes();
+    let mut masks = ExposedMasks {
+        faces: [[0u64; FACE_MASK_WORDS]; FACES.len()],
+        visit: [0u16; SECTION_SIZE * SECTION_SIZE],
+    };
     let mut opaque_rows = [0u32; SECTION_PAD * SECTION_PAD];
     // Cells whose own geometry seals the boundary BENEATH them without being
     // opaque — a lowered cube's floor-flush base, a mod shape with one. Only
@@ -78,12 +100,17 @@ pub(super) fn build_exposed_masks(
             let mut row = 0u32;
             let mut covers_row = 0u32;
             for px in 0..SECTION_PAD {
-                let block = pad.block_at_pad(px, py, pz);
-                if block.is_opaque() || pad.full_slab_stack_at_pad(block, px, py, pz) {
+                let i = mesh_pad_idx(px, py, pz);
+                let c = pad_class[pad.blocks[i] as usize];
+                if c & PAD_OPAQUE != 0
+                    || (c & PAD_SLAB != 0
+                        && crate::block_state::SlabState::from_cell(pad.cell_states[i]).is_full())
+                {
                     row |= 1u32 << px;
-                // Air is the overwhelming majority of pad cells; testing it
-                // here keeps them off the shape seam entirely.
-                } else if block != Block::Air
+                // Air, water, plants and plain cubes are the overwhelming
+                // majority of pad cells; the dense flag keeps every one of
+                // them off the shape seam.
+                } else if c & PAD_SEALS != 0
                     && seals_floor(crate::mathh::IVec3::new(
                         origin.0 - 1 + px as i32,
                         origin.1 - 1 + py as i32,
@@ -99,28 +126,36 @@ pub(super) fn build_exposed_masks(
     }
 
     let mut candidate_rows = [0u32; SECTION_SIZE * SECTION_SIZE];
+    // Cells the scan has real work for whatever their exposure: plants,
+    // torches, box shapes, models, water, glass — everything that is neither
+    // air/chest/door nor a plain cube.
+    let mut work_rows = [0u32; SECTION_SIZE * SECTION_SIZE];
     for ly in 0..SECTION_SIZE {
         for lz in 0..SECTION_SIZE {
             let mut row = 0u32;
+            let mut work = 0u32;
             for lx in 0..SECTION_SIZE {
-                let block = pad.block_at_pad(lx + 1, ly + 1, lz + 1);
-                if block == Block::Air {
-                    continue;
+                let i = mesh_pad_idx(lx + 1, ly + 1, lz + 1);
+                let id = pad.blocks[i];
+                if classes[id as usize] & SKIP == 0 {
+                    work |= 1u32 << lx;
                 }
-                // Same-material full slab stacks take the cube fast path too; this
-                // MUST match the slab-branch fall-through in `section_geometry`.
-                let slab_as_cube = block.is_slab()
-                    && crate::slab::is_uniform_full_stack(
-                        crate::block_state::SlabState::from_cell(
-                            pad.cell_states[mesh_pad_idx(lx + 1, ly + 1, lz + 1)],
-                        ),
-                    );
-                if !pad_cube_fast_candidate(block) && !slab_as_cube {
-                    continue;
+                if classes[id as usize] & FAST_CUBE == 0 {
+                    // Same-material full slab stacks take the cube fast path too;
+                    // this MUST match the slab-branch fall-through in
+                    // `section_geometry`.
+                    if pad_class[id as usize] & PAD_SLAB == 0
+                        || !crate::slab::is_uniform_full_stack(
+                            crate::block_state::SlabState::from_cell(pad.cell_states[i]),
+                        )
+                    {
+                        continue;
+                    }
                 }
                 row |= 1u32 << lx;
             }
             candidate_rows[ly * SECTION_SIZE + lz] = row;
+            work_rows[ly * SECTION_SIZE + lz] = work;
         }
     }
 
@@ -128,12 +163,16 @@ pub(super) fn build_exposed_masks(
         for lz in 0..SECTION_SIZE {
             let cand = candidate_rows[ly * SECTION_SIZE + lz];
             if cand == 0 {
+                // No cube candidate here; only the non-cube work stands.
+                masks.visit[ly * SECTION_SIZE + lz] = work_rows[ly * SECTION_SIZE + lz] as u16;
                 continue;
             }
             let (py, pz) = (ly + 1, lz + 1);
+            let mut exposed = 0u32;
             let x_row = opaque_rows[row_idx(py, pz)];
             set_face_row(
                 &mut masks,
+                &mut exposed,
                 Face::PosX,
                 ly,
                 lz,
@@ -141,6 +180,7 @@ pub(super) fn build_exposed_masks(
             );
             set_face_row(
                 &mut masks,
+                &mut exposed,
                 Face::NegX,
                 ly,
                 lz,
@@ -148,6 +188,7 @@ pub(super) fn build_exposed_masks(
             );
             set_face_row(
                 &mut masks,
+                &mut exposed,
                 Face::PosY,
                 ly,
                 lz,
@@ -158,6 +199,7 @@ pub(super) fn build_exposed_masks(
             );
             set_face_row(
                 &mut masks,
+                &mut exposed,
                 Face::NegY,
                 ly,
                 lz,
@@ -165,6 +207,7 @@ pub(super) fn build_exposed_masks(
             );
             set_face_row(
                 &mut masks,
+                &mut exposed,
                 Face::PosZ,
                 ly,
                 lz,
@@ -172,11 +215,14 @@ pub(super) fn build_exposed_masks(
             );
             set_face_row(
                 &mut masks,
+                &mut exposed,
                 Face::NegZ,
                 ly,
                 lz,
                 cand & !((opaque_rows[row_idx(py, pz - 1)] >> 1) & CENTER_BITS),
             );
+            let work = work_rows[ly * SECTION_SIZE + lz];
+            masks.visit[ly * SECTION_SIZE + lz] = ((work & !cand) | (cand & exposed)) as u16;
         }
     }
     masks

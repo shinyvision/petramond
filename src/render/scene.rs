@@ -20,7 +20,7 @@ use super::{
 use crate::game::body_pose::lerp_angle;
 use crate::game::presentation::{
     ChestPresentation, DoorPresentation, DroppedItemPresentation, GamePresentation,
-    MobPresentation, ParticleAtlas, ParticleEmitterPresentation, ParticlePresentation,
+    MobPresentation, ParticleAtlas, ParticlePresentation,
 };
 
 /// Per-frame presentation translation state, owned by the App. Holds the renderer's
@@ -52,12 +52,11 @@ pub(crate) struct Scene {
     /// Every other connected player's body + held item (already interpolated
     /// by the presentation layer — a pass-through here, like the local body).
     remote_players: Vec<RemotePlayerRender>,
-    /// Two-channel light + warm-tint amount for the first-person hand / held
-    /// item, sampled at the camera each frame so it brightens AND warms near
-    /// torches (and torch light keeps it lit at night).
+    /// Two-channel light for the first-person hand / held item, sampled at the
+    /// camera each frame so it brightens AND takes the colour of nearby block
+    /// light (which keeps it lit at night).
     held_item_skylight: u8,
-    held_item_blocklight: u8,
-    held_item_warm: u8,
+    held_item_blocklight: crate::light::BlockLight6,
 }
 
 impl Scene {
@@ -77,8 +76,7 @@ impl Scene {
         self.player = None;
         self.remote_players.clear();
         self.held_item_skylight = 0;
-        self.held_item_blocklight = 0;
-        self.held_item_warm = 0;
+        self.held_item_blocklight = crate::light::BlockLight6::DARK;
     }
 
     /// Translate the current presentation snapshot into this scene's reused buffers.
@@ -97,7 +95,11 @@ impl Scene {
             &mut self.model_particles,
             &mut self.solid_particles,
         );
-        bake_particle_emitters(presentation.particle_emitters, &mut self.particle_emitters);
+        // Already the render row, already culled by the gather — a copy into
+        // the frame's own buffer, not a translation.
+        self.particle_emitters.clear();
+        self.particle_emitters
+            .extend_from_slice(presentation.particle_emitters);
         self.bake_chests(presentation.chests);
         self.bake_doors(presentation.doors);
         bake_mobs(presentation.mobs, alpha, &mut self.mobs);
@@ -118,11 +120,7 @@ impl Scene {
         self.remote_players.clear();
         self.remote_players
             .extend_from_slice(presentation.remote_players);
-        (
-            self.held_item_skylight,
-            self.held_item_blocklight,
-            self.held_item_warm,
-        ) = presentation.held_item_light;
+        (self.held_item_skylight, self.held_item_blocklight) = presentation.held_item_light;
     }
 
     /// The placed chests to draw this frame (world pos, facing, lid angle, skylight),
@@ -170,11 +168,7 @@ impl Scene {
 
     /// Hand the baked instances + held-item light to the renderer for this frame.
     pub(crate) fn upload(&self, renderer: &mut Renderer) {
-        renderer.set_held_item_light(
-            self.held_item_skylight,
-            self.held_item_blocklight,
-            self.held_item_warm,
-        );
+        renderer.set_held_item_light(self.held_item_skylight, self.held_item_blocklight);
         renderer.set_item_entities(&self.item_entities);
         renderer.set_chests(&self.chests);
         renderer.set_doors(&self.doors);
@@ -266,7 +260,7 @@ fn bake_particles(
             pos: p.pos,
             uv_min: p.uv_min,
             uv_size: p.uv_size,
-            tint: crate::torch::warm_tint(p.tint, p.warm as f32 / 255.0),
+            tint: p.tint,
             alpha: p.alpha,
             size: p.size,
             skylight: p.skylight,
@@ -278,20 +272,6 @@ fn bake_particles(
             ParticleAtlas::Solid => unreachable!("handled above"),
         }
     }
-}
-
-fn bake_particle_emitters(
-    emitters: &[ParticleEmitterPresentation],
-    out: &mut Vec<ParticleEmitterInstance>,
-) {
-    out.clear();
-    out.extend(emitters.iter().map(|e| ParticleEmitterInstance {
-        origin: e.origin,
-        emitter: e.emitter,
-        seed: e.seed,
-        skylight: e.skylight,
-        blocklight: e.blocklight,
-    }));
 }
 
 #[cfg(test)]
@@ -310,7 +290,7 @@ mod tests {
             prev_spin: 0.0,
             spin: 0.0,
             skylight: 0,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
         }
     }
 
@@ -321,12 +301,11 @@ mod tests {
             uv_min: [0.0, 0.0],
             uv_size: [0.0625; 2],
             tint: [1.0, 1.0, 1.0],
-            warm: 0,
             alpha: 1.0,
             size: 0.1,
             stretch: 1.0,
             skylight: 0,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
         }
     }
 

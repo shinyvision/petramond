@@ -215,15 +215,14 @@ mod tests {
 
     /// The shipped `features.json` resolves every engine row against the real
     /// block registry, and pack rows register after the engine range.
+    ///
+    /// Reads the BASE layer only: "the shipped catalog is valid on its own"
+    /// must not change meaning because a pack happens to layer this file.
     #[test]
     fn engine_rows_hold_frozen_ids_and_pack_rows_register_after() {
-        let base = std::fs::read_to_string(
-            crate::assets::candidate_paths("features.json")
-                .into_iter()
-                .find(|p| p.exists())
-                .expect("shipped features.json"),
-        )
-        .unwrap();
+        let base = crate::assets::read_base_text("features.json")
+            .expect("shipped features.json")
+            .0;
         let pack = r#"{"features": [
             {"feature": "petramond:spruce", "shape": {"tree": {
                 "trunk": "straight",

@@ -345,6 +345,80 @@ fn rooted_plants_place_only_on_their_required_ground() {
     );
 }
 
+/// The SHAPE half of the substrate gate, and the reason it cannot be a tag:
+/// a TOP slab of stone is the same MATERIAL as stone and presents a complete
+/// top face, yet it is not whole matter, so a mushroom must refuse it while
+/// still taking the full cube beside it.
+///
+/// Both sides are asserted because a predictor that says yes where the server
+/// says no is its own bug class — the player gets a ghost the next delta
+/// deletes, which is exactly the "it breaks right after placing" report.
+#[test]
+fn a_full_cube_substrate_is_required_by_the_server_and_the_predictor() {
+    use crate::game::tick::PlacePrediction;
+
+    let mut game = game_on_empty_chunk();
+    game.game.replica.insert_chunk_for_test(
+        crate::chunk::ChunkPos::new(0, 0),
+        crate::chunk::Chunk::new(0, 0),
+    );
+    game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
+    game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
+
+    // Column 4: a whole stone cube. Column 6: a stone TOP slab — complete top
+    // face, shaped body.
+    let whole = IVec3::new(4, 64, 4);
+    let slab = IVec3::new(6, 64, 6);
+    for world in [&mut game.server.world, &mut game.game.replica] {
+        world.set_block_world(whole.x, whole.y, whole.z, Block::Stone);
+        world.set_block_world(slab.x, slab.y, slab.z, Block::StoneSlab);
+        world
+            .section_at_world_mut_for_test(slab.x, slab.y, slab.z)
+            .expect("the slab's section is loaded")
+            .set_slab_state(
+                slab.x.rem_euclid(16) as usize,
+                slab.y.rem_euclid(16) as usize,
+                slab.z.rem_euclid(16) as usize,
+                SlabState::single(SlabSplit::Y, 1, Block::StoneSlab),
+            );
+    }
+    assert_eq!(
+        game.server
+            .world
+            .slab_state_at(slab.x, slab.y, slab.z)
+            .layers[1],
+        Block::StoneSlab,
+        "fixture: the slab really occupies its cell's TOP half"
+    );
+
+    for (ground, expect) in [(whole, true), (slab, false)] {
+        give(&mut game, ItemType::BrownMushroom, 1);
+        game.sync_self_view_for_test();
+        game.server.sessions[0].look = Some(hit(ground, IVec3::Y));
+        assert_eq!(
+            game.server.try_place_for_test(),
+            expect,
+            "server verdict on {ground:?}"
+        );
+        let predicted = !matches!(
+            game.game.predict_place_at_for_test(ground, IVec3::Y, false),
+            PlacePrediction::No
+        );
+        assert_eq!(
+            predicted, expect,
+            "the predictor must agree with the server on {ground:?}"
+        );
+        assert_eq!(
+            game.game
+                .replica
+                .chunk_block(ground.x, ground.y + 1, ground.z)
+                != Block::Air.0,
+            expect,
+            "a refused placement must leave no ghost on {ground:?}"
+        );
+    }
+}
+
 #[test]
 fn rotating_held_stair_places_top_half() {
     let mut game = game_on_empty_chunk();
@@ -386,7 +460,11 @@ fn slabs_stack_horizontally_with_mixed_materials() {
     let state = game.server.world.slab_state_at(p.x, p.y, p.z);
     assert_eq!(state.split, SlabSplit::Y);
     assert_eq!(state.layers, [Block::DirtSlab, Block::CobblestoneSlab]);
-    let parts = game.server.world.cell_parts(p).expect("a slab cell is composed");
+    let parts = game
+        .server
+        .world
+        .cell_parts(p)
+        .expect("a slab cell is composed");
     assert_eq!(
         game.server.part_drop_stacks(p, &parts),
         vec![

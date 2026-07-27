@@ -317,7 +317,7 @@ impl ServerGame {
             .look
             .filter(|h| h.block == event.pos && h.normal != IVec3::ZERO)
             .map(|h| h.normal);
-        let (sky, blk, _warm) = break_light(&self.world, event.pos, hit_normal);
+        let (sky, blk) = break_light(&self.world, event.pos, hit_normal);
         // A COMPOSED cell (a slab stack) drops each of its parts as its own
         // material, each stamped with that part's own carried data, so a white
         // slab under an orange one comes back as one white and one orange —
@@ -425,7 +425,7 @@ impl ServerGame {
                 // KV) before this drain — no tint to sample.
                 tint: None,
             });
-            let (sky, blk, _warm) = self.world.dynamic_light_at_world(pos.x, pos.y, pos.z);
+            let (sky, blk) = self.world.dynamic_light_at_world(pos.x, pos.y, pos.z);
             // A natural break yields exactly what a bare-hand break would: most
             // fragile blocks are tier-0 (short grass yields nothing, a
             // flower/torch yields itself), while a tool-gated drop (the snow
@@ -511,7 +511,7 @@ impl ServerGame {
         &mut self,
         pos: IVec3,
         block: Block,
-        (sky, blk): (u8, u8),
+        (sky, blk): (u8, crate::light::BlockLight6),
         carry_variant: crate::item::VariantId,
     ) {
         let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
@@ -549,7 +549,12 @@ impl ServerGame {
 
     /// Spawn `stack` as a dropped item at the centre of block `pos` (e.g. a broken
     /// furnace scattering its contents). No-op for an empty stack.
-    fn spawn_item_stack(&mut self, pos: IVec3, stack: ItemStack, (sky, blk): (u8, u8)) {
+    fn spawn_item_stack(
+        &mut self,
+        pos: IVec3,
+        stack: ItemStack,
+        (sky, blk): (u8, crate::light::BlockLight6),
+    ) {
         if stack.is_empty() {
             return;
         }
@@ -562,11 +567,15 @@ impl ServerGame {
     }
 }
 
-/// Two-channel light + warm at the lit face of a just-broken block, for its break
-/// particles: the mined face's `(sky6, block6, warm)`, or the brightest neighbour
-/// (by combined `max(sky, block)`, matching the old single-channel pick) when the
-/// face is unknown.
-pub(crate) fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> (u8, u8, u8) {
+/// Two-channel light at the lit face of a just-broken block, for its break
+/// particles: the mined face's `(sky6, block6)`, or the brightest neighbour
+/// (by combined `max(sky, block luminance)`, matching the old single-channel
+/// pick) when the face is unknown.
+pub(crate) fn break_light(
+    world: &World,
+    pos: IVec3,
+    normal: Option<IVec3>,
+) -> (u8, crate::light::BlockLight6) {
     let at = |c: IVec3| world.dynamic_light_at_world(c.x, c.y, c.z);
     if let Some(n) = normal {
         return at(pos + n);
@@ -582,6 +591,6 @@ pub(crate) fn break_light(world: &World, pos: IVec3, normal: Option<IVec3>) -> (
     ]
     .into_iter()
     .map(|n| at(pos + n))
-    .max_by_key(|&(sky, block, _)| sky.max(block))
-    .unwrap_or((63, 0, 0))
+    .max_by_key(|&(sky, block)| sky.max(block.luminance() as u8))
+    .unwrap_or((63, crate::light::BlockLight6::DARK))
 }

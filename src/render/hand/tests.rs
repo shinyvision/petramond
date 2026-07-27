@@ -53,8 +53,10 @@ fn lit_hand_packs_sampled_skylight() {
     build_hand_lit(
         &view,
         16.0 / 9.0,
-        DynLight { sky: 9, block: 5 },
-        0,
+        DynLight {
+            sky: 9,
+            block: crate::light::BlockLight6::new(5, 2, 63),
+        },
         &mut v,
         &mut i,
     );
@@ -66,7 +68,13 @@ fn lit_hand_packs_sampled_skylight() {
             9,
             "sky channel in word 1"
         );
-        assert_eq!(vert.packed2 & 0x3F, 5, "block channel in word 2");
+        // The block channel's COLOUR must survive the three-way vertex split
+        // on the dynamic path too, not just in the chunk mesher.
+        assert_eq!(
+            crate::mesh::vertex::decode_vertex_light(vert),
+            crate::light::BlockLight6::new(5, 2, 63),
+            "block light colour in the split lanes"
+        );
     }
 }
 
@@ -103,7 +111,6 @@ fn raster_held_cell(
         Mat4::IDENTITY,
         DynLight::FULL,
         LightEnv::IDENTITY,
-        0,
         None,
         &mut verts,
         &mut indices,

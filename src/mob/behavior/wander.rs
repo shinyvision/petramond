@@ -159,9 +159,10 @@ fn pick_destination(
             exhausted: false,
         };
     }
-    let solid = super::super::nav::nav_solid_fn(ctx.world);
-    let support = super::super::nav::nav_support_fn(ctx.world, ctx.half_width);
-    let water = |c: IVec3| ctx.world.water_cell_at(c.x, c.y, c.z);
+    let cursor = ctx.world.cursor();
+    let solid = super::super::nav::nav_solid_fn(&cursor);
+    let support = super::super::nav::nav_support_fn(&cursor, ctx.half_width);
+    let water = super::super::nav::nav_water_fn(&cursor);
     let radius = tuning.radius;
     let r2 = radius * radius;
     let path_params = PathParams::for_body(ctx.head, ctx.half_width);
@@ -230,18 +231,27 @@ fn pick_destination(
         // the mob to the nearest wall cell and park it there. A bounded number
         // of failed probes cancels the pick: the mob is likely hemmed in, and
         // more probes would just be a slow way to stand still.
-        if !super::super::nav::destination_reachable(
+        match super::super::nav::destination_reachable(
             ctx.world,
             ctx.cell,
             dest,
             path_params,
             ctx.head_height,
+            ctx.reach,
         ) {
-            unreachable_seen += 1;
-            if unreachable_seen >= REACH_ATTEMPTS {
-                break;
+            // The tick's shared probe budget is spent: this pick is DEFERRED,
+            // not cancelled — the roll comes round again next tick, and
+            // guessing "unreachable" here would spend the horizon backoff on
+            // a spot nobody probed.
+            None => break,
+            Some(false) => {
+                unreachable_seen += 1;
+                if unreachable_seen >= REACH_ATTEMPTS {
+                    break;
+                }
+                continue;
             }
-            continue;
+            Some(true) => {}
         }
         if escape_water && wet {
             wet_fallback.get_or_insert(dest);
@@ -282,7 +292,8 @@ fn pick_region_destination(
     if region.cells.len() < MIN_REGION_WANDER_CELLS {
         return None;
     }
-    let water = |c: IVec3| ctx.world.water_cell_at(c.x, c.y, c.z);
+    let cursor = ctx.world.cursor();
+    let water = super::super::nav::nav_water_fn(&cursor);
     let radius = tuning.radius;
     let r2 = radius * radius;
     let path_params = PathParams::for_body(ctx.head, ctx.half_width);
@@ -828,11 +839,12 @@ mod tests {
     /// are exercised against exactly what the instance refresh would cache.
     fn region_for(world: &World, start: IVec3) -> crate::mob::confined::ConfinedRegion {
         let params = PathParams::for_body(2, 0.45);
-        let solid = crate::mob::nav::nav_solid_fn(world);
-        let support = crate::mob::nav::nav_support_fn(world, 0.45);
-        let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
-        let step = crate::mob::nav::partial_step_gate(world, params, 1.4);
-        let loaded = |c: IVec3| world.physics_cell_final_at(c.x, c.y, c.z);
+        let cursor = world.cursor();
+        let solid = crate::mob::nav::nav_solid_fn(&cursor);
+        let support = crate::mob::nav::nav_support_fn(&cursor, 0.45);
+        let water = crate::mob::nav::nav_water_fn(&cursor);
+        let step = crate::mob::nav::partial_step_gate(&cursor, params, 1.4);
+        let loaded = crate::mob::nav::nav_loaded_fn(&cursor);
         crate::mob::confined::confined_region(
             start, params, &solid, &support, &water, &step, &loaded,
         )

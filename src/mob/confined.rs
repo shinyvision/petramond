@@ -19,6 +19,46 @@ use crate::mob::path::{body_clear, body_layer_clear, is_navigation_foothold_with
 /// Game ticks between confined-state re-evaluations for one mob.
 pub const CHECK_INTERVAL: u8 = 60;
 
+/// Ticks a FREE verdict may be carried without re-proving it, when nothing
+/// that could change it has been observed. Thirty seconds: the insurance
+/// cadence, not the working one — the two observable triggers below are what
+/// normally re-prove a verdict.
+pub const FREE_CHECK_INTERVAL: u16 = 1200;
+
+/// How far (cells, Chebyshev, x/z) a free mob may drift from the cell it was
+/// last proved free at before the verdict is re-proved.
+///
+/// A verdict can only flip from FREE to CONFINED two ways: the terrain
+/// changed (the nav revision moves, and the shared region cache drops), or the
+/// mob crossed a ONE-WAY boundary — walked off a ledge it cannot climb back,
+/// dropped into a pit. The first is observed exactly; the second is bounded by
+/// distance, because a one-way boundary is a place the mob physically walked
+/// to.
+const FREE_RECHECK_MOVE: i32 = 8;
+
+/// Whether a FREE verdict taken at `checked_at` under nav revision
+/// `checked_rev` must be re-proved for a mob now standing at `cell`.
+///
+/// This is the cadence gate that keeps an open-field mob from re-flooding the
+/// world every [`CHECK_INTERVAL`] ticks forever: on open ground the fill is
+/// the single most expensive thing one mob does, and NOTHING about an
+/// unchanged world and an unmoved mob can change its answer.
+pub fn free_verdict_stale(
+    cell: IVec3,
+    checked_at: IVec3,
+    nav_rev: u64,
+    checked_rev: u64,
+    free_age: u16,
+) -> bool {
+    nav_rev != checked_rev
+        || free_age >= FREE_CHECK_INTERVAL
+        || (cell.x - checked_at.x).abs() >= FREE_RECHECK_MOVE
+        || (cell.z - checked_at.z).abs() >= FREE_RECHECK_MOVE
+        // Vertical movement is how a mob leaves its component without moving
+        // far horizontally (a pit, a ledge), so it is not given any slack.
+        || cell.y != checked_at.y
+}
+
 /// Maximum x/z span (in cells) of a reachable region that still counts as
 /// confined. The fill gives up — mob is free — the moment its footprint
 /// outgrows this in either horizontal axis.
@@ -111,9 +151,35 @@ pub fn confined_region(
     step_allowed: &impl Fn(IVec3, IVec3) -> bool,
     loaded: &impl Fn(IVec3) -> bool,
 ) -> Option<ConfinedRegion> {
-    let foothold = |c: IVec3| is_navigation_foothold_with(c, params, solid, support, water);
+    // Every visited cell is asked about from up to four sides, and each ask
+    // costs a whole support/solid/water probe stack — so the composite verdict
+    // is memoized for the life of one fill (the world cannot change under it).
+    let memo = crate::mob::path::CellMemo::<512>::default();
+    let foothold = |c: IVec3| {
+        memo.get(c, |c| {
+            is_navigation_foothold_with(c, params, solid, support, water)
+        })
+    };
     if !foothold(start) {
         return None;
+    }
+
+    // Cheap sufficient proof of freedom BEFORE the fill (see `escapes_span`):
+    // a mob in the open is the overwhelmingly common case, and one straight
+    // run costs a quarter of what the four-way fill pays to reach the same
+    // conclusion.
+    for (dx, dz) in DIRS {
+        if escapes_span(
+            start,
+            (dx, dz),
+            params,
+            solid,
+            &foothold,
+            step_allowed,
+            loaded,
+        ) {
+            return None;
+        }
     }
 
     let mut set = FxHashSet::default();
@@ -128,11 +194,6 @@ pub fn confined_region(
         }
 
         for (dx, dz) in DIRS {
-            let side = c + IVec3::new(dx, 0, dz);
-            if !loaded(side) {
-                return None;
-            }
-
             let mut reach = |cell: IVec3| -> bool {
                 if set.insert(cell) {
                     min = min.min(cell);
@@ -144,42 +205,12 @@ pub fn confined_region(
                 }
                 true
             };
-
-            // Jump up one block.
-            let up = side + IVec3::Y;
-            if foothold(up)
-                && step_allowed(c, up)
-                && body_layer_clear(c + IVec3::Y * params.head_cells(), params, solid)
-            {
-                if !reach(up) {
-                    return None;
-                }
-                continue;
-            }
-
-            // Flat step.
-            if foothold(side) && step_allowed(c, side) {
-                if !reach(side) {
-                    return None;
-                }
-                continue;
-            }
-
-            // Descend to the first foothold within max_drop.
-            if body_clear(side, params, solid) {
-                for dy in 1..=params.max_drop {
-                    let down = side - IVec3::Y * dy;
-                    if !loaded(down) {
+            match step_from(c, (dx, dz), params, solid, &foothold, step_allowed, loaded) {
+                Step::Unloaded => return None,
+                Step::Blocked => {}
+                Step::To(next) => {
+                    if !reach(next) {
                         return None;
-                    }
-                    if solid(down) {
-                        break;
-                    }
-                    if foothold(down) && step_allowed(c, down) {
-                        if !reach(down) {
-                            return None;
-                        }
-                        break;
                     }
                 }
             }
@@ -194,6 +225,95 @@ pub fn confined_region(
         min,
         max,
     })
+}
+
+/// Where one cardinal move from foothold `c` lands, under the fill's movement
+/// rules. Exactly one of jump-up-one / flat step / descend-to-first-foothold
+/// applies, in that order — the same precedence the pathfinder uses.
+enum Step {
+    /// The world has not finished streaming here, so nothing is provable.
+    Unloaded,
+    /// No move exists in this direction.
+    Blocked,
+    To(IVec3),
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn step_from(
+    c: IVec3,
+    (dx, dz): (i32, i32),
+    params: PathParams,
+    solid: &impl Fn(IVec3) -> bool,
+    foothold: &impl Fn(IVec3) -> bool,
+    step_allowed: &impl Fn(IVec3, IVec3) -> bool,
+    loaded: &impl Fn(IVec3) -> bool,
+) -> Step {
+    let side = c + IVec3::new(dx, 0, dz);
+    if !loaded(side) {
+        return Step::Unloaded;
+    }
+
+    // Jump up one block.
+    let up = side + IVec3::Y;
+    if foothold(up)
+        && step_allowed(c, up)
+        && body_layer_clear(c + IVec3::Y * params.head_cells(), params, solid)
+    {
+        return Step::To(up);
+    }
+
+    // Flat step.
+    if foothold(side) && step_allowed(c, side) {
+        return Step::To(side);
+    }
+
+    // Descend to the first foothold within max_drop.
+    if body_clear(side, params, solid) {
+        for dy in 1..=params.max_drop {
+            let down = side - IVec3::Y * dy;
+            if !loaded(down) {
+                return Step::Unloaded;
+            }
+            if solid(down) {
+                break;
+            }
+            if foothold(down) && step_allowed(c, down) {
+                return Step::To(down);
+            }
+        }
+    }
+    Step::Blocked
+}
+
+/// Whether a straight run of [`MAX_REGION_SPAN`] moves in one cardinal
+/// direction exists from `start` — a SUFFICIENT proof that
+/// [`confined_region`] would answer "free", at a quarter of the fill's cost.
+///
+/// Every cell the run walks is genuinely reachable from `start`, so the fill
+/// would insert all of them; [`MAX_REGION_SPAN`] of them in one axis is
+/// exactly the span that makes the fill give up. Hitting unstreamed world is
+/// the fill's other give-up, so it counts too. A run that simply runs into a
+/// wall proves nothing — the caller falls through to the fill.
+#[allow(clippy::too_many_arguments)]
+fn escapes_span(
+    start: IVec3,
+    dir: (i32, i32),
+    params: PathParams,
+    solid: &impl Fn(IVec3) -> bool,
+    foothold: &impl Fn(IVec3) -> bool,
+    step_allowed: &impl Fn(IVec3, IVec3) -> bool,
+    loaded: &impl Fn(IVec3) -> bool,
+) -> bool {
+    let mut c = start;
+    for _ in 0..MAX_REGION_SPAN {
+        match step_from(c, dir, params, solid, foothold, step_allowed, loaded) {
+            Step::Unloaded => return true,
+            Step::Blocked => return false,
+            Step::To(next) => c = next,
+        }
+    }
+    true
 }
 
 /// The shared store of live confined regions, owned by the mob manager: one
@@ -321,11 +441,12 @@ mod tests {
     }
 
     fn probe(world: &World, start: IVec3) -> Option<ConfinedRegion> {
-        let solid = crate::mob::nav::nav_solid_fn(world);
-        let support = crate::mob::nav::nav_support_fn(world, params().half_width);
-        let water = |c: IVec3| world.water_cell_at(c.x, c.y, c.z);
-        let step = crate::mob::nav::partial_step_gate(world, params(), 1.4);
-        let loaded = |c: IVec3| world.physics_cell_final_at(c.x, c.y, c.z);
+        let cursor = world.cursor();
+        let solid = crate::mob::nav::nav_solid_fn(&cursor);
+        let support = crate::mob::nav::nav_support_fn(&cursor, params().half_width);
+        let water = crate::mob::nav::nav_water_fn(&cursor);
+        let step = crate::mob::nav::partial_step_gate(&cursor, params(), 1.4);
+        let loaded = crate::mob::nav::nav_loaded_fn(&cursor);
         confined_region(start, params(), &solid, &support, &water, &step, &loaded)
     }
 

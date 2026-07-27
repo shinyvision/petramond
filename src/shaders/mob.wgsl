@@ -110,7 +110,9 @@ fn fs_mob(in: VsOut) -> @location(0) vec4<f32> {
 // face shade, so the sim's sky scale/colour darkens a placed model at night
 // exactly like the terrain around it. The curve constants mirror block.wgsl —
 // keep them in sync (at sky scale 1.0 + white sky the result is identical to
-// the old mesh-time bake of max(sky, block)).
+// the old mesh-time bake of max(sky, block)). Unlike a mob vertex there is no
+// tint lane: a model block's colour is its texture, and its light is the light
+// vector.
 const SKY_MIN: f32 = 0.02;
 const FINAL_MIN: f32 = 0.006;
 const SKY_GAMMA: f32 = 3.0;
@@ -119,18 +121,18 @@ struct WmIn {
     @location(0) pos:   vec3<f32>,
     @location(1) uv:    vec2<f32>,
     @location(2) shade: f32,
-    @location(3) tint:  vec3<f32>,
-    @location(4) light: vec2<f32>, // (sky01, block01)
+    // (sky01, block_r01, block_g01, block_b01) — the block channel is per
+    // colour so a placed model sits in coloured light like the terrain.
+    @location(3) light: vec4<f32>,
 };
 
 struct WmOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv:    vec2<f32>,
     @location(1) shade: f32,
-    @location(2) tint:  vec3<f32>,
-    @location(3) view:  vec3<f32>,
-    @location(4) light: vec2<f32>,
-    @location(5) world_y: f32,
+    @location(2) view:  vec3<f32>,
+    @location(3) light: vec4<f32>,
+    @location(4) world_y: f32,
 };
 
 @vertex
@@ -140,7 +142,6 @@ fn vs_world_model(in: WmIn) -> WmOut {
     out.clip = u.view_proj * vec4<f32>(local_pos, 1.0);
     out.uv = in.uv;
     out.shade = in.shade;
-    out.tint = in.tint;
     out.view = local_pos - u.cam_pos.xyz;
     out.world_y = in.pos.y;
     out.light = in.light;
@@ -152,11 +153,13 @@ fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
     let tex_color = textureSample(tex, samp, in.uv);
     if (tex_color.a < 0.5) { discard; }
     // The same two-term light as block.wgsl: sky scaled + tinted by the sim's
-    // day/night state, block light night-invariant, max of the two.
+    // day/night state, block light night-invariant and COLOURED, max of the two.
     let sky_term = mix(SKY_MIN, 1.0, pow(in.light.x, SKY_GAMMA) * u.fog_color.w) * u.sky_color.rgb;
-    let block_term = mix(SKY_MIN, 1.0, pow(in.light.y, SKY_GAMMA));
-    let lit = max(max(sky_term, vec3<f32>(block_term)), vec3<f32>(FINAL_MIN));
-    var color = tex_color.rgb * in.shade * in.tint * lit;
+    // Per channel, each riding its own SKY_MIN floor (see block.wgsl).
+    let blk = in.light.yzw;
+    let block_term = mix(vec3<f32>(SKY_MIN), vec3<f32>(1.0), blk * blk * blk);
+    let lit = max(max(sky_term, block_term), vec3<f32>(FINAL_MIN));
+    var color = tex_color.rgb * in.shade * lit;
     if (u.fog.w > 0.5) {
         color = color * WATER_TINT;
         let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);

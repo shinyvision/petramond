@@ -30,8 +30,7 @@ use glam::{Mat4, Vec3};
 /// MODEL atlas, the same sheet the in-world block uses) — the model centred + uniformly
 /// scaled to a unit cube (`±0.5`), then placed by `transform`, lit by the two-channel
 /// `light` under `env` (folded into the vertex TINT as an RGB factor; the vertex `shade`
-/// keeps only the directional term) and warmed by `warm` (0..255). APPENDS (caller
-/// clears).
+/// keeps only the directional term). APPENDS (caller clears).
 /// Shared by the inventory ICON, the first-person HELD item, and the DROPPED item-entity
 /// so all three show the real workbench, not a stand-in cube.
 ///
@@ -43,7 +42,6 @@ pub fn build_block_model_item(
     transform: Mat4,
     light: DynLight,
     env: LightEnv,
-    warm: u8,
     view_sort: Option<Vec3>,
     verts: &mut Vec<ItemVertex>,
     indices: &mut Vec<u32>,
@@ -61,9 +59,9 @@ pub fn build_block_model_item(
     let map =
         transform * Mat4::from_scale(Vec3::splat(1.0 / span)) * Mat4::from_translation(-fp * 0.5);
     // RGB light (sky channel dims/tints with the env; block channel is night-
-    // invariant) folds into the tint; `shade` keeps the directional term only.
-    let warm = crate::torch::warm_tint([1.0, 1.0, 1.0], warm as f32 / 255.0);
-    let tint = lighting::fold_tint(warm, light, env);
+    // invariant and carries its own colour) folds into the tint; `shade` keeps
+    // the directional term only.
+    let tint = lighting::fold_tint([1.0, 1.0, 1.0], light, env);
 
     // Draw order (far→near for the depthless icon; natural otherwise).
     let mut order: Vec<usize> = (0..inst.cubes.len()).collect();
@@ -122,7 +120,7 @@ pub fn build_block_model_item(
 /// model-icon pass is DEPTH-BUFFERED (the model is double-sided like the in-world block,
 /// so depth — not winding — orders its panels/drawers), but the faces are also emitted
 /// FAR→NEAR by clip-z as a cheap, stable tiebreak for coincident decals. Full-bright (no
-/// warm tint); APPENDS (caller clears).
+/// block light); APPENDS (caller clears).
 pub fn build_block_model_icon(
     kind: BlockModelKind,
     mvp: Mat4,
@@ -310,7 +308,9 @@ pub(super) fn dye_block_verts(verts: &mut [crate::mesh::Vertex], variant: crate:
     };
     for v in verts.iter_mut() {
         let base = crate::mesh::unpack_tint(v.tint);
-        v.tint = crate::mesh::pack_tint([base[0] * t[0], base[1] * t[1], base[2] * t[2]]);
+        // `retint`, not `pack_tint`: the tint word's alpha lane carries the block
+        // light's chroma, and rebuilding the word from scratch would erase it.
+        v.tint = crate::mesh::retint(v.tint, [base[0] * t[0], base[1] * t[1], base[2] * t[2]]);
         v.packed2 |= crate::mesh::DYED_FLAG2;
     }
 }
@@ -504,13 +504,22 @@ mod tests {
         let mut out = Vec::new();
         build_extruded_item_lit(
             Tile::named("poppy"),
-            DynLight { sky: 0, block: 0 },
+            DynLight {
+                sky: 0,
+                block: crate::light::BlockLight6::DARK,
+            },
             LightEnv::IDENTITY,
             &mut out,
         );
 
         assert_eq!(out[0].shade, SHADE_FRONT);
-        let dark = lighting::light_rgb(DynLight { sky: 0, block: 0 }, LightEnv::IDENTITY);
+        let dark = lighting::light_rgb(
+            DynLight {
+                sky: 0,
+                block: crate::light::BlockLight6::DARK,
+            },
+            LightEnv::IDENTITY,
+        );
         assert_eq!(out[0].tint, dark, "unlit sample dims the tint");
         assert!(dark[0] < 1.0);
     }

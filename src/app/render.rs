@@ -181,7 +181,13 @@ impl App {
             let current_tick = game.current_tick();
             // The same hourly-wrapped clock `GameEnvironment::time` carries, so
             // ambient volumes animate on the exact clock looping emitters do.
-            let presentation = self.presentation.snapshot(game, (now % 3600.0) as f32);
+            // The renderer's own view volume, published by `update_uniforms`
+            // above (shake included) and unchanged until this frame draws — so
+            // gathers cull against exactly what will be rasterized.
+            let view = renderer.view_volume();
+            let presentation = self
+                .presentation
+                .snapshot(game, (now % 3600.0) as f32, &view);
             renderer.set_break_overlays(presentation.break_overlays);
             self.spatial_mob_positions.clear();
             self.spatial_mob_positions.extend(
@@ -313,11 +319,14 @@ impl App {
             return false;
         }
 
-        {
+        let terrain_busy = {
             let mut terrain = game.terrain_render_handoff();
             renderer.sync_meshes(&mut terrain);
-        }
+            terrain.is_streaming()
+        };
         renderer.render();
+        self.heap_reclaim
+            .frame(terrain_busy || renderer.terrain_uploads_pending());
         true
     }
 }

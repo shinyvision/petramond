@@ -210,7 +210,7 @@ impl Player {
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
         let water = |x: i32, y: i32, z: i32| world.water_cell_at(x, y, z);
         let water_flow = |p: Vec3| world.water_flow_at_point(p);
-        let climb = |x: i32, y: i32, z: i32| world.climbable_facing_at(x, y, z);
+        let climb = |x: i32, y: i32, z: i32| world.climb_at(x, y, z);
         let slippery = |x: i32, y: i32, z: i32| world.physics_block(x, y, z).is_slippery();
         self.update_core_with_current(
             dt,
@@ -266,7 +266,7 @@ impl Player {
     ) where
         F: Fn(i32, i32, i32) -> bool,
         W: Fn(i32, i32, i32) -> bool,
-        L: Fn(i32, i32, i32) -> Option<crate::facing::Facing>,
+        L: Fn(i32, i32, i32) -> Option<crate::world::Climb>,
     {
         self.update_core_env(dt, solid, water, climb, &|_, _, _| false, input);
     }
@@ -286,7 +286,7 @@ impl Player {
     ) where
         F: Fn(i32, i32, i32) -> bool,
         W: Fn(i32, i32, i32) -> bool,
-        L: Fn(i32, i32, i32) -> Option<crate::facing::Facing>,
+        L: Fn(i32, i32, i32) -> Option<crate::world::Climb>,
         S: Fn(i32, i32, i32) -> bool,
     {
         let still_water = |_: Vec3| Vec3::ZERO;
@@ -316,7 +316,7 @@ impl Player {
         F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
         W: Fn(i32, i32, i32) -> bool,
         C: Fn(Vec3) -> Vec3,
-        L: Fn(i32, i32, i32) -> Option<crate::facing::Facing>,
+        L: Fn(i32, i32, i32) -> Option<crate::world::Climb>,
         S: Fn(i32, i32, i32) -> bool,
     {
         if self.is_spectator() {
@@ -405,17 +405,24 @@ impl Player {
                 self.vel.y = approach(self.vel.y, target, SWIM_VACCEL * dt);
                 self.jumping = false;
             }
-        } else if let Some(facing) = ladder {
-            // Climbing: while the feet stand in a ladder cell, vertical speed is
-            // fully controlled — no gravity, no jump impulse. Moving INTO the
+        } else if let Some(grip) = ladder {
+            // Climbing: while the feet stand in a climbable cell, vertical speed
+            // is fully controlled — no gravity, no jump impulse. Moving INTO the
             // panel (the wish direction pointing at the wall it hangs on) or
             // holding jump climbs; otherwise the body slides down gently, and a
             // fall through the cell is caught by the hard clamp (the "grab").
             // The speed is a fraction of base WALK on purpose: sprint and sneak
             // change nothing here.
-            let d = facing.dir();
-            let into_wall = -(input.wishdir.x * d.x as f32 + input.wishdir.z * d.z as f32);
-            let ascending = input.jump || into_wall > 1e-3;
+            //   A FREE-hanging climbable (a vine curtain) has no wall to press
+            //   against, so jump is its only ascent — pressing a compass
+            //   direction must do nothing, which is why the grip carries the
+            //   DECLARED facing rather than `Block::panel_facing`'s North default.
+            let into_wall = |facing: crate::facing::Facing| {
+                let d = facing.dir();
+                -(input.wishdir.x * d.x as f32 + input.wishdir.z * d.z as f32)
+            };
+            let ascending = input.jump
+                || matches!(grip, crate::world::Climb::Panel(f) if into_wall(f) > 1e-3);
             let target = if ascending { CLIMB_SPEED } else { -CLIMB_SPEED };
             self.vel.y = approach(
                 self.vel.y.clamp(-CLIMB_SPEED, CLIMB_SPEED),

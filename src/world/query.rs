@@ -32,6 +32,14 @@ impl World {
             || self.mesh_jobs_in_flight > 0
     }
 
+    /// Anything still generating, loading from disk or waiting on an overlay.
+    pub(crate) fn has_pending_stream_work(&self) -> bool {
+        !self.pending.is_empty()
+            || !self.pending_sections.is_empty()
+            || !self.awaited_overlays.is_empty()
+            || !self.pending_overlays.is_empty()
+    }
+
     /// Number of loaded sections — a diagnostic for streaming/perf tooling.
     pub fn loaded_section_count(&self) -> usize {
         self.sections.len()
@@ -105,20 +113,35 @@ impl World {
         ((l * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63) as u8
     }
 
-    /// Cached block-light (torches) at a world voxel on the x2 scale. `0` outside any
-    /// chunk's block-light band and in unloaded chunks — there is no block light
-    /// without a nearby emitter.
-    pub fn blocklight_at_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
+    /// Cached block-light COLOUR at a world voxel on the x2 scale.
+    /// [`LightRgb::ZERO`] outside any chunk's block-light band and in unloaded
+    /// chunks — there is no block light without a nearby emitter.
+    pub fn blocklight_rgb_at_world(&self, wx: i32, wy: i32, wz: i32) -> crate::light::LightRgb {
         match self.chunk_at_world(wx, wy, wz) {
             Some((c, lx, ly, lz)) => c.blocklight_at(lx, ly, lz),
-            None => 0,
+            None => crate::light::LightRgb::ZERO,
         }
+    }
+
+    /// Block-light BRIGHTNESS (the strongest channel) at a world voxel on the
+    /// x2 scale — the scalar every consumer that predates colour reads.
+    pub fn blocklight_at_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
+        self.blocklight_rgb_at_world(wx, wy, wz).luminance()
     }
 
     /// Block-light converted to the 6-bit packed vertex scale (`0..=63`).
     pub fn blocklight6_at_world(&self, wx: i32, wy: i32, wz: i32) -> u8 {
         let l = self.blocklight_at_world(wx, wy, wz) as u32;
         ((l * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63) as u8
+    }
+
+    /// The per-channel block light at a world voxel on the same 6-bit scale as
+    /// [`blocklight6_at_world`](Self::blocklight6_at_world), whose value is
+    /// exactly its strongest channel.
+    pub fn blocklight6_rgb_at_world(&self, wx: i32, wy: i32, wz: i32) -> [u8; 3] {
+        crate::light::BlockLight6::from_x2(self.blocklight_rgb_at_world(wx, wy, wz))
+            .channels()
+            .map(|c| c as u8)
     }
 
     /// The brighter of skylight and block-light (6-bit) — how dynamic geometry (the
@@ -129,18 +152,22 @@ impl World {
             .max(self.blocklight6_at_world(wx, wy, wz))
     }
 
-    /// The TWO light channels plus the warm-tint amount for dynamic geometry (the
-    /// held item / hand, mobs, dropped items, particles). Returns `(sky6, block6,
-    /// warm)` — the channels stay separate so the renderer can dim/tint the sky
-    /// term (day/night mods) without dimming torch light, mirroring the split
-    /// terrain vertex; `warm` is `crate::torch::warm_amount * 255` packed into a
-    /// byte (divide by 255 at render) so the same warmth the chunk mesher bakes
-    /// into static blocks applies to dynamic geometry.
-    pub fn dynamic_light_at_world(&self, wx: i32, wy: i32, wz: i32) -> (u8, u8, u8) {
-        let sky6 = self.skylight6_at_world(wx, wy, wz);
-        let block6 = self.blocklight6_at_world(wx, wy, wz);
-        let warm = crate::torch::warm_amount(sky6 as f32 / 63.0, block6 as f32 / 63.0);
-        (sky6, block6, (warm * 255.0) as u8)
+    /// The two light channels for dynamic geometry (the held item / hand, mobs,
+    /// dropped items, particles): 6-bit skylight and the COLOURED 6-bit block
+    /// light. They stay separate so the renderer can dim/tint the sky term
+    /// (day/night mods) without dimming block light, mirroring the split
+    /// terrain vertex — and the block colour reaches a mob or a fleck exactly
+    /// as it reaches the wall behind it.
+    pub fn dynamic_light_at_world(
+        &self,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+    ) -> (u8, crate::light::BlockLight6) {
+        (
+            self.skylight6_at_world(wx, wy, wz),
+            crate::light::BlockLight6::from_x2(self.blocklight_rgb_at_world(wx, wy, wz)),
+        )
     }
 
     /// Biome id for the loaded world column at `(wx, wz)`, or `None` if its
@@ -153,8 +180,14 @@ impl World {
 
     /// Is any section of the column at chunk-coords `(cx, cz)` loaded?
     pub fn chunk_loaded(&self, cx: i32, cz: i32) -> bool {
-        Self::column_section_range()
-            .any(|cy| self.sections.contains_key(&SectionPos::new(cx, cy, cz)))
+        // The per-column loaded-`cy` bitset answers this in ONE map read: it
+        // holds an entry exactly while the column has a loaded section (the
+        // entry is dropped when its last bit clears). Probing the vertical
+        // range instead cost one hash lookup per possible section — and this
+        // is asked per mob per tick, and per chunk of the hostile-spawn
+        // neighbourhood.
+        self.section_column_cys
+            .contains_key(&crate::chunk::ChunkPos::new(cx, cz))
     }
 
     /// Whether a world cell can be built into: its column is loaded, it lies within the

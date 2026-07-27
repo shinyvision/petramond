@@ -1,0 +1,12 @@
+[package]
+name = "exploration"
+version = "0.1.0"
+edition = "2021"
+description = "Exploration addon: rare, cathedral-scale mushroom caverns lit by their own bioluminescence."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mod-sdk = { path = "../../mod-sdk" }

@@ -253,7 +253,7 @@ mod tests {
             head_yaw: 0.0,
             head_pitch: 0.0,
             skylight: 63,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
             hurt: 0.0,
             shorn: false,
             emitter_tint: [1.0, 1.0, 1.0],

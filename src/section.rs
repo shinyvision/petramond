@@ -16,6 +16,7 @@ use crate::block_state::BlockStates;
 use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
 use crate::container::Container;
 use crate::furnace::Furnace;
+use crate::light::LightRgb;
 
 mod block_entities;
 mod cell_states;
@@ -109,9 +110,10 @@ pub struct Section {
     /// light drain can swap in a fresh cube on a shared section without a deep clone, and so
     /// a mesh job's snapshot keeps reading the old one safely.
     skylight: Option<Arc<[u8]>>,
-    /// Cached block-light (x2 scale) radiated by emitters (torches). `None`/outside
-    /// reads as 0 (no block light beyond the flood). `Arc` like [`skylight`](Self::skylight).
-    blocklight: Option<Arc<[u8]>>,
+    /// Cached block-light radiated by emitters, one packed RGB cell per voxel
+    /// (see [`LightRgb`]). `None`/outside reads as [`LightRgb::ZERO`] (no block
+    /// light beyond the flood). `Arc` like [`skylight`](Self::skylight).
+    blocklight: Option<Arc<[LightRgb]>>,
     /// Set when blocks change; cleared when light is recomputed.
     pub light_dirty: bool,
     /// This section's light cubes are the UNTOUCHED persisted bake seeded at
@@ -152,9 +154,12 @@ pub struct Section {
     /// Count of cells whose emitted mesh can use biome tint. `0` lets meshing skip the
     /// biome halo/tint precompute for stone/cave/building sections.
     biome_tint_count: u32,
-    /// Count of cells whose block row declares a visual particle emitter. `0` lets
-    /// presentation skip this section when collecting ambient block emitters.
-    particle_emitter_count: u32,
+    /// Section-local indices (ascending) of the cells whose block row declares a
+    /// visual particle emitter — the SPARSE set presentation walks, so gathering
+    /// a frame's emitters never rescans 4,096 dense ids (the chest/door
+    /// block-entity gathers have always worked this way). Also the emitter
+    /// COUNT: there is deliberately no second counter to fall out of step with.
+    particle_emitter_cells: Vec<u16>,
     /// Count of cells whose block row EMITS block light (`emission > 0` —
     /// torches, lit furnaces, pack glow blocks). `0` lets the light flood's
     /// emitter gather skip this section without scanning its cells.
@@ -192,6 +197,12 @@ impl BlockEntities {
     fn is_empty(&self) -> bool {
         self.furnaces.is_empty() && self.containers.is_empty()
     }
+
+    fn memory_bytes(&self) -> u64 {
+        std::mem::size_of::<Self>() as u64
+            + (self.furnaces.len() * (2 + std::mem::size_of::<Furnace>() + 1)) as u64
+            + (self.containers.len() * (2 + std::mem::size_of::<Container>() + 1)) as u64
+    }
 }
 
 /// Process-wide shared 16³ cubes filled with one byte value. Uniform sections
@@ -199,7 +210,11 @@ impl BlockEntities {
 /// (open sky, pitch dark) point at these instead of owning a 4 KiB buffer each;
 /// the cache entry keeps the refcount ≥ 2, so the first heterogeneous write
 /// un-shares through the existing `Arc::make_mut` copy-on-write path.
-fn uniform_cube(value: u8) -> Arc<[u8]> {
+/// A shared all-`value` 16³ byte cube. The light bakes' `Full` / `Dark` sky
+/// shortcuts return one directly instead of allocating and filling a fresh
+/// cube that [`compact_uniform_cube`] would immediately throw away — most
+/// sections in a loaded world take one of those two shortcuts.
+pub(crate) fn uniform_cube(value: u8) -> Arc<[u8]> {
     static CACHE: [std::sync::OnceLock<Arc<[u8]>>; 256] =
         [const { std::sync::OnceLock::new() }; 256];
     CACHE[value as usize]
@@ -240,7 +255,7 @@ impl Section {
             non_air_count: 0,
             water_count: 0,
             biome_tint_count: 0,
-            particle_emitter_count: 0,
+            particle_emitter_cells: Vec::new(),
             light_emitter_count: 0,
             shape_render: None,
             light_apertures: None,
@@ -346,6 +361,15 @@ impl Section {
         Arc::clone(&self.blocks)
     }
 
+    /// Heap accounting for the memory census: `(water buffer ptr, water len,
+    /// sparse-state bytes, block-entity bytes, emitter-list bytes)`.
+    pub(crate) fn memory_parts(&self) -> (Option<usize>, usize, u64, u64, u64) {
+        let (water_ptr, water_len, sparse) = self.states.memory_parts();
+        let entities = self.entities.as_ref().map_or(0, |e| e.memory_bytes());
+        let emitters = (self.particle_emitter_cells.capacity() * 2) as u64;
+        (water_ptr, water_len, sparse, entities, emitters)
+    }
+
     /// Cheap shared handles to this section's water / skylight / block-light buffers (`Arc`
     /// clones, no copy; `None` when the buffer is absent). Used to snapshot a section's
     /// neighbour for off-thread meshing without deep-copying any voxel array.
@@ -355,7 +379,7 @@ impl Section {
     pub fn skylight_arc(&self) -> Option<Arc<[u8]>> {
         self.skylight.clone()
     }
-    pub fn blocklight_arc(&self) -> Option<Arc<[u8]>> {
+    pub fn blocklight_arc(&self) -> Option<Arc<[LightRgb]>> {
         self.blocklight.clone()
     }
 
@@ -428,23 +452,29 @@ impl Section {
         self.light_dirty = false;
     }
 
-    /// Block-light (x2 scale) at a local voxel: `0` when uncomputed.
+    /// Block-light at a local voxel: [`LightRgb::ZERO`] when uncomputed.
     #[inline]
-    pub fn blocklight_at(&self, x: usize, y: usize, z: usize) -> u8 {
+    pub fn blocklight_at(&self, x: usize, y: usize, z: usize) -> LightRgb {
         match &self.blocklight {
             Some(b) => b[section_idx(x, y, z)],
-            None => 0,
+            None => LightRgb::ZERO,
         }
     }
 
-    /// Install a freshly computed block-light cube. All-zero (no emitter in
+    /// Install a freshly computed block-light cube. All-dark (no emitter in
     /// range — the overwhelmingly common bake) stores as `None`, which reads
-    /// identically; other uniform cubes share the per-value buffer.
-    pub fn set_blocklight(&mut self, cube: Arc<[u8]>) {
-        if cube.iter().all(|&v| v == 0) {
+    /// identically and costs zero bytes.
+    ///
+    /// Non-dark cubes do NOT share a per-value buffer the way skylight does:
+    /// [`uniform_cube`]'s cache is keyed by a BYTE, and a colour cell has 32k
+    /// spellings. Nothing is lost — light decays 2 per step, so a 16³ cube can
+    /// only be uniform if it is uniformly dark, which is exactly the case
+    /// `None` already covers.
+    pub fn set_blocklight(&mut self, cube: Arc<[LightRgb]>) {
+        if cube.iter().all(|v| v.is_dark()) {
             self.blocklight = None;
         } else {
-            self.blocklight = Some(compact_uniform_cube(cube));
+            self.blocklight = Some(cube);
         }
     }
 

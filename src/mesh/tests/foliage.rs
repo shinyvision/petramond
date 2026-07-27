@@ -18,17 +18,13 @@ fn cross_plant_emits_double_sided_billboards() {
         ((8, 9, 8), Block::ShortGrass),
     ]));
 
-    // Plant adds exactly 2 planes x 4 verts = 8 verts, and 2 planes x (6 front +
-    // 6 back) = 24 indices. The stone's faces are untouched (plant is non-opaque).
+    // Plant adds 2 planes x 4 verts, each appended a second time in reverse
+    // corner order so the plane draws from behind too (the opaque stream's
+    // triangulation is implied). The stone's faces are untouched.
     assert_eq!(
         m1.opaque.len() - m0.opaque.len(),
-        8,
-        "plant should add 8 verts"
-    );
-    assert_eq!(
-        m1.opaque_idx.len() - m0.opaque_idx.len(),
-        24,
-        "plant should add 24 indices (both windings)"
+        16,
+        "plant should add 2 planes x 2 windings x 4 verts"
     );
     assert!(
         m1.transparent.is_empty(),
@@ -43,11 +39,8 @@ fn cross_plant_emits_double_sided_billboards() {
 fn leaves_go_to_opaque_pass() {
     let m = mesh(&section_with(&[((8, 8, 8), Block::OakLeaves)]));
     assert!(
-        m.transparent_idx.is_empty(),
+        m.transparent.is_empty() && m.transparent_two_sided.is_empty(),
         "leaves+no-water section should have an empty transparent buffer"
     );
-    assert!(
-        !m.opaque_idx.is_empty(),
-        "leaves should fill the opaque buffer"
-    );
+    assert!(!m.opaque.is_empty(), "leaves should fill the opaque buffer");
 }

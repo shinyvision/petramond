@@ -1157,6 +1157,56 @@ pub enum HostCall {
     BlocksWithData {
         key: String,
     },
+    /// Resolve an UNDERGROUND-BIOME registry name (`"petramond:marble"`,
+    /// `"mymod:mushroom_cavern"` — the `underground_biome` field of an
+    /// `underground_biomes.json` row) to its session-scoped id. The twin of
+    /// [`HostCall::ResolveShape`]: registry-only, legal on ANY instance, any
+    /// time (worldgen instances included). `None` = no such row. Resolve once
+    /// in `Mod::init` and keep the id; NEVER persist it — underground-biome
+    /// ids are session-scoped and are never written to disk or the wire.
+    /// → [`HostRet::MaybeByte`].
+    ResolveUndergroundBiome {
+        key: String,
+    },
+    /// The underground biome owning each world cell, reply parallel to
+    /// `positions`. A pure function of (world seed, position) reading the
+    /// SAME world-anchored lattice the cave carver reads — so it answers
+    /// during worldgen, before any section exists, and it agrees with the
+    /// wall lining and cave caliber at that cell by construction. Total: a
+    /// cell no row claims is the fallback row, id 0 — never `None`, never an
+    /// unloaded answer. Bounded batch (4096 positions per call).
+    /// → [`HostRet::UndergroundBiomes`].
+    UndergroundBiomeAt {
+        positions: Vec<[i32; 3]>,
+    },
+    /// Is the GENERATED TERRAIN solid at each world cell, reply parallel to
+    /// `positions`? A pure function of (world seed, position): the density
+    /// surface minus the cave carve — the same two decisions the engine's own
+    /// fill and carve make — so it answers during worldgen, before any section
+    /// exists, and every section's dispatch gets the same answer for a shared
+    /// cell. `false` = air or water; features (ores, vegetation, mod writes)
+    /// are NOT included. Bounded batch (4096 positions per call).
+    /// → [`HostRet::TerrainSolid`].
+    TerrainSolidAt {
+        positions: Vec<[i32; 3]>,
+    },
+    /// Which underground biomes CAN own a cell inside the inclusive world box
+    /// `lo..=hi`? The bounded form of [`HostCall::UndergroundBiomeAt`], and a
+    /// REJECTION gate rather than an answer: the reply is a conservative
+    /// superset (the engine bounds the partition field over the box's lattice
+    /// cells instead of evaluating it per cell, and snaps the box outward to
+    /// whole sections), so an id it OMITS provably owns nothing in the box,
+    /// while an id it lists may still turn out absent.
+    ///
+    /// This is what makes a one-biome mod feature cheap: worldgen dispatches
+    /// every registered feature for every section, and one box query over the
+    /// dispatch's whole reach rejects the sections holding none of the mod's
+    /// territory before any per-cell work is rolled or asked about.
+    /// → [`HostRet::UndergroundBiomes`] (ascending ids).
+    UndergroundBiomesInBox {
+        lo: [i32; 3],
+        hi: [i32; 3],
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -1264,4 +1314,10 @@ pub enum HostRet {
     /// [`HostCall::BlocksWithData`]: every carrying block with its raw JSON
     /// value, in id order.
     BlockDataRows(Vec<(BlockId, String)>),
+    /// [`HostCall::UndergroundBiomeAt`]: one id per requested position, in
+    /// order.
+    UndergroundBiomes(#[serde(with = "serde_bytes")] Vec<u8>),
+    /// [`HostCall::TerrainSolidAt`]: one flag per requested position, in
+    /// order.
+    TerrainSolid(Vec<bool>),
 }

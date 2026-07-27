@@ -45,6 +45,51 @@ impl<'de> Deserialize<'de> for SectionBytes {
     }
 }
 
+/// A shared BLOCK-LIGHT cube on the wire: the sibling of [`SectionBytes`] for
+/// the packed RGB cell. Same deal — the local connection ships a refcount
+/// bump; TCP pays one little-endian byte pass in each direction. Decode forces
+/// canonical cells (see [`LightRgb::from_bits`]) so a mangled frame cannot
+/// introduce a second spelling of black and desync the region diff.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SectionLight(pub Arc<[crate::light::LightRgb]>);
+
+impl Serialize for SectionLight {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_bytes(&crate::light::to_le_bytes(&self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for SectionLight {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'a> serde::de::Visitor<'a> for V {
+            type Value = SectionLight;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a packed RGB light buffer")
+            }
+            fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<SectionLight, E> {
+                let cells = crate::light::from_le_bytes(v)
+                    .ok_or_else(|| E::custom("odd-length light buffer"))?;
+                Ok(SectionLight(Arc::from(cells)))
+            }
+            fn visit_byte_buf<E: serde::de::Error>(self, v: Vec<u8>) -> Result<SectionLight, E> {
+                self.visit_bytes(&v)
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'a>>(
+                self,
+                mut seq: A,
+            ) -> Result<SectionLight, A::Error> {
+                let mut v = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+                while let Some(b) = seq.next_element::<u8>()? {
+                    v.push(b);
+                }
+                self.visit_bytes(&v)
+            }
+        }
+        d.deserialize_bytes(V)
+    }
+}
+
 /// A column's client-relevant facts: the biome skin, visible surface,
 /// direct-sky cover, and a per-cy section summary so replica physics can answer
 /// for ABSENT sections without running worldgen. Sent before the column's first
@@ -107,7 +152,7 @@ pub(crate) struct SectionPayload {
     /// local predicted edits may compute disposable presentation light.
     /// Post-install rebakes arrive as [`LightData`](ServerToClient::LightData).
     pub skylight: Option<SectionBytes>,
-    pub blocklight: Option<SectionBytes>,
+    pub blocklight: Option<SectionLight>,
     /// Sparse per-cell block states (doors, stairs, slabs, log axes, torches,
     /// model cells, facings, cell KV).
     pub states: SectionStatesPayload,
@@ -139,9 +184,9 @@ pub(crate) struct LightPayload {
     pub pos: SectionPos,
     /// 4096 skylight bytes (x2 scale).
     pub skylight: SectionBytes,
-    /// 4096 block-light bytes; `None` when no emitter reaches the section
-    /// (reads as all-zero, mirroring `Section::set_blocklight`'s compaction).
-    pub blocklight: Option<SectionBytes>,
+    /// 4096 packed RGB block-light cells; `None` when no emitter reaches the
+    /// section (reads as all-dark, mirroring `Section::set_blocklight`).
+    pub blocklight: Option<SectionLight>,
 }
 
 /// The sparse per-cell state maps a section carries beyond raw block ids.

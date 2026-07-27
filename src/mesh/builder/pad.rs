@@ -1,9 +1,10 @@
-use crate::block::CellView;
 use crate::block::{Block, ShapeState};
 use crate::chunk::{SECTION_SIZE, SKY_FULL, WORLD_MAX_Y, WORLD_MIN_Y};
 use crate::world::water as water_math;
 
 pub(super) const SECTION_PAD: usize = SECTION_SIZE + 2;
+/// [`SECTION_PAD`] under the name the mesh module re-exports.
+pub(in crate::mesh) const MESH_PAD_SIDE: usize = SECTION_PAD;
 const BIOME_PAD_RADIUS: i32 = 2;
 const BIOME_PAD: usize = SECTION_SIZE + (BIOME_PAD_RADIUS as usize * 2);
 
@@ -21,7 +22,9 @@ pub(crate) struct SectionMeshPad<'a> {
     pub blocks: &'a [u8],
     pub water: &'a [u8],
     pub skylight: &'a [u8],
-    pub blocklight: &'a [u8],
+    /// Per-cell block light, packed RGB — the mesher averages it PER CHANNEL
+    /// and emits all three into the vertex's split light lanes.
+    pub blocklight: &'a [crate::light::LightRgb],
     /// The UNIFIED per-cell block state (opaque; decoded by the owning
     /// family's codec gated on the cell's block).
     pub cell_states: &'a [ShapeState],
@@ -33,22 +36,6 @@ impl SectionMeshPad<'_> {
     #[inline]
     pub(in crate::mesh) fn block_at_pad(&self, px: usize, py: usize, pz: usize) -> Block {
         Block::from_id(self.blocks[mesh_pad_idx(px, py, pz)])
-    }
-
-    /// A slab cell with BOTH halves filled renders as a full block: it culls
-    /// adjacent faces and occludes AO/light exactly like an opaque cube (the
-    /// closure paths make the same test through `neighbour_cell_state`).
-    #[inline]
-    pub(super) fn full_slab_stack_at_pad(
-        &self,
-        block: Block,
-        px: usize,
-        py: usize,
-        pz: usize,
-    ) -> bool {
-        block.is_slab()
-            && crate::block_state::SlabState::from_cell(self.cell_states[mesh_pad_idx(px, py, pz)])
-                .is_full()
     }
 
     #[inline]
@@ -117,9 +104,9 @@ impl SectionMeshPad<'_> {
         wx: i32,
         wy: i32,
         wz: i32,
-    ) -> u8 {
+    ) -> crate::light::LightRgb {
         self.world_idx(ox, oy, oz, wx, wy, wz)
-            .map_or(0, |i| self.blocklight[i])
+            .map_or(crate::light::LightRgb::ZERO, |i| self.blocklight[i])
     }
 
     #[inline]

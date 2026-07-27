@@ -111,7 +111,7 @@ impl World {
                 ) | crate::world::light::cube_region_changes(
                     s.blocklight_arc().as_deref(),
                     &res.blocklight,
-                    0,
+                    crate::light::LightRgb::ZERO,
                 )
             };
             if mask == 0 {

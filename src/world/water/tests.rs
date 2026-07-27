@@ -560,3 +560,139 @@ fn a_flow_over_a_drop_never_converts_even_between_two_sources() {
         "a flow resting on air (a waterfall lip) must never become a source"
     );
 }
+
+/// Cut a two-step CASCADE out of the rock at `(0, ·, 0)`, exactly as the
+/// exploration pack's worldgen does: pools two deep at descending levels, a
+/// weir of rock between them whose top course is one row below the upper
+/// pool's surface, the gorge over both of them cut open so the water can fall,
+/// and untouched rock everywhere else.
+///
+/// Returns `(the water cells as generated, the gorge's bounding box)`.
+fn cut_cascade(w: &mut World) -> (Vec<IVec3>, (IVec3, IVec3)) {
+    // flat_world only lays one course; a gorge needs rock to be cut out of.
+    for y in 52..64 {
+        for z in -10..=10 {
+            for x in -10..=10 {
+                w.set_block_world(x, y, z, Block::Stone);
+            }
+        }
+    }
+    // Pool A: x -4..=-1, surface y 64. Weir at x 0, its top at y 63.
+    // Pool B: x 1..=4, surface y 60 (a three-block fall past the weir).
+    let mut cells: Vec<IVec3> = Vec::new();
+    let mut fill = |w: &mut World, xs: std::ops::RangeInclusive<i32>, top: i32| {
+        for x in xs {
+            for z in -2..=2i32 {
+                for y in (top - 1)..=top {
+                    let p = IVec3::new(x, y, z);
+                    assert!(w.set_water_world(p, Block::Water, 0));
+                    cells.push(p);
+                }
+                // cut the gorge open over the pool, up to the cavern floor
+                for y in (top + 1)..=64 {
+                    w.set_block_world(x, y, z, Block::Air);
+                }
+            }
+        }
+    };
+    fill(w, -4..=-1, 64);
+    fill(w, 1..=4, 60);
+    // The weir: rock up to y 63, open at 64 so pool A pours over it.
+    for z in -2..=2 {
+        w.set_block_world(0, 64, z, Block::Air);
+    }
+    cells.sort_by_key(|p| (p.y, p.z, p.x));
+    (cells, (IVec3::new(-4, 59, -2), IVec3::new(4, 64, 2)))
+}
+
+/// Every water cell in the box, so a leak is caught wherever it goes rather
+/// than only where it was expected.
+fn water_cells(w: &World) -> Vec<IVec3> {
+    let mut out = Vec::new();
+    for y in 50..70 {
+        for z in -10..=10 {
+            for x in -10..=10 {
+                if block(w, x, y, z) == Block::Water {
+                    out.push(IVec3::new(x, y, z));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A worldgen CASCADE must come alive on the first disturbance and still stay
+/// inside its own gorge.
+///
+/// Both halves matter and they pull against each other, which is why they are
+/// one test. Generation schedules no flow check, so a cascade is a stack of
+/// still sources until something wakes it — "it did not flood when it
+/// generated" is evidence of nothing. Once woken it is SUPPOSED to move: the
+/// upper pool pours over its weir and falls into the lower one, and a version
+/// of this that asserted "nothing moved" would be asserting the feature away.
+/// What must never happen is water reaching a cell outside the gorge the
+/// feature cut for itself.
+///
+/// The control at the end knocks one cell out of the gorge wall and asserts
+/// the same cascade DOES get out, so a change that stopped scheduling flow
+/// checks entirely could not make the first half pass vacuously.
+#[test]
+fn a_cut_cascade_flows_inside_its_gorge_and_a_breached_one_does_not() {
+    let mut w = flat_world();
+    let (generated, (lo, hi)) = cut_cascade(&mut w);
+    assert!(
+        generated.iter().all(|&p| is_source(meta_at(&w, p))),
+        "worldgen water is meta 0 — a still source"
+    );
+    let inside = |p: &IVec3| {
+        (p.x >= lo.x && p.x <= hi.x) && (p.y >= lo.y && p.y <= hi.y) && (p.z >= lo.z && p.z <= hi.z)
+    };
+
+    // The realistic disturbance: a player puts a block down at the waterline
+    // and takes it away again. Either write notifies the water under it, which
+    // is what schedules the flow check generation never scheduled.
+    w.set_block_world(-2, 65, 0, Block::Stone);
+    w.set_block_world(-2, 65, 0, Block::Air);
+    // And the exhaustive version, so the result does not depend on which cell
+    // the disturbance happened to reach.
+    for &p in &generated {
+        w.schedule_block_tick(p, WATER_FLOW_DELAY);
+    }
+    run_ticks(&mut w, RING * 12);
+
+    let wet = water_cells(&w);
+    assert!(
+        wet.len() > generated.len(),
+        "the cascade never ran: {} wet cells, same as generated — a chain that \
+         does not pour is the failure mode, not the success one",
+        wet.len()
+    );
+    assert!(
+        wet.iter().any(|p| p.x > 0 && p.y > 61),
+        "no water in the gorge over the LOWER pool: the fall never formed"
+    );
+    let out: Vec<&IVec3> = wet.iter().filter(|p| !inside(p)).collect();
+    assert!(
+        out.is_empty(),
+        "water escaped the gorge at {:?}",
+        &out[..out.len().min(8)]
+    );
+
+    // Control: one cell out of the gorge wall at the LOWER pool's waterline,
+    // with ordinary cavern floor beyond it — the invariant broken, and the
+    // cascade runs straight out over the floor.
+    for y in 60..=64 {
+        w.set_block_world(5, y, 0, Block::Air);
+    }
+    for x in 6..=9 {
+        w.set_block_world(x, 60, 0, Block::Air);
+    }
+    w.set_block_world(4, 60, 0, Block::Air);
+    w.set_block_world(4, 60, 0, Block::Water);
+    run_ticks(&mut w, RING * 12);
+    assert!(
+        water_cells(&w).iter().any(|p| p.x > hi.x),
+        "a breached gorge must leak, or the contained half of this test proves \
+         nothing"
+    );
+}

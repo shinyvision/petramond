@@ -26,8 +26,7 @@ fn atlas_uv_stays_strictly_inside_the_tile_rect() {
                     pos: Vec3::ZERO,
                     vel: Vec3::ZERO,
                     skylight: 63,
-                    blocklight: 0,
-                    warm: 0,
+                    blocklight: crate::light::BlockLight6::DARK,
                     tile,
                     model: None,
                     dyed,
@@ -70,8 +69,7 @@ fn alpha_fades_at_end_of_life() {
         pos: Vec3::ZERO,
         vel: Vec3::ZERO,
         skylight: 63,
-        blocklight: 0,
-        warm: 0,
+        blocklight: crate::light::BlockLight6::DARK,
         tile: Tile::from_name("grass_top").unwrap(),
         model: None,
         dyed: false,
@@ -103,8 +101,7 @@ fn render_size_shrinks_during_fade() {
         pos: Vec3::ZERO,
         vel: Vec3::ZERO,
         skylight: 63,
-        blocklight: 0,
-        warm: 0,
+        blocklight: crate::light::BlockLight6::DARK,
         tile: Tile::from_name("grass_top").unwrap(),
         model: None,
         dyed: false,
@@ -176,8 +173,7 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
         pos,
         vel,
         skylight: 63,
-        blocklight: 0,
-        warm: 0,
+        blocklight: crate::light::BlockLight6::DARK,
         tile: Tile::from_name("grass_top").unwrap(),
         model: None,
         dyed: false,
@@ -269,10 +265,16 @@ fn splash_spec() -> crate::particle_emitters::BurstSpec {
 fn emitter_burst_count_scales_with_intensity_and_caps() {
     let spec = splash_spec();
     let mut small = ParticleSystem::new();
-    small.spawn_emitter_burst(&spec, Vec3::ZERO, 2.0, 63, 0, 0);
+    small.spawn_emitter_burst(&spec, Vec3::ZERO, 2.0, 63, crate::light::BlockLight6::DARK);
     assert_eq!(small.len(), 8, "4 per intensity unit × 2");
     let mut big = ParticleSystem::new();
-    big.spawn_emitter_burst(&spec, Vec3::ZERO, 100.0, 63, 0, 0);
+    big.spawn_emitter_burst(
+        &spec,
+        Vec3::ZERO,
+        100.0,
+        63,
+        crate::light::BlockLight6::DARK,
+    );
     assert_eq!(big.len(), 20, "hard-capped at max_count");
     for p in big.particles() {
         assert!(p.solid && p.die_on_contact);
@@ -290,7 +292,7 @@ fn burst_color_bias_favors_the_first_endpoint() {
     let spec = splash_spec(); // bias 2.5 toward the deep first endpoint
     let mut sys = ParticleSystem::new();
     for _ in 0..10 {
-        sys.spawn_emitter_burst(&spec, Vec3::ZERO, 5.0, 63, 0, 0);
+        sys.spawn_emitter_burst(&spec, Vec3::ZERO, 5.0, 63, crate::light::BlockLight6::DARK);
     }
     // mix^2.5 has mean ~0.29: most droplets sit nearer color[0] (deep).
     let mean_g: f32 = sys.particles().iter().map(|p| p.tint[1]).sum::<f32>() / sys.len() as f32;
@@ -311,7 +313,13 @@ fn die_on_contact_particles_vanish_on_blocks_and_water() {
     // Falling onto a solid: a contact-dying droplet is culled, while an
     // ordinary fleck would have settled (velocity zeroed, still alive).
     let mut sys = ParticleSystem::new();
-    sys.spawn_emitter_burst(&spec, Vec3::new(0.0, 0.05, 0.0), 1.0, 63, 0, 0);
+    sys.spawn_emitter_burst(
+        &spec,
+        Vec3::new(0.0, 0.05, 0.0),
+        1.0,
+        63,
+        crate::light::BlockLight6::DARK,
+    );
     for p in &mut sys.particles {
         p.vel = Vec3::new(0.0, -2.0, 0.0); // force straight down
     }
@@ -320,7 +328,13 @@ fn die_on_contact_particles_vanish_on_blocks_and_water() {
 
     // Falling into water: same instant destruction.
     let mut wet = ParticleSystem::new();
-    wet.spawn_emitter_burst(&spec, Vec3::new(0.0, 0.05, 0.0), 1.0, 63, 0, 0);
+    wet.spawn_emitter_burst(
+        &spec,
+        Vec3::new(0.0, 0.05, 0.0),
+        1.0,
+        63,
+        crate::light::BlockLight6::DARK,
+    );
     for p in &mut wet.particles {
         p.vel = Vec3::new(0.0, -2.0, 0.0);
     }

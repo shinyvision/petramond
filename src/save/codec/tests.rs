@@ -30,8 +30,10 @@ fn baked_light_persists_only_when_clean_and_roundtrips() {
 
     // Clean baked light: roundtrips byte-exact, loads clean.
     let sky: Vec<u8> = (0..SECTION_VOLUME).map(|i| (i % 16) as u8).collect();
-    let mut bl = vec![0u8; SECTION_VOLUME];
-    bl[100] = 9;
+    // A COLOURED cell, so the record must carry all three channels through
+    // the widened blob rather than a luminance.
+    let mut bl = vec![crate::light::LightRgb::ZERO; SECTION_VOLUME];
+    bl[100] = crate::light::LightRgb::new(9, 2, 30);
     s.set_skylight(Arc::from(sky.clone().into_boxed_slice()));
     s.set_blocklight(Arc::from(bl.clone().into_boxed_slice()));
     let rec = encode_snapshot(&SectionSnapshot::from_section(&s));

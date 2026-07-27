@@ -118,6 +118,9 @@ impl Boat {
 #[derive(Default)]
 struct Vehicles {
     boat_item: Option<ItemId>,
+    /// The boat species id, resolved once — a mob snapshot names its species
+    /// by id, not by string.
+    boat_kind: Option<MobId>,
     water: Option<BlockId>,
     /// Live boat state by STABLE mob id — `BTreeMap` so the drive tick
     /// iterates deterministically.
@@ -127,6 +130,7 @@ struct Vehicles {
 impl Mod for Vehicles {
     fn init(&mut self) {
         self.boat_item = resolve_item_logged(BOAT_KEY);
+        self.boat_kind = resolve_mob_logged(BOAT_KEY);
         self.water = resolve_block_logged("petramond:water");
         register_event_handler(EventKind::ItemUsePre, 0, ON_ITEM_USE);
         register_event_handler(EventKind::InteractAttempt, 0, ON_INTERACT_ATTEMPT);
@@ -153,7 +157,7 @@ impl Mod for Vehicles {
                 // boat, or an engine-refused mount, consumed nothing; a
                 // targeted mob blanks the block look anyway, so nothing
                 // later in the chain acts either).
-                if mob_info(*id).is_none_or(|m| m.key != BOAT_KEY) {
+                if mob_info(*id).is_none_or(|m| Some(m.kind) != self.boat_kind) {
                     return Outcome::Continue;
                 }
                 if self.board(*id, *player) {

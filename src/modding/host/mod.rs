@@ -279,6 +279,12 @@ impl ModStoreData {
         self.dispatch_host_calls
     }
 
+    /// The world seed this instance was created for — the input the pure
+    /// positional worldgen queries need on a detached (`SimCtx`-less) instance.
+    pub(super) fn world_seed(&self) -> u32 {
+        self.world_seed
+    }
+
     pub(super) fn register(&mut self, reg: Registration) -> HostRet {
         if self.phase != Phase::Init {
             self.stats.rejected_registrations += 1;
@@ -488,7 +494,11 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::BlocksWithData { .. } => registry::handle_registry_call(call),
         HostCall::RegisterWorldgenFeature { .. }
         | HostCall::RegisterStageReplacement { .. }
-        | HostCall::RegisterGenerator { .. } => worldgen::handle_worldgen_call(data, call),
+        | HostCall::RegisterGenerator { .. }
+        | HostCall::ResolveUndergroundBiome { .. }
+        | HostCall::UndergroundBiomeAt { .. }
+        | HostCall::UndergroundBiomesInBox { .. }
+        | HostCall::TerrainSolidAt { .. } => worldgen::handle_worldgen_call(data, call),
         HostCall::GuiStateSet { .. }
         | HostCall::GuiStateGet { .. }
         | HostCall::GuiOpen { .. }

@@ -176,7 +176,7 @@ fn mesh_with(
         },
         |_, _| 0,
         sky,
-        |_, _, _| 0,
+        |_, _, _| crate::light::LightRgb::ZERO,
         loaded,
     )
 }
@@ -207,7 +207,7 @@ fn mesh_in_scene(
         |_, _, _| 0,
         |_, _| 0,
         sky,
-        |_, _, _| 0,
+        |_, _, _| crate::light::LightRgb::ZERO,
         |_, _, _| true,
     )
 }
@@ -295,6 +295,7 @@ fn roof_with_open_shaft(roof: Block) -> Chunk {
 // --- Tests ------------------------------------------------------------------
 
 mod ao;
+mod block_light_color;
 mod boxes;
 mod contact;
 mod fence;
@@ -303,6 +304,7 @@ mod glass;
 mod greedy;
 mod oriented_blocks;
 mod parity;
+mod quad_streams;
 mod seams;
 mod skylight;
 mod slabs;

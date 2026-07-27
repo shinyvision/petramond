@@ -292,7 +292,7 @@ mod tests {
             seated: false,
             hurt: 0.0,
             skylight: 63,
-            blocklight: 0,
+            blocklight: crate::light::BlockLight6::DARK,
         }
     }
 

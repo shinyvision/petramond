@@ -140,7 +140,7 @@ fn mob_presentation(id: u64) -> MobPresentation {
         prev_head_pitch: 0.0,
         head_pitch: 0.0,
         skylight: 0,
-        blocklight: 0,
+        blocklight: crate::light::BlockLight6::DARK,
         hurt_flash: 0.0,
         dead: false,
         shorn: false,

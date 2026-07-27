@@ -191,7 +191,7 @@ impl ServerGame {
             centre.y.floor() as i32,
             centre.z.floor() as i32,
         );
-        let (sky, blk, _) = self.world.dynamic_light_at_world(cell.0, cell.1, cell.2);
+        let (sky, blk) = self.world.dynamic_light_at_world(cell.0, cell.1, cell.2);
         for stack in stacks {
             self.spawn_counter = self.spawn_counter.wrapping_add(1);
             let mut drop = crate::entity::DroppedItem::new(centre, stack, self.spawn_counter);

@@ -31,20 +31,27 @@ pub(crate) type PlaneQuads = ([([f32; 3], [f32; 3]); 4], usize);
 pub(super) struct PlaneLight {
     pub(super) ao: [u32; 4],
     pub(super) sky: [u32; 4],
-    pub(super) block: [u32; 4],
-    pub(super) warm: [f32; 4],
+    pub(super) block: [crate::light::BlockLight6; 4],
 }
 
 impl PlaneLight {
-    pub(super) fn sample(&self, u: f32, v: f32) -> (u32, u32, u32, f32) {
+    pub(super) fn sample(&self, u: f32, v: f32) -> (u32, u32, crate::light::BlockLight6) {
         // Corner UVs: 0=(0,1) 1=(1,1) 2=(1,0) 3=(0,0).
         let w = [(1.0 - u) * v, u * v, u * (1.0 - v), (1.0 - u) * (1.0 - v)];
         let blend = |c: [u32; 4]| -> u32 {
             let f: f32 = c.iter().zip(w).map(|(&x, wi)| x as f32 * wi).sum();
             (f + 0.5) as u32
         };
-        let warm: f32 = self.warm.iter().zip(w).map(|(&x, wi)| x * wi).sum();
-        (blend(self.ao), blend(self.sky), blend(self.block), warm)
+        // Block light interpolates PER CHANNEL, in the linear light space —
+        // interpolating a hue between two differently-coloured corners is
+        // meaningless, and the shader's per-channel curve wants linear input.
+        let ch = self.block.map(crate::light::BlockLight6::channels);
+        let block = crate::light::BlockLight6::new(
+            blend([ch[0][0], ch[1][0], ch[2][0], ch[3][0]]),
+            blend([ch[0][1], ch[1][1], ch[2][1], ch[3][1]]),
+            blend([ch[0][2], ch[1][2], ch[2][2], ch[3][2]]),
+        );
+        (blend(self.ao), blend(self.sky), block)
     }
 }
 

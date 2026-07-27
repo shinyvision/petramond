@@ -6,21 +6,21 @@ use crate::block::{Block, ShapeFamily};
 use crate::block_state::{LogAxis, SlabState};
 use crate::chunk::{section_idx, SectionPos, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
 use crate::section::Section;
-use crate::torch::warm_tint;
 
 use super::super::face::{quad_for, Face, FACES};
 use super::super::face_emit::{cube_face_lighting_pad, fold_light, push_cube_face_with_cell_uvs};
 use super::super::greedy::{emit_greedy_quads, FlatFace, GreedyScratch, GREEDY};
 use super::super::tint;
-use super::super::vertex::{pack_tint, ChunkMesh, ModelVertex, UV_MODE_NONE};
+use super::super::vertex::{ChunkMesh, ModelVertex, UV_MODE_NONE};
 use super::super::water::{self, SideVsWater, WaterSurface};
 
 use super::super::boxset::{cell_seals_face, emit_box_set, BoxSetScratch, ShapeBox};
+use super::cell_class::{cell_classes, BOXES, CROP, CROSS, FAST_CUBE, MODEL, SKIP, TORCH, WATER};
 use super::cube_face::{
     boundary_plane, cube_face_lighting, cube_face_tile, face_axes, face_index, facing_face,
-    log_side_cell_uvs,
+    log_side_cell_uvs, log_side_uvs_apply,
 };
-use super::exposed_masks::{build_exposed_masks, mask_has, pad_cube_fast_candidate};
+use super::exposed_masks::{build_exposed_masks, mask_has, VISIT_ALL};
 use super::model_block::{emit_model_block, emit_model_contact};
 use super::pad::{mesh_pad_idx, SectionMeshPad};
 use super::plant::emit_plant;
@@ -34,18 +34,16 @@ pub(super) fn section_geometry(
     neighbour_cell_state: impl Fn(i32, i32, i32) -> crate::block::ShapeState,
     neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
-    neighbour_blocklight: impl Fn(i32, i32, i32) -> u8,
+    neighbour_blocklight: impl Fn(i32, i32, i32) -> crate::light::LightRgb,
     neighbour_loaded: impl Fn(i32, i32, i32) -> bool,
     tints: Option<&tint::BiomeTints>,
     options: MeshOptions,
     pad: Option<&SectionMeshPad<'_>>,
 ) -> ChunkMesh {
     let mut opaque = vec![];
-    let mut opaque_idx = vec![];
     let mut transparent = vec![];
-    let mut transparent_idx = vec![];
+    let mut transparent_two_sided = vec![];
     let mut translucent = vec![];
-    let mut translucent_idx = vec![];
     let mut model: Vec<ModelVertex> = vec![];
     let mut model_idx: Vec<u32> = vec![];
     let mut contact: Vec<super::super::vertex::ContactShadowVertex> = vec![];
@@ -167,8 +165,10 @@ pub(super) fn section_geometry(
     let occ_scratch = std::cell::RefCell::new(Vec::<ShapeBox>::new());
     let occupancy_boxes = |p: IVec3, cell_block: Block, out: &mut Vec<([f32; 3], [f32; 3])>| {
         let nb_block = block_at(p.x, p.y, p.z);
-        let k = nb_block.shape_kind_def();
-        if !k.resolves_to_boxes {
+        // Dense flag first: this runs per face of every box-shaped cell, and
+        // the shape-kind row behind `resolves_to_boxes` is a big-table load
+        // that almost every neighbour is rejected without needing.
+        if !nb_block.has_box_shape() {
             return;
         }
         // See-through texels cannot seal ANOTHER block's face: a cutout
@@ -184,6 +184,7 @@ pub(super) fn section_geometry(
         // there. Presentation is irrelevant to an occupancy query, so the
         // tint is a constant; the scratch keeps the per-face call allocation
         // free.
+        let k = nb_block.shape_kind_def();
         let mut boxes = occ_scratch.borrow_mut();
         boxes.clear();
         let tint_for = |_: Tile| [1.0f32; 3];
@@ -262,24 +263,27 @@ pub(super) fn section_geometry(
         .filter(|_| options.leaf_mesh_mode == LeafMeshMode::Detailed)
         .map(|pad| build_exposed_masks(pad, (ox, oy, oz), &seals_floor));
 
+    let classes = cell_classes();
+    // Which cells in each `(ly, lz)` row have any work at all. With exposure
+    // masks this excludes buried cubes outright, so a solid underground row
+    // costs one word test instead of sixteen classified cells.
+    let visit = exposed_masks
+        .as_ref()
+        .map_or(&VISIT_ALL, |m| m.visit_rows());
     for ly in 0..SECTION_SIZE {
         for lz in 0..SECTION_SIZE {
-            for lx in 0..SECTION_SIZE {
+            let mut row = visit[ly * SECTION_SIZE + lz];
+            while row != 0 {
+                let lx = row.trailing_zeros() as usize;
+                row &= row - 1;
                 let id = section.block_raw(lx, ly, lz);
+                // ONE dense byte answers every dispatch question below (see
+                // `cell_class`). Air, chests and doors emit nothing here.
+                let class = classes[id as usize];
+                if class & SKIP != 0 {
+                    continue;
+                }
                 let block = Block::from_id(id);
-                if block == Block::Air {
-                    continue;
-                }
-                if block == Block::Chest {
-                    continue;
-                }
-                // Resolve the render shape once per cell (each call indexes the block
-                // table); the special-shape checks below and the cube fallthrough share it.
-                let shape = block.shape_family();
-                let kind = block.shape_kind_def();
-                if shape == ShapeFamily::Door {
-                    continue;
-                }
 
                 let wx = ox + lx as i32;
                 let wy = oy + ly as i32;
@@ -299,16 +303,17 @@ pub(super) fn section_geometry(
                     occupancy_boxes(IVec3::new(wx + dx, wy + dy, wz + dz), block, out);
                 };
 
-                if matches!(shape, ShapeFamily::Cross | ShapeFamily::Crop) {
+                if class & (CROSS | CROP) != 0 {
+                    let shape = block.shape_family();
                     let tile = block.tiles()[0];
                     let l = neighbour_light(wx, wy, wz) as u32;
-                    let bl = neighbour_blocklight(wx, wy, wz) as u32;
-                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
-                    let tint = warm_tint(tint_tile(tile.world_tint(), ci), warm);
+                    let bl = neighbour_blocklight(wx, wy, wz).channels().map(u32::from);
+                    let (sky6, blight) = fold_light(l, bl, SKY_FULL as u32);
+                    let tint = tint_tile(tile.world_tint(), ci);
                     // Layer-2 dimensions (a mod's retuned cross/crop) or the
                     // engine defaults for a parameterless row.
                     let dims = block.shape_kind_def().params.dimensions();
-                    let (inset, drop) = if shape == ShapeFamily::Crop {
+                    let (inset, drop) = if class & CROP != 0 {
                         (
                             dims.map_or(crate::block::CROP_PLANE_INSET, |d| d.inset),
                             dims.map_or(crate::block::CROP_PLANE_DROP, |d| d.drop),
@@ -318,7 +323,6 @@ pub(super) fn section_geometry(
                     };
                     emit_plant(
                         &mut opaque,
-                        &mut opaque_idx,
                         shape,
                         wx as f32,
                         wy as f32,
@@ -326,14 +330,14 @@ pub(super) fn section_geometry(
                         tile,
                         tint,
                         sky6,
-                        block6,
+                        blight,
                         inset,
                         drop,
                     );
                     continue;
                 }
 
-                if shape == ShapeFamily::Torch {
+                if class & TORCH != 0 {
                     let [top_tile, _bottom, side_tile] = block.tiles();
                     // Sky channel = the cell's skylight; block channel = the torch's own
                     // emission (self-lit). `max(sky_term, block_term)` in the shader
@@ -341,12 +345,12 @@ pub(super) fn section_geometry(
                     // identity scale, and the emission channel never dims at night.
                     let cell_sky = neighbour_light(wx, wy, wz) as u32;
                     let sky6 = ((cell_sky * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
-                    let emit = block.light_emission() as u32;
-                    let block6 = ((emit * 63 + SKY_FULL as u32 / 2) / SKY_FULL as u32).min(63);
+                    let [er, eg, eb] = block.light_emission_rgb();
+                    let emit =
+                        crate::light::BlockLight6::from_x2(crate::light::LightRgb::new(er, eg, eb));
                     let placement = section.torch_placement(lx, ly, lz);
                     super::torch::emit_torch(
                         &mut opaque,
-                        &mut opaque_idx,
                         wx as f32,
                         wy as f32,
                         wz as f32,
@@ -355,7 +359,7 @@ pub(super) fn section_geometry(
                         top_tile,
                         [1.0, 1.0, 1.0],
                         sky6,
-                        block6,
+                        emit,
                     );
                     continue;
                 }
@@ -365,7 +369,8 @@ pub(super) fn section_geometry(
                 // targeting read. Adding a family means implementing
                 // `ShapeRender::boxes`, not editing the mesher.
                 let mut slab_as_cube = false;
-                if kind.resolves_to_boxes {
+                if class & BOXES != 0 {
+                    let kind = block.shape_kind_def();
                     let tint_for = |tile: Tile| tint_tile(tile.world_tint(), ci);
                     let cell_part_tint = |part| part_tint(section_idx(lx, ly, lz), part);
                     let ctx = crate::block::ShapeCtx {
@@ -389,7 +394,6 @@ pub(super) fn section_geometry(
                             apply_cell_tint(&mut mesh_boxes, section_idx(lx, ly, lz));
                             emit_box_set(
                                 &mut opaque,
-                                &mut opaque_idx,
                                 wx,
                                 wy,
                                 wz,
@@ -408,12 +412,15 @@ pub(super) fn section_geometry(
                     }
                 }
 
-                if let Some(kind) = block.model_kind() {
+                if class & MODEL != 0 {
+                    let kind = block
+                        .model_kind()
+                        .expect("a Model-family row carries its bbmodel kind");
                     let offset = section.model_offset(lx, ly, lz);
                     let facing = section.model_facing(lx, ly, lz);
                     let l = neighbour_light(wx, wy, wz) as u32;
-                    let bl = neighbour_blocklight(wx, wy, wz) as u32;
-                    let (sky6, block6, warm) = fold_light(l, bl, SKY_FULL as u32);
+                    let bl = neighbour_blocklight(wx, wy, wz).channels().map(u32::from);
+                    let (sky6, blight) = fold_light(l, bl, SKY_FULL as u32);
                     emit_model_block(
                         &mut model,
                         &mut model_idx,
@@ -424,8 +431,7 @@ pub(super) fn section_geometry(
                         wy,
                         wz,
                         sky6,
-                        block6,
-                        warm,
+                        blight,
                     );
                     // Contact shadow: only a BOTTOM footprint cell stamps, each
                     // single-cell piece (its own floor + its owned spill onto the
@@ -457,7 +463,12 @@ pub(super) fn section_geometry(
                     continue;
                 }
 
-                let is_water = block == Block::Water;
+                // A cube-family cell with no exposed face draws nothing on the
+                // fast path below, so skip its whole per-cell setup — tiles,
+                // side style, log axis, front facing, water surface — instead
+                // of computing all of it and then culling six faces. Buried
+                // cells are the bulk of every underground section.
+                let is_water = class & WATER != 0;
                 let block_tiles = block.tiles();
                 // Row-declared side treatments, resolved once per cell — the
                 // mesher reads row fields, never concrete block ids. A
@@ -498,29 +509,78 @@ pub(super) fn section_geometry(
                 let base_z = wz as f32;
                 let base_y = wy as f32;
 
-                let water_surface = is_water.then(|| {
-                    if let Some(pad) = pad {
-                        // Pad-local samples: ±1 neighbours stay inside SECTION_PAD.
-                        let (plx, ply, plz) = (lx as i32, ly as i32, lz as i32);
-                        let full = pad.water_fills_local(plx, ply, plz);
-                        let block_l = |nwx, nwy, nwz| {
-                            pad.block_local(plx + nwx - wx, ply + nwy - wy, plz + nwz - wz)
-                        };
-                        let fluid_l = |nwx, nwy, nwz| {
-                            pad.fluid_height_local(plx + nwx - wx, ply + nwy - wy, plz + nwz - wz)
-                        };
-                        let still_l = |nwx, nwy, nwz| {
-                            pad.water_still_local(plx + nwx - wx, ply + nwy - wy, plz + nwz - wz)
-                        };
-                        WaterSurface::new(wx, wy, wz, full, &block_l, &fluid_l, &still_l)
-                    } else {
-                        let full = water_fills_cell(wx, wy, wz);
-                        WaterSurface::new(wx, wy, wz, full, &block_at, &fluid_at, &water_still_at)
-                    }
+                // The cell's own `fills_cell` answer — cheap, and the ONLY
+                // thing the water-vs-water cull needs. The full surface
+                // resolve behind it (sixteen corner-height samples plus a flow
+                // gradient) is DEFERRED to the first face that survives
+                // culling: a submerged ocean cell draws nothing at all, and
+                // those are the overwhelming majority of water cells.
+                let water_full = is_water.then(|| match pad {
+                    Some(pad) => pad.water_fills_local(lx as i32, ly as i32, lz as i32),
+                    None => water_fills_cell(wx, wy, wz),
                 });
+                // A SUBMERGED water cell — full to the top, with six water
+                // neighbours that are themselves full — draws nothing at all:
+                // top and bottom cull against water outright, and each side
+                // culls because the neighbour is not recessed. Ocean interiors
+                // are the bulk of every water cell in the world, so testing it
+                // once beats walking six faces to reach six culls.
+                if water_full == Some(true) {
+                    let nb_full = |dx: i32, dy: i32, dz: i32| match pad {
+                        Some(pad) => {
+                            pad.water_fills_local(lx as i32 + dx, ly as i32 + dy, lz as i32 + dz)
+                        }
+                        None => water_fills_cell(wx + dx, wy + dy, wz + dz),
+                    };
+                    if FACES.iter().all(|f| {
+                        let (dx, dy, dz) = f.dir();
+                        nb_full(dx, dy, dz)
+                    }) {
+                        continue;
+                    }
+                }
+
+                let water_cell: std::cell::OnceCell<WaterSurface> = std::cell::OnceCell::new();
+                let water_surface = || {
+                    water_cell.get_or_init(|| {
+                        let full = water_full.expect("only a water cell resolves a surface");
+                        if let Some(pad) = pad {
+                            // Pad-local samples: ±1 neighbours stay inside SECTION_PAD.
+                            let (plx, ply, plz) = (lx as i32, ly as i32, lz as i32);
+                            let block_l = |nwx, nwy, nwz| {
+                                pad.block_local(plx + nwx - wx, ply + nwy - wy, plz + nwz - wz)
+                            };
+                            let fluid_l = |nwx, nwy, nwz| {
+                                pad.fluid_height_local(
+                                    plx + nwx - wx,
+                                    ply + nwy - wy,
+                                    plz + nwz - wz,
+                                )
+                            };
+                            let still_l = |nwx, nwy, nwz| {
+                                pad.water_still_local(
+                                    plx + nwx - wx,
+                                    ply + nwy - wy,
+                                    plz + nwz - wz,
+                                )
+                            };
+                            WaterSurface::new(wx, wy, wz, full, &block_l, &fluid_l, &still_l)
+                        } else {
+                            WaterSurface::new(
+                                wx,
+                                wy,
+                                wz,
+                                full,
+                                &block_at,
+                                &fluid_at,
+                                &water_still_at,
+                            )
+                        }
+                    })
+                };
 
                 if let (Some(pad), Some(exposed)) = (pad, exposed_masks.as_ref()) {
-                    if pad_cube_fast_candidate(block) || slab_as_cube {
+                    if class & FAST_CUBE != 0 || slab_as_cube {
                         let cell = section_idx(lx, ly, lz);
                         for face in FACES {
                             if !mask_has(exposed, face, cell) {
@@ -543,7 +603,6 @@ pub(super) fn section_geometry(
                                 }
                             };
                             let tint = kv_tint(cell, tint);
-                            let corners = quad_for(face, base_x, base_y, base_z);
                             let (dx, dy, dz) = face.dir();
                             let (fxp, fyp, fzp) = (
                                 (lx as i32 + 1 + dx) as usize,
@@ -552,18 +611,16 @@ pub(super) fn section_geometry(
                             );
                             let fpi = mesh_pad_idx(fxp, fyp, fzp);
                             let f_l = pad.skylight[fpi] as u32;
-                            let f_bl = pad.blocklight[fpi] as u32;
+                            let f_bl = pad.blocklight[fpi];
                             let (overlay, has_overlay) = match overlay_tile {
                                 Some(o) => (o.index() as u32, true),
                                 None => (0, false),
                             };
-                            let log_uvs = log_side_cell_uvs(
-                                log_axis,
-                                face,
-                                corners,
-                                [base_x, base_y, base_z],
-                            );
-                            let (ao, light6, block6, warm) = cube_face_lighting_pad(
+                            // Asked corner-free: a face bound for the greedy
+                            // merge never builds its quad at all (the merged
+                            // quad rebuilds one for the whole run).
+                            let log_uvs_apply = log_side_uvs_apply(log_axis, face);
+                            let (ao, light6, block6) = cube_face_lighting_pad(
                                 pad,
                                 face,
                                 fxp,
@@ -583,37 +640,33 @@ pub(super) fn section_geometry(
                                 && light6[2] == light6[3]
                                 && block6[0] == block6[1]
                                 && block6[1] == block6[2]
-                                && block6[2] == block6[3]
-                                && warm[0] == warm[1]
-                                && warm[1] == warm[2]
-                                && warm[2] == warm[3];
+                                && block6[2] == block6[3];
                             if overlay_tile.is_none()
                                 && (block.is_opaque() || slab_as_cube)
                                 && flat
-                                && log_uvs.is_none()
+                                && !log_uvs_apply
                             {
-                                let final_tint = if warm[0] == 0.0 {
-                                    tint
-                                } else {
-                                    warm_tint(tint, warm[0])
-                                };
                                 let fi = face_index(face);
                                 greedy.faces[fi * SECTION_VOLUME + cell] = FlatFace {
                                     gen: greedy_gen,
                                     // Dyed flag in bit 31 (part of the merge key).
                                     tile: base_tile.index() as u32
                                         | ((cell_tinted(cell) as u32) << 31),
-                                    ao: ao[0],
-                                    light6: light6[0],
-                                    block6: block6[0],
-                                    tint: pack_tint(final_tint),
+                                    shade: FlatFace::shade(ao[0], light6[0], block6[0]),
+                                    tint: block6[0].tint_word(tint),
                                 };
                                 let s = [lx, ly, lz][face_axes(face).0];
                                 greedy.slice_counts[fi * SECTION_SIZE + s] += 1;
                             } else {
+                                let corners = quad_for(face, base_x, base_y, base_z);
+                                let log_uvs = log_side_cell_uvs(
+                                    log_axis,
+                                    face,
+                                    corners,
+                                    [base_x, base_y, base_z],
+                                );
                                 push_cube_face_with_cell_uvs(
                                     &mut opaque,
-                                    &mut opaque_idx,
                                     corners,
                                     base_tile,
                                     overlay,
@@ -625,7 +678,6 @@ pub(super) fn section_geometry(
                                     ao,
                                     light6,
                                     block6,
-                                    warm,
                                     cell_tinted(cell),
                                 );
                             }
@@ -666,7 +718,7 @@ pub(super) fn section_geometry(
                         continue;
                     }
                     let mut water_exposed_step = false;
-                    if let Some(ws) = &water_surface {
+                    if let Some(full) = water_full {
                         if nb == Block::Water {
                             let nb_full = if let Some(pad) = pad {
                                 pad.water_fills_local(
@@ -677,16 +729,16 @@ pub(super) fn section_geometry(
                             } else {
                                 water_fills_cell(nwx, nwy, nwz)
                             };
-                            match ws.side_against_water(is_side, nb_full) {
+                            match water::side_vs_water(full, is_side, nb_full) {
                                 SideVsWater::ExposedStep => water_exposed_step = true,
                                 SideVsWater::Cull => continue,
                             }
                         }
                     }
 
-                    let (base_tile, overlay_tile, tint) = if let Some(ws) = &water_surface {
+                    let (base_tile, overlay_tile, tint) = if is_water {
                         let t = match face {
-                            Face::PosY => ws.top_tile(),
+                            Face::PosY => water_surface().top_tile(),
                             Face::NegY => crate::atlas::engine().water_still,
                             // A STILL SOURCE's side faces are calm water — the
                             // step walls of the recessed pocket under a block
@@ -711,19 +763,26 @@ pub(super) fn section_geometry(
                     let tint = kv_tint(section_idx(lx, ly, lz), tint);
 
                     let mut corners = quad_for(face, base_x, base_y, base_z);
-                    if let Some(ws) = &water_surface {
-                        ws.warp_quad(&mut corners, base_x, base_y, base_z, water_exposed_step);
+                    if is_water {
+                        water_surface().warp_quad(
+                            &mut corners,
+                            base_x,
+                            base_y,
+                            base_z,
+                            water_exposed_step,
+                        );
                     }
 
                     let fx = nwx;
                     let fy = nwy;
                     let fz = nwz;
                     let f_l = neighbour_light(fx, fy, fz) as u32;
-                    let f_bl = neighbour_blocklight(fx, fy, fz) as u32;
+                    let f_bl = neighbour_blocklight(fx, fy, fz);
 
-                    let water_ov: u32 = match &water_surface {
-                        Some(ws) if matches!(face, Face::PosY) => ws.top_angle(),
-                        _ => 0,
+                    let water_ov: u32 = if is_water && matches!(face, Face::PosY) {
+                        water_surface().top_angle()
+                    } else {
+                        0
                     };
                     let (overlay, has_overlay) = match overlay_tile {
                         Some(o) => (o.index() as u32, true),
@@ -732,7 +791,7 @@ pub(super) fn section_geometry(
                     let log_uvs =
                         log_side_cell_uvs(log_axis, face, corners, [base_x, base_y, base_z]);
 
-                    let (ao, light6, block6, warm) = cube_face_lighting(
+                    let (ao, light6, block6) = cube_face_lighting(
                         face,
                         fx,
                         fy,
@@ -748,7 +807,7 @@ pub(super) fn section_geometry(
                         &cell_matter,
                     );
                     // Defer PLAIN opaque cube faces that are FLAT (all four corners share
-                    // AO + light + warm) to the greedy merge — a run of them collapses into
+                    // AO + every light channel) to the greedy merge — a run of them collapses into
                     // one tiled quad, pixel-identical. Water / grass-side (overlay) / leaves /
                     // cactus and any gradient (non-flat) face emit per-cell here, unchanged.
                     let flat = ao[0] == ao[1]
@@ -759,31 +818,21 @@ pub(super) fn section_geometry(
                         && light6[2] == light6[3]
                         && block6[0] == block6[1]
                         && block6[1] == block6[2]
-                        && block6[2] == block6[3]
-                        && warm[0] == warm[1]
-                        && warm[1] == warm[2]
-                        && warm[2] == warm[3];
+                        && block6[2] == block6[3];
                     if !is_water
                         && overlay_tile.is_none()
                         && (block.is_opaque() || slab_as_cube)
                         && flat
                         && log_uvs.is_none()
                     {
-                        let final_tint = if warm[0] == 0.0 {
-                            tint
-                        } else {
-                            warm_tint(tint, warm[0])
-                        };
                         let fi = face_index(face);
                         greedy.faces[fi * SECTION_VOLUME + section_idx(lx, ly, lz)] = FlatFace {
                             gen: greedy_gen,
                             // Dyed flag in bit 31 (part of the merge key).
                             tile: base_tile.index() as u32
                                 | ((cell_tinted(section_idx(lx, ly, lz)) as u32) << 31),
-                            ao: ao[0],
-                            light6: light6[0],
-                            block6: block6[0],
-                            tint: pack_tint(final_tint),
+                            shade: FlatFace::shade(ao[0], light6[0], block6[0]),
+                            tint: block6[0].tint_word(tint),
                         };
                         // Slice index = the cell's coord along this face's normal axis.
                         let s = [lx, ly, lz][face_axes(face).0];
@@ -794,16 +843,22 @@ pub(super) fn section_geometry(
                         // opaque pass's cutout and would discard to nothing
                         // there, and water's read-only depth cannot resolve a
                         // translucent cube sheet's own face order.
-                        let (vbuf, ibuf) = if is_water {
-                            (&mut transparent, &mut transparent_idx)
+                        // Water TOP faces are the only two-sided terrain quads
+                        // that stay in one draw: they go to their own cull-none
+                        // stream instead of duplicating their vertices.
+                        let vbuf = if is_water {
+                            if matches!(face, Face::PosY) {
+                                &mut transparent_two_sided
+                            } else {
+                                &mut transparent
+                            }
                         } else if block.is_translucent() {
-                            (&mut translucent, &mut translucent_idx)
+                            &mut translucent
                         } else {
-                            (&mut opaque, &mut opaque_idx)
+                            &mut opaque
                         };
-                        let tris = push_cube_face_with_cell_uvs(
+                        push_cube_face_with_cell_uvs(
                             vbuf,
-                            ibuf,
                             corners,
                             base_tile,
                             overlay,
@@ -815,12 +870,8 @@ pub(super) fn section_geometry(
                             ao,
                             light6,
                             block6,
-                            warm,
                             cell_tinted(section_idx(lx, ly, lz)),
                         );
-                        if is_water && matches!(face, Face::PosY) {
-                            ibuf.extend_from_slice(&water::top_back_winding(tris));
-                        }
                     }
                 }
             }
@@ -829,16 +880,14 @@ pub(super) fn section_geometry(
 
     // Collapse the deferred flat faces into merged tiled quads, then return the scratch to
     // the thread-local for the next section.
-    emit_greedy_quads(&mut greedy, &mut opaque, &mut opaque_idx, ox, oy, oz);
+    emit_greedy_quads(&mut greedy, &mut opaque, ox, oy, oz);
     GREEDY.with(|g| *g.borrow_mut() = greedy);
 
     ChunkMesh {
         opaque,
-        opaque_idx,
         transparent,
-        transparent_idx,
+        transparent_two_sided,
         translucent,
-        translucent_idx,
         model,
         model_idx,
         contact,

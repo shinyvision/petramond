@@ -34,15 +34,13 @@ impl Game {
                 } => {
                     // Sampled against the REPLICA, which already applied this
                     // pump's deltas (the break landed before the events).
-                    let (sky, blk, warm) =
+                    let (sky, blk) =
                         crate::server::breaking::break_light(&self.replica, pos, normal);
                     match block.model_kind() {
-                        Some(kind) => self
-                            .particles
-                            .spawn_break_burst_model(pos, kind, sky, blk, warm),
+                        Some(kind) => self.particles.spawn_break_burst_model(pos, kind, sky, blk),
                         None => self
                             .particles
-                            .spawn_break_burst_lit(pos, block, sky, blk, warm, tint),
+                            .spawn_break_burst_lit(pos, block, sky, blk, tint),
                     }
                     // A broken door's swing entry dies with it (client-owned
                     // state the sim can no longer clear). The event carries
@@ -73,9 +71,9 @@ impl Game {
                         continue;
                     };
                     let c = voxel_at(pos);
-                    let (sky, blk, warm) = self.replica.dynamic_light_at_world(c.x, c.y, c.z);
+                    let (sky, blk) = self.replica.dynamic_light_at_world(c.x, c.y, c.z);
                     self.particles
-                        .spawn_emitter_burst(spec, pos, intensity, sky, blk, warm);
+                        .spawn_emitter_burst(spec, pos, intensity, sky, blk);
                 }
                 // Sounds only (played by the app); lids follow `open_chests`.
                 super::tick::WorldEvent::BlockPlaced { .. }
@@ -128,15 +126,15 @@ impl Game {
         let world = &self.replica;
         let block = Block::from_id(world.chunk_block(h.block.x, h.block.y, h.block.z));
         let cell = h.block + h.normal;
-        let (sky, blk, warm) = world.dynamic_light_at_world(cell.x, cell.y, cell.z);
+        let (sky, blk) = world.dynamic_light_at_world(cell.x, cell.y, cell.z);
         let kv_tint = world.cell_burst_tint(h.block);
         match block.model_kind() {
             Some(kind) => self
                 .particles
-                .spawn_mining_model(h.block, h.normal, kind, sky, blk, warm),
+                .spawn_mining_model(h.block, h.normal, kind, sky, blk),
             None => self
                 .particles
-                .spawn_mining_lit(h.block, h.normal, block, sky, blk, warm, kv_tint),
+                .spawn_mining_lit(h.block, h.normal, block, sky, blk, kv_tint),
         }
     }
 
@@ -240,10 +238,10 @@ impl Game {
         self.replica_clock.alpha()
     }
 
-    /// Two-channel light + warm-tint amount at the player's eye, for lighting the
-    /// first-person hand / held item: it brightens AND warms near torches/furnaces,
+    /// Two-channel light at the player's eye, for lighting the first-person hand
+    /// / held item: it brightens AND takes the colour of nearby block light,
     /// and the torch channel keeps it lit at night.
-    pub(super) fn held_item_light(&self) -> (u8, u8, u8) {
+    pub(super) fn held_item_light(&self) -> (u8, crate::light::BlockLight6) {
         let c = voxel_at(self.cam.pos);
         self.replica.dynamic_light_at_world(c.x, c.y, c.z)
     }

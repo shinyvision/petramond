@@ -74,7 +74,8 @@ gui-builder-dev:
 # each one that ships a pack/ dir into mods/<id>/ (pack files + mod.wasm),
 # where the game discovers it. Convention: crate name == directory name == the
 # mod id in pack/pack.json. Crates without a pack/ dir (test fixtures) are
-# built but not installed.
+# built but not installed. A pack with no compiled wasm installs as
+# content-only, which the mod API supports.
 mods:
 	cd mods-src && $(CARGO) build --release --target wasm32-unknown-unknown
 	@set -e; for d in mods-src/*/; do \
@@ -82,6 +83,10 @@ mods:
 		[ -f "$$d/pack/pack.json" ] || continue; \
 		mkdir -p mods/$$id; \
 		cp -r $$d/pack/. mods/$$id/; \
-		cp mods-src/target/wasm32-unknown-unknown/release/$$id.wasm mods/$$id/mod.wasm; \
-		echo "installed mods/$$id"; \
+		if [ -f mods-src/target/wasm32-unknown-unknown/release/$$id.wasm ]; then \
+			cp mods-src/target/wasm32-unknown-unknown/release/$$id.wasm mods/$$id/mod.wasm; \
+			echo "installed mods/$$id"; \
+		else \
+			echo "installed mods/$$id (content only, no wasm)"; \
+		fi; \
 	done

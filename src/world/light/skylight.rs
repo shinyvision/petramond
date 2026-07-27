@@ -76,10 +76,9 @@ fn cover_range(pos: SectionPos, columns: &FxHashMap<ChunkPos, Column>) -> (i32, 
         for dcx in -1..=1 {
             let cp = ChunkPos::new(pos.cx + dcx, pos.cz + dcz);
             if let Some(col) = columns.get(&cp) {
-                for &h in col.sky_cover_slice() {
-                    hmin = hmin.min(h);
-                    hmax = hmax.max(h);
-                }
+                let (lo, hi) = col.sky_cover_range();
+                hmin = hmin.min(lo);
+                hmax = hmax.max(hi);
             }
         }
     }
@@ -116,9 +115,9 @@ pub(super) fn gather_surface_span(
             let bx = dcx * SECTION_SIZE;
             let bz = dcz * SECTION_SIZE;
             for lz in 0..SECTION_SIZE {
-                for lx in 0..SECTION_SIZE {
-                    surface[(bz + lz) * dim + (bx + lx)] = hm[lz * SECTION_SIZE + lx];
-                }
+                let dst = (bz + lz) * dim + bx;
+                let src = lz * SECTION_SIZE;
+                surface[dst..dst + SECTION_SIZE].copy_from_slice(&hm[src..src + SECTION_SIZE]);
             }
         }
     }

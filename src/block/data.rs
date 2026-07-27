@@ -170,12 +170,21 @@ pub(super) fn all() -> &'static [Block] {
     &ALL
 }
 
+/// `Block(id)` for a registered id, `Air` past the table.
+///
+/// The mesher's AO ring gathers and the light flood's cube reads turn raw ids
+/// into blocks tens of millions of times per world load, so this must not
+/// index `defs` — that is a dependent load into a several-hundred-byte-per-row
+/// table, i.e. a cache miss per cell. `defs[i].block == Block(i)` holds by
+/// construction (`parse_layers` converts each row with its own id), so the
+/// bounds test alone is the whole function.
 #[inline]
 pub(super) fn from_id(id: u8) -> Block {
-    REGISTRY
-        .defs
-        .get(id as usize)
-        .map_or(Block::Air, |d| d.block)
+    if (id as usize) < REGISTRY.defs.len() {
+        Block(id)
+    } else {
+        Block::Air
+    }
 }
 
 #[inline]
@@ -254,6 +263,90 @@ pub(super) fn default_light_apertures(id: u8) -> u32 {
     APERTURES[id as usize]
 }
 
+/// Dense per-id LIGHT CELL word — everything the light flood needs to know
+/// about a block id, in ONE 1 KB table read.
+///
+/// Low 24 bits: the state-free aperture word ([`crate::block::LIGHT_APERTURES_OPEN`]
+/// layout) — all zero for an opaque cube, fully open for an open cell, the
+/// shape's own answer for a `Shaped` one. [`LIGHT_CELL_SHAPED`] marks the ids
+/// whose per-cell state may override those bits (the only ids for which the
+/// flood consults its sparse aperture gather); [`LIGHT_CELL_DIRECT_SKY`] is
+/// [`Block::transmits_direct_skylight`].
+///
+/// The flood relaxes ~100 M edges per render-distance-12 load and each edge
+/// asked two blocks for their apertures; going through `Block::light_shape`
+/// meant a registry `BlockDef` load plus a virtual `ShapeSim` call per ask.
+/// Baked in its own lazy for the same reason as [`default_light_apertures`].
+#[inline]
+pub(crate) fn light_cells() -> &'static [u32; 256] {
+    static CELLS: LazyLock<[u32; 256]> = LazyLock::new(|| {
+        let word = |block: Block| -> u32 {
+            let mut w = match block.light_shape() {
+                crate::block::BlockLightShape::OpaqueCube => 0,
+                crate::block::BlockLightShape::Open => crate::block::LIGHT_APERTURES_OPEN,
+                crate::block::BlockLightShape::Shaped => {
+                    default_light_apertures(block.id()) | super::LIGHT_CELL_SHAPED
+                }
+            };
+            if block.transmits_direct_skylight() {
+                w |= super::LIGHT_CELL_DIRECT_SKY;
+            }
+            w
+        };
+        // Ids past the registry resolve to `Air` through `Block::from_id`.
+        let mut table = [word(Block::Air); 256];
+        for &block in all() {
+            table[block.id() as usize] = word(block);
+        }
+        table
+    });
+    &CELLS
+}
+
+/// Dense per-id CELL COLLISION for every shape whose boxes are fully
+/// determined by the block id ([`ShapeKindDef::collision_state_free`]);
+/// `None` where the shape resolves per cell (a stair corner, a fence's arms, a
+/// door's swing, a box set's stored form), which must go through the world.
+///
+/// Every body/particle/navigation cell probe used to pay a `shape_kind_def`
+/// indirection plus a virtual `collision_boxes` call for plain stone and air.
+///
+/// Baked in its OWN lazy for the same reason as [`default_light_apertures`].
+#[inline]
+pub(super) fn static_collision_boxes(id: u8) -> Option<&'static [super::Aabb]> {
+    static BOXES: LazyLock<[Option<&'static [super::Aabb]>; 256]> = LazyLock::new(|| {
+        let mut table: [Option<&'static [super::Aabb]>; 256] = [None; 256];
+        for &block in all() {
+            let k = block.shape_kind_def();
+            if k.collision_state_free {
+                table[block.id() as usize] = Some(k.sim.collision_boxes(
+                    &k.params,
+                    &crate::block::NoNeighborhood,
+                    crate::mathh::IVec3::ZERO,
+                    block,
+                ));
+            }
+        }
+        table
+    });
+    BOXES[id as usize]
+}
+
+/// Dense per-id [`ShapeSim::nav_reads_solid`] — a per-KIND answer, so it bakes
+/// per id like the apertures. Read once per navigation cell probe.
+#[inline]
+pub(super) fn nav_reads_solid(id: u8) -> bool {
+    static SOLID: LazyLock<[bool; 256]> = LazyLock::new(|| {
+        let mut table = [false; 256];
+        for &block in all() {
+            let k = block.shape_kind_def();
+            table[block.id() as usize] = k.sim.nav_reads_solid(&k.params);
+        }
+        table
+    });
+    SOLID[id as usize]
+}
+
 /// Dense per-id copy of every block's [`BlockFlags`], indexed by raw block id.
 ///
 /// The mesher/light hot loops test `is_opaque`/`occludes_ao` on neighbour ids tens of
@@ -262,6 +355,16 @@ pub(super) fn default_light_apertures(id: u8) -> u32 {
 /// to read one flag byte. This table is 256 bytes — a handful of cache lines that stay hot
 /// — so a flag query is one small-array read, not a big-struct indirection. It is derived
 /// from the loaded defs by the loader, so it can never disagree with the source of truth.
+/// Dense per-id tag membership; see [`load::Registry::tag_bits`].
+#[inline]
+pub(super) fn has_tag(id: u8, tag: super::BlockTag) -> bool {
+    if tag.id() <= load::TAG_BITS_MAX {
+        REGISTRY.tag_bits[id as usize] & (1u128 << tag.id()) != 0
+    } else {
+        REGISTRY.defs[id as usize].tags.contains(&tag)
+    }
+}
+
 #[inline]
 pub(super) fn flags(id: u8) -> BlockFlags {
     REGISTRY.flags[id as usize]
@@ -272,4 +375,13 @@ pub(super) fn flags(id: u8) -> BlockFlags {
 #[inline]
 pub(super) fn emission(id: u8) -> u8 {
     REGISTRY.emission[id as usize]
+}
+
+/// Dense per-id PER-CHANNEL light emission — `emission` split by the row's
+/// `light_color`. Same rationale and same 256-entry shape as [`emission`]:
+/// a block id is a `u8` everywhere it is stored, so the table covers the whole
+/// id space and a lookup is one small-array read.
+#[inline]
+pub(super) fn emission_rgb(id: u8) -> [u8; 3] {
+    REGISTRY.emission_rgb[id as usize]
 }

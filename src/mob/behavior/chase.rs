@@ -158,9 +158,10 @@ impl AiBehavior for ChasePlayerAi {
 /// always a cell `find_path` accepts. Shared by every chase-like node
 /// (`chase_player`, `chase_sound`, `retaliate`).
 pub(super) fn goal_cell_near(ctx: &AiCtx, pos: Vec3) -> Option<IVec3> {
-    let solid = super::super::nav::nav_solid_fn(ctx.world);
-    let support = super::super::nav::nav_support_fn(ctx.world, ctx.half_width);
-    let water = |c: IVec3| ctx.world.water_cell_at(c.x, c.y, c.z);
+    let cursor = ctx.world.cursor();
+    let solid = super::super::nav::nav_solid_fn(&cursor);
+    let support = super::super::nav::nav_support_fn(&cursor, ctx.half_width);
+    let water = super::super::nav::nav_water_fn(&cursor);
     let params = PathParams::for_body(ctx.head, ctx.half_width);
     let x = pos.x.floor() as i32;
     let z = pos.z.floor() as i32;

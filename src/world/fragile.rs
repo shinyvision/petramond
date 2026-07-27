@@ -10,7 +10,7 @@
 //! cells it may flow into), this behaviour is what such a block DOES when its support
 //! changes.
 
-use crate::block::{Block, BlockBehavior};
+use crate::block::{Block, BlockBehavior, SupportDir};
 use crate::mathh::IVec3;
 
 use super::store::World;
@@ -36,7 +36,8 @@ impl BlockBehavior for Fragile {
 
     fn neighbor_update(&self, world: &mut World, pos: IVec3) {
         // Dispatch already read this cell as the fragile block; re-read to learn which
-        // one (a torch derives its support sideways, a plant from the block below).
+        // one — the support cell is per-block (a torch sideways, a plant below, a
+        // hanging block above).
         let block = Block::from_id(world.chunk_block(pos.x, pos.y, pos.z));
         if !world.fragile_supported(pos, block) {
             world.schedule_block_tick(pos, FRAGILE_BREAK_DELAY);
@@ -59,34 +60,54 @@ impl BlockBehavior for Fragile {
 pub static FRAGILE: Fragile = Fragile;
 
 impl World {
-    /// The cell that must stay solid to hold up non-torch fragile blocks.
-    fn fragile_ground_cell(&self, pos: IVec3) -> IVec3 {
-        pos - IVec3::new(0, 1, 0)
-    }
-
-    /// Whether the fragile block at `pos` still has something to stand on:
-    /// torches and ladders use the same mounted-face test as their placement,
-    /// a block that LIES FLAT on its floor rests on ANY full collision cube,
-    /// and everything else (the plants) keeps the full-opaque ground rule.
+    /// Whether the fragile block at `pos` still has something holding it up.
     ///
-    /// "Lies flat" is the shape's own answer — its matter fills the whole
-    /// floor of its cell — not a family name: a dusting of snow sits on leaves
-    /// or glass just as well as on soil, while stairs, slabs, and model blocks
-    /// shed it (per Rachel: snow stays on any full block, and canopy snow must
-    /// not shatter the tick after the weather mod lays it), and a pack block
-    /// shaped like a cover behaves the same with no engine edit.
-    fn fragile_supported(&self, pos: IVec3, block: Block) -> bool {
+    /// WHICH cell that is, is the row's own declaration
+    /// ([`Block::support_dir`]): a plant reads its ground, a hanging block
+    /// reads its ceiling. Torches and ladders are the exception the data
+    /// cannot state yet — their support cell derives from stored placement
+    /// state, so they keep the same mounted-face test as their placement.
+    ///
+    /// The ACCEPT rule then depends only on the direction:
+    /// - `below`: a block that LIES FLAT on its floor rests on ANY full
+    ///   collision cube, everything else (the plants) keeps the full-opaque
+    ///   ground rule. "Lies flat" is the shape's own answer — its matter
+    ///   fills the whole floor of its cell — not a family name: a dusting of
+    ///   snow sits on leaves or glass just as well as on soil, while stairs,
+    ///   slabs, and model blocks shed it (per Rachel: snow stays on any full
+    ///   block, and canopy snow must not shatter the tick after the weather
+    ///   mod lays it), and a pack block shaped like a cover behaves the same
+    ///   with no engine edit.
+    /// - `above`: any full collision CUBE above holds it — deliberately not
+    ///   `is_opaque`, because a solid-but-not-opaque ceiling (leaves, a pack's
+    ///   glowing cap) is a real ceiling — OR another hanging block, so a run
+    ///   of them chains up to whatever the topmost one grips. Chaining is a
+    ///   property of the DECLARATION, not of block identity, so a curtain may
+    ///   mix rows freely; each link's own support is checked in turn, which is
+    ///   what makes a cut at the top unzip the whole run downward while a cut
+    ///   at the bottom takes nothing with it.
+    pub(crate) fn fragile_supported(&self, pos: IVec3, block: Block) -> bool {
         if block.shape_family() == crate::block::ShapeFamily::Torch {
             return self.torch_supported_at(pos, self.torch_placement(pos));
         }
         if block.shape_family() == crate::block::ShapeFamily::Ladder {
             return self.ladder_supported_at(pos, block.panel_facing());
         }
-        let s = self.fragile_ground_cell(pos);
-        if crate::block::rests_flat_on_floor(self, pos, block) {
-            return super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z));
+        let dir = block.support_dir();
+        let s = dir.support_cell(pos);
+        match dir {
+            SupportDir::Below => {
+                if crate::block::rests_flat_on_floor(self, pos, block) {
+                    return super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z));
+                }
+                self.physics_block(s.x, s.y, s.z).is_opaque()
+            }
+            SupportDir::Above => {
+                super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z))
+                    || Block::from_id(self.chunk_block(s.x, s.y, s.z)).support_dir()
+                        == SupportDir::Above
+            }
         }
-        self.physics_block(s.x, s.y, s.z).is_opaque()
     }
 }
 
@@ -285,5 +306,194 @@ mod tests {
         w.insert_torch(torch, TorchPlacement::West);
         run_ticks(&mut w, 2);
         assert_eq!(block(&w, torch), Block::Torch, "stair back holds torch");
+    }
+
+    /// A block row declaring `support: "above"` hangs from its ceiling, and a
+    /// run of them unzips DOWNWARD from a cut at the top while a cut at the
+    /// bottom takes nothing with it.
+    ///
+    /// No engine row hangs, so this needs a pack row: the block registry is a
+    /// process-wide `LazyLock`, so the fixture must be in place before ANY
+    /// test in this binary touches it — hence the established re-spawn
+    /// pattern (this test writes a content-only pack and runs the `#[ignore]`d
+    /// inner test below in a child process with `PETRAMOND_MODS` set).
+    /// Deterministic regardless of test order.
+    #[test]
+    fn a_hanging_row_breaks_downward_and_never_upward() {
+        let root = std::env::temp_dir().join(format!("petramond-hangpack-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let pack = root.join("mods/hangtest");
+        std::fs::create_dir_all(&pack).unwrap();
+        std::fs::write(
+            pack.join("pack.json"),
+            r#"{ "name": "Hang Test", "id": "hangtest", "description": "support-direction fixture" }"#,
+        )
+        .unwrap();
+        // Two DIFFERENT hanging rows (a curtain mixes them) plus one ordinary
+        // standing row, so the direction is proven to be per-row data.
+        let row = |name: &str, support: &str| {
+            format!(
+                r#"{{ "block": "hangtest:{name}", "shape": "cross", "flags": ["transparent"], "tags": ["fragile"], "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0{support}, "tiles": ["poppy", "poppy", "poppy"], "material": "plant", "harvest_tier": 0, "hardness": 0, "drops": [] }}"#
+            )
+        };
+        let above = r#", "support": "above""#;
+        std::fs::write(
+            pack.join("blocks.json"),
+            format!(
+                r#"{{ "blocks": [ {}, {}, {} ] }}"#,
+                row("vine", above),
+                row("vine_lit", above),
+                row("standing", "")
+            ),
+        )
+        .unwrap();
+
+        let exe = std::env::current_exe().expect("test binary path");
+        let out = std::process::Command::new(exe)
+            .arg("world::fragile::tests::hanging_support_inner")
+            .arg("--exact")
+            .arg("--ignored")
+            .arg("--nocapture")
+            .env("PETRAMOND_MODS", root.join("mods"))
+            .output()
+            .expect("spawn test binary");
+        let _ = std::fs::remove_dir_all(&root);
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert!(
+            out.status.success(),
+            "inner test failed\n--- stdout ---\n{stdout}\n--- stderr ---\n{}",
+            String::from_utf8_lossy(&out.stderr),
+        );
+        // A filtered-out inner test also exits 0 — the one way this whole
+        // check can silently become a no-op (a rename, a moved module).
+        assert!(
+            stdout.contains("1 passed"),
+            "the inner test did not run\n{stdout}"
+        );
+    }
+
+    /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
+    /// pointing at the fixture pack before first registry touch).
+    #[test]
+    #[ignore = "spawned by a_hanging_row_breaks_downward_and_never_upward with a fixture pack env"]
+    fn hanging_support_inner() {
+        let by_name = |name: &str| {
+            Block(
+                crate::registry::names()
+                    .blocks
+                    .id(name)
+                    .unwrap_or_else(|| panic!("fixture pack row '{name}' must be registered")),
+            )
+        };
+        let vine = by_name("hangtest:vine");
+        let vine_lit = by_name("hangtest:vine_lit");
+        let standing = by_name("hangtest:standing");
+
+        let mut w = world();
+        // LEAVES, not stone: a full collision cube that is NOT opaque. A pack's
+        // solid-but-translucent ceiling (a glowing mushroom cap) is the common
+        // real anchor, and an `is_opaque` accept rule would drop every curtain
+        // hanging under one while still passing under rock.
+        let ceiling = IVec3::new(8, 70, 8);
+        w.set_block_world(ceiling.x, ceiling.y, ceiling.z, Block::OakLeaves);
+        // A five-cell curtain of MIXED hanging rows: chaining is a property of
+        // the declaration, not of block identity.
+        let curtain: Vec<IVec3> = (65..=69).rev().map(|y| IVec3::new(8, y, 8)).collect();
+        for (i, c) in curtain.iter().enumerate() {
+            let b = if i % 2 == 0 { vine } else { vine_lit };
+            w.set_block_world(c.x, c.y, c.z, b);
+        }
+        run_ticks(&mut w, 3);
+        for c in &curtain {
+            assert_ne!(block(&w, *c), Block::Air, "hung curtain must stand: {c:?}");
+        }
+
+        // An edit BESIDE the curtain announces to every cell of it; under the
+        // old ground rule that shattered the whole run.
+        w.set_block_world(9, 67, 8, Block::Stone);
+        run_ticks(&mut w, 3);
+        for c in &curtain {
+            assert_ne!(
+                block(&w, *c),
+                Block::Air,
+                "a neighbour edit must not shatter the curtain: {c:?}"
+            );
+        }
+
+        // Cut the BOTTOM: nothing above it lost its own support.
+        let bottom = curtain[4];
+        w.set_block_world(bottom.x, bottom.y, bottom.z, Block::Air);
+        run_ticks(&mut w, 6);
+        for c in &curtain[..4] {
+            assert_ne!(
+                block(&w, *c),
+                Block::Air,
+                "a cut at the bottom must not propagate upward: {c:?}"
+            );
+        }
+
+        // Cut the TOP: the whole remaining run unzips downward, one cell per
+        // tick, and each cell is handed over as a natural break (drops + burst).
+        let _ = w.take_natural_breaks();
+        let top = curtain[0];
+        w.set_block_world(top.x, top.y, top.z, Block::Air);
+        run_ticks(&mut w, 10);
+        for c in &curtain[1..4] {
+            assert_eq!(
+                block(&w, *c),
+                Block::Air,
+                "a cut at the top must cascade all the way down: {c:?}"
+            );
+        }
+        let breaks = w.take_natural_breaks();
+        assert_eq!(
+            breaks.len(),
+            3,
+            "every cascaded cell breaks naturally, exactly once: {breaks:?}"
+        );
+
+        // PLACEMENT must accept exactly what the rule above keeps. A hanging
+        // row has no substrate vocabulary — `roots_on` names GROUNDS and its
+        // support is a ceiling — so without a gate it places on open air and
+        // this very tick shatters it, eating the item.
+        let mut never_occupied = |_: IVec3, _: &[crate::block::Aabb]| false;
+        let mut plan = |w: &World, p: IVec3, b: Block| {
+            w.finish_single_cell_placement(
+                b,
+                p,
+                crate::block::ShapeState::NONE,
+                &[],
+                &mut never_occupied,
+            )
+            .is_some()
+        };
+        assert!(
+            !plan(&w, IVec3::new(4, 68, 4), vine),
+            "a hanging row must not place under open air"
+        );
+        w.set_block_world(4, 70, 4, Block::Stone);
+        assert!(
+            plan(&w, IVec3::new(4, 69, 4), vine),
+            "a ceiling accepts it"
+        );
+        w.set_block_world(4, 69, 4, vine);
+        assert!(
+            plan(&w, IVec3::new(4, 68, 4), vine_lit),
+            "and so does another hanging row, so a curtain extends downward"
+        );
+
+        // The direction is PER ROW: the same fixture's default row is still
+        // held from below and is not held by a ceiling.
+        w.set_block_world(7, 64, 7, Block::Dirt);
+        w.set_block_world(7, 65, 7, standing);
+        w.set_block_world(9, 66, 9, Block::Stone);
+        w.set_block_world(9, 65, 9, standing);
+        run_ticks(&mut w, 4);
+        assert_eq!(block(&w, IVec3::new(7, 65, 7)), standing, "ground holds it");
+        assert_eq!(
+            block(&w, IVec3::new(9, 65, 9)),
+            Block::Air,
+            "a ceiling holds up nothing that does not declare it"
+        );
     }
 }

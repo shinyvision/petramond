@@ -235,8 +235,12 @@ impl crate::block::CellCodec for EntityFront {
     }
 }
 
+// `pub`, not `pub(crate)`, to match the `pub` fields of `render::HeldItemView`
+// / `HeldItemFrame` that carry it — `block_state` is a private module, so this
+// is still crate-visible either way, and the mismatch was a live
+// `private_interfaces` warning.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) enum HeldBlockState {
+pub enum HeldBlockState {
     #[default]
     None,
     Stair(StairState),
@@ -319,6 +323,28 @@ impl BlockStates {
     #[inline]
     pub(crate) fn water_arc(&self) -> Option<Arc<[u8]>> {
         self.water.clone()
+    }
+
+    /// `(water buffer ptr, water len, sparse heap bytes)` for the memory census.
+    pub(crate) fn memory_parts(&self) -> (Option<usize>, usize, u64) {
+        let sparse = self.sparse.as_ref().map_or(0, |s| {
+            let states = (s.cell_states.len() * (2 + std::mem::size_of::<ShapeState>() + 1)) as u64;
+            let kv: u64 = s
+                .cell_kv
+                .values()
+                .map(|m| {
+                    m.iter()
+                        .map(|(k, v)| (k.capacity() + v.capacity() + 48) as u64)
+                        .sum::<u64>()
+                })
+                .sum();
+            std::mem::size_of::<SparseStates>() as u64 + states * 8 / 7 + kv
+        });
+        (
+            self.water.as_ref().map(|w| w.as_ptr() as usize),
+            self.water.as_ref().map_or(0, |w| w.len()),
+            sparse,
+        )
     }
 
     #[inline]

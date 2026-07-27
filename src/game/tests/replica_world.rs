@@ -142,9 +142,12 @@ fn server_rebakes_replicate_as_light_data() {
         g.replica
             .section_at_world_for_test(torch.x, torch.y, torch.z)
             .map(|s| s.blocklight_at(6, 1, 6))
-            .unwrap_or(0)
+            .unwrap_or(crate::light::LightRgb::ZERO)
     };
-    assert_eq!(block_at(&game), 0, "no emitter yet — block light is dark");
+    assert!(
+        block_at(&game).is_dark(),
+        "no emitter yet — block light is dark"
+    );
 
     // The server edit dirties light server-side only; the replica applies the
     // delta immediately (block visible) and receives the light as LightData.
@@ -157,7 +160,7 @@ fn server_rebakes_replicate_as_light_data() {
         .world
         .insert_torch(torch, crate::torch::TorchPlacement::Floor);
     let deadline = std::time::Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
-    while block_at(&game) == 0 {
+    while block_at(&game).is_dark() {
         assert!(
             std::time::Instant::now() < deadline,
             "the server's rebake reached the replica as LightData"

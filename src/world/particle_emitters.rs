@@ -5,22 +5,104 @@
 //! the renderer derives transient particles from that. This keeps visual particles
 //! out of simulation, saves, and the fixed tick.
 
+use std::sync::LazyLock;
+
 use crate::block::{Block, ParticleEmitter, ParticleEmitterAnchor, ShapeFamily};
 use crate::block_model::{self, BlockModelKind};
-use crate::chunk::{section_local, SectionPos};
+use crate::camera::ViewVolume;
+use crate::chunk::{section_local, SectionPos, SECTION_SIZE};
 use crate::facing::Facing;
+use crate::light::BlockLight6;
 use crate::mathh::{voxel_at, IVec3, Vec3};
 use crate::torch::POLE_HEIGHT;
 
 use super::store::World;
 
+/// One placed particle emitter to draw this frame: where it sits, the row that
+/// describes it, its deterministic particle-schedule seed, and the light
+/// sampled at the anchor. Purely presentation — nothing here is saved, ticked
+/// or replicated.
+///
+/// Mobs produce these too (anchored at the body instead of a cell), and the
+/// render layer consumes them unchanged, so this is the single row type the
+/// whole emitter path speaks.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct PlacedEmitter {
+    pub origin: Vec3,
+    pub emitter: ParticleEmitter,
+    pub seed: u64,
+    pub skylight: u8,
+    pub blocklight: BlockLight6,
+}
+
+/// Half-extents of the box a row's particles can ever occupy around their
+/// anchor: the spawn box, plus how far the fastest particle travels in the
+/// longest lifetime, plus the spiral's horizontal orbit, plus the biggest
+/// cube's own size.
+pub fn emitter_envelope(e: &ParticleEmitter) -> Vec3 {
+    let max_life = e.lifetime[1].max(e.lifetime[0]);
+    let max_size = e.size[1].max(e.size[0]);
+    let velocity = Vec3::from_array(e.velocity);
+    let jitter = Vec3::from_array(e.velocity_jitter);
+    let travel = Vec3::new(
+        velocity.x.abs() + jitter.x,
+        velocity.y.abs() + jitter.y,
+        velocity.z.abs() + jitter.z,
+    ) * max_life;
+    // The orbit is applied on top of the travelled position, around the
+    // anchor's vertical axis, so it widens the box in X and Z.
+    let orbit = Vec3::new(e.spiral[0], 0.0, e.spiral[0]);
+    Vec3::from_array(e.spawn_box) + travel + orbit + Vec3::splat(max_size + 0.05)
+}
+
+/// How far, in blocks, any loaded block row's emitter particles can reach from
+/// the CELL that carries the row — anchor displacement (a `local` anchor may
+/// leave the cell, and a model block anchors anywhere in its footprint after
+/// placement) plus the particle envelope.
+///
+/// Padding a section's box by this makes the section-level reject exact: a
+/// section whose padded box misses the view cannot hold an emitter whose
+/// particles are on screen. Derived from the loaded rows rather than guessed,
+/// so a pack with a far-flung emitter widens it automatically.
+fn max_emitter_reach() -> f32 {
+    static REACH: LazyLock<f32> = LazyLock::new(|| {
+        let mut reach: f32 = 0.0;
+        for id in 0..=u8::MAX {
+            let block = Block::from_id(id);
+            let Some(rows) = block.particle_emitter() else {
+                continue;
+            };
+            // A model anchors in FOOTPRINT space and its base is placed off the
+            // authored-origin cell, so twice the footprint bounds both.
+            let footprint = block.model_kind().map_or(0.0, |kind| {
+                let fp = block_model::def(kind).cells;
+                2.0 * fp.iter().copied().max().unwrap_or(0) as f32
+            });
+            for row in rows {
+                let anchor =
+                    Vec3::from_array(row.origin).abs() + Vec3::from_array(row.offset).abs();
+                let far = Vec3::splat(1.0 + footprint) + anchor + emitter_envelope(row);
+                reach = reach.max(far.max_element());
+            }
+        }
+        reach
+    });
+    *REACH
+}
+
 impl World {
-    /// Append `(world_origin, emitter, deterministic_seed, sky6, block6)` for every
-    /// loaded block cell whose row declares a particle emitter. Visits only the
-    /// maintained `particle_emitter_sections` index, then scans that section's dense
-    /// block ids.
-    pub fn collect_particle_emitters(&self, out: &mut Vec<(Vec3, ParticleEmitter, u64, u8, u8)>) {
+    /// Fill `out` with every loaded block cell whose row declares a particle
+    /// emitter AND whose particles are inside `view`.
+    ///
+    /// Visits only the maintained `particle_emitter_sections` index, rejects a
+    /// whole section on one box test before touching its dense block ids, and
+    /// rejects an individual emitter before sampling light for it — so a
+    /// cavern's worth of loaded emitters behind the camera costs a handful of
+    /// box tests rather than a scan.
+    pub fn collect_particle_emitters(&self, view: &ViewVolume, out: &mut Vec<PlacedEmitter>) {
         out.clear();
+        let reach = Vec3::splat(max_emitter_reach());
+        let span = Vec3::splat(SECTION_SIZE as f32);
         for sp in &self.particle_emitter_sections {
             let Some(section) = self.sections.get(sp) else {
                 continue;
@@ -29,8 +111,13 @@ impl World {
                 continue;
             }
             let (ox, oy, oz) = section.origin_world();
-            for (idx, &id) in section.blocks_slice().iter().enumerate() {
-                let block = Block::from_id(id);
+            let origin = Vec3::new(ox as f32, oy as f32, oz as f32);
+            if !view.aabb_visible(origin - reach, origin + span + reach) {
+                continue;
+            }
+            for &cell_idx in section.particle_emitter_cells() {
+                let idx = cell_idx as usize;
+                let block = Block::from_id(section.blocks_slice()[idx]);
                 let Some(rows) = block.particle_emitter() else {
                     continue;
                 };
@@ -54,17 +141,21 @@ impl World {
                         let local = emitter_anchor_local(emitter, block, section, lx, ly, lz);
                         Vec3::new(cell.x as f32, cell.y as f32, cell.z as f32) + local
                     };
+                    let envelope = emitter_envelope(&emitter);
+                    if !view.aabb_visible(origin - envelope, origin + envelope) {
+                        continue;
+                    }
                     let sample = voxel_at(origin);
-                    let (sky, block_light, _) =
+                    let (sky, block_light) =
                         self.dynamic_light_at_world(sample.x, sample.y, sample.z);
-                    out.push((
+                    out.push(PlacedEmitter {
                         origin,
                         emitter,
-                        emitter_seed(*sp, idx as u16, block)
+                        seed: emitter_seed(*sp, cell_idx, block)
                             ^ (row_idx as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
-                        sky,
-                        block_light,
-                    ));
+                        skylight: sky,
+                        blocklight: block_light,
+                    });
                 }
             }
         }
