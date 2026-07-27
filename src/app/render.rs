@@ -261,6 +261,16 @@ impl App {
                     pos,
                 );
             }
+            // Footsteps ride the same live world clock as the mob idle
+            // cadence below, and for the same reason.
+            tick_footstep_sounds(
+                &mut self.audio,
+                &mut self.footstep_next_tick,
+                &mut self.next_mob_sound_handle,
+                listener,
+                presentation.footsteps,
+                current_tick,
+            );
             // Idle cadence follows the live world clock, not gameplay input:
             // menus and multiplayer pause can keep that clock moving.
             tick_idle_mob_sounds(
@@ -422,6 +432,59 @@ fn play_pending_mob_sound_events(
             initial,
         );
     }
+}
+
+/// Ticks between one body's footsteps, walking and sprinting. The gait comes
+/// from presentation (which sees the body's real speed); the cadence is here.
+const FOOTSTEP_INTERVAL_TICKS: u64 = 10;
+const SPRINT_FOOTSTEP_INTERVAL_TICKS: u64 = 7;
+
+/// Sound one footstep per walking body whose cadence is due.
+///
+/// The presentation already decided WHO is walking and on WHAT (it needs the
+/// world to answer that); this owns only the cadence and the play. A body first
+/// seen walking steps IMMEDIATELY — its entry is seeded due — so movement is
+/// heard the moment it starts rather than up to half a second later.
+///
+/// The map is keyed on the body, not the sound, so a player who pauses for a
+/// step or two resumes ON the same cadence instead of retriggering; entries die
+/// with the bodies (`footsteps` lists standing players too, which is what makes
+/// that retire exact without a second list).
+pub(super) fn tick_footstep_sounds(
+    audio: &mut crate::audio::Audio,
+    next_tick: &mut std::collections::HashMap<u64, u64>,
+    next_handle: &mut u64,
+    listener: SpatialListener,
+    footsteps: &[crate::game::presentation::FootstepSource],
+    current_tick: u64,
+) {
+    for step in footsteps {
+        let due = next_tick.entry(step.id).or_insert(current_tick);
+        let Some(ground) = step.ground else {
+            continue;
+        };
+        if current_tick < *due {
+            continue;
+        }
+        *due = current_tick.saturating_add(if step.sprinting {
+            SPRINT_FOOTSTEP_INTERVAL_TICKS
+        } else {
+            FOOTSTEP_INTERVAL_TICKS
+        });
+        let Some(sound) = ground.sound(crate::block::BlockSoundAction::Step) else {
+            continue;
+        };
+        // Fire-and-forget at the FEET, off the same wrapping handle pool the
+        // world one-shots use, so a remote's steps arrive from their body.
+        audio.play_spatial_randomized(
+            alloc_mob_sound_handle(next_handle),
+            sound,
+            SpatialSoundSource::Fixed(step.pos),
+            listener,
+            step.pos,
+        );
+    }
+    next_tick.retain(|id, _| footsteps.iter().any(|s| s.id == *id));
 }
 
 pub(super) fn tick_idle_mob_sounds(

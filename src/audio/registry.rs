@@ -86,6 +86,23 @@ impl Sound {
     pub const LeafBreak: Sound = Sound(27);
     /// Plant matter was placed into the world.
     pub const LeafPlace: Sound = Sound(28);
+    // FOOTSTEPS. Each is its material's PUNCH clips replayed quietly — a row
+    // pointing at the same variants at a low gain, the `farming:lamb_idle`
+    // pattern, so "how loud is a step" stays tunable data instead of a
+    // constant in the playback path. Swapping in dedicated step clips later is
+    // a `variants` edit and no code at all.
+    /// A footstep on wood.
+    pub const WoodStep: Sound = Sound(29);
+    /// A footstep on stone or ore.
+    pub const StoneStep: Sound = Sound(30);
+    /// A footstep on dirt, grass or gravel.
+    pub const DirtStep: Sound = Sound(31);
+    /// A footstep on sand, clay, silt or snow.
+    pub const SandStep: Sound = Sound(32);
+    /// A footstep on glass or ice.
+    pub const GlassStep: Sound = Sound(33);
+    /// A footstep on plant matter.
+    pub const LeafStep: Sound = Sound(34);
 }
 
 /// Engine sound names in frozen id order (`ENGINE_SOUND_NAMES[id]` names
@@ -120,6 +137,12 @@ const ENGINE_SOUND_NAMES: &[&str] = &[
     "petramond:leaf_punch",
     "petramond:leaf_break",
     "petramond:leaf_place",
+    "petramond:wood_step",
+    "petramond:stone_step",
+    "petramond:dirt_step",
+    "petramond:sand_step",
+    "petramond:glass_step",
+    "petramond:leaf_step",
 ];
 
 impl std::fmt::Debug for Sound {

@@ -63,40 +63,40 @@ pub static WOOD: BlockSoundSet = BlockSoundSet {
     dig: Some(Sound::WoodPunch),
     break_: Some(Sound::WoodBreak),
     place: Some(Sound::WoodPlace),
-    step: None,
+    step: Some(Sound::WoodStep),
 };
 
 /// Stone: stone, cobblestone, granite, ore, and every other `BlockMaterial::Stone`
 /// or `BlockMaterial::Ore` block. Mining loops the stone "punch"; break and place use
-/// the stone break/place sounds; the step slot awaits its asset.
+/// the stone break/place sounds; stepping replays the punch clips quietly.
 pub static STONE: BlockSoundSet = BlockSoundSet {
     dig: Some(Sound::StonePunch),
     break_: Some(Sound::StoneBreak),
     place: Some(Sound::StonePlace),
-    step: None,
+    step: Some(Sound::StoneStep),
 };
 
 /// Dirt: dirt, grass (a smotherable dirt), gravel, and every other
 /// `BlockMaterial::Dirt` block. Mining loops the dirt "punch"; break and place use
-/// the dirt break/place sounds; the step slot awaits its asset.
+/// the dirt break/place sounds; stepping replays the punch clips quietly.
 pub static DIRT: BlockSoundSet = BlockSoundSet {
     dig: Some(Sound::DirtPunch),
     break_: Some(Sound::DirtBreak),
     place: Some(Sound::DirtPlace),
-    step: None,
+    step: Some(Sound::DirtStep),
 };
 
 /// Sand-family: everything `BlockMaterial::Sand` — sand, red sand, clay, the
 /// exploration pack's cave silt, and the snow layer/block (which are
 /// shovel-classed as sand, so they inherit this set; a crunchier snow would be
 /// its own material, not a per-block exception here). Mining loops the sand
-/// "punch"; break and place use the sand break/place sounds; the step slot
-/// awaits its asset.
+/// "punch"; break and place use the sand break/place sounds; stepping replays
+/// the punch clips quietly.
 pub static SAND: BlockSoundSet = BlockSoundSet {
     dig: Some(Sound::SandPunch),
     break_: Some(Sound::SandBreak),
     place: Some(Sound::SandPlace),
-    step: None,
+    step: Some(Sound::SandStep),
 };
 
 /// Plant matter: LEAVES (`BlockMaterial::Foliage`) and every cross plant
@@ -104,21 +104,21 @@ pub static SAND: BlockSoundSet = BlockSoundSet {
 /// exploration pack's cave flora and vines). Two materials because they mine
 /// differently — a plant pairs with shears, leaves with the bare hand — but
 /// they are the same matter and rustle the same, the way `Ice` shares the glass
-/// set. The step slot awaits its asset; most plant matter has no collision to
-/// step on anyway.
+/// set. Plant matter is walked THROUGH, not on, so its step slot only sounds
+/// for the rare plant a body can stand on.
 pub static LEAF: BlockSoundSet = BlockSoundSet {
     dig: Some(Sound::LeafPunch),
     break_: Some(Sound::LeafBreak),
     place: Some(Sound::LeafPlace),
-    step: None,
+    step: Some(Sound::LeafStep),
 };
 
 /// Glass-family: glass, panes (`BlockMaterial::Glass`) and ice
-/// (`BlockMaterial::Ice`). Mining loops the glass "punch"; breaking shatters.
-/// The step slot awaits its asset.
+/// (`BlockMaterial::Ice`). Mining loops the glass "punch"; breaking shatters;
+/// stepping replays the punch clips quietly.
 pub static GLASS: BlockSoundSet = BlockSoundSet {
     dig: Some(Sound::GlassPunch),
     break_: Some(Sound::GlassBreak),
     place: Some(Sound::GlassPlace),
-    step: None,
+    step: Some(Sound::GlassStep),
 };

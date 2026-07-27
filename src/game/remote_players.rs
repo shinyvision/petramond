@@ -241,6 +241,12 @@ impl RemotePlayers {
         self.map.values()
     }
 
+    /// [`iter`](Self::iter) with each remote's id — for consumers that key
+    /// per-player state on it (the footstep cadence).
+    pub(crate) fn iter_with_ids(&self) -> impl Iterator<Item = (PlayerId, &RemotePlayer)> {
+        self.map.iter().map(|(id, p)| (*id, p))
+    }
+
     /// How many remotes exist / are asleep, for the sleep overlay's
     /// "x/y players sleeping" line.
     pub(crate) fn len(&self) -> usize {

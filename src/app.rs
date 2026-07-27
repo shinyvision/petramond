@@ -68,6 +68,10 @@ pub struct App {
     world_sound_cues: Vec<(crate::audio::Sound, crate::mathh::Vec3)>,
     /// Client-owned idle sound scheduling per live mob session id.
     mob_sound_state: HashMap<u64, MobSoundState>,
+    /// Client-owned footstep cadence per walking body (see
+    /// `crate::game::FootstepSource` for the key): the tick its next step is
+    /// due. Retired with the bodies themselves each frame.
+    footstep_next_tick: HashMap<u64, u64>,
     /// Reused per-frame scratch for client-mod loop gains (rain/wind beds).
     mod_loop_scratch: Vec<(crate::audio::Sound, f32)>,
     next_mob_sound_handle: u64,
@@ -231,6 +235,7 @@ impl App {
             mob_sound_events: Vec::new(),
             world_sound_cues: Vec::new(),
             mob_sound_state: HashMap::new(),
+            footstep_next_tick: HashMap::new(),
             mod_loop_scratch: Vec::new(),
             next_mob_sound_handle: MOB_SOUND_HANDLE_START,
             audio,

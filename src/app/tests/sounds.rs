@@ -4,9 +4,12 @@
 //! action can never sound twice (once locally, once via its broadcast event).
 
 use super::app;
-use crate::app::{render::tick_idle_mob_sounds, MobSoundState};
+use crate::app::{
+    render::{tick_footstep_sounds, tick_idle_mob_sounds},
+    MobSoundState,
+};
 use crate::audio::SpatialListener;
-use crate::game::presentation::MobPresentation;
+use crate::game::presentation::{FootstepSource, MobPresentation};
 use crate::game::{GameEvents, WorldEvent};
 use crate::mathh::{IVec3, Vec3};
 
@@ -149,4 +152,74 @@ fn mob_presentation(id: u64) -> MobPresentation {
         emitter_tint: [1.0; 3],
         ragdoll_pose: None,
     }
+}
+
+/// The footstep cadence: one step per body per [`FOOTSTEP_INTERVAL_TICKS`], a
+/// step the MOMENT a body starts walking, and silence for a body that is not.
+/// The handle pool is the observable — every step allocates exactly one, so it
+/// counts plays without asserting on clip identity.
+#[test]
+fn footsteps_fire_on_first_sight_then_hold_their_cadence() {
+    let mut test_app = app();
+    let listener = SpatialListener {
+        pos: Vec3::ZERO,
+        right: Vec3::X,
+    };
+    let walking = |id: u64| FootstepSource {
+        id,
+        pos: Vec3::new(0.0, 64.0, 0.0),
+        ground: Some(crate::block::Block::Stone),
+        sprinting: false,
+    };
+    // A sneaking body arrives exactly as a standing one — presentation, not
+    // `App`, is what silences it.
+    let standing = |id: u64| FootstepSource {
+        ground: None,
+        ..walking(id)
+    };
+    let sprinting = |id: u64| FootstepSource {
+        sprinting: true,
+        ..walking(id)
+    };
+    let app = &mut test_app.app;
+    let steps = |app: &mut crate::app::App, rows: &[FootstepSource], tick: u64| -> u64 {
+        let before = app.next_mob_sound_handle;
+        tick_footstep_sounds(
+            &mut app.audio,
+            &mut app.footstep_next_tick,
+            &mut app.next_mob_sound_handle,
+            listener,
+            rows,
+            tick,
+        );
+        app.next_mob_sound_handle - before
+    };
+
+    // Two bodies seen walking for the first time both step at once.
+    assert_eq!(steps(app, &[walking(0), walking(3)], 500), 2);
+    // …and neither steps again until the interval has passed.
+    for t in 501..510 {
+        assert_eq!(steps(app, &[walking(0), walking(3)], t), 0, "tick {t}");
+    }
+    assert_eq!(steps(app, &[walking(0), walking(3)], 510), 2);
+
+    // A body that stops walking is silent, and does NOT bank steps: resuming
+    // after a long pause plays one, not one per tick missed.
+    for t in 511..560 {
+        assert_eq!(steps(app, &[standing(0)], t), 0, "standing at {t}");
+    }
+    assert_eq!(steps(app, &[walking(0)], 560), 1);
+    assert_eq!(steps(app, &[walking(0)], 561), 0);
+
+    // A SPRINT tightens the interval to 7 ticks.
+    assert_eq!(steps(app, &[sprinting(0)], 571), 1);
+    for t in 572..578 {
+        assert_eq!(steps(app, &[sprinting(0)], t), 0, "sprinting at {t}");
+    }
+    assert_eq!(steps(app, &[sprinting(0)], 578), 1);
+
+    // Bodies that leave take their cadence state with them.
+    assert!(app.footstep_next_tick.contains_key(&0));
+    steps(app, &[], 600);
+    assert!(app.footstep_next_tick.is_empty());
 }

@@ -199,6 +199,35 @@ pub(crate) struct PlayerPresentation {
     pub(crate) blocklight: crate::light::BlockLight6,
 }
 
+/// One body whose FOOTSTEPS the client may sound this frame — the local player
+/// and every visible remote, together, so a step is heard at whoever took it.
+///
+/// Built here rather than in `App` because deciding it needs the world: the
+/// sound is the block UNDER the feet, and only presentation has the replica.
+/// The cadence itself is `App`'s (see `tick_footstep_sounds`), like the mob
+/// idle schedule.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub(crate) struct FootstepSource {
+    /// Stable cadence key: `0` is the local player, a remote is `1 + its
+    /// PlayerId`. Ids are only compared, never sent.
+    pub(crate) id: u64,
+    /// Feet centre — where the sound plays, so a remote's steps arrive from
+    /// their body and attenuate with distance like any other world sound.
+    pub(crate) pos: Vec3,
+    /// The block being walked on, or `None` when this body is not making
+    /// footsteps at all: standing still, SNEAKING, airborne (the cell below is
+    /// air), seated, asleep, or over an unloaded cell. `App` never re-decides
+    /// this.
+    pub(crate) ground: Option<crate::block::Block>,
+    /// Moving at a sprint — the gait `App` picks the step interval from.
+    ///
+    /// Derived from the body's ACTUAL horizontal speed on both sides rather
+    /// than from a sprint key: a key held while the body is blocked, wading, or
+    /// climbing must not quicken the cadence, and speed needs no new
+    /// replication (a remote's velocity already ships for its walk blend).
+    pub(crate) sprinting: bool,
+}
+
 pub(crate) struct GamePresentation<'a> {
     pub(crate) tick_alpha: f32,
     pub(crate) item_entities: &'a [DroppedItemPresentation],
@@ -214,6 +243,10 @@ pub(crate) struct GamePresentation<'a> {
     /// (`build_player_body` consumes `PlayerRenderInstance` directly, so no
     /// second translation buys anything).
     pub(crate) remote_players: &'a [RemotePlayerRender],
+    /// Every body that could sound a footstep this frame (see
+    /// [`FootstepSource`]) — INCLUDING bodies standing still, so `App` can
+    /// retire the cadence state of players who left without a second list.
+    pub(crate) footsteps: &'a [FootstepSource],
     pub(crate) player: Option<PlayerPresentation>,
     pub(crate) held_item_light: (u8, crate::light::BlockLight6),
     /// Every break (crack) overlay to draw this frame: the LOCAL player's own
@@ -221,6 +254,25 @@ pub(crate) struct GamePresentation<'a> {
     /// [`MAX_BREAK_OVERLAYS`] nearest to the camera.
     pub(crate) break_overlays: &'a [BreakOverlayView],
 }
+
+/// The local player's [`FootstepSource`] key. Remotes are `1 + PlayerId`, so
+/// zero can never collide with one.
+const LOCAL_FOOTSTEP_ID: u64 = 0;
+
+/// Horizontal speed (blocks/s) below which a body is not walking. Well
+/// under a sneak (half walk) and well over the drift a current or a
+/// conveyor-ish push imparts to a standing body.
+const MIN_FOOTSTEP_SPEED: f32 = 0.5;
+
+/// Horizontal speed (blocks/s) at or above which a body is SPRINTING —
+/// midway between `player::movement::WALK` (4.3) and `SPRINT` (5.6), so
+/// either gait clears it by a wide margin and a slowed sprint honestly
+/// reads as a walk.
+const SPRINT_FOOTSTEP_SPEED: f32 = 4.95;
+
+/// Walk-blend weight above which a REMOTE body is walking. The blend is eased,
+/// so this is a hysteresis-free threshold on an already-smoothed signal.
+const MIN_FOOTSTEP_WALK_WEIGHT: f32 = 0.35;
 
 /// Break overlays drawn per frame (own + remotes), nearest-to-camera first
 /// under contention — a bound so a crowd of miners can't grow the bake.
@@ -240,6 +292,7 @@ pub(crate) struct GamePresentationScratch {
     doors: Vec<DoorPresentation>,
     mobs: Vec<MobPresentation>,
     remote_players: Vec<RemotePlayerRender>,
+    footsteps: Vec<FootstepSource>,
     break_overlays: Vec<BreakOverlayView>,
 }
 
@@ -268,6 +321,7 @@ impl GamePresentationScratch {
         self.collect_mobs(game, tick_alpha);
         self.collect_mob_emitters(tick_alpha, view);
         self.collect_remote_players(game, tick_alpha);
+        self.collect_footsteps(game, tick_alpha);
         self.collect_break_overlays(game);
 
         GamePresentation {
@@ -279,6 +333,7 @@ impl GamePresentationScratch {
             doors: &self.doors,
             mobs: &self.mobs,
             remote_players: &self.remote_players,
+            footsteps: &self.footsteps,
             player: collect_player(game),
             held_item_light: game.held_item_light(),
             break_overlays: &self.break_overlays,
@@ -499,6 +554,70 @@ impl GamePresentationScratch {
                     });
                 }
             }
+        }
+    }
+
+    /// One footstep row per body — the local player plus every visible remote
+    /// — with the block under its feet resolved from the replica.
+    ///
+    /// "Is this body walking" is answered from the BEST signal each side has,
+    /// and they are deliberately different: the local player owns real physics
+    /// (`on_ground` + velocity), while a remote is only ever seen through the
+    /// replicated transform, whose movement the shared `BodyPose` has already
+    /// distilled into the `walk_weight` that drives its legs. Footsteps
+    /// agreeing with the animation is the point.
+    ///
+    /// SNEAKING is the exception that reads a FLAG on both sides, not a speed:
+    /// it already ships (observers need it to render the crouch), and a sneak
+    /// is only ~2.15 blocks/s, close enough to a laboured walk that inferring
+    /// it would silence ordinary movement.
+    ///
+    /// AIRBORNE NEEDS NO TEST: the cell under the feet is air, air is
+    /// `BlockMaterial::None`, and the silent set answers no step sound. The
+    /// same fall-through covers an unloaded cell and any block whose material
+    /// has no sounds yet.
+    fn collect_footsteps(&mut self, game: &Game, tick_alpha: f32) {
+        self.footsteps.clear();
+        let world = &game.replica;
+        // The block a body at `pos` (feet centre, model y=0) stands on.
+        let ground = |pos: Vec3, walking: bool| -> Option<crate::block::Block> {
+            if !walking {
+                return None;
+            }
+            let c = crate::mathh::voxel_at(pos - Vec3::new(0.0, 0.1, 0.0));
+            world.block_if_loaded(c.x, c.y, c.z)
+        };
+        let p = &game.player;
+        let speed = Vec3::new(p.vel.x, 0.0, p.vel.z).length();
+        self.footsteps.push(FootstepSource {
+            id: LOCAL_FOOTSTEP_ID,
+            pos: p.pos,
+            ground: ground(
+                p.pos,
+                p.on_ground
+                    && speed >= MIN_FOOTSTEP_SPEED
+                    && !game.predicted_input.sneak
+                    && game.self_mount.is_none(),
+            ),
+            sprinting: speed >= SPRINT_FOOTSTEP_SPEED,
+        });
+        for (id, rp) in game.remote_players.iter_with_ids() {
+            if !rp.curr.visible {
+                continue;
+            }
+            let (pos, _, _) = remote_players::interpolate(&rp.prev, &rp.curr, tick_alpha);
+            let vel = rp.curr.transform.vel;
+            let speed = Vec3::new(vel.x, 0.0, vel.z).length();
+            let walking = rp.pose.walk_weight >= MIN_FOOTSTEP_WALK_WEIGHT
+                && !rp.curr.sneaking
+                && !rp.curr.sleeping
+                && rp.curr.mount.is_none();
+            self.footsteps.push(FootstepSource {
+                id: 1 + id.0 as u64,
+                pos,
+                ground: ground(pos, walking),
+                sprinting: speed >= SPRINT_FOOTSTEP_SPEED,
+            });
         }
     }
 

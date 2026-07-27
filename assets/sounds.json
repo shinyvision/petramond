@@ -117,6 +117,72 @@
       "category": "block"
     },
     {
+      "sound": "petramond:wood_step",
+      "variants": [
+        "sounds/wood_punch_1.ogg",
+        "sounds/wood_punch_2.ogg",
+        "sounds/wood_punch_3.ogg"
+      ],
+      "gain": 0.2,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:stone_step",
+      "variants": [
+        "sounds/stone_punch_1.ogg",
+        "sounds/stone_punch_2.ogg",
+        "sounds/stone_punch_3.ogg"
+      ],
+      "gain": 0.2,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:dirt_step",
+      "variants": [
+        "sounds/dirt_punch_1.ogg",
+        "sounds/dirt_punch_2.ogg",
+        "sounds/dirt_punch_3.ogg"
+      ],
+      "gain": 0.2,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:sand_step",
+      "variants": [
+        "sounds/sand_punch_1.ogg",
+        "sounds/sand_punch_2.ogg",
+        "sounds/sand_punch_3.ogg"
+      ],
+      "gain": 0.2,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:glass_step",
+      "variants": [
+        "sounds/glass_punch_1.ogg",
+        "sounds/glass_punch_2.ogg",
+        "sounds/glass_punch_3.ogg"
+      ],
+      "gain": 0.2,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
+      "sound": "petramond:leaf_step",
+      "variants": [
+        "sounds/leaf_punch_1.ogg",
+        "sounds/leaf_punch_2.ogg",
+        "sounds/leaf_punch_3.ogg"
+      ],
+      "gain": 0.2,
+      "pitch_variation": 0.12,
+      "category": "block"
+    },
+    {
       "sound": "petramond:item_pickup",
       "variants": [
         "sounds/item_pickup.ogg"
