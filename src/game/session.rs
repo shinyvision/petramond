@@ -191,6 +191,7 @@ impl Game {
             prediction: super::prediction::PredictionLedger::new(),
             local_mining: crate::mining::MiningState::new(),
             predicted_input: Default::default(),
+            view_bob: Default::default(),
             local_hand_jab: false,
             local_hand_swing: false,
             local_hand_threw: false,

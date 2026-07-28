@@ -590,6 +590,7 @@ fn render_held_item_preview() {
             item: Some(item),
             variant: crate::item::VariantId::NONE,
             block_state: Default::default(),
+            bob: [0.0, 0.0],
             swing: 0.0,
             swing_scale: 1.0,
             eat,

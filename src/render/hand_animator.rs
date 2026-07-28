@@ -35,6 +35,23 @@ const EAT_BLEND_OUT_S: f32 = 0.10;
 /// stair-steps without lagging the 3-second drift noticeably.
 const EAT_NEAR_EASE_S: f32 = 0.09;
 
+/// How fast the hand's sway chases the camera's, per second.
+///
+/// This single number IS the "not perfectly in sync" — a first-order lag, not a
+/// fixed phase offset, because it also has to behave at the START and END of a
+/// walk (an offset would have the hand swaying before the first step and after
+/// the last). At a walk the camera's sway runs near 9.5 rad/s, so this rate
+/// puts the hand about 50 degrees behind at roughly two thirds amplitude:
+/// clearly trailing, never obviously wrong. Raising it walks the hand back into
+/// lockstep with the camera, which is the look this exists to avoid.
+const HAND_BOB_CHASE_RATE: f32 = 8.0;
+
+/// Peak hand sway in view units at full stride, side and up. The hand sits much
+/// nearer the eye than anything in the world, so it carries a larger motion
+/// than the camera's own without reading as bigger.
+const HAND_BOB_SWAY: f32 = 0.060;
+const HAND_BOB_RISE: f32 = 0.050;
+
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct HeldItemAnimator {
     swing_t: f32,
@@ -49,6 +66,8 @@ pub(crate) struct HeldItemAnimator {
     eat_near: f32,
     /// Nibble oscillator phase, advanced only while eating.
     eat_phase: f32,
+    /// The hand's lagging copy of the camera's walk sway, normalized.
+    bob: [f32; 2],
 }
 
 impl Default for HeldItemAnimator {
@@ -60,6 +79,7 @@ impl Default for HeldItemAnimator {
             eat_blend: 0.0,
             eat_near: 0.0,
             eat_phase: 0.0,
+            bob: [0.0, 0.0],
         }
     }
 }
@@ -67,6 +87,13 @@ impl Default for HeldItemAnimator {
 impl HeldItemAnimator {
     pub fn update(&mut self, frame: HeldItemFrame) -> HeldItemView {
         let dt = frame.dt.max(0.0);
+
+        // The hand CHASES the camera's sway instead of wearing it: the arm has
+        // mass, and a hand locked to the camera reads as painted on the screen.
+        let chase = 1.0 - (-HAND_BOB_CHASE_RATE * dt).exp();
+        for (have, want) in self.bob.iter_mut().zip(frame.bob) {
+            *have += (want - *have) * chase;
+        }
 
         // A placement plays one softer swing — the same punch motion as mining,
         // at reduced amplitude. Restart the phase so the jab reads cleanly even
@@ -131,6 +158,7 @@ impl HeldItemAnimator {
             item: frame.item,
             variant: frame.variant,
             block_state: frame.block_state,
+            bob: [self.bob[0] * HAND_BOB_SWAY, self.bob[1] * HAND_BOB_RISE],
             swing: self.swing_t,
             swing_scale: self.swing_scale,
             eat: e,
@@ -160,6 +188,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
         assert!(
@@ -176,6 +205,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            bob: [0.0, 0.0],
             dt: 0.5 / HAND_SWING_HZ,
         });
         assert_eq!(settled.swing, 0.0);
@@ -194,6 +224,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            bob: [0.0, 0.0],
             dt: 0.0,
         });
         assert_eq!(
@@ -210,6 +241,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
         assert!(
@@ -226,6 +258,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            bob: [0.0, 0.0],
             dt: 1.0 / HAND_SWING_HZ,
         });
         assert_eq!(settled.swing, 0.0);
@@ -243,6 +276,7 @@ mod tests {
             placed: false,
             swung: true,
             eating: None,
+            bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
         assert!(started.swing > 0.0, "an attack begins a swing");
@@ -261,6 +295,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            bob: [0.0, 0.0],
             dt: 1.0 / HAND_SWING_HZ,
         });
         assert_eq!(settled.swing, 0.0, "the attack swing completes");
@@ -278,6 +313,7 @@ mod tests {
             placed: true,
             swung: false,
             eating: None,
+            bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
         // A place starts a one-shot swing at the reduced place amplitude (softer
@@ -296,6 +332,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            bob: [0.0, 0.0],
             dt: 1.0 / HAND_SWING_HZ,
         });
         assert_eq!(settled.swing, 0.0);
@@ -315,6 +352,7 @@ mod tests {
             placed: true,
             swung: false,
             eating: None,
+            bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
         assert_eq!(
@@ -340,6 +378,7 @@ mod tests {
             placed: false,
             swung: false,
             eating: Some(progress),
+            bob: [0.0, 0.0],
             dt,
         };
 
@@ -405,8 +444,75 @@ mod tests {
             placed: false,
             swung: false,
             eating: None,
+            bob: [0.0, 0.0],
             dt: 1.0 / 60.0,
         });
         assert_eq!(view.swing_scale, 1.0, "mining is the full-strength punch");
+    }
+    /// The hand CHASES the camera's sway; it does not wear it. Pinned because
+    /// the obvious "simplification" — assigning `frame.bob` straight through —
+    /// puts the item in rigid lockstep with the camera, which is precisely the
+    /// look view bob exists to avoid, and nothing else in the frame would show
+    /// it.
+    #[test]
+    fn the_hand_trails_the_cameras_sway_instead_of_matching_it() {
+        let mut anim = HeldItemAnimator::default();
+        let dt = 1.0 / 60.0;
+        let frame = |bob: [f32; 2]| HeldItemFrame {
+            item: Some(ItemType::Stone),
+            variant: crate::item::VariantId::NONE,
+            block_state: Default::default(),
+            mining: false,
+            broke_block: false,
+            placed: false,
+            swung: false,
+            eating: None,
+            bob,
+            dt,
+        };
+
+        // A step to full sway is approached, never taken in one frame.
+        let first = anim.update(frame([1.0, 0.0]));
+        assert!(
+            first.bob[0] > 0.0 && first.bob[0] < HAND_BOB_SWAY * 0.5,
+            "one frame must only start the chase: {}",
+            first.bob[0]
+        );
+
+        // Under the real thing — a sine at a walk's sway rate — the hand runs
+        // BEHIND and SHORTER than the camera. Both matter: a pure phase offset
+        // would keep full amplitude, and pure damping would keep the timing.
+        let mut anim = HeldItemAnimator::default();
+        let omega = 9.5_f32; // rad/s, a walk's lateral sway
+        let (mut camera, mut hand) = (Vec::new(), Vec::new());
+        for i in 0..600 {
+            let t = i as f32 * dt;
+            let c = (omega * t).sin();
+            hand.push(anim.update(frame([c, 0.0])).bob[0] / HAND_BOB_SWAY);
+            camera.push(c);
+        }
+        // Measure over the last few cycles, past the start transient.
+        let tail = 300;
+        let peak = |v: &[f32]| v[tail..].iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        assert!(
+            peak(&hand) < peak(&camera) * 0.9,
+            "the hand should swing shorter: {} vs {}",
+            peak(&hand),
+            peak(&camera)
+        );
+        let rising_zero = |v: &[f32]| {
+            v.windows(2)
+                .enumerate()
+                .skip(tail)
+                .find(|(_, w)| w[0] < 0.0 && w[1] >= 0.0)
+                .map(|(i, _)| i)
+                .expect("a rising crossing in the tail")
+        };
+        assert!(
+            rising_zero(&hand) > rising_zero(&camera),
+            "the hand should cross LATER: {} vs {}",
+            rising_zero(&hand),
+            rising_zero(&camera)
+        );
     }
 }

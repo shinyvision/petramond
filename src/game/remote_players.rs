@@ -213,7 +213,10 @@ impl RemotePlayers {
                 0.0
             };
             let latch = std::mem::take(&mut p.latched);
+            // A remote body's arm swing comes from its POSE; view bob is a
+            // first-person camera effect and has no meaning on one.
             p.view = p.animator.update(HeldItemFrame {
+                bob: [0.0, 0.0],
                 item: p.curr.held_item.map(crate::item::ItemType),
                 variant: p
                     .curr

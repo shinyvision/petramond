@@ -173,6 +173,7 @@ impl App {
                 placed: hand.placed,
                 swung: hand.swung,
                 eating: frame.held_item.eating,
+                bob: frame.held_item.bob,
                 dt,
             });
         }

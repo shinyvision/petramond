@@ -30,6 +30,9 @@ pub(crate) struct ClientHeldItem {
     /// `[0, 1)` — the animation carries the food deeper toward the mouth as it
     /// advances. `None` on ordinary frames.
     pub(crate) eating: Option<f32>,
+    /// The camera's normalized walk sway this frame — the hand follows a
+    /// LAGGED copy of it (see `game::view_bob` and `HeldItemAnimator`).
+    pub(crate) bob: [f32; 2],
 }
 
 impl Game {
@@ -61,6 +64,7 @@ impl Game {
                 mining,
                 mining_block,
                 eating: self.eating_progress(),
+                bob: self.view_bob.offset(),
             },
         }
     }

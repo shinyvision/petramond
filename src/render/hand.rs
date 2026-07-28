@@ -296,6 +296,13 @@ fn arm_punch_rotation(swing: f32, amp: f32) -> Quat {
         * Quat::from_rotation_x(radians(-ARM_PUNCH_ROLL_DEG * strike))
 }
 
+/// The hand's walking sway as a view-space translation. Already lagged and
+/// scaled by the animator; the `-y` is because view space grows upward while
+/// the bob's `up` channel is a rise.
+fn bob_offset(view: &HeldItemView) -> Vec3 {
+    Vec3::new(view.bob[0], view.bob[1], 0.0)
+}
+
 fn bare_arm_placement(view: &HeldItemView, aspect: f32) -> Mat4 {
     let aspect = aspect.max(0.0001);
     let anchor = view_pos_from_ndc(
@@ -304,7 +311,7 @@ fn bare_arm_placement(view: &HeldItemView, aspect: f32) -> Mat4 {
         BARE_ARM_DEPTH,
         aspect,
     );
-    let rest = Mat4::from_translation(anchor)
+    let rest = Mat4::from_translation(anchor + bob_offset(view))
         * Mat4::from_scale(Vec3::splat(VANILLA_ARM_SCALE))
         * arm_rest_pose();
 
@@ -330,7 +337,7 @@ fn held_item_placement(view: &HeldItemView, aspect: f32) -> Mat4 {
 /// pose (mouth carry + nibble) composes here too, so every held render kind
 /// (block cube, extruded sprite, bbmodel) eats identically.
 fn placement_at(view: &HeldItemView, rest: Vec3, throw_scale: f32) -> Mat4 {
-    let mut pos = rest;
+    let mut pos = rest + bob_offset(view);
     let mut rot = Quat::IDENTITY;
 
     if view.eat > 0.0 {

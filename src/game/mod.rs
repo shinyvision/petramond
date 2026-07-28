@@ -34,6 +34,7 @@ pub(crate) mod ambient;
 pub(crate) mod body_pose;
 mod client_mods;
 mod client_presentation;
+mod view_bob;
 pub(crate) mod container;
 pub(crate) mod environment;
 mod frame;
@@ -237,6 +238,9 @@ pub struct Game {
     /// (`tick_player`) — reused verbatim by `build_player_update` so the wire
     /// intent can never drift from what the prediction simulated.
     predicted_input: crate::player::Input,
+    /// First-person walking sway — a presentation offset on the camera, and
+    /// the signal the hand follows (lagged) so the two are not in lockstep.
+    view_bob: view_bob::ViewBob,
     /// One-shot hand/presentation triggers latched this frame for P0
     /// prediction — the ONLY source of the own hand animation (the server
     /// never echoes self-initiated one-shots back). Consumed into `GameEvents` in

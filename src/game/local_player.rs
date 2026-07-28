@@ -13,6 +13,16 @@ const STEP_CAMERA_EPS: f32 = 0.001;
 /// Camera height above the feet while asleep: head-on-the-pillow, a touch
 /// above the mattress the body is standing on (vs the standing `player::EYE`).
 const SLEEP_EYE_HEIGHT: f32 = 0.25;
+/// Peak lateral camera sway while walking, in blocks. Subtle on purpose: this
+/// is the channel a player FEELS, and a big one is what makes view bob a motion
+/// sickness complaint rather than a sense of weight.
+const BOB_EYE_SWAY: f32 = 0.045;
+
+/// Peak vertical camera rise/dip while walking, in blocks — deliberately far
+/// smaller than the sway. Vertical camera motion is the more nauseating axis
+/// and it also fights the step-up glide above, which owns real height changes.
+const BOB_EYE_RISE: f32 = 0.018;
+
 /// How far the first-person eye drops while sneaking (blocks) — the in-view
 /// feedback that sneak is active. CAMERA ONLY: the sim eye (`player::EYE`),
 /// reach, and the collision box stay full height, exactly like the sleep
@@ -280,6 +290,25 @@ impl Game {
         let sneak_settle = 1.0 - (-SNEAK_EYE_SETTLE_SPEED * dt.max(0.0)).exp();
         self.camera_sneak_y_offset += (sneak_target - self.camera_sneak_y_offset) * sneak_settle;
 
+        // Walking sway. Presentation only, like both offsets above — see
+        // `view_bob`. A sleeper, rider, spectator or airborne body simply
+        // eases back to rest rather than being special-cased at the apply.
+        let hspeed = Vec3::new(self.player.vel.x, 0.0, self.player.vel.z).length();
+        let striding = self.player.on_ground
+            && !self.player.is_spectator()
+            && self.self_mount.is_none()
+            && self.self_view.sleeping.is_none()
+            // THIRD PERSON DOES NOT BOB. The boom camera is `self.cam` cloned
+            // and retreated (`update_third_person`, which runs after this), so
+            // suppressing the sway here is what keeps it out of the boom —
+            // there is no second place to gate. Easing the envelope to rest
+            // rather than skipping the APPLY is deliberate: toggling back
+            // mid-stride then eases the sway in instead of snapping the camera
+            // to wherever the phase had run to.
+            && !self.third_person_enabled();
+        self.view_bob.advance(dt, hspeed, striding);
+        let [bob_side, bob_up] = self.view_bob.offset();
+
         // Lying in bed: the body stays a standing collision box on the
         // mattress (physics unchanged), but the camera drops to pillow height
         // so the player visibly lies down rather than standing on the bed.
@@ -287,9 +316,19 @@ impl Game {
         let eye_y = if self.self_view.sleeping.is_some() {
             self.player.pos.y + SLEEP_EYE_HEIGHT
         } else {
-            target.y + self.camera_step_y_offset + self.camera_sneak_y_offset
+            target.y
+                + self.camera_step_y_offset
+                + self.camera_sneak_y_offset
+                + bob_up * BOB_EYE_RISE
         };
-        self.cam.pos = Vec3::new(target.x, eye_y, target.z);
+        // The sway is LATERAL in the camera's own frame, so it reads as the
+        // body swinging under the head whichever way the player is looking.
+        // `cam.yaw` is already this frame's look (mirrored in `apply_look`),
+        // and the horizontal right vector ignores pitch, so looking up or down
+        // cannot tilt the sway out of the horizon.
+        let (sin_yaw, cos_yaw) = self.cam.yaw.sin_cos();
+        let right = Vec3::new(cos_yaw, 0.0, -sin_yaw);
+        self.cam.pos = Vec3::new(target.x, eye_y, target.z) + right * (bob_side * BOB_EYE_SWAY);
         self.last_player_eye_y = target.y;
     }
 

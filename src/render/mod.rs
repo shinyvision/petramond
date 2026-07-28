@@ -163,6 +163,10 @@ pub struct HeldItemView {
     /// The held stack's instance-data variant (tint resolution at draw).
     pub variant: crate::item::VariantId,
     pub block_state: HeldBlockState,
+    /// The hand's own sway: the camera's bob run through a first-order lag, so
+    /// the arm trails the body instead of moving with it (see
+    /// `HeldItemAnimator`). View-space offset, already scaled.
+    pub bob: [f32; 2],
     /// 0..1 punch phase (sawtooth while mining, one-shot for a break/place).
     pub swing: f32,
     /// Amplitude of the current swing: `1.0` for a mining/break punch, less for
@@ -187,6 +191,7 @@ impl Default for HeldItemView {
             item: None,
             variant: crate::item::VariantId::NONE,
             block_state: HeldBlockState::None,
+            bob: [0.0, 0.0],
             swing: 0.0,
             swing_scale: 1.0,
             eat: 0.0,
@@ -217,6 +222,10 @@ pub struct HeldItemFrame {
     /// The animator raises the food quickly at the start, then drifts it the
     /// rest of the way to the mouth as the progress advances.
     pub eating: Option<f32>,
+    /// The camera's normalized walk sway this frame (`side`, `up` — see
+    /// `game::view_bob`). The hand does NOT wear it directly: the animator
+    /// lags it, which is what stops the item riding the screen rigidly.
+    pub bob: [f32; 2],
     pub dt: f32,
 }
 

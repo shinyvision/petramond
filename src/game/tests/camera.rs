@@ -34,3 +34,41 @@ fn camera_eases_grounded_step_up_to_the_player_eye() {
         game.cam.pos.y
     );
 }
+
+/// View bob sways the FIRST-PERSON eye and must never reach the third-person
+/// boom — which is `self.cam` cloned and retreated, so the only thing keeping
+/// it out is the suppression in `sync_camera_to_player_eye`. Nothing else in
+/// the frame would show a bobbing boom.
+#[test]
+fn view_bob_sways_the_first_person_eye_and_never_the_third_person_boom() {
+    let mut game = game();
+    game.player.pos = Vec3::new(0.0, 64.0, 0.0);
+    game.player.on_ground = true;
+    game.player.yaw = 0.0;
+    game.cam.yaw = 0.0;
+
+    // Two seconds of walking: with yaw 0 the sway rides +X, and the rise is the
+    // camera's departure from the eye height.
+    let walk = |game: &mut crate::game::Game, frames: usize| -> (f32, f32) {
+        let (mut sway, mut rise) = (0.0f32, 0.0f32);
+        for _ in 0..frames {
+            game.player.vel = Vec3::new(4.3, 0.0, 0.0);
+            game.sync_camera_to_player_eye(1.0 / 60.0);
+            sway = sway.max((game.cam.pos.x - game.player.pos.x).abs());
+            rise = rise.max((game.cam.pos.y - game.player.eye().y).abs());
+        }
+        (sway, rise)
+    };
+
+    let (sway, rise) = walk(&mut game, 120);
+    assert!(sway > 0.01, "first person should sway sideways: {sway}");
+    assert!(rise > 0.005, "…and rise/dip a little: {rise}");
+
+    // Switching to third person settles the eye back onto the player's axis,
+    // so the boom cloned from it carries no sway at all.
+    game.third_person.enabled = true;
+    walk(&mut game, 120);
+    let (sway, rise) = walk(&mut game, 120);
+    assert!(sway < 1e-4, "third person must not sway: {sway}");
+    assert!(rise < 1e-4, "third person must not rise: {rise}");
+}
