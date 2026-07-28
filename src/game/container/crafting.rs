@@ -16,16 +16,24 @@ impl ContainerMenu {
     /// inventory. Selection is client-only; the session owns only this output.
     /// `bulk` (shift-craft) repeats until ingredients run out or the output
     /// stack fills; the first craft's failure is the request's outcome.
+    ///
+    /// A recipe the player has not UNLOCKED is not a recipe they have: it is
+    /// refused here, on the authoritative side, exactly like a wrong-station
+    /// or unknown key — the browser's hiding it is presentation.
     pub(crate) fn craft_recipe(
         &mut self,
         inventory: &mut Inventory,
         recipes: &Recipes,
+        progression: &crate::player::Progression,
         recipe_key: &str,
         bulk: bool,
     ) -> Result<Vec<ItemStack>, CraftMenuFailure> {
         let station = self
             .crafting_station()
             .ok_or(CraftMenuFailure::InvalidRecipe)?;
+        if !progression.is_unlocked(recipe_key) {
+            return Err(CraftMenuFailure::InvalidRecipe);
+        }
         let recipe = recipes
             .crafting()
             .get_at(recipe_key, station)

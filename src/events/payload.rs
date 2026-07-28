@@ -257,6 +257,51 @@ pub(crate) enum PostEvent {
         key: String,
         value: crate::mob::MobTagValue,
     },
+    /// A player vacuumed one dropped-item stack off the ground.
+    ItemPickedUp {
+        player: crate::server::player::PlayerId,
+        item: ItemType,
+        count: u8,
+        /// The collector's body centre — the drop entity is already gone.
+        pos: Vec3,
+    },
+    /// An item kind entered a player's inventory for the FIRST time ever,
+    /// from ANY source (pickup, craft, furnace/chest take, mod `GiveItem`).
+    /// The once-per-kind guarantee is the player's persisted obtained set
+    /// (`player::Progression`), so handlers need no memory of their own.
+    ItemObtained {
+        player: crate::server::player::PlayerId,
+        item: ItemType,
+    },
+    /// Damage LANDED on a mob: it survived the i-frame gate, `mob_damage_pre`,
+    /// and had a live feedback pipeline. `amount` is the post-mutation value
+    /// actually applied. A killing blow fires this AND `MobDied`.
+    MobDamaged {
+        mob_id: u64,
+        kind: Mob,
+        amount: f32,
+        source: DamageSource,
+        killed: bool,
+    },
+    /// A use click RESOLVED — the observational twin of the cancellable
+    /// `InteractAttempt`, fired once per attempt that named a cell or a mob
+    /// whether or not a consumer claimed it (a claim ENDS the pre dispatch,
+    /// so a later handler never sees the attempt; this is where it can still
+    /// observe one).
+    Interacted {
+        block: Option<IVec3>,
+        face: Option<IVec3>,
+        mob: Option<u64>,
+        player: crate::server::player::PlayerId,
+        consumed: bool,
+    },
+    /// A mod emitted its own event (`EmitEvent`). `key` is namespaced to the
+    /// emitting mod; `data` is that mod's opaque payload. Every registered
+    /// handler sees every mod event.
+    ModEvent {
+        key: String,
+        data: Vec<u8>,
+    },
 }
 
 /// Registration key for post handlers; one bit per kind gates enqueueing so an
@@ -277,10 +322,15 @@ pub(crate) enum PostEventKind {
     PlayerDismounted,
     MobTagAdded,
     MobTagRemoved,
+    ItemPickedUp,
+    ItemObtained,
+    MobDamaged,
+    Interacted,
+    ModEvent,
 }
 
 impl PostEventKind {
-    pub(crate) const COUNT: usize = 14;
+    pub(crate) const COUNT: usize = 19;
 }
 
 impl PostEvent {
@@ -300,6 +350,11 @@ impl PostEvent {
             PostEvent::PlayerDismounted { .. } => PostEventKind::PlayerDismounted,
             PostEvent::MobTagAdded { .. } => PostEventKind::MobTagAdded,
             PostEvent::MobTagRemoved { .. } => PostEventKind::MobTagRemoved,
+            PostEvent::ItemPickedUp { .. } => PostEventKind::ItemPickedUp,
+            PostEvent::ItemObtained { .. } => PostEventKind::ItemObtained,
+            PostEvent::MobDamaged { .. } => PostEventKind::MobDamaged,
+            PostEvent::Interacted { .. } => PostEventKind::Interacted,
+            PostEvent::ModEvent { .. } => PostEventKind::ModEvent,
         }
     }
 }

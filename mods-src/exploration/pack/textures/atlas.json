@@ -69,6 +69,10 @@
       "file": "hanging_vine.png"
     },
     {
+      "name": "exploration:mushroom_planks",
+      "file": "mushroom_planks.png"
+    },
+    {
       "name": "exploration:mushroom_stem",
       "file": "mushroom_stem.png"
     },

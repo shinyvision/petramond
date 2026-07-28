@@ -1,0 +1,49 @@
+{
+  "recipes": [
+    {
+      "type": "crafting",
+      "recipe": "exploration:mushroom_planks",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "exploration:mushroom_stem",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "exploration:mushroom_planks",
+        "count": 4
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "exploration:mushroom_stairs",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "exploration:mushroom_planks",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "exploration:mushroom_stairs",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "exploration:mushroom_slab",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "exploration:mushroom_planks",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "exploration:mushroom_slab",
+        "count": 6
+      }
+    }
+  ]
+}

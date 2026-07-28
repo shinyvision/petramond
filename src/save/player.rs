@@ -14,7 +14,7 @@ use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u32, put_u8,
 
 /// The one supported player-file version. Only the CURRENT version decodes —
 /// no legacy ladders. Bump this and let old dev players respawn fresh.
-const VERSION: u32 = 4;
+const VERSION: u32 = 5;
 
 /// Decoded `players/<name>.dat` contents.
 pub struct PlayerData {
@@ -36,6 +36,12 @@ pub struct PlayerData {
     pub effects: Vec<(String, u32)>,
     /// The recipe browser's craftable-only filter preference.
     pub craft_craftable_only: bool,
+    /// Item kinds this player has ever held, by registry NAME (ids are
+    /// session-scoped, exactly like the effect names above). This is what
+    /// makes `item_obtained` a once-per-lifetime event across sessions.
+    pub obtained_items: Vec<String>,
+    /// Unlocked crafting recipe keys, in unlock order.
+    pub unlocked_recipes: Vec<String>,
 }
 
 pub fn encode(player: &Player) -> Vec<u8> {
@@ -77,7 +83,38 @@ pub fn encode(player: &Player) -> Vec<u8> {
         b.extend_from_slice(name.as_bytes());
         put_u32(&mut b, e.remaining);
     }
+    // Progression: obtained items by registry name, then unlocked recipe keys
+    // in unlock order (the order the wire catch-up depends on).
+    let obtained: Vec<&str> = player
+        .progression
+        .obtained()
+        .iter()
+        .filter_map(|item| crate::registry::names().items.name(item.id()))
+        .collect();
+    put_strings(&mut b, obtained.iter().copied());
+    put_strings(
+        &mut b,
+        player.progression.unlocked().iter().map(String::as_str),
+    );
     b
+}
+
+fn put_strings<'a>(b: &mut Vec<u8>, values: impl ExactSizeIterator<Item = &'a str>) {
+    put_u32(b, values.len() as u32);
+    for value in values {
+        put_u32(b, value.len() as u32);
+        b.extend_from_slice(value.as_bytes());
+    }
+}
+
+fn get_strings(r: &mut Reader) -> Option<Vec<String>> {
+    let n = r.u32()? as usize;
+    let mut out = Vec::with_capacity(n.min(1024));
+    for _ in 0..n {
+        let len = r.u32()? as usize;
+        out.push(std::str::from_utf8(r.bytes(len)?).ok()?.to_owned());
+    }
+    Some(out)
 }
 
 /// Decode a CURRENT-version player file. Any other version returns `None` —
@@ -123,6 +160,9 @@ pub fn decode(bytes: &[u8]) -> Option<PlayerData> {
         effects.push((name, remaining));
     }
 
+    let obtained_items = get_strings(&mut r)?;
+    let unlocked_recipes = get_strings(&mut r)?;
+
     Some(PlayerData {
         pos,
         vel,
@@ -134,6 +174,8 @@ pub fn decode(bytes: &[u8]) -> Option<PlayerData> {
         inventory,
         effects,
         craft_craftable_only,
+        obtained_items,
+        unlocked_recipes,
     })
 }
 
@@ -152,6 +194,14 @@ impl PlayerData {
         player.inventory = self.inventory.clone();
         player.bed_spawn = self.bed_spawn;
         player.craft_craftable_only = self.craft_craftable_only;
+        // An item whose pack is gone simply drops out of the record, like an
+        // unknown effect: the set is a discovery log, not addressing.
+        player.progression.restore(
+            self.obtained_items
+                .iter()
+                .filter_map(|name| crate::item::ItemType::by_name(name)),
+            self.unlocked_recipes.clone(),
+        );
         for (name, remaining) in &self.effects {
             match crate::effect::by_name(name) {
                 Some(effect) => player.apply_effect(effect, *remaining),
@@ -205,6 +255,10 @@ mod tests {
         });
         player.apply_effect(crate::effect::Effect::Regeneration, 950);
         player.craft_craftable_only = true;
+        player.progression.obtain(crate::item::ItemType::OakLog);
+        player.progression.obtain(crate::item::ItemType::Coal);
+        player.progression.unlock("petramond:oak_planks");
+        player.progression.unlock("petramond:torch");
 
         let bytes = encode(&player);
         let got = decode(&bytes).expect("decodes");
@@ -233,6 +287,28 @@ mod tests {
         assert!(
             got.restore().craft_craftable_only,
             "the craftable-only browser preference survives the round-trip"
+        );
+        // Progression is the one record a player cannot re-earn by playing:
+        // losing it re-hides recipes they already unlocked, and losing the
+        // obtained set re-fires `item_obtained` for things they have had for
+        // days. Both travel by NAME, and unlock ORDER is the wire catch-up's
+        // contract.
+        let restored = got.restore();
+        assert_eq!(
+            restored.progression.unlocked(),
+            ["petramond:oak_planks", "petramond:torch"],
+            "unlocked recipes survive in unlock order"
+        );
+        assert!(restored.progression.obtained().intersects(
+            &[crate::item::ItemType::OakLog, crate::item::ItemType::Coal]
+                .into_iter()
+                .collect()
+        ));
+        let mut fresh = crate::item::ItemSet::EMPTY;
+        fresh.insert(crate::item::ItemType::Diamond);
+        assert!(
+            !restored.progression.obtained().intersects(&fresh),
+            "an item never held stays unheld"
         );
     }
 

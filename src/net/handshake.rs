@@ -252,6 +252,7 @@ mod tests {
                 inventory: Vec::new(),
                 active_slot: 2,
                 craft_craftable_only: false,
+                unlocked_recipes: Vec::new(),
             },
             crafting_recipes: Vec::new(),
             players: vec![(PlayerId(0), "Host".to_string())],

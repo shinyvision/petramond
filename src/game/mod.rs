@@ -34,7 +34,6 @@ pub(crate) mod ambient;
 pub(crate) mod body_pose;
 mod client_mods;
 mod client_presentation;
-mod view_bob;
 pub(crate) mod container;
 pub(crate) mod environment;
 mod frame;
@@ -49,6 +48,7 @@ pub(crate) mod session;
 mod terrain_render;
 mod third_person;
 pub(crate) mod tick;
+mod view_bob;
 mod world_prediction;
 
 use std::collections::{HashMap, VecDeque};
@@ -716,6 +716,13 @@ impl Game {
         &self.crafting
     }
 
+    /// The local player's discovery record, mirrored from the server (the
+    /// unlocked half — see `SelfRestore::unlocked_recipes`). The browser lists
+    /// exactly these recipes.
+    pub fn progression(&self) -> &crate::player::Progression {
+        &self.player.progression
+    }
+
     #[cfg(test)]
     pub(crate) fn replica_for_test(&self) -> &crate::world::World {
         &self.replica
@@ -733,11 +740,18 @@ impl Game {
         self.self_view.inventory_revision
     }
 
+    /// Install a browser catalog AND unlock all of it, the way a real session
+    /// arrives (catalog from the handshake, unlocked set from the player's
+    /// record). Tests about the browser are about presentation, not
+    /// discovery; a test that wants a LOCKED recipe unlocks selectively.
     #[cfg(test)]
     pub(crate) fn set_crafting_catalog_for_test(
         &mut self,
         catalog: crate::crafting::CraftingCatalog,
     ) {
+        for recipe in catalog.iter() {
+            self.player.progression.unlock(recipe.key());
+        }
         self.crafting = catalog;
     }
 

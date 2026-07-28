@@ -56,6 +56,12 @@ pub(crate) struct SelfRestore {
     pub active_slot: u8,
     /// The recipe browser's craftable-only filter preference.
     pub craft_craftable_only: bool,
+    /// Every crafting recipe unlocked for this player, in unlock order — the
+    /// browser shows exactly these. Later unlocks arrive as the appended
+    /// suffix ([`ServerToClient::RecipesUnlocked`]).
+    ///
+    /// [`ServerToClient::RecipesUnlocked`]: crate::net::protocol::ServerToClient::RecipesUnlocked
+    pub unlocked_recipes: Vec<String>,
 }
 
 /// Everything a client needs to enter the world, sent on `JoinAccept`.

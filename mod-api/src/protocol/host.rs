@@ -1207,6 +1207,52 @@ pub enum HostCall {
         lo: [i32; 3],
         hi: [i32; 3],
     },
+
+    // --- progression ----------------------------------------------------------
+    /// Unlock a crafting recipe for one player: it joins their browser at
+    /// whatever station the recipe declares, and the server starts accepting
+    /// it from them. Idempotent — `true` = this call is what unlocked it,
+    /// `false` = already unlocked, no such recipe key, or no such player.
+    /// Persists with the player. → [`HostRet::Bool`].
+    ///
+    /// The unlock is a CONSEQUENCE, not an event: call it from whatever
+    /// handler decides the player has earned it (an `item_obtained`, a
+    /// `mob_died`, the mod's own [`EmitEvent`](Self::EmitEvent)). A recipe
+    /// nobody unlocks stays invisible, so a pack that authors recipes and no
+    /// policy still gets the engine's ingredient-discovery default.
+    ///
+    /// Reaching another player needs the dispatch site to publish the
+    /// sessions view: POST event handlers and attached tick systems always
+    /// do, and those are where an unlock belongs anyway. From a site that
+    /// does not, the call answers `false` and logs which case it hit.
+    UnlockRecipe {
+        player: PlayerId,
+        recipe: String,
+    },
+    /// Has `player` unlocked `recipe`? The read half of
+    /// [`UnlockRecipe`](Self::UnlockRecipe), for gating a mod's own hints,
+    /// GUIs, or follow-up rewards. `false` for an unknown recipe or player.
+    /// → [`HostRet::Bool`].
+    RecipeUnlocked {
+        player: PlayerId,
+        recipe: String,
+    },
+    /// Emit one of the calling mod's OWN events onto the post-event queue,
+    /// dispatched at the next drain point in this same tick (never inline —
+    /// re-entering the bus from inside a guest dispatch is forbidden, exactly
+    /// like [`DamagePlayer`](Self::DamagePlayer) queueing its action).
+    ///
+    /// `key` must carry the calling mod's `mod_id:` prefix; `data` is that
+    /// mod's own opaque payload, capped like a KV value. Every handler
+    /// registered for [`EventKind::ModEvent`] sees it, so the key is the
+    /// filter. → [`HostRet::Unit`].
+    ///
+    /// [`EventKind::ModEvent`]: crate::EventKind::ModEvent
+    EmitEvent {
+        key: String,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].

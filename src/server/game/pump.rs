@@ -93,6 +93,18 @@ impl ServerGame {
                 }
             }
         }
+        // Recipes unlocked since this recipient last heard: unlocking only
+        // ever appends, so the catch-up is the untold suffix.
+        for (s, out) in per_session.iter_mut().enumerate() {
+            let sess = &mut self.sessions[s];
+            let unlocked = sess.player.progression.unlocked();
+            if unlocked.len() > sess.sent_unlock_count {
+                out.push(ServerToClient::RecipesUnlocked {
+                    recipes: unlocked[sess.sent_unlock_count..].to_vec(),
+                });
+                sess.sent_unlock_count = unlocked.len();
+            }
+        }
         let queue_room: Vec<usize> = self
             .sessions
             .iter()

@@ -28,6 +28,7 @@ mod collision;
 mod interaction;
 pub mod model;
 mod movement;
+mod progression;
 mod state;
 
 #[cfg(test)]
@@ -43,6 +44,7 @@ pub(crate) use movement::WATER_PROBE_Y;
 /// speeds plus the vertical envelope (jump take-off up, terminal fall down)
 /// and gravity (correction deadband scaling).
 pub(crate) use movement::{GRAVITY, JUMP_V0, SPECTATOR_SPRINT, SPRINT, TERMINAL};
+pub use progression::Progression;
 pub use state::{
     BedSpawn, Input, Player, PlayerInputSnapshot, PlayerMode, PlayerRosterSnapshot, DT_MAX, EYE,
     HALF_W, HEIGHT, MAX_HEALTH, PITCH_LIMIT,

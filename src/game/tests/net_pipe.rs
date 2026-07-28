@@ -14,19 +14,20 @@ use crate::net::protocol::{ClientToServer, MenuSlotWire, PlayerAction, TargetRef
 use crate::server::health::fall_damage_health;
 
 fn install_test_crafting_recipe(game: &mut super::common::TestGame) {
-    game.server.recipes = crate::crafting::Recipes::new(
-        vec![crate::crafting::CraftingRecipe::new(
-            "test:ordered".into(),
-            crate::crafting::CraftingStation::Inventory,
-            vec![crate::crafting::CraftingIngredient {
-                selector: crate::crafting::IngredientSelector::Item(ItemType::Coal),
-                count: 1,
-                use_mode: crate::crafting::IngredientUse::Consume,
-            }],
-            ItemStack::new(ItemType::Stick, 2),
-        )],
-        Vec::new(),
-    );
+    game.server
+        .install_recipes_for_test(crate::crafting::Recipes::new(
+            vec![crate::crafting::CraftingRecipe::new(
+                "test:ordered".into(),
+                crate::crafting::CraftingStation::Inventory,
+                vec![crate::crafting::CraftingIngredient {
+                    selector: crate::crafting::IngredientSelector::Item(ItemType::Coal),
+                    count: 1,
+                    use_mode: crate::crafting::IngredientUse::Consume,
+                }],
+                ItemStack::new(ItemType::Stick, 2),
+            )],
+            Vec::new(),
+        ));
 }
 
 fn apply_update(game: &mut super::common::TestGame, u: crate::net::protocol::PlayerUpdate) {

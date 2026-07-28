@@ -17,7 +17,7 @@
 
 use super::game::ServerGame;
 use crate::block::{Block, BlockInteraction};
-use crate::events::{InteractAttempt, Outcome};
+use crate::events::{InteractAttempt, Outcome, PostEvent};
 use crate::game::tick::TickEvents;
 use crate::mathh::IVec3;
 use crate::net::protocol::TargetRef;
@@ -192,6 +192,20 @@ impl ServerGame {
                 }
             }
             break;
+        }
+        // The attempt RESOLVED: announce it once, whoever took it. A claim
+        // ends the pre dispatch, so `interact_attempt` handlers after the
+        // claimant never saw it — this is where anything that only wants to
+        // OBSERVE the click (progression, statistics, tutorial hints) reads
+        // it, with the outcome attached.
+        if attempt.block.is_some() || attempt.mob.is_some() {
+            self.bus.emit(PostEvent::Interacted {
+                block: attempt.block,
+                face: attempt.face,
+                mob: attempt.mob,
+                player: attempt.player,
+                consumed,
+            });
         }
         // A consumed click whose initiator stayed silent (its replica could
         // not foresee the effect — a mod-claimed attempt like tilling or a

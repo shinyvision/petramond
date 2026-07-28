@@ -14,6 +14,11 @@ use crate::modding::scope;
 pub(in crate::modding) const KV_MAX_KEY_BYTES: usize = 256;
 pub(super) const KV_MAX_VALUE_BYTES: usize = 64 * 1024;
 
+/// A mod event's payload bound (`EmitEvent`). Same order as a KV value: the
+/// post queue holds these until the next drain point, and an event is a
+/// notification, not a transport.
+pub(super) const EVENT_MAX_DATA_BYTES: usize = 8 * 1024;
+
 /// Aggregate cap: distinct KV keys ON ONE CELL. Per-entry sizes alone don't
 /// bound a cell — every `BlockDelta` (including per-recipient corrective
 /// syncs) ships the cell's WHOLE KV map, so an unbounded key count would

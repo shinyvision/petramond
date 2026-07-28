@@ -94,6 +94,10 @@ pub(crate) struct ServerGame {
     /// machine-processing ticks share this immutable catalog, which is why it
     /// lives above individual menu sessions.
     pub(crate) recipes: Recipes,
+    /// Which recipes each discovery opens, derived once from
+    /// [`recipes`](Self::recipes). Shared with the engine's unlock handler on
+    /// the bus (see `server::progression`) and read by every session start.
+    pub(crate) unlocks: std::sync::Arc<crate::crafting::UnlockIndex>,
     /// Mob loot tables (from `assets/loot_tables.json`), rolled when a mob dies to
     /// spawn its dropped items. Loaded once at world load, like [`recipes`](Self::recipes).
     pub(crate) loot: LootTables,

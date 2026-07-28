@@ -418,6 +418,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::RegisterHostileSpawner { .. }
         | HostCall::RegisterBlockBehavior { .. }
         | HostCall::RegisterAiNode { .. }
+        | HostCall::EmitEvent { .. }
         | HostCall::ShaderSetParam { .. } => core::handle_core_call(data, call),
         HostCall::GetBlock { .. }
         | HostCall::GetBlocks { .. }
@@ -461,6 +462,8 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::EffectsActive
         | HostCall::PlayerInput { .. }
         | HostCall::Players
+        | HostCall::UnlockRecipe { .. }
+        | HostCall::RecipeUnlocked { .. }
         | HostCall::ChatSend { .. } => player::handle_player_call(&data.mod_id, call),
         HostCall::EmitSound { .. }
         | HostCall::SoundPlayAt { .. }

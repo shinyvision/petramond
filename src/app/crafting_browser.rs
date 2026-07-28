@@ -42,6 +42,10 @@ struct BrowserCacheKey {
     inventory_revision: u64,
     query: String,
     craftable_only: bool,
+    /// How many recipes are unlocked. Unlocking only appends, so the count is
+    /// a complete change signal — and a rebuild is exactly what a fresh
+    /// unlock needs.
+    unlocked: usize,
 }
 
 struct VisibleRecipe {
@@ -77,15 +81,22 @@ impl CraftingBrowser {
         let inventory = menu.inventory;
         let craftable_only = game.craft_craftable_only();
         let query = self.search.trim().to_lowercase();
+        let progression = game.progression();
         let next_key = BrowserCacheKey {
             station,
             inventory_revision: game.replicated_inventory_revision(),
             query,
             craftable_only,
+            unlocked: progression.unlocked().len(),
         };
         if self.cache_key.as_ref() != Some(&next_key) {
             self.visible.clear();
             for recipe in game.crafting_catalog().at(station) {
+                // A locked recipe is not shown at all — the point of unlocks
+                // is that the catalog reveals itself as the player earns it.
+                if !progression.is_unlocked(recipe.key()) {
+                    continue;
+                }
                 let result = recipe.result();
                 if !next_key.query.is_empty()
                     && !result.item.name().to_lowercase().contains(&next_key.query)
@@ -169,6 +180,22 @@ impl CraftingBrowser {
         state.set("can_craft", UiValue::Bool(can_craft));
         state.set("craft_filter_on", UiValue::Bool(craftable_only));
         state.set("no_craft_results", UiValue::Bool(self.visible.is_empty()));
+        // An empty grid means two different things now. A player who has
+        // unlocked nothing at this station is not filtering badly — they have
+        // not found anything yet, and saying "no matching recipes" to someone
+        // who typed nothing reads as a bug.
+        let unfiltered = self.search.trim().is_empty() && !craftable_only;
+        state.set(
+            "craft_empty_hint",
+            UiValue::Str(
+                if unfiltered {
+                    "Gather materials to discover recipes"
+                } else {
+                    "No matching recipes"
+                }
+                .to_owned(),
+            ),
+        );
 
         let tip = self.hovered.and_then(|index| self.visible.get(index));
         state.set("show_recipe_tip", UiValue::Bool(tip.is_some()));

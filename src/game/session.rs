@@ -429,21 +429,21 @@ fn build_server_with_pool(
     perf.mark("save_attach");
 
     let has_local_session = local.is_some();
+    // The mod host answers `SmeltResult` from the same loaded catalog the
+    // engine cooks from — install a shared snapshot (the process-wide pattern
+    // gen hooks use). The unlock index is the other view of that catalog.
+    let recipes = load_recipes_for(&disabled_mods);
+    crate::modding::install_recipes(std::sync::Arc::new(recipes.clone()));
+    let unlocks = std::sync::Arc::new(crate::crafting::UnlockIndex::build(recipes.crafting()));
+    perf.mark("recipes");
     let mut server = ServerGame {
         hostile_spawn_cache: Default::default(),
         world,
         sessions: local.into_iter().collect(),
         has_local_session,
         operators,
-        recipes: {
-            // The mod host answers `SmeltResult` from the same loaded
-            // catalog the engine cooks from — install a shared snapshot
-            // (the process-wide pattern gen hooks use).
-            let recipes = load_recipes_for(&disabled_mods);
-            crate::modding::install_recipes(std::sync::Arc::new(recipes.clone()));
-            perf.mark("recipes");
-            recipes
-        },
+        recipes,
+        unlocks: unlocks.clone(),
         loot: {
             let loot = crate::mob::load_loot();
             perf.mark("loot");
@@ -471,6 +471,14 @@ fn build_server_with_pool(
         last_shipped_env: None,
     };
     crate::server::daynight::install_core(&mut server.world, &mut server.systems);
+    crate::server::progression::install_core(&mut server.bus, unlocks);
+    // Reconcile the restored record against THIS world's catalog before the
+    // first tick (a pack installed since the player last played). The local
+    // client half clones this player, so it starts already caught up.
+    for sess in &mut server.sessions {
+        crate::server::progression::catch_up(&mut sess.player, &server.unlocks);
+        sess.sent_unlock_count = sess.player.progression.unlocked().len();
+    }
     // Replication is live from construction: block/water changes log into
     // the capture at the announce choke point and drain into each pump's
     // `TickUpdate`.
@@ -614,6 +622,12 @@ fn player_from_restore(r: &crate::net::protocol::SelfRestore) -> Player {
         .map(|(bed, spot)| crate::player::BedSpawn { bed, spot });
     player.inventory = crate::game::replicated::inventory_from_wire(&r.inventory, r.active_slot);
     player.craft_craftable_only = r.craft_craftable_only;
+    // The client mirrors only the UNLOCKED set — what its browser may show.
+    // The obtained set is server-side progression bookkeeping and never
+    // crosses the wire.
+    player
+        .progression
+        .restore(std::iter::empty(), r.unlocked_recipes.clone());
     for (name, remaining) in &r.effects {
         match crate::effect::by_name(name) {
             Some(effect) => player.apply_effect(effect, *remaining),

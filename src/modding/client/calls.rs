@@ -180,6 +180,12 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         // presentation-side has a use for it. (`underground_biome_at`, which
         // is a cheap partition lookup, is legal above.)
         | HostCall::TerrainSolidAt { .. }
+        // Progression is authoritative player state and its events queue on
+        // the sim's post bus: unlocking from a presentation instance would
+        // write state the server owns, and a client mirror only ever mirrors.
+        | HostCall::UnlockRecipe { .. }
+        | HostCall::RecipeUnlocked { .. }
+        | HostCall::EmitEvent { .. }
         | HostCall::Players => false,
     }
 }

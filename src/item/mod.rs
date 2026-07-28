@@ -21,6 +21,7 @@ mod food;
 mod load;
 mod reaction;
 mod render;
+mod set;
 mod stack;
 mod tags;
 #[cfg(test)]
@@ -34,6 +35,7 @@ pub use drops::{Drop, DropSpec};
 pub use food::FoodDef;
 pub use reaction::{DroppedReaction, ReactionEnvironment};
 pub use render::{HeldPose, ItemRenderKind};
+pub use set::ItemSet;
 pub use stack::ItemStack;
 pub use tags::ItemTag;
 #[allow(unused_imports)]

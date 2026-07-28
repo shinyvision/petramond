@@ -248,6 +248,12 @@ pub(crate) enum ServerToClient {
         id: PlayerId,
     },
     ChatLine(ChatLine),
+    /// Recipes newly unlocked for the RECIPIENT, in unlock order — the suffix
+    /// they have not been told about yet (`JoinData` carried the rest).
+    /// Recipe keys are namespaced strings, so this needs no id remap.
+    RecipesUnlocked {
+        recipes: Vec<String>,
+    },
     ServerClosing,
     KeepAlive,
     Disconnect {

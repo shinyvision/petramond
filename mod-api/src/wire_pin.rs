@@ -296,6 +296,15 @@ fn samples() -> Samples {
     s.pin("HostCall::UndergroundBiomesInBox", &HostCall::UndergroundBiomesInBox {
         lo: [1, -2, 3], hi: [4, 5, -6],
     });
+    s.pin("HostCall::UnlockRecipe", &HostCall::UnlockRecipe {
+        player: PlayerId(1), recipe: "m:r".into(),
+    });
+    s.pin("HostCall::RecipeUnlocked", &HostCall::RecipeUnlocked {
+        player: PlayerId(1), recipe: "m:r".into(),
+    });
+    s.pin("HostCall::EmitEvent", &HostCall::EmitEvent {
+        key: "m:e".into(), data: vec![1, 2],
+    });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -306,7 +315,7 @@ fn samples() -> Samples {
     s.pin("HostRet::Blocks", &HostRet::Blocks(vec![None, Some(BlockId(2))]));
     s.pin("HostRet::Light", &HostRet::Light(Some(LightData { combined: 1, sky: 2, block: 3, block_rgb: [3, 2, 1] })));
     s.pin("HostRet::Mobs", &HostRet::Mobs(vec![MobSnapshot {
-        index: 1, key: "m:k".into(), kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
+        index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, vel: [1.0, 0.0, 2.0],
     }]));
     s.pin("HostRet::Player", &HostRet::Player(PlayerSnapshot {
@@ -381,7 +390,7 @@ fn samples() -> Samples {
     s.pin("HostRet::SpawnedMob", &HostRet::SpawnedMob(Some(7)));
     s.pin("HostRet::FoundBlocks", &HostRet::FoundBlocks(Some(vec![[1, -2, 3]])));
     s.pin("HostRet::Mob", &HostRet::Mob(Some(MobSnapshot {
-        index: 1, key: "m:k".into(), kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
+        index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, vel: [1.0, 0.0, 2.0],
     })));
     s.pin("HostRet::BytesMany", &HostRet::BytesMany(vec![Some(vec![1, 2]), None]));
@@ -567,6 +576,22 @@ fn samples() -> Samples {
     s.pin("EventPayload::MobTagRemoved", &EventPayload::MobTagRemoved {
         mob_id: 7, kind: MobId(2), key: "m:k".into(), value: MobTagValue::I64(-3),
     });
+    s.pin("EventPayload::ItemPickedUp", &EventPayload::ItemPickedUp {
+        player: PlayerId(1), item: ItemId(3), count: 4, pos: [1.5, 2.0, -3.5],
+    });
+    s.pin("EventPayload::ItemObtained", &EventPayload::ItemObtained {
+        player: PlayerId(1), item: ItemId(3),
+    });
+    s.pin("EventPayload::MobDamaged", &EventPayload::MobDamaged {
+        mob_id: 7, kind: MobId(2), amount: 1.5, source: DamageSource::Fall, killed: true,
+    });
+    s.pin("EventPayload::Interacted", &EventPayload::Interacted {
+        block: Some([1, -2, 3]), face: Some([0, 1, 0]), mob: None,
+        player: PlayerId(1), consumed: true,
+    });
+    s.pin("EventPayload::ModEvent", &EventPayload::ModEvent {
+        key: "m:e".into(), data: vec![1, 2],
+    });
 
     // --- Auxiliary enums: ALL variants of each, encoded as one Vec ----------
     s.pin("Outcome::*", &vec![Outcome::Continue, Outcome::Cancel]);
@@ -588,6 +613,8 @@ fn samples() -> Samples {
         EventKind::PlayerDied, EventKind::ContainerOpened, EventKind::ContainerClosed,
         EventKind::SectionGenerated, EventKind::SectionLoaded,
         EventKind::PlayerDismounted, EventKind::MobTagAdded, EventKind::MobTagRemoved,
+        EventKind::ItemPickedUp, EventKind::ItemObtained, EventKind::MobDamaged,
+        EventKind::Interacted, EventKind::ModEvent,
     ]);
     s.pin("DamageSource::*", &vec![
         DamageSource::Fall,
@@ -782,6 +809,9 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::UndergroundBiomeAt", "7901020306"),
     ("HostCall::TerrainSolidAt", "7a01020306"),
     ("HostCall::UndergroundBiomesInBox", "7b020306080a0b"),
+    ("HostCall::UnlockRecipe", "7c01036d3a72"),
+    ("HostCall::RecipeUnlocked", "7d01036d3a72"),
+    ("HostCall::EmitEvent", "7e036d3a65020102"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -789,7 +819,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Block", "040101"),
     ("HostRet::Blocks", "0502000102"),
     ("HostRet::Light", "0601010203030201"),
-    ("HostRet::Mobs", "070101036d3a6b020000803f000000400000404000008040050000003f0000803f0000000000000040"),
+    ("HostRet::Mobs", "070101020000803f000000400000404000008040050000003f0000803f0000000000000040"),
     ("HostRet::Player", "080000803f00000040000040400000000000000000000000000000003f0000803e28010001010203010000c03f00000040000060c0"),
     ("HostRet::Bytes", "09010101"),
     ("HostRet::MobTag", "0a020001"),
@@ -821,7 +851,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobTags", "240101036d3a6b0001"),
     ("HostRet::SpawnedMob", "250107"),
     ("HostRet::FoundBlocks", "260101020306"),
-    ("HostRet::Mob", "270101036d3a6b020000803f000000400000404000008040050000003f0000803f0000000000000040"),
+    ("HostRet::Mob", "270101020000803f000000400000404000008040050000003f0000803f0000000000000040"),
     ("HostRet::BytesMany", "28020102010200"),
     ("HostRet::ItemDataRows", "290103027b7d"),
     ("HostRet::BlockDataRows", "2a0104027b7d"),
@@ -876,11 +906,16 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::PlayerDismounted(anchor)", "1100010000c03f00000040000060c0"),
     ("EventPayload::MobTagAdded", "120702036d3a6b0105"),
     ("EventPayload::MobTagRemoved", "130702036d3a6b0105"),
+    ("EventPayload::ItemPickedUp", "140103040000c03f00000040000060c0"),
+    ("EventPayload::ItemObtained", "150103"),
+    ("EventPayload::MobDamaged", "1607020000c03f0001"),
+    ("EventPayload::Interacted", "170102030601000200000101"),
+    ("EventPayload::ModEvent", "18036d3a65020102"),
     ("Outcome::*", "020001"),
     ("Stage::*", "0c000102030405060708090a0b"),
     ("AttachSide::*", "020001"),
     ("WorldgenStage::*", "050001020304"),
-    ("EventKind::*", "14000102030405060708090a0b0c0d0e0f10111213"),
+    ("EventKind::*", "19000102030405060708090a0b0c0d0e0f101112131415161718"),
     ("DamageSource::*", "0400010102036d3a6b03016d"),
     ("ContainerKind::*", "06000102030405036d3a67"),
     ("Facing::*", "0400010203"),

@@ -191,8 +191,14 @@ fn a_free_hanging_climbable_ascends_on_jump_and_on_no_other_input() {
 
     for d in [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z] {
         let walked = run(d, false);
-        assert!(walked < 65.0, "pushing {d:?} must not climb a vine: y={walked}");
+        assert!(
+            walked < 65.0,
+            "pushing {d:?} must not climb a vine: y={walked}"
+        );
         let both = run(d, true);
-        assert!(both > 66.0, "walking while holding jump still climbs: y={both}");
+        assert!(
+            both > 66.0,
+            "walking while holding jump still climbs: y={both}"
+        );
     }
 }

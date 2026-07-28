@@ -224,14 +224,25 @@ impl ServerGame {
             return false;
         }
         let soundable_hit = pre.feedback.plays_sound(MobDamageSound::Hurt) && pre.amount > 0.0;
-        if let Some(death) = self.world.mobs_mut().damage_mob(
+        let death = self.world.mobs_mut().damage_mob(
             idx,
             pre.amount,
             pre.origin,
             pre.source.is_attack(),
             pre.source.attacker(),
             &pre.feedback,
-        ) {
+        );
+        // The observational twin of `mob_damage_pre`: what the pipeline
+        // actually applied, after every handler had its say. A killing blow
+        // announces both this and `mob_died`, in that order.
+        self.bus.emit(PostEvent::MobDamaged {
+            mob_id,
+            kind,
+            amount: pre.amount,
+            source: pre.source,
+            killed: death.is_some(),
+        });
+        if let Some(death) = death {
             if pre.feedback.plays_sound(MobDamageSound::Death) {
                 queue_mob_sound(events, mob_id, kind, MobSoundCategory::Death, death.pos);
             }
@@ -474,14 +485,25 @@ impl ServerGame {
         // aliasing. Actual inventory mutation only happens after a requested drop
         // reaches the absorb radius.
         let inventory = &mut self.sessions[s].player.inventory;
-        let mut collected = false;
+        let mut collected = Vec::new();
         self.world
             .dropped_items_mut()
             .collect_requested_pickups(requester, player_pos, |stack| {
-                collected = true;
+                collected.push(stack);
                 inventory.add(stack)
             });
-        collected
+        let picked_up = !collected.is_empty();
+        // One event per collected STACK. Whether the player has ever HELD one
+        // of these is a different question, answered by `item_obtained`.
+        for stack in collected {
+            self.bus.emit(PostEvent::ItemPickedUp {
+                player: requester,
+                item: stack.item,
+                count: stack.count,
+                pos: player_pos,
+            });
+        }
+        picked_up
     }
 }
 

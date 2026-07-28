@@ -68,6 +68,29 @@ pub mod mods {
     }
 }
 
+/// The loaded recipe catalog and the progression rule derived from it — what
+/// a developer tool needs to audit "which recipes does the player see once
+/// they have held X", without opening a world.
+pub mod recipes {
+    pub use crate::crafting::{CraftingCatalog, CraftingRecipe, Recipes, UnlockIndex};
+
+    /// Every enabled pack's crafting/processing rows (the same load the
+    /// server runs at session start, with nothing disabled).
+    pub fn load() -> Recipes {
+        crate::crafting::load_recipes_for(&Default::default())
+    }
+
+    /// The recipes a player who has held exactly `item_names` would have
+    /// unlocked under the engine's default rule. Unknown names are ignored.
+    pub fn opened_by_items(index: &UnlockIndex, item_names: &[&str]) -> Vec<String> {
+        let obtained: crate::item::ItemSet = item_names
+            .iter()
+            .filter_map(|name| crate::item::ItemType::by_name(name))
+            .collect();
+        index.opened_by_all(&obtained).map(str::to_owned).collect()
+    }
+}
+
 pub mod biome {
     pub use crate::biome::Biome;
 }

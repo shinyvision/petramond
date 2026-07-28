@@ -196,7 +196,8 @@ impl TestApp {
     }
 
     fn install_test_crafting_catalog(&mut self, recipes: Vec<crate::crafting::CraftingRecipe>) {
-        self.server.recipes = crate::crafting::Recipes::new(recipes.clone(), Vec::new());
+        self.server
+            .install_recipes_for_test(crate::crafting::Recipes::new(recipes.clone(), Vec::new()));
         self.app
             .game
             .as_mut()

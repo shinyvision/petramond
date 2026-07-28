@@ -22,7 +22,40 @@ impl ServerGame {
             player,
             radius,
         ));
-        self.sessions.len() - 1
+        let s = self.sessions.len() - 1;
+        self.unlock_all_recipes_for_test(s);
+        s
+    }
+
+    /// Test-only: install a recipe catalog and open all of it for every
+    /// session — the fixture twin of session start, where the catalog and the
+    /// player's unlocked record arrive together. Tests about crafting
+    /// mechanics are not tests about discovery.
+    #[cfg(test)]
+    pub(crate) fn install_recipes_for_test(&mut self, recipes: crate::crafting::Recipes) {
+        self.recipes = recipes;
+        self.unlocks =
+            std::sync::Arc::new(crate::crafting::UnlockIndex::build(self.recipes.crafting()));
+        for s in 0..self.sessions.len() {
+            self.unlock_all_recipes_for_test(s);
+        }
+    }
+
+    #[cfg(test)]
+    fn unlock_all_recipes_for_test(&mut self, s: usize) {
+        let keys: Vec<String> = self
+            .recipes
+            .crafting()
+            .iter()
+            .map(|r| r.key().to_owned())
+            .collect();
+        for key in keys {
+            self.sessions[s].player.progression.unlock(&key);
+        }
+        // A real join carries the whole unlocked list in the handshake, so
+        // the pump has nothing to catch this session up on — mirror that, or
+        // fixtures see a `RecipesUnlocked` message no real session would get.
+        self.sessions[s].sent_unlock_count = self.sessions[s].player.progression.unlocked().len();
     }
 
     /// Persist everything: flush modified chunks to the save thread, then write

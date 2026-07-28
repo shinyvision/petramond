@@ -234,6 +234,7 @@ impl IdRemap {
             | ServerToClient::PlayerJoined { .. }
             | ServerToClient::PlayerLeft { .. }
             | ServerToClient::ChatLine(_)
+            | ServerToClient::RecipesUnlocked { .. }
             | ServerToClient::StreamBatchStart
             | ServerToClient::StreamBatchEnd { .. }
             | ServerToClient::ServerClosing

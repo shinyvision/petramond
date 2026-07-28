@@ -82,10 +82,44 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: HostCall) -> HostR
             Some(e) => e,
             None => sim_call(|ctx| ctx.world.set_shader_param(key, value)),
         },
+        // A mod's own event: QUEUED, never dispatched inline. Re-entering the
+        // bus from inside a guest dispatch is what the architecture forbids
+        // (it would run other mods' handlers inside this mod's host call), so
+        // this rides the post queue like every other observational event and
+        // dispatches at the next drain point in the same tick.
+        HostCall::EmitEvent { key, data: bytes } => {
+            // Emitting under another mod's namespace would let a mod forge
+            // events its owner is trusted for; the key is the only filter a
+            // handler has. Same rule, same guard, as a KV write.
+            if let Some(e) = event_key_guard(&data.mod_id, &key, bytes.len()) {
+                return e;
+            }
+            sim_call(|ctx| {
+                ctx.queue
+                    .emit(crate::events::PostEvent::ModEvent { key, data: bytes })
+            })
+        }
         other => HostRet::Error(format!(
             "non-core call {other:?} mis-routed to handle_core_call (host bug)"
         )),
     }
+}
+
+/// A mod event's key must be the emitter's OWN namespace (an engine
+/// `petramond:` event is the engine's to fire), and its payload is bounded
+/// like a KV value — the queue holds these until the next drain.
+fn event_key_guard(mod_id: &str, key: &str, len: usize) -> Option<HostRet> {
+    if !key_owned_by_namespace(mod_id, key) {
+        return Some(HostRet::Error(format!(
+            "EmitEvent key '{key}' is not in mod '{mod_id}'s namespace"
+        )));
+    }
+    (len > super::guards::EVENT_MAX_DATA_BYTES).then(|| {
+        HostRet::Error(format!(
+            "EmitEvent payload is {len} bytes; the limit is {}",
+            super::guards::EVENT_MAX_DATA_BYTES
+        ))
+    })
 }
 
 #[cfg(test)]

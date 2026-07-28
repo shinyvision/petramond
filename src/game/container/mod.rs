@@ -33,6 +33,15 @@ mod tests {
         world
     }
 
+    /// The test player's discovery record with the fixture recipe unlocked —
+    /// crafting is authoritative on the UNLOCKED set, so every craft path in
+    /// these tests must present one.
+    fn unlocked() -> crate::player::Progression {
+        let mut progression = crate::player::Progression::default();
+        progression.unlock("test:coal_to_sticks");
+        progression
+    }
+
     fn player_crafting_recipes(station: CraftingStation) -> Recipes {
         Recipes::new(
             vec![CraftingRecipe::new(
@@ -49,6 +58,41 @@ mod tests {
         )
     }
 
+    /// A recipe the player has not unlocked is refused by the AUTHORITATIVE
+    /// path, not merely hidden by the browser: hiding is presentation, and a
+    /// crafted item is state.
+    #[test]
+    fn crafting_refuses_a_recipe_the_player_has_not_unlocked() {
+        let recipes = player_crafting_recipes(CraftingStation::Inventory);
+        let mut menu = ContainerMenu::new();
+        let mut inv = Inventory::new();
+        inv.add(ItemStack::new(ItemType::Coal, 2));
+        menu.open_crafting(CraftingStation::Inventory);
+
+        let locked = crate::player::Progression::default();
+        assert_eq!(
+            menu.craft_recipe(&mut inv, &recipes, &locked, "test:coal_to_sticks", false),
+            Err(CraftMenuFailure::InvalidRecipe),
+        );
+        assert_eq!(menu.craft_output(), None, "nothing was produced");
+        assert_eq!(
+            inv.slot(0).copied(),
+            Some(ItemStack::new(ItemType::Coal, 2)),
+            "and nothing was consumed"
+        );
+
+        // The same request, once unlocked, is an ordinary craft.
+        assert!(menu
+            .craft_recipe(
+                &mut inv,
+                &recipes,
+                &unlocked(),
+                "test:coal_to_sticks",
+                false
+            )
+            .is_ok());
+    }
+
     #[test]
     fn craft_button_commits_one_stack_then_output_is_taken() {
         let recipes = player_crafting_recipes(CraftingStation::Inventory);
@@ -58,7 +102,13 @@ mod tests {
         menu.open_crafting(CraftingStation::Inventory);
 
         assert_eq!(
-            menu.craft_recipe(&mut inv, &recipes, "test:coal_to_sticks", false),
+            menu.craft_recipe(
+                &mut inv,
+                &recipes,
+                &unlocked(),
+                "test:coal_to_sticks",
+                false
+            ),
             Ok(Vec::new())
         );
         assert_eq!(
@@ -204,7 +254,13 @@ mod tests {
 
         menu.open_crafting(CraftingStation::Inventory);
         assert_eq!(
-            menu.craft_recipe(&mut inv, &recipes, "test:coal_to_sticks", false),
+            menu.craft_recipe(
+                &mut inv,
+                &recipes,
+                &unlocked(),
+                "test:coal_to_sticks",
+                false
+            ),
             Err(CraftMenuFailure::InvalidRecipe)
         );
         assert_eq!(
@@ -214,12 +270,24 @@ mod tests {
 
         menu.open_crafting(CraftingStation::CraftingTable);
         assert!(menu
-            .craft_recipe(&mut inv, &recipes, "test:coal_to_sticks", false)
+            .craft_recipe(
+                &mut inv,
+                &recipes,
+                &unlocked(),
+                "test:coal_to_sticks",
+                false
+            )
             .is_ok());
         // A same-item output MERGES the repeat craft (stackable results keep
         // the button usable) instead of refusing.
         assert!(menu
-            .craft_recipe(&mut inv, &recipes, "test:coal_to_sticks", false)
+            .craft_recipe(
+                &mut inv,
+                &recipes,
+                &unlocked(),
+                "test:coal_to_sticks",
+                false
+            )
             .is_ok());
         assert_eq!(
             menu.craft_output(),
@@ -231,7 +299,13 @@ mod tests {
         inv.add(ItemStack::new(ItemType::Coal, 1));
         menu.craft_output = Some(ItemStack::new(ItemType::Dirt, 1));
         assert_eq!(
-            menu.craft_recipe(&mut inv, &recipes, "test:coal_to_sticks", false),
+            menu.craft_recipe(
+                &mut inv,
+                &recipes,
+                &unlocked(),
+                "test:coal_to_sticks",
+                false
+            ),
             Err(CraftMenuFailure::OutputOccupied)
         );
         assert_eq!(
@@ -250,7 +324,7 @@ mod tests {
 
         // Resource-bound: 5 coal → 5 crafts of 2 sticks each.
         assert_eq!(
-            menu.craft_recipe(&mut inv, &recipes, "test:coal_to_sticks", true),
+            menu.craft_recipe(&mut inv, &recipes, &unlocked(), "test:coal_to_sticks", true),
             Ok(Vec::new())
         );
         assert_eq!(
@@ -264,7 +338,7 @@ mod tests {
         inv.add(ItemStack::new(ItemType::Coal, max));
         menu.craft_output = None;
         assert_eq!(
-            menu.craft_recipe(&mut inv, &recipes, "test:coal_to_sticks", true),
+            menu.craft_recipe(&mut inv, &recipes, &unlocked(), "test:coal_to_sticks", true),
             Ok(Vec::new())
         );
         assert_eq!(
@@ -279,7 +353,7 @@ mod tests {
 
         // An impossible first craft is still the request's failure.
         assert_eq!(
-            menu.craft_recipe(&mut inv, &recipes, "test:coal_to_sticks", true),
+            menu.craft_recipe(&mut inv, &recipes, &unlocked(), "test:coal_to_sticks", true),
             Err(CraftMenuFailure::OutputOccupied)
         );
     }

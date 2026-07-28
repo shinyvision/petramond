@@ -34,10 +34,12 @@ impl World {
     pub fn climb_at(&self, x: i32, y: i32, z: i32) -> Option<Climb> {
         let (s, lx, ly, lz) = self.chunk_at_world(x, y, z)?;
         let block = Block::from_id(s.block_raw(lx, ly, lz));
-        block.is_climbable().then(|| match block.declared_panel_facing() {
-            Some(facing) => Climb::Panel(facing),
-            None => Climb::Free,
-        })
+        block
+            .is_climbable()
+            .then(|| match block.declared_panel_facing() {
+                Some(facing) => Climb::Panel(facing),
+                None => Climb::Free,
+            })
     }
 }
 

@@ -138,6 +138,10 @@ pub struct Player {
     /// that persists with the world's player data and follows the player
     /// across joins.
     pub craft_craftable_only: bool,
+    /// What this player has discovered: items ever held, recipes unlocked.
+    /// Server-authoritative, persisted, and mirrored on the owning client so
+    /// its browser shows exactly the unlocked catalog.
+    pub progression: super::Progression,
     /// Active status effects, in application order (deterministic iteration).
     /// Stepped once per game tick by `Game::tick_effects`; persisted by
     /// registry name in `level.dat`.
@@ -161,6 +165,7 @@ impl Player {
             inventory: crate::inventory::Inventory::new(),
             bed_spawn: None,
             craft_craftable_only: false,
+            progression: Default::default(),
             effects: Vec::new(),
         }
     }

@@ -4,6 +4,7 @@ mod load;
 mod plan;
 mod recipe;
 mod station;
+mod unlock;
 
 pub use load::load_recipes_for;
 pub use plan::{craft, output_accepts, CraftFailure};
@@ -12,3 +13,4 @@ pub use recipe::{CraftingCatalog, CraftingRecipe, IngredientSelector, Ingredient
 #[cfg(test)]
 pub use recipe::{CraftingIngredient, ProcessingRecipe, SMELTING_CLASS};
 pub use station::CraftingStation;
+pub use unlock::UnlockIndex;

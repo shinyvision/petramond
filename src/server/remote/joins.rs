@@ -22,13 +22,16 @@ impl ServerGame {
     ) -> (Box<JoinData>, String) {
         let name = self.dedupe_player_name(requested);
         let id = self.next_free_player_id();
-        let player = self
+        let mut player = self
             .world
             .save()
             .and_then(|save| save.load_player(&name))
             .and_then(|bytes| crate::save::player::decode(&bytes))
             .map(|data| data.restore())
             .unwrap_or_else(|| crate::game::session::spawn_player(self.world.seed));
+        // Reconcile the restored record against this world's catalog before
+        // the handshake ships it (see `server::progression::catch_up`).
+        crate::server::progression::catch_up(&mut player, &self.unlocks);
         let data = Box::new(JoinData {
             player_id: id,
             seed: self.world.seed,
@@ -43,6 +46,8 @@ impl ServerGame {
                 .collect(),
         });
         let mut session = ConnectedPlayer::new(id, name.clone(), player, view_distance);
+        // The handshake already carried the full unlocked list.
+        session.sent_unlock_count = session.player.progression.unlocked().len();
         session.terrain.seed_client_cache(cached_sections);
         // Reseed the env params for the newcomer (see the local-join twin in
         // game.rs): a static param map would otherwise never reach them.
@@ -153,5 +158,6 @@ fn self_restore_from(player: &crate::player::Player) -> SelfRestore {
             .collect(),
         active_slot: player.inventory.active_slot(),
         craft_craftable_only: player.craft_craftable_only,
+        unlocked_recipes: player.progression.unlocked().to_vec(),
     }
 }

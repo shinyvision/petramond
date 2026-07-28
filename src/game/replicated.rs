@@ -547,6 +547,14 @@ impl Game {
                 ServerToClient::ChatLine(line) => {
                     self.pending_chat_lines.push(line);
                 }
+                // The server is the only writer of the unlocked set; the
+                // client mirrors it so its browser lists exactly what the
+                // server would accept a CRAFT for.
+                ServerToClient::RecipesUnlocked { recipes } => {
+                    for recipe in recipes {
+                        self.player.progression.unlock(&recipe);
+                    }
+                }
                 // Streaming flow control: Start opens the timing window, End
                 // closes it into a measured apply rate and an immediate ack
                 // (both markers apply in THIS same drain loop, so the elapsed

@@ -68,14 +68,15 @@ fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
 
     // Craft: the explicit stable-key request consumes inventory into a real
     // output, then the ordinary result-slot click takes it.
-    game.server.recipes = crate::crafting::Recipes::new(
-        vec![test_crafting_recipe(
-            "test:revision",
-            ItemType::Coal,
-            ItemType::Stick,
-        )],
-        Vec::new(),
-    );
+    game.server
+        .install_recipes_for_test(crate::crafting::Recipes::new(
+            vec![test_crafting_recipe(
+                "test:revision",
+                ItemType::Coal,
+                ItemType::Stick,
+            )],
+            Vec::new(),
+        ));
     game.server.sessions[0]
         .player
         .inventory
@@ -113,13 +114,14 @@ fn crafting_outputs_replicate_per_session_and_remain_independent() {
     use crate::net::protocol::{ClientToServer, MenuSlotWire, MenuTargetWire};
 
     let mut game = game();
-    game.server.recipes = crate::crafting::Recipes::new(
-        vec![
-            test_crafting_recipe("test:local", ItemType::Coal, ItemType::Stick),
-            test_crafting_recipe("test:remote", ItemType::Dirt, ItemType::Glass),
-        ],
-        Vec::new(),
-    );
+    game.server
+        .install_recipes_for_test(crate::crafting::Recipes::new(
+            vec![
+                test_crafting_recipe("test:local", ItemType::Coal, ItemType::Stick),
+                test_crafting_recipe("test:remote", ItemType::Dirt, ItemType::Glass),
+            ],
+            Vec::new(),
+        ));
     let remote = game
         .server
         .add_session_for_test(crate::player::Player::new(Vec3::new(2.5, 64.0, 2.5)));

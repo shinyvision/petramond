@@ -488,7 +488,6 @@ fn abi_roundtrip_host_and_guest_calls() {
     roundtrip(HostRet::Light(None));
     roundtrip(HostRet::Mobs(vec![MobSnapshot {
         index: 0,
-        key: "petramond:owl".into(),
         kind: MobId(0),
         pos: [1.5, 64.0, -3.5],
         health: 4.0,

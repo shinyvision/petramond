@@ -484,6 +484,13 @@ pub(crate) struct ConnectedPlayer {
     /// `None` = nothing sent yet, so the first update after join always
     /// includes the inventory.
     pub last_sent_inventory_revision: Option<u64>,
+    /// The inventory revision the obtained-item scan last ran against, so a
+    /// tick that changed nothing costs one comparison (see
+    /// `server::progression`). Bookkeeping, not sim state.
+    pub last_obtained_scan: Option<u64>,
+    /// How many of this player's unlocked recipes the client has been told
+    /// about. Unlocking only appends, so the catch-up is the untold suffix.
+    pub sent_unlock_count: usize,
     /// The last `MenuSyncMsg` this session was sent (its `gui_state` field
     /// always `None` — the map compares by `Arc` identity below). On-change
     /// send detection; replication bookkeeping, not sim state.
@@ -565,6 +572,8 @@ impl ConnectedPlayer {
             request_open_sleep: false,
             gui_state: crate::gui::empty_gui_state(),
             last_sent_inventory_revision: None,
+            last_obtained_scan: None,
+            sent_unlock_count: 0,
             last_menu_sync: None,
             last_sent_gui_state: None,
             terrain: Default::default(),

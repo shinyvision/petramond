@@ -28,6 +28,7 @@ pub(crate) mod movement;
 pub(crate) mod permissions;
 pub(crate) mod placement;
 pub(crate) mod player;
+pub(crate) mod progression;
 pub(crate) mod remote;
 pub(crate) mod riding;
 pub(crate) mod streaming;

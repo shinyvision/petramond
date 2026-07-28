@@ -227,6 +227,11 @@ impl ServerGame {
             }
         }
         self.tick_mod_hostile_mob_spawns(&anchors, events);
+        // Discovery is measured once per tick, after every stage that can put
+        // an item in a hand (pickup, craft, furnace/chest take, a mod's
+        // `GiveItem`), and inside the last stage so `item_obtained` drains at
+        // its boundary — a recipe a pickup unlocks is craftable this tick.
+        self.detect_obtained_items();
         self.end_stage(Stage::Spawning, events);
     }
 

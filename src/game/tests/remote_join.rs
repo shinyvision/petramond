@@ -35,6 +35,7 @@ fn join_data() -> Box<JoinData> {
             inventory: slots,
             active_slot: 2,
             craft_craftable_only: false,
+            unlocked_recipes: Vec::new(),
         },
         crafting_recipes: Vec::new(),
         players: vec![

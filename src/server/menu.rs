@@ -157,9 +157,11 @@ impl ServerGame {
                 } => {
                     let result = {
                         let sess = &mut self.sessions[s];
-                        sess.menu.craft_recipe(
-                            &mut sess.player.inventory,
+                        let (player, menu) = (&mut sess.player, &mut sess.menu);
+                        menu.craft_recipe(
+                            &mut player.inventory,
                             &self.recipes,
+                            &player.progression,
                             &recipe,
                             bulk,
                         )

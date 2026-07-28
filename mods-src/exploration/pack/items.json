@@ -10,7 +10,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
+      "tags": [
+        "petramond:logs"
+      ],
       "block": "exploration:mushroom_stem"
     },
     {
@@ -259,6 +261,47 @@
       },
       "tags": [],
       "block": "exploration:glow_vine_purple"
+    },
+    {
+      "item": "exploration:mushroom_planks",
+      "key": "exploration:mushroom_planks",
+      "name": "Mushroom Planks",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [
+        "petramond:planks"
+      ],
+      "block": "exploration:mushroom_planks"
+    },
+    {
+      "item": "exploration:mushroom_stairs",
+      "key": "exploration:mushroom_stairs",
+      "name": "Mushroom Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:mushroom_stairs"
+    },
+    {
+      "item": "exploration:mushroom_slab",
+      "key": "exploration:mushroom_slab",
+      "name": "Mushroom Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "exploration:mushroom_slab"
     }
   ]
 }

@@ -472,10 +472,7 @@ mod tests {
             "a hanging row must not place under open air"
         );
         w.set_block_world(4, 70, 4, Block::Stone);
-        assert!(
-            plan(&w, IVec3::new(4, 69, 4), vine),
-            "a ceiling accepts it"
-        );
+        assert!(plan(&w, IVec3::new(4, 69, 4), vine), "a ceiling accepts it");
         w.set_block_world(4, 69, 4, vine);
         assert!(
             plan(&w, IVec3::new(4, 68, 4), vine_lit),

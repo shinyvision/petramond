@@ -84,6 +84,11 @@ pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
         K::PlayerDismounted => PostEventKind::PlayerDismounted,
         K::MobTagAdded => PostEventKind::MobTagAdded,
         K::MobTagRemoved => PostEventKind::MobTagRemoved,
+        K::ItemPickedUp => PostEventKind::ItemPickedUp,
+        K::ItemObtained => PostEventKind::ItemObtained,
+        K::MobDamaged => PostEventKind::MobDamaged,
+        K::Interacted => PostEventKind::Interacted,
+        K::ModEvent => PostEventKind::ModEvent,
     })
 }
 
@@ -307,6 +312,51 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
             kind: api::MobId(kind.id()),
             key: key.clone(),
             value: super::host::tags::to_api(value),
+        },
+        PostEvent::ItemPickedUp {
+            player,
+            item,
+            count,
+            pos,
+        } => api::EventPayload::ItemPickedUp {
+            player: api::PlayerId(player.0),
+            item: api::ItemId(item.id()),
+            count,
+            pos: vec(pos),
+        },
+        PostEvent::ItemObtained { player, item } => api::EventPayload::ItemObtained {
+            player: api::PlayerId(player.0),
+            item: api::ItemId(item.id()),
+        },
+        PostEvent::MobDamaged {
+            mob_id,
+            kind,
+            amount,
+            source,
+            killed,
+        } => api::EventPayload::MobDamaged {
+            mob_id,
+            kind: api::MobId(kind.id()),
+            amount,
+            source: damage_source(source),
+            killed,
+        },
+        PostEvent::Interacted {
+            block,
+            face,
+            mob,
+            player,
+            consumed,
+        } => api::EventPayload::Interacted {
+            block: block.map(ivec),
+            face: face.map(ivec),
+            mob,
+            player: api::PlayerId(player.0),
+            consumed,
+        },
+        PostEvent::ModEvent { ref key, ref data } => api::EventPayload::ModEvent {
+            key: key.clone(),
+            data: data.clone(),
         },
     }
 }

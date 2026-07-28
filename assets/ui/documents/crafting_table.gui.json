@@ -44,7 +44,7 @@
         "type": "label",
         "text": "No matching recipes",
         "style": "label.muted",
-        "bind": { "visible": "no_craft_results" }
+        "bind": { "visible": "no_craft_results", "text": "craft_empty_hint" }
       },
       {
         "type": "scroll",

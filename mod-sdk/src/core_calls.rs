@@ -80,3 +80,15 @@ host_fn! {
     pub fn shader_set_param(key: &str, value: [f32; 4])
         => ShaderSetParam { key: key.into(), value }
 }
+
+host_fn! {
+    /// Emit one of this mod's OWN events. `key` must carry this mod's
+    /// `mod_id:` prefix; `data` is this mod's opaque payload. The event queues
+    /// and dispatches at the next post-event drain point in the same tick —
+    /// every handler registered for [`EventKind::ModEvent`] receives it, so
+    /// the key is what a handler filters on.
+    ///
+    /// [`EventKind::ModEvent`]: mod_api::EventKind::ModEvent
+    pub fn emit_event(key: &str, data: &[u8])
+        => EmitEvent { key: key.into(), data: data.to_vec() }
+}

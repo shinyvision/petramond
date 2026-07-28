@@ -199,8 +199,152 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             ctx.queue.push_action(ModAction::ChatSend { text, targets });
             HostRet::Bool(true)
         }),
+        // Progression is per-player state, so both arms address a player
+        // explicitly (the addressing doctrine) and route through the sessions
+        // view — never the acting-session shortcut.
+        HostCall::UnlockRecipe { player, recipe } => sim_query(|ctx| {
+            // A key no catalog row owns would sit in the player's record
+            // forever, unlocking nothing and never failing — refuse it, so a
+            // typo shows up as a `false` the mod can log.
+            let known = crate::modding::active_recipes()
+                .is_some_and(|recipes| recipes.crafting().get(&recipe).is_some());
+            if !known {
+                log::warn!("[mod {mod_id}] UnlockRecipe: no crafting recipe '{recipe}'");
+                return HostRet::Bool(false);
+            }
+            match ctx.with_player(crate::server::player::PlayerId(player.0), |p| {
+                p.progression.unlock(&recipe)
+            }) {
+                Some(unlocked) => HostRet::Bool(unlocked),
+                // No such session — or a dispatch site that publishes no
+                // sessions roster (the not-yet-migrated pre-event sites; see
+                // the sessions-view notes in WIKI/modding.md). Silence here
+                // would look exactly like "already unlocked", so say which.
+                None => {
+                    log::warn!(
+                        "[mod {mod_id}] UnlockRecipe '{recipe}': player {} is not reachable from \
+                         this dispatch (no such session, or this site publishes no sessions view)",
+                        player.0
+                    );
+                    HostRet::Bool(false)
+                }
+            }
+        }),
+        HostCall::RecipeUnlocked { player, recipe } => sim_query(|ctx| {
+            let unlocked = ctx
+                .with_player(crate::server::player::PlayerId(player.0), |p| {
+                    p.progression.is_unlocked(&recipe)
+                })
+                .unwrap_or(false);
+            HostRet::Bool(unlocked)
+        }),
         other => HostRet::Error(format!(
             "non-player call {other:?} mis-routed to handle_player_call (host bug)"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mod_api::{HostCall, HostRet};
+
+    use crate::events::{PostQueue, SimCtx};
+    use crate::game::TickEvents;
+    use crate::mathh::Vec3;
+    use crate::modding::host::{handle_host_call, ModStoreData};
+    use crate::modding::scope;
+    use crate::player::Player;
+    use crate::world::World;
+
+    /// The progression arms: unlocking is per-player, idempotent (`true` only
+    /// on the call that changed it), refuses a key no catalog row owns, and
+    /// the query reads back what the write stored. Reaching the player needs
+    /// the dispatch site's sessions view — an unreachable player answers
+    /// `false` rather than silently unlocking the acting one.
+    #[test]
+    fn unlocking_is_per_player_idempotent_and_refuses_unknown_keys() {
+        use crate::server::player::PlayerId;
+
+        // The validation reads the process-wide installed catalog (the same
+        // snapshot `RecipeResult` answers from), and every session build
+        // installs the REAL one — so the fixture installs that and takes a key
+        // FROM it. A synthetic catalog would be stomped by any concurrently
+        // building session; naming a specific engine recipe would pin editable
+        // data. Neither is this test's subject.
+        let recipes = crate::crafting::load_recipes_for(&Default::default());
+        let key = recipes
+            .crafting()
+            .iter()
+            .next()
+            .expect("the shipped catalog has recipes")
+            .key()
+            .to_owned();
+        crate::modding::install_recipes(std::sync::Arc::new(recipes));
+
+        let mut data = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 1);
+        let mut acting = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let mut other = Player::new(Vec3::new(4.0, 80.0, 0.0));
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut gui = crate::gui::empty_gui_state();
+
+        let unlock = |data: &mut ModStoreData, id: u8| {
+            handle_host_call(
+                data,
+                HostCall::UnlockRecipe {
+                    player: mod_api::PlayerId(id),
+                    recipe: key.clone(),
+                },
+            )
+        };
+        let query = |data: &mut ModStoreData, id: u8| {
+            handle_host_call(
+                data,
+                HostCall::RecipeUnlocked {
+                    player: mod_api::PlayerId(id),
+                    recipe: key.clone(),
+                },
+            )
+        };
+
+        let others = vec![crate::events::SessionPlayerRef {
+            id: PlayerId(1),
+            player: &mut other,
+        }];
+        crate::events::with_sessions_scope(PlayerId(0), 0, others, || {
+            let mut ctx = SimCtx {
+                world: &mut world,
+                player: &mut acting,
+                gui_state: &mut gui,
+                feed: &mut feed,
+                queue: &mut queue,
+            };
+            scope::enter(&mut ctx, || {
+                assert_eq!(query(&mut data, 0), HostRet::Bool(false), "starts locked");
+                assert_eq!(unlock(&mut data, 0), HostRet::Bool(true), "first unlock");
+                assert_eq!(unlock(&mut data, 0), HostRet::Bool(false), "idempotent");
+                assert_eq!(query(&mut data, 0), HostRet::Bool(true));
+                // Per PLAYER: the other session is untouched until addressed.
+                assert_eq!(query(&mut data, 1), HostRet::Bool(false));
+                assert_eq!(unlock(&mut data, 1), HostRet::Bool(true));
+                assert_eq!(query(&mut data, 1), HostRet::Bool(true));
+                // No such session.
+                assert_eq!(unlock(&mut data, 9), HostRet::Bool(false));
+                // A key no catalog row owns is refused rather than stored.
+                assert_eq!(
+                    handle_host_call(
+                        &mut data,
+                        HostCall::UnlockRecipe {
+                            player: mod_api::PlayerId(0),
+                            recipe: "alpha:typo".into(),
+                        },
+                    ),
+                    HostRet::Bool(false)
+                );
+            });
+        });
+        assert_eq!(acting.progression.unlocked(), [key.clone()]);
+        assert_eq!(other.progression.unlocked(), [key]);
     }
 }

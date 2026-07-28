@@ -134,3 +134,23 @@ host_fn! {
     /// policy. Address a specific player through the entry's `id`.
     pub fn players() -> Vec<mod_api::PlayerListEntry> => Players => Players
 }
+
+host_fn! {
+    /// Unlock a crafting recipe for `player`: it joins their recipe browser at
+    /// whatever station the recipe declares, and the server starts accepting it
+    /// from them. Idempotent and persistent — `true` = this call is what
+    /// unlocked it, `false` = already unlocked, unknown recipe key, or unknown
+    /// player.
+    ///
+    /// Unlocking is a CONSEQUENCE of whatever the mod decides earns it; call
+    /// this from an event handler, never from a per-tick poll.
+    pub fn unlock_recipe(player: PlayerId, recipe: &str) -> bool
+        => UnlockRecipe { player, recipe: recipe.into() } => Bool
+}
+
+host_fn! {
+    /// Has `player` unlocked `recipe`? The read half of [`unlock_recipe`], for
+    /// gating a mod's own hints or follow-up rewards.
+    pub fn recipe_unlocked(player: PlayerId, recipe: &str) -> bool
+        => RecipeUnlocked { player, recipe: recipe.into() } => Bool
+}

@@ -41,6 +41,16 @@ pub enum EventKind {
     PlayerDismounted,
     MobTagAdded,
     MobTagRemoved,
+    ItemPickedUp,
+    ItemObtained,
+    MobDamaged,
+    Interacted,
+    /// Every mod-authored event, whoever emitted it
+    /// ([`HostCall::EmitEvent`]). Handlers filter by the payload's key; there
+    /// is no per-key registration.
+    ///
+    /// [`HostCall::EmitEvent`]: crate::HostCall::EmitEvent
+    ModEvent,
 }
 
 /// Why an entity is taking damage.
@@ -322,6 +332,74 @@ pub enum EventPayload {
         /// The value the key held when it was removed.
         value: MobTagValue,
     },
+    /// POST — a player vacuumed dropped-item entities off the ground. One
+    /// event per collected STACK, so a tick that sweeps three drops fires
+    /// three times. This is the "it came off the floor" signal (magnets,
+    /// collection quests, pickup effects); for "the player now has one of
+    /// these at all", listen on [`ItemObtained`](Self::ItemObtained) instead.
+    ItemPickedUp {
+        player: PlayerId,
+        item: ItemId,
+        count: u8,
+        /// Where the collector's body was — the drop is already gone.
+        pos: [f32; 3],
+    },
+    /// POST — an item kind entered a player's inventory for the FIRST time
+    /// ever, from ANY source: a pickup, a craft, a furnace output, a chest
+    /// withdrawal, a mod's [`HostCall::GiveItem`]. The engine owns the
+    /// per-player "ever held" set that makes this a once-per-kind transition
+    /// (it persists with the player), so a handler needs no memory of its own.
+    ///
+    /// This is the progression signal: the engine's own recipe unlocking
+    /// listens on it (see the crafting docs), and a mod that wants "the first
+    /// time the player holds X" should too rather than polling an inventory.
+    ///
+    /// [`HostCall::GiveItem`]: crate::HostCall::GiveItem
+    ItemObtained {
+        player: PlayerId,
+        item: ItemId,
+    },
+    /// POST — damage LANDED on a mob (it survived `mob_damage_pre`, the
+    /// i-frame gate, and had at least one feedback component). `amount` is
+    /// the post-mutation value the pipeline actually applied. A killing blow
+    /// fires this AND [`MobDied`](Self::MobDied).
+    MobDamaged {
+        mob_id: u64,
+        kind: MobId,
+        amount: f32,
+        source: DamageSource,
+        /// Whether this hit was the killing one.
+        killed: bool,
+    },
+    /// POST — a use click RESOLVED, whoever consumed it. Fires for every
+    /// attempt that named a block cell or a mob, exactly once, after the
+    /// consumer chain ran — the observational twin of the cancellable
+    /// [`InteractAttempt`](Self::InteractAttempt) (which a mod earlier in the
+    /// chain can end before later handlers ever see it). `consumed` says
+    /// whether anything claimed it.
+    ///
+    /// Observe here; CLAIM on `interact_attempt`. A HELD use button
+    /// dispatches a fresh attempt every few ticks, exactly like a click, so
+    /// this fires for those repeats too — a handler must be happy to run
+    /// several times a second while the button is down.
+    Interacted {
+        block: Option<[i32; 3]>,
+        face: Option<[i32; 3]>,
+        mob: Option<u64>,
+        player: PlayerId,
+        consumed: bool,
+    },
+    /// POST — a mod emitted its own event ([`HostCall::EmitEvent`]). `key` is
+    /// namespaced to the EMITTING mod (`"farming:harvest_complete"`) and
+    /// `data` is that mod's own opaque payload; every registered handler sees
+    /// every mod event, so filter on `key` first.
+    ///
+    /// [`HostCall::EmitEvent`]: crate::HostCall::EmitEvent
+    ModEvent {
+        key: String,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
 }
 
 impl EventPayload {
@@ -347,6 +425,11 @@ impl EventPayload {
             EventPayload::PlayerDismounted { .. } => EventKind::PlayerDismounted,
             EventPayload::MobTagAdded { .. } => EventKind::MobTagAdded,
             EventPayload::MobTagRemoved { .. } => EventKind::MobTagRemoved,
+            EventPayload::ItemPickedUp { .. } => EventKind::ItemPickedUp,
+            EventPayload::ItemObtained { .. } => EventKind::ItemObtained,
+            EventPayload::MobDamaged { .. } => EventKind::MobDamaged,
+            EventPayload::Interacted { .. } => EventKind::Interacted,
+            EventPayload::ModEvent { .. } => EventKind::ModEvent,
         }
     }
 }

@@ -421,8 +421,8 @@ impl Player {
                 let d = facing.dir();
                 -(input.wishdir.x * d.x as f32 + input.wishdir.z * d.z as f32)
             };
-            let ascending = input.jump
-                || matches!(grip, crate::world::Climb::Panel(f) if into_wall(f) > 1e-3);
+            let ascending =
+                input.jump || matches!(grip, crate::world::Climb::Panel(f) if into_wall(f) > 1e-3);
             let target = if ascending { CLIMB_SPEED } else { -CLIMB_SPEED };
             self.vel.y = approach(
                 self.vel.y.clamp(-CLIMB_SPEED, CLIMB_SPEED),
