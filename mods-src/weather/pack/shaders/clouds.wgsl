@@ -46,7 +46,8 @@ struct ShaderParams { values: array<vec4<f32>, 16> };
 const CLOUD_BASE: f32 = 192.0;
 const CLOUD_THICK: f32 = 96.0;
 const CLOUD_FAR: f32 = 2400.0;   // march cap; beyond, the deck fades to haze
-const STEPS: i32 = 20;
+const STEPS: i32 = 28;          // see JITTER: steps and dither amplitude are
+                                // one trade, and the LOD below pays for these
 const WRAP: f32 = 65536.0;
 const SIGMA_T: f32 = 0.11;       // extinction at density 1 — thick cores go
                                  // optically deep fast (that contrast IS the
@@ -85,9 +86,21 @@ const COV_KEY_SPACING: f32 = 40.0;
 // Segment skip: below this keyed coverage nothing can render
 // (cloud_density needs cov > ~0.18; the margin covers between-key peaks).
 const COV_SKIP: f32 = 0.10;
-// Beyond this march distance the billow erosion is skipped (cheap density):
+// Beyond this march distance the billow erosion fades out (cheap density):
 // the aerial fade toward haze owns the look out there.
 const BILLOW_LOD_T: f32 = 1200.0;
+// Billow detail LOD by SAMPLE FOOTPRINT. A grazing ray crosses the slab over
+// a span many times the vertical one, so its dt runs to tens of blocks — an
+// octave finer than dt is not detail, it is aliasing, and no dither can hide
+// it (the horizon band read as an 8px woven grid: the 4x4 Bayer start offset
+// spans a whole dt, and at half res each phase is 2x2 final pixels). Each
+// octave therefore fades out as dt passes its Nyquist limit (half the
+// feature size), which is also exactly where the march is most worth making
+// cheaper. Under the fade the octave's vnoise3 is not evaluated at all.
+const BILLOW_FINE_NYQ: f32 = 8.0;    // 16-block octave
+const BILLOW_FINE_OUT: f32 = 20.0;
+const BILLOW_COARSE_NYQ: f32 = 32.0; // 64-block octave
+const BILLOW_COARSE_OUT: f32 = 80.0;
 // Top rim light: skylight scattered down through thin cloud above the
 // sample. DELIBERATELY sun-independent (per Rachel: bright crowns across
 // the whole deck, not only toward the sun) and NOT menace-boosted — a storm
@@ -247,7 +260,12 @@ fn vnoise3(p: vec3<f32>, period: u32, seed: u32) -> f32 {
 // two octaves of wind-advected 3D billow noise carve that column into puffy
 // cauliflower volumes (erode edges, keep cores); a height profile keeps
 // bases flat-ish and tops domed.
-fn cloud_density(p: vec3<f32>, cov: f32, cheap: bool) -> f32 {
+// `detail` weights the two billow octaves (x = 64-block, y = 16-block) — see
+// BILLOW_FINE_NYQ. A weight of 0 leaves `billow` at 1, which the erosion
+// below passes through as `base` untouched: the detail-free field is the
+// SAME expression, not a second branch, so an octave fades out instead of
+// popping when the footprint outgrows it.
+fn cloud_density(p: vec3<f32>, cov: f32, detail: vec2<f32>) -> f32 {
     if (cov <= 0.02) { return 0.0; }
     let hn = clamp((p.y - CLOUD_BASE) / CLOUD_THICK, 0.0, 1.0);
     // Heavier cells tower higher; every cell keeps a flat-ish base band.
@@ -255,7 +273,6 @@ fn cloud_density(p: vec3<f32>, cov: f32, cheap: bool) -> f32 {
     let prof = smoothstep(0.0, 0.08, hn) * (1.0 - smoothstep(top * 0.45, top, hn));
     let base = clamp(remap(cov * prof, 0.18, 0.95, 0.0, 1.0), 0.0, 1.0);
     if (base <= 0.0) { return 0.0; }
-    if (cheap) { return base * (0.45 + 0.55 * cov); }
     let wind = params.values[0];
     let sky = params.values[1];
     let seed = u32(sky.w);
@@ -266,10 +283,15 @@ fn cloud_density(p: vec3<f32>, cov: f32, cheap: bool) -> f32 {
     // (65536/64 = 1024 = the mask; 65536/16 = 4096) and nothing pops. The y
     // axis has its own scale (puffs read rounder than tall) and never wraps.
     let adv = vec3<f32>(wind.x, 0.0, wind.y);
-    let q1 = (p - adv) / vec3<f32>(64.0, 34.0, 64.0);
-    let q2 = (p - adv) / vec3<f32>(16.0, 13.0, 16.0);
-    let billow = 0.68 * vnoise3(q1, 1024u, seed ^ 0xA511E9B3u)
-        + 0.32 * vnoise3(q2, 4096u, seed ^ 0x63D83595u);
+    var billow = 1.0;
+    if (detail.x > 0.01) {
+        let q1 = (p - adv) / vec3<f32>(64.0, 34.0, 64.0);
+        billow -= detail.x * 0.68 * (1.0 - vnoise3(q1, 1024u, seed ^ 0xA511E9B3u));
+    }
+    if (detail.y > 0.01) {
+        let q2 = (p - adv) / vec3<f32>(16.0, 13.0, 16.0);
+        billow -= detail.y * 0.32 * (1.0 - vnoise3(q2, 4096u, seed ^ 0x63D83595u));
+    }
     // Edge erosion, core-preserving (Nubis): thin edges dissolve into
     // cauliflower lobes, thick cores stay solid.
     let d = clamp(remap(base, (1.0 - billow) * 0.62 * (1.0 - base * 0.7), 1.0, 0.0, 1.0), 0.0, 1.0);
@@ -283,8 +305,26 @@ fn hg(mu: f32, g: f32) -> f32 {
     return (1.0 - gg) / (12.566371 * b * sqrt(b));
 }
 
-// A small ordered dither so a 20-step march reads as soft layers, not bands
-// (art direction: no per-pixel noise — this is a stable 4×4 Bayer).
+// A small ordered dither so the march reads as soft layers, not bands (art
+// direction: no per-pixel noise — this is a stable 4×4 Bayer).
+//
+// JITTER is how much of a step the pattern spans, and it is the WHOLE reason
+// the deck used to wear a woven grid: at full width the 16 phases start their
+// marches up to a step apart, which over an overcast lid is easily a visible
+// grey level, and half res turns the 4×4 into an 8px weave the depth-aware
+// upsample passes straight through (measured on a real frame: the pattern was
+// the ONLY high-frequency content in the sky — zero the dither and the
+// residual is bit-flat). It cannot be zeroed, though: the dither is what
+// keeps the step count from showing as bands. Narrowing it to a FIFTH of a
+// step and spending the freed LOD budget on more steps beats the old setting
+// on both counts at once: measured over two overcast cameras the weave drops
+// ~85% while the banding lands exactly on the old number.
+//
+// Do NOT "fix" this by raising STEPS alone — 36 steps measured WORSE than 28.
+// n_keys is clamped by STEPS, so a higher budget also shortens the coverage
+// keyframe segments and hands the march back the high-frequency field the
+// keyframes existed to smooth.
+const JITTER: f32 = 0.20;
 fn bayer4(p: vec2<u32>) -> f32 {
     let m = array<f32, 16>(
         0.0, 8.0, 2.0, 10.0,
@@ -349,20 +389,25 @@ fn fs_env(in: VsOut) -> @location(0) vec4<f32> {
         t0 = min(ta, tb);
         t1 = max(ta, tb);
     }
-    t0 = max(t0, 0.0);
-    t1 = min(t1, min(scene_dist, CLOUD_FAR));
-    // Sub-millimeter spans (slab entry grazing the terrain clamp) render
-    // nothing AND their dt can fall below the float ulp at large t — see the
-    // step budget below.
-    if (t1 <= t0 + 1e-3) { return vec4<f32>(0.0); }
-
     // Aerial fade band, terrain-style: from where the terrain fog completes
     // to a cloud-scaled 3x (see CLOUD_FADE_END_CAP). Computed before the
     // march so a ray entering the slab beyond full fade skips it entirely —
     // alpha would multiply to zero anyway (hit_dist >= t0 >= fade_end).
     let fade_start = u.fog.y;
     let fade_end = min(CLOUD_FADE_END_CAP, u.fog.y * 3.0);
+    t0 = max(t0, 0.0);
     if (t0 >= fade_end) { return vec4<f32>(0.0); }
+    // The march ENDS at the fade too, not at the raw CLOUD_FAR cap: past
+    // fade_end the deck is pure haze, so those samples only ever bought
+    // opacity the haze then took back. Grazing rays are the ones this cuts
+    // (their slab crossing runs kilometres), and cutting their span cuts dt
+    // with it — which is what lets the billow LOD keep its detail out to a
+    // much lower elevation angle.
+    t1 = min(t1, min(scene_dist, min(CLOUD_FAR, fade_end)));
+    // Sub-millimeter spans (slab entry grazing the terrain clamp) render
+    // nothing AND their dt can fall below the float ulp at large t — see the
+    // step budget below.
+    if (t1 <= t0 + 1e-3) { return vec4<f32>(0.0); }
 
     let mu = dot(dir, u.sun_dir.xyz);
     let daylight = u.sun_dir.w;
@@ -392,7 +437,17 @@ fn fs_env(in: VsOut) -> @location(0) vec4<f32> {
     let span = t1 - t0;
     let n_keys = clamp(i32(span / COV_KEY_SPACING) + 1, 1, STEPS);
     let dt = span / f32(STEPS);
-    var t = t0 + dt * bayer4(pixel);
+    // Footprint LOD, constant along the march (dt is): each octave's weight
+    // at this step spacing. The old hard `t > BILLOW_LOD_T` switch folds in
+    // per step below as a distance factor, so the far deck now eases into
+    // cheap density instead of popping at 1200.
+    let detail_dt = vec2<f32>(
+        1.0 - smoothstep(BILLOW_COARSE_NYQ, BILLOW_COARSE_OUT, dt),
+        1.0 - smoothstep(BILLOW_FINE_NYQ, BILLOW_FINE_OUT, dt),
+    );
+    // Centred on the half-step so narrowing JITTER only tightens the spread,
+    // it does not slide the whole march forward.
+    var t = t0 + dt * (0.5 + (bayer4(pixel) - 0.5) * JITTER);
     var transmittance = 1.0;
     var radiance = vec3<f32>(0.0);
     var hit_dist = -1.0;
@@ -420,10 +475,11 @@ fn fs_env(in: VsOut) -> @location(0) vec4<f32> {
         steps_left -= 1;
         let p = cam_world + dir * t;
         let cov = mix(seg_lo, seg_hi, clamp((t - seg_t0) / (seg_t1 - seg_t0), 0.0, 1.0));
-        // Beyond the LOD line the aerial haze already owns the look: skip
-        // the billow erosion (cheap density) for the sample and its taps.
-        let cheap_lod = t > BILLOW_LOD_T;
-        let density = cloud_density(p, cov, cheap_lod);
+        // Toward the LOD line the aerial haze already owns the look: the
+        // billow erosion fades out (cheap density) for the sample and its
+        // taps.
+        let detail = detail_dt * (1.0 - smoothstep(BILLOW_LOD_T * 0.75, BILLOW_LOD_T, t));
+        let density = cloud_density(p, cov, detail);
         if (density > 0.003) {
             if (hit_dist < 0.0) { hit_dist = t; }
             let menace = menace_at(cov);
@@ -438,8 +494,8 @@ fn fs_env(in: VsOut) -> @location(0) vec4<f32> {
             // the lattice.
             let sp1 = p + u.sun_dir.xyz * 12.0;
             let sp2 = p + u.sun_dir.xyz * 34.0;
-            let s1 = cloud_density(sp1, cov, cheap_lod);
-            let s2 = cloud_density(sp2, cov, true);
+            let s1 = cloud_density(sp1, cov, detail);
+            let s2 = cloud_density(sp2, cov, vec2<f32>(0.0));
             let tau_sun = (s1 * 12.0 + s2 * 26.0) * SIGMA_T * (1.0 + RAIN_DARKEN * menace);
             // Dual-lobe Beer: the wide lobe keeps shadowed flanks readable.
             let t_sun = max(exp(-tau_sun), 0.5 * exp(-0.25 * tau_sun));
@@ -447,8 +503,8 @@ fn fs_env(in: VsOut) -> @location(0) vec4<f32> {
             // open sky. The coverage field is 2D, so the column's `cov` is
             // reused exactly — these taps cost only billow noise. No menace
             // boost on the taps: storm crowns stay lit (see RIM_BOOST).
-            let r1 = cloud_density(p + vec3<f32>(0.0, 14.0, 0.0), cov, cheap_lod);
-            let r2 = cloud_density(p + vec3<f32>(0.0, 36.0, 0.0), cov, true);
+            let r1 = cloud_density(p + vec3<f32>(0.0, 14.0, 0.0), cov, detail);
+            let r2 = cloud_density(p + vec3<f32>(0.0, 36.0, 0.0), cov, vec2<f32>(0.0));
             let rim = exp(-(r1 * 14.0 + r2 * 28.0) * SIGMA_T);
             let rim_light = vec3<f32>(1.0, 0.99, 0.96) * mix(0.10, 1.0, daylight) * (RIM_BOOST * rim);
             let crown = sun_color * (CROWN_SUN * daylight * rim * rim * mix(0.3, 1.0, menace));
