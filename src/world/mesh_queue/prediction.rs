@@ -18,7 +18,7 @@ impl World {
         let Some(work) = self.prepare_prediction_terrain(previous) else {
             return;
         };
-        let requeue = self.prediction_terrain.submit(work);
+        let requeue = self.terrain.prediction_terrain.submit(work);
         self.requeue_prediction_meshes(&requeue);
     }
 
@@ -36,9 +36,9 @@ impl World {
             return;
         };
         let guarded: Vec<_> = work.guards.iter().map(|guard| guard.pos).collect();
-        let requeue = self.prediction_terrain.cancel_overlapping(&guarded);
+        let requeue = self.terrain.prediction_terrain.cancel_overlapping(&guarded);
         self.requeue_prediction_meshes(&requeue);
-        let pool = Arc::clone(self.prediction_terrain.pool());
+        let pool = Arc::clone(self.terrain.prediction_terrain.pool());
         let result = run_prediction_terrain_synchronously(work, &pool)
             .expect("an uncancelled synchronous prediction bundle completes");
         let installed = self.install_prediction_terrain_result(result);
@@ -253,7 +253,12 @@ impl World {
             for cz in cpos.cz - 1..=cpos.cz + 1 {
                 for cx in cpos.cx - 1..=cpos.cx + 1 {
                     let cp = ChunkPos::new(cx, cz);
-                    let bits = self.section_column_cys.get(&cp).copied().unwrap_or(0);
+                    let bits = self
+                        .terrain
+                        .section_column_cys
+                        .get(&cp)
+                        .copied()
+                        .unwrap_or(0);
                     let mut b = bits;
                     while b != 0 {
                         let cy = chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
@@ -274,7 +279,7 @@ impl World {
     /// authoritative light landing, unload, or newer prediction rejects the
     /// entire bundle and hands its mesh targets back to the ordinary pipeline.
     pub(super) fn drain_prediction_terrain(&mut self) {
-        while let Some(completion) = self.prediction_terrain.try_recv() {
+        while let Some(completion) = self.terrain.prediction_terrain.try_recv() {
             let installed = completion
                 .result
                 .is_some_and(|result| self.install_prediction_terrain_result(result));
@@ -347,7 +352,7 @@ impl World {
         let mut installed = FxHashSet::default();
         for mesh in meshes {
             let pos = mesh.pos();
-            if let Some(job) = self.mesh_job_cancels.get(&pos) {
+            if let Some(job) = self.terrain.mesh_job_cancels.get(&pos) {
                 job.cancel();
             }
             match mesh {
@@ -357,15 +362,17 @@ impl World {
                 }
                 PredictionMeshResult::Remove { .. } => {
                     if self.remove_mesh(pos) {
-                        self.mesh_upload_dirty_columns.insert(pos.chunk_pos());
+                        self.terrain
+                            .mesh_upload_dirty_columns
+                            .insert(pos.chunk_pos());
                     }
                 }
             }
             installed.insert(pos);
-            self.dirty_meshes.remove(pos);
-            self.light_blocked_meshes.remove(&pos);
-            self.hidden_parked.remove(&pos);
-            self.sealed_parked.remove(&pos);
+            self.terrain.dirty_meshes.remove(pos);
+            self.terrain.light_blocked_meshes.remove(&pos);
+            self.terrain.hidden_parked.remove(&pos);
+            self.terrain.sealed_parked.remove(&pos);
             self.light_deferred.remove(&pos);
             self.deferred_rechecks.remove(&pos);
             if let Some(section) = self.section_mut(pos) {
@@ -386,8 +393,8 @@ impl World {
                         }
                         let p = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
                         if installed.contains(&p)
-                            || self.dirty_meshes.contains(p)
-                            || self.light_blocked_meshes.contains(&p)
+                            || self.terrain.dirty_meshes.contains(p)
+                            || self.terrain.light_blocked_meshes.contains(&p)
                             || !self.sections.contains_key(&p)
                         {
                             continue;
@@ -403,9 +410,9 @@ impl World {
 
     fn requeue_prediction_meshes(&mut self, positions: &[SectionPos]) {
         for &pos in positions {
-            self.light_blocked_meshes.remove(&pos);
+            self.terrain.light_blocked_meshes.remove(&pos);
             if self.sections.contains_key(&pos) {
-                self.dirty_meshes.push(pos);
+                self.terrain.dirty_meshes.push(pos);
             }
         }
     }

@@ -13,14 +13,16 @@ impl World {
     /// "settled" verdict costs remesh work, never visible terrain.
     pub(super) fn release_settled_column_meshes(&mut self) {
         if !self
+            .terrain
             .mesh_pump_frame
             .is_multiple_of(MESH_RELEASE_SWEEP_INTERVAL)
-            || self.mesh_release_after.is_empty()
+            || self.terrain.mesh_release_after.is_empty()
         {
             return;
         }
-        let frame = self.mesh_pump_frame;
+        let frame = self.terrain.mesh_pump_frame;
         let ripe: Vec<ChunkPos> = self
+            .terrain
             .mesh_release_after
             .iter()
             .filter(|&(_, &after)| frame >= after)
@@ -34,23 +36,26 @@ impl World {
             // Bounded cost: (2·ring+1)² columns per anchor stay at full size;
             // the re-armed timer releases them once the anchor moves away.
             if self.column_near_load_center(pos) {
-                self.mesh_release_after
+                self.terrain
+                    .mesh_release_after
                     .insert(pos, frame + MESH_RELEASE_DELAY_FRAMES);
                 continue;
             }
-            self.mesh_release_after.remove(&pos);
+            self.terrain.mesh_release_after.remove(&pos);
             // Still has upload or remesh work pending: skip. The eventual upload
             // re-stamps the column via `mark_column_uploaded`.
-            if self.mesh_upload_dirty_columns.contains(&pos) {
+            if self.terrain.mesh_upload_dirty_columns.contains(&pos) {
                 continue;
             }
-            let Some(&bits) = self.mesh_column_cys.get(&pos) else {
+            let Some(&bits) = self.terrain.mesh_column_cys.get(&pos) else {
                 continue;
             };
             let mut busy = false;
             Self::for_each_mesh_cy(bits, |cy| {
                 let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                if self.dirty_meshes.contains(sp) || self.light_blocked_meshes.contains(&sp) {
+                if self.terrain.dirty_meshes.contains(sp)
+                    || self.terrain.light_blocked_meshes.contains(&sp)
+                {
                     busy = true;
                 }
             });
@@ -58,7 +63,11 @@ impl World {
                 continue;
             }
             Self::for_each_mesh_cy(bits, |cy| {
-                if let Some(mesh) = self.meshes.get_mut(&SectionPos::new(pos.cx, cy, pos.cz)) {
+                if let Some(mesh) = self
+                    .terrain
+                    .meshes
+                    .get_mut(&SectionPos::new(pos.cx, cy, pos.cz))
+                {
                     if !mesh.mesh_dirty && !mesh.is_released() {
                         mesh.release_cpu_buffers();
                     }

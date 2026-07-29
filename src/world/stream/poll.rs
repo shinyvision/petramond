@@ -65,10 +65,11 @@ impl World {
             .as_ref()
             .is_some_and(|s| !s.colgen_manifest_contains(pos))
         {
-            self.pending_colgen_records
+            self.gen
+                .pending_colgen_records
                 .push(col.cache_record(self.seed));
         }
-        self.column_gen.insert(pos, col);
+        self.gen.column_gen.insert(pos, col);
         self.bump_column_payload_revision(pos);
     }
 
@@ -78,14 +79,14 @@ impl World {
     /// memory policy, not a correctness gate.
     ///
     fn slim_settled_column_gen(&mut self, pos: ChunkPos) {
-        let Some(col) = self.column_gen.get(&pos) else {
+        let Some(col) = self.gen.column_gen.get(&pos) else {
             return;
         };
         if !col.has_feature_windows() {
             return;
         }
         let slim = std::sync::Arc::new(col.slimmed());
-        self.column_gen.insert(pos, slim);
+        self.gen.column_gen.insert(pos, slim);
     }
 
     /// The anchor that wants column `pos` most (min priority key) — the target
@@ -110,14 +111,14 @@ impl World {
     /// touches the buffer. Turning capture off drops anything already buffered.
     pub fn set_stream_event_capture(&mut self, on: bool) {
         if !on {
-            self.stream_events.clear();
+            self.mods.stream_events.clear();
         }
-        self.stream_events_enabled = on;
+        self.mods.stream_events_enabled = on;
     }
 
     /// Drain the section stream events buffered by `poll` since the last take.
     pub fn take_stream_events(&mut self) -> Vec<StreamEvent> {
-        std::mem::take(&mut self.stream_events)
+        std::mem::take(&mut self.mods.stream_events)
     }
 
     /// Poll the worker and the save thread, then ingest: install each landed column's
@@ -142,9 +143,9 @@ impl World {
     fn stream_finality_fingerprint(&self) -> (usize, usize, usize, usize) {
         (
             self.sections.len(),
-            self.pending_sections.len(),
-            self.awaited_overlays.len(),
-            self.pending_overlays.len(),
+            self.gen.pending_sections.len(),
+            self.gen.awaited_overlays.len(),
+            self.gen.pending_overlays.len(),
         )
     }
 
@@ -196,7 +197,7 @@ impl World {
             |w| w.worker.try_recv(),
             |w, out| match out {
                 GenOutput::Column { pos, col } => {
-                    let was_pending = w.pending.remove(&pos).is_some();
+                    let was_pending = w.gen.pending.remove(&pos).is_some();
                     if !was_pending {
                         return;
                     }
@@ -212,7 +213,7 @@ impl World {
                 // in-flight forever — which would both hide the terrain and freeze
                 // the sim guard around it.
                 GenOutput::ColumnFailed(pos) => {
-                    w.pending.remove(&pos);
+                    w.gen.pending.remove(&pos);
                     // No longer pending and not installed: the column is
                     // missing again — let the scan re-find it.
                     w.missing_columns_settled = false;
@@ -220,16 +221,16 @@ impl World {
                 }
                 GenOutput::SectionFailed(sp) => {
                     w.remove_pending_section(sp);
-                    w.pending_section_jobs.remove(&sp);
+                    w.gen.pending_section_jobs.remove(&sp);
                     w.queue_deferred_rechecks_around(sp);
                 }
                 GenOutput::Section { sp, section } => {
                     if !w.remove_pending_section(sp) {
                         return;
                     }
-                    w.pending_section_jobs.remove(&sp);
+                    w.gen.pending_section_jobs.remove(&sp);
                     if !w.within_current_keep_radius(sp.chunk_pos())
-                        || !w.column_gen.contains_key(&sp.chunk_pos())
+                        || !w.gen.column_gen.contains_key(&sp.chunk_pos())
                     {
                         return;
                     }
@@ -238,8 +239,8 @@ impl World {
                     w.refresh_block_entity_index(sp);
                     w.refresh_particle_emitter_index(sp);
                     w.classify_deep_on_install(sp);
-                    if w.stream_events_enabled {
-                        w.stream_events.push(StreamEvent::Generated(sp));
+                    if w.mods.stream_events_enabled {
+                        w.mods.stream_events.push(StreamEvent::Generated(sp));
                     }
                     if ingested_set.insert(sp) {
                         ingested.push(sp);
@@ -259,12 +260,12 @@ impl World {
             |w| w.save.as_ref().and_then(|s| s.poll_loaded_column_gen()),
             |w, loaded| {
                 let pos = loaded.pos;
-                if !w.pending.contains_key(&pos) {
+                if !w.gen.pending.contains_key(&pos) {
                     return;
                 }
                 match loaded.record {
                     Some(rec) => {
-                        w.pending.remove(&pos);
+                        w.gen.pending.remove(&pos);
                         if !w.within_current_keep_radius(pos) {
                             return;
                         }
@@ -281,7 +282,7 @@ impl World {
                             target.column_priority_key(pos),
                             GenJob::Column { pos, seed: w.seed },
                         );
-                        if let Some(slot) = w.pending.get_mut(&pos) {
+                        if let Some(slot) = w.gen.pending.get_mut(&pos) {
                             *slot = Some(job);
                         }
                     }
@@ -311,11 +312,11 @@ impl World {
                 let loaded_store = loaded.store;
                 // The save thread answered: the record is no longer in flight (whatever
                 // the answer), so the sim guard must not keep the section blocked.
-                w.awaited_overlays.remove(&sp);
-                let disk_primary = w.disk_primary_sections.remove(&sp);
+                w.gen.awaited_overlays.remove(&sp);
+                let disk_primary = w.gen.disk_primary_sections.remove(&sp);
                 if disk_primary {
                     w.remove_pending_section(sp);
-                    w.pending_section_jobs.remove(&sp);
+                    w.gen.pending_section_jobs.remove(&sp);
                 }
                 if !w.within_current_keep_radius(sp.chunk_pos()) {
                     return;
@@ -327,7 +328,7 @@ impl World {
                     // Missing/corrupt record. Overlay path: generation stands.
                     // Disk-primary path: no base exists — generate it after all.
                     if disk_primary {
-                        if let Some(col) = w.column_gen.get(&sp.chunk_pos()).cloned() {
+                        if let Some(col) = w.gen.column_gen.get(&sp.chunk_pos()).cloned() {
                             let band_lo = *Self::surface_window_for_column(&col, 0).start();
                             let underground = w.anchor_underground(target);
                             let job = w.worker.submit(
@@ -339,13 +340,13 @@ impl World {
                                 },
                             );
                             w.insert_pending_section(sp);
-                            w.pending_section_jobs.insert(sp, job);
+                            w.gen.pending_section_jobs.insert(sp, job);
                         }
                     }
                     return;
                 };
                 if disk_primary {
-                    if !w.column_gen.contains_key(&sp.chunk_pos()) {
+                    if !w.gen.column_gen.contains_key(&sp.chunk_pos()) {
                         return; // column evicted while the read was in flight
                     }
                     if !loaded.entities.is_empty() || !loaded.mobs.is_empty() {
@@ -360,8 +361,8 @@ impl World {
                     w.classify_deep_on_install(sp);
                     w.dropped_items.extend(loaded.entities);
                     w.restore_mobs(loaded.mobs);
-                    if w.stream_events_enabled {
-                        w.stream_events.push(StreamEvent::Loaded(sp));
+                    if w.mods.stream_events_enabled {
+                        w.mods.stream_events.push(StreamEvent::Loaded(sp));
                     }
                     if ingested_set.insert(sp) {
                         ingested.push(sp);
@@ -370,7 +371,8 @@ impl World {
                         heightmap_recompute.insert(sp.chunk_pos());
                     }
                 } else {
-                    w.pending_overlays
+                    w.gen
+                        .pending_overlays
                         .insert(sp, (section, loaded.entities, loaded.mobs));
                 }
             },
@@ -378,9 +380,9 @@ impl World {
 
         // 4. Overlay any buffered saved sections whose generated section is now installed.
         let overlaid = self.apply_pending_overlays();
-        if self.stream_events_enabled {
+        if self.mods.stream_events_enabled {
             for sp in &overlaid {
-                self.stream_events.push(StreamEvent::Loaded(*sp));
+                self.mods.stream_events.push(StreamEvent::Loaded(*sp));
             }
         }
         for sp in &overlaid {
@@ -405,7 +407,7 @@ impl World {
         }
         // Bound the column-cache buffer during long exploration flights between
         // autosaves/unloads (each flush is one batched region write).
-        if self.pending_colgen_records.len() >= 128 {
+        if self.gen.pending_colgen_records.len() >= 128 {
             self.flush_pending_colgen_records();
         }
 
@@ -519,7 +521,7 @@ impl World {
             // dark, and headless/replica worlds have no lazy mesh-gate bake).
             let no_mesh_output = self.clear_mesh_if_section_produces_no_mesh(sp);
             let stale = light_stale.contains(&sp);
-            if self.meshes.contains_key(&sp) {
+            if self.terrain.meshes.contains_key(&sp) {
                 // Already produced a mesh: remesh now (border culling moved).
                 // Relight only if a landing actually invalidated it — plus the
                 // in-flight-bake race: a bake requested before this landing
@@ -595,8 +597,8 @@ impl World {
                 && dz.abs() <= radius
                 && dx * dx + dz * dz <= stream_radius * stream_radius
         };
-        !self.awaited_overlays.iter().any(in_neighborhood)
-            && !self.pending_overlays.keys().any(in_neighborhood)
+        !self.gen.awaited_overlays.iter().any(in_neighborhood)
+            && !self.gen.pending_overlays.keys().any(in_neighborhood)
     }
 
     /// Overlay every buffered saved section whose generated section is present: replace
@@ -605,13 +607,14 @@ impl World {
     /// section positions.
     pub(super) fn apply_pending_overlays(&mut self) -> Vec<SectionPos> {
         let ready: Vec<SectionPos> = self
+            .gen
             .pending_overlays
             .keys()
             .copied()
             .filter(|sp| self.sections.contains_key(sp))
             .collect();
         for sp in &ready {
-            let (section, entities, mobs) = self.pending_overlays.remove(sp).unwrap();
+            let (section, entities, mobs) = self.gen.pending_overlays.remove(sp).unwrap();
             // The record carried drops or mobs: remember that, so a later flush that finds
             // the section free of them rewrites the record instead of leaving stale
             // entities to resurrect (cross-session dupe).

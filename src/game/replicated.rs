@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use glam::{Quat, Vec3};
 
-use crate::gui::{ChestView, ContainerView, FurnaceView, GuiStateMap};
+use crate::gui::{ContainerView, GuiStateMap};
 use crate::inventory::Inventory;
 use crate::item::ItemStack;
 use crate::mathh::IVec3;
@@ -312,8 +312,6 @@ impl SelfView {
 pub(crate) struct MenuView {
     /// The real output produced by the last accepted CRAFT request.
     pub(crate) craft_output: Option<ItemStack>,
-    pub(crate) furnace: Option<FurnaceView>,
-    pub(crate) chest: Option<ChestView>,
     /// The open mod GUI's container slots.
     pub(crate) container: Option<ContainerView>,
     /// The open mod GUI's kind — resolves the document's slot semantics
@@ -328,8 +326,6 @@ impl Default for MenuView {
     fn default() -> Self {
         Self {
             craft_output: None,
-            furnace: None,
-            chest: None,
             container: None,
             container_kind: None,
             gui_state: None,
@@ -346,8 +342,6 @@ impl MenuView {
     /// GUI state map is kept unless the sync carries a fresh one.
     pub(crate) fn apply(&mut self, msg: MenuSyncMsg) {
         self.craft_output = None;
-        self.furnace = None;
-        self.chest = None;
         self.container = None;
         self.container_kind = None;
         match msg.target {
@@ -358,32 +352,7 @@ impl MenuView {
                 self.gui_state = None;
                 self.craft_output = stack_from_wire(&output);
             }
-            MenuTargetWire::Furnace {
-                slots,
-                cook01,
-                burn01,
-                ..
-            } => {
-                self.gui_state = None;
-                self.furnace = Some(FurnaceView {
-                    input: stack_from_wire(&slots[0]),
-                    fuel: stack_from_wire(&slots[1]),
-                    output: stack_from_wire(&slots[2]),
-                    cook01,
-                    burn01,
-                });
-            }
-            MenuTargetWire::Chest { slots, .. } => {
-                self.gui_state = None;
-                let mut view = ChestView {
-                    slots: [None; crate::world::chest::CHEST_SLOTS],
-                };
-                for (dst, src) in view.slots.iter_mut().zip(slots) {
-                    *dst = stack_from_wire(&src);
-                }
-                self.chest = Some(view);
-            }
-            MenuTargetWire::ModGui {
+            MenuTargetWire::Container {
                 kind_key,
                 slots,
                 gui_state,
@@ -415,7 +384,7 @@ impl MenuView {
     /// and a skipped map would be lost until its next change), while slot
     /// truth arrives with the pending request's own forced outcome batch.
     pub(crate) fn adopt_gui_state(&mut self, msg: MenuSyncMsg) {
-        if let MenuTargetWire::ModGui {
+        if let MenuTargetWire::Container {
             gui_state: Some(entries),
             ..
         } = msg.target

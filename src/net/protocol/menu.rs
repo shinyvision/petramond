@@ -11,38 +11,26 @@ use super::ItemSlotWire;
 pub(crate) enum MenuSlotWire {
     Inventory(u32),
     CraftResult,
-    FurnaceInput,
-    FurnaceFuel,
-    FurnaceOutput,
-    Chest(u32),
     Container(u32),
     Widget(String),
 }
 
 impl MenuSlotWire {
     pub(crate) fn from_menu_slot(slot: &crate::gui::MenuSlot) -> Self {
-        use crate::gui::{FurnaceHit, MenuSlot};
+        use crate::gui::MenuSlot;
         match slot {
             MenuSlot::Inventory(i) => Self::Inventory(*i as u32),
             MenuSlot::CraftResult => Self::CraftResult,
-            MenuSlot::Furnace(FurnaceHit::Input) => Self::FurnaceInput,
-            MenuSlot::Furnace(FurnaceHit::Fuel) => Self::FurnaceFuel,
-            MenuSlot::Furnace(FurnaceHit::Output) => Self::FurnaceOutput,
-            MenuSlot::Chest(i) => Self::Chest(*i as u32),
             MenuSlot::Container(i) => Self::Container(*i as u32),
             MenuSlot::Widget(id) => Self::Widget((*id).to_string()),
         }
     }
 
     pub(crate) fn to_menu_slot(&self) -> crate::gui::MenuSlot {
-        use crate::gui::{FurnaceHit, MenuSlot};
+        use crate::gui::MenuSlot;
         match self {
             Self::Inventory(i) => MenuSlot::Inventory(*i as usize),
             Self::CraftResult => MenuSlot::CraftResult,
-            Self::FurnaceInput => MenuSlot::Furnace(FurnaceHit::Input),
-            Self::FurnaceFuel => MenuSlot::Furnace(FurnaceHit::Fuel),
-            Self::FurnaceOutput => MenuSlot::Furnace(FurnaceHit::Output),
-            Self::Chest(i) => MenuSlot::Chest(*i as usize),
             Self::Container(i) => MenuSlot::Container(*i as usize),
             Self::Widget(id) => MenuSlot::Widget(crate::gui::intern_str(id)),
         }
@@ -88,18 +76,7 @@ pub(crate) enum MenuTargetWire {
     /// station's kind). The result is transient server-owned menu state, not
     /// an inventory slot.
     Crafting { output: Option<ItemSlotWire> },
-    Furnace {
-        pos: IVec3,
-        /// `[input, fuel, output]`.
-        slots: [Option<ItemSlotWire>; 3],
-        cook01: f32,
-        burn01: f32,
-    },
-    Chest {
-        pos: IVec3,
-        slots: Vec<Option<ItemSlotWire>>,
-    },
-    ModGui {
+    Container {
         kind_key: String,
         pos: Option<IVec3>,
         /// The backing container's slots, `None` for a slot-less GUI.

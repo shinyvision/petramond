@@ -6,8 +6,7 @@
 
 use super::{ContainerMenu, ContainerTarget};
 use crate::controls::PointerButton;
-use crate::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
-use crate::gui::{FurnaceHit, GuiKind, MenuSlot, MAX_MENU_DRAG_SLOTS};
+use crate::gui::{MenuSlot, MAX_MENU_DRAG_SLOTS};
 use crate::inventory::{plan_drag_distribution, slot_capacity, take_slot_stack, Inventory};
 use crate::item::ItemStack;
 use crate::world::World;
@@ -62,9 +61,7 @@ impl ContainerMenu {
             MenuSlot::CraftResult if self.crafting_station().is_some() => {
                 take_slot_stack(&mut self.craft_output, all)
             }
-            MenuSlot::Furnace(_) | MenuSlot::Chest(_) | MenuSlot::Container(_) => {
-                self.drop_open_container_slot(world, slot, all)
-            }
+            MenuSlot::Container(_) => self.drop_open_container_slot(world, slot, all),
             MenuSlot::CraftResult | MenuSlot::Widget(_) => None,
         }
     }
@@ -73,13 +70,10 @@ impl ContainerMenu {
     /// role can never address another target's backing container.
     fn open_container_index(&self, slot: MenuSlot) -> Option<usize> {
         match (self.target.kind()?, slot) {
-            (GuiKind::Chest, MenuSlot::Chest(i)) => Some(i),
-            (GuiKind::Furnace, MenuSlot::Furnace(hit)) => Some(match hit {
-                FurnaceHit::Input => SLOT_INPUT,
-                FurnaceHit::Fuel => SLOT_FUEL,
-                FurnaceHit::Output => SLOT_OUTPUT,
-            }),
-            (kind, MenuSlot::Container(i)) if kind.is_mod() => Some(i),
+            // Every block-backed container addresses its slots by plain index
+            // — engine chest, engine furnace, and a pack's alike. What each
+            // index MEANS is the document's `SlotSpec`, not a role name.
+            (kind, MenuSlot::Container(i)) if ContainerTarget::kind_block_backed(kind) => Some(i),
             _ => None,
         }
     }
@@ -97,7 +91,7 @@ impl ContainerMenu {
                 .get(i)
                 .map(|cell| slot_capacity(cell, held))
                 .unwrap_or(0),
-            MenuSlot::Furnace(_) | MenuSlot::Chest(_) | MenuSlot::Container(_) => {
+            MenuSlot::Container(_) => {
                 let Some(i) = self.open_container_index(slot) else {
                     return 0;
                 };
@@ -125,7 +119,7 @@ impl ContainerMenu {
             MenuSlot::Inventory(i) => {
                 inv.place_cursor_count_in_slot(i, wanted);
             }
-            MenuSlot::Furnace(_) | MenuSlot::Chest(_) | MenuSlot::Container(_) => {
+            MenuSlot::Container(_) => {
                 let Some(i) = self.open_container_index(slot) else {
                     return;
                 };

@@ -54,14 +54,17 @@ impl Renderer {
         document: Option<&super::super::DocumentUiFrame<'_>>,
         screen: (u32, u32),
     ) {
-        self.doc_ui.batches.clear();
-        self.doc_ui.overlay_start = 0;
-        self.doc_ui.frame_images.clear();
+        self.ui.doc_ui.batches.clear();
+        self.ui.doc_ui.overlay_start = 0;
+        self.ui.doc_ui.frame_images.clear();
         let Some(document) = document else {
             return;
         };
         let draw = document.draw;
-        self.doc_ui.frame_images.extend_from_slice(document.images);
+        self.ui
+            .doc_ui
+            .frame_images
+            .extend_from_slice(document.images);
         self.ensure_doc_image_binds();
         if draw.vertices.is_empty() {
             return;
@@ -73,18 +76,25 @@ impl Renderer {
 
         // px (y down) → NDC (y up); uv/color pass through, including the
         // solid sentinel.
-        self.doc_ui.verts.clear();
-        self.doc_ui
+        self.ui.doc_ui.verts.clear();
+        self.ui
+            .doc_ui
             .verts
             .extend(draw.vertices.iter().map(|v| UiVertex {
                 pos: crate::render::ui::pixel_to_ndc(screen, v.pos[0], v.pos[1]),
                 uv: v.uv,
                 color: v.color,
             }));
-        let bytes: &[u8] = bytemuck::cast_slice(&self.doc_ui.verts);
+        let bytes: &[u8] = bytemuck::cast_slice(&self.ui.doc_ui.verts);
         let needs = bytes.len() as u64;
-        if self.doc_ui.vbuf.as_ref().is_none_or(|b| b.size() < needs) {
-            self.doc_ui.vbuf = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+        if self
+            .ui
+            .doc_ui
+            .vbuf
+            .as_ref()
+            .is_none_or(|b| b.size() < needs)
+        {
+            self.ui.doc_ui.vbuf = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("doc ui vbuf"),
                 size: needs.next_power_of_two(),
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
@@ -92,9 +102,10 @@ impl Renderer {
             }));
         }
         self.queue
-            .write_buffer(self.doc_ui.vbuf.as_ref().unwrap(), 0, bytes);
+            .write_buffer(self.ui.doc_ui.vbuf.as_ref().unwrap(), 0, bytes);
 
-        self.doc_ui
+        self.ui
+            .doc_ui
             .batches
             .extend(draw.batches.iter().map(|b| DocBatch {
                 tex: b.tex,
@@ -102,27 +113,28 @@ impl Renderer {
                 count: b.count,
                 clip: b.clip,
             }));
-        self.doc_ui.overlay_start = draw.overlay_start.min(self.doc_ui.batches.len());
+        self.ui.doc_ui.overlay_start = draw.overlay_start.min(self.ui.doc_ui.batches.len());
     }
 
     fn ensure_doc_theme_binds(&mut self) {
-        if self.doc_ui.theme_binds.is_some() {
+        if self.ui.doc_ui.theme_binds.is_some() {
             return;
         }
         let theme = crate::gui::doc_theme::theme();
         let atlas = self.doc_texture_bind(&theme.atlas, "doc ui theme atlas");
         let font = self.doc_texture_bind(&theme.font, "doc ui font atlas");
-        self.doc_ui.theme_binds = Some(ThemeBinds { atlas, font });
+        self.ui.doc_ui.theme_binds = Some(ThemeBinds { atlas, font });
     }
 
     fn ensure_doc_image_binds(&mut self) {
         let missing: Vec<std::path::PathBuf> = self
+            .ui
             .doc_ui
             .frame_images
             .iter()
             .filter_map(|source| match source {
                 crate::gui::DocImageSource::Path(path)
-                    if !self.doc_ui.image_binds.contains_key(path) =>
+                    if !self.ui.doc_ui.image_binds.contains_key(path) =>
                 {
                     Some(path.clone())
                 }
@@ -140,9 +152,10 @@ impl Renderer {
                 size,
             };
             let bind = self.doc_texture_bind(&data, "doc ui image");
-            self.doc_ui.image_binds.insert(path, bind);
+            self.ui.doc_ui.image_binds.insert(path, bind);
         }
         let updates: Vec<_> = self
+            .ui
             .doc_ui
             .frame_images
             .iter()
@@ -153,6 +166,7 @@ impl Renderer {
                     revision,
                     rgba,
                 } if self
+                    .ui
                     .doc_ui
                     .dynamic_binds
                     .get(key)
@@ -164,7 +178,7 @@ impl Renderer {
             })
             .collect();
         for (key, size, revision, rgba) in updates {
-            if let Some(existing) = self.doc_ui.dynamic_binds.get_mut(&key) {
+            if let Some(existing) = self.ui.doc_ui.dynamic_binds.get_mut(&key) {
                 if existing.size == size {
                     write_doc_texture(&self.queue, &existing.texture, size, &rgba);
                     existing.revision = revision;
@@ -172,7 +186,7 @@ impl Renderer {
                 }
             }
             let (texture, bind) = self.doc_texture_resources(size, &rgba, "dynamic doc ui image");
-            self.doc_ui.dynamic_binds.insert(
+            self.ui.doc_ui.dynamic_binds.insert(
                 key,
                 DynamicBind {
                     revision,
@@ -222,7 +236,7 @@ impl Renderer {
         });
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(label),
-            layout: &self.ui_texture_bgl,
+            layout: &self.ui.texture_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -240,54 +254,56 @@ impl Renderer {
     /// Draw the base tier of the uploaded document UI (everything under the
     /// host's own item icons).
     pub(super) fn draw_doc_ui(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let end = self.doc_ui.overlay_start;
-        self.draw_doc_batches(pass, &self.doc_ui.batches[..end]);
+        let end = self.ui.doc_ui.overlay_start;
+        self.draw_doc_batches(pass, &self.ui.doc_ui.batches[..end]);
     }
 
     /// Draw the overlay tier: floating tooltip chrome, which has to cover the
     /// host content the base tier drew under.
     pub(super) fn draw_doc_ui_overlay(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let start = self.doc_ui.overlay_start;
-        self.draw_doc_batches(pass, &self.doc_ui.batches[start..]);
+        let start = self.ui.doc_ui.overlay_start;
+        self.draw_doc_batches(pass, &self.ui.doc_ui.batches[start..]);
     }
 
     pub(super) fn has_doc_overlay(&self) -> bool {
-        self.doc_ui.overlay_start < self.doc_ui.batches.len()
+        self.ui.doc_ui.overlay_start < self.ui.doc_ui.batches.len()
     }
 
     /// Draw a batch range inside the UI pass. The pipeline is already set;
     /// each batch binds its texture and scissors its clip.
     fn draw_doc_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[DocBatch]) {
-        let (Some(vbuf), Some(binds)) = (&self.doc_ui.vbuf, &self.doc_ui.theme_binds) else {
+        let (Some(vbuf), Some(binds)) = (&self.ui.doc_ui.vbuf, &self.ui.doc_ui.theme_binds) else {
             return;
         };
         if batches.is_empty() {
             return;
         }
-        let screen = self.prepared_ui_viewport.size;
+        let screen = self.ui.prepared_viewport.size;
         pass.set_vertex_buffer(0, vbuf.slice(..));
         for batch in batches {
-            let bind =
-                match batch.tex {
-                    petramond_ui::TexId::Solid => &self.icon_atlas.bind,
-                    petramond_ui::TexId::ThemeAtlas => &binds.atlas,
-                    petramond_ui::TexId::Font => &binds.font,
-                    petramond_ui::TexId::DocImage(i) => {
-                        match self.doc_ui.frame_images.get(i as usize).and_then(|source| {
-                            match source {
-                                crate::gui::DocImageSource::Path(path) => {
-                                    self.doc_ui.image_binds.get(path)
-                                }
-                                crate::gui::DocImageSource::Dynamic { key, .. } => {
-                                    self.doc_ui.dynamic_binds.get(key).map(|entry| &entry.bind)
-                                }
+            let bind = match batch.tex {
+                petramond_ui::TexId::Solid => &self.ui.icon_atlas.bind,
+                petramond_ui::TexId::ThemeAtlas => &binds.atlas,
+                petramond_ui::TexId::Font => &binds.font,
+                petramond_ui::TexId::DocImage(i) => {
+                    match self.ui.doc_ui.frame_images.get(i as usize).and_then(
+                        |source| match source {
+                            crate::gui::DocImageSource::Path(path) => {
+                                self.ui.doc_ui.image_binds.get(path)
                             }
-                        }) {
-                            Some(bind) => bind,
-                            None => continue,
-                        }
+                            crate::gui::DocImageSource::Dynamic { key, .. } => self
+                                .ui
+                                .doc_ui
+                                .dynamic_binds
+                                .get(key)
+                                .map(|entry| &entry.bind),
+                        },
+                    ) {
+                        Some(bind) => bind,
+                        None => continue,
                     }
-                };
+                }
+            };
             match batch.clip {
                 Some([x, y, w, h]) => {
                     let x0 = x.clamp(0, screen.0 as i32) as u32;

@@ -109,7 +109,7 @@ impl World {
         // Floor the scan at the generated surface only while that surface section is
         // absent. Once loaded, its blocks are authoritative; otherwise a streaming
         // recompute can "restore" ground over a player-dug sky shaft.
-        let bare = self.column_gen.get(&cpos).cloned();
+        let bare = self.gen.column_gen.get(&cpos).cloned();
         for lz in 0..SECTION_SIZE {
             for lx in 0..SECTION_SIZE {
                 let i = lz * SECTION_SIZE + lx;

@@ -240,7 +240,7 @@ impl Game {
             return false;
         };
         let looked = Block::from_id(self.replica.chunk_block(h.block.x, h.block.y, h.block.z));
-        let p = if looked.is_replaceable() && looked != Block::Air {
+        let p = if crate::world::placement::replaces_in_place(looked) {
             h.block
         } else {
             if h.normal == IVec3::ZERO {
@@ -348,7 +348,7 @@ impl Game {
         // mod's own CLIENT PREDICTOR first: the predicted pre event dispatched
         // against the replica, the same vocabulary the server dispatches. A
         // predicted cancel is a KNOWN refusal (no jab, no ghost). Everything
-        // AFTER that gate is deterministic on both sides: a Layer-3 CUSTOM
+        // AFTER that gate is deterministic on both sides: a CUSTOM
         // shape runs the server's whole plan+bake pipeline and ghosts the
         // exact write; every other mod block falls through to the shared
         // placement ladder below like an engine block — a pack model block
@@ -361,13 +361,10 @@ impl Game {
                 look.block.z,
             ));
             // The server's pre-event position rule (minus slab stacking,
-            // which no mod row participates in): replace-in-place targets
-            // the clicked cell, anything else builds against the face.
-            let pre_pos = if looked_at.is_replaceable() && looked_at != crate::block::Block::Air {
-                look.block
-            } else {
-                look.block + look.normal
-            };
+            // which no mod row participates in): the shared build-position
+            // rule, so this cannot drift from the authority.
+            let pre_pos =
+                crate::world::placement::build_position(looked_at, look.block, look.normal);
             let facing = crate::server::placement::facing_from_forward(self.player.forward());
             let payload = mod_api::EventPayload::BlockPlacePre {
                 pos: pre_pos.to_array(),
@@ -397,7 +394,7 @@ impl Game {
         // plausible (jab), never ghosted. Replacing a block with ITSELF is a
         // KNOWN refusal (the shared ladder rejects the no-op rewrite), so the
         // click stays silent.
-        if target.is_replaceable() && target != crate::block::Block::Air {
+        if crate::world::placement::replaces_in_place(target) {
             return if target == block {
                 PlacePrediction::No
             } else {
@@ -491,7 +488,7 @@ impl Game {
         PlacePrediction::Predicted(id)
     }
 
-    /// Full client prediction of a Layer-3 custom shape's placement — the SAME
+    /// Full client prediction of a custom shape's placement — the SAME
     /// pipeline the server runs (`try_place_custom_shape`), evaluated against
     /// the replica: the owning mod's placement plan (its client instance — the
     /// plan is deterministic), the SHARED plan validation, the replaceable

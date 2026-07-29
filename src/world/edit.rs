@@ -120,7 +120,7 @@ impl World {
         // changes — reads never resolve, they decode.
         self.refine_shape_states_around(wx, wy, wz);
         // Plane openness may have changed; deep-visibility must re-evaluate.
-        self.vis_dirty = true;
+        self.terrain.vis_dirty = true;
 
         // Announce the change: re-lights the influence reach and lets reactive
         // neighbours (e.g. water) re-evaluate on the next game tick. A proven

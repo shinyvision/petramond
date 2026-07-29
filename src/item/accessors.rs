@@ -195,10 +195,7 @@ impl ItemType {
                 match k.render.item_render(&k.params, block) {
                     ItemRender::ItemSprite => ItemRenderKind::Sprite(self.item_sprite()),
                     ItemRender::Tile(tile) => ItemRenderKind::Sprite(tile),
-                    ItemRender::Cube(b) => ItemRenderKind::BlockCube(b),
-                    // The Cube/true-geometry split (stair/slab/fence) is drawn by
-                    // `render::item_cube`; both are `BlockCube` render kinds here.
-                    ItemRender::Geometry(b) => ItemRenderKind::BlockCube(b),
+                    ItemRender::BlockForm(b) => ItemRenderKind::BlockCube(b),
                     ItemRender::Model(kind) => ItemRenderKind::Model(kind),
                 }
             }

@@ -1,4 +1,4 @@
-//! Mod-declared procedural shapes (Layer 3): the `shapes.json` catalog a pack
+//! Mod-declared procedural shapes: the `shapes.json` catalog a pack
 //! ships to declare custom shape kinds its WASM bakes. A block row references
 //! one by name (`"shape": "mymod:gate"`); the geometry comes from the pack's
 //! bake (see the shape bake ABI), while this row carries the static metadata the

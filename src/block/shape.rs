@@ -40,7 +40,7 @@ pub struct Aabb {
     pub max: [f32; 3],
 }
 
-/// One DRAWN box of a Layer-3 custom shape's render bake: geometry plus the
+/// One DRAWN box of a custom shape's render bake: geometry plus the
 /// per-box RGB multiply tint (`[1.0; 3]` = untinted, the ordinary case). The
 /// engine form of the wire `mod_api::ShapeRenderBox`; the mesher multiplies
 /// it into the box's per-vertex tint lane (the biome grass/water channel).
@@ -103,6 +103,44 @@ impl ShapeFace {
             2 => (1.0 - u, 1.0 - v),
             3 => (1.0 - v, u),
             _ => (u, v),
+        }
+    }
+}
+
+/// One cell-local cuboid of a shape's ITEM form — what the icon, the dropped
+/// entity, and the in-hand model draw.
+///
+/// Deliberately NOT [`ShapeBox`]: an item is not always the placed form. A
+/// fence item is an authored two-post SEGMENT, where the placed cell with no
+/// neighbours resolves to a bare post. The family owns that difference, which
+/// is why it answers [`ShapeRender::item_boxes`] instead of the renderer
+/// re-deriving a form per family.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ItemBox {
+    pub aabb: Aabb,
+    /// Which faces the item draws. A face the family omits is one it knows is
+    /// buried (a fence rail's end against its post).
+    pub faces: [bool; 6],
+    /// The block whose icon tiles this box samples — a stacked slab's two
+    /// layers can be different materials. `None` = the item's own block.
+    pub material: Option<crate::block::Block>,
+    /// Per-face tile override (a static box set's authored tiles); `None`
+    /// falls back to the material's icon face tile.
+    pub tiles: [Option<crate::atlas::Tile>; 6],
+    /// Per-face extra UV quarter-turns (a static box set's `uv_turns`).
+    pub uv_turns: [u8; 6],
+}
+
+impl ItemBox {
+    /// A box drawing all six faces from the item's own block, untinted and
+    /// unturned — what stair/slab/fence forms want.
+    pub fn solid(min: [f32; 3], max: [f32; 3]) -> Self {
+        ItemBox {
+            aabb: Aabb { min, max },
+            faces: [true; 6],
+            material: None,
+            tiles: [None; 6],
+            uv_turns: [0; 6],
         }
     }
 }

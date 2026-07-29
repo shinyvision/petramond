@@ -398,7 +398,7 @@ impl ServerGame {
         }
         let mut out = base.clone();
         if gui_changed {
-            if let (MenuTargetWire::ModGui { gui_state, .. }, Some(map)) =
+            if let (MenuTargetWire::Container { gui_state, .. }, Some(map)) =
                 (&mut out.target, &gui_arc)
             {
                 *gui_state = Some(

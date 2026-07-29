@@ -61,7 +61,7 @@ impl World {
                     .to_u8()
             })
             .collect();
-        let (mesh_biomes, deep_band_lo) = self.column_gen.get(&pos).map_or_else(
+        let (mesh_biomes, deep_band_lo) = self.gen.column_gen.get(&pos).map_or_else(
             || {
                 let mut halo = vec![0u8; 20 * 20];
                 for z in 0..20 {

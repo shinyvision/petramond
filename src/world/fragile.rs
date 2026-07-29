@@ -87,11 +87,12 @@ impl World {
     ///   what makes a cut at the top unzip the whole run downward while a cut
     ///   at the bottom takes nothing with it.
     pub(crate) fn fragile_supported(&self, pos: IVec3, block: Block) -> bool {
-        if block.shape_family() == crate::block::ShapeFamily::Torch {
-            return self.torch_supported_at(pos, self.torch_placement(pos));
-        }
-        if block.shape_family() == crate::block::ShapeFamily::Ladder {
-            return self.ladder_supported_at(pos, block.panel_facing());
+        // A shape whose support comes from its PLACEMENT answers where it
+        // grips; the face-completeness test is then the shared one. No family
+        // is named here, so a pack's wall lantern supports itself for free.
+        let k = block.shape_kind_def();
+        if let Some(m) = k.sim.mount(&k.params, self, pos, block) {
+            return self.mount_face_complete(m.cell, m.normal);
         }
         let dir = block.support_dir();
         let s = dir.support_cell(pos);

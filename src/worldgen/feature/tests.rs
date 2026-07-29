@@ -266,7 +266,7 @@ fn live_density_feature_region_covers_margin_and_spacing_queries() {
 fn runtime_feature_field_matches_full_region_features() {
     let seed = 0x1234_5678;
     let surface = SurfaceDensitySystem::new(seed);
-    let caves = crate::worldgen::noise::height::CaveField::new(seed);
+    let caves = crate::worldgen::noise::cave_field::CaveField::new(seed);
 
     for (cx, cz) in [(0, 0), (-3, 5), (12, -7), (4, -3)] {
         let ox = cx * CHUNK_SX as i32;

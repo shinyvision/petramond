@@ -25,6 +25,48 @@ mod tests {
     use crate::item::{ItemStack, ItemType};
     use crate::mathh::IVec3;
     use crate::world::World;
+    /// The engine chest earns its slot semantics from its OWN GUI document,
+    /// exactly as a pack container does — there is no engine-owned chest spec
+    /// set any more. If `chest.gui.json` ever stops declaring `container`
+    /// slots, the specs go empty and shift-clicking into a chest silently
+    /// degrades to a plain hotbar↔grid move instead of routing into storage,
+    /// which no other test would catch.
+    #[test]
+    fn the_chest_derives_its_slot_specs_from_its_document() {
+        let specs = crate::gui::documents::container_slot_specs(crate::gui::GuiKind::Chest);
+        assert_eq!(
+            specs.len(),
+            crate::world::chest::CHEST_SLOTS,
+            "the chest document must declare one `container` slot per storage cell"
+        );
+        assert!(
+            specs.iter().all(|s| !s.take_only && s.accepts.is_empty()),
+            "chest cells are plain storage: no filters, no take-only outputs"
+        );
+    }
+
+    /// The furnace's slot SEMANTICS are its document's too: a smeltable-only
+    /// input, a fuel-only fuel slot, and a take-only output, in the engine's
+    /// `SLOT_INPUT`/`SLOT_FUEL`/`SLOT_OUTPUT` index order. If the document's
+    /// slot order or its `accepts`/`take_only` ever drift, shift-routing sends
+    /// coal to the input and the output stops refusing inserts — both silent.
+    #[test]
+    fn the_furnace_derives_its_slot_specs_from_its_document() {
+        use crate::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
+        let specs = crate::gui::documents::container_slot_specs(crate::gui::GuiKind::Furnace);
+        assert_eq!(specs.len(), crate::furnace::FURNACE_SLOTS);
+        assert!(specs[SLOT_INPUT]
+            .accepts
+            .contains(&crate::item::ItemTag::SMELTABLE));
+        assert!(specs[SLOT_FUEL]
+            .accepts
+            .contains(&crate::item::ItemTag::FUEL));
+        assert!(
+            specs[SLOT_OUTPUT].take_only,
+            "the furnace output must refuse inserts"
+        );
+    }
+
     fn world_with_empty_chunk() -> World {
         let mut world = World::new(1, 1);
         let pos = crate::chunk::ChunkPos::new(0, 0);
@@ -165,7 +207,7 @@ mod tests {
         menu.click(
             &mut world,
             &mut inv,
-            MenuSlot::Furnace(crate::gui::FurnaceHit::Output),
+            MenuSlot::Container(crate::furnace::SLOT_OUTPUT),
             PointerButton::Secondary,
             false,
             false,
@@ -198,9 +240,9 @@ mod tests {
             &mut inv,
             &[
                 MenuSlot::Inventory(9),
-                MenuSlot::Chest(0),
+                MenuSlot::Container(0),
                 MenuSlot::Inventory(9),
-                MenuSlot::Chest(1),
+                MenuSlot::Container(1),
             ],
             PointerButton::Primary,
         );
@@ -231,7 +273,7 @@ mod tests {
         menu.open_chest_screen(&mut world, pos);
 
         assert_eq!(
-            menu.drop_slot(&mut world, &mut inv, MenuSlot::Chest(0), false),
+            menu.drop_slot(&mut world, &mut inv, MenuSlot::Container(0), false),
             Some(ItemStack::new(ItemType::Coal, 1))
         );
         assert_eq!(
@@ -239,7 +281,7 @@ mod tests {
             Some(ItemStack::new(ItemType::Coal, 4))
         );
         assert_eq!(
-            menu.drop_slot(&mut world, &mut inv, MenuSlot::Chest(0), true),
+            menu.drop_slot(&mut world, &mut inv, MenuSlot::Container(0), true),
             Some(ItemStack::new(ItemType::Coal, 4))
         );
         assert!(world.container_at(pos).unwrap().slots[0].is_none());

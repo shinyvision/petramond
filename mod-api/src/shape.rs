@@ -1,4 +1,4 @@
-//! Procedural block-shape ABI (Layer 3): the vocabulary a mod's WASM uses to
+//! Procedural block-shape ABI: the vocabulary a mod's WASM uses to
 //! BAKE a custom block shape's geometry — the deterministic sim side (collision
 //! boxes + a light aperture, cross-checked server↔replica) and the client
 //! render side (the drawn boxes) — plus the per-interaction placement plan. The

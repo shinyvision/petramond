@@ -420,7 +420,7 @@ impl ModHost {
         }
     }
 
-    /// Bake the SIM geometry of every dirty Layer-3 custom-shape cell: batch each
+    /// Bake the SIM geometry of every dirty custom-shape cell: batch each
     /// shape kind's cells to the owning pack's WASM ([`GuestCall::BakeShapeSim`])
     /// and cache the collision boxes for the physics to read. A missing owner, a
     /// disabled mod, or a wrong-shaped/short reply leaves the cells uncached, so
@@ -516,7 +516,7 @@ impl ModHost {
         }
     }
 
-    /// Ask a Layer-3 custom shape's owning pack how to place it for one click
+    /// Ask a custom shape's owning pack how to place it for one click
     /// ([`GuestCall::ShapePlacementPlan`]) — the per-interaction placement
     /// callback (not a hot path). `None` means no reachable owner (unknown
     /// namespace or a disabled/trapped mod), so the caller falls back to the

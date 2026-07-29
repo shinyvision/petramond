@@ -21,10 +21,14 @@ impl World {
     }
 
     pub(in crate::world) fn note_section_loaded(&mut self, pos: SectionPos) {
-        *self.section_column_cys.entry(pos.chunk_pos()).or_insert(0) |= Self::column_cy_bit(pos.cy);
+        *self
+            .terrain
+            .section_column_cys
+            .entry(pos.chunk_pos())
+            .or_insert(0) |= Self::column_cy_bit(pos.cy);
         self.random_tick_dirty.insert(pos);
         // A bulk section load bypasses the per-edit bake trigger, so mark any
-        // Layer-3 custom-shape cells for a (re)bake now (a chair restored from
+        // custom-shape cells for a (re)bake now (a chair restored from
         // disk must rebuild its geometry, not sit on the static fallback).
         self.scan_section_custom_bakes(pos);
         // ...and re-refine the section's refining cells, so stored refined
@@ -36,12 +40,12 @@ impl World {
     #[inline]
     pub(in crate::world) fn note_section_unloaded(&mut self, pos: SectionPos) {
         let column = pos.chunk_pos();
-        let Some(bits) = self.section_column_cys.get_mut(&column) else {
+        let Some(bits) = self.terrain.section_column_cys.get_mut(&column) else {
             return;
         };
         *bits &= !Self::column_cy_bit(pos.cy);
         if *bits == 0 {
-            self.section_column_cys.remove(&column);
+            self.terrain.section_column_cys.remove(&column);
         }
         self.random_tick_dirty.remove(&pos);
         self.clear_random_tick_bit(pos);
@@ -49,8 +53,8 @@ impl World {
 
     #[inline]
     pub(in crate::world) fn clear_section_column_index(&mut self, pos: ChunkPos) {
-        self.section_column_cys.remove(&pos);
-        self.section_column_rt.remove(&pos);
+        self.terrain.section_column_cys.remove(&pos);
+        self.terrain.section_column_rt.remove(&pos);
     }
 
     /// Clear one section's random-tickable bit, dropping the column entry when
@@ -58,10 +62,10 @@ impl World {
     #[inline]
     fn clear_random_tick_bit(&mut self, pos: SectionPos) {
         let column = pos.chunk_pos();
-        if let Some(bits) = self.section_column_rt.get_mut(&column) {
+        if let Some(bits) = self.terrain.section_column_rt.get_mut(&column) {
             *bits &= !Self::column_cy_bit(pos.cy);
             if *bits == 0 {
-                self.section_column_rt.remove(&column);
+                self.terrain.section_column_rt.remove(&column);
             }
         }
     }
@@ -81,8 +85,11 @@ impl World {
                 .get(pos)
                 .is_some_and(|s| s.has_random_tickable());
             if tickable {
-                *self.section_column_rt.entry(pos.chunk_pos()).or_insert(0) |=
-                    Self::column_cy_bit(pos.cy);
+                *self
+                    .terrain
+                    .section_column_rt
+                    .entry(pos.chunk_pos())
+                    .or_insert(0) |= Self::column_cy_bit(pos.cy);
             } else {
                 self.clear_random_tick_bit(*pos);
             }
@@ -96,8 +103,9 @@ impl World {
     /// Track a newly pending section gen/disk-primary request.
     #[inline]
     pub(in crate::world) fn insert_pending_section(&mut self, sp: SectionPos) -> bool {
-        if self.pending_sections.insert(sp) {
+        if self.gen.pending_sections.insert(sp) {
             *self
+                .gen
                 .pending_section_columns
                 .entry(sp.chunk_pos())
                 .or_insert(0) += 1;
@@ -110,34 +118,34 @@ impl World {
     /// Clear a pending section; returns whether it was pending.
     #[inline]
     pub(in crate::world) fn remove_pending_section(&mut self, sp: SectionPos) -> bool {
-        if !self.pending_sections.remove(&sp) {
+        if !self.gen.pending_sections.remove(&sp) {
             return false;
         }
         let column = sp.chunk_pos();
-        let Some(count) = self.pending_section_columns.get_mut(&column) else {
+        let Some(count) = self.gen.pending_section_columns.get_mut(&column) else {
             return true;
         };
         *count = count.saturating_sub(1);
         if *count == 0 {
-            self.pending_section_columns.remove(&column);
+            self.gen.pending_section_columns.remove(&column);
         }
         true
     }
 
     #[inline]
     pub(in crate::world) fn column_has_pending_section(&self, pos: ChunkPos) -> bool {
-        self.pending_section_columns.contains_key(&pos)
+        self.gen.pending_section_columns.contains_key(&pos)
     }
 
     #[inline]
     pub(in crate::world) fn clear_pending_sections_for_column(&mut self, pos: ChunkPos) {
-        self.pending_sections.retain(|sp| sp.chunk_pos() != pos);
-        self.pending_section_columns.remove(&pos);
+        self.gen.pending_sections.retain(|sp| sp.chunk_pos() != pos);
+        self.gen.pending_section_columns.remove(&pos);
     }
 
     #[inline]
     pub(in crate::world) fn clear_all_pending_sections(&mut self) {
-        self.pending_sections.clear();
-        self.pending_section_columns.clear();
+        self.gen.pending_sections.clear();
+        self.gen.pending_section_columns.clear();
     }
 }

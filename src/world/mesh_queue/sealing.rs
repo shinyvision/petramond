@@ -37,12 +37,14 @@ impl World {
             return false;
         }
         if self.remove_mesh(pos) {
-            self.mesh_upload_dirty_columns.insert(pos.chunk_pos());
+            self.terrain
+                .mesh_upload_dirty_columns
+                .insert(pos.chunk_pos());
         }
-        self.dirty_meshes.remove(pos);
-        self.light_blocked_meshes.remove(&pos);
-        self.hidden_parked.remove(&pos);
-        self.sealed_parked.remove(&pos);
+        self.terrain.dirty_meshes.remove(pos);
+        self.terrain.light_blocked_meshes.remove(&pos);
+        self.terrain.hidden_parked.remove(&pos);
+        self.terrain.sealed_parked.remove(&pos);
         if let Some(s) = self.section_mut(pos) {
             s.dirty = false;
             // A mesh job may already have snapshotted this section while one of its

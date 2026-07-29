@@ -149,7 +149,7 @@ impl Face {
 /// tile upright. Each plane is drawn in both windings by the mesher so the plant is
 /// visible from both sides under back-face culling.
 pub(super) fn cross_quads(x: f32, y: f32, z: f32, inset: f32) -> [[[f32; 3]; 4]; 2] {
-    // `inset` (a Layer-2 dimension; 0 for the engine cross) pulls both diagonal
+    // `inset` (a parameterized dimension; 0 for the engine cross) pulls both diagonal
     // endpoints in from the cell corners, shrinking the X toward centre.
     let lo = inset;
     let hi = 1.0 - inset;

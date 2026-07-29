@@ -165,24 +165,24 @@ impl World {
         let mut mobs = std::mem::take(&mut self.mobs);
         let (spawned, populated) = mobs.populate_tick(self, player_pos);
         self.mobs = mobs;
-        self.populated_columns.extend(populated);
+        self.gen.populated_columns.extend(populated);
         spawned
     }
 
     /// Whether `chunk`'s one-time worldgen herd already spawned (this session or
     /// any earlier one — the set is restored from `level.dat` at world open).
     pub fn column_populated(&self, chunk: ChunkPos) -> bool {
-        self.populated_columns.contains(&chunk)
+        self.gen.populated_columns.contains(&chunk)
     }
 
     /// The persisted populated-chunk set, for the `level.dat` encoder.
     pub fn populated_columns(&self) -> &BTreeSet<ChunkPos> {
-        &self.populated_columns
+        &self.gen.populated_columns
     }
 
     /// Restore the populated-chunk set at world open (before the first tick, so
     /// the first population pass already sees every historical herd).
     pub fn set_populated_columns(&mut self, set: BTreeSet<ChunkPos>) {
-        self.populated_columns = set;
+        self.gen.populated_columns = set;
     }
 }

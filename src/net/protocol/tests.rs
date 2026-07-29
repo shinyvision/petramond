@@ -84,12 +84,12 @@ fn representative_messages_roundtrip_through_postcard() {
         request_id: 3,
     });
     roundtrip(&ClientToServer::MenuDrag {
-        slots: vec![MenuSlotWire::Inventory(2), MenuSlotWire::Chest(4)],
+        slots: vec![MenuSlotWire::Inventory(2), MenuSlotWire::Container(4)],
         button: 1,
         request_id: 30,
     });
     roundtrip(&ClientToServer::MenuDrop {
-        slot: MenuSlotWire::FurnaceOutput,
+        slot: MenuSlotWire::Container(2),
         all: true,
         request_id: 31,
     });
@@ -349,7 +349,7 @@ fn tick_updates_roundtrip() {
             reason: None,
         }],
         menu_sync: Some(MenuSyncMsg {
-            target: MenuTargetWire::ModGui {
+            target: MenuTargetWire::Container {
                 kind_key: "kitchen:oven".into(),
                 pos: Some(IVec3::new(4, 65, 4)),
                 slots: Some(vec![

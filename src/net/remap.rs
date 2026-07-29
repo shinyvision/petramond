@@ -304,17 +304,7 @@ impl IdRemap {
             MenuTargetWire::Crafting { output } => {
                 remap_slot(self, output);
             }
-            MenuTargetWire::Furnace { slots, .. } => {
-                for slot in slots {
-                    remap_slot(self, slot);
-                }
-            }
-            MenuTargetWire::Chest { slots, .. } => {
-                for slot in slots {
-                    remap_slot(self, slot);
-                }
-            }
-            MenuTargetWire::ModGui { slots, .. } => {
+            MenuTargetWire::Container { slots, .. } => {
                 if let Some(slots) = slots {
                     for slot in slots {
                         remap_slot(self, slot);

@@ -8,7 +8,7 @@
 //! data-only. The placeholder theme synthesizes flat programmer art for every
 //! part so documents render (and tests run) before the real kit exists.
 
-use crate::doc::{AlertLevel, Node, NodeKind};
+use crate::doc::{Node, NodeKind};
 use crate::layout::{LayoutEnv, SlotMetrics};
 use crate::validate::StyleLookup;
 use serde::Deserialize;
@@ -313,26 +313,10 @@ impl StyleLookup for Theme {
     }
 }
 
-/// The default part key per widget type (node `style` overrides it).
+/// The default part key per widget type (node `style` overrides it) — the
+/// exhaustive per-kind answer lives in [`crate::widget_policy::style_key`].
 pub fn default_style_key(kind: &NodeKind) -> Option<&'static str> {
-    Some(match kind {
-        NodeKind::Button { .. } => "button.default",
-        NodeKind::Checkbox => "checkbox",
-        NodeKind::Toggle { .. } => "toggle",
-        NodeKind::Slider { .. } => "slider.track",
-        NodeKind::TextInput { .. } => "input",
-        NodeKind::Slot { .. } | NodeKind::SlotGrid { .. } => "slot",
-        NodeKind::Badge { .. } => "badge",
-        NodeKind::Alert { level, .. } => match level {
-            AlertLevel::Info => "alert.info",
-            AlertLevel::Warning => "alert.warning",
-            AlertLevel::Success => "alert.success",
-            AlertLevel::Danger => "alert.danger",
-        },
-        NodeKind::Label { .. } => "label",
-        NodeKind::TabBar { .. } => "tab",
-        _ => return None,
-    })
+    crate::widget_policy::style_key(kind)
 }
 
 fn parse_hex(s: &str) -> Option<[f32; 4]> {

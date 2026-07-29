@@ -1,6 +1,6 @@
 use crate::app::AppScreen;
 use crate::game::Game;
-use crate::gui::{FurnaceHit, MenuSlot, UiSnapshot};
+use crate::gui::{MenuSlot, UiSnapshot};
 use crate::inventory::{place_cursor_count, plan_drag_distribution, slot_capacity};
 use crate::item::ItemStack;
 
@@ -26,8 +26,6 @@ pub(super) fn build(
     snapshot.active = inv.active_slot();
     snapshot.craft_output = menu.craft_output;
     snapshot.cursor = inv.cursor().copied();
-    snapshot.furnace = menu.furnace;
-    snapshot.chest = menu.chest;
     snapshot.container = menu.container;
     snapshot.gui_state = menu.gui_state;
     snapshot.health = game.player_health();
@@ -79,21 +77,6 @@ fn preview_capacity(
             .get(i)
             .map(|cell| slot_capacity(cell, held))
             .unwrap_or(0),
-        MenuSlot::Furnace(hit) => snapshot
-            .furnace
-            .as_ref()
-            .map(|furnace| match hit {
-                FurnaceHit::Input => slot_capacity(&furnace.input, held),
-                FurnaceHit::Fuel => slot_capacity(&furnace.fuel, held),
-                FurnaceHit::Output => 0,
-            })
-            .unwrap_or(0),
-        MenuSlot::Chest(i) => snapshot
-            .chest
-            .as_ref()
-            .and_then(|chest| chest.slots.get(i))
-            .map(|cell| slot_capacity(cell, held))
-            .unwrap_or(0),
         MenuSlot::Container(i) if specs.get(i).is_some_and(|spec| !spec.take_only) => snapshot
             .container
             .as_ref()
@@ -119,23 +102,12 @@ fn preview_place(
     }
 
     let cell = match slot {
-        MenuSlot::Furnace(FurnaceHit::Input) => {
-            snapshot.furnace.as_mut().map(|furnace| &mut furnace.input)
-        }
-        MenuSlot::Furnace(FurnaceHit::Fuel) => {
-            snapshot.furnace.as_mut().map(|furnace| &mut furnace.fuel)
-        }
-        MenuSlot::Chest(i) => snapshot
-            .chest
-            .as_mut()
-            .and_then(|chest| chest.slots.get_mut(i)),
         MenuSlot::Container(i) if specs.get(i).is_some_and(|spec| !spec.take_only) => snapshot
             .container
             .as_mut()
             .and_then(|container| container.slots.get_mut(i)),
         MenuSlot::Inventory(_)
         | MenuSlot::CraftResult
-        | MenuSlot::Furnace(FurnaceHit::Output)
         | MenuSlot::Container(_)
         | MenuSlot::Widget(_) => None,
     };

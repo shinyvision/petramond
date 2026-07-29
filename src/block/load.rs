@@ -1249,7 +1249,7 @@ mod tests {
         );
     }
 
-    /// Layer 2: a `{"custom": {...}}` shape parameterizes an existing family
+    /// A `{"custom": {...}}` shape parameterizes an existing family
     /// (fence/pane) from JSON — no WASM. The loader resolves it to a
     /// `Connection` shape kind with the declared post dimensions + rule, and
     /// rejects out-of-range / unknown / unsupported combinations.

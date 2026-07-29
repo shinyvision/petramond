@@ -45,7 +45,7 @@ fn mesh_job_uses_column_generated_biome_tint_halo() {
     let pos = SectionPos::new(0, 0, 0);
     insert_solid_section(&mut world, pos);
     let gen = crate::worldgen::driver::ChunkGenerator::new(0).generate_column_gen(pos.cx, pos.cz);
-    world.column_gen.insert(pos.chunk_pos(), Arc::new(gen));
+    world.gen.column_gen.insert(pos.chunk_pos(), Arc::new(gen));
 
     let job = world
         .build_mesh_job(pos)
@@ -98,11 +98,11 @@ fn light_blocked_mesh_leaves_hot_dirty_queue() {
     world.tick_mesh_budget(1);
 
     assert!(
-        world.dirty_meshes.is_empty(),
+        world.terrain.dirty_meshes.is_empty(),
         "light-blocked meshes should not churn in the hot dirty queue"
     );
     assert!(
-        world.light_blocked_meshes.contains(&pos),
+        world.terrain.light_blocked_meshes.contains(&pos),
         "the mesh should be parked until its light dependency finishes"
     );
 }
@@ -132,7 +132,11 @@ fn all_air_transition_removes_stale_ghost_mesh() {
 
     world.mesh_section_blocking_for_test(center);
     assert!(
-        world.meshes.get(&center).is_some_and(|m| !m.is_empty()),
+        world
+            .terrain
+            .meshes
+            .get(&center)
+            .is_some_and(|m| !m.is_empty()),
         "a solid section with missing neighbours meshes its exposed border"
     );
 
@@ -155,11 +159,12 @@ fn all_air_transition_removes_stale_ghost_mesh() {
         "settling to no-mesh must invalidate in-flight jobs built from the old blocks"
     );
     assert!(
-        !world.meshes.contains_key(&center),
+        !world.terrain.meshes.contains_key(&center),
         "stale ghost mesh must be removed"
     );
     assert!(
         world
+            .terrain
             .mesh_upload_dirty_columns
             .contains(&center.chunk_pos()),
         "the render column must be marked for GPU repack"
@@ -206,13 +211,14 @@ fn sealed_section_around_player_still_meshes_and_remeshes() {
     world.mesh_section_blocking_for_test(center);
     assert!(
         world
+            .terrain
             .meshes
             .get(&center)
             .is_some_and(|mesh| !mesh.is_empty()),
         "the internal cavity walls must mesh around the player"
     );
 
-    let before = world.mesh_upload_revisions[&center.chunk_pos()];
+    let before = world.terrain.mesh_upload_revisions[&center.chunk_pos()];
     world
         .section_mut(center)
         .unwrap()
@@ -220,7 +226,7 @@ fn sealed_section_around_player_still_meshes_and_remeshes() {
     world.queue_dirty_mesh(center);
     world.mesh_section_blocking_for_test(center);
     assert!(
-        world.mesh_upload_revisions[&center.chunk_pos()] > before,
+        world.terrain.mesh_upload_revisions[&center.chunk_pos()] > before,
         "an edit inside the sealed section must install a fresh mesh"
     );
 }
@@ -237,16 +243,16 @@ fn far_sealed_section_requeues_when_player_approaches() {
     world.last_load_target = Some(LoadTarget::new(8, 0, 0, 16));
 
     world.tick_mesh_budget(1);
-    assert!(world.sealed_parked.contains(&center));
-    assert!(!world.meshes.contains_key(&center));
+    assert!(world.terrain.sealed_parked.contains(&center));
+    assert!(!world.terrain.meshes.contains_key(&center));
 
     world.last_load_target = Some(LoadTarget::new(0, 0, 0, 16));
-    world.vis_dirty = true;
+    world.terrain.vis_dirty = true;
     world.refresh_deep_visibility();
-    assert!(!world.sealed_parked.contains(&center));
-    assert!(world.dirty_meshes.contains(center));
+    assert!(!world.terrain.sealed_parked.contains(&center));
+    assert!(world.terrain.dirty_meshes.contains(center));
     world.mesh_section_blocking_for_test(center);
-    assert!(world.meshes.contains_key(&center));
+    assert!(world.terrain.meshes.contains_key(&center));
 }
 
 #[test]
@@ -299,9 +305,9 @@ fn predicted_mine_relights_and_remeshes_the_opened_shaft_synchronously() {
         world.sections[&shaft].skylight_at(8, 15, 8),
         crate::chunk::SKY_FULL
     );
-    assert!(world.meshes.contains_key(&shaft));
+    assert!(world.terrain.meshes.contains_key(&shaft));
     assert!(!world.light_deferred.contains(&shaft));
-    assert!(!world.prediction_terrain.has_pending());
+    assert!(!world.terrain.prediction_terrain.has_pending());
 }
 
 #[test]
@@ -316,28 +322,31 @@ fn reconciliation_is_async_and_never_overrides_authoritative_light() {
     world.last_load_target = Some(LoadTarget::new(0, 0, 0, 4));
     world.queue_dirty_mesh(pos);
     world.mesh_section_blocking_for_test(pos);
-    let before = world.mesh_upload_revisions[&pos.chunk_pos()];
+    let before = world.terrain.mesh_upload_revisions[&pos.chunk_pos()];
 
     let cell = crate::mathh::IVec3::new(8, 8, 8);
     assert!(world.set_block_world(8, 8, 8, Block::Air));
     world.reconcile_predicted_edit(&[(cell, Block::Stone.id())]);
 
-    assert_eq!(world.mesh_upload_revisions[&pos.chunk_pos()], before);
+    assert_eq!(
+        world.terrain.mesh_upload_revisions[&pos.chunk_pos()],
+        before
+    );
     assert!(
         world.sections[&pos].light_dirty,
         "the light-changing mesh must not publish before its bake"
     );
-    assert!(world.prediction_terrain.has_pending());
+    assert!(world.terrain.prediction_terrain.has_pending());
 
     let mut landed = false;
     for _ in 0..2500 {
         world.tick_mesh_budget(1);
-        if world.mesh_upload_revisions[&pos.chunk_pos()] > before {
+        if world.terrain.mesh_upload_revisions[&pos.chunk_pos()] > before {
             assert!(
                 !world.sections[&pos].light_dirty,
                 "the published prediction mesh must already carry final local light"
             );
-            assert!(!world.prediction_terrain.has_pending());
+            assert!(!world.terrain.prediction_terrain.has_pending());
             landed = true;
             break;
         }
@@ -349,7 +358,7 @@ fn reconciliation_is_async_and_never_overrides_authoritative_light() {
     // the bundle's mesh-revision fence must reject the stale local result.
     assert!(world.set_block_world(cell.x, cell.y, cell.z, Block::Stone));
     world.reconcile_predicted_edit(&[(cell, Block::Air.id())]);
-    assert!(world.prediction_terrain.has_pending());
+    assert!(world.terrain.prediction_terrain.has_pending());
     world.install_remote_light(LightPayload {
         pos,
         skylight: SectionBytes(Arc::from(vec![7u8; SECTION_VOLUME].into_boxed_slice())),
@@ -357,7 +366,7 @@ fn reconciliation_is_async_and_never_overrides_authoritative_light() {
     });
     for _ in 0..2500 {
         world.drain_prediction_terrain();
-        if !world.prediction_terrain.has_pending() {
+        if !world.terrain.prediction_terrain.has_pending() {
             assert_eq!(world.sections[&pos].skylight_at(8, 8, 8), 7);
             return;
         }
@@ -376,11 +385,11 @@ fn forced_repack_remesh_bypasses_sealed_parking() {
         .unwrap()
         .set_skylight(Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice()));
     world.last_load_target = Some(LoadTarget::new(8, 0, 0, 16));
-    world.repack_forced.insert(center);
+    world.terrain.repack_forced.insert(center);
     world.queue_dirty_mesh(center);
 
     world.mesh_section_blocking_for_test(center);
-    assert!(world.meshes.contains_key(&center));
-    assert!(!world.repack_forced.contains(&center));
-    assert!(!world.sealed_parked.contains(&center));
+    assert!(world.terrain.meshes.contains_key(&center));
+    assert!(!world.terrain.repack_forced.contains(&center));
+    assert!(!world.terrain.sealed_parked.contains(&center));
 }

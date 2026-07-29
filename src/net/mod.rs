@@ -19,7 +19,11 @@ pub(crate) mod remap;
 // 19: menu drag/drop actions carry ordered logical slot identities.
 // 21: cursor throws are one `ThrowCursor { amount }` action.
 // 27: block light is a packed RGB cell (`SectionLight`), two bytes per voxel.
-pub(crate) const PROTOCOL_VERSION: u16 = 27;
+// 28: the chest AND furnace lost their own slot/target variants — every
+//     container ships as the keyed generic `Container` target with
+//     `Container(i)` slots and named gauge readings in `gui_state`, so no
+//     engine content identity remains in the menu protocol.
+pub(crate) const PROTOCOL_VERSION: u16 = 28;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

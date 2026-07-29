@@ -40,15 +40,16 @@ impl World {
     /// misclassification can only cost work, never visibility.
     pub(super) fn classify_deep_on_install(&mut self, pos: SectionPos) {
         let band_lo = self
+            .gen
             .column_gen
             .get(&pos.chunk_pos())
             .map(|col| *Self::surface_window_for_column(col, 0).start())
             .or_else(|| self.column_deep_band_los.get(&pos.chunk_pos()).copied());
         let Some(band_lo) = band_lo else { return };
         if pos.cy < band_lo {
-            self.deep_sections.insert(pos);
+            self.terrain.deep_sections.insert(pos);
         }
-        self.vis_dirty = true;
+        self.terrain.vis_dirty = true;
     }
 
     /// Whether `pos` is inside any player's 5×5×5 section ring — always meshed, so
@@ -79,8 +80,8 @@ impl World {
 
     /// Whether the mesh pump should park `pos` instead of meshing it.
     pub(super) fn section_hidden(&self, pos: SectionPos) -> bool {
-        self.deep_sections.contains(&pos)
-            && !self.visible_deep.contains(&pos)
+        self.terrain.deep_sections.contains(&pos)
+            && !self.terrain.visible_deep.contains(&pos)
             && !self.near_load_center(pos)
     }
 
@@ -89,7 +90,7 @@ impl World {
     /// edit, crossing); cost is O(deep sections) hash probes plus the BFS over
     /// actually-reachable cave sections, so it is bounded and main-thread safe.
     pub(super) fn refresh_deep_visibility(&mut self) {
-        self.vis_dirty = false;
+        self.terrain.vis_dirty = false;
 
         let mut visible: rustc_hash::FxHashSet<SectionPos> = rustc_hash::FxHashSet::default();
         let mut queue: VecDeque<SectionPos> = VecDeque::new();
@@ -97,7 +98,7 @@ impl World {
 
         // Seeds: deep sections bordering the visible region (non-deep or absent
         // positions), plus the player ring.
-        for &pos in &self.deep_sections {
+        for &pos in &self.terrain.deep_sections {
             let Some(s) = self.sections.get(&pos) else {
                 continue;
             };
@@ -111,7 +112,7 @@ impl World {
             for d in FACE_NEIGHBORS {
                 let (dx, dy, dz) = (d.x, d.y, d.z);
                 let n = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
-                if self.deep_sections.contains(&n) {
+                if self.terrain.deep_sections.contains(&n) {
                     continue;
                 }
                 // The neighbour's air region is visible by definition (non-deep),
@@ -148,7 +149,7 @@ impl World {
                     continue;
                 }
                 let n = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
-                if !self.deep_sections.contains(&n) {
+                if !self.terrain.deep_sections.contains(&n) {
                     continue;
                 }
                 visible.insert(n);
@@ -163,14 +164,15 @@ impl World {
 
         // Re-queue parked sections that just became visible (or entered the ring).
         let unpark: Vec<SectionPos> = self
+            .terrain
             .hidden_parked
             .iter()
             .filter(|p| visible.contains(p) || self.near_load_center(**p))
             .copied()
             .collect();
         for pos in unpark {
-            self.hidden_parked.remove(&pos);
-            self.dirty_meshes.push(pos);
+            self.terrain.hidden_parked.remove(&pos);
+            self.terrain.dirty_meshes.push(pos);
         }
 
         // A sealed section is normally unreachable from outside, but a moving
@@ -178,6 +180,7 @@ impl World {
         // this the bounded wake-up path for clean-light and previously meshed
         // sections that had no first-light deferred entry to recheck.
         let unseal_near: Vec<SectionPos> = self
+            .terrain
             .sealed_parked
             .iter()
             .filter(|p| self.near_load_center(**p))
@@ -187,7 +190,7 @@ impl World {
             self.queue_dirty_mesh(pos);
         }
 
-        self.visible_deep = visible;
+        self.terrain.visible_deep = visible;
     }
 }
 
@@ -236,10 +239,11 @@ mod tests {
         let cpos = ChunkPos::new(0, 0);
         world.ensure_column(cpos);
         world
+            .gen
             .column_gen
             .insert(cpos, Arc::new(generator.generate_column_gen(0, 0)));
 
-        let band_lo = *World::surface_window_for_column(&world.column_gen[&cpos], 0).start();
+        let band_lo = *World::surface_window_for_column(&world.gen.column_gen[&cpos], 0).start();
         // Keep the player ring far above the cave.
         world.last_load_target = Some(LoadTarget::new(0, band_lo + 5, 0, 4));
 
@@ -268,7 +272,7 @@ mod tests {
                 "a sealed deep cave section must not mesh"
             );
             assert!(
-                world.hidden_parked.contains(&pos),
+                world.terrain.hidden_parked.contains(&pos),
                 "a sealed deep cave section parks for later re-exposure"
             );
         }
@@ -293,9 +297,10 @@ mod tests {
         let cpos = ChunkPos::new(0, 0);
         world.ensure_column(cpos);
         world
+            .gen
             .column_gen
             .insert(cpos, Arc::new(generator.generate_column_gen(0, 0)));
-        let band_lo = *World::surface_window_for_column(&world.column_gen[&cpos], 0).start();
+        let band_lo = *World::surface_window_for_column(&world.gen.column_gen[&cpos], 0).start();
         world.last_load_target = Some(LoadTarget::new(0, band_lo + 5, 0, 4));
 
         let deep = SectionPos::new(0, band_lo - 2, 0);
@@ -305,14 +310,14 @@ mod tests {
 
         pump(&mut world);
         assert!(
-            world.hidden_parked.contains(&deep),
+            world.terrain.hidden_parked.contains(&deep),
             "an isolated deep pocket parks while the player is far away"
         );
 
         // The player descends within the two-section fail-safe radius: the ring
         // must pull the pocket back in even without a boundary opening.
         world.last_load_target = Some(LoadTarget::new(deep.cx - 2, deep.cy, deep.cz, 4));
-        world.vis_dirty = true;
+        world.terrain.vis_dirty = true;
         pump(&mut world);
         assert!(
             world.iter_meshes().any(|(p, _)| p == deep),

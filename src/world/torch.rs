@@ -46,10 +46,10 @@ impl World {
         normal: IVec3,
         placement: TorchPlacement,
     ) -> bool {
-        let Some(kind) = support_kind(normal, placement) else {
+        if support_kind(normal, placement).is_none() {
             return false;
-        };
-        self.mount_face_complete(support, normal, kind)
+        }
+        self.mount_face_complete(support, normal)
     }
 
     /// Whether the VERTICAL face of the block at `support` whose outward unit
@@ -61,7 +61,7 @@ impl World {
         if normal.y != 0 || normal.x.abs() + normal.z.abs() != 1 {
             return false;
         }
-        self.mount_face_complete(support, normal, SupportKind::Wall)
+        self.mount_face_complete(support, normal)
     }
 
     /// The face test behind [`block_supports_torch`](Self::block_supports_torch)
@@ -69,7 +69,7 @@ impl World {
     /// FAMILY answers whether its face toward the mount is complete
     /// (`ShapeSim::full_face` — no family knowledge here); a full-cube face
     /// additionally requires the opaque material, the historical mount rule.
-    fn mount_face_complete(&self, support: IVec3, normal: IVec3, _kind: SupportKind) -> bool {
+    pub(crate) fn mount_face_complete(&self, support: IVec3, normal: IVec3) -> bool {
         match crate::block::full_face_at(self, support, normal) {
             Some(crate::block::FullFace::Cube) => self
                 .physics_block(support.x, support.y, support.z)

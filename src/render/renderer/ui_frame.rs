@@ -22,7 +22,7 @@ impl Renderer {
         self.prepare_doc_ui(frame.document.as_ref(), screen);
         self.prepare_client_overlays(frame.client_overlays, screen, frame.client_overlay_dim);
         self.build_ui_frame(frame.content, screen, scale, slots, hooks);
-        self.prepared_ui_viewport = frame.viewport;
+        self.ui.prepared_viewport = frame.viewport;
         true
     }
 
@@ -43,51 +43,51 @@ impl Renderer {
         slots: Option<&[crate::gui::DocSlot]>,
         hooks: Option<&[crate::gui::DocHook]>,
     ) {
-        self.ui_count_vertex_count = 0;
-        self.ui_overlay_count_vertex_count = 0;
-        self.ui_drag_count_vertex_count = 0;
-        self.icon_quad_vertex_count = 0;
-        self.overlay_icon_quad_vertex_count = 0;
-        self.drag_icon_quad_vertex_count = 0;
+        self.ui.count_vertex_count = 0;
+        self.ui.overlay_count_vertex_count = 0;
+        self.ui.drag_count_vertex_count = 0;
+        self.ui.icon_quad_vertex_count = 0;
+        self.ui.overlay_icon_quad_vertex_count = 0;
+        self.ui.drag_icon_quad_vertex_count = 0;
 
-        build_ui(content, screen, scale, slots, hooks, &mut self.ui_build);
+        build_ui(content, screen, scale, slots, hooks, &mut self.ui.build);
         let cap = crate::render::pipeline::MAX_UI_VERTICES as usize;
         let vsize = std::mem::size_of::<UiVertex>();
 
         // Solid quads packed into one buffer in draw order: normal stack
         // counts, the tooltip's counts (after the overlay chrome), then the
         // cursor-held count (drawn after the cursor icon).
-        let counts = &self.ui_build.counts;
-        let overlay_counts = &self.ui_build.overlay_counts;
-        let drag_counts = &self.ui_build.drag_counts;
+        let counts = &self.ui.build.counts;
+        let overlay_counts = &self.ui.build.overlay_counts;
+        let drag_counts = &self.ui.build.drag_counts;
         if !counts.is_empty() && counts.len() <= cap {
             self.queue
-                .write_buffer(&self.ui_solid_vbuf, 0, bytemuck::cast_slice(counts));
-            self.ui_count_vertex_count = counts.len() as u32;
+                .write_buffer(&self.ui.solid_vbuf, 0, bytemuck::cast_slice(counts));
+            self.ui.count_vertex_count = counts.len() as u32;
         }
-        let mut off = self.ui_count_vertex_count as usize;
+        let mut off = self.ui.count_vertex_count as usize;
         if !overlay_counts.is_empty() && off + overlay_counts.len() <= cap {
             self.queue.write_buffer(
-                &self.ui_solid_vbuf,
+                &self.ui.solid_vbuf,
                 (off * vsize) as u64,
                 bytemuck::cast_slice(overlay_counts),
             );
-            self.ui_overlay_count_vertex_count = overlay_counts.len() as u32;
+            self.ui.overlay_count_vertex_count = overlay_counts.len() as u32;
             off += overlay_counts.len();
         }
         if !drag_counts.is_empty() && off + drag_counts.len() <= cap {
             self.queue.write_buffer(
-                &self.ui_solid_vbuf,
+                &self.ui.solid_vbuf,
                 (off * vsize) as u64,
                 bytemuck::cast_slice(drag_counts),
             );
-            self.ui_drag_count_vertex_count = drag_counts.len() as u32;
+            self.ui.drag_count_vertex_count = drag_counts.len() as u32;
         }
 
         // HUD chrome layers: each layer's UiBuild vec to its own buffer.
-        for layer in &mut self.hud_layers {
+        for layer in &mut self.ui.hud_layers {
             layer.vertex_count = 0;
-            let verts = (layer.source)(&self.ui_build);
+            let verts = (layer.source)(&self.ui.build);
             if !verts.is_empty() && verts.len() <= cap {
                 self.queue
                     .write_buffer(&layer.vbuf, 0, bytemuck::cast_slice(verts));
@@ -100,14 +100,14 @@ impl Renderer {
         // NDC, cell rect → uv, white tint (so the quad samples the atlas, not the solid
         // sentinel). Normal icons draw in the UI pass; cursor-held icons are appended
         // to the same buffer but drawn later, after normal stack-count overlays.
-        let mut verts = std::mem::take(&mut self.icon_quad_verts);
+        let mut verts = std::mem::take(&mut self.ui.icon_quad_verts);
         verts.clear();
         if screen.0 != 0 && screen.1 != 0 {
-            for &(item, r, color, dyed) in &self.ui_build.icon_quads {
+            for &(item, r, color, dyed) in &self.ui.build.icon_quads {
                 let [u0, v0, u1, v1] = if dyed {
-                    self.icon_atlas.cell_uv_dyed(item)
+                    self.ui.icon_atlas.cell_uv_dyed(item)
                 } else {
-                    self.icon_atlas.cell_uv(item)
+                    self.ui.icon_atlas.cell_uv(item)
                 };
                 crate::render::ui::push_quad_uv(
                     &mut verts,
@@ -124,7 +124,7 @@ impl Renderer {
             let push_hooks =
                 |verts: &mut Vec<UiVertex>, icons: &[crate::render::ui::HookIconQuad]| {
                     for icon in icons {
-                        let [u0, v0, u1, v1] = self.icon_atlas.cell_uv(icon.item);
+                        let [u0, v0, u1, v1] = self.ui.icon_atlas.cell_uv(icon.item);
                         let Some((visible, uv_tl, uv_br)) =
                             clipped_icon(icon.rect, icon.clip, [u0, v0, u1, v1])
                         else {
@@ -143,15 +143,15 @@ impl Renderer {
                         );
                     }
                 };
-            push_hooks(&mut verts, &self.ui_build.hook_icon_quads);
+            push_hooks(&mut verts, &self.ui.build.hook_icon_quads);
             let normal_icon_vertex_count = verts.len() as u32;
-            push_hooks(&mut verts, &self.ui_build.overlay_icon_quads);
-            self.overlay_icon_quad_vertex_count = verts.len() as u32 - normal_icon_vertex_count;
-            for &(item, r, color, dyed) in &self.ui_build.drag_icon_quads {
+            push_hooks(&mut verts, &self.ui.build.overlay_icon_quads);
+            self.ui.overlay_icon_quad_vertex_count = verts.len() as u32 - normal_icon_vertex_count;
+            for &(item, r, color, dyed) in &self.ui.build.drag_icon_quads {
                 let [u0, v0, u1, v1] = if dyed {
-                    self.icon_atlas.cell_uv_dyed(item)
+                    self.ui.icon_atlas.cell_uv_dyed(item)
                 } else {
-                    self.icon_atlas.cell_uv(item)
+                    self.ui.icon_atlas.cell_uv(item)
                 };
                 crate::render::ui::push_quad_uv(
                     &mut verts,
@@ -165,9 +165,10 @@ impl Renderer {
                     color,
                 );
             }
-            self.icon_quad_vertex_count = normal_icon_vertex_count;
-            self.drag_icon_quad_vertex_count =
-                verts.len() as u32 - normal_icon_vertex_count - self.overlay_icon_quad_vertex_count;
+            self.ui.icon_quad_vertex_count = normal_icon_vertex_count;
+            self.ui.drag_icon_quad_vertex_count = verts.len() as u32
+                - normal_icon_vertex_count
+                - self.ui.overlay_icon_quad_vertex_count;
         }
         if !verts.is_empty() {
             // Icon-quad geometry is bounded by the visible slots but GROW the buffer to
@@ -175,8 +176,8 @@ impl Renderer {
             // would blank EVERY icon at once. Grow to the next power of two so it
             // doesn't reallocate every frame.
             let bytes = bytemuck::cast_slice::<_, u8>(verts.as_slice()).len() as u64;
-            if bytes > self.icon_quad_vbuf.size() {
-                self.icon_quad_vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
+            if bytes > self.ui.icon_quad_vbuf.size() {
+                self.ui.icon_quad_vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("icon quad vbuf"),
                     size: bytes.next_power_of_two(),
                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
@@ -184,9 +185,9 @@ impl Renderer {
                 });
             }
             self.queue
-                .write_buffer(&self.icon_quad_vbuf, 0, bytemuck::cast_slice(&verts));
+                .write_buffer(&self.ui.icon_quad_vbuf, 0, bytemuck::cast_slice(&verts));
         }
-        self.icon_quad_verts = verts;
+        self.ui.icon_quad_verts = verts;
     }
 }
 

@@ -75,9 +75,9 @@ impl World {
     /// replaced by the player's saved record.
     #[inline]
     pub(super) fn stream_writable(&self, sp: SectionPos) -> bool {
-        !self.pending_sections.contains(&sp)
-            && !self.awaited_overlays.contains(&sp)
-            && !self.pending_overlays.contains_key(&sp)
+        !self.gen.pending_sections.contains(&sp)
+            && !self.gen.awaited_overlays.contains(&sp)
+            && !self.gen.pending_overlays.contains_key(&sp)
     }
 
     /// Block read for the mod ABI (`GetBlock`/`GetBlocks`): `None` not only
@@ -127,7 +127,7 @@ impl World {
             return StreamState::Final;
         }
         let cp = sp.chunk_pos();
-        if let Some(col) = self.column_gen.get(&cp) {
+        if let Some(col) = self.gen.column_gen.get(&cp) {
             if self.saved_section_contains(sp) {
                 // A saved record will overlay this section when it streams in.
                 return StreamState::InFlight;
@@ -144,7 +144,7 @@ impl World {
             // materialize-on-write): its absent sections are genuinely all-air.
             return StreamState::Final;
         }
-        if self.pending.contains_key(&cp) {
+        if self.gen.pending.contains_key(&cp) {
             return StreamState::InFlight;
         }
         if self.column_wanted_by_any_target(cp) {
@@ -158,9 +158,9 @@ impl World {
     /// stream-final. `Drop` outranks `Wait`: terrain that is not coming can
     /// only be resolved by a future load event, never by waiting.
     pub(super) fn sim_readiness_at(&self, pos: IVec3) -> SimReadiness {
-        let quiet = self.pending_sections.is_empty()
-            && self.awaited_overlays.is_empty()
-            && self.pending_overlays.is_empty();
+        let quiet = self.gen.pending_sections.is_empty()
+            && self.gen.awaited_overlays.is_empty()
+            && self.gen.pending_overlays.is_empty();
         let s = SECTION_SIZE as i32;
         let (x0, x1) = (
             (pos.x - SIM_READ_REACH).div_euclid(s),
@@ -259,9 +259,9 @@ mod tests {
 
         // An awaited saved overlay blocks writes the same way, and unblocks.
         let awaited = SectionPos::new(0, 4, 0);
-        w.awaited_overlays.insert(awaited);
+        w.gen.awaited_overlays.insert(awaited);
         assert!(!w.set_block_world(8, 70, 8, Block::Stone));
-        w.awaited_overlays.remove(&awaited);
+        w.gen.awaited_overlays.remove(&awaited);
         assert!(w.set_block_world(8, 70, 8, Block::Stone));
     }
 
@@ -281,12 +281,12 @@ mod tests {
 
         w.insert_empty_column_for_test(column);
         let section = SectionPos::new(0, 4, 0);
-        w.awaited_overlays.insert(section);
+        w.gen.awaited_overlays.insert(section);
         assert!(
             w.spawn_mob_checked(Mob::Owl, pos, 0.0).is_none(),
             "a loaded base with an in-flight save overlay is not final"
         );
-        w.awaited_overlays.remove(&section);
+        w.gen.awaited_overlays.remove(&section);
         assert!(w.spawn_mob_checked(Mob::Owl, pos, 0.0).is_some());
     }
 
@@ -296,12 +296,12 @@ mod tests {
         let sp = SectionPos::new(0, 4, 0);
         assert!(w.set_block_world(1, 70, 1, Block::Stone)); // marks it modified
 
-        w.awaited_overlays.insert(sp);
+        w.gen.awaited_overlays.insert(sp);
         assert!(
             w.harvest_section_snapshot(sp).is_none(),
             "persisting a base whose overlay is in flight would shadow the on-disk record"
         );
-        w.awaited_overlays.remove(&sp);
+        w.gen.awaited_overlays.remove(&sp);
         assert!(w.harvest_section_snapshot(sp).is_some());
     }
 
@@ -318,7 +318,7 @@ mod tests {
         assert_eq!(w.block_if_stream_final(8, 64, 8), Some(Block::Stone));
         assert!(w.section_stream_final_at(8, 64, 8));
 
-        w.awaited_overlays.insert(sp);
+        w.gen.awaited_overlays.insert(sp);
         assert_eq!(
             w.block_if_stream_final(8, 64, 8),
             None,
@@ -330,7 +330,7 @@ mod tests {
             "a cell-KV write raced the in-flight overlay"
         );
 
-        w.awaited_overlays.remove(&sp);
+        w.gen.awaited_overlays.remove(&sp);
         assert_eq!(w.block_if_stream_final(8, 64, 8), Some(Block::Stone));
         assert!(w.cell_kv_set(8, 64, 8, "kitchen:state".into(), vec![1]));
     }

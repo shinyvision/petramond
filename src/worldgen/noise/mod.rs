@@ -4,7 +4,7 @@
 //! density graph. The samplers stay pure world-position functions so chunk and
 //! section generation remain order-independent.
 
+pub mod cave_field;
 mod chamber;
-pub mod height;
 pub mod settings;
 mod simplex;

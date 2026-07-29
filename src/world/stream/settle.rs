@@ -20,14 +20,14 @@ impl World {
                     if !SectionPos::cy_in_range(n.cy) || self.sections.contains_key(&n) {
                         continue;
                     }
-                    if self.pending_sections.contains(&n) {
+                    if self.gen.pending_sections.contains(&n) {
                         return false;
                     }
                     let cp = n.chunk_pos();
-                    if self.column_gen.contains_key(&cp) {
+                    if self.gen.column_gen.contains_key(&cp) {
                         continue;
                     }
-                    if self.pending.contains_key(&cp) || Self::column_wanted(target, cp) {
+                    if self.gen.pending.contains_key(&cp) || Self::column_wanted(target, cp) {
                         return false;
                     }
                 }
@@ -56,7 +56,12 @@ impl World {
         for cz in pos.cz - 1..=pos.cz + 1 {
             for cx in pos.cx - 1..=pos.cx + 1 {
                 let cp = ChunkPos::new(cx, cz);
-                let bits = self.section_column_cys.get(&cp).copied().unwrap_or(0);
+                let bits = self
+                    .terrain
+                    .section_column_cys
+                    .get(&cp)
+                    .copied()
+                    .unwrap_or(0);
                 Self::for_each_column_cy(bits, |cy| {
                     self.deferred_rechecks.insert(SectionPos::new(cx, cy, cz));
                 });
@@ -96,7 +101,7 @@ impl World {
         let ready: Vec<SectionPos> = check
             .into_iter()
             .filter(|sp| {
-                !self.pending_overlays.contains_key(sp)
+                !self.gen.pending_overlays.contains_key(sp)
                     && self.gen_neighborhood_settled(*sp, target)
             })
             .collect();

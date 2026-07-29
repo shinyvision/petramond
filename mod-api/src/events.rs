@@ -75,21 +75,27 @@ pub enum DamageSource {
     },
 }
 
-/// Which container GUI opened/closed.
-/// (`Copy` was dropped when `Mod` gained its String payload — a Rust-trait
-/// change, not a wire change.)
+/// Which container GUI opened/closed, named by its registered kind key —
+/// `"petramond:chest"`, `"petramond:furnace"`, `"kitchen:oven"`.
+///
+/// Engine and pack containers speak ONE vocabulary here, the way
+/// [`DamageSource::MobAttack`] speaks species keys. There are deliberately no
+/// engine-named variants: a pack container would be second-class beside them,
+/// and every engine container added later would be a wire break.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub enum ContainerKind {
-    Inventory,
-    CraftingTable,
-    Furnace,
-    Chest,
-    FurnitureWorkbench,
-    /// A mod-defined GUI; `key` is its registered kind key
-    /// (`"wheel:wheel"`).
-    Mod {
-        key: String,
-    },
+pub struct ContainerKind {
+    pub key: String,
+}
+
+impl ContainerKind {
+    pub fn new(key: impl Into<String>) -> Self {
+        ContainerKind { key: key.into() }
+    }
+
+    /// Whether this is the container registered under `key`.
+    pub fn is(&self, key: &str) -> bool {
+        self.key == key
+    }
 }
 
 /// Player-derived placement facing.

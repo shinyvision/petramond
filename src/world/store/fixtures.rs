@@ -31,7 +31,7 @@ impl World {
     /// gated reads there must report unloaded until it lands.
     #[cfg(test)]
     pub(crate) fn mark_overlay_in_flight_for_test(&mut self, pos: SectionPos) {
-        self.awaited_overlays.insert(pos);
+        self.gen.awaited_overlays.insert(pos);
     }
 
     /// Install a whole column [`Chunk`] for a test, splitting it into sections + column

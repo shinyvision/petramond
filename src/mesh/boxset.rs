@@ -2,7 +2,7 @@
 //!
 //! Every block shape in the game whose geometry is a set of axis-aligned
 //! cuboids — the full cube is the degenerate one-box case, stairs and slabs
-//! are half-cell box sets, fences/panes/ladders are thin box sets, Layer-3
+//! are half-cell box sets, fences/panes/ladders are thin box sets, custom
 //! custom shapes are baked box sets — shares one characteristic: every face
 //! is a rectangle on an axis-aligned plane. This module meshes that
 //! characteristic once, so per-family emitters carry no culling or lighting

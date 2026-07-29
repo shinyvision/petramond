@@ -12,7 +12,9 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::block::{CellCodec, CellView, ShapeState};
 use crate::block_model::ModelCellState;
-use crate::block_state::{EntityFront, LogAxis, SlabState, StairHalf, StairState};
+#[cfg(test)]
+use crate::block_state::StairHalf;
+use crate::block_state::{EntityFront, LogAxis, SlabState, StairState};
 use crate::door::DoorState;
 use crate::facing::Facing;
 use crate::torch::TorchPlacement;
@@ -101,6 +103,10 @@ impl Section {
         self.stair_state(x, y, z).facing
     }
 
+    /// Test convenience only: places a BOTTOM-half stair of `facing`. Lossy by
+    /// construction (it cannot express a top half), which is why production
+    /// writes `set_stair_state` with a full [`StairState`].
+    #[cfg(test)]
     pub fn set_stair_facing(&mut self, x: usize, y: usize, z: usize, facing: Facing) {
         self.set_stair_state(x, y, z, StairState::new(facing, StairHalf::Bottom));
     }

@@ -18,7 +18,7 @@ impl World {
     /// Drain the sections whose server bake landed since the last streaming
     /// pump (ServerHeadless fills it in `pump_light_bakes`).
     pub(crate) fn take_light_ship_log(&mut self) -> Vec<SectionPos> {
-        self.light_ship_log.drain().collect()
+        self.replication.light_ship_log.drain().collect()
     }
 
     /// Opaque key over everything the per-connection wanted-vs-sent diff
@@ -41,7 +41,11 @@ impl World {
     pub(crate) fn terrain_send_key(&self, anchor: LoadAnchor) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = rustc_hash::FxHasher::default();
-        (self.terrain_target_key(anchor), self.terrain_revision).hash(&mut h);
+        (
+            self.terrain_target_key(anchor),
+            self.replication.terrain_revision,
+        )
+            .hash(&mut h);
         h.finish()
     }
 
@@ -88,6 +92,7 @@ impl World {
         let mut band_lo_of = |world: &Self, cp: ChunkPos| {
             *band_los.entry(cp).or_insert_with(|| {
                 world
+                    .gen
                     .column_gen
                     .get(&cp)
                     .map_or(crate::chunk::SECTION_MIN_CY, |col| {
@@ -103,7 +108,7 @@ impl World {
         // the plan). Already-sent deep sections are not yanked here.
         let vwin = Self::vertical_window(target.center_cy, 0);
         let mut sections: Vec<(i64, SectionPos)> = Vec::new();
-        for (&cp, &bits) in &self.section_column_cys {
+        for (&cp, &bits) in &self.terrain.section_column_cys {
             if bits == 0 || !Self::column_wanted(target, cp) {
                 continue;
             }

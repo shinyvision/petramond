@@ -104,7 +104,7 @@ impl ServerGame {
         self.begin_stage(Stage::WorldScheduled, events);
         self.world.game_tick(&self.recipes);
         self.dispatch_mod_block_hooks(events);
-        // Re-bake any Layer-3 custom-shape cells placed/edited this tick so their
+        // Re-bake any custom-shape cells placed/edited this tick so their
         // collision is ready for the next tick's physics (see `ModHost::bake_custom_shapes`).
         self.bake_dirty_custom_shapes(events);
         self.end_stage(Stage::WorldScheduled, events);
@@ -263,7 +263,7 @@ impl ServerGame {
         });
     }
 
-    /// Bake the SIM geometry of any Layer-3 custom-shape cells dirtied this tick
+    /// Bake the SIM geometry of any custom-shape cells dirtied this tick
     /// (placement, edits) so the physics reads real collision boxes next tick,
     /// not the static fallback. Cheap-gated on there being pending bakes.
     fn bake_dirty_custom_shapes(&mut self, events: &mut TickEvents) {

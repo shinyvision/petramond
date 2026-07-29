@@ -1,4 +1,4 @@
-//! Shared plumbing for the Layer-3 shape bake pumps (server tick + client
+//! Shared plumbing for the WASM shape bake pumps (server tick + client
 //! replica). Both build the same [`mod_api::CellInput`] batch, and both gate
 //! the reply through the SAME failure policy (M5) and geometry sanitation (C2):
 //!

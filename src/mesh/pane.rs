@@ -130,25 +130,6 @@ fn face_styles(kind: PaneBox, mask: u8) -> [Option<(PaneTile, bool)>; 6] {
     f
 }
 
-/// Visit every drawable face of the connected pane shape — consumed by the
-/// break-crack overlay so the crack traces the mesh's faces (the overlay
-/// draws them all; the mesher's generic burial cull decides visibility).
-pub(crate) fn shape_faces(
-    post_lo: f32,
-    post_hi: f32,
-    mask: u8,
-    mut visit: impl FnMut([f32; 3], [f32; 3], Face, PaneTile, bool),
-) {
-    shape_boxes(post_lo, post_hi, mask, |min, max, kind| {
-        let styles = face_styles(kind, mask);
-        for face in Face::ALL {
-            if let Some((tile, swap_uv)) = styles[face as usize] {
-                visit(min, max, face, tile, swap_uv);
-            }
-        }
-    });
-}
-
 /// The connected pane shape as [`ShapeBox`]es for the unified emitter.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn push_mesh_boxes(

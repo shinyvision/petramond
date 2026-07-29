@@ -14,7 +14,7 @@ impl World {
             .copied()
             .collect();
         let mut drop_sections = Vec::new();
-        for (&cp, &bits) in &self.section_column_cys {
+        for (&cp, &bits) in &self.terrain.section_column_cys {
             if !targets.iter().any(|t| Self::column_kept(*t, cp)) {
                 continue;
             }
@@ -29,6 +29,7 @@ impl World {
                     continue;
                 }
                 let in_surface = self
+                    .gen
                     .column_gen
                     .get(&cp)
                     .is_some_and(|col| Self::surface_window_for_column(col, 2).contains(&cy));
@@ -56,7 +57,7 @@ impl World {
             // Walk loaded stacks of kept columns only — sections in columns
             // already selected for full drop are removed with the column.
             let mut out = Vec::new();
-            for (&cp, &bits) in &self.section_column_cys {
+            for (&cp, &bits) in &self.terrain.section_column_cys {
                 if !Self::column_kept(target, cp) {
                     continue;
                 }
@@ -67,10 +68,10 @@ impl World {
                     if vwindow.contains(&cy) {
                         continue;
                     }
-                    let in_surface = self
-                        .column_gen
-                        .get(&cp)
-                        .is_some_and(|col| Self::surface_window_for_column(col, 2).contains(&cy));
+                    let in_surface =
+                        self.gen.column_gen.get(&cp).is_some_and(|col| {
+                            Self::surface_window_for_column(col, 2).contains(&cy)
+                        });
                     if !in_surface {
                         out.push(SectionPos::new(cp.cx, cy, cp.cz));
                     }
@@ -95,7 +96,12 @@ impl World {
         if self.save.is_some() {
             let mut snaps = Vec::new();
             for &cpos in &drop_columns {
-                let bits = self.section_column_cys.get(&cpos).copied().unwrap_or(0);
+                let bits = self
+                    .terrain
+                    .section_column_cys
+                    .get(&cpos)
+                    .copied()
+                    .unwrap_or(0);
                 Self::for_each_column_cy(bits, |cy| {
                     if let Some(snap) =
                         self.harvest_section_snapshot(SectionPos::new(cpos.cx, cy, cpos.cz))
@@ -122,9 +128,9 @@ impl World {
         }
         for sp in drop_sections {
             self.remove_section(sp);
-            self.pending_overlays.remove(&sp);
+            self.gen.pending_overlays.remove(&sp);
             self.remove_pending_section(sp);
-            if let Some(job) = self.pending_section_jobs.remove(&sp) {
+            if let Some(job) = self.gen.pending_section_jobs.remove(&sp) {
                 job.cancel();
             }
         }
@@ -136,6 +142,8 @@ impl World {
     /// Drop any buffered disk overlays for a column that is no longer wanted, so a
     /// section whose column was evicted before its overlay could land doesn't linger.
     fn drop_overlays_for_column(&mut self, pos: ChunkPos) {
-        self.pending_overlays.retain(|sp, _| sp.chunk_pos() != pos);
+        self.gen
+            .pending_overlays
+            .retain(|sp, _| sp.chunk_pos() != pos);
     }
 }

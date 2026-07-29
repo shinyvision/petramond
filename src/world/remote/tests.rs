@@ -554,7 +554,7 @@ fn replica_deep_classification_heals_out_of_order_column_installs() {
     replica.install_remote_column(column_payload_fixture(deep_pos.chunk_pos(), 2));
     replica.install_remote_section(solid.to_payload());
     assert!(
-        replica.deep_sections.contains(&deep_pos),
+        replica.terrain.deep_sections.contains(&deep_pos),
         "a below-band section installed after its column classifies deep"
     );
 
@@ -562,12 +562,12 @@ fn replica_deep_classification_heals_out_of_order_column_installs() {
     let mut replica = make_replica();
     replica.install_remote_section(solid.to_payload());
     assert!(
-        !replica.deep_sections.contains(&deep_pos),
+        !replica.terrain.deep_sections.contains(&deep_pos),
         "without a band floor the section stays (safely) non-deep"
     );
     replica.install_remote_column(column_payload_fixture(deep_pos.chunk_pos(), 2));
     assert!(
-        replica.deep_sections.contains(&deep_pos),
+        replica.terrain.deep_sections.contains(&deep_pos),
         "the column install must re-classify already-installed sections"
     );
 }
@@ -693,7 +693,7 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
 
     // A loaded section whose saved overlay is still in flight is NOT
     // final: it must not ship until the overlay resolves.
-    w.awaited_overlays.insert(SectionPos::new(1, 4, 0));
+    w.gen.awaited_overlays.insert(SectionPos::new(1, 4, 0));
     let plan = w.plan_terrain_send(
         anchor(0),
         &sent_columns,
@@ -705,7 +705,7 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
         !plan.sections.contains(&SectionPos::new(1, 4, 0)),
         "an in-flight section must not be sent (its base would lie)"
     );
-    w.awaited_overlays.clear();
+    w.gen.awaited_overlays.clear();
     let plan = w.plan_terrain_send(
         anchor(0),
         &sent_columns,
@@ -758,7 +758,7 @@ fn terrain_send_defers_deep_sections_outside_the_anchor_window() {
     let cp = ChunkPos::new(0, 0);
     let gen = crate::worldgen::driver::ChunkGenerator::new(0).generate_column_gen(cp.cx, cp.cz);
     let band_lo = *World::surface_window_for_column(&gen, 0).start();
-    w.column_gen.insert(cp, Arc::new(gen));
+    w.gen.column_gen.insert(cp, Arc::new(gen));
 
     // Deepest legal cy: a surface anchor at band_lo+2 has vwin down to
     // band_lo-3, so SECTION_MIN_CY must sit below that for the deferral

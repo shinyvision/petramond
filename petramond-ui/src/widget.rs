@@ -3,30 +3,17 @@
 //!
 //! Everything here is logical px and pure.
 
-use crate::doc::{NodeKind, ScrollAxis, TabSpec};
+use crate::doc::{ScrollAxis, TabSpec};
 use crate::layout::RectI;
 use crate::theme::Theme;
 use crate::tree::Inst;
 
 /// Whether a pointer press can target this instance directly (used by the
-/// topmost-hit scan). Containers are excluded — except list template stamps,
-/// which are handled by their `list` parent.
+/// topmost-hit scan). The per-kind answer is exhaustive in
+/// [`crate::widget_policy::pointer_target`], so a new interactive widget
+/// cannot silently become unclickable.
 pub(crate) fn pointer_target(inst: &Inst<'_>) -> bool {
-    matches!(
-        inst.node.kind,
-        NodeKind::Button { .. }
-            | NodeKind::Checkbox
-            | NodeKind::Toggle { .. }
-            | NodeKind::Slider { .. }
-            | NodeKind::TextInput { .. }
-            | NodeKind::Image {
-                interactive: true,
-                ..
-            }
-            | NodeKind::Slot { .. }
-            | NodeKind::SlotGrid { .. }
-            | NodeKind::TabBar { .. }
-    )
+    crate::widget_policy::pointer_target(&inst.node.kind)
 }
 
 /// Per-tab widths of a tab bar: icon + label centred with button padding,

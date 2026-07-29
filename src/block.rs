@@ -29,7 +29,7 @@ pub use interaction::BlockInteraction;
 pub(crate) use load::validate_particle_emitter;
 pub use shape::BlockLightShape;
 pub use shape::{
-    Aabb, CellPart, ShapeBox, ShapeFace, ShapeRenderBox, CROP_PLANE_DROP, CROP_PLANE_INSET,
+    Aabb, CellPart, ItemBox, ShapeBox, ShapeFace, ShapeRenderBox, CROP_PLANE_DROP, CROP_PLANE_INSET,
 };
 pub use shape_kind::ConnectionRule;
 pub use shape_kind::ItemRender;
@@ -48,8 +48,8 @@ pub(crate) use shape_kind::{light_aperture_face, pack_light_apertures, LIGHT_APE
 pub(crate) const LIGHT_CELL_SHAPED: u32 = 1 << 31;
 /// [`light_cells`] flag: [`Block::transmits_direct_skylight`].
 pub(crate) const LIGHT_CELL_DIRECT_SKY: u32 = 1 << 30;
-// The shape facet traits + Layer-2 param types are public API (the shape
-// dispatch surface / the Layer-2 loader's params); re-export the stable
+// The shape facet traits + parameterized-shape param types are public API (the shape
+// dispatch surface / the parameterized loader's params); re-export the stable
 // `crate::block::` path even though in-crate consumers currently reach the
 // singletons through `ShapeKindDef` and name the params in `shape_kind`.
 #[allow(unused_imports)]

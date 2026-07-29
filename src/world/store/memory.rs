@@ -108,11 +108,11 @@ impl World {
         c.columns = self.columns.len();
         c.column_bytes = (self.columns.len() as u64)
             * (std::mem::size_of::<crate::column::Column>() as u64 + 2 * 1024 + 256);
-        c.column_gen = self.column_gen.len();
-        for g in self.column_gen.values() {
+        c.column_gen = self.gen.column_gen.len();
+        for g in self.gen.column_gen.values() {
             c.column_gen_bytes += g.memory_bytes();
         }
-        for m in self.meshes.values() {
+        for m in self.terrain.meshes.values() {
             c.meshes += 1;
             if m.is_released() {
                 c.meshes_released += 1;
@@ -124,23 +124,26 @@ impl World {
                 *dst += src;
             }
         }
-        c.index_bytes =
-            map_bytes::<crate::chunk::SectionPos, std::sync::Arc<crate::section::Section>>(
-                self.sections.len(),
-            ) + map_bytes::<crate::chunk::ChunkPos, crate::column::Column>(self.columns.len())
-                + map_bytes::<crate::chunk::SectionPos, crate::mesh::ChunkMesh>(self.meshes.len())
-                + map_bytes::<crate::chunk::ChunkPos, u64>(self.column_payload_revisions.len())
-                + map_bytes::<crate::chunk::ChunkPos, u32>(self.mesh_column_cys.len())
-                + map_bytes::<crate::chunk::ChunkPos, u32>(self.section_column_cys.len())
-                + map_bytes::<crate::chunk::ChunkPos, u64>(self.mesh_upload_revisions.len())
-                + map_bytes::<crate::chunk::ChunkPos, ()>(self.mesh_columns.len())
-                + map_bytes::<crate::chunk::SectionPos, ()>(self.deep_sections.len())
-                + map_bytes::<crate::chunk::SectionPos, ()>(self.visible_deep.len())
-                + map_bytes::<crate::chunk::SectionPos, ()>(self.hidden_parked.len())
-                + map_bytes::<crate::chunk::SectionPos, ()>(self.sealed_parked.len())
-                + map_bytes::<crate::chunk::SectionPos, ()>(self.light_deferred.len())
-                + map_bytes::<crate::chunk::SectionPos, ()>(self.light_blocked_meshes.len())
-                + map_bytes::<crate::chunk::ChunkPos, u64>(self.mesh_release_after.len());
+        c.index_bytes = map_bytes::<
+            crate::chunk::SectionPos,
+            std::sync::Arc<crate::section::Section>,
+        >(self.sections.len())
+            + map_bytes::<crate::chunk::ChunkPos, crate::column::Column>(self.columns.len())
+            + map_bytes::<crate::chunk::SectionPos, crate::mesh::ChunkMesh>(
+                self.terrain.meshes.len(),
+            )
+            + map_bytes::<crate::chunk::ChunkPos, u64>(self.column_payload_revisions.len())
+            + map_bytes::<crate::chunk::ChunkPos, u32>(self.terrain.mesh_column_cys.len())
+            + map_bytes::<crate::chunk::ChunkPos, u32>(self.terrain.section_column_cys.len())
+            + map_bytes::<crate::chunk::ChunkPos, u64>(self.terrain.mesh_upload_revisions.len())
+            + map_bytes::<crate::chunk::ChunkPos, ()>(self.terrain.mesh_columns.len())
+            + map_bytes::<crate::chunk::SectionPos, ()>(self.terrain.deep_sections.len())
+            + map_bytes::<crate::chunk::SectionPos, ()>(self.terrain.visible_deep.len())
+            + map_bytes::<crate::chunk::SectionPos, ()>(self.terrain.hidden_parked.len())
+            + map_bytes::<crate::chunk::SectionPos, ()>(self.terrain.sealed_parked.len())
+            + map_bytes::<crate::chunk::SectionPos, ()>(self.light_deferred.len())
+            + map_bytes::<crate::chunk::SectionPos, ()>(self.terrain.light_blocked_meshes.len())
+            + map_bytes::<crate::chunk::ChunkPos, u64>(self.terrain.mesh_release_after.len());
         c
     }
 }

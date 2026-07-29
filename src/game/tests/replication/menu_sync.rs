@@ -348,7 +348,8 @@ fn menu_sync_ships_on_change_only() {
     let up3 = pump_one_tick(&mut game);
     let sync = up3.menu_sync.expect("the open ships the new view");
     assert!(
-        matches!(sync.target, MenuTargetWire::Chest { pos: p, .. } if p == pos),
+        matches!(&sync.target, MenuTargetWire::Container { pos: p, kind_key, .. }
+            if *p == Some(pos) && kind_key == "petramond:chest"),
         "the chest target replicates, got {:?}",
         sync.target
     );
@@ -386,7 +387,7 @@ fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
     game.server.apply_message(
         0,
         ClientToServer::MenuClick {
-            slot: MenuSlotWire::Chest(0),
+            slot: MenuSlotWire::Container(0),
             button: crate::net::protocol::button_to_wire(crate::controls::PointerButton::Secondary),
             shift: false,
             gather: false,
@@ -422,9 +423,9 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     game.server.open_mod_gui_screen_for(0, kind, None);
 
     let up = pump_one_tick(&mut game);
-    let MenuTargetWire::ModGui { gui_state, .. } = up.menu_sync.expect("the open ships").target
+    let MenuTargetWire::Container { gui_state, .. } = up.menu_sync.expect("the open ships").target
     else {
-        panic!("expected a ModGui target");
+        panic!("expected a Container target");
     };
     assert_eq!(
         gui_state,
@@ -443,10 +444,10 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
         GuiValue::I32(7),
     );
     let up = pump_one_tick(&mut game);
-    let MenuTargetWire::ModGui { gui_state, .. } =
+    let MenuTargetWire::Container { gui_state, .. } =
         up.menu_sync.expect("the write ships a sync").target
     else {
-        panic!("expected a ModGui target");
+        panic!("expected a Container target");
     };
     assert_eq!(
         gui_state,
@@ -478,13 +479,13 @@ fn host_written_mod_gui_state_syncs_to_matching_remote_session() {
         GuiValue::F32(0.5),
     );
 
-    let MenuTargetWire::ModGui { gui_state, .. } = game
+    let MenuTargetWire::Container { gui_state, .. } = game
         .server
         .build_menu_sync(remote)
         .expect("remote menu sync includes the shared mod GUI state")
         .target
     else {
-        panic!("expected a ModGui target");
+        panic!("expected a Container target");
     };
     assert_eq!(
         gui_state,

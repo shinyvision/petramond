@@ -223,13 +223,10 @@ impl App {
         }
         if let Some(game) = self.game.as_ref() {
             let menu = game.menu_read_model();
-            let furnace = menu.furnace;
             let gui_state = menu.gui_state;
             let state = self.ui.state_mut();
-            if let Some(f) = furnace {
-                state.set("cook01", petramond_ui::UiValue::F32(f.cook01));
-                state.set("burn01", petramond_ui::UiValue::F32(f.burn01));
-            }
+            // Every gauge — an engine machine's or a pack's — arrives as an
+            // ordinary named GUI-state value; nothing here knows a furnace.
             if let Some(map) = gui_state {
                 for (key, value) in map.iter() {
                     let v = match value {

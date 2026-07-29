@@ -472,7 +472,7 @@ impl Block {
         self.def().panel_facing
     }
 
-    /// A wall-panel's `(thickness, height)` in cell fractions: the Layer-2
+    /// A wall-panel's `(thickness, height)` in cell fractions: the parameterized
     /// dimensions a mod retuned, or the engine ladder's `(1/16, full)`. Read by
     /// the ONE panel box every panel path (collision, targeting, in-world mesh)
     /// derives from, so a thicker/shorter panel stays coherent everywhere.
@@ -665,6 +665,14 @@ impl Block {
     pub fn picks_by_boxes(self) -> bool {
         let k = self.shape_kind_def();
         k.render.picks_by_boxes(&k.params)
+    }
+
+    /// Whether a targeting ray must test this block's precise shape instead of
+    /// stopping on cell entry — see [`ShapeRender::precise_pick`].
+    #[inline]
+    pub fn precise_pick(self) -> bool {
+        let k = self.shape_kind_def();
+        k.render.precise_pick(&k.params)
     }
 
     /// The row's namespaced consumer-data entry `key` as raw JSON text, or

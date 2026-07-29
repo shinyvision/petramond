@@ -557,10 +557,10 @@ fn samples() -> Samples {
     });
     s.pin("EventPayload::PlayerDied", &EventPayload::PlayerDied);
     s.pin("EventPayload::ContainerOpened", &EventPayload::ContainerOpened {
-        kind: ContainerKind::Chest, pos: Some([1, 2, 3]),
+        kind: ContainerKind::new("petramond:chest"), pos: Some([1, 2, 3]),
     });
     s.pin("EventPayload::ContainerClosed", &EventPayload::ContainerClosed {
-        kind: ContainerKind::Mod { key: "m:g".into() }, pos: None,
+        kind: ContainerKind::new("m:g"), pos: None,
     });
     s.pin("EventPayload::SectionGenerated", &EventPayload::SectionGenerated { pos: [1, 2, 3] });
     s.pin("EventPayload::SectionLoaded", &EventPayload::SectionLoaded { pos: [1, 2, 3] });
@@ -623,9 +623,8 @@ fn samples() -> Samples {
         DamageSource::Mod { mod_id: "m".into() },
     ]);
     s.pin("ContainerKind::*", &vec![
-        ContainerKind::Inventory, ContainerKind::CraftingTable, ContainerKind::Furnace,
-        ContainerKind::Chest, ContainerKind::FurnitureWorkbench,
-        ContainerKind::Mod { key: "m:g".into() },
+        ContainerKind::new("petramond:inventory"), ContainerKind::new("petramond:chest"),
+        ContainerKind::new("m:g"),
     ]);
     s.pin("Facing::*", &vec![Facing::North, Facing::South, Facing::West, Facing::East]);
     s.pin("MobDamageFeedbackComponent::*", &vec![
@@ -898,8 +897,8 @@ const PINS: &[(&str, &str)] = &[
     ("EventPayload::MobSpawned", "0a07010000803f0000004000004040"),
     ("EventPayload::PlayerDamaged", "0b0226"),
     ("EventPayload::PlayerDied", "0c"),
-    ("EventPayload::ContainerOpened", "0d0301020406"),
-    ("EventPayload::ContainerClosed", "0e05036d3a6700"),
+    ("EventPayload::ContainerOpened", "0d0f70657472616d6f6e643a636865737401020406"),
+    ("EventPayload::ContainerClosed", "0e036d3a6700"),
     ("EventPayload::SectionGenerated", "0f020406"),
     ("EventPayload::SectionLoaded", "10020406"),
     ("EventPayload::PlayerDismounted", "11000007"),
@@ -917,7 +916,7 @@ const PINS: &[(&str, &str)] = &[
     ("WorldgenStage::*", "050001020304"),
     ("EventKind::*", "19000102030405060708090a0b0c0d0e0f101112131415161718"),
     ("DamageSource::*", "0400010102036d3a6b03016d"),
-    ("ContainerKind::*", "06000102030405036d3a67"),
+    ("ContainerKind::*", "031370657472616d6f6e643a696e76656e746f72790f70657472616d6f6e643a6368657374036d3a67"),
     ("Facing::*", "0400010203"),
     ("MobDamageFeedbackComponent::*", "0600010000003f020000803f0000003f030004050a"),
     ("MobDamageSound::*", "020001"),

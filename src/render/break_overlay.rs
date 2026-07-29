@@ -113,123 +113,26 @@ fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indice
                 super::lighting::DynLight::FULL,
             );
         }
-    } else if let Some(shape) = view.stair_shape {
-        // A stair cracks over the EXACT quads the chunk mesher emitted for it
-        // (same plane merge, same cell-local UVs), so the crack is one
-        // continuous decal over the cut-out shape — no per-box tile restarts,
-        // no buried faces.
-        for face in crate::mesh::face::Face::ALL {
-            for outer in [true, false] {
-                let (quads, n) = crate::mesh::stair::plane_quads(shape, face, outer);
-                for &(min, max) in quads.iter().take(n) {
-                    super::item_cube::push_cell_local_face(
-                        verts,
-                        indices,
-                        tile,
-                        base,
-                        1.0,
-                        min,
-                        max,
-                        face,
-                        super::lighting::DynLight::FULL,
-                    );
+    } else if let Some(cb) = view.shape_boxes {
+        // Every box family cracks the same way: over the boxes its shape
+        // resolved to, with cell-local UVs, emitting only the faces the family
+        // emits. A stair's steps, a slab's occupied halves, a fence's post and
+        // rails, a ladder's panel (minus the face buried in the wall) and a
+        // chair's legs are all this one loop — the crack cannot disagree with
+        // the meshed form because it reads the same producer.
+        for b in cb.boxes.iter().take(cb.len as usize) {
+            for (fi, face) in crate::mesh::face::Face::ALL.into_iter().enumerate() {
+                if !b.faces[fi] {
+                    continue;
                 }
-            }
-        }
-    } else if let Some(state) = view.slab_state {
-        // A slab cracks over its meshed per-layer quads with the same
-        // cell-local UVs, so the decal is cropped to the occupied halves (a
-        // bottom slab's side shows the lower half of the crack tile, not a
-        // squashed full tile) and shared mid faces of a full stack stay buried.
-        for (slot, _) in crate::slab::layer_slots(state) {
-            for face in crate::mesh::face::Face::ALL {
-                let (quads, n) = crate::mesh::slab::layer_quads(state, slot, face);
-                for &(min, max) in quads.iter().take(n) {
-                    super::item_cube::push_cell_local_face(
-                        verts,
-                        indices,
-                        tile,
-                        base,
-                        1.0,
-                        min,
-                        max,
-                        face,
-                        super::lighting::DynLight::FULL,
-                    );
-                }
-            }
-        }
-    } else if let Some(facing) = view.ladder_facing {
-        // A ladder cracks over the SAME panel faces the chunk mesher emitted
-        // (cell-local UVs), omitting the face buried in the supporting wall —
-        // a box crack would paint the destroy texture onto the wall's coplanar
-        // face behind the panel.
-        crate::mesh::ladder::shape_faces(facing, |min, max, face| {
-            super::item_cube::push_cell_local_face(
-                verts,
-                indices,
-                tile,
-                base,
-                1.0,
-                min,
-                max,
-                face,
-                super::lighting::DynLight::FULL,
-            );
-        });
-    } else if let Some(mask) = view.pane_mask {
-        // A pane cracks over the SAME post/arm faces the chunk mesher emitted
-        // (cell-local UVs), so the crack reads as a full block's decal with the
-        // open parts cut out — like stairs and slabs, not a box around the cell.
-        let (post_lo, post_hi) = view
-            .connection
-            .unwrap_or((crate::pane::POST_LO, crate::pane::POST_HI));
-        crate::mesh::pane::shape_faces(post_lo, post_hi, mask, |min, max, face, _, _| {
-            super::item_cube::push_cell_local_face(
-                verts,
-                indices,
-                tile,
-                base,
-                1.0,
-                min,
-                max,
-                face,
-                super::lighting::DynLight::FULL,
-            );
-        });
-    } else if let Some(mask) = view.fence_mask {
-        // A fence cracks over the SAME post/rail faces the chunk mesher emitted
-        // (cell-local UVs) — the pane contract on the fence's shape list.
-        let (post_lo, post_hi) = view
-            .connection
-            .unwrap_or((crate::fence::POST_LO, crate::fence::POST_HI));
-        crate::mesh::fence::shape_faces(post_lo, post_hi, mask, |min, max, face, _| {
-            super::item_cube::push_cell_local_face(
-                verts,
-                indices,
-                tile,
-                base,
-                1.0,
-                min,
-                max,
-                face,
-                super::lighting::DynLight::FULL,
-            );
-        });
-    } else if let Some(cb) = view.custom_boxes {
-        // A Layer-3 custom shape (a chair) cracks over its BAKED boxes with
-        // cell-local UVs, so the decal hugs the real legs/seat/backrest instead
-        // of a box floating over the cell's empty gaps.
-        for &(min, max) in cb.boxes.iter().take(cb.len as usize) {
-            for face in crate::mesh::face::Face::ALL {
                 super::item_cube::push_cell_local_face(
                     verts,
                     indices,
                     tile,
                     base,
                     1.0,
-                    min,
-                    max,
+                    b.min,
+                    b.max,
                     face,
                     super::lighting::DynLight::FULL,
                 );
@@ -296,14 +199,8 @@ mod tests {
             block: IVec3::new(3, 64, -7),
             // A full cube (Stone) has no special visual box, so the crack spans the cell.
             visual_box: None,
-            stair_shape: None,
-            slab_state: None,
-            pane_mask: None,
-            fence_mask: None,
-            connection: None,
-            ladder_facing: None,
+            shape_boxes: None,
             model: None,
-            custom_boxes: None,
             stage: 4,
         };
         let n = build_break_overlay(&view, &mut v, &mut i);
@@ -329,115 +226,55 @@ mod tests {
         assert_eq!(max_x, 4.0, "cube max lands exactly on the block boundary");
     }
 
-    /// A stair cracks over its meshed plane quads with cell-local UVs: one
-    /// continuous decal over the cut-out shape, not a full tile per box face.
-    #[test]
-    fn stair_crack_uses_cell_local_uvs_over_the_meshed_quads() {
-        use crate::mesh::face::Face;
-
-        let block = IVec3::new(2, 60, 5);
-        let shape = crate::stair::shape(crate::block_state::StairState::new(
-            crate::facing::Facing::South,
-            Default::default(),
-        ));
-        let view = BreakOverlayView {
+    /// Build a view whose cell resolved to `boxes` — `(min, max, faces)` in
+    /// canonical face order (`+X, -X, +Y, -Y, +Z, -Z`).
+    fn boxes_view(
+        block: IVec3,
+        boxes: &[([f32; 3], [f32; 3], [bool; 6])],
+        stage: u8,
+    ) -> BreakOverlayView {
+        use crate::game::presentation::{CrackBox, CrackBoxes, MAX_CRACK_BOXES};
+        let mut arr = [CrackBox {
+            min: [0.0; 3],
+            max: [0.0; 3],
+            faces: [false; 6],
+        }; MAX_CRACK_BOXES];
+        for (dst, &(min, max, faces)) in arr.iter_mut().zip(boxes) {
+            *dst = CrackBox { min, max, faces };
+        }
+        BreakOverlayView {
             block,
             visual_box: None,
-            stair_shape: Some(shape),
-            slab_state: None,
-            pane_mask: None,
-            fence_mask: None,
-            connection: None,
-            ladder_facing: None,
+            shape_boxes: Some(CrackBoxes {
+                boxes: arr,
+                len: boxes.len() as u8,
+            }),
             model: None,
-            custom_boxes: None,
-            stage: 5,
-        };
-        let mut v = Vec::new();
-        let mut i = Vec::new();
-        build_break_overlay(&view, &mut v, &mut i);
-
-        // Exactly the mesher's quads: 4 verts per plane quad, nothing else.
-        let quads: usize = Face::ALL
-            .into_iter()
-            .flat_map(|f| {
-                [true, false].map(|outer| crate::mesh::stair::plane_quads(shape, f, outer).1)
-            })
-            .sum();
-        assert_eq!(v.len(), quads * 4);
-
-        for vert in &v {
-            assert_eq!(
-                (vert.packed >> crate::mesh::UV_MODE_SHIFT) & 0x7,
-                crate::mesh::UV_MODE_CELL_LOCAL,
-                "stair crack quads must carry cell-local UVs"
-            );
-            for a in 0..3 {
-                let base = [block.x, block.y, block.z][a] as f32;
-                assert!(
-                    vert.pos[a] >= base - 1e-6 && vert.pos[a] <= base + 1.0 + 1e-6,
-                    "crack vertex must stay on the stair cell"
-                );
-            }
+            stage,
         }
-
-        // The full underside is ONE quad spanning the whole destroy tile, so the
-        // crack does not restart per quadrant.
-        let bottom: Vec<_> = v
-            .iter()
-            .filter(|vert| {
-                // NegY faces only (shade index 3): side faces also touch y == 60.
-                (vert.packed >> crate::mesh::vertex::SHADE_SHIFT) & 0x3 == 3
-                    && (vert.pos[1] - 60.0).abs() < 1e-6
-            })
-            .collect();
-        assert_eq!(bottom.len(), 4, "underside crack must be a single quad");
-        let mut uvs: Vec<(u32, u32)> = bottom
-            .iter()
-            .map(|vert| ((vert.packed2 >> 6) & 0x1F, (vert.packed2 >> 11) & 0x1F))
-            .collect();
-        uvs.sort_unstable();
-        assert_eq!(uvs, vec![(0, 0), (0, 16), (16, 0), (16, 16)]);
     }
 
-    /// A slab cracks over its meshed quads with cell-local UVs: the decal on a
-    /// bottom slab's side is CROPPED to the lower half of the destroy tile,
-    /// never a full tile squashed onto the half-height face.
+    /// The crack traces the cell's RESOLVED boxes with cell-local UVs, so the
+    /// decal is CROPPED to each box (a half-height box's side shows the lower
+    /// half of the destroy tile) instead of a full tile squashed onto it.
     #[test]
-    fn slab_crack_crops_the_tile_to_the_occupied_half() {
-        use crate::block::Block;
-        use crate::block_state::{SlabSplit, SlabState};
-
+    fn crack_crops_the_tile_to_the_resolved_box() {
         let block = IVec3::new(-3, 70, 8);
-        let state = SlabState::single(SlabSplit::Y, 0, Block::DirtSlab);
-        let view = BreakOverlayView {
-            block,
-            visual_box: None,
-            stair_shape: None,
-            slab_state: Some(state),
-            pane_mask: None,
-            fence_mask: None,
-            connection: None,
-            ladder_facing: None,
-            model: None,
-            custom_boxes: None,
-            stage: 6,
-        };
+        let view = boxes_view(block, &[([0.0; 3], [1.0, 0.5, 1.0], [true; 6])], 6);
         let mut v = Vec::new();
         let mut i = Vec::new();
         build_break_overlay(&view, &mut v, &mut i);
 
-        // A lone bottom slab is six merged quads (top, bottom, four sides).
-        assert_eq!(v.len(), 6 * 4);
+        assert_eq!(v.len(), 6 * 4, "six faces of the one resolved box");
         for vert in &v {
             assert_eq!(
                 (vert.packed >> crate::mesh::UV_MODE_SHIFT) & 0x7,
                 crate::mesh::UV_MODE_CELL_LOCAL,
-                "slab crack quads must carry cell-local UVs"
+                "crack quads must carry cell-local UVs"
             );
             assert!(
                 vert.pos[1] <= 70.5 + 1e-6,
-                "bottom slab crack must stay on the lower half"
+                "crack must stay on the resolved box"
             );
             // Side-face verts (X or Z shade groups) sit in the cell's lower
             // half, so their cell-local v spans 8..=16 — the lower half of the
@@ -451,6 +288,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A face the shape does not EMIT takes no destroy texture. This is what
+    /// keeps a wall-mounted panel's crack off the coplanar wall face behind it
+    /// and a fence rail's guaranteed-covered end cap clean — the emitted-face
+    /// set comes from the same producer the mesher used, so the two agree by
+    /// construction rather than by two hand-kept copies.
+    #[test]
+    fn crack_skips_faces_the_shape_does_not_emit() {
+        let mut faces = [true; 6];
+        faces[5] = false; // NegZ — buried in the supporting wall.
+        let view = boxes_view(
+            IVec3::new(1, 2, 3),
+            &[([0.0, 0.0, 0.0], [1.0, 1.0, 0.125], faces)],
+            3,
+        );
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        build_break_overlay(&view, &mut v, &mut i);
+        assert_eq!(v.len(), 5 * 4, "the unemitted face draws no crack");
+        // No whole quad lies on the buried z == 3.0 plane. (Side faces span
+        // that plane's edge, so per-vertex tests would false-positive; only a
+        // NegZ quad has all four corners on it.)
+        assert!(
+            v.chunks(4)
+                .all(|q| !q.iter().all(|vert| (vert.pos[2] - 3.0).abs() < 1e-6)),
+            "no crack quad on the face the shape never emits"
+        );
     }
 
     #[test]
@@ -483,14 +348,8 @@ mod tests {
         let view = BreakOverlayView {
             block,
             visual_box: None,
-            stair_shape: None,
-            slab_state: None,
-            pane_mask: None,
-            fence_mask: None,
-            connection: None,
-            ladder_facing: None,
+            shape_boxes: None,
             model: Some((kind, offset, crate::block_model::DEFAULT_MODEL_FACING)),
-            custom_boxes: None,
             stage: 3,
         };
         let mut v = Vec::new();
@@ -748,14 +607,8 @@ mod tests {
         let view = BreakOverlayView {
             block: IVec3::ZERO,
             visual_box: None,
-            stair_shape: None,
-            slab_state: None,
-            pane_mask: None,
-            fence_mask: None,
-            connection: None,
-            ladder_facing: None,
+            shape_boxes: None,
             model: None,
-            custom_boxes: None,
             stage: 0,
         };
         build_break_overlay(&view, &mut v, &mut i);
@@ -769,29 +622,21 @@ mod tests {
     }
 
     #[test]
-    fn custom_shape_cracks_over_its_baked_boxes_not_the_empty_cell() {
-        use crate::game::presentation::{CustomCrackBoxes, MAX_CUSTOM_CRACK_BOXES};
+    fn multi_part_shape_cracks_over_its_parts_not_the_empty_cell() {
         let mut v = Vec::new();
         let mut i = Vec::new();
-        let mut boxes = [([0.0; 3], [0.0; 3]); MAX_CUSTOM_CRACK_BOXES];
-        boxes[0] = ([0.1, 0.0, 0.1], [0.3, 0.5, 0.3]);
-        boxes[1] = ([0.7, 0.0, 0.7], [0.9, 0.5, 0.9]);
-        let view = BreakOverlayView {
-            block: IVec3::new(0, 0, 0),
-            visual_box: None,
-            stair_shape: None,
-            slab_state: None,
-            pane_mask: None,
-            fence_mask: None,
-            connection: None,
-            ladder_facing: None,
-            model: None,
-            custom_boxes: Some(CustomCrackBoxes { boxes, len: 2 }),
-            stage: 4,
-        };
+        let view = boxes_view(
+            IVec3::new(0, 0, 0),
+            &[
+                ([0.1, 0.0, 0.1], [0.3, 0.5, 0.3], [true; 6]),
+                ([0.7, 0.0, 0.7], [0.9, 0.5, 0.9], [true; 6]),
+            ],
+            4,
+        );
         let n = build_break_overlay(&view, &mut v, &mut i);
-        // TWO baked boxes × 6 cell-local faces × 4 verts — the crack hugs the
-        // shape's parts, NOT a single 24-vert cube spanning the empty cell.
+        // TWO resolved boxes × 6 cell-local faces × 4 verts — the crack hugs
+        // the shape's parts (a chair's legs), NOT a single 24-vert cube
+        // spanning the empty cell.
         assert_eq!(v.len(), 48);
         assert_eq!(n, 72);
     }

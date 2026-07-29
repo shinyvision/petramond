@@ -154,7 +154,7 @@ pub enum GuestCall {
         delta: f32,
     },
 
-    // --- Procedural shape bakes (Layer 3) ---------------------------------------
+    // --- Procedural shape bakes ---------------------------------------
     /// Bake the DETERMINISTIC sim geometry (collision boxes + light aperture) for
     /// every cell of one custom shape kind in a section, in one batch. Run on the
     /// server `wasm` AND re-run against the client replica for prediction — each
@@ -221,7 +221,7 @@ pub enum GuestRet {
     /// tick (`None` = no opinion on anything, same as the default decision).
     AiDecision(Option<AiNodeDecision>),
 
-    // --- Procedural shape bakes (Layer 3) ---------------------------------------
+    // --- Procedural shape bakes ---------------------------------------
     /// Reply to [`GuestCall::BakeShapeSim`]: one [`BakedSimCell`] per input cell,
     /// in order. An EMPTY reply means "no bake, use the static fallback" (a shape
     /// that declines to bake, or a `client_wasm` implementing only the render

@@ -73,7 +73,7 @@ fn ndc_half_extents(screen: (u32, u32), r: SlotRect) -> [f32; 2] {
 
 /// The iso icon's view-depth direction: the Z row of the [`iso_icon_mvp`]
 /// rotation `Rx(30°)·Ry(45°)`, so a point's `dot` with this is its view-space
-/// depth. The DEPTHLESS icon pass sorts self-occluding geometry (a Layer-3
+/// depth. The DEPTHLESS icon pass sorts self-occluding geometry (a custom-shape
 /// custom shape's baked boxes) far→near along it; the depth-tested hand /
 /// dropped forms don't sort. Derived from the pose angles here so it can't drift
 /// from `iso_icon_mvp`.

@@ -309,7 +309,7 @@ impl World {
         // Replication rides the same choke point, for the same reason as the
         // relight: every editor announces here, so no block/water change a
         // client could see can miss the delta log (see `record_block_delta`).
-        if self.replication_capture {
+        if self.replication.replication_capture {
             self.record_block_delta(wx, wy, wz);
         }
         // Confinement invalidation rides here too, unless the caller PROVED
@@ -518,6 +518,7 @@ impl World {
                     // stone costs one map read for the whole column instead of
                     // a `Section` deref per loaded section.
                     let mut cys = self
+                        .terrain
                         .section_column_rt
                         .get(&crate::chunk::ChunkPos::new(cx, cz))
                         .copied()
@@ -604,6 +605,7 @@ mod tests {
 
     fn live_random_tick_index(world: &World) -> Vec<(ChunkPos, u32)> {
         let mut out: Vec<(ChunkPos, u32)> = world
+            .terrain
             .section_column_rt
             .iter()
             .map(|(&p, &b)| (p, b))

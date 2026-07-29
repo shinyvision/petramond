@@ -186,7 +186,7 @@ fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
 pub(crate) fn contract_for(kind: GuiKind) -> SlotContract {
     match kind {
         GuiKind::Chest => SlotContract::new(&[
-            ("storage", crate::world::chest::CHEST_SLOTS),
+            ("container", crate::world::chest::CHEST_SLOTS),
             ("player_inv", 27),
             ("hotbar", 9),
         ]),
@@ -199,9 +199,9 @@ pub(crate) fn contract_for(kind: GuiKind) -> SlotContract {
         GuiKind::Furnace => SlotContract::new(&[
             ("player_inv", 27),
             ("hotbar", 9),
-            ("furnace_input", 1),
-            ("furnace_fuel", 1),
-            ("furnace_output", 1),
+            // Input, fuel, output — in `SLOT_INPUT`/`SLOT_FUEL`/`SLOT_OUTPUT`
+            // order, since the in-role index IS the container index.
+            ("container", crate::furnace::FURNACE_SLOTS),
         ]),
         GuiKind::Hotbar => SlotContract::new(&[("hotbar", 9)]),
         GuiKind::Demo => SlotContract::new(&[("demo_slots", 9)]),

@@ -155,14 +155,6 @@ pub fn half_cell_block(state: SlabState, ix: usize, iy: usize, iz: usize) -> Opt
 }
 
 #[inline]
-pub fn half_cell_bounds(ix: usize, iy: usize, iz: usize) -> ([f32; 3], [f32; 3]) {
-    debug_assert!(ix < 2 && iy < 2 && iz < 2);
-    let min = [ix as f32 * H, iy as f32 * H, iz as f32 * H];
-    let max = [min[0] + H, min[1] + H, min[2] + H];
-    (min, max)
-}
-
-#[inline]
 pub fn slot_for_rotation(rotation: SlabRotation, normal: IVec3, facing: Facing) -> SlabSlot {
     match rotation {
         SlabRotation::Bottom => SlabSlot {

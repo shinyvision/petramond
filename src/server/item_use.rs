@@ -298,7 +298,7 @@ impl ServerGame {
         };
         // Water is itself replaceable, so a water hit pours in place.
         let looked_at = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
-        let p = if looked_at.is_replaceable() && looked_at != Block::Air {
+        let p = if crate::world::placement::replaces_in_place(looked_at) {
             h.block
         } else {
             if h.normal == crate::mathh::IVec3::ZERO {

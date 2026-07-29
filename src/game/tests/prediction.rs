@@ -48,13 +48,14 @@ fn mixed_menu_drag_prediction_rolls_back_as_one_unit_on_deny() {
             10,
         ));
     game.game.self_view.inventory.click_slot(0);
-    game.game.menu_view.chest = Some(crate::gui::ChestView {
-        slots: [None; crate::world::chest::CHEST_SLOTS],
+    game.game.menu_view.container = Some(crate::gui::ContainerView {
+        slots: vec![None; crate::world::chest::CHEST_SLOTS],
     });
+    game.game.menu_view.container_kind = crate::gui::resolve_kind("petramond:chest");
 
     game.game.menu_drag(
         GuiKind::Chest,
-        vec![MenuSlot::Inventory(9), MenuSlot::Chest(0)],
+        vec![MenuSlot::Inventory(9), MenuSlot::Container(0)],
         PointerButton::Primary,
     );
     assert!(game.game.self_view.inventory.cursor().is_none());
@@ -67,7 +68,7 @@ fn mixed_menu_drag_prediction_rolls_back_as_one_unit_on_deny() {
         Some(5)
     );
     assert_eq!(
-        game.game.menu_view.chest.unwrap().slots[0].map(|stack| stack.count),
+        game.game.menu_view.container.as_ref().unwrap().slots[0].map(|stack| stack.count),
         Some(5)
     );
 
@@ -84,7 +85,7 @@ fn mixed_menu_drag_prediction_rolls_back_as_one_unit_on_deny() {
         Some(10)
     );
     assert!(game.game.self_view.inventory.slot(9).is_none());
-    assert!(game.game.menu_view.chest.unwrap().slots[0].is_none());
+    assert!(game.game.menu_view.container.as_ref().unwrap().slots[0].is_none());
 }
 
 #[test]
@@ -110,7 +111,7 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
 
     game.game.menu_drag(
         GuiKind::Chest,
-        vec![MenuSlot::Inventory(9), MenuSlot::Chest(0)],
+        vec![MenuSlot::Inventory(9), MenuSlot::Container(0)],
         PointerButton::Primary,
     );
     assert_eq!(game.game.prediction.pending_len(), 1);
@@ -126,7 +127,7 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
     assert_eq!(
         game.game
             .menu_view
-            .chest
+            .container
             .as_ref()
             .and_then(|chest| chest.slots[0])
             .map(|stack| stack.count),
@@ -148,7 +149,7 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
     assert_eq!(
         game.game
             .menu_view
-            .chest
+            .container
             .as_ref()
             .and_then(|chest| chest.slots[0])
             .map(|stack| stack.count),
@@ -181,9 +182,14 @@ fn predicted_chest_slot_click_applies_immediately_and_survives_reconcile() {
     game.sync_self_view_for_test();
     game.sync_menu_view_for_test();
 
-    game.menu_click(MenuSlot::Chest(0), PointerButton::Secondary, false, false);
+    game.menu_click(
+        MenuSlot::Container(0),
+        PointerButton::Secondary,
+        false,
+        false,
+    );
     assert_eq!(
-        game.game.menu_view.chest.unwrap().slots[0].map(|stack| stack.count),
+        game.game.menu_view.container.as_ref().unwrap().slots[0].map(|stack| stack.count),
         Some(1),
         "the mirror slot fills at click time"
     );
@@ -201,7 +207,7 @@ fn predicted_chest_slot_click_applies_immediately_and_survives_reconcile() {
 
     assert_eq!(game.game.prediction.pending_len(), 0);
     assert_eq!(
-        game.game.menu_view.chest.unwrap().slots[0].map(|stack| stack.count),
+        game.game.menu_view.container.as_ref().unwrap().slots[0].map(|stack| stack.count),
         Some(1),
         "the authoritative pair confirms the prediction in place"
     );
@@ -231,16 +237,26 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
         .inventory
         .add(crate::item::ItemStack::new(grass, 10));
     game.game.self_view.inventory.click_slot(0);
-    game.game.menu_view.chest = Some(crate::gui::ChestView {
-        slots: [None; crate::world::chest::CHEST_SLOTS],
+    game.game.menu_view.container = Some(crate::gui::ContainerView {
+        slots: vec![None; crate::world::chest::CHEST_SLOTS],
     });
+    game.game.menu_view.container_kind = crate::gui::resolve_kind("petramond:chest");
 
-    game.game
-        .menu_click(MenuSlot::Chest(0), PointerButton::Secondary, false, false);
-    game.game
-        .menu_click(MenuSlot::Chest(0), PointerButton::Secondary, false, false);
-    let chest_count =
-        |game: &TestGame| game.game.menu_view.chest.unwrap().slots[0].map(|stack| stack.count);
+    game.game.menu_click(
+        MenuSlot::Container(0),
+        PointerButton::Secondary,
+        false,
+        false,
+    );
+    game.game.menu_click(
+        MenuSlot::Container(0),
+        PointerButton::Secondary,
+        false,
+        false,
+    );
+    let chest_count = |game: &TestGame| {
+        game.game.menu_view.container.as_ref().unwrap().slots[0].map(|stack| stack.count)
+    };
     let cursor_count = |game: &TestGame| {
         game.game
             .self_view
@@ -278,7 +294,12 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
             data: None,
         });
         MenuSyncMsg {
-            target: MenuTargetWire::Chest { pos, slots },
+            target: MenuTargetWire::Container {
+                kind_key: "petramond:chest".to_string(),
+                pos: Some(pos),
+                slots: Some(slots),
+                gui_state: None,
+            },
         }
     };
 
@@ -1015,7 +1036,7 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
 #[test]
 fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
     use crate::block::ShapeFamily;
-    // Any mod-registered Layer-3 custom block with a linked item (the
+    // Any mod-registered custom-shape block with a linked item (the
     // furniture chain, when the pack is installed). The engine ships no
     // custom rows, so without an installed pack there is nothing to pin.
     let Some(item) = crate::item::ItemType::all().iter().copied().find(|i| {

@@ -521,13 +521,9 @@ pub(super) fn intersect_rect(a: SlotRect, b: SlotRect) -> Option<SlotRect> {
 /// decorative role.
 fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<crate::item::ItemStack> {
     match role {
-        Role::Storage => ui.chest.and_then(|c| c.slots.get(i).copied().flatten()),
         Role::Hotbar => ui.slots.get(i).copied().flatten(),
         Role::PlayerInv => ui.slots.get(HOTBAR_LEN + i).copied().flatten(),
         Role::CraftResult => ui.craft_output,
-        Role::FurnaceInput => ui.furnace.and_then(|f| f.input),
-        Role::FurnaceFuel => ui.furnace.and_then(|f| f.fuel),
-        Role::FurnaceOutput => ui.furnace.and_then(|f| f.output),
         Role::Container => ui
             .container
             .as_ref()

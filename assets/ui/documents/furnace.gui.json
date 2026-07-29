@@ -36,7 +36,8 @@
                         "children": [
                             {
                                 "type": "slot",
-                                "role": "furnace_input"
+                                "role": "container",
+                                "accepts": ["smeltable"]
                             },
                             {
                                 "type": "gauge",
@@ -53,7 +54,8 @@
                             },
                             {
                                 "type": "slot",
-                                "role": "furnace_fuel"
+                                "role": "container",
+                                "accepts": ["fuel"]
                             }
                         ]
                     },
@@ -72,7 +74,8 @@
                     },
                     {
                         "type": "slot",
-                        "role": "furnace_output"
+                        "role": "container",
+                        "take_only": true
                     }
                 ]
             },

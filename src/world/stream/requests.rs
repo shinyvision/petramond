@@ -47,7 +47,7 @@ impl World {
         self.missing_columns_settled = false;
         self.deferred_recheck_needed = true;
         // The player ring and disc edge moved; deep-visibility must re-evaluate.
-        self.vis_dirty = true;
+        self.terrain.vis_dirty = true;
         let vertical_moved = prev.is_none_or(|p| p.center_cy != target.center_cy);
         let horizontal_keep_changed =
             prev.is_none_or(|p| p.center != target.center || p.render_dist != target.render_dist);
@@ -120,8 +120,8 @@ impl World {
         self.extra_load_targets = targets[1..].to_vec();
         self.missing_columns_settled = false;
         self.deferred_recheck_needed = true;
-        self.vis_dirty = true;
-        self.pending.retain(|pos, job| {
+        self.terrain.vis_dirty = true;
+        self.gen.pending.retain(|pos, job| {
             let keep = targets.iter().any(|t| Self::column_wanted(*t, *pos));
             if !keep {
                 if let Some(job) = job {
@@ -160,7 +160,7 @@ impl World {
     /// [`request_missing_columns`] over the union of the anchors' discs.
     fn request_missing_columns_multi(&mut self, targets: &[LoadTarget]) {
         let submit_limit = MAX_COLUMN_GEN_SUBMITS_PER_TARGET
-            .min(MAX_PENDING_COLUMN_GEN_JOBS.saturating_sub(self.pending.len()));
+            .min(MAX_PENDING_COLUMN_GEN_JOBS.saturating_sub(self.gen.pending.len()));
         if submit_limit == 0 {
             return;
         }
@@ -177,7 +177,8 @@ impl World {
                     if !targets.iter().any(|t| Self::column_wanted(*t, pos)) {
                         continue;
                     }
-                    if self.column_gen.contains_key(&pos) || self.pending.contains_key(&pos) {
+                    if self.gen.column_gen.contains_key(&pos) || self.gen.pending.contains_key(&pos)
+                    {
                         continue;
                     }
                     missing.push((Self::multi_column_key(targets, pos), pos));
@@ -201,7 +202,7 @@ impl World {
             .collect();
         let mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)> = Vec::new();
         let mut cys: Vec<i32> = Vec::new();
-        for (pos, col) in &self.column_gen {
+        for (pos, col) in &self.gen.column_gen {
             cys.clear();
             for t in targets {
                 if !Self::column_wanted(*t, *pos) {
@@ -217,7 +218,7 @@ impl World {
             let band_lo = *Self::surface_window_for_column(col, 0).start();
             for &cy in &cys {
                 let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                if self.sections.contains_key(&sp) || self.pending_sections.contains(&sp) {
+                if self.sections.contains_key(&sp) || self.gen.pending_sections.contains(&sp) {
                     continue;
                 }
                 if self.skip_empty_sky_section(sp, content_top) {
@@ -241,7 +242,7 @@ impl World {
     /// first. Each landed column then drives its own per-section jobs (`poll`).
     pub(super) fn request_missing_columns(&mut self, target: LoadTarget) {
         let submit_limit = MAX_COLUMN_GEN_SUBMITS_PER_TARGET
-            .min(MAX_PENDING_COLUMN_GEN_JOBS.saturating_sub(self.pending.len()));
+            .min(MAX_PENDING_COLUMN_GEN_JOBS.saturating_sub(self.gen.pending.len()));
         if submit_limit == 0 {
             return;
         }
@@ -254,7 +255,7 @@ impl World {
                 if !Self::column_wanted(target, pos) {
                     continue;
                 }
-                if self.column_gen.contains_key(&pos) || self.pending.contains_key(&pos) {
+                if self.gen.column_gen.contains_key(&pos) || self.gen.pending.contains_key(&pos) {
                     continue;
                 }
                 missing.push((target.column_priority_key(pos), pos));
@@ -300,11 +301,11 @@ impl World {
                 },
             ))
         };
-        self.pending.insert(pos, job);
+        self.gen.pending.insert(pos, job);
     }
 
     pub(super) fn prune_stale_column_requests(&mut self, target: LoadTarget) {
-        self.pending.retain(|pos, job| {
+        self.gen.pending.retain(|pos, job| {
             let keep = Self::column_wanted(target, *pos);
             if !keep {
                 if let Some(job) = job {
@@ -335,7 +336,7 @@ impl World {
         let prev_window = Self::vertical_window(prev.center_cy, 0);
         let mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)> = Vec::new();
         let mut cys: Vec<i32> = Vec::new();
-        for (pos, col) in &self.column_gen {
+        for (pos, col) in &self.gen.column_gen {
             if !Self::column_wanted(target, *pos) {
                 continue;
             }
@@ -364,7 +365,7 @@ impl World {
             let band_lo = *Self::surface_window_for_column(col, 0).start();
             for &cy in &cys {
                 let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                if self.sections.contains_key(&sp) || self.pending_sections.contains(&sp) {
+                if self.sections.contains_key(&sp) || self.gen.pending_sections.contains(&sp) {
                     continue;
                 }
                 if self.skip_empty_sky_section(sp, content_top) {
@@ -395,14 +396,14 @@ impl World {
         let underground = self.anchor_underground(target);
         let center_cy = target.center_cy;
         let mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)> = Vec::new();
-        for (pos, col) in &self.column_gen {
+        for (pos, col) in &self.gen.column_gen {
             if !Self::column_wanted(target, *pos) || !include_column(*pos) {
                 continue;
             }
             let band_lo = *Self::surface_window_for_column(col, 0).start();
             for cy in self.wanted_section_cys_for_column(*pos, col, center_cy, 0) {
                 let sp = SectionPos::new(pos.cx, cy, pos.cz);
-                if self.sections.contains_key(&sp) || self.pending_sections.contains(&sp) {
+                if self.sections.contains_key(&sp) || self.gen.pending_sections.contains(&sp) {
                     continue;
                 }
                 if self.skip_empty_sky_section(sp, col.content_top()) {
@@ -425,7 +426,7 @@ impl World {
     /// (nearest the player's `cy` first), so a column starts filling the moment its
     /// shared data lands without waiting for the next `update_load`.
     pub(super) fn request_sections_for_column(&mut self, pos: ChunkPos, target: LoadTarget) {
-        let Some(col) = self.column_gen.get(&pos).cloned() else {
+        let Some(col) = self.gen.column_gen.get(&pos).cloned() else {
             return;
         };
         let underground = self.anchor_underground(target);
@@ -434,7 +435,7 @@ impl World {
         let band_lo = *Self::surface_window_for_column(&col, 0).start();
         for cy in self.wanted_section_cys_for_column(pos, &col, target.center_cy, 0) {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
-            if self.sections.contains_key(&sp) || self.pending_sections.contains(&sp) {
+            if self.sections.contains_key(&sp) || self.gen.pending_sections.contains(&sp) {
                 continue;
             }
             if self.skip_empty_sky_section(sp, content_top) {
@@ -465,11 +466,11 @@ impl World {
         let disk_primary = self.saved_section_contains(sp);
         if disk_primary {
             self.insert_pending_section(sp);
-            self.disk_primary_sections.insert(sp);
+            self.gen.disk_primary_sections.insert(sp);
             // The section's true content is in flight until the save thread
             // answers: the sim guard blocks mutation and the harvest skips
             // persisting it meanwhile (same contract as the overlay path).
-            self.awaited_overlays.insert(sp);
+            self.gen.awaited_overlays.insert(sp);
             if let Some(save) = self.save.as_ref() {
                 save.request_load(sp, true);
             }
@@ -484,14 +485,14 @@ impl World {
             },
         );
         self.insert_pending_section(sp);
-        self.pending_section_jobs.insert(sp, job);
+        self.gen.pending_section_jobs.insert(sp, job);
         if let Some(save) = self.save.as_ref() {
             if save.authoritative_manifest_contains(sp) {
                 save.request_load(sp, false);
                 // The section's true content is now in flight until the save thread
                 // answers (and the overlay applies): the sim guard blocks mutation
                 // and the harvest skips persisting it meanwhile.
-                self.awaited_overlays.insert(sp);
+                self.gen.awaited_overlays.insert(sp);
             }
         }
     }

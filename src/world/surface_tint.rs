@@ -95,6 +95,7 @@ struct SurfaceTintGrids<'a> {
 impl<'a> SurfaceTintGrids<'a> {
     fn new(world: &'a World, pos: ChunkPos, column: &'a Column) -> Self {
         let halo = world
+            .gen
             .column_gen
             .get(&pos)
             .map(|column| column.mesh_biome_slice())

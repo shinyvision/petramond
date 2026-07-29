@@ -310,7 +310,7 @@ pub(super) fn section_geometry(
                     let bl = neighbour_blocklight(wx, wy, wz).channels().map(u32::from);
                     let (sky6, blight) = fold_light(l, bl, SKY_FULL as u32);
                     let tint = tint_tile(tile.world_tint(), ci);
-                    // Layer-2 dimensions (a mod's retuned cross/crop) or the
+                    // parameterized dimensions (a mod's retuned cross/crop) or the
                     // engine defaults for a parameterless row.
                     let dims = block.shape_kind_def().params.dimensions();
                     let (inset, drop) = if class & CROP != 0 {
@@ -388,7 +388,7 @@ pub(super) fn section_geometry(
                     if !slab_as_cube {
                         mesh_boxes.clear();
                         kind.render.boxes(&ctx, &mut mesh_boxes);
-                        // Nothing resolved (an unbaked Layer-3 cell) falls
+                        // Nothing resolved (an unbaked custom-shape cell) falls
                         // through to the cube path — the render fallback.
                         if !mesh_boxes.is_empty() {
                             apply_cell_tint(&mut mesh_boxes, section_idx(lx, ly, lz));

@@ -34,16 +34,16 @@ impl Renderer {
         screen: (u32, u32),
         dim_background: bool,
     ) {
-        self.client_overlays.batches.clear();
-        self.client_overlays.verts.clear();
+        self.ui.client_overlays.batches.clear();
+        self.ui.client_overlays.verts.clear();
         if screen.0 == 0 || screen.1 == 0 {
             return;
         }
 
         if dim_background {
-            let start = self.client_overlays.verts.len() as u32;
+            let start = self.ui.client_overlays.verts.len() as u32;
             crate::render::ui::push_solid(
-                &mut self.client_overlays.verts,
+                &mut self.ui.client_overlays.verts,
                 screen,
                 0.0,
                 0.0,
@@ -51,7 +51,7 @@ impl Renderer {
                 screen.1 as f32,
                 [0.0, 0.0, 0.0, 0.55],
             );
-            self.client_overlays.batches.push(OverlayBatch {
+            self.ui.client_overlays.batches.push(OverlayBatch {
                 bind_index: None,
                 start,
                 count: 6,
@@ -60,9 +60,9 @@ impl Renderer {
 
         for image in images {
             let bind_index = self.ensure_client_overlay_bind(image);
-            let start = self.client_overlays.verts.len() as u32;
+            let start = self.ui.client_overlays.verts.len() as u32;
             crate::render::ui::push_quad_uv(
-                &mut self.client_overlays.verts,
+                &mut self.ui.client_overlays.verts,
                 screen,
                 image.rect[0],
                 image.rect[1],
@@ -72,43 +72,46 @@ impl Renderer {
                 [image.uv[2], image.uv[3]],
                 [1.0; 4],
             );
-            self.client_overlays.batches.push(OverlayBatch {
+            self.ui.client_overlays.batches.push(OverlayBatch {
                 bind_index: Some(bind_index),
                 start,
                 count: 6,
             });
         }
 
-        let bytes = bytemuck::cast_slice::<_, u8>(&self.client_overlays.verts);
+        let bytes = bytemuck::cast_slice::<_, u8>(&self.ui.client_overlays.verts);
         if bytes.is_empty() {
             return;
         }
         let needs = bytes.len() as u64;
         if self
+            .ui
             .client_overlays
             .vbuf
             .as_ref()
             .is_none_or(|buffer| buffer.size() < needs)
         {
-            self.client_overlays.vbuf = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("client overlay vbuf"),
-                size: needs.next_power_of_two(),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
+            self.ui.client_overlays.vbuf =
+                Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("client overlay vbuf"),
+                    size: needs.next_power_of_two(),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
         }
         self.queue
-            .write_buffer(self.client_overlays.vbuf.as_ref().unwrap(), 0, bytes);
+            .write_buffer(self.ui.client_overlays.vbuf.as_ref().unwrap(), 0, bytes);
     }
 
     fn ensure_client_overlay_bind(&mut self, image: &super::super::ClientOverlayImage) -> usize {
         if let Some(index) = self
+            .ui
             .client_overlays
             .binds
             .iter()
             .position(|(key, _)| key == &image.key)
         {
-            let existing = &mut self.client_overlays.binds[index].1;
+            let existing = &mut self.ui.client_overlays.binds[index].1;
             if existing.size == image.size {
                 if existing.revision != image.revision {
                     // Partial refresh when every revision step since the one
@@ -171,7 +174,7 @@ impl Renderer {
         });
         let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("client overlay image"),
-            layout: &self.ui_texture_bgl,
+            layout: &self.ui.texture_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -184,12 +187,13 @@ impl Renderer {
             ],
         });
         if let Some(index) = self
+            .ui
             .client_overlays
             .binds
             .iter()
             .position(|(key, _)| key == &image.key)
         {
-            self.client_overlays.binds[index].1 = OverlayBind {
+            self.ui.client_overlays.binds[index].1 = OverlayBind {
                 revision: image.revision,
                 size: image.size,
                 texture,
@@ -197,7 +201,7 @@ impl Renderer {
             };
             return index;
         }
-        self.client_overlays.binds.push((
+        self.ui.client_overlays.binds.push((
             image.key.clone(),
             OverlayBind {
                 revision: image.revision,
@@ -206,21 +210,21 @@ impl Renderer {
                 bind,
             },
         ));
-        self.client_overlays.binds.len() - 1
+        self.ui.client_overlays.binds.len() - 1
     }
 
     pub(super) fn draw_client_overlays(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let Some(vbuf) = &self.client_overlays.vbuf else {
+        let Some(vbuf) = &self.ui.client_overlays.vbuf else {
             return;
         };
         pass.set_vertex_buffer(0, vbuf.slice(..));
-        for batch in &self.client_overlays.batches {
+        for batch in &self.ui.client_overlays.batches {
             let bind = match batch.bind_index {
-                Some(index) => match self.client_overlays.binds.get(index) {
+                Some(index) => match self.ui.client_overlays.binds.get(index) {
                     Some((_, image)) => &image.bind,
                     None => continue,
                 },
-                None => &self.icon_atlas.bind,
+                None => &self.ui.icon_atlas.bind,
             };
             pass.set_bind_group(0, bind, &[]);
             pass.draw(batch.start..batch.start + batch.count, 0..1);

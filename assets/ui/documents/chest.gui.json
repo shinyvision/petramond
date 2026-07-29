@@ -21,7 +21,7 @@
             },
             {
                 "type": "slot_grid",
-                "role": "storage",
+                "role": "container",
                 "cols": 9,
                 "rows": 3
             },

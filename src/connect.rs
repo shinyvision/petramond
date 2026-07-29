@@ -1,5 +1,5 @@
 //! Shared connection-shape primitives: the 4-bit horizontal connection mask and
-//! the post + full-height-arm box model that fences, panes, and the Layer-2
+//! the post + full-height-arm box model that fences, panes, and the parameterized
 //! parameterized wall/bar families all build from.
 //!
 //! A connection shape's 4-bit mask of horizontal connections is REFINED

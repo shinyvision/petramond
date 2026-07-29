@@ -12,6 +12,7 @@ use super::World;
 fn install_column_summary(world: &mut World, generator: &ChunkGenerator, pos: ChunkPos) {
     world.ensure_column(pos);
     world
+        .gen
         .column_gen
         .insert(pos, Arc::new(generator.generate_column_gen(pos.cx, pos.cz)));
 }
@@ -169,16 +170,16 @@ fn mesh_column_index_tracks_multiple_vertical_meshes() {
     world.install_mesh(lower, ChunkMesh::empty());
     world.install_mesh(upper, ChunkMesh::empty());
     assert!(world.column_has_mesh(column));
-    let bits = world.mesh_column_cys[&column];
+    let bits = world.terrain.mesh_column_cys[&column];
     assert_eq!(bits.count_ones(), 2);
 
     assert!(world.remove_mesh(lower));
     assert!(world.column_has_mesh(column));
-    assert_eq!(world.mesh_column_cys[&column].count_ones(), 1);
+    assert_eq!(world.terrain.mesh_column_cys[&column].count_ones(), 1);
 
     assert!(world.remove_mesh(upper));
     assert!(!world.column_has_mesh(column));
-    assert!(!world.mesh_column_cys.contains_key(&column));
+    assert!(!world.terrain.mesh_column_cys.contains_key(&column));
 }
 
 #[test]
@@ -237,7 +238,7 @@ fn heightmap_recompute_preserves_generated_cave_mouth_surface() {
 
     let mut world = World::new(seed, 0);
     world.ensure_column(cp);
-    world.column_gen.insert(cp, Arc::clone(&col));
+    world.gen.column_gen.insert(cp, Arc::clone(&col));
 
     let cy = cave_top.div_euclid(SECTION_SIZE as i32);
     let sp = SectionPos::new(cp.cx, cy, cp.cz);
@@ -318,7 +319,7 @@ fn heightmap_recompute_preserves_loaded_dug_shaft_below_generated_surface() {
     let column = world.ensure_column(cp);
     column.set_surface_y(x, z, ground);
     column.set_sky_cover_y(x, z, ground);
-    world.column_gen.insert(cp, col);
+    world.gen.column_gen.insert(cp, col);
 
     let ground_sp = SectionPos::from_world(
         cp.cx * SECTION_SIZE as i32 + x as i32,

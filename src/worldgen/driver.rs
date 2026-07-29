@@ -26,7 +26,7 @@ use super::feature::{
     vegetation, ColumnFeatureField, RuntimeFeatureField, SurfaceHeights, MAX_TREE_REACH_ABOVE,
     TREELINE,
 };
-use super::noise::height::CaveField;
+use super::noise::cave_field::CaveField;
 use super::proto::ProtoChunk;
 use super::region::RegionCells;
 

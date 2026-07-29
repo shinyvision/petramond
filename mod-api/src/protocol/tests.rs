@@ -444,9 +444,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         ],
     })));
     roundtrip(EventPayload::ContainerOpened {
-        kind: ContainerKind::Mod {
-            key: "wheel:wheel".into(),
-        },
+        kind: ContainerKind::new("wheel:wheel"),
         pos: None,
     });
     roundtrip(GuestCall::GenFeature {
@@ -540,7 +538,7 @@ fn abi_roundtrip_host_and_guest_calls() {
         },
     });
     roundtrip(EventPayload::ContainerOpened {
-        kind: ContainerKind::Furnace,
+        kind: ContainerKind::new("petramond:furnace"),
         pos: Some([1, -64, 3]),
     });
     roundtrip(HostCall::BlockNames {

@@ -57,9 +57,7 @@ use crate::block_state::HeldBlockState;
 use crate::camera::Camera;
 use crate::entity::ParticleSystem;
 use crate::mathh::IVec3;
-use crate::net::protocol::{
-    ChatLine, ClientToServer, MenuSlotWire, PlayerAction, SelfTransform, ThrowAmount,
-};
+use crate::net::protocol::{ChatLine, ClientToServer, PlayerAction, SelfTransform, ThrowAmount};
 #[cfg(test)]
 use crate::player::PlayerMode;
 use crate::player::{Player, RaycastHit};
@@ -599,90 +597,6 @@ impl Game {
             }));
     }
 
-    /// Latch a hit-tested container click for the next game tick: resolved by
-    /// the App to a [`MenuSlot`](crate::gui::MenuSlot), a button, Shift, and
-    /// its double-click `gather` verdict, shipped as a `MenuClick` message and
-    /// applied in arrival order by the tick's menu stage. Optimistically
-    /// mutates the predicted inventory when the ledger has room.
-    pub fn menu_click(
-        &mut self,
-        slot: crate::gui::MenuSlot,
-        button: crate::controls::PointerButton,
-        shift: bool,
-        gather: bool,
-    ) {
-        // Clicks the prediction cannot faithfully apply ride track-only: no
-        // inventory clone, no snapshot slot burned, nothing to roll back. A
-        // container-slot click mutates the open menu mirror too, so its
-        // rollback unit spans both stores.
-        let (can, request_id) = if self.menu_click_is_predictable(slot, shift, gather) {
-            if matches!(slot, crate::gui::MenuSlot::Inventory(_)) {
-                self.begin_inventory_prediction()
-            } else {
-                self.begin_menu_prediction()
-            }
-        } else {
-            (false, self.prediction.begin_track_only())
-        };
-        if can {
-            self.predict_menu_click(slot, button, shift, gather);
-        }
-        self.outbox.push(ClientToServer::MenuClick {
-            slot: MenuSlotWire::from_menu_slot(&slot),
-            button: crate::net::protocol::button_to_wire(button),
-            shift,
-            gather,
-            request_id,
-        });
-    }
-
-    /// Drop from the hovered menu slot (Q / Ctrl-Q by default). Inventory
-    /// cells can be predicted locally; container and transient output cells
-    /// ride track-only until the authoritative menu tick applies them.
-    pub fn menu_drop(&mut self, slot: crate::gui::MenuSlot, all: bool) {
-        self.local_hand_threw |= self.menu_slot_has_stack(slot);
-        let (can, request_id) = if matches!(slot, crate::gui::MenuSlot::Inventory(_)) {
-            self.begin_inventory_prediction()
-        } else {
-            (false, self.prediction.begin_track_only())
-        };
-        if can {
-            if let crate::gui::MenuSlot::Inventory(i) = slot {
-                self.self_view.inventory.take_slot_for_drop(i, all);
-            }
-        }
-        self.outbox.push(ClientToServer::MenuDrop {
-            slot: MenuSlotWire::from_menu_slot(&slot),
-            all,
-            request_id,
-        });
-    }
-
-    fn menu_slot_has_stack(&self, slot: crate::gui::MenuSlot) -> bool {
-        use crate::gui::{FurnaceHit, MenuSlot};
-        match slot {
-            MenuSlot::Inventory(i) => self.self_view.inventory.slot(i).is_some(),
-            MenuSlot::CraftResult => self.menu_view.craft_output.is_some(),
-            MenuSlot::Furnace(hit) => self.menu_view.furnace.is_some_and(|furnace| match hit {
-                FurnaceHit::Input => furnace.input.is_some(),
-                FurnaceHit::Fuel => furnace.fuel.is_some(),
-                FurnaceHit::Output => furnace.output.is_some(),
-            }),
-            MenuSlot::Chest(i) => self
-                .menu_view
-                .chest
-                .and_then(|chest| chest.slots.get(i).copied().flatten())
-                .is_some(),
-            MenuSlot::Container(i) => self
-                .menu_view
-                .container
-                .as_ref()
-                .and_then(|container| container.slots.get(i).copied().flatten())
-                .is_some(),
-            MenuSlot::Widget(_) => false,
-        }
-    }
-
     /// Request one explicit craft by stable recipe key (`bulk` = shift-craft
     /// the maximum possible). The authoritative server revalidates station,
     /// ingredients, and output fit.
@@ -755,128 +669,6 @@ impl Game {
         self.crafting = catalog;
     }
 
-    /// Whether the client can faithfully predict a click's outcome. Inventory
-    /// slots: always for plain clicks; shift/gather only while no open target
-    /// reroutes them (the shared apply routes a shifted stack INTO an open
-    /// chest/furnace/mod/workbench, and a gather sweeps an open block
-    /// container — predicting those with inventory-only primitives would
-    /// drift from the server). Container slots (chest/furnace/mod document):
-    /// plain clicks only, and only while the mirror view is present — the
-    /// mutation is cursor ↔ mirrored slot through the same external-slot
-    /// primitives the server's decode runs. Shift quick-moves and gathers on
-    /// those still ride track-only (the single-apply-path rule).
-    fn menu_click_is_predictable(
-        &self,
-        slot: crate::gui::MenuSlot,
-        shift: bool,
-        gather: bool,
-    ) -> bool {
-        use crate::gui::MenuSlot;
-        let v = &self.menu_view;
-        match slot {
-            MenuSlot::Inventory(_) => {
-                let block_container_open =
-                    v.chest.is_some() || v.furnace.is_some() || v.container.is_some();
-                if shift {
-                    !block_container_open
-                } else if gather {
-                    !block_container_open
-                } else {
-                    true
-                }
-            }
-            MenuSlot::Chest(_) => !shift && !gather && v.chest.is_some(),
-            MenuSlot::Furnace(_) => !shift && !gather && v.furnace.is_some(),
-            MenuSlot::Container(_) => {
-                !shift && !gather && v.container.is_some() && v.container_kind.is_some()
-            }
-            _ => false,
-        }
-    }
-
-    /// Apply click prediction; callers gate on
-    /// [`menu_click_is_predictable`](Self::menu_click_is_predictable), so
-    /// every arm here matches what `ContainerMenu::click` will do server-side:
-    /// container-slot arms run the same external-slot primitives its generic
-    /// decode runs, against the mirror cell instead of the world container.
-    fn predict_menu_click(
-        &mut self,
-        slot: crate::gui::MenuSlot,
-        button: crate::controls::PointerButton,
-        shift: bool,
-        gather: bool,
-    ) {
-        use crate::controls::PointerButton;
-        use crate::gui::{FurnaceHit, MenuSlot};
-        let secondary = button == PointerButton::Secondary;
-        let inv = &mut self.self_view.inventory;
-        match slot {
-            MenuSlot::Inventory(i) => {
-                if shift {
-                    inv.shift_move_slot(i);
-                } else if gather {
-                    inv.collect_to_cursor();
-                } else if secondary {
-                    inv.right_click_slot(i);
-                } else {
-                    inv.click_slot(i);
-                }
-            }
-            MenuSlot::Chest(i) => {
-                if let Some(cell) = self
-                    .menu_view
-                    .chest
-                    .as_mut()
-                    .and_then(|chest| chest.slots.get_mut(i))
-                {
-                    if secondary {
-                        inv.right_click_external_slot(cell);
-                    } else {
-                        inv.click_external_slot(cell);
-                    }
-                }
-            }
-            MenuSlot::Furnace(hit) => {
-                if let Some(furnace) = self.menu_view.furnace.as_mut() {
-                    match hit {
-                        FurnaceHit::Input if secondary => {
-                            inv.right_click_external_slot(&mut furnace.input)
-                        }
-                        FurnaceHit::Input => inv.click_external_slot(&mut furnace.input),
-                        FurnaceHit::Fuel if secondary => {
-                            inv.right_click_external_slot(&mut furnace.fuel)
-                        }
-                        FurnaceHit::Fuel => inv.click_external_slot(&mut furnace.fuel),
-                        FurnaceHit::Output => {
-                            inv.click_take_only_external_slot(&mut furnace.output, secondary)
-                        }
-                    }
-                }
-            }
-            MenuSlot::Container(i) => {
-                let Some(kind) = self.menu_view.container_kind else {
-                    return;
-                };
-                let specs = crate::gui::documents::container_slot_specs(kind);
-                if let Some(cell) = self
-                    .menu_view
-                    .container
-                    .as_mut()
-                    .and_then(|container| container.slots.get_mut(i))
-                {
-                    if specs.get(i).is_some_and(|spec| spec.take_only) {
-                        inv.click_take_only_external_slot(cell, secondary);
-                    } else if secondary {
-                        inv.right_click_external_slot(cell);
-                    } else {
-                        inv.click_external_slot(cell);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// Whether the LOCAL cursor currently holds a stack, from the REPLICATED
     /// inventory (cursor rides `SelfState`). Gates the double-click gather,
     /// which only fires while a stack is being dragged; the gather verdict
@@ -893,8 +685,6 @@ impl Game {
         crate::server::menu::MenuReadModel {
             inventory: &self.self_view.inventory,
             craft_output: view.craft_output,
-            furnace: view.furnace,
-            chest: view.chest,
             gui_state: view.gui_state.clone(),
             container: view.container.clone(),
         }

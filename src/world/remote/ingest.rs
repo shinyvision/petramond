@@ -181,7 +181,7 @@ impl World {
         for pos in affected {
             self.queue_dirty_mesh(pos);
         }
-        self.vis_dirty = true;
+        self.terrain.vis_dirty = true;
     }
 
     /// Apply a server light rebake on a replica — the exact seam a local bake
@@ -248,7 +248,7 @@ impl World {
         // An in-flight mesh snapshotted the old cubes: discard its result.
         s.mesh_revision = s.mesh_revision.wrapping_add(1);
         self.bump_lighting_revision();
-        self.dirty_meshes.push(pos);
+        self.terrain.dirty_meshes.push(pos);
         if !first_bake {
             self.requeue_meshes_sampling_changed_regions(pos, mask);
         }
@@ -317,7 +317,7 @@ impl World {
         // Geometry samplers only; light-driven remeshes ride the server's
         // `LightData` install for exactly the sections whose cubes changed.
         self.queue_dirty_meshes_sampling_cell(delta.pos.x, delta.pos.y, delta.pos.z);
-        // Re-mark any Layer-3 custom-shape cell so the CLIENT bakes it (its own
+        // Re-mark any custom-shape cell so the CLIENT bakes it (its own
         // client_wasm) and predicts the same collision the server does.
         self.mark_custom_bake_edit(
             delta.pos.x,
@@ -325,7 +325,7 @@ impl World {
             delta.pos.z,
             Block::from_id(delta.block_id),
         );
-        self.vis_dirty = true;
+        self.terrain.vis_dirty = true;
     }
 
     /// Replica-only: apply one live per-cell mod KV delta (the streamed twin
@@ -376,7 +376,7 @@ impl World {
         let target = LoadTarget::new(cx, cy, cz, self.render_dist);
         if self.last_load_target != Some(target) {
             self.last_load_target = Some(target);
-            self.vis_dirty = true;
+            self.terrain.vis_dirty = true;
         }
     }
 
@@ -392,7 +392,7 @@ impl World {
         );
         let evicted = self.sections.get(&pos).cloned();
         self.remove_section(pos);
-        self.vis_dirty = true;
+        self.terrain.vis_dirty = true;
         evicted
     }
 
@@ -408,7 +408,12 @@ impl World {
             self.role == WorldRole::ClientReplica,
             "remote unloads are the replica's ingest path"
         );
-        let bits = self.section_column_cys.get(&pos).copied().unwrap_or(0);
+        let bits = self
+            .terrain
+            .section_column_cys
+            .get(&pos)
+            .copied()
+            .unwrap_or(0);
         let mut evicted = Vec::with_capacity(bits.count_ones() as usize);
         Self::for_each_column_cy(bits, |cy| {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
@@ -417,7 +422,7 @@ impl World {
             }
         });
         self.remove_column(pos);
-        self.vis_dirty = true;
+        self.terrain.vis_dirty = true;
         evicted
     }
 

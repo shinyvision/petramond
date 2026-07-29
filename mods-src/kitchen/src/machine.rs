@@ -12,7 +12,7 @@ use mod_sdk::*;
 /// tracking, and the batched prune/read tick preamble — is [`Machine`];
 /// a spec only says which rows are its and what one machine does per tick.
 pub trait MachineSpec: Default {
-    /// The mod GUI container kind (`ContainerKind::Mod` key).
+    /// The GUI container kind key (`ContainerKind::key`).
     const KIND_KEY: &'static str;
     /// The placeable base block row; unresolvable = this kind stays idle.
     const BLOCK_KEY: &'static str;
@@ -92,7 +92,7 @@ impl<S: MachineSpec> Machine<S> {
 
     /// Container session tracking; opening also self-heals a lost anchor.
     pub fn on_container(&mut self, kind: &ContainerKind, pos: Option<[i32; 3]>, opened: bool) {
-        if !matches!(kind, ContainerKind::Mod { key } if key == S::KIND_KEY) {
+        if !kind.is(S::KIND_KEY) {
             return;
         }
         if opened {

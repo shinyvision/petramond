@@ -61,7 +61,7 @@ pub fn collision_boxes(facing: Facing) -> &'static [Aabb] {
 }
 
 /// The panel box for arbitrary `thickness`/`height` (cell fractions) — the ONE
-/// geometry a Layer-2 wall-panel derives collision, targeting, and mesh from.
+/// geometry a parameterized wall-panel derives collision, targeting, and mesh from.
 /// The engine ladder is `panel_box(facing, THICKNESS, 1.0)`.
 pub fn panel_box(facing: Facing, thickness: f32, height: f32) -> Aabb {
     match facing {
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn parameterized_panel_thickens_and_shortens_the_box() {
-        // A Layer-2 wall panel (thickness 4/16, height 12/16) grows the slice and
+        // A parameterized wall panel (thickness 4/16, height 12/16) grows the slice and
         // caps its height; the box the collision, targeting, and mesh share.
         let boxes = collision_boxes_dim(Facing::East, 4.0 / 16.0, 12.0 / 16.0);
         assert_eq!(boxes.len(), 1);

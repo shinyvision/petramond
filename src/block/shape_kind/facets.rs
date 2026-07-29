@@ -229,6 +229,14 @@ pub fn light_aperture_face(masks: u32, dir: (i32, i32, i32)) -> u8 {
 
 /// Sim-side shape behavior: authoritative, deterministic. A headless server
 /// calls every method here and never touches [`ShapeRender`].
+/// A shape's grip on a neighbouring face: the supporting cell, and the
+/// outward normal of the face being gripped. What [`ShapeSim::mount`] answers.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ShapeMount {
+    pub cell: IVec3,
+    pub normal: IVec3,
+}
+
 pub trait ShapeSim: Send + Sync + 'static {
     /// The block's position-aware collision boxes — the resolve behind
     /// [`World::collision_boxes_at`]. The default is the row's position-less
@@ -253,6 +261,25 @@ pub trait ShapeSim: Send + Sync + 'static {
     /// default facing, a bare no-neighbour fence post) overrides.
     fn default_boxes(&self, _params: &ShapeParams, block: Block) -> &'static [Aabb] {
         block.row_collision()
+    }
+
+    /// The cell this shape GRIPS and the outward normal of the face it grips,
+    /// for a family whose support comes from its PLACEMENT rather than the
+    /// row's declarative `support_dir`. `None` (the default) = the
+    /// declarative rule governs, which is every ordinary block.
+    ///
+    /// A wall torch grips the wall behind it; a wall panel grips the wall it
+    /// is mounted on. Answering here is what keeps the fragility rule free of
+    /// family names, so a pack's wall lantern or rope gets the same support
+    /// treatment with no engine edit.
+    fn mount(
+        &self,
+        _params: &ShapeParams,
+        _nb: &dyn ShapeNeighborhood,
+        _pos: IVec3,
+        _block: Block,
+    ) -> Option<ShapeMount> {
+        None
     }
 
     /// Whether the face of this cell with outward normal `dir` is a COMPLETE
@@ -459,7 +486,7 @@ pub trait ShapeRender: Send + Sync + 'static {
 
     /// Whether a targeting ray picks this shape against its RESOLVED COLLISION
     /// BOXES rather than stopping on a single box. True for every family whose
-    /// real form is a box set (stair, slab, pane, fence, a Layer-3 bake): the
+    /// real form is a box set (stair, slab, pane, fence, a WASM shape bake): the
     /// aimed geometry is then the collided geometry by construction, so aiming
     /// through a gap misses and aiming at a part hits, with no per-family ray
     /// code. A family whose form is not a box set keeps this `false` — a full
@@ -469,12 +496,41 @@ pub trait ShapeRender: Send + Sync + 'static {
         false
     }
 
+    /// Whether a targeting ray must test this shape's PRECISE form instead of
+    /// stopping on cell entry. Every box-set family needs that (hence the
+    /// default), and so does a family whose form is neither a full cube nor a
+    /// box set but still has real sub-cell geometry to aim at — a tilted torch
+    /// pole, a thin wall panel. The DDA asks only this, so a pack shape that
+    /// needs precise aiming declares it here instead of being named in the
+    /// picker.
+    fn precise_pick(&self, params: &ShapeParams) -> bool {
+        self.picks_by_boxes(params)
+    }
+
+    /// The cell-local boxes this shape's ITEM draws, when its item is true
+    /// geometry. Empty (the default) = the item is a sprite, a plain cube, or
+    /// a bbmodel, drawn by its own path.
+    ///
+    /// The family answers because an item is NOT always the placed form: a
+    /// fence item is an authored two-post SEGMENT where the placed cell with
+    /// no neighbours resolves to a bare post. `state` is the HELD state (a
+    /// stair's facing/half, a slab's layers), so the icon shows what a click
+    /// would place.
+    fn item_boxes(
+        &self,
+        _params: &ShapeParams,
+        _block: Block,
+        _state: crate::block_state::HeldBlockState,
+        _out: &mut Vec<crate::block::ItemBox>,
+    ) {
+    }
+
     /// The item KIND + geometry decision for a block of this shape — the
     /// per-shape arm folded out of `ItemType::render_kind`. Drives the inventory
     /// icon, the dropped entity, and the in-hand form identically. The default
     /// is a plain cube icon.
     fn item_render(&self, _params: &ShapeParams, block: Block) -> ItemRender {
-        ItemRender::Cube(block)
+        ItemRender::BlockForm(block)
     }
 }
 
@@ -490,11 +546,15 @@ pub enum ItemRender {
     ItemSprite,
     /// A specific atlas tile as a flat sprite (a plant's top tile).
     Tile(Tile),
-    /// A plain full-cube icon (the plain cube).
-    Cube(Block),
-    /// True baked geometry built from the family + the held state (stair, slab,
-    /// fence) — the same helpers the chunk mesher uses.
-    Geometry(Block),
+    /// The item draws its BLOCK. What form that takes is not decided here:
+    /// `ShapeRender::item_boxes` answers it (a stair's steps, a slab's layers,
+    /// a fence's authored segment, a static box set's boxes), falling back to
+    /// a plain cube when the family offers none.
+    ///
+    /// This used to be two variants — `Cube` and `Geometry` — which produced
+    /// the IDENTICAL `ItemRenderKind::BlockCube` and were told apart nowhere;
+    /// the real decision had already moved to the facet.
+    BlockForm(Block),
     /// A baked bbmodel, everywhere.
     Model(BlockModelKind),
 }

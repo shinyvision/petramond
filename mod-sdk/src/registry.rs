@@ -52,7 +52,7 @@ host_fn! {
 
 host_fn! {
     /// Resolve a block SHAPE-KIND registry key (`"petramond:fence"`,
-    /// `"mymod:gate"`) to the session-local `shape_kind` id the Layer-3 bake
+    /// `"mymod:gate"`) to the session-local `shape_kind` id the WASM shape bake
     /// calls carry (`bake_shape_sim`/`bake_shape_render`/`shape_placement_plan`)
     /// — the shape twin of [`resolve_block`], so a mod with two custom shapes can
     /// branch on which one a bake batch is for. `None` = no such shape kind.

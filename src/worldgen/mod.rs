@@ -185,14 +185,14 @@ fn clamp_query(p: [i32; 3]) -> [i32; 3] {
 /// A `CaveField` is ten OpenSimplex permutation tables, so it is memoized in
 /// ONE slot keyed by seed rather than rebuilt per call; sessions are serial,
 /// and a seed change self-evicts.
-fn cave_field(seed: u32) -> std::sync::Arc<noise::height::CaveField> {
+fn cave_field(seed: u32) -> std::sync::Arc<noise::cave_field::CaveField> {
     use std::sync::{Arc, Mutex};
-    static SLOT: Mutex<Option<(u32, Arc<noise::height::CaveField>)>> = Mutex::new(None);
+    static SLOT: Mutex<Option<(u32, Arc<noise::cave_field::CaveField>)>> = Mutex::new(None);
     let mut slot = SLOT.lock().unwrap();
     match slot.as_ref() {
         Some((s, field)) if *s == seed => Arc::clone(field),
         _ => {
-            let field = Arc::new(noise::height::CaveField::new(seed));
+            let field = Arc::new(noise::cave_field::CaveField::new(seed));
             *slot = Some((seed, Arc::clone(&field)));
             field
         }
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn cave_capable_section_summaries_are_conservative() {
-        use super::noise::height::CaveField;
+        use super::noise::cave_field::CaveField;
         use crate::section::SectionSummary;
 
         let seed = 0x1234_5678;

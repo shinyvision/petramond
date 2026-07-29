@@ -3,29 +3,21 @@
 //! split, take-only outputs, shift-routing by the [`SlotSpec`] item tags,
 //! gather double-clicks); what the slots MEAN stays with the container's
 //! owner — engine machine state like the furnace's, or the opening mod's tick
-//! logic. The chest and furnace ride the same path as mod documents: their
-//! semantics are the engine-owned spec sets below, not hardcoded roles.
+//! logic. The chest rides the same path as a pack document — its slot
+//! semantics come from its own GUI document, not from a hardcoded role — and
+//! only the furnace keeps an engine-owned spec set, because its filters are
+//! machine state rather than authored layout.
 
 use super::{ContainerMenu, ContainerTarget};
 use crate::container::{Container, SlotSpec};
 use crate::controls::PointerButton;
 use crate::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
-use crate::gui::{ChestView, ContainerView};
+use crate::gui::ContainerView;
 use crate::inventory::{merge_stack, Inventory};
 use crate::item::ItemTag;
 use crate::mathh::IVec3;
-use crate::world::chest::CHEST_SLOTS;
 use crate::world::World;
 use std::sync::{Arc, OnceLock};
-
-/// The chest's semantics in the same [`SlotSpec`] language mod documents
-/// speak: plain storage cells — no filters, no outputs.
-fn chest_slot_specs() -> Arc<Vec<SlotSpec>> {
-    static SPECS: OnceLock<Arc<Vec<SlotSpec>>> = OnceLock::new();
-    SPECS
-        .get_or_init(|| Arc::new(vec![SlotSpec::default(); CHEST_SLOTS]))
-        .clone()
-}
 
 /// The furnace's semantics: a smeltable-filtered input, a fuel-filtered fuel
 /// slot, and a take-only output, in the `SLOT_INPUT`/`SLOT_FUEL`/`SLOT_OUTPUT`
@@ -44,35 +36,16 @@ fn furnace_slot_specs() -> Arc<Vec<SlotSpec>> {
 }
 
 impl ContainerMenu {
-    /// The open mod GUI's container slots for the render view, or `None` when
-    /// the session is not a mod GUI opened from a block with storage. (The
-    /// chest and furnace draw through their own views.)
+    /// The open session's container slots for the render view, or `None` when
+    /// no block-backed container is open. The engine chest and a pack's own
+    /// container publish through this ONE view — the chest is not a kind the
+    /// render path knows by name. (The furnace still draws its own view; it
+    /// carries cook/burn gauges the plain slot view has no room for.)
     pub(crate) fn open_container_view(&self, world: &World) -> Option<ContainerView> {
-        if !self.target.kind().is_some_and(|kind| kind.is_mod()) {
-            return None;
-        }
         let pos = self.container_pos()?;
         Some(ContainerView {
             slots: world.container_at(pos)?.slots.clone(),
         })
-    }
-
-    /// The open chest's slots for the render view, or `None` when no chest is
-    /// open.
-    pub(crate) fn open_chest_view(&self, world: &World) -> Option<ChestView> {
-        let ContainerTarget::Gui {
-            kind: crate::gui::GuiKind::Chest,
-            pos: Some(pos),
-        } = self.target
-        else {
-            return None;
-        };
-        let container = world.container_at(pos)?;
-        let mut slots = [None; CHEST_SLOTS];
-        for (dst, src) in slots.iter_mut().zip(&container.slots) {
-            *dst = *src;
-        }
-        Some(ChestView { slots })
     }
 
     /// The open session's container position: the block a block-backed kind's
@@ -86,14 +59,15 @@ impl ContainerMenu {
     }
 
     /// The open session's slot semantics (empty when no slot-bearing GUI is
-    /// up): the engine sets for the chest/furnace, the document's for a mod
-    /// GUI — one kind-keyed lookup, never a per-target enum.
+    /// up). Every container — the engine chest included — derives them from
+    /// its own GUI DOCUMENT's `container` slots, exactly as a pack's does;
+    /// only the furnace keeps an engine-owned set, because its filters are
+    /// machine state (smeltable/fuel/output) rather than authored layout.
     pub(super) fn slot_specs(&self) -> Arc<Vec<SlotSpec>> {
         match self.target.kind() {
-            Some(crate::gui::GuiKind::Chest) => chest_slot_specs(),
             Some(crate::gui::GuiKind::Furnace) => furnace_slot_specs(),
-            Some(kind) if kind.is_mod() => crate::gui::documents::container_slot_specs(kind),
-            _ => Arc::default(),
+            Some(kind) => crate::gui::documents::container_slot_specs(kind),
+            None => Arc::default(),
         }
     }
 

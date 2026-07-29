@@ -28,6 +28,7 @@ pub mod theme;
 pub mod tree;
 pub mod validate;
 mod widget;
+mod widget_policy;
 
 pub use doc::{
     AbsPos, AlertLevel, Align, Anchor, AnchorEdge, Bindings, Dir, DocClass, DocError, Document,

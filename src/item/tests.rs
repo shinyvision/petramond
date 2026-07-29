@@ -261,7 +261,7 @@ fn render_kind_matches_shape_family() {
                     "{block:?} renders as a flat sprite"
                 );
             }
-            // A Layer-3 custom shape's item defaults to a cube icon (a mod can
+            // A custom shape's item defaults to a cube icon (a mod can
             // bake its own item form; the default `ShapeRender` is a cube).
             ShapeFamily::Custom => {
                 assert_eq!(

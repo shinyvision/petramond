@@ -1,4 +1,4 @@
-//! The Layer-3 custom-shape SIM bake cache: per-cell collision boxes a pack's
+//! The custom-shape SIM bake cache: per-cell collision boxes a pack's
 //! WASM baked, read by the shape's collision facet. A cache MISS (never baked,
 //! or a trapped/timed-out bake) falls back to the block row's static collision
 //! boxes — the failure policy that keeps placed world data intact while only the
@@ -51,7 +51,7 @@ impl World {
     /// boxes).
     #[inline]
     pub(crate) fn custom_shape_boxes(&self, pos: IVec3) -> Option<&'static [Aabb]> {
-        self.custom_bake.get(&pos).copied()
+        self.mods.custom_bake.get(&pos).copied()
     }
 
     /// Record a custom shape cell's freshly-baked collision boxes. A full intern
@@ -60,10 +60,10 @@ impl World {
     pub(crate) fn set_custom_bake(&mut self, pos: IVec3, boxes: &[Aabb]) {
         match intern_boxes(boxes) {
             Some(interned) => {
-                self.custom_bake.insert(pos, interned);
+                self.mods.custom_bake.insert(pos, interned);
             }
             None => {
-                self.custom_bake.remove(&pos);
+                self.mods.custom_bake.remove(&pos);
             }
         }
     }
@@ -121,10 +121,10 @@ impl World {
     /// invalidation the block-write lanes call.
     #[inline]
     pub(crate) fn invalidate_custom_bake(&mut self, pos: IVec3) {
-        self.custom_bake.remove(&pos);
+        self.mods.custom_bake.remove(&pos);
     }
 
-    /// The ENTIRE wire input a Layer-3 bake receives for one cell: `block`'s
+    /// The ENTIRE wire input a WASM shape bake receives for one cell: `block`'s
     /// id (the CELL's id may not be written yet — placement bakes the
     /// hypothetical cell), the six neighbour ids, and — for a shape declaring
     /// a `state_key` — the replicated per-cell state of the cell and its six
@@ -175,7 +175,7 @@ impl World {
         // on the server and every client replica (C1): the dirty set is a hashed
         // set with no stable order, and a bake that touched instance state would
         // otherwise diverge between the two and desync.
-        let mut dirty: Vec<IVec3> = self.custom_bake_dirty.drain().collect();
+        let mut dirty: Vec<IVec3> = self.mods.custom_bake_dirty.drain().collect();
         dirty.sort_by_key(|p| (p.x, p.y, p.z));
         dirty
             .into_iter()
@@ -199,10 +199,10 @@ impl World {
     /// tick's bake step checks before building a mod dispatch scope.
     #[inline]
     pub(crate) fn has_pending_custom_bakes(&self) -> bool {
-        !self.custom_bake_dirty.is_empty()
+        !self.mods.custom_bake_dirty.is_empty()
     }
 
-    /// Mark every Layer-3 custom-shape cell in a freshly-LOADED section dirty for
+    /// Mark every custom-shape cell in a freshly-LOADED section dirty for
     /// baking. A section load (worldgen, streaming, client ingest, save reload)
     /// sets its cells in BULK, bypassing [`mark_custom_bake_edit`], so a chair
     /// restored from disk would never re-bake — it would show the row's static
@@ -228,7 +228,7 @@ impl World {
             }
         }
         for p in dirty {
-            self.custom_bake_dirty.insert(p);
+            self.mods.custom_bake_dirty.insert(p);
         }
     }
 
@@ -256,7 +256,7 @@ impl World {
                 Block::from_id(self.chunk_block(p.x, p.y, p.z))
             };
             if cell.shape_family() == ShapeFamily::Custom {
-                self.custom_bake_dirty.insert(p);
+                self.mods.custom_bake_dirty.insert(p);
             } else {
                 // The cell is no longer a custom shape: drop any stale baked
                 // light aperture so a later ungated read can't see it (the
@@ -295,7 +295,7 @@ impl World {
                 && b.shape_kind_def().params.state_key() == Some(key)
             {
                 self.invalidate_custom_bake(p);
-                self.custom_bake_dirty.insert(p);
+                self.mods.custom_bake_dirty.insert(p);
             }
         }
     }
@@ -320,8 +320,8 @@ impl World {
     /// `chunk_block` on unloaded coords every bake pump.
     pub(in crate::world) fn evict_custom_bake_section(&mut self, pos: SectionPos) {
         let in_section = |p: &IVec3| Self::split_world(p.x, p.y, p.z).map(|s| s.0) == Some(pos);
-        self.custom_bake.retain(|p, _| !in_section(p));
-        self.custom_bake_dirty.retain(|p| !in_section(p));
+        self.mods.custom_bake.retain(|p, _| !in_section(p));
+        self.mods.custom_bake_dirty.retain(|p| !in_section(p));
     }
 
     /// Drop every cached custom bake in a column being evicted.
@@ -332,14 +332,14 @@ impl World {
                 p.z.div_euclid(crate::chunk::SECTION_SIZE as i32),
             ) == pos
         };
-        self.custom_bake.retain(|p, _| !in_column(p));
-        self.custom_bake_dirty.retain(|p| !in_column(p));
+        self.mods.custom_bake.retain(|p, _| !in_column(p));
+        self.mods.custom_bake_dirty.retain(|p| !in_column(p));
     }
 
     /// Drop the whole custom-bake cache (the regen path clears every section).
     pub(in crate::world) fn clear_custom_bake(&mut self) {
-        self.custom_bake.clear();
-        self.custom_bake_dirty.clear();
+        self.mods.custom_bake.clear();
+        self.mods.custom_bake_dirty.clear();
     }
 }
 

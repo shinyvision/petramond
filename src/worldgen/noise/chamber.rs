@@ -423,14 +423,14 @@ mod tests {
     fn field(
         table: &'static underground::UndergroundBiomes,
         seed: u32,
-    ) -> super::super::height::CaveField {
-        super::super::height::CaveField::with_table(seed, table)
+    ) -> super::super::cave_field::CaveField {
+        super::super::cave_field::CaveField::with_table(seed, table)
     }
 
     /// Every room the seed actually rolls over a wide box — the only honest
     /// population to sweep, since a hand-built `Room` cannot exercise the lobe
     /// roll and a lobe offset missing from a reach bound is a carve seam.
-    fn rolled(f: &super::super::height::CaveField) -> Vec<Room> {
+    fn rolled(f: &super::super::cave_field::CaveField) -> Vec<Room> {
         let g = f.chamber_field([-768, -64, -768], [768, -8, 768]);
         g.rooms.clone()
     }

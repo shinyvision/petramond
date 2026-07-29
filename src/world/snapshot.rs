@@ -148,10 +148,10 @@ impl World {
     /// (autosave / unload / a size trigger in `poll`) so one region-file
     /// rewrite absorbs many columns.
     pub(super) fn flush_pending_colgen_records(&mut self) {
-        if self.pending_colgen_records.is_empty() {
+        if self.gen.pending_colgen_records.is_empty() {
             return;
         }
-        let recs = std::mem::take(&mut self.pending_colgen_records);
+        let recs = std::mem::take(&mut self.gen.pending_colgen_records);
         if let Some(save) = self.save.as_mut() {
             save.save_column_gens(recs);
         }
@@ -170,7 +170,7 @@ impl World {
         // overwrite the player's on-disk record with pre-overlay state. Skip; the
         // record on disk stays authoritative. (Entities that wandered in are
         // dropped with the unload — losing a wanderer beats corrupting a build.)
-        if self.awaited_overlays.contains(&sp) || self.pending_overlays.contains_key(&sp) {
+        if self.gen.awaited_overlays.contains(&sp) || self.gen.pending_overlays.contains_key(&sp) {
             return None;
         }
         let entities = self.dropped_items.take_items_in_section(sp);

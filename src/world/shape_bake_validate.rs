@@ -1,4 +1,4 @@
-//! Shared ingest validation for Layer-3 guest bake geometry — the ONE place a
+//! Shared ingest validation for guest shape bake geometry — the ONE place a
 //! `ShapeAabb` reply crosses into engine `Aabb`s the physics sweeps, the light
 //! flood reads, and the mesher emits. Guest replies are hostile input: a bake
 //! can return NaN boxes (every physics overlap goes false — the player falls

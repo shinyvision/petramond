@@ -82,27 +82,6 @@ fn rail_end(kind: FenceBox, face: Face) -> bool {
     }
 }
 
-/// Visit every drawable face of the connected fence shape, in emission order
-/// — consumed by the break-crack overlay so the crack traces the mesh's
-/// faces. `post_cap` marks the post's PosY/NegY caps (the overlay draws them
-/// all; the mesher's generic burial cull handles their visibility).
-pub(crate) fn shape_faces(
-    post_lo: f32,
-    post_hi: f32,
-    mask: u8,
-    mut visit: impl FnMut([f32; 3], [f32; 3], Face, bool),
-) {
-    shape_boxes(post_lo, post_hi, mask, |min, max, kind| {
-        for face in Face::ALL {
-            if rail_end(kind, face) {
-                continue;
-            }
-            let post_cap = kind == FenceBox::Post && matches!(face, Face::PosY | Face::NegY);
-            visit(min, max, face, post_cap);
-        }
-    });
-}
-
 /// The connected fence shape as [`ShapeBox`]es for the unified emitter:
 /// `[top, bottom, side]` tiles, rail end caps omitted.
 pub(crate) fn push_mesh_boxes(

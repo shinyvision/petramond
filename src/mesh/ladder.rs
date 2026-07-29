@@ -27,31 +27,6 @@ fn buried_face(facing: Facing) -> Face {
     }
 }
 
-/// Visit every emitted face of a ladder facing `facing`, in emission order —
-/// consumed by the break-crack overlay so the crack is coincident with the
-/// mesh. The face flush against the supporting wall is never visited.
-pub(crate) fn shape_faces(facing: Facing, visit: impl FnMut([f32; 3], [f32; 3], Face)) {
-    let (t, h) = (crate::ladder::THICKNESS, 1.0);
-    shape_faces_dim(facing, t, h, visit);
-}
-
-/// [`shape_faces`] for a Layer-2 wall panel of retuned `thickness`/`height` — the
-/// in-world mesh reads the same [`crate::ladder::panel_box`] the collision does.
-pub(crate) fn shape_faces_dim(
-    facing: Facing,
-    thickness: f32,
-    height: f32,
-    mut visit: impl FnMut([f32; 3], [f32; 3], Face),
-) {
-    let (min, max) = crate::ladder::panel_aabb_dim(facing, thickness, height);
-    let buried = buried_face(facing);
-    for face in Face::ALL {
-        if face != buried {
-            visit(min, max, face);
-        }
-    }
-}
-
 /// The wall panel as a [`ShapeBox`] for the unified emitter: one tile on
 /// every face, the wall-side face omitted.
 pub(crate) fn push_mesh_box(

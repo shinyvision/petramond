@@ -220,7 +220,7 @@ const CATALOGS: [CatalogSpec; 11] = {
             row_filter: Some(("type", "crafting")),
             ..plain("recipes.json", "recipes", "recipe")
         },
-        // Layer-3 custom shape declarations (WASM-baked geometry).
+        // Custom shape declarations (WASM-baked geometry).
         plain("shapes.json", "shapes", "key"),
         plain(
             "underground_biomes.json",

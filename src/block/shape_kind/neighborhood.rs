@@ -105,19 +105,6 @@ impl ShapeState {
         }
     }
 
-    /// Overwrite byte `i` in place, growing the state to cover it (new bytes
-    /// between the old end and `i` read as zero — the same value they decode
-    /// as when absent). The read-modify-write primitive a multi-field state
-    /// (a model cell's offset + facing) edits through.
-    #[inline]
-    pub fn set_byte(&mut self, i: usize, v: u8) {
-        debug_assert!(i < SHAPE_STATE_MAX);
-        if i >= self.len as usize {
-            self.len = (i + 1) as u8;
-        }
-        self.bytes[i] = v;
-    }
-
     /// Rewrite every id-masked byte through `f` — the save palette / net
     /// transport boundary hook. Non-masked bytes are untouched.
     #[inline]
@@ -178,15 +165,15 @@ pub trait ShapeNeighborhood {
     /// owning that cell's block.
     fn shape_state(&self, pos: IVec3) -> ShapeState;
 
-    /// A Layer-3 bake's drawn boxes for `pos`, when one is cached and
+    /// A WASM shape bake's drawn boxes for `pos`, when one is cached and
     /// reachable. `None` covers "never baked", "trapped bake", and "outside
     /// the caller's window" alike — the family then falls back to its static
-    /// form, the established Layer-3 failure policy.
+    /// form, the established custom-shape failure policy.
     fn baked(&self, _pos: IVec3) -> Option<&[ShapeRenderBox]> {
         None
     }
 
-    /// A Layer-3 SIM bake's authoritative collision boxes for `pos`, when one
+    /// A SIM shape bake's authoritative collision boxes for `pos`, when one
     /// is cached and reachable — the sim twin of [`baked`](Self::baked)
     /// (collision is interned, render is not, so the two caches stay
     /// separate). Same `None` semantics: the family falls back to the row's

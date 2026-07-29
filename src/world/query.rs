@@ -9,7 +9,7 @@ use super::store::World;
 impl World {
     /// Iterate loaded section meshes for rendering (caller culls by camera).
     pub fn iter_meshes(&self) -> impl Iterator<Item = (SectionPos, &ChunkMesh)> {
-        self.meshes.iter().map(|(p, m)| (*p, m))
+        self.terrain.meshes.iter().map(|(p, m)| (*p, m))
     }
 
     /// Is any terrain CPU light/mesh work still queued or in flight? Tooling uses this
@@ -22,22 +22,22 @@ impl World {
     /// move, topology change, neighbour landing — can wake it, so it is not
     /// pending work.
     pub fn has_dirty_meshes(&self) -> bool {
-        !self.dirty_meshes.is_empty()
-            || (self.role != super::store::WorldRole::ServerHeadless && self.vis_dirty)
-            || !self.light_blocked_meshes.is_empty()
+        !self.terrain.dirty_meshes.is_empty()
+            || (self.role != super::store::WorldRole::ServerHeadless && self.terrain.vis_dirty)
+            || !self.terrain.light_blocked_meshes.is_empty()
             || self.deferred_recheck_needed
             || !self.deferred_rechecks.is_empty()
             || self.light_bakes.has_pending()
-            || self.prediction_terrain.has_pending()
-            || self.mesh_jobs_in_flight > 0
+            || self.terrain.prediction_terrain.has_pending()
+            || self.terrain.mesh_jobs_in_flight > 0
     }
 
     /// Anything still generating, loading from disk or waiting on an overlay.
     pub(crate) fn has_pending_stream_work(&self) -> bool {
-        !self.pending.is_empty()
-            || !self.pending_sections.is_empty()
-            || !self.awaited_overlays.is_empty()
-            || !self.pending_overlays.is_empty()
+        !self.gen.pending.is_empty()
+            || !self.gen.pending_sections.is_empty()
+            || !self.gen.awaited_overlays.is_empty()
+            || !self.gen.pending_overlays.is_empty()
     }
 
     /// Number of loaded sections — a diagnostic for streaming/perf tooling.
@@ -47,7 +47,7 @@ impl World {
 
     /// Number of sections queued for (re)mesh — the streaming backlog.
     pub fn dirty_mesh_count(&self) -> usize {
-        self.dirty_meshes.len() + self.light_blocked_meshes.len()
+        self.terrain.dirty_meshes.len() + self.terrain.light_blocked_meshes.len()
     }
 
     /// Number of loaded columns — a diagnostic for streaming/perf tooling.
@@ -59,9 +59,9 @@ impl World {
     /// streaming/perf tooling.
     pub fn deep_visibility_counts(&self) -> (usize, usize, usize) {
         (
-            self.deep_sections.len(),
-            self.visible_deep.len(),
-            self.hidden_parked.len(),
+            self.terrain.deep_sections.len(),
+            self.terrain.visible_deep.len(),
+            self.terrain.hidden_parked.len(),
         )
     }
 
@@ -186,7 +186,8 @@ impl World {
         // range instead cost one hash lookup per possible section — and this
         // is asked per mob per tick, and per chunk of the hostile-spawn
         // neighbourhood.
-        self.section_column_cys
+        self.terrain
+            .section_column_cys
             .contains_key(&crate::chunk::ChunkPos::new(cx, cz))
     }
 

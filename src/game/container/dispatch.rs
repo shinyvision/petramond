@@ -1,7 +1,6 @@
 use super::{ContainerMenu, ContainerTarget};
 use crate::controls::PointerButton;
-use crate::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
-use crate::gui::{FurnaceHit, MenuSlot};
+use crate::gui::MenuSlot;
 use crate::inventory::Inventory;
 use crate::world::World;
 
@@ -51,17 +50,7 @@ impl ContainerMenu {
                 }
             }
             MenuSlot::CraftResult => self.craft_take_output(inv, button, shift),
-            // The furnace's role hits are its conventional container indices;
-            // its SlotSpecs (take-only output, tag filters) drive the rest.
-            MenuSlot::Furnace(hit) => {
-                let i = match hit {
-                    FurnaceHit::Input => SLOT_INPUT,
-                    FurnaceHit::Fuel => SLOT_FUEL,
-                    FurnaceHit::Output => SLOT_OUTPUT,
-                };
-                self.container_slot_interaction(world, inv, i, button, shift, gather);
-            }
-            MenuSlot::Chest(i) | MenuSlot::Container(i) => {
+            MenuSlot::Container(i) => {
                 self.container_slot_interaction(world, inv, i, button, shift, gather);
             }
             // Widget clicks mutate no container: `Game::tick_menu` intercepts

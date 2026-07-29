@@ -182,31 +182,6 @@ pub fn shape_half_cell_occupied(shape: StairShape, ix: usize, iy: usize, iz: usi
 }
 
 #[inline]
-pub fn adjacent_shape_half_cell_occupied(
-    shape: StairShape,
-    ix: usize,
-    iy: usize,
-    iz: usize,
-    dir: (i32, i32, i32),
-) -> bool {
-    let nx = ix as i32 + dir.0;
-    let ny = iy as i32 + dir.1;
-    let nz = iz as i32 + dir.2;
-    (0..2).contains(&nx)
-        && (0..2).contains(&ny)
-        && (0..2).contains(&nz)
-        && shape_half_cell_occupied(shape, nx as usize, ny as usize, nz as usize)
-}
-
-#[inline]
-pub fn half_cell_bounds(ix: usize, iy: usize, iz: usize) -> ([f32; 3], [f32; 3]) {
-    debug_assert!(ix < 2 && iy < 2 && iz < 2);
-    let min = [ix as f32 * H, iy as f32 * H, iz as f32 * H];
-    let max = [min[0] + H, min[1] + H, min[2] + H];
-    (min, max)
-}
-
-#[inline]
 pub fn is_stair(block: Block) -> bool {
     block.shape_family() == ShapeFamily::Stair
 }

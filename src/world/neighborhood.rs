@@ -7,13 +7,44 @@
 //! serving both. Both adapters are a single unified-store read — the seam
 //! ships opaque bytes and NEVER interprets them.
 
-use crate::block::{Aabb, Block, CellPart, ShapeNeighborhood, ShapeRenderBox, ShapeState};
+use crate::block::{
+    Aabb, Block, CellPart, ShapeBox, ShapeNeighborhood, ShapeRenderBox, ShapeState,
+};
 use crate::chunk::section_idx;
 use crate::mathh::IVec3;
 
 use super::store::World;
 
 impl World {
+    /// This cell's RESOLVED drawn boxes, for a consumer outside the chunk
+    /// mesher. Routes through the one box producer (`ShapeRender::boxes`), so
+    /// a decal traced over these cannot disagree with the meshed form.
+    ///
+    /// Empty for a family whose form is not a box set (a full cube, a plant, a
+    /// torch, a bbmodel): those draw through their own path and the caller
+    /// falls back to the cell's selection box.
+    pub fn shape_draw_boxes(&self, pos: IVec3, out: &mut Vec<ShapeBox>) {
+        out.clear();
+        let block = self.block(pos);
+        if !block.has_box_shape() {
+            return;
+        }
+        let k = block.shape_kind_def();
+        // A decal takes its own tile everywhere, so no world tint is resolved.
+        let tint_for = |_: crate::atlas::Tile| [1.0f32; 3];
+        k.render.boxes(
+            &crate::block::ShapeCtx {
+                nb: self,
+                pos,
+                block,
+                params: &k.params,
+                tint_for: &tint_for,
+                part_tint: crate::block::NO_PART_TINT,
+            },
+            out,
+        );
+    }
+
     /// The sub-cell parts the cell at `pos` is composed of, each with the
     /// block it is made of — the family's own answer (see `ShapeSim::parts`).
     /// `None` means the cell is one whole part of its own block, which is

@@ -21,9 +21,6 @@ pub(crate) fn cell_uv(face: Face, p: [f32; 3]) -> [f32; 2] {
     }
 }
 
-/// Up to four cell-local quad boxes (min, max) plus their count.
-pub(crate) type PlaneQuads = ([([f32; 3], [f32; 3]); 4], usize);
-
 /// One plane's four face-corner lighting samples, in `Face::quad_box` corner
 /// order (so corner `i` sits at UV `corner_local(i)`), bilinearly sampled at
 /// sub-quad corners. Interpolated integer channels round half-up; coincident

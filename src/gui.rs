@@ -80,15 +80,6 @@ pub(crate) fn gui_state_clear(map: &mut Arc<GuiStateMap>) {
     }
 }
 
-/// A hit-tested furnace role: the smeltable input, the fuel, or the take-only
-/// output. One slot each, so these are identified by role, never by position.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum FurnaceHit {
-    Input,
-    Fuel,
-    Output,
-}
-
 /// A click hit-tested to a concrete logical slot identity, the unit the App routes
 /// through the deterministic container menu on the next tick.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -97,14 +88,11 @@ pub enum MenuSlot {
     Inventory(usize),
     /// The real, take-only output of an accepted player-crafting request.
     CraftResult,
-    /// A furnace role slot (smeltable input, fuel, or take-only output).
-    Furnace(FurnaceHit),
-    /// A chest storage slot index.
-    Chest(usize),
-    /// A mod GUI's `container` role slot index, backed by the
-    /// [`Container`](crate::container::Container) at the session's
-    /// opening block. Slot semantics (filters, take-only) come from the
-    /// document's slot nodes.
+    /// A container's `container` role slot index, backed by the
+    /// [`Container`](crate::container::Container) at the session's opening
+    /// block. Slot semantics (filters, take-only) come from the document's
+    /// slot nodes — so the engine chest/furnace and a pack's container are
+    /// one identity here, and no engine content is named in this vocabulary.
     Container(usize),
     /// A manifest `button` widget (mod GUIs). Latches like every slot click;
     /// the tick dispatches it to the kind's owning mod as a `gui_click`.
@@ -117,14 +105,12 @@ pub enum MenuSlot {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Role {
     Generic,
-    Storage,
     PlayerInv,
     Hotbar,
     CraftResult,
-    FurnaceInput,
-    FurnaceFuel,
-    FurnaceOutput,
-    /// A mod GUI's generic container slots (role string `container`).
+    /// ANY container's slots (role string `container`) — the engine chest and
+    /// furnace and a pack's own container alike. What each index means is the
+    /// document's `SlotSpec` (filters, take-only), never the role name.
     Container,
     #[serde(other)]
     Other,
@@ -135,13 +121,9 @@ impl Role {
     /// strings; the game owns the mapping to slot identities).
     pub(crate) fn from_key(key: &str) -> Option<Role> {
         Some(match key {
-            "storage" => Role::Storage,
             "player_inv" => Role::PlayerInv,
             "hotbar" => Role::Hotbar,
             "craft_result" => Role::CraftResult,
-            "furnace_input" => Role::FurnaceInput,
-            "furnace_fuel" => Role::FurnaceFuel,
-            "furnace_output" => Role::FurnaceOutput,
             "container" => Role::Container,
             _ => return None,
         })
@@ -152,13 +134,9 @@ impl Role {
     /// route a click.
     pub(crate) fn menu_slot(self, i: usize) -> Option<MenuSlot> {
         Some(match self {
-            Role::Storage => MenuSlot::Chest(i),
             Role::Hotbar => MenuSlot::Inventory(i),
             Role::PlayerInv => MenuSlot::Inventory(HOTBAR_LEN + i),
             Role::CraftResult => MenuSlot::CraftResult,
-            Role::FurnaceInput => MenuSlot::Furnace(FurnaceHit::Input),
-            Role::FurnaceFuel => MenuSlot::Furnace(FurnaceHit::Fuel),
-            Role::FurnaceOutput => MenuSlot::Furnace(FurnaceHit::Output),
             Role::Container => MenuSlot::Container(i),
             Role::Generic | Role::Other => return None,
         })
@@ -232,31 +210,10 @@ impl UiViewport {
     }
 }
 
-/// A furnace's view for the open furnace screen: its three slots plus the two
-/// progress gauges (`0.0..=1.0`). `Copy` (`ItemStack` is `Copy`), so render can
-/// snapshot it by value with no borrow.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
-pub struct FurnaceView {
-    pub input: Option<ItemStack>,
-    pub fuel: Option<ItemStack>,
-    pub output: Option<ItemStack>,
-    /// Smelt progress (drives the arrow): 0 at the start of an item, 1 when done.
-    pub cook01: f32,
-    /// Remaining fuel of the current burn (drives the flame): 1 full -> 0 spent.
-    pub burn01: f32,
-}
-
-/// A chest's view for the open chest screen: its 27 storage slots, row-major.
-/// `Copy` (`ItemStack` is `Copy`), so render can snapshot it by value with no
-/// borrow.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ChestView {
-    pub slots: [Option<ItemStack>; crate::world::chest::CHEST_SLOTS],
-}
-
-/// An open mod container's view: its slots row-major in document order (the
+/// An open container's view: its slots row-major in document order (the
 /// in-role `container` index). Owned (slot counts vary per document), rebuilt
-/// per frame from the world like the chest view.
+/// per frame from the world. EVERY container uses this — engine chest, engine
+/// furnace, and a pack's alike.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ContainerView {
     pub slots: Vec<Option<ItemStack>>,
@@ -292,13 +249,7 @@ pub struct UiSnapshot {
     pub craft_tip: Option<CraftingRecipeView>,
     /// The cursor-held stack (drag/drop), drawn at `cursor_px` when open.
     pub cursor: Option<ItemStack>,
-    /// The open furnace's slots + progress gauges, or `None` when the open panel is
-    /// not a furnace. When `Some`, the furnace panel is drawn instead of the grid.
-    pub furnace: Option<FurnaceView>,
-    /// The open chest's 27 storage slots, or `None`.
-    pub chest: Option<ChestView>,
-    /// The open mod GUI's container slots, or `None` when the open session is
-    /// not a slot-bearing mod GUI.
+    /// The open container's slots, or `None` when the open session has none.
     pub container: Option<ContainerView>,
     /// The player's health for the bottom-left hearts, or `None` to hide the bar
     /// (spectator). Drawn only with the [`GuiKind::Hotbar`] HUD, not behind an open menu.
@@ -355,8 +306,6 @@ impl Default for UiSnapshot {
             craft_recipes: Vec::new(),
             craft_tip: None,
             cursor: None,
-            furnace: None,
-            chest: None,
             container: None,
             health: None,
             effects: Vec::new(),

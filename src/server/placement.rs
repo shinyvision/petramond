@@ -79,12 +79,8 @@ impl ServerGame {
         // never itself a raycast hit, so exclude it. `p` then feeds the torch support
         // gate, the model footprint, and the final replaceable check uniformly.
         let looked_at = Block::from_id(self.world.chunk_block(h.block.x, h.block.y, h.block.z));
-        let replacing_in_place = looked_at.is_replaceable() && looked_at != Block::Air;
-        let p = if replacing_in_place {
-            h.block
-        } else {
-            h.block + h.normal
-        };
+        let replacing_in_place = crate::world::placement::replaces_in_place(looked_at);
+        let p = crate::world::placement::build_position(looked_at, h.block, h.normal);
         let player_facing = facing_from_forward(self.sessions[s].player.forward());
         let slab_stacks_in_hit = self
             .world
@@ -140,7 +136,7 @@ impl ServerGame {
             held_rotation: self.sessions[s].held_rotation_snapshot(),
             held: self.sessions[s].selected_item(),
         };
-        // A Layer-3 custom shape places through its OWN pack's WASM callback
+        // A custom shape places through its OWN pack's WASM callback
         // (footprint + orientation + initial state are the shape's to decide),
         // not the engine ladder. A pack with no reachable owner (disabled /
         // trapped) falls through to the ordinary ladder so its cells still
@@ -164,7 +160,7 @@ impl ServerGame {
         Some(plan.anchor)
     }
 
-    /// Place a Layer-3 custom shape via its pack's `shape_placement_plan`
+    /// Place a custom shape via its pack's `shape_placement_plan`
     /// callback. `None` = no reachable owner, so `try_place` falls through to
     /// the engine ladder; `Some(None)` = the callback refused (or nothing
     /// placeable); `Some(Some(anchor))` = placed at `anchor`. The client never

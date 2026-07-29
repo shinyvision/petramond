@@ -525,7 +525,7 @@ impl Game {
         // latest read-model state wins), while entity rows enter their bounded
         // interpolation FIFO.
         self.pump_network();
-        // Bake any Layer-3 custom-shape cells the ingested deltas dirtied, so the
+        // Bake any custom-shape cells the ingested deltas dirtied, so the
         // next frame's client physics/prediction reads real (server-matching)
         // collision instead of the static fallback.
         self.bake_client_custom_shapes();

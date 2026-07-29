@@ -695,7 +695,7 @@ fn classify_boxes(boxes: &[Aabb]) -> CellShape {
 /// while treating them as air walks mobs into their boxes forever.
 /// The one BY-DESIGN exception is a shape that DECLARES itself nav-solid through
 /// its [`ShapeSim::nav_reads_solid`](crate::block::ShapeSim) facet — the fence
-/// family, and any Layer-3 custom shape with `nav_solid` set. Such a cell always
+/// family, and any custom shape with `nav_solid` set. Such a cell always
 /// reads solid, so no route steps through it and the one-block jump from the
 /// ground is no foothold jump either (see [`nav_support_fn`] for the step-up
 /// caveat) — a lone fence/hedge is a wall here or no pen would hold.

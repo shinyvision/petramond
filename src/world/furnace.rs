@@ -167,7 +167,7 @@ mod tests {
         let pos = IVec3::new(8, 64, 8);
         assert!(world.cell_kv_set(8, 64, 8, "testmod:note".into(), vec![9]));
         world.mesh_section_blocking_for_test(spos);
-        let mesh = world.meshes.get(&spos).expect("initial mesh built");
+        let mesh = world.terrain.meshes.get(&spos).expect("initial mesh built");
         assert_eq!(count_tile(mesh, Tile::named("furnace_front")), 4);
         assert_eq!(count_tile(mesh, Tile::named("furnace_front_on")), 0);
 
@@ -201,7 +201,7 @@ mod tests {
         settle_section_light(&mut world, 8, 64, 8);
         world.mesh_section_blocking_for_test(spos);
 
-        let mesh = world.meshes.get(&spos).expect("relit mesh rebuilt");
+        let mesh = world.terrain.meshes.get(&spos).expect("relit mesh rebuilt");
         assert_eq!(count_tile(mesh, Tile::named("furnace_front")), 0);
         assert_eq!(count_tile(mesh, Tile::named("furnace_front_on")), 4);
 

@@ -101,21 +101,11 @@ fn facing(f: Facing) -> api::Facing {
     }
 }
 
-/// Engine container sessions speak `GuiKind` end-to-end; the ABI mirror keeps
-/// its named engine variants (frozen wire shape), so the engine kinds map to
-/// them here and every other registered kind rides `Mod { key }`.
+/// Engine container sessions speak `GuiKind` end-to-end; the ABI names the
+/// same kinds by their REGISTRY KEY, so engine and pack containers convert
+/// through one line and no engine identity is baked into the wire enum.
 fn container(kind: crate::gui::GuiKind) -> api::ContainerKind {
-    use crate::gui::GuiKind;
-    match kind {
-        GuiKind::Inventory => api::ContainerKind::Inventory,
-        GuiKind::CraftingTable => api::ContainerKind::CraftingTable,
-        GuiKind::Furnace => api::ContainerKind::Furnace,
-        GuiKind::Chest => api::ContainerKind::Chest,
-        GuiKind::FurnitureWorkbench => api::ContainerKind::FurnitureWorkbench,
-        kind => api::ContainerKind::Mod {
-            key: crate::gui::kind_key(kind).unwrap_or("?").to_owned(),
-        },
-    }
+    api::ContainerKind::new(crate::gui::kind_key(kind).unwrap_or("?"))
 }
 
 /// ABI → engine GUI state value.

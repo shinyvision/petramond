@@ -29,6 +29,7 @@ impl World {
     /// and the anchor's own column is always the nearest-first column job.
     pub(in crate::world) fn anchor_underground(&self, target: LoadTarget) -> bool {
         let band_lo = self
+            .gen
             .column_gen
             .get(&target.center)
             .map(|col| *Self::surface_window_for_column(col, 0).start())

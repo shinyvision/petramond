@@ -1,4 +1,4 @@
-//! Client cache of Layer-3 custom shapes' baked ITEM geometry — the boxes a
+//! Client cache of custom shapes' baked ITEM geometry — the boxes a
 //! shape's `BakeShapeItem` produced once at client-mod load, reused for the
 //! block-item's icon, dropped entity, and in-hand form. Keyed by block id
 //! (stable for a session); populated by [`ClientModRuntime::bake_item_geometry`]

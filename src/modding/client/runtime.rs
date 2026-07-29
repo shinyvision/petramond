@@ -224,7 +224,7 @@ impl ClientModRuntime {
         rt
     }
 
-    /// One-time load pass: bake every Layer-3 custom block's ITEM geometry
+    /// One-time load pass: bake every custom-shape block's ITEM geometry
     /// (`BakeShapeItem`) on its owning client mod and cache it for the item
     /// renderer. Detached (no world) — the item form is a pure function of the
     /// block. A block whose owner ships no client wasm (or a trapped bake) is
@@ -392,7 +392,7 @@ impl ClientModRuntime {
         (sim, render)
     }
 
-    /// Bake the SIM geometry of any dirty Layer-3 custom-shape cell on the
+    /// Bake the SIM geometry of any dirty custom-shape cell on the
     /// CLIENT (each shape's own `client_wasm` `bake_shape_sim`), so the client's
     /// physics/prediction sees the same collision the server does — otherwise a
     /// custom shape would fall back to its (often empty) static boxes and desync.
@@ -730,7 +730,7 @@ impl ClientModRuntime {
     }
 }
 
-/// Bake the ITEM geometry of every INSTALLED Layer-3 custom block into the item
+/// Bake the ITEM geometry of every INSTALLED custom-shape block into the item
 /// cache, using a detached client instance per owning pack. Run ONCE at client
 /// startup, BEFORE the icon atlas bakes (`render::renderer::construct`), so a
 /// custom block's inventory icon shows its real baked shape (a chair) instead of

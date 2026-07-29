@@ -164,14 +164,14 @@ pub struct Section {
     /// torches, lit furnaces, pack glow blocks). `0` lets the light flood's
     /// emitter gather skip this section without scanning its cells.
     light_emitter_count: u32,
-    /// Layer-3 custom-shape RENDER bake: per-cell baked BOXES a pack's
+    /// custom-shape RENDER bake: per-cell baked BOXES a pack's
     /// `client_wasm` produced, keyed by section-local index. `None` for the
     /// common section (no custom shapes). `Arc` so a mesh job's snapshot keeps
     /// reading it safely and a clone is cheap; NOT persisted (re-baked on the
     /// client). The mesher draws each box face-by-face for `Custom`-family cells
     /// (falling back to a cube on a miss).
     shape_render: Option<Arc<std::collections::HashMap<u16, Box<[crate::block::ShapeRenderBox]>>>>,
-    /// Layer-3 custom-shape SIM light aperture: per-cell "opaque to light" bit a
+    /// custom-shape SIM light aperture: per-cell "opaque to light" bit a
     /// pack's `wasm` baked (`BakedSimCell.light_aperture`), keyed by section-local
     /// index. `None` for the common section. Deterministic (server + every client
     /// replica bake it identically), so the light flood reads the SAME value on

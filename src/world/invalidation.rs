@@ -42,16 +42,16 @@ impl World {
         if self.role == WorldRole::ServerHeadless {
             return;
         }
-        if let Some(job) = self.mesh_job_cancels.get(&pos) {
+        if let Some(job) = self.terrain.mesh_job_cancels.get(&pos) {
             job.cancel();
         }
         if let Some(s) = self.section_mut(pos) {
             s.dirty = true;
             s.mesh_revision = s.mesh_revision.wrapping_add(1);
-            self.light_blocked_meshes.remove(&pos);
-            self.hidden_parked.remove(&pos);
-            self.sealed_parked.remove(&pos);
-            self.dirty_meshes.push(pos);
+            self.terrain.light_blocked_meshes.remove(&pos);
+            self.terrain.hidden_parked.remove(&pos);
+            self.terrain.sealed_parked.remove(&pos);
+            self.terrain.dirty_meshes.push(pos);
         }
     }
 
@@ -103,7 +103,12 @@ impl World {
         for dz in -1..=1 {
             for dx in -1..=1 {
                 let cp = ChunkPos::new(center.cx + dx, center.cz + dz);
-                let bits = self.section_column_cys.get(&cp).copied().unwrap_or(0);
+                let bits = self
+                    .terrain
+                    .section_column_cys
+                    .get(&cp)
+                    .copied()
+                    .unwrap_or(0);
                 let mut b = bits;
                 while b != 0 {
                     let cy = SECTION_MIN_CY + b.trailing_zeros() as i32;
@@ -132,7 +137,12 @@ impl World {
             for dz in -1..=1 {
                 for dx in -1..=1 {
                     let cp = ChunkPos::new(center.cx + dx, center.cz + dz);
-                    let bits = self.section_column_cys.get(&cp).copied().unwrap_or(0);
+                    let bits = self
+                        .terrain
+                        .section_column_cys
+                        .get(&cp)
+                        .copied()
+                        .unwrap_or(0);
                     let mut b = bits;
                     while b != 0 {
                         let cy = SECTION_MIN_CY + b.trailing_zeros() as i32;

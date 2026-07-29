@@ -14,10 +14,10 @@ impl World {
     /// [`set_stream_event_capture`]: Self::set_stream_event_capture
     pub(crate) fn set_replication_capture(&mut self, on: bool) {
         if !on {
-            self.block_delta_log.clear();
-            self.cell_kv_delta_log.clear();
+            self.replication.block_delta_log.clear();
+            self.replication.cell_kv_delta_log.clear();
         }
-        self.replication_capture = on;
+        self.replication.replication_capture = on;
     }
 
     /// Drain this tick's coalesced per-cell mod KV changes (latest value per
@@ -27,6 +27,7 @@ impl World {
     /// write-block-then-KV sequence survives in order.
     pub(crate) fn take_cell_kv_deltas(&mut self) -> Vec<crate::net::protocol::CellKvDelta> {
         let mut out: Vec<_> = self
+            .replication
             .cell_kv_delta_log
             .drain()
             .map(|((pos, key), value)| crate::net::protocol::CellKvDelta { pos, key, value })
@@ -44,7 +45,12 @@ impl World {
     /// (chest/furnace/torch insert their facing after `set_block_world`), so
     /// only the drain sees the whole tick's final state for the cell.
     pub(crate) fn take_block_deltas(&mut self) -> Vec<crate::net::protocol::BlockDelta> {
-        let mut out: Vec<_> = self.block_delta_log.drain().map(|(_, d)| d).collect();
+        let mut out: Vec<_> = self
+            .replication
+            .block_delta_log
+            .drain()
+            .map(|(_, d)| d)
+            .collect();
         out.sort_unstable_by_key(|d| (d.pos.x, d.pos.y, d.pos.z));
         for d in &mut out {
             // A section evicted since the write keeps the recorded state; the
@@ -116,8 +122,10 @@ impl World {
         // written later this tick — ships in this delta's drain-time KV
         // snapshot instead (`cell_kv_set` skips the log while this delta is
         // pending).
-        self.cell_kv_delta_log.retain(|(p, _), _| *p != pos);
-        self.block_delta_log.insert(
+        self.replication
+            .cell_kv_delta_log
+            .retain(|(p, _), _| *p != pos);
+        self.replication.block_delta_log.insert(
             pos,
             crate::net::protocol::BlockDelta {
                 pos,

@@ -21,7 +21,7 @@ impl FeatureField for &RegionCells {
 
 pub(crate) struct RuntimeFeatureField<'a> {
     surface: &'a SurfaceDensitySystem,
-    caves: &'a crate::worldgen::noise::height::CaveField,
+    caves: &'a crate::worldgen::noise::cave_field::CaveField,
     seed: u32,
     candidates: RegionCells,
     support_bounds: (i32, i32, usize, usize),
@@ -36,7 +36,7 @@ impl<'a> RuntimeFeatureField<'a> {
     /// identical values.
     pub(crate) fn new(
         surface: &'a SurfaceDensitySystem,
-        caves: &'a crate::worldgen::noise::height::CaveField,
+        caves: &'a crate::worldgen::noise::cave_field::CaveField,
         seed: u32,
         ox: i32,
         oz: i32,
@@ -130,7 +130,7 @@ fn tile_memo_idx(seed: u32, tcx: i32, tcz: i32) -> usize {
 /// reference.
 pub(crate) fn cached_feature_region(
     surface: &SurfaceDensitySystem,
-    caves: &crate::worldgen::noise::height::CaveField,
+    caves: &crate::worldgen::noise::cave_field::CaveField,
     seed: u32,
     x0: i32,
     z0: i32,

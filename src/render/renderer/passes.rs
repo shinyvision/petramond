@@ -119,24 +119,24 @@ impl Renderer {
         model_columns: &mut Vec<(f32, ChunkPos)>,
         contact_columns: &mut Vec<(f32, ChunkPos)>,
     ) -> (RenderStats, bool, bool) {
-        if self.terrain_planned_gpu_revision == self.terrain_gpu_revision
-            && self.terrain_planned_view_key.as_ref() == Some(&self.terrain_view_key)
+        if self.terrain.planned_gpu_revision == self.terrain.gpu_revision
+            && self.terrain.planned_view_key.as_ref() == Some(&self.terrain.view_key)
         {
             return (
                 RenderStats::default(),
-                self.terrain_plan_any_model,
-                self.terrain_plan_any_transparent,
+                self.terrain.plan_any_model,
+                self.terrain.plan_any_transparent,
             );
         }
         // Cull + depth-sort the visible sections once. The opaque pass draws nearest-first
         // so the GPU's early-Z rejects occluded fragments before the fragment shader runs;
         // the transparent pass draws farthest-first for correct back-to-front alpha.
-        let cam = self.cam_pos;
-        let frustum = self.frustum;
-        let render_origin = self.render_origin;
+        let cam = self.view.cam_pos;
+        let frustum = self.view.frustum;
+        let render_origin = self.view.render_origin;
         let fog = self.terrain_cull_dist();
-        let terrain_columns = &self.terrain_columns;
-        let far_leaf_lod_state = &mut self.far_leaf_lod_state;
+        let terrain_columns = &self.terrain.columns;
+        let far_leaf_lod_state = &mut self.terrain.far_leaf_lod_state;
         order.clear();
         opaque_columns.clear();
         model_columns.clear();
@@ -262,10 +262,10 @@ impl Renderer {
         opaque_columns.sort_by(by_dist_then_pos);
         model_columns.sort_by(by_dist_then_pos);
         contact_columns.sort_by(by_dist_then_pos);
-        self.terrain_planned_gpu_revision = self.terrain_gpu_revision;
-        self.terrain_planned_view_key = Some(self.terrain_view_key.clone());
-        self.terrain_plan_any_model = any_model_visible;
-        self.terrain_plan_any_transparent = any_transparent_visible;
+        self.terrain.planned_gpu_revision = self.terrain.gpu_revision;
+        self.terrain.planned_view_key = Some(self.terrain.view_key.clone());
+        self.terrain.plan_any_model = any_model_visible;
+        self.terrain.plan_any_transparent = any_transparent_visible;
         (
             RenderStats::default(),
             any_model_visible,
@@ -295,15 +295,19 @@ impl Renderer {
         // colours stay exact. With grade off at native scale the world skips
         // the round-trip and renders straight into the swapchain.
         let direct = self.direct_to_swapchain();
-        let view = if direct { swapchain } else { &self.scene_color };
-        let cc = self.clear_color;
+        let view = if direct {
+            swapchain
+        } else {
+            &self.targets.scene_color
+        };
+        let cc = self.sky.clear_color;
         // OPAQUE PASS: the visible chunk terrain, near→far for early-Z. The first
         // pass of the frame: CLEARS color (to the fog colour) and depth.
         {
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "opaque pass",
                 wgpu::LoadOp::Clear(wgpu::Color {
                     r: cc[0] as f64,
@@ -321,17 +325,17 @@ impl Renderer {
             // row with `first_instance`, and every draw's triangulation comes
             // from the shared quad index buffer with the section's first vertex
             // as `base_vertex`.
-            pass.set_vertex_buffer(1, self.column_origins.buffer().slice(..));
-            pass.set_index_buffer(self.quad_index.slice(), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
+            pass.set_index_buffer(self.terrain.quad_index.slice(), wgpu::IndexFormat::Uint32);
             for (_, pos) in opaque_columns {
-                let Some(col) = self.terrain_columns.get(pos) else {
+                let Some(col) = self.terrain.columns.get(pos) else {
                     continue;
                 };
                 if col.opaque_quads == 0 {
                     continue;
                 }
                 if let Some(vb) = &col.opaque_vbuf {
-                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
+                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
                     stats.opaque_draws += 1;
                     stats.opaque_indices += col.opaque_quads as u64 * 6;
                     let slot = col.origin_slot.index();
@@ -342,7 +346,7 @@ impl Renderer {
                 if item.opaque_batched {
                     continue;
                 }
-                let Some(col) = self.terrain_columns.get(&item.column_pos) else {
+                let Some(col) = self.terrain.columns.get(&item.column_pos) else {
                     continue;
                 };
                 // near -> far (early-Z)
@@ -363,7 +367,7 @@ impl Renderer {
                     continue;
                 }
                 if let Some(vb) = vbuf {
-                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
+                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
                     stats.opaque_draws += 1;
                     stats.opaque_indices += quads as u64 * 6;
                     let slot = col.origin_slot.index();
@@ -384,7 +388,7 @@ impl Renderer {
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "contact shadow pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
@@ -393,14 +397,14 @@ impl Renderer {
             pass.set_pipeline(&self.contact_pipe);
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             for (_, pos) in contact_columns {
-                let Some(col) = self.terrain_columns.get(pos) else {
+                let Some(col) = self.terrain.columns.get(pos) else {
                     continue;
                 };
                 if col.contact_vertex_count == 0 {
                     continue;
                 }
                 if let Some(vb) = &col.contact_vbuf {
-                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
+                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
                     pass.draw(0..col.contact_vertex_count, 0..1);
                 }
             }
@@ -413,15 +417,15 @@ impl Renderer {
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "sky pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
                 self.gpu_timer.as_ref(),
             );
-            pass.set_pipeline(&self.sky_pipe);
-            pass.set_bind_group(0, &self.sky_bind, &[]);
-            pass.set_bind_group(1, &self.sky_texture_bind, &[]);
+            pass.set_pipeline(&self.sky.pipe);
+            pass.set_bind_group(0, &self.sky.bind, &[]);
+            pass.set_bind_group(1, &self.sky.texture_bind, &[]);
             pass.draw(0..3, 0..1);
         }
         // MODEL PASS: bbmodel-block geometry (explicit-UV, sampling the model atlas),
@@ -429,11 +433,11 @@ impl Renderer {
         // underwater/fog the world uses) over depth from the opaque pass — so a placed
         // model occludes and is occluded by terrain like any block. Most chunks have no
         // model geometry, so this is usually a no-op loop.
-        if any_model_visible || self.item_model_entity_draw.index_count > 0 {
+        if any_model_visible || self.item_entity.model_draw.index_count > 0 {
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "model pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
@@ -446,16 +450,16 @@ impl Renderer {
             // day/night sky scale (meshes don't rebake at sunset).
             pass.set_pipeline(&self.world_model_pipe);
             for (_, pos) in model_columns {
-                let Some(col) = self.terrain_columns.get(pos) else {
+                let Some(col) = self.terrain.columns.get(pos) else {
                     continue;
                 };
                 if col.model_idx_count == 0 {
                     continue;
                 }
                 if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
-                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
+                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
                     pass.set_index_buffer(
-                        self.geometry.slice(&ib.alloc, ib.len),
+                        self.terrain.geometry.slice(&ib.alloc, ib.len),
                         wgpu::IndexFormat::Uint32,
                     );
                     pass.draw_indexed(0..col.model_idx_count, 0, 0..1);
@@ -465,13 +469,13 @@ impl Renderer {
                 if item.model_batched || item.model_idx_count == 0 {
                     continue;
                 }
-                let Some(col) = self.terrain_columns.get(&item.column_pos) else {
+                let Some(col) = self.terrain.columns.get(&item.column_pos) else {
                     continue;
                 };
                 if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
-                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
+                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
                     pass.set_index_buffer(
-                        self.geometry.slice(&ib.alloc, ib.len),
+                        self.terrain.geometry.slice(&ib.alloc, ib.len),
                         wgpu::IndexFormat::Uint32,
                     );
                     pass.draw_indexed(
@@ -485,18 +489,18 @@ impl Renderer {
             // with per-frame CPU-baked light, so they stay on the mob-layout
             // pipeline).
             pass.set_pipeline(&self.model_pipe);
-            self.item_model_entity_draw.draw(&mut pass);
+            self.item_entity.model_draw.draw(&mut pass);
         }
         // ITEM-ENTITY PASS (§8 2b): dropped items as spinning cubes (the EXISTING
         // opaque pipeline, terrain atlas array) plus extruded sprite slabs (the
         // mob-layout pipeline over the 2D block atlas — their per-texel wall UVs
         // need explicit UVs). Load color + depth, depth test + write so items
         // occlude and are occluded by terrain.
-        if self.item_entity_draw.index_count > 0 || self.item_sprite_entity_draw.index_count > 0 {
+        if self.item_entity.draw.index_count > 0 || self.item_entity.sprite_draw.index_count > 0 {
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "item entity pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
@@ -504,21 +508,23 @@ impl Renderer {
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
-            self.item_entity_draw.draw(&mut pass);
-            if self.item_sprite_entity_draw.index_count > 0 {
+            self.item_entity.draw.draw(&mut pass);
+            if self.item_entity.sprite_draw.index_count > 0 {
                 pass.set_bind_group(1, &self.atlas_bind, &[]);
-                self.item_sprite_entity_draw.draw(&mut pass);
+                self.item_entity.sprite_draw.draw(&mut pass);
             }
         }
         // CHEST + DOOR PASS: placed chests (inset body + hinged lid) and doors (2-tall
         // hinged slab) drawn as full opaque geometry by the EXISTING opaque pipeline
         // with the same uniform + atlas binds, loading color + depth so they occlude and
         // are occluded by terrain — exactly like the item-entity pass above.
-        if self.chest_draw.index_count > 0 || self.door_draw.index_count > 0 {
+        if self.block_entity.chest_draw.index_count > 0
+            || self.block_entity.door_draw.index_count > 0
+        {
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "chest+door pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
@@ -526,8 +532,8 @@ impl Renderer {
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
-            self.chest_draw.draw(&mut pass);
-            self.door_draw.draw(&mut pass);
+            self.block_entity.chest_draw.draw(&mut pass);
+            self.block_entity.door_draw.draw(&mut pass);
         }
         // MOB PASS: animated entity models, one draw per visible species. Loads color
         // + depth (test + WRITE) so mobs occlude and are occluded by terrain — like
@@ -535,23 +541,23 @@ impl Renderer {
         // group(1) (not the block atlas); the mob pipeline (set by each DynamicDraw)
         // uses explicit-UV vertices so a model's arbitrary sub-rect UVs sample its
         // own sheet.
-        if self.mob_gpu.iter().any(|g| g.draw.index_count > 0)
-            || self.player_gpu.draw.index_count > 0
-            || self.player_item_draw.index_count > 0
-            || self.player_model_item_draw.index_count > 0
-            || self.player_block_item_draw.index_count > 0
+        if self.actor.mob_gpu.iter().any(|g| g.draw.index_count > 0)
+            || self.actor.player_gpu.draw.index_count > 0
+            || self.actor.item_draw.index_count > 0
+            || self.actor.model_item_draw.index_count > 0
+            || self.actor.block_item_draw.index_count > 0
         {
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "mob pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
                 self.gpu_timer.as_ref(),
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
-            for g in &self.mob_gpu {
+            for g in &self.actor.mob_gpu {
                 if g.draw.index_count == 0 {
                     continue;
                 }
@@ -560,25 +566,25 @@ impl Renderer {
             }
             // Player bodies — the local third-person body and every remote
             // player, one combined stream (shared skin texture, mob pipeline)…
-            if self.player_gpu.draw.index_count > 0 {
-                pass.set_bind_group(1, &self.player_gpu.bind, &[]);
-                self.player_gpu.draw.draw(&mut pass);
+            if self.actor.player_gpu.draw.index_count > 0 {
+                pass.set_bind_group(1, &self.actor.player_gpu.bind, &[]);
+                self.actor.player_gpu.draw.draw(&mut pass);
             }
             // …their extruded-sprite held items (2D atlas)…
-            if self.player_item_draw.index_count > 0 {
+            if self.actor.item_draw.index_count > 0 {
                 pass.set_bind_group(1, &self.atlas_bind, &[]);
-                self.player_item_draw.draw(&mut pass);
+                self.actor.item_draw.draw(&mut pass);
             }
             // …their bbmodel held items (model atlas)…
-            if self.player_model_item_draw.index_count > 0 {
+            if self.actor.model_item_draw.index_count > 0 {
                 pass.set_bind_group(1, &self.model_atlas_bind, &[]);
-                self.player_model_item_draw.draw(&mut pass);
+                self.actor.model_item_draw.draw(&mut pass);
             }
             // …and their held block mini-cubes (opaque pipeline + terrain
             // atlas array).
-            if self.player_block_item_draw.index_count > 0 {
+            if self.actor.block_item_draw.index_count > 0 {
                 pass.set_bind_group(1, &self.atlas_array_bind, &[]);
-                self.player_block_item_draw.draw(&mut pass);
+                self.actor.block_item_draw.draw(&mut pass);
             }
         }
         // TRANSLUCENT-BLOCK PASS: ice — alpha-blended but depth-WRITING, so a
@@ -591,7 +597,7 @@ impl Renderer {
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "translucent block pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
@@ -602,18 +608,18 @@ impl Renderer {
             pass.set_pipeline(&self.translucent_pipe);
             // One bind for the whole pass: every column draw picks its
             // origin row with `first_instance`.
-            pass.set_vertex_buffer(1, self.column_origins.buffer().slice(..));
-            pass.set_index_buffer(self.quad_index.slice(), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
+            pass.set_index_buffer(self.terrain.quad_index.slice(), wgpu::IndexFormat::Uint32);
             for item in order.iter() {
                 if item.translucent_quads == 0 {
                     continue;
                 }
-                let Some(col) = self.terrain_columns.get(&item.column_pos) else {
+                let Some(col) = self.terrain.columns.get(&item.column_pos) else {
                     continue;
                 };
                 // near -> far: depth-writing, so early-Z applies like opaque.
                 if let Some(vb) = &col.translucent_vbuf {
-                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
+                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
                     stats.transparent_draws += 1;
                     stats.transparent_indices += item.translucent_quads as u64 * 6;
                     let slot = col.origin_slot.index();
@@ -634,11 +640,11 @@ impl Renderer {
         // so the decal never misaligns), with a small polygon offset toward the
         // camera (BREAK_DEPTH_BIAS) so it wins the depth tie cleanly. Reuses
         // uniform_bind (view_proj + uv_rects) + atlas_bind.
-        if self.break_draw.index_count > 0 {
+        if self.hand.break_draw.index_count > 0 {
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "break overlay pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
@@ -646,7 +652,7 @@ impl Renderer {
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
-            self.break_draw.draw(&mut pass);
+            self.hand.break_draw.draw(&mut pass);
         }
         // PARTICLE PASS (§8 3b): tiny 3D terrain particle cubes. Drawn BEFORE the
         // transparent water pass (but after the break overlay, so they sit in front
@@ -654,16 +660,16 @@ impl Renderer {
         // so water blends over the ones behind it (underwater dust reads as
         // submerged) while ones in front of the water still occlude it. Reuses
         // uniform_bind + atlas_bind. 24 verts / 36 indices per cube.
-        if self.particle_draw.vertex_count > 0 {
+        if self.particle.draw.vertex_count > 0 {
             let verts_per_cube = crate::render::particles::VERTS_PER_CUBE as u32;
             let idx_per_cube = crate::render::particles::INDICES_PER_CUBE as u32;
             // Cube boundaries: block flecks occupy [0..block_cubes), model flecks the rest.
-            let total_cubes = self.particle_draw.vertex_count / verts_per_cube;
-            let block_cubes = self.particle_block_vertex_count / verts_per_cube;
+            let total_cubes = self.particle.draw.vertex_count / verts_per_cube;
+            let block_cubes = self.particle.block_vertex_count / verts_per_cube;
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "particle pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
@@ -673,7 +679,8 @@ impl Renderer {
             // Block-atlas flecks: the leading index range via the standard draw.
             if block_cubes > 0 {
                 pass.set_bind_group(1, &self.atlas_bind, &[]);
-                self.particle_draw
+                self.particle
+                    .draw
                     .draw(&mut pass, block_cubes * idx_per_cube);
             }
             // Model-atlas flecks (bbmodel blocks): the trailing index range, same vbuf with
@@ -681,9 +688,9 @@ impl Renderer {
             // vertex offset is needed.
             if total_cubes > block_cubes {
                 pass.set_bind_group(1, &self.model_atlas_bind, &[]);
-                pass.set_pipeline(&self.particle_draw.pipeline);
-                pass.set_vertex_buffer(0, self.particle_draw.vbuf.slice(..));
-                pass.set_index_buffer(self.particle_draw.ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.set_pipeline(&self.particle.draw.pipeline);
+                pass.set_vertex_buffer(0, self.particle.draw.vbuf.slice(..));
+                pass.set_index_buffer(self.particle.draw.ibuf.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(
                     block_cubes * idx_per_cube..total_cubes * idx_per_cube,
                     0,
@@ -700,7 +707,7 @@ impl Renderer {
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "transparent pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
@@ -710,8 +717,8 @@ impl Renderer {
             pass.set_bind_group(1, &self.atlas_array_bind, &[]);
             // One bind for the whole pass: every column draw picks its
             // origin row with `first_instance`.
-            pass.set_vertex_buffer(1, self.column_origins.buffer().slice(..));
-            pass.set_index_buffer(self.quad_index.slice(), wgpu::IndexFormat::Uint32);
+            pass.set_vertex_buffer(1, self.terrain.column_origins.buffer().slice(..));
+            pass.set_index_buffer(self.terrain.quad_index.slice(), wgpu::IndexFormat::Uint32);
             // Water side faces cull their backs, water TOPS do not (they must
             // stay visible from underneath). Sections almost never carry both,
             // so tracking the bound pipeline keeps this at one switch per pass
@@ -723,7 +730,7 @@ impl Renderer {
                 if item.transparent_quads == 0 && item.transparent_ts_quads == 0 {
                     continue;
                 }
-                let Some(col) = self.terrain_columns.get(&item.column_pos) else {
+                let Some(col) = self.terrain.columns.get(&item.column_pos) else {
                     continue;
                 };
                 let slot = col.origin_slot.index();
@@ -754,7 +761,7 @@ impl Renderer {
                         });
                         two_sided_bound = Some(two_sided);
                     }
-                    pass.set_vertex_buffer(0, self.geometry.slice(&vb.alloc, vb.len));
+                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
                     stats.transparent_draws += 1;
                     stats.transparent_indices += quads as u64 * 6;
                     pass.draw_indexed(0..quads * 6, start as i32, slot..slot + 1);
@@ -782,13 +789,13 @@ impl Renderer {
         // the scene (crisp at silhouette edges, bilinear elsewhere). A
         // volumetric is soft, so this quarters its fragment cost invisibly;
         // see pipeline::EnvScaler and the two env_*.wgsl builtins.
-        if self.env_passes.iter().any(|env| !env.dormant) {
+        if self.sky.env_passes.iter().any(|env| !env.dormant) {
             {
                 let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("env depth downsample"),
                     color_attachments: &[],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.env_depth,
+                        view: &self.sky.env_depth,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(1.0),
                             store: wgpu::StoreOp::Store,
@@ -801,15 +808,15 @@ impl Renderer {
                         .and_then(|t| t.pass("env depth downsample")),
                     ..Default::default()
                 });
-                pass.set_pipeline(&self.env_scaler.down_pipe);
-                pass.set_bind_group(0, &self.env_down_bind, &[]);
+                pass.set_pipeline(&self.sky.env_scaler.down_pipe);
+                pass.set_bind_group(0, &self.sky.env_down_bind, &[]);
                 pass.draw(0..3, 0..1);
             }
             {
                 let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("environment pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.env_color,
+                        view: &self.sky.env_color,
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
@@ -827,7 +834,7 @@ impl Renderer {
                         .and_then(|t| t.pass("environment pass")),
                     ..Default::default()
                 });
-                for env in self.env_passes.iter().filter(|env| !env.dormant) {
+                for env in self.sky.env_passes.iter().filter(|env| !env.dormant) {
                     pass.set_pipeline(&env.res.pipe);
                     pass.set_bind_group(0, &env.bind, &[]);
                     pass.set_bind_group(1, &env.res.texture_bind, &[]);
@@ -838,14 +845,14 @@ impl Renderer {
                 let mut pass = color_depth_pass(
                     enc,
                     view,
-                    &self.depth,
+                    &self.targets.depth,
                     "env composite pass",
                     wgpu::LoadOp::Load,
                     None,
                     self.gpu_timer.as_ref(),
                 );
-                pass.set_pipeline(&self.env_scaler.comp_pipe);
-                pass.set_bind_group(0, &self.env_comp_bind, &[]);
+                pass.set_pipeline(&self.sky.env_scaler.comp_pipe);
+                pass.set_bind_group(0, &self.sky.env_comp_bind, &[]);
                 pass.draw(0..3, 0..1);
             }
         }
@@ -853,14 +860,14 @@ impl Renderer {
         // rows (torch flame cubes and mod emitters). They draw after water with alpha
         // blending, depth test but no write, and back-face culling in the pipeline so
         // transparency never exposes the whole cube shell.
-        if self.emitter_particle_draw.vertex_count > 0 {
+        if self.particle.emitter_draw.vertex_count > 0 {
             let verts_per_cube = crate::render::particles::VERTS_PER_CUBE as u32;
             let idx_per_cube = crate::render::particles::INDICES_PER_CUBE as u32;
-            let cubes = self.emitter_particle_draw.vertex_count / verts_per_cube;
+            let cubes = self.particle.emitter_draw.vertex_count / verts_per_cube;
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "emitter particle pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
@@ -868,26 +875,27 @@ impl Renderer {
             );
             pass.set_bind_group(0, &self.uniform_bind, &[]);
             pass.set_bind_group(1, &self.atlas_bind, &[]);
-            self.emitter_particle_draw
+            self.particle
+                .emitter_draw
                 .draw(&mut pass, cubes * idx_per_cube);
         }
         // Selection outline, after particles: load color + depth, depth-test (no
         // write) so it draws over terrain/water at the targeted block but stays
         // occluded behind nearer geometry.
-        if self.selection.is_some() && self.outline_vertex_count > 0 {
+        if self.chrome.selection.is_some() && self.chrome.outline_vertex_count > 0 {
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "outline pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Load),
                 self.gpu_timer.as_ref(),
             );
-            pass.set_pipeline(&self.outline_pipe);
-            pass.set_bind_group(0, &self.outline_bind, &[]);
-            pass.set_vertex_buffer(0, self.outline_vbuf.slice(..));
-            pass.draw(0..self.outline_vertex_count, 0..1);
+            pass.set_pipeline(&self.chrome.outline_pipe);
+            pass.set_bind_group(0, &self.chrome.outline_bind, &[]);
+            pass.set_vertex_buffer(0, self.chrome.outline_vbuf.slice(..));
+            pass.draw(0..self.chrome.outline_vertex_count, 0..1);
         }
         // HAND PASS (§8 4c): the first-person held item / bare hand, drawn over the
         // world. Color Load; the world colour is already composited, so we attach
@@ -899,40 +907,40 @@ impl Renderer {
         // item3d pipeline (extruded, slot 0 = the item MVP — the model3d hand is
         // empty in that case, so slot 0 is free). They are mutually exclusive, but
         // both are drawn here so the pass is correct regardless.
-        if self.hand_index_count > 0 || self.item3d_vertex_count > 0 {
+        if self.hand.index_count > 0 || self.hand.item3d_vertex_count > 0 {
             // NB: depth load-op is CLEAR(1.0) — this pass intentionally resets the
             // depth buffer so the hand self-sorts in isolation from the world.
             let mut pass = color_depth_pass(
                 enc,
                 view,
-                &self.depth,
+                &self.targets.depth,
                 "hand pass",
                 wgpu::LoadOp::Load,
                 Some(wgpu::LoadOp::Clear(1.0)),
                 self.gpu_timer.as_ref(),
             );
             // Bare arm / held block (model3d, depth-enabled hand variant).
-            if self.hand_index_count > 0 {
-                pass.set_pipeline(&self.model3d_hand_pipe);
-                pass.set_bind_group(0, &self.model3d_mvp_bind, &[0]);
+            if self.hand.index_count > 0 {
+                pass.set_pipeline(&self.hand.model3d_pipe);
+                pass.set_bind_group(0, &self.hand.model3d_mvp_bind, &[0]);
                 pass.set_bind_group(1, &self.atlas_bind, &[]);
-                pass.set_vertex_buffer(0, self.model3d_vbuf.slice(..));
-                pass.set_index_buffer(self.model3d_ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..self.hand_index_count, 0, 0..1);
+                pass.set_vertex_buffer(0, self.hand.model3d_vbuf.slice(..));
+                pass.set_index_buffer(self.hand.model3d_ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..self.hand.index_count, 0, 0..1);
             }
             // Extruded held sprite (block atlas) OR a held bbmodel block (model atlas) —
             // both ride the item3d pipeline (non-indexed triangle list, depth-tested).
-            if self.item3d_vertex_count > 0 {
-                pass.set_pipeline(&self.item3d_pipe);
-                pass.set_bind_group(0, &self.item3d_mvp_bind, &[0]);
-                let atlas = if self.held_is_model {
+            if self.hand.item3d_vertex_count > 0 {
+                pass.set_pipeline(&self.hand.item3d_pipe);
+                pass.set_bind_group(0, &self.hand.item3d_mvp_bind, &[0]);
+                let atlas = if self.hand.held_is_model {
                     &self.model_atlas_bind
                 } else {
                     &self.atlas_bind
                 };
                 pass.set_bind_group(1, atlas, &[]);
-                pass.set_vertex_buffer(0, self.item3d_vbuf.slice(..));
-                pass.draw(0..self.item3d_vertex_count, 0..1);
+                pass.set_vertex_buffer(0, self.hand.item3d_vbuf.slice(..));
+                pass.draw(0..self.hand.item3d_vertex_count, 0..1);
             }
         }
         // GRADE PASS: full-screen colour grade (+ upscale when render_scale < 1)
@@ -943,30 +951,30 @@ impl Renderer {
             let mut pass = color_depth_pass(
                 enc,
                 swapchain,
-                &self.depth,
+                &self.targets.depth,
                 "grade pass",
                 wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                 None,
                 self.gpu_timer.as_ref(),
             );
-            pass.set_pipeline(&self.grade_pipe);
-            pass.set_bind_group(0, &self.grade_bind, &[]);
+            pass.set_pipeline(&self.targets.grade_pipe);
+            pass.set_bind_group(0, &self.targets.grade_bind, &[]);
             pass.draw(0..3, 0..1);
         }
         // CROSSHAIR PASS: the center invert-blend crosshair. Color Load, NO depth.
-        if self.crosshair_vertex_count > 0 {
+        if self.chrome.crosshair_vertex_count > 0 {
             let mut pass = color_depth_pass(
                 enc,
                 swapchain,
-                &self.depth,
+                &self.targets.depth,
                 "crosshair pass",
                 wgpu::LoadOp::Load,
                 None,
                 self.gpu_timer.as_ref(),
             );
-            pass.set_pipeline(&self.crosshair_pipe);
-            pass.set_vertex_buffer(0, self.crosshair_vbuf.slice(..));
-            pass.draw(0..self.crosshair_vertex_count, 0..1);
+            pass.set_pipeline(&self.chrome.crosshair_pipe);
+            pass.set_vertex_buffer(0, self.chrome.crosshair_vbuf.slice(..));
+            pass.draw(0..self.chrome.crosshair_vertex_count, 0..1);
         }
         // UI PASS: under-chrome HUD layers (hurt vignette) → the GUI-document
         // draw list (all screen chrome, including its own dim backdrop) → the
@@ -974,28 +982,33 @@ impl Renderer {
         // icons, all via `ui_pipe` (own alpha blend, NO depth). Each layer
         // binds its own texture; solid quads bind the icon atlas (the solid
         // sentinel skips the sampler, so any layout-compatible texture works).
-        if self.hud_layers.iter().any(|l| l.vertex_count > 0)
-            || self.icon_quad_vertex_count > 0
-            || !self.doc_ui.batches.is_empty()
-            || !self.client_overlays.batches.is_empty()
+        if self.ui.hud_layers.iter().any(|l| l.vertex_count > 0)
+            || self.ui.icon_quad_vertex_count > 0
+            || !self.ui.doc_ui.batches.is_empty()
+            || !self.ui.client_overlays.batches.is_empty()
         {
             let mut pass = color_depth_pass(
                 enc,
                 swapchain,
-                &self.depth,
+                &self.targets.depth,
                 "ui pass",
                 wgpu::LoadOp::Load,
                 None,
                 self.gpu_timer.as_ref(),
             );
-            pass.set_pipeline(&self.ui_pipe);
+            pass.set_pipeline(&self.ui.pipe);
             let draw_layers = |pass: &mut wgpu::RenderPass<'_>, under: bool| {
-                for layer in self.hud_layers.iter().filter(|l| l.under_chrome == under) {
+                for layer in self
+                    .ui
+                    .hud_layers
+                    .iter()
+                    .filter(|l| l.under_chrome == under)
+                {
                     if layer.vertex_count == 0 {
                         continue;
                     }
                     let bind = match &layer.texture {
-                        super::HudLayerTexture::Solid => Some(&self.icon_atlas.bind),
+                        super::HudLayerTexture::Solid => Some(&self.ui.icon_atlas.bind),
                         super::HudLayerTexture::Texture(b) => b.as_ref(),
                     };
                     let Some(bind) = bind else {
@@ -1013,68 +1026,68 @@ impl Renderer {
             draw_layers(&mut pass, false);
             self.draw_client_overlays(&mut pass);
             // Per-slot item icons (icon atlas), one bind + one draw.
-            if self.icon_quad_vertex_count > 0 {
-                pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
-                pass.set_vertex_buffer(0, self.icon_quad_vbuf.slice(..));
-                pass.draw(0..self.icon_quad_vertex_count, 0..1);
+            if self.ui.icon_quad_vertex_count > 0 {
+                pass.set_bind_group(0, &self.ui.icon_atlas.bind, &[]);
+                pass.set_vertex_buffer(0, self.ui.icon_quad_vbuf.slice(..));
+                pass.draw(0..self.ui.icon_quad_vertex_count, 0..1);
             }
         }
         // UI OVERLAY / DRAG PASS: stack counts, then the document's overlay
         // tier (floating tooltip chrome) with its own icons and counts over
         // the base tier's, then the cursor-held icon and its count — keeping
         // the whole dragged stack front-most.
-        if self.ui_count_vertex_count > 0
-            || self.drag_icon_quad_vertex_count > 0
-            || self.ui_drag_count_vertex_count > 0
-            || self.overlay_icon_quad_vertex_count > 0
-            || self.ui_overlay_count_vertex_count > 0
+        if self.ui.count_vertex_count > 0
+            || self.ui.drag_icon_quad_vertex_count > 0
+            || self.ui.drag_count_vertex_count > 0
+            || self.ui.overlay_icon_quad_vertex_count > 0
+            || self.ui.overlay_count_vertex_count > 0
             || self.has_doc_overlay()
         {
             let mut pass = color_depth_pass(
                 enc,
                 swapchain,
-                &self.depth,
+                &self.targets.depth,
                 "ui overlay / drag pass",
                 wgpu::LoadOp::Load,
                 None,
                 self.gpu_timer.as_ref(),
             );
-            pass.set_pipeline(&self.ui_pipe);
+            pass.set_pipeline(&self.ui.pipe);
             // Normal stack counts (solid), at the head of the solid buffer.
-            if self.ui_count_vertex_count > 0 {
-                pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
-                pass.set_vertex_buffer(0, self.ui_solid_vbuf.slice(..));
-                pass.draw(0..self.ui_count_vertex_count, 0..1);
+            if self.ui.count_vertex_count > 0 {
+                pass.set_bind_group(0, &self.ui.icon_atlas.bind, &[]);
+                pass.set_vertex_buffer(0, self.ui.solid_vbuf.slice(..));
+                pass.draw(0..self.ui.count_vertex_count, 0..1);
             }
             // Floating tooltip chrome, over every base-tier icon and count.
             self.draw_doc_ui_overlay(&mut pass);
             // Its icons, appended after the normal icons.
-            if self.overlay_icon_quad_vertex_count > 0 {
-                let start = self.icon_quad_vertex_count;
-                pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
-                pass.set_vertex_buffer(0, self.icon_quad_vbuf.slice(..));
-                pass.draw(start..start + self.overlay_icon_quad_vertex_count, 0..1);
+            if self.ui.overlay_icon_quad_vertex_count > 0 {
+                let start = self.ui.icon_quad_vertex_count;
+                pass.set_bind_group(0, &self.ui.icon_atlas.bind, &[]);
+                pass.set_vertex_buffer(0, self.ui.icon_quad_vbuf.slice(..));
+                pass.draw(start..start + self.ui.overlay_icon_quad_vertex_count, 0..1);
             }
             // Its counts (solid), packed after the normal counts.
-            if self.ui_overlay_count_vertex_count > 0 {
-                let start = self.ui_count_vertex_count;
-                pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
-                pass.set_vertex_buffer(0, self.ui_solid_vbuf.slice(..));
-                pass.draw(start..start + self.ui_overlay_count_vertex_count, 0..1);
+            if self.ui.overlay_count_vertex_count > 0 {
+                let start = self.ui.count_vertex_count;
+                pass.set_bind_group(0, &self.ui.icon_atlas.bind, &[]);
+                pass.set_vertex_buffer(0, self.ui.solid_vbuf.slice(..));
+                pass.draw(start..start + self.ui.overlay_count_vertex_count, 0..1);
             }
             // Cursor-held icon, appended after the tooltip icons.
-            if self.drag_icon_quad_vertex_count > 0 {
-                let start = self.icon_quad_vertex_count + self.overlay_icon_quad_vertex_count;
-                pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
-                pass.set_vertex_buffer(0, self.icon_quad_vbuf.slice(..));
-                pass.draw(start..start + self.drag_icon_quad_vertex_count, 0..1);
+            if self.ui.drag_icon_quad_vertex_count > 0 {
+                let start = self.ui.icon_quad_vertex_count + self.ui.overlay_icon_quad_vertex_count;
+                pass.set_bind_group(0, &self.ui.icon_atlas.bind, &[]);
+                pass.set_vertex_buffer(0, self.ui.icon_quad_vbuf.slice(..));
+                pass.draw(start..start + self.ui.drag_icon_quad_vertex_count, 0..1);
             }
             // Cursor-held count (solid), packed after the tooltip counts.
-            if self.ui_drag_count_vertex_count > 0 {
-                let start = self.ui_count_vertex_count + self.ui_overlay_count_vertex_count;
-                pass.set_bind_group(0, &self.icon_atlas.bind, &[]);
-                pass.set_vertex_buffer(0, self.ui_solid_vbuf.slice(..));
-                pass.draw(start..start + self.ui_drag_count_vertex_count, 0..1);
+            if self.ui.drag_count_vertex_count > 0 {
+                let start = self.ui.count_vertex_count + self.ui.overlay_count_vertex_count;
+                pass.set_bind_group(0, &self.ui.icon_atlas.bind, &[]);
+                pass.set_vertex_buffer(0, self.ui.solid_vbuf.slice(..));
+                pass.draw(start..start + self.ui.drag_count_vertex_count, 0..1);
             }
         }
     }

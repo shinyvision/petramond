@@ -30,7 +30,7 @@ impl World {
                     // own snapshot — requesting here would double-bake either.
                     bakeable
                         && !self.light_deferred.contains(pos)
-                        && !self.prediction_terrain.owns_light(*pos)
+                        && !self.terrain.prediction_terrain.owns_light(*pos)
                 })
                 .collect();
             // Streaming seam rebakes arrive in adjacent bursts; groups of 3+
@@ -145,10 +145,10 @@ impl World {
                 // recipients that already hold the section, and (via the
                 // revision) a replan for those still waiting on the light-final
                 // ship gate. No meshes to relight headless (`queue_dirty_mesh`).
-                self.light_ship_log.insert(res.pos);
+                self.replication.light_ship_log.insert(res.pos);
                 self.bump_terrain_revision();
             } else {
-                self.dirty_meshes.push(res.pos);
+                self.terrain.dirty_meshes.push(res.pos);
                 if !first_bake {
                     self.requeue_meshes_sampling_changed_regions(res.pos, mask);
                 }
@@ -175,8 +175,8 @@ impl World {
                         continue;
                     }
                     let p = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
-                    if self.dirty_meshes.contains(p)
-                        || self.light_blocked_meshes.contains(&p)
+                    if self.terrain.dirty_meshes.contains(p)
+                        || self.terrain.light_blocked_meshes.contains(&p)
                         || !self.sections.contains_key(&p)
                     {
                         continue;
@@ -211,7 +211,7 @@ impl World {
                         // it here would bake a half-landed neighbourhood and be
                         // immediately redone. Still wait on it.
                         if !self.light_deferred.contains(&p)
-                            && !self.prediction_terrain.owns_light(p)
+                            && !self.terrain.prediction_terrain.owns_light(p)
                         {
                             let key = self
                                 .last_load_target
@@ -228,7 +228,7 @@ impl World {
     }
 
     fn mesh_light_dependencies_pending(&self, pos: SectionPos) -> bool {
-        if self.prediction_terrain.owns_mesh(pos) {
+        if self.terrain.prediction_terrain.owns_mesh(pos) {
             return true;
         }
         for dy in -1..=1 {
@@ -250,10 +250,11 @@ impl World {
     }
 
     pub(super) fn flush_light_blocked_meshes(&mut self) {
-        if self.light_blocked_meshes.is_empty() {
+        if self.terrain.light_blocked_meshes.is_empty() {
             return;
         }
         let ready: Vec<SectionPos> = self
+            .terrain
             .light_blocked_meshes
             .iter()
             .copied()
@@ -262,9 +263,9 @@ impl World {
             })
             .collect();
         for pos in ready {
-            self.light_blocked_meshes.remove(&pos);
+            self.terrain.light_blocked_meshes.remove(&pos);
             if self.sections.contains_key(&pos) {
-                self.dirty_meshes.push(pos);
+                self.terrain.dirty_meshes.push(pos);
             }
         }
     }

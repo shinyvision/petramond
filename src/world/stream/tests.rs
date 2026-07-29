@@ -31,6 +31,7 @@ fn overlaid_saved_section_keeps_its_block_entities_live() {
     );
     saved.insert_entity_facing(0, 0, 0, crate::facing::Facing::default());
     world
+        .gen
         .pending_overlays
         .insert(sp, (saved, Vec::new(), Vec::new()));
     world.apply_pending_overlays();
@@ -61,12 +62,12 @@ fn mob_census_waits_for_nearby_columns_and_overlays_only() {
     );
 
     let near = SectionPos::new(1, 4, 0);
-    world.awaited_overlays.insert(near);
+    world.gen.awaited_overlays.insert(near);
     assert!(!world.mob_census_loaded_around(center, census_radius));
-    world.awaited_overlays.clear();
+    world.gen.awaited_overlays.clear();
 
     let far = SectionPos::new(20, 4, 0);
-    world.awaited_overlays.insert(far);
+    world.gen.awaited_overlays.insert(far);
     assert!(
         world.mob_census_loaded_around(center, census_radius),
         "far streaming does not block the local census"
@@ -180,15 +181,15 @@ fn multi_anchor_requests_and_keeps_both_neighbourhoods() {
 
     let near = |p: &ChunkPos, cx: i32| (p.cx - cx).abs() <= 4 && p.cz.abs() <= 4;
     assert!(
-        world.pending.keys().any(|p| near(p, 0)),
+        world.gen.pending.keys().any(|p| near(p, 0)),
         "anchor A's columns are requested"
     );
     assert!(
-        world.pending.keys().any(|p| near(p, 40)),
+        world.gen.pending.keys().any(|p| near(p, 40)),
         "anchor B's columns are requested"
     );
     assert!(
-        world.pending.keys().all(|p| near(p, 0) || near(p, 40)),
+        world.gen.pending.keys().all(|p| near(p, 0) || near(p, 40)),
         "nothing outside the anchors' union is requested"
     );
 
@@ -221,7 +222,7 @@ fn settled_missing_scan_resumes_after_eviction() {
     );
     let victim = ChunkPos::new(0, 0);
     assert!(
-        world.pending.contains_key(&victim) || world.column_gen.contains_key(&victim),
+        world.gen.pending.contains_key(&victim) || world.gen.column_gen.contains_key(&victim),
         "the player's own column is requested or loaded"
     );
 
@@ -234,7 +235,7 @@ fn settled_missing_scan_resumes_after_eviction() {
     );
     world.update_load(0, 4, 0);
     assert!(
-        world.pending.contains_key(&victim),
+        world.gen.pending.contains_key(&victim),
         "the evicted column is re-requested by the next scan"
     );
 }
@@ -256,7 +257,7 @@ fn single_anchor_multi_load_matches_update_load() {
     assert_eq!(single.last_load_target, multi.last_load_target);
     assert!(multi.extra_load_targets.is_empty());
     let sorted = |w: &World| {
-        let mut p: Vec<ChunkPos> = w.pending.keys().copied().collect();
+        let mut p: Vec<ChunkPos> = w.gen.pending.keys().copied().collect();
         p.sort_by_key(|c| (c.cx, c.cz));
         p
     };
@@ -357,6 +358,7 @@ fn first_bake_defers_until_generation_neighborhood_settles() {
         for dx in -1..=1 {
             let cp = ChunkPos::new(dx, dz);
             world
+                .gen
                 .column_gen
                 .insert(cp, Arc::new(generator.generate_column_gen(dx, dz)));
             world.ensure_column(cp);
@@ -396,7 +398,7 @@ fn first_bake_defers_until_generation_neighborhood_settles() {
         "the single first bake fires on settle"
     );
     assert!(
-        !world.dirty_meshes.is_empty(),
+        !world.terrain.dirty_meshes.is_empty(),
         "the first mesh queues alongside the first bake"
     );
 }
@@ -425,7 +427,7 @@ fn sealed_first_light_waits_for_player_proximity_then_bakes() {
         world.insert_section_for_test(pos, section);
     }
     let generator = crate::worldgen::driver::ChunkGenerator::new(world.seed);
-    world.column_gen.insert(
+    world.gen.column_gen.insert(
         center.chunk_pos(),
         Arc::new(generator.generate_column_gen(center.cx, center.cz)),
     );
@@ -455,18 +457,18 @@ fn stale_pending_columns_are_pruned_to_current_disc() {
     let mut world = World::new(0, 16);
     let outside = ChunkPos::new(17, 0);
     let inside = ChunkPos::new(-10, 0);
-    world.pending.insert(outside, None);
-    world.pending.insert(inside, None);
+    world.gen.pending.insert(outside, None);
+    world.gen.pending.insert(inside, None);
 
     let target = LoadTarget::new(0, 5, 0, 16);
     world.prune_stale_column_requests(target);
 
     assert!(
-        !world.pending.contains_key(&outside),
+        !world.gen.pending.contains_key(&outside),
         "queued work outside the disc should be dropped"
     );
     assert!(
-        world.pending.contains_key(&inside),
+        world.gen.pending.contains_key(&inside),
         "queued work inside the disc stays queued"
     );
 }
@@ -485,13 +487,14 @@ fn horizontal_move_requests_sections_for_newly_wanted_loaded_columns() {
 
     let generator = crate::worldgen::driver::ChunkGenerator::new(world.seed);
     let col = Arc::new(generator.generate_column_gen(newly_wanted.cx, newly_wanted.cz));
-    world.column_gen.insert(newly_wanted, col);
+    world.gen.column_gen.insert(newly_wanted, col);
     world.last_load_target = Some(old);
 
     world.update_load(1, 5, 0);
 
     assert!(
         world
+            .gen
             .pending_sections
             .iter()
             .any(|sp| sp.chunk_pos() == newly_wanted),
@@ -606,9 +609,9 @@ fn explored_terrain_reloads_from_disk_without_generating() {
         loop {
             world.poll();
             if world.loaded_section_count() > 0
-                && world.pending.is_empty()
-                && world.pending_sections.is_empty()
-                && world.awaited_overlays.is_empty()
+                && world.gen.pending.is_empty()
+                && world.gen.pending_sections.is_empty()
+                && world.gen.awaited_overlays.is_empty()
             {
                 break;
             }
@@ -739,8 +742,8 @@ fn vertical_window_generates_near_the_player_not_the_whole_column() {
     loop {
         world.poll();
         if world.loaded_section_count() > 0
-            && world.pending.is_empty()
-            && world.pending_sections.is_empty()
+            && world.gen.pending.is_empty()
+            && world.gen.pending_sections.is_empty()
         {
             break;
         }

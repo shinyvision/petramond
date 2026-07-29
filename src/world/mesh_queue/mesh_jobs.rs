@@ -12,17 +12,18 @@ impl World {
         let start = std::time::Instant::now();
         let mut drained = 0usize;
         while drained < RESULT_DRAIN_MIN || start.elapsed() < RESULT_DRAIN_TIME_BUDGET {
-            let Some(done) = self.mesh_pool.try_recv() else {
+            let Some(done) = self.terrain.mesh_pool.try_recv() else {
                 break;
             };
             drained += 1;
-            self.mesh_jobs_in_flight = self.mesh_jobs_in_flight.saturating_sub(1);
+            self.terrain.mesh_jobs_in_flight = self.terrain.mesh_jobs_in_flight.saturating_sub(1);
             if self
+                .terrain
                 .mesh_job_cancels
                 .get(&done.pos)
                 .is_some_and(|current| current.same_job(&done.cancel))
             {
-                self.mesh_job_cancels.remove(&done.pos);
+                self.terrain.mesh_job_cancels.remove(&done.pos);
             }
             let Some(mut mesh) = done.mesh else {
                 continue;
@@ -85,6 +86,7 @@ impl World {
         // worlds fall back to loaded column facts only; live submission never runs
         // analytical worldgen on this thread.
         let biome = self
+            .gen
             .column_gen
             .get(&pos.chunk_pos())
             .map(|col| col.mesh_biome())

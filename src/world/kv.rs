@@ -16,26 +16,26 @@ impl World {
     /// it is a BTreeMap on purpose).
     #[inline]
     pub fn mod_kv(&self) -> &BTreeMap<String, Vec<u8>> {
-        &self.mod_kv
+        &self.mods.mod_kv
     }
 
     #[inline]
     pub fn mod_kv_get(&self, key: &str) -> Option<&[u8]> {
-        self.mod_kv.get(key).map(Vec::as_slice)
+        self.mods.mod_kv.get(key).map(Vec::as_slice)
     }
 
     pub fn mod_kv_set(&mut self, key: String, value: Vec<u8>) {
-        self.mod_kv.insert(key, value);
+        self.mods.mod_kv.insert(key, value);
     }
 
     /// Remove `key`; returns whether it was present.
     pub fn mod_kv_remove(&mut self, key: &str) -> bool {
-        self.mod_kv.remove(key).is_some()
+        self.mods.mod_kv.remove(key).is_some()
     }
 
     /// Replace the whole map — the session-open restore from `level.dat`.
     pub fn set_mod_kv(&mut self, map: BTreeMap<String, Vec<u8>>) {
-        self.mod_kv = map;
+        self.mods.mod_kv = map;
     }
 
     /// A cell's KV entry at world coords, or `None` when absent or the owning
@@ -70,7 +70,8 @@ impl World {
         // delta's drain re-reads the cell's whole KV map, so a separate KV
         // delta would be redundant — and one logged BEFORE a wiping block
         // write would be stale (`record_block_delta` scrubs those).
-        let capture = self.replication_capture && !self.block_delta_log.contains_key(&pos);
+        let capture = self.replication.replication_capture
+            && !self.replication.block_delta_log.contains_key(&pos);
         let log_value = capture.then(|| value.clone());
         let Some((s, lx, ly, lz)) = self.chunk_at_world_mut(wx, wy, wz) else {
             return false;
@@ -78,7 +79,9 @@ impl World {
         s.cell_kv_set(lx, ly, lz, key.clone(), value);
         s.modified = true;
         if let Some(v) = log_value {
-            self.cell_kv_delta_log.insert((pos, key.clone()), Some(v));
+            self.replication
+                .cell_kv_delta_log
+                .insert((pos, key.clone()), Some(v));
         }
         // A mesh-feeding presentation write renders through the mesher —
         // re-mesh the host's own view (the replica side re-meshes in its KV
@@ -107,8 +110,12 @@ impl World {
             let pos = crate::mathh::IVec3::new(wx, wy, wz);
             // Same block-delta skip as `cell_kv_set`: a covering block delta's
             // drain-time KV snapshot already reflects the removal.
-            if self.replication_capture && !self.block_delta_log.contains_key(&pos) {
-                self.cell_kv_delta_log.insert((pos, key.to_string()), None);
+            if self.replication.replication_capture
+                && !self.replication.block_delta_log.contains_key(&pos)
+            {
+                self.replication
+                    .cell_kv_delta_log
+                    .insert((pos, key.to_string()), None);
             }
             if crate::block::kv_key_affects_mesh(key) {
                 self.queue_dirty_meshes_sampling_cell(wx, wy, wz);

@@ -89,15 +89,15 @@ impl Renderer {
         let view_proj = relative_view_proj(cam, render_origin);
         let inv_view_proj = view_proj.inverse();
         // Refresh the culling frustum from the same matrix the GPU will use.
-        self.frustum = Frustum::from_view_proj(view_proj);
-        self.cam_pos = cam.pos;
-        self.render_origin = render_origin;
-        self.visual_time = time;
+        self.view.frustum = Frustum::from_view_proj(view_proj);
+        self.view.cam_pos = cam.pos;
+        self.view.render_origin = render_origin;
+        self.view.visual_time = time;
         self.update_shader_params(shader_params);
         let mut effective_sky_scale = 1.0;
         let mut effective_sky_color = [1.0, 1.0, 1.0];
         let mut shader_light_overrode_identity = false;
-        if let (Some(params), Some(key)) = (shader_params, self.sky_light_param_key.as_deref()) {
+        if let (Some(params), Some(key)) = (shader_params, self.sky.light_param_key.as_deref()) {
             if let Some(value) = params.get(key) {
                 effective_sky_scale = value[0].clamp(0.0, 1.0);
                 effective_sky_color = [
@@ -117,16 +117,16 @@ impl Renderer {
         } else {
             fog_color
         };
-        self.clear_color = effective_fog_color;
-        self.underwater = underwater;
-        self.sky_scale = effective_sky_scale;
-        self.sky_color = effective_sky_color;
+        self.sky.clear_color = effective_fog_color;
+        self.sky.underwater = underwater;
+        self.sky.scale = effective_sky_scale;
+        self.sky.color = effective_sky_color;
         let (fog_start, fog_end) = if underwater {
             (UNDERWATER_FOG_START, UNDERWATER_FOG_END)
         } else {
-            (self.fog_start, self.fog_end)
+            (self.sky.fog_start, self.sky.fog_end)
         };
-        self.terrain_view_key = TerrainViewKey {
+        self.terrain.view_key = TerrainViewKey {
             view_proj: view_proj.to_cols_array().map(f32::to_bits),
             cam: cam.pos.to_array().map(f32::to_bits),
             fog: self.terrain_cull_dist().to_bits(),
@@ -166,7 +166,7 @@ impl Renderer {
             &self.shader_params_buf,
             0,
             bytemuck::cast_slice(&[fill_shader_params(
-                &self.sky_shader_param_keys,
+                &self.sky.shader_param_keys,
                 shader_params,
             )]),
         );
@@ -174,7 +174,7 @@ impl Renderer {
         // buffer. A pass whose declared params are ALL absent goes dormant
         // (skipped in encode) — the title screen and servers without the
         // owning mod pay nothing for it.
-        for pass in &mut self.env_passes {
+        for pass in &mut self.sky.env_passes {
             let any_present = shader_params.is_some_and(|params| {
                 pass.res
                     .param_keys
@@ -199,82 +199,82 @@ impl Renderer {
     pub fn set_mood(&mut self, target: [f32; 2], dt: f32) {
         const MOOD_EASE_SECONDS: f32 = 2.0;
         let ease = 1.0 - (-dt.clamp(0.0, 0.25) / MOOD_EASE_SECONDS).exp();
-        self.mood[0] += (target[0].clamp(0.0, 0.5) - self.mood[0]) * ease;
-        self.mood[1] += (target[1].clamp(0.0, 0.5) - self.mood[1]) * ease;
+        self.targets.mood[0] += (target[0].clamp(0.0, 0.5) - self.targets.mood[0]) * ease;
+        self.targets.mood[1] += (target[1].clamp(0.0, 0.5) - self.targets.mood[1]) * ease;
         self.queue.write_buffer(
-            &self.mood_buf,
+            &self.targets.mood_buf,
             0,
-            bytemuck::cast_slice(&[self.mood[0], self.mood[1], 0.0, 0.0]),
+            bytemuck::cast_slice(&[self.targets.mood[0], self.targets.mood[1], 0.0, 0.0]),
         );
     }
 
     /// Set (or clear) the target highlighted by the selection outline. Cheap: the
     /// vertex buffer is only re-uploaded in `render` when the target changes.
     pub fn set_selection(&mut self, shape: Option<SelectionShape>) {
-        self.selection = shape;
+        self.chrome.selection = shape;
     }
 
     /// Store the block-break overlays to draw this frame (empty clears). A
     /// small bounded slice — the local miner's own crack plus the capped
     /// nearest remotes; each bakes exactly like the single overlay always did.
     pub fn set_break_overlays(&mut self, v: &[BreakOverlayView]) {
-        self.break_overlays.clear();
-        self.break_overlays.extend_from_slice(v);
+        self.hand.break_overlays.clear();
+        self.hand.break_overlays.extend_from_slice(v);
     }
 
     /// Advance and store the first-person held-item / hand state for this frame.
     pub fn set_held_item(&mut self, v: HeldItemFrame) {
-        self.held_item = self.held_item_anim.update(v);
+        self.hand.held_item = self.hand.held_item_anim.update(v);
     }
 
     pub fn set_hand_visible(&mut self, visible: bool) {
-        self.hand_visible = visible;
+        self.hand.visible = visible;
     }
 
     /// Store this frame's hurt-shake screen offset for the hand/held item, in
     /// NDC units (tiny values — the shake is subtle).
     pub fn set_hand_shake(&mut self, shake: [f32; 2]) {
-        self.hand_shake = shake;
+        self.hand.shake = shake;
     }
 
     pub fn set_crosshair_visible(&mut self, visible: bool) {
-        self.crosshair_visible = visible;
+        self.chrome.crosshair_visible = visible;
     }
 
     /// Store the two-channel light to apply to the first-person hand / held item
     /// (so it brightens AND takes the colour of nearby block light, and block
     /// light keeps it lit at night).
     pub fn set_held_item_light(&mut self, skylight: u8, blocklight: crate::light::BlockLight6) {
-        self.held_item_skylight = skylight.min(crate::render::lighting::FULL_SKYLIGHT);
-        self.held_item_blocklight = blocklight;
+        self.hand.held_item_skylight = skylight.min(crate::render::lighting::FULL_SKYLIGHT);
+        self.hand.held_item_blocklight = blocklight;
     }
 
     /// Store the dropped item-entities to draw this frame. Reuses the existing
     /// `Vec` capacity (clear + extend) to avoid per-frame reallocation.
     pub fn set_item_entities(&mut self, v: &[ItemEntityInstance]) {
-        self.item_entities.clear();
-        self.item_entities.extend_from_slice(v);
+        self.item_entity.instances.clear();
+        self.item_entity.instances.extend_from_slice(v);
     }
 
     /// Store the placed chests to draw this frame. Reuses the existing `Vec`
     /// capacity (clear + extend) to avoid per-frame reallocation.
     pub(in crate::render) fn set_chests(&mut self, v: &[ChestInstance]) {
-        self.chests.clear();
-        self.chests.extend_from_slice(v);
+        self.block_entity.chests.clear();
+        self.block_entity.chests.extend_from_slice(v);
     }
 
     /// Store the placed doors to draw this frame. Reuses the existing `Vec` capacity
     /// (clear + extend) to avoid per-frame reallocation.
     pub(in crate::render) fn set_doors(&mut self, v: &[DoorInstance]) {
-        self.doors.clear();
-        self.doors.extend_from_slice(v);
+        self.block_entity.doors.clear();
+        self.block_entity.doors.extend_from_slice(v);
     }
 
     /// Store the mobs to draw this frame (already interpolated by the scene adapter).
     /// Reuses the existing `Vec` capacity.
     pub fn set_mobs(&mut self, v: &[MobRenderInstance]) {
-        self.mobs.clear();
-        self.mobs.extend_from_slice(v);
+        self.actor.mobs.clear();
+        self.actor.mobs.extend_from_slice(v);
     }
 
     /// Store the LOCAL third-person player body to draw this frame (`None` in
@@ -282,91 +282,55 @@ impl Renderer {
     /// held item animates from the renderer's own first-person `held_item`
     /// view, exactly as before remote players existed.
     pub fn set_player(&mut self, v: Option<PlayerRenderInstance>) {
-        self.player_view = v;
+        self.actor.player_view = v;
     }
 
     /// Store the REMOTE players' bodies + held-item views for this frame
     /// (already interpolated/posed by the game). Reuses capacity.
     pub fn set_remote_players(&mut self, v: &[super::RemotePlayerRender]) {
-        self.remote_players.clear();
-        self.remote_players.extend_from_slice(v);
+        self.actor.remote_players.clear();
+        self.actor.remote_players.extend_from_slice(v);
     }
 
     /// Store the block-atlas particle cubes to draw this frame. Reuses capacity.
     pub fn set_particles(&mut self, v: &[ParticleInstance]) {
-        self.particles.clear();
-        self.particles.extend_from_slice(v);
+        self.particle.instances.clear();
+        self.particle.instances.extend_from_slice(v);
     }
 
     /// Store the model-atlas particle cubes (bbmodel-block flecks) for this frame; they
     /// bake into the same particle vbuf after the block cubes and draw with the model
     /// atlas bound. Reuses capacity.
     pub fn set_model_particles(&mut self, v: &[ParticleInstance]) {
-        self.model_particles.clear();
-        self.model_particles.extend_from_slice(v);
+        self.particle.model_instances.clear();
+        self.particle.model_instances.extend_from_slice(v);
     }
 
     /// Store loaded block-row particle emitters for this frame. The renderer derives
     /// transient translucent cubes from these in `bake_world_instances`.
     pub fn set_particle_emitters(&mut self, v: &[ParticleEmitterInstance]) {
-        self.particle_emitters.clear();
-        self.particle_emitters.extend_from_slice(v);
+        self.particle.emitters.clear();
+        self.particle.emitters.extend_from_slice(v);
     }
 
     /// Store the solid-color simulated particles (emitter-burst droplets) for
     /// this frame; they join the emitter cubes' alpha-blended bake.
     pub fn set_solid_particles(&mut self, v: &[SolidParticleInstance]) {
-        self.solid_particles.clear();
-        self.solid_particles.extend_from_slice(v);
+        self.particle.solid_instances.clear();
+        self.particle.solid_instances.extend_from_slice(v);
     }
 
     pub fn clear_world_state(&mut self) {
-        self.terrain_columns.clear();
-        self.terrain_upload_pending.clear();
-        self.terrain_upload_heap.clear();
-        self.terrain_gpu_revision = self.terrain_gpu_revision.wrapping_add(1);
-        self.terrain_planned_view_key = None;
-        self.far_leaf_lod_state.clear();
-        self.draw_order.clear();
-        self.opaque_column_order.clear();
-        self.model_column_order.clear();
-        self.contact_column_order.clear();
-        self.selection = None;
-        self.selection_drawn = None;
-        self.outline_vertex_count = 0;
-        self.crosshair_visible = false;
-        self.crosshair_vertex_count = 0;
-        self.hand_visible = false;
-        self.hand_index_count = 0;
-        self.hand_vertex_count = 0;
-        self.item3d_vertex_count = 0;
-        self.break_overlays.clear();
-        self.break_draw.index_count = 0;
-        self.item_entity_draw.index_count = 0;
-        self.item_model_entity_draw.index_count = 0;
-        self.item_sprite_entity_draw.index_count = 0;
-        self.chest_draw.index_count = 0;
-        self.door_draw.index_count = 0;
-        self.particle_draw.vertex_count = 0;
-        self.emitter_particle_draw.vertex_count = 0;
-        self.item_entities.clear();
-        self.particles.clear();
-        self.model_particles.clear();
-        self.particle_emitters.clear();
-        self.chests.clear();
-        self.doors.clear();
-        self.mobs.clear();
-        for mob in &mut self.mob_gpu {
-            mob.draw.index_count = 0;
-            mob.visible.clear();
-        }
-        self.player_view = None;
-        self.remote_players.clear();
-        self.player_visible.clear();
-        self.player_gpu.draw.index_count = 0;
-        self.player_item_draw.index_count = 0;
-        self.player_model_item_draw.index_count = 0;
-        self.player_block_item_draw.index_count = 0;
+        self.terrain.clear_world();
+        self.chrome.clear_world();
+        // Each pass drops its own world-scoped state, so leaving a world
+        // cannot forget one the way the hand-written reset did (it had lost
+        // the solid particles, the held item, and its animator).
+        self.hand.clear_world();
+        self.particle.clear_world();
+        self.item_entity.clear_world();
+        self.block_entity.clear_world();
+        self.actor.clear_world();
     }
 
     /// True while terrain columns are still queued for GPU upload. Uploads are
@@ -374,24 +338,25 @@ impl Renderer {
     /// COMPLETE terrain in one shot pumps [`Renderer::sync_meshes`] until this
     /// clears.
     pub(crate) fn terrain_uploads_pending(&self) -> bool {
-        !self.terrain_upload_pending.is_empty()
+        !self.terrain.upload_pending.is_empty()
     }
 
     /// Synchronize GPU meshes with the terrain CPU meshes.
     pub(crate) fn sync_meshes(&mut self, terrain: &mut TerrainRenderHandoff<'_>) {
-        self.terrain_upload_frame = self.terrain_upload_frame.wrapping_add(1);
-        let upload_frame = self.terrain_upload_frame;
+        self.terrain.upload_frame = self.terrain.upload_frame.wrapping_add(1);
+        let upload_frame = self.terrain.upload_frame;
         // Drop packed GPU columns whose CPU meshes are gone.
-        let before_columns = self.terrain_columns.len();
-        self.terrain_columns
+        let before_columns = self.terrain.columns.len();
+        self.terrain
+            .columns
             .retain(|p, _| terrain.has_column_mesh(*p));
-        if self.terrain_columns.len() != before_columns {
-            self.terrain_gpu_revision = self.terrain_gpu_revision.wrapping_add(1);
+        if self.terrain.columns.len() != before_columns {
+            self.terrain.gpu_revision = self.terrain.gpu_revision.wrapping_add(1);
         }
 
-        let cam = self.cam_pos;
-        let frustum = self.frustum;
-        let render_origin = self.render_origin;
+        let cam = self.view.cam_pos;
+        let frustum = self.view.frustum;
+        let render_origin = self.view.render_origin;
         let fog = self.terrain_cull_dist();
         let priority = |column: ChunkPos| {
             let min = glam::Vec3::new(
@@ -420,14 +385,14 @@ impl Renderer {
         };
         terrain.for_dirty_columns(&mut |column, revision| {
             let mut enqueue = false;
-            if let Some(pending) = self.terrain_upload_pending.get_mut(&column) {
+            if let Some(pending) = self.terrain.upload_pending.get_mut(&column) {
                 if pending.revision != revision {
                     pending.revision = revision;
                     pending.quiet_after = upload_frame + MESH_UPLOAD_QUIET_FRAMES;
                     enqueue = true;
                 }
             } else {
-                self.terrain_upload_pending.insert(
+                self.terrain.upload_pending.insert(
                     column,
                     PendingTerrainUpload {
                         revision,
@@ -439,18 +404,19 @@ impl Renderer {
             }
             if enqueue {
                 let (hidden, distance, cx, cz) = priority(column);
-                self.terrain_upload_heap
+                self.terrain
+                    .upload_heap
                     .push(Reverse((hidden, distance, cx, cz, revision)));
             }
         });
 
         let device = &self.device;
         let queue = &self.queue;
-        let columns = &mut self.terrain_columns;
-        let upload_scratch = &mut self.terrain_upload_scratch;
-        let origins = &mut self.column_origins;
-        let arena = &mut self.geometry;
-        let quad_index = &mut self.quad_index;
+        let columns = &mut self.terrain.columns;
+        let upload_scratch = &mut self.terrain.upload_scratch;
+        let origins = &mut self.terrain.column_origins;
+        let arena = &mut self.terrain.geometry;
+        let quad_index = &mut self.terrain.quad_index;
         let start = std::time::Instant::now();
         let mut uploaded_columns = 0usize;
         let mut attempts = 0usize;
@@ -460,12 +426,12 @@ impl Renderer {
             if uploaded_columns > 0 && start.elapsed() >= MESH_COLUMN_UPLOAD_TIME_BUDGET {
                 break;
             }
-            let Some(Reverse((_, _, cx, cz, revision))) = self.terrain_upload_heap.pop() else {
+            let Some(Reverse((_, _, cx, cz, revision))) = self.terrain.upload_heap.pop() else {
                 break;
             };
             heap_pops += 1;
             let column = ChunkPos::new(cx, cz);
-            let Some(pending) = self.terrain_upload_pending.get(&column) else {
+            let Some(pending) = self.terrain.upload_pending.get(&column) else {
                 continue;
             };
             if pending.revision != revision {
@@ -477,14 +443,15 @@ impl Renderer {
                 continue;
             }
             let mut pending = self
-                .terrain_upload_pending
+                .terrain
+                .upload_pending
                 .remove(&column)
                 .expect("pending upload checked above");
             if !terrain.has_column_mesh(column) {
                 let removed = columns.remove(&column).is_some();
                 terrain.mark_column_uploaded(column);
                 if removed {
-                    self.terrain_gpu_revision = self.terrain_gpu_revision.wrapping_add(1);
+                    self.terrain.gpu_revision = self.terrain.gpu_revision.wrapping_add(1);
                 }
                 continue;
             }
@@ -493,7 +460,7 @@ impl Renderer {
             if terrain.needs_repack_remeshes(column) {
                 pending.quiet_after = upload_frame + MESH_UPLOAD_QUIET_FRAMES;
                 pending.deadline = upload_frame + MESH_UPLOAD_MAX_WAIT_FRAMES;
-                self.terrain_upload_pending.insert(column, pending);
+                self.terrain.upload_pending.insert(column, pending);
                 deferred.push((column, revision));
                 continue;
             }
@@ -503,7 +470,7 @@ impl Renderer {
                     let removed = columns.remove(&column).is_some();
                     terrain.mark_column_uploaded(column);
                     if removed {
-                        self.terrain_gpu_revision = self.terrain_gpu_revision.wrapping_add(1);
+                        self.terrain.gpu_revision = self.terrain.gpu_revision.wrapping_add(1);
                     }
                     false
                 } else {
@@ -525,25 +492,27 @@ impl Renderer {
             if uploaded {
                 terrain.mark_column_uploaded(column);
                 uploaded_columns += 1;
-                self.terrain_gpu_revision = self.terrain_gpu_revision.wrapping_add(1);
+                self.terrain.gpu_revision = self.terrain.gpu_revision.wrapping_add(1);
             }
         }
         for (column, revision) in deferred {
             if self
-                .terrain_upload_pending
+                .terrain
+                .upload_pending
                 .get(&column)
                 .is_some_and(|pending| pending.revision == revision)
             {
                 let (hidden, distance, cx, cz) = priority(column);
-                self.terrain_upload_heap
+                self.terrain
+                    .upload_heap
                     .push(Reverse((hidden, distance, cx, cz, revision)));
             }
         }
-        let terrain_columns = &self.terrain_columns;
+        let terrain_columns = &self.terrain.columns;
         // A section that lost its far mesh must lose its LOD state too: the
         // planner only consults (and only maintains) the map for sections that
         // still own one.
-        self.far_leaf_lod_state.retain(|sp, _| {
+        self.terrain.far_leaf_lod_state.retain(|sp, _| {
             terrain_columns.get(&sp.chunk_pos()).is_some_and(|column| {
                 column
                     .sections

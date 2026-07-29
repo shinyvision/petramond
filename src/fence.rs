@@ -15,10 +15,6 @@
 
 use crate::block::Aabb;
 
-/// The post's horizontal extent: `4/16` across, centred in the cell.
-pub const POST_LO: f32 = 6.0 / 16.0;
-pub const POST_HI: f32 = 10.0 / 16.0;
-
 /// A rail is inset half a texel from each post face, so it sits centred on the
 /// post and its cross bounds land on half-texels (the cell-local UV rounding
 /// keeps the face sampling exact). Derived from the post so a wider/narrower
@@ -88,6 +84,13 @@ mod tests {
     // The connection mask + box tests moved to `crate::connect` (the shared,
     // param-driven owner); here only the fence's fixed item segment remains.
     use super::*;
+
+    /// The engine fence's post extent (`4/16` across, centred). A local test
+    /// fixture, not a shared constant: production always reads the extent from
+    /// the row's own connection params, so a modded wall's item matches its
+    /// placed thickness.
+    const POST_LO: f32 = 6.0 / 16.0;
+    const POST_HI: f32 = 10.0 / 16.0;
 
     #[test]
     fn item_shape_is_two_posts_bridged_by_the_rails() {

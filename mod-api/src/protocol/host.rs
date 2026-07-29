@@ -1079,7 +1079,7 @@ pub enum HostCall {
     },
     /// Resolve a block SHAPE-KIND registry key (`"petramond:fence"`,
     /// `"mymod:gate"`) to its session-local numeric id — the shape twin of
-    /// [`HostCall::ResolveBlock`], for a Layer-3 mod branching on the
+    /// [`HostCall::ResolveBlock`], for a custom-shape mod branching on the
     /// `shape_kind` its bake calls carry. Registry-only (legal on any instance).
     /// `None` = no such shape kind. → [`HostRet::MaybeByte`].
     ResolveShape {

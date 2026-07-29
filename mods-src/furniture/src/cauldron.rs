@@ -1,4 +1,4 @@
-//! The cauldron: the mod's second Layer-3 shape and the dyeing it hosts.
+//! The cauldron: the mod's second custom shape and the dyeing it hosts.
 //!
 //! Unoriented rows whose bakes all return [`CAULDRON_BOXES`] — a hollow
 //! slate pot the mesher carves from the row's `[top,bottom,side]` tiles.

@@ -94,7 +94,7 @@ impl Player {
         } else if hit_block.picks_by_boxes() {
             // Every box-set family outlines the boxes it actually resolved —
             // a stair's corner steps, a slab's layers, a pane's / fence's
-            // connected post + arm runs, a Layer-3 bake's parts — so the
+            // connected post + arm runs, a WASM shape bake's parts — so the
             // wireframe hugs what the mesher drew rather than a bare default.
             // Whether it draws as boxes or as one union box is a CAPACITY
             // question, not a family one: past the outline array's width (a
@@ -103,7 +103,7 @@ impl Player {
             let boxes = world.collision_boxes_at(hit.block.x, hit.block.y, hit.block.z);
             let base = Vec3::new(hit.block.x as f32, hit.block.y as f32, hit.block.z as f32);
             if boxes.is_empty() {
-                // Nothing resolved (an unbaked Layer-3 cell, a connection row
+                // Nothing resolved (an unbaked custom-shape cell, a connection row
                 // missing its params): keep the row's default outline rather
                 // than drawing an empty wireframe.
             } else if boxes.len() <= crate::mathh::MAX_SELECTION_BOXES {
@@ -236,18 +236,16 @@ impl Player {
             let t_exit = next_boundary_t(t_max);
             // The "solid body" selection branch: genuinely solid blocks plus the
             // shapes selectable by geometry the `solid` flag doesn't imply —
-            // the torch and ladder (own precise tests), every box-set family (a
-            // decorative Layer-3 chair is not a solid cube but must still be
-            // aimable), and anything whose SHAPE offers a box to aim at even
-            // though it does not collide (a walk-through thin cover like the
-            // snow layer, a no-collision model block). All three are facet
-            // answers, so a modded family needs no engine edit here. The
-            // cross-plant case is handled separately below, like its render
-            // shape. Resolve both once: the table reads are per stepped cell.
-            let shape = block.shape_family();
-            let precise_only = block.picks_by_boxes()
-                || shape == ShapeFamily::Torch
-                || shape == ShapeFamily::Ladder;
+            // every shape needing a precise ray test (a box-set family, a
+            // tilted torch pole, a thin wall panel; a decorative custom-shape
+            // chair is not a solid cube but must still be aimable), and
+            // anything whose SHAPE offers a box to aim at even though it does
+            // not collide (a walk-through thin cover like the snow layer, a
+            // no-collision model block). Both are facet answers, so a modded
+            // family needs no engine edit here. The cross-plant case is handled
+            // separately below, like its render shape. Resolve both once: the
+            // table reads are per stepped cell.
+            let precise_only = block.precise_pick();
             let shape_box = block.visual_aabb();
             if block.is_solid() || precise_only || shape_box.is_some() {
                 // A full cube fills its cell, so it stops the ray on entry. A
@@ -429,10 +427,10 @@ fn precise_shape_hit(
     }
     // Every family whose real form is a BOX SET is picked against its resolved
     // boxes: a stair's corner steps, a slab's layers, a pane's / fence's
-    // neighbour-derived post + arm runs, a Layer-3 bake's legs and seat. All of
+    // neighbour-derived post + arm runs, a WASM shape bake's legs and seat. All of
     // them resolve through the shape's own collision facet, so the aimed boxes
     // ARE the collided boxes and aiming through a gap misses by construction.
-    // (A cache miss on a Layer-3 bake reads the row's static fallback, so a
+    // (A cache miss on a WASM shape bake reads the row's static fallback, so a
     // custom shape is always aimable somewhere.)
     if block.picks_by_boxes() {
         let base = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);

@@ -1,6 +1,6 @@
 //! Chains: three single-cell rows — `furniture:chain` (vertical, the
 //! item-linked base), `furniture:chain_ns`, `furniture:chain_ew` — sharing
-//! ONE Layer-3 custom shape (`shapes.json` + the bakes in `lib.rs`); the axis
+//! ONE custom shape (`shapes.json` + the bakes in `lib.rs`); the axis
 //! is block IDENTITY (the ladder-row pattern), so the bake orients each cell
 //! from its block id alone and placement needs no per-cell state. The
 //! placement plan picks the sibling row from the clicked face's normal and

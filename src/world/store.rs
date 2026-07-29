@@ -37,7 +37,7 @@ mod fixtures;
 mod tests;
 
 /// Which half of the client/server split this `World` instance plays.
-/// A single-player session without the split uses [`Combined`](WorldRole::Combined):
+/// DEV TOOLING ONLY uses [`Combined`](WorldRole::Combined):
 /// one world runs the sim AND meshes for the renderer.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum WorldRole {
@@ -59,6 +59,226 @@ pub enum WorldRole {
 /// Sections are the unit of storage, meshing, lighting, streaming, and saving; a
 /// column exists whenever any of its sections is loaded (see
 /// [`ensure_column`](World::ensure_column)).
+/// The replica's terrain presentation: the CPU section meshes, the packed
+/// column bookkeeping the GPU upload reads, the bake job pool, and the
+/// visibility parking sets.
+///
+/// Owned by `WorldRole::ClientReplica` (and `Combined` for dev tooling). A
+/// `ServerHeadless` world allocates it empty and never writes it — see
+/// `World::queue_dirty_mesh`, which early-returns for that role.
+pub(in crate::world) struct TerrainRenderState {
+    /// One GPU-ready mesh per section.
+    pub(in crate::world) meshes: FxHashMap<SectionPos, ChunkMesh>,
+    /// XZ columns that currently have at least one CPU section mesh.
+    /// Mirrors `meshes` so renderer retention does not scan the vertical range
+    /// of every GPU column each frame.
+    pub(in crate::world) mesh_columns: FxHashSet<ChunkPos>,
+    /// Per-column bitset of meshed section `cy` values (bit `i` =
+    /// `SECTION_MIN_CY + i`). Kept in sync with `meshes` / `mesh_columns` so
+    /// packed-column consumers walk only the meshed stack, not the full
+    /// vertical world range.
+    pub(in crate::world) mesh_column_cys: FxHashMap<ChunkPos, u32>,
+    /// Per-column bitset of *loaded* section `cy` values. Maintained at every
+    /// section install/evict so planners (terrain send) iterate real stacks
+    /// instead of probing the full vertical world range per wanted column.
+    pub(in crate::world) section_column_cys: FxHashMap<ChunkPos, u32>,
+    /// Per-column bitset of loaded section `cy` values that hold at least one
+    /// RANDOM-TICKABLE cell — the random-tick scan's working set. A derived
+    /// index over `sections`: `random_tick_dirty` names the sections whose bit
+    /// may be stale (any `section_mut` handout, any install), and the scan
+    /// repairs those before it walks. Kept separate from
+    /// [`section_column_cys`](Self::section_column_cys) so an underground
+    /// stack of plain stone costs the scan nothing at all.
+    pub(in crate::world) section_column_rt: FxHashMap<ChunkPos, u32>,
+    /// Changes whenever a section mesh enters or leaves a packed GPU column.
+    /// The renderer uses it to coalesce consecutive sibling completions.
+    pub(in crate::world) mesh_upload_revisions: FxHashMap<ChunkPos, u64>,
+    /// XZ columns whose packed render buffer must be rebuilt from `meshes`.
+    /// Kept explicitly so the renderer does not scan every section mesh each frame.
+    pub(in crate::world) mesh_upload_dirty_columns: FxHashSet<ChunkPos>,
+    /// Uploaded columns scheduled to release their CPU mesh buffers once they have
+    /// been upload-quiet long enough (value = earliest release frame). The retained
+    /// CPU copy exists only so a column repack can re-pack sibling sections; a
+    /// settled column frees it and repacks force a remesh instead (`repack_forced`).
+    pub(in crate::world) mesh_release_after: FxHashMap<ChunkPos, u64>,
+    /// Released sections whose column needs a GPU repack: their remesh must not be
+    /// skipped by deep-visibility parking — the packed column buffer cannot be
+    /// rebuilt without their geometry.
+    pub(in crate::world) repack_forced: FxHashSet<SectionPos>,
+    /// Monotonic mesh-pump frame counter (drives `mesh_release_after`).
+    pub(in crate::world) mesh_pump_frame: u64,
+    /// Ordinary off-thread section meshing: dirty sections are submitted as owned
+    /// snapshots and finished meshes drained back. Local prediction deliberately
+    /// invokes the same builder synchronously.
+    pub(in crate::world) mesh_pool: super::mesh_pool::MeshPool,
+    pub(in crate::world) mesh_jobs_in_flight: usize,
+    /// Latest mesh job per section. Re-dirtying cancels queued stale work;
+    /// completion tokens prevent an older result from clearing a newer handle.
+    pub(in crate::world) mesh_job_cancels: FxHashMap<SectionPos, JobCancel>,
+    pub(in crate::world) dirty_meshes: DirtyMeshQueue,
+    /// Loaded sections wholly below their column's surface retention band — only
+    /// visible through cave openings (see `world::visibility`).
+    pub(in crate::world) deep_sections: FxHashSet<SectionPos>,
+    /// The deep sections the last visibility refresh could reach from the visible
+    /// region. Deep sections outside this set park instead of meshing.
+    pub(in crate::world) visible_deep: FxHashSet<SectionPos>,
+    /// Dirty deep sections parked because nothing can see them. Re-queued by the
+    /// visibility refresh when they become reachable (or the player ring arrives).
+    pub(in crate::world) hidden_parked: FxHashSet<SectionPos>,
+    /// Dirty sections whose six exact loaded neighbour planes currently seal them
+    /// from outside sightlines. Kept separate from deep visibility so a load-target
+    /// move can wake them when a player may already be inside.
+    pub(in crate::world) sealed_parked: FxHashSet<SectionPos>,
+    /// Asynchronous reconciliation light -> mesh bundles. Initial prediction
+    /// runs the same complete invalidation footprint synchronously.
+    pub(in crate::world) prediction_terrain: super::prediction_render::PredictionTerrainQueue,
+    /// Raised by ingest / edits / load-target moves; consumed by the mesh pump,
+    /// which re-runs the deep-visibility BFS before submitting work.
+    pub(in crate::world) vis_dirty: bool,
+    /// Dirty meshes parked while async light bakes their sampling neighbourhood.
+    /// They re-enter `dirty_meshes` only once the 3×3×3 light dependency set is clean.
+    pub(in crate::world) light_blocked_meshes: FxHashSet<SectionPos>,
+}
+
+/// The SERVER's worldgen + disk streaming work: which columns/sections are
+/// generating or awaited, the overlay handshake, and the column records
+/// queued for persistence.
+///
+/// Owned by `WorldRole::ServerHeadless` (and `Combined`). A `ClientReplica`
+/// never generates — its sections arrive as remote payloads — so it carries
+/// this empty.
+pub(in crate::world) struct WorldgenJobs {
+    /// Columns whose shared 2D gen data (`ColumnGen`) has landed: the source for
+    /// submitting per-section jobs and sizing each column's vertical load window.
+    /// Present for every loaded column; dropped when the column unloads.
+    pub(in crate::world) column_gen: FxHashMap<ChunkPos, Arc<ColumnGen>>,
+    /// Columns queued for the (heavy, once-per-column) `ColumnGen` job.
+    pub(in crate::world) pending: FxHashMap<ChunkPos, Option<JobCancel>>,
+    /// Sections with an in-flight per-section gen job, so the streamer never submits a
+    /// section twice while it is being generated.
+    pub(in crate::world) pending_sections: FxHashSet<SectionPos>,
+    /// Count of `pending_sections` per XZ column. Lets settled-column slimming
+    /// ask "anything still pending in this column?" in O(1) instead of rebuilding
+    /// a column set from every pending section each ingest pump.
+    pub(in crate::world) pending_section_columns: FxHashMap<ChunkPos, u16>,
+    /// Cancellation handles for pending worker-generated sections. Disk-primary
+    /// requests are in `pending_sections` without an entry here.
+    pub(in crate::world) pending_section_jobs: FxHashMap<SectionPos, JobCancel>,
+    /// Saved (player-modified) sections read back from disk whose generated column has
+    /// not arrived yet — disk I/O usually beats noise-gen. Held here until the column
+    /// lands, then overlaid over the generated terrain (see `world::stream::poll`).
+    pub(in crate::world) pending_overlays: FxHashMap<SectionPos, super::stream::LoadedOverlay>,
+    /// Sections whose saved record has been REQUESTED from the save thread but not
+    /// answered yet. Until the answer lands (and any overlay applies) the section's
+    /// true content is in flight: the sim guard blocks mutation and the harvest skips
+    /// persisting it (see `world::sim_guard`).
+    pub(in crate::world) awaited_overlays: FxHashSet<SectionPos>,
+    /// Requested disk records that install as the section's PRIMARY content — no
+    /// gen job was submitted for them ("Optimize explored terrain"). A corrupt
+    /// answer falls back to generation; see `world::stream::submit_section_job`.
+    pub(in crate::world) disk_primary_sections: FxHashSet<SectionPos>,
+    /// Column-gen cache records awaiting a batched write: buffered so the
+    /// save thread merges many columns per region file rewrite instead of
+    /// read-modify-writing per column. Records are pure gen data — a crash
+    /// losing the buffer only costs a future regen.
+    pub(in crate::world) pending_colgen_records: Vec<crate::save::colgen::ColumnGenRecord>,
+    /// Chunk columns whose one-time worldgen herd actually spawned (see
+    /// `mob::populate`) — the fact that keeps the initial animal stock from
+    /// re-minting every session. Persisted in `level.dat`; BTreeSet so the
+    /// encoding iterates in one deterministic order. Mutated on the tick only.
+    pub(in crate::world) populated_columns: BTreeSet<ChunkPos>,
+}
+
+/// The SERVER's per-tick change log: what to ship to each session next
+/// batch. Captured only while `replication_capture` is on.
+pub(in crate::world) struct ReplicationLog {
+    /// Server-side replication log gate; ~zero cost while off (one branch at
+    /// the block-change choke point). See [`set_replication_capture`].
+    ///
+    /// [`set_replication_capture`]: Self::set_replication_capture
+    pub(in crate::world) replication_capture: bool,
+    /// This tick's coalesced block/water changes, latest state per cell —
+    /// drained by [`take_block_deltas`](Self::take_block_deltas).
+    pub(in crate::world) block_delta_log:
+        FxHashMap<crate::mathh::IVec3, crate::net::protocol::BlockDelta>,
+    /// This tick's coalesced per-cell mod KV changes, latest value per
+    /// `(pos, key)` — drained by
+    /// [`take_cell_kv_deltas`](Self::take_cell_kv_deltas). Captured behind
+    /// the same [`replication_capture`](Self::replication_capture) gate.
+    pub(in crate::world) cell_kv_delta_log:
+        FxHashMap<(crate::mathh::IVec3, String), Option<Vec<u8>>>,
+    /// ServerHeadless only: sections whose bake LANDED since the last
+    /// streaming pump — drained by [`take_light_ship_log`](Self::take_light_ship_log)
+    /// into per-connection `LightData` messages (filtered to each recipient's
+    /// sent set). A set, so several bakes in one window ship latest-wins.
+    pub(in crate::world) light_ship_log: FxHashSet<SectionPos>,
+    /// Monotonic revision of "which sections exist / are stream-final": bumped
+    /// on ingest, eviction, materialization, and in-flight-set changes. The
+    /// per-connection terrain sender keys its wanted-vs-sent rescan on this
+    /// (plus the anchor's quantized target), so a steady frame does no scan.
+    pub(in crate::world) terrain_revision: u64,
+}
+
+/// Per-world session state the SERVER owns: who is connected, their queued
+/// inputs, and the world rules their actions read.
+pub(in crate::world) struct SessionState {
+    /// Every connected player's movement intent this tick, decomposed into
+    /// its own yaw frame (see [`crate::player::PlayerInputSnapshot`]) —
+    /// published by the server before the tick stages so the `PlayerInput`
+    /// HostCall can answer from the world. Replaced wholesale each tick.
+    pub(in crate::world) player_inputs: Vec<crate::player::PlayerInputSnapshot>,
+    /// Every connected player's state snapshot this tick (see
+    /// [`crate::player::PlayerRosterSnapshot`]) — published beside the
+    /// inputs; the read model behind the `Players` HostCall. Replaced
+    /// wholesale each tick.
+    pub(in crate::world) player_roster: Vec<crate::player::PlayerRosterSnapshot>,
+    /// Keep the inventory on death instead of spilling it (per-world
+    /// `settings.json` rule). Session-fixed, set once at open.
+    pub(in crate::world) keep_inventory: bool,
+    /// The full day+night cycle length in ticks (per-world `settings.json`
+    /// "day length"). Session-fixed, set once at open BEFORE core systems
+    /// install — the day/night cycle captures it.
+    pub(in crate::world) day_cycle_ticks: u64,
+}
+
+/// Mod-owned world state: the block hooks packs registered, their key/value
+/// store, the disabled set, the stream-event queue they subscribe to, and the
+/// custom-shape bake cache their WASM fills.
+pub(in crate::world) struct ModWorldState {
+    /// Behavior hooks fired on mod-behavior blocks this tick (see
+    /// `block::behavior::wasm`), in fire order. Drained by the game right
+    /// after the world tick and dispatched to the owning mods; only blocks
+    /// whose rows declare a `mod_id:name` behavior ever enqueue here.
+    pub(in crate::world) mod_block_hooks: Vec<crate::block::behavior::ModBlockHook>,
+    /// Persistent mod world KV (`mod_id:key` → bytes) — the cross-mod interop
+    /// surface. BTreeMap so the save encoding (it
+    /// rides `level.dat`) iterates in one deterministic order. Mutated on the
+    /// tick only (mod HostCalls); restored at session open.
+    pub(in crate::world) mod_kv: BTreeMap<String, Vec<u8>>,
+    /// Mod pack ids DISABLED for this world (per-world `settings.json`; empty
+    /// = all enabled). Session-fixed, set once at open; the natural spawner
+    /// and the mod-set record consult it. The palette/mod-host gates take it
+    /// separately at session construction.
+    pub(in crate::world) disabled_mods: std::collections::BTreeSet<String>,
+    /// Section installs the per-frame streamer buffered for the tick-side event bus
+    /// (`section_generated` / `section_loaded`); drained by the next game tick.
+    pub(in crate::world) stream_events: Vec<super::stream::StreamEvent>,
+    /// Buffer gate, mirroring event-bus listener presence (set once per tick), so
+    /// streaming costs nothing while nothing listens.
+    pub(in crate::world) stream_events_enabled: bool,
+    /// Per-cell baked SIM collision boxes for custom shapes — the sim
+    /// bake cache the collision facet reads (a miss falls back to the row's
+    /// static boxes, the failure policy). NOT persisted; re-baked from the pack
+    /// WASM on load/edit. Boxes are content-interned to `'static` so
+    /// `collision_boxes_at` keeps its `&'static` return (bounded by the shape's
+    /// distinct configurations, not by cell count). See `world::custom_bake`.
+    pub(in crate::world) custom_bake: FxHashMap<crate::mathh::IVec3, &'static [crate::block::Aabb]>,
+    /// Custom-shape cells needing a (re)bake — placed/edited since the last bake
+    /// pump run. The host drains this, dispatches the shape's WASM bake, and
+    /// fills `custom_bake`; a cell not in either falls back to its static boxes.
+    pub(in crate::world) custom_bake_dirty: FxHashSet<crate::mathh::IVec3>,
+}
+
 pub struct World {
     pub seed: u32,
     /// Client/server role (see [`WorldRole`]); fixed at construction.
@@ -72,6 +292,19 @@ pub struct World {
     /// per bake — assembling those neighbourhoods was a multi-millisecond per-frame spike
     /// while streaming. Mutation is copy-on-write via [`Arc::make_mut`]: a setter clones a
     /// section's storage only while a bake still holds the old handle.
+    /// CLIENT-side terrain presentation. Dead weight on a headless server:
+    /// `queue_dirty_mesh` early-returns for `ServerHeadless`, so nothing here
+    /// is ever filled there. Grouped so that is VISIBLE rather than spread
+    /// across twenty fields the server carries for nothing.
+    pub(in crate::world) terrain: TerrainRenderState,
+    /// SERVER-side worldgen/streaming job tables; empty on a replica.
+    pub(in crate::world) gen: WorldgenJobs,
+    /// SERVER-side replication capture; inert on a replica.
+    pub(in crate::world) replication: ReplicationLog,
+    /// SERVER-side session roster + world rules.
+    pub(in crate::world) session: SessionState,
+    /// Mod-owned world state (hooks, KV, bakes).
+    pub(in crate::world) mods: ModWorldState,
     pub(super) sections: FxHashMap<SectionPos, Arc<Section>>,
     /// Per-column 2D data (biome, visible surface, direct-sky cover) shared by a
     /// vertical stack of sections. Cheap; ensured present whenever a section in
@@ -85,29 +318,6 @@ pub struct World {
     pub(super) column_payload_revisions: FxHashMap<ChunkPos, u64>,
     /// Store-wide source of unique column payload revision values.
     pub(super) column_revision_counter: u64,
-    /// One GPU-ready mesh per section.
-    pub(super) meshes: FxHashMap<SectionPos, ChunkMesh>,
-    /// XZ columns that currently have at least one CPU section mesh.
-    /// Mirrors `meshes` so renderer retention does not scan the vertical range
-    /// of every GPU column each frame.
-    pub(super) mesh_columns: FxHashSet<ChunkPos>,
-    /// Per-column bitset of meshed section `cy` values (bit `i` =
-    /// `SECTION_MIN_CY + i`). Kept in sync with `meshes` / `mesh_columns` so
-    /// packed-column consumers walk only the meshed stack, not the full
-    /// vertical world range.
-    pub(super) mesh_column_cys: FxHashMap<ChunkPos, u32>,
-    /// Per-column bitset of *loaded* section `cy` values. Maintained at every
-    /// section install/evict so planners (terrain send) iterate real stacks
-    /// instead of probing the full vertical world range per wanted column.
-    pub(super) section_column_cys: FxHashMap<ChunkPos, u32>,
-    /// Per-column bitset of loaded section `cy` values that hold at least one
-    /// RANDOM-TICKABLE cell — the random-tick scan's working set. A derived
-    /// index over `sections`: `random_tick_dirty` names the sections whose bit
-    /// may be stale (any `section_mut` handout, any install), and the scan
-    /// repairs those before it walks. Kept separate from
-    /// [`section_column_cys`](Self::section_column_cys) so an underground
-    /// stack of plain stone costs the scan nothing at all.
-    pub(super) section_column_rt: FxHashMap<ChunkPos, u32>,
     /// Sections whose [`section_column_rt`](Self::section_column_rt) bit may
     /// be stale. Bounded by the loaded section count (it is a set).
     pub(super) random_tick_dirty: FxHashSet<SectionPos>,
@@ -116,81 +326,10 @@ pub struct World {
     /// here because both askers — the mob brains and the mod ABI's
     /// `MobCanReach` — hold only `&World` when they ask.
     nav_probe_budget: crate::mob::ReachBudget,
-    /// Changes whenever a section mesh enters or leaves a packed GPU column.
-    /// The renderer uses it to coalesce consecutive sibling completions.
-    pub(super) mesh_upload_revisions: FxHashMap<ChunkPos, u64>,
-    /// XZ columns whose packed render buffer must be rebuilt from `meshes`.
-    /// Kept explicitly so the renderer does not scan every section mesh each frame.
-    pub(super) mesh_upload_dirty_columns: FxHashSet<ChunkPos>,
-    /// Uploaded columns scheduled to release their CPU mesh buffers once they have
-    /// been upload-quiet long enough (value = earliest release frame). The retained
-    /// CPU copy exists only so a column repack can re-pack sibling sections; a
-    /// settled column frees it and repacks force a remesh instead (`repack_forced`).
-    pub(super) mesh_release_after: FxHashMap<ChunkPos, u64>,
-    /// Released sections whose column needs a GPU repack: their remesh must not be
-    /// skipped by deep-visibility parking — the packed column buffer cannot be
-    /// rebuilt without their geometry.
-    pub(super) repack_forced: FxHashSet<SectionPos>,
-    /// Monotonic mesh-pump frame counter (drives `mesh_release_after`).
-    pub(super) mesh_pump_frame: u64,
     pub worker: WorkerPool,
-    /// Columns whose shared 2D gen data (`ColumnGen`) has landed: the source for
-    /// submitting per-section jobs and sizing each column's vertical load window.
-    /// Present for every loaded column; dropped when the column unloads.
-    pub(super) column_gen: FxHashMap<ChunkPos, Arc<ColumnGen>>,
-    /// Columns queued for the (heavy, once-per-column) `ColumnGen` job.
-    pub(super) pending: FxHashMap<ChunkPos, Option<JobCancel>>,
-    /// Sections with an in-flight per-section gen job, so the streamer never submits a
-    /// section twice while it is being generated.
-    pub(super) pending_sections: FxHashSet<SectionPos>,
-    /// Count of `pending_sections` per XZ column. Lets settled-column slimming
-    /// ask "anything still pending in this column?" in O(1) instead of rebuilding
-    /// a column set from every pending section each ingest pump.
-    pub(super) pending_section_columns: FxHashMap<ChunkPos, u16>,
-    /// Cancellation handles for pending worker-generated sections. Disk-primary
-    /// requests are in `pending_sections` without an entry here.
-    pub(super) pending_section_jobs: FxHashMap<SectionPos, JobCancel>,
-    /// Saved (player-modified) sections read back from disk whose generated column has
-    /// not arrived yet — disk I/O usually beats noise-gen. Held here until the column
-    /// lands, then overlaid over the generated terrain (see `world::stream::poll`).
-    pub(super) pending_overlays: FxHashMap<SectionPos, super::stream::LoadedOverlay>,
-    /// Sections whose saved record has been REQUESTED from the save thread but not
-    /// answered yet. Until the answer lands (and any overlay applies) the section's
-    /// true content is in flight: the sim guard blocks mutation and the harvest skips
-    /// persisting it (see `world::sim_guard`).
-    pub(super) awaited_overlays: FxHashSet<SectionPos>,
-    /// Requested disk records that install as the section's PRIMARY content — no
-    /// gen job was submitted for them ("Optimize explored terrain"). A corrupt
-    /// answer falls back to generation; see `world::stream::submit_section_job`.
-    pub(super) disk_primary_sections: FxHashSet<SectionPos>,
     pub render_dist: i32,
     pub(super) lighting_revision: u64,
     pub(super) light_bakes: LightBakeQueue,
-    /// Asynchronous reconciliation light -> mesh bundles. Initial prediction
-    /// runs the same complete invalidation footprint synchronously.
-    pub(super) prediction_terrain: super::prediction_render::PredictionTerrainQueue,
-    /// Ordinary off-thread section meshing: dirty sections are submitted as owned
-    /// snapshots and finished meshes drained back. Local prediction deliberately
-    /// invokes the same builder synchronously.
-    pub(super) mesh_pool: super::mesh_pool::MeshPool,
-    pub(super) mesh_jobs_in_flight: usize,
-    /// Latest mesh job per section. Re-dirtying cancels queued stale work;
-    /// completion tokens prevent an older result from clearing a newer handle.
-    pub(super) mesh_job_cancels: FxHashMap<SectionPos, JobCancel>,
-    pub(super) dirty_meshes: DirtyMeshQueue,
-    /// Loaded sections wholly below their column's surface retention band — only
-    /// visible through cave openings (see `world::visibility`).
-    pub(super) deep_sections: FxHashSet<SectionPos>,
-    /// The deep sections the last visibility refresh could reach from the visible
-    /// region. Deep sections outside this set park instead of meshing.
-    pub(super) visible_deep: FxHashSet<SectionPos>,
-    /// Dirty deep sections parked because nothing can see them. Re-queued by the
-    /// visibility refresh when they become reachable (or the player ring arrives).
-    pub(super) hidden_parked: FxHashSet<SectionPos>,
-    /// Dirty sections whose six exact loaded neighbour planes currently seal them
-    /// from outside sightlines. Kept separate from deep visibility so a load-target
-    /// move can wake them when a player may already be inside.
-    pub(super) sealed_parked: FxHashSet<SectionPos>,
     /// Sections currently holding at least one chest, door, or furnace, so the
     /// per-frame chest/door collection and the furnace tick visit only those
     /// sections instead of scanning every loaded one (mirrors `mesh_columns`).
@@ -203,12 +342,6 @@ pub struct World {
     /// from `block_entity_sections` so torch-heavy scenes do not make chest/door/furnace
     /// collection visit unrelated sections.
     pub(super) particle_emitter_sections: FxHashSet<SectionPos>,
-    /// Raised by ingest / edits / load-target moves; consumed by the mesh pump,
-    /// which re-runs the deep-visibility BFS before submitting work.
-    pub(super) vis_dirty: bool,
-    /// Dirty meshes parked while async light bakes their sampling neighbourhood.
-    /// They re-enter `dirty_meshes` only once the 3×3×3 light dependency set is clean.
-    pub(super) light_blocked_meshes: FxHashSet<SectionPos>,
     /// Freshly streamed sections that have never produced light or a mesh, parked
     /// until their generation neighbourhood settles (`gen_neighborhood_settled`) so
     /// their FIRST bake and mesh run once, not once per landing neighbour. Without
@@ -244,24 +377,6 @@ pub struct World {
     /// Combined/server worlds read the same facts from `column_gen`.
     pub(super) column_biome_halos: FxHashMap<ChunkPos, Arc<[u8]>>,
     pub(super) column_deep_band_los: FxHashMap<ChunkPos, i32>,
-    /// Server-side replication log gate; ~zero cost while off (one branch at
-    /// the block-change choke point). See [`set_replication_capture`].
-    ///
-    /// [`set_replication_capture`]: Self::set_replication_capture
-    pub(super) replication_capture: bool,
-    /// This tick's coalesced block/water changes, latest state per cell —
-    /// drained by [`take_block_deltas`](Self::take_block_deltas).
-    pub(super) block_delta_log: FxHashMap<crate::mathh::IVec3, crate::net::protocol::BlockDelta>,
-    /// This tick's coalesced per-cell mod KV changes, latest value per
-    /// `(pos, key)` — drained by
-    /// [`take_cell_kv_deltas`](Self::take_cell_kv_deltas). Captured behind
-    /// the same [`replication_capture`](Self::replication_capture) gate.
-    pub(super) cell_kv_delta_log: FxHashMap<(crate::mathh::IVec3, String), Option<Vec<u8>>>,
-    /// Monotonic revision of "which sections exist / are stream-final": bumped
-    /// on ingest, eviction, materialization, and in-flight-set changes. The
-    /// per-connection terrain sender keys its wanted-vs-sent rescan on this
-    /// (plus the anchor's quantized target), so a steady frame does no scan.
-    pub(super) terrain_revision: u64,
     /// Sections whose light went dirty since the last
     /// [`pump_light_bakes`](Self::pump_light_bakes) drain: the mark choke
     /// point feeds this set and the light pump requests from it. This is the
@@ -272,11 +387,6 @@ pub struct World {
     /// `request_light_dependencies`; the pending-bake dedup makes that free.
     /// Bounded by edits per tick.
     pub(super) relight_demand: FxHashSet<SectionPos>,
-    /// ServerHeadless only: sections whose bake LANDED since the last
-    /// streaming pump — drained by [`take_light_ship_log`](Self::take_light_ship_log)
-    /// into per-connection `LightData` messages (filtered to each recipient's
-    /// sent set). A set, so several bakes in one window ship latest-wins.
-    pub(super) light_ship_log: FxHashSet<SectionPos>,
     /// Sections whose bake landed since the last save flush. Light changes
     /// don't set `modified` (they're derived, not player content), but a
     /// section whose on-disk record already exists must re-persist after a
@@ -296,11 +406,6 @@ pub struct World {
     pub(super) sim: TickState,
     /// On-disk save handle (`None` if saving is disabled / failed to open).
     pub(super) save: Option<WorldSave>,
-    /// Column-gen cache records awaiting a batched write: buffered so the
-    /// save thread merges many columns per region file rewrite instead of
-    /// read-modify-writing per column. Records are pure gen data — a crash
-    /// losing the buffer only costs a future regen.
-    pub(super) pending_colgen_records: Vec<crate::save::colgen::ColumnGenRecord>,
     /// Active dropped item entities resting in currently-loaded sections.
     pub(super) dropped_items: DroppedItems,
     /// Active mobs in currently-loaded sections.
@@ -309,64 +414,10 @@ pub struct World {
     /// mount HostCalls reach it through `SimCtx`; the server's riding pass
     /// reconciles sessions against it each tick. Never persisted.
     pub(super) riding: crate::mob::riding::Riding,
-    /// Every connected player's movement intent this tick, decomposed into
-    /// its own yaw frame (see [`crate::player::PlayerInputSnapshot`]) —
-    /// published by the server before the tick stages so the `PlayerInput`
-    /// HostCall can answer from the world. Replaced wholesale each tick.
-    pub(super) player_inputs: Vec<crate::player::PlayerInputSnapshot>,
-    /// Every connected player's state snapshot this tick (see
-    /// [`crate::player::PlayerRosterSnapshot`]) — published beside the
-    /// inputs; the read model behind the `Players` HostCall. Replaced
-    /// wholesale each tick.
-    pub(super) player_roster: Vec<crate::player::PlayerRosterSnapshot>,
-    /// Behavior hooks fired on mod-behavior blocks this tick (see
-    /// `block::behavior::wasm`), in fire order. Drained by the game right
-    /// after the world tick and dispatched to the owning mods; only blocks
-    /// whose rows declare a `mod_id:name` behavior ever enqueue here.
-    pub(super) mod_block_hooks: Vec<crate::block::behavior::ModBlockHook>,
-    /// Section installs the per-frame streamer buffered for the tick-side event bus
-    /// (`section_generated` / `section_loaded`); drained by the next game tick.
-    pub(super) stream_events: Vec<super::stream::StreamEvent>,
-    /// Buffer gate, mirroring event-bus listener presence (set once per tick), so
-    /// streaming costs nothing while nothing listens.
-    pub(super) stream_events_enabled: bool,
     /// Sim-owned visual shader parameters.
     /// Mutated on the tick only (mod HostCalls); NOT persisted — resets to
     /// defaults on world open, the owning mod re-applies it (mod world KV).
     pub(super) environment: WorldEnvironment,
-    /// Persistent mod world KV (`mod_id:key` → bytes) — the cross-mod interop
-    /// surface. BTreeMap so the save encoding (it
-    /// rides `level.dat`) iterates in one deterministic order. Mutated on the
-    /// tick only (mod HostCalls); restored at session open.
-    pub(super) mod_kv: BTreeMap<String, Vec<u8>>,
-    /// Mod pack ids DISABLED for this world (per-world `settings.json`; empty
-    /// = all enabled). Session-fixed, set once at open; the natural spawner
-    /// and the mod-set record consult it. The palette/mod-host gates take it
-    /// separately at session construction.
-    pub(super) disabled_mods: std::collections::BTreeSet<String>,
-    /// Keep the inventory on death instead of spilling it (per-world
-    /// `settings.json` rule). Session-fixed, set once at open.
-    pub(super) keep_inventory: bool,
-    /// The full day+night cycle length in ticks (per-world `settings.json`
-    /// "day length"). Session-fixed, set once at open BEFORE core systems
-    /// install — the day/night cycle captures it.
-    pub(super) day_cycle_ticks: u64,
-    /// Chunk columns whose one-time worldgen herd actually spawned (see
-    /// `mob::populate`) — the fact that keeps the initial animal stock from
-    /// re-minting every session. Persisted in `level.dat`; BTreeSet so the
-    /// encoding iterates in one deterministic order. Mutated on the tick only.
-    pub(super) populated_columns: BTreeSet<ChunkPos>,
-    /// Per-cell baked SIM collision boxes for Layer-3 custom shapes — the sim
-    /// bake cache the collision facet reads (a miss falls back to the row's
-    /// static boxes, the failure policy). NOT persisted; re-baked from the pack
-    /// WASM on load/edit. Boxes are content-interned to `'static` so
-    /// `collision_boxes_at` keeps its `&'static` return (bounded by the shape's
-    /// distinct configurations, not by cell count). See `world::custom_bake`.
-    pub(super) custom_bake: FxHashMap<crate::mathh::IVec3, &'static [crate::block::Aabb]>,
-    /// Custom-shape cells needing a (re)bake — placed/edited since the last bake
-    /// pump run. The host drains this, dispatches the shape's WASM bake, and
-    /// fills `custom_bake`; a cell not in either falls back to its static boxes.
-    pub(super) custom_bake_dirty: FxHashSet<crate::mathh::IVec3>,
 }
 
 impl World {
@@ -393,47 +444,77 @@ impl World {
         Self {
             seed,
             role,
+            terrain: TerrainRenderState {
+                meshes: FxHashMap::default(),
+                mesh_columns: FxHashSet::default(),
+                mesh_column_cys: FxHashMap::default(),
+                section_column_cys: FxHashMap::default(),
+                section_column_rt: FxHashMap::default(),
+                mesh_upload_revisions: FxHashMap::default(),
+                mesh_upload_dirty_columns: FxHashSet::default(),
+                mesh_release_after: FxHashMap::default(),
+                repack_forced: FxHashSet::default(),
+                mesh_pump_frame: 0,
+                prediction_terrain: super::prediction_render::PredictionTerrainQueue::new(
+                    jobs.clone(),
+                ),
+                mesh_pool: super::mesh_pool::MeshPool::new(jobs.clone()),
+                mesh_jobs_in_flight: 0,
+                mesh_job_cancels: FxHashMap::default(),
+                dirty_meshes: DirtyMeshQueue::default(),
+                deep_sections: FxHashSet::default(),
+                visible_deep: FxHashSet::default(),
+                hidden_parked: FxHashSet::default(),
+                sealed_parked: FxHashSet::default(),
+                vis_dirty: false,
+                light_blocked_meshes: FxHashSet::default(),
+            },
+            gen: WorldgenJobs {
+                column_gen: FxHashMap::default(),
+                pending: FxHashMap::default(),
+                pending_sections: FxHashSet::default(),
+                pending_section_columns: FxHashMap::default(),
+                pending_section_jobs: FxHashMap::default(),
+                pending_overlays: FxHashMap::default(),
+                awaited_overlays: FxHashSet::default(),
+                disk_primary_sections: FxHashSet::default(),
+                pending_colgen_records: Vec::new(),
+                populated_columns: BTreeSet::new(),
+            },
+            replication: ReplicationLog {
+                replication_capture: false,
+                block_delta_log: FxHashMap::default(),
+                cell_kv_delta_log: FxHashMap::default(),
+                terrain_revision: 0,
+                light_ship_log: FxHashSet::default(),
+            },
+            session: SessionState {
+                player_inputs: Vec::new(),
+                player_roster: Vec::new(),
+                keep_inventory: false,
+                day_cycle_ticks: crate::server::daynight::DEFAULT_CYCLE_TICKS,
+            },
+            mods: ModWorldState {
+                mod_block_hooks: Vec::new(),
+                stream_events: Vec::new(),
+                stream_events_enabled: false,
+                mod_kv: BTreeMap::new(),
+                disabled_mods: std::collections::BTreeSet::new(),
+                custom_bake: FxHashMap::default(),
+                custom_bake_dirty: FxHashSet::default(),
+            },
             sections: FxHashMap::default(),
             columns: FxHashMap::default(),
             column_payload_revisions: FxHashMap::default(),
             column_revision_counter: 0,
-            meshes: FxHashMap::default(),
-            mesh_columns: FxHashSet::default(),
-            mesh_column_cys: FxHashMap::default(),
-            section_column_cys: FxHashMap::default(),
-            section_column_rt: FxHashMap::default(),
             random_tick_dirty: FxHashSet::default(),
             nav_probe_budget: crate::mob::ReachBudget::default(),
-            mesh_upload_revisions: FxHashMap::default(),
-            mesh_upload_dirty_columns: FxHashSet::default(),
-            mesh_release_after: FxHashMap::default(),
-            repack_forced: FxHashSet::default(),
-            mesh_pump_frame: 0,
             worker: WorkerPool::new(jobs.clone()),
-            column_gen: FxHashMap::default(),
-            pending: FxHashMap::default(),
-            pending_sections: FxHashSet::default(),
-            pending_section_columns: FxHashMap::default(),
-            pending_section_jobs: FxHashMap::default(),
-            pending_overlays: FxHashMap::default(),
-            awaited_overlays: FxHashSet::default(),
-            disk_primary_sections: FxHashSet::default(),
             render_dist,
             lighting_revision: 0,
             light_bakes: LightBakeQueue::new(jobs.clone()),
-            prediction_terrain: super::prediction_render::PredictionTerrainQueue::new(jobs.clone()),
-            mesh_pool: super::mesh_pool::MeshPool::new(jobs),
-            mesh_jobs_in_flight: 0,
-            mesh_job_cancels: FxHashMap::default(),
-            dirty_meshes: DirtyMeshQueue::default(),
-            deep_sections: FxHashSet::default(),
-            visible_deep: FxHashSet::default(),
-            hidden_parked: FxHashSet::default(),
-            sealed_parked: FxHashSet::default(),
             block_entity_sections: FxHashSet::default(),
             particle_emitter_sections: FxHashSet::default(),
-            vis_dirty: false,
-            light_blocked_meshes: FxHashSet::default(),
             light_deferred: FxHashSet::default(),
             deferred_recheck_needed: false,
             deferred_rechecks: FxHashSet::default(),
@@ -443,68 +524,50 @@ impl World {
             column_summaries: FxHashMap::default(),
             column_biome_halos: FxHashMap::default(),
             column_deep_band_los: FxHashMap::default(),
-            replication_capture: false,
-            block_delta_log: FxHashMap::default(),
-            cell_kv_delta_log: FxHashMap::default(),
-            terrain_revision: 0,
             relight_demand: FxHashSet::default(),
-            light_ship_log: FxHashSet::default(),
             relit_since_persist: FxHashSet::default(),
             light_edited_since_persist: FxHashSet::default(),
             sim: TickState::new(seed),
             save: None,
-            pending_colgen_records: Vec::new(),
             dropped_items: DroppedItems::default(),
             mobs: Mobs::new(seed as u64),
             riding: Default::default(),
-            player_inputs: Vec::new(),
-            player_roster: Vec::new(),
-            mod_block_hooks: Vec::new(),
-            stream_events: Vec::new(),
-            stream_events_enabled: false,
             environment: WorldEnvironment::default(),
-            mod_kv: BTreeMap::new(),
-            disabled_mods: std::collections::BTreeSet::new(),
-            keep_inventory: false,
-            day_cycle_ticks: crate::server::daynight::DEFAULT_CYCLE_TICKS,
-            populated_columns: BTreeSet::new(),
-            custom_bake: FxHashMap::default(),
-            custom_bake_dirty: FxHashSet::default(),
         }
     }
 
     /// Mod pack ids disabled for this world (per-world `settings.json`).
     #[inline]
     pub fn disabled_mods(&self) -> &std::collections::BTreeSet<String> {
-        &self.disabled_mods
+        &self.mods.disabled_mods
     }
 
     /// Install the world's disabled-mod set — once, at session open.
     pub fn set_disabled_mods(&mut self, disabled: std::collections::BTreeSet<String>) {
-        self.disabled_mods = disabled;
+        self.mods.disabled_mods = disabled;
     }
 
     /// Keep the inventory on death (per-world `settings.json` rule).
     #[inline]
     pub fn keep_inventory(&self) -> bool {
-        self.keep_inventory
+        self.session.keep_inventory
     }
 
     /// Install the keep-inventory rule — once, at session open.
     pub fn set_keep_inventory(&mut self, keep: bool) {
-        self.keep_inventory = keep;
+        self.session.keep_inventory = keep;
     }
 
     /// The full day+night cycle length in ticks (per-world "day length").
     #[inline]
     pub fn day_cycle_ticks(&self) -> u64 {
-        self.day_cycle_ticks
+        self.session.day_cycle_ticks
     }
 
     /// Install the world's cycle length — once, at session open, BEFORE core
     /// systems install (the day/night cycle captures it).
     pub fn set_day_cycle_ticks(&mut self, ticks: u64) {
-        self.day_cycle_ticks = ticks.max(1);
+        self.session.day_cycle_ticks = ticks.max(1);
     }
 
     /// The sim-owned visual shader parameter state (see [`WorldEnvironment`]).
@@ -534,29 +597,33 @@ impl World {
             return;
         }
         self.render_dist = chunks;
-        self.vis_dirty = true;
+        self.terrain.vis_dirty = true;
     }
 
     /// Replace the published per-player input snapshots for this tick (see
     /// [`crate::player::PlayerInputSnapshot`]).
     pub fn set_player_inputs(&mut self, inputs: Vec<crate::player::PlayerInputSnapshot>) {
-        self.player_inputs = inputs;
+        self.session.player_inputs = inputs;
     }
 
     /// The published input snapshot for `player`, if connected this tick.
     pub fn player_input(&self, player: u8) -> Option<crate::player::PlayerInputSnapshot> {
-        self.player_inputs.iter().find(|i| i.id == player).copied()
+        self.session
+            .player_inputs
+            .iter()
+            .find(|i| i.id == player)
+            .copied()
     }
 
     /// Replace the published per-player roster for this tick (see
     /// [`crate::player::PlayerRosterSnapshot`]).
     pub fn set_player_roster(&mut self, roster: Vec<crate::player::PlayerRosterSnapshot>) {
-        self.player_roster = roster;
+        self.session.player_roster = roster;
     }
 
     /// Every connected player's published snapshot this tick, session-id order.
     pub fn player_roster(&self) -> &[crate::player::PlayerRosterSnapshot] {
-        &self.player_roster
+        &self.session.player_roster
     }
 
     #[inline]
@@ -588,6 +655,7 @@ impl World {
                 return false;
             }
             let section = self
+                .gen
                 .column_gen
                 .get(&pos.chunk_pos())
                 .filter(|col| col.section_summary(pos.cy) != SectionSummary::Empty)
@@ -608,13 +676,13 @@ impl World {
     /// See [`terrain_revision`](Self::terrain_revision) (field docs).
     #[inline]
     pub(crate) fn terrain_revision(&self) -> u64 {
-        self.terrain_revision
+        self.replication.terrain_revision
     }
 
     /// See [`terrain_revision`](Self::terrain_revision) (field docs).
     #[inline]
     pub(super) fn bump_terrain_revision(&mut self) {
-        self.terrain_revision = self.terrain_revision.wrapping_add(1);
+        self.replication.terrain_revision = self.replication.terrain_revision.wrapping_add(1);
     }
 
     /// [`materialize_section`](Self::materialize_section) for the section owning world
@@ -748,7 +816,7 @@ impl World {
         if self.saved_section_contains(pos) {
             return SectionSummary::Unknown;
         }
-        if let Some(col) = self.column_gen.get(&pos.chunk_pos()) {
+        if let Some(col) = self.gen.column_gen.get(&pos.chunk_pos()) {
             return col.section_summary(pos.cy);
         }
         // Replica: an absent section answers from the server's ColumnPayload
@@ -795,12 +863,12 @@ impl World {
     /// Queue a mod-behavior hook for post-tick dispatch (called by
     /// `block::behavior::wasm`'s hooks, on the tick only).
     pub fn queue_mod_block_hook(&mut self, hook: crate::block::behavior::ModBlockHook) {
-        self.mod_block_hooks.push(hook);
+        self.mods.mod_block_hooks.push(hook);
     }
 
     /// Drain the mod-behavior hooks fired this tick, in fire order.
     pub fn take_mod_block_hooks(&mut self) -> Vec<crate::block::behavior::ModBlockHook> {
-        std::mem::take(&mut self.mod_block_hooks)
+        std::mem::take(&mut self.mods.mod_block_hooks)
     }
 
     /// All section coordinates of column `(cx,cz)` in the world vertical range.

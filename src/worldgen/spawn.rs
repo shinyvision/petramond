@@ -33,7 +33,7 @@ use crate::mathh::IVec3;
 
 use super::density::surface::SurfaceDensitySystem;
 use super::feature::cached_feature_region;
-use super::noise::height::CaveField;
+use super::noise::cave_field::CaveField;
 
 /// Radius (blocks) of the disk a spawn is drawn from, around the origin (or the
 /// nearest coast when the origin is open ocean).

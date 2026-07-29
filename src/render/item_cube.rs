@@ -40,7 +40,7 @@ use super::foliage_tint::{self, FaceMaterial};
 use super::lighting::{self, DynLight};
 use crate::atlas::Tile;
 use crate::block::Block;
-use crate::block_state::{HeldBlockState, LogAxis, SlabState, StairState};
+use crate::block_state::{HeldBlockState, LogAxis};
 use crate::facing::Facing;
 use crate::mesh::face::Face;
 use crate::mesh::{pack_cell_uv, pack_tint, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT};
@@ -472,68 +472,40 @@ pub(super) fn push_block_item_cube_lit_with_state(
     size: f32,
     light: DynLight,
     // Only the depthless icon pass needs a back-to-front painter sort of a
-    // custom shape's self-occluding boxes; the depth-tested hand/dropped forms
+    // shape's self-occluding boxes; the depth-tested hand/dropped forms
     // pass `false`.
     sort_for_icon: bool,
 ) {
-    use crate::block::ShapeFamily;
     let faces = block_icon_faces_with_state(block, state);
-    if block.shape_family() == ShapeFamily::Stair {
-        let stair = match state {
-            HeldBlockState::Stair(state) => state,
-            _ => StairState::new(crate::facing::Facing::South, Default::default()),
-        };
-        push_stair_item_lit(verts, indices, faces, stair, origin, size, light);
-    } else if block.shape_family() == ShapeFamily::Slab {
-        let slab = match state {
-            HeldBlockState::Slab(state) => crate::slab::normalize_state(block, state),
-            _ => crate::slab::default_state(block),
-        };
-        push_slab_item_lit(verts, indices, slab, origin, size, light);
-    } else if block.shape_family() == ShapeFamily::Fence {
-        push_fence_item_lit(verts, indices, block, faces, origin, size, light);
-    } else if block.is_log() {
-        let axis = match state {
-            HeldBlockState::Log(axis) => axis,
-            _ => LogAxis::Y,
-        };
-        push_log_cube_faces_lit(verts, indices, faces, axis, origin, size, light);
-    } else if block.shape_family() == ShapeFamily::Custom {
-        // A Layer-3 custom shape's item is its own baked item geometry
-        // (`BakeShapeItem`, cached at client-mod load): each cell-local box
-        // drawn as a textured cuboid of the block's tiles. A cache miss (no
-        // client bake / trapped / empty) falls back to the plain cube, so the
-        // item is never invisible.
-        match crate::render::item_shape_bake::item_bake(block.id()) {
-            Some(boxes) if !boxes.is_empty() => {
-                let order = icon_painter_order(&boxes, |b| b, sort_for_icon);
-                // Each box face uses CELL-LOCAL UVs (`push_cell_local_face`, the
-                // stair-item path), so the block's tiles map carved-from-the-block
-                // — identical to the in-world mesh — instead of a full tile
-                // stretched onto every face by `push_box_faces_lit`.
-                for b in order {
-                    for (i, face) in ALL_FACES.into_iter().enumerate() {
-                        push_cell_local_face(
-                            verts, indices, faces[i], origin, size, b.min, b.max, face, light,
-                        );
-                    }
+    // A WASM-baked custom shape's item is its own baked geometry, cached at
+    // client-mod load. Asked FIRST and by block id, so no family is named: a
+    // block with no bake simply has none.
+    if let Some(boxes) = crate::render::item_shape_bake::item_bake(block.id()) {
+        if !boxes.is_empty() {
+            for b in icon_painter_order(&boxes, |b| b, sort_for_icon) {
+                for (i, face) in ALL_FACES.into_iter().enumerate() {
+                    push_cell_local_face(
+                        verts, indices, faces[i], origin, size, b.min, b.max, face, light,
+                    );
                 }
             }
-            _ => push_cube_faces_lit(verts, indices, faces, origin, size, light),
+            return;
         }
-    } else if let Some(set) = block.shape_kind_def().params.box_set() {
-        // A static box set's item IS its boxes, carved from the block's tiles
-        // exactly as the placed shape is — one geometry source for the world
-        // mesh, the icon, the hand and the drop. Faces the shape never emits
-        // are skipped here too, so a cactus icon shows no rim.
-        //
-        // A shape with a FRONT draws half-turned: the authored front is `-Z`
-        // (the engine-wide convention, shared with model blocks) and the iso
-        // icon presents `+Y`/`-X`/`+Z`, so the authored form would show the
-        // viewer nothing but its back. This is the same correction a `.bbmodel`
-        // pack writes as a 180° yaw in its `gui` display transform.
-        let turns = if block.directional_view() { 2 } else { 0 };
-        for b in icon_painter_order(set.boxes(turns, 0), |b| &b.aabb, sort_for_icon) {
+    }
+    // Otherwise the SHAPE owns its item form: stair steps, slab layers (each
+    // in its own material), a fence's authored two-post segment, a static box
+    // set's boxes. One loop; the renderer names no family.
+    let k = block.shape_kind_def();
+    let mut boxes = Vec::new();
+    k.render.item_boxes(&k.params, block, state, &mut boxes);
+    if !boxes.is_empty() {
+        for b in icon_painter_order(&boxes, |b| &b.aabb, sort_for_icon) {
+            // A box may draw in another material than the item's own block —
+            // a stacked two-tone slab shows both layers.
+            let box_faces = match b.material {
+                Some(mat) => block_icon_faces_with_state(mat, HeldBlockState::None),
+                None => faces,
+            };
             for (i, face) in ALL_FACES.into_iter().enumerate() {
                 if !b.faces[i] {
                     continue;
@@ -541,137 +513,30 @@ pub(super) fn push_block_item_cube_lit_with_state(
                 push_cell_local_face_turned(
                     verts,
                     indices,
-                    b.tiles[i].unwrap_or(faces[i]),
+                    b.tiles[i].unwrap_or(box_faces[i]),
                     origin,
                     size,
                     b.aabb.min,
                     b.aabb.max,
                     face,
                     light,
-                    // The face's TOTAL turn, the same rule the chunk mesher
-                    // applies. The item always draws form 0, whose art is all
-                    // in the shape's own frame, so this is an identity today —
-                    // stated anyway so the two paths cannot diverge if the item
-                    // ever draws a composed form.
-                    crate::block::face_uv_turns(i, (turns + b.art_turns[i]) & 3),
+                    b.uv_turns[i],
                 );
             }
         }
-    } else {
-        push_cube_faces_lit(verts, indices, faces, origin, size, light);
+        return;
     }
-}
-
-fn push_slab_item_lit(
-    verts: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    state: SlabState,
-    origin: Vec3,
-    size: f32,
-    light: DynLight,
-) {
-    for (slot, block) in crate::slab::layer_slots(state) {
-        let faces = block_icon_faces_with_state(block, HeldBlockState::None);
-        for face in Face::ALL {
-            let (quads, n) = crate::mesh::slab::layer_quads(state, slot, face);
-            for &(min, max) in quads.iter().take(n) {
-                push_cell_local_face(
-                    verts,
-                    indices,
-                    faces[face as usize],
-                    origin,
-                    size,
-                    min,
-                    max,
-                    face,
-                    light,
-                );
-            }
-        }
+    // A log's axis is a BLOCK property, not a shape one — its cube just
+    // rotates its side tiles.
+    if block.is_log() {
+        let axis = match state {
+            HeldBlockState::Log(axis) => axis,
+            _ => LogAxis::Y,
+        };
+        push_log_cube_faces_lit(verts, indices, faces, axis, origin, size, light);
+        return;
     }
-}
-
-/// A fence item draws as a complete fence segment — two posts joined by the
-/// two rails from `crate::fence`'s item boxes — with cell-local UVs sampling
-/// the planks tile, so the icon / hand / drop all read as the placed shape. The
-/// post/rail extents come from the shape's own connection params, so a modded
-/// wall's item matches its placed thickness.
-fn push_fence_item_lit(
-    verts: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    block: Block,
-    faces: [Tile; 6],
-    origin: Vec3,
-    size: f32,
-    light: DynLight,
-) {
-    let (post_lo, post_hi) = block
-        .shape_kind_def()
-        .params
-        .connection()
-        .map(|c| (c.post_lo, c.post_hi))
-        .unwrap_or((crate::fence::POST_LO, crate::fence::POST_HI));
-    for post in crate::fence::item_posts(post_lo, post_hi) {
-        for face in Face::ALL {
-            push_cell_local_face(
-                verts,
-                indices,
-                faces[face as usize],
-                origin,
-                size,
-                post.min,
-                post.max,
-                face,
-                light,
-            );
-        }
-    }
-    // The rail ends butt against the post faces, so only the long faces draw.
-    for rail in crate::fence::item_rails(post_lo, post_hi) {
-        for face in [Face::NegY, Face::PosY, Face::NegZ, Face::PosZ] {
-            push_cell_local_face(
-                verts,
-                indices,
-                faces[face as usize],
-                origin,
-                size,
-                rail.min,
-                rail.max,
-                face,
-                light,
-            );
-        }
-    }
-}
-
-fn push_stair_item_lit(
-    verts: &mut Vec<Vertex>,
-    indices: &mut Vec<u32>,
-    faces: [Tile; 6],
-    state: StairState,
-    origin: Vec3,
-    size: f32,
-    light: DynLight,
-) {
-    let shape = crate::stair::shape(state);
-    for face in Face::ALL {
-        for outer in [true, false] {
-            let (quads, n) = crate::mesh::stair::plane_quads(shape, face, outer);
-            for &(min, max) in quads.iter().take(n) {
-                push_cell_local_face(
-                    verts,
-                    indices,
-                    faces[face as usize],
-                    origin,
-                    size,
-                    min,
-                    max,
-                    face,
-                    light,
-                );
-            }
-        }
-    }
+    push_cube_faces_lit(verts, indices, faces, origin, size, light);
 }
 
 /// One `face` of the cell-local box `[min, max]` scaled into `[origin, origin +

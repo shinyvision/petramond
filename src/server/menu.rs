@@ -11,11 +11,11 @@
 use crate::controls::PointerButton;
 use crate::crafting::CraftingStation;
 use crate::events::{PostEvent, SimCtx};
-use crate::gui::{ChestView, ContainerView, FurnaceView, GuiStateMap, MenuSlot};
+use crate::gui::{ContainerView, GuiStateMap, MenuSlot};
 use crate::inventory::Inventory;
 use crate::item::ItemStack;
 use crate::mathh::IVec3;
-use crate::net::protocol::{ItemSlotWire, MenuSyncMsg, MenuTargetWire};
+use crate::net::protocol::{GuiValueWire, ItemSlotWire, MenuSyncMsg, MenuTargetWire};
 
 use super::game::ServerGame;
 use crate::game::container::{ContainerTarget, CraftMenuFailure};
@@ -30,8 +30,6 @@ use crate::server::player::PendingMenuAction;
 pub struct MenuReadModel<'a> {
     pub inventory: &'a Inventory,
     pub craft_output: Option<ItemStack>,
-    pub furnace: Option<FurnaceView>,
-    pub chest: Option<ChestView>,
     /// The open mod GUI's state map (a shared snapshot), or `None` when the
     /// open session is not a mod GUI.
     pub gui_state: Option<std::sync::Arc<GuiStateMap>>,
@@ -217,7 +215,6 @@ impl ServerGame {
         pos: Option<IVec3>,
         events: &mut TickEvents,
     ) -> bool {
-        use crate::gui::GuiKind;
         // Any registered crafting station — the engine pair or a pack
         // workbench kind — opens the ordinary crafting session, never a mod
         // GUI session.
@@ -225,6 +222,7 @@ impl ServerGame {
             self.open_crafting_for(s, station);
             return true;
         }
+        use crate::gui::GuiKind;
         match kind {
             GuiKind::Furnace => {
                 let Some(pos) = pos else { return false };
@@ -432,45 +430,37 @@ impl ServerGame {
     /// Session `s`'s menu view as the wire message, with `gui_state` held
     /// `None` (the caller attaches the map only when its `Arc` changed).
     pub(super) fn build_menu_sync_base(&self, s: usize) -> MenuSyncMsg {
-        use crate::gui::GuiKind;
         let sess = &self.sessions[s];
-        // The wire keeps per-kind view payloads (gauges, chest slots);
-        // this is the one kind-keyed lookup that selects them.
+        // EVERY container ships as the generic keyed slot list plus whatever
+        // named gauge readings its block entity publishes. No engine content
+        // identity remains here, so adding one is not a wire change.
         let target = match sess.menu.target() {
             ContainerTarget::None => MenuTargetWire::None,
             ContainerTarget::Gui { kind, pos } => match kind {
                 kind if CraftingStation::of_kind(kind).is_some() => MenuTargetWire::Crafting {
                     output: slot_wire(sess.menu.craft_output()),
                 },
-                GuiKind::Furnace => {
-                    let v = sess.menu.open_furnace_view(&self.world).unwrap_or_default();
-                    MenuTargetWire::Furnace {
-                        pos: pos.unwrap_or_default(),
-                        slots: [slot_wire(v.input), slot_wire(v.fuel), slot_wire(v.output)],
-                        cook01: v.cook01,
-                        burn01: v.burn01,
+                kind => {
+                    // A machine's readings ride the SAME generic state map a
+                    // pack GUI uses, so no engine machine needs a wire variant.
+                    let gauges = sess.menu.open_gauges(&self.world);
+                    MenuTargetWire::Container {
+                        kind_key: crate::gui::kind_key(kind).unwrap_or_default().to_string(),
+                        pos,
+                        slots: sess
+                            .menu
+                            .open_container_view(&self.world)
+                            .map(|v| v.slots.iter().map(|s| slot_wire(*s)).collect()),
+                        gui_state: (!gauges.is_empty()).then(|| {
+                            gauges
+                                .into_iter()
+                                .map(|(k, v)| {
+                                    (k, GuiValueWire::from_value(&crate::gui::GuiValue::F32(v)))
+                                })
+                                .collect()
+                        }),
                     }
                 }
-                GuiKind::Chest => {
-                    let slots = sess
-                        .menu
-                        .open_chest_view(&self.world)
-                        .map(|v| v.slots.iter().map(|s| slot_wire(*s)).collect())
-                        .unwrap_or_default();
-                    MenuTargetWire::Chest {
-                        pos: pos.unwrap_or_default(),
-                        slots,
-                    }
-                }
-                kind => MenuTargetWire::ModGui {
-                    kind_key: crate::gui::kind_key(kind).unwrap_or_default().to_string(),
-                    pos,
-                    slots: sess
-                        .menu
-                        .open_container_view(&self.world)
-                        .map(|v| v.slots.iter().map(|s| slot_wire(*s)).collect()),
-                    gui_state: None,
-                },
             },
         };
         MenuSyncMsg { target }

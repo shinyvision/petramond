@@ -9,7 +9,7 @@ use std::sync::Arc;
 use glam::{IVec3, Quat, Vec3};
 
 use crate::atlas::Tile;
-use crate::block::{Block, ShapeFamily};
+use crate::block::Block;
 use crate::block_model::BlockModelKind;
 use crate::camera::ViewVolume;
 use crate::door::DoorState;
@@ -17,7 +17,6 @@ use crate::facing::Facing;
 use crate::item::ItemType;
 use crate::mob::Mob;
 use crate::render::{PlayerRenderInstance, RemotePlayerRender};
-use crate::stair::StairShape;
 use crate::world::PlacedEmitter;
 
 use super::remote_players;
@@ -30,50 +29,42 @@ pub struct BreakOverlayView {
     pub block: IVec3,
     /// The cell-local visual box the crack hugs. `None` means an ordinary full cube.
     pub visual_box: Option<([f32; 3], [f32; 3])>,
-    /// A stair's corner-resolved shape: the crack rebuilds the exact
-    /// quads the chunk mesher emitted for it (`mesh::stair::plane_quads`).
-    pub stair_shape: Option<StairShape>,
-    /// A slab cell's layer state: the crack rebuilds the exact per-layer quads
-    /// the chunk mesher emitted (`mesh::slab::layer_quads`), so the decal is
-    /// cropped to the occupied halves rather than stretched over them.
-    pub slab_state: Option<crate::block_state::SlabState>,
-    /// A pane's resolved connection mask: the crack rebuilds the exact post/arm
-    /// faces the chunk mesher emitted (`mesh::pane::shape_faces`), so the decal
-    /// hugs the connected shape rather than a box around it.
-    pub pane_mask: Option<u8>,
-    /// A fence's resolved connection mask: the crack rebuilds the exact
-    /// post/rail faces the chunk mesher emitted (`mesh::fence::shape_faces`),
-    /// same contract as the pane's.
-    pub fence_mask: Option<u8>,
-    /// A connection shape's post extent `(post_lo, post_hi)`, so a modded
-    /// wall/bar's crack matches its post thickness. `None` for non-connection
-    /// shapes (and unused unless `pane_mask` / `fence_mask` is set).
-    pub connection: Option<(f32, f32)>,
-    /// A ladder's wall facing: the crack rebuilds the exact panel faces the
-    /// chunk mesher emitted (`mesh::ladder::shape_faces`), omitting the face
-    /// buried in the supporting wall — a box crack would paint the destroy
-    /// texture onto the wall's coplanar face behind the panel.
-    pub ladder_facing: Option<Facing>,
+    /// The cell's RESOLVED shape boxes, when its family has a box form: the
+    /// crack traces THEM with cell-local UVs, so the decal hugs the real
+    /// geometry (a stair's steps, a slab's occupied halves, a fence's post and
+    /// rails, a chair's legs) instead of a box hanging in the cell's empty air.
+    ///
+    /// One field for every box family, because they all answer through the one
+    /// box producer — a family is never named here.
+    pub shape_boxes: Option<CrackBoxes>,
     /// A model block cracks over its cell's actual model cubes, including the targeted
     /// cell's authored footprint offset and placed facing.
     pub model: Option<(BlockModelKind, [u8; 3], Facing)>,
-    /// A Layer-3 custom shape's baked collision boxes: the crack traces THEM
-    /// (cell-local UVs), so a chair's decal hugs its legs/seat/backrest instead
-    /// of a box hanging in the cell's empty air.
-    pub custom_boxes: Option<CustomCrackBoxes>,
     /// 0..=9 crack stage.
     pub stage: u8,
 }
 
-/// The most cell-local boxes a custom shape's crack traces (a chair is 7). A
-/// shape with more truncates — the crack just covers fewer parts.
-pub const MAX_CUSTOM_CRACK_BOXES: usize = 12;
+/// The most cell-local boxes a crack traces (a chair is 7). A shape with more
+/// truncates — the crack just covers fewer parts.
+pub const MAX_CRACK_BOXES: usize = 16;
 
-/// A bounded, `Copy` snapshot of a custom shape's baked boxes for its break crack
+/// One cell-local box of a resolved shape, reduced to what a crack decal
+/// needs: the box, and which of its faces the family actually emits. A face
+/// the family never emits takes no destroy texture — that is what keeps a
+/// ladder's crack off the wall behind it and a fence rail's end cap clean.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct CrackBox {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+    /// Canonical face order (`+X, -X, +Y, -Y, +Z, -Z`) — `mesh::face::Face::ALL`.
+    pub faces: [bool; 6],
+}
+
+/// A bounded, `Copy` snapshot of a cell's resolved boxes for its break crack
 /// (the view stays `Copy`, so no per-frame allocation).
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct CustomCrackBoxes {
-    pub boxes: [([f32; 3], [f32; 3]); MAX_CUSTOM_CRACK_BOXES],
+pub struct CrackBoxes {
+    pub boxes: [CrackBox; MAX_CRACK_BOXES],
     pub len: u8,
 }
 
@@ -831,54 +822,38 @@ fn break_overlay_at(game: &Game, block: IVec3, stage: u8) -> BreakOverlayView {
             game.replica.model_facing_at(block.x, block.y, block.z),
         )
     });
-    let stair_shape = (block_type.shape_family() == ShapeFamily::Stair)
-        .then(|| game.replica.stair_shape_at(block.x, block.y, block.z));
-    let slab_state = game.replica.slab_state_if_slab(block);
-    let pane_mask =
-        (block_type.shape_family() == ShapeFamily::Pane).then(|| game.replica.pane_mask_at(block));
-    let fence_mask = (block_type.shape_family() == ShapeFamily::Fence)
-        .then(|| game.replica.fence_mask_at(block));
-    let ladder_facing =
-        (block_type.shape_family() == ShapeFamily::Ladder).then(|| block_type.panel_facing());
-    let connection = block_type
-        .shape_kind_def()
-        .params
-        .connection()
-        .map(|c| (c.post_lo, c.post_hi));
-    let custom_boxes = (block_type.shape_family() == ShapeFamily::Custom).then(|| {
-        let src = game.replica.collision_boxes_at(block.x, block.y, block.z);
-        let mut boxes = [([0.0; 3], [0.0; 3]); MAX_CUSTOM_CRACK_BOXES];
-        let len = src.len().min(MAX_CUSTOM_CRACK_BOXES);
-        for (dst, b) in boxes.iter_mut().zip(src.iter()).take(len) {
-            *dst = (b.min, b.max);
+    // The ONE box producer answers for every box family at once; nothing here
+    // asks which family it is.
+    let mut resolved = Vec::new();
+    game.replica.shape_draw_boxes(block, &mut resolved);
+    let shape_boxes = (!resolved.is_empty()).then(|| {
+        let mut boxes = [CrackBox {
+            min: [0.0; 3],
+            max: [0.0; 3],
+            faces: [false; 6],
+        }; MAX_CRACK_BOXES];
+        let len = resolved.len().min(MAX_CRACK_BOXES);
+        for (dst, b) in boxes.iter_mut().zip(resolved.iter()).take(len) {
+            *dst = CrackBox {
+                min: b.aabb.min,
+                max: b.aabb.max,
+                faces: std::array::from_fn(|fi| b.faces[fi].is_some()),
+            };
         }
-        CustomCrackBoxes {
+        CrackBoxes {
             boxes,
             len: len as u8,
         }
     });
     BreakOverlayView {
         block,
-        visual_box: if model.is_some()
-            || stair_shape.is_some()
-            || slab_state.is_some()
-            || pane_mask.is_some()
-            || fence_mask.is_some()
-            || ladder_facing.is_some()
-            || custom_boxes.is_some()
-        {
+        visual_box: if model.is_some() || shape_boxes.is_some() {
             None
         } else {
             game.replica.selection_box_at(block.x, block.y, block.z)
         },
-        stair_shape,
-        slab_state,
-        pane_mask,
-        fence_mask,
-        connection,
-        ladder_facing,
+        shape_boxes,
         model,
-        custom_boxes,
         stage,
     }
 }

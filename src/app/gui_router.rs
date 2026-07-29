@@ -38,13 +38,15 @@ impl GuiRouter {
         let streak_key = match slot {
             _ if shift || button != PointerButton::Primary => None,
             MenuSlot::Inventory(i) => Some(i),
-            MenuSlot::Chest(i) => Some(CHEST_SLOT_STREAK_BASE + i),
-            // Mod container slots skip the gather streak (like the furnace's
-            // semantic slots): the double-click sweep is a plain-storage read.
-            MenuSlot::CraftResult
-            | MenuSlot::Furnace(_)
-            | MenuSlot::Container(_)
-            | MenuSlot::Widget(_) => None,
+            // EVERY container's slots take the gather streak — engine chest,
+            // engine furnace, and a pack's alike. Before the chest/furnace
+            // lanes collapsed into `Container`, only the chest got this and a
+            // pack container was needlessly second-class. The widened cases
+            // (furnace + pack) sweep matching items out of the open container,
+            // which take-only slots already permit (they refuse INSERTS, not
+            // takes), so this stays consistent with their semantics.
+            MenuSlot::Container(i) => Some(CONTAINER_SLOT_STREAK_BASE + i),
+            MenuSlot::CraftResult | MenuSlot::Widget(_) => None,
         };
         match streak_key {
             Some(key) => self.double_click.register(key, now) && cursor_has_stack,
@@ -82,5 +84,6 @@ impl DoubleClickStreak {
 /// Matches the classic ~250 ms double-click timeout for gather-on-cursor.
 const DOUBLE_CLICK_SECS: f64 = 0.25;
 
-/// Namespaces chest storage slots away from inventory slots in the click streak.
-const CHEST_SLOT_STREAK_BASE: usize = 1000;
+/// Namespaces container storage slots away from inventory slots in the click
+/// streak.
+const CONTAINER_SLOT_STREAK_BASE: usize = 1000;

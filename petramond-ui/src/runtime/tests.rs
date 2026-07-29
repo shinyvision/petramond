@@ -925,7 +925,7 @@ fn tab_bar_fires_on_down_and_respects_enabled_and_gaps() {
     let mut out = FrameOutput::default();
     let mut state = UiState::new();
     state.set("tab", UiValue::I32(0));
-    let mut frame =
+    let frame =
         |state: &UiState, fs: &mut FrameState, out: &mut FrameOutput, input: &[InputEvent]| {
             rt.frame(
                 FrameArgs {

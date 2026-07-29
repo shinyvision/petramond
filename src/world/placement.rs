@@ -19,6 +19,29 @@ use crate::slab::{SlabRotation, SlabSlot};
 
 use super::store::World;
 
+/// Whether a click on `looked_at` REPLACES it where it stands instead of
+/// building against its face: replaceable MATTER — tall grass, a snow layer,
+/// water (so a bucket pours in place) — which air, being nothing, is not.
+pub(crate) fn replaces_in_place(looked_at: Block) -> bool {
+    looked_at.is_replaceable() && looked_at != Block::Air
+}
+
+/// THE build-position rule: which cell a click builds into. Server placement,
+/// server item use, and both client prediction paths resolve through this, so
+/// a change to what counts as replace-in-place cannot land on one side only
+/// and desync the ghost from the authority.
+///
+/// Callers keep their own zero-normal guard where they have one: whether a
+/// faceless hit is a refusal or a build in place is the CALLER's policy, not
+/// part of this rule.
+pub(crate) fn build_position(looked_at: Block, hit: IVec3, normal: IVec3) -> IVec3 {
+    if replaces_in_place(looked_at) {
+        hit
+    } else {
+        hit + normal
+    }
+}
+
 /// Player-derived inputs to the placement rules, resolved by each side from
 /// its own session / held-rotation state before the ladder runs.
 pub(crate) struct PlaceInputs {
@@ -173,7 +196,7 @@ pub(crate) trait ShapePlacement: Send + Sync + 'static {
     }
 }
 
-/// The SHARED validation of an accepted Layer-3 placement plan — evaluated
+/// The SHARED validation of an accepted custom-shape placement plan — evaluated
 /// by the server against the authoritative world and by the client place
 /// ghost against the replica, so the two sides compute the same write by
 /// construction (one rule, never two hand-kept copies). Refuses: a plan
@@ -449,7 +472,7 @@ impl World {
                 }
             }
         }
-        self.vis_dirty = true;
+        self.terrain.vis_dirty = true;
         self.refresh_region(&cells);
         true
     }

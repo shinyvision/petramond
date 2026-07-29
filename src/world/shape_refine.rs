@@ -80,7 +80,7 @@ impl World {
             // (the replica applies it verbatim — it does not re-refine
             // authoritative deltas).
             self.queue_dirty_meshes_sampling_cell(p.x, p.y, p.z);
-            if self.replication_capture {
+            if self.replication.replication_capture {
                 self.record_block_delta(p.x, p.y, p.z);
             }
             for d in FACE_NEIGHBORS {
