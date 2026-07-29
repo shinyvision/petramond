@@ -44,6 +44,21 @@
         "item": "exploration:mushroom_slab",
         "count": 6
       }
+    },
+    {
+      "type": "crafting",
+      "recipe": "exploration:mushroom_door",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {
+          "item": "exploration:mushroom_planks",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "exploration:mushroom_door",
+        "count": 1
+      }
     }
   ]
 }

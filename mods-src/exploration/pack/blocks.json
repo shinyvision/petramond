@@ -8,7 +8,9 @@
         "opaque",
         "ao_occluder"
       ],
-      "tags": [],
+      "tags": [
+        "log"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [
@@ -929,6 +931,49 @@
       "drops": [
         {
           "item": "exploration:mushroom_slab",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:mushroom_door",
+      "shape": "door",
+      "flags": [
+        "solid"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "behavior": "door",
+      "interaction": "toggle_door",
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0.8125
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "exploration:mushroom_door_top",
+        "exploration:mushroom_door_bottom",
+        "exploration:mushroom_planks"
+      ],
+      "material": "wood",
+      "harvest_tier": 0,
+      "hardness": 3,
+      "drops": [
+        {
+          "item": "exploration:mushroom_door",
           "min": 1,
           "max": 1,
           "chance": 1.0

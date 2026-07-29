@@ -69,6 +69,18 @@
       "file": "hanging_vine.png"
     },
     {
+      "name": "exploration:mushroom_door_top",
+      "file": "mushroom_door_top.png"
+    },
+    {
+      "name": "exploration:mushroom_door_bottom",
+      "file": "mushroom_door_bottom.png"
+    },
+    {
+      "name": "exploration:mushroom_door_item",
+      "file": "mushroom_door_item.png"
+    },
+    {
       "name": "exploration:mushroom_planks",
       "file": "mushroom_planks.png"
     },

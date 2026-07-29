@@ -302,6 +302,20 @@
       },
       "tags": [],
       "block": "exploration:mushroom_slab"
+    },
+    {
+      "item": "exploration:mushroom_door",
+      "key": "exploration:mushroom_door",
+      "name": "Mushroom Door",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "exploration:mushroom_door_item",
+      "tags": [],
+      "block": "exploration:mushroom_door"
     }
   ]
 }
