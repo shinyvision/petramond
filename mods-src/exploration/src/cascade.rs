@@ -1579,7 +1579,7 @@ mod tests {
             let base = b.finish(&oracle, &[]);
 
             // A giant standing in the head basin, rooted a block over the bed.
-            let (&(x, z), &(pi, bed)) = b
+            let (&(x, z), &(_pi, bed)) = b
                 .cols
                 .iter()
                 .find(|&(_, &(pi, bed))| pi == 0 && b.pools[pi] - bed >= 2)

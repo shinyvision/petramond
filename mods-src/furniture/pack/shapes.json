@@ -10,6 +10,11 @@
       "light_shape": "open",
       "grass_decay_eligible": false,
       "state_key": "furniture:dye"
+    },
+    {
+      "key": "furniture:lantern",
+      "light_shape": "open",
+      "grass_decay_eligible": false
     }
   ]
 }

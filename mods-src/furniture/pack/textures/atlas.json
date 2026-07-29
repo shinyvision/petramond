@@ -1,5 +1,13 @@
 {
   "tiles": [
+    { "name": "furniture:lantern_top", "file": "lantern_top.png" },
+    { "name": "furniture:lantern_bracket_side", "file": "lantern_bracket_side.png" },
+    { "name": "furniture:lantern_bracket_top", "file": "lantern_bracket_top.png" },
+    { "name": "furniture:lantern_bracket_bottom", "file": "lantern_bracket_bottom.png" },
+    { "name": "furniture:lantern_bottom", "file": "lantern_bottom.png" },
+    { "name": "furniture:lantern_side", "file": "lantern_side.png" },
+    { "name": "furniture:chain_iron", "file": "chain_iron.png" },
+    { "name": "furniture:chain_iron_h", "file": "chain_iron_h.png" },
     { "name": "furniture:chain_link", "file": "chain_link.png" },
     { "name": "furniture:chain_link_h", "file": "chain_link_h.png" },
     { "name": "furniture:cauldron_top", "file": "cauldron_top.png" },

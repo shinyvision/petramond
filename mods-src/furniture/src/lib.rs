@@ -8,6 +8,8 @@
 //!   and the broken-piece release.
 //! - [`chains`]: the three axis rows sharing one custom shape (axis = block
 //!   identity), their plate geometry, and the face-normal placement rule.
+//! - [`lanterns`]: the standing/hanging pair over one custom shape (the same
+//!   pattern), the bail geometry, and the underside-hangs-it placement rule.
 //! - [`cauldron`]: the pot shape, its fill-state rows (fill = block
 //!   identity), bucket fill/scoop, and DYEING — pigment declarations,
 //!   subtractive mixing, the per-cell color/uses KV, and the tinted
@@ -17,10 +19,12 @@ use mod_sdk::*;
 
 mod cauldron;
 mod chains;
+mod lanterns;
 mod seats;
 
 use cauldron::{resolve_cauldron, Cauldron};
-use chains::{resolve_chains, Chains, PLATES};
+use chains::{resolve_chains, Chains};
+use lanterns::{resolve_lanterns, Lanterns};
 use seats::{release_broken_piece_sitters, ResolvedPiece, PIECES};
 
 const ON_INTERACT: u32 = 1;
@@ -30,6 +34,8 @@ const ON_BLOCK_BROKEN: u32 = 2;
 struct Furniture {
     pieces: Vec<ResolvedPiece>,
     chains: Option<Chains>,
+    /// The lantern family (`None`: pack content didn't load).
+    lanterns: Option<Lanterns>,
     /// The cauldron family (`None`: pack content didn't load).
     cauldron: Option<Cauldron>,
     /// The engine water bucket (`None`: base content missing) — the item the
@@ -59,6 +65,7 @@ impl Mod for Furniture {
             .collect();
         self.client = runtime_side() == RuntimeSide::Client;
         self.chains = resolve_chains();
+        self.lanterns = resolve_lanterns();
         self.cauldron = resolve_cauldron();
         self.water_bucket = resolve_item("petramond:water_bucket");
         self.wooden_bucket = resolve_item("petramond:wooden_bucket");
@@ -150,7 +157,9 @@ impl Mod for Furniture {
     /// item. The cauldron is unoriented; its one box list is the item too.
     fn bake_shape_item(&mut self, shape_kind: u8, _block: BlockId) -> BakedItemGeometry {
         let boxes = if self.chains.as_ref().is_some_and(|c| c.shape == shape_kind) {
-            PLATES[0].to_vec()
+            chains::cell_links()
+        } else if let Some(lanterns) = self.lanterns.as_ref().filter(|l| l.shape == shape_kind) {
+            lanterns.item_boxes()
         } else if self.cauldron.as_ref().is_some_and(|c| c.shape == shape_kind) {
             cauldron::CAULDRON_BOXES.to_vec()
         } else {
@@ -175,7 +184,13 @@ impl Mod for Furniture {
             .chains
             .as_ref()
             .filter(|c| c.shape == shape_kind)
-            .map(|c| c.row_for_normal(inputs.normal));
+            .map(|c| c.row_for_normal(inputs.normal))
+            .or_else(|| {
+                self.lanterns
+                    .as_ref()
+                    .filter(|l| l.shape == shape_kind)
+                    .map(|l| l.row_for_normal(inputs.normal))
+            });
         ShapePlacementResult {
             accepted: true,
             anchor: inputs.place_pos,
@@ -189,6 +204,7 @@ impl Furniture {
     /// Whether a bake dispatch's shape kind is one of this mod's shapes.
     fn owns_shape(&self, shape_kind: u8) -> bool {
         self.chains.as_ref().is_some_and(|c| c.shape == shape_kind)
+            || self.lanterns.as_ref().is_some_and(|l| l.shape == shape_kind)
             || self.cauldron.as_ref().is_some_and(|c| c.shape == shape_kind)
     }
 
@@ -196,7 +212,10 @@ impl Furniture {
     /// render bakes share so collision, selection, and the mesh can't drift.
     fn shape_boxes(&self, shape_kind: u8, block: BlockId) -> Vec<ShapeAabb> {
         if let Some(chains) = self.chains.as_ref().filter(|c| c.shape == shape_kind) {
-            return chains.plates_for(block);
+            return chains.links_for(block);
+        }
+        if let Some(lanterns) = self.lanterns.as_ref().filter(|l| l.shape == shape_kind) {
+            return lanterns.boxes_for(block);
         }
         if self.cauldron.as_ref().is_some_and(|c| c.shape == shape_kind) {
             return cauldron::CAULDRON_BOXES.to_vec();

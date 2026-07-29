@@ -57,6 +57,23 @@ impl ShapeSim for CustomFamily {
         nb.baked_collision(pos)
             .is_some_and(|boxes| boxes.iter().any(|bx| overlaps(lo, hi, bx.min, bx.max)))
     }
+
+    /// Derived from the BAKED matter, like the box set's: a pack shape that
+    /// fills a boundary holds a mount there, one that does not (a chain, a
+    /// lantern) holds nothing — with no row field to keep in step and no
+    /// family named. An unbaked cell answers `None`, the family's failure
+    /// policy everywhere else too.
+    fn full_face(
+        &self,
+        _p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        _b: Block,
+        dir: IVec3,
+    ) -> Option<crate::block::shape_kind::facets::FullFace> {
+        crate::block::shape_kind::facets::face_is_solid(nb, pos, dir)
+            .then_some(crate::block::shape_kind::facets::FullFace::Shaped)
+    }
 }
 
 impl ShapeRender for CustomFamily {

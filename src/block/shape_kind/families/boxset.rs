@@ -103,6 +103,22 @@ impl ShapeSim for BoxSetFamily {
         };
         ShapeState::new(&[state.byte(0), form])
     }
+    /// Derived from the BOXES, so any arrangement of matter answers for
+    /// itself: a counter whose worktop spans the cell holds a wall/floor mount,
+    /// an L of trim does not, and neither is named anywhere. `Shaped`, never
+    /// `Cube` — the material rules that bind a cube face (opaque-only joins)
+    /// must not bind a shape that merely happens to be complete.
+    fn full_face(
+        &self,
+        _p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        _b: Block,
+        dir: IVec3,
+    ) -> Option<crate::block::shape_kind::facets::FullFace> {
+        crate::block::shape_kind::facets::face_is_solid(nb, pos, dir)
+            .then_some(crate::block::shape_kind::facets::FullFace::Shaped)
+    }
 }
 
 impl ShapeRender for BoxSetFamily {

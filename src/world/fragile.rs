@@ -98,16 +98,34 @@ impl World {
         let s = dir.support_cell(pos);
         match dir {
             SupportDir::Below => {
+                let ground = self.physics_block(s.x, s.y, s.z);
+                // DECLARED beats derived. A row that stated what its floor must
+                // look like keeps that same rule once placed, so the gate that
+                // let it be placed and the rule that keeps it there cannot
+                // disagree. It has to come first: `rests_flat_on_floor` probes
+                // octant VOLUMES, so anything with a foot on the floor — a
+                // lantern's 8-wide base — reads as lying flat and would take
+                // the cover rule instead of its own.
+                if block.roots_face() != crate::block::RootsFace::Any {
+                    return self.roots_face_ok(block, crate::mathh::IVec3::Y, s, ground);
+                }
                 if crate::block::rests_flat_on_floor(self, pos, block) {
                     return super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z));
                 }
-                self.physics_block(s.x, s.y, s.z).is_opaque()
+                ground.is_opaque()
             }
             SupportDir::Above => {
                 super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z))
                     || Block::from_id(self.chunk_block(s.x, s.y, s.z)).support_dir()
                         == SupportDir::Above
             }
+            // A WALL holds it exactly when a wall torch would hold: the
+            // support's face toward this cell is complete — an opaque cube's,
+            // or any shaped face that is geometrically whole (a stair's flat
+            // side, a counter's back). The same test the torch/ladder mounts
+            // run, reached here through the row's declaration instead of
+            // through stored placement state.
+            _ => self.mount_face_complete(s, pos - s),
         }
     }
 }
@@ -137,6 +155,109 @@ mod tests {
 
     fn block(w: &World, p: IVec3) -> Block {
         Block::from_id(w.chunk_block(p.x, p.y, p.z))
+    }
+
+    /// A BOX SET's face is complete only where its matter reaches the
+    /// boundary — the rule every "is there something to stand on / mount to"
+    /// question resolves through for the families nobody can enumerate.
+    ///
+    /// The cactus is the case worth pinning: its side faces are carried by
+    /// full-cell planes declared `occludes: false`, so they DRAW a complete
+    /// face while being no matter at all, and its cap plate is `collides:
+    /// false` while still being matter. Read either flag as the other and this
+    /// flips — silently, into "a torch mounts on the side of a cactus".
+    #[test]
+    fn a_box_sets_face_is_complete_only_where_its_matter_reaches_the_boundary() {
+        let face = |b: Block, dir: IVec3| {
+            let mut w = world();
+            let p = IVec3::new(8, 64, 8);
+            w.set_block_world(p.x, p.y, p.z, b);
+            crate::block::full_face_at(&w, p, dir)
+        };
+        // A one-texel cover: its floor is against the boundary, its top is not.
+        assert_eq!(
+            face(Block::SnowLayer, -IVec3::Y),
+            Some(crate::block::FullFace::Shaped),
+            "a cover rests on its own floor"
+        );
+        assert_eq!(
+            face(Block::SnowLayer, IVec3::Y),
+            None,
+            "a cover's top is a texel up, not at the boundary — nothing stands on it"
+        );
+        // The cactus: cap plate = matter (though it does not collide), side
+        // planes = face carriers (they draw, and are not matter).
+        assert_eq!(
+            face(Block::Cactus, IVec3::Y),
+            Some(crate::block::FullFace::Shaped),
+            "the cap plate is matter"
+        );
+        assert_eq!(
+            face(Block::Cactus, IVec3::X),
+            None,
+            "an `occludes: false` face carrier is not something to mount on"
+        );
+        // …and it is SHAPED, never CUBE: the material rules that bind a cube
+        // face (opaque-only fence joins) must not start binding box sets.
+        assert_eq!(
+            face(Block::Stone, IVec3::Y),
+            Some(crate::block::FullFace::Cube)
+        );
+    }
+
+    /// A row that DECLARED what its floor must be keeps that rule once placed,
+    /// so the gate that let it be placed and the rule that keeps it there
+    /// cannot disagree — a mushroom rooted on a stair top by anything other
+    /// than a player click still sheds.
+    ///
+    /// It has to be checked BEFORE `rests_flat_on_floor`, which probes octant
+    /// VOLUMES: anything with a foot on the floor reads as lying flat and would
+    /// otherwise take the cover rule (any full collision cube) instead of its
+    /// own declaration.
+    #[test]
+    fn a_declared_floor_requirement_is_also_the_survival_rule() {
+        let mut w = world();
+        // `petramond:brown_mushroom` declares `roots_face: "full_cube"`.
+        // Both sites stay clear of the lone chunk's borders, like the snow
+        // test above — the streaming-finality guard drops breaks near them.
+        w.set_block_world(6, 64, 8, Block::Stone);
+        w.set_block_world(6, 65, 8, Block::BrownMushroom);
+        let stair = IVec3::new(10, 64, 8);
+        assert!(w.place_stair(
+            stair,
+            Block::OakStairs,
+            StairState::new(Facing::East, StairHalf::Bottom)
+        ));
+        w.set_block_world(10, 65, 8, Block::BrownMushroom);
+        run_ticks(&mut w, 3);
+        assert_eq!(
+            block(&w, IVec3::new(6, 65, 8)),
+            Block::BrownMushroom,
+            "a full cube satisfies `full_cube`"
+        );
+        assert_eq!(
+            block(&w, IVec3::new(10, 65, 8)),
+            Block::Air,
+            "a stair top does not, so the mushroom sheds like the snow layer"
+        );
+    }
+
+    /// The compass mapping of a wall support. Getting this backwards puts every
+    /// wall-mounted block's support cell on the far side of the wall, where it
+    /// is usually air — and the block then breaks the tick after it is placed.
+    #[test]
+    fn a_wall_supports_row_reads_the_cell_its_side_names() {
+        for (dir, facing) in [
+            (SupportDir::North, Facing::North),
+            (SupportDir::South, Facing::South),
+            (SupportDir::West, Facing::West),
+            (SupportDir::East, Facing::East),
+        ] {
+            assert_eq!(dir.support_cell(IVec3::ZERO), facing.dir(), "{dir:?}");
+            assert!(dir.is_wall(), "{dir:?}");
+        }
+        assert!(!SupportDir::Below.is_wall());
+        assert!(!SupportDir::Above.is_wall());
     }
 
     #[test]

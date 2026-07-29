@@ -39,11 +39,12 @@
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["furniture:chain_link", "furniture:chain_link", "furniture:chain_link"],
+      "tiles": ["furniture:chain_iron", "furniture:chain_iron", "furniture:chain_iron"],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 5.0,
-      "drops": [{ "item": "furniture:chain", "min": 1, "max": 1, "chance": 1.0 }]
+      "drops": [{ "item": "furniture:chain", "min": 1, "max": 1, "chance": 1.0 }],
+      "support": "above"
     },
     {
       "block": "furniture:chain_ns",
@@ -54,11 +55,12 @@
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["furniture:chain_link", "furniture:chain_link", "furniture:chain_link_h"],
+      "tiles": ["furniture:chain_iron", "furniture:chain_iron", "furniture:chain_iron_h"],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 5.0,
-      "drops": [{ "item": "furniture:chain", "min": 1, "max": 1, "chance": 1.0 }]
+      "drops": [{ "item": "furniture:chain", "min": 1, "max": 1, "chance": 1.0 }],
+      "support": "above"
     },
     {
       "block": "furniture:chain_ew",
@@ -69,11 +71,12 @@
       "interaction": "none",
       "collision": [],
       "emission": 0,
-      "tiles": ["furniture:chain_link_h", "furniture:chain_link_h", "furniture:chain_link_h"],
+      "tiles": ["furniture:chain_iron_h", "furniture:chain_iron_h", "furniture:chain_iron_h"],
       "material": "stone",
       "harvest_tier": 1,
       "hardness": 5.0,
-      "drops": [{ "item": "furniture:chain", "min": 1, "max": 1, "chance": 1.0 }]
+      "drops": [{ "item": "furniture:chain", "min": 1, "max": 1, "chance": 1.0 }],
+      "support": "above"
     },
     {
       "block": "furniture:cauldron",
@@ -289,6 +292,124 @@
       "harvest_tier": 1,
       "hardness": 3.0,
       "drops": [{ "item": "furniture:counter_cabinet", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
+      "block": "furniture:lantern",
+      "shape": "furniture:lantern",
+      "flags": ["transparent"],
+      "tags": ["fragile"],
+      "behavior": "fragile",
+      "roots_face": "solid_face",
+      "interaction": "none",
+      "collision": [],
+      "emission": 28,
+      "light_color": [1.0, 1.0, 0.96],
+      "tiles": ["furniture:lantern_top", "furniture:lantern_bottom", "furniture:lantern_side"],
+      "material": "glass",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [{ "item": "furniture:lantern", "min": 1, "max": 1, "chance": 1.0 }]
+    },
+    {
+      "block": "furniture:lantern_hanging",
+      "shape": "furniture:lantern",
+      "flags": ["transparent"],
+      "tags": ["fragile"],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 28,
+      "light_color": [1.0, 1.0, 0.96],
+      "tiles": ["furniture:lantern_top", "furniture:lantern_bottom", "furniture:lantern_side"],
+      "material": "glass",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [{ "item": "furniture:lantern", "min": 1, "max": 1, "chance": 1.0 }],
+      "support": "above"
+    },
+    {
+      "block": "furniture:lantern_wall_north",
+      "shape": "furniture:lantern",
+      "flags": ["transparent"],
+      "tags": ["fragile"],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 28,
+      "light_color": [1.0, 1.0, 0.96],
+      "tiles": [
+        "furniture:lantern_bracket_top",
+        "furniture:lantern_bracket_bottom",
+        "furniture:lantern_bracket_side"
+      ],
+      "material": "glass",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [{ "item": "furniture:lantern", "min": 1, "max": 1, "chance": 1.0 }],
+      "support": "north"
+    },
+    {
+      "block": "furniture:lantern_wall_south",
+      "shape": "furniture:lantern",
+      "flags": ["transparent"],
+      "tags": ["fragile"],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 28,
+      "light_color": [1.0, 1.0, 0.96],
+      "tiles": [
+        "furniture:lantern_bracket_top",
+        "furniture:lantern_bracket_bottom",
+        "furniture:lantern_bracket_side"
+      ],
+      "material": "glass",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [{ "item": "furniture:lantern", "min": 1, "max": 1, "chance": 1.0 }],
+      "support": "south"
+    },
+    {
+      "block": "furniture:lantern_wall_west",
+      "shape": "furniture:lantern",
+      "flags": ["transparent"],
+      "tags": ["fragile"],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 28,
+      "light_color": [1.0, 1.0, 0.96],
+      "tiles": [
+        "furniture:lantern_bracket_top",
+        "furniture:lantern_bracket_bottom",
+        "furniture:lantern_bracket_side"
+      ],
+      "material": "glass",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [{ "item": "furniture:lantern", "min": 1, "max": 1, "chance": 1.0 }],
+      "support": "west"
+    },
+    {
+      "block": "furniture:lantern_wall_east",
+      "shape": "furniture:lantern",
+      "flags": ["transparent"],
+      "tags": ["fragile"],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 28,
+      "light_color": [1.0, 1.0, 0.96],
+      "tiles": [
+        "furniture:lantern_bracket_top",
+        "furniture:lantern_bracket_bottom",
+        "furniture:lantern_bracket_side"
+      ],
+      "material": "glass",
+      "harvest_tier": 0,
+      "hardness": 0.5,
+      "drops": [{ "item": "furniture:lantern", "min": 1, "max": 1, "chance": 1.0 }],
+      "support": "east"
     },
     { "patch": "petramond:wool_block", "data": { "petramond:carry": ["petramond:tint"] } },
     { "patch": "petramond:wool_stairs", "data": { "petramond:carry": ["petramond:tint"] } },

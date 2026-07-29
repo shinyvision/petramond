@@ -98,6 +98,16 @@
       ],
       "result": { "item": "furniture:counter_cabinet", "count": 1 }
     },
+    {
+      "type": "crafting",
+      "recipe": "furniture:lantern",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        { "item": "petramond:torch", "count": 1 },
+        { "item": "petramond:iron_ingot", "count": 1 }
+      ],
+      "result": { "item": "furniture:lantern", "count": 1 }
+    },
     { "patch": "petramond:wool_stairs", "data": { "petramond:inherit": ["petramond:tint"] } },
     { "patch": "petramond:wool_slab", "data": { "petramond:inherit": ["petramond:tint"] } }
   ]

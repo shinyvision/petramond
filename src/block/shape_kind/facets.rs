@@ -178,6 +178,48 @@ pub fn rests_flat_on_floor(nb: &dyn ShapeNeighborhood, pos: IVec3, block: Block)
     })
 }
 
+/// Whether the shape at `pos` presents a COMPLETE face of matter toward `dir`
+/// — every quadrant of that boundary occupied.
+///
+/// The geometric twin of [`rests_flat_on_floor`], and the same probe the light
+/// apertures use ([`aperture_probe`]): half a texel at the CENTRE of each
+/// quadrant, pressed against the boundary. It is what an arbitrary pile of
+/// matter — a box set, a pack's baked shape — can answer about itself without
+/// anyone maintaining a list, so a furniture counter's full-width worktop holds
+/// a lamp while a bottom slab's mid-cell top does not, and neither family is
+/// named anywhere.
+///
+/// It reads [`ShapeSim::occupies_pocket`], so it is only meaningful for the
+/// families that ANSWER that — the arbitrary-matter ones, which call this from
+/// their own [`ShapeSim::full_face`]. It is NOT a general "is this face solid"
+/// oracle: a plain cube leaves `occupies_pocket` at its `false` default and
+/// would read as empty here. Ask [`full_face_at`] instead, which dispatches to
+/// whichever answer the family actually owns.
+pub fn face_is_solid(nb: &dyn ShapeNeighborhood, pos: IVec3, dir: IVec3) -> bool {
+    let block = nb.block(pos);
+    let k = block.shape_kind_def();
+    let d = [dir.x, dir.y, dir.z];
+    let Some(axis) = d.iter().position(|&c| c != 0) else {
+        return false;
+    };
+    let layer = usize::from(d[axis] > 0);
+    let (u, v) = match axis {
+        0 => (1, 2),
+        1 => (0, 2),
+        _ => (0, 1),
+    };
+    (0..2).all(|i| {
+        (0..2).all(|j| {
+            let mut q = [0usize; 3];
+            q[axis] = layer;
+            q[u] = i;
+            q[v] = j;
+            let (lo, hi) = aperture_probe(axis, q[0], q[1], q[2]);
+            k.sim.occupies_pocket(&k.params, nb, pos, block, lo, hi)
+        })
+    })
+}
+
 /// Ask the family at `q` whether its face with outward normal `dir` is
 /// complete — the one dispatch every cross-family asker uses.
 pub fn full_face_at(nb: &dyn ShapeNeighborhood, q: IVec3, dir: IVec3) -> Option<FullFace> {

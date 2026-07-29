@@ -94,6 +94,15 @@
       "patch": "petramond:dandelion",
       "data": { "furniture:pigment": { "color": [250, 224, 28] } }
     },
+    {
+      "item": "furniture:lantern",
+      "key": "furniture:lantern",
+      "name": "Lantern",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 1.8, "roll": 0 },
+      "tags": [],
+      "block": "furniture:lantern"
+    },
     { "patch": "petramond:poppy", "data": { "furniture:pigment": { "color": [222, 38, 28] } } },
     {
       "patch": "petramond:cornflower",

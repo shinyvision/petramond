@@ -224,6 +224,14 @@ impl ServerGame {
             Some(cur) if cur.is_replaceable() && cur != write_block => {}
             _ => return Some(None),
         }
+        // The row's own SUPPORT gate, the same one every engine family runs:
+        // the written row — not the held one — declares where it must be held
+        // (a wall lamp's bracket wall, a hanging lamp's ceiling), so the guest
+        // orients and the host still enforces. Without this a pack row could
+        // declare `support` / `roots_face` and have placement ignore it.
+        if !self.world.placement_support_ok(write_block, anchor) {
+            return Some(None);
+        }
         // The body-occupancy gate every engine placement path runs: a custom
         // shape's solid boxes may not trap a player or mob. The bake cache
         // only holds PLACED cells, so for this not-yet-placed cell the shape's

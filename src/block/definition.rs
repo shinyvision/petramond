@@ -130,6 +130,19 @@ pub enum SupportDir {
     Below,
     /// The cell ABOVE — the ceiling a hanging block grows down from.
     Above,
+    /// A WALL: the horizontal neighbour named holds this block up — a bracket,
+    /// a wall lamp, a sign. Named by the DIRECTION OF THE SUPPORT from the
+    /// block, so a row whose back is against the west wall declares `"west"`.
+    ///
+    /// Four separate variants rather than one carrying a [`Facing`]: the field
+    /// is authored in JSON, and the loader's `rename_all = "snake_case"` turns
+    /// these into the same flat vocabulary as `above`/`below`.
+    ///
+    /// [`Facing`]: crate::facing::Facing
+    North,
+    South,
+    West,
+    East,
 }
 
 /// A GEOMETRIC requirement on the face a placement rests against — the
@@ -153,6 +166,18 @@ pub enum RootsFace {
     /// do not. Opacity is the same material rule a wall mount applies to a
     /// cube face; without it the block would take root on glass and leaves.
     FullCube,
+    /// A complete face of ANY shape — the mounted-face rule a wall torch uses,
+    /// applied to whichever cell the row's `support` names. An opaque cube's
+    /// face, a stair's flat side, a slab's top, a counter's worktop; NOT a
+    /// flower, a torch, or the mid-cell top of a bottom slab, which are not
+    /// faces at all.
+    ///
+    /// The looser sibling of [`FullCube`](Self::FullCube), and the one to
+    /// reach for when the requirement is "something whole to stand ON"
+    /// rather than "unshaped ground to root IN". Completeness is answered by
+    /// the shape itself (`facets::face_is_solid` for the arbitrary-matter
+    /// families), so no list of acceptable supports exists to maintain.
+    SolidFace,
 }
 
 impl RootsFace {
@@ -169,7 +194,17 @@ impl SupportDir {
         match self {
             SupportDir::Below => pos - crate::mathh::IVec3::Y,
             SupportDir::Above => pos + crate::mathh::IVec3::Y,
+            SupportDir::North => pos + crate::facing::Facing::North.dir(),
+            SupportDir::South => pos + crate::facing::Facing::South.dir(),
+            SupportDir::West => pos + crate::facing::Facing::West.dir(),
+            SupportDir::East => pos + crate::facing::Facing::East.dir(),
         }
+    }
+
+    /// Whether the support is a WALL rather than a floor or a ceiling — the
+    /// case whose accept rule is the shared mounted-face test.
+    pub fn is_wall(self) -> bool {
+        !matches!(self, SupportDir::Below | SupportDir::Above)
     }
 
     /// Whether this is the `below` every silent row carries (the loader's

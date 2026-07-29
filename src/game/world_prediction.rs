@@ -539,6 +539,11 @@ impl Game {
         if !cur.is_replaceable() || cur == write_block {
             return Some(PlacePrediction::No);
         }
+        // The written row's SUPPORT gate — the server's twin, run against the
+        // replica so the ghost refuses exactly what the server will refuse.
+        if !self.replica.placement_support_ok(write_block, anchor) {
+            return Some(PlacePrediction::No);
+        }
         // The body-occupancy gate, fed by the shape's own bake of the
         // hypothetical cell (collision AND render, installed eagerly so the
         // ghost collides and draws exactly from frame 0), falling back to the
