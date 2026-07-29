@@ -320,7 +320,7 @@
     {
       "item": "exploration:torch_pink",
       "key": "exploration:torch_pink",
-      "name": "Torch Pink",
+      "name": "Pink Torch",
       "max_stack_size": 64,
       "held_pose": {
         "pitch": 0,
@@ -334,7 +334,7 @@
     {
       "item": "exploration:torch_blue",
       "key": "exploration:torch_blue",
-      "name": "Torch Blue",
+      "name": "Blue Torch",
       "max_stack_size": 64,
       "held_pose": {
         "pitch": 0,
@@ -348,7 +348,7 @@
     {
       "item": "exploration:torch_magenta",
       "key": "exploration:torch_magenta",
-      "name": "Torch Magenta",
+      "name": "Magenta Torch",
       "max_stack_size": 64,
       "held_pose": {
         "pitch": 0,
@@ -362,7 +362,7 @@
     {
       "item": "exploration:torch_purple",
       "key": "exploration:torch_purple",
-      "name": "Torch Purple",
+      "name": "Purple Torch",
       "max_stack_size": 64,
       "held_pose": {
         "pitch": 0,
