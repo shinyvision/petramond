@@ -59,6 +59,82 @@
         "item": "exploration:mushroom_door",
         "count": 1
       }
+    },
+    {
+      "type": "crafting",
+      "recipe": "exploration:torch_pink",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:torch",
+          "count": 4
+        },
+        {
+          "item": "exploration:glowcap_pink",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "exploration:torch_pink",
+        "count": 4
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "exploration:torch_blue",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:torch",
+          "count": 4
+        },
+        {
+          "item": "exploration:glowcap_blue",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "exploration:torch_blue",
+        "count": 4
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "exploration:torch_magenta",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:torch",
+          "count": 4
+        },
+        {
+          "item": "exploration:glowcap_magenta",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "exploration:torch_magenta",
+        "count": 4
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "exploration:torch_purple",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:torch",
+          "count": 4
+        },
+        {
+          "item": "exploration:glowcap_purple",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "exploration:torch_purple",
+        "count": 4
+      }
     }
   ]
 }

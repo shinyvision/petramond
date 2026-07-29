@@ -243,11 +243,20 @@ fn render_kind_matches_shape_family() {
                     "{block:?} crop items render as flat sprites"
                 );
             }
+            // A torch draws its OWN row art. Pinning the engine's `torch` tile
+            // here asserted that only one torch can exist, which the family
+            // never promised — packs ship their own (coloured flames). What
+            // must hold is that the row DECLARES a sprite: an `ItemSprite`
+            // shape with none falls back to the stick, silently.
             ShapeFamily::Torch => {
-                assert_eq!(
+                assert!(
+                    matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
+                    "{block:?} renders as a flat sprite"
+                );
+                assert_ne!(
                     item.render_kind(),
-                    ItemRenderKind::Sprite(Tile::named("torch")),
-                    "{block:?}"
+                    ItemRenderKind::Sprite(Tile::named("stick")),
+                    "{block:?} must declare its own item sprite"
                 );
             }
             ShapeFamily::Model => {

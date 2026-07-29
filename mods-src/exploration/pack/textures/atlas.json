@@ -107,6 +107,54 @@
     {
       "name": "exploration:sporeshroom_purple",
       "file": "sporeshroom_purple.png"
+    },
+    {
+      "name": "exploration:torch_pink",
+      "file": "torch_pink.png"
+    },
+    {
+      "name": "exploration:torch_pink_top",
+      "file": "torch_pink_top.png"
+    },
+    {
+      "name": "exploration:torch_pink_side",
+      "file": "torch_pink_side.png"
+    },
+    {
+      "name": "exploration:torch_blue",
+      "file": "torch_blue.png"
+    },
+    {
+      "name": "exploration:torch_blue_top",
+      "file": "torch_blue_top.png"
+    },
+    {
+      "name": "exploration:torch_blue_side",
+      "file": "torch_blue_side.png"
+    },
+    {
+      "name": "exploration:torch_magenta",
+      "file": "torch_magenta.png"
+    },
+    {
+      "name": "exploration:torch_magenta_top",
+      "file": "torch_magenta_top.png"
+    },
+    {
+      "name": "exploration:torch_magenta_side",
+      "file": "torch_magenta_side.png"
+    },
+    {
+      "name": "exploration:torch_purple",
+      "file": "torch_purple.png"
+    },
+    {
+      "name": "exploration:torch_purple_top",
+      "file": "torch_purple_top.png"
+    },
+    {
+      "name": "exploration:torch_purple_side",
+      "file": "torch_purple_side.png"
     }
   ]
 }

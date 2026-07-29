@@ -979,6 +979,150 @@
           "chance": 1.0
         }
       ]
+    },
+    {
+      "block": "exploration:torch_pink",
+      "shape": "torch",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 28,
+      "light_color": [
+        1.0,
+        0.77,
+        0.85
+      ],
+      "particle_emitter": "exploration:torch_flame_pink",
+      "tiles": [
+        "exploration:torch_pink_top",
+        "exploration:torch_pink_side",
+        "exploration:torch_pink_side"
+      ],
+      "material": "other",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:torch_pink",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:torch_blue",
+      "shape": "torch",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 28,
+      "light_color": [
+        0.7,
+        0.85,
+        1.0
+      ],
+      "particle_emitter": "exploration:torch_flame_blue",
+      "tiles": [
+        "exploration:torch_blue_top",
+        "exploration:torch_blue_side",
+        "exploration:torch_blue_side"
+      ],
+      "material": "other",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:torch_blue",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:torch_magenta",
+      "shape": "torch",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 28,
+      "light_color": [
+        0.97,
+        0.74,
+        1.0
+      ],
+      "particle_emitter": "exploration:torch_flame_magenta",
+      "tiles": [
+        "exploration:torch_magenta_top",
+        "exploration:torch_magenta_side",
+        "exploration:torch_magenta_side"
+      ],
+      "material": "other",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:torch_magenta",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "exploration:torch_purple",
+      "shape": "torch",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 28,
+      "light_color": [
+        0.82,
+        0.75,
+        1.0
+      ],
+      "particle_emitter": "exploration:torch_flame_purple",
+      "tiles": [
+        "exploration:torch_purple_top",
+        "exploration:torch_purple_side",
+        "exploration:torch_purple_side"
+      ],
+      "material": "other",
+      "harvest_tier": 0,
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "exploration:torch_purple",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
     }
   ]
 }

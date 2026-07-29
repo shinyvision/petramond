@@ -316,6 +316,62 @@
       "sprite": "exploration:mushroom_door_item",
       "tags": [],
       "block": "exploration:mushroom_door"
+    },
+    {
+      "item": "exploration:torch_pink",
+      "key": "exploration:torch_pink",
+      "name": "Torch Pink",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "exploration:torch_pink",
+      "tags": [],
+      "block": "exploration:torch_pink"
+    },
+    {
+      "item": "exploration:torch_blue",
+      "key": "exploration:torch_blue",
+      "name": "Torch Blue",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "exploration:torch_blue",
+      "tags": [],
+      "block": "exploration:torch_blue"
+    },
+    {
+      "item": "exploration:torch_magenta",
+      "key": "exploration:torch_magenta",
+      "name": "Torch Magenta",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "exploration:torch_magenta",
+      "tags": [],
+      "block": "exploration:torch_magenta"
+    },
+    {
+      "item": "exploration:torch_purple",
+      "key": "exploration:torch_purple",
+      "name": "Torch Purple",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "exploration:torch_purple",
+      "tags": [],
+      "block": "exploration:torch_purple"
     }
   ]
 }
