@@ -443,8 +443,7 @@ fn welded_bones_ride_their_anchor_rigidly_through_the_tumble() {
             let pose = rag.pose(alpha);
             let (anchor_pos, anchor_rot) = pose[0];
             tumbled = tumbled.max(anchor_rot.angle_between(Quat::IDENTITY));
-            for i in 1..3 {
-                let (pos, rot) = pose[i];
+            for (i, &(pos, rot)) in pose.iter().enumerate().take(3).skip(1) {
                 assert!(
                     rot.angle_between(anchor_rot) < 1e-3,
                     "welded bone {i} keeps its anchor's orientation"

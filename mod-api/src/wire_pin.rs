@@ -329,7 +329,7 @@ fn samples() -> Samples {
     s.pin("HostRet::ContainerSlots", &HostRet::ContainerSlots(Some(vec![
         Some(ItemStackData { item: "m:i".into(), count: 1, data: Vec::new() }), None,
     ])));
-    s.pin("HostRet::ItemInfo", &HostRet::ItemInfo(Some(ItemInfoData {
+    s.pin("HostRet::ItemInfo", &HostRet::ItemInfo(Some(Box::new(ItemInfoData {
         max_stack: 64, fuel_burn_ticks: 0, tags: vec!["t".into()],
         display_name: "N".into(), block: Some(BlockId(2)),
         tool: Some(ToolInfoData { kind: "pickaxe".into(), tier: 1 }),
@@ -338,7 +338,7 @@ fn samples() -> Samples {
             effects: vec![FoodEffectData { effect: "m:e".into(), ticks: 100 }],
         }),
         item_use: Some("bucket_fill".into()),
-    })));
+    }))));
     s.pin("HostRet::ItemStack", &HostRet::ItemStack(Some(ItemStackData {
         item: "m:i".into(), count: 2, data: Vec::new(),
     })));

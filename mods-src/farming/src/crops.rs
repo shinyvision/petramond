@@ -188,7 +188,7 @@ pub fn on_interact(
     // unit of the primary produce.
     let roll = |key: &str, (lo, hi): (u64, u64)| -> u8 { (lo + rng_u64(key) % (hi - lo + 1)) as u8 };
     let count = roll(&def.harvest_key, def.yield_range)
-        + (fertile && rng_u64(&def.fertile_key) % FERTILE_BONUS_IN == 0) as u8;
+        + (fertile && rng_u64(&def.fertile_key).is_multiple_of(FERTILE_BONUS_IN)) as u8;
     spawn_item(def.produce, count, center);
     if let Some((key, item, lo, hi)) = def.extra_drop {
         let extra = roll(key, (lo, hi));

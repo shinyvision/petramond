@@ -50,7 +50,7 @@ fn random_tick(content: &Content, pos: [i32; 3]) {
     let Some(above) = get_block([pos[0], pos[1] + 1, pos[2]]) else {
         return;
     };
-    if content.spreadable.contains(&above) && rng_u64("spread") % SPREAD_CHANCE_IN == 0 {
+    if content.spreadable.contains(&above) && rng_u64("spread").is_multiple_of(SPREAD_CHANCE_IN) {
         try_spread(content, pos, above);
     }
     let spent = kv_counter_bump(pos, SPREAD_KEY);

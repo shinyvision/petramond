@@ -349,6 +349,11 @@ impl BlockEntityPass {
 /// The terrain pass: the packed per-column GPU geometry, the persistent upload
 /// queue that fills it, and the per-frame draw plan (visible sections and the
 /// column runs each pass can draw in one call).
+/// A terrain upload's heap ordering key: priority band, then the frame it was
+/// queued on, then the column, then a tiebreak sequence — so equal-priority
+/// columns retire in the order they arrived.
+type UploadKey = (u8, u32, i32, i32, u64);
+
 struct TerrainPass {
     columns: HashMap<ChunkPos, GpuColumnMesh>,
     /// Shared instance-step table of per-column world XZ origins, bound once
@@ -361,7 +366,7 @@ struct TerrainPass {
     /// Persistent upload work. World dirtiness is level-triggered, so the set
     /// deduplicates columns while the heap preserves their first useful priority.
     upload_pending: HashMap<ChunkPos, PendingTerrainUpload>,
-    upload_heap: BinaryHeap<Reverse<(u8, u32, i32, i32, u64)>>,
+    upload_heap: BinaryHeap<Reverse<UploadKey>>,
     upload_frame: u64,
     /// Reusable CPU staging for packing section meshes into a GPU column upload.
     upload_scratch: ColumnUploadScratch,
@@ -820,12 +825,10 @@ impl Renderer {
                 &col.model_vbuf,
                 &col.model_ibuf,
                 &col.contact_vbuf,
-            ] {
-                if let Some(b) = b {
-                    suballocated += b.alloc.capacity();
-                    used += b.len;
-                    live_allocs += 1;
-                }
+            ].into_iter().flatten() {
+                suballocated += b.alloc.capacity();
+                used += b.len;
+                live_allocs += 1;
             }
         }
         TerrainMemory {

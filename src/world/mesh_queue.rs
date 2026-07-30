@@ -61,6 +61,7 @@ const MESH_RELEASE_SWEEP_INTERVAL: u64 = 64;
 /// path that dirties a section pushes here and `remove_section` pulls it back out —
 /// so the set alone says what needs meshing. Drained NEAREST-FIRST to the load
 /// centre so the terrain around the player meshes before the edges.
+#[derive(Default)]
 pub(super) struct DirtyMeshQueue {
     pending: FxHashSet<SectionPos>,
     /// Entries cache their priority once. Removal is lazy: `pending` remains the
@@ -69,15 +70,6 @@ pub(super) struct DirtyMeshQueue {
     target: Option<LoadTarget>,
 }
 
-impl Default for DirtyMeshQueue {
-    fn default() -> Self {
-        Self {
-            pending: FxHashSet::default(),
-            heap: BinaryHeap::new(),
-            target: None,
-        }
-    }
-}
 
 impl DirtyMeshQueue {
     fn entry(target: Option<LoadTarget>, pos: SectionPos) -> Reverse<(i64, i32, i32, i32)> {

@@ -134,14 +134,10 @@ impl Game {
         let v = &self.menu_view;
         match slot {
             MenuSlot::Inventory(_) => {
-                let block_container_open = v.container.is_some();
-                if shift {
-                    !block_container_open
-                } else if gather {
-                    !block_container_open
-                } else {
-                    true
-                }
+                // Shift-move and gather both target the open container, so
+                // both are unpredictable exactly while one is open; a plain
+                // click never leaves the inventory.
+                !(shift || gather) || v.container.is_none()
             }
             MenuSlot::Container(_) => {
                 !shift && !gather && v.container.is_some() && v.container_kind.is_some()

@@ -176,7 +176,7 @@ pub(super) fn new_renderer_inner(
     // Half-res environment targets: env passes march at half the scene dims
     // against a downsampled depth; the composite lifts the result back (see
     // pipeline::EnvScaler).
-    let (env_w, env_h) = ((width + 1) / 2, (height + 1) / 2);
+    let (env_w, env_h) = (width.div_ceil(2), height.div_ceil(2));
     let env_color = create_scene_color(&device, env_w, env_h, format);
     let env_depth = super::super::resources::create_depth(&device, env_w, env_h);
     let env_down_bind = super::super::pipeline::create_env_down_bind(
@@ -644,8 +644,8 @@ pub(super) fn new_renderer_inner(
             visible: Vec::new(),
         },
         actor: ActorPass {
-            mob_gpu: mob_gpu,
-            player_gpu: player_gpu,
+            mob_gpu,
+            player_gpu,
             item_draw: player_item_draw,
             model_item_draw: player_model_item_draw,
             block_item_draw: player_block_item_draw,
@@ -723,9 +723,9 @@ pub(super) fn new_renderer_inner(
             count_vertex_count: 0,
             overlay_count_vertex_count: 0,
             drag_count_vertex_count: 0,
-            hud_layers: hud_layers,
-            icon_atlas: icon_atlas,
-            icon_quad_vbuf: icon_quad_vbuf,
+            hud_layers,
+            icon_atlas,
+            icon_quad_vbuf,
             icon_quad_verts: Vec::new(),
             icon_quad_vertex_count: 0,
             overlay_icon_quad_vertex_count: 0,
@@ -737,12 +737,12 @@ pub(super) fn new_renderer_inner(
             bind: pipelines.sky_bind,
             texture_bind: pipelines.sky_texture_bind,
             shader_param_keys: pipelines.sky_shader_param_keys,
-            env_passes: env_passes,
+            env_passes,
             env_scaler: pipelines.env_scaler,
-            env_color: env_color,
-            env_depth: env_depth,
-            env_down_bind: env_down_bind,
-            env_comp_bind: env_comp_bind,
+            env_color,
+            env_depth,
+            env_down_bind,
+            env_comp_bind,
             light_param_key: pipelines.sky_light_param_key,
             underwater: false,
             fog_start: default_fog.0,
@@ -767,13 +767,13 @@ pub(super) fn new_renderer_inner(
         targets: SceneTargets {
             render_scale: 1.0,
             grade_enabled: true,
-            scene_color: scene_color,
+            scene_color,
             grade_pipe: pipelines.grade_pipe,
             grade_bgl: pipelines.grade_bgl,
-            grade_bind: grade_bind,
-            mood_buf: mood_buf,
+            grade_bind,
+            mood_buf,
             mood: [0.0, 0.0],
-            depth: depth,
+            depth,
         },
         view: ViewState {
             frustum: Frustum::permissive(),
@@ -783,9 +783,9 @@ pub(super) fn new_renderer_inner(
         },
         terrain: TerrainPass {
             columns: HashMap::new(),
-            column_origins: column_origins,
+            column_origins,
             geometry: super::super::geometry_arena::GeometryArena::new(),
-            quad_index: quad_index,
+            quad_index,
             upload_pending: HashMap::new(),
             upload_heap: BinaryHeap::new(),
             upload_frame: 0,
@@ -875,7 +875,7 @@ impl Renderer {
         );
         // Environment half-res targets and every bind that references the
         // recreated views.
-        let (env_w, env_h) = ((w + 1) / 2, (h + 1) / 2);
+        let (env_w, env_h) = (w.div_ceil(2), h.div_ceil(2));
         self.sky.env_color = create_scene_color(&self.device, env_w, env_h, self.config.format);
         self.sky.env_depth = super::super::resources::create_depth(&self.device, env_w, env_h);
         self.sky.env_down_bind = super::super::pipeline::create_env_down_bind(

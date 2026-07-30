@@ -114,7 +114,7 @@ impl Mod for Minimap {
             // Map closed: a reopen recomputes its visible requests.
             self.full_needed_stamp = None;
         }
-        if self.frame % FLUSH_INTERVAL == 0 {
+        if self.frame.is_multiple_of(FLUSH_INTERVAL) {
             self.store.flush_dirty();
         }
     }

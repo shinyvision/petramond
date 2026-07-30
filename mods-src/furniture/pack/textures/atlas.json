@@ -7,6 +7,7 @@
     { "name": "furniture:lantern_bottom", "file": "lantern_bottom.png" },
     { "name": "furniture:lantern_side", "file": "lantern_side.png" },
     { "name": "furniture:chain_iron", "file": "chain_iron.png" },
+    { "name": "furniture:chain_iron_cap", "file": "chain_iron_cap.png" },
     { "name": "furniture:chain_iron_h", "file": "chain_iron_h.png" },
     { "name": "furniture:chain_link", "file": "chain_link.png" },
     { "name": "furniture:chain_link_h", "file": "chain_link_h.png" },

@@ -249,7 +249,7 @@ impl World {
     /// chunk is unloaded. Biomes are column-level data fixed at generation.
     pub fn biome_at_world(&self, wx: i32, wz: i32) -> Option<u8> {
         let col = self.columns.get(&ChunkPos::new(wx >> 4, wz >> 4))?;
-        Some(col.biome_at(chunk::lx(wx) as usize, chunk::lz(wz) as usize))
+        Some(col.biome_at(chunk::lx(wx), chunk::lz(wz)))
     }
 
     /// The Y of the topmost cell precipitation lands on in the loaded column

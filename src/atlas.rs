@@ -447,7 +447,7 @@ fn dye_base_pixels(src: &image::RgbaImage) -> image::RgbaImage {
     let max = src
         .pixels()
         .filter(|p| p.0[3] >= ALPHA_CUTOFF)
-        .map(|p| luma(p))
+        .map(&luma)
         .fold(0.0f32, f32::max);
     let scale = if max > 0.0 { 255.0 / max } else { 1.0 };
     let mut out = src.clone();
@@ -848,7 +848,8 @@ mod tests {
             assert_eq!(t.world_tint(), Some(TileTint::Foliage), "{name}");
         }
         // Azalea keeps its baked colour in the WORLD but green in icons.
-        for name in ["azalea_leaves"] {
+        {
+            let name = "azalea_leaves";
             let t = Tile::from_name(name).unwrap();
             assert_eq!(t.world_tint(), None, "{name}");
             assert_eq!(t.icon_tint(), Some(TileTint::Foliage), "{name}");

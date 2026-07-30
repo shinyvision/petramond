@@ -402,7 +402,7 @@ mod tests {
         assert_eq!(count(&inventory, ItemType::OakPlanks), 5);
         assert_eq!(output, Some(ItemStack::new(ItemType::Stick, 1)));
 
-        let before = inventory.raw_slots().clone();
+        let before = *inventory.raw_slots();
         output = None;
         assert_eq!(
             craft(&recipe, &mut inventory, &mut output),
@@ -589,7 +589,7 @@ mod tests {
             1,
             IngredientUse::Consume,
         )]);
-        let before = inventory.raw_slots().clone();
+        let before = *inventory.raw_slots();
         let mut output = Some(ItemStack::new(ItemType::Dirt, 1));
         assert_eq!(
             craft(&recipe, &mut inventory, &mut output),

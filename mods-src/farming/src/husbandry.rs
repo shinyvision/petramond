@@ -901,7 +901,7 @@ pub fn decide(ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
     let consuming =
         tag_i64(&ctx.tags, CONSUME_UNTIL).is_some_and(|until| (ctx.tick as i64) < until);
     if consuming {
-        let lowered = (ctx.tick / BOB_HALF_PERIOD) % 2 == 0;
+        let lowered = (ctx.tick / BOB_HALF_PERIOD).is_multiple_of(2);
         return Some(AiNodeDecision {
             goal: Some(ctx.cell),
             head_look: Some([0.0, if lowered { HEAD_DOWN } else { HEAD_RAISED }]),

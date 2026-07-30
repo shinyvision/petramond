@@ -300,13 +300,12 @@ fn full_lan_join_place_pause_gate_and_leave() {
                     pad_streamed = true;
                 }
             }
-            ServerToClient::Tick(update) => {
-                if pad_streamed && lit_sections > 0 {
+            ServerToClient::Tick(update)
+                if pad_streamed && lit_sections > 0 => {
                     if let Some(row) = update.players.iter().find(|r| r.id == PlayerId(1)) {
                         return Some(row.transform.pos);
                     }
                 }
-            }
             _ => {}
         }
         None
@@ -371,12 +370,8 @@ fn full_lan_join_place_pause_gate_and_leave() {
         {
             return Some(());
         }
-        let Some(self_state) = update.self_state.as_ref() else {
-            return None;
-        };
-        let Some(inv) = self_state.inventory.as_ref() else {
-            return None;
-        };
+        let self_state = update.self_state.as_ref()?;
+        let inv = self_state.inventory.as_ref()?;
         match inv.first() {
             Some(Some(slot)) if slot.item_id == ItemType::Dirt.0 && slot.count == 63 => Some(()),
             _ => None,

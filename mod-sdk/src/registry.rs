@@ -100,7 +100,7 @@ host_fn! {
     /// tags, display name, block link, tool, food, engine use key) — the same
     /// rows engine mechanics read. `None` = unknown name. Row data is
     /// session-stable — cache it mod-side instead of re-asking per tick.
-    pub fn item_info(item: &str) -> Option<ItemInfoData> => ItemInfo { item: item.into() } => ItemInfo
+    pub fn item_info(item: &str) -> Option<Box<ItemInfoData>> => ItemInfo { item: item.into() } => ItemInfo
 }
 
 /// [`resolve_block`] that also logs a "not registered" line on `None` — the

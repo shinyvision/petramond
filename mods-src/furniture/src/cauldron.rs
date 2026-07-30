@@ -58,16 +58,27 @@ const fn px(min: [f32; 3], max: [f32; 3]) -> ShapeAabb {
 /// (block id = state, the ladder-row pattern) with their own tiles; the bake
 /// branches on the cell's block id.
 pub(super) const CAULDRON_BOXES: [ShapeAabb; 13] = [
-    px([2.0, 0.0, 2.0], [14.0, 3.0, 14.0]),   // floor slab (cavity floor + inset foot)
-    px([1.0, 1.0, 1.0], [13.0, 14.0, 3.0]),   // wall ring, pinwheel
+    px([2.0, 0.0, 2.0], [14.0, 3.0, 14.0]), // floor slab (cavity floor + inset foot)
+    px([1.0, 1.0, 1.0], [13.0, 14.0, 3.0]), // wall ring, pinwheel
     px([13.0, 1.0, 1.0], [15.0, 14.0, 13.0]),
     px([3.0, 1.0, 13.0], [15.0, 14.0, 15.0]),
     px([1.0, 1.0, 3.0], [3.0, 14.0, 15.0]),
-    px([2.0, 2.0, 0.5], [14.0, 12.0, 2.0]),   // belly plates (rounded bulge)
-    px([2.0, 2.0, 14.0], [14.0, 12.0, 15.5]),
-    px([0.5, 2.0, 2.0], [2.0, 12.0, 14.0]),
-    px([14.0, 2.0, 2.0], [15.5, 12.0, 14.0]),
-    px([1.0, 14.0, 0.0], [15.0, 16.0, 2.0]),  // lip ring, corners cut 1×1
+    // Belly plates (the rounded bulge). Each is only the SLIVER that stands
+    // proud of its wall, and stops exactly on the wall's outer face rather than
+    // reaching through it. The visible surface is unchanged — the part that
+    // used to continue inside the wall was never seen.
+    //
+    // Interpenetrating cost a real artifact: `mesh::boxset` never culls a face
+    // that merely STRADDLES another box's plane, so the wall's outer face was
+    // retained half a texel behind the belly's, and two same-facing quads that
+    // close together fight as soon as the depth buffer stops separating them —
+    // i.e. with DISTANCE, which is why it read as "further down" and why no
+    // close-up ever showed it. Butted contact is the case the emitter culls.
+    px([2.0, 2.0, 0.5], [14.0, 12.0, 1.0]),
+    px([2.0, 2.0, 15.0], [14.0, 12.0, 15.5]),
+    px([0.5, 2.0, 2.0], [1.0, 12.0, 14.0]),
+    px([15.0, 2.0, 2.0], [15.5, 12.0, 14.0]),
+    px([1.0, 14.0, 0.0], [15.0, 16.0, 2.0]), // lip ring, corners cut 1×1
     px([1.0, 14.0, 14.0], [15.0, 16.0, 16.0]),
     px([0.0, 14.0, 1.0], [2.0, 16.0, 15.0]),
     px([14.0, 14.0, 1.0], [16.0, 16.0, 15.0]),
@@ -239,7 +250,11 @@ fn mix_dye(pot: [u8; 3], pigment: [u8; 3], dilute: bool) -> [u8; 3] {
             t * p.sqrt()
         };
         let scaled = mixed * 255.0;
-        let rounded = if dilute { scaled.ceil() } else { scaled.floor() };
+        let rounded = if dilute {
+            scaled.ceil()
+        } else {
+            scaled.floor()
+        };
         let snapped = (rounded / 8.0).round() * 8.0;
         out[c] = snapped.clamp(8.0, 248.0) as u8;
     }
@@ -343,8 +358,7 @@ impl Furniture {
         }
         let stale_dye_pot = block == cauldron.dye && dye.is_none();
         if (block == cauldron.water || block == cauldron.dye) && !stale_dye_pot {
-            if let Some(&(_, pigment, dilute)) =
-                self.pigments.iter().find(|(id, _, _)| *id == held)
+            if let Some(&(_, pigment, dilute)) = self.pigments.iter().find(|(id, _, _)| *id == held)
             {
                 if actor.sneak && held_places_a_block(Some(held)) {
                     return CauldronSwap::None; // sneak-to-build against the pot
@@ -548,6 +562,71 @@ impl Furniture {
             self.cauldron_action(cauldron, block, actor, dye),
             CauldronSwap::None
         )
+    }
+}
+
+#[cfg(test)]
+mod shape_tests {
+    use super::*;
+
+    /// NO TWO SAME-FACING FACES OF ONE SHAPE MAY SIT CLOSER THAN A TEXEL AND
+    /// OVERLAP.
+    ///
+    /// `mesh::boxset` never culls a face that merely STRADDLES another box's
+    /// plane, so a box reaching through another leaves the buried face retained
+    /// a fraction of a texel behind the visible one. Two same-facing quads that
+    /// close together fight as soon as the depth buffer stops separating them —
+    /// i.e. with DISTANCE, so it is invisible in every close-up and reads as
+    /// "further away it starts sparkling". The cauldron's belly plates reached
+    /// half a texel through its walls and did exactly that (2026-07-30); they
+    /// are slivers that BUTT now, which is the case the emitter culls.
+    ///
+    /// A full texel apart is a real step and fine — the floor slab sits inside
+    /// the wall ring that way. It is the sub-texel offsets that fight.
+    /// `harness/src/bin/zfight.rs --gap` measures the same thing on the emitted
+    /// mesh, including across blocks.
+    #[test]
+    fn no_shape_in_this_pack_buries_a_face_a_sliver_deep() {
+        let shapes: [(&str, Vec<ShapeAabb>); 2] = [
+            ("cauldron", CAULDRON_BOXES.to_vec()),
+            ("chain", crate::chains::cell_links()),
+        ];
+        const TEXEL: f32 = 1.0 / 16.0;
+        const E: f32 = 1e-6;
+        for (name, boxes) in shapes {
+            for (i, a) in boxes.iter().enumerate() {
+                for (j, b) in boxes.iter().enumerate() {
+                    if i == j {
+                        continue;
+                    }
+                    for axis in 0..3 {
+                        let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+                        if !(a.min[u] < b.max[u] - E
+                            && b.min[u] < a.max[u] - E
+                            && a.min[v] < b.max[v] - E
+                            && b.min[v] < a.max[v] - E)
+                        {
+                            continue;
+                        }
+                        for (p, front, inward) in [
+                            (a.min[axis], b.min[axis], true),
+                            (a.max[axis], b.max[axis], false),
+                        ] {
+                            let straddles = b.min[axis] < p - E && p < b.max[axis] - E;
+                            if !straddles {
+                                continue;
+                            }
+                            let depth = if inward { p - front } else { front - p };
+                            assert!(
+                                depth >= TEXEL - E,
+                                "{name}: box {j} buries box {i}'s face only {:.3} texels deep on axis {axis}",
+                                depth * 16.0
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

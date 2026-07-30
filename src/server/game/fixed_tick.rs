@@ -219,7 +219,7 @@ impl ServerGame {
         // The passive trickle backfills on the slow creature cadence — one
         // attempt per player per interval, not per tick, or killing animals
         // becomes a respawn faucet.
-        if self.world.current_tick() % crate::mob::PASSIVE_SPAWN_INTERVAL_TICKS == 0 {
+        if self.world.current_tick().is_multiple_of(crate::mob::PASSIVE_SPAWN_INTERVAL_TICKS) {
             for anchor in &anchors {
                 for (id, kind, pos) in self.world.spawn_mobs_tick(anchor.pos) {
                     self.bus.emit(PostEvent::MobSpawned { id, kind, pos });

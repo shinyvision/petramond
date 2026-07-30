@@ -97,7 +97,11 @@ pub(in crate::modding) fn test_advance_epochs(ticks: u64) {
 /// Test-only seam: runs at the top of every host call made by the mod whose
 /// id matches, so a test can simulate a host call stalling for many epochs.
 #[cfg(test)]
-pub(in crate::modding) static HOST_CALL_TEST_HOOK: Mutex<Option<(String, fn())>> = Mutex::new(None);
+pub(in crate::modding) static HOST_CALL_TEST_HOOK: Mutex<Option<HostCallHook>> = Mutex::new(None);
+
+/// A host-call name and the callback to run when it is reached.
+#[cfg(test)]
+type HostCallHook = (String, fn());
 
 /// The process-wide wasmtime engine, plus its epoch ticker thread. The ticker
 /// only bumps a counter — it never touches the simulation — so determinism is

@@ -997,7 +997,7 @@ impl CaveField {
     /// can be open.
     #[inline]
     fn batch_y_pad_low(&self, y0: i32) -> i32 {
-        (self.lining_faces && y0 - 1 >= self.batch_min_y()) as i32
+        (self.lining_faces && y0 > self.batch_min_y()) as i32
     }
 
     pub fn carve_chunk(&self, chunk: &mut Chunk, surf: &[i32]) {

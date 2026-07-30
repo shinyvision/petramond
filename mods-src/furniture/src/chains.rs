@@ -30,21 +30,28 @@ pub(super) struct Chains {
 /// flat black cardboard. Nothing about the art could fix that — the geometry
 /// was two quads. The tile carries only SHADING now (`gen_chain.py`).
 ///
-/// One link is [`LINK_W`] wide x `LINK_PITCH + 1` tall x [`LINK_T`] thick, with
-/// a real 1x3 hole; links sit every [`LINK_PITCH`] texels, so consecutive links
-/// SHARE their bar row — the upper ring's bottom bar crosses the lower ring's
-/// top bar, which is what reads as interlock. `LINK_PITCH` must divide 16 with
-/// an even link count per cell or the alternating pattern breaks at the cell
-/// boundary: 8 was the first cut (two chunky links), 4 is Rachel's "smaller,
-/// vertically" (four links of 5).
+/// One link is exactly [`LINK_PITCH`] tall — [`LINK_W`] wide x [`LINK_T`] thick
+/// with a real 1x2 hole — so consecutive links BUTT rather than overlap, and
+/// the cell holds a whole number of them with nothing to clip.
+///
+/// Butting is not cosmetic. Links that shared a bar row INTERPENETRATED, and
+/// `mesh::boxset` deliberately never culls an interpenetrating face ("merely
+/// straddling ... does NOT hide"): every shared row kept a pair of buried,
+/// mutually-straddling faces. Butted contact is the case the emitter culls
+/// exactly — flush faces vanish on both sides — so the run carries no retained
+/// interior geometry at all. At 16px the two read identically.
+///
+/// `LINK_PITCH` must divide 16 with an EVEN link count, or the 90-degree
+/// alternation breaks at the cell boundary: 8 was the first cut (two chunky
+/// links), 4 is Rachel's "smaller, vertically".
 const LINK_PITCH: f32 = 4.0;
 const LINK_W: [f32; 2] = [6.5, 9.5];
 const LINK_T: [f32; 2] = [7.0, 9.0];
 
 /// One link, its bottom bar's floor at texel `ya`, ring plane in x/y
-/// (`turned = false`) or z/y.
+/// (`turned = false`) or z/y. Spans exactly `ya .. ya + LINK_PITCH`.
 fn ring(ya: f32, turned: bool) -> [ShapeAabb; 4] {
-    let top = ya + LINK_PITCH;
+    let top = ya + LINK_PITCH - 1.0;
     let (w, t) = (LINK_W, LINK_T);
     let raw = [
         bx([w[0], ya, t[0]], [w[1], ya + 1.0, t[1]]), // bottom bar
@@ -89,29 +96,16 @@ fn to_axis(b: ShapeAabb, i: usize) -> ShapeAabb {
     }
 }
 
-/// This cell's whole chain, as the VERTICAL row authors it: every ring whose
-/// span reaches into the cell, CLIPPED to it (a ring crossing the cell top
-/// reappears as the stub ring the cell above clips at its floor — same pure
-/// pattern, so a stack of cells is one unbroken run). The lantern's bail clips
-/// this same list rather than restating it (`lanterns::bail`), so a lamp
+/// This cell's whole chain, as the VERTICAL row authors it. The lantern's bail
+/// clips this same list rather than restating it (`lanterns::bail`), so a lamp
 /// strung under a chain continues the run exactly.
 pub(super) fn cell_links() -> Vec<ShapeAabb> {
-    let mut out = Vec::new();
-    // One anchor below the cell (the stub) through one at its top; anchors
-    // whose ring misses the cell clip to nothing, so the bounds only need to
-    // be generous, not exact, and they survive a LINK_PITCH retune.
-    for k in -1i32..=(16.0 / LINK_PITCH) as i32 {
-        for b in ring(k as f32 * LINK_PITCH, k.rem_euclid(2) == 1) {
-            let (lo, hi) = (b.min[1].max(0.0), b.max[1].min(1.0));
-            if hi > lo {
-                out.push(ShapeAabb {
-                    min: [b.min[0], lo, b.min[2]],
-                    max: [b.max[0], hi, b.max[2]],
-                });
-            }
-        }
-    }
-    out
+    // A whole number of links, every one entirely inside the cell: nothing is
+    // clipped and no link straddles the boundary, so a stack of cells is a run
+    // of butted links with no special case at the seam.
+    (0..(16.0 / LINK_PITCH) as i32)
+        .flat_map(|k| ring(k as f32 * LINK_PITCH, k.rem_euclid(2) == 1))
+        .collect()
 }
 
 impl Chains {
@@ -156,11 +150,9 @@ mod tests {
     use super::*;
 
     /// A chain cell's pattern must CONTINUE across the cell boundary: every
-    /// box the cell top cuts off must be met, in the identical pattern one
-    /// cell up, by a box starting at the floor that overlaps its footprint.
-    /// A miss here is a one-texel gap at EVERY cell boundary of every run —
-    /// the wrap stub (`cell_links`' `k = -1` ring) is exactly what closes it,
-    /// and this is what fails if the anchor bounds ever stop covering it.
+    /// box the cell top reaches must be met, in the identical pattern one cell
+    /// up, by a box starting at the floor that overlaps its footprint. A miss
+    /// is a one-texel gap at EVERY cell boundary of every run.
     #[test]
     fn a_stack_of_chain_cells_has_no_seam_at_the_boundary() {
         let links = cell_links();
@@ -175,6 +167,22 @@ mod tests {
                     && t.min[2] < b.max[2]),
                 "{t:?} ends at the cell top with nothing continuing it above"
             );
+        }
+    }
+
+    /// NO TWO LINK BOXES MAY INTERPENETRATE. `mesh::boxset` never culls a face
+    /// that merely straddles another box's plane, so any overlap leaves buried
+    /// geometry in the run forever — the thing the butted construction exists
+    /// to avoid. Touching faces are fine (that is the cull the emitter does
+    /// handle); shared VOLUME is not.
+    #[test]
+    fn no_two_link_boxes_share_volume() {
+        let links = cell_links();
+        for (i, a) in links.iter().enumerate() {
+            for (j, b) in links.iter().enumerate().skip(i + 1) {
+                let overlaps = (0..3).all(|k| a.min[k] < b.max[k] && b.min[k] < a.max[k]);
+                assert!(!overlaps, "boxes {i} and {j} interpenetrate: {a:?} {b:?}");
+            }
         }
     }
 

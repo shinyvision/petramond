@@ -88,7 +88,7 @@ impl Spores {
         };
         self.frame = self.frame.wrapping_add(1);
         self.clock += frame.dt.clamp(0.0, 0.25);
-        if self.frame % SAMPLE_INTERVAL != 0 && self.frame != 1 {
+        if !self.frame.is_multiple_of(SAMPLE_INTERVAL) && self.frame != 1 {
             return;
         }
         self.intensity += (self.sample(biome, frame) - self.intensity)

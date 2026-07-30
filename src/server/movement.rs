@@ -125,7 +125,7 @@ impl ServerGame {
             if spectator || sess.player.columns_loaded(world) {
                 sess.player
                     .update_with_obstacles(TICK_DT, world, input, obstacles);
-                (!spectator && sess.player.on_ground).then(|| sess.player.pos.y)
+                (!spectator && sess.player.on_ground).then_some(sess.player.pos.y)
             } else {
                 None
             }

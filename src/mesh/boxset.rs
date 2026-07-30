@@ -482,12 +482,16 @@ fn covers_boundary(boxes: &[ShapeBox], face: Face, scratch: &mut BoxSetScratch) 
 ///   one plane emit that plane once (the earlier box wins; ties are the only
 ///   case subtraction alone cannot order).
 ///
-/// A box merely STRADDLING the plane (interpenetration, like the chain's two
-/// crossing plates) deliberately does NOT hide: box faces draw alpha-cutout
-/// tiles, so a face inside another box's volume can still show through that
-/// box's transparent texels — culling it would punch visible holes. Where the
-/// straddling box is fully opaque the retained face is invisible overdraw,
-/// which is harmless.
+/// A box merely STRADDLING the plane (interpenetration — the cactus's inset
+/// trunk behind its full-cell face carriers) deliberately does NOT hide: box
+/// faces draw alpha-cutout tiles, so a face inside another box's volume can
+/// still show through that box's transparent texels — culling it would punch
+/// visible holes. Where the straddling box is fully opaque the retained face
+/// is overdraw — invisible if the surface in front is a texel or more away,
+/// but a Z-FIGHT once the two are a fraction of a texel apart and the depth
+/// buffer stops separating them, which only shows AT DISTANCE. So a pack shape
+/// built from overlapping boxes should BUTT them instead; the furniture
+/// cauldron's belly plates were the case that taught this (2026-07-30).
 #[allow(clippy::too_many_arguments)]
 fn push_occluder(
     occ: &mut Vec<Rect>,

@@ -52,6 +52,14 @@ pub struct SceneCapture {
     camera: Camera,
     shader_params: ShaderParamMap,
     animation_time: f32,
+    /// The CLIENT mod runtime, purely so a pack's custom shapes bake.
+    ///
+    /// Without it every WASM-baked shape falls back to its row's static form —
+    /// a full cube wearing the row's tiles — and a capture of one is a
+    /// convincing picture of something that is not in the game. That cost three
+    /// misdiagnoses in one session (2026-07-29) before anyone noticed the
+    /// harness was photographing the fallback.
+    client_mods: crate::modding::client::ClientModRuntime,
 }
 
 impl SceneCapture {
@@ -66,12 +74,24 @@ impl SceneCapture {
         ));
         renderer.set_render_distance(render_distance);
         let aspect = width as f32 / height.max(1) as f32;
+        // Every installed pack, since a capture has no server handshake to
+        // narrow the set with — a headless shot wants exactly what the assets
+        // dir holds.
+        let enabled: std::collections::BTreeSet<String> = crate::assets::packs()
+            .iter()
+            .filter_map(|p| p.id.clone())
+            .collect();
         let mut this = Self {
             world: World::new(seed, render_distance),
             renderer,
             camera: Camera::new(Vec3::ZERO, aspect),
             shader_params: ShaderParamMap::new(),
             animation_time: 0.0,
+            client_mods: crate::modding::client::ClientModRuntime::load(
+                seed,
+                &crate::modding::client::local_session_key("harness"),
+                &enabled,
+            ),
         };
         // Without sky params the shaders fall back to their zero state, which is
         // not a visible failure — it is fully lit terrain under a dawn sky, i.e.
@@ -98,10 +118,15 @@ impl SceneCapture {
     /// world is already streamed, it just has to re-light and re-mesh.
     pub fn settle(&mut self, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
+        // Custom shapes bake FIRST: a dirty custom cell has no geometry until
+        // its pack is asked, and the mesher would otherwise settle on the
+        // static fallback and call it done.
+        self.client_mods.bake_custom_shapes(&mut self.world);
         let mut quiet = 0u32;
         let mut last = (0usize, 0usize);
         while Instant::now() < deadline {
             self.world.poll();
+            self.client_mods.bake_custom_shapes(&mut self.world);
             self.world.tick_mesh_budget(MESH_BUDGET);
             let now = (
                 self.world.loaded_section_count(),

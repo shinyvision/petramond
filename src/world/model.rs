@@ -92,9 +92,7 @@ impl World {
     /// than a per-cell cube. `None` for a non-model cell.
     pub fn model_outline_box(&self, pos: IVec3) -> Option<([f32; 3], [f32; 3])> {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        let Some(kind) = block.model_kind() else {
-            return None;
-        };
+        let kind = block.model_kind()?;
         let off = self.model_offset_at(pos.x, pos.y, pos.z);
         let facing = self.model_facing_at(pos.x, pos.y, pos.z);
         let base = block_model::base_from_cell(pos, kind, off, facing);
@@ -187,9 +185,7 @@ impl World {
     /// rotated-footprint base, and every footprint cell. `None` for a non-model cell.
     pub fn model_group(&self, pos: IVec3) -> Option<(BlockModelKind, IVec3, Vec<IVec3>)> {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        let Some(kind) = block.model_kind() else {
-            return None;
-        };
+        let kind = block.model_kind()?;
         let off = self.model_offset_at(pos.x, pos.y, pos.z);
         let facing = self.model_facing_at(pos.x, pos.y, pos.z);
         let base = block_model::base_from_cell(pos, kind, off, facing);

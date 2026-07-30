@@ -770,8 +770,8 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
         .filter(|hook| {
             matches!(
                 hook.kind,
-                crate::gui::DocHookKind::CraftTipResult
-                    | crate::gui::DocHookKind::CraftTipIngredients
+                crate::gui::DocHookKind::TipResult
+                    | crate::gui::DocHookKind::TipIngredients
             )
         })
         .collect();
@@ -779,7 +779,7 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
     assert!(tip.iter().all(|hook| hook.overlay));
     assert!(hooks
         .iter()
-        .filter(|hook| hook.kind == crate::gui::DocHookKind::CraftRecipeResult)
+        .filter(|hook| hook.kind == crate::gui::DocHookKind::RecipeResult)
         .all(|hook| !hook.overlay));
 
     // Off the grid the tooltip goes away entirely.
@@ -792,7 +792,7 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
         .ui
         .doc_hooks()
         .iter()
-        .all(|hook| hook.kind != crate::gui::DocHookKind::CraftTipResult));
+        .all(|hook| hook.kind != crate::gui::DocHookKind::TipResult));
 }
 
 /// Selection is carried by the cell's own selected face, not by a detail

@@ -337,8 +337,8 @@ mod tests {
             cube([0.5, 0.0, 0.0], [1.0, 0.5, 1.0]),
         ];
         let ao = bake_face_ao(&cubes, |_, _, _, _, _| true);
-        for c in 0..2 {
-            let top = &ao[c][slot(Face::PosY)];
+        for faces in ao.iter().take(2) {
+            let top = &faces[slot(Face::PosY)];
             for &v in top {
                 assert!((v - 1.0).abs() < 1e-6, "flush seam must stay unshaded: {v}");
             }
@@ -375,7 +375,7 @@ mod tests {
     fn contact_field_covers_floor_geometry_only() {
         // A leg in the cell's -X/-Z quarter.
         let leg = cube([0.1, 0.0, 0.1], [0.3, 0.8, 0.3]);
-        let field = bake_contact_field(&[leg.clone()], 0, 0).expect("leg stamps");
+        let field = bake_contact_field(std::slice::from_ref(&leg), 0, 0).expect("leg stamps");
         assert!(field[1][1] > 0.0, "under the leg darkens");
         assert!(
             field[CONTACT_GRID - 1][CONTACT_GRID - 1] == 0.0,

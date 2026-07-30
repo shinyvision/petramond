@@ -306,8 +306,8 @@ impl App {
 
     pub(super) fn compose_client_overlays(&mut self, screen: (u32, u32)) {
         self.client_overlay_images.clear();
-        if matches!(self.screen, AppScreen::Game | AppScreen::Chat) && self.game.is_some() {
-            let game = self.game.as_ref().unwrap();
+        let on_game = matches!(self.screen, AppScreen::Game | AppScreen::Chat);
+        if let Some(game) = self.game.as_ref().filter(|_| on_game) {
             for overlay in game.client_mod_overlays() {
                 let Some(image) = game.client_mod_image(&overlay.image_key) else {
                     continue;

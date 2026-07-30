@@ -23,7 +23,7 @@ pub fn on_block_broken(content: &Content, pos: [i32; 3], block: BlockId, natural
     if !content.seed_cover.contains(&block) {
         return;
     }
-    if rng_u64("forage_seeds") % SEED_DROP_IN != 0 {
+    if !rng_u64("forage_seeds").is_multiple_of(SEED_DROP_IN) {
         return;
     }
     spawn_item(

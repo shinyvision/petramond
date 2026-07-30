@@ -648,10 +648,11 @@ fn reaches_section(c: &Candidate, origin: [i32; 3]) -> bool {
 /// is. Same pattern as `biome_id` below, which caches a pure resolution the
 /// same way.
 fn cascade_cell(seed: u32, ours: u8, cell: (i32, i32, i32)) -> Option<Rc<cascade::Feature>> {
+    /// `(seed, cell x, y, z)` -> the cascade feature that cell resolves to.
+    type CascadeCache = std::collections::HashMap<(u32, i32, i32, i32), Option<Rc<cascade::Feature>>>;
     thread_local! {
-        static CACHE: std::cell::RefCell<
-            std::collections::HashMap<(u32, i32, i32, i32), Option<Rc<cascade::Feature>>>,
-        > = std::cell::RefCell::new(std::collections::HashMap::new());
+        static CACHE: std::cell::RefCell<CascadeCache> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
     }
     let key = (seed, cell.0, cell.1, cell.2);
     if let Some(hit) = CACHE.with(|c| c.borrow().get(&key).cloned()) {
@@ -687,7 +688,7 @@ fn compute_cascade_cell(
     let gate = c.gate_points();
     let want = gate.len();
     let biomes = batched(gate, underground_biome_at);
-    if biomes.len() != want || !biomes.iter().any(|&b| b == ours) {
+    if biomes.len() != want || !biomes.contains(&ours) {
         return None;
     }
     let mut coarse: Vec<[i32; 3]> = Vec::new();
@@ -1132,14 +1133,14 @@ fn isqrt(n: i32) -> i32 {
 /// The species a COLONY wears. Falls back to the ambient stand colour for a
 /// stray growing outside any patch, so the two blend instead of the strays
 /// advertising themselves as different.
-fn patch_species<'a>(content: &'a Content, seed: u32, salt: i32, p: [i32; 3]) -> &'a Species {
+fn patch_species(content: &Content, seed: u32, salt: i32, p: [i32; 3]) -> &Species {
     if salt == 0 {
         return pick_species(content, seed, p[0], p[1], p[2]);
     }
     &content.species[(salt as usize) % content.species.len()]
 }
 
-fn pick_species<'a>(content: &'a Content, seed: u32, wx: i32, wy: i32, wz: i32) -> &'a Species {
+fn pick_species(content: &Content, seed: u32, wx: i32, wy: i32, wz: i32) -> &Species {
     // 24 put one species in an entire view, which reads monochrome. 13 lets two
     // or three stands share a sightline, so the per-channel light MIXING is
     // visible — a blue stand behind a pink one is the whole point of doing

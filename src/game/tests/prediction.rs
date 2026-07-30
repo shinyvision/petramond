@@ -648,7 +648,7 @@ fn movement_claim_validation_cases() {
         if let Some(on_ground) = case.on_ground {
             u.on_ground = on_ground;
         }
-        let claim = u.clone();
+        let claim = u;
         game.server
             .apply_message(0, ClientToServer::PlayerUpdate(u));
         game.server.tick_movement(0);

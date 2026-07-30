@@ -171,12 +171,8 @@ impl World {
         let oy = pos.cy * SECTION_SIZE as i32;
         let mut raised_surface = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
         let mut raised_sky = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
-        let Some(section) = self.sections.get(&pos) else {
-            return None;
-        };
-        let Some(column) = self.columns.get(&cpos) else {
-            return None;
-        };
+        let section = self.sections.get(&pos)?;
+        let column = self.columns.get(&cpos)?;
         let blocks = section.blocks_slice();
         let mut any = false;
         for lz in 0..SECTION_SIZE {

@@ -870,9 +870,7 @@ mod tests {
                 let ServerToClient::SectionData(p) = m else {
                     return None;
                 };
-                if p.skylight.is_none() {
-                    return None;
-                }
+                p.skylight.as_ref()?;
                 find_lit_air(&server.world, p.pos).map(|cell| (p.pos, cell))
             });
             inbox = acks(&out);

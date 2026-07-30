@@ -159,10 +159,10 @@ pub struct SlotRect {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DocHookKind {
     /// One recipe-grid cell's result icon (`index` = filtered row).
-    CraftRecipeResult,
+    RecipeResult,
     /// The hovered recipe's result icon / ingredient strip, in the tooltip.
-    CraftTipResult,
-    CraftTipIngredients,
+    TipResult,
+    TipIngredients,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]

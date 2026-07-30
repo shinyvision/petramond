@@ -290,8 +290,8 @@ fn render_deep(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32) {
         let lx = wx.rem_euclid(CHUNK_SX as i32) as usize;
         if cx != cur_cx {
             let col = generator.generate_column_gen(cx, cz);
-            for x in 0..16 {
-                surf[x] = col.surface_y(x, lz);
+            for (x, s) in surf.iter_mut().enumerate() {
+                *s = col.surface_y(x, lz);
             }
             sections = (SECTION_MIN_CY..=SECTION_MAX_CY)
                 .map(|cy| generator.generate_section(SectionPos::new(cx, cy, cz), &col))
@@ -416,11 +416,11 @@ fn cave_stats(seed: u32) {
             chunks += 1;
             let col = generator.generate_column_gen(cx, cz);
             let mut surf = [[0i32; 16]; 16];
-            for z in 0..16 {
-                for x in 0..16 {
-                    surf[z][x] = col.surface_y(x, z);
+            for (z, row) in surf.iter_mut().enumerate() {
+                for (x, cell) in row.iter_mut().enumerate() {
+                    *cell = col.surface_y(x, z);
                     total_columns += 1;
-                    if col.heightmap_surface_y(x, z) < surf[z][x] {
+                    if col.heightmap_surface_y(x, z) < *cell {
                         mouth_columns += 1;
                     }
                 }
@@ -433,9 +433,9 @@ fn cave_stats(seed: u32) {
                 for ly in 0..SECTION_SIZE {
                     let wy = oy + ly as i32;
                     let band = ((wy - WORLD_MIN_Y) / BAND) as usize;
-                    for z in 0..SECTION_SIZE {
-                        for x in 0..SECTION_SIZE {
-                            if wy > surf[z][x] {
+                    for (z, row) in surf.iter().enumerate() {
+                        for (x, &top) in row.iter().enumerate() {
+                            if wy > top {
                                 continue;
                             }
                             let b = section.block_raw(x, ly, z);

@@ -52,16 +52,15 @@ enum Claim {
     Placed(IVec3),
 }
 
+/// One interact consumer: it is offered the attempt and either claims it or
+/// passes. The signature is the whole contract — a consumer sees the acting
+/// player, the attempt, the click, and the tick's event sink, and nothing else.
+type Consumer = fn(&mut ServerGame, usize, &InteractAttempt, &ClickMeta, &mut TickEvents) -> Claim;
+
 /// The consumer registry, in claim order. Deterministic and data-shaped: a
 /// new engine capability is a new entry here (plus its client prediction
 /// rule), never a branch in the dispatcher.
-const CONSUMERS: &[fn(
-    &mut ServerGame,
-    usize,
-    &InteractAttempt,
-    &ClickMeta,
-    &mut TickEvents,
-) -> Claim] = &[
+const CONSUMERS: &[Consumer] = &[
     // Mods first: every attempt, sneak or not, block or mob — a handler's
     // Cancel is a claim (mod GUIs, boat boarding, the trough take-out).
     ServerGame::consume_mod_attempt,

@@ -104,10 +104,7 @@ impl World {
         let mut lights = Vec::new();
         for (base, members) in group_positions(&light_positions) {
             if members.len() >= 3 {
-                let Some(job) = snapshot_batch(base, &members, &self.sections, &self.columns)
-                else {
-                    return None;
-                };
+                let job = snapshot_batch(base, &members, &self.sections, &self.columns)?;
                 let mut prev = Vec::with_capacity(members.len());
                 for pos in job.member_positions() {
                     let section = self.sections.get(&pos).expect("batch members are loaded");
@@ -116,16 +113,15 @@ impl World {
                 lights.push(PredictionLightUnit::Batch { job, prev });
             } else {
                 for pos in members {
-                    let Some(job) = LightBakeJob::snapshot(0, pos, &self.sections, &self.columns)
-                    else {
-                        return None;
-                    };
+                    let job = LightBakeJob::snapshot(0, pos, &self.sections, &self.columns)?;
                     let section = self.sections.get(&pos).expect("filtered on presence");
-                    lights.push(PredictionLightUnit::Single(PredictionLightJob {
-                        job,
-                        prev_skylight: section.skylight_arc(),
-                        prev_blocklight: section.blocklight_arc(),
-                    }));
+                    lights.push(PredictionLightUnit::Single(Box::new(
+                        PredictionLightJob {
+                            job,
+                            prev_skylight: section.skylight_arc(),
+                            prev_blocklight: section.blocklight_arc(),
+                        },
+                    )));
                 }
             }
         }
@@ -140,7 +136,7 @@ impl World {
                     revision: section.mesh_revision,
                 });
             } else if let Some(job) = self.build_mesh_job(pos) {
-                meshes.push(PredictionMeshJob::Build(job));
+                meshes.push(PredictionMeshJob::Build(Box::new(job)));
             }
         }
         if meshes.is_empty() {

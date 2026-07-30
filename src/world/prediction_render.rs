@@ -32,7 +32,7 @@ pub(super) struct SectionGuard {
 }
 
 pub(super) enum PredictionMeshJob {
-    Build(MeshJob),
+    Build(Box<MeshJob>),
     Remove { pos: SectionPos, revision: u64 },
 }
 
@@ -86,7 +86,7 @@ pub(super) struct PredictionLightJob {
 /// Per-unit light work for a prediction bundle: a lone 48³ bake, or one
 /// aligned 2×2×2 batch (≥3 members) sharing a 64³ flood.
 pub(super) enum PredictionLightUnit {
-    Single(PredictionLightJob),
+    Single(Box<PredictionLightJob>),
     Batch {
         job: LightBatchJob,
         /// Pre-bake cubes in the same order as [`LightBatchJob::member_positions`].
@@ -284,6 +284,9 @@ pub(super) fn run_prediction_terrain_synchronously(
     run_prediction_terrain(work, &JobCancel::new(), pool)
 }
 
+/// A section's baked light pair: skylight bytes and the RGB block-light grid.
+type BakedLight = (Arc<[u8]>, Arc<[crate::light::LightRgb]>);
+
 fn run_prediction_terrain(
     work: PredictionTerrainWork,
     cancel: &JobCancel,
@@ -301,7 +304,7 @@ fn run_prediction_terrain(
                 job,
                 prev_skylight,
                 prev_blocklight,
-            } = light;
+            } = *light;
             vec![finish_prediction_light(
                 run_light_bake(job),
                 prev_skylight,
@@ -329,8 +332,7 @@ fn run_prediction_terrain(
     // geometry samplers, plus every section a changed light region reaches
     // through the one-cell mesh pad. Unchanged-light candidates drop here.
     let mut needed: FxHashSet<SectionPos> = always_mesh.into_iter().collect();
-    let mut baked: FxHashMap<SectionPos, (Arc<[u8]>, Arc<[crate::light::LightRgb]>)> =
-        FxHashMap::default();
+    let mut baked: FxHashMap<SectionPos, BakedLight> = FxHashMap::default();
     for light in &light_results {
         if light.mask == 0 {
             continue;
@@ -372,7 +374,7 @@ fn run_prediction_terrain(
         PredictionMeshJob::Build(job) => {
             let pos = job.pos;
             let revision = job.revision;
-            let mesh = mesh_pool::build_inline(job)
+            let mesh = mesh_pool::build_inline(*job)
                 .expect("an uncancelled inline mesh build always yields a mesh");
             PredictionMeshResult::Built {
                 pos,

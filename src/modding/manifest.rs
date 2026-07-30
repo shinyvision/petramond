@@ -185,10 +185,16 @@ struct CatalogSpec {
     key_field: &'static str,
     /// `Some((field, value))`: only rows where `field == value` contribute a
     /// key (other rows are skipped); `None`: every row must carry one.
-    row_filter: Option<(&'static str, &'static str)>,
+    row_filter: Option<RowFilter>,
     /// Loader-owned extra validation over the raw file text.
-    extra_validate: Option<fn(&str) -> Result<(), String>>,
+    extra_validate: Option<ExtraValidate>,
 }
+
+/// A `(field, value)` pair a catalog's rows must match to be taken.
+type RowFilter = (&'static str, &'static str);
+
+/// A catalog's own check over its raw file text, beyond the shared row rules.
+type ExtraValidate = fn(&str) -> Result<(), String>;
 
 const CATALOGS: [CatalogSpec; 11] = {
     const fn plain(rel: &'static str, array: &'static str, key_field: &'static str) -> CatalogSpec {

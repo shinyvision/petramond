@@ -81,7 +81,7 @@ pub(crate) struct AmbientDrives {
     /// Per-collect column cache: kill height (cell top face, absent when the
     /// column blocks nothing) + column biome per world column, or `None` for
     /// unloaded columns.
-    ceilings: FxHashMap<(i32, i32), Option<(Option<f32>, u8)>>,
+    ceilings: ColumnInfoCache,
 }
 
 impl AmbientDrives {
@@ -219,9 +219,14 @@ fn wrap_center(v: f32, d: f32) -> f32 {
 /// bundle's per-column filter — the rain/snow divide at a border is exact —
 /// and is readable independently of the kill height, since a bundle may
 /// declare a filter without asking for a ceiling kill.
+/// Per-world-column memo for [`column_info`]: the killing ceiling height (or
+/// `None` where the column blocks nothing) and the column's biome, against
+/// `None` for a column that is not loaded.
+type ColumnInfoCache = FxHashMap<(i32, i32), Option<(Option<f32>, u8)>>;
+
 fn column_info(
     world: &World,
-    cache: &mut FxHashMap<(i32, i32), Option<(Option<f32>, u8)>>,
+    cache: &mut ColumnInfoCache,
     x: f32,
     z: f32,
 ) -> Option<(Option<f32>, u8)> {
@@ -240,7 +245,7 @@ fn column_info(
 /// nothing).
 fn column_ceiling(
     world: &World,
-    cache: &mut FxHashMap<(i32, i32), Option<(Option<f32>, u8)>>,
+    cache: &mut ColumnInfoCache,
     x: f32,
     z: f32,
 ) -> Option<(f32, u8)> {
@@ -257,7 +262,7 @@ fn derive_volume(
     wind: [f32; 2],
     adv: [f32; 2],
     world: &World,
-    ceilings: &mut FxHashMap<(i32, i32), Option<(Option<f32>, u8)>>,
+    ceilings: &mut ColumnInfoCache,
     cam: Vec3,
     time: f32,
     out: &mut Vec<ParticlePresentation>,

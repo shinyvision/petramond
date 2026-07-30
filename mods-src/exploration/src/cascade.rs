@@ -1089,8 +1089,8 @@ fn notch_path(
                     Some(&(pi, _)) if pi == i => hits.push((n, c)),
                     Some(_) => {}
                     None => {
-                        if !parent.contains_key(&n) {
-                            parent.insert(n, c);
+                        if let std::collections::btree_map::Entry::Vacant(e) = parent.entry(n) {
+                            e.insert(c);
                             next.push_back(n);
                         }
                     }

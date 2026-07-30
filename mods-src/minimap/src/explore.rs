@@ -127,6 +127,10 @@ struct InFlightLoad {
     entries: Vec<((i32, i32), RegionKind, bool)>,
 }
 
+/// One arrived region awaiting its decode-budget slot: the region coord, which
+/// kind it is, whether it was a live fetch, and the raw bytes (`None` = miss).
+type Undecoded = ((i32, i32), RegionKind, bool, Option<Vec<u8>>);
+
 /// The tile/mip caches plus the async region loader.
 #[derive(Default)]
 pub(crate) struct TileStore {
@@ -148,7 +152,7 @@ pub(crate) struct TileStore {
     /// paint-once readiness check.
     pending: HashSet<(RegionKind, (i32, i32))>,
     /// Arrived values awaiting their decode-budget slot.
-    undecoded: std::collections::VecDeque<((i32, i32), RegionKind, bool, Option<Vec<u8>>)>,
+    undecoded: std::collections::VecDeque<Undecoded>,
     /// rgb→hsl work on the mip write path is memoized: terrain colors repeat
     /// massively.
     hsl_memo: HashMap<[u8; 3], (f32, f32, f32)>,

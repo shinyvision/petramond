@@ -371,7 +371,7 @@ mod tests {
                 for dz in 0..SPAN {
                     for dx in 0..SPAN {
                         // Leave a few sections absent: absent neighbours read as air.
-                        if xorshift(&mut rng) % 9 == 0 {
+                        if xorshift(&mut rng).is_multiple_of(9) {
                             continue;
                         }
                         let pos = SectionPos::new(dx as i32 - 1, dy as i32 - 1, dz as i32 - 1);
@@ -385,9 +385,9 @@ mod tests {
                                     let h = heights[gz * SPAN * SECTION_SIZE + gx];
                                     let wy = oy + ly as i32;
                                     // Solid below the surface with random cave holes.
-                                    if wy <= h && xorshift(&mut rng) % 8 != 0 {
+                                    if wy <= h && !xorshift(&mut rng).is_multiple_of(8) {
                                         section.set_block(lx, ly, lz, Block::Stone);
-                                    } else if xorshift(&mut rng) % 401 == 0 {
+                                    } else if xorshift(&mut rng).is_multiple_of(401) {
                                         section.set_block(lx, ly, lz, Block::OakStairs);
                                         section.set_stair_state(
                                             lx,
@@ -395,7 +395,7 @@ mod tests {
                                             lz,
                                             StairState::new(Facing::East, StairHalf::Bottom),
                                         );
-                                    } else if xorshift(&mut rng) % 353 == 0 {
+                                    } else if xorshift(&mut rng).is_multiple_of(353) {
                                         section.set_block(lx, ly, lz, Block::Torch);
                                         section.insert_torch(lx, ly, lz, TorchPlacement::Floor);
                                     }

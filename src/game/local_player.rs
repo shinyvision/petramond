@@ -262,8 +262,7 @@ impl Game {
             self.camera_step_y_offset = (self.camera_step_y_offset - eye_dy).max(-max_lag);
         } else if grounded_still
             && self.predicted_input.sneak
-            && eye_dy < -STEP_CAMERA_EPS
-            && eye_dy >= -(crate::collision::STEP_HEIGHT + STEP_CAMERA_EPS)
+            && (-(crate::collision::STEP_HEIGHT + STEP_CAMERA_EPS)..-STEP_CAMERA_EPS).contains(&eye_dy)
         {
             // The sneak snap-down: physics dropped the feet onto the lower step
             // instantly (grounded throughout, so the guard never let go); the

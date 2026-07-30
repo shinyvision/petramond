@@ -553,11 +553,11 @@ pub(super) fn push_block_item_cube_lit_with_state(
 /// shared iso view direction, ascending. Back-face culling alone only settles
 /// each box against ITSELF, never one box against another. The depth-tested
 /// in-hand / dropped forms skip the sort entirely.
-fn icon_painter_order<'a, T>(
-    items: &'a [T],
+fn icon_painter_order<T>(
+    items: &[T],
     aabb: impl Fn(&T) -> &crate::block::Aabb,
     sort_for_icon: bool,
-) -> Vec<&'a T> {
+) -> Vec<&T> {
     let mut order: Vec<&T> = items.iter().collect();
     if sort_for_icon {
         let dir = crate::render::ui::icon::icon_view_dir();

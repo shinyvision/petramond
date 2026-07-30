@@ -323,9 +323,7 @@ mod tests {
                 |q, (dx, dz)| {
                     // Only the stair cell answers; air (every other side)
                     // has no complete face in this fixture.
-                    (q == EAST_CELL)
-                        .then(|| crate::stair::face_full(shape, IVec3::new(-dx, 0, -dz)))
-                        .unwrap_or(false)
+                    if q == EAST_CELL { crate::stair::face_full(shape, IVec3::new(-dx, 0, -dz)) } else { false }
                         .then_some(FullFace::Shaped)
                 },
                 |nb, dir, ff| {

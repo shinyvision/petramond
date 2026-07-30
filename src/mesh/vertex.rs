@@ -72,7 +72,7 @@ impl TerrainVertex {
 
     /// Inverse of [`from_world`] for tests (round-trip within 1/64 block).
     #[cfg(test)]
-    pub fn to_world(&self, col_ox: i32, col_oz: i32) -> [f32; 3] {
+    pub fn to_world(self, col_ox: i32, col_oz: i32) -> [f32; 3] {
         [
             self.pos[0] as f32 / TERRAIN_POS_SCALE + col_ox as f32,
             self.pos[1] as f32 / TERRAIN_POS_SCALE,

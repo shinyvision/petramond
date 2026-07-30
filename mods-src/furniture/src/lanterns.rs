@@ -67,10 +67,10 @@ const fn bx(min: [f32; 3], max: [f32; 3]) -> ShapeAabb {
 /// reads as a lamp rather than a box, and it gives the side elevation three
 /// distinct bands to shade.
 const BODY: [ShapeAabb; 4] = [
-    bx([4.0, 0.0, 4.0], [12.0, 1.0, 12.0]),  // foot
-    bx([5.0, 1.0, 5.0], [11.0, 7.0, 11.0]),  // glazed body
-    bx([4.0, 7.0, 4.0], [12.0, 9.0, 12.0]),  // hood
-    bx([7.0, 9.0, 7.0], [9.0, 10.0, 9.0]),   // finial the bail grips
+    bx([4.0, 0.0, 4.0], [12.0, 1.0, 12.0]), // foot
+    bx([5.0, 1.0, 5.0], [11.0, 7.0, 11.0]), // glazed body
+    bx([4.0, 7.0, 4.0], [12.0, 9.0, 12.0]), // hood
+    bx([7.0, 9.0, 7.0], [9.0, 10.0, 9.0]),  // finial the bail grips
 ];
 
 /// The bail: a real cell of `furniture:chain`, CLIPPED to `y0..y1`.
@@ -241,9 +241,11 @@ mod tests {
             let want = if d[axis] < 0 { 0.0 } else { 1.0 };
             let boxes = l.boxes_for(l.wall[i]);
             assert!(
-                boxes
-                    .iter()
-                    .any(|b| if want == 0.0 { b.min[axis] } else { b.max[axis] } == want),
+                boxes.iter().any(|b| if want == 0.0 {
+                    b.min[axis]
+                } else {
+                    b.max[axis]
+                } == want),
                 "wall row {i} has nothing against its {d:?} wall"
             );
         }

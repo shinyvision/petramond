@@ -344,7 +344,7 @@ mod tests {
                 );
             });
         });
-        assert_eq!(acting.progression.unlocked(), [key.clone()]);
+        assert_eq!(acting.progression.unlocked(), std::slice::from_ref(&key));
         assert_eq!(other.progression.unlocked(), [key]);
     }
 }

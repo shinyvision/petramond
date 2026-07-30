@@ -328,7 +328,7 @@ fn gather_row(
 /// no per-roll reasoning, and the offsets are drawn per axis so the cluster is
 /// never axis-aligned in practice.
 fn roll_lobes(rng: &mut FeatureRng, ch: &Chamber, rx: i32) -> ([Lobe; MAX_LOBES], usize, i32, i32) {
-    let (rx, ry) = (rx as f64, ch.ry(rx as i32));
+    let (rx, ry) = (rx as f64, ch.ry(rx));
     let mut lobes = [Lobe::default(); MAX_LOBES];
     // Sills are filled in once the centre is rolled; see `gather_row`.
     lobes[0] = Lobe {

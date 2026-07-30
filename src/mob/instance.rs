@@ -638,7 +638,7 @@ impl Instance {
                 idle_anims,
                 mob_index,
                 mobs: inputs.mobs,
-                tags: &*self.tags,
+                tags: &self.tags,
                 confined_region: self.confined_region.as_deref(),
                 rng: &mut self.rng,
             };

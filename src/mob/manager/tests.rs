@@ -633,7 +633,7 @@ fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
             );
             Some(super::simulation::push_body_for_test(
                 pos,
-                next() * 6.28,
+                next() * std::f32::consts::TAU,
                 size,
             ))
         })

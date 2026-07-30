@@ -395,15 +395,15 @@ impl AppUi {
                 .iter()
                 .filter_map(|hook| {
                     let kind = match hook.key.id.as_str() {
-                        "recipe_result" => crate::gui::DocHookKind::CraftRecipeResult,
-                        "craft_tip_result" => crate::gui::DocHookKind::CraftTipResult,
-                        "craft_tip_ingredients" => crate::gui::DocHookKind::CraftTipIngredients,
+                        "recipe_result" => crate::gui::DocHookKind::RecipeResult,
+                        "craft_tip_result" => crate::gui::DocHookKind::TipResult,
+                        "craft_tip_ingredients" => crate::gui::DocHookKind::TipIngredients,
                         _ => return None,
                     };
                     // Only the grid cells are list stamps; the detail and
                     // tooltip hooks describe the recipe the snapshot names.
                     let index = match kind {
-                        crate::gui::DocHookKind::CraftRecipeResult => hook.key.item? as usize,
+                        crate::gui::DocHookKind::RecipeResult => hook.key.item? as usize,
                         _ => 0,
                     };
                     let rect = crate::gui::SlotRect {

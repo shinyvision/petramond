@@ -263,7 +263,7 @@ impl Navigator {
                     &support,
                     &water,
                     &step_allowed,
-                    &cell_cost,
+                    cell_cost,
                 )
             });
         self.path_reaches_goal = self.path.last().is_some_and(|&last| last == goal);
@@ -647,7 +647,7 @@ fn blocking_bearing(
 fn veer_side(wish: Vec3, d: Vec3, self_id: u64) -> f32 {
     let cross = wish.x * d.z - wish.z * d.x;
     if cross.abs() < 1e-3 {
-        if self_id % 2 == 0 {
+        if self_id.is_multiple_of(2) {
             1.0
         } else {
             -1.0
@@ -744,7 +744,7 @@ pub(super) fn nav_support_fn<'c, 'w>(
     cur: &'c SectionCursor<'w>,
     half_width: f32,
 ) -> impl Fn(IVec3) -> bool + use<'c, 'w> {
-    let hw = half_width.max(0.05).min(0.5);
+    let hw = half_width.clamp(0.05, 0.5);
     let (lo, hi) = (0.5 - hw, 0.5 + hw);
     move |c: IVec3| {
         let boxes = cur.collision_boxes(c);
@@ -961,7 +961,7 @@ pub(super) fn partial_step_gate<'c, 'w>(
             return true;
         }
         let boxes_at = |x: i32, y: i32, z: i32| -> &'static [Aabb] {
-            *cache
+            cache
                 .borrow_mut()
                 .entry(IVec3::new(x, y, z))
                 .or_insert_with(|| nav_partial_boxes(cur, IVec3::new(x, y, z)))

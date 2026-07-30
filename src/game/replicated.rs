@@ -309,6 +309,7 @@ impl SelfView {
 /// exclusive source `Game::menu_read_model` renders from. Wire ids arrive
 /// already remapped to local ids.
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub(crate) struct MenuView {
     /// The real output produced by the last accepted CRAFT request.
     pub(crate) craft_output: Option<ItemStack>,
@@ -322,16 +323,6 @@ pub(crate) struct MenuView {
     pub(crate) gui_state: Option<Arc<GuiStateMap>>,
 }
 
-impl Default for MenuView {
-    fn default() -> Self {
-        Self {
-            craft_output: None,
-            container: None,
-            container_kind: None,
-            gui_state: None,
-        }
-    }
-}
 
 fn stack_from_wire(slot: &Option<ItemSlotWire>) -> Option<ItemStack> {
     slot.as_ref().map(ItemSlotWire::to_stack)

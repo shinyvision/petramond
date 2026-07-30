@@ -89,8 +89,12 @@ impl ChasePlayerAi {
         if p.give_up_radius < p.radius {
             return Err("give_up_radius must be >= radius".into());
         }
-        // `!(>= 0)` rather than `< 0` so a NaN penalty is rejected too.
-        if !(p.sneak_radius_penalty >= 0.0) {
+        // `partial_cmp` rather than `< 0` so a NaN penalty is rejected too
+        // (it compares as `None`) instead of silently passing.
+        if !matches!(
+            p.sneak_radius_penalty.partial_cmp(&0.0),
+            Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+        ) {
             return Err("sneak_radius_penalty must be >= 0".into());
         }
         Ok(ChasePlayerAi::with_sneak_penalty(

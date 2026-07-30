@@ -657,6 +657,43 @@ pub fn fixed_control_from_key_code(code: KeyCode) -> Option<Control> {
     }
 }
 
+pub fn text_key_from_named(key: &winit::keyboard::NamedKey) -> Option<TextKey> {
+    use winit::keyboard::NamedKey;
+
+    match key {
+        NamedKey::Backspace => Some(TextKey::Backspace),
+        NamedKey::Delete => Some(TextKey::Delete),
+        NamedKey::Enter => Some(TextKey::Enter),
+        NamedKey::Tab => Some(TextKey::Tab),
+        NamedKey::ArrowLeft => Some(TextKey::ArrowLeft),
+        NamedKey::ArrowRight => Some(TextKey::ArrowRight),
+        NamedKey::ArrowUp => Some(TextKey::ArrowUp),
+        NamedKey::ArrowDown => Some(TextKey::ArrowDown),
+        NamedKey::Home => Some(TextKey::Home),
+        NamedKey::End => Some(TextKey::End),
+        _ => None,
+    }
+}
+
+pub fn text_shortcut_from_key_code(
+    code: winit::keyboard::KeyCode,
+    modifiers: Modifiers,
+) -> Option<TextShortcut> {
+    use winit::keyboard::KeyCode;
+
+    if !modifiers.ctrl {
+        return None;
+    }
+
+    match code {
+        KeyCode::KeyA => Some(TextShortcut::SelectAll),
+        KeyCode::KeyX => Some(TextShortcut::Cut),
+        KeyCode::KeyC => Some(TextShortcut::Copy),
+        KeyCode::KeyV => Some(TextShortcut::Paste),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod binding_tests {
     use super::*;
@@ -915,42 +952,5 @@ mod binding_tests {
             .label(),
             "CTRL + SHIFT + B"
         );
-    }
-}
-
-pub fn text_key_from_named(key: &winit::keyboard::NamedKey) -> Option<TextKey> {
-    use winit::keyboard::NamedKey;
-
-    match key {
-        NamedKey::Backspace => Some(TextKey::Backspace),
-        NamedKey::Delete => Some(TextKey::Delete),
-        NamedKey::Enter => Some(TextKey::Enter),
-        NamedKey::Tab => Some(TextKey::Tab),
-        NamedKey::ArrowLeft => Some(TextKey::ArrowLeft),
-        NamedKey::ArrowRight => Some(TextKey::ArrowRight),
-        NamedKey::ArrowUp => Some(TextKey::ArrowUp),
-        NamedKey::ArrowDown => Some(TextKey::ArrowDown),
-        NamedKey::Home => Some(TextKey::Home),
-        NamedKey::End => Some(TextKey::End),
-        _ => None,
-    }
-}
-
-pub fn text_shortcut_from_key_code(
-    code: winit::keyboard::KeyCode,
-    modifiers: Modifiers,
-) -> Option<TextShortcut> {
-    use winit::keyboard::KeyCode;
-
-    if !modifiers.ctrl {
-        return None;
-    }
-
-    match code {
-        KeyCode::KeyA => Some(TextShortcut::SelectAll),
-        KeyCode::KeyX => Some(TextShortcut::Cut),
-        KeyCode::KeyC => Some(TextShortcut::Copy),
-        KeyCode::KeyV => Some(TextShortcut::Paste),
-        _ => None,
     }
 }

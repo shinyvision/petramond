@@ -297,10 +297,10 @@ impl Weather {
         // floor(), not truncation: at fractional negative coords `as i32`
         // probes the neighbouring column.
         let cell = [x.floor() as i32, z.floor() as i32];
-        if self.cam_biome.is_none() || self.frame % CLIENT_BIOME_INTERVAL == 0 {
+        if self.cam_biome.is_none() || self.frame.is_multiple_of(CLIENT_BIOME_INTERVAL) {
             self.cam_biome = client_biome_at(cell);
         }
-        if self.frame % CLIENT_COVER_INTERVAL == 0 {
+        if self.frame.is_multiple_of(CLIENT_COVER_INTERVAL) {
             self.refresh_cover(frame);
         }
         let snowy = self.cam_biome.is_some_and(is_snowy_biome);

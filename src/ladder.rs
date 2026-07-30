@@ -87,8 +87,11 @@ pub fn panel_box(facing: Facing, thickness: f32, height: f32) -> Aabb {
 
 /// Interned `'static` panel box sets for parameterized wall panels, keyed by
 /// `(facing, thickness bits, height bits)` — a handful per distinct panel dim.
-static PANEL_INTERN: std::sync::Mutex<Vec<((u8, u32, u32), &'static [Aabb])>> =
-    std::sync::Mutex::new(Vec::new());
+static PANEL_INTERN: std::sync::Mutex<Vec<PanelIntern>> = std::sync::Mutex::new(Vec::new());
+
+/// One interned panel: its `(facing, thickness bits, height bits)` key and the
+/// leaked box set that key resolves to.
+type PanelIntern = ((u8, u32, u32), &'static [Aabb]);
 
 /// A wall-panel's collision boxes for retuned `thickness`/`height`. The engine
 /// default returns the static slice (no alloc); other dims intern once.

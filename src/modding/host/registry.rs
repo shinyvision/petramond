@@ -87,7 +87,10 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
             })
         }
         HostCall::ItemInfo { item } => {
-            HostRet::ItemInfo(crate::item::ItemType::by_name(&item).map(item_info_data))
+            HostRet::ItemInfo(
+                crate::item::ItemType::by_name(&item)
+                    .map(|t| Box::new(item_info_data(t))),
+            )
         }
         // The shape-kind resolver: like the block/item/mob resolvers, a key→id
         // lookup over the process-wide registry, unknown key = `None`.
@@ -166,7 +169,7 @@ fn item_use_key(u: crate::item::ItemUse) -> &'static str {
     match u {
         ItemUse::BucketFill { .. } => "bucket_fill",
         ItemUse::BucketPour { .. } => "bucket_pour",
-        ItemUse::Shear { .. } => "shear",
+        ItemUse::Shear => "shear",
     }
 }
 

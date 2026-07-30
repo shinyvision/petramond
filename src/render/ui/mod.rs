@@ -255,14 +255,14 @@ fn push_recipe_hook_content(
     use crate::gui::DocHookKind as Kind;
     for hook in hooks {
         let recipe = match hook.kind {
-            Kind::CraftRecipeResult => ui.craft_recipes.get(hook.index),
-            Kind::CraftTipResult | Kind::CraftTipIngredients => ui.craft_tip.as_ref(),
+            Kind::RecipeResult => ui.craft_recipes.get(hook.index),
+            Kind::TipResult | Kind::TipIngredients => ui.craft_tip.as_ref(),
         };
         let Some(recipe) = recipe else {
             continue;
         };
         match hook.kind {
-            Kind::CraftRecipeResult | Kind::CraftTipResult => {
+            Kind::RecipeResult | Kind::TipResult => {
                 let side = hook.rect.w.min(hook.rect.h);
                 let Some(clip) = effective_hook_clip(*hook) else {
                     continue;
@@ -279,7 +279,7 @@ fn push_recipe_hook_content(
                     dim: !recipe.craftable,
                 });
             }
-            Kind::CraftTipIngredients => {
+            Kind::TipIngredients => {
                 push_ingredient_strip(recipe, build, *hook, screen, scale);
             }
         }
@@ -768,14 +768,14 @@ mod tests {
         let clip = rect(100.0, 105.0, 160.0, 20.0);
         let hooks = [
             hook(
-                crate::gui::DocHookKind::CraftRecipeResult,
+                crate::gui::DocHookKind::RecipeResult,
                 rect(100.0, 100.0, 20.0, 20.0),
                 Some(clip),
                 false,
             ),
             // Scrolled fully out of the viewport: no content at all.
             hook(
-                crate::gui::DocHookKind::CraftRecipeResult,
+                crate::gui::DocHookKind::RecipeResult,
                 rect(100.0, 200.0, 20.0, 20.0),
                 Some(clip),
                 false,
@@ -812,19 +812,19 @@ mod tests {
         snapshot.craft_tip = Some(recipe(ItemType::Stone, true));
         let hooks = [
             hook(
-                crate::gui::DocHookKind::CraftRecipeResult,
+                crate::gui::DocHookKind::RecipeResult,
                 rect(10.0, 10.0, 18.0, 18.0),
                 None,
                 false,
             ),
             hook(
-                crate::gui::DocHookKind::CraftTipResult,
+                crate::gui::DocHookKind::TipResult,
                 rect(200.0, 200.0, 18.0, 18.0),
                 None,
                 true,
             ),
             hook(
-                crate::gui::DocHookKind::CraftTipIngredients,
+                crate::gui::DocHookKind::TipIngredients,
                 rect(220.0, 200.0, 120.0, 14.0),
                 None,
                 true,
@@ -863,7 +863,7 @@ mod tests {
         let mut snapshot = snap(GuiKind::Inventory, true);
         snapshot.craft_recipes.push(recipe(ItemType::Stick, true));
         let hooks = [hook(
-            crate::gui::DocHookKind::CraftTipIngredients,
+            crate::gui::DocHookKind::TipIngredients,
             rect(220.0, 200.0, 120.0, 14.0),
             None,
             true,

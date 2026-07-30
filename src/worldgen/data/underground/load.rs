@@ -512,7 +512,7 @@ fn compile(catalog: Catalog<UndergroundBiomeDef>) -> UndergroundBiomes {
     let lining_faces_vary = faces.iter().any(|f| f.is_some());
     let lining_floor_under_world_floor = rows
         .iter()
-        .any(|r| r.faces.is_some_and(|f| f.floor.block != 0) && r.y.0 <= CAVE_MIN_Y - 1);
+        .any(|r| r.faces.is_some_and(|f| f.floor.block != 0) && r.y.0 < CAVE_MIN_Y);
     let lining_floor_depth_max = rows
         .iter()
         .filter_map(|r| r.faces.filter(|f| f.floor.block != 0))

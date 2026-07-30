@@ -384,7 +384,7 @@ impl SurfaceDensitySystem {
     fn climate_cells(&self) -> ClimateCellCache<'_> {
         ClimateCellCache::new(
             ClimateSampler::new(self.density.graph()),
-            &self.climate,
+            self.climate,
             self.seed,
         )
     }

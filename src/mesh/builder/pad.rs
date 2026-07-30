@@ -171,9 +171,7 @@ impl SectionMeshPad<'_> {
 
     #[inline]
     pub(super) fn fluid_height_local(&self, lx: i32, ly: i32, lz: i32) -> Option<f32> {
-        let Some((px, py, pz)) = Self::local_pad_xyz(lx, ly, lz) else {
-            return None;
-        };
+        let (px, py, pz) = Self::local_pad_xyz(lx, ly, lz)?;
         let i = mesh_pad_idx(px, py, pz);
         if Block::from_id(self.blocks[i]) != Block::Water {
             return None;

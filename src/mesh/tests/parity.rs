@@ -265,8 +265,6 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     let water_at = |wx: i32, wy: i32, wz: i32| -> u8 {
         if in_section(wx, wy, wz) {
             section.water_meta(wx as usize, wy as usize, wz as usize)
-        } else if wy == SECTION_SIZE as i32 && wx == 5 && wz == 2 {
-            0
         } else {
             0
         }

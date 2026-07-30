@@ -838,7 +838,7 @@ fn try_patch_column_verts(
         }
     }
     let (ox, oz) = (prev.col_ox, prev.col_oz);
-    for (&(_, mesh), &(_, ref gpu)) in meshes.iter().zip(&prev.sections) {
+    for (&(_, mesh), (_, gpu)) in meshes.iter().zip(&prev.sections) {
         if !patch_terrain_verts(
             queue,
             arena,

@@ -1287,7 +1287,13 @@ pub enum HostRet {
     /// container / unloaded.
     ContainerSlots(Option<Vec<Option<ItemStackData>>>),
     /// [`HostCall::ItemInfo`]: `None` = unknown item key.
-    ItemInfo(Option<ItemInfoData>),
+    ///
+    /// BOXED: `ItemInfoData` is by far the largest thing this enum carries, and
+    /// unboxed it set the size of EVERY host-call reply — including the guards'
+    /// `Result<_, HostRet>` rejection path, which is on every validated call.
+    /// `serde` treats `Box<T>` exactly as `T`, so the wire is unchanged
+    /// (`wire_pin` proves it).
+    ItemInfo(Option<Box<ItemInfoData>>),
     /// [`HostCall::RecipeResult`]: `None` = no recipe for that input.
     ItemStack(Option<ItemStackData>),
     /// [`HostCall::EffectsActive`]: the player's active status effects.
@@ -1367,3 +1373,4 @@ pub enum HostRet {
     /// order.
     TerrainSolid(Vec<bool>),
 }
+

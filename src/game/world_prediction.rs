@@ -264,7 +264,7 @@ impl Game {
     /// they classify [`PlacePrediction::Plausible`] so the click still jabs.
     /// On predict: cell(s), hotbar decrement, hand pop, and a local
     /// `WorldEvent::BlockPlaced`.
-
+    ///
     /// Predicted-place mirror of the server's carry restore: copy the held
     /// stack's `petramond:carry` instance-data entries into REPLICA cell KV at
     /// the anchor, so a carried tint renders the frame the ghost appears

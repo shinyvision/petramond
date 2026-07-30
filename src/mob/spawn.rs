@@ -128,7 +128,7 @@ pub(super) fn attempt(
     let (cx, cz, render_dist) = world.loaded_area()?;
     // Inset by a chunk so the column (and the neighbours a footing/biome read may
     // touch) are loaded — unloaded reads would just fail the attempt anyway.
-    let r = (render_dist - 1).max(0).min(HOSTILE_SPAWN_CHUNK_RADIUS);
+    let r = (render_dist - 1).clamp(0, HOSTILE_SPAWN_CHUNK_RADIUS);
 
     // Pick a species that still has room; the site is then judged for *that* species.
     let kind = choose_kind(rng, &room_for, world.disabled_mods())?;
@@ -267,7 +267,7 @@ pub(crate) fn hostile_spawn_plan(
         .iter()
         .copied()
         .zip(&cache.census_ready)
-        .filter_map(|(pos, &ready)| ready.then(|| HostileSpawnAnchor::new(pos)))
+        .filter(|&(_pos, &ready)| ready).map(|(pos, &_ready)| HostileSpawnAnchor::new(pos))
         .collect();
     if anchors.is_empty() {
         return None;
