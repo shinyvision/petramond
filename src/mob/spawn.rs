@@ -267,7 +267,8 @@ pub(crate) fn hostile_spawn_plan(
         .iter()
         .copied()
         .zip(&cache.census_ready)
-        .filter(|&(_pos, &ready)| ready).map(|(pos, &_ready)| HostileSpawnAnchor::new(pos))
+        .filter(|&(_pos, &ready)| ready)
+        .map(|(pos, &_ready)| HostileSpawnAnchor::new(pos))
         .collect();
     if anchors.is_empty() {
         return None;

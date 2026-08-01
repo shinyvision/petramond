@@ -403,26 +403,96 @@ pub(in crate::mesh) fn cell_seals_face(
     scratch: &mut BoxSetScratch,
 ) -> bool {
     let block = nb.block(pos);
+    boxes.clear();
+    // The blanket a `snow_bedded` cell is drawn standing in seals exactly like
+    // the snow layer it stands in for — and it must be counted BEFORE the
+    // box-shape flags below, because the cells that need it most (a tuft, a
+    // fern, a hemp stalk) are transparent crosses with no box form at all.
+    let tint_for = |_: crate::atlas::Tile| [1.0f32; 3];
+    snow_bed_boxes(nb, pos, block, &tint_for, boxes);
     // Dense flags first: the shape-kind row behind `resolves_to_boxes` is a
     // big-table load, and almost every cell asked here is rejected.
-    if !block.has_box_shape() || block.is_transparent() || block.is_translucent() {
-        return false;
+    if block.has_box_shape() && !block.is_transparent() && !block.is_translucent() {
+        let k = block.shape_kind_def();
+        k.render.boxes(
+            &crate::block::ShapeCtx {
+                nb,
+                pos,
+                block,
+                params: &k.params,
+                tint_for: &tint_for,
+                part_tint: crate::block::NO_PART_TINT,
+            },
+            boxes,
+        );
     }
-    let k = block.shape_kind_def();
-    boxes.clear();
-    let tint_for = |_: crate::atlas::Tile| [1.0f32; 3];
+    !boxes.is_empty() && covers_boundary(boxes, face, scratch)
+}
+
+/// The `snow_cover` block bedding this cell, if any: a [`snow_bedded`] row with
+/// a snow-cover block on one of its four horizontal neighbours.
+///
+/// Worldgen places ONE thing per column, so ground decoration and a snow
+/// blanket compete for the same cell and the decoration always wins it. That
+/// left every tuft, fern and pebble punching a bare hole in a snowfield. The
+/// blanket is given back at MESH time from the neighbours, never stored per
+/// cell, exactly like the snowy-grass side swap — so it appears and vanishes
+/// the moment the snow beside it is placed or dug.
+///
+/// [`snow_bedded`]: crate::block::BlockTag::SNOW_BEDDED
+fn snow_bed(
+    nb: &dyn crate::block::ShapeNeighborhood,
+    pos: glam::IVec3,
+    block: Block,
+) -> Option<Block> {
+    if !block.is_snow_bedded() {
+        return None;
+    }
+    [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        .into_iter()
+        .map(|(dx, dz)| nb.block(pos + glam::IVec3::new(dx, 0, dz)))
+        .find(|nb| nb.is_snow_cover())
+}
+
+/// Whether this cell presents a SNOW BLANKET to the block beneath it — it
+/// either IS a snow-cover block or is [`snow_bed`]ded in one. What the grass
+/// below swaps its sides for, so a decorated column keeps the snowy sides its
+/// undecorated neighbours have.
+pub(in crate::mesh) fn cell_wears_snow(
+    nb: &dyn crate::block::ShapeNeighborhood,
+    pos: glam::IVec3,
+) -> bool {
+    let block = nb.block(pos);
+    block.is_snow_cover() || snow_bed(nb, pos, block).is_some()
+}
+
+/// The bedding blanket's own boxes, resolved IN this cell. Reading the
+/// neighbour's shape rather than naming a plate is what keeps the bed honest:
+/// it is whatever the snow beside it actually is, so it lines up by
+/// construction and a retuned snow row moves both together. Appends; empty
+/// when the cell is not bedded.
+pub(in crate::mesh) fn snow_bed_boxes(
+    nb: &dyn crate::block::ShapeNeighborhood,
+    pos: glam::IVec3,
+    block: Block,
+    tint_for: &dyn Fn(crate::atlas::Tile) -> [f32; 3],
+    out: &mut Vec<ShapeBox>,
+) {
+    let Some(bed) = snow_bed(nb, pos, block) else {
+        return;
+    };
+    let k = bed.shape_kind_def();
     k.render.boxes(
         &crate::block::ShapeCtx {
             nb,
             pos,
-            block,
+            block: bed,
             params: &k.params,
-            tint_for: &tint_for,
+            tint_for,
             part_tint: crate::block::NO_PART_TINT,
         },
-        boxes,
+        out,
     );
-    covers_boundary(boxes, face, scratch)
 }
 
 /// Whether `boxes` cover the whole 1×1 cell-boundary rectangle their `face`

@@ -153,8 +153,10 @@ fn is_default_use_ray(v: &super::UseRay) -> bool {
     *v == super::UseRay::default()
 }
 
-/// The `petramond:tool` data entry: family + material tier (1 = wooden,
-/// 2 = stone, 3 = iron, 4 = diamond).
+/// The `petramond:tool` data entry: family + material tier. The shipped
+/// mining ladder is stone `2`, iron `3`, diamond `4`; rung `1` carries only
+/// the shears since the wooden tools were retired, and is where a softer
+/// metal would land.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawTool {
@@ -555,8 +557,8 @@ mod data_tests {
             "a patch attaches data to an engine row"
         );
         // The shipped tool rows still compile through `petramond:tool`.
-        let pick = &defs[ItemType::WoodenPickaxe.id() as usize];
-        assert_eq!(pick.tool.map(|t| t.tier), Some(1));
+        let pick = &defs[ItemType::StonePickaxe.id() as usize];
+        assert_eq!(pick.tool.map(|t| t.tier), Some(2));
 
         let bad = r#"{"items": [{"patch": "mymod:missing", "data": {"a:b": 1}}]}"#;
         assert!(

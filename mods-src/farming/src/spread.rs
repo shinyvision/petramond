@@ -90,7 +90,8 @@ fn try_spread(content: &Content, pos: [i32; 3], plant: BlockId) {
     let cells = candidates.iter().flat_map(|c| [c.soil, c.head]).collect();
     let got = get_blocks(cells);
     for (pair, c) in got.chunks_exact(2).zip(&candidates) {
-        let rooted = matches!(pair[0], Some(b) if b == content.grass || b == content.grass_fertilized);
+        let rooted =
+            matches!(pair[0], Some(b) if b == content.grass || b == content.grass_fertilized);
         if !rooted || pair[1] != Some(BlockId::AIR) {
             continue;
         }

@@ -34,7 +34,6 @@
         "exploration:mushroom_stem"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 0.6,
       "drops": [
         {
@@ -82,7 +81,6 @@
         "exploration:glowcap_pink"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -130,7 +128,6 @@
         "exploration:glowcap_blue"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -178,7 +175,6 @@
         "exploration:glowcap_magenta"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -226,7 +222,6 @@
         "exploration:glowcap_purple"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -272,7 +267,6 @@
         "exploration:cave_moss_side"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.4,
       "drops": [
         {
@@ -304,7 +298,11 @@
         "exploration:hanging_vine"
       ],
       "material": "plant",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 0,
       "drops": [
         {
@@ -343,7 +341,11 @@
         "exploration:glow_vine_blue"
       ],
       "material": "plant",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 0,
       "drops": [
         {
@@ -382,7 +384,11 @@
         "exploration:glow_vine_magenta"
       ],
       "material": "plant",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 0,
       "drops": [
         {
@@ -421,7 +427,11 @@
         "exploration:glow_vine_pink"
       ],
       "material": "plant",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 0,
       "drops": [
         {
@@ -460,7 +470,11 @@
         "exploration:glow_vine_purple"
       ],
       "material": "plant",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 0,
       "drops": [
         {
@@ -502,7 +516,6 @@
         "exploration:cave_flower_pink"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -543,7 +556,6 @@
         "exploration:cave_flower_blue"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -584,7 +596,6 @@
         "exploration:cave_flower_magenta"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -625,7 +636,6 @@
         "exploration:cave_flower_purple"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -663,7 +673,6 @@
         "exploration:sporeshroom_pink"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -701,7 +710,6 @@
         "exploration:sporeshroom_blue"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -739,7 +747,6 @@
         "exploration:sporeshroom_magenta"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -777,7 +784,6 @@
         "exploration:sporeshroom_purple"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -823,7 +829,6 @@
         "exploration:cave_silt"
       ],
       "material": "sand",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -866,7 +871,6 @@
         "exploration:mushroom_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -896,7 +900,6 @@
         "exploration:mushroom_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -926,7 +929,6 @@
         "exploration:mushroom_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -969,7 +971,6 @@
         "exploration:mushroom_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 3,
       "drops": [
         {
@@ -1005,7 +1006,6 @@
         "exploration:torch_pink_side"
       ],
       "material": "other",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -1041,7 +1041,6 @@
         "exploration:torch_blue_side"
       ],
       "material": "other",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -1077,7 +1076,6 @@
         "exploration:torch_magenta_side"
       ],
       "material": "other",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -1113,7 +1111,6 @@
         "exploration:torch_purple_side"
       ],
       "material": "other",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {

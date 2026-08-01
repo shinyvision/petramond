@@ -57,8 +57,9 @@ pub(super) struct BlockDef {
     pub covered_side: Option<Tile>,
     /// Mining material class (drives tool requirement + future tool tiers).
     pub material: BlockMaterial,
-    /// Minimum pickaxe tier to HARVEST this block (`0` = hand, `1` = wooden,
-    /// `2` = stone, `3` = above stone). See [`Block::harvest_tier`](super::Block::harvest_tier).
+    /// Minimum tool tier to HARVEST this block (`0` = hand-harvestable).
+    /// Compiled from the row's `petramond:harvest` data entry.
+    /// See [`Block::harvest_tier`](super::Block::harvest_tier).
     pub harvest_tier: u8,
     /// Base break time scalar in "hardness units"; `0.0` = instant, `< 0.0` =
     /// unbreakable (never a mining target). See `crate::mining` for the model.

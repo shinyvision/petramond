@@ -172,6 +172,14 @@ impl ItemType {
         self.def().name
     }
 
+    /// The sprite this item's ROW declares, if any — the art that wins over a
+    /// linked block's look in [`render_kind`](Self::render_kind). Read it to
+    /// tell "this item chose its own picture" from "this item inherited one".
+    #[inline]
+    pub fn declared_sprite(self) -> Option<Tile> {
+        self.def().sprite
+    }
+
     /// How to draw this item. A ROW-DECLARED sprite always wins: an item that
     /// places a block but ships its own flat art (seeds planting a crop, a
     /// door, the torch) draws that art everywhere the ITEM is shown — the

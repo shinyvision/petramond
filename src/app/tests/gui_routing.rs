@@ -770,8 +770,7 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
         .filter(|hook| {
             matches!(
                 hook.kind,
-                crate::gui::DocHookKind::TipResult
-                    | crate::gui::DocHookKind::TipIngredients
+                crate::gui::DocHookKind::TipResult | crate::gui::DocHookKind::TipIngredients
             )
         })
         .collect();

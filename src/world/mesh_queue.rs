@@ -70,7 +70,6 @@ pub(super) struct DirtyMeshQueue {
     target: Option<LoadTarget>,
 }
 
-
 impl DirtyMeshQueue {
     fn entry(target: Option<LoadTarget>, pos: SectionPos) -> Reverse<(i64, i32, i32, i32)> {
         Reverse((

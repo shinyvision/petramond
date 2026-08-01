@@ -210,7 +210,9 @@ struct State {
 impl State {
     fn read(tags: &[(String, MobTagValue)]) -> State {
         State {
-            sat: tag_i64(tags, SATURATION).unwrap_or(SAT_MAX).clamp(0, SAT_MAX),
+            sat: tag_i64(tags, SATURATION)
+                .unwrap_or(SAT_MAX)
+                .clamp(0, SAT_MAX),
             sat_next: tag_i64(tags, SAT_NEXT),
             heart_next: tag_i64(tags, HEART_NEXT),
             graze: tag_i64(tags, GRAZE_CELL),
@@ -386,10 +388,14 @@ fn step_animal(content: &Content, def: &HusbandryDef, a: &mut Animal, tick: u64)
     let s = &mut a.now;
     // Saturation trickles down on a jittered per-animal deadline.
     match s.sat_next {
-        None => s.sat_next = Some((tick + TRICKLE_MIN + rng_u64("husbandry_trickle") % TRICKLE_SPAN) as i64),
+        None => {
+            s.sat_next =
+                Some((tick + TRICKLE_MIN + rng_u64("husbandry_trickle") % TRICKLE_SPAN) as i64)
+        }
         Some(due) if tick as i64 >= due => {
             s.sat = (s.sat - 1).max(0);
-            s.sat_next = Some((tick + TRICKLE_MIN + rng_u64("husbandry_trickle") % TRICKLE_SPAN) as i64);
+            s.sat_next =
+                Some((tick + TRICKLE_MIN + rng_u64("husbandry_trickle") % TRICKLE_SPAN) as i64);
         }
         Some(_) => {}
     }

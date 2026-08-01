@@ -379,7 +379,7 @@ mod tests {
              "ingredients":[{"item":"petramond:oak_log","tag":"petramond:logs","count":1}],
              "result":{"item":"petramond:oak_planks","count":4}},
             {"type":"crafting","recipe":"petramond:free","station":"petramond:inventory",
-             "ingredients":[{"item":"petramond:wooden_shovel","count":1,"keep":true}],
+             "ingredients":[{"item":"petramond:stone_shovel","count":1,"keep":true}],
              "result":{"item":"petramond:stick","count":1}}
         ] }"#;
         let (crafting, _) = parse(text);

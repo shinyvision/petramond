@@ -308,8 +308,7 @@ impl SelfView {
 /// only) and temporarily mutated by rollback-backed P1 menu predictions — the
 /// exclusive source `Game::menu_read_model` renders from. Wire ids arrive
 /// already remapped to local ids.
-#[derive(Clone, Debug)]
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct MenuView {
     /// The real output produced by the last accepted CRAFT request.
     pub(crate) craft_output: Option<ItemStack>,
@@ -322,7 +321,6 @@ pub(crate) struct MenuView {
     /// (the server ships it on `Arc` change only).
     pub(crate) gui_state: Option<Arc<GuiStateMap>>,
 }
-
 
 fn stack_from_wire(slot: &Option<ItemSlotWire>) -> Option<ItemStack> {
     slot.as_ref().map(ItemSlotWire::to_stack)

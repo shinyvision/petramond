@@ -1,6 +1,6 @@
 use crate::biome::Biome;
 
-use super::{surfaces, trees, BiomeSpec, SnowCover, TreeProfile, VegetationProfile};
+use super::{surfaces, trees, BiomeSpec, SnowCover, TreeProfile, VegetationProfile, COLD_HEMP};
 
 pub(super) static SPEC: BiomeSpec = BiomeSpec {
     biome: Biome::SnowyTundra,
@@ -8,6 +8,6 @@ pub(super) static SPEC: BiomeSpec = BiomeSpec {
     // Scattered lone spruces on open snow — between the treeless SnowyPlains
     // and the SnowyTaiga spruce forest.
     trees: TreeProfile::new(0.004, trees::spruce),
-    vegetation: VegetationProfile::NONE,
+    vegetation: VegetationProfile::NONE.with_hemp(COLD_HEMP),
     snow_cover: SnowCover::Always,
 };

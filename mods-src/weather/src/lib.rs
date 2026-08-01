@@ -238,8 +238,7 @@ impl Weather {
             // the LOCAL intensity clears its own hash — light snowfall dusts
             // scattered patches, a storm whites everything out. The extra
             // per-tick roll on top keeps even a storm's fill-in gradual.
-            let cell_gate = splitmix64_mix(((x as u64) << 32) ^ (z as u64 & 0xFFFF_FFFF))
-                as f32
+            let cell_gate = splitmix64_mix(((x as u64) << 32) ^ (z as u64 & 0xFFFF_FFFF)) as f32
                 / u64::MAX as f32;
             let tick_gate = (roll >> 32) as f32 / u32::MAX as f32;
             if cell_gate > intensity || tick_gate > 0.35 {
@@ -255,7 +254,8 @@ impl Weather {
             // already lands on the treetop — leaves block movement), but
             // never on frozen water: worldgen keeps sea/pond ice bare and
             // its parity tests pin it.
-            if !self.leaves.contains(&support) && !self.full_solid_support(support, [x, surface_y, z])
+            if !self.leaves.contains(&support)
+                && !self.full_solid_support(support, [x, surface_y, z])
             {
                 continue;
             }
@@ -371,8 +371,7 @@ impl Weather {
         let (lx, lz) = ((wx & 15) as usize, (wz & 15) as usize);
         let idx = (lz * 16 + lx) * CLIENT_SURFACE_CELL_BYTES;
         let h = i16::from_le_bytes([cells[idx], cells[idx + 1]]);
-        self.covered =
-            h != CLIENT_SURFACE_UNKNOWN_HEIGHT && (h as f32) > frame.player_pos[1] + 2.0;
+        self.covered = h != CLIENT_SURFACE_UNKNOWN_HEIGHT && (h as f32) > frame.player_pos[1] + 2.0;
         if !self.covered {
             // Nothing overhead at all — trivially sky access.
             self.roofed = false;

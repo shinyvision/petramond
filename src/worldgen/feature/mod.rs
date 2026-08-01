@@ -131,6 +131,22 @@ impl<'a> FeatureCtx<'a> {
         }
     }
 
+    /// Write over Air/Water or a SNOW BLANKET (== ground-litter predicate).
+    ///
+    /// Litter lands on the ground after the vegetation pass has already dressed
+    /// the column, so it must decide what it is allowed to displace. A tuft or
+    /// a flower it must not — burying those is what [`Self::set_leaf`] exists to
+    /// prevent. A snow layer it must, because in a `SnowCover::Always` biome
+    /// EVERY column carries one, so refusing it means no branch ever lands in a
+    /// snowy forest at all — measured as literally zero over 400 chunks before
+    /// this existed, in a biome a fresh player can spawn in.
+    pub fn set_ground_litter(&mut self, p: IVec3, b: Block) {
+        let c = self.sink.get(p);
+        if c == Block::Air || c == Block::Water || c.is_snow_cover() {
+            self.sink.set(p, b);
+        }
+    }
+
     /// Replace a voxel only when it currently equals `expect`. Used by the
     /// underground ore / stone-blob veins, which overwrite Stone (and never air,
     /// dirt, or an already-placed ore). World coords; clipped to this chunk.

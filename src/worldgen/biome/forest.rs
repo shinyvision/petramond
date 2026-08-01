@@ -14,6 +14,8 @@ pub(super) static SPEC: BiomeSpec = BiomeSpec {
     trees: TreeProfile::new(0.005, trees::forest_oak)
         .with_spacing(10)
         .with_height_clearance(30),
-    vegetation: VegetationProfile::grass(Block::ShortGrass, 0.11).with_flowers(FLOWERS, 0.16, 0.22),
+    vegetation: VegetationProfile::grass(Block::ShortGrass, 0.11)
+        .with_flowers(FLOWERS, 0.16, 0.22)
+        .with_hemp(0.0037),
     snow_cover: SnowCover::None,
 };

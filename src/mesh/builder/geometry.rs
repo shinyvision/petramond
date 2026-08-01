@@ -14,7 +14,9 @@ use super::super::tint;
 use super::super::vertex::{ChunkMesh, ModelVertex, UV_MODE_NONE};
 use super::super::water::{self, SideVsWater, WaterSurface};
 
-use super::super::boxset::{cell_seals_face, emit_box_set, BoxSetScratch, ShapeBox};
+use super::super::boxset::{
+    cell_seals_face, cell_wears_snow, emit_box_set, snow_bed_boxes, BoxSetScratch, ShapeBox,
+};
 use super::cell_class::{cell_classes, BOXES, CROP, CROSS, FAST_CUBE, MODEL, SKIP, TORCH, WATER};
 use super::cube_face::{
     boundary_plane, cube_face_lighting, cube_face_tile, face_axes, face_index, facing_face,
@@ -154,6 +156,8 @@ pub(super) fn section_geometry(
     // every axis-aligned sub-cell shape family routes through it.
     let mut box_scratch = BoxSetScratch::default();
     let mut mesh_boxes: Vec<ShapeBox> = Vec::new();
+    // The snow blanket a `snow_bedded` cell is drawn standing in.
+    let mut bed_boxes: Vec<ShapeBox> = Vec::new();
 
     // The cell-local occupancy boxes of the block at `p` — what the box-set
     // emitter subtracts from a flush face so sub-cell geometry culls against
@@ -303,7 +307,48 @@ pub(super) fn section_geometry(
                     occupancy_boxes(IVec3::new(wx + dx, wy + dy, wz + dz), block, out);
                 };
 
+                // The snow blanket this cell is drawn standing in, if the row
+                // asks for one and snow still touches it (see
+                // `boxset::snow_bed_boxes`). Ground decoration and a blanket
+                // compete for one cell, and the decoration always wins it, so
+                // without this every tuft and pebble is a bare hole in the
+                // white.
+                // Dense flag first, like every other per-cell gate here: this
+                // runs for every drawn cell in the world and almost none of
+                // them is decoration.
+                bed_boxes.clear();
+                if block.is_snow_bedded() {
+                    snow_bed_boxes(
+                        &nbh,
+                        IVec3::new(wx, wy, wz),
+                        block,
+                        &|t: Tile| tint_tile(t.world_tint(), ci),
+                        &mut bed_boxes,
+                    );
+                }
+
                 if class & (CROSS | CROP) != 0 {
+                    // The bed is its own set here — a cross has no boxes to
+                    // share one with. Its planes are diagonal, so nothing can
+                    // land coplanar with the blanket's top; the stalk's buried
+                    // base is simply inside opaque snow.
+                    if !bed_boxes.is_empty() {
+                        emit_box_set(
+                            &mut opaque,
+                            wx,
+                            wy,
+                            wz,
+                            &bed_boxes,
+                            &mut box_scratch,
+                            &neighbor_solid,
+                            &neighbor_boxes,
+                            &cell_matter,
+                            &block_at,
+                            &slab_at,
+                            &neighbour_light,
+                            &neighbour_blocklight,
+                        );
+                    }
                     let shape = block.shape_family();
                     let tile = block.tiles()[0];
                     let l = neighbour_light(wx, wy, wz) as u32;
@@ -392,6 +437,15 @@ pub(super) fn section_geometry(
                         // through to the cube path — the render fallback.
                         if !mesh_boxes.is_empty() {
                             apply_cell_tint(&mut mesh_boxes, section_idx(lx, ly, lz));
+                            // The bed joins the block's OWN set, and that is the
+                            // whole reason this is not a second emit: half the
+                            // litter boxes are exactly one texel tall, so their
+                            // top face is coplanar with the blanket's. In one
+                            // set the emitter's coincidence tie-break settles
+                            // which of the two draws it — two sets would draw
+                            // both and z-fight. Appended AFTER the cell tint so
+                            // a dyed decoration never dyes the snow it lies in.
+                            mesh_boxes.extend_from_slice(&bed_boxes);
                             emit_box_set(
                                 &mut opaque,
                                 wx,
@@ -481,7 +535,7 @@ pub(super) fn section_geometry(
                 let side_style: Option<(Tile, Option<Tile>, [f32; 3])> = {
                     let covered = block
                         .covered_side()
-                        .filter(|_| block_at(wx, wy + 1, wz).is_snow_cover());
+                        .filter(|_| cell_wears_snow(&nbh, IVec3::new(wx, wy + 1, wz)));
                     match covered {
                         Some(t) => Some((t, None, tint_tile(t.world_tint(), ci))),
                         None => block.side_overlay().map(|so| {

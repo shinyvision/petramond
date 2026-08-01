@@ -455,7 +455,7 @@ mod tests {
         // standing row, so the direction is proven to be per-row data.
         let row = |name: &str, support: &str| {
             format!(
-                r#"{{ "block": "hangtest:{name}", "shape": "cross", "flags": ["transparent"], "tags": ["fragile"], "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0{support}, "tiles": ["poppy", "poppy", "poppy"], "material": "plant", "harvest_tier": 0, "hardness": 0, "drops": [] }}"#
+                r#"{{ "block": "hangtest:{name}", "shape": "cross", "flags": ["transparent"], "tags": ["fragile"], "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0{support}, "tiles": ["poppy", "poppy", "poppy"], "material": "plant", "hardness": 0, "drops": [] }}"#
             )
         };
         let above = r#", "support": "above""#;

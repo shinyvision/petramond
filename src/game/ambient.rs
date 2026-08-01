@@ -243,12 +243,7 @@ fn column_info(
 /// The kill height for a column that must have one — the precipitation path's
 /// original contract (`None` for unloaded columns AND for columns that block
 /// nothing).
-fn column_ceiling(
-    world: &World,
-    cache: &mut ColumnInfoCache,
-    x: f32,
-    z: f32,
-) -> Option<(f32, u8)> {
+fn column_ceiling(world: &World, cache: &mut ColumnInfoCache, x: f32, z: f32) -> Option<(f32, u8)> {
     let (kill, biome) = column_info(world, cache, x, z)?;
     Some((kill?, biome))
 }

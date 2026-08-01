@@ -62,12 +62,7 @@ pub fn on_item_use(content: &Content, item: ItemId, target: Option<[i32; 3]>) ->
 /// CLIENT prediction mirror of [`on_item_use`]'s gate: hoe + eligible soil +
 /// a clearable (or absent) cover. The hydration probe is irrelevant to the
 /// claim — only which farmland appearance lands.
-pub fn predict_item_use(
-    content: &Content,
-    item: ItemId,
-    pos: [i32; 3],
-    block: BlockId,
-) -> Outcome {
+pub fn predict_item_use(content: &Content, item: ItemId, pos: [i32; 3], block: BlockId) -> Outcome {
     if item != content.iron_hoe {
         return Outcome::Continue;
     }
@@ -75,7 +70,9 @@ pub fn predict_item_use(
         return Outcome::Continue;
     }
     match crate::predict::peek([pos[0], pos[1] + 1, pos[2]]) {
-        Some(cover) if cover == BlockId::AIR || content.is_clearable_cover(cover) => Outcome::Cancel,
+        Some(cover) if cover == BlockId::AIR || content.is_clearable_cover(cover) => {
+            Outcome::Cancel
+        }
         _ => Outcome::Continue,
     }
 }

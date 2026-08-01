@@ -22,9 +22,23 @@ struct CropSpec {
     /// Primary produce item + its per-harvest yield range (balance data).
     produce: &'static str,
     yield_range: (u64, u64),
-    /// An optional secondary drop per harvest: (RNG stream key, item, lo,
-    /// hi). The key is a literal so existing streams stay byte-identical.
-    extra_drop: Option<(&'static str, &'static str, u64, u64)>,
+    /// An optional secondary drop per harvest.
+    extra_drop: Option<ExtraDrop>,
+}
+
+/// A crop's secondary harvest drop — the seeds a tended plant throws off
+/// beside its produce.
+struct ExtraDrop {
+    /// RNG stream key for the COUNT. A frozen literal: streams are stateful
+    /// per key, so an existing one must never be renamed.
+    count_key: &'static str,
+    item: &'static str,
+    /// Percent of harvests that yield it at all. `100` means every harvest,
+    /// and draws no chance roll — so a crop that always rolls keeps its
+    /// historic stream exactly as it was before chances existed.
+    chance_percent: u64,
+    /// How many, inclusive, when it does yield.
+    count: (u64, u64),
 }
 
 /// One breedable species row: the whole husbandry system (grazing
@@ -70,7 +84,12 @@ const CROPS: &[CropSpec] = &[
         planting_stock: "farming:wheat_seeds",
         produce: "farming:wheat",
         yield_range: (1, 2),
-        extra_drop: Some(("harvest_wheat_seeds", "farming:wheat_seeds", 0, 2)),
+        extra_drop: Some(ExtraDrop {
+            count_key: "harvest_wheat_seeds",
+            item: "farming:wheat_seeds",
+            chance_percent: 100,
+            count: (0, 2),
+        }),
     },
     CropSpec {
         name: "carrot",
@@ -88,7 +107,34 @@ const CROPS: &[CropSpec] = &[
         yield_range: (2, 3),
         extra_drop: None,
     },
+    // Hemp is the one crop whose stock and produce are ENGINE items: the wild
+    // stands and the rope they lash the first stone tools with are core
+    // progression (WIKI/progression.md), so cultivating it is this pack
+    // making a core material renewable, not owning it.
+    CropSpec {
+        name: "hemp",
+        block_stem: "hemp",
+        planting_stock: "farming:hemp_seeds",
+        produce: "petramond:hemp",
+        yield_range: (1, 1),
+        extra_drop: Some(ExtraDrop {
+            count_key: "harvest_hemp_seeds",
+            item: "farming:hemp_seeds",
+            chance_percent: 60,
+            count: (1, 2),
+        }),
+    },
 ];
+
+/// A resolved [`ExtraDrop`]: the spec's frozen count stream plus the derived
+/// chance stream, so the two rolls never share state.
+pub struct ExtraDropDef {
+    pub item: &'static str,
+    pub chance_percent: u64,
+    pub count: (u64, u64),
+    pub count_key: &'static str,
+    pub chance_key: String,
+}
 
 /// One cultivated crop, resolved: the stage blocks plus everything a harvest
 /// or a support pop needs, derived from its [`CropSpec`] row.
@@ -98,7 +144,7 @@ pub struct CropDef {
     pub planting_stock: &'static str,
     pub produce: &'static str,
     pub yield_range: (u64, u64),
-    pub extra_drop: Option<(&'static str, &'static str, u64, u64)>,
+    pub extra_drop: Option<ExtraDropDef>,
     /// RNG stream keys (derived once from the spec name — streams are
     /// stateful per key, so these must never vary per call site).
     pub harvest_key: String,
@@ -149,6 +195,10 @@ pub struct Content {
     /// LIVING ground cover (short grass, fern): breaking it can forage a
     /// stray wheat seed — a dead bush holds none (see [`crate::forage`]).
     pub seed_cover: [BlockId; 2],
+    /// The ENGINE's wild hemp stand. The pack adds a seed roll to it because a
+    /// core row is one this pack cannot give drops to; every CULTIVATED stage
+    /// declares its own drops in `blocks.json` (see [`crate::hemp`]).
+    pub hemp_wild: BlockId,
     // Pack items.
     pub iron_hoe: ItemId,
     pub fertilizer: ItemId,
@@ -221,11 +271,27 @@ impl Content {
                 planting_stock: spec.planting_stock,
                 produce: spec.produce,
                 yield_range: spec.yield_range,
-                extra_drop: spec.extra_drop,
+                extra_drop: spec.extra_drop.as_ref().map(|e| ExtraDropDef {
+                    item: e.item,
+                    chance_percent: e.chance_percent,
+                    count: e.count,
+                    count_key: e.count_key,
+                    chance_key: format!("extra_chance_{}", spec.name),
+                }),
                 harvest_key: format!("harvest_{}", spec.name),
                 fertile_key: format!("fertile_{}", spec.name),
                 harvest_emitter: format!("farming:{}_harvest", spec.name),
             });
+        }
+        // The hemp a break can shake seeds out of. The wild stand is an ENGINE
+        // row; the mature stage comes off the crop def, so a rename there
+        // cannot leave this list behind. Seedlings are deliberately absent.
+        let mut hemp_mature = vec![block("petramond:hemp")?];
+        if let Some(def) = crops
+            .iter()
+            .find(|c| c.planting_stock == "farming:hemp_seeds")
+        {
+            hemp_mature.push(def.stages[3]);
         }
         Some(Content {
             farmland_dry: block("farming:farmland_dry")?,
@@ -253,6 +319,7 @@ impl Content {
             spreadable,
             clearable: [short_grass, fern, dead_bush],
             seed_cover: [short_grass, fern],
+            hemp_wild: block("petramond:hemp")?,
             iron_hoe: item("farming:iron_hoe")?,
             fertilizer: item("farming:fertilizer")?,
             wheat_item: item("farming:wheat")?,

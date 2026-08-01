@@ -30,6 +30,22 @@
       "block": "farming:wheat_0"
     },
     {
+      "item": "farming:hemp_seeds",
+      "key": "farming:hemp_seeds",
+      "name": "Hemp Seeds",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "farming:hemp_seeds",
+      "tags": [
+        "farming:compostable"
+      ],
+      "block": "farming:hemp_0"
+    },
+    {
       "item": "farming:wheat",
       "key": "farming:wheat",
       "name": "Wheat",

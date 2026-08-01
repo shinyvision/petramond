@@ -225,6 +225,16 @@ impl Block {
     pub const JungleFence: Block = Block(133);
     pub const AcaciaFence: Block = Block(134);
     pub const RedwoodFence: Block = Block(135);
+    // Ground litter — the pre-tool gathering layer. Three pebble sizes so a
+    // scattered field does not read as one sprite stamped everywhere; the
+    // branch and the hemp stalk are the other two things a bare hand may take.
+    pub const PebblesSmall: Block = Block(136);
+    pub const PebblesMedium: Block = Block(137);
+    pub const PebblesLarge: Block = Block(138);
+    pub const FallenBranch: Block = Block(139);
+    pub const Hemp: Block = Block(140);
+    pub const FallenBranch2: Block = Block(141);
+    pub const FallenBranch3: Block = Block(142);
 }
 
 impl std::fmt::Debug for Block {

@@ -71,7 +71,7 @@ fn light_apertures_are_derived_from_the_shape_occupancy() {
 /// outlines, and still blocks light.
 #[test]
 fn a_box_set_derives_every_box_from_its_authored_shape() {
-    let mut checked = 0;
+    let (mut checked, mut sealing) = (0, 0);
     for &b in Block::all() {
         let Some(set) = b.shape_kind().def().params.box_set() else {
             continue;
@@ -90,12 +90,39 @@ fn a_box_set_derives_every_box_from_its_authored_shape() {
             .map(|d| d.aabb)
             .collect();
         assert_eq!(collision, expect, "{b:?} collides as its colliding boxes");
-        // Drawn matter blocks light whether or not it collides: a shape that
-        // fills its floor seals the face below it.
-        let sealed = crate::block::light_aperture_face(b.default_light_apertures(), (0, -1, 0));
-        assert_eq!(sealed, 0, "{b:?} floor-flush box must block light downward");
+        // Drawn matter blocks light whether or not it collides: a shape whose
+        // boxes cover the whole floor seals the face below it even when every
+        // one of them is `collides: false` (the snow layer). A shape that only
+        // DOTS its floor — a pebble field — must not, or the cell it draws
+        // inside floods black.
+        if floor_fully_covered(set.boxes(0, 0)) {
+            let sealed = crate::block::light_aperture_face(b.default_light_apertures(), (0, -1, 0));
+            assert_eq!(sealed, 0, "{b:?} full-floor box must block light downward");
+            sealing += 1;
+        }
     }
     assert!(checked >= 2, "expected the engine's own box-set rows");
+    assert!(
+        sealing >= 1,
+        "expected a shipped box set that covers its floor"
+    );
+}
+
+/// Whether boxes resting on the cell floor cover its whole 16×16 footprint.
+/// Sampled per texel, which is exact: box extents are authored in texels.
+fn floor_fully_covered(boxes: &[crate::block::shape_kind::BoxDef]) -> bool {
+    (0..16).all(|tz| {
+        (0..16).all(|tx| {
+            let (x, z) = ((tx as f32 + 0.5) / 16.0, (tz as f32 + 0.5) / 16.0);
+            boxes.iter().any(|d| {
+                d.aabb.min[1] <= 0.0
+                    && d.aabb.min[0] <= x
+                    && x <= d.aabb.max[0]
+                    && d.aabb.min[2] <= z
+                    && z <= d.aabb.max[2]
+            })
+        })
+    })
 }
 
 /// The shape-kind registry resolves every block to a valid, self-consistent
@@ -194,16 +221,22 @@ fn every_block_has_consistent_metadata() {
                 d.max
             );
         }
-        // requires_tool() is the harvest gate's condition. Every Stone/Ore
-        // material block is tool-gated (needs at least a wooden pickaxe);
-        // soft blocks may opt in too (the snow layer's shovel-gated drop).
+        // requires_tool() is the harvest gate's condition.
         assert_eq!(
             block.requires_tool(),
             block.harvest_tier() >= 1,
             "{block:?}"
         );
-        if matches!(block.material(), BlockMaterial::Stone | BlockMaterial::Ore) {
-            assert!(block.requires_tool(), "{block:?}");
+        // A gated row must have a tool kind that can open it, or nothing in
+        // the game can ever harvest it: `tool_power` is 0 for every kind but
+        // the material's own preferred one. Material does NOT imply the gate
+        // in the other direction — loose surface stone (pebbles) is stone to
+        // mine and to listen to, and still comes up in a bare hand.
+        if block.requires_tool() {
+            assert!(
+                block.preferred_tool().is_some(),
+                "{block:?} is tool-gated with no tool that fits it"
+            );
         }
     }
 }

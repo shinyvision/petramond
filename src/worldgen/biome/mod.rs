@@ -120,7 +120,10 @@ pub(crate) struct VegetationProfile {
     pub flower_density: f32,
     pub grass_tuft: Block,
     pub grass_density: f32,
+    pub hemp_anchor_chance: f32,
 }
+
+pub(super) const COLD_HEMP: f32 = 0.01;
 
 impl VegetationProfile {
     pub const NONE: Self = Self {
@@ -133,6 +136,7 @@ impl VegetationProfile {
         flower_density: 0.0,
         grass_tuft: Block::ShortGrass,
         grass_density: 0.0,
+        hemp_anchor_chance: 0.0,
     };
 
     pub const fn grass(grass_tuft: Block, grass_density: f32) -> Self {
@@ -172,6 +176,11 @@ impl VegetationProfile {
 
     pub const fn with_cover_cluster(mut self, cluster: CoverCluster) -> Self {
         self.cover_cluster = Some(cluster);
+        self
+    }
+
+    pub const fn with_hemp(mut self, anchor_chance: f32) -> Self {
+        self.hemp_anchor_chance = anchor_chance;
         self
     }
 }

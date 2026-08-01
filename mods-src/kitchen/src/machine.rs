@@ -115,7 +115,9 @@ impl<S: MachineSpec> Machine<S> {
             return;
         }
         let variant = self.variant;
-        let live = self.anchors.prune_live(|b| b == block || Some(b) == variant);
+        let live = self
+            .anchors
+            .prune_live(|b| b == block || Some(b) == variant);
         if live.is_empty() {
             return;
         }
@@ -240,7 +242,8 @@ impl Caches {
             return cached.clone();
         }
         let result = recipe_result(class, item);
-        self.recipes.insert((class, item.to_owned()), result.clone());
+        self.recipes
+            .insert((class, item.to_owned()), result.clone());
         result
     }
 }

@@ -115,13 +115,11 @@ impl World {
                 for pos in members {
                     let job = LightBakeJob::snapshot(0, pos, &self.sections, &self.columns)?;
                     let section = self.sections.get(&pos).expect("filtered on presence");
-                    lights.push(PredictionLightUnit::Single(Box::new(
-                        PredictionLightJob {
-                            job,
-                            prev_skylight: section.skylight_arc(),
-                            prev_blocklight: section.blocklight_arc(),
-                        },
-                    )));
+                    lights.push(PredictionLightUnit::Single(Box::new(PredictionLightJob {
+                        job,
+                        prev_skylight: section.skylight_arc(),
+                        prev_blocklight: section.blocklight_arc(),
+                    })));
                 }
             }
         }

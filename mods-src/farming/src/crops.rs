@@ -183,24 +183,111 @@ pub fn on_interact(
     // Fertility read ONCE per interaction (a get_block crossing): it gates
     // the harvest bonus roll and shortens the re-arm delay below.
     let fertile = soil_is_fertile(content, pos);
-    // Yield ranges are balance data; the invariant is that the plant itself
-    // is retained (reset, not removed). Fertile soil adds a one-in-ten bonus
-    // unit of the primary produce.
-    let roll = |key: &str, (lo, hi): (u64, u64)| -> u8 { (lo + rng_u64(key) % (hi - lo + 1)) as u8 };
-    let count = roll(&def.harvest_key, def.yield_range)
-        + (fertile && rng_u64(&def.fertile_key).is_multiple_of(FERTILE_BONUS_IN)) as u8;
-    spawn_item(def.produce, count, center);
-    if let Some((key, item, lo, hi)) = def.extra_drop {
-        let extra = roll(key, (lo, hi));
-        if extra > 0 {
-            spawn_item(item, extra, center);
-        }
-    }
+    // The plant is RETAINED here (reset, not removed), so no replant is owed.
+    spawn_all(mature_yield(def, fertile, Taking::Retained), center);
     emit_sound("farming:harvest", Some(center));
     emitter_burst(&def.harvest_emitter, center, 1.0);
     set_block(pos, def.stages[0]);
     arm(growth, pos, 0, fertile);
     Outcome::Cancel
+}
+
+/// How a mature plant was taken. The ONLY thing that may differ between the
+/// two ways of taking a crop.
+#[derive(Copy, Clone, PartialEq)]
+enum Taking {
+    /// Right-click harvest: the plant stays and resets to stage 0.
+    Retained,
+    /// Broken: the plant is gone and the taker has to plant again.
+    Removed,
+}
+
+/// What ONE mature plant gives up — the single definition of a crop's yield,
+/// shared by BOTH ways of taking it.
+///
+/// Harvesting and breaking a mature crop pay the SAME produce, the same extra
+/// roll, and the same fertile-soil bonus. A player who never learns that
+/// mature crops can be right-clicked must not be quietly taxed for it; the
+/// interaction is a convenience, not a reward tier.
+///
+/// The one honest difference is [`Taking::Removed`]: a broken plant is gone, so
+/// the yield guarantees at least one PLANTING STOCK back, or breaking a field
+/// would strand the player with nothing to replant. That is a floor, not a
+/// bonus — a crop whose stock is its own produce (the carrot, the potato)
+/// already clears it and gets nothing extra.
+///
+/// Every crop inherits this from its `CropSpec` row. Adding crop #N changes
+/// nothing here.
+fn mature_yield(def: &CropDef, fertile: bool, taking: Taking) -> Vec<(&'static str, u8)> {
+    let roll =
+        |key: &str, (lo, hi): (u64, u64)| -> u8 { (lo + rng_u64(key) % (hi - lo + 1)) as u8 };
+    let mut out = vec![(
+        def.produce,
+        roll(&def.harvest_key, def.yield_range)
+            + (fertile && rng_u64(&def.fertile_key).is_multiple_of(FERTILE_BONUS_IN)) as u8,
+    )];
+    if let Some(extra) = &def.extra_drop {
+        // A 100% row draws NO chance roll, so the crops that always threw
+        // seeds keep the stream they have always had.
+        let yields =
+            extra.chance_percent >= 100 || rng_u64(&extra.chance_key) % 100 < extra.chance_percent;
+        if yields {
+            out.push((extra.item, roll(extra.count_key, extra.count)));
+        }
+    }
+    if taking == Taking::Removed {
+        let stock: u32 = out
+            .iter()
+            .filter(|(item, _)| *item == def.planting_stock)
+            .map(|(_, n)| *n as u32)
+            .sum();
+        if stock == 0 {
+            out.push((def.planting_stock, 1));
+        }
+    }
+    out
+}
+
+/// Drop a yield list at `center`, skipping the empty entries a roll can produce.
+fn spawn_all(items: Vec<(&'static str, u8)>, center: [f32; 3]) {
+    for (item, count) in items {
+        if count > 0 {
+            spawn_item(item, count, center);
+        }
+    }
+}
+
+/// Breaking a crop instead of harvesting it.
+///
+/// The pack owns this outright — every cultivated stage row declares
+/// `"drops": []` — because the yield has to be the SAME one
+/// [`mature_yield`] computes for a harvest, and row data cannot read the
+/// fertility of the soil underneath.
+///
+/// Fires for NATURAL breaks too (water washing a field away is the classic
+/// water-harvest, and it takes the plant just as thoroughly), gated only on
+/// `harvested` so a break that yields nothing keeps yielding nothing.
+pub fn on_block_broken(content: &Content, pos: [i32; 3], block: BlockId, harvested: bool) {
+    let Some((def, stage)) = content.crop_stage(block) else {
+        return;
+    };
+    if !harvested {
+        return;
+    }
+    let center = [
+        pos[0] as f32 + 0.5,
+        pos[1] as f32 + 0.3,
+        pos[2] as f32 + 0.5,
+    ];
+    if stage < 3 {
+        // An unripe plant is worth exactly what was put into it.
+        spawn_item(def.planting_stock, 1, center);
+        return;
+    }
+    spawn_all(
+        mature_yield(def, soil_is_fertile(content, pos), Taking::Removed),
+        center,
+    );
 }
 
 /// The crop block hooks.

@@ -1,4 +1,5 @@
 use crate::biome::Biome;
+use crate::block::Block;
 use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
 use crate::mathh::IVec3;
 use crate::section::Section;
@@ -12,6 +13,17 @@ use super::{ChunkSink, FeatureCtx, FeatureField, SectionSink, TREELINE};
 const FEATURE_SALT: u64 = 0x0000_7A3E_0AC0_FFEE;
 /// Separate stream used only to break ties between nearby tree candidates.
 const TREE_PRIORITY_SALT: u64 = 0x0000_7A3E_51AC_1EAF;
+/// Own stream for the fallen-branch scatter, so branch placement does not move
+/// when a tree's geometry draws change (and vice versa).
+const BRANCH_SALT: u64 = 0x0000_7A3E_B4A0_C401;
+/// How far from the trunk a branch may have fallen. Well inside
+/// `MAX_TREE_SPACING_RADIUS`, which bounds the surface reads this scatter is
+/// allowed to make (see the note on the anchoring gate below).
+const BRANCH_REACH: i32 = 8;
+/// Branches dropped per accepted tree, inclusive. Most land; some fall on a
+/// cell that already holds a plant and are skipped, so the effective rate is
+/// lower than the mean of this range.
+const BRANCH_PER_TREE: (i32, i32) = (0, 2);
 
 #[derive(Copy, Clone)]
 pub(super) struct TreeCandidate {
@@ -216,6 +228,75 @@ fn place_feature_origins(
                 continue;
             }
             cf.feature.generate(ctx, origin, &mut rng);
+            scatter_fallen_branches(ctx, field, seed, wx, wz);
         }
+    }
+}
+
+/// Drop a few fallen branches around an accepted tree.
+///
+/// This lives on the TREE path, not in the ground-vegetation pass, because
+/// "within `BRANCH_REACH` of a tree" is not a question a column can answer:
+/// vegetation runs BEFORE trees are placed, and asking it there would mean
+/// re-running the candidate + spacing scan for every column in the world.
+/// Coming from the tree itself, the constraint holds by construction and costs
+/// one positional stream per tree that actually exists.
+///
+/// Seam rules this obeys, all of them the same ones the tree obeys:
+/// - the stream is positional on the tree's ORIGIN, so every chunk that
+///   replays this origin scatters identically and the sink clips the rest;
+/// - the ground is read from the world-anchored `field`, never from the sink
+///   (an out-of-footprint sink read returns Air and would differ per chunk);
+/// - reads stay within `MAX_TREE_SPACING_RADIUS` of the origin, the window the
+///   anchoring gate already established.
+fn scatter_fallen_branches(
+    ctx: &mut FeatureCtx,
+    field: &mut impl FeatureField,
+    seed: u32,
+    wx: i32,
+    wz: i32,
+) {
+    let mut rng = FeatureRng::positional(seed, BRANCH_SALT, wx, 0, wz);
+    let count = rng.next_i32(BRANCH_PER_TREE.0, BRANCH_PER_TREE.1);
+    for _ in 0..count {
+        let dx = rng.next_i32(-BRANCH_REACH, BRANCH_REACH);
+        let dz = rng.next_i32(-BRANCH_REACH, BRANCH_REACH);
+        let variant = rng.next_i32(0, 2);
+        // Under the trunk itself the branch would be buried by the tree's own
+        // logs and roots.
+        if dx.abs() <= 1 && dz.abs() <= 1 {
+            continue;
+        }
+        let (sx, sz) = (wx + dx, wz + dz);
+        let (surf, biome) = field.column_at(sx, sz);
+        if surf <= SEA_LEVEL {
+            continue;
+        }
+        let skin = super::super::surface::SurfaceSystem.skin_block(
+            &crate::worldgen::surface::rule::SurfaceCtx {
+                seed,
+                wx: sx,
+                wz: sz,
+                y: surf,
+                surf_y: surf,
+                depth_from_top: 0,
+            },
+            spec(biome).surface,
+        );
+        if !super::vegetation::litter_ground(skin) {
+            continue;
+        }
+        // `set_ground_litter` writes over Air/Water and a snow layer, so a
+        // branch never buries the tuft or flower the vegetation pass already
+        // put there but is not shut out of a snowy forest either — and, being a
+        // read of its OWN cell, it stays seam-safe.
+        ctx.set_ground_litter(
+            IVec3::new(sx, surf + 1, sz),
+            match variant {
+                0 => Block::FallenBranch,
+                1 => Block::FallenBranch2,
+                _ => Block::FallenBranch3,
+            },
+        );
     }
 }

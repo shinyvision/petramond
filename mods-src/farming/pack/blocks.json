@@ -29,7 +29,6 @@
         "dirt"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -69,7 +68,6 @@
         "dirt"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -99,7 +97,6 @@
         "farming:wild_wheat"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -135,7 +132,6 @@
         "farming:wild_carrots"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -165,16 +161,8 @@
         "farming:wheat_0"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
-      "drops": [
-        {
-          "item": "farming:wheat_seeds",
-          "min": 1,
-          "max": 1,
-          "chance": 1.0
-        }
-      ]
+      "drops": []
     },
     {
       "block": "farming:wheat_1",
@@ -195,16 +183,8 @@
         "farming:wheat_1"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
-      "drops": [
-        {
-          "item": "farming:wheat_seeds",
-          "min": 1,
-          "max": 1,
-          "chance": 1.0
-        }
-      ]
+      "drops": []
     },
     {
       "block": "farming:wheat_2",
@@ -225,16 +205,8 @@
         "farming:wheat_2"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
-      "drops": [
-        {
-          "item": "farming:wheat_seeds",
-          "min": 1,
-          "max": 1,
-          "chance": 1.0
-        }
-      ]
+      "drops": []
     },
     {
       "block": "farming:wheat_3",
@@ -255,22 +227,8 @@
         "farming:wheat_3"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
-      "drops": [
-        {
-          "item": "farming:wheat",
-          "min": 1,
-          "max": 2,
-          "chance": 1.0
-        },
-        {
-          "item": "farming:wheat_seeds",
-          "min": 1,
-          "max": 3,
-          "chance": 1.0
-        }
-      ]
+      "drops": []
     },
     {
       "block": "farming:carrots_0",
@@ -291,16 +249,8 @@
         "farming:carrots_0"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
-      "drops": [
-        {
-          "item": "farming:carrot",
-          "min": 1,
-          "max": 1,
-          "chance": 1.0
-        }
-      ]
+      "drops": []
     },
     {
       "block": "farming:carrots_1",
@@ -321,16 +271,8 @@
         "farming:carrots_1"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
-      "drops": [
-        {
-          "item": "farming:carrot",
-          "min": 1,
-          "max": 1,
-          "chance": 1.0
-        }
-      ]
+      "drops": []
     },
     {
       "block": "farming:carrots_2",
@@ -351,16 +293,8 @@
         "farming:carrots_2"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
-      "drops": [
-        {
-          "item": "farming:carrot",
-          "min": 1,
-          "max": 1,
-          "chance": 1.0
-        }
-      ]
+      "drops": []
     },
     {
       "block": "farming:carrots_3",
@@ -381,16 +315,8 @@
         "farming:carrots_3"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
-      "drops": [
-        {
-          "item": "farming:carrot",
-          "min": 2,
-          "max": 3,
-          "chance": 1.0
-        }
-      ]
+      "drops": []
     },
     {
       "block": "farming:farmland_fertile_dry",
@@ -421,7 +347,6 @@
         "dirt"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -461,7 +386,6 @@
         "dirt"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -491,7 +415,6 @@
         "farming:wild_potatoes"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -521,16 +444,8 @@
         "farming:potatoes_0"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
-      "drops": [
-        {
-          "item": "farming:potato",
-          "min": 1,
-          "max": 1,
-          "chance": 1.0
-        }
-      ]
+      "drops": []
     },
     {
       "block": "farming:potatoes_1",
@@ -551,16 +466,8 @@
         "farming:potatoes_1"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
-      "drops": [
-        {
-          "item": "farming:potato",
-          "min": 1,
-          "max": 1,
-          "chance": 1.0
-        }
-      ]
+      "drops": []
     },
     {
       "block": "farming:potatoes_2",
@@ -581,16 +488,8 @@
         "farming:potatoes_2"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
-      "drops": [
-        {
-          "item": "farming:potato",
-          "min": 1,
-          "max": 1,
-          "chance": 1.0
-        }
-      ]
+      "drops": []
     },
     {
       "block": "farming:potatoes_3",
@@ -611,16 +510,8 @@
         "farming:potatoes_3"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
-      "drops": [
-        {
-          "item": "farming:potato",
-          "min": 2,
-          "max": 3,
-          "chance": 1.0
-        }
-      ]
+      "drops": []
     },
     {
       "block": "farming:compost_0",
@@ -641,7 +532,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 1.5,
       "drops": [
         {
@@ -671,7 +561,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 1.5,
       "drops": [
         {
@@ -701,7 +590,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 1.5,
       "drops": [
         {
@@ -731,7 +619,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 1.5,
       "drops": [
         {
@@ -776,7 +663,6 @@
         "grass_side"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.7,
       "drops": [
         {
@@ -810,7 +696,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2.5,
       "drops": [
         {
@@ -842,7 +727,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2.5,
       "drops": [
         {
@@ -874,7 +758,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2.5,
       "drops": [
         {
@@ -906,7 +789,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2.5,
       "drops": [
         {
@@ -916,6 +798,94 @@
           "chance": 1.0
         }
       ]
+    },
+    {
+      "block": "farming:hemp_0",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:hemp_0",
+        "farming:hemp_0",
+        "farming:hemp_0"
+      ],
+      "material": "plant",
+      "hardness": 0,
+      "drops": []
+    },
+    {
+      "block": "farming:hemp_1",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:hemp_1",
+        "farming:hemp_1",
+        "farming:hemp_1"
+      ],
+      "material": "plant",
+      "hardness": 0,
+      "drops": []
+    },
+    {
+      "block": "farming:hemp_2",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:hemp_2",
+        "farming:hemp_2",
+        "farming:hemp_2"
+      ],
+      "material": "plant",
+      "hardness": 0,
+      "drops": []
+    },
+    {
+      "block": "farming:hemp_3",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile"
+      ],
+      "behavior": "farming:crop",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "farming:hemp_3",
+        "farming:hemp_3",
+        "farming:hemp_3"
+      ],
+      "material": "plant",
+      "hardness": 0,
+      "drops": []
     }
   ]
 }

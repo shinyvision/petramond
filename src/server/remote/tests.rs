@@ -300,12 +300,11 @@ fn full_lan_join_place_pause_gate_and_leave() {
                     pad_streamed = true;
                 }
             }
-            ServerToClient::Tick(update)
-                if pad_streamed && lit_sections > 0 => {
-                    if let Some(row) = update.players.iter().find(|r| r.id == PlayerId(1)) {
-                        return Some(row.transform.pos);
-                    }
+            ServerToClient::Tick(update) if pad_streamed && lit_sections > 0 => {
+                if let Some(row) = update.players.iter().find(|r| r.id == PlayerId(1)) {
+                    return Some(row.transform.pos);
                 }
+            }
             _ => {}
         }
         None

@@ -35,7 +35,8 @@ fn attack_damage_ranges_are_ordered_and_positive() {
 fn item_only_items_render_as_sprites_and_carry_tools() {
     for item in [
         ItemType::Stick,
-        ItemType::WoodenPickaxe,
+        ItemType::Pebble,
+        ItemType::Rope,
         ItemType::DiamondPickaxe,
         ItemType::IronAxe,
         ItemType::DiamondShovel,
@@ -52,15 +53,9 @@ fn item_only_items_render_as_sprites_and_carry_tools() {
         );
     }
     // Tools carry a kind + tier (gating mining); non-tools carry none. The
-    // three families share the 1..=4 tier ladder (wooden, stone, iron, diamond).
+    // three families share one tier ladder; rung 1 is vacant since the wooden
+    // tools were retired (shears still sit on it), so stone is the entry tool.
     use ToolKind::{Axe, Pickaxe, Shovel};
-    assert_eq!(
-        ItemType::WoodenPickaxe.tool(),
-        Some(Tool {
-            kind: Pickaxe,
-            tier: 1
-        })
-    );
     assert_eq!(
         ItemType::StonePickaxe.tool(),
         Some(Tool {
@@ -82,20 +77,10 @@ fn item_only_items_render_as_sprites_and_carry_tools() {
             tier: 4
         })
     );
-    assert_eq!(
-        ItemType::WoodenAxe.tool(),
-        Some(Tool { kind: Axe, tier: 1 })
-    );
+    assert_eq!(ItemType::StoneAxe.tool(), Some(Tool { kind: Axe, tier: 2 }));
     assert_eq!(
         ItemType::DiamondAxe.tool(),
         Some(Tool { kind: Axe, tier: 4 })
-    );
-    assert_eq!(
-        ItemType::WoodenShovel.tool(),
-        Some(Tool {
-            kind: Shovel,
-            tier: 1
-        })
     );
     assert_eq!(
         ItemType::StoneShovel.tool(),
@@ -127,15 +112,12 @@ fn durable_items_do_not_stack() {
     // The stack limit of 1 follows from durability, not from being a "tool".
     // Every mining tool — pickaxes, axes, shovels and shears — is durable.
     for durable in [
-        ItemType::WoodenPickaxe,
         ItemType::StonePickaxe,
         ItemType::IronPickaxe,
         ItemType::DiamondPickaxe,
-        ItemType::WoodenAxe,
         ItemType::StoneAxe,
         ItemType::IronAxe,
         ItemType::DiamondAxe,
-        ItemType::WoodenShovel,
         ItemType::StoneShovel,
         ItemType::IronShovel,
         ItemType::DiamondShovel,
@@ -159,6 +141,46 @@ fn durable_items_do_not_stack() {
         assert!(!stackable.is_durable(), "{stackable:?}");
         assert_eq!(stackable.max_stack_size(), 64, "{stackable:?}");
     }
+}
+
+/// EVERY item must own an art source, because the fallback is SILENT.
+///
+/// `item_sprite` falls back to the stick tile when a row declares no sprite,
+/// and a row with no `block` link and no `model` reaches it — so an item with
+/// nothing to draw does not fail, it quietly becomes a stick in the icon, the
+/// hand, and on the ground. That shipped once: taking the `block` link off
+/// `petramond:hemp` to stop it being replantable left the row with no art at
+/// all, and harvested hemp drew as sticks (2026-07-31).
+///
+/// The item is fine either way — this is purely how it LOOKS, which is exactly
+/// why nothing else catches it.
+#[test]
+fn every_item_draws_as_itself_and_never_falls_back_to_the_stick() {
+    let stick = ItemType::Stick.render_kind();
+    for &it in ItemType::all() {
+        if it == ItemType::Air || it == ItemType::Stick {
+            continue;
+        }
+        assert_ne!(
+            it.render_kind(),
+            stick,
+            "{it:?} has no sprite, block link or model, so it silently draws as a stick"
+        );
+    }
+}
+
+/// A plant the WORLD hands out for free must not be re-placeable.
+///
+/// Wild hemp drops its fibre, and the farming pack rolls a seed bonus on the
+/// break. While the fibre could be planted back, that bonus was a faucet:
+/// place, break, repeat, infinite seeds — the 2026-07-31 report. Net-zero drops
+/// are not enough on their own; ANY per-break bonus turns a replantable wild
+/// plant into a mint. Every other wild crop already answers this the same way
+/// (no item links `farming:wild_wheat`/`wild_carrots`/`wild_potatoes`), so this
+/// pins the one the engine owns.
+#[test]
+fn the_wild_hemp_fibre_is_a_material_not_a_placeable() {
+    assert_eq!(ItemType::Hemp.as_block(), None);
 }
 
 #[test]
@@ -228,20 +250,19 @@ fn render_kind_matches_shape_family() {
                     "{block:?}"
                 );
             }
-            ShapeFamily::Cross => {
-                assert_eq!(
-                    item.render_kind(),
-                    ItemRenderKind::Sprite(block.tiles()[0]),
-                    "{block:?}"
-                );
-            }
-            // Crop planters normally carry their own sprite (which wins);
-            // either way the ITEM is always a flat sprite, never a cube.
-            ShapeFamily::Crop => {
+            // Both plant families: the ITEM is always a flat sprite, never a
+            // cube. It shows the block's own art UNLESS the item row declares a
+            // sprite, which wins everywhere the item appears — that is how hemp
+            // seeds show seeds rather than the plant they grow into.
+            ShapeFamily::Cross | ShapeFamily::Crop => {
+                let kind = item.render_kind();
                 assert!(
-                    matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
-                    "{block:?} crop items render as flat sprites"
+                    matches!(kind, ItemRenderKind::Sprite(_)),
+                    "{block:?} plant items render as flat sprites"
                 );
+                if item.declared_sprite().is_none() {
+                    assert_eq!(kind, ItemRenderKind::Sprite(block.tiles()[0]), "{block:?}");
+                }
             }
             // A torch draws its OWN row art. Pinning the engine's `torch` tile
             // here asserted that only one torch can exist, which the family

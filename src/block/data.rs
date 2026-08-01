@@ -156,6 +156,13 @@ pub(crate) const ENGINE_BLOCK_NAMES: &[&str] = &[
     "petramond:jungle_fence",
     "petramond:acacia_fence",
     "petramond:redwood_fence",
+    "petramond:pebbles_small",
+    "petramond:pebbles_medium",
+    "petramond:pebbles_large",
+    "petramond:fallen_branch",
+    "petramond:hemp",
+    "petramond:fallen_branch_2",
+    "petramond:fallen_branch_3",
 ];
 
 /// The JSON-loaded block table. Loads exactly once, on first access from any

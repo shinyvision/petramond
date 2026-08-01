@@ -82,7 +82,10 @@ pub(crate) fn encode_region(tiles: &[Option<&Tile>; 16]) -> Vec<u8> {
                 run += 1;
             }
             push_varint(&mut scratch, run as u32);
-            push_varint(&mut scratch, zigzag(cell.height as i32 - prev.height as i32));
+            push_varint(
+                &mut scratch,
+                zigzag(cell.height as i32 - prev.height as i32),
+            );
             for channel in 0..3 {
                 push_varint(
                     &mut scratch,
@@ -206,8 +209,7 @@ mod tests {
         let tiles: Vec<Option<Box<Tile>>> = (0..16)
             .map(|i| (i % 3 != 2).then(|| tile(i, i % 2 == 0)))
             .collect();
-        let refs: [Option<&Tile>; 16] =
-            std::array::from_fn(|i| tiles[i].as_deref());
+        let refs: [Option<&Tile>; 16] = std::array::from_fn(|i| tiles[i].as_deref());
         let encoded = encode_region(&refs);
         let decoded = decode_region(&encoded).expect("well-formed value decodes");
         for (i, (a, b)) in tiles.iter().zip(decoded.iter()).enumerate() {
@@ -231,10 +233,7 @@ mod tests {
         let refs: [Option<&Tile>; 16] = std::array::from_fn(|i| Some(tiles[i].as_ref()));
         let encoded = encode_region(&refs);
         let decoded = decode_region(&encoded).expect("decodes");
-        assert_eq!(
-            decoded[7].as_ref().unwrap().cells[..],
-            tiles[7].cells[..]
-        );
+        assert_eq!(decoded[7].as_ref().unwrap().cells[..], tiles[7].cells[..]);
         let raw_size = 1 + 16 + 16 * 256 * 5;
         assert!(
             encoded.len() * 2 < raw_size,
@@ -252,7 +251,11 @@ mod tests {
         });
         let refs: [Option<&Tile>; 16] = std::array::from_fn(|_| Some(uniform.as_ref()));
         let encoded = encode_region(&refs);
-        assert!(encoded.len() < 200, "uniform region packs tiny: {}", encoded.len());
+        assert!(
+            encoded.len() < 200,
+            "uniform region packs tiny: {}",
+            encoded.len()
+        );
         assert!(decode_region(&encoded).is_some());
     }
 
@@ -278,9 +281,8 @@ mod tests {
 
     #[test]
     fn malformed_values_decode_to_none() {
-        let refs: [Option<&Tile>; 16] = std::array::from_fn(|i| (i == 0).then(|| {
-            Box::leak(tile(1, false)) as &Tile
-        }));
+        let refs: [Option<&Tile>; 16] =
+            std::array::from_fn(|i| (i == 0).then(|| Box::leak(tile(1, false)) as &Tile));
         let good = encode_region(&refs);
         assert!(decode_region(&good).is_some());
         for truncate_at in [0, 1, 2, good.len() / 2, good.len() - 1] {
@@ -291,7 +293,10 @@ mod tests {
         }
         let mut trailing = good.clone();
         trailing.push(0);
-        assert!(decode_region(&trailing).is_none(), "trailing bytes rejected");
+        assert!(
+            decode_region(&trailing).is_none(),
+            "trailing bytes rejected"
+        );
         assert!(decode_region(&[9]).is_none(), "unknown version rejected");
     }
 }

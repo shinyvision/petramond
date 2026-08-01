@@ -504,7 +504,7 @@ mod tests {
     fn catalyst_is_reserved_and_remainder_is_never_deleted() {
         let mut inventory = Inventory::new();
         inventory.add(ItemStack::new(ItemType::Coal, 1));
-        inventory.add(ItemStack::new(ItemType::WoodenShovel, 1));
+        inventory.add(ItemStack::new(ItemType::StoneShovel, 1));
         inventory.add(ItemStack::new(ItemType::WaterBucket, 1));
         let recipe = recipe(vec![
             ingredient(
@@ -527,7 +527,7 @@ mod tests {
         let overflow = craft(&recipe, &mut inventory, &mut output).expect("craft");
         assert!(overflow.is_empty());
         assert_eq!(count(&inventory, ItemType::Coal), 0);
-        assert_eq!(count(&inventory, ItemType::WoodenShovel), 1);
+        assert_eq!(count(&inventory, ItemType::StoneShovel), 1);
         assert_eq!(count(&inventory, ItemType::WaterBucket), 0);
         assert_eq!(count(&inventory, ItemType::WoodenBucket), 1);
     }

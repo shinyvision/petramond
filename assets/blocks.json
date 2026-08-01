@@ -17,7 +17,6 @@
         "oak_leaves"
       ],
       "material": "none",
-      "harvest_tier": 0,
       "hardness": -1,
       "drops": []
     },
@@ -61,7 +60,6 @@
       },
       "covered_side": "grass_snow",
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.7,
       "drops": [
         {
@@ -107,7 +105,6 @@
         "dirt"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -152,7 +149,11 @@
         "stone"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -198,7 +199,6 @@
         "sand"
       ],
       "material": "sand",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -239,7 +239,11 @@
         "snow"
       ],
       "material": "sand",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 0.1,
       "drops": [
         {
@@ -269,7 +273,6 @@
         "water"
       ],
       "material": "none",
-      "harvest_tier": 0,
       "hardness": -1,
       "drops": []
     },
@@ -307,7 +310,6 @@
         "oak_log_side"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -316,7 +318,12 @@
           "max": 1,
           "chance": 1
         }
-      ]
+      ],
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      }
     },
     {
       "block": "petramond:oak_leaves",
@@ -353,7 +360,6 @@
         "oak_leaves"
       ],
       "material": "foliage",
-      "harvest_tier": 0,
       "hardness": 0.2,
       "drops": [
         {
@@ -398,7 +404,6 @@
         "spruce_log_side"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -407,7 +412,12 @@
           "max": 1,
           "chance": 1
         }
-      ]
+      ],
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      }
     },
     {
       "block": "petramond:birch_log",
@@ -443,7 +453,6 @@
         "birch_log_side"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -452,7 +461,12 @@
           "max": 1,
           "chance": 1
         }
-      ]
+      ],
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      }
     },
     {
       "block": "petramond:jungle_log",
@@ -488,7 +502,6 @@
         "jungle_log_side"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -497,7 +510,12 @@
           "max": 1,
           "chance": 1
         }
-      ]
+      ],
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      }
     },
     {
       "block": "petramond:acacia_log",
@@ -533,7 +551,6 @@
         "acacia_log_side"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -542,7 +559,12 @@
           "max": 1,
           "chance": 1
         }
-      ]
+      ],
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      }
     },
     {
       "block": "petramond:spruce_leaves",
@@ -579,7 +601,6 @@
         "spruce_leaves"
       ],
       "material": "foliage",
-      "harvest_tier": 0,
       "hardness": 0.2,
       "drops": [
         {
@@ -625,7 +646,6 @@
         "birch_leaves"
       ],
       "material": "foliage",
-      "harvest_tier": 0,
       "hardness": 0.2,
       "drops": [
         {
@@ -671,7 +691,6 @@
         "jungle_leaves"
       ],
       "material": "foliage",
-      "harvest_tier": 0,
       "hardness": 0.2,
       "drops": [
         {
@@ -717,7 +736,6 @@
         "acacia_leaves"
       ],
       "material": "foliage",
-      "harvest_tier": 0,
       "hardness": 0.2,
       "drops": [
         {
@@ -763,7 +781,6 @@
         "azalea_leaves"
       ],
       "material": "foliage",
-      "harvest_tier": 0,
       "hardness": 0.2,
       "drops": []
     },
@@ -801,7 +818,6 @@
         "red_sand"
       ],
       "material": "sand",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -844,7 +860,11 @@
         "sandstone_side"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -887,7 +907,11 @@
         "red_sandstone_side"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -930,7 +954,11 @@
         "terracotta"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -973,7 +1001,11 @@
         "white_terracotta"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -1016,7 +1048,11 @@
         "orange_terracotta"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -1059,7 +1095,11 @@
         "yellow_terracotta"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -1102,7 +1142,11 @@
         "brown_terracotta"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -1145,7 +1189,11 @@
         "red_terracotta"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -1188,7 +1236,11 @@
         "light_gray_terracotta"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -1233,7 +1285,6 @@
         "podzol_side"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -1276,7 +1327,6 @@
         "mycelium_side"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -1319,7 +1369,6 @@
         "coarse_dirt"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -1362,7 +1411,6 @@
         "gravel"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -1405,7 +1453,6 @@
         "clay"
       ],
       "material": "sand",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -1448,7 +1495,6 @@
         "mud"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -1491,7 +1537,6 @@
         "moss_block"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -1537,7 +1582,6 @@
         "snow"
       ],
       "material": "sand",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -1583,7 +1627,11 @@
         "packed_ice"
       ],
       "material": "ice",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 0.5,
       "drops": [
         {
@@ -1630,7 +1678,11 @@
         "ice"
       ],
       "material": "ice",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 0.5,
       "drops": [
         {
@@ -1673,7 +1725,11 @@
         "calcite"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -1716,7 +1772,11 @@
         "marble"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -1759,7 +1819,11 @@
         "tuff"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -1802,7 +1866,11 @@
         "coal_ore"
       ],
       "material": "ore",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -1845,7 +1913,11 @@
         "iron_ore"
       ],
       "material": "ore",
-      "harvest_tier": 2,
+      "data": {
+        "petramond:harvest": {
+          "tier": 2
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -1888,7 +1960,11 @@
         "copper_ore"
       ],
       "material": "ore",
-      "harvest_tier": 2,
+      "data": {
+        "petramond:harvest": {
+          "tier": 2
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -1931,7 +2007,11 @@
         "gold_ore"
       ],
       "material": "ore",
-      "harvest_tier": 3,
+      "data": {
+        "petramond:harvest": {
+          "tier": 3
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -1974,7 +2054,11 @@
         "diamond_ore"
       ],
       "material": "ore",
-      "harvest_tier": 3,
+      "data": {
+        "petramond:harvest": {
+          "tier": 3
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -2017,7 +2101,6 @@
         "pumpkin_side"
       ],
       "material": "other",
-      "harvest_tier": 0,
       "hardness": 1,
       "drops": [
         {
@@ -2060,7 +2143,6 @@
         "melon_side"
       ],
       "material": "other",
-      "harvest_tier": 0,
       "hardness": 1,
       "drops": [
         {
@@ -2164,7 +2246,6 @@
         "cactus_side"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0.4,
       "drops": [
         {
@@ -2184,7 +2265,8 @@
       "tags": [
         "fragile",
         "replaceable",
-        "roots_in_soil"
+        "roots_in_soil",
+        "snow_bedded"
       ],
       "behavior": "fragile",
       "interaction": "none",
@@ -2196,7 +2278,11 @@
         "short_grass"
       ],
       "material": "plant",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 0,
       "drops": [
         {
@@ -2216,7 +2302,8 @@
       "tags": [
         "fragile",
         "replaceable",
-        "roots_in_soil"
+        "roots_in_soil",
+        "snow_bedded"
       ],
       "behavior": "fragile",
       "interaction": "none",
@@ -2228,7 +2315,6 @@
         "fern"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -2259,7 +2345,6 @@
         "dandelion"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -2290,7 +2375,6 @@
         "poppy"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -2321,7 +2405,6 @@
         "cornflower"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -2352,7 +2435,6 @@
         "allium"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -2383,7 +2465,6 @@
         "azure_bluet"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -2414,7 +2495,6 @@
         "oxeye_daisy"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -2445,7 +2525,6 @@
         "red_tulip"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -2477,7 +2556,6 @@
         "dead_bush"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -2510,7 +2588,6 @@
         "brown_mushroom"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -2543,7 +2620,6 @@
         "red_mushroom"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -2586,7 +2662,11 @@
         "cobblestone"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -2629,7 +2709,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -2672,7 +2751,6 @@
         "spruce_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -2715,7 +2793,6 @@
         "birch_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -2758,7 +2835,6 @@
         "jungle_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -2801,7 +2877,6 @@
         "acacia_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -2844,7 +2919,6 @@
         "crafting_table_front"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2.5,
       "drops": [
         {
@@ -2889,7 +2963,11 @@
       ],
       "front": "furnace_front",
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 3.5,
       "drops": [
         {
@@ -2939,7 +3017,11 @@
       ],
       "front": "furnace_front_on",
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 3.5,
       "drops": [
         {
@@ -2984,7 +3066,6 @@
       ],
       "front": "chest_front",
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2.5,
       "drops": [
         {
@@ -3020,7 +3101,6 @@
         "torch_side"
       ],
       "material": "other",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -3053,7 +3133,6 @@
         "crafting_table_front"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2.5,
       "drops": [
         {
@@ -3086,7 +3165,6 @@
         "oak_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -3119,7 +3197,6 @@
         "spruce_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -3152,7 +3229,6 @@
         "birch_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -3185,7 +3261,6 @@
         "jungle_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -3218,7 +3293,6 @@
         "acacia_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -3261,7 +3335,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 3,
       "drops": [
         {
@@ -3304,7 +3377,6 @@
         "spruce_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 3,
       "drops": [
         {
@@ -3347,7 +3419,6 @@
         "birch_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 3,
       "drops": [
         {
@@ -3390,7 +3461,6 @@
         "jungle_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 3,
       "drops": [
         {
@@ -3433,7 +3503,6 @@
         "acacia_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 3,
       "drops": [
         {
@@ -3478,7 +3547,6 @@
         "redwood_log_side"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -3487,7 +3555,12 @@
           "max": 1,
           "chance": 1
         }
-      ]
+      ],
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      }
     },
     {
       "block": "petramond:redwood_leaves",
@@ -3524,7 +3597,6 @@
         "redwood_leaves"
       ],
       "material": "foliage",
-      "harvest_tier": 0,
       "hardness": 0.2,
       "drops": []
     },
@@ -3560,7 +3632,6 @@
         "redwood_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -3603,7 +3674,6 @@
         "redwood_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 3,
       "drops": [
         {
@@ -3633,7 +3703,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -3663,7 +3732,6 @@
         "spruce_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -3693,7 +3761,6 @@
         "birch_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -3723,7 +3790,6 @@
         "jungle_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -3753,7 +3819,6 @@
         "acacia_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -3783,7 +3848,6 @@
         "redwood_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -3813,7 +3877,11 @@
         "cobblestone"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -3843,7 +3911,11 @@
         "stone"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -3873,7 +3945,6 @@
         "dirt"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -3907,7 +3978,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 1,
       "drops": [
         {
@@ -3937,7 +4007,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -3967,7 +4036,6 @@
         "spruce_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -3997,7 +4065,6 @@
         "birch_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -4027,7 +4094,6 @@
         "jungle_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -4057,7 +4123,6 @@
         "acacia_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -4087,7 +4152,6 @@
         "redwood_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -4117,7 +4181,11 @@
         "cobblestone"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4147,7 +4215,11 @@
         "stone"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -4177,7 +4249,6 @@
         "dirt"
       ],
       "material": "dirt",
-      "harvest_tier": 0,
       "hardness": 0.5,
       "drops": [
         {
@@ -4222,7 +4293,6 @@
         "glass"
       ],
       "material": "glass",
-      "harvest_tier": 0,
       "hardness": 0.3,
       "drops": []
     },
@@ -4246,7 +4316,6 @@
         "glass"
       ],
       "material": "glass",
-      "harvest_tier": 0,
       "hardness": 0.3,
       "drops": []
     },
@@ -4270,7 +4339,6 @@
         "oak_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -4301,7 +4369,6 @@
         "spruce_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -4332,7 +4399,6 @@
         "birch_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -4363,7 +4429,6 @@
         "jungle_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -4394,7 +4459,6 @@
         "acacia_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -4425,7 +4489,6 @@
         "redwood_planks"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 2,
       "drops": [
         {
@@ -4468,7 +4531,6 @@
         "wool_block"
       ],
       "material": "wool",
-      "harvest_tier": 0,
       "hardness": 0.7,
       "drops": [
         {
@@ -4498,7 +4560,6 @@
         "wool_block"
       ],
       "material": "wool",
-      "harvest_tier": 0,
       "hardness": 0.7,
       "drops": [
         {
@@ -4528,7 +4589,6 @@
         "wool_block"
       ],
       "material": "wool",
-      "harvest_tier": 0,
       "hardness": 0.7,
       "drops": [
         {
@@ -4571,7 +4631,11 @@
         "polished_marble"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -4601,7 +4665,11 @@
         "marble"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -4631,7 +4699,11 @@
         "marble"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -4661,7 +4733,11 @@
         "polished_marble"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -4691,7 +4767,11 @@
         "polished_marble"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 1.5,
       "drops": [
         {
@@ -4729,7 +4809,6 @@
         "ladder"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 0.4,
       "drops": [
         {
@@ -4761,7 +4840,6 @@
         "ladder"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 0.4,
       "drops": [
         {
@@ -4793,7 +4871,6 @@
         "ladder"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 0.4,
       "drops": [
         {
@@ -4825,7 +4902,6 @@
         "ladder"
       ],
       "material": "wood",
-      "harvest_tier": 0,
       "hardness": 0.4,
       "drops": [
         {
@@ -4858,7 +4934,6 @@
         "oak_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -4900,7 +4975,6 @@
         "oak_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -4933,7 +5007,6 @@
         "spruce_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -4966,7 +5039,6 @@
         "spruce_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -4999,7 +5071,6 @@
         "birch_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -5032,7 +5103,6 @@
         "birch_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -5065,7 +5135,6 @@
         "jungle_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -5098,7 +5167,6 @@
         "jungle_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -5131,7 +5199,6 @@
         "acacia_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -5164,7 +5231,6 @@
         "acacia_sapling"
       ],
       "material": "plant",
-      "harvest_tier": 0,
       "hardness": 0,
       "drops": [
         {
@@ -5174,6 +5240,628 @@
           "chance": 1
         }
       ]
+    },
+    {
+      "block": "petramond:pebbles_small",
+      "shape": {
+        "boxes": [
+          {
+            "from": [
+              6,
+              0,
+              6
+            ],
+            "to": [
+              10,
+              2,
+              10
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              2,
+              0,
+              9
+            ],
+            "to": [
+              5,
+              1,
+              12
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          }
+        ]
+      },
+      "flags": [],
+      "tags": [
+        "fragile",
+        "replaceable",
+        "snow_bedded"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "pebbles",
+        "pebbles",
+        "pebbles"
+      ],
+      "material": "stone",
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:pebble",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ],
+      "roots_face": "solid_face"
+    },
+    {
+      "block": "petramond:pebbles_medium",
+      "shape": {
+        "boxes": [
+          {
+            "from": [
+              5,
+              0,
+              4
+            ],
+            "to": [
+              10,
+              3,
+              9
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              11,
+              0,
+              8
+            ],
+            "to": [
+              14,
+              2,
+              12
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              2,
+              0,
+              10
+            ],
+            "to": [
+              5,
+              1,
+              13
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          }
+        ]
+      },
+      "flags": [],
+      "tags": [
+        "fragile",
+        "replaceable",
+        "snow_bedded"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "pebbles",
+        "pebbles",
+        "pebbles"
+      ],
+      "material": "stone",
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:pebble",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ],
+      "roots_face": "solid_face"
+    },
+    {
+      "block": "petramond:pebbles_large",
+      "shape": {
+        "boxes": [
+          {
+            "from": [
+              4,
+              0,
+              4
+            ],
+            "to": [
+              10,
+              4,
+              10
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              10,
+              0,
+              6
+            ],
+            "to": [
+              14,
+              2,
+              11
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              2,
+              0,
+              10
+            ],
+            "to": [
+              6,
+              2,
+              13
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              7,
+              0,
+              11
+            ],
+            "to": [
+              10,
+              1,
+              14
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              6,
+              0,
+              1
+            ],
+            "to": [
+              9,
+              1,
+              4
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          }
+        ]
+      },
+      "flags": [],
+      "tags": [
+        "fragile",
+        "replaceable",
+        "snow_bedded"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "pebbles",
+        "pebbles",
+        "pebbles"
+      ],
+      "material": "stone",
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:pebble",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ],
+      "roots_face": "solid_face"
+    },
+    {
+      "block": "petramond:fallen_branch",
+      "shape": {
+        "boxes": [
+          {
+            "from": [
+              1,
+              0,
+              10
+            ],
+            "to": [
+              5,
+              2,
+              12
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              5,
+              0,
+              9
+            ],
+            "to": [
+              9,
+              2,
+              11
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              9,
+              0,
+              7
+            ],
+            "to": [
+              13,
+              2,
+              9
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              12,
+              0,
+              5
+            ],
+            "to": [
+              15,
+              1,
+              7
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              6,
+              0,
+              12
+            ],
+            "to": [
+              9,
+              1,
+              15
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          }
+        ]
+      },
+      "flags": [],
+      "tags": [
+        "fragile",
+        "replaceable",
+        "snow_bedded"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "fallen_branch",
+        "fallen_branch",
+        "fallen_branch"
+      ],
+      "material": "wood",
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:stick",
+          "min": 1,
+          "max": 2,
+          "chance": 1
+        }
+      ],
+      "roots_face": "solid_face"
+    },
+    {
+      "block": "petramond:hemp",
+      "shape": "cross",
+      "flags": [
+        "transparent"
+      ],
+      "tags": [
+        "fragile",
+        "snow_bedded"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "hemp",
+        "hemp",
+        "hemp"
+      ],
+      "material": "plant",
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:hemp",
+          "min": 1,
+          "max": 1,
+          "chance": 1
+        }
+      ],
+      "roots_on": [
+        "soil"
+      ]
+    },
+    {
+      "block": "petramond:fallen_branch_2",
+      "shape": {
+        "boxes": [
+          {
+            "from": [
+              2,
+              0,
+              6
+            ],
+            "to": [
+              7,
+              2,
+              8
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              7,
+              0,
+              6
+            ],
+            "to": [
+              12,
+              2,
+              8
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              12,
+              0,
+              6
+            ],
+            "to": [
+              15,
+              1,
+              8
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              7,
+              0,
+              8
+            ],
+            "to": [
+              10,
+              1,
+              12
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          }
+        ]
+      },
+      "flags": [],
+      "tags": [
+        "fragile",
+        "replaceable",
+        "snow_bedded"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "fallen_branch_2",
+        "fallen_branch_2",
+        "fallen_branch_2"
+      ],
+      "material": "wood",
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:stick",
+          "min": 1,
+          "max": 2,
+          "chance": 1
+        }
+      ],
+      "roots_face": "solid_face"
+    },
+    {
+      "block": "petramond:fallen_branch_3",
+      "shape": {
+        "boxes": [
+          {
+            "from": [
+              4,
+              0,
+              3
+            ],
+            "to": [
+              7,
+              2,
+              9
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              7,
+              0,
+              5
+            ],
+            "to": [
+              11,
+              1,
+              7
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              1,
+              0,
+              11
+            ],
+            "to": [
+              5,
+              1,
+              13
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          },
+          {
+            "from": [
+              11,
+              0,
+              10
+            ],
+            "to": [
+              14,
+              1,
+              12
+            ],
+            "faces": [
+              "sides",
+              "up"
+            ],
+            "collides": false
+          }
+        ]
+      },
+      "flags": [],
+      "tags": [
+        "fragile",
+        "replaceable",
+        "snow_bedded"
+      ],
+      "behavior": "fragile",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "fallen_branch_3",
+        "fallen_branch_3",
+        "fallen_branch_3"
+      ],
+      "material": "wood",
+      "hardness": 0,
+      "drops": [
+        {
+          "item": "petramond:stick",
+          "min": 1,
+          "max": 2,
+          "chance": 1
+        }
+      ],
+      "roots_face": "solid_face"
     }
   ]
 }

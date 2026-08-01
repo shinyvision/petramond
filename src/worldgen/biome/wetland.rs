@@ -7,6 +7,6 @@ pub(super) static SPEC: BiomeSpec = BiomeSpec {
     biome: Biome::Wetland,
     surface: &surfaces::WETLAND_TOP,
     trees: TreeProfile::new(0.011, trees::wetland_oak),
-    vegetation: VegetationProfile::grass(Block::ShortGrass, 0.10),
+    vegetation: VegetationProfile::grass(Block::ShortGrass, 0.10).with_hemp(0.016),
     snow_cover: SnowCover::None,
 };

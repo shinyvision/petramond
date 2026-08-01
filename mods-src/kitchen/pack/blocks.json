@@ -24,7 +24,11 @@
         "stone"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 3.5,
       "drops": [
         {
@@ -53,14 +57,22 @@
       },
       "collision": [],
       "emission": 28,
-      "light_color": [1.0, 1.0, 0.96],
+      "light_color": [
+        1.0,
+        1.0,
+        0.96
+      ],
       "tiles": [
         "stone",
         "stone",
         "stone"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 3.5,
       "drops": [
         {
@@ -150,7 +162,11 @@
         "stone"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 3.5,
       "drops": [
         {
@@ -183,7 +199,11 @@
         "stone"
       ],
       "material": "stone",
-      "harvest_tier": 1,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
       "hardness": 3.5,
       "drops": [
         {

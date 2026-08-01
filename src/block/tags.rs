@@ -33,6 +33,7 @@ static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
     "sapling",
     "bed",
     "merges_with_self",
+    "snow_bedded",
 ]);
 
 impl BlockTag {
@@ -142,6 +143,18 @@ impl BlockTag {
     /// are what give a canopy depth, so this is a row opt-in rather than
     /// anything derived from the render pass.
     pub const MERGES_WITH_SELF: BlockTag = BlockTag(18);
+    /// Ground decoration that is drawn STANDING IN the snow blanket its cell
+    /// would otherwise have held — the dual of [`SNOW_COVER`](Self::SNOW_COVER),
+    /// and the answer to the same problem from the other side.
+    ///
+    /// A snow layer and a pebble want the same cell, and only one of them can
+    /// have it, so a snowfield's litter and tufts each punched a bare green
+    /// hole in the white. A row with this tag keeps both: while any horizontal
+    /// neighbour carries a `snow_cover` block, the mesher draws THAT block's
+    /// own boxes in this cell underneath the decoration's geometry. Derived
+    /// from the neighbours at mesh time and never stored per cell, exactly like
+    /// the snowy-grass side swap, so it heals the moment snow is placed or dug.
+    pub const SNOW_BEDDED: BlockTag = BlockTag(19);
 
     /// Resolve a `blocks.json` row tag name (see [`crate::registry::TagTable`]).
     pub(crate) fn resolve(name: &str) -> Result<BlockTag, String> {

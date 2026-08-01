@@ -649,7 +649,8 @@ fn reaches_section(c: &Candidate, origin: [i32; 3]) -> bool {
 /// same way.
 fn cascade_cell(seed: u32, ours: u8, cell: (i32, i32, i32)) -> Option<Rc<cascade::Feature>> {
     /// `(seed, cell x, y, z)` -> the cascade feature that cell resolves to.
-    type CascadeCache = std::collections::HashMap<(u32, i32, i32, i32), Option<Rc<cascade::Feature>>>;
+    type CascadeCache =
+        std::collections::HashMap<(u32, i32, i32, i32), Option<Rc<cascade::Feature>>>;
     thread_local! {
         static CACHE: std::cell::RefCell<CascadeCache> =
             std::cell::RefCell::new(std::collections::HashMap::new());

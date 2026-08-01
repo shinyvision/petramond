@@ -44,7 +44,10 @@ fn target(content: &Content, block: BlockId) -> Option<Target> {
         } else {
             content.farmland_fertile_dry
         };
-        return Some(Target::Swap { to, feedback_y: 1.0 });
+        return Some(Target::Swap {
+            to,
+            feedback_y: 1.0,
+        });
     }
     if block == content.grass {
         return Some(Target::Swap {
@@ -147,12 +150,7 @@ fn feedback(pos: [i32; 3], y: f32) {
 /// CLIENT prediction mirror of [`on_item_use`]'s gate: the direct target
 /// table, then the vegetation-to-soil proxy — the claim condition only,
 /// never the swap.
-pub fn predict_item_use(
-    content: &Content,
-    item: ItemId,
-    pos: [i32; 3],
-    block: BlockId,
-) -> Outcome {
+pub fn predict_item_use(content: &Content, item: ItemId, pos: [i32; 3], block: BlockId) -> Outcome {
     if item != content.fertilizer {
         return Outcome::Continue;
     }

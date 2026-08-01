@@ -103,7 +103,6 @@ pub(super) struct RawBlockDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_side: Option<String>,
     pub material: BlockMaterial,
-    pub harvest_tier: u8,
     pub hardness: f64,
     pub drops: Vec<RawDrop>,
     /// Sapling stage chain: the registry name of the block this row advances
@@ -156,6 +155,21 @@ pub(super) struct RawBlockDef {
     /// a row may declare either, both, or neither.
     #[serde(default, skip_serializing_if = "RootsFace::is_default")]
     pub roots_face: RootsFace,
+}
+
+/// The `petramond:harvest` data entry: the mining tier a tool of this block's
+/// [`preferred_tool`](crate::block::Block::preferred_tool) kind must meet for
+/// the break to yield the row's drops.
+///
+/// It rides the interop `data` map rather than a dedicated row field so a PACK
+/// can retune it on rows it does not own — `{"patch": "petramond:oak_log",
+/// "data": {"petramond:harvest": {"tier": 0}}}` is the whole of "in my pack,
+/// fists break wood again". A row that says nothing is tier `0`:
+/// hand-harvestable, which is what the absent field always meant.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RawHarvest {
+    pub tier: u8,
 }
 
 /// A row's `facing_rows` field: the four facing-sibling registry names.
@@ -851,6 +865,8 @@ fn convert(
         &r.data,
         patches,
     )?;
+    let harvest_tier = crate::registry::engine_data::<RawHarvest>(data, "petramond:harvest")?
+        .map_or(0, |h| h.tier);
     let carry: &'static [&'static str] =
         match crate::registry::engine_data::<Vec<String>>(data, "petramond:carry")? {
             None => &[],
@@ -879,7 +895,7 @@ fn convert(
         side_overlay,
         covered_side,
         material: r.material,
-        harvest_tier: r.harvest_tier,
+        harvest_tier,
         hardness: r.hardness as f32,
         drop: DropSpec { drops: leak(drops) },
         next_stage,
@@ -1037,21 +1053,21 @@ mod tests {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
         // A bed-tagged CUBE row: the bookkeeping could never resolve its group.
-        let cube = r#"{ "blocks": [ { "block": "petramond:stone", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["bed"], "behavior": "inert", "interaction": "sleep", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 1, "drops": [] } ] }"#;
+        let cube = r#"{ "blocks": [ { "block": "petramond:stone", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["bed"], "behavior": "inert", "interaction": "sleep", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {"petramond:harvest": {"tier": 1}}, "hardness": 1, "drops": [] } ] }"#;
         let err = parse_test_layers(&[&base, cube])
             .err()
             .expect("bed tag on a cube refused");
         assert!(err.contains("model shape"), "{err}");
         // A bed-tagged model row WITHOUT the sleep interaction: no click could
         // ever set the spawn it advertises.
-        let unsleepable = r#"{ "blocks": [ { "block": "petramond:bed", "shape": {"model": "petramond:bed"}, "flags": ["solid", "directional_view"], "tags": ["bed"], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["oak_planks", "oak_planks", "oak_planks"], "material": "wood", "harvest_tier": 0, "hardness": 1, "drops": [] } ] }"#;
+        let unsleepable = r#"{ "blocks": [ { "block": "petramond:bed", "shape": {"model": "petramond:bed"}, "flags": ["solid", "directional_view"], "tags": ["bed"], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["oak_planks", "oak_planks", "oak_planks"], "material": "wood", "hardness": 1, "drops": [] } ] }"#;
         let err = parse_test_layers(&[&base, unsleepable])
             .err()
             .expect("unsleepable bed tag refused");
         assert!(err.contains("interaction 'sleep'"), "{err}");
         // The open converse: `interaction: "sleep"` WITHOUT the tag is a
         // sleepable block that anchors no spawn — legal.
-        let sleep_only = r#"{ "blocks": [ { "block": "petramond:bed", "shape": {"model": "petramond:bed"}, "flags": ["solid", "directional_view"], "tags": [], "behavior": "inert", "interaction": "sleep", "collision": [], "emission": 0, "tiles": ["oak_planks", "oak_planks", "oak_planks"], "material": "wood", "harvest_tier": 0, "hardness": 1, "drops": [] } ] }"#;
+        let sleep_only = r#"{ "blocks": [ { "block": "petramond:bed", "shape": {"model": "petramond:bed"}, "flags": ["solid", "directional_view"], "tags": [], "behavior": "inert", "interaction": "sleep", "collision": [], "emission": 0, "tiles": ["oak_planks", "oak_planks", "oak_planks"], "material": "wood", "hardness": 1, "drops": [] } ] }"#;
         parse_test_layers(&[&base, sleep_only]).expect("sleep without the bed tag loads");
     }
 
@@ -1059,7 +1075,7 @@ mod tests {
     fn pack_layer_overrides_rows_by_block() {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        let layer = r#"{ "blocks": [ { "block": "petramond:stone", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["terrain"], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 99, "drops": [] } ] }"#;
+        let layer = r#"{ "blocks": [ { "block": "petramond:stone", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["terrain"], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {"petramond:harvest": {"tier": 1}}, "hardness": 99, "drops": [] } ] }"#;
         let base_reg = parse(&base).expect("base table loads");
         let reg = parse_test_layers(&[&base, layer]).expect("layered table loads");
         assert_eq!(
@@ -1076,11 +1092,56 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_pack_patch_retunes_the_harvest_gate_of_a_row_it_does_not_own() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let base_reg = parse(&base).expect("base table loads");
+        let shipped = base_reg.defs[Block::OakLog.id() as usize].harvest_tier;
+        // The whole point of the gate riding the data surface: a pack that
+        // wants fists to break wood again says so about a row it cannot
+        // otherwise touch. Aim at whichever side of the gate the shipped row
+        // is NOT on, so this pins the override and not the shipped value.
+        let wanted = if shipped == 0 { 3 } else { 0 };
+        let patch = format!(
+            r#"{{ "blocks": [ {{ "patch": "petramond:oak_log", "data": {{"petramond:harvest": {{"tier": {wanted}}}}} }} ] }}"#
+        );
+        let reg = parse_test_layers(&[&base, &patch]).expect("patched table loads");
+        assert_eq!(
+            reg.defs[Block::OakLog.id() as usize].harvest_tier,
+            wanted,
+            "the patch layer's harvest entry drives the compiled gate"
+        );
+        // A patch registers no id and leaves every other row alone.
+        assert_eq!(reg.defs.len(), crate::block::ENGINE_BLOCK_NAMES.len());
+        assert_eq!(
+            reg.defs[Block::Stone.id() as usize].harvest_tier,
+            base_reg.defs[Block::Stone.id() as usize].harvest_tier
+        );
+    }
+
+    #[test]
+    fn a_row_with_no_harvest_entry_is_hand_harvestable() {
+        let (base, _) =
+            crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
+        let layer = r#"{ "blocks": [ { "block": "mymod:chalk", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "hardness": 1, "drops": [] } ] }"#;
+        let reg = parse_test_layers(&[&base, layer]).expect("unstated gate loads");
+        let chalk = reg.defs.last().expect("the pack row registered");
+        assert_eq!(chalk.harvest_tier, 0, "an absent entry means tier 0");
+        // A malformed entry is a load error — the engine parses its own
+        // vocabulary strictly, so a typo can never read as "no gate".
+        let bad = r#"{ "blocks": [ { "block": "mymod:chalk", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {"petramond:harvest": {"teir": 2}}, "hardness": 1, "drops": [] } ] }"#;
+        let err = parse_test_layers(&[&base, bad])
+            .err()
+            .expect("a misspelled harvest key is refused");
+        assert!(err.contains("petramond:harvest"), "{err}");
+    }
+
     /// One `mymod:lamp` row with the given `flags` / `emission` / `light_color`
     /// fields, layered over the shipped table.
     fn lamp_layer(flags: &str, emission: u8, light_color: &str) -> String {
         format!(
-            r#"{{ "blocks": [ {{ "block": "mymod:lamp", "shape": "cube", "flags": [{flags}], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{{"min": [0, 0, 0], "max": [1, 1, 1]}}], "emission": {emission}{light_color}, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [] }} ] }}"#
+            r#"{{ "blocks": [ {{ "block": "mymod:lamp", "shape": "cube", "flags": [{flags}], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{{"min": [0, 0, 0], "max": [1, 1, 1]}}], "emission": {emission}{light_color}, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {{"petramond:harvest": {{"tier": 1}}}}, "hardness": 2, "drops": [] }} ] }}"#
         )
     }
 
@@ -1173,7 +1234,7 @@ mod tests {
     fn namespaced_pack_row_registers_a_new_block() {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        let layer = r#"{ "blocks": [ { "block": "mymod:glowrock", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 28, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [{"item": "petramond:cobblestone", "min": 1, "max": 1, "chance": 1.0}] } ] }"#;
+        let layer = r#"{ "blocks": [ { "block": "mymod:glowrock", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 28, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {"petramond:harvest": {"tier": 1}}, "hardness": 2, "drops": [{"item": "petramond:cobblestone", "min": 1, "max": 1, "chance": 1.0}] } ] }"#;
         let reg = parse_test_layers(&[&base, layer]).expect("dynamic row loads");
         let engine = crate::block::ENGINE_BLOCK_NAMES.len();
         assert_eq!(
@@ -1205,7 +1266,7 @@ mod tests {
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
         let vine = |support: &str| {
             format!(
-                r#"{{ "blocks": [ {{ "block": "mymod:vine", "shape": "cross", "flags": ["transparent"], "tags": ["fragile"], "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0{support}, "tiles": ["poppy", "poppy", "poppy"], "material": "plant", "harvest_tier": 0, "hardness": 0, "drops": [] }} ] }}"#
+                r#"{{ "blocks": [ {{ "block": "mymod:vine", "shape": "cross", "flags": ["transparent"], "tags": ["fragile"], "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0{support}, "tiles": ["poppy", "poppy", "poppy"], "material": "plant", "hardness": 0, "drops": [] }} ] }}"#
             )
         };
         let engine = crate::block::ENGINE_BLOCK_NAMES.len();
@@ -1232,10 +1293,10 @@ mod tests {
     fn roots_on_names_ground_tags_and_refuses_a_tag_nothing_carries() {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        let ground = r#"{ "block": "mymod:ash", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["mymod:ashen"], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 1, "drops": [] }"#;
+        let ground = r#"{ "block": "mymod:ash", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["mymod:ashen"], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {"petramond:harvest": {"tier": 1}}, "hardness": 1, "drops": [] }"#;
         let plant = |roots_on: &str| {
             format!(
-                r#"{{ "blocks": [ {ground}, {{ "block": "mymod:ashbloom", "shape": "cross", "flags": ["transparent"], "tags": ["fragile"], "roots_on": {roots_on}, "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0, "tiles": ["poppy", "poppy", "poppy"], "material": "plant", "harvest_tier": 0, "hardness": 0, "drops": [] }} ] }}"#
+                r#"{{ "blocks": [ {ground}, {{ "block": "mymod:ashbloom", "shape": "cross", "flags": ["transparent"], "tags": ["fragile"], "roots_on": {roots_on}, "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0, "tiles": ["poppy", "poppy", "poppy"], "material": "plant", "hardness": 0, "drops": [] }} ] }}"#
             )
         };
         let engine = crate::block::ENGINE_BLOCK_NAMES.len();
@@ -1260,7 +1321,7 @@ mod tests {
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
         let row = |name: &str, shape: &str| {
             format!(
-                r#"{{ "blocks": [ {{ "block": "{name}", "shape": {shape}, "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [] }} ] }}"#
+                r#"{{ "blocks": [ {{ "block": "{name}", "shape": {shape}, "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {{"petramond:harvest": {{"tier": 1}}}}, "hardness": 2, "drops": [] }} ] }}"#
             )
         };
         let engine = crate::block::ENGINE_BLOCK_NAMES.len();
@@ -1335,7 +1396,7 @@ mod tests {
     fn namespaced_block_rows_can_declare_particle_emitters() {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        let layer = r#"{ "blocks": [ { "block": "mymod:spark", "shape": "cube", "flags": ["solid"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "particle_emitter": { "anchor": "block_top", "rate": [1.0, 2.0], "lifetime": [0.2, 0.4], "size": [0.02, 0.05], "spawn_box": [0.1, 0.0, 0.1], "velocity": [0.0, 0.2, 0.0], "velocity_jitter": [0.03, 0.02, 0.03], "color": [[1.0, 0.2, 0.0], [1.0, 1.0, 0.2]], "alpha": [0.2, 0.6], "self_lit": 1.0 }, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [] } ] }"#;
+        let layer = r#"{ "blocks": [ { "block": "mymod:spark", "shape": "cube", "flags": ["solid"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "particle_emitter": { "anchor": "block_top", "rate": [1.0, 2.0], "lifetime": [0.2, 0.4], "size": [0.02, 0.05], "spawn_box": [0.1, 0.0, 0.1], "velocity": [0.0, 0.2, 0.0], "velocity_jitter": [0.03, 0.02, 0.03], "color": [[1.0, 0.2, 0.0], [1.0, 1.0, 0.2]], "alpha": [0.2, 0.6], "self_lit": 1.0 }, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {"petramond:harvest": {"tier": 1}}, "hardness": 2, "drops": [] } ] }"#;
         let reg = parse_test_layers(&[&base, layer]).expect("particle emitter row loads");
         let def = &reg.defs[crate::block::ENGINE_BLOCK_NAMES.len()];
         assert!(
@@ -1348,7 +1409,7 @@ mod tests {
     fn particle_emitter_rows_validate_ranges() {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        let layer = r#"{ "blocks": [ { "block": "mymod:bad_spark", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "particle_emitter": { "rate": 2.0, "lifetime": [0.5, 0.2], "size": [0.02, 0.05], "color": [[1.0, 0.2, 0.0], [1.0, 1.0, 0.2]], "alpha": [0.2, 0.6] }, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 0, "hardness": 1, "drops": [] } ] }"#;
+        let layer = r#"{ "blocks": [ { "block": "mymod:bad_spark", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "particle_emitter": { "rate": 2.0, "lifetime": [0.5, 0.2], "size": [0.02, 0.05], "color": [[1.0, 0.2, 0.0], [1.0, 1.0, 0.2]], "alpha": [0.2, 0.6] }, "tiles": ["stone", "stone", "stone"], "material": "stone", "hardness": 1, "drops": [] } ] }"#;
         let err = parse_test_layers(&[&base, layer])
             .err()
             .expect("reversed lifetime is rejected");
@@ -1361,7 +1422,7 @@ mod tests {
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
         let row = |emitter: &str| {
             format!(
-                r#"{{ "blocks": [ {{ "block": "mymod:spark", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "particle_emitter": {{ "rate": 2.0, "lifetime": [0.2, 0.5], "size": [0.02, 0.05], "alpha": [0.2, 0.6]{emitter} }}, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 0, "hardness": 1, "drops": [] }} ] }}"#
+                r#"{{ "blocks": [ {{ "block": "mymod:spark", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "particle_emitter": {{ "rate": 2.0, "lifetime": [0.2, 0.5], "size": [0.02, 0.05], "alpha": [0.2, 0.6]{emitter} }}, "tiles": ["stone", "stone", "stone"], "material": "stone", "hardness": 1, "drops": [] }} ] }}"#
             )
         };
 
@@ -1400,7 +1461,7 @@ mod tests {
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
         let row = |name: &str, tags: &str, behavior: &str, growth: &str| {
             format!(
-                r#"{{ "blocks": [ {{ "block": "{name}", {growth} "shape": "cross", "flags": ["transparent"], "tags": [{tags}], "behavior": "{behavior}", "interaction": "none", "collision": [], "emission": 0, "tiles": ["oak_sapling", "oak_sapling", "oak_sapling"], "material": "plant", "harvest_tier": 0, "hardness": 0, "drops": [] }} ] }}"#
+                r#"{{ "blocks": [ {{ "block": "{name}", {growth} "shape": "cross", "flags": ["transparent"], "tags": [{tags}], "behavior": "{behavior}", "interaction": "none", "collision": [], "emission": 0, "tiles": ["oak_sapling", "oak_sapling", "oak_sapling"], "material": "plant", "hardness": 0, "drops": [] }} ] }}"#
             )
         };
         let sapling_tags = r#""fragile", "roots_in_soil", "sapling""#;
@@ -1511,7 +1572,7 @@ mod tests {
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
         let row = |name: &str, shape: &str, extra: &str| {
             format!(
-                r#"{{ "blocks": [ {{ "block": "{name}", "shape": "{shape}", {extra} "flags": ["transparent"], "tags": ["fragile", "climbable"], "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0, "tiles": ["ladder", "ladder", "ladder"], "material": "wood", "harvest_tier": 0, "hardness": 0.4, "drops": [] }} ] }}"#
+                r#"{{ "blocks": [ {{ "block": "{name}", "shape": "{shape}", {extra} "flags": ["transparent"], "tags": ["fragile", "climbable"], "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0, "tiles": ["ladder", "ladder", "ladder"], "material": "wood", "hardness": 0.4, "drops": [] }} ] }}"#
             )
         };
 
@@ -1575,7 +1636,7 @@ mod tests {
     fn new_bare_name_rows_are_rejected() {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        let layer = r#"{ "blocks": [ { "block": "glowrock", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "none", "harvest_tier": 0, "hardness": 1, "drops": [] } ] }"#;
+        let layer = r#"{ "blocks": [ { "block": "glowrock", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "none", "hardness": 1, "drops": [] } ] }"#;
         let err = parse_test_layers(&[&base, layer])
             .err()
             .expect("bare additions are refused");
@@ -1592,7 +1653,7 @@ mod tests {
     fn open_gui_interaction_parses_namespaced_and_rejects_bare() {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        let layer = r#"{ "blocks": [ { "block": "guimod:opener", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": {"open_gui": "guimod:panel"}, "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [] } ] }"#;
+        let layer = r#"{ "blocks": [ { "block": "guimod:opener", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": {"open_gui": "guimod:panel"}, "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {"petramond:harvest": {"tier": 1}}, "hardness": 2, "drops": [] } ] }"#;
         let reg = parse_test_layers(&[&base, layer]).expect("open_gui row loads");
         let def = &reg.defs[crate::block::ENGINE_BLOCK_NAMES.len()];
         let BlockInteraction::OpenGui(kind) = def.interaction else {
@@ -1612,12 +1673,12 @@ mod tests {
     #[test]
     fn loader_rejects_incomplete_or_unknown_rows() {
         // A single valid row is not a full table: the error names a missing block.
-        let partial = r#"{ "blocks": [ { "block": "petramond:air", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "harvest_tier": 0, "hardness": -1, "drops": [] } ] }"#;
+        let partial = r#"{ "blocks": [ { "block": "petramond:air", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "hardness": -1, "drops": [] } ] }"#;
         assert!(parse(partial).err().unwrap().contains("missing row"));
         // Unknown behavior name (the full base table with one row broken).
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        let bad_behavior = r#"{ "blocks": [ { "block": "petramond:air", "shape": "cube", "flags": [], "tags": [], "behavior": "bogus", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "harvest_tier": 0, "hardness": -1, "drops": [] } ] }"#;
+        let bad_behavior = r#"{ "blocks": [ { "block": "petramond:air", "shape": "cube", "flags": [], "tags": [], "behavior": "bogus", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "hardness": -1, "drops": [] } ] }"#;
         assert!(parse_test_layers(&[&base, bad_behavior])
             .err()
             .unwrap()

@@ -114,7 +114,9 @@ impl Minimap {
                 if let Some(initial) = initial {
                     let text = initial.to_string();
                     let size = self.measure_cached(&text);
-                    text_runs.push(layout_waypoint_initial_below(rgba, HUD_SIZE, x, y, text, size));
+                    text_runs.push(layout_waypoint_initial_below(
+                        rgba, HUD_SIZE, x, y, text, size,
+                    ));
                 }
             }
         }
@@ -179,7 +181,11 @@ fn draw_player_arrow(rgba: &mut [u8], width: usize, x: i32, y: i32) {
     );
 }
 
-fn cardinal_text_runs(right: [f32; 2], forward: [f32; 2], text_size: [u16; 2]) -> Vec<ClientTextRun> {
+fn cardinal_text_runs(
+    right: [f32; 2],
+    forward: [f32; 2],
+    text_size: [u16; 2],
+) -> Vec<ClientTextRun> {
     let [text_width, text_height] = text_size;
     let mut runs = Vec::with_capacity(36);
     for (letter, direction) in [

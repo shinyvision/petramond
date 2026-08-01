@@ -102,3 +102,111 @@ fn any_floor_flush_neighbour_seals_the_face_beneath_it() {
         "a TOP slab leaves the carrier's top face exposed"
     );
 }
+
+/// Ground decoration beside a snow layer is drawn STANDING IN the blanket its
+/// cell displaced, and the blanket is drawn exactly once.
+///
+/// Worldgen gives a column one cover cell, so a pebble in a snowfield takes the
+/// snow layer's place and used to leave a bare green hole. The bed puts the
+/// blanket back — but half the litter boxes are exactly one texel tall, so
+/// their top face lands on the blanket's own plane, which is why the bed joins
+/// the decoration's box set instead of being emitted beside it: one set lets
+/// the emitter's coincidence tie-break pick a winner, two sets would draw both
+/// and z-fight. That is the part worth guarding.
+#[test]
+fn decoration_beside_snow_is_bedded_in_it_without_doubling_the_surface() {
+    // Litter with a one-texel-tall box: `pebbles_small` puts one at
+    // x 2..5, z 9..12, whose top is coplanar with the bed's.
+    let coincident = (3.5 / 16.0, 10.5 / 16.0);
+    // A corner of the same cell that no pebble box reaches.
+    let bare = (14.0 / 16.0, 2.0 / 16.0);
+
+    let tops_at = |neighbour: Option<Block>, at: (f32, f32)| {
+        let mut section = floor_section(Block::Grass);
+        section.set_block(8, 1, 8, Block::PebblesSmall);
+        if let Some(b) = neighbour {
+            section.set_block(9, 1, 8, b);
+        }
+        mesh(&section)
+            .opaque
+            .chunks_exact(4)
+            .filter(|q| {
+                let span = |a: usize| {
+                    q.iter()
+                        .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| {
+                            (lo.min(v.pos[a]), hi.max(v.pos[a]))
+                        })
+                };
+                let (x0, x1) = span(0);
+                let (z0, z1) = span(2);
+                let (px, pz) = (8.0 + at.0, 8.0 + at.1);
+                shade_idx(&q[0]) == 0
+                    && q.iter()
+                        .all(|v| (v.pos[1] - (1.0 + 1.0 / 16.0)).abs() < 1e-3)
+                    && x0 < px
+                    && px < x1
+                    && z0 < pz
+                    && pz < z1
+            })
+            .count()
+    };
+
+    // No snow beside it: the pebble is bare ground, and only its own one-texel
+    // box reaches the blanket's height.
+    assert_eq!(tops_at(None, coincident), 1, "the pebble's own box top");
+    assert_eq!(tops_at(None, bare), 0, "no blanket without snow beside it");
+
+    // Snow beside it: the blanket appears across the cell, and the plane the
+    // pebble already owned is still drawn exactly once.
+    assert_eq!(
+        tops_at(Some(Block::SnowLayer), bare),
+        1,
+        "the bed's surface"
+    );
+    assert_eq!(
+        tops_at(Some(Block::SnowLayer), coincident),
+        1,
+        "the blanket and a coplanar litter box must not both draw the plane"
+    );
+}
+
+/// A bedded cell wears its blanket for the block BELOW it too: the grass keeps
+/// the snowy sides its undecorated neighbours have, and stops drawing the top
+/// face the blanket now hides (which would otherwise z-fight it from far off,
+/// the artifact `a_full_cube_under_a_snow_layer_culls_its_top_face` exists to
+/// prevent — the two planes are 1/16 apart).
+#[test]
+fn a_bedded_cell_covers_the_grass_below_it_like_the_snow_it_stands_in() {
+    let carrier_top_drawn = |neighbour: Option<Block>| {
+        let mut section = floor_section(Block::Grass);
+        section.set_block(8, 1, 8, Block::Fern);
+        if let Some(b) = neighbour {
+            section.set_block(9, 1, 8, b);
+        }
+        mesh(&section).opaque.chunks_exact(4).any(|q| {
+            let span = |a: usize| {
+                q.iter()
+                    .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| {
+                        (lo.min(v.pos[a]), hi.max(v.pos[a]))
+                    })
+            };
+            let (x0, x1) = span(0);
+            let (z0, z1) = span(2);
+            shade_idx(&q[0]) == 0
+                && q.iter().all(|v| (v.pos[1] - 1.0).abs() < 1e-3)
+                && x0 < 8.5
+                && 8.5 < x1
+                && z0 < 8.5
+                && 8.5 < z1
+        })
+    };
+
+    assert!(
+        carrier_top_drawn(None),
+        "a fern on bare grass leaves the grass top exposed"
+    );
+    assert!(
+        !carrier_top_drawn(Some(Block::SnowLayer)),
+        "a bedded fern's blanket seals the grass top beneath it"
+    );
+}

@@ -165,7 +165,7 @@ mod tests {
             recipe(
                 "test:tool",
                 vec![tagged(ItemTag::PLANKS), exact(ItemType::Stick)],
-                ItemType::WoodenPickaxe,
+                ItemType::StonePickaxe,
             ),
         ]);
         let index = UnlockIndex::build(&catalog);

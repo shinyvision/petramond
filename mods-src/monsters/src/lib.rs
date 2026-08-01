@@ -434,8 +434,7 @@ impl Monsters {
             // same deck that rains occludes the sun, so a rained-on zombie
             // is never "sunlit" — its burn only winds down.
             let rained_on = rain_i > 0.0 && sky.is_some_and(|s| s >= SUNBURN_SKY_THRESHOLD);
-            let sunlit =
-                !rained_on && sky.is_some_and(|s| s * daylight >= SUNBURN_SKY_THRESHOLD);
+            let sunlit = !rained_on && sky.is_some_and(|s| s * daylight >= SUNBURN_SKY_THRESHOLD);
             burn.stage_ticks += 1;
             burn.dark_ticks = if sunlit {
                 0
@@ -494,7 +493,6 @@ impl Monsters {
             self.burning.remove(&id);
         }
     }
-
 }
 
 /// The burn tick's damage pipeline: the default presentation (flash, hurt /
@@ -554,8 +552,7 @@ fn rain_at(field: Option<&FieldParams>, pos: [f32; 3]) -> f32 {
 /// own session-tick clock fallback in clockless harnesses).
 fn weather_field() -> Option<FieldParams> {
     let row = world_kv_get(weather_core::KV_FIELD)?;
-    let clock =
-        world_kv_get(weather_core::CLOCK_KEY).and_then(|b| weather_core::decode_clock(&b));
+    let clock = world_kv_get(weather_core::CLOCK_KEY).and_then(|b| weather_core::decode_clock(&b));
     weather_core::fresh_params(&row, clock)
 }
 

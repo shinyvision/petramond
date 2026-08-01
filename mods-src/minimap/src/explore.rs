@@ -314,8 +314,7 @@ impl TileStore {
             match client_storage_read_poll(load.ticket) {
                 None => still_in_flight.push(load),
                 Some(values) => {
-                    for ((coord, kind, materialize), value) in
-                        load.entries.into_iter().zip(values)
+                    for ((coord, kind, materialize), value) in load.entries.into_iter().zip(values)
                     {
                         self.undecoded.push_back((coord, kind, materialize, value));
                     }
@@ -368,7 +367,9 @@ impl TileStore {
                     .filter(|(_, load)| load.tier == tier)
                     .map(|(&(kind, coord), load)| (coord, kind, load.materialize))
                     .collect();
-                picked.sort_unstable_by_key(|&(coord, kind, _)| (kind == RegionKind::Mip, coord.1, coord.0));
+                picked.sort_unstable_by_key(|&(coord, kind, _)| {
+                    (kind == RegionKind::Mip, coord.1, coord.0)
+                });
                 picked.truncate(LOAD_KEYS_PER_TICKET - batch.len());
                 for entry in picked {
                     self.queued.remove(&(entry.1, entry.0));
@@ -617,10 +618,13 @@ impl Minimap {
         let queries: Vec<ClientSurfaceQuery> = (min.1..=max.1)
             .flat_map(|cz| (min.0..=max.0).map(move |cx| (cx, cz)))
             .filter_map(|(cx, cz)| {
-                self.store.tiles.get(&(cx, cz)).map(|tile| ClientSurfaceQuery {
-                    coord: [cx, cz],
-                    revision: tile.watermark,
-                })
+                self.store
+                    .tiles
+                    .get(&(cx, cz))
+                    .map(|tile| ClientSurfaceQuery {
+                        coord: [cx, cz],
+                        revision: tile.watermark,
+                    })
             })
             .collect();
         if queries.is_empty() {
@@ -717,12 +721,11 @@ impl Minimap {
                 self.mark_full_tiles_dirty(region_block_rect(arrival.kind, arrival.coord));
             }
         }
-        let sample_center = self.last_sample.unwrap_or((
-            self.player[0].floor() as i32,
-            self.player[2].floor() as i32,
-        ));
-        let view = (self.open_canvas.as_deref() == Some(FULL_CANVAS))
-            .then(|| self.full_view_world_rect());
+        let sample_center = self
+            .last_sample
+            .unwrap_or((self.player[0].floor() as i32, self.player[2].floor() as i32));
+        let view =
+            (self.open_canvas.as_deref() == Some(FULL_CANVAS)).then(|| self.full_view_world_rect());
         self.store.trim_caches(|kind, region| {
             let rect = region_block_rect(kind, region);
             // The live sampling neighborhood…
@@ -886,7 +889,8 @@ mod tests {
         // Player + pan at the origin: the view rect hugs (0, 0).
         mm.store.materialize_region(RegionKind::Base, (0, 0));
         for i in 0..(BASE_REGION_CACHE_MAX + REGION_CACHE_SLACK) as i32 + 8 {
-            mm.store.materialize_region(RegionKind::Base, (1000 + i, 500));
+            mm.store
+                .materialize_region(RegionKind::Base, (1000 + i, 500));
         }
         mm.pump_store();
         assert!(
@@ -906,8 +910,14 @@ mod tests {
         store.materialize_region(RegionKind::Mip, (0, 0));
         let tile = store.tiles.get_mut(&(1, 1)).unwrap();
         // Two known blocks in one 2×2 group + a fully unknown group.
-        tile.tile.cells[0] = Cell { height: 10, rgb: [100, 0, 0] };
-        tile.tile.cells[1] = Cell { height: 20, rgb: [100, 0, 0] };
+        tile.tile.cells[0] = Cell {
+            height: 10,
+            rgb: [100, 0, 0],
+        };
+        tile.tile.cells[1] = Cell {
+            height: 20,
+            rgb: [100, 0, 0],
+        };
         store.merge_tile_into_mip((1, 1));
         let mip = store.mips.get(&(0, 0)).expect("mip tile resident");
         // Tile (1,1) covers blocks 16..32: its quadrant starts at mip cell

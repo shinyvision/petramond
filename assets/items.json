@@ -922,23 +922,43 @@
       "tags": []
     },
     {
-      "item": "petramond:wooden_pickaxe",
-      "key": "petramond:wooden_pickaxe",
-      "name": "Wooden Pickaxe",
+      "item": "petramond:pebble",
+      "key": "petramond:pebble",
+      "name": "Pebble",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "sprite": "pebble",
+      "tags": []
+    },
+    {
+      "item": "petramond:hemp",
+      "key": "petramond:hemp",
+      "name": "Hemp",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "sprite": "hemp_item"
+    },
+    {
+      "item": "petramond:rope",
+      "key": "petramond:rope",
+      "name": "Rope",
       "max_stack_size": 64,
       "held_pose": {
         "pitch": 0,
         "yaw": -1.5,
         "roll": 0.5
       },
-      "sprite": "wooden_pickaxe",
-      "tags": [],
-      "data": {
-        "petramond:tool": {
-          "kind": "pickaxe",
-          "tier": 1
-        }
-      }
+      "sprite": "rope",
+      "tags": []
     },
     {
       "item": "petramond:stone_pickaxe",
@@ -1117,25 +1137,6 @@
       "tags": []
     },
     {
-      "item": "petramond:wooden_axe",
-      "key": "petramond:wooden_axe",
-      "name": "Wooden Axe",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": -1.5,
-        "roll": 0.5
-      },
-      "sprite": "wooden_axe",
-      "tags": [],
-      "data": {
-        "petramond:tool": {
-          "kind": "axe",
-          "tier": 1
-        }
-      }
-    },
-    {
       "item": "petramond:stone_axe",
       "key": "petramond:stone_axe",
       "name": "Stone Axe",
@@ -1227,27 +1228,6 @@
         "petramond:tool": {
           "kind": "pickaxe",
           "tier": 4
-        }
-      }
-    },
-    {
-      "item": "petramond:wooden_shovel",
-      "key": "petramond:wooden_shovel",
-      "name": "Wooden Shovel",
-      "max_stack_size": 64,
-      "held_pose": {
-        "pitch": 0,
-        "yaw": -1.5,
-        "roll": 0.5
-      },
-      "sprite": "wooden_shovel",
-      "tags": [
-        "shovels"
-      ],
-      "data": {
-        "petramond:tool": {
-          "kind": "shovel",
-          "tier": 1
         }
       }
     },

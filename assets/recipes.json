@@ -107,6 +107,67 @@
     },
     {
       "type": "crafting",
+      "recipe": "petramond:rope",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:hemp",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:rope",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:lashed_stone_pickaxe",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:rope",
+          "count": 1
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        },
+        {
+          "item": "petramond:pebble",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:stone_pickaxe",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:lashed_stone_axe",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:rope",
+          "count": 1
+        },
+        {
+          "item": "petramond:stick",
+          "count": 2
+        },
+        {
+          "item": "petramond:pebble",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "petramond:stone_axe",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
       "recipe": "petramond:crafting_table",
       "station": "petramond:inventory",
       "ingredients": [
@@ -531,25 +592,6 @@
     },
     {
       "type": "crafting",
-      "recipe": "petramond:wooden_pickaxe",
-      "station": "petramond:crafting_table",
-      "ingredients": [
-        {
-          "tag": "petramond:planks",
-          "count": 3
-        },
-        {
-          "item": "petramond:stick",
-          "count": 2
-        }
-      ],
-      "result": {
-        "item": "petramond:wooden_pickaxe",
-        "count": 1
-      }
-    },
-    {
-      "type": "crafting",
       "recipe": "petramond:stone_pickaxe",
       "station": "petramond:crafting_table",
       "ingredients": [
@@ -607,25 +649,6 @@
     },
     {
       "type": "crafting",
-      "recipe": "petramond:wooden_shovel",
-      "station": "petramond:crafting_table",
-      "ingredients": [
-        {
-          "tag": "petramond:planks",
-          "count": 1
-        },
-        {
-          "item": "petramond:stick",
-          "count": 2
-        }
-      ],
-      "result": {
-        "item": "petramond:wooden_shovel",
-        "count": 1
-      }
-    },
-    {
-      "type": "crafting",
       "recipe": "petramond:stone_shovel",
       "station": "petramond:crafting_table",
       "ingredients": [
@@ -678,25 +701,6 @@
       ],
       "result": {
         "item": "petramond:diamond_shovel",
-        "count": 1
-      }
-    },
-    {
-      "type": "crafting",
-      "recipe": "petramond:wooden_axe",
-      "station": "petramond:crafting_table",
-      "ingredients": [
-        {
-          "tag": "petramond:planks",
-          "count": 3
-        },
-        {
-          "item": "petramond:stick",
-          "count": 2
-        }
-      ],
-      "result": {
-        "item": "petramond:wooden_axe",
         "count": 1
       }
     },

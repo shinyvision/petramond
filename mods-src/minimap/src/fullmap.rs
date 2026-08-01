@@ -179,10 +179,7 @@ impl Minimap {
                     break;
                 }
                 let rect = align_rect_to_cells(rect, zoom);
-                let size_px = [
-                    (rect[2] - rect[0]) / cb * cp,
-                    (rect[3] - rect[1]) / cb * cp,
-                ];
+                let size_px = [(rect[2] - rect[0]) / cb * cp, (rect[3] - rect[1]) / cb * cp];
                 budget -= size_px[0] as i64 * size_px[1] as i64;
                 let (rgba, text_runs) = self.render_full_region(coord, rect);
                 let image_key = full_tile_image_key(slot);
@@ -371,7 +368,8 @@ impl Minimap {
         }
         for rz in pz0..=pz1 {
             for rx in px0..=px1 {
-                self.store.request_region(kind, (rx, rz), LoadTier::Prefetch);
+                self.store
+                    .request_region(kind, (rx, rz), LoadTier::Prefetch);
             }
         }
 

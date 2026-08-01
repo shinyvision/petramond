@@ -75,8 +75,7 @@ fn rained_on(pos: [i32; 3]) -> bool {
     let Some(row) = world_kv_get(weather_core::KV_FIELD) else {
         return false;
     };
-    let clock =
-        world_kv_get(weather_core::CLOCK_KEY).and_then(|b| weather_core::decode_clock(&b));
+    let clock = world_kv_get(weather_core::CLOCK_KEY).and_then(|b| weather_core::decode_clock(&b));
     let Some(params) = weather_core::fresh_params(&row, clock) else {
         return false;
     };

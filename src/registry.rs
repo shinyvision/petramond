@@ -685,7 +685,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             pack.join("blocks.json"),
-            r#"{ "blocks": [ { "block": "testmod:glowrock", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 28, "tiles": ["stone", "stone", "stone"], "material": "stone", "harvest_tier": 1, "hardness": 2, "drops": [{"item": "testmod:glowrock", "min": 1, "max": 1, "chance": 1.0}] } ] }"#,
+            r#"{ "blocks": [ { "block": "testmod:glowrock", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 28, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {"petramond:harvest": {"tier": 1}}, "hardness": 2, "drops": [{"item": "testmod:glowrock", "min": 1, "max": 1, "chance": 1.0}] } ] }"#,
         )
         .unwrap();
         std::fs::write(

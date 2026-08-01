@@ -433,6 +433,14 @@ impl Block {
         self.has_tag(BlockTag::SNOW_COVER)
     }
 
+    /// Whether this block is drawn standing in the snow blanket its cell
+    /// displaced (see [`BlockTag::SNOW_BEDDED`]) — ground decoration that would
+    /// otherwise punch a bare hole in a snowfield.
+    #[inline]
+    pub fn is_snow_bedded(self) -> bool {
+        self.has_tag(BlockTag::SNOW_BEDDED)
+    }
+
     /// Whether this block is [`Fragile`](BlockTag::FRAGILE) — it shatters when it
     /// loses support or water enters its cell. Read by the water sim (a fragile cell
     /// is one water may flow into) and paired with the [`FRAGILE`](behavior) break
@@ -646,13 +654,16 @@ impl Block {
         }
     }
 
-    /// Minimum pickaxe tier (`0` = hand, `1` = wooden, `2` = stone, `3` = above
-    /// stone) needed to HARVEST this block — i.e. to get a drop AND to mine it
-    /// faster than by hand. A pickaxe below this tier breaks the block at the
-    /// bare-hand rate and yields nothing (matching the goal's diamond-by-hand
-    /// rule). Everything that is hand-harvestable (dirt, wood, plants, planks…)
-    /// is tier `0`. Per-row in [`BlockDef`](definition::BlockDef): stone/ore
-    /// blocks are tier `1`, iron/copper ore `2`, gold/diamond ore `3`.
+    /// Minimum tool tier needed to HARVEST this block — i.e. to get a drop AND
+    /// to mine it faster than by hand. A tool below this tier (or of the wrong
+    /// kind) breaks the block at the bare-hand rate and yields nothing
+    /// (diamond-by-hand drops nothing). Tier `0` is hand-harvestable: dirt,
+    /// planks, most plants. Shipped gates: stone and cobblestone `1`, LOGS `1`
+    /// (so a fist cannot start the wood economy), iron/copper ore `2`,
+    /// gold/diamond ore `3`.
+    ///
+    /// Row-authored through the `petramond:harvest` data entry, so a pack can
+    /// retune the gate on rows it does not own; see `load::RawHarvest`.
     #[inline]
     pub fn harvest_tier(self) -> u8 {
         self.def().harvest_tier

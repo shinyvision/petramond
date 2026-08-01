@@ -40,6 +40,7 @@ mod fertilize;
 mod follow;
 mod forage;
 mod growth;
+mod hemp;
 mod husbandry;
 mod kv_counter;
 mod predict;
@@ -206,7 +207,14 @@ impl Mod for Farming {
                 // Crops first, then the compost collect, then the trough's
                 // sneak take-out — each falls through on Continue.
                 let first = chain(
-                    crops::on_interact(content, &mut self.growth, *pos, block, actor.held, actor.sneak),
+                    crops::on_interact(
+                        content,
+                        &mut self.growth,
+                        *pos,
+                        block,
+                        actor.held,
+                        actor.sneak,
+                    ),
                     || compost::on_interact(content, *pos, block),
                 );
                 chain(first, || {
@@ -222,11 +230,13 @@ impl Mod for Farming {
                 EventPayload::BlockBroken {
                     pos,
                     block,
+                    harvested,
                     natural,
-                    ..
                 },
             ) => {
+                crops::on_block_broken(content, *pos, *block, *harvested);
                 forage::on_block_broken(content, *pos, *block, *natural);
+                hemp::on_block_broken(content, *pos, *block, *natural);
                 Outcome::Continue
             }
             (

@@ -86,12 +86,9 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                 None => Vec::new(),
             })
         }
-        HostCall::ItemInfo { item } => {
-            HostRet::ItemInfo(
-                crate::item::ItemType::by_name(&item)
-                    .map(|t| Box::new(item_info_data(t))),
-            )
-        }
+        HostCall::ItemInfo { item } => HostRet::ItemInfo(
+            crate::item::ItemType::by_name(&item).map(|t| Box::new(item_info_data(t))),
+        ),
         // The shape-kind resolver: like the block/item/mob resolvers, a key→id
         // lookup over the process-wide registry, unknown key = `None`.
         HostCall::ResolveShape { key } => {

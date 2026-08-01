@@ -825,7 +825,10 @@ impl Renderer {
                 &col.model_vbuf,
                 &col.model_ibuf,
                 &col.contact_vbuf,
-            ].into_iter().flatten() {
+            ]
+            .into_iter()
+            .flatten()
+            {
                 suballocated += b.alloc.capacity();
                 used += b.len;
                 live_allocs += 1;

@@ -319,11 +319,7 @@ pub(crate) fn rgb_to_hsl(rgb: [u8; 3]) -> (f32, f32, f32) {
     } else {
         (r - g) / delta + 4.0
     };
-    (
-        sixth / 6.0 * std::f32::consts::TAU,
-        saturation,
-        lightness,
-    )
+    (sixth / 6.0 * std::f32::consts::TAU, saturation, lightness)
 }
 
 pub(crate) fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> [u8; 3] {
@@ -368,9 +364,7 @@ mod tests {
     use super::*;
 
     fn close(a: [u8; 3], b: [u8; 3], tolerance: u8) -> bool {
-        a.iter()
-            .zip(b)
-            .all(|(x, y)| x.abs_diff(y) <= tolerance)
+        a.iter().zip(b).all(|(x, y)| x.abs_diff(y) <= tolerance)
     }
 
     #[test]
