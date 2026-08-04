@@ -40,13 +40,11 @@ impl ShapeSim for LadderFamily {
         _p: &ShapeParams,
         _nb: &dyn ShapeNeighborhood,
         _pos: IVec3,
-        b: Block,
-        lo: [f32; 3],
-        hi: [f32; 3],
+        _b: Block,
+        _lo: [f32; 3],
+        _hi: [f32; 3],
     ) -> bool {
-        let (thickness, height) = b.ladder_dims();
-        let (mn, mx) = crate::ladder::panel_aabb_dim(b.panel_facing(), thickness, height);
-        overlaps(lo, hi, mn, mx)
+        false
     }
 }
 
