@@ -15,7 +15,7 @@ pub struct ItemTag(u8);
 
 /// Engine item-tag names, id-ordered to match the consts on [`ItemTag`].
 static ITEM_TAGS: crate::registry::TagTable =
-    crate::registry::TagTable::new(&["planks", "logs", "fuel", "smeltable", "shovels"]);
+    crate::registry::TagTable::new(&["planks", "logs", "fuel", "smeltable", "shovels", "raw_ore"]);
 
 impl ItemTag {
     /// Any wood-type planks (recipe selector `petramond:planks`).
@@ -29,6 +29,10 @@ impl ItemTag {
     /// Any shovel-class digging tool (recipe selector `petramond:shovels`). Packs
     /// opt compatible shovels in by listing the tag on their item rows.
     pub const SHOVELS: ItemTag = ItemTag(4);
+    /// Ore as it comes out of the ground, before smelting (`petramond:raw_ore`)
+    /// — the "the player has struck metal" class. A pack's own ore joins by
+    /// listing the tag, so metalworking policy never enumerates ores.
+    pub const RAW_ORE: ItemTag = ItemTag(5);
 
     /// Resolve a tag's registry name (a recipe selector or an
     /// `items.json` row entry), interning an unseen namespaced pack tag.

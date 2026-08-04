@@ -9,6 +9,8 @@
 //! - the pottery table — no code at all. A block row whose interaction opens
 //!   `forge:pottery_table` plus recipe rows naming that station is a whole
 //!   crafting bench; the engine runs the ordinary crafting session.
+//! - `unlocks.rs` — when each station becomes visible, which the pack states
+//!   itself rather than inheriting the engine's hold-every-ingredient default.
 //! - `furnace.rs` — the forging furnace: a machine you OPERATE. Mould in by
 //!   hand, lever to pour, and the cast pops out of the basin as an item.
 //!
@@ -24,6 +26,7 @@ mod clay;
 mod content;
 mod furnace;
 mod liquid;
+mod unlocks;
 
 use machine_core::Caches;
 use mod_sdk::*;
@@ -33,6 +36,7 @@ use furnace::ForgingFurnace;
 const TICK_SYSTEM: u32 = 1;
 const ON_BLOCK_PLACED: u32 = 1;
 const ON_CONTAINER_OPENED: u32 = 2;
+const ON_ITEM_OBTAINED: u32 = 3;
 const GEN_CLAY: u32 = 1;
 
 #[derive(Default)]
@@ -40,6 +44,7 @@ struct Forge {
     furnace: ForgingFurnace,
     caches: Caches,
     clay: clay::Deposits,
+    unlocks: unlocks::Unlocks,
 }
 
 impl Mod for Forge {
@@ -57,6 +62,11 @@ impl Mod for Forge {
         if runtime_side() != RuntimeSide::Server {
             return;
         }
+        // Independent of the casting machinery: the ladder must still reveal
+        // itself even if the furnace rows are broken.
+        self.unlocks = unlocks::Unlocks::resolve();
+        register_event_handler(EventKind::ItemObtained, 0, ON_ITEM_OBTAINED);
+
         if !self.furnace.init() {
             log("forge: the forging furnace rows are missing; casting stays idle");
             return;
@@ -76,6 +86,9 @@ impl Mod for Forge {
             }
             (ON_CONTAINER_OPENED, EventPayload::ContainerOpened { kind, pos }) => {
                 self.furnace.on_container_opened(kind, *pos);
+            }
+            (ON_ITEM_OBTAINED, EventPayload::ItemObtained { player, item }) => {
+                self.unlocks.on_item_obtained(*player, *item);
             }
             _ => {}
         }

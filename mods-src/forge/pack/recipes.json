@@ -6,16 +6,12 @@
             "station": "petramond:crafting_table",
             "ingredients": [
                 {
-                    "item": "petramond:furnace",
-                    "count": 1
+                    "tag": "petramond:planks",
+                    "count": 8
                 },
                 {
-                    "item": "petramond:cobblestone",
+                    "item": "petramond:clay",
                     "count": 4
-                },
-                {
-                    "item": "petramond:stone",
-                    "count": 3
                 }
             ],
             "result": {

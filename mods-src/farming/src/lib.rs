@@ -25,6 +25,7 @@
 //!   husbandry rows).
 //! - [`growth`] — juveniles (the lamb) growing into their adult species when
 //!   their `farming:baby` tag is removed (the `mob_tag_removed` hook).
+//! - [`unlocks`] — the pack's own earlier recipe-unlock triggers.
 //! - [`wellfed`] — the Well Fed marker effect's damage consequence.
 //!
 //! Everything mutating runs on the deterministic tick through events, block
@@ -47,6 +48,7 @@ mod predict;
 mod spread;
 mod tilling;
 mod trough;
+mod unlocks;
 mod wellfed;
 mod worldgen;
 
@@ -72,6 +74,7 @@ const ON_INTERACT_ATTEMPT: u32 = 4;
 const ON_PLAYER_DAMAGE_PRE: u32 = 5;
 const ON_BLOCK_BROKEN: u32 = 6;
 const ON_MOB_TAG_REMOVED: u32 = 7;
+const ON_ITEM_OBTAINED: u32 = 8;
 
 // Block-behavior callback ids.
 const HOOK_CROP: u32 = 1;
@@ -128,6 +131,7 @@ impl Mod for Farming {
         register_event_handler(EventKind::PlayerDamagePre, 0, ON_PLAYER_DAMAGE_PRE);
         register_event_handler(EventKind::BlockBroken, 0, ON_BLOCK_BROKEN);
         register_event_handler(EventKind::MobTagRemoved, 0, ON_MOB_TAG_REMOVED);
+        register_event_handler(EventKind::ItemObtained, 0, ON_ITEM_OBTAINED);
         register_block_behavior("farming:crop", HOOK_CROP);
         register_block_behavior("farming:farmland", HOOK_FARMLAND);
         register_block_behavior("farming:grass_fertilized", HOOK_SPREAD);
@@ -246,6 +250,10 @@ impl Mod for Farming {
                 },
             ) => {
                 growth::on_tag_removed(content, *mob_id, *kind, key);
+                Outcome::Continue
+            }
+            (ON_ITEM_OBTAINED, EventPayload::ItemObtained { player, item }) => {
+                unlocks::on_item_obtained(content, *player, *item);
                 Outcome::Continue
             }
             _ => Outcome::Continue,

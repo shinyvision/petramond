@@ -1004,7 +1004,8 @@
       },
       "sprite": "raw_iron",
       "tags": [
-        "smeltable"
+        "smeltable",
+        "raw_ore"
       ]
     },
     {
@@ -1019,7 +1020,8 @@
       },
       "sprite": "raw_copper",
       "tags": [
-        "smeltable"
+        "smeltable",
+        "raw_ore"
       ]
     },
     {
@@ -1133,7 +1135,8 @@
       },
       "sprite": "raw_gold",
       "tags": [
-        "smeltable"
+        "smeltable",
+        "raw_ore"
       ]
     },
     {
