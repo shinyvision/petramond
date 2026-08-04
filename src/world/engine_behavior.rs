@@ -4,7 +4,7 @@
 //! layer's `EngineHook` facts; the tick resolves a key here FIRST and only
 //! falls back to the data-layer behaviour object.
 
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 use crate::world::World;
 
 pub(crate) trait EngineBlockBehavior: Sync {

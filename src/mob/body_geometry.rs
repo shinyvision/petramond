@@ -4,7 +4,7 @@
 //! for terrain movement, pairwise solid motion, soft contact, placement,
 //! client picking, and server-side target validation.
 
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 
 use super::MobSize;
 

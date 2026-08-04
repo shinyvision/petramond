@@ -39,7 +39,7 @@ impl DisplayTransform {
     /// Blockbench's display preview builds in `updateDisplayBase` (display_mode.js) for
     /// the right-hand / unmirrored contexts, so a pose renders exactly as authored.
     /// Model points are expected relative to the authored display pivot (the block
-    /// centre — see [`BlockModel::display_pivot`] / [`ModelInstance::display_from_unit`]).
+    /// centre — see `BlockModel::display_pivot` / `ModelInstance::display_from_unit`).
     /// Translation is authored in pixels (16 per block); the pivots in blocks. A zero
     /// scale component degrades to 0.001 exactly as Blockbench does; a negative one
     /// mirrors that axis (the authored "mirror" flag).

@@ -1,8 +1,8 @@
 //! Directional stairs at the world level: position-aware facing lookup and placement.
 
-use crate::block::Block;
-use crate::block_state::StairState;
-use crate::mathh::IVec3;
+use petramond_world::block::Block;
+use petramond_world::block_state::StairState;
+use petramond_math::math::IVec3;
 
 use super::store::World;
 
@@ -11,7 +11,7 @@ impl World {
     /// Place a single-cell stair and record its facing before relighting/remeshing.
     /// Assumes the caller already gated replaceability and entity overlap.
     pub fn place_stair(&mut self, pos: IVec3, block: Block, state: StairState) -> bool {
-        if !crate::stair::is_stair(block) || !self.materialize_section_at(pos) {
+        if !petramond_world::stair::is_stair(block) || !self.materialize_section_at(pos) {
             return false;
         }
         let Some((section, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
@@ -29,8 +29,8 @@ impl World {
 mod tests {
     use super::*;
 
-    use crate::block_state::StairHalf;
-    use crate::chunk::ChunkPos;
+    use petramond_world::block_state::StairHalf;
+    use petramond_world::chunk::ChunkPos;
 
     #[test]
     fn placing_a_stair_raises_the_column_surface_for_skylight() {
@@ -40,7 +40,7 @@ mod tests {
         assert!(world.place_stair(
             p,
             Block::OakStairs,
-            StairState::new(crate::facing::Facing::East, StairHalf::Bottom)
+            StairState::new(petramond_math::facing::Facing::East, StairHalf::Bottom)
         ));
 
         let column = world.columns.get(&ChunkPos::new(0, 0)).unwrap();

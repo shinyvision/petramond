@@ -1,5 +1,5 @@
-use crate::chunk::{ChunkPos, SectionPos};
-use crate::mesh::ChunkMesh;
+use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_mesh::ChunkMesh;
 
 use super::World;
 
@@ -115,10 +115,10 @@ impl TerrainRenderHandoff<'_> {
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
-    use crate::block::Block;
-    use crate::section::Section;
+    use petramond_world::block::Block;
+    use petramond_world::section::Section;
     use crate::world::store::World;
-    use crate::chunk::SectionPos;
+    use petramond_world::chunk::SectionPos;
 
     /// The CPU-release contract: a settled column frees its mesh buffers, a later
     /// repack refuses to upload from released meshes (no silent geometry loss) and

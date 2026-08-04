@@ -6,7 +6,7 @@
 //! through namespaced (`mod_id:name`) rows in load order. A row carries the species'
 //! model asset path, render scale, body size, movement stats, spawn pack size, and a
 //! `brain` list of `{node, priority, params}` rows resolved through the string-keyed
-//! AI-node registry (see [`behavior`]). So **adding an animal is a `mobs.json` row**
+//! AI-node registry (see `behavior`). So **adding an animal is a `mobs.json` row**
 //! — no engine edit, no change to the game loop, the scene, or the renderer (which
 //! iterate the table generically).
 //!
@@ -14,7 +14,7 @@
 //! (composable per-tick AI), `nav` (path following + jumps), `instance` (shared
 //! kinematics), `manager` (the live set). Nothing here depends on `crate::render`:
 //! each species' `.bbmodel` (read through the pack overlay) is precached into a
-//! compiled [`Model`](crate::bbmodel::Model) (via [`model`]) that the renderer and
+//! compiled [`Model`] (via [`model`]) that the renderer and
 //! the simulation both read — the renderer also reads `scale` off the table.
 
 mod anim;
@@ -59,11 +59,11 @@ pub use spawn::{
 
 use std::sync::LazyLock;
 
-use crate::bbmodel::Model;
-use crate::biome::Biome;
-use crate::block::Block;
-use crate::item::ItemType;
-use crate::mathh::Vec3;
+use petramond_world::bbmodel::Model;
+use petramond_world::biome::Biome;
+use petramond_world::block::Block;
+use petramond_world::item::ItemType;
+use petramond_math::math::Vec3;
 
 use brain::AiBehavior;
 
@@ -353,7 +353,7 @@ pub struct WanderTuning {
     pub cohesion: Option<WanderCohesion>,
 }
 
-crate::wire_enum::wire_enum! {
+petramond_math::wire_enum::wire_enum! {
     /// The semantic reason a mob sound is played. The sound clip itself stays in
     /// `sounds.json`; this category maps a species to a row in that catalog.
     /// The byte form is the net protocol's (`WorldEventMsg::MobSound`).
@@ -463,7 +463,7 @@ impl Default for MobDamageFeedback {
                 },
                 MobDamageFeedbackComponent::Ragdoll,
                 MobDamageFeedbackComponent::Immunity {
-                    ticks: crate::damage::MOB_DAMAGE_IFRAME_TICKS,
+                    ticks: petramond_world::damage::MOB_DAMAGE_IFRAME_TICKS,
                 },
             ],
         }
@@ -475,7 +475,7 @@ impl Default for MobDamageFeedback {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MobSoundSpec {
     pub category: MobSoundCategory,
-    pub sound: crate::sound_registry::Sound,
+    pub sound: petramond_world::sound_registry::Sound,
     pub tick_interval: Option<u32>,
     pub tick_interval_variance: u32,
 }
@@ -656,7 +656,7 @@ pub fn build_brain(def: &'static MobDef) -> Brain {
 
 /// One row of the mob registry: everything that makes a species what it is. `model`
 /// and `scale` feed the renderer; the rest drives the simulation. (`model` names the
-/// `.bbmodel` asset, compiled once into the shared [`Model`](crate::bbmodel::Model) —
+/// `.bbmodel` asset, compiled once into the shared [`Model`] —
 /// see [`model`].)
 pub struct MobDef {
     pub mob: Mob,
@@ -665,11 +665,11 @@ pub struct MobDef {
     /// palette speak.
     pub name: &'static str,
     /// Stable identity key (e.g. `"petramond:owl"`), independent of any display name
-    /// — the key a loot table is looked up by. Mirrors [`crate::item::ItemType::key`].
+    /// — the key a loot table is looked up by. Mirrors [`petramond_world::item::ItemType::key`].
     pub key: &'static str,
     /// Asset-relative `.bbmodel` path (`models/owl.bbmodel`), resolved through the
-    /// pack overlay ([`crate::assets::read_bytes`]) at precache time (see [`model`]);
-    /// at runtime the compiled [`Model`](crate::bbmodel::Model) is authoritative.
+    /// pack overlay ([`petramond_world::assets::read_bytes`]) at precache time (see [`model`]);
+    /// at runtime the compiled [`Model`] is authoritative.
     pub model: &'static str,
     /// Model-unit → metre scale for rendering.
     pub scale: f32,
@@ -725,7 +725,7 @@ pub struct MobDef {
     /// variants, gain, pitch jitter, and attenuation live in `sounds.json`.
     pub sounds: &'static [MobSoundSpec],
     /// The species' AI as data: priority-ordered node rows resolved against the
-    /// engine AI-node registry at load (see [`behavior`] and [`build_brain`]).
+    /// engine AI-node registry at load (see `behavior` and [`build_brain`]).
     pub brain: &'static [BrainNode],
     /// Rider seat offsets in mob-local blocks — `+z` toward the mob's facing,
     /// `+x` to its right, `y` up from the feet. Empty = not rideable. The seat
@@ -756,7 +756,7 @@ impl MobDef {
 
 /// How a species behaves in water (`mobs.json` `"buoyancy"`, default `swim`).
 /// Creatures SWIM: they stroke toward air and bob through the waterline (see
-/// the swim constants in [`instance`]). A hull FLOATS: it levels off at the
+/// the swim constants in `instance`). A hull FLOATS: it levels off at the
 /// water surface (feet a small draft below it) and holds there — no bob.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -794,10 +794,10 @@ pub fn solid_boxes(
     pos: Vec3,
     yaw: f32,
     size: MobSize,
-    out: &mut Vec<crate::collision::DynBox>,
+    out: &mut Vec<petramond_world::collision::DynBox>,
 ) {
     for (min, max) in body_boxes(pos, yaw, size) {
-        out.push(crate::collision::DynBox {
+        out.push(petramond_world::collision::DynBox {
             id,
             min: min.to_array(),
             max: max.to_array(),
@@ -859,7 +859,7 @@ pub fn by_key(key: &str) -> Option<Mob> {
     INDEX.get(key).copied()
 }
 
-/// Every species' compiled [`Model`](crate::bbmodel::Model), indexed by `Mob` id —
+/// Every species' compiled [`Model`](petramond_world::bbmodel::Model), indexed by `Mob` id —
 /// the in-memory golden asset, precached once on first use (compiling each `.bbmodel` →
 /// `.llmob` on a cache miss, else fast-loading the `.llmob`) and shared by the renderer and
 /// the simulation. Sources are read through the pack overlay, so a pack can override a
@@ -870,11 +870,11 @@ static MODELS: LazyLock<Vec<Model>> = LazyLock::new(|| {
         .iter()
         .map(|d| {
             let m = d.mob;
-            let Some((src, _)) = crate::assets::read_bytes(d.model) else {
+            let Some((src, _)) = petramond_world::assets::read_bytes(d.model) else {
                 log::error!("mob model '{}' not found in the asset roots", d.model);
                 return Model::empty();
             };
-            crate::asset_cache::load_or_compile::<Model>(d.name, &src).unwrap_or_else(|e| {
+            petramond_world::asset_cache::load_or_compile::<Model>(d.name, &src).unwrap_or_else(|e| {
                 log::error!("mob model precache failed for {m:?}: {e}");
                 Model::empty()
             })
@@ -882,7 +882,7 @@ static MODELS: LazyLock<Vec<Model>> = LazyLock::new(|| {
         .collect()
 });
 
-/// This species' precached [`Model`](crate::bbmodel::Model), borrowed for the process
+/// This species' precached [`Model`], borrowed for the process
 /// lifetime: the renderer bakes geometry from it each frame and the simulation derives its
 /// skeleton + idle metadata from it (see `model_meta`).
 pub fn model(mob: Mob) -> &'static Model {
@@ -977,7 +977,7 @@ mod tests {
     #[test]
     fn all_mob_model_sources_parse() {
         for d in defs() {
-            let (src, _) = crate::assets::read_bytes(d.model)
+            let (src, _) = petramond_world::assets::read_bytes(d.model)
                 .unwrap_or_else(|| panic!("{} model asset '{}' should exist", d.key, d.model));
             let text = String::from_utf8(src).expect("bbmodel is utf-8 JSON");
             let model =

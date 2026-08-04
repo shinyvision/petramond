@@ -11,7 +11,7 @@
 //! (`game/remote_players.rs`), so there is exactly one pose implementation.
 
 use petramond_render::camera::Camera;
-use petramond::mathh::Vec3;
+use petramond_math::math::Vec3;
 
 use super::body_pose::BodyPose;
 use super::Game;
@@ -90,7 +90,7 @@ impl Game {
             let target = Vec3::new(pos.x, pos.y + 0.5, pos.z);
             let back = -cam.forward();
             let world = &self.replica;
-            let dist = petramond::collision::clamp_padded_segment(
+            let dist = petramond_world::collision::clamp_padded_segment(
                 [target.x, target.y, target.z],
                 [back.x, back.y, back.z],
                 BOOM_DIST,
@@ -119,7 +119,7 @@ impl Game {
         let mut cam = self.cam.clone();
         let back = -cam.forward();
         let world = &self.replica;
-        let dist = petramond::collision::clamp_padded_segment(
+        let dist = petramond_world::collision::clamp_padded_segment(
             [cam.pos.x, cam.pos.y, cam.pos.z],
             [back.x, back.y, back.z],
             BOOM_DIST,

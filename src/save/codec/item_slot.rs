@@ -9,14 +9,14 @@ use petramond_world::item::{ItemStack, ItemType};
 /// `[0, 0, 0, 0]` for an empty or absent slot. Shared by the `level`
 /// (inventory/cursor), `furnace`, and item-entity codecs so the slot format
 /// lives in exactly one place. The blob is the variant's CANONICAL bytes
-/// ([`crate::item::variant::encode`]) — the disk never sees the session
-/// [`crate::item::VariantId`].
+/// ([`petramond_world::item::variant::encode`]) — the disk never sees the session
+/// [`petramond_world::item::VariantId`].
 pub fn put_item_slot(buf: &mut Vec<u8>, slot: Option<ItemStack>) {
     match slot {
         Some(s) if !s.is_empty() => {
             put_u16(buf, super::palette::active().item_to_disk(s.item.id()));
             put_u8(buf, s.count);
-            match crate::item::variant::blob(s.variant) {
+            match petramond_world::item::variant::blob(s.variant) {
                 Some(blob) => {
                     put_u16(buf, blob.len() as u16);
                     buf.extend_from_slice(&blob);
@@ -47,7 +47,7 @@ pub fn get_item_slot(r: &mut Reader) -> Option<Option<ItemStack>> {
     let id = super::palette::active().item_from_disk(id);
     let mut stack = ItemStack::new(ItemType::from_id(id), count);
     if !blob.is_empty() {
-        match crate::item::variant::intern_blob(blob) {
+        match petramond_world::item::variant::intern_blob(blob) {
             Some(v) => stack.variant = v,
             None => log::warn!("save slot: unreadable instance-data blob dropped"),
         }

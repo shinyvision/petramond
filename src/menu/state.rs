@@ -1,9 +1,9 @@
 use super::ContainerTarget;
-use crate::crafting::CraftingStation;
-use crate::gui_state::GuiKind;
-use crate::inventory::Inventory;
-use crate::item::ItemStack;
-use crate::mathh::IVec3;
+use petramond_world::crafting::CraftingStation;
+use petramond_world::gui_state::GuiKind;
+use petramond_world::inventory::Inventory;
+use petramond_world::item::ItemStack;
+use petramond_math::math::IVec3;
 use crate::world::World;
 
 /// The active container menu: transient station state plus the edit target the
@@ -60,7 +60,7 @@ impl ContainerMenu {
     /// (placement always inserts one, so this is belt-and-braces).
     pub fn open_furnace_screen(&mut self, world: &mut World, pos: IVec3) {
         if world.furnace_at(pos).is_none() {
-            world.insert_furnace(pos, crate::facing::Facing::default());
+            world.insert_furnace(pos, petramond_math::facing::Facing::default());
         }
         self.target = ContainerTarget::Gui {
             kind: GuiKind::Furnace,
@@ -78,7 +78,7 @@ impl ContainerMenu {
     /// always inserts one, so this is belt-and-braces).
     pub fn open_chest_screen(&mut self, world: &mut World, pos: IVec3) {
         if world.container_at(pos).is_none() {
-            world.insert_chest(pos, crate::facing::Facing::default());
+            world.insert_chest(pos, petramond_math::facing::Facing::default());
         }
         self.target = ContainerTarget::Gui {
             kind: GuiKind::Chest,
@@ -104,7 +104,7 @@ impl ContainerMenu {
         &mut self,
         world: &mut World,
         kind: GuiKind,
-        pos: Option<crate::mathh::IVec3>,
+        pos: Option<petramond_math::math::IVec3>,
     ) {
         let pos = pos.map(|p| world.container_anchor(p));
         let specs = crate::gui::documents::container_slot_specs(kind);

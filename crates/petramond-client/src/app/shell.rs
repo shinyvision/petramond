@@ -5,8 +5,8 @@
 
 use super::{now_seconds, App, AppScreen, HandTriggers};
 use petramond_render::camera::Camera;
-use petramond::controls::{text_shortcut_from_key_code, TextKey, TextShortcut};
-use petramond::mathh::Vec3;
+use petramond_world::controls::{text_shortcut_from_key_code, TextKey, TextShortcut};
+use petramond_math::math::Vec3;
 
 /// One World Settings row: an installed pack. Content-only packs (no `id`)
 /// are listed but not toggleable — disable semantics are namespace-based and
@@ -78,9 +78,9 @@ pub(super) struct CreateWorldSession {
 }
 
 /// One row per installed pack, in discovery order (parallel to
-/// `petramond::assets::packs()` — the Mods-tab icon binding relies on that).
+/// `petramond_world::assets::packs()` — the Mods-tab icon binding relies on that).
 fn pack_rows() -> Vec<ModPackRow> {
-    petramond::assets::packs()
+    petramond_world::assets::packs()
         .iter()
         .map(|p| ModPackRow {
             name: p.name.clone(),
@@ -165,7 +165,7 @@ impl App {
     /// Resolve a physical key + tracked modifiers into a text shortcut and
     /// forward it. Clipboard access lives inside the document UI (`AppUi`
     /// owns its own clipboard), so no host clipboard is threaded through.
-    pub fn handle_text_shortcut_code(&mut self, code: petramond::keycode::KeyCode) -> bool {
+    pub fn handle_text_shortcut_code(&mut self, code: petramond_world::keycode::KeyCode) -> bool {
         let Some(shortcut) = text_shortcut_from_key_code(code, self.modifiers) else {
             return false;
         };
@@ -316,7 +316,7 @@ impl App {
         // Baked custom-shape item geometry is keyed by session-local block ids;
         // flush it so the next world's mods rebake instead of inheriting stale
         // shapes.
-        petramond::block::item_shape_bake::clear();
+        petramond_world::block::item_shape_bake::clear();
         self.scene.clear();
         self.client_canvas = None;
         self.client_overlay_images.clear();
@@ -511,7 +511,7 @@ impl App {
     }
 
     /// Install a freshly-built game session and enter gameplay — the shared
-    /// tail of [`start_game`] (which builds the session, spawning the server
+    /// tail of `start_game` (which builds the session, spawning the server
     /// thread) and the test fixtures (which build a loopback-piped session).
     pub fn adopt_game(&mut self, game: crate::game::Game) {
         self.game = Some(game);

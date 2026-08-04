@@ -21,9 +21,9 @@ use std::cell::RefCell;
 
 use rustc_hash::FxHashMap;
 
-use crate::block::Aabb;
-use crate::collision;
-use crate::mathh::{IVec3, Vec3};
+use petramond_world::block::Aabb;
+use petramond_world::collision;
+use petramond_math::math::{IVec3, Vec3};
 use crate::world::{SectionCursor, World};
 
 use super::brain::AiMob;
@@ -694,7 +694,7 @@ fn classify_boxes(boxes: &[Aabb]) -> CellShape {
 /// solid walls off routes a body actually fits through (a ladder corridor),
 /// while treating them as air walks mobs into their boxes forever.
 /// The one BY-DESIGN exception is a shape that DECLARES itself nav-solid through
-/// its [`ShapeSim::nav_reads_solid`](crate::block::ShapeSim) facet — the fence
+/// its [`ShapeSim::nav_reads_solid`](petramond_world::block::ShapeSim) facet — the fence
 /// family, and any custom shape with `nav_solid` set. Such a cell always
 /// reads solid, so no route steps through it and the one-block jump from the
 /// ground is no foothold jump either (see [`nav_support_fn`] for the step-up
@@ -788,7 +788,7 @@ pub const REACH_PROBE_TICK_BUDGET: usize = 1200;
 const PROBE_SETUP_CHARGE: usize = 40;
 
 /// The tick-scoped expansion budget shared by every reachability probe (see
-/// [`REACH_PROBE_TICK_BUDGET`]). Interior mutability so the AI context can
+/// `REACH_PROBE_TICK_BUDGET`). Interior mutability so the AI context can
 /// carry it by shared reference alongside the world; `None` in a context means
 /// "unbudgeted" (unit fixtures, the mod ABI's explicit `MobCanReach`).
 pub struct ReachBudget {
@@ -864,7 +864,7 @@ pub(super) fn destination_reachable(
     Some(out)
 }
 
-/// [`destination_reachable`] for a live mob instance: probes from the mob's
+/// `destination_reachable` for a live mob instance: probes from the mob's
 /// current navigation cell with its real body. `false` when the mob is not on
 /// a foothold (airborne — nothing is provable, callers retry later). The
 /// `MobCanReach` HostCall's engine seam.
@@ -875,7 +875,7 @@ pub fn mob_can_reach(world: &World, mob: &super::Instance, dest: IVec3) -> bool 
     let solid = nav_solid_fn(&cursor);
     let support = nav_support_fn(&cursor, d.size.half_width);
     let water = nav_water_fn(&cursor);
-    let feet = crate::mathh::voxel_at(mob.pos);
+    let feet = petramond_math::math::voxel_at(mob.pos);
     let in_water = water(feet) || water(feet - IVec3::Y);
     let start = path::navigation_cell_with(
         mob.pos,
@@ -1113,8 +1113,8 @@ fn entity_cell_costs(avoid: &NavObstacles, start: IVec3) -> FxHashMap<IVec3, u32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::Block;
-    use crate::facing::Facing;
+    use petramond_world::block::Block;
+    use petramond_math::facing::Facing;
 
     #[test]
     fn idle_until_given_a_goal() {
@@ -1226,7 +1226,7 @@ mod tests {
     /// A single chunk with a solid grass floor at `y = 63`, so footholds sit at
     /// `y = 64` across it — enough terrain for `find_path` to route over.
     fn flat_world() -> World {
-        use crate::chunk::{Chunk, ChunkPos};
+        use petramond_world::chunk::{Chunk, ChunkPos};
         let mut world = World::new(0, 2);
         world.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         for x in 0..12 {
@@ -1796,7 +1796,7 @@ mod tests {
         let goal = IVec3::new(8, 64, 1);
         let player_cell = IVec3::new(4, 64, 1);
         let anchor = PlayerAnchor {
-            body: Some(crate::body::Body::new(Vec3::new(4.5, 64.0, 1.5), 0.3, 1.8)),
+            body: Some(petramond_world::body::Body::new(Vec3::new(4.5, 64.0, 1.5), 0.3, 1.8)),
             ..Default::default()
         };
         let players = [anchor];

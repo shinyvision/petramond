@@ -1,6 +1,6 @@
 //! First-class worldgen biome modules.
 //!
-//! A game-facing [`Biome`](petramond_world::biome::Biome) is only identity: id, name, and
+//! A game-facing [`Biome`] is only identity: id, name, and
 //! render colours live in `src/biome`. Generation behavior lives here. Each
 //! biome module owns its surface rule, tree placement, and ground-cover
 //! decoration.

@@ -1,4 +1,4 @@
-use petramond::controls::Control;
+use petramond_world::controls::Control;
 use crate::game::MovementInput;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

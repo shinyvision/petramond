@@ -12,7 +12,7 @@
 //! lifted from the player's original `Player::sweep_boxes` so the player, mobs, and items
 //! share one implementation; particles, being points, use the cheaper [`point_in_solid`].
 //!
-//! [`World::collision_boxes_at`]: crate::world::World::collision_boxes_at
+//! [`World::collision_boxes_at`]: crate::world::WorldData::collision_boxes_at
 
 use crate::block::Aabb;
 
@@ -104,7 +104,7 @@ pub const STEP_HEIGHT: f32 = 0.5;
 /// sitting EXACTLY a step below (the slab step-down) must pass the strict
 /// interval tests despite float noise. Block geometry is 1/16-grained, so the
 /// margin can never legalize the next-taller drop. Shared by
-/// [`clamp_to_supported`] and the player's sneak snap-down, which must agree on
+/// `clamp_to_supported` and the player's sneak snap-down, which must agree on
 /// what counts as "within a step" or a move the clamp allowed could fail to
 /// settle.
 pub const SUPPORT_PROBE_MARGIN: f32 = 0.01;
@@ -125,7 +125,7 @@ where
     sweep_axis_dyn(min, max, axis, delta, boxes_fn, &[], 0)
 }
 
-/// [`sweep_axis`] that ALSO clamps against dynamic world-space boxes (solid
+/// `sweep_axis` that ALSO clamps against dynamic world-space boxes (solid
 /// entities), skipping the one owned by `ignore`.
 pub fn sweep_axis_dyn<F>(
     min: [f32; 3],
@@ -252,7 +252,7 @@ where
     depenetrate_up_dyn(min, max, max_lift, boxes_fn, &[], 0)
 }
 
-/// [`depenetrate_up`] that also heals out of dynamic boxes — a solid entity
+/// `depenetrate_up` that also heals out of dynamic boxes — a solid entity
 /// surfacing under standing feet (a boat rising beneath a swimmer) lifts the
 /// body onto its top exactly like a grown block.
 pub fn depenetrate_up_dyn<F>(
@@ -337,7 +337,7 @@ where
     clamp_to_supported_dyn(min, max, dx, dz, max_drop, boxes_fn, &[], 0)
 }
 
-/// [`clamp_to_supported`] whose support band also sees dynamic boxes — a
+/// `clamp_to_supported` whose support band also sees dynamic boxes — a
 /// sneaking body edge-guards on a solid entity's deck like on any floor.
 #[allow(clippy::too_many_arguments)]
 pub fn clamp_to_supported_dyn<F>(
@@ -418,7 +418,7 @@ where
 /// `(moved, grounded, hit)` — the per-axis displacement, whether a downward Y move was
 /// stopped (resting on ground), and which axes were blocked (the caller zeroes velocity on
 /// those). Shared by mob + dropped-item physics; the player drives [`step_horizontal`] /
-/// [`sweep_axis`] directly because it layers water on top.
+/// `sweep_axis` directly because it layers water on top.
 pub fn resolve_body<F>(
     min: [f32; 3],
     max: [f32; 3],
@@ -706,7 +706,7 @@ where
 /// Is point `p` inside any collision box of its cell? The particle test — a particle is a
 /// point, not a body, so it stops the instant it enters a real box (a leg/top), passing
 /// through the empty margin of an inset/model cell. EPS keeps a point exactly on a face
-/// from counting, matching [`sweep_axis`]. Cell-local: boxes never extend past their cell
+/// from counting, matching `sweep_axis`. Cell-local: boxes never extend past their cell
 /// (model boxes are clipped per cell; a normal block's box *is* its cell).
 pub fn point_in_solid<F>(p: [f32; 3], boxes_fn: F) -> bool
 where

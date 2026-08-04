@@ -6,9 +6,9 @@
 //! through the same sanitize routine world save directories use (see
 //! `save::mod.rs`); this module owns only the codec.
 
-use crate::inventory::{Inventory, TOTAL_SLOTS};
-use crate::item::ItemStack;
-use crate::mathh::{IVec3, Vec3};
+use petramond_world::inventory::{Inventory, TOTAL_SLOTS};
+use petramond_world::item::ItemStack;
+use petramond_math::math::{IVec3, Vec3};
 use crate::player::{BedSpawn, Player, PlayerMode};
 use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u32, put_u8, Reader};
 
@@ -89,7 +89,7 @@ pub fn encode(player: &Player) -> Vec<u8> {
         .progression
         .obtained()
         .iter()
-        .filter_map(|item| crate::registry::names().items.name(item.id()))
+        .filter_map(|item| petramond_world::registry::names().items.name(item.id()))
         .collect();
     put_strings(&mut b, obtained.iter().copied());
     put_strings(
@@ -199,11 +199,11 @@ impl PlayerData {
         player.progression.restore(
             self.obtained_items
                 .iter()
-                .filter_map(|name| crate::item::ItemType::by_name(name)),
+                .filter_map(|name| petramond_world::item::ItemType::by_name(name)),
             self.unlocked_recipes.clone(),
         );
         for (name, remaining) in &self.effects {
-            match crate::effect::by_name(name) {
+            match petramond_world::effect::by_name(name) {
                 Some(effect) => player.apply_effect(effect, *remaining),
                 None => log::warn!("player file: dropping unknown status effect '{name}'"),
             }
@@ -253,10 +253,10 @@ mod tests {
             bed: IVec3::new(-3, 70, 12),
             spot: IVec3::new(-2, 70, 13),
         });
-        player.apply_effect(crate::effect::Effect::Regeneration, 950);
+        player.apply_effect(petramond_world::effect::Effect::Regeneration, 950);
         player.craft_craftable_only = true;
-        player.progression.obtain(crate::item::ItemType::OakLog);
-        player.progression.obtain(crate::item::ItemType::Coal);
+        player.progression.obtain(petramond_world::item::ItemType::OakLog);
+        player.progression.obtain(petramond_world::item::ItemType::Coal);
         player.progression.unlock("petramond:oak_planks");
         player.progression.unlock("petramond:torch");
 
@@ -300,12 +300,12 @@ mod tests {
             "unlocked recipes survive in unlock order"
         );
         assert!(restored.progression.obtained().intersects(
-            &[crate::item::ItemType::OakLog, crate::item::ItemType::Coal]
+            &[petramond_world::item::ItemType::OakLog, petramond_world::item::ItemType::Coal]
                 .into_iter()
                 .collect()
         ));
-        let mut fresh = crate::item::ItemSet::EMPTY;
-        fresh.insert(crate::item::ItemType::Diamond);
+        let mut fresh = petramond_world::item::ItemSet::EMPTY;
+        fresh.insert(petramond_world::item::ItemType::Diamond);
         assert!(
             !restored.progression.obtained().intersects(&fresh),
             "an item never held stays unheld"
@@ -327,7 +327,7 @@ mod tests {
         // A removed/disabled mod's effect must not error the whole restore —
         // it is dropped (with a warning) while known effects still apply.
         let mut player = Player::new(Vec3::new(0.0, 70.0, 0.0));
-        player.apply_effect(crate::effect::Effect::Regeneration, 400);
+        player.apply_effect(petramond_world::effect::Effect::Regeneration, 400);
         let mut data = decode(&encode(&player)).expect("decodes");
         data.effects
             .push(("gone_mod:vanished_effect".to_owned(), 100));
@@ -335,7 +335,7 @@ mod tests {
         let restored = data.restore();
         let active = restored.effects();
         assert_eq!(active.len(), 1, "only the known effect is restored");
-        assert_eq!(active[0].effect, crate::effect::Effect::Regeneration);
+        assert_eq!(active[0].effect, petramond_world::effect::Effect::Regeneration);
         assert_eq!(active[0].remaining, 400);
     }
 }

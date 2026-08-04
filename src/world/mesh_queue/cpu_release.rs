@@ -1,4 +1,4 @@
-use crate::chunk::{ChunkPos, SectionPos};
+use petramond_world::chunk::{ChunkPos, SectionPos};
 use crate::world::store::World;
 
 use super::{MESH_RELEASE_DELAY_FRAMES, MESH_RELEASE_SWEEP_INTERVAL};

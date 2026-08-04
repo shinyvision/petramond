@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use petramond::biome::{blended_fog_color, Biome};
-use petramond::block::Block;
-use petramond::mathh::{lerp, voxel_at, IVec3, Vec3};
+use petramond_world::biome::{blended_fog_color, Biome};
+use petramond_world::block::Block;
+use petramond_math::math::{lerp, voxel_at, IVec3, Vec3};
 use petramond::world::environment::ShaderParamMap;
 use petramond::world::World;
 
@@ -135,12 +135,12 @@ fn water_fills_cell_at(world: &World, wx: i32, wy: i32, wz: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use petramond_render::camera::Camera;
-    use petramond::chunk::ChunkPos;
+    use petramond_world::chunk::ChunkPos;
     use crate::game::Game;
-    use petramond::mathh::{IVec3, Vec3};
+    use petramond_math::math::{IVec3, Vec3};
 
     use super::UNDERWATER_SURFACE_MARGIN;
-    use petramond::block::Block;
+    use petramond_world::block::Block;
 
     fn game() -> Game {
         Game::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), "", 1, 1)

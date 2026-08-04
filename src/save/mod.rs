@@ -44,10 +44,10 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
-use crate::chunk::{ChunkPos, SectionPos};
+use petramond_world::chunk::{ChunkPos, SectionPos};
 use crate::entity::DroppedItem;
 use crate::mob::SavedMob;
-use crate::section::Section;
+use petramond_world::section::Section;
 
 use io::{read_thread, write_thread, IoMsg, ReadMsg};
 use worlds::player_path;

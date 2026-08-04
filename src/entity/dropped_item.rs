@@ -5,10 +5,10 @@
 //! cells without tunnelling). Spin and age advance for the renderer/pickup; the
 //! `entity` module never draws — `App` reads `pos`/`spin`/`stack` directly.
 
-use crate::item::ItemStack;
+use petramond_world::item::ItemStack;
 #[cfg(test)]
-use crate::mathh::IVec3;
-use crate::mathh::Vec3;
+use petramond_math::math::IVec3;
+use petramond_math::math::Vec3;
 use crate::world::World;
 
 use super::{hash01, hash_signed};
@@ -69,7 +69,7 @@ pub struct DroppedItem {
     /// long-lived item piles.
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    pub blocklight: crate::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
     /// Game ticks this item has been alive (advanced once per fixed tick by the
     /// world entity step, paused while its chunk is unloaded). Gates the pickup
     /// delay and drives the despawn timer; persisted with the owning chunk so the
@@ -112,7 +112,7 @@ impl DroppedItem {
             vel,
             stack,
             skylight: 63,
-            blocklight: crate::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
             ticks_lived: 0,
             pickup_requested: None,
             spin,
@@ -122,7 +122,7 @@ impl DroppedItem {
     }
 
     /// Spawn a stack thrown out of the inventory at `pos`, flying along `dir`
-    /// (the player's look direction) with a small upward arc. Unlike [`new`], the
+    /// (the player's look direction) with a small upward arc. Unlike `new`, the
     /// launch is deliberate rather than a random pop, so the toss reads as "the
     /// player threw this". `ticks_lived` starts at 0 so the shared pickup delay
     /// keeps the thrower from instantly vacuuming it back up. A zero `dir` drops it
@@ -140,7 +140,7 @@ impl DroppedItem {
             vel,
             stack,
             skylight: 63,
-            blocklight: crate::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
             ticks_lived: 0,
             pickup_requested: None,
             spin: 0.0,
@@ -166,7 +166,7 @@ impl DroppedItem {
     /// the per-tick world step, not here.
     ///
     /// `magnet_target` is the player chest (body-centre) the item is sucked into:
-    /// once the item is within [`ATTRACT_RADIUS`] of it the normal physics are
+    /// once the item is within `ATTRACT_RADIUS` of it the normal physics are
     /// bypassed and the item flies straight at the target with an accelerating
     /// pull, ignoring gravity/collision so the vacuum reads cleanly. Pass `None`
     /// (or a far target) to disable magnetism.
@@ -190,7 +190,7 @@ impl DroppedItem {
     ) {
         let boxes = |x: i32, y: i32, z: i32| {
             if solid_at(IVec3::new(x, y, z)) {
-                crate::block::Block::Stone.collision_boxes()
+                petramond_world::block::Block::Stone.collision_boxes()
             } else {
                 &[][..]
             }
@@ -203,7 +203,7 @@ impl DroppedItem {
         &mut self,
         dt: f32,
         magnet_target: Option<Vec3>,
-        boxes: &impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
+        boxes: &impl Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
         flow_at: &impl Fn(Vec3) -> Vec3,
     ) {
         // Snapshot the pre-tick pose so the renderer can interpolate this tick's motion
@@ -255,7 +255,7 @@ impl DroppedItem {
         let min = [self.pos.x - h, self.pos.y - h, self.pos.z - h];
         let max = [self.pos.x + h, self.pos.y + h, self.pos.z + h];
         let (moved, grounded, hit) =
-            crate::collision::resolve_body(min, max, self.vel.to_array(), dt, 0.0, boxes);
+            petramond_world::collision::resolve_body(min, max, self.vel.to_array(), dt, 0.0, boxes);
         self.pos += Vec3::from(moved);
         if hit[0] {
             self.vel.x = 0.0;
@@ -282,7 +282,7 @@ impl DroppedItem {
     }
 
     /// `true` if `player_pos` (player body-centre) is within the inner
-    /// [`ABSORB_RADIUS`]: the item should be vacuumed into the inventory and
+    /// `ABSORB_RADIUS`: the item should be vacuumed into the inventory and
     /// despawned. Cheap squared-distance test.
     #[inline]
     pub fn within_pickup(&self, player_pos: Vec3) -> bool {
@@ -291,7 +291,7 @@ impl DroppedItem {
     }
 
     /// `true` if `player_pos` (player body-centre) is within the outer
-    /// [`ATTRACT_RADIUS`]: the item is in the magnet phase and flying at the
+    /// `ATTRACT_RADIUS`: the item is in the magnet phase and flying at the
     /// player. Cheap squared-distance test.
     #[inline]
     pub fn within_attract(&self, player_pos: Vec3) -> bool {
@@ -316,7 +316,7 @@ fn add_flow_push(vel: Vec3, dir: Vec3, target_speed: f32, max_delta: f32) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::item::ItemType;
+    use petramond_world::item::ItemType;
 
     fn stack() -> ItemStack {
         ItemStack::new(ItemType::Dirt, 1)
@@ -337,10 +337,10 @@ mod tests {
     /// `integrate_with_flow` directly.
     fn boxes_of(
         solid: impl Fn(IVec3) -> bool,
-    ) -> impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb] {
+    ) -> impl Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb] {
         move |x, y, z| {
             if solid(IVec3::new(x, y, z)) {
-                crate::block::Block::Stone.collision_boxes()
+                petramond_world::block::Block::Stone.collision_boxes()
             } else {
                 &[]
             }
@@ -431,7 +431,7 @@ mod tests {
         // Model-aware: an item dropped onto an INSET-shaped block (a chest, top at 14/16)
         // settles on that real top, not the full-cube cell top (y = 1). Proves the dropped
         // item now collides through the shared `collision_boxes_at` shape, like the player.
-        let chest = crate::block::Block::Chest.collision_boxes();
+        let chest = petramond_world::block::Block::Chest.collision_boxes();
         let chest_top = chest.iter().map(|b| b.max[1]).fold(0.0, f32::max);
         assert!(
             chest_top < 1.0,

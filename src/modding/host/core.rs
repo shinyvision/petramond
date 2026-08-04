@@ -157,7 +157,7 @@ mod tests {
         );
     }
     use crate::events::tick::TickEvents;
-    use crate::mathh::Vec3;
+    use petramond_math::math::Vec3;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
@@ -174,7 +174,7 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,

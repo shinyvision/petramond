@@ -10,9 +10,9 @@
 
 use std::time::{Duration, Instant};
 
-use petramond::biome::Biome;
+use petramond_world::biome::Biome;
 use petramond_render::camera::Camera;
-use petramond::mathh::{voxel_at, Vec3};
+use petramond_math::math::{voxel_at, Vec3};
 use petramond_render::Renderer;
 use petramond::world::environment::ShaderParamMap;
 use petramond::world::World;
@@ -77,7 +77,7 @@ impl SceneCapture {
         // Every installed pack, since a capture has no server handshake to
         // narrow the set with — a headless shot wants exactly what the assets
         // dir holds.
-        let enabled: std::collections::BTreeSet<String> = petramond::assets::packs()
+        let enabled: std::collections::BTreeSet<String> = petramond_world::assets::packs()
             .iter()
             .filter_map(|p| p.id.clone())
             .collect();

@@ -1,10 +1,10 @@
 use petramond::events::tick::TickEvents;
 use super::common::{filled_inventory, game, game_on_empty_chunk, give, hit};
-use petramond::block::Block;
-use petramond::block_state::{HeldBlockState, LogAxis, SlabSplit, SlabState, StairHalf, StairState};
-use petramond::facing::Facing;
-use petramond::item::{ItemStack, ItemType};
-use petramond::mathh::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_world::block_state::{HeldBlockState, LogAxis, SlabSplit, SlabState, StairHalf, StairState};
+use petramond_math::facing::Facing;
+use petramond_world::item::{ItemStack, ItemType};
+use petramond_math::math::{IVec3, Vec3};
 use petramond::server::placement::facing_from_forward;
 
 #[test]
@@ -22,7 +22,7 @@ fn place_with_empty_hand_does_nothing() {
 
 #[test]
 fn right_clicking_interactable_blocks_requests_their_screen() {
-    use petramond::gui_state::GuiKind;
+    use petramond_world::gui_state::GuiKind;
 
     for (block, expected_kind) in [
         (Block::CraftingTable, GuiKind::CraftingTable),
@@ -122,7 +122,7 @@ fn place_into_loaded_air_decrements_selected() {
     // band, and the y=200 placement below is into open air via materialize-on-write.
     game.server.world.update_load(0, 4, 0);
     // `TestGame` uses an inline job pool — gen finishes inside `poll`.
-    let deadline = std::time::Instant::now() + petramond::test_time::TEST_HARD_DEADLINE;
+    let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     let mut loaded = false;
     while std::time::Instant::now() < deadline {
         game.server.world.poll();
@@ -359,8 +359,8 @@ fn a_full_cube_substrate_is_required_by_the_server_and_the_predictor() {
 
     let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
-        petramond::chunk::ChunkPos::new(0, 0),
-        petramond::chunk::Chunk::new(0, 0),
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
     );
     game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
     game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
@@ -521,7 +521,7 @@ fn torch_support_face_cases() {
         normal: IVec3,
         expect_place: bool,
         expected_block: Block,
-        expected_mount: Option<petramond::torch::TorchPlacement>,
+        expected_mount: Option<petramond_world::torch::TorchPlacement>,
     }
     fn stair(game: &mut super::common::TestGame, support: IVec3) -> bool {
         game.server.world.place_stair(
@@ -537,7 +537,7 @@ fn torch_support_face_cases() {
             normal: -IVec3::X,
             expect_place: true,
             expected_block: Block::Torch,
-            expected_mount: Some(petramond::torch::TorchPlacement::West),
+            expected_mount: Some(petramond_world::torch::TorchPlacement::West),
         },
         Case {
             label: "stair open side is not a full support face",
@@ -553,7 +553,7 @@ fn torch_support_face_cases() {
                 game.server.world.place_slab_layer(
                     support,
                     Block::DirtSlab,
-                    petramond::slab::SlabSlot {
+                    petramond_world::slab::SlabSlot {
                         split: SlabSplit::Y,
                         index: 0,
                     },
@@ -573,7 +573,7 @@ fn torch_support_face_cases() {
                         game.server.world.place_slab_layer(
                             support,
                             block,
-                            petramond::slab::SlabSlot {
+                            petramond_world::slab::SlabSlot {
                                 split: SlabSplit::Y,
                                 index,
                             },
@@ -796,7 +796,7 @@ fn furnace_front_faces_the_player_on_placement() {
 /// came out orange on both halves — and dropped two orange slabs.
 #[test]
 fn stacking_a_slab_keeps_the_sitting_layers_data() {
-    use petramond::block::{part_kv_key, TINT_KV_KEY};
+    use petramond_world::block::{part_kv_key, TINT_KV_KEY};
 
     let mut game = game_on_empty_chunk();
     game.server.sessions[0].player.pos = Vec3::new(100.0, 64.0, 100.0);
@@ -845,7 +845,7 @@ fn stacking_a_slab_keeps_the_sitting_layers_data() {
 /// just quietly paints or drops the wrong layer.
 #[test]
 fn slab_parts_and_boxes_agree_on_the_layer_numbering() {
-    use petramond::block::{ShapeCtx, NO_PART_TINT};
+    use petramond_world::block::{ShapeCtx, NO_PART_TINT};
 
     let mut game = game_on_empty_chunk();
     let p = IVec3::new(4, 64, 4);
@@ -854,7 +854,7 @@ fn slab_parts_and_boxes_agree_on_the_layer_numbering() {
         assert!(world.place_slab_layer(
             p,
             block,
-            petramond::slab::SlabSlot {
+            petramond_world::slab::SlabSlot {
                 split: SlabSplit::Y,
                 index,
             },
@@ -870,7 +870,7 @@ fn slab_parts_and_boxes_agree_on_the_layer_numbering() {
         "slot index IS the part number"
     );
 
-    let tint_for = |_: petramond::tile::Tile| [1.0f32; 3];
+    let tint_for = |_: petramond_world::tile::Tile| [1.0f32; 3];
     let mut boxes = vec![];
     k.render.boxes(
         &ShapeCtx {

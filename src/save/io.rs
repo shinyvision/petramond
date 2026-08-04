@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 
-use crate::chunk::{ChunkPos, SectionPos};
+use petramond_world::chunk::{ChunkPos, SectionPos};
 
 use super::worlds::player_path;
 use super::{codec, colgen, region, LoadedColumnGen, LoadedSection, SectionSnapshot, SectionStore};

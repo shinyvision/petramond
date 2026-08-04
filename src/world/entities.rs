@@ -22,10 +22,10 @@
 
 use std::collections::HashMap;
 
-use crate::chunk::SectionPos;
+use petramond_world::chunk::SectionPos;
 use crate::entity::DroppedItem;
-use crate::item::ItemStack;
-use crate::mathh::{voxel_at, Vec3};
+use petramond_world::item::ItemStack;
+use petramond_math::math::{voxel_at, Vec3};
 use crate::player::PlayerId;
 
 use super::store::World;
@@ -47,7 +47,7 @@ pub struct ItemReactionFx {
     /// The item row's one-shot burst bundle id, if declared.
     pub burst: Option<u8>,
     /// The item row's one-shot sound, if declared.
-    pub sound: Option<crate::sound_registry::Sound>,
+    pub sound: Option<petramond_world::sound_registry::Sound>,
     pub pos: Vec3,
 }
 
@@ -142,7 +142,7 @@ impl DroppedItems {
             let after = voxel_at(it.pos);
             if before != after {
                 it.skylight = world.skylight6_at_world(after.x, after.y, after.z);
-                it.blocklight = crate::light::BlockLight6::from_x2(
+                it.blocklight = petramond_world::light::BlockLight6::from_x2(
                     world.blocklight_rgb_at_world(after.x, after.y, after.z),
                 );
             }
@@ -157,9 +157,9 @@ impl DroppedItems {
             // section reads as "not there yet", never a transient transform.
             if let Some(reaction) = it.stack.item.dropped_reaction() {
                 let in_env = match reaction.environment {
-                    crate::item::ReactionEnvironment::Water => {
+                    petramond_world::item::ReactionEnvironment::Water => {
                         world.block_if_stream_final(after.x, after.y, after.z)
-                            == Some(crate::block::Block::Water)
+                            == Some(petramond_world::block::Block::Water)
                     }
                 };
                 if in_env {
@@ -400,7 +400,7 @@ impl World {
     /// magnet toward each requested drop's own requester — `magnet_anchors` is
     /// `(player id, body centre)` per player). With a save attached, a drop
     /// over a not-yet-loaded chunk is frozen so it can't fall through missing
-    /// terrain. Drives the owned [`DroppedItems`] against an immutable view of
+    /// terrain. Drives the owned `DroppedItems` against an immutable view of
     /// the rest of the world: the field is moved out so the
     /// `&mut DroppedItems` and `&World` borrows stay disjoint.
     pub fn tick_item_physics(
@@ -419,8 +419,8 @@ impl World {
     }
 
     /// Per fixed game-tick lifetime step: age each active item and despawn those
-    /// past [`ITEM_LIFETIME_TICKS`]. With a save attached, an item over an unloaded
-    /// chunk is paused. See [`DroppedItems::tick_lifetime`].
+    /// past `ITEM_LIFETIME_TICKS`. With a save attached, an item over an unloaded
+    /// chunk is paused. See `DroppedItems::tick_lifetime`.
     pub fn tick_item_lifetime(&mut self) {
         if self.dropped_items.is_empty() {
             return;
@@ -453,7 +453,7 @@ fn section_of(pos: Vec3) -> Option<SectionPos> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::item::ItemType;
+    use petramond_world::item::ItemType;
 
     /// The single test player's id — most tests exercise one requester.
     const P0: PlayerId = PlayerId(0);
@@ -517,13 +517,13 @@ mod tests {
         let mut w = World::new(1, 4);
         w.clear_world();
         w.insert_chunk_for_test(
-            crate::chunk::ChunkPos::new(0, 0),
-            crate::chunk::Chunk::new(0, 0),
+            petramond_world::chunk::ChunkPos::new(0, 0),
+            petramond_world::chunk::Chunk::new(0, 0),
         );
         // A water cell over stone, and a dry stone shelf as the control.
-        w.set_block_world(2, 63, 2, crate::block::Block::Stone);
-        w.set_block_world(2, 64, 2, crate::block::Block::Water);
-        w.set_block_world(4, 63, 4, crate::block::Block::Stone);
+        w.set_block_world(2, 63, 2, petramond_world::block::Block::Stone);
+        w.set_block_world(2, 64, 2, petramond_world::block::Block::Water);
+        w.set_block_world(4, 63, 4, petramond_world::block::Block::Stone);
 
         let mut wet = DroppedItem::new(Vec3::new(2.5, 64.5, 2.5), ItemStack::new(flour, 7), 1);
         wet.vel = Vec3::ZERO;

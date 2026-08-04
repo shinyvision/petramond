@@ -13,8 +13,8 @@
 //! or the world's terrain-content revision moved (`World::terrain_send_key`),
 //! or while a previous plan hit the per-pump budget.
 
-use crate::chunk::{ChunkPos, SectionPos};
-use crate::mathh::IVec3;
+use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_math::math::IVec3;
 use crate::net::protocol::{SectionCacheClaim, ServerToClient, SECTION_CACHE_CAP};
 use crate::world::LoadAnchor;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -611,7 +611,7 @@ mod tests {
     use crate::net::protocol::ClientToServer;
     use crate::server::game::PumpOutput;
     use crate::player::PlayerId;
-    use crate::test_time::TEST_HARD_DEADLINE;
+    use petramond_util::test_time::TEST_HARD_DEADLINE;
     use std::time::Instant;
 
     fn count_terrain(msgs: &[ServerToClient]) -> usize {
@@ -888,7 +888,7 @@ mod tests {
                 lit_air.0,
                 lit_air.1,
                 lit_air.2,
-                crate::block::Block::Stone
+                petramond_world::block::Block::Stone
             ),
             "edit lands inside the streamed section"
         );

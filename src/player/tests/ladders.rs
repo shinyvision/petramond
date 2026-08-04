@@ -6,7 +6,7 @@ use super::*;
 /// on the ladder. The player stands in front of the wall and walks +X into the
 /// ladder's face.
 mod ladder_fixture {
-    use crate::facing::Facing;
+    use petramond_math::facing::Facing;
     use crate::world::Climb;
 
     pub fn solid(x: i32, y: i32, _z: i32) -> bool {

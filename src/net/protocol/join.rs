@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::crafting::CraftingRecipeData;
-use crate::mathh::IVec3;
+use petramond_world::crafting::CraftingRecipeData;
+use petramond_math::math::IVec3;
 use crate::player::PlayerId;
 
 use super::{ItemSlotWire, Transform};

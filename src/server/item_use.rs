@@ -5,12 +5,12 @@
 
 use super::game::ServerGame;
 use super::placement::facing_from_forward;
-use crate::block::Block;
+use petramond_world::block::Block;
 use crate::entity::DroppedItem;
 use crate::events::{BlockPlacePre, ItemUsePre, Outcome, PostEvent};
 use crate::events::tick::TickEvents;
-use crate::item::{ItemStack, ItemType, ItemUse, UseRay};
-use crate::mathh::Vec3;
+use petramond_world::item::{ItemStack, ItemType, ItemUse, UseRay};
+use petramond_math::math::Vec3;
 use crate::mob::ShearDrop;
 use crate::net::protocol::TargetRef;
 use crate::player::Player;
@@ -301,7 +301,7 @@ impl ServerGame {
         let p = if crate::world::placement::replaces_in_place(looked_at) {
             h.block
         } else {
-            if h.normal == crate::mathh::IVec3::ZERO {
+            if h.normal == petramond_math::math::IVec3::ZERO {
                 return false;
             }
             h.block + h.normal

@@ -1,6 +1,6 @@
 use super::{App, AppScreen};
 use crate::game::GameEvents;
-use petramond::mathh::IVec3;
+use petramond_math::math::IVec3;
 
 impl App {
     pub(super) fn toggle_inventory(&mut self) {
@@ -75,7 +75,7 @@ impl App {
     }
 
     fn open_inventory(&mut self) {
-        self.enter_menu(AppScreen::Menu(petramond::gui_state::GuiKind::Inventory));
+        self.enter_menu(AppScreen::Menu(petramond_world::gui_state::GuiKind::Inventory));
         if let Some(game) = self.game.as_mut() {
             game.request_open_inventory();
         }
@@ -83,7 +83,7 @@ impl App {
 
     /// Open the screen for a server-opened GUI session — any kind, engine
     /// container or mod GUI. `pos` is the opening block, if any.
-    fn open_gui(&mut self, kind: petramond::gui_state::GuiKind, pos: Option<IVec3>) {
+    fn open_gui(&mut self, kind: petramond_world::gui_state::GuiKind, pos: Option<IVec3>) {
         self.enter_menu(AppScreen::Menu(kind));
         if let Some(game) = self.game.as_mut() {
             game.open_gui_screen(kind, pos);
@@ -98,7 +98,7 @@ impl App {
         // every crafting-station kind (engine pair or pack workbench).
         if matches!(
             screen,
-            AppScreen::Menu(k) if petramond::crafting::CraftingStation::of_kind(k).is_some()
+            AppScreen::Menu(k) if petramond_world::crafting::CraftingStation::of_kind(k).is_some()
         ) {
             self.crafting_browser.reset();
         }

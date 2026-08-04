@@ -10,7 +10,7 @@
 //! — a fresh location each launch, and a different location for each player when
 //! several share one world (future multiplayer). The terrain stays fully
 //! seed-deterministic; only *where on it* the player lands is random. The random
-//! core [`find_spawn_rng`] takes an explicit `rng_seed` so tests stay
+//! core `find_spawn_rng` takes an explicit `rng_seed` so tests stay
 //! reproducible; [`find_spawn`] feeds it real entropy.
 //!
 //! **The dry-land predicate.** A column's `surf` is its top *solid* surface

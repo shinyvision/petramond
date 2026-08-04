@@ -13,8 +13,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::chunk::{ChunkPos, SectionPos};
-use crate::mathh::Vec3;
+use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_math::math::Vec3;
 use crate::player::PlayerId;
 
 mod actions;
@@ -59,20 +59,20 @@ pub struct ItemSlotWire {
 
 impl ItemSlotWire {
     /// Encode a stack for the wire (blob resolved from the variant table).
-    pub fn from_stack(st: crate::item::ItemStack) -> Self {
+    pub fn from_stack(st: petramond_world::item::ItemStack) -> Self {
         ItemSlotWire {
             item_id: st.item.0,
             count: st.count,
-            data: crate::item::variant::blob(st.variant).map(|b| (*b).clone()),
+            data: petramond_world::item::variant::blob(st.variant).map(|b| (*b).clone()),
         }
     }
 
     /// Decode back to a stack, re-interning the blob. An unreadable blob
     /// degrades to a plain stack (mirrors the save codec's policy).
-    pub fn to_stack(&self) -> crate::item::ItemStack {
-        let mut st = crate::item::ItemStack::new(crate::item::ItemType(self.item_id), self.count);
+    pub fn to_stack(&self) -> petramond_world::item::ItemStack {
+        let mut st = petramond_world::item::ItemStack::new(petramond_world::item::ItemType(self.item_id), self.count);
         if let Some(blob) = &self.data {
-            match crate::item::variant::intern_blob(blob) {
+            match petramond_world::item::variant::intern_blob(blob) {
                 Some(v) => st.variant = v,
                 None => log::warn!("wire slot: unreadable instance-data blob dropped"),
             }

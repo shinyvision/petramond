@@ -24,7 +24,7 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use serde::Deserialize;
 
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 
 use super::super::brain::{AiBehavior, AiCtx, AttackIntent, BehaviorOutput};
 use super::super::{def, EntityRef};
@@ -163,8 +163,8 @@ fn wrap_angle(a: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::Block;
-    use crate::chunk::ChunkPos;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::ChunkPos;
     use crate::mob::MobRng;
     use crate::world::World;
 

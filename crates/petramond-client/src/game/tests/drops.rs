@@ -1,11 +1,11 @@
 use super::super::tick::TICK_DT;
 use super::super::GameInput;
 use super::common::{apply_drop_actions, count_item, filled_inventory, game};
-use petramond::block::Block;
+use petramond_world::block::Block;
 use petramond::entity::DroppedItem;
-use petramond::inventory::Inventory;
-use petramond::item::{ItemStack, ItemType};
-use petramond::mathh::{IVec3, Vec3};
+use petramond_world::inventory::Inventory;
+use petramond_world::item::{ItemStack, ItemType};
+use petramond_math::math::{IVec3, Vec3};
 use petramond::net::protocol::ThrowAmount;
 use petramond::world::{ITEM_LIFETIME_TICKS, ITEM_PICKUP_DELAY_TICKS};
 
@@ -16,12 +16,12 @@ fn spawn_drops_dirt_yields_one_drop() {
     game.server.spawn_drops(
         IVec3::new(2, 3, 4),
         Block::Dirt,
-        (17, petramond::light::BlockLight6::DARK),
-        petramond::item::VariantId::NONE,
+        (17, petramond_world::light::BlockLight6::DARK),
+        petramond_world::item::VariantId::NONE,
     );
     assert_eq!(game.server.world.item_entities().len(), 1);
     let d = &game.server.world.item_entities()[0];
-    assert_eq!(d.stack.item, petramond::item::ItemType::Dirt);
+    assert_eq!(d.stack.item, petramond_world::item::ItemType::Dirt);
     assert_eq!(d.stack.count, 1);
     assert_eq!(d.skylight, 17);
     assert!((d.pos.x - 2.5).abs() < 1e-5);
@@ -71,7 +71,7 @@ fn an_undermined_snow_layer_shatters_without_a_drop() {
 #[test]
 fn dropped_item_is_picked_up_near_player() {
     let mut game = game();
-    let item = petramond::item::ItemType::Poppy;
+    let item = petramond_world::item::ItemType::Poppy;
     let before = count_item(&game.server.sessions[0].player.inventory, item);
     let centre = game.server.sessions[0].player.body_center();
     let mut drop = DroppedItem::new(centre, ItemStack::new(item, 1), 1);
@@ -91,7 +91,7 @@ fn partial_pickup_takes_what_fits_and_leaves_the_rest() {
     // full of a different item.
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::Dirt, 63));
-    for _ in 0..(petramond::inventory::TOTAL_SLOTS - 1) {
+    for _ in 0..(petramond_world::inventory::TOTAL_SLOTS - 1) {
         inv.add(ItemStack::new(ItemType::Stone, 64));
     }
     game.server.sessions[0].player.inventory = inv;
@@ -132,7 +132,7 @@ fn pickup_planning_reserves_capacity_before_magnetizing() {
     // radius. Planning should request only one of them.
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::Dirt, 63));
-    for _ in 0..(petramond::inventory::TOTAL_SLOTS - 1) {
+    for _ in 0..(petramond_world::inventory::TOTAL_SLOTS - 1) {
         inv.add(ItemStack::new(ItemType::Stone, 64));
     }
     game.server.sessions[0].player.inventory = inv;
@@ -169,7 +169,7 @@ fn pickup_planning_reserves_capacity_before_magnetizing() {
 #[test]
 fn fresh_dropped_item_waits_out_pickup_delay() {
     let mut game = game();
-    let item = petramond::item::ItemType::Poppy;
+    let item = petramond_world::item::ItemType::Poppy;
     let centre = game.server.sessions[0].player.body_center();
     // ticks_lived 0: sitting right on the player but still inside the delay.
     game.server
@@ -193,7 +193,7 @@ fn fresh_dropped_item_waits_out_pickup_delay() {
 #[test]
 fn dropped_item_magnets_toward_player_then_absorbs() {
     let mut game = game();
-    let item = petramond::item::ItemType::Poppy;
+    let item = petramond_world::item::ItemType::Poppy;
     let before = count_item(&game.server.sessions[0].player.inventory, item);
     let chest = game.server.sessions[0].player.body_center();
     let start = chest + Vec3::new(0.0, petramond::entity::ATTRACT_RADIUS - 0.1, 0.0);
@@ -268,7 +268,7 @@ fn a_dropped_item_enters_the_world_on_the_tick_not_the_frame() {
 #[test]
 fn dropped_item_beyond_one_block_is_not_magnet_picked_up() {
     let mut game = game();
-    let item = petramond::item::ItemType::Poppy;
+    let item = petramond_world::item::ItemType::Poppy;
     let before = count_item(&game.server.sessions[0].player.inventory, item);
     let chest = game.server.sessions[0].player.body_center();
     let start = chest + Vec3::new(petramond::entity::ATTRACT_RADIUS + 0.05, 0.0, 0.0);
@@ -296,7 +296,7 @@ fn dropped_item_beyond_one_block_is_not_magnet_picked_up() {
 fn distant_dropped_item_is_not_picked_up() {
     let mut game = game();
     let far = game.server.sessions[0].player.eye() + Vec3::new(50.0, 0.0, 0.0);
-    let mut drop = DroppedItem::new(far, ItemStack::new(petramond::item::ItemType::Dirt, 1), 2);
+    let mut drop = DroppedItem::new(far, ItemStack::new(petramond_world::item::ItemType::Dirt, 1), 2);
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // eligible, but far out of range
     game.server.world.spawn_item(drop);
     game.server.world.tick_item_lifetime();
@@ -308,7 +308,7 @@ fn distant_dropped_item_is_not_picked_up() {
 fn stale_dropped_item_despawns_on_the_lifetime_tick() {
     let mut game = game();
     let far = game.server.sessions[0].player.eye() + Vec3::new(50.0, 0.0, 0.0);
-    let mut item = DroppedItem::new(far, ItemStack::new(petramond::item::ItemType::Dirt, 1), 3);
+    let mut item = DroppedItem::new(far, ItemStack::new(petramond_world::item::ItemType::Dirt, 1), 3);
     // One tick short of the lifetime limit: the next fixed tick ages it out.
     item.ticks_lived = ITEM_LIFETIME_TICKS - 1;
     game.server.world.spawn_item(item);
@@ -422,12 +422,12 @@ fn cursor_throw_and_drop_selected_cases() {
         game.server.sessions[0].player.inventory = match (case.held, case.source) {
             (false, _) => Inventory::new(),
             (true, Source::Cursor) => Inventory::from_parts(
-                [None; petramond::inventory::TOTAL_SLOTS],
+                [None; petramond_world::inventory::TOTAL_SLOTS],
                 Some(ItemStack::new(ItemType::Dirt, STACK)),
                 0,
             ),
             (true, Source::Selected) => {
-                let mut slots = [None; petramond::inventory::TOTAL_SLOTS];
+                let mut slots = [None; petramond_world::inventory::TOTAL_SLOTS];
                 slots[0] = Some(ItemStack::new(ItemType::Dirt, STACK));
                 Inventory::from_parts(slots, None, 0)
             }
@@ -492,7 +492,7 @@ fn cursor_throw_and_drop_selected_cases() {
 fn queued_cursor_stack_throw_survives_menu_close_before_tick() {
     let mut game = game();
     game.server.sessions[0].player.inventory = Inventory::from_parts(
-        [None; petramond::inventory::TOTAL_SLOTS],
+        [None; petramond_world::inventory::TOTAL_SLOTS],
         Some(ItemStack::new(ItemType::Dirt, 12)),
         0,
     );
@@ -530,7 +530,7 @@ fn queued_cursor_stack_throw_survives_menu_close_before_tick() {
 fn queued_cursor_one_throw_stashes_only_remainder_on_menu_close() {
     let mut game = game();
     game.server.sessions[0].player.inventory = Inventory::from_parts(
-        [None; petramond::inventory::TOTAL_SLOTS],
+        [None; petramond_world::inventory::TOTAL_SLOTS],
         Some(ItemStack::new(ItemType::Dirt, 12)),
         0,
     );
@@ -570,7 +570,7 @@ fn queued_cursor_one_throw_stashes_only_remainder_on_menu_close() {
 #[test]
 fn queued_q_drop_uses_the_action_time_hotbar_slot() {
     let mut game = game();
-    let mut slots = [None; petramond::inventory::TOTAL_SLOTS];
+    let mut slots = [None; petramond_world::inventory::TOTAL_SLOTS];
     slots[0] = Some(ItemStack::new(ItemType::Dirt, 5));
     slots[1] = Some(ItemStack::new(ItemType::Stone, 7));
     game.server.sessions[0].player.inventory = Inventory::from_parts(slots, None, 0);
@@ -627,7 +627,7 @@ fn applying_a_real_throw_arms_the_hand_place_jab() {
 #[test]
 fn a_noop_throw_does_not_arm_the_place_jab() {
     let mut game = game();
-    game.server.sessions[0].player.inventory = petramond::inventory::Inventory::new();
+    game.server.sessions[0].player.inventory = petramond_world::inventory::Inventory::new();
     // Nothing in hand or on the cursor: every throw path is a no-op.
     for _ in 0..64 {
         game.server.sessions[0]
@@ -686,7 +686,7 @@ fn throw_animates_once_at_the_click_and_is_never_echoed_back() {
 #[test]
 fn two_players_each_collect_their_own_adjacent_drop_in_one_tick() {
     let mut game = game();
-    let item = petramond::item::ItemType::Poppy;
+    let item = petramond_world::item::ItemType::Poppy;
     game.server.sessions[0].player.pos = Vec3::new(0.5, 64.0, 0.5);
     let other = game
         .server
@@ -722,7 +722,7 @@ fn two_players_each_collect_their_own_adjacent_drop_in_one_tick() {
 #[test]
 fn a_single_drop_between_two_players_goes_to_exactly_one() {
     let mut game = game();
-    let item = petramond::item::ItemType::Poppy;
+    let item = petramond_world::item::ItemType::Poppy;
     game.server.sessions[0].player.pos = Vec3::new(0.0, 64.0, 0.5);
     let other = game
         .server

@@ -11,7 +11,7 @@ use super::MAX_MODEL_PARTS;
 // ---------------------------------------------------------------------------------
 
 /// A bbmodel kind — the registry key, one per authored model (an opaque runtime
-/// id indexing the loaded def table + [`MODELS`]/[`INSTANCES`]). Engine kinds own
+/// id indexing the loaded def table + `MODELS`/`INSTANCES`). Engine kinds own
 /// the low ids in the frozen const order below; mod packs register additional
 /// kinds through namespaced `models.json` rows (see [`crate::registry`]) and
 /// reference them from a block row's `shape` field (`{"model": "<key>"}`, the

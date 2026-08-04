@@ -7,8 +7,8 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-use crate::crafting::load_recipes_for;
-use crate::mathh::Vec3;
+use petramond_world::crafting::load_recipes_for;
+use petramond_math::math::Vec3;
 use crate::player::Player;
 use crate::player::PlayerId;
 use crate::save::{LevelData, WorldSave};
@@ -16,7 +16,7 @@ use crate::server::game::ServerGame;
 use crate::server::player::ConnectedPlayer;
 use crate::worker::JobPool;
 use crate::world::{World, WorldRole};
-use crate::worldgen::density::surface::SurfaceDensitySystem;
+use petramond_worldgen::density::surface::SurfaceDensitySystem;
 
 struct OpenedSession {
     save: Option<(WorldSave, crate::world::SavedIndex)>,
@@ -177,7 +177,7 @@ pub fn build_server_with_pool(
     // gen hooks use). The unlock index is the other view of that catalog.
     let recipes = load_recipes_for(&disabled_mods);
     crate::modding::install_recipes(std::sync::Arc::new(recipes.clone()));
-    let unlocks = std::sync::Arc::new(crate::crafting::UnlockIndex::build(recipes.crafting()));
+    let unlocks = std::sync::Arc::new(petramond_world::crafting::UnlockIndex::build(recipes.crafting()));
     perf.mark("recipes");
     let mut server = ServerGame {
         hostile_spawn_cache: Default::default(),
@@ -248,7 +248,7 @@ pub fn build_server_with_pool(
         let (host_player, host_gui) = match sessions.first_mut() {
             Some(host) => (&mut host.player, &mut host.gui_state),
             None => {
-                stand_in = (spawn_player(seed), crate::gui_state::empty_gui_state());
+                stand_in = (spawn_player(seed), petramond_world::gui_state::empty_gui_state());
                 (&mut stand_in.0, &mut stand_in.1)
             }
         };
@@ -359,7 +359,7 @@ pub fn player_for_session(save: Option<&WorldSave>, name: &str, seed: u32) -> Pl
 /// A fresh player at the seed's surface pick — the fallback for both the
 /// local session and a remote join with no `players/<name>.dat` yet.
 pub fn spawn_player(seed: u32) -> Player {
-    let surface = crate::worldgen::spawn::find_spawn(seed);
+    let surface = petramond_worldgen::spawn::find_spawn(seed);
     let feet = Vec3::new(
         surface.x as f32 + 0.5,
         (surface.y + 1) as f32,

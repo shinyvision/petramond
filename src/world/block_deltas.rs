@@ -2,8 +2,8 @@
 //! change capture and the sparse per-cell wire state it ships.
 
 use crate::world::WorldData;
-use crate::block::Block;
-use crate::chunk::section_idx;
+use petramond_world::block::Block;
+use petramond_world::chunk::section_idx;
 
 use super::store::World;
 
@@ -84,12 +84,12 @@ impl World {
     }
 
     /// Snapshot one cell's CURRENT content as a wire delta — the same shape
-    /// [`record_block_delta`](Self::record_block_delta) logs, but on demand:
+    /// `record_block_delta` logs, but on demand:
     /// the per-recipient corrective sync a use click that disagreed with the
     /// client's replica ships. `None` when the section is not loaded.
     pub fn block_delta_at(
         &self,
-        pos: crate::mathh::IVec3,
+        pos: petramond_math::math::IVec3,
     ) -> Option<crate::net::protocol::BlockDelta> {
         if !self.section_loaded_at(pos.x, pos.y, pos.z) {
             return None;
@@ -114,7 +114,7 @@ impl World {
     pub(super) fn record_block_delta(&mut self, wx: i32, wy: i32, wz: i32) {
         let block_id = self.chunk_block(wx, wy, wz);
         let water = (block_id == Block::Water.id()).then(|| self.water_meta_world(wx, wy, wz));
-        let pos = crate::mathh::IVec3::new(wx, wy, wz);
+        let pos = petramond_math::math::IVec3::new(wx, wy, wz);
         let state = self.cell_state_at(wx, wy, wz);
         // KV deltas already logged for this cell are STALE: the block write
         // wiped the cell's KV, so replaying them after this delta would
@@ -148,7 +148,7 @@ impl World {
         wx: i32,
         wy: i32,
         wz: i32,
-    ) -> Option<crate::block::ShapeState> {
+    ) -> Option<petramond_world::block::ShapeState> {
         let (pos, lx, ly, lz) = WorldData::split_world(wx, wy, wz)?;
         let s = self.sections.get(&pos)?;
         s.cell_states()

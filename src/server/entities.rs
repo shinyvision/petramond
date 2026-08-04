@@ -1,6 +1,6 @@
 use crate::entity::DroppedItem;
 use crate::events::{DamageSource, MobDamagePre, Outcome, PostEvent};
-use crate::mathh::{voxel_at, Vec3};
+use petramond_math::math::{voxel_at, Vec3};
 use crate::mob::{def as mob_def, DeathDrop, MobAttack, MobDamageSound, MobFall, MobSoundCategory};
 
 /// Falls shorter than this into water make no splash — walking or a one-block
@@ -100,7 +100,7 @@ impl ServerGame {
     /// The held weapon's damage roll for session `s` (the same roll a mob hit
     /// uses; deterministic off the spawn counter).
     fn roll_attack_damage(&mut self, s: usize) -> f32 {
-        let (lo, hi) = crate::item::attack_damage(self.sessions[s].selected_item());
+        let (lo, hi) = petramond_world::item::attack_damage(self.sessions[s].selected_item());
         self.spawn_counter = self.spawn_counter.wrapping_add(1);
         lo + crate::entity::hash01(self.spawn_counter as u64) * (hi - lo)
     }
@@ -355,11 +355,11 @@ impl ServerGame {
             return;
         }
         let Some(bundle) =
-            crate::particle_emitters::by_key(crate::particle_emitters::WATER_SPLASH_KEY)
+            petramond_world::particle_emitters::by_key(petramond_world::particle_emitters::WATER_SPLASH_KEY)
         else {
             return;
         };
-        let c = crate::mathh::voxel_at(feet);
+        let c = petramond_math::math::voxel_at(feet);
         // The entry cell (or the one below, when the feet sit at the boundary).
         let mut top = if self.world.water_cell_at(c.x, c.y, c.z) {
             c.y
@@ -378,9 +378,9 @@ impl ServerGame {
         // The splash SOUND rides the ordinary one-shot sound channel (the
         // emitter catalog is particles-only); the fall depth picks the clip.
         let sound = if fall >= WATER_SPLASH_BIG_FALL {
-            crate::sound_registry::Sound::WaterSplashBig
+            petramond_world::sound_registry::Sound::WaterSplashBig
         } else {
-            crate::sound_registry::Sound::WaterSplashSmall
+            petramond_world::sound_registry::Sound::WaterSplashSmall
         };
         events.world.sounds.push(crate::events::tick::ModSound {
             sound,
@@ -395,7 +395,7 @@ impl ServerGame {
     pub fn push_block_noise(
         &mut self,
         s: usize,
-        pos: crate::mathh::IVec3,
+        pos: petramond_math::math::IVec3,
         kind: crate::mob::NoiseKind,
     ) {
         self.world.push_noise(crate::mob::Noise {
@@ -527,7 +527,7 @@ fn queue_mob_sound(
 /// The two 6-bit light channels `(sky6, block)` for dynamic geometry at a world
 /// position, so the held item, particles, and dropped items are lit — and
 /// coloured — by nearby emitters just like the static blocks around them.
-pub fn light_at_pos(world: &World, pos: Vec3) -> (u8, crate::light::BlockLight6) {
+pub fn light_at_pos(world: &World, pos: Vec3) -> (u8, petramond_world::light::BlockLight6) {
     let c = voxel_at(pos);
     world.dynamic_light_at_world(c.x, c.y, c.z)
 }

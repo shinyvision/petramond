@@ -1,9 +1,9 @@
 use petramond::events::tick::TickEvents;
 use super::common::game_on_empty_chunk;
-use petramond::block::Block;
-use petramond::inventory::Inventory;
-use petramond::item::{ItemStack, ItemType};
-use petramond::mathh::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_world::inventory::Inventory;
+use petramond_world::item::{ItemStack, ItemType};
+use petramond_math::math::{IVec3, Vec3};
 
 fn holding(item: ItemType) -> Inventory {
     let mut inv = Inventory::new();

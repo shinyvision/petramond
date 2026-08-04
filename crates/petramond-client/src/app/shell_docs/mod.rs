@@ -29,8 +29,8 @@ mod world_select;
 mod world_settings;
 
 use super::{App, AppScreen};
-use petramond::sound_registry::Sound;
-use petramond::gui_state::GuiKind;
+use petramond_world::sound_registry::Sound;
+use petramond_world::gui_state::GuiKind;
 use petramond_ui::{UiEvent, UiState, UiValue};
 
 /// The flat dim shell menus draw over a live world.
@@ -156,7 +156,7 @@ fn controller_for(kind: GuiKind) -> ShellController {
 /// headers count), resolved through the controller's own row builder.
 #[cfg(test)]
 pub(in crate::app) fn controls_action_row_index(
-    table: &petramond::controls::ActionTable,
+    table: &petramond_world::controls::ActionTable,
     action_id: &str,
 ) -> Option<usize> {
     options_controls::row_entries(table)
@@ -263,11 +263,11 @@ impl App {
     /// containers): bound values come from the tick-owned GUI state map and
     /// the container views; slot clicks/drags/drops and widget clicks latch
     /// to the tick as
-    /// [`petramond::gui_state::MenuSlot`] clicks — the same deterministic path the
+    /// [`petramond_world::gui_state::MenuSlot`] clicks — the same deterministic path the
     /// legacy hit-test used. Off-panel presses throw the cursor stack.
     pub(super) fn drive_doc_menu(&mut self, kind: GuiKind, screen: (u32, u32), now: f64) {
         self.ui.ensure_active(kind);
-        let crafting_station = petramond::crafting::CraftingStation::of_kind(kind);
+        let crafting_station = petramond_world::crafting::CraftingStation::of_kind(kind);
         if let (Some(station), Some(game)) = (crafting_station, self.game.as_ref()) {
             let hovered = self
                 .ui
@@ -286,9 +286,9 @@ impl App {
             if let Some(map) = gui_state {
                 for (key, value) in map.iter() {
                     let v = match value {
-                        petramond::gui_state::GuiValue::F32(v) => petramond_ui::UiValue::F32(*v),
-                        petramond::gui_state::GuiValue::I32(v) => petramond_ui::UiValue::I32(*v),
-                        petramond::gui_state::GuiValue::Str(s) => petramond_ui::UiValue::Str(s.clone()),
+                        petramond_world::gui_state::GuiValue::F32(v) => petramond_ui::UiValue::F32(*v),
+                        petramond_world::gui_state::GuiValue::I32(v) => petramond_ui::UiValue::I32(*v),
+                        petramond_world::gui_state::GuiValue::Str(s) => petramond_ui::UiValue::Str(s.clone()),
                     };
                     state.set(key.clone(), v);
                 }
@@ -301,8 +301,8 @@ impl App {
         self.ui.frame(kind, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
         let modifier_shift = self.modifiers.shift;
         let to_button = |b: petramond_ui::PointerButton| match b {
-            petramond_ui::PointerButton::Primary => petramond::gui_state::PointerButton::Primary,
-            petramond_ui::PointerButton::Secondary => petramond::gui_state::PointerButton::Secondary,
+            petramond_ui::PointerButton::Primary => petramond_world::gui_state::PointerButton::Primary,
+            petramond_ui::PointerButton::Secondary => petramond_world::gui_state::PointerButton::Secondary,
         };
         for ev in self.ui.take_events() {
             let handled_crafting = if crafting_station.is_some() {
@@ -318,8 +318,8 @@ impl App {
             if let Some(id) = menu_widget_activation(&ev) {
                 if let Some(game) = self.game.as_mut() {
                     game.menu_click(
-                        petramond::gui_state::MenuSlot::Widget(petramond::gui_state::intern_str(id)),
-                        petramond::gui_state::PointerButton::Primary,
+                        petramond_world::gui_state::MenuSlot::Widget(petramond_world::gui_state::intern_str(id)),
+                        petramond_world::gui_state::PointerButton::Primary,
                         modifier_shift,
                         false,
                     );
@@ -365,8 +365,8 @@ impl App {
                     if let Some(game) = self.game.as_mut() {
                         use petramond::net::protocol::ThrowAmount;
                         game.throw_cursor(match to_button(button) {
-                            petramond::gui_state::PointerButton::Primary => ThrowAmount::All,
-                            petramond::gui_state::PointerButton::Secondary => ThrowAmount::One,
+                            petramond_world::gui_state::PointerButton::Primary => ThrowAmount::All,
+                            petramond_world::gui_state::PointerButton::Secondary => ThrowAmount::One,
                         });
                     }
                 }

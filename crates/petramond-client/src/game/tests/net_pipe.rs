@@ -5,24 +5,24 @@
 
 use petramond::events::tick::TickEvents;
 use super::common::{self, filled_inventory, game, game_on_empty_chunk};
-use petramond::block::Block;
-use petramond::gui_state::MenuSlot;
-use petramond::item::{ItemStack, ItemType};
-use petramond::mathh::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_world::gui_state::MenuSlot;
+use petramond_world::item::{ItemStack, ItemType};
+use petramond_math::math::{IVec3, Vec3};
 use petramond::mob::Mob;
 use petramond::net::protocol::{ClientToServer, MenuSlotWire, PlayerAction, TargetRef};
 use petramond::server::health::fall_damage_health;
 
 fn install_test_crafting_recipe(game: &mut super::common::TestGame) {
     game.server
-        .install_recipes_for_test(petramond::crafting::Recipes::new(
-            vec![petramond::crafting::CraftingRecipe::new(
+        .install_recipes_for_test(petramond_world::crafting::Recipes::new(
+            vec![petramond_world::crafting::CraftingRecipe::new(
                 "test:ordered".into(),
-                petramond::crafting::CraftingStation::Inventory,
-                vec![petramond::crafting::CraftingIngredient {
-                    selector: petramond::crafting::IngredientSelector::Item(ItemType::Coal),
+                petramond_world::crafting::CraftingStation::Inventory,
+                vec![petramond_world::crafting::CraftingIngredient {
+                    selector: petramond_world::crafting::IngredientSelector::Item(ItemType::Coal),
                     count: 1,
-                    use_mode: petramond::crafting::IngredientUse::Consume,
+                    use_mode: petramond_world::crafting::IngredientUse::Consume,
                 }],
                 ItemStack::new(ItemType::Stick, 2),
             )],
@@ -388,7 +388,7 @@ fn close_then_table_interact_recovers_output_before_opening_the_new_menu() {
         .inventory
         .add(ItemStack::new(ItemType::Coal, 1));
     game.server
-        .open_crafting_for(0, petramond::crafting::CraftingStation::Inventory);
+        .open_crafting_for(0, petramond_world::crafting::CraftingStation::Inventory);
     game.server.apply_message(
         0,
         ClientToServer::CraftRecipe {
@@ -407,7 +407,7 @@ fn close_then_table_interact_recovers_output_before_opening_the_new_menu() {
         table.x,
         table.y,
         table.z,
-        petramond::block::Block::CraftingTable,
+        petramond_world::block::Block::CraftingTable,
     );
     game.server.sessions[0].look = Some(common::hit(table, IVec3::Y));
     game.server.queue_place_click_for_test(0);
@@ -423,13 +423,13 @@ fn close_then_table_interact_recovers_output_before_opening_the_new_menu() {
     assert_eq!(
         game.server.sessions[0].menu.target(),
         crate::game::container::ContainerTarget::Gui {
-            kind: petramond::gui_state::GuiKind::CraftingTable,
+            kind: petramond_world::gui_state::GuiKind::CraftingTable,
             pos: None
         }
     );
     assert_eq!(
         game.server.sessions[0].request_open_gui,
-        Some((petramond::gui_state::GuiKind::CraftingTable, Some(table)))
+        Some((petramond_world::gui_state::GuiKind::CraftingTable, Some(table)))
     );
     assert!(game.server.sessions[0].menu.craft_output().is_none());
 }
@@ -443,7 +443,7 @@ fn shutdown_recovers_untaken_output_without_waiting_for_a_tick() {
         .inventory
         .add(ItemStack::new(ItemType::Coal, 1));
     game.server
-        .open_crafting_for(0, petramond::crafting::CraftingStation::Inventory);
+        .open_crafting_for(0, petramond_world::crafting::CraftingStation::Inventory);
     game.server.apply_message(
         0,
         ClientToServer::CraftRecipe {

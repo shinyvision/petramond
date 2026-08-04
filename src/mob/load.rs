@@ -5,7 +5,7 @@
 //! brain) lives on disk, editable — and moddable — without a rebuild. Rows are keyed by registry
 //! name: an ENGINE mob name overrides that species' row, a NAMESPACED key
 //! (`mod_id:name`) REGISTERS a new dynamic species (same rules as
-//! [`crate::registry`]); a new bare name is an error. The table is load-bearing
+//! [`petramond_world::registry`]); a new bare name is an error. The table is load-bearing
 //! (instances index by id, loot resolves by key), so the loader validates the file
 //! covers EVERY registered species exactly once — with unique keys — and fails
 //! loudly otherwise.
@@ -35,12 +35,12 @@ use std::collections::HashSet;
 
 use serde::Deserialize;
 
-use crate::biome::Biome;
-use crate::block::Block;
-use crate::registry::NameTable;
+use petramond_world::biome::Biome;
+use petramond_world::block::Block;
+use petramond_world::registry::NameTable;
 
 use super::brain::AiBehavior;
-use crate::ai_vocab::{RawBrainExtension, RawBrainNode};
+use petramond_world::ai_vocab::{RawBrainExtension, RawBrainNode};
 use super::{
     behavior, BrainNode, Buoyancy, Habitat, Mob, MobCategory, MobCollision, MobDamageFeedback,
     MobDamageFeedbackComponent, MobDamageSound, MobDef, MobSize, MobSoundCategory, MobSoundSpec,
@@ -204,7 +204,7 @@ enum RawMobDamageFeedback {
 }
 
 fn default_immunity_ticks() -> u32 {
-    crate::damage::MOB_DAMAGE_IFRAME_TICKS
+    petramond_world::damage::MOB_DAMAGE_IFRAME_TICKS
 }
 
 #[derive(Copy, Clone, Debug, Deserialize)]
@@ -227,7 +227,7 @@ pub(super) struct LoadedMobs {
 /// replacing rows by mob), panicking with a precise message if the table is missing
 /// or inconsistent.
 pub(super) fn table() -> LoadedMobs {
-    crate::registry::read_catalog_labeled("mobs.json", "mob", |layers| {
+    petramond_world::registry::read_catalog_labeled("mobs.json", "mob", |layers| {
         let labeled: Vec<(&str, String)> = layers
             .iter()
             .map(|(text, path)| (*text, path.display().to_string()))
@@ -255,7 +255,7 @@ fn parse_layers_labeled(layers: &[(&str, String)]) -> Result<LoadedMobs, String>
     let mut extensions: Vec<(usize, RawBrainExtension)> = Vec::new();
     let mut parse_li = 0usize;
     let mut keys = HashSet::new();
-    let catalog = crate::registry::load_catalog(
+    let catalog = petramond_world::registry::load_catalog(
         &texts,
         |text| {
             let file = serde_json::from_str::<RawFile>(text)?;
@@ -564,7 +564,7 @@ fn convert_sounds(rows: Vec<RawMobSound>) -> Result<&'static [MobSoundSpec], Str
         if !categories.insert(r.category) {
             return Err(format!("duplicate {:?} sound category", r.category));
         }
-        let sound = crate::sound_registry::by_name(&r.sound)
+        let sound = petramond_world::sound_registry::by_name(&r.sound)
             .ok_or_else(|| format!("sound '{}' is not registered in sounds.json", r.sound))?;
         let (tick_interval, tick_interval_variance) = match r.category {
             MobSoundCategory::Idle => {

@@ -316,7 +316,7 @@ pub enum PlacementOutcome {
     /// full, a body in the way).
     Refused,
     /// This family has no bespoke placement: use the generic single-cell path
-    /// ([`World::general_placement_plan`]) — cube/log/directional blocks,
+    /// (`World::general_placement_plan`) — cube/log/directional blocks,
     /// plants, and any family that never overrides.
     General,
     /// A fully-resolved placement.

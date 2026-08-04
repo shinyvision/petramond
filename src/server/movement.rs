@@ -6,7 +6,7 @@
 //! same drift ring bounds the reach eye ([`reach_eye`]) so a fabricated
 //! claim cannot grant remote block interaction.
 
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 use crate::player::{self, Input};
 
 use super::game::ServerGame;
@@ -65,7 +65,7 @@ impl ServerGame {
     /// neither integrated nor adopted (the client slaves itself to the same
     /// replicated mount), and no fall accrues. Claim staleness bookkeeping
     /// still runs so the drift ring is honest on the dismount tick.
-    fn tick_movement_with_obstacles(&mut self, s: usize, obstacles: &[crate::collision::DynBox]) {
+    fn tick_movement_with_obstacles(&mut self, s: usize, obstacles: &[petramond_world::collision::DynBox]) {
         let (
             wishdir,
             jump,
@@ -293,7 +293,7 @@ pub fn vel_correction_eps(gap_ticks: u32) -> f32 {
 fn claim_not_deeply_penetrating(
     pos: Vec3,
     world: &crate::world::World,
-    obstacles: &[crate::collision::DynBox],
+    obstacles: &[petramond_world::collision::DynBox],
     spectator: bool,
 ) -> bool {
     if spectator {
@@ -310,11 +310,11 @@ fn claim_not_deeply_penetrating(
         pos.z + player::HALF_W - PENETRATION_TOL,
     );
     !aabb_hits_collision(world, min, max)
-        && !crate::collision::aabb_hits_dynamic(
+        && !petramond_world::collision::aabb_hits_dynamic(
             min.to_array(),
             max.to_array(),
             obstacles,
-            crate::collision::NOT_AN_ENTITY,
+            petramond_world::collision::NOT_AN_ENTITY,
         )
 }
 
@@ -331,7 +331,7 @@ const GROUND_PROBE_UP: f32 = 0.05;
 fn feet_supported(
     pos: Vec3,
     world: &crate::world::World,
-    obstacles: &[crate::collision::DynBox],
+    obstacles: &[petramond_world::collision::DynBox],
 ) -> bool {
     let min = Vec3::new(
         pos.x - player::HALF_W,
@@ -344,18 +344,18 @@ fn feet_supported(
         pos.z + player::HALF_W,
     );
     aabb_hits_collision(world, min, max)
-        || crate::collision::aabb_hits_dynamic(
+        || petramond_world::collision::aabb_hits_dynamic(
             min.to_array(),
             max.to_array(),
             obstacles,
-            crate::collision::NOT_AN_ENTITY,
+            petramond_world::collision::NOT_AN_ENTITY,
         )
 }
 
 /// Whether the world AABB `[min, max]` overlaps any collision box of any cell
 /// it spans.
 pub fn aabb_hits_collision(world: &crate::world::World, min: Vec3, max: Vec3) -> bool {
-    crate::collision::aabb_hits_cells(min.to_array(), max.to_array(), |x, y, z| {
+    petramond_world::collision::aabb_hits_cells(min.to_array(), max.to_array(), |x, y, z| {
         world.collision_boxes_at(x, y, z)
     })
 }

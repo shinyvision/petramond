@@ -6,7 +6,7 @@ use crate::chunk::{ChunkPos, SectionPos};
 
 pub const RENDER_DIST: i32 = 32;
 
-/// One streaming anchor for [`World::update_load_multi`]: a player's section
+/// One streaming anchor for `World::update_load_multi`: a player's section
 /// coordinates plus that connection's streaming radius (its requested view
 /// distance, already clamped by the server's own maximum), one per connected
 /// player.

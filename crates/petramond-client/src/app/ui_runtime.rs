@@ -10,7 +10,7 @@
 
 use petramond::gui::{doc_theme, documents};
 
-use petramond::gui_state::GuiKind;
+use petramond_world::gui_state::GuiKind;
 use petramond_ui::{DocImages, FrameArgs, FrameOutput, FrameState, InputEvent, UiRuntime, UiState};
 
 /// A document's image registry: document-local images first, then the
@@ -320,7 +320,7 @@ impl AppUi {
     /// document frame. Raw key events can arrive before the queued pointer
     /// move is framed, so hovered-slot keyboard actions hit-test here instead
     /// of trusting the previous frame's cached `hover_slot`.
-    pub fn menu_slot_at(&self, x: f32, y: f32) -> Option<petramond::gui_state::MenuSlot> {
+    pub fn menu_slot_at(&self, x: f32, y: f32) -> Option<petramond_world::gui_state::MenuSlot> {
         let (_, viewport) = self.frame_stamp?;
         if viewport.generation != self.viewport_generation {
             return None;
@@ -344,7 +344,7 @@ impl AppUi {
     /// still emits the one authoritative `SlotDrag` event.
     pub fn menu_drag_preview(
         &self,
-    ) -> Option<(Vec<petramond::gui_state::MenuSlot>, petramond_ui::PointerButton)> {
+    ) -> Option<(Vec<petramond_world::gui_state::MenuSlot>, petramond_ui::PointerButton)> {
         let (_, viewport) = self.frame_stamp?;
         if viewport.generation != self.viewport_generation {
             return None;
@@ -352,7 +352,7 @@ impl AppUi {
         let (button, slots) = self.fs.slot_drag()?;
         let slots: Vec<_> = slots
             .iter()
-            .take(petramond::gui_state::MAX_MENU_DRAG_SLOTS)
+            .take(petramond_world::gui_state::MAX_MENU_DRAG_SLOTS)
             .filter_map(|(role, index)| {
                 petramond::gui::Role::from_key(role).and_then(|role| role.menu_slot(*index as usize))
             })

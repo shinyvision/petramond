@@ -9,7 +9,7 @@ use mod_api::{AttachSide, HostCall, Stage as ApiStage};
 
 use crate::events::{Attach, EventBus, PostEvent, Stage, TickSystems};
 use crate::events::tick::TickEvents;
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 use crate::player::Player;
 use crate::world::World;
 
@@ -19,7 +19,7 @@ use super::ModHost;
 struct Sim {
     world: World,
     player: Player,
-    gui_state: std::sync::Arc<crate::gui_state::GuiStateMap>,
+    gui_state: std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
     feed: TickEvents,
     bus: EventBus,
     systems: TickSystems,
@@ -30,7 +30,7 @@ impl Sim {
         Self {
             world: World::new(1, 1),
             player: Player::new(Vec3::new(0.0, 80.0, 0.0)),
-            gui_state: crate::gui_state::empty_gui_state(),
+            gui_state: petramond_world::gui_state::empty_gui_state(),
             feed: TickEvents::default(),
             bus: EventBus::default(),
             systems: TickSystems::default(),
@@ -68,7 +68,7 @@ impl Sim {
 /// gate.
 #[test]
 fn disabled_packs_contribute_no_wasm_instance() {
-    let pack = |name: &str, id: Option<&str>, wasm: Option<&str>| crate::assets::Pack {
+    let pack = |name: &str, id: Option<&str>, wasm: Option<&str>| petramond_world::assets::Pack {
         dir: PathBuf::from(format!("/fixture/{name}")),
         name: name.to_owned(),
         id: id.map(str::to_owned),
@@ -457,17 +457,17 @@ fn watchdog_charges_guest_compute_only_inner() {
 
 /// A [`Sim`] holding one placed multi-cell model block, with its group anchor
 /// and a NON-anchor footprint cell — the cell a mod would address it by.
-fn sim_with_a_placed_machine() -> (Sim, crate::mathh::IVec3, crate::mathh::IVec3) {
-    use crate::mathh::IVec3;
+fn sim_with_a_placed_machine() -> (Sim, petramond_math::math::IVec3, petramond_math::math::IVec3) {
+    use petramond_math::math::IVec3;
 
     let mut sim = Sim::new();
     sim.world.clear_world();
     sim.world
-        .insert_empty_column_for_test(crate::chunk::ChunkPos::new(0, 0));
+        .insert_empty_column_for_test(petramond_world::chunk::ChunkPos::new(0, 0));
     let anchor = IVec3::new(5, 64, 5);
     assert!(
         sim.world
-            .place_model_block(anchor, crate::block::Block::FurnitureWorkbench),
+            .place_model_block(anchor, petramond_world::block::Block::FurnitureWorkbench),
         "fixture: a multi-cell model block places"
     );
     let cells = sim.world.model_group(anchor).expect("a placed group").2;
@@ -480,19 +480,19 @@ fn sim_with_a_placed_machine() -> (Sim, crate::mathh::IVec3, crate::mathh::IVec3
 }
 
 /// The parts mask stored at `c`.
-fn parts_mask_at(world: &World, c: crate::mathh::IVec3) -> Option<u32> {
+fn parts_mask_at(world: &World, c: petramond_math::math::IVec3) -> Option<u32> {
     world
-        .cell_kv_get(c.x, c.y, c.z, crate::block_model::PARTS_KV_KEY)
+        .cell_kv_get(c.x, c.y, c.z, petramond_world::block_model::PARTS_KV_KEY)
         .map(<[u8; 4]>::try_from)
         .and_then(Result::ok)
         .map(u32::from_le_bytes)
 }
 
 /// The two presentation calls a machine makes every tick, addressed at `pos`.
-fn dressing_calls(pos: crate::mathh::IVec3, parts: u32, tint: [u8; 3]) -> Vec<HostCall> {
-    let item = crate::registry::names()
+fn dressing_calls(pos: petramond_math::math::IVec3, parts: u32, tint: [u8; 3]) -> Vec<HostCall> {
+    let item = petramond_world::registry::names()
         .items
-        .name(crate::item::ItemType::Dirt.id())
+        .name(petramond_world::item::ItemType::Dirt.id())
         .expect("fixture: a registered item")
         .to_owned();
     let pos = [pos.x, pos.y, pos.z];
@@ -546,7 +546,7 @@ fn a_guest_dresses_a_placed_machine_and_a_joiner_sees_it() {
     // the only multi-cell model row a bare test registry has is an engine one —
     // so the guest stands in for the pack that would ship the machine.
     let mut host = ModHost::from_instances(vec![calling_guest(
-        crate::registry::ENGINE_NAMESPACE,
+        petramond_world::registry::ENGINE_NAMESPACE,
         &dressing_calls(addressed, PARTS, TINT),
     )]);
     sim.init(&mut host);
@@ -560,7 +560,7 @@ fn a_guest_dresses_a_placed_machine_and_a_joiner_sees_it() {
         assert_eq!(parts_mask_at(&sim.world, c), Some(PARTS), "{c:?}");
         assert_eq!(
             sim.world
-                .cell_kv_get(c.x, c.y, c.z, crate::block::TINT_KV_KEY),
+                .cell_kv_get(c.x, c.y, c.z, petramond_world::block::TINT_KV_KEY),
             Some(&TINT[..]),
             "{c:?} takes the tint with the mask"
         );
@@ -583,9 +583,9 @@ fn a_guest_dresses_a_placed_machine_and_a_joiner_sees_it() {
         crate::world::WorldRole::ClientReplica,
         std::sync::Arc::new(crate::worker::JobPool::new(1)),
     );
-    let cp = crate::chunk::ChunkPos::new(0, 0);
+    let cp = petramond_world::chunk::ChunkPos::new(0, 0);
     replica.install_remote_column(sim.world.column_payload(cp).expect("a column payload"));
-    let sp = crate::chunk::SectionPos::from_world(anchor.x, anchor.y, anchor.z).expect("in range");
+    let sp = petramond_world::chunk::SectionPos::from_world(anchor.x, anchor.y, anchor.z).expect("in range");
     replica.install_remote_section(sim.world.section_payload(sp).expect("a loaded section"));
 
     assert_eq!(

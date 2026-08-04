@@ -423,7 +423,7 @@ fn server_main(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mathh::Vec3;
+    use petramond_math::math::Vec3;
     use crate::net::protocol::PlayerUpdate;
 
     /// A real, fully-built ServerGame (no save attached), as `Game::new`
@@ -486,9 +486,9 @@ mod tests {
         handle.send(ClientToServer::KeepAlive).expect("live server");
 
         let first =
-            recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE).expect("a TickUpdate arrives");
+            recv_tick(&handle, petramond_util::test_time::TEST_HARD_DEADLINE).expect("a TickUpdate arrives");
         let second =
-            recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE).expect("ticks keep coming");
+            recv_tick(&handle, petramond_util::test_time::TEST_HARD_DEADLINE).expect("ticks keep coming");
         assert!(
             second.tick > first.tick,
             "the self-clocked loop advances the world tick"
@@ -513,7 +513,7 @@ mod tests {
         handle
             .send(ClientToServer::PlayerUpdate(update))
             .expect("live server");
-        let _ = recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE)
+        let _ = recv_tick(&handle, petramond_util::test_time::TEST_HARD_DEADLINE)
             .expect("running before the pause");
 
         handle
@@ -547,7 +547,7 @@ mod tests {
             .send(ClientToServer::Pause(false))
             .expect("live server");
         let resumed =
-            recv_tick(&handle, crate::test_time::TEST_HARD_DEADLINE).expect("ticks resume");
+            recv_tick(&handle, petramond_util::test_time::TEST_HARD_DEADLINE).expect("ticks resume");
         if let Some(last) = last_tick {
             assert!(resumed.tick > last, "the world advances again");
             // Pausing must not bank catch-up ticks (the accumulator is pinned).

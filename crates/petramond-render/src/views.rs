@@ -7,13 +7,13 @@ use std::sync::Arc;
 
 use glam::{IVec3, Quat, Vec3};
 
-use petramond::block_model::BlockModelKind;
-use petramond::door::DoorState;
-use petramond::facing::Facing;
-use petramond::item::ItemType;
+use petramond_world::block_model::BlockModelKind;
+use petramond_world::door::DoorState;
+use petramond_math::facing::Facing;
+use petramond_world::item::ItemType;
 use petramond::mob::Mob;
 use crate::RemotePlayerRender;
-use petramond::tile::Tile;
+use petramond_world::tile::Tile;
 use petramond::world::PlacedEmitter;
 
 /// The block-break overlay to draw this frame: a cracked-texture overlay over
@@ -68,7 +68,7 @@ pub struct ChestPresentation {
     pub facing: Facing,
     pub lid_progress: f32,
     pub skylight: u8,
-    pub blocklight: petramond::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -78,7 +78,7 @@ pub struct DoorPresentation {
     pub tiles: [Tile; 3],
     pub swing_progress: f32,
     pub skylight: u8,
-    pub blocklight: petramond::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -86,12 +86,12 @@ pub struct DroppedItemPresentation {
     pub prev_pos: Vec3,
     pub pos: Vec3,
     pub item: ItemType,
-    pub variant: petramond::item::VariantId,
+    pub variant: petramond_world::item::VariantId,
     pub count: u8,
     pub prev_spin: f32,
     pub spin: f32,
     pub skylight: u8,
-    pub blocklight: petramond::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -117,7 +117,7 @@ pub struct ParticlePresentation {
     /// Only the Solid atlas path honors it.
     pub stretch: f32,
     pub skylight: u8,
-    pub blocklight: petramond::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -137,7 +137,7 @@ pub struct MobPresentation {
     pub prev_head_pitch: f32,
     pub head_pitch: f32,
     pub skylight: u8,
-    pub blocklight: petramond::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
     pub hurt_flash: f32,
     pub dead: bool,
     pub shorn: bool,
@@ -171,7 +171,7 @@ pub struct PlayerPresentation {
     pub anim_time: f32,
     /// The body renders seated (legs forward): mounted on a mob seat, or
     /// pinned at a pose anchor whose pose is `sitting`. Anchor poses outside
-    /// the known vocabulary render the rest pose (see [`mount_renders_seated`]).
+    /// the known vocabulary render the rest pose (see `mount_renders_seated`).
     pub seated: bool,
     /// Walk-pose blend weight (`0` standing … `1` full walk cycle).
     pub walk_weight: f32,
@@ -181,7 +181,7 @@ pub struct PlayerPresentation {
     /// head toward `body_yaw`.
     pub sleeping: bool,
     pub skylight: u8,
-    pub blocklight: petramond::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
 }
 
 /// One body whose FOOTSTEPS the client may sound this frame — the local player
@@ -203,7 +203,7 @@ pub struct FootstepSource {
     /// footsteps at all: standing still, SNEAKING, airborne (the cell below is
     /// air), seated, asleep, or over an unloaded cell. `App` never re-decides
     /// this.
-    pub ground: Option<petramond::block::Block>,
+    pub ground: Option<petramond_world::block::Block>,
     /// Moving at a sprint — the gait `App` picks the step interval from.
     ///
     /// Derived from the body's ACTUAL horizontal speed on both sides rather
@@ -236,9 +236,9 @@ pub struct GamePresentation<'a> {
     /// retire the cadence state of players who left without a second list.
     pub footsteps: &'a [FootstepSource],
     pub player: Option<PlayerPresentation>,
-    pub held_item_light: (u8, petramond::light::BlockLight6),
+    pub held_item_light: (u8, petramond_world::light::BlockLight6),
     /// Every break (crack) overlay to draw this frame: the LOCAL player's own
     /// mining target plus each visible remote's replicated one, capped at the
-    /// [`MAX_BREAK_OVERLAYS`] nearest to the camera.
+    /// `MAX_BREAK_OVERLAYS` nearest to the camera.
     pub break_overlays: &'a [BreakOverlayView],
 }

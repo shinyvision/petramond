@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 use crate::player::PlayerId;
 
 use super::{ActionOutcome, ItemSlotWire, MenuSyncMsg, Transform};
@@ -18,7 +18,7 @@ pub struct BlockDelta {
     /// mirroring `clear_on_block_change` server-side). Verbatim store bytes;
     /// the id-masked ones are rewritten at the transport boundary
     /// (`ShapeState::remap_ids`).
-    pub state: Option<crate::block::ShapeState>,
+    pub state: Option<petramond_world::block::ShapeState>,
     /// The cell's mod KV map after the change (empty for the common cell).
     /// A delta ALWAYS carries the cell's current KV because the replica's
     /// apply wipes the cell's KV exactly like a server-side write — without
@@ -444,7 +444,7 @@ pub struct TickUpdate {
     pub events: Vec<WorldEventMsg>,
     /// The recipient's own per-tick one-shots.
     pub self_events: SelfEvents,
-    /// Answers to this recipient's [`ClientRequestId`]s (menu clicks, breaks,
+    /// Answers to this recipient's `ClientRequestId`s (menu clicks, breaks,
     /// drops, …), in emission order.
     pub action_outcomes: Vec<ActionOutcome>,
     /// The recipient's menu-session view when it changed (`None` = unchanged).

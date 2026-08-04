@@ -6,8 +6,8 @@ use super::pump_one_tick;
 use petramond::entity::DroppedItem;
 use crate::game::presentation::GamePresentationScratch;
 use crate::game::tick::TICK_DT;
-use petramond::item::{ItemStack, ItemType};
-use petramond::mathh::Vec3;
+use petramond_world::item::{ItemStack, ItemType};
+use petramond_math::math::Vec3;
 use petramond::mob::Mob;
 use petramond::net::protocol::MobStateRow;
 

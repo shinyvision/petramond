@@ -1,7 +1,7 @@
 use crate::world::WorldData;
-use crate::block::Block;
-use crate::chunk::WORLD_MIN_Y;
-use crate::mathh::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_world::chunk::WORLD_MIN_Y;
+use petramond_math::math::{IVec3, Vec3};
 use crate::world::store::World;
 
 use super::{

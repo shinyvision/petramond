@@ -8,8 +8,8 @@ use mod_api::{
 
 use crate::entity::DroppedItem;
 use crate::events::{ModAction, PostEvent, SimCtx};
-use crate::item::{ItemStack, ItemType};
-use crate::mathh::Vec3;
+use petramond_world::item::{ItemStack, ItemType};
+use petramond_math::math::Vec3;
 
 use super::guards::{finite3, item_by_name, live_mob, sim_call, sim_query};
 use super::intern_mod_id;
@@ -17,7 +17,7 @@ use super::intern_mod_id;
 /// Maximum horizontal speed accepted from `MobDrive`, derived from the
 /// collision resolver's bounded external sweep and the fixed simulation tick.
 const MAX_MOB_DRIVE_SPEED: f32 =
-    crate::collision::MAX_SAFE_EXTERNAL_SWEEP_DISTANCE / crate::events::tick::TICK_DT;
+    petramond_world::collision::MAX_SAFE_EXTERNAL_SWEEP_DISTANCE / crate::events::tick::TICK_DT;
 
 fn anim_name_guard(call: &str, anim: &str) -> Result<(), HostRet> {
     if anim.len() <= MAX_MOB_ANIM_NAME_BYTES {
@@ -91,7 +91,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 crate::mob::mob_can_reach(
                     ctx.world,
                     &ctx.world.mobs().instances()[i],
-                    crate::mathh::IVec3::new(cell[0], cell[1], cell[2]),
+                    petramond_math::math::IVec3::new(cell[0], cell[1], cell[2]),
                 )
             }))
         }),
@@ -290,15 +290,15 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
             HostRet::Riders(Some(MobRidersData { capacity, riders }))
         }),
         HostCall::BlockModelGroup { pos } => sim_query(|ctx| {
-            let p = crate::mathh::IVec3::new(pos[0], pos[1], pos[2]);
+            let p = petramond_math::math::IVec3::new(pos[0], pos[1], pos[2]);
             HostRet::ModelGroup(ctx.world.model_group(p).map(|(_, base, _)| {
                 mod_api::ModelGroupData {
                     base: [base.x, base.y, base.z],
                     facing: match ctx.world.model_facing_at(base.x, base.y, base.z) {
-                        crate::facing::Facing::North => mod_api::Facing::North,
-                        crate::facing::Facing::South => mod_api::Facing::South,
-                        crate::facing::Facing::West => mod_api::Facing::West,
-                        crate::facing::Facing::East => mod_api::Facing::East,
+                        petramond_math::facing::Facing::North => mod_api::Facing::North,
+                        petramond_math::facing::Facing::South => mod_api::Facing::South,
+                        petramond_math::facing::Facing::West => mod_api::Facing::West,
+                        petramond_math::facing::Facing::East => mod_api::Facing::East,
                     },
                 }
             }))
@@ -359,11 +359,11 @@ fn spawn_item_stacks(
     item: ItemType,
     count: u8,
     pos: Vec3,
-    variant: crate::item::VariantId,
+    variant: petramond_world::item::VariantId,
 ) {
-    let cell = crate::mathh::voxel_at(pos);
+    let cell = petramond_math::math::voxel_at(pos);
     let sky = ctx.world.skylight6_at_world(cell.x, cell.y, cell.z);
-    let block = crate::light::BlockLight6::from_x2(
+    let block = petramond_world::light::BlockLight6::from_x2(
         ctx.world.blocklight_rgb_at_world(cell.x, cell.y, cell.z),
     );
     let mut remaining = count;
@@ -398,7 +398,7 @@ pub(super) fn give_item(
     ctx: &mut SimCtx<'_>,
     item: ItemType,
     count: u8,
-    variant: crate::item::VariantId,
+    variant: petramond_world::item::VariantId,
 ) {
     let mut remaining = count;
     while remaining > 0 {
@@ -411,10 +411,10 @@ pub(super) fn give_item(
         {
             let at = ctx.player.body_center();
             let seed = drop_seed(ctx.world.current_tick(), at, remaining as u32);
-            let cell = crate::mathh::voxel_at(at);
+            let cell = petramond_math::math::voxel_at(at);
             let mut drop = DroppedItem::new(at, leftover, seed);
             drop.skylight = ctx.world.skylight6_at_world(cell.x, cell.y, cell.z);
-            drop.blocklight = crate::light::BlockLight6::from_x2(
+            drop.blocklight = petramond_world::light::BlockLight6::from_x2(
                 ctx.world.blocklight_rgb_at_world(cell.x, cell.y, cell.z),
             );
             ctx.world.spawn_item(drop);
@@ -429,10 +429,10 @@ mod tests {
         MAX_MOB_ANIM_PHASE_MAGNITUDE, MAX_MOB_ANIM_RATE_MAGNITUDE,
     };
 
-    use crate::chunk::{ChunkPos, SECTION_VOLUME};
+    use petramond_world::chunk::{ChunkPos, SECTION_VOLUME};
     use crate::events::{PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use crate::mathh::Vec3;
+    use petramond_math::math::Vec3;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
@@ -447,12 +447,12 @@ mod tests {
             .section_at_world_mut_for_test(8, 64, 8)
             .expect("fixture loads the spawn section");
         section.set_skylight(vec![0; SECTION_VOLUME].into());
-        section.set_blocklight(vec![crate::light::LightRgb::ZERO; SECTION_VOLUME].into());
+        section.set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
 
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
@@ -477,7 +477,7 @@ mod tests {
 
         let mob = &world.mobs().instances()[0];
         assert_eq!(mob.skylight, 0);
-        assert_eq!(mob.blocklight, crate::light::BlockLight6::DARK);
+        assert_eq!(mob.blocklight, petramond_world::light::BlockLight6::DARK);
     }
 
     #[test]
@@ -485,11 +485,11 @@ mod tests {
         let mut data = ModStoreData::new("alpha", 1);
         let mut world = World::new(1, 1);
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
-        world.set_block_world(8, 64, 8, crate::block::Block::Stone);
+        world.set_block_world(8, 64, 8, petramond_world::block::Block::Stone);
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
@@ -517,7 +517,7 @@ mod tests {
         });
         assert!(world.mobs().instances().is_empty());
 
-        world.set_block_world(8, 64, 8, crate::block::Block::Air);
+        world.set_block_world(8, 64, 8, petramond_world::block::Block::Air);
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
@@ -555,7 +555,7 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
@@ -655,7 +655,7 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
@@ -754,7 +754,7 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,

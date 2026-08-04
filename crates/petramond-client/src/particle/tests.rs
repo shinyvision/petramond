@@ -26,7 +26,7 @@ fn atlas_uv_stays_strictly_inside_the_tile_rect() {
                     pos: Vec3::ZERO,
                     vel: Vec3::ZERO,
                     skylight: 63,
-                    blocklight: petramond::light::BlockLight6::DARK,
+                    blocklight: petramond_world::light::BlockLight6::DARK,
                     tile,
                     model: None,
                     dyed,
@@ -69,7 +69,7 @@ fn alpha_fades_at_end_of_life() {
         pos: Vec3::ZERO,
         vel: Vec3::ZERO,
         skylight: 63,
-        blocklight: petramond::light::BlockLight6::DARK,
+        blocklight: petramond_world::light::BlockLight6::DARK,
         tile: Tile::from_name("grass_top").unwrap(),
         model: None,
         dyed: false,
@@ -101,7 +101,7 @@ fn render_size_shrinks_during_fade() {
         pos: Vec3::ZERO,
         vel: Vec3::ZERO,
         skylight: 63,
-        blocklight: petramond::light::BlockLight6::DARK,
+        blocklight: petramond_world::light::BlockLight6::DARK,
         tile: Tile::from_name("grass_top").unwrap(),
         model: None,
         dyed: false,
@@ -164,7 +164,7 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
     let chest = Block::Chest.collision_boxes(); // inset: x/z in [1/16, 15/16]
     let chest_top = chest.iter().map(|b| b.max[1]).fold(0.0, f32::max);
     let blocked = |p: Vec3| {
-        petramond::collision::point_in_solid(
+        petramond_world::collision::point_in_solid(
             [p.x, p.y, p.z],
             |_x, y, _z| if y == 0 { chest } else { &[][..] },
         )
@@ -173,7 +173,7 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
         pos,
         vel,
         skylight: 63,
-        blocklight: petramond::light::BlockLight6::DARK,
+        blocklight: petramond_world::light::BlockLight6::DARK,
         tile: Tile::from_name("grass_top").unwrap(),
         model: None,
         dyed: false,
@@ -247,8 +247,8 @@ fn leaf_burst_flecks_carry_the_foliage_tint() {
     }
 }
 
-fn splash_spec() -> petramond::particle_emitters::BurstSpec {
-    petramond::particle_emitters::BurstSpec {
+fn splash_spec() -> petramond_world::particle_emitters::BurstSpec {
+    petramond_world::particle_emitters::BurstSpec {
         count_per_intensity: 4.0,
         max_count: 20,
         up_speed: [1.5, 3.5],
@@ -265,7 +265,7 @@ fn splash_spec() -> petramond::particle_emitters::BurstSpec {
 fn emitter_burst_count_scales_with_intensity_and_caps() {
     let spec = splash_spec();
     let mut small = ParticleSystem::new();
-    small.spawn_emitter_burst(&spec, Vec3::ZERO, 2.0, 63, petramond::light::BlockLight6::DARK);
+    small.spawn_emitter_burst(&spec, Vec3::ZERO, 2.0, 63, petramond_world::light::BlockLight6::DARK);
     assert_eq!(small.len(), 8, "4 per intensity unit × 2");
     let mut big = ParticleSystem::new();
     big.spawn_emitter_burst(
@@ -273,7 +273,7 @@ fn emitter_burst_count_scales_with_intensity_and_caps() {
         Vec3::ZERO,
         100.0,
         63,
-        petramond::light::BlockLight6::DARK,
+        petramond_world::light::BlockLight6::DARK,
     );
     assert_eq!(big.len(), 20, "hard-capped at max_count");
     for p in big.particles() {
@@ -292,7 +292,7 @@ fn burst_color_bias_favors_the_first_endpoint() {
     let spec = splash_spec(); // bias 2.5 toward the deep first endpoint
     let mut sys = ParticleSystem::new();
     for _ in 0..10 {
-        sys.spawn_emitter_burst(&spec, Vec3::ZERO, 5.0, 63, petramond::light::BlockLight6::DARK);
+        sys.spawn_emitter_burst(&spec, Vec3::ZERO, 5.0, 63, petramond_world::light::BlockLight6::DARK);
     }
     // mix^2.5 has mean ~0.29: most droplets sit nearer color[0] (deep).
     let mean_g: f32 = sys.particles().iter().map(|p| p.tint[1]).sum::<f32>() / sys.len() as f32;
@@ -318,7 +318,7 @@ fn die_on_contact_particles_vanish_on_blocks_and_water() {
         Vec3::new(0.0, 0.05, 0.0),
         1.0,
         63,
-        petramond::light::BlockLight6::DARK,
+        petramond_world::light::BlockLight6::DARK,
     );
     for p in &mut sys.particles {
         p.vel = Vec3::new(0.0, -2.0, 0.0); // force straight down
@@ -333,7 +333,7 @@ fn die_on_contact_particles_vanish_on_blocks_and_water() {
         Vec3::new(0.0, 0.05, 0.0),
         1.0,
         63,
-        petramond::light::BlockLight6::DARK,
+        petramond_world::light::BlockLight6::DARK,
     );
     for p in &mut wet.particles {
         p.vel = Vec3::new(0.0, -2.0, 0.0);

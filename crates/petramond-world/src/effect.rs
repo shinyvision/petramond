@@ -9,7 +9,7 @@
 //! (`"regen"` heals on an interval; `"none"` is a pure marker a mod's own tick
 //! system can query through the `EffectsActive` host call). The ACTIVE state —
 //! which effects the player currently has and for how many more ticks — lives
-//! on [`crate::player::Player`] and is stepped once per game tick by
+//! on `crate::player::Player` and is stepped once per game tick by
 //! `Game::tick_effects` (`src/game/health.rs`), never in per-frame code.
 //! Persistence is by registry NAME in `players/<name>.dat` (ids are
 //! session-scoped).

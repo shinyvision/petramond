@@ -422,7 +422,7 @@ pub struct ShapeKindDef {
     /// virtual call; set from the family at intern time.
     pub resolves_to_boxes: bool,
     /// Whether this kind's cell collision is fully determined by the block id
-    /// (see [`families::collision_is_state_free`]) — a plain field so
+    /// (see `families::collision_is_state_free`) — a plain field so
     /// `World::collision_boxes_at` and the navigation probes can take the
     /// baked per-id table instead of a virtual resolve.
     pub collision_state_free: bool,

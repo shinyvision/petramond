@@ -1,5 +1,5 @@
-use petramond::mathh::{IVec3, Mat4, SelectionBoxes, SelectionShape, Vec3};
-use petramond::torch::{POLE_HALF, POLE_HEIGHT};
+use petramond_math::math::{IVec3, Mat4, SelectionBoxes, SelectionShape, Vec3};
+use petramond_world::torch::{POLE_HALF, POLE_HEIGHT};
 
 pub(super) const MAX_OUTLINE_VERTICES: usize = 96;
 
@@ -332,12 +332,12 @@ fn push_line(out: &mut OutlineVertices, a: [f32; 3], b: [f32; 3]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond::facing::Facing;
+    use petramond_math::facing::Facing;
 
     #[test]
     fn stair_box_outline_removes_internal_join_but_keeps_step_edges() {
         let (boxes, len) =
-            petramond::connect::world_boxes(IVec3::ZERO, petramond::stair::boxes(Facing::South));
+            petramond_world::connect::world_boxes(IVec3::ZERO, petramond_world::stair::boxes(Facing::South));
         let outline = outline_vertices(SelectionShape::Boxes {
             boxes: SelectionBoxes { boxes, len },
         });

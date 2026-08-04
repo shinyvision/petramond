@@ -17,24 +17,24 @@ use super::{ModStoreData, Registration};
 pub(super) fn handle_worldgen_call(data: &mut ModStoreData, call: HostCall) -> HostRet {
     match call {
         HostCall::ResolveUndergroundBiome { key } => {
-            HostRet::MaybeByte(crate::worldgen::data::underground::id_by_name(&key))
+            HostRet::MaybeByte(petramond_worldgen::data::underground::id_by_name(&key))
         }
         HostCall::UndergroundBiomeAt { positions } => {
             match batch_guard("UndergroundBiomeAt position", positions.len()) {
                 Some(err) => err,
-                None => HostRet::UndergroundBiomes(crate::worldgen::underground_biomes_at(
+                None => HostRet::UndergroundBiomes(petramond_worldgen::underground_biomes_at(
                     data.world_seed(),
                     &positions,
                 )),
             }
         }
         HostCall::UndergroundBiomesInBox { lo, hi } => HostRet::UndergroundBiomes(
-            crate::worldgen::underground_biomes_in_box(data.world_seed(), lo, hi),
+            petramond_worldgen::underground_biomes_in_box(data.world_seed(), lo, hi),
         ),
         HostCall::TerrainSolidAt { positions } => {
             match batch_guard("TerrainSolidAt position", positions.len()) {
                 Some(err) => err,
-                None => HostRet::TerrainSolid(crate::worldgen::terrain_solid_at(
+                None => HostRet::TerrainSolid(petramond_worldgen::terrain_solid_at(
                     data.world_seed(),
                     &positions,
                 )),
@@ -43,7 +43,7 @@ pub(super) fn handle_worldgen_call(data: &mut ModStoreData, call: HostCall) -> H
         HostCall::SurfaceBiomeAt { columns } => {
             match batch_guard("SurfaceBiomeAt column", columns.len()) {
                 Some(err) => err,
-                None => HostRet::SurfaceBiomes(crate::worldgen::surface_biome_at(
+                None => HostRet::SurfaceBiomes(petramond_worldgen::surface_biome_at(
                     data.world_seed(),
                     &columns,
                 )),
@@ -160,7 +160,7 @@ mod tests {
             other => panic!("{other:?}"),
         };
         assert_eq!(
-            crate::worldgen::data::underground::table().name(id),
+            petramond_worldgen::data::underground::table().name(id),
             Some("petramond:stone"),
             "name -> id -> name round-trips"
         );
@@ -189,7 +189,7 @@ mod tests {
         for (p, got) in positions.iter().zip(&ids) {
             assert_eq!(
                 *got,
-                crate::worldgen::underground_biomes_at(0x312, &[*p])[0],
+                petramond_worldgen::underground_biomes_at(0x312, &[*p])[0],
                 "the ABI answer is the engine's own at {p:?}"
             );
         }
@@ -237,7 +237,7 @@ mod tests {
         assert_eq!(ids.len(), columns.len(), "reply parallels the request");
         for (column, got) in columns.iter().zip(&ids) {
             assert_eq!(
-                crate::biome::Biome::from_id(*got).id(),
+                petramond_world::biome::Biome::from_id(*got).id(),
                 *got,
                 "every column answers a real biome id; {column:?} answered {got}"
             );

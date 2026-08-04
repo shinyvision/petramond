@@ -2,10 +2,10 @@ use super::*;
 
 use std::sync::Arc;
 
-use crate::block::Block;
-use crate::chunk::{Chunk, ChunkPos, SectionPos, SEA_LEVEL, SECTION_MAX_CY, SECTION_SIZE};
-use crate::mathh::IVec3;
-use crate::section::Section;
+use petramond_world::block::Block;
+use petramond_world::chunk::{Chunk, ChunkPos, SectionPos, SEA_LEVEL, SECTION_MAX_CY, SECTION_SIZE};
+use petramond_math::math::IVec3;
+use petramond_world::section::Section;
 
 use crate::world::store::{LoadAnchor, LoadTarget, World};
 
@@ -22,14 +22,14 @@ fn overlaid_saved_section_keeps_its_block_entities_live() {
     world.note_section_loaded(sp);
     // A saved section carrying a chest lands from disk.
     let mut saved = Section::new(0, 4, 0);
-    saved.set_block(0, 0, 0, crate::block::Block::Chest);
+    saved.set_block(0, 0, 0, petramond_world::block::Block::Chest);
     saved.insert_container(
         0,
         0,
         0,
-        crate::container::Container::with_len(crate::world::chest::CHEST_SLOTS),
+        petramond_world::container::Container::with_len(crate::world::chest::CHEST_SLOTS),
     );
-    saved.insert_entity_facing(0, 0, 0, crate::facing::Facing::default());
+    saved.insert_entity_facing(0, 0, 0, petramond_math::facing::Facing::default());
     world
         .gen
         .pending_overlays
@@ -138,7 +138,7 @@ fn water_kick_queues_source_water_over_a_drop() {
 
 #[test]
 fn high_flight_still_wants_the_surface_band() {
-    let generator = crate::worldgen::driver::ChunkGenerator::new(0x51EED);
+    let generator = petramond_worldgen::driver::ChunkGenerator::new(0x51EED);
     let col = generator.generate_column_gen(0, 0);
     let cys = World::wanted_section_cys(&col, SECTION_MAX_CY + 100, 0);
     let surface_cy = col
@@ -355,7 +355,7 @@ fn first_bake_defers_until_generation_neighborhood_settles() {
     let mut world = World::new(0x51EED, 4);
     let target = LoadTarget::new(0, 4, 0, 4);
     world.last_load_target = Some(target);
-    let generator = crate::worldgen::driver::ChunkGenerator::new(world.seed);
+    let generator = petramond_worldgen::driver::ChunkGenerator::new(world.seed);
     for dz in -1..=1 {
         for dx in -1..=1 {
             let cp = ChunkPos::new(dx, dz);
@@ -428,7 +428,7 @@ fn sealed_first_light_waits_for_player_proximity_then_bakes() {
         section.recompute_opaque_count();
         world.insert_section_for_test(pos, section);
     }
-    let generator = crate::worldgen::driver::ChunkGenerator::new(world.seed);
+    let generator = petramond_worldgen::driver::ChunkGenerator::new(world.seed);
     world.gen.column_gen.insert(
         center.chunk_pos(),
         Arc::new(generator.generate_column_gen(center.cx, center.cz)),
@@ -487,7 +487,7 @@ fn horizontal_move_requests_sections_for_newly_wanted_loaded_columns() {
         "test setup: column starts outside the old disc"
     );
 
-    let generator = crate::worldgen::driver::ChunkGenerator::new(world.seed);
+    let generator = petramond_worldgen::driver::ChunkGenerator::new(world.seed);
     let col = Arc::new(generator.generate_column_gen(newly_wanted.cx, newly_wanted.cz));
     world.set_column_gen(newly_wanted, col);
     world.last_load_target = Some(old);
@@ -518,7 +518,7 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     let opened = crate::save::open_at(dir.clone()).expect("open save");
     let mut world = World::new(0x51EED, 2);
     world.attach_save(opened.save, opened.saved);
-    let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
+    let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
 
     // Stream the origin column: generate (worker) + ingest. The later edit lands well
     // above the active vertical window; reload coverage comes from the save manifest.
@@ -607,7 +607,7 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     let stream_settled = |world: &mut World| {
         use std::time::Instant;
         world.update_load(0, 8, 0);
-        let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
+        let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
         loop {
             world.poll();
             if world.loaded_section_count() > 0
@@ -628,7 +628,7 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     // (never bakes). The first-persist gate waits for exactly this.
     let light_settled = |world: &mut World| {
         use std::time::Instant;
-        let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
+        let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
         while Instant::now() < deadline {
             world.poll();
             world.pump_light_bakes();
@@ -740,7 +740,7 @@ fn vertical_window_generates_near_the_player_not_the_whole_column() {
     // Player near the surface (section cy 6): stream until nothing is pending —
     // the whole wanted window has landed (observable state, not a quiet window).
     world.update_load(0, 6, 0);
-    let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
+    let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     loop {
         world.poll();
         if world.loaded_section_count() > 0
@@ -762,7 +762,7 @@ fn vertical_window_generates_near_the_player_not_the_whole_column() {
 
     // Descend to that deep section (cy -4): now it must stream in.
     world.update_load(0, -4, 0);
-    let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
+    let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     while !world.section_loaded_at(deep.0, deep.1, deep.2) && Instant::now() < deadline {
         world.poll();
     }
@@ -775,7 +775,7 @@ fn vertical_window_generates_near_the_player_not_the_whole_column() {
 #[cfg(all(test, feature = "worldgen-tests"))]
 mod sea_ice_streaming {
     use super::*;
-    use crate::block::Block;
+    use petramond_world::block::Block;
 
     /// The frozen sea exists in the LIVE streamed world, not just the one-shot
     /// generator: a waterline ice cell must survive the per-section pipeline
@@ -789,7 +789,7 @@ mod sea_ice_streaming {
         world.update_load(6, 3, -1);
         let (wx, wy, wz) = (6 * 16 + 15, 63, -16 + 15);
         use std::time::Instant;
-        let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
+        let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
         while !world.section_loaded_at(wx, wy, wz) {
             assert!(
                 Instant::now() < deadline,
@@ -798,7 +798,7 @@ mod sea_ice_streaming {
             world.poll();
         }
         let live = Block::from_id(world.chunk_block(wx, wy, wz));
-        let oneshot = crate::worldgen::generate_chunk(34, 6, -1);
+        let oneshot = petramond_worldgen::generate_chunk(34, 6, -1);
         let expected = oneshot.block(15, 63, 15);
         assert_eq!(expected, Block::Ice, "the pinned column still freezes");
         assert_eq!(

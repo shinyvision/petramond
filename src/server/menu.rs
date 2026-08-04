@@ -8,14 +8,14 @@
 //! `ContainerMenu` — two players can stand in one chest; their clicks apply in
 //! session-id order on the tick.
 
-use crate::gui_state::PointerButton;
-use crate::crafting::CraftingStation;
+use petramond_world::gui_state::PointerButton;
+use petramond_world::crafting::CraftingStation;
 use crate::events::{PostEvent, SimCtx};
-use crate::gui_state::ContainerView;
-use crate::gui_state::{GuiStateMap, MenuSlot};
-use crate::inventory::Inventory;
-use crate::item::ItemStack;
-use crate::mathh::IVec3;
+use petramond_world::gui_state::ContainerView;
+use petramond_world::gui_state::{GuiStateMap, MenuSlot};
+use petramond_world::inventory::Inventory;
+use petramond_world::item::ItemStack;
+use petramond_math::math::IVec3;
 use crate::net::protocol::{GuiValueWire, ItemSlotWire, MenuSyncMsg, MenuTargetWire};
 
 use super::game::ServerGame;
@@ -212,7 +212,7 @@ impl ServerGame {
     fn open_gui_for(
         &mut self,
         s: usize,
-        kind: crate::gui_state::GuiKind,
+        kind: petramond_world::gui_state::GuiKind,
         pos: Option<IVec3>,
         events: &mut TickEvents,
     ) -> bool {
@@ -223,7 +223,7 @@ impl ServerGame {
             self.open_crafting_for(s, station);
             return true;
         }
-        use crate::gui_state::GuiKind;
+        use petramond_world::gui_state::GuiKind;
         match kind {
             GuiKind::Furnace => {
                 let Some(pos) = pos else { return false };
@@ -246,7 +246,7 @@ impl ServerGame {
     fn dispatch_gui_click(
         &mut self,
         s: usize,
-        widget_id: crate::gui_state::WidgetId,
+        widget_id: petramond_world::gui_state::WidgetId,
         events: &mut TickEvents,
     ) {
         let ContainerTarget::Gui { kind, pos } = self.sessions[s].menu.target() else {
@@ -259,7 +259,7 @@ impl ServerGame {
         if !kind.is_mod() || CraftingStation::of_kind(kind).is_some() {
             return;
         }
-        let Some(kind_key) = crate::gui_state::kind_key(kind) else {
+        let Some(kind_key) = petramond_world::gui_state::kind_key(kind) else {
             return;
         };
         let Self {
@@ -302,7 +302,7 @@ impl ServerGame {
         // releases the old slot.
         let same = matches!(
             self.sessions[s].menu.target(),
-            ContainerTarget::Gui { kind: crate::gui_state::GuiKind::Chest, pos: Some(p) } if p == pos
+            ContainerTarget::Gui { kind: petramond_world::gui_state::GuiKind::Chest, pos: Some(p) } if p == pos
         );
         if !same {
             self.release_chest_viewer(s, events);
@@ -324,7 +324,7 @@ impl ServerGame {
     /// that 1→0 transition emits the world-anchored `ChestClosed` event.
     fn release_chest_viewer(&mut self, s: usize, events: &mut TickEvents) {
         if let ContainerTarget::Gui {
-            kind: crate::gui_state::GuiKind::Chest,
+            kind: petramond_world::gui_state::GuiKind::Chest,
             pos: Some(pos),
         } = self.sessions[s].menu.target()
         {
@@ -345,14 +345,14 @@ impl ServerGame {
     pub fn open_mod_gui_screen_for(
         &mut self,
         s: usize,
-        kind: crate::gui_state::GuiKind,
+        kind: petramond_world::gui_state::GuiKind,
         pos: Option<IVec3>,
     ) {
         if !self.any_mod_gui_open() {
             self.clear_all_mod_gui_states();
         }
         let sess = &mut self.sessions[s];
-        crate::gui_state::gui_state_clear(&mut sess.gui_state);
+        petramond_world::gui_state::gui_state_clear(&mut sess.gui_state);
         sess.menu.open_mod_gui(&mut self.world, kind, pos);
         self.emit_container_opened(s);
     }
@@ -407,7 +407,7 @@ impl ServerGame {
             .is_some_and(|kind| kind.is_mod())
         {
             let sess = &mut self.sessions[s];
-            crate::gui_state::gui_state_clear(&mut sess.gui_state);
+            petramond_world::gui_state::gui_state_clear(&mut sess.gui_state);
             sess.menu.close_mod_gui();
             if !self.any_mod_gui_open() {
                 self.clear_all_mod_gui_states();
@@ -423,7 +423,7 @@ impl ServerGame {
 
     fn clear_all_mod_gui_states(&mut self) {
         for sess in &mut self.sessions {
-            crate::gui_state::gui_state_clear(&mut sess.gui_state);
+            petramond_world::gui_state::gui_state_clear(&mut sess.gui_state);
             sess.last_sent_gui_state = None;
         }
     }
@@ -446,7 +446,7 @@ impl ServerGame {
                     // pack GUI uses, so no engine machine needs a wire variant.
                     let gauges = sess.menu.open_gauges(&self.world);
                     MenuTargetWire::Container {
-                        kind_key: crate::gui_state::kind_key(kind).unwrap_or_default().to_string(),
+                        kind_key: petramond_world::gui_state::kind_key(kind).unwrap_or_default().to_string(),
                         pos,
                         slots: sess
                             .menu
@@ -456,7 +456,7 @@ impl ServerGame {
                             gauges
                                 .into_iter()
                                 .map(|(k, v)| {
-                                    (k, GuiValueWire::from_value(&crate::gui_state::GuiValue::F32(v)))
+                                    (k, GuiValueWire::from_value(&petramond_world::gui_state::GuiValue::F32(v)))
                                 })
                                 .collect()
                         }),
@@ -471,7 +471,7 @@ impl ServerGame {
 /// The `container_opened`/`container_closed` payload for a menu target, or `None`
 /// when no container session is involved. The unified target already carries
 /// the event's `(kind, pos)` identity.
-fn container_event_key(target: ContainerTarget) -> Option<(crate::gui_state::GuiKind, Option<IVec3>)> {
+fn container_event_key(target: ContainerTarget) -> Option<(petramond_world::gui_state::GuiKind, Option<IVec3>)> {
     match target {
         ContainerTarget::None => None,
         ContainerTarget::Gui { kind, pos } => Some((kind, pos)),

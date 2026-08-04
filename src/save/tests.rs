@@ -1,8 +1,8 @@
 use super::worlds::delete_world_at;
 use super::*;
-use crate::block::Block;
-use crate::item::{ItemStack, ItemType};
-use crate::mathh::Vec3;
+use petramond_world::block::Block;
+use petramond_world::item::{ItemStack, ItemType};
+use petramond_math::math::Vec3;
 use crate::player::Player;
 
 fn temp_world_dir(tag: &str) -> PathBuf {

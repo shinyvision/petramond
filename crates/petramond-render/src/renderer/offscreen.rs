@@ -31,7 +31,7 @@ const CAPTURE_FORMATS: [wgpu::TextureFormat; 4] = [
 const TEXEL_BYTES: u32 = 4;
 
 /// Build a renderer with no surface at `width` × `height`, rendering in
-/// `format` (one of [`CAPTURE_FORMATS`]). Prefer an sRGB format: every pipeline
+/// `format` (one of `CAPTURE_FORMATS`). Prefer an sRGB format: every pipeline
 /// (and the pre-baked icon atlas) is built for the colour format handed in
 /// here, and the windowed game runs on an sRGB swapchain.
 pub async fn new_offscreen_renderer(
@@ -96,7 +96,7 @@ impl Renderer {
     /// Render one frame into an owned offscreen target and read it back.
     /// Blocks until the GPU is done. Works with or without a surface; nothing
     /// is presented either way. Panics unless the renderer's colour format is
-    /// one of [`CAPTURE_FORMATS`] — a windowed renderer on an HDR swapchain is
+    /// one of `CAPTURE_FORMATS` — a windowed renderer on an HDR swapchain is
     /// not capturable.
     pub fn capture_frame(&mut self) -> RenderedFrame {
         let (width, height) = (self.config.width, self.config.height);

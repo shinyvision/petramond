@@ -7,7 +7,7 @@
 /// rather than a re-derivation of it — generation/light/mesh pumping, the
 /// resident-memory census, and deterministic ticking.
 pub mod stream {
-    pub use crate::facing::Facing;
+    pub use petramond_math::facing::Facing;
     pub use crate::world::{MemoryCensus, World};
 
     /// Run `n` deterministic game ticks over a streamed world.
@@ -16,7 +16,7 @@ pub mod stream {
     /// move": the fluid sim only ever acts on the tick, and re-deriving its
     /// spread rules in a tool would just be a mirror that can go stale.
     pub fn tick(world: &mut World, n: u32) {
-        let recipes = crate::crafting::Recipes::default();
+        let recipes = petramond_world::crafting::Recipes::default();
         for _ in 0..n {
             world.game_tick(&recipes);
         }
@@ -33,16 +33,16 @@ pub mod stream {
         world: &mut World,
         name: &str,
         place_pos: [i32; 3],
-        player_facing: crate::facing::Facing,
+        player_facing: petramond_math::facing::Facing,
     ) -> bool {
         let Some(id) = super::block::id_by_name(name) else {
             return false;
         };
-        let block = crate::block::Block::from_id(id);
-        let p = crate::mathh::IVec3::new(place_pos[0], place_pos[1], place_pos[2]);
+        let block = petramond_world::block::Block::from_id(id);
+        let p = petramond_math::math::IVec3::new(place_pos[0], place_pos[1], place_pos[2]);
         let inputs = crate::world::placement::PlaceInputs {
-            hit: p - crate::mathh::IVec3::Y,
-            normal: crate::mathh::IVec3::Y,
+            hit: p - petramond_math::math::IVec3::Y,
+            normal: petramond_math::math::IVec3::Y,
             place_pos: p,
             replacing_in_place: false,
             player_facing,
@@ -62,7 +62,7 @@ pub mod stream {
     /// `parts` cubes draw), e.g. the forge furnace's `coals`.
     pub fn set_model_parts(world: &mut World, pos: [i32; 3], parts: u32) -> bool {
         world.set_model_parts(
-            crate::mathh::IVec3::new(pos[0], pos[1], pos[2]),
+            petramond_math::math::IVec3::new(pos[0], pos[1], pos[2]),
             parts,
             None,
         )
@@ -98,7 +98,7 @@ pub mod mods {
         let mut host = crate::modding::ModHost::load(seed, &Default::default());
         let mut world = crate::world::World::new(seed, 4);
         let mut player = crate::player::Player::new(glam::Vec3::new(0.0, 80.0, 0.0));
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut bus = crate::events::EventBus::default();
         let mut systems = crate::events::TickSystems::default();
         let mut sound = 1u64;
@@ -120,11 +120,11 @@ pub mod recipes_query {
     /// answer a machine gets from `HostCall::RecipeResult`. `None` when the
     /// item is unknown or the route does not exist.
     pub fn process(
-        catalog: &crate::crafting::Recipes,
+        catalog: &petramond_world::crafting::Recipes,
         class: &str,
         item_key: &str,
     ) -> Option<String> {
-        let item = crate::item::ItemType::by_key(item_key)?;
+        let item = petramond_world::item::ItemType::by_key(item_key)?;
         catalog
             .process(class, item)
             .map(|s| s.item.key().to_owned())
@@ -154,53 +154,53 @@ pub mod gui {
 /// a developer tool needs to audit "which recipes does the player see once
 /// they have held X", without opening a world.
 pub mod recipes {
-    pub use crate::crafting::{CraftingCatalog, CraftingRecipe, Recipes, UnlockIndex};
+    pub use petramond_world::crafting::{CraftingCatalog, CraftingRecipe, Recipes, UnlockIndex};
 
     /// Every enabled pack's crafting/processing rows (the same load the
     /// server runs at session start, with nothing disabled).
     pub fn load() -> Recipes {
-        crate::crafting::load_recipes_for(&Default::default())
+        petramond_world::crafting::load_recipes_for(&Default::default())
     }
 
     /// The recipes a player who has held exactly `item_names` would have
     /// unlocked under the engine's default rule. Unknown names are ignored.
     pub fn opened_by_items(index: &UnlockIndex, item_names: &[&str]) -> Vec<String> {
-        let obtained: crate::item::ItemSet = item_names
+        let obtained: petramond_world::item::ItemSet = item_names
             .iter()
-            .filter_map(|name| crate::item::ItemType::by_name(name))
+            .filter_map(|name| petramond_world::item::ItemType::by_name(name))
             .collect();
         index.opened_by_all(&obtained).map(str::to_owned).collect()
     }
 }
 
 pub mod biome {
-    pub use crate::biome::Biome;
+    pub use petramond_world::biome::Biome;
 }
 
 pub mod block {
-    pub use crate::block::Block;
+    pub use petramond_world::block::Block;
 
     /// Runtime id of a namespaced block row key (`"petramond:torch"`), or
     /// `None` when no loaded catalog layer declares it. Ids shift as packs
     /// change, so tools must resolve by name rather than hardcode numbers.
     pub fn id_by_name(name: &str) -> Option<u16> {
-        crate::registry::names().blocks.id(name)
+        petramond_world::registry::names().blocks.id(name)
     }
 
     /// The row key a runtime block id came from.
     pub fn name_of(id: u16) -> Option<&'static str> {
-        crate::registry::names().blocks.name(id)
+        petramond_world::registry::names().blocks.name(id)
     }
 }
 
 // Tile colour data, re-exported so dev tools (genmap) can derive block map
 // colours from the block rows' top tiles instead of a hand-maintained palette.
 pub mod atlas {
-    pub use crate::tile::{Tile, TileTint};
+    pub use petramond_world::tile::{Tile, TileTint};
 }
 
 pub mod chunk {
-    pub use crate::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
+    pub use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 }
 
 pub mod worldgen {

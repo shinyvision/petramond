@@ -6,7 +6,7 @@
 //! thread). Keeping the registry per-thread (instead of a
 //! process-wide map) preserves test isolation: parallel test sessions each
 //! install into their own thread. The server thread re-installs the session's
-//! map on startup via [`ModHost::install_thread_ai_nodes`]. A dispatch from
+//! map on startup via `ModHost::install_thread_ai_nodes`. A dispatch from
 //! a thread without an install simply finds no registration and decides
 //! nothing.
 //!

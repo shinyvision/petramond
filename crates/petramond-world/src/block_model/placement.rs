@@ -28,7 +28,7 @@ pub fn placement_transform(base: IVec3, kind: BlockModelKind, facing: Facing) ->
 }
 
 /// [`placement_transform`] with an explicit footprint instead of `footprint(kind)`. Used by
-/// [`ModelInstance::build`] to bake the render templates: that runs INSIDE the `INSTANCES`
+/// `ModelInstance::build` to bake the render templates: that runs INSIDE the `INSTANCES`
 /// `LazyLock` init, so going through `footprint(kind)` (→ `instance(kind)`) would re-enter
 /// the half-built lock and deadlock. The footprint is already known locally there.
 pub fn placement_transform_fp(base: IVec3, fp: [u8; 3], facing: Facing) -> Mat4 {
@@ -55,7 +55,7 @@ pub fn world_cell_for_offset(
     base + cell_rel_for_offset(footprint(kind), offset, facing)
 }
 
-/// Inverse of [`world_cell_for_offset`]: find the rotated-footprint base from a world
+/// Inverse of `world_cell_for_offset`: find the rotated-footprint base from a world
 /// cell and its stored authored offset.
 pub fn base_from_cell(cell: IVec3, kind: BlockModelKind, offset: [u8; 3], facing: Facing) -> IVec3 {
     cell - cell_rel_for_offset(footprint(kind), offset, facing)

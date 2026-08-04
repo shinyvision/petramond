@@ -16,7 +16,7 @@
 //! layers) — the `world::store` pattern. This file keeps the struct, spawn,
 //! and the per-tick orchestration.
 
-use crate::mathh::{voxel_at, IVec3, Vec3};
+use petramond_math::math::{voxel_at, IVec3, Vec3};
 use crate::world::World;
 
 use super::anim::AnimKind;
@@ -76,7 +76,7 @@ pub struct Instance {
     pub head_pitch: f32,
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    pub blocklight: crate::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
     /// Previous-tick pose, for render interpolation.
     pub prev_pos: Vec3,
     pub prev_yaw: f32,
@@ -90,7 +90,7 @@ pub struct Instance {
     pub(super) on_ground: bool,
     /// Engine-owned global damage immunity. It is transient like hurt/stagger
     /// presentation and starts clear when a saved mob is restored.
-    pub(super) damage_immunity: crate::damage::DamageImmunity,
+    pub(super) damage_immunity: petramond_world::damage::DamageImmunity,
     /// Highest feet Y reached since the mob last stood/swum. A landing compares this
     /// peak to the landed feet Y to produce deterministic fall damage.
     pub(super) fall_peak_y: f32,
@@ -145,7 +145,7 @@ pub struct Instance {
     /// Ticks a free verdict has been carried unproven, so it is re-proven at
     /// [`confined::FREE_CHECK_INTERVAL`] regardless.
     confined_free_age: u16,
-    /// ACTIVE particle-emitter bundles by catalog id (`crate::particle_emitters`),
+    /// ACTIVE particle-emitter bundles by catalog id (`petramond_world::particle_emitters`),
     /// sorted, at most [`super::MAX_ACTIVE_MOB_EMITTERS`]. Presentation-only
     /// state toggled by mods through the `MobEmitterSet` HostCall, replicated
     /// per tick, and deliberately not persisted (the owning mod re-derives it,
@@ -218,7 +218,7 @@ impl Instance {
             head_yaw: 0.0,
             head_pitch: 0.0,
             skylight: 63,
-            blocklight: crate::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
             prev_pos: pos,
             prev_yaw: yaw,
             prev_anim_time: 0.0,
@@ -275,7 +275,7 @@ impl Instance {
     }
 
     /// The active particle-emitter bundle ids, sorted (catalog session ids —
-    /// `crate::particle_emitters`).
+    /// `petramond_world::particle_emitters`).
     #[inline]
     pub fn active_emitters(&self) -> &[u8] {
         &self.active_emitters
@@ -308,9 +308,9 @@ impl Instance {
     }
 
     /// This mob's gameplay body (feet at `pos`, sized to its species).
-    pub(super) fn body(&self) -> crate::body::Body {
+    pub(super) fn body(&self) -> petramond_world::body::Body {
         let s = def(self.kind).size;
-        crate::body::Body::new(self.pos, s.half_width, s.height)
+        petramond_world::body::Body::new(self.pos, s.half_width, s.height)
     }
 
     /// Replace this mob's touch-contact record (see the field docs) — the

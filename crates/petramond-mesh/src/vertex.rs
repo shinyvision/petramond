@@ -24,7 +24,7 @@ pub struct Vertex {
     /// — and light from `SHADES * AO`).
     pub packed: u32,
     /// Second packed word: block light plus the optional cell-local UV. See
-    /// [`pack_vertex2`] and [`pack_cell_uv`], the owners of its bit layout.
+    /// `pack_vertex2` and [`pack_cell_uv`], the owners of its bit layout.
     pub packed2: u32,
 }
 
@@ -599,7 +599,7 @@ pub const SKY_SHIFT: u32 = 17;
 
 /// `Vertex::packed` bit 26. In the chunk pass it means "composite the overlay
 /// payload"; the model3d pass, which never composites overlays, reuses the same
-/// bit as [`SOLID_COLOR_FLAG`](crate::render::SOLID_COLOR_FLAG).
+/// bit as `SOLID_COLOR_FLAG`.
 pub const OVERLAY_FLAG: u32 = 1 << 26;
 
 /// The overlay payload's home in `packed2`, bits 20..31.
@@ -623,7 +623,7 @@ pub fn pack_overlay(payload: u32) -> u32 {
 /// each 4 bits (a merge never exceeds one 16-cell section axis). The shader
 /// multiplies the corner uv by it so one tile REPEATs across the merge.
 ///
-/// Paired with [`unpack_greedy_span`] so the emitter, the tests and the WGSL
+/// Paired with `unpack_greedy_span` so the emitter, the tests and the WGSL
 /// mirror all describe one layout — spelling the two nibbles out by hand is
 /// how the height read silently drifted onto the AO/sky bits when the payload
 /// moved words.
@@ -779,7 +779,7 @@ pub fn push_back_face(vbuf: &mut Vec<Vertex>, start: u32) {
 }
 
 pub struct ChunkMesh {
-    /// Opaque terrain quads, triangulation implied (see [`QuadIdx`]).
+    /// Opaque terrain quads, triangulation implied (see `QuadIdx`).
     pub opaque: Vec<Vertex>,
     /// WATER geometry: alpha-blended, depth-READ-only (water must not occlude
     /// the terrain behind it), drawn last, farthest section first. Back-face

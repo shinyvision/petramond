@@ -6,8 +6,8 @@
 //! lives on the server thread); everything mutated is
 //! client-owned (particles, lids, swings, the mesh pump).
 
-use petramond::block::{Block, ShapeFamily};
-use petramond::mathh::{voxel_at, IVec3};
+use petramond_world::block::{Block, ShapeFamily};
+use petramond_math::math::{voxel_at, IVec3};
 
 use super::{Game, MINING_DUST_INTERVAL};
 
@@ -66,7 +66,7 @@ impl Game {
                     // A one-shot burst bundle: spawn its physics particles into
                     // the client-local system, world-lit at the burst point.
                     let Some(spec) =
-                        petramond::particle_emitters::def(emitter).and_then(|b| b.burst.as_ref())
+                        petramond_world::particle_emitters::def(emitter).and_then(|b| b.burst.as_ref())
                     else {
                         continue;
                     };
@@ -241,7 +241,7 @@ impl Game {
     /// Two-channel light at the player's eye, for lighting the first-person hand
     /// / held item: it brightens AND takes the colour of nearby block light,
     /// and the torch channel keeps it lit at night.
-    pub(super) fn held_item_light(&self) -> (u8, petramond::light::BlockLight6) {
+    pub(super) fn held_item_light(&self) -> (u8, petramond_world::light::BlockLight6) {
         let c = voxel_at(self.cam.pos);
         self.replica.dynamic_light_at_world(c.x, c.y, c.z)
     }

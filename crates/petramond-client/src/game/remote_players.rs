@@ -14,7 +14,7 @@
 //!
 //! Approximations (deliberate, documented):
 //! - EATING replicates as a level bool; the animator wants an `Option<f32>`
-//!   progress, so a client-side ramp ([`EAT_RAMP_SECS`]) stands in. Only the
+//!   progress, so a client-side ramp (`EAT_RAMP_SECS`) stands in. Only the
 //!   blend/nibble channels pose the third-person body — the progress channel
 //!   (`eat_near`) drives a first-person-only camera approach — so the ramp is
 //!   visually exact for remote bodies.
@@ -124,9 +124,9 @@ impl RemotePlayer {
     /// Consumed by the local player's per-frame entity push
     /// (`Game::apply_entity_push`) through the same body separation rule
     /// mobs use.
-    pub fn push_body(&self) -> Option<petramond::body::Body> {
+    pub fn push_body(&self) -> Option<petramond_world::body::Body> {
         (self.curr.visible && !self.curr.sleeping && self.curr.mount.is_none()).then(|| {
-            petramond::body::Body::new(
+            petramond_world::body::Body::new(
                 self.curr.transform.pos,
                 petramond::player::HALF_W,
                 petramond::player::HEIGHT,
@@ -217,12 +217,12 @@ impl RemotePlayers {
             // first-person camera effect and has no meaning on one.
             p.view = p.animator.update(HeldItemFrame {
                 bob: [0.0, 0.0],
-                item: p.curr.held_item.map(petramond::item::ItemType),
+                item: p.curr.held_item.map(petramond_world::item::ItemType),
                 variant: p
                     .curr
                     .held_data
                     .as_deref()
-                    .and_then(petramond::item::variant::intern_blob)
+                    .and_then(petramond_world::item::variant::intern_blob)
                     .unwrap_or_default(),
                 // Held-rotation preview state isn't replicated; the default
                 // reads fine at held-mini-cube size.
@@ -352,7 +352,7 @@ mod tests {
         b.transform.yaw = -PI + 0.1;
         let (_, yaw, _) = interpolate(&a, &b, 0.5);
         assert!(
-            petramond::mathh::wrap_angle(yaw - PI).abs() < 1e-5,
+            petramond_math::math::wrap_angle(yaw - PI).abs() < 1e-5,
             "yaw crosses the seam the short way: {yaw}"
         );
     }

@@ -39,8 +39,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, OnceLock, RwLock};
 
-use crate::block::Block;
-use crate::item::ItemType;
+use petramond_world::block::Block;
+use petramond_world::item::ItemType;
 use crate::mob::Mob;
 
 /// Bidirectional id maps for one save. Every direction is a dense LUT sized to
@@ -77,7 +77,7 @@ impl Palette {
     /// registry happens not to have reached yet.
     pub fn identity() -> Palette {
         let ids = |n: usize| -> Box<[u16]> { (0..n as u16).collect::<Vec<_>>().into_boxed_slice() };
-        let n = crate::registry::WIDE_ID_CAP;
+        let n = petramond_world::registry::WIDE_ID_CAP;
         let mut mob_identity = [None; 256];
         for (i, v) in mob_identity.iter_mut().enumerate() {
             *v = Some(i as u8);
@@ -176,7 +176,7 @@ fn mob_from_name(name: &str) -> Option<Mob> {
 /// Whether `name` belongs to a mod id in `disabled`. The engine `petramond`
 /// namespace is reserved and never appears in the disabled mod-id set.
 fn name_disabled(name: &str, disabled: &BTreeSet<String>) -> bool {
-    crate::registry::namespace(name).is_some_and(|ns| disabled.contains(ns))
+    petramond_world::registry::namespace(name).is_some_and(|ns| disabled.contains(ns))
 }
 
 /// Load the save's palette, creating (or extending) `palette.json` as needed.
@@ -239,7 +239,7 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
             path.display()
         );
     }
-    let cap = crate::registry::WIDE_ID_CAP;
+    let cap = petramond_world::registry::WIDE_ID_CAP;
     if file.blocks.len() > cap || file.items.len() > cap || file.mobs.len() > 256 {
         panic!(
             "save palette {} exceeds the id ceiling ({cap} blocks/items, 256 mobs)",

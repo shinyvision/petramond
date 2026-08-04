@@ -8,7 +8,7 @@
 //!
 //! [`Audio`] is best-effort: if no output device opens, or a sound fails to decode,
 //! it logs and runs silent rather than failing — a missing speaker never costs you
-//! the game (mirroring [`petramond::asset_cache`]'s never-fatal stance).
+//! the game (mirroring [`petramond_world::asset_cache`]'s never-fatal stance).
 //!
 //! The PLAYBACK half (rodio → cpal → ALSA on Linux) sits behind the default-on
 //! `audio` cargo feature; without it [`Audio`] is a signature-identical silent
@@ -22,7 +22,7 @@
 #![allow(clippy::too_many_arguments)]
 
 #[cfg_attr(not(feature = "playback"), allow(unused_imports))]
-pub use petramond::sound_registry::{Sound, SoundCategory};
+pub use petramond_world::sound_registry::{Sound, SoundCategory};
 
 
 #[cfg(feature = "playback")]

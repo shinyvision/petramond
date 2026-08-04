@@ -7,18 +7,18 @@
 //!
 //! The door is modelled CLOSED on the `+Z` (south) edge, hinged on its SE corner; the
 //! lower half is `y ∈ [0,1]` (textured `bottom_tile`), the upper `y ∈ [1,2]`
-//! (`top_tile`). Opening rotates the slab about the hinge (see [`petramond::door`]); the
+//! (`top_tile`). Opening rotates the slab about the hinge (see [`petramond_world::door`]); the
 //! whole model is then rotated about its vertical centre to the block's `facing` and
 //! translated to the world, like the chest. The swung edge matches the door's
 //! collision edge (a rigid swing's 3px body lands on the outer face of that edge, an
-//! imperceptible offset from the in-cell collision slab — see `petramond::door`).
+//! imperceptible offset from the in-cell collision slab — see `petramond_world::door`).
 
 use glam::Vec3;
 
 use super::item_cube::{orient_faces_to_block, push_box_faces_lit_mirrored};
 use super::DoorInstance;
-use petramond::door::{self, THICKNESS};
-use petramond::facing::Facing;
+use petramond_world::door::{self, THICKNESS};
+use petramond_math::facing::Facing;
 use petramond_mesh::{Vertex, UV_MODE_THIN_U, UV_MODE_THIN_V};
 
 /// Canonical closed-door slab extent on the thin (Z) axis: flush with the `+Z` face.
@@ -50,7 +50,7 @@ fn push_door_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &DoorI
     // which carry the door ART; the four thin edge faces (±X sides, ±Y top/bottom) carry
     // the distinct `side_tile` (the door's edge — a plank strip, NOT the stretched front
     // art). Built canonically (south, front = +Z); the rotations below carry it.
-    let half_faces = |art: petramond::tile::Tile| {
+    let half_faces = |art: petramond_world::tile::Tile| {
         [
             inst.side_tile, // PosX (east edge)
             inst.side_tile, // NegX (west edge)
@@ -118,7 +118,7 @@ fn push_door_world(verts: &mut Vec<Vertex>, indices: &mut Vec<u32>, inst: &DoorI
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond::tile::Tile;
+    use petramond_world::tile::Tile;
 
     fn inst(facing: Facing, open01: f32) -> DoorInstance {
         DoorInstance {
@@ -129,7 +129,7 @@ mod tests {
             top_tile: Tile::named("oak_door_top"),
             side_tile: Tile::named("oak_planks"),
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: petramond::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
         }
     }
 

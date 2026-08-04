@@ -25,9 +25,9 @@
 
 use std::collections::VecDeque;
 
-use crate::block::{Block, ShapeNeighborhood};
-use crate::chunk::{section_idx, section_local, SectionPos, SECTION_SIZE};
-use crate::mathh::{IVec3, FACE_NEIGHBORS};
+use petramond_world::block::{Block, ShapeNeighborhood};
+use petramond_world::chunk::{section_idx, section_local, SectionPos, SECTION_SIZE};
+use petramond_math::math::{IVec3, FACE_NEIGHBORS};
 
 use super::store::{World, WorldRole};
 
@@ -186,17 +186,17 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-    use crate::mathh::IVec3;
-    use crate::block::{Block, CellCodec, ShapeNeighborhood};
-    use crate::block_state::{StairHalf, StairState};
-    use crate::facing::Facing;
-    use crate::section::Section;
+    use petramond_math::math::IVec3;
+    use petramond_world::block::{Block, CellCodec, ShapeNeighborhood};
+    use petramond_world::block_state::{StairHalf, StairState};
+    use petramond_math::facing::Facing;
+    use petramond_world::section::Section;
     use crate::world::World;
-    use crate::chunk::SectionPos;
+    use petramond_world::chunk::SectionPos;
 
     /// The oracle: what the cell's own family would refine its state to right
     /// now — the sweep must leave every cell agreeing with it.
-    fn refined_now(world: &World, p: IVec3) -> crate::block::ShapeState {
+    fn refined_now(world: &World, p: IVec3) -> petramond_world::block::ShapeState {
         let block = Block::from_id(world.chunk_block(p.x, p.y, p.z));
         let k = block.shape_kind_def();
         let cur = world.shape_state(p);

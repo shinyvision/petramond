@@ -170,7 +170,7 @@ impl SurfaceDensitySystem {
     /// Y, so a voxel is solid IFF `wy <= surf`, the same equivalence
     /// [`fill_section`](Self::fill_section) relies on. The run below the
     /// deepest depth-gated skin band resolves to one (depth-independent)
-    /// block computed once. Byte-identical to [`fill_chunk_direct`], pinned
+    /// block computed once. Byte-identical to `fill_chunk_direct`, pinned
     /// by `direct_fill_matches_region_fill`.
     pub fn fill_chunk_from(&self, proto: &mut ProtoChunk, biomes: &[Biome], surf: &[i32]) {
         debug_assert_eq!(biomes.len(), CHUNK_SX * CHUNK_SZ);
@@ -249,7 +249,7 @@ impl SurfaceDensitySystem {
     /// biome + density surface (`biomes`/`surf`, the column's 16×16 grids indexed
     /// `z*16 + x`) instead of a per-section density lattice.
     ///
-    /// This is byte-identical to [`fill_column`](Self::fill_column) for the section's
+    /// This is byte-identical to `fill_column` for the section's
     /// slab. `master_density` is depth-only and exactly linear in Y, so a voxel is
     /// solid IFF `wy <= surf`, and its surface depth is exactly `surf - wy` — the same
     /// run-top/`depth_from_top` the lattice walk derives, with no overhangs to track.

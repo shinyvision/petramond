@@ -6,9 +6,9 @@
 //! of panes is two long broad faces per cell, not per-arm strips); when runs
 //! cross, the north-south run keeps the post and the east-west arms butt
 //! against it. The chunk mesher wraps the boxes into the unified
-//! [`super::boxset`] emitter — cap culling against the pane above/below, the
+//! `super::boxset` emitter — cap culling against the pane above/below, the
 //! junction's interior faces, everything buried is removed geometrically —
-//! and the break-crack overlay walks the same boxes through [`shape_faces`].
+//! and the break-crack overlay walks the same boxes through `shape_faces`.
 //! Faces at a CONNECTED cell edge are declared never-emitted (the neighbour
 //! pane's run continues flush, or the connected block's complete face hides
 //! them — the connection RULE guarantees it, not local geometry).

@@ -12,9 +12,9 @@
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use crate::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
-use crate::mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
-use crate::section::Section;
+use petramond_world::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
+use petramond_mesh::{build_section_mesh_from_pad, ChunkMesh, SectionMeshPad};
+use petramond_world::section::Section;
 use crate::worker::JobPool;
 
 /// Padded neighbourhood side length: the section (16) plus one cell of border on each
@@ -59,13 +59,13 @@ pub(super) fn biome_pad_idx(x: usize, z: usize) -> usize {
 /// `Arc<Section>`, so streaming edits never copy-on-write a section because a mesh job holds
 /// it. Absent (`None`) buffers fall back exactly like [`Section`]'s accessors.
 pub(super) struct NeighborSnap {
-    pub blocks: crate::section::BlockCube,
+    pub blocks: petramond_world::section::BlockCube,
     pub water: Option<std::sync::Arc<[u8]>>,
     pub skylight: Option<std::sync::Arc<[u8]>>,
-    pub blocklight: Option<std::sync::Arc<[crate::light::LightRgb]>>,
+    pub blocklight: Option<std::sync::Arc<[petramond_world::light::LightRgb]>>,
     /// The section's unified per-cell state entries (opaque; the mesher's
     /// seam hands them to the owning family to decode).
-    pub cell_states: Option<Box<[(u16, crate::block::ShapeState)]>>,
+    pub cell_states: Option<Box<[(u16, petramond_world::block::ShapeState)]>>,
 }
 
 /// A self-contained meshing job: the 3×3×3 neighbourhood as cheap field-`Arc` snapshots
@@ -91,7 +91,7 @@ impl MeshJob {
         &mut self,
         pos: SectionPos,
         skylight: Arc<[u8]>,
-        blocklight: Arc<[crate::light::LightRgb]>,
+        blocklight: Arc<[petramond_world::light::LightRgb]>,
     ) {
         let (dx, dy, dz) = (
             pos.cx - self.pos.cx,
@@ -187,8 +187,8 @@ struct Pad {
     blocks: Box<[u16]>,
     water: Box<[u8]>,
     skylight: Box<[u8]>,
-    blocklight: Box<[crate::light::LightRgb]>,
-    cell_states: Box<[crate::block::ShapeState]>,
+    blocklight: Box<[petramond_world::light::LightRgb]>,
+    cell_states: Box<[petramond_world::block::ShapeState]>,
     loaded: Box<[bool]>,
 }
 
@@ -198,8 +198,8 @@ impl Pad {
             blocks: vec![0u16; PAD_VOL].into_boxed_slice(),
             water: vec![0u8; PAD_VOL].into_boxed_slice(),
             skylight: vec![SKY_FULL; PAD_VOL].into_boxed_slice(),
-            blocklight: vec![crate::light::LightRgb::ZERO; PAD_VOL].into_boxed_slice(),
-            cell_states: vec![crate::block::ShapeState::NONE; PAD_VOL].into_boxed_slice(),
+            blocklight: vec![petramond_world::light::LightRgb::ZERO; PAD_VOL].into_boxed_slice(),
+            cell_states: vec![petramond_world::block::ShapeState::NONE; PAD_VOL].into_boxed_slice(),
             loaded: vec![false; PAD_VOL].into_boxed_slice(),
         }
     }
@@ -210,8 +210,8 @@ impl Pad {
         self.blocks.fill(0);
         self.water.fill(0);
         self.skylight.fill(SKY_FULL);
-        self.blocklight.fill(crate::light::LightRgb::ZERO);
-        self.cell_states.fill(crate::block::ShapeState::NONE);
+        self.blocklight.fill(petramond_world::light::LightRgb::ZERO);
+        self.cell_states.fill(petramond_world::block::ShapeState::NONE);
         self.loaded.fill(false);
     }
 }
@@ -253,7 +253,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         for py in 0..PAD {
             let (ddy, ly) = pad_axis(py);
             let base = pad_idx(1, py, pz); // px=1
-            let src = crate::chunk::section_idx(0, ly, lz); // local x=0 of this row
+            let src = petramond_world::chunk::section_idx(0, ly, lz); // local x=0 of this row
             match nbhd[nbhd_idx27(0, ddy, ddz)].as_ref() {
                 Some(s) => {
                     s.blocks
@@ -294,7 +294,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
             for py in 0..PAD {
                 let (ddy, ly) = pad_axis(py);
                 let pi = pad_idx(px, py, pz);
-                let li = crate::chunk::section_idx(lx, ly, lz);
+                let li = petramond_world::chunk::section_idx(lx, ly, lz);
                 match nbhd[nbhd_idx27(ddx, ddy, ddz)].as_ref() {
                     Some(s) => {
                         blocks[pi] = s.blocks.get(li);
@@ -303,7 +303,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                         blocklight[pi] = s
                             .blocklight
                             .as_ref()
-                            .map_or(crate::light::LightRgb::ZERO, |b| b[li]);
+                            .map_or(petramond_world::light::LightRgb::ZERO, |b| b[li]);
                         loaded[pi] = true;
                     }
                     None => {
@@ -340,7 +340,7 @@ fn scatter_border_states<T: Copy>(
     mut write: impl FnMut(usize, T),
 ) {
     for &(key, state) in states {
-        let (lx, ly, lz) = crate::chunk::section_local(key as usize);
+        let (lx, ly, lz) = petramond_world::chunk::section_local(key as usize);
         let (Some(px), Some(py), Some(pz)) =
             (pad_border(dx, lx), pad_border(dy, ly), pad_border(dz, lz))
         else {

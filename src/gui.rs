@@ -9,17 +9,17 @@
 pub mod doc_theme;
 pub mod documents;
 
-use crate::inventory::{HOTBAR_LEN, TOTAL_SLOTS};
-use crate::item::{ItemStack, ItemType};
+use petramond_world::inventory::{HOTBAR_LEN, TOTAL_SLOTS};
+use petramond_world::item::{ItemStack, ItemType};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 // Compat re-exports while callers migrate to `gui_state` (the shared session
 // vocabulary now lives below the GUI machinery).
-pub use crate::gui_state::{ContainerView, GuiKind, GuiStateMap, HealthView, MenuSlot};
+pub use petramond_world::gui_state::{ContainerView, GuiKind, GuiStateMap, HealthView, MenuSlot};
 #[allow(unused_imports)]
-pub use crate::gui_state::{
+pub use petramond_world::gui_state::{
     empty_gui_state, gui_state_clear, gui_state_set, intern_kind, intern_str, kind_key,
     resolve_kind, MAX_MENU_DRAG_SLOTS,
 };
@@ -181,7 +181,7 @@ pub struct UiSnapshot {
     /// The player's active status effects, in application order — the framed
     /// icon row drawn directly above the hearts (hidden with them). Empty for
     /// a spectator or when nothing is active.
-    pub effects: Vec<crate::effect::Effect>,
+    pub effects: Vec<petramond_world::effect::Effect>,
     /// The open mod GUI's state map (labels / rotimage angles / overlay
     /// fractions), or `None` when no mod GUI session is up. A cheap `Arc`
     /// clone of the tick-owned map.

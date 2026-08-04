@@ -7,7 +7,7 @@ impl Mobs {
     /// `false` for a bad index, an unregistered key, or an activation past the
     /// per-mob cap. Keeps `list` private, like [`damage_mob`](Self::damage_mob).
     pub fn set_mob_emitter(&mut self, index: usize, key: &str, active: bool) -> bool {
-        let Some(bundle) = crate::particle_emitters::by_key(key) else {
+        let Some(bundle) = petramond_world::particle_emitters::by_key(key) else {
             return false;
         };
         // A one-shot burst bundle is an event, not attachable state.
@@ -52,7 +52,7 @@ impl Mobs {
     }
 
     /// Latch a mod's kinematic locomotion intent on the mob at `index` for
-    /// THIS tick (see [`Instance::set_drive`]): a horizontal world-space
+    /// THIS tick (see `Instance::set_drive`): a horizontal world-space
     /// velocity plus optionally an absolute yaw (the mob-facing convention:
     /// yaw `0` faces `-Z`, facing `(-sin yaw, 0, -cos yaw)`). `false` for a
     /// bad index or a dead mob.

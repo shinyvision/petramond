@@ -1,9 +1,9 @@
 use crate::app::AppScreen;
 use crate::game::Game;
 use petramond::gui::UiSnapshot;
-use petramond::gui_state::MenuSlot;
-use petramond::inventory::{place_cursor_count, plan_drag_distribution, slot_capacity};
-use petramond::item::ItemStack;
+use petramond_world::gui_state::MenuSlot;
+use petramond_world::inventory::{place_cursor_count, plan_drag_distribution, slot_capacity};
+use petramond_world::item::ItemStack;
 
 pub(super) fn build(
     game: Option<&Game>,
@@ -68,7 +68,7 @@ pub(super) fn apply_menu_drag_preview(
 
 fn preview_capacity(
     snapshot: &UiSnapshot,
-    specs: &[petramond::container::SlotSpec],
+    specs: &[petramond_world::container::SlotSpec],
     slot: MenuSlot,
     held: &ItemStack,
 ) -> u8 {
@@ -81,7 +81,7 @@ fn preview_capacity(
         // The same question the committed prediction and the server both ask
         // (`container::slot_admits`). Asking a THIRD one here means the drag
         // preview shows a split the click that follows it will not perform.
-        MenuSlot::Container(i) if petramond::container::slot_admits(specs, i, Some(held.item)) => {
+        MenuSlot::Container(i) if petramond_world::container::slot_admits(specs, i, Some(held.item)) => {
             snapshot
                 .container
                 .as_ref()
@@ -95,7 +95,7 @@ fn preview_capacity(
 
 fn preview_place(
     snapshot: &mut UiSnapshot,
-    specs: &[petramond::container::SlotSpec],
+    specs: &[petramond_world::container::SlotSpec],
     cursor: &mut Option<ItemStack>,
     slot: MenuSlot,
     wanted: u8,
@@ -109,7 +109,7 @@ fn preview_place(
 
     let cell = match slot {
         MenuSlot::Container(i)
-            if petramond::container::slot_admits(specs, i, cursor.as_ref().map(|c| c.item)) =>
+            if petramond_world::container::slot_admits(specs, i, cursor.as_ref().map(|c| c.item)) =>
         {
             snapshot
                 .container

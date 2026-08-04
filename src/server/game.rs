@@ -9,9 +9,9 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use crate::crafting::Recipes;
+use petramond_world::crafting::Recipes;
 use crate::events::{EventBus, TickSystems};
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 use crate::mob::LootTables;
 use crate::modding::ModHost;
 use crate::net::protocol::{
@@ -98,7 +98,7 @@ pub struct ServerGame {
     /// Which recipes each discovery opens, derived once from
     /// [`recipes`](Self::recipes). Shared with the engine's unlock handler on
     /// the bus (see `server::progression`) and read by every session start.
-    pub unlocks: std::sync::Arc<crate::crafting::UnlockIndex>,
+    pub unlocks: std::sync::Arc<petramond_world::crafting::UnlockIndex>,
     /// Mob loot tables (from `assets/loot_tables.json`), rolled when a mob dies to
     /// spawn its dropped items. Loaded once at world load, like [`recipes`](Self::recipes).
     pub loot: LootTables,

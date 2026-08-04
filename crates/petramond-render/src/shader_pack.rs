@@ -70,7 +70,7 @@ struct EnvironmentShaderRow {
 }
 
 pub fn active_sky_shader() -> Option<SkyShaderSpec> {
-    active_sky_shader_from_layers(petramond::assets::read_layers("shaders.json"))
+    active_sky_shader_from_layers(petramond_world::assets::read_layers("shaders.json"))
 }
 
 fn active_sky_shader_from_layers(
@@ -95,7 +95,7 @@ fn active_sky_shader_from_layers(
 /// Unlike the sky, environment passes COMPOSE — each valid row becomes one
 /// full-screen pass; invalid rows are skipped with a warning.
 pub fn environment_shaders() -> Vec<EnvironmentShaderSpec> {
-    environment_shaders_from_layers(petramond::assets::read_layers("shaders.json"))
+    environment_shaders_from_layers(petramond_world::assets::read_layers("shaders.json"))
 }
 
 fn environment_shaders_from_layers(
@@ -148,7 +148,7 @@ fn checked_shader_source(
     }
     if let Some(bad) = params
         .iter()
-        .find(|key| !petramond::registry::is_namespaced(key))
+        .find(|key| !petramond_world::registry::is_namespaced(key))
     {
         log::warn!(
             "ignoring {} {kind} shader '{shader}': shader param '{bad}' is not namespaced",
@@ -156,7 +156,7 @@ fn checked_shader_source(
         );
         return None;
     }
-    let Some((bytes, path)) = petramond::assets::read_bytes(shader) else {
+    let Some((bytes, path)) = petramond_world::assets::read_bytes(shader) else {
         log::warn!(
             "ignoring {} {kind} shader '{shader}': WGSL source not found",
             catalog_path.display(),

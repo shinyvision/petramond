@@ -3,8 +3,8 @@
 //! The server remains authoritative; this module
 //! only tracks disposable local overlays until [`ActionOutcome`]s arrive.
 
-use petramond::inventory::Inventory;
-use petramond::mathh::IVec3;
+use petramond_world::inventory::Inventory;
+use petramond_math::math::IVec3;
 use petramond::net::protocol::{ActionOutcome, ClientRequestId};
 
 use super::replicated::MenuView;

@@ -4,7 +4,7 @@
 //! sets the spawn point in one go; the sleep timer then runs [`SLEEP_TICKS`]
 //! fixed ticks and either completes (time skips to next morning) or is
 //! cancelled by an app-side wake request (ESC / the "Leave bed" button). The
-//! presentation side only draws the dark overlay from [`crate::game::Game::sleep_progress01`]
+//! presentation side only draws the dark overlay from `crate::game::Game::sleep_progress01`
 //! and owns which screen is up; every mutation here happens on the game tick.
 //!
 //! With multiple players, the morning skip is a CROSS-player decision: it fires
@@ -12,15 +12,15 @@
 //! sleeper finished the timer — see [`ServerGame::resolve_sleep_completion`].
 //!
 //! Waking (and respawning at a bed) never drops the player inside a wall: the
-//! deterministic outward scan in [`find_wake_spot`] picks the closest cell
+//! deterministic outward scan in `find_wake_spot` picks the closest cell
 //! beside the bed whose body space is free of collision boxes over solid
 //! footing. Respawn without a (still existing) bed falls back to the same
 //! random-surface-near-origin pick a fresh world uses
-//! ([`crate::worldgen::spawn::find_spawn`] — deliberately OS-entropy random,
+//! ([`petramond_worldgen::spawn::find_spawn`] — deliberately OS-entropy random,
 //! like the fresh spawn).
 
-use crate::block::{Block, BlockTag};
-use crate::mathh::{IVec3, Vec3};
+use petramond_world::block::{Block, BlockTag};
+use petramond_math::math::{IVec3, Vec3};
 use crate::player::{BedSpawn, MAX_HEALTH, PITCH_LIMIT};
 use crate::world::World;
 
@@ -239,7 +239,7 @@ impl ServerGame {
             // The bed is gone — the spawn point disappears with it.
             self.sessions[s].player.bed_spawn = None;
         }
-        let surface = crate::worldgen::spawn::find_spawn(self.world.seed);
+        let surface = petramond_worldgen::spawn::find_spawn(self.world.seed);
         Vec3::new(
             surface.x as f32 + 0.5,
             (surface.y + 1) as f32,
@@ -375,7 +375,7 @@ fn wake_spot_clear(world: &World, c: IVec3) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunk::{Chunk, ChunkPos};
+    use petramond_world::chunk::{Chunk, ChunkPos};
 
     /// A loaded, empty chunk at (0,0) with a stone floor at y=63 under a 4×4
     /// pad around (5..9, 5..9), so candidates have footing.

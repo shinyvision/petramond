@@ -1,7 +1,7 @@
 //! Fixed-biome foliage tinting for the **out-of-world** model3d renders (held
 //! item, dropped item-entity cubes, hotbar/inventory icons).
 //!
-//! The chunk mesher ([`petramond_mesh::builder`]) biome-tints grass tops / short
+//! The chunk mesher (`petramond_mesh::builder`) biome-tints grass tops / short
 //! grass / ferns by the column's grass colour, leaves by its foliage colour, and
 //! renders grass-block SIDES as an untinted dirt tile with a biome-tinted
 //! grayscale `grass_block_side_overlay` composited on top (vertex overlay bits).
@@ -17,8 +17,8 @@
 //! stay in lock-step with the mesher by construction.
 
 
-use petramond::tile::{Tile, TileTint};
-use petramond::biome::Biome;
+use petramond_world::tile::{Tile, TileTint};
+use petramond_world::biome::Biome;
 
 /// Fixed temperate grass colour for out-of-world tints. Plains is the canonical
 /// default temperate biome (`biome::data::TEMPERATE_DRY_DEFAULT`), so its grass
@@ -64,7 +64,7 @@ pub struct FaceMaterial {
 ///   bush, water, ...) -> the tile untinted.
 #[inline]
 pub fn face_material(tile: Tile) -> FaceMaterial {
-    let e = petramond::tile::engine();
+    let e = petramond_world::tile::engine();
     if tile == e.grass_side {
         return FaceMaterial {
             base_tile: e.dirt,

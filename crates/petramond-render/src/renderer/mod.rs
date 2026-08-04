@@ -1,7 +1,7 @@
 use super::gpu_timer;
 use crate::camera::{Camera, Frustum, ViewVolume};
-use petramond::chunk::{ChunkPos, SectionPos};
-use petramond::mathh::SelectionShape;
+use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_math::math::SelectionShape;
 use petramond::world::TerrainRenderHandoff;
 
 use std::cmp::Reverse;
@@ -53,7 +53,7 @@ use super::{
     MobRenderInstance, ParticleEmitterInstance, ParticleInstance, PlayerRenderInstance,
     RemotePlayerRender, SolidParticleInstance, UiFrame,
 };
-use petramond::bbmodel::Model;
+use petramond_world::bbmodel::Model;
 use petramond::gui::{UiSnapshot, UiViewport};
 
 const TERRAIN_FOG_CULL_PAD: f32 = 32.0;
@@ -477,7 +477,7 @@ struct HandPass {
     shake: [f32; 2],
     held_item_anim: HeldItemAnimator,
     held_item_skylight: u8,
-    held_item_blocklight: petramond::light::BlockLight6,
+    held_item_blocklight: petramond_world::light::BlockLight6,
 }
 
 impl HandPass {

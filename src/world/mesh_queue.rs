@@ -2,7 +2,7 @@ use rustc_hash::FxHashSet;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use crate::chunk::SectionPos;
+use petramond_world::chunk::SectionPos;
 
 use super::store::LoadTarget;
 

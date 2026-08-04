@@ -1,8 +1,8 @@
 use super::App;
-use petramond::sound_registry::Sound;
-use petramond::block::{Block, BlockSoundAction};
+use petramond_world::sound_registry::Sound;
+use petramond_world::block::{Block, BlockSoundAction};
 use crate::game::{GameEvents, WorldEvent};
-use petramond::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 
 impl App {
     pub(super) fn play_game_event_sounds(

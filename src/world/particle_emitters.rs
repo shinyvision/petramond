@@ -7,14 +7,14 @@
 
 use std::sync::LazyLock;
 
-use crate::block::{Block, ParticleEmitter, ParticleEmitterAnchor, ShapeFamily};
-use crate::block_model::{self, BlockModelKind};
-use crate::view_volume::ViewVolume;
-use crate::chunk::{section_local, SectionPos, SECTION_SIZE};
-use crate::facing::Facing;
-use crate::light::BlockLight6;
-use crate::mathh::{voxel_at, IVec3, Vec3};
-use crate::torch::POLE_HEIGHT;
+use petramond_world::block::{Block, ParticleEmitter, ParticleEmitterAnchor, ShapeFamily};
+use petramond_world::block_model::{self, BlockModelKind};
+use petramond_world::view_volume::ViewVolume;
+use petramond_world::chunk::{section_local, SectionPos, SECTION_SIZE};
+use petramond_math::facing::Facing;
+use petramond_world::light::BlockLight6;
+use petramond_math::math::{voxel_at, IVec3, Vec3};
+use petramond_world::torch::POLE_HEIGHT;
 
 use super::store::World;
 
@@ -190,7 +190,7 @@ fn model_emitter_origin(
 fn emitter_anchor_local(
     emitter: ParticleEmitter,
     block: Block,
-    section: &crate::section::Section,
+    section: &petramond_world::section::Section,
     lx: usize,
     ly: usize,
     lz: usize,

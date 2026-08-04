@@ -10,11 +10,11 @@
 // mod closures see through `modding::convert`.
 #![allow(dead_code)]
 
-use crate::block::Block;
-use crate::chunk::SectionPos;
-use crate::facing::Facing;
-use crate::item::ItemType;
-use crate::mathh::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_world::chunk::SectionPos;
+use petramond_math::facing::Facing;
+use petramond_world::item::ItemType;
+use petramond_math::math::{IVec3, Vec3};
 use crate::mob::{Mob, MobDamageFeedback};
 
 /// `block_place_pre` — cancel = placement refused (the click does nothing and the
@@ -158,7 +158,7 @@ pub enum ModAction {
     },
     /// A mod's `GuiOpen` HostCall: request the app shell open this mod GUI
     /// (honoured only from gameplay, like a block-interact open request).
-    OpenGui { kind: crate::gui_state::GuiKind },
+    OpenGui { kind: petramond_world::gui_state::GuiKind },
     /// A mod's `GuiClose` HostCall: close the open mod GUI, if one is open.
     CloseGui,
     /// A mod's `ChatSend` HostCall: deliver one authored chat line on the next
@@ -216,11 +216,11 @@ pub enum PostEvent {
     /// included) and mod GUIs speak the one kind registry; the ABI mirror
     /// carries the kind's key string.
     ContainerOpened {
-        kind: crate::gui_state::GuiKind,
+        kind: petramond_world::gui_state::GuiKind,
         pos: Option<IVec3>,
     },
     ContainerClosed {
-        kind: crate::gui_state::GuiKind,
+        kind: petramond_world::gui_state::GuiKind,
         pos: Option<IVec3>,
     },
     SectionGenerated {

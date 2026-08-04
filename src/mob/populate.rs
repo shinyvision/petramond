@@ -22,8 +22,8 @@
 
 use rustc_hash::FxHashSet;
 
-use crate::chunk::{ChunkPos, CHUNK_SX, CHUNK_SZ};
-use crate::mathh::{IVec3, Vec3};
+use petramond_world::chunk::{ChunkPos, CHUNK_SX, CHUNK_SZ};
+use petramond_math::math::{IVec3, Vec3};
 use crate::world::World;
 
 use super::spawn::{
@@ -224,9 +224,9 @@ fn choose_kind_for_site(world: &World, wx: i32, wz: i32, rng: &mut MobRng) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::biome::Biome;
-    use crate::block::Block;
-    use crate::chunk::Chunk;
+    use petramond_world::biome::Biome;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::Chunk;
 
     /// A census-ready flat grass neighborhood: the anchor's chunk plus the four
     /// columns of the render-distance-1 streamable disc.

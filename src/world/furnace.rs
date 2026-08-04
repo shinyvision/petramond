@@ -2,17 +2,17 @@
 //! world-coordinate access to the section-owned furnace state.
 //!
 //! A furnace is machine state ([`Furnace`]) plus slots in the block's generic
-//! [`Container`](crate::container::Container) plus an entity facing — three
+//! [`Container`](petramond_world::container::Container) plus an entity facing — three
 //! sibling section maps under one key. These are thin world↔section coordinate
 //! wrappers plus the tick driver that supplies the recipe set the storage
 //! layer is kept ignorant of.
 
-use crate::chunk::{SectionPos, SECTION_SIZE};
-use crate::container::Container;
-use crate::crafting::Recipes;
-use crate::facing::Facing;
-use crate::furnace::{Furnace, FURNACE_SLOTS};
-use crate::mathh::IVec3;
+use petramond_world::chunk::{SectionPos, SECTION_SIZE};
+use petramond_world::container::Container;
+use petramond_world::crafting::Recipes;
+use petramond_math::facing::Facing;
+use petramond_world::furnace::{Furnace, FURNACE_SLOTS};
+use petramond_math::math::IVec3;
 
 use super::store::World;
 
@@ -96,14 +96,14 @@ fn local_to_world(cpos: SectionPos, lx: usize, ly: usize, lz: usize) -> IVec3 {
 mod tests {
     use super::*;
 
-    use crate::tile::Tile;
-    use crate::block::Block;
-    use crate::chunk::SECTION_VOLUME;
-    use crate::crafting::{ProcessingRecipe, SMELTING_CLASS};
-    use crate::furnace::{SLOT_FUEL, SLOT_INPUT};
-    use crate::item::{ItemStack, ItemType};
-    use crate::mesh::ChunkMesh;
-    use crate::section::Section;
+    use petramond_world::tile::Tile;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::SECTION_VOLUME;
+    use petramond_world::crafting::{ProcessingRecipe, SMELTING_CLASS};
+    use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT};
+    use petramond_world::item::{ItemStack, ItemType};
+    use petramond_mesh::ChunkMesh;
+    use petramond_world::section::Section;
 
     fn furnace_recipes() -> Recipes {
         Recipes::new(

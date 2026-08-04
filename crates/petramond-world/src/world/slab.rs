@@ -32,7 +32,7 @@ impl WorldData {
     /// The state `pos` would hold after adding one `block` slab layer in `slot` —
     /// the single placement-validity rule, shared by the game's pre-checks (which
     /// need the resulting shape for entity-overlap tests) and the commit in
-    /// [`place_slab_layer`](Self::place_slab_layer). `None` when `block` is not a
+    /// `place_slab_layer`. `None` when `block` is not a
     /// slab, the cell holds a non-replaceable non-slab block, or the slot is
     /// unavailable (split mismatch / already occupied).
     pub fn slab_layer_target_state(

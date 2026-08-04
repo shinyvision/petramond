@@ -17,7 +17,7 @@ pub(super) fn create_shader_texture_bind(
     let mut slots = Vec::with_capacity(super::shader_pack::SKY_TEXTURE_SLOTS);
     for slot in 0..super::shader_pack::SKY_TEXTURE_SLOTS {
         let loaded = paths.get(slot).and_then(|rel| {
-            let Some((bytes, path)) = petramond::assets::read_bytes(rel) else {
+            let Some((bytes, path)) = petramond_world::assets::read_bytes(rel) else {
                 log::warn!("{kind} texture slot {slot} asset '{rel}' not found; using blank slot");
                 return None;
             };

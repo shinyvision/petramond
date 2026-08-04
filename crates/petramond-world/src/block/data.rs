@@ -296,15 +296,15 @@ pub(super) fn default_light_apertures(id: u16) -> u32 {
 ///
 /// Low 24 bits: the state-free aperture word ([`crate::block::LIGHT_APERTURES_OPEN`]
 /// layout) — all zero for an opaque cube, fully open for an open cell, the
-/// shape's own answer for a `Shaped` one. [`LIGHT_CELL_SHAPED`] marks the ids
+/// shape's own answer for a `Shaped` one. `LIGHT_CELL_SHAPED` marks the ids
 /// whose per-cell state may override those bits (the only ids for which the
-/// flood consults its sparse aperture gather); [`LIGHT_CELL_DIRECT_SKY`] is
+/// flood consults its sparse aperture gather); `LIGHT_CELL_DIRECT_SKY` is
 /// [`Block::transmits_direct_skylight`].
 ///
 /// The flood relaxes ~100 M edges per render-distance-12 load and each edge
 /// asked two blocks for their apertures; going through `Block::light_shape`
 /// meant a registry `BlockDef` load plus a virtual `ShapeSim` call per ask.
-/// Baked in its own lazy for the same reason as [`default_light_apertures`].
+/// Baked in its own lazy for the same reason as `default_light_apertures`.
 #[inline]
 pub fn light_cells() -> &'static [u32] {
     static CELLS: LazyLock<Box<[u32]>> = LazyLock::new(|| {

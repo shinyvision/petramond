@@ -5,7 +5,7 @@
 //! block light (night-invariant, and COLOURED — each channel rides its own
 //! curve), recombined with a per-channel `max`.
 
-use petramond::light::BlockLight6;
+use petramond_world::light::BlockLight6;
 
 /// Full light on the 6-bit packed scale used by `mesh::Vertex`.
 pub(super) const FULL_SKYLIGHT: u8 = 63;

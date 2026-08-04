@@ -184,7 +184,7 @@ impl ParticlePatches {
 /// An ABSOLUTE model-atlas UV patch (`min`, per-axis `size`) for one break/mining fleck
 /// of `kind`, chosen from its opaque texture patches by `r` (`0..1`). So a model block's
 /// flecks read as its own texture; falls back to the whole sheet if nothing scanned
-/// opaque. Shared by [`crate::entity::ParticleSystem`]'s model spawn paths.
+/// opaque. Shared by `crate::entity::ParticleSystem`'s model spawn paths.
 ///
 /// The patch is inset half a sheet texel per side: the sheet stacks every kind's
 /// texture vertically, and a UV landing exactly on a stack boundary resolves

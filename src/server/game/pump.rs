@@ -191,7 +191,7 @@ impl ServerGame {
             } => {
                 let slots = slots
                     .into_iter()
-                    .take(crate::gui_state::MAX_MENU_DRAG_SLOTS)
+                    .take(petramond_world::gui_state::MAX_MENU_DRAG_SLOTS)
                     .map(|slot| slot.to_menu_slot())
                     .collect();
                 self.sessions[s]

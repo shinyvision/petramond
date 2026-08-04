@@ -1,9 +1,9 @@
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
-use crate::chunk::{ChunkPos, SectionPos};
+use petramond_world::chunk::{ChunkPos, SectionPos};
 use crate::worker::GenJob;
-use crate::worldgen::driver::ColumnGen;
+use petramond_worldgen::driver::ColumnGen;
 
 use crate::world::store::{LoadAnchor, LoadTarget, World, WorldRole};
 
@@ -19,7 +19,7 @@ impl World {
     /// Update the streamed region around the player's SECTION `(cam_chunk_x, cam_chunk_y,
     /// cam_chunk_z)`. The world streams a flattened cylinder: a Euclidean horizontal disc
     /// of columns, each loaded only across a vertical window of sections around the player
-    /// (see [`VERTICAL_LOAD_RADIUS`]). Generation is per 16³ section, prioritised by 3D
+    /// (see `VERTICAL_LOAD_RADIUS`). Generation is per 16³ section, prioritised by 3D
     /// distance — "worldgen closest to the player" — so the deep underground / high sky a
     /// far column doesn't need is never generated until the player approaches it (room for
     /// caves below y=0). Scans are gated to player-section / render-distance changes; call
@@ -80,7 +80,7 @@ impl World {
     /// anchor wants (submission priority = the MIN key over the anchors, so a
     /// column between two players resolves for whichever is nearer) and keep
     /// everything inside ANY anchor's keep shape. One anchor is exactly
-    /// [`update_load`] including its incremental rescan optimizations; the N ≥ 2 path
+    /// `update_load` including its incremental rescan optimizations; the N ≥ 2 path
     /// trades those delta scans for a plain full scan on anchor-set change (bounded by
     /// the anchors' discs, and it runs only on change).
     pub fn update_load_multi(&mut self, anchors: &[LoadAnchor]) {

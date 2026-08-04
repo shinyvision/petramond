@@ -4,11 +4,11 @@
 //! and target/held-item state. It intentionally does not contain renderer DTOs
 //! or terrain upload handles.
 
-use petramond::block::Block;
-use petramond::block_state::HeldBlockState;
+use petramond_world::block::Block;
+use petramond_world::block_state::HeldBlockState;
 use petramond_render::camera::Camera;
-use petramond::item::ItemType;
-use petramond::mathh::SelectionShape;
+use petramond_world::item::ItemType;
+use petramond_math::math::SelectionShape;
 
 use super::{Game, GameEnvironment};
 
@@ -22,7 +22,7 @@ pub struct ClientFrame<'a> {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ClientHeldItem {
     pub item: Option<ItemType>,
-    pub variant: petramond::item::VariantId,
+    pub variant: petramond_world::item::VariantId,
     pub block_state: HeldBlockState,
     pub mining: bool,
     pub mining_block: Option<Block>,

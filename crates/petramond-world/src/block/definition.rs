@@ -333,7 +333,7 @@ pub const MAX_RAMP_STOPS: usize = 6;
 
 /// A color-over-life ramp: evenly spaced RGB stops sampled by age fraction.
 /// Fixed-capacity so emitter rows stay `Copy`; serde speaks a plain JSON list
-/// of 2..=[`MAX_RAMP_STOPS`] stops.
+/// of 2..=`MAX_RAMP_STOPS` stops.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ColorRamp {
     stops: [[f32; 3]; MAX_RAMP_STOPS],

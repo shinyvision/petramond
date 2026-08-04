@@ -7,11 +7,11 @@
 
 use glam::{IVec3, Vec3};
 
-use petramond::tile::Tile;
-use petramond::block::Block;
+use petramond_world::tile::Tile;
+use petramond_world::block::Block;
 use petramond_render::camera::ViewVolume;
-use petramond::door::DoorState;
-use petramond::facing::Facing;
+use petramond_world::door::DoorState;
+use petramond_math::facing::Facing;
 use petramond::mob::Mob;
 use petramond_render::{PlayerRenderInstance, RemotePlayerRender};
 use petramond::world::PlacedEmitter;
@@ -56,9 +56,9 @@ pub struct GamePresentationScratch {
     item_entities: Vec<DroppedItemPresentation>,
     particles: Vec<ParticlePresentation>,
     particle_emitters: Vec<PlacedEmitter>,
-    chest_rows: Vec<(IVec3, Facing, u8, petramond::light::BlockLight6)>,
+    chest_rows: Vec<(IVec3, Facing, u8, petramond_world::light::BlockLight6)>,
     block_draws: Vec<petramond::world::draw::BlockDrawInstance>,
-    door_rows: Vec<(IVec3, DoorState, [Tile; 3], u8, petramond::light::BlockLight6)>,
+    door_rows: Vec<(IVec3, DoorState, [Tile; 3], u8, petramond_world::light::BlockLight6)>,
     chests: Vec<ChestPresentation>,
     doors: Vec<DoorPresentation>,
     mobs: Vec<MobPresentation>,
@@ -120,24 +120,24 @@ impl GamePresentationScratch {
         let world = &game.replica;
         self.item_entities
             .extend(game.replicated_items.iter().map(|entry| {
-                let c = petramond::mathh::voxel_at(entry.curr.pos);
+                let c = petramond_math::math::voxel_at(entry.curr.pos);
                 DroppedItemPresentation {
                     prev_pos: entry.prev.pos,
                     pos: entry.curr.pos,
-                    item: petramond::item::ItemType(entry.curr.item_id),
+                    item: petramond_world::item::ItemType(entry.curr.item_id),
                     // Re-intern the row's blob (idempotent hash probe once the
                     // variant exists); an unreadable blob renders plain.
                     variant: entry
                         .curr
                         .data
                         .as_deref()
-                        .and_then(petramond::item::variant::intern_blob)
+                        .and_then(petramond_world::item::variant::intern_blob)
                         .unwrap_or_default(),
                     count: entry.curr.count,
                     prev_spin: entry.prev.spin,
                     spin: entry.curr.spin,
                     skylight: world.skylight6_at_world(c.x, c.y, c.z),
-                    blocklight: petramond::light::BlockLight6::from_x2(
+                    blocklight: petramond_world::light::BlockLight6::from_x2(
                         world.blocklight_rgb_at_world(c.x, c.y, c.z),
                     ),
                 }
@@ -244,7 +244,7 @@ impl GamePresentationScratch {
         let world = &game.replica;
         self.mobs.extend(game.replicated_mobs.iter().map(|entry| {
             let (prev, curr) = (&entry.prev, &entry.curr);
-            let c = petramond::mathh::voxel_at(curr.pos + Vec3::new(0.0, 0.3, 0.0));
+            let c = petramond_math::math::voxel_at(curr.pos + Vec3::new(0.0, 0.3, 0.0));
             MobPresentation {
                 id: curr.id,
                 kind: Mob(curr.kind_id),
@@ -261,7 +261,7 @@ impl GamePresentationScratch {
                 prev_head_pitch: prev.head_pitch,
                 head_pitch: curr.head_pitch,
                 skylight: world.skylight6_at_world(c.x, c.y, c.z),
-                blocklight: petramond::light::BlockLight6::from_x2(
+                blocklight: petramond_world::light::BlockLight6::from_x2(
                     world.blocklight_rgb_at_world(c.x, c.y, c.z),
                 ),
                 hurt_flash: petramond::mob::hurt_flash01(prev.hurt_timer, curr.hurt_timer, tick_alpha),
@@ -313,7 +313,7 @@ impl GamePresentationScratch {
             let feet = m.prev_pos.lerp(m.pos, tick_alpha);
             let mut stream = 0u64;
             for &id in &m.emitters {
-                let Some(bundle) = petramond::particle_emitters::def(id) else {
+                let Some(bundle) = petramond_world::particle_emitters::def(id) else {
                     continue;
                 };
                 for emitter in bundle.rows {
@@ -360,11 +360,11 @@ impl GamePresentationScratch {
         self.footsteps.clear();
         let world = &game.replica;
         // The block a body at `pos` (feet centre, model y=0) stands on.
-        let ground = |pos: Vec3, walking: bool| -> Option<petramond::block::Block> {
+        let ground = |pos: Vec3, walking: bool| -> Option<petramond_world::block::Block> {
             if !walking {
                 return None;
             }
-            let c = petramond::mathh::voxel_at(pos - Vec3::new(0.0, 0.1, 0.0));
+            let c = petramond_math::math::voxel_at(pos - Vec3::new(0.0, 0.1, 0.0));
             world.block_if_loaded(c.x, c.y, c.z)
         };
         let p = &game.player;
@@ -438,11 +438,11 @@ impl GamePresentationScratch {
                     }
                     petramond::net::protocol::PlayerMount::Anchor { pos, yaw, .. } => (pos, yaw),
                 };
-                Some((seat_pos, petramond::mathh::wrap_angle(body_yaw)))
+                Some((seat_pos, petramond_math::math::wrap_angle(body_yaw)))
             }) {
                 pos = seat_pos;
                 body_yaw = mount_yaw;
-                head_yaw = petramond::mathh::wrap_angle(yaw - body_yaw)
+                head_yaw = petramond_math::math::wrap_angle(yaw - body_yaw)
                     .clamp(-SEATED_HEAD_YAW_LIMIT, SEATED_HEAD_YAW_LIMIT);
             }
             if sleeping {
@@ -453,7 +453,7 @@ impl GamePresentationScratch {
                 pos.z -= body_yaw.cos() * 0.925;
             }
             // Sample light at the body's torso cell (~mid-height).
-            let c = petramond::mathh::voxel_at(pos + Vec3::new(0.0, 0.9, 0.0));
+            let c = petramond_math::math::voxel_at(pos + Vec3::new(0.0, 0.9, 0.0));
             self.remote_players.push(RemotePlayerRender {
                 body: PlayerRenderInstance {
                     pos,
@@ -470,7 +470,7 @@ impl GamePresentationScratch {
                     seated: p.curr.mount.is_some_and(mount_renders_seated),
                     hurt: p.hurt_flash01(),
                     skylight: world.skylight6_at_world(c.x, c.y, c.z),
-                    blocklight: petramond::light::BlockLight6::from_x2(
+                    blocklight: petramond_world::light::BlockLight6::from_x2(
                         world.blocklight_rgb_at_world(c.x, c.y, c.z),
                     ),
                 },
@@ -524,7 +524,7 @@ impl GamePresentationScratch {
 fn emitter_tint(ids: &[u8]) -> [f32; 3] {
     let mut tint = [1.0, 1.0, 1.0];
     for &id in ids {
-        if let Some(t) = petramond::particle_emitters::def(id).and_then(|b| b.tint) {
+        if let Some(t) = petramond_world::particle_emitters::def(id).and_then(|b| b.tint) {
             tint = [tint[0] * t[0], tint[1] * t[1], tint[2] * t[2]];
         }
     }
@@ -576,7 +576,7 @@ fn collect_player(game: &Game) -> Option<PlayerPresentation> {
     let (body_yaw, head_yaw) = match game.mount_body_yaw() {
         Some(mount_yaw) => (
             mount_yaw,
-            petramond::mathh::wrap_angle(game.player.yaw - mount_yaw)
+            petramond_math::math::wrap_angle(game.player.yaw - mount_yaw)
                 .clamp(-SEATED_HEAD_YAW_LIMIT, SEATED_HEAD_YAW_LIMIT),
         ),
         None => (

@@ -2,10 +2,10 @@
 //! rails toward each connected side (see `crate::fence` for the rules).
 //!
 //! [`shape_boxes`] is the ONE geometry source: the chunk mesher wraps its
-//! boxes into the unified [`super::boxset`] emitter (which culls buried
+//! boxes into the unified `super::boxset` emitter (which culls buried
 //! faces — a rail end inside the post, a post cap under a solid or a stacked
 //! fence — geometrically), and the break-crack overlay walks the same boxes
-//! through [`shape_faces`]. Rail end caps (the two faces perpendicular to
+//! through `shape_faces`. Rail end caps (the two faces perpendicular to
 //! the arm) are declared never-emitted: the cell-edge end continues into the
 //! neighbour fence's rail or hides against the connected block's face, the
 //! post end is buried — the connection RULE guarantees this, not local

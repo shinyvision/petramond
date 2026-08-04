@@ -24,6 +24,9 @@ petramond = { path = "../.." }
 petramond-audio = { path = "../petramond-audio", default-features = false }
 petramond-render = { path = "../petramond-render" }
 petramond-math = { path = "../petramond-math" }
+petramond-world = { path = "../petramond-world" }
+petramond-mesh = { path = "../petramond-mesh" }
+petramond-worldgen = { path = "../petramond-worldgen" }
 petramond-util = { path = "../petramond-util" }
 petramond-ui = { path = "../../petramond-ui" }
 petramond-text = { path = "../../petramond-text" }

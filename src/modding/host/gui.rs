@@ -12,7 +12,7 @@ use super::guards::{sim_call, sim_query};
 pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
         HostCall::GuiStateSet { key, value } => sim_call(|ctx| {
-            crate::gui_state::gui_state_set(
+            petramond_world::gui_state::gui_state_set(
                 ctx.gui_state,
                 key,
                 crate::modding::convert::gui_value(value),
@@ -29,7 +29,7 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
             let value = crate::modding::convert::gui_value(value);
             let id = crate::player::PlayerId(player_id.0);
             HostRet::Bool(
-                ctx.with_gui_state(id, |map| crate::gui_state::gui_state_set(map, key, value))
+                ctx.with_gui_state(id, |map| petramond_world::gui_state::gui_state_set(map, key, value))
                     .is_some(),
             )
         }),
@@ -43,7 +43,7 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
                         let kind = open
                             .kind
                             .is_mod()
-                            .then(|| crate::gui_state::kind_key(open.kind))??;
+                            .then(|| petramond_world::gui_state::kind_key(open.kind))??;
                         Some(mod_api::GuiViewerData {
                             player_id: mod_api::PlayerId(id.0),
                             kind: kind.to_owned(),
@@ -63,7 +63,7 @@ pub(super) fn handle_gui_call(mod_id: &str, call: HostCall) -> HostRet {
         HostCall::GuiOpen { kind_key } => {
             // Resolve WITHOUT registering: opening a kind nothing declared is
             // a mod bug, reported forgivingly (like an unknown sound key).
-            let Some(kind) = crate::gui_state::resolve_kind(&kind_key).filter(|k| k.is_mod()) else {
+            let Some(kind) = petramond_world::gui_state::resolve_kind(&kind_key).filter(|k| k.is_mod()) else {
                 log::warn!("[mod {mod_id}] GuiOpen: unknown or non-mod gui kind '{kind_key}'");
                 return HostRet::Bool(false);
             };
@@ -85,7 +85,7 @@ mod tests {
 
     use crate::events::{OpenGui, PostQueue, SessionPlayerRef, SimCtx};
     use crate::events::tick::TickEvents;
-    use crate::mathh::{IVec3, Vec3};
+    use petramond_math::math::{IVec3, Vec3};
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
@@ -103,11 +103,11 @@ mod tests {
         let mut world = World::new(1, 1);
         let mut host = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut guest = Player::new(Vec3::new(8.0, 80.0, 8.0));
-        let mut host_gui = crate::gui_state::empty_gui_state();
-        let mut guest_gui = crate::gui_state::empty_gui_state();
+        let mut host_gui = petramond_world::gui_state::empty_gui_state();
+        let mut guest_gui = petramond_world::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let kind = crate::gui_state::intern_kind("doctest:machine").expect("a mod kind interns");
+        let kind = petramond_world::gui_state::intern_kind("doctest:machine").expect("a mod kind interns");
         let (host_at, guest_at) = (IVec3::new(1, 2, 3), IVec3::new(9, 2, 3));
 
         let others = vec![SessionPlayerRef {
@@ -182,8 +182,8 @@ mod tests {
             });
         });
 
-        let read = |map: &std::sync::Arc<crate::gui_state::GuiStateMap>| match map.get("doctest:level") {
-            Some(crate::gui_state::GuiValue::F32(v)) => *v,
+        let read = |map: &std::sync::Arc<petramond_world::gui_state::GuiStateMap>| match map.get("doctest:level") {
+            Some(petramond_world::gui_state::GuiValue::F32(v)) => *v,
             other => panic!("expected the published gauge, got {other:?}"),
         };
         assert_eq!(read(&host_gui), 0.25);

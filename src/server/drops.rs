@@ -1,6 +1,6 @@
 use crate::entity::DroppedItem;
-use crate::inventory::Inventory;
-use crate::item::{ItemStack, ItemType};
+use petramond_world::inventory::Inventory;
+use petramond_world::item::{ItemStack, ItemType};
 use crate::net::protocol::ThrowAmount;
 
 use super::entities::light_at_pos;

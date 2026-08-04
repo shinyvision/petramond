@@ -53,7 +53,7 @@ fn moves_freely_in_open_air() {
 
 #[test]
 fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
-    use crate::block::Aabb;
+    use petramond_world::block::Aabb;
     let still = |_: Vec3| Vec3::ZERO;
     let walk_x = Input {
         wishdir: Vec3::new(1.0, 0.0, 0.0),

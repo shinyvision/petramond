@@ -4,21 +4,21 @@
 //! app. Main modes:
 //!   top   (default) — top-down, coloured by each column's top block.
 //!   biome           — top-down, coloured by per-column biome id.
-//!   side  <z>       — vertical cross-section at world Z = <z>, so overhangs,
+//!   side  `<z>`       — vertical cross-section at world Z = `<z>`, so overhangs,
 //!                     ocean depth and mountain strata are visible (y 0..255).
-//!   deep  <z>       — full-depth cross-section (y -64..255) from the cubic
+//!   deep  `<z>`       — full-depth cross-section (y -64..255) from the cubic
 //!                     per-section generator: deep caves, marble, ores.
 //!   cavestats       — cave/ore census: carved share per depth band, marble
 //!                     share, ore counts per chunk, entrance-mouth rate.
 //!
 //! Run:
-//!   cargo run --quiet --bin genmap -- [seed] [out.png] [mode] [arg]
+//!   cargo run --quiet --bin genmap -- `seed` [out.png] `mode` `arg`
 //! e.g.
 //!   cargo run --quiet --bin genmap -- 42 /tmp/top.png top
 //!   cargo run --quiet --bin genmap -- 42 /tmp/biome.png biome
 //!   cargo run --quiet --bin genmap -- 42 /tmp/cut.png side 0
 
-use petramond::tile::{map_rgb as tile_map_rgb, TileTint};
+use petramond_world::tile::{map_rgb as tile_map_rgb, TileTint};
 use petramond::tooling::biome::Biome;
 use petramond::tooling::block::Block;
 use petramond::tooling::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
@@ -36,7 +36,7 @@ fn top_block(c: &Chunk, x: usize, z: usize) -> (u16, i32) {
 }
 
 /// Top-down colour for a block, derived from its data row: the top tile's
-/// cartography average ([`Tile::map_rgb`](petramond::tooling::atlas::Tile::map_rgb)),
+/// cartography average (`Tile::map_rgb`),
 /// with tinted tiles (grass/foliage/water) multiplied by a fixed Plains biome
 /// colour — the previewer has no per-column tint blend and doesn't need one.
 fn block_color(block: u16) -> [u8; 3] {
@@ -493,7 +493,7 @@ fn cave_stats(seed: u32) {
 }
 
 /// Audit overhangs + floating debris across a region (computed by
-/// `worldgen::audit::audit`); prints its [`DebrisAudit`] in the previewer format.
+/// `worldgen::audit::audit`); prints its `DebrisAudit` in the previewer format.
 fn audit(seed: u32) {
     use petramond::tooling::worldgen::audit;
     let a = audit::audit(seed);
@@ -520,7 +520,7 @@ fn audit(seed: u32) {
 }
 
 /// True 3-D detached-debris census (computed by `worldgen::audit::flood_audit`);
-/// prints its [`FloodAudit`] in the previewer format.
+/// prints its `FloodAudit` in the previewer format.
 fn flood_audit(seed: u32) {
     use petramond::tooling::worldgen::audit;
     let f = audit::flood_audit(seed);
@@ -534,7 +534,7 @@ fn flood_audit(seed: u32) {
 }
 
 /// Lowland-relief diagnostic (computed by `worldgen::audit::relief_audit`);
-/// prints its [`ReliefStats`] in the previewer format.
+/// prints its `ReliefStats` in the previewer format.
 fn relief_audit(seed: u32) {
     use petramond::tooling::worldgen::audit::{self, RELIEF_HIST_LABELS};
     let r = audit::relief_audit(seed);
@@ -640,7 +640,7 @@ fn render_shaded(
 }
 
 /// Walkability / spikiness metric (computed by `worldgen::audit::roughness`);
-/// prints its [`RoughnessStats`] in the previewer format.
+/// prints its `RoughnessStats` in the previewer format.
 fn roughness(seed: u32) {
     use petramond::tooling::worldgen::audit;
     let Some(s) = audit::roughness(seed) else {

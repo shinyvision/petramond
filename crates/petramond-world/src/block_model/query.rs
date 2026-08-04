@@ -13,7 +13,7 @@ use super::atlas::{atlas, ModelAtlas};
 use super::{instance, BlockModelKind, ModelCube};
 
 /// The cell-local player-collision boxes for the cell at `offset` within the footprint.
-/// `&'static` because the baked boxes live in the process-lifetime [`INSTANCES`].
+/// `&'static` because the baked boxes live in the process-lifetime `INSTANCES`.
 #[inline]
 pub fn collision_boxes(kind: BlockModelKind, offset: [u8; 3]) -> &'static [Aabb] {
     match instance(kind).cell(offset) {
@@ -91,7 +91,7 @@ pub fn outline_bounds(kind: BlockModelKind) -> ([f32; 3], [f32; 3]) {
 /// from behind (the far side of a cube, seen through the near face's cutout texels)
 /// is skipped here exactly as it is not drawn. The ray is in
 /// FOOTPRINT space (1 unit = 1 world cell; the caller subtracts the footprint-origin
-/// world cell), matching [`ModelInstance::cubes`]. `None` on a clean miss — so aiming
+/// world cell), matching `ModelInstance::cubes`. `None` on a clean miss — so aiming
 /// through the gap between the legs, under the top, or through fully transparent model
 /// texels does NOT select the block. Flat/degenerate decoration cubes (a plane, a
 /// locator) are skipped.

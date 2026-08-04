@@ -256,7 +256,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crafting::Recipes;
+    use petramond_world::crafting::Recipes;
 
     const C: u64 = DEFAULT_CYCLE_TICKS;
 
@@ -308,7 +308,7 @@ mod tests {
 
     use crate::events::EventBus;
     use crate::events::tick::TickEvents;
-    use crate::mathh::Vec3;
+    use petramond_math::math::Vec3;
     use crate::player::Player;
 
     fn published_time(world: &World) -> f32 {
@@ -342,7 +342,7 @@ mod tests {
 
         world.game_tick(&Recipes::default());
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut bus = EventBus::default();
         systems.run(
@@ -415,7 +415,7 @@ mod tests {
         let mut systems = TickSystems::default();
         install_core(&mut world, &mut systems);
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut bus = EventBus::default();
         for _ in 0..3 {

@@ -4,7 +4,7 @@
 
 use mod_api::{HostCall, HostRet};
 
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 
 use super::guards::{batch_guard, kv_write_guard, sim_call, sim_query, CELL_KV_MAX_KEYS};
 
@@ -133,7 +133,7 @@ mod tests {
 
     use crate::events::{PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use crate::mathh::Vec3;
+    use petramond_math::math::Vec3;
     use crate::modding::host::guards::KV_MAX_VALUE_BYTES;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
@@ -145,17 +145,17 @@ mod tests {
     /// have a writable target.
     fn with_ctx(f: impl FnOnce()) {
         let mut world = World::new(1, 1);
-        let mut c = crate::chunk::Chunk::new(0, 0);
-        for z in 0..crate::chunk::CHUNK_SZ {
-            for x in 0..crate::chunk::CHUNK_SX {
-                c.set_block(x, 64, z, crate::block::Block::Stone);
+        let mut c = petramond_world::chunk::Chunk::new(0, 0);
+        for z in 0..petramond_world::chunk::CHUNK_SZ {
+            for x in 0..petramond_world::chunk::CHUNK_SX {
+                c.set_block(x, 64, z, petramond_world::block::Block::Stone);
             }
         }
-        world.insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), c);
+        world.insert_chunk_for_test(petramond_world::chunk::ChunkPos::new(0, 0), c);
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,

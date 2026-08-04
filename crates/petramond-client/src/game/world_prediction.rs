@@ -8,7 +8,7 @@
 use super::prediction;
 use super::tick::{GameInput, PlacePrediction, WorldEvent};
 use super::Game;
-use petramond::mathh::IVec3;
+use petramond_math::math::IVec3;
 use petramond::net::protocol::{ClientToServer, PlayerAction};
 
 impl Game {
@@ -87,7 +87,7 @@ impl Game {
     pub(super) fn apply_predicted_break(
         &mut self,
         pos: IVec3,
-        expected_block: petramond::block::Block,
+        expected_block: petramond_world::block::Block,
         normal: Option<IVec3>,
     ) {
         // `predicted` tells the server whether we presented (echo strip): a
@@ -156,7 +156,7 @@ impl Game {
         input: &GameInput,
         use_mob: Option<u64>,
     ) -> bool {
-        use petramond::item::ItemUse;
+        use petramond_world::item::ItemUse;
 
         // A targeted mob: the mod consumers (boarding, trading) or the
         // shears may claim it — a claim the replica cannot rule out.
@@ -204,14 +204,14 @@ impl Game {
         let Some(look) = self.look else {
             return false;
         };
-        let target = petramond::block::Block::from_id(self.replica.chunk_block(
+        let target = petramond_world::block::Block::from_id(self.replica.chunk_block(
             look.block.x,
             look.block.y,
             look.block.z,
         ));
         // The SAME claim rule the server's built-in consumer runs — parity by
         // construction, not by two hand-kept copies.
-        petramond::block::builtin_claims_click(target, input.movement.sneak)
+        petramond_world::block::builtin_claims_click(target, input.movement.sneak)
     }
 
     /// Replica mirror of the fill consumer's rule (`try_fill_bucket`): the
@@ -231,7 +231,7 @@ impl Game {
     /// `block_place_pre` cancels stay invisible to the replica — the same
     /// over-optimism policy as the engine-block place ghost.
     fn predicts_bucket_pour(&self) -> bool {
-        use petramond::block::Block;
+        use petramond_world::block::Block;
         let Some((h, _)) = petramond::player::Player::raycast_including_water(
             self.cam.pos,
             self.cam.forward(),
@@ -273,9 +273,9 @@ impl Game {
     /// restore wipes it like any block write).
     fn predict_restore_carry(
         &mut self,
-        block: petramond::block::Block,
+        block: petramond_world::block::Block,
         anchor: IVec3,
-        part: petramond::block::CellPart,
+        part: petramond_world::block::CellPart,
     ) {
         let carry = block.carry();
         if carry.is_empty() {
@@ -284,7 +284,7 @@ impl Game {
         let Some(held) = self.self_view.inventory.selected() else {
             return;
         };
-        let Some(map) = petramond::item::variant::get(held.variant) else {
+        let Some(map) = petramond_world::item::variant::get(held.variant) else {
             return;
         };
         for &key in carry {
@@ -293,7 +293,7 @@ impl Game {
                     anchor.x,
                     anchor.y,
                     anchor.z,
-                    petramond::block::part_kv_key(key, part),
+                    petramond_world::block::part_kv_key(key, part),
                     v.clone(),
                 );
             }
@@ -323,12 +323,12 @@ impl Game {
         // ahead of the whole place consumer, so a chest/table/furnace click
         // cancels a mod-block ghost exactly like an engine-block ghost
         // (holding a chain must predict like holding a fence).
-        let target = petramond::block::Block::from_id(self.replica.chunk_block(
+        let target = petramond_world::block::Block::from_id(self.replica.chunk_block(
             look.block.x,
             look.block.y,
             look.block.z,
         ));
-        if petramond::block::builtin_claims_click(target, sneak) {
+        if petramond_world::block::builtin_claims_click(target, sneak) {
             return PlacePrediction::No;
         }
         // A dual-natured item (both food and placeable — contextual placeable
@@ -355,7 +355,7 @@ impl Game {
         // (the furniture chair) gets the same footprint/body-gate refusal
         // prediction a bed or workbench does.
         if !block.is_engine() {
-            let looked_at = petramond::block::Block::from_id(self.replica.chunk_block(
+            let looked_at = petramond_world::block::Block::from_id(self.replica.chunk_block(
                 look.block.x,
                 look.block.y,
                 look.block.z,
@@ -370,16 +370,16 @@ impl Game {
                 pos: pre_pos.to_array(),
                 block: mod_api::BlockId(block.id()),
                 facing: match facing {
-                    petramond::facing::Facing::North => mod_api::Facing::North,
-                    petramond::facing::Facing::South => mod_api::Facing::South,
-                    petramond::facing::Facing::West => mod_api::Facing::West,
-                    petramond::facing::Facing::East => mod_api::Facing::East,
+                    petramond_math::facing::Facing::North => mod_api::Facing::North,
+                    petramond_math::facing::Facing::South => mod_api::Facing::South,
+                    petramond_math::facing::Facing::West => mod_api::Facing::West,
+                    petramond_math::facing::Facing::East => mod_api::Facing::East,
                 },
             };
             if self.predict_mod_claim(sneak, payload) {
                 return PlacePrediction::No;
             }
-            if block.shape_family() == petramond::block::ShapeFamily::Custom {
+            if block.shape_family() == petramond_world::block::ShapeFamily::Custom {
                 if let Some(prediction) = self.try_predict_custom_place(sneak, block, look, pre_pos)
                 {
                     return prediction;
@@ -405,7 +405,7 @@ impl Game {
         let prev = self
             .replica
             .chunk_block(place_pos.x, place_pos.y, place_pos.z);
-        if prev != petramond::block::Block::Air.0 {
+        if prev != petramond_world::block::Block::Air.0 {
             return PlacePrediction::No;
         }
         let held = self.self_view.inventory.selected().map(|s| s.item);
@@ -446,7 +446,7 @@ impl Game {
         // place), the request ships unpredicted.
         let oriented_model = match block.model_kind() {
             Some(kind) => {
-                block.directional_view() || petramond::block_model::instance(kind).cells.len() > 1
+                block.directional_view() || petramond_world::block_model::instance(kind).cells.len() > 1
             }
             None => false,
         };
@@ -501,7 +501,7 @@ impl Game {
     fn try_predict_custom_place(
         &mut self,
         sneak: bool,
-        block: petramond::block::Block,
+        block: petramond_world::block::Block,
         look: petramond::player::RaycastHit,
         place_pos: IVec3,
     ) -> Option<PlacePrediction> {
@@ -535,7 +535,7 @@ impl Game {
         // unread replica cell reads as air — optimistic, and a stale read
         // rolls back like any engine ghost.
         let cur =
-            petramond::block::Block::from_id(self.replica.chunk_block(anchor.x, anchor.y, anchor.z));
+            petramond_world::block::Block::from_id(self.replica.chunk_block(anchor.x, anchor.y, anchor.z));
         if !cur.is_replaceable() || cur == write_block {
             return Some(PlacePrediction::No);
         }
@@ -563,7 +563,7 @@ impl Game {
             } = self;
             client_mods.bake_placement_geometry(replica, shape_key, shape_kind, input)
         };
-        let boxes: &[petramond::block::Aabb] = match &sim_boxes {
+        let boxes: &[petramond_world::block::Aabb] = match &sim_boxes {
             Some(b) => b,
             None => self
                 .replica
@@ -586,7 +586,7 @@ impl Game {
         let plan = petramond::world::placement::PlacementPlan::single(
             anchor,
             write_block,
-            petramond::block::ShapeState::NONE,
+            petramond_world::block::ShapeState::NONE,
         );
         let previous_cells = vec![(anchor, cur.id())];
         let snapshot = prediction::PredictionSnapshot::World {
@@ -624,7 +624,7 @@ impl Game {
     pub(super) fn placement_blocked_by_body(
         &self,
         cell: IVec3,
-        boxes: &[petramond::block::Aabb],
+        boxes: &[petramond_world::block::Aabb],
     ) -> bool {
         if boxes.is_empty() {
             return false; // collisionless blocks (torch, grass) trap nothing
@@ -652,7 +652,7 @@ impl Game {
             if !row.visible || !row.alive {
                 continue;
             }
-            let body = petramond::body::Body::new(
+            let body = petramond_world::body::Body::new(
                 row.transform.pos,
                 petramond::player::HALF_W,
                 petramond::player::HEIGHT,

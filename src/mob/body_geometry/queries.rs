@@ -1,4 +1,4 @@
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 use crate::mob::MobSize;
 
 use super::{
@@ -21,10 +21,10 @@ pub fn body_separation(
     }
     strongest_separation(
         segment_centres(a_pos, a_yaw, a_size)
-            .map(|centre| crate::body::Body::new(centre, a_size.half_width, a_size.height)),
+            .map(|centre| petramond_world::body::Body::new(centre, a_size.half_width, a_size.height)),
         || {
             segment_centres(b_pos, b_yaw, b_size)
-                .map(|centre| crate::body::Body::new(centre, b_size.half_width, b_size.height))
+                .map(|centre| petramond_world::body::Body::new(centre, b_size.half_width, b_size.height))
         },
     )
 }
@@ -35,7 +35,7 @@ pub fn body_separation_from_body(
     pos: Vec3,
     yaw: f32,
     size: MobSize,
-    other: crate::body::Body,
+    other: petramond_world::body::Body,
 ) -> Option<Vec3> {
     let other_pos = Vec3::new(other.x, other.y0, other.z);
     let other_size = MobSize {
@@ -48,7 +48,7 @@ pub fn body_separation_from_body(
     }
     strongest_separation(
         segment_centres(pos, yaw, size)
-            .map(|centre| crate::body::Body::new(centre, size.half_width, size.height)),
+            .map(|centre| petramond_world::body::Body::new(centre, size.half_width, size.height)),
         || std::iter::once(other),
     )
 }
@@ -63,9 +63,9 @@ pub fn append_body_supports(
     pos: Vec3,
     yaw: f32,
     size: MobSize,
-    candidates: &[crate::collision::DynBox],
+    candidates: &[petramond_world::collision::DynBox],
     ignore: u64,
-    out: &mut Vec<crate::collision::DynBox>,
+    out: &mut Vec<petramond_world::collision::DynBox>,
 ) {
     out.extend(
         candidates
@@ -81,7 +81,7 @@ pub fn body_has_peer_support(
     pos: Vec3,
     yaw: f32,
     size: MobSize,
-    candidates: &[crate::collision::DynBox],
+    candidates: &[petramond_world::collision::DynBox],
     ignore: u64,
 ) -> bool {
     candidates.iter().any(|candidate| {
@@ -93,7 +93,7 @@ fn body_box_is_supported_by(
     pos: Vec3,
     yaw: f32,
     size: MobSize,
-    candidate: &crate::collision::DynBox,
+    candidate: &petramond_world::collision::DynBox,
 ) -> bool {
     let gap = pos.y - candidate.max[1];
     if !(-PEER_SUPPORT_VERTICAL_EPS..=PEER_SUPPORT_VERTICAL_EPS).contains(&gap) {
@@ -132,13 +132,13 @@ fn compound_push_bounds_overlap(
 
 fn strongest_separation<A, B>(a: A, b: impl Fn() -> B) -> Option<Vec3>
 where
-    A: IntoIterator<Item = crate::body::Body>,
-    B: IntoIterator<Item = crate::body::Body>,
+    A: IntoIterator<Item = petramond_world::body::Body>,
+    B: IntoIterator<Item = petramond_world::body::Body>,
 {
     let mut best: Option<Vec3> = None;
     for a in a {
         for b in b() {
-            let Some(candidate) = crate::body::separation(a, b) else {
+            let Some(candidate) = petramond_world::body::separation(a, b) else {
                 continue;
             };
             if best
@@ -160,14 +160,14 @@ pub fn body_overlaps_block_boxes(
     pos: Vec3,
     yaw: f32,
     size: MobSize,
-    cell: crate::mathh::IVec3,
-    boxes: &[crate::block::Aabb],
+    cell: petramond_math::math::IVec3,
+    boxes: &[petramond_world::block::Aabb],
 ) -> bool {
     if boxes.is_empty() {
         return false;
     }
     segment_centres(pos, yaw, size).any(|centre| {
-        crate::body::Body::new(centre, size.half_width, size.height)
+        petramond_world::body::Body::new(centre, size.half_width, size.height)
             .overlaps_block_boxes(cell, boxes)
     })
 }
@@ -182,10 +182,10 @@ pub fn body_pose_fits<F, K>(
     size: MobSize,
     boxes_fn: &F,
     known: &K,
-    dyn_boxes: &[crate::collision::DynBox],
+    dyn_boxes: &[petramond_world::collision::DynBox],
 ) -> bool
 where
-    F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
+    F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
     K: Fn(i32, i32, i32) -> bool,
 {
     if !pos.is_finite() || !yaw.is_finite() {
@@ -195,12 +195,12 @@ where
         let min = min.to_array();
         let max = max.to_array();
         aabb_cells_known(min, max, known)
-            && !crate::collision::aabb_hits_cells(min, max, boxes_fn)
-            && !crate::collision::aabb_hits_dynamic(
+            && !petramond_world::collision::aabb_hits_cells(min, max, boxes_fn)
+            && !petramond_world::collision::aabb_hits_dynamic(
                 min,
                 max,
                 dyn_boxes,
-                crate::collision::NOT_AN_ENTITY,
+                petramond_world::collision::NOT_AN_ENTITY,
             )
     })
 }
@@ -237,11 +237,11 @@ pub fn clamp_body_yaw<F>(
     requested: f32,
     size: MobSize,
     boxes_fn: &F,
-    dyn_boxes: &[crate::collision::DynBox],
+    dyn_boxes: &[petramond_world::collision::DynBox],
     ignore: u64,
 ) -> f32
 where
-    F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
+    F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
 {
     if !current.is_finite() || !requested.is_finite() {
         return current;
@@ -279,11 +279,11 @@ fn rotation_step_hits<F>(
     to: f32,
     size: MobSize,
     boxes_fn: &F,
-    dyn_boxes: &[crate::collision::DynBox],
+    dyn_boxes: &[petramond_world::collision::DynBox],
     ignore: u64,
 ) -> bool
 where
-    F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
+    F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
 {
     segment_offsets(size).any(|offset| {
         let (min_x, max_x) = arc_component_bounds(from, to, std::f32::consts::FRAC_PI_2, |yaw| {
@@ -297,8 +297,8 @@ where
             pos.y + size.height,
             max_z + size.half_width,
         ];
-        crate::collision::aabb_hits_cells(min, max, boxes_fn)
-            || crate::collision::aabb_hits_dynamic(min, max, dyn_boxes, ignore)
+        petramond_world::collision::aabb_hits_cells(min, max, boxes_fn)
+            || petramond_world::collision::aabb_hits_dynamic(min, max, dyn_boxes, ignore)
     })
 }
 

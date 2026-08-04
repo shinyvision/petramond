@@ -6,13 +6,13 @@
 //! purpose — adding an engine event/stage without its ABI mirror must not
 //! compile.
 
-use crate::chunk::SectionPos;
+use petramond_world::chunk::SectionPos;
 use crate::events::{
     self, BlockBreakPre, BlockPlacePre, InteractAttempt, ItemUsePre, MobDamageFeedbackComponent,
     MobDamagePre, MobDamageSound, PlayerDamagePre, PostEvent, PostEventKind,
 };
-use crate::facing::Facing;
-use crate::mathh::{IVec3, Vec3};
+use petramond_math::facing::Facing;
+use petramond_math::math::{IVec3, Vec3};
 use mod_api as api;
 
 /// Engine → ABI world-cell position (a plain-fn `IVec3::to_array` for `.map`).
@@ -104,25 +104,25 @@ fn facing(f: Facing) -> api::Facing {
 /// Engine container sessions speak `GuiKind` end-to-end; the ABI names the
 /// same kinds by their REGISTRY KEY, so engine and pack containers convert
 /// through one line and no engine identity is baked into the wire enum.
-fn container(kind: crate::gui_state::GuiKind) -> api::ContainerKind {
-    api::ContainerKind::new(crate::gui_state::kind_key(kind).unwrap_or("?"))
+fn container(kind: petramond_world::gui_state::GuiKind) -> api::ContainerKind {
+    api::ContainerKind::new(petramond_world::gui_state::kind_key(kind).unwrap_or("?"))
 }
 
 /// ABI → engine GUI state value.
-pub(super) fn gui_value(v: api::GuiValue) -> crate::gui_state::GuiValue {
+pub(super) fn gui_value(v: api::GuiValue) -> petramond_world::gui_state::GuiValue {
     match v {
-        api::GuiValue::F32(x) => crate::gui_state::GuiValue::F32(x),
-        api::GuiValue::I32(x) => crate::gui_state::GuiValue::I32(x),
-        api::GuiValue::Str(s) => crate::gui_state::GuiValue::Str(s),
+        api::GuiValue::F32(x) => petramond_world::gui_state::GuiValue::F32(x),
+        api::GuiValue::I32(x) => petramond_world::gui_state::GuiValue::I32(x),
+        api::GuiValue::Str(s) => petramond_world::gui_state::GuiValue::Str(s),
     }
 }
 
 /// Engine → ABI GUI state value.
-pub(super) fn gui_value_out(v: &crate::gui_state::GuiValue) -> api::GuiValue {
+pub(super) fn gui_value_out(v: &petramond_world::gui_state::GuiValue) -> api::GuiValue {
     match v {
-        crate::gui_state::GuiValue::F32(x) => api::GuiValue::F32(*x),
-        crate::gui_state::GuiValue::I32(x) => api::GuiValue::I32(*x),
-        crate::gui_state::GuiValue::Str(s) => api::GuiValue::Str(s.clone()),
+        petramond_world::gui_state::GuiValue::F32(x) => api::GuiValue::F32(*x),
+        petramond_world::gui_state::GuiValue::I32(x) => api::GuiValue::I32(*x),
+        petramond_world::gui_state::GuiValue::Str(s) => api::GuiValue::Str(s.clone()),
     }
 }
 

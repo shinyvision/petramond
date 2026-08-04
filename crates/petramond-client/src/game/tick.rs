@@ -1,11 +1,11 @@
 //! The frame→tick boundary types shared by the client and the server sim
-//! ([`GameInput`], [`GameEvents`], [`TickEvents`]/[`WorldEvents`]) plus the
+//! ([`GameInput`], [`GameEvents`], `TickEvents`/`WorldEvents`) plus the
 //! client's per-frame [`Game::tick`] driver. The fixed-tick stage ladder
 //! itself lives on [`petramond::server::game::ServerGame`].
 
 use super::Game;
-use petramond::block::Block;
-use petramond::mathh::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_math::math::{IVec3, Vec3};
 use petramond::net::protocol::{
     ClientToServer, OpenScreen, PlayerAction, PlayerUpdate, SelfEvents, TargetRef,
 };
@@ -127,7 +127,7 @@ pub struct GameEvents {
     /// alike: from a block's interaction (`pos = Some`) or a mod's
     /// programmatic `GuiOpen` (`pos = None`). The inventory's E-key open is
     /// client-initiated and never rides here.
-    pub open_gui: Option<(petramond::gui_state::GuiKind, Option<IVec3>)>,
+    pub open_gui: Option<(petramond_world::gui_state::GuiKind, Option<IVec3>)>,
     /// A mod asked to close the open mod GUI this frame (`GuiClose`); the app
     /// honours it only while a mod GUI screen is actually up.
     pub close_mod_gui: bool,
@@ -464,8 +464,8 @@ impl Game {
                 // this unreachable in practice — skip rather than panic. The
                 // inventory open is the server's ack of the client's own E-key
                 // request (its screen is already up), so it never re-opens.
-                match petramond::gui_state::resolve_kind(&kind_key) {
-                    Some(kind) if kind != petramond::gui_state::GuiKind::Inventory => {
+                match petramond_world::gui_state::resolve_kind(&kind_key) {
+                    Some(kind) if kind != petramond_world::gui_state::GuiKind::Inventory => {
                         out.open_gui = Some((kind, pos));
                     }
                     _ => {}

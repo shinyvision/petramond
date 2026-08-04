@@ -3,7 +3,7 @@
 
 use super::common::{filled_inventory, game};
 use crate::game::tick::TICK_DT;
-use petramond::mathh::Vec3;
+use petramond_math::math::Vec3;
 
 /// An UNPREDICTED placement (oriented model, replace-in-place, slab stack,
 /// frozen ledger) never presented client-side, so the initiator's own
@@ -11,8 +11,8 @@ use petramond::mathh::Vec3;
 /// place with no hand jab and no sound for the placer.
 #[test]
 fn unpredicted_placement_keeps_the_initiators_world_event() {
-    use petramond::block::Block;
-    use petramond::mathh::IVec3;
+    use petramond_world::block::Block;
+    use petramond_math::math::IVec3;
     use petramond::net::protocol::WorldEventMsg;
 
     let mut game = super::common::game_on_empty_chunk();
@@ -57,8 +57,8 @@ fn unpredicted_placement_keeps_the_initiators_world_event() {
 /// still reaches them; a second session receives both either way.
 #[test]
 fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
-    use petramond::block::Block;
-    use petramond::mathh::IVec3;
+    use petramond_world::block::Block;
+    use petramond_math::math::IVec3;
     use petramond::net::protocol::WorldEventMsg;
 
     let mut game = super::common::game_on_empty_chunk();
@@ -190,8 +190,8 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
 /// resolves; any other cell's event assembles normally.
 #[test]
 fn wire_break_for_a_presented_cell_is_suppressed_while_its_request_is_pending() {
-    use petramond::block::Block;
-    use petramond::mathh::IVec3;
+    use petramond_world::block::Block;
+    use petramond_math::math::IVec3;
     use petramond::net::protocol::{ServerToClient, TickUpdate, WorldEventMsg};
 
     let mut game = game();
@@ -250,7 +250,7 @@ fn multiple_tick_updates_in_one_frame_accumulate_not_overwrite() {
     };
     first.self_events.picked_up_item = true;
     first.events.push(WorldEventMsg::ChestOpened {
-        pos: petramond::mathh::IVec3::new(1, 65, 1),
+        pos: petramond_math::math::IVec3::new(1, 65, 1),
     });
 
     let mut second = TickUpdate {
@@ -259,7 +259,7 @@ fn multiple_tick_updates_in_one_frame_accumulate_not_overwrite() {
     };
     second.self_events.player_damaged = true;
     second.events.push(WorldEventMsg::ChestClosed {
-        pos: petramond::mathh::IVec3::new(1, 65, 1),
+        pos: petramond_math::math::IVec3::new(1, 65, 1),
     });
 
     game.apply_tick_update(Box::new(first));
@@ -274,10 +274,10 @@ fn multiple_tick_updates_in_one_frame_accumulate_not_overwrite() {
         ev.world,
         vec![
             crate::game::WorldEvent::ChestOpened {
-                pos: petramond::mathh::IVec3::new(1, 65, 1)
+                pos: petramond_math::math::IVec3::new(1, 65, 1)
             },
             crate::game::WorldEvent::ChestClosed {
-                pos: petramond::mathh::IVec3::new(1, 65, 1)
+                pos: petramond_math::math::IVec3::new(1, 65, 1)
             },
         ],
         "world events append in arrival order"

@@ -12,7 +12,7 @@ fn health_damage_and_restore_clamp_to_the_valid_range() {
         !pl.apply_damage(1000),
         "the active i-frame window rejects damage"
     );
-    for _ in 0..crate::damage::PLAYER_DAMAGE_IFRAME_TICKS {
+    for _ in 0..petramond_world::damage::PLAYER_DAMAGE_IFRAME_TICKS {
         pl.tick_damage_immunity();
     }
     assert!(pl.apply_damage(1000)); // never below zero
@@ -25,7 +25,7 @@ fn health_damage_and_restore_clamp_to_the_valid_range() {
 
 #[test]
 fn status_effects_fire_on_interval_boundaries_and_expire() {
-    use crate::effect::{Effect, EffectBehavior};
+    use petramond_world::effect::{Effect, EffectBehavior};
     // Derive the cadence from the loaded row — the contract under test is the
     // boundary/expiry behavior, never the freely-editable interval/amount.
     let EffectBehavior::Regen { interval, .. } = Effect::Regeneration.def().behavior else {

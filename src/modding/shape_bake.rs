@@ -12,7 +12,7 @@
 //! Keeping this in one place is what makes the server and client pumps behave
 //! identically, so a shape cannot pass on one side and desync on the other.
 
-use crate::block::Aabb;
+use petramond_world::block::Aabb;
 use crate::world::CustomBakeCell;
 
 /// The wire input for one dirty cell — built once by
@@ -73,7 +73,7 @@ pub(in crate::modding) fn ingest_sim_bake(
 pub(in crate::modding) fn ingest_render_bake(
     baked: &[mod_api::BakedRenderCell],
     expected: usize,
-) -> BakeIngest<Box<[crate::block::ShapeRenderBox]>> {
+) -> BakeIngest<Box<[petramond_world::block::ShapeRenderBox]>> {
     ingest(baked, expected, |c| {
         let aabbs: Vec<mod_api::ShapeAabb> = c.boxes.iter().map(|b| b.aabb).collect();
         crate::world::ingest_shape_boxes(&aabbs)
@@ -81,7 +81,7 @@ pub(in crate::modding) fn ingest_render_bake(
                 clean
                     .into_iter()
                     .zip(&c.boxes)
-                    .map(|(aabb, b)| crate::block::ShapeRenderBox {
+                    .map(|(aabb, b)| petramond_world::block::ShapeRenderBox {
                         aabb,
                         tint: b.tint.map_or([1.0; 3], |t| t.map(|v| f32::from(v) / 255.0)),
                         ao_strength: b.ao.map_or(1.0, |p| (f32::from(p) / 100.0).clamp(0.0, 1.0)),

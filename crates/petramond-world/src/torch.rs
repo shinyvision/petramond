@@ -5,8 +5,8 @@
 //! the owning chunk's torch map (see [`Chunk::torches`](crate::chunk::Chunk)),
 //! keyed by local block index just like the furnace/chest maps. This module owns
 //! the orientation enum plus the single shared model transform that BOTH the
-//! in-world mesher ([`mesh::torch`](crate::mesh)) and the selection outline
-//! ([`render`](crate::render)) build from — so the outline traces the rendered
+//! in-world mesher (`mesh::torch`) and the selection outline
+//! (`render`) build from — so the outline traces the rendered
 //! pole exactly, by construction.
 
 use crate::facing::Facing;
@@ -63,7 +63,7 @@ impl crate::block::CellCodec for TorchPlacement {
 
 impl TorchPlacement {
     /// The placement for a torch put against the face whose outward normal (pointing
-    /// back toward the player, as [`RaycastHit`](crate::player) reports it) is
+    /// back toward the player, as `RaycastHit` reports it) is
     /// `normal`: `+Y` → a `Floor` torch on the block below, a horizontal normal → a
     /// wall torch leaning that way. A `-Y` normal (the underside of a block) or a
     /// zero normal yields `None` — torches don't hang from ceilings.
@@ -130,7 +130,7 @@ impl TorchPlacement {
     /// at the origin, `±POLE_HALF` across in X/Z and `0..POLE_HEIGHT` tall — into
     /// its CELL-local space (`0..1` per axis). A floor torch is just centered on the
     /// block; a wall torch pivots at its base against the wall and leans
-    /// [`WALL_TILT`] out. The caller adds the cell's world origin. The mesher and
+    /// `WALL_TILT` out. The caller adds the cell's world origin. The mesher and
     /// the selection outline both build from this, so the outline hugs the model.
     pub fn model_transform(self) -> Mat4 {
         match self.lean() {

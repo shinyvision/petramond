@@ -32,10 +32,10 @@ impl ServerGame {
     /// player's unlocked record arrive together. Tests about crafting
     /// mechanics are not tests about discovery.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn install_recipes_for_test(&mut self, recipes: crate::crafting::Recipes) {
+    pub fn install_recipes_for_test(&mut self, recipes: petramond_world::crafting::Recipes) {
         self.recipes = recipes;
         self.unlocks =
-            std::sync::Arc::new(crate::crafting::UnlockIndex::build(self.recipes.crafting()));
+            std::sync::Arc::new(petramond_world::crafting::UnlockIndex::build(self.recipes.crafting()));
         for s in 0..self.sessions.len() {
             self.unlock_all_recipes_for_test(s);
         }

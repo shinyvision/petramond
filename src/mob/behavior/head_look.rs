@@ -17,7 +17,7 @@
 //! an animation is already moving the head — so a model with no `head` bone, or one
 //! whose active animation drives the head, simply ignores this.
 
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput, HeadLook};
 

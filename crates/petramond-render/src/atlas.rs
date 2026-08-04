@@ -2,7 +2,7 @@
 //! for the tile identities `tile` assigned, plus per-tile pixel-derived data
 //! (map colours, alpha bounds, mips, UV rects).
 //!
-//! Identity (names, ids, tints, frame counts) lives in [`petramond::tile`] and
+//! Identity (names, ids, tints, frame counts) lives in [`petramond_world::tile`] and
 //! never touches a texel; this module is the client half that actually decodes
 //! the PNGs. Like the block/item tables, the composed atlas is load-bearing
 //! (meshing, render, and icon drawing all resolve through it), so composition
@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use petramond::tile::{engine, Tile};
+use petramond_world::tile::{engine, Tile};
 
 /// Fixed tile edge length in texels. Every atlas cell is `TILE × TILE`.
 pub const TILE: u32 = 16;
@@ -42,7 +42,7 @@ static ATLAS: LazyLock<AtlasData> = LazyLock::new(|| {
     let data = compose().unwrap_or_else(|e| panic!("textures/atlas.json: {e}"));
     // Publish the pixel-derived cartography colours through the identity
     // registry, where headless-safe consumers (minimap surface tint) read them.
-    petramond::tile::install_map_colors(data.map_rgb.clone());
+    petramond_world::tile::install_map_colors(data.map_rgb.clone());
     data
 });
 
@@ -80,7 +80,7 @@ pub fn tile_min_alpha(tile: Tile) -> u8 {
 /// frames are cropped per cell.
 fn load_source(file: &str) -> Result<image::RgbaImage, String> {
     let rel = format!("textures/{file}");
-    let (bytes, _) = petramond::assets::read_bytes(&rel)
+    let (bytes, _) = petramond_world::assets::read_bytes(&rel)
         .ok_or_else(|| format!("missing texture '{rel}' (searched the asset roots)"))?;
     Ok(image::load_from_memory(&bytes)
         .map_err(|e| format!("failed to decode '{rel}': {e}"))?
@@ -91,7 +91,7 @@ fn load_source(file: &str) -> Result<image::RgbaImage, String> {
 /// source frame resampled to `TILE × TILE`, placed at its id's grid slot, with
 /// its dye-base twin one grid-half below.
 fn compose() -> Result<AtlasData, String> {
-    let cells = petramond::tile::cells();
+    let cells = petramond_world::tile::cells();
     let count = cells.len();
 
     // Square-ish atlas grid, same shape rule the old build-time composer used.
@@ -221,7 +221,7 @@ pub const DYE_V_OFFSET: f32 = 0.5;
 /// Per-tile texture-ARRAY data for the terrain pipeline: one `TILE×TILE` layer per tile id,
 /// with a per-layer mip chain. Returned as `(levels, tile_size, layer_count)` where
 /// `levels[mip]` is layer-major packed RGBA (`layer_count × (tile>>mip)² × 4` bytes) — one
-/// `write_texture` per mip. Extracted from the same tile-isolated mips [`build_atlas_mips`]
+/// `write_texture` per mip. Extracted from the same tile-isolated mips `build_atlas_mips`
 /// builds (so leaf alpha-expansion etc. carry over), but repacked per layer so the array can
 /// use real REPEAT wrapping + mips with NO cross-tile bleed — exactly what a greedy-meshed
 /// quad's tiled UVs need. Layer index == tile id, matching the `uv_rects` / mesher numbering.
@@ -258,7 +258,7 @@ pub fn decode_atlas_array() -> (Vec<Vec<u8>>, u32, u32) {
 
 fn build_atlas_mips(base: &[u8]) -> Vec<Vec<u8>> {
     let d = data();
-    let cells = petramond::tile::cells();
+    let cells = petramond_world::tile::cells();
     let levels = TILE.trailing_zeros() as usize + 1;
     let mut mips = Vec::with_capacity(levels);
     mips.push(base.to_vec());
@@ -410,7 +410,7 @@ mod tests {
     /// split hands them their own authored alpha instead of water's constant.
     #[test]
     fn block_tiles_match_their_render_pass_alpha_contract() {
-        for &b in petramond::block::Block::all() {
+        for &b in petramond_world::block::Block::all() {
             for tile in b.tiles() {
                 if b.is_opaque() {
                     assert!(
@@ -462,7 +462,7 @@ mod tests {
         let d = data();
         let leaves = Tile::from_name("oak_leaves").expect("oak_leaves tile");
         assert!(
-            petramond::tile::cells()[leaves.index()].fill_cutout_mips,
+            petramond_world::tile::cells()[leaves.index()].fill_cutout_mips,
             "oak_leaves must carry fill_cutout_mips"
         );
         let mut base = vec![0u8; (d.cols * TILE * 2 * d.rows * TILE * 4) as usize];

@@ -130,7 +130,7 @@ impl WorldData {
 
     /// Mark every custom-shape cell in a freshly-LOADED section dirty for
     /// baking. A section load (worldgen, streaming, client ingest, save reload)
-    /// sets its cells in BULK, bypassing [`mark_custom_bake_edit`], so a chair
+    /// sets its cells in BULK, bypassing `mark_custom_bake_edit`, so a chair
     /// restored from disk would never re-bake — it would show the row's static
     /// fallback collision and the cube render forever. This is the load-time
     /// equivalent, called from `note_section_loaded` for every install.
@@ -165,7 +165,7 @@ impl WorldData {
     /// refreshes. Its SIM bake derives collision from the state too, so the
     /// authoritative side must invalidate, not just the render side. Called by
     /// the host KV write path; the replica's KV ingest re-marks via
-    /// [`mark_custom_bake_edit`](Self::mark_custom_bake_edit).
+    /// `mark_custom_bake_edit`.
     pub fn remark_state_key_bakes(&mut self, wx: i32, wy: i32, wz: i32, key: &str) {
         // Almost every cell-KV write carries a non-state key (a dye use count,
         // an interop row): one registry scan skips the 7-cell world probe.
@@ -224,7 +224,7 @@ impl WorldData {
 }
 
 /// One custom-shape cell awaiting a bake: the routing facts the pumps group
-/// dispatches by, plus the [ready wire input](World::bake_cell_input).
+/// dispatches by, plus the `ready wire input`.
 pub struct CustomBakeCell {
     pub pos: IVec3,
     pub shape_kind: u8,

@@ -81,7 +81,7 @@ pub(super) async fn request_adapter(
 /// with a clear count instead of silently truncating.
 pub(super) async fn request_device(adapter: &wgpu::Adapter) -> (wgpu::Device, wgpu::Queue) {
     let mut required_limits = wgpu::Limits::default().using_alignment(adapter.limits());
-    required_limits.max_texture_array_layers = (2 * petramond::tile::Tile::count() as u32)
+    required_limits.max_texture_array_layers = (2 * petramond_world::tile::Tile::count() as u32)
         .max(required_limits.max_texture_array_layers)
         .min(adapter.limits().max_texture_array_layers);
     // Timestamp queries are requested only when the GPU-timing instrument is
@@ -412,7 +412,7 @@ pub(super) fn new_renderer_inner(
     // mob pipeline reused for the model pass (the chunk's `ModelVertex` stream shares the
     // mob `ItemVertex` layout). The mesher bakes geometry into each chunk's model stream;
     // this pass just draws it with full-block lighting already baked in.
-    let model_atlas = petramond::block_model::atlas();
+    let model_atlas = petramond_world::block_model::atlas();
     let (matlas_rgba, matlas_w, matlas_h) = model_atlas.texture();
     let (_model_atlas_texture, model_atlas_view, model_atlas_sampler) =
         create_model_texture(&device, &queue, matlas_rgba, matlas_w, matlas_h);
@@ -505,7 +505,7 @@ pub(super) fn new_renderer_inner(
     // asset overlay (a pack can reskin it) into its own bind group (reusing the
     // gui-atlas bind layout).
     let load_gui_bind = |rel: &str| -> Option<wgpu::BindGroup> {
-        let (bytes, _path) = petramond::assets::read_bytes(rel)?;
+        let (bytes, _path) = petramond_world::assets::read_bytes(rel)?;
         let (_tex, view, sampler) = create_gui_panel(&device, &queue, &bytes);
         Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gui texture bind"),
@@ -713,7 +713,7 @@ pub(super) fn new_renderer_inner(
             shake: [0.0, 0.0],
             held_item_anim: HeldItemAnimator::default(),
             held_item_skylight: crate::lighting::FULL_SKYLIGHT,
-            held_item_blocklight: petramond::light::BlockLight6::DARK,
+            held_item_blocklight: petramond_world::light::BlockLight6::DARK,
             vertex_count: 0,
         },
         ui: UiPass {

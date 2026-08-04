@@ -17,7 +17,7 @@ pub enum ItemRenderKind {
 
 /// First-person hold orientation for a [`Sprite`](ItemRenderKind::Sprite) item:
 /// the Euler tilt (radians) applied to the upright, origin-centred extruded slab
-/// before it's seated in the hand (see [`crate::render`]'s `held_sprite`). A long
+/// before it's seated in the hand (see `crate::render`'s `held_sprite`). A long
 /// tool is laid diagonally like a swung handle (`roll != 0`); a small item stands
 /// upright (`roll == 0`). Per-item so each item can declare how it's held.
 #[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

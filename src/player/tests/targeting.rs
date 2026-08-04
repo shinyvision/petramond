@@ -243,8 +243,8 @@ fn intersects_block_strict_faces() {
 /// chain notices, which is why this is pinned here.
 #[test]
 fn a_multi_cell_model_block_outlines_its_whole_model_from_every_cell() {
-    use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos};
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{Chunk, ChunkPos};
 
     let mut world = crate::world::World::new(1, 2);
     for (cx, cz) in [(0, 0), (-1, 0), (0, -1), (-1, -1)] {

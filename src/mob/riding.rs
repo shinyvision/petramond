@@ -18,7 +18,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 use crate::player;
 
 const DISMOUNT_CLEARANCE: f32 = 0.45;
@@ -97,15 +97,15 @@ pub fn dismount_spot(
 pub fn player_body_free(
     world: &crate::world::World,
     feet: Vec3,
-    obstacles: &[crate::collision::DynBox],
+    obstacles: &[petramond_world::collision::DynBox],
 ) -> bool {
     let (min, max) = player_body_aabb(feet);
-    !crate::collision::aabb_hits_cells(min, max, |x, y, z| world.collision_boxes_at(x, y, z))
-        && !crate::collision::aabb_hits_dynamic(
+    !petramond_world::collision::aabb_hits_cells(min, max, |x, y, z| world.collision_boxes_at(x, y, z))
+        && !petramond_world::collision::aabb_hits_dynamic(
             min,
             max,
             obstacles,
-            crate::collision::NOT_AN_ENTITY,
+            petramond_world::collision::NOT_AN_ENTITY,
         )
 }
 
@@ -116,7 +116,7 @@ pub fn player_body_free(
 pub fn player_body_known_free(
     world: &crate::world::World,
     feet: Vec3,
-    obstacles: &[crate::collision::DynBox],
+    obstacles: &[petramond_world::collision::DynBox],
 ) -> bool {
     if !feet.is_finite() {
         return false;
@@ -205,7 +205,7 @@ impl Riding {
     }
 
     /// Drain completed detach transitions in the deterministic order they
-    /// occurred. A transition is recorded exactly once by [`dismount`].
+    /// occurred. A transition is recorded exactly once by `dismount`.
     pub fn drain_dismounted(&mut self) -> impl Iterator<Item = (u8, Mount)> + '_ {
         self.dismounted.drain(..)
     }

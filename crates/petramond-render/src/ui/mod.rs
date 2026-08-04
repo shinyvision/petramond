@@ -17,9 +17,9 @@ pub mod icon;
 
 use petramond::gui::{Role, SlotRect, UiSnapshot};
 
-use petramond::gui_state::GuiKind;
-use petramond::inventory::HOTBAR_LEN;
-use petramond::item::ItemType;
+use petramond_world::gui_state::GuiKind;
+use petramond_world::inventory::HOTBAR_LEN;
+use petramond_world::item::ItemType;
 use petramond_text::tiny as tiny_text;
 
 /// A single UI vertex: NDC position (y up) + texture uv + RGBA color. `uv.x < 0`
@@ -521,7 +521,7 @@ pub(super) fn intersect_rect(a: SlotRect, b: SlotRect) -> Option<SlotRect> {
 /// The game state filling slot `i` of `role`, as `(item, count)` — the one place
 /// that maps a slot role to its backing model. `None` for an empty slot or a
 /// decorative role.
-fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<petramond::item::ItemStack> {
+fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<petramond_world::item::ItemStack> {
     match role {
         Role::Hotbar => ui.slots.get(i).copied().flatten(),
         Role::PlayerInv => ui.slots.get(HOTBAR_LEN + i).copied().flatten(),
@@ -547,7 +547,7 @@ fn slot_item(ui: &UiSnapshot, role: Role, i: usize) -> Option<petramond::item::I
 fn push_hearts(
     out: &mut Vec<UiVertex>,
     screen: (u32, u32),
-    health: petramond::gui_state::HealthView,
+    health: petramond_world::gui_state::HealthView,
     wiggle: Option<(i32, i32, f32)>,
     scale: f32,
 ) {
@@ -601,7 +601,7 @@ fn push_hearts(
 fn push_effects(
     out: &mut Vec<UiVertex>,
     screen: (u32, u32),
-    effects: &[petramond::effect::Effect],
+    effects: &[petramond_world::effect::Effect],
     scale: f32,
 ) {
     if effects.is_empty() {
@@ -612,7 +612,7 @@ fn push_effects(
     let margin = HEART_MARGIN * scale;
     // Sits `gap` above the heart bar's top edge.
     let y = screen.1 as f32 - margin - HEART_PX * scale - gap - cell;
-    let strip_cells = petramond::effect::defs().len() as f32;
+    let strip_cells = petramond_world::effect::defs().len() as f32;
     for (i, effect) in effects.iter().enumerate() {
         let x = margin + i as f32 * (cell + gap);
         let u0 = effect.0 as f32 / strip_cells;
@@ -705,7 +705,7 @@ mod tests {
             active: 2,
             ..Default::default()
         };
-        s.slots[0] = Some(petramond::item::ItemStack::new(ItemType::Stone, 64));
+        s.slots[0] = Some(petramond_world::item::ItemStack::new(ItemType::Stone, 64));
         s
     }
 
@@ -731,7 +731,7 @@ mod tests {
 
         // No solved document (and therefore no slots): game content draws nothing.
         let mut s = snap(GuiKind::Inventory, true);
-        s.cursor = Some(petramond::item::ItemStack::new(ItemType::Dirt, 12));
+        s.cursor = Some(petramond_world::item::ItemStack::new(ItemType::Dirt, 12));
         build(&s, None, &mut b);
         assert!(b.icon_quads.is_empty() && b.drag_icon_quads.is_empty() && b.counts.is_empty());
     }
@@ -902,7 +902,7 @@ mod tests {
         let mut b = UiBuild::default();
         let mut s = snap(GuiKind::Inventory, true);
         let slots = [cell(Role::Hotbar, 0), cell(Role::Hotbar, 1)];
-        s.cursor = Some(petramond::item::ItemStack::new(ItemType::Dirt, 12));
+        s.cursor = Some(petramond_world::item::ItemStack::new(ItemType::Dirt, 12));
         build(&s, Some(&slots), &mut b);
         assert_eq!(b.icon_quads.len(), 1, "only the filled cell draws an icon");
         let (item, r, _color, _dyed) = b.icon_quads[0];
@@ -919,7 +919,7 @@ mod tests {
 
     #[test]
     fn hearts_only_on_the_hotbar_hud_with_health() {
-        let health = Some(petramond::gui_state::HealthView {
+        let health = Some(petramond_world::gui_state::HealthView {
             current: 15,
             max: 20,
         });

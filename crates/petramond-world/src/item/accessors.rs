@@ -121,7 +121,7 @@ impl ItemType {
     }
 
     /// Whether this item belongs to `tag`. Membership is item data — each item's
-    /// [`ItemDef`](definition::ItemDef) lists its tags — so recipes can require a
+    /// `ItemDef` lists its tags — so recipes can require a
     /// group (e.g. any `petramond:planks`) without naming every member, and a new
     /// item joins a group by editing its data row, never any recipe code.
     #[inline]
@@ -157,7 +157,7 @@ impl ItemType {
     }
 
     /// Stable snake_case identity recipes reference (e.g. `oak_planks`), read from
-    /// the item's [`ItemDef`](definition::ItemDef) row. This is the item's real id,
+    /// the item's `ItemDef` row. This is the item's real id,
     /// distinct from its [`name`](Self::name) display string — renaming the name
     /// never moves the key, so recipes keep resolving (see `crate::crafting::load`).
     #[inline]
@@ -194,7 +194,7 @@ impl ItemType {
     /// block-items follow their block's render shape (`BlockCube` for full
     /// cubes, `Sprite` for cross-model plants), and item-only items are flat
     /// sprites, unless they carry their own bbmodel
-    /// ([`item_model`](Self::item_model)).
+    /// (`item_model`).
     #[inline]
     pub fn render_kind(self) -> ItemRenderKind {
         if let Some(sprite) = self.def().sprite {
@@ -222,7 +222,7 @@ impl ItemType {
     }
 
     /// First-person hold orientation for this item when held as a sprite (tools,
-    /// flowers, raw drops), read from its [`ItemDef`](definition::ItemDef) row.
+    /// flowers, raw drops), read from its `ItemDef` row.
     /// Pickaxes are laid diagonally like a swung tool; everything else carries
     /// [`HeldPose::DEFAULT`] (upright). Only meaningful for `Sprite` render-kind
     /// items — block-cube items use the cube hold transform instead.

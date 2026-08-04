@@ -106,7 +106,7 @@ static INTERNED: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 /// Mod kind keys in registration order; index + engine count == id.
 static MOD_KINDS: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
-/// Deduplicate `s` into a `'static` string (see [`INTERNED`]).
+/// Deduplicate `s` into a `'static` string (see `INTERNED`).
 pub fn intern_str(s: &str) -> &'static str {
     let mut interned = INTERNED.lock().unwrap();
     if let Some(hit) = interned.iter().find(|i| **i == s) {

@@ -6,15 +6,15 @@
 //! - `facing` — the outward normal of the **closed** slab, i.e. the edge nearest the
 //!   placer. The placer faces a block and the door appears on the near edge: facing
 //!   north ⇒ the door sits on the **south** edge ⇒ `facing == South` (this matches
-//!   [`facing_from_forward`](crate::game) used by furnaces/chests).
+//!   `facing_from_forward` used by furnaces/chests).
 //! - `open` — swings the slab 90° onto the adjacent edge of the SAME cell. The hinge is
 //!   on the placing player's **left** corner; facing south ⇒ opens onto the west edge.
 //! - `top` — which of the two stacked cells this is (the upper half).
 //!
 //! The per-cell collision/selection boxes (full cell height, a thin slab on one edge)
-//! are returned here as `'static` slices so [`World::collision_boxes_at`] can hand
+//! are returned here as `'static` slices so `World::collision_boxes_at` can hand
 //! them straight to the swept-AABB collider. The rendered model
-//! ([`render::door_model`](crate::render)) builds the same closed slab and rotates it
+//! (`render::door_model`) builds the same closed slab and rotates it
 //! about [`hinge_pivot`] by [`swing_radians`] — and because that pivot is inset half a
 //! thickness from the cell corner, the swung slab lands exactly on the open
 //! collision slab (the door stays within its own cell, not 3px into the neighbour).
@@ -158,7 +158,7 @@ pub fn hinge_pivot(facing: Facing) -> (f32, f32) {
 }
 
 /// The swing angle (radians, about +Y) for a door `open01` of the way open: 0 closed,
-/// +90° fully open. The rendered panel ([`render::door_model`](crate::render)) is the
+/// +90° fully open. The rendered panel (`render::door_model`) is the
 /// closed slab rotated about [`hinge_pivot`] by this angle, landing it on the adjacent
 /// (hinge-side) edge of its OWN cell — matching the open [`collision_boxes`].
 #[inline]
@@ -167,7 +167,7 @@ pub fn swing_radians(open01: f32) -> f32 {
 }
 
 /// Rotate cell-local point `(x, z)` about the vertical line through `(hx, hz)` by
-/// `angle` radians about +Y. Shared by [`render::door_model`](crate::render) so the
+/// `angle` radians about +Y. Shared by `render::door_model` so the
 /// drawn swing pivots on the hinge.
 #[inline]
 pub fn rotate_about(x: f32, z: f32, hx: f32, hz: f32, angle: f32) -> (f32, f32) {

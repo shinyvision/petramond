@@ -1,9 +1,9 @@
-use crate::block::{Block, ShapeFamily};
+use petramond_world::block::{Block, ShapeFamily};
 use crate::entity::DroppedItem;
 use crate::events::{BlockBreakPre, Outcome, PostEvent};
-use crate::item::ItemStack;
-use crate::mathh::{IVec3, Vec3};
-use crate::mining::{BreakEvent, MiningState};
+use petramond_world::item::ItemStack;
+use petramond_math::math::{IVec3, Vec3};
+use petramond_world::mining::{BreakEvent, MiningState};
 use crate::world::World;
 
 use super::game::ServerGame;
@@ -169,7 +169,7 @@ impl ServerGame {
             .selected()
             .and_then(|st| st.item.tool());
         let claimed_tool = tool_item_id
-            .map(crate::item::ItemType)
+            .map(petramond_world::item::ItemType)
             .and_then(|it| it.tool());
         if claimed_tool != auth_tool {
             self.deny_break_finished(s, request_id, pos, ActionDenyReason::BadTool);
@@ -185,7 +185,7 @@ impl ServerGame {
         // stays, and when the hold-path timer finishes the same cell we
         // accept + strip presentation. Immediate deny would restore the
         // block then re-break it (double sound/burst on slow links).
-        let expected = crate::mining::break_time(block, auth_tool);
+        let expected = petramond_world::mining::break_time(block, auth_tool);
         if expected > 0.0 {
             let observed = self.sessions[s]
                 .mining
@@ -210,7 +210,7 @@ impl ServerGame {
         let event = BreakEvent {
             pos,
             block,
-            harvested: crate::mining::harvests(block, auth_tool),
+            harvested: petramond_world::mining::harvests(block, auth_tool),
         };
         self.sessions[s].mining = MiningState::new();
         // A successful BreakFinished clears any deferred wait for this cell
@@ -310,7 +310,7 @@ impl ServerGame {
         // removal below clears the footprint metadata the group lookup needs.
         // Checked for EVERY session: any player can break another's spawn bed.
         // Keyed on bed IDENTITY (the tag), not the sleep-interaction capability.
-        if event.block.has_tag(crate::block::BlockTag::BED) {
+        if event.block.has_tag(petramond_world::block::BlockTag::BED) {
             self.clear_bed_spawn_at(event.pos);
         }
         let hit_normal = self.sessions[s]
@@ -418,7 +418,7 @@ impl ServerGame {
         for (pos, block) in self.world.take_natural_breaks() {
             // The cell is already cleared, so the group base can't be derived;
             // re-checking the stored spawn bed still exists covers it.
-            if block.has_tag(crate::block::BlockTag::BED) {
+            if block.has_tag(petramond_world::block::BlockTag::BED) {
                 self.validate_bed_spawn();
             }
             events.world.block_broken.push(BlockBrokenEvent {
@@ -434,11 +434,11 @@ impl ServerGame {
             // fragile blocks are tier-0 (short grass yields nothing, a
             // flower/torch yields itself), while a tool-gated drop (the snow
             // layer's shovel-only snowball) is lost — nobody dug it.
-            let harvested = crate::mining::harvests(block, None);
+            let harvested = petramond_world::mining::harvests(block, None);
             if harvested {
                 // Natural breaks carry nothing: the world cleared the cell
                 // (and its KV) before this drain runs.
-                self.spawn_drops(pos, block, (sky, blk), crate::item::VariantId::NONE);
+                self.spawn_drops(pos, block, (sky, blk), petramond_world::item::VariantId::NONE);
             }
             // Sim-destroyed blocks are not cancellable (no pre event);
             // observers still hear about them.
@@ -459,25 +459,25 @@ impl ServerGame {
         &self,
         pos: IVec3,
         block: Block,
-        part: crate::block::CellPart,
-    ) -> crate::item::VariantId {
+        part: petramond_world::block::CellPart,
+    ) -> petramond_world::item::VariantId {
         let carry = block.carry();
         if carry.is_empty() {
-            return crate::item::VariantId::NONE;
+            return petramond_world::item::VariantId::NONE;
         }
-        let mut map = crate::item::variant::VariantMap::new();
+        let mut map = petramond_world::item::variant::VariantMap::new();
         for &key in carry {
-            let stored = crate::block::part_kv_key(key, part);
+            let stored = petramond_world::block::part_kv_key(key, part);
             if let Some(v) = self.world.cell_kv_get(pos.x, pos.y, pos.z, &stored) {
                 map.insert(key.to_owned(), v.to_vec());
             }
         }
         if map.is_empty() {
-            return crate::item::VariantId::NONE;
+            return petramond_world::item::VariantId::NONE;
         }
-        crate::item::variant::intern(&map).unwrap_or_else(|| {
+        petramond_world::item::variant::intern(&map).unwrap_or_else(|| {
             log::warn!("carry at {pos:?}: variant table full — drop loses its data");
-            crate::item::VariantId::NONE
+            petramond_world::item::VariantId::NONE
         })
     }
 
@@ -489,12 +489,12 @@ impl ServerGame {
     pub fn part_drop_stacks(
         &self,
         pos: IVec3,
-        parts: &[(crate::block::CellPart, Block)],
-    ) -> Vec<crate::item::ItemStack> {
-        let mut stacks: Vec<crate::item::ItemStack> = Vec::new();
+        parts: &[(petramond_world::block::CellPart, Block)],
+    ) -> Vec<petramond_world::item::ItemStack> {
+        let mut stacks: Vec<petramond_world::item::ItemStack> = Vec::new();
         for &(part, block) in parts {
-            let item = crate::item::ItemType::from_block(block);
-            if item == crate::item::ItemType::Air {
+            let item = petramond_world::item::ItemType::from_block(block);
+            if item == petramond_world::item::ItemType::Air {
                 continue;
             }
             let variant = self.carry_variant_at(pos, block, part);
@@ -505,7 +505,7 @@ impl ServerGame {
                 Some(s) => {
                     s.count = s.count.saturating_add(1).min(item.max_stack_size());
                 }
-                None => stacks.push(crate::item::ItemStack::with_variant(item, 1, variant)),
+                None => stacks.push(petramond_world::item::ItemStack::with_variant(item, 1, variant)),
             }
         }
         stacks
@@ -515,8 +515,8 @@ impl ServerGame {
         &mut self,
         pos: IVec3,
         block: Block,
-        (sky, blk): (u8, crate::light::BlockLight6),
-        carry_variant: crate::item::VariantId,
+        (sky, blk): (u8, petramond_world::light::BlockLight6),
+        carry_variant: petramond_world::item::VariantId,
     ) {
         let centre = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32) + Vec3::splat(0.5);
         for d in block.drop_spec().drops {
@@ -541,7 +541,7 @@ impl ServerGame {
                 continue;
             }
             let mut stack = ItemStack::new(d.item, count);
-            if d.item == crate::item::ItemType::from_block(block) {
+            if d.item == petramond_world::item::ItemType::from_block(block) {
                 stack.variant = carry_variant;
             }
             let mut drop = DroppedItem::new(centre, stack, self.spawn_counter);
@@ -557,7 +557,7 @@ impl ServerGame {
         &mut self,
         pos: IVec3,
         stack: ItemStack,
-        (sky, blk): (u8, crate::light::BlockLight6),
+        (sky, blk): (u8, petramond_world::light::BlockLight6),
     ) {
         if stack.is_empty() {
             return;
@@ -579,7 +579,7 @@ pub fn break_light(
     world: &World,
     pos: IVec3,
     normal: Option<IVec3>,
-) -> (u8, crate::light::BlockLight6) {
+) -> (u8, petramond_world::light::BlockLight6) {
     let at = |c: IVec3| world.dynamic_light_at_world(c.x, c.y, c.z);
     if let Some(n) = normal {
         return at(pos + n);
@@ -596,5 +596,5 @@ pub fn break_light(
     .into_iter()
     .map(|n| at(pos + n))
     .max_by_key(|&(sky, block)| sky.max(block.luminance() as u8))
-    .unwrap_or((63, crate::light::BlockLight6::DARK))
+    .unwrap_or((63, petramond_world::light::BlockLight6::DARK))
 }

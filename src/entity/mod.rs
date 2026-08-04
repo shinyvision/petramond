@@ -5,9 +5,9 @@
 //! `tick_mesh_budget`.
 //!
 //! **Render-agnostic rule:** nothing here may depend on `crate::render`. The
-//! module exposes raw [`DroppedItem`] / [`Particle`] data (slices/accessors) and
-//! a single [`Particle::atlas_uv`] helper that resolves absolute atlas UVs via
-//! [`crate::atlas`]; the App maps these to render instances in a later layer.
+//! module exposes raw [`DroppedItem`] / `Particle` data (slices/accessors) and
+//! a single `Particle::atlas_uv` helper that resolves absolute atlas UVs via
+//! `crate::atlas`; the App maps these to render instances in a later layer.
 
 mod dropped_item;
 

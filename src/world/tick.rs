@@ -3,7 +3,7 @@
 //!
 //! The generic loops never name a concrete block: every reaction — random tick,
 //! neighbour update, and scheduled tick — routes through the block's
-//! [`behavior`](crate::block::behavior). A behaviour needing only World's public
+//! [`behavior`](petramond_world::block::behavior). A behaviour needing only World's public
 //! api (leaf decay) lives in `block`; one reaching into world internals (water,
 //! which drives `FluidSim` and the tick scheduler) lives in `world` and still
 //! implements the `block`-defined trait.
@@ -32,10 +32,10 @@
 
 use std::cmp::Reverse;
 
-use crate::block::Block;
-use crate::chunk::{SectionPos, SECTION_SIZE, SECTION_VOLUME};
-use crate::crafting::Recipes;
-use crate::mathh::{IVec3, FACE_NEIGHBORS};
+use petramond_world::block::Block;
+use petramond_world::chunk::{SectionPos, SECTION_SIZE, SECTION_VOLUME};
+use petramond_world::crafting::Recipes;
+use petramond_math::math::{IVec3, FACE_NEIGHBORS};
 
 use petramond_world::world::tick_state::NAV_CHANGE_CAP;
 use super::sim_guard::{SimReadiness, SIM_RETRY_DELAY};
@@ -71,11 +71,11 @@ pub(super) fn edit_nav_equivalent(old: Block, new: Block) -> bool {
     let static_shape = |b: Block| {
         matches!(
             b.shape_family(),
-            crate::block::ShapeFamily::Cube
-                | crate::block::ShapeFamily::BoxSet
-                | crate::block::ShapeFamily::Cross
-                | crate::block::ShapeFamily::Crop
-                | crate::block::ShapeFamily::Torch
+            petramond_world::block::ShapeFamily::Cube
+                | petramond_world::block::ShapeFamily::BoxSet
+                | petramond_world::block::ShapeFamily::Cross
+                | petramond_world::block::ShapeFamily::Crop
+                | petramond_world::block::ShapeFamily::Torch
         ) && !b.is_water()
     };
     static_shape(old) && static_shape(new) && old.collision_boxes() == new.collision_boxes()
@@ -108,7 +108,7 @@ impl World {
     /// 2. dispatch every queued block update (which may schedule future ticks;
     ///    dispatch never sets blocks, so the drain terminates within the tick),
     /// 3. advance furnace smelting on the same clock (needs `recipes`, which the
-    ///    storage layer is kept ignorant of — see [`World::tick_furnaces`]),
+    ///    storage layer is kept ignorant of — see `World::tick_furnaces`),
     /// 4. run random block ticks near the player (probabilistic per-block
     ///    behaviour, e.g. leaf decay; order-independent of the above).
     ///
@@ -281,7 +281,7 @@ impl World {
     }
 
     /// Drain the changed-block buffer feeding confinement-cache invalidation
-    /// (see [`TickState::nav_changes`]): every position announced since the
+    /// (see `TickState::nav_changes`): every position announced since the
     /// last drain, plus whether the buffer overflowed (positions unknown —
     /// the consumer must invalidate everything).
     /// A counter that moves whenever anything a mob could walk on or through
@@ -306,7 +306,7 @@ impl World {
         }
     }
 
-    /// Public [`schedule_block_tick`](Self::schedule_block_tick): the mod
+    /// Public `schedule_block_tick`: the mod
     /// `ScheduleTick` HostCall's entry, same first-schedule-wins semantics.
     pub fn schedule_tick(&mut self, pos: IVec3, delay: u64) {
         self.schedule_block_tick(pos, delay);
@@ -371,7 +371,7 @@ impl World {
     }
 
     /// Generic ANNOUNCE step: a neighbour of `pos` changed. Read the block there
-    /// and route it to that block's [`behavior`](crate::block::behavior). Names no
+    /// and route it to that block's [`behavior`](petramond_world::block::behavior). Names no
     /// concrete block — water (and any future reactor) carries its own reaction.
     fn dispatch_block_update(&mut self, pos: IVec3) {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
@@ -419,7 +419,7 @@ impl World {
             return;
         };
         // (center, radius) per anchor; radii can differ only via render_dist.
-        let mut anchors: Vec<(crate::chunk::ChunkPos, i32)> =
+        let mut anchors: Vec<(petramond_world::chunk::ChunkPos, i32)> =
             Vec::with_capacity(1 + self.extra_load_targets.len());
         for t in std::iter::once(&primary).chain(self.extra_load_targets.iter()) {
             anchors.push((
@@ -460,11 +460,11 @@ impl World {
                     let mut cys = self
                         .data
                         .section_column_rt
-                        .get(&crate::chunk::ChunkPos::new(cx, cz))
+                        .get(&petramond_world::chunk::ChunkPos::new(cx, cz))
                         .copied()
                         .unwrap_or(0);
                     while cys != 0 {
-                        let cy = crate::chunk::SECTION_MIN_CY + cys.trailing_zeros() as i32;
+                        let cy = petramond_world::chunk::SECTION_MIN_CY + cys.trailing_zeros() as i32;
                         cys &= cys - 1;
                         let Some(section) = self.data.sections.get(&SectionPos::new(cx, cy, cz)) else {
                             continue;
@@ -519,7 +519,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunk::ChunkPos;
+    use petramond_world::chunk::ChunkPos;
 
     use super::super::store::LoadTarget;
 
@@ -653,7 +653,7 @@ mod tests {
         // feed the invalidation on its own.
         world.set_block_world(p.x, p.y, p.z, Block::Air);
         let door = IVec3::new(8, 70, 9);
-        assert!(world.place_door(door, Block::OakDoor, crate::facing::Facing::South));
+        assert!(world.place_door(door, Block::OakDoor, petramond_math::facing::Facing::South));
         let _ = world.take_nav_changes();
         assert!(world.toggle_door(door).is_some());
         let (changed, overflow) = world.take_nav_changes();

@@ -12,7 +12,7 @@
 //! restart.
 
 use super::GuiKind;
-use crate::container::{SlotSpec, MAX_CONTAINER_SLOTS};
+use petramond_world::container::{SlotSpec, MAX_CONTAINER_SLOTS};
 use petramond_ui::{DocClass, Document, Node, SlotContract};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -69,7 +69,7 @@ pub fn doc_for(kind: GuiKind) -> Option<DocRef> {
         // inventory and table own their browser screens, and a validation
         // failure there must stay a loud missing-document failure, not a
         // silent swap to the other's layout.
-        use crate::crafting::CraftingStation;
+        use petramond_world::crafting::CraftingStation;
         CraftingStation::of_kind(kind)
             .is_some_and(|s| s != CraftingStation::Inventory && s != CraftingStation::CraftingTable)
             .then(|| doc_entry_for(GuiKind::CraftingTable))
@@ -115,7 +115,7 @@ pub fn loaded_documents() -> Vec<(&'static str, usize)> {
     let mut out: Vec<(&'static str, usize)> = registry
         .entries
         .iter()
-        .filter_map(|e| Some((crate::gui_state::kind_key(e.kind)?, e.container_slots.len())))
+        .filter_map(|e| Some((petramond_world::gui_state::kind_key(e.kind)?, e.container_slots.len())))
         .collect();
     out.sort_unstable();
     out
@@ -136,8 +136,8 @@ pub fn container_slot_specs(kind: GuiKind) -> Arc<Vec<SlotSpec>> {
 /// an engine block-entity's roles. `Err` skips the document loudly at load.
 fn mod_contract_for(doc: &Document) -> Result<SlotContract, String> {
     // The engine grids' sizes come from the inventory layout itself.
-    const MAIN_GRID: usize = crate::inventory::TOTAL_SLOTS - crate::inventory::HOTBAR_LEN;
-    const HOTBAR: usize = crate::inventory::HOTBAR_LEN;
+    const MAIN_GRID: usize = petramond_world::inventory::TOTAL_SLOTS - petramond_world::inventory::HOTBAR_LEN;
+    const HOTBAR: usize = petramond_world::inventory::HOTBAR_LEN;
     let mut roles: Vec<(String, usize)> = Vec::new();
     for (role, count) in doc.role_slots() {
         match role.as_str() {
@@ -204,24 +204,24 @@ fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
 /// One authored `accepts` entry → the runtime filter.
 fn resolve_slot_filter(
     accept: &petramond_ui::doc::Accept,
-) -> Result<crate::container::SlotFilter, String> {
+) -> Result<petramond_world::container::SlotFilter, String> {
     match accept {
-        petramond_ui::doc::Accept::Tag(name) => crate::item::ItemTag::lookup(name)
-            .map(crate::container::SlotFilter::Tag)
+        petramond_ui::doc::Accept::Tag(name) => petramond_world::item::ItemTag::lookup(name)
+            .map(petramond_world::container::SlotFilter::Tag)
             .ok_or_else(|| format!("unknown item tag '{name}' in a slot's accepts")),
         petramond_ui::doc::Accept::Data { data } => {
-            if !crate::registry::is_namespaced(data) {
+            if !petramond_world::registry::is_namespaced(data) {
                 return Err(format!(
                     "slot accepts data key '{data}': data keys must be namespaced ('mod_id:name')"
                 ));
             }
-            Ok(crate::container::SlotFilter::Data(super::intern_str(data)))
+            Ok(petramond_world::container::SlotFilter::Data(super::intern_str(data)))
         }
     }
 }
 
 /// The engine's slot expectations per kind. Mod kinds derive their contract
-/// from their own document via [`mod_contract_for`]; shell kinds carry no
+/// from their own document via `mod_contract_for`; shell kinds carry no
 /// role slots.
 pub fn contract_for(kind: GuiKind) -> SlotContract {
     match kind {
@@ -241,7 +241,7 @@ pub fn contract_for(kind: GuiKind) -> SlotContract {
             ("hotbar", 9),
             // Input, fuel, output — in `SLOT_INPUT`/`SLOT_FUEL`/`SLOT_OUTPUT`
             // order, since the in-role index IS the container index.
-            ("container", crate::furnace::FURNACE_SLOTS),
+            ("container", petramond_world::furnace::FURNACE_SLOTS),
         ]),
         GuiKind::Hotbar => SlotContract::new(&[("hotbar", 9)]),
         GuiKind::Demo => SlotContract::new(&[("demo_slots", 9)]),
@@ -390,7 +390,7 @@ fn load() -> Registry {
     // a name wins, so packs shadow base documents.
     let mut manifests: Vec<(String, Found)> = Vec::new();
     let mut sources: Vec<(PathBuf, Option<SystemTime>)> = Vec::new();
-    for (dir, pack_id) in crate::assets::layer_dirs_with_ids(DOCUMENTS_DIR) {
+    for (dir, pack_id) in petramond_world::assets::layer_dirs_with_ids(DOCUMENTS_DIR) {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -517,7 +517,7 @@ mod tests {
         // assets/ui/bindings.json is the builder-facing data contract; keep
         // it shipping and covering every screen a controller populates.
         let (text, _) =
-            crate::assets::read_base_text("ui/bindings.json").expect("bindings catalog ships");
+            petramond_world::assets::read_base_text("ui/bindings.json").expect("bindings catalog ships");
         let v: serde_json::Value = serde_json::from_str(&text).expect("catalog is valid JSON");
         let kinds = v["kinds"].as_object().expect("catalog has kinds");
         for key in [
@@ -882,7 +882,7 @@ mod tests {
             doc_for(kind).is_none(),
             "an unregistered mod kind has no document"
         );
-        crate::crafting::CraftingStation::from_key("doctest:bench_station")
+        petramond_world::crafting::CraftingStation::from_key("doctest:bench_station")
             .expect("station registers");
         let doc = doc_for(kind).expect("station kinds are backed by the crafting table document");
         assert_eq!(doc.doc.kind, "petramond:crafting_table");
@@ -928,7 +928,7 @@ mod tests {
             .expect("an unheard-of data key is legal");
         assert_eq!(
             specs[0].accepts,
-            vec![crate::container::SlotFilter::Data("doctest:metal")]
+            vec![petramond_world::container::SlotFilter::Data("doctest:metal")]
         );
         let err = doc_container_specs(&doc(r#"{"data": "metal"}"#)).unwrap_err();
         assert!(err.contains("namespaced"), "{err}");
@@ -978,7 +978,7 @@ mod tests {
             "A craftable rideable wooden chair, directional iron chains, a light-giving \
              chandelier, and a slate cauldron.";
         const ORDINARY: &str = "Nexo Test World";
-        let (text, _) = crate::assets::read_base_text("ui/bindings.json").expect("catalog ships");
+        let (text, _) = petramond_world::assets::read_base_text("ui/bindings.json").expect("catalog ships");
         let v: serde_json::Value = serde_json::from_str(&text).expect("catalog is valid JSON");
         let mut state = UiState::new();
         let key = crate::gui::kind_key(kind).unwrap_or("");

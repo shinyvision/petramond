@@ -30,7 +30,7 @@ impl App {
         // presentation-only, so it runs its (input-free) frame here.
         let mut doc_kind = self.doc_ui_kind();
         if doc_kind.is_none() && self.doc_hud_active() {
-            let kind = petramond::gui_state::GuiKind::Hotbar;
+            let kind = petramond_world::gui_state::GuiKind::Hotbar;
             self.ui.ensure_active(kind);
             if let Some(game) = self.game.as_ref() {
                 let active = game.menu_read_model().inventory.active_slot();
@@ -352,7 +352,7 @@ impl App {
 fn heart_wiggle_frame(
     prev_health: &mut Option<i32>,
     wiggle: &mut Option<super::HeartWiggle>,
-    health: Option<petramond::gui_state::HealthView>,
+    health: Option<petramond_world::gui_state::HealthView>,
     now: f64,
 ) -> Option<(i32, i32, f32)> {
     let current = health.map(|h| h.current);
@@ -417,7 +417,7 @@ fn play_pending_mob_sound_events(
     events: &mut Vec<crate::game::MobSoundEvent>,
     next_handle: &mut u64,
     listener: SpatialListener,
-    positions: &[(u64, petramond::mathh::Vec3)],
+    positions: &[(u64, petramond_math::math::Vec3)],
 ) {
     for event in events.drain(..) {
         let Some(spec) = petramond::mob::def(event.kind).sound_for(event.category) else {
@@ -472,7 +472,7 @@ pub(super) fn tick_footstep_sounds(
         } else {
             FOOTSTEP_INTERVAL_TICKS
         });
-        let Some(sound) = ground.sound(petramond::block::BlockSoundAction::Step) else {
+        let Some(sound) = ground.sound(petramond_world::block::BlockSoundAction::Step) else {
             continue;
         };
         // Fire-and-forget at the FEET, off the same wrapping handle pool the
@@ -494,7 +494,7 @@ pub(super) fn tick_idle_mob_sounds(
     next_handle: &mut u64,
     listener: SpatialListener,
     mobs: &[MobPresentation],
-    positions: &[(u64, petramond::mathh::Vec3)],
+    positions: &[(u64, petramond_math::math::Vec3)],
     current_tick: u64,
 ) {
     for mob in mobs {
@@ -525,10 +525,10 @@ pub(super) fn tick_idle_mob_sounds(
 fn play_mob_sound(
     audio: &mut petramond_audio::Audio,
     next_handle: &mut u64,
-    sound: petramond::sound_registry::Sound,
+    sound: petramond_world::sound_registry::Sound,
     mob_id: u64,
     listener: SpatialListener,
-    initial: petramond::mathh::Vec3,
+    initial: petramond_math::math::Vec3,
 ) {
     audio.play_spatial_randomized(
         alloc_mob_sound_handle(next_handle),
@@ -546,9 +546,9 @@ fn alloc_mob_sound_handle(next: &mut u64) -> u64 {
 }
 
 fn mob_position(
-    positions: &[(u64, petramond::mathh::Vec3)],
+    positions: &[(u64, petramond_math::math::Vec3)],
     mob_id: u64,
-) -> Option<petramond::mathh::Vec3> {
+) -> Option<petramond_math::math::Vec3> {
     positions
         .iter()
         .find(|(id, _)| *id == mob_id)

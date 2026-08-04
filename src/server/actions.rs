@@ -8,7 +8,7 @@
 //! queue is denied immediately.
 
 
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 use crate::net::protocol::{ActionDenyReason, ActionOutcome, ClientRequestId, PlayerAction, TargetRef};
 use crate::server::game::ServerGame;
 use crate::server::player::{PendingBreakFinished, PendingMenuAction, PendingUseClick};
@@ -70,7 +70,7 @@ impl ServerGame {
                 self.sessions[s]
                     .pending_menu_actions
                     .push(PendingMenuAction::OpenGui {
-                        kind: crate::gui_state::GuiKind::Inventory,
+                        kind: petramond_world::gui_state::GuiKind::Inventory,
                         pos: None,
                     })
             }

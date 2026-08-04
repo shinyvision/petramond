@@ -31,7 +31,7 @@ pub enum BlockLightShape {
 
 /// One axis-aligned box of a block's collision shape, in CELL-LOCAL coordinates
 /// (`0.0..1.0` per axis). A block's full shape is a *list* of these (see
-/// [`Block::collision_boxes`]) — one for a full cube or the inset chest, several for
+/// `Block::collision_boxes`) — one for a full cube or the inset chest, several for
 /// shapes like stairs. The player collides via a swept-AABB over them, and the
 /// selection outline + break overlay derive from their union.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -113,7 +113,7 @@ impl ShapeFace {
 /// Deliberately NOT [`ShapeBox`]: an item is not always the placed form. A
 /// fence item is an authored two-post SEGMENT, where the placed cell with no
 /// neighbours resolves to a bare post. The family owns that difference, which
-/// is why it answers [`ShapeRender::item_boxes`] instead of the renderer
+/// is why it answers `ShapeRender::item_boxes` instead of the renderer
 /// re-deriving a form per family.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ItemBox {

@@ -6,13 +6,13 @@
 //! authored offset plus placed facing, which only the world knows (the chunk model maps).
 //! So the per-cell queries live here, over the chunk-owned placement metadata, while
 //! [`Block`]'s own (position-less) accessors answer the authored-origin cell. See
-//! [`crate::block_model`].
+//! [`petramond_world::block_model`].
 
 use crate::world::WorldData;
-use crate::block::Block;
-use crate::block_model::{self, BlockModelKind};
-use crate::facing::Facing;
-use crate::mathh::IVec3;
+use petramond_world::block::Block;
+use petramond_world::block_model::{self, BlockModelKind};
+use petramond_math::facing::Facing;
+use petramond_math::math::IVec3;
 
 use super::store::{SkyCoverChange, World};
 
@@ -173,7 +173,7 @@ impl World {
         };
         let unchanged = cells.iter().all(|&c| {
             has(c, block_model::PARTS_KV_KEY, &parts.to_le_bytes())
-                && tint.is_none_or(|rgb| has(c, crate::block::TINT_KV_KEY, &rgb))
+                && tint.is_none_or(|rgb| has(c, petramond_world::block::TINT_KV_KEY, &rgb))
         });
         if unchanged {
             return true;
@@ -197,7 +197,7 @@ impl World {
                     c.x,
                     c.y,
                     c.z,
-                    crate::block::TINT_KV_KEY.to_owned(),
+                    petramond_world::block::TINT_KV_KEY.to_owned(),
                     rgb.to_vec(),
                 );
             }
@@ -275,7 +275,7 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunk::{Chunk, ChunkPos};
+    use petramond_world::chunk::{Chunk, ChunkPos};
 
     const WB: Block = Block::FurnitureWorkbench;
 

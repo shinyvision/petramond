@@ -19,9 +19,9 @@
 use mod_api::AiNodeCtx;
 
 use super::super::brain::{AiBehavior, AiCtx, AttackIntent, BehaviorOutput, HeadLook};
-pub use crate::ai_vocab::ScriptedInputs;
+pub use petramond_world::ai_vocab::ScriptedInputs;
 
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 
 pub struct WasmNodeAi {
     key: &'static str,
@@ -109,11 +109,11 @@ impl WasmNodeAi {
         if writes.is_empty() {
             return Vec::new();
         }
-        let own = crate::registry::namespace(self.key).unwrap_or("");
+        let own = petramond_world::registry::namespace(self.key).unwrap_or("");
         writes
             .into_iter()
             .filter(|w| {
-                let ok = crate::registry::namespace(&w.key) == Some(own) && !own.is_empty();
+                let ok = petramond_world::registry::namespace(&w.key) == Some(own) && !own.is_empty();
                 if !ok {
                     log::warn!(
                         "AI node '{}' decision tag write '{}' outside its own namespace — dropped",

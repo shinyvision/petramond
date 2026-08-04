@@ -86,8 +86,8 @@ pub(super) fn node_spec(name: &str) -> Option<NodeSpec> {
             default_priority: PRIORITY_ATTACK,
         },
         // The reserved engine namespace never dispatches to a mod.
-        _ if crate::registry::namespace(name)
-            .is_some_and(|ns| ns != crate::registry::ENGINE_NAMESPACE) =>
+        _ if petramond_world::registry::namespace(name)
+            .is_some_and(|ns| ns != petramond_world::registry::ENGINE_NAMESPACE) =>
         {
             NodeSpec {
                 factory: wasm_node,

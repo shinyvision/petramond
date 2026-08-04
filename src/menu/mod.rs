@@ -13,17 +13,17 @@ pub use target::ContainerTarget;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::Block;
-    use crate::gui_state::PointerButton;
-    use crate::crafting::{
+    use petramond_world::block::Block;
+    use petramond_world::gui_state::PointerButton;
+    use petramond_world::crafting::{
         CraftingIngredient, CraftingRecipe, CraftingStation, IngredientSelector, IngredientUse,
         Recipes,
     };
-    use crate::facing::Facing;
-    use crate::gui_state::MenuSlot;
-    use crate::inventory::Inventory;
-    use crate::item::{ItemStack, ItemType};
-    use crate::mathh::IVec3;
+    use petramond_math::facing::Facing;
+    use petramond_world::gui_state::MenuSlot;
+    use petramond_world::inventory::Inventory;
+    use petramond_world::item::{ItemStack, ItemType};
+    use petramond_math::math::IVec3;
     use crate::world::World;
     /// The engine chest earns its slot semantics from its OWN GUI document,
     /// exactly as a pack container does — there is no engine-owned chest spec
@@ -33,7 +33,7 @@ mod tests {
     /// which no other test would catch.
     #[test]
     fn the_chest_derives_its_slot_specs_from_its_document() {
-        let specs = crate::gui::documents::container_slot_specs(crate::gui_state::GuiKind::Chest);
+        let specs = crate::gui::documents::container_slot_specs(petramond_world::gui_state::GuiKind::Chest);
         assert_eq!(
             specs.len(),
             crate::world::chest::CHEST_SLOTS,
@@ -52,18 +52,18 @@ mod tests {
     /// coal to the input and the output stops refusing inserts — both silent.
     #[test]
     fn the_furnace_derives_its_slot_specs_from_its_document() {
-        use crate::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
-        let specs = crate::gui::documents::container_slot_specs(crate::gui_state::GuiKind::Furnace);
-        assert_eq!(specs.len(), crate::furnace::FURNACE_SLOTS);
+        use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
+        let specs = crate::gui::documents::container_slot_specs(petramond_world::gui_state::GuiKind::Furnace);
+        assert_eq!(specs.len(), petramond_world::furnace::FURNACE_SLOTS);
         assert!(specs[SLOT_INPUT]
             .accepts
-            .contains(&crate::container::SlotFilter::Tag(
-                crate::item::ItemTag::SMELTABLE
+            .contains(&petramond_world::container::SlotFilter::Tag(
+                petramond_world::item::ItemTag::SMELTABLE
             )));
         assert!(specs[SLOT_FUEL]
             .accepts
-            .contains(&crate::container::SlotFilter::Tag(
-                crate::item::ItemTag::FUEL
+            .contains(&petramond_world::container::SlotFilter::Tag(
+                petramond_world::item::ItemTag::FUEL
             )));
         assert!(
             specs[SLOT_OUTPUT].take_only,
@@ -73,9 +73,9 @@ mod tests {
 
     fn world_with_empty_chunk() -> World {
         let mut world = World::new(1, 1);
-        let pos = crate::chunk::ChunkPos::new(0, 0);
+        let pos = petramond_world::chunk::ChunkPos::new(0, 0);
         world.clear_world();
-        world.insert_chunk_for_test(pos, crate::chunk::Chunk::new(0, 0));
+        world.insert_chunk_for_test(pos, petramond_world::chunk::Chunk::new(0, 0));
         world
     }
 
@@ -203,7 +203,7 @@ mod tests {
         let pos = IVec3::new(2, 64, 2);
         world.set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
         world.insert_furnace(pos, Facing::North);
-        world.container_at_mut(pos).unwrap().slots[crate::furnace::SLOT_OUTPUT] =
+        world.container_at_mut(pos).unwrap().slots[petramond_world::furnace::SLOT_OUTPUT] =
             Some(ItemStack::new(ItemType::IronIngot, 5));
         menu.open_furnace_screen(&mut world, pos);
         *inv.cursor_mut() = None;
@@ -211,7 +211,7 @@ mod tests {
         menu.click(
             &mut world,
             &mut inv,
-            MenuSlot::Container(crate::furnace::SLOT_OUTPUT),
+            MenuSlot::Container(petramond_world::furnace::SLOT_OUTPUT),
             PointerButton::Secondary,
             false,
             false,
@@ -222,7 +222,7 @@ mod tests {
             Some(ItemStack::new(ItemType::IronIngot, 3))
         );
         assert_eq!(
-            world.container_at(pos).unwrap().slots[crate::furnace::SLOT_OUTPUT],
+            world.container_at(pos).unwrap().slots[petramond_world::furnace::SLOT_OUTPUT],
             Some(ItemStack::new(ItemType::IronIngot, 2))
         );
     }
@@ -424,7 +424,7 @@ mod tests {
     fn closing_crafting_routes_output_overflow_to_the_drop_sink() {
         let mut menu = ContainerMenu::new();
         let mut inv = Inventory::new();
-        for _ in 0..crate::inventory::TOTAL_SLOTS {
+        for _ in 0..petramond_world::inventory::TOTAL_SLOTS {
             assert!(inv
                 .add(ItemStack::new(
                     ItemType::Dirt,
@@ -462,7 +462,7 @@ mod tests {
         menu.container_shift_from_inventory(&mut world, &mut inv, 0);
         assert!(inv.slot(0).is_none(), "coal left the inventory");
         assert_eq!(
-            world.container_at(pos).unwrap().slots[crate::furnace::SLOT_FUEL],
+            world.container_at(pos).unwrap().slots[petramond_world::furnace::SLOT_FUEL],
             Some(ItemStack::new(ItemType::Coal, 5)),
             "coal went to the fuel slot"
         );
@@ -471,7 +471,7 @@ mod tests {
         menu.container_shift_from_inventory(&mut world, &mut inv, 1);
         assert!(inv.slot(1).is_none(), "raw iron left the inventory");
         assert_eq!(
-            world.container_at(pos).unwrap().slots[crate::furnace::SLOT_INPUT],
+            world.container_at(pos).unwrap().slots[petramond_world::furnace::SLOT_INPUT],
             Some(ItemStack::new(ItemType::RawIron, 3)),
             "raw iron went to the input slot"
         );
@@ -486,7 +486,7 @@ mod tests {
         }
         // It landed in the main grid (first slot of the 27-slot region).
         assert_eq!(
-            inv.slot(crate::inventory::HOTBAR_LEN).map(|s| s.item),
+            inv.slot(petramond_world::inventory::HOTBAR_LEN).map(|s| s.item),
             Some(ItemType::OakPlanks),
         );
     }
@@ -499,7 +499,7 @@ mod tests {
         world.set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
         world.insert_furnace(pos, Facing::North);
         // Seed the fuel slot with some coal already.
-        world.container_at_mut(pos).unwrap().slots[crate::furnace::SLOT_FUEL] =
+        world.container_at_mut(pos).unwrap().slots[petramond_world::furnace::SLOT_FUEL] =
             Some(ItemStack::new(ItemType::Coal, 60));
         menu.open_furnace_screen(&mut world, pos);
 
@@ -509,7 +509,7 @@ mod tests {
 
         // 4 top up the fuel slot to 64; the remaining 6 stay in the inventory.
         assert_eq!(
-            world.container_at(pos).unwrap().slots[crate::furnace::SLOT_FUEL]
+            world.container_at(pos).unwrap().slots[petramond_world::furnace::SLOT_FUEL]
                 .unwrap()
                 .count,
             64

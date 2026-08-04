@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use mod_api::DrawPrim;
 
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 
 use super::store::World;
 
@@ -74,7 +74,7 @@ pub enum BlockDrawPrim {
     Cuboid {
         min: [f32; 3],
         max: [f32; 3],
-        tile: crate::tile::Tile,
+        tile: petramond_world::tile::Tile,
         tint: [u8; 3],
         emissive: bool,
     },
@@ -83,7 +83,7 @@ pub enum BlockDrawPrim {
         scale: f32,
         yaw: f32,
         pitch: f32,
-        item: crate::item::ItemType,
+        item: petramond_world::item::ItemType,
         tint: [u8; 3],
     },
 }
@@ -101,7 +101,7 @@ impl BlockDrawPrim {
                 tint,
                 emissive,
             } => {
-                let tile = crate::tile::Tile::from_name(tile)?;
+                let tile = petramond_world::tile::Tile::from_name(tile)?;
                 // Degenerate, inverted, or non-finite: a box with an infinite
                 // corner passes an ordering test and reaches the vertex buffer.
                 let sane =
@@ -122,7 +122,7 @@ impl BlockDrawPrim {
                 item,
                 tint,
             } => {
-                let item = crate::item::ItemType::by_name(item)?;
+                let item = petramond_world::item::ItemType::by_name(item)?;
                 let sane = *scale > 0.0
                     && scale.is_finite()
                     && yaw.is_finite()
@@ -173,13 +173,13 @@ impl BlockDrawSet {
 /// A prim-space box in world axes: the bounds of its transformed corners.
 /// The transform is a yaw plus a translation, so that is exact rather than
 /// conservative.
-pub fn world_bounds(to_world: &crate::mathh::Mat4, lo: [f32; 3], hi: [f32; 3]) -> DrawBox {
+pub fn world_bounds(to_world: &petramond_math::math::Mat4, lo: [f32; 3], hi: [f32; 3]) -> DrawBox {
     let mut mn = [f32::MAX; 3];
     let mut mx = [f32::MIN; 3];
     for cx in [lo[0], hi[0]] {
         for cy in [lo[1], hi[1]] {
             for cz in [lo[2], hi[2]] {
-                let p = to_world.transform_point3(crate::mathh::Vec3::new(cx, cy, cz));
+                let p = to_world.transform_point3(petramond_math::math::Vec3::new(cx, cy, cz));
                 for a in 0..3 {
                     mn[a] = mn[a].min(p[a]);
                     mx[a] = mx[a].max(p[a]);
@@ -237,7 +237,7 @@ pub type DrawBox = ([f32; 3], [f32; 3]);
 /// gather may never be.
 pub(in crate::world) struct PlacedDraw {
     pub(in crate::world) set: BlockDraw,
-    pub(in crate::world) to_world: crate::mathh::Mat4,
+    pub(in crate::world) to_world: petramond_math::math::Mat4,
     /// [`BlockDrawSet::bounds`] in world axes; `None` for a set that resolved
     /// to no prims and can therefore never be visible.
     pub(in crate::world) world: Option<DrawBox>,
@@ -258,9 +258,9 @@ pub struct BlockDrawInstance {
     /// Prim space → world. For a model block this is its footprint space
     /// turned by the placed facing, so a mod's geometry follows the model it
     /// was authored against instead of the world axes.
-    pub transform: crate::mathh::Mat4,
+    pub transform: petramond_math::math::Mat4,
     pub skylight: u8,
-    pub blocklight: crate::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
 }
 
 /// The draw sets anchored inside ONE section, plus their union bound.
@@ -345,7 +345,7 @@ impl World {
         &self,
         pos: IVec3,
         set: &BlockDrawSet,
-    ) -> (crate::mathh::Mat4, Option<DrawBox>) {
+    ) -> (petramond_math::math::Mat4, Option<DrawBox>) {
         let to_world = self.block_local_transform(pos);
         let world = set.bounds.map(|(lo, hi)| world_bounds(&to_world, lo, hi));
         (to_world, world)
@@ -355,7 +355,7 @@ impl World {
     fn insert_draw(&mut self, pos: IVec3, set: BlockDraw) {
         // Outside the world's vertical range there is no section to index it
         // under, and an unindexed record is one nothing can gather or forget.
-        let Some(sp) = crate::chunk::SectionPos::from_world(pos.x, pos.y, pos.z) else {
+        let Some(sp) = petramond_world::chunk::SectionPos::from_world(pos.x, pos.y, pos.z) else {
             return;
         };
         let (to_world, world) = self.draw_placement(pos, &set);
@@ -388,7 +388,7 @@ impl World {
         if self.mod_stream.block_draws.remove(&pos).is_none() {
             return false;
         }
-        let Some(sp) = crate::chunk::SectionPos::from_world(pos.x, pos.y, pos.z) else {
+        let Some(sp) = petramond_world::chunk::SectionPos::from_world(pos.x, pos.y, pos.z) else {
             return true;
         };
         let Some(mut entry) = self.mod_stream.block_draw_sections.remove(&sp) else {
@@ -444,7 +444,7 @@ impl World {
     /// `is_empty` test in the common case rather than a walk.
     pub fn collect_block_draws(
         &self,
-        view: &crate::view_volume::ViewVolume,
+        view: &petramond_world::view_volume::ViewVolume,
         out: &mut Vec<BlockDrawInstance>,
     ) {
         out.clear();
@@ -467,7 +467,7 @@ impl World {
                     continue;
                 }
                 let sky = self.skylight6_at_world(pos.x, pos.y, pos.z);
-                let block = crate::light::BlockLight6::from_x2(
+                let block = petramond_world::light::BlockLight6::from_x2(
                     self.blocklight_rgb_at_world(pos.x, pos.y, pos.z),
                 );
                 out.push(BlockDrawInstance {
@@ -492,15 +492,15 @@ impl World {
     /// ONE rule with two consumers: the draw-set gather below, and the ABI's
     /// `BlockLocalToWorld`, which is what lets a mod ask for a world point off
     /// its own model instead of writing this transform out a second time.
-    pub fn block_local_transform(&self, pos: IVec3) -> crate::mathh::Mat4 {
-        let block = crate::block::Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
+    pub fn block_local_transform(&self, pos: IVec3) -> petramond_math::math::Mat4 {
+        let block = petramond_world::block::Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
         if let Some(kind) = block.model_kind() {
             let offset = self.model_offset_at(pos.x, pos.y, pos.z);
             let facing = self.model_facing_at(pos.x, pos.y, pos.z);
-            let base = crate::block_model::base_from_cell(pos, kind, offset, facing);
-            return crate::block_model::placement_transform(base, kind, facing);
+            let base = petramond_world::block_model::base_from_cell(pos, kind, offset, facing);
+            return petramond_world::block_model::placement_transform(base, kind, facing);
         }
-        crate::mathh::Mat4::from_translation(crate::mathh::Vec3::new(
+        petramond_math::math::Mat4::from_translation(petramond_math::math::Vec3::new(
             pos.x as f32,
             pos.y as f32,
             pos.z as f32,
@@ -529,7 +529,7 @@ impl World {
     /// delta lane that carries changes to it.
     pub fn section_block_draws(
         &self,
-        sp: crate::chunk::SectionPos,
+        sp: petramond_world::chunk::SectionPos,
     ) -> Vec<crate::net::protocol::BlockDrawEntry> {
         let Some(entry) = self.mod_stream.block_draw_sections.get(&sp) else {
             return Vec::new();
@@ -540,7 +540,7 @@ impl World {
             .iter()
             .filter_map(|p| {
                 let placed = self.mod_stream.block_draws.get(p)?;
-                let cell = crate::chunk::section_idx(
+                let cell = petramond_world::chunk::section_idx(
                     (p.x - ox) as usize,
                     (p.y - oy) as usize,
                     (p.z - oz) as usize,
@@ -557,7 +557,7 @@ impl World {
     /// delta for a section nobody holds is filtered out anyway.
     pub(in crate::world) fn forget_block_draws_in_section(
         &mut self,
-        pos: crate::chunk::SectionPos,
+        pos: petramond_world::chunk::SectionPos,
     ) {
         let Some(entry) = self.mod_stream.block_draw_sections.remove(&pos) else {
             return;
@@ -605,10 +605,10 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::Block;
-    use crate::block_model::BlockModelKind;
-    use crate::chunk::{Chunk, ChunkPos, SectionPos};
-    use crate::facing::Facing;
+    use petramond_world::block::Block;
+    use petramond_world::block_model::BlockModelKind;
+    use petramond_world::chunk::{Chunk, ChunkPos, SectionPos};
+    use petramond_math::facing::Facing;
 
     const WB: Block = Block::FurnitureWorkbench;
 
@@ -637,7 +637,7 @@ mod tests {
     #[test]
     fn a_stored_draws_placement_follows_its_cell() {
         let mut w = world();
-        let base = crate::block_model::base_from_front_left_anchor(
+        let base = petramond_world::block_model::base_from_front_left_anchor(
             IVec3::new(6, 64, 6),
             BlockModelKind::FurnitureWorkbench,
             Facing::East,

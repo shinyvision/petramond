@@ -67,12 +67,12 @@ pub struct ModSimState {
 
 /// Mod-owned STREAMING/DRAW state: retained per-block draw sets and the
 /// stream-event queue packs subscribe to. Presentation/orchestration — lives
-/// on [`World`], not [`WorldData`].
+/// on `World`, not [`WorldData`].
 /// LAYERING CONTRACT: `WorldData` (and every `impl WorldData` file) must never
 /// reference mesh, camera, atlas, net, server, save, worldgen, worker, mob,
 /// entity, player, modding, or render. Orchestration state that needs those —
 /// streaming jobs, mesh queues, replication, the session roster, the mob and
-/// dropped-item stores, the save handle — lives on [`World`], which wraps
+/// dropped-item stores, the save handle — lives on `World`, which wraps
 /// this and derefs to it.
 pub struct WorldData {
     pub seed: u32,
@@ -143,7 +143,7 @@ pub struct WorldData {
     pub deferred_rechecks: FxHashSet<SectionPos>,
     pub last_load_target: Option<LoadTarget>,
     /// Anchors beyond the first under multi-anchor streaming
-    /// ([`World::update_load_multi`]); empty in single-anchor mode, so every
+    /// (`World::update_load_multi`); empty in single-anchor mode, so every
     /// single-anchor path is byte-identical to before. `last_load_target`
     /// stays the PRIMARY anchor (the priority/fallback target).
     pub extra_load_targets: Vec<LoadTarget>,
@@ -200,8 +200,8 @@ pub struct WorldData {
     /// Sections whose streamed content is NOT final: an in-flight gen job, an
     /// unanswered saved-record request, or a pending saved overlay. The UNION
     /// of `WorldgenJobs`' three in-flight sets, maintained beside them by the
-    /// streaming code through [`World::note_stream_nonfinal`] /
-    /// [`World::settle_stream_nonfinal`] — the A-side fact behind
+    /// streaming code through `World::note_stream_nonfinal` /
+    /// `World::settle_stream_nonfinal` — the A-side fact behind
     /// [`stream_writable`](WorldData::stream_writable), so the deterministic
     /// half can guard writes without reaching into the job tables.
     pub stream_nonfinal: FxHashSet<SectionPos>,

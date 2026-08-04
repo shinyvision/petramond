@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 
 use super::ItemSlotWire;
 
 /// A container-menu slot identity on the wire — the message twin of
-/// [`crate::gui_state::MenuSlot`], self-contained (widget ids travel as strings; the
+/// [`petramond_world::gui_state::MenuSlot`], self-contained (widget ids travel as strings; the
 /// server re-interns them).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MenuSlotWire {
@@ -16,8 +16,8 @@ pub enum MenuSlotWire {
 }
 
 impl MenuSlotWire {
-    pub fn from_menu_slot(slot: &crate::gui_state::MenuSlot) -> Self {
-        use crate::gui_state::MenuSlot;
+    pub fn from_menu_slot(slot: &petramond_world::gui_state::MenuSlot) -> Self {
+        use petramond_world::gui_state::MenuSlot;
         match slot {
             MenuSlot::Inventory(i) => Self::Inventory(*i as u32),
             MenuSlot::CraftResult => Self::CraftResult,
@@ -26,18 +26,18 @@ impl MenuSlotWire {
         }
     }
 
-    pub fn to_menu_slot(&self) -> crate::gui_state::MenuSlot {
-        use crate::gui_state::MenuSlot;
+    pub fn to_menu_slot(&self) -> petramond_world::gui_state::MenuSlot {
+        use petramond_world::gui_state::MenuSlot;
         match self {
             Self::Inventory(i) => MenuSlot::Inventory(*i as usize),
             Self::CraftResult => MenuSlot::CraftResult,
             Self::Container(i) => MenuSlot::Container(*i as usize),
-            Self::Widget(id) => MenuSlot::Widget(crate::gui_state::intern_str(id)),
+            Self::Widget(id) => MenuSlot::Widget(petramond_world::gui_state::intern_str(id)),
         }
     }
 }
 
-/// One [`crate::gui_state::GuiValue`] on the wire.
+/// One [`petramond_world::gui_state::GuiValue`] on the wire.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum GuiValueWire {
     F32(f32),
@@ -46,19 +46,19 @@ pub enum GuiValueWire {
 }
 
 impl GuiValueWire {
-    pub fn from_value(v: &crate::gui_state::GuiValue) -> Self {
+    pub fn from_value(v: &petramond_world::gui_state::GuiValue) -> Self {
         match v {
-            crate::gui_state::GuiValue::F32(x) => Self::F32(*x),
-            crate::gui_state::GuiValue::I32(x) => Self::I32(*x),
-            crate::gui_state::GuiValue::Str(s) => Self::Str(s.clone()),
+            petramond_world::gui_state::GuiValue::F32(x) => Self::F32(*x),
+            petramond_world::gui_state::GuiValue::I32(x) => Self::I32(*x),
+            petramond_world::gui_state::GuiValue::Str(s) => Self::Str(s.clone()),
         }
     }
 
-    pub fn into_value(self) -> crate::gui_state::GuiValue {
+    pub fn into_value(self) -> petramond_world::gui_state::GuiValue {
         match self {
-            Self::F32(x) => crate::gui_state::GuiValue::F32(x),
-            Self::I32(x) => crate::gui_state::GuiValue::I32(x),
-            Self::Str(s) => crate::gui_state::GuiValue::Str(s),
+            Self::F32(x) => petramond_world::gui_state::GuiValue::F32(x),
+            Self::I32(x) => petramond_world::gui_state::GuiValue::I32(x),
+            Self::Str(s) => petramond_world::gui_state::GuiValue::Str(s),
         }
     }
 }

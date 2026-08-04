@@ -47,8 +47,8 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-    use crate::block::Block;
-    use crate::chunk::ChunkPos;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::ChunkPos;
 
     use super::*;
 

@@ -22,7 +22,7 @@ pub const CELL_PX: u32 = 16;
 /// Compose the id-ordered effect strip, or `None` when the frame art is
 /// missing (the HUD then simply draws no effect row — never a panic).
 pub fn compose_atlas() -> Option<RgbaImage> {
-    let defs = petramond::effect::defs();
+    let defs = petramond_world::effect::defs();
     let frame = load_rgba("textures/gui/effect_frame.png")?;
     let frame = fit(frame, CELL_PX, CELL_PX);
     let mut atlas = RgbaImage::new(CELL_PX * defs.len() as u32, CELL_PX);
@@ -53,7 +53,7 @@ pub fn compose_atlas() -> Option<RgbaImage> {
 }
 
 fn load_rgba(rel: &str) -> Option<RgbaImage> {
-    let (bytes, _path) = petramond::assets::read_bytes(rel)?;
+    let (bytes, _path) = petramond_world::assets::read_bytes(rel)?;
     Some(image::load_from_memory(&bytes).ok()?.to_rgba8())
 }
 

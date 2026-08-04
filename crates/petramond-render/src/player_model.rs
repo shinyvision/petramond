@@ -24,7 +24,7 @@ use super::item_model::ItemVertex;
 use super::lighting::{fold_tint, DynLight, LightEnv};
 use super::mob_model::{bake_model_cubes, hurt_tint};
 use super::PlayerRenderInstance;
-use petramond::bbmodel::Model;
+use petramond_world::bbmodel::Model;
 use petramond::player::model::PLAYER_MODEL_SCALE;
 
 /// The grip point in model pixels, in the visual-right arm's rest frame: centred
@@ -80,7 +80,7 @@ pub(super) fn build_player_body(
     } else {
         inst.walk_weight.clamp(0.0, 1.0)
     };
-    let mut layers: Vec<(&petramond::bbmodel::Animation, f32, f32)> = Vec::with_capacity(3);
+    let mut layers: Vec<(&petramond_world::bbmodel::Animation, f32, f32)> = Vec::with_capacity(3);
     if let Some(walk) = model.animation("walk") {
         if ww * (1.0 - sw) > 0.001 {
             layers.push((walk, inst.anim_time, ww * (1.0 - sw)));
@@ -254,14 +254,14 @@ pub(super) fn held_block_transform(hand: Mat4) -> Mat4 {
 /// display unit is one world block, and the authored pose does the rest. A model
 /// that sits wrong in hand has an untuned `thirdperson_righthand` pose; tune it
 /// in Blockbench, not here.
-pub(super) fn held_model_transform(hand: Mat4, kind: petramond::block_model::BlockModelKind) -> Mat4 {
-    let pose = &petramond::block_model::display(kind).thirdperson_righthand;
+pub(super) fn held_model_transform(hand: Mat4, kind: petramond_world::block_model::BlockModelKind) -> Mat4 {
+    let pose = &petramond_world::block_model::display(kind).thirdperson_righthand;
     hand * Mat4::from_translation(HAND_GRIP_PX)
         * Mat4::from_scale(Vec3::splat(1.0 / PLAYER_MODEL_SCALE))
         * Mat4::from_rotation_x(-std::f32::consts::FRAC_PI_2)
         * Mat4::from_rotation_y(std::f32::consts::PI)
         * pose.base_matrix()
-        * petramond::block_model::instance(kind).display_from_unit
+        * petramond_world::block_model::instance(kind).display_from_unit
 }
 
 /// CPU-transform the given vertex positions by `m` — baking in model space then
@@ -292,7 +292,7 @@ mod tests {
             seated: false,
             hurt: 0.0,
             skylight: 63,
-            blocklight: petramond::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
         }
     }
 

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use crate::block::Block;
-use crate::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY, SECTION_SIZE, SECTION_VOLUME};
-use crate::mathh::IVec3;
-use crate::mesh::ChunkMesh;
-use crate::section::Section;
-use crate::worldgen::driver::ChunkGenerator;
+use petramond_world::block::Block;
+use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY, SECTION_SIZE, SECTION_VOLUME};
+use petramond_math::math::IVec3;
+use petramond_mesh::ChunkMesh;
+use petramond_world::section::Section;
+use petramond_worldgen::driver::ChunkGenerator;
 
 use super::World;
 
@@ -57,7 +57,7 @@ fn edits_in_total_darkness_skip_light_invalidation_entirely() {
     {
         let s = world.section_mut(pos).unwrap();
         s.set_skylight(vec![0u8; SECTION_VOLUME].into());
-        s.set_blocklight(vec![crate::light::LightRgb::ZERO; SECTION_VOLUME].into());
+        s.set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
     }
     // The fixture insert demands a bake; only the edits below are under test.
     world.relight_demand.clear();
@@ -74,7 +74,7 @@ fn edits_in_total_darkness_skip_light_invalidation_entirely() {
     world
         .section_mut(pos)
         .unwrap()
-        .set_skylight(vec![crate::chunk::SKY_FULL; SECTION_VOLUME].into());
+        .set_skylight(vec![petramond_world::chunk::SKY_FULL; SECTION_VOLUME].into());
     assert!(world.set_block_world(8, 4, 8, Block::Air));
     assert!(
         world.sections[&pos].light_dirty,
@@ -124,7 +124,7 @@ fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
             }
         }
         s.set_skylight(vec![0u8; SECTION_VOLUME].into());
-        s.set_blocklight(vec![crate::light::LightRgb::ZERO; SECTION_VOLUME].into());
+        s.set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
         s.mark_light_clean();
         world.insert_section_for_test(sp, s);
         world.section_mut(sp).expect("loaded").modified = true;
@@ -379,12 +379,12 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
     let mut top_section = Section::new(top.cx, top.cy, top.cz);
     top_section.set_block(shaft_x, 0, shaft_z, Block::Dirt);
     top_section.set_skylight(vec![0u8; SECTION_VOLUME].into());
-    top_section.set_blocklight(vec![crate::light::LightRgb::ZERO; SECTION_VOLUME].into());
+    top_section.set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
     top_section.dirty = false;
 
     let mut lower_section = Section::new(lower.cx, lower.cy, lower.cz);
     lower_section.set_skylight(vec![0u8; SECTION_VOLUME].into());
-    lower_section.set_blocklight(vec![crate::light::LightRgb::ZERO; SECTION_VOLUME].into());
+    lower_section.set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
     lower_section.dirty = false;
 
     world.sections.insert(top, Arc::new(top_section));
@@ -428,7 +428,7 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
     let lower_section = world.sections.get(&lower).unwrap();
     assert_eq!(
         lower_section.skylight_at(shaft_x, 8, shaft_z),
-        crate::chunk::SKY_FULL,
+        petramond_world::chunk::SKY_FULL,
         "the opened shaft must reach full skylight below"
     );
     assert!(

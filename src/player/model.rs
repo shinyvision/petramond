@@ -4,7 +4,7 @@
 
 use std::sync::LazyLock;
 
-use crate::bbmodel::Model;
+use petramond_world::bbmodel::Model;
 
 /// Pack-relative source path of the player body model.
 const PLAYER_MODEL_PATH: &str = "models/entities/player.bbmodel";
@@ -16,11 +16,11 @@ const PLAYER_MODEL_PATH: &str = "models/entities/player.bbmodel";
 pub const PLAYER_MODEL_SCALE: f32 = super::EYE / 28.0;
 
 static PLAYER_MODEL: LazyLock<Model> = LazyLock::new(|| {
-    let Some((src, _)) = crate::assets::read_bytes(PLAYER_MODEL_PATH) else {
+    let Some((src, _)) = petramond_world::assets::read_bytes(PLAYER_MODEL_PATH) else {
         log::error!("player model '{PLAYER_MODEL_PATH}' not found in the asset roots");
         return Model::empty();
     };
-    crate::asset_cache::load_or_compile::<Model>("player", &src).unwrap_or_else(|e| {
+    petramond_world::asset_cache::load_or_compile::<Model>("player", &src).unwrap_or_else(|e| {
         log::error!("player model precache failed: {e}");
         Model::empty()
     })

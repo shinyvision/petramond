@@ -42,14 +42,14 @@ impl Sound {
     /// A chest's lid is dropping shut (its GUI was just closed).
     pub const ChestClose: Sound = Sound(7);
     /// The stone "punch" — re-triggered while mining stone (and ore, which
-    /// shares the stone set). See [`crate::block::sounds::STONE`].
+    /// shares the stone set). See `crate::block::sounds::STONE`.
     pub const StonePunch: Sound = Sound(8);
     /// A stone block finished breaking / was destroyed.
     pub const StoneBreak: Sound = Sound(9);
     /// A stone block was placed into the world.
     pub const StonePlace: Sound = Sound(10);
     /// The dirt "punch" — re-triggered while mining dirt, grass, gravel, and
-    /// other dirt-likes. See [`crate::block::sounds::DIRT`].
+    /// other dirt-likes. See `crate::block::sounds::DIRT`.
     pub const DirtPunch: Sound = Sound(11);
     /// A dirt block finished breaking / was destroyed.
     pub const DirtBreak: Sound = Sound(12);
@@ -189,7 +189,7 @@ pub enum SoundCategory {
 /// One row of the sound table: a sound's clip files + default playback
 /// parameters. Clips are read through the asset roots (so a mod pack can
 /// override one by shipping the same relative path) and decoded once at
-/// startup (see [`crate::audio::Audio`]); this is just the static description.
+/// startup (see `crate::audio::Audio`); this is just the static description.
 /// Playback fields are read only by the `audio`-feature engine; the featureless
 /// (headless-server) build keeps the table for names/net tables alone.
 #[allow(dead_code)]

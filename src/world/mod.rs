@@ -71,8 +71,8 @@ pub use stream::StreamEvent;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod testutil {
-    use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
     use super::store::World;
 

@@ -29,7 +29,7 @@ pub fn theme() -> Arc<Theme> {
 
 fn load() -> Arc<Theme> {
     // Highest-priority copy wins: read_layers returns base first, packs after.
-    let Some((json, path)) = crate::assets::read_layers(THEME_JSON)
+    let Some((json, path)) = petramond_world::assets::read_layers(THEME_JSON)
         .into_iter()
         .next_back()
     else {

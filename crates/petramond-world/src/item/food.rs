@@ -1,6 +1,6 @@
 /// Edible-item data (`"food"` in `items.json`): the held-button eat duration
 /// and the status effects granted when the eat completes. Read from an item
-/// via [`ItemType::food`]; the eat itself runs on the tick (see
+/// via `ItemType::food`; the eat itself runs on the tick (see
 /// `crate::game::item_use`).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct FoodDef {

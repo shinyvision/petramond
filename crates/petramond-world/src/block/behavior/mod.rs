@@ -1,6 +1,6 @@
 //! Per-block behaviour — a block's "class".
 //!
-//! Every block's data row ([`BlockDef`](super::definition::BlockDef)) points at
+//! Every block's data row (`BlockDef`) points at
 //! one `&'static dyn BlockBehavior`. Everything a block *does* (as opposed to what
 //! it *is* — categorised by [`BlockTag`](super::BlockTag)) lives behind this
 //! trait, so giving a block reactive behaviour is "write a behaviour, point its
@@ -94,7 +94,7 @@ pub trait BlockBehavior: Sync {
 /// to its singleton — the inverse of [`BlockBehavior::key`]. One arm per
 /// registered engine behaviour above; a new engine behaviour joins the data
 /// files by adding its arm here. A NAMESPACED key (`mod_id:name`) resolves to
-/// a per-key [`wasm::WasmBehavior`] singleton that forwards every hook to the
+/// a per-key `wasm::WasmBehavior` singleton that forwards every hook to the
 /// owning mod (see that module) — so a pack gives its block reactive behaviour
 /// by naming a key here and registering it via `RegisterBlockBehavior`.
 pub fn by_name(name: &str) -> Option<&'static dyn BlockBehavior> {

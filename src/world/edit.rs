@@ -1,10 +1,10 @@
 use crate::world::WorldData;
-use crate::block::{Block, ShapeFamily};
-use crate::block_state::LogAxis;
-use crate::chunk::{ChunkPos, SECTION_SIZE, WORLD_MIN_Y};
-use crate::column::NO_SURFACE;
-use crate::mathh::IVec3;
-use crate::section::SectionSummary;
+use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::block_state::LogAxis;
+use petramond_world::chunk::{ChunkPos, SECTION_SIZE, WORLD_MIN_Y};
+use petramond_world::column::NO_SURFACE;
+use petramond_math::math::IVec3;
+use petramond_world::section::SectionSummary;
 
 use super::store::{SkyCoverChange, World};
 
@@ -27,7 +27,7 @@ impl World {
         }
     }
 
-    /// Snapshot previous block ids for [`break_footprint_cells`], then clear
+    /// Snapshot previous block ids for `break_footprint_cells`, then clear
     /// the footprint the same way the server's break funnel does (door /
     /// model / single air). No drops. Returns `(broken_block, cells_with_prev)`
     /// or `None` when the cell is already air / unbreakable.
@@ -203,7 +203,7 @@ impl World {
         };
         let v = if old.is_opaque() && new == Block::Air {
             // Opening a cell: whatever enters comes through the six faces.
-            crate::mathh::FACE_NEIGHBORS
+            petramond_math::math::FACE_NEIGHBORS
                 .into_iter()
                 .map(|d| value_at(wx + d.x, wy + d.y, wz + d.z))
                 .max()

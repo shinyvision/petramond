@@ -1,8 +1,8 @@
 use rustc_hash::FxHashSet;
 
-use crate::block::Block;
-use crate::chunk::{section_idx, SectionPos, SECTION_SIZE};
-use crate::mathh::IVec3;
+use petramond_world::block::Block;
+use petramond_world::chunk::{section_idx, SectionPos, SECTION_SIZE};
+use petramond_math::math::IVec3;
 
 use crate::world::store::World;
 

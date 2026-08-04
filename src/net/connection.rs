@@ -20,8 +20,8 @@
 //!   `IdRemap` is built from `JoinData::tables` BEFORE the threads spawn, so
 //!   no message ever crosses un-remapped.
 //!
-//! Liveness: writers send `KeepAlive` after [`KEEPALIVE_AFTER`] of outbound
-//! silence; readers run under a [`READ_TIMEOUT`] socket timeout, so a peer
+//! Liveness: writers send `KeepAlive` after `KEEPALIVE_AFTER` of outbound
+//! silence; readers run under a `READ_TIMEOUT` socket timeout, so a peer
 //! silent for that long reads as a lost connection. Sockets are NODELAY.
 //! Threads exit on their own (reader: socket error/shutdown; writer: channel
 //! close, after draining + flushing farewells) and are never joined.

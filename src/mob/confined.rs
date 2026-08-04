@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
 
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 use crate::mob::path::{body_clear, body_layer_clear, is_navigation_foothold_with, PathParams};
 
 /// Game ticks between confined-state re-evaluations for one mob.
@@ -379,8 +379,8 @@ impl RegionCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     use crate::mob::path::PathParams;
     use crate::world::World;
 
@@ -395,7 +395,7 @@ mod tests {
                 for z in 0..CHUNK_SZ {
                     for x in 0..CHUNK_SX {
                         chunk.set_block(x, 63, z, Block::Grass);
-                        chunk.set_biome(x, z, crate::biome::Biome::Plains.id());
+                        chunk.set_biome(x, z, petramond_world::biome::Biome::Plains.id());
                     }
                 }
                 edit(&mut chunk, cx, cz);

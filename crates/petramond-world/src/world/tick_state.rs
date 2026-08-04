@@ -31,7 +31,7 @@ pub struct TickState {
     /// Blocks the simulation itself destroyed this tick (a fragile block losing its
     /// support, or one washed away by water), each as `(pos, block)`. Purely a
     /// hand-off to the presentation layer: `Game` drains it right after the tick (see
-    /// [`World::take_natural_breaks`]) to play the break burst + roll the drops, so the
+    /// `World::take_natural_breaks`) to play the break burst + roll the drops, so the
     /// visual effect lives in `Game` while the world stays the authority on the change.
     pub pending_breaks: Vec<(IVec3, crate::block::Block)>,
     /// xorshift64 state for random-tick cell selection (kept non-zero; see
@@ -49,7 +49,7 @@ pub struct TickState {
     pub nav_changes: Vec<IVec3>,
     pub nav_changes_overflow: bool,
     /// Bumped by every announced nav-relevant change (see
-    /// [`World::nav_revision`]).
+    /// `World::nav_revision`).
     pub nav_revision: u64,
 }
 

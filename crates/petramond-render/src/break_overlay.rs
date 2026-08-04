@@ -24,7 +24,7 @@ use glam::Vec3;
 
 use super::item_cube::{push_box_faces_lit, push_cube_textured};
 use super::BreakOverlayView;
-use petramond::tile::Tile;
+use petramond_world::tile::Tile;
 use petramond_mesh::Vertex;
 
 /// Skip cracking a bbmodel cube whose LARGEST dimension is below this (in blocks).
@@ -33,7 +33,7 @@ const MIN_CRACK_EXTENT: f32 = 1.0;
 /// The destroy tile for crack `stage` (clamped 0..=9), as a [`Tile`].
 #[inline]
 fn destroy_tile(stage: u8) -> Tile {
-    petramond::tile::engine().destroy_stages[stage.min(9) as usize]
+    petramond_world::tile::engine().destroy_stages[stage.min(9) as usize]
 }
 
 /// Build the crack overlay geometry for every view in `views` into `verts` /
@@ -91,9 +91,9 @@ fn append_break_overlay(view: &BreakOverlayView, verts: &mut Vec<Vertex>, indice
         // cell's empty air. Boxes are footprint-space, so transform them through the
         // placed model's facing and rotated-footprint base. The multi-block breaks as one
         // object, so the whole piece cracks (MC-like).
-        let model_base = petramond::block_model::base_from_cell(view.block, kind, offset, facing);
-        let placement = petramond::block_model::placement_transform(model_base, kind, facing);
-        for b in petramond::block_model::model_render_boxes(kind) {
+        let model_base = petramond_world::block_model::base_from_cell(view.block, kind, offset, facing);
+        let placement = petramond_world::block_model::placement_transform(model_base, kind, facing);
+        for b in petramond_world::block_model::model_render_boxes(kind) {
             // Skip very small surfaces (decoration specks) — crack only the structural cubes.
             let ext = [
                 b.max[0] - b.min[0],
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn model_overlay_cracks_each_cube_surface_within_the_outline() {
-        use petramond::block_model::BlockModelKind;
+        use petramond_world::block_model::BlockModelKind;
         // Mining a workbench cell: the crack must paint the whole model's actual cube
         // surfaces (many boxes — legs/body/top), not one coarse box, and every quad must
         // sit inside the model's world outline (never floating in the cell's empty air).
@@ -328,7 +328,7 @@ mod tests {
         let kind = BlockModelKind::FurnitureWorkbench;
         let offset = [1u8, 1, 0];
         let block = IVec3::new(10, 64, -3);
-        let all = petramond::block_model::model_render_boxes(kind);
+        let all = petramond_world::block_model::model_render_boxes(kind);
         // Only the STRUCTURAL cubes crack — small decoration cubes are filtered out by
         // `MIN_CRACK_EXTENT`, so the cracked set is a non-empty strict subset.
         let cracked = all
@@ -349,7 +349,7 @@ mod tests {
             block,
             visual_box: None,
             shape_boxes: None,
-            model: Some((kind, offset, petramond::block_model::DEFAULT_MODEL_FACING)),
+            model: Some((kind, offset, petramond_world::block_model::DEFAULT_MODEL_FACING)),
             stage: 3,
         };
         let mut v = Vec::new();
@@ -371,12 +371,12 @@ mod tests {
 
         // Every crack vertex lies within the model's world-space outline box — i.e. on
         // the model, never out in the air.
-        let (omn, omx) = petramond::block_model::outline_bounds(kind);
-        let base = petramond::block_model::base_from_cell(
+        let (omn, omx) = petramond_world::block_model::outline_bounds(kind);
+        let base = petramond_world::block_model::base_from_cell(
             block,
             kind,
             offset,
-            petramond::block_model::DEFAULT_MODEL_FACING,
+            petramond_world::block_model::DEFAULT_MODEL_FACING,
         );
         let origin = [base.x as f32, base.y as f32, base.z as f32];
         for vert in &v {
@@ -399,8 +399,8 @@ mod tests {
     #[test]
     #[ignore = "visual preview harness; writes /tmp/break_overlay.png"]
     fn render_break_overlay_preview() {
-        use petramond::bbmodel::euler_quat;
-        use petramond::block_model::{self, BlockModelKind};
+        use petramond_world::bbmodel::euler_quat;
+        use petramond_world::block_model::{self, BlockModelKind};
         use petramond_math::face::Face;
         use petramond_mesh::SHADES;
         use glam::{Mat4, Vec3};

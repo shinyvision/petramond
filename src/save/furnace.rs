@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::furnace::Furnace;
+use petramond_world::furnace::Furnace;
 use crate::save::codec::{get_indexed, put_indexed, put_u16, Reader};
 
 /// Bytes per serialized furnace: idx(2) + cook/burn_remaining/burn_max (2 each).

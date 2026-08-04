@@ -9,7 +9,7 @@ use crate::section::SectionSummary;
 use super::data::WorldData;
 
 /// Whether `floor` can hold up a door: a FULL OPAQUE block. This is the one rule both
-/// placement ([`World::door_footprint_clear`]) and the break behaviour ([`Door`]) read,
+/// placement (`World::door_footprint_clear`) and the break behaviour (`Door`) read,
 /// so the two agree — and it matches the torch/fragile support test. Chests, the
 /// furniture workbench and cactuses are SOLID but NOT opaque (non-full-cube models), so
 /// a door refuses to stand on them and falls if its opaque floor is dug out.
@@ -84,7 +84,7 @@ impl WorldData {
     }
 
     /// Cached block-light COLOUR at a world voxel on the x2 scale.
-    /// [`LightRgb::ZERO`] outside any chunk's block-light band and in unloaded
+    /// `LightRgb::ZERO` outside any chunk's block-light band and in unloaded
     /// chunks — there is no block light without a nearby emitter.
     pub fn blocklight_rgb_at_world(&self, wx: i32, wy: i32, wz: i32) -> crate::light::LightRgb {
         match self.chunk_at_world(wx, wy, wz) {
@@ -275,7 +275,7 @@ pub fn full_unit_cube(boxes: &[Aabb]) -> bool {
     b.min == [0.0, 0.0, 0.0] && b.max == [1.0, 1.0, 1.0]
 }
 
-/// See [`World::collision_shape_class`].
+/// See `World::collision_shape_class`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CollisionShapeClass {
     /// No collision boxes: air, water, walk-through cover.

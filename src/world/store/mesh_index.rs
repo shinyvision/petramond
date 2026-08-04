@@ -1,5 +1,5 @@
-use crate::chunk::{ChunkPos, SectionPos};
-use crate::mesh::ChunkMesh;
+use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_mesh::ChunkMesh;
 
 use super::World;
 

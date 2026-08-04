@@ -9,8 +9,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 
-use crate::chunk::SectionPos;
-use crate::mesh::ChunkMesh;
+use petramond_world::chunk::SectionPos;
+use petramond_mesh::ChunkMesh;
 use crate::worker::{JobCancel, JobPool};
 
 use super::light::{
@@ -73,14 +73,14 @@ impl PredictionMeshResult {
 
 /// The pair of light cubes one section carries: skylight and packed-RGB block
 /// light, either of which may be absent (never baked).
-type LightCubes = (Option<Arc<[u8]>>, Option<Arc<[crate::light::LightRgb]>>);
+type LightCubes = (Option<Arc<[u8]>>, Option<Arc<[petramond_world::light::LightRgb]>>);
 
 /// One candidate light bake plus the cubes it would replace, so the runner
 /// can diff the fresh bake against them and prune meshes nothing sampled.
 pub(super) struct PredictionLightJob {
     pub job: LightBakeJob,
     pub prev_skylight: Option<Arc<[u8]>>,
-    pub prev_blocklight: Option<Arc<[crate::light::LightRgb]>>,
+    pub prev_blocklight: Option<Arc<[petramond_world::light::LightRgb]>>,
 }
 
 /// Per-unit light work for a prediction bundle: a lone 48³ bake, or one
@@ -285,7 +285,7 @@ pub(super) fn run_prediction_terrain_synchronously(
 }
 
 /// A section's baked light pair: skylight bytes and the RGB block-light grid.
-type BakedLight = (Arc<[u8]>, Arc<[crate::light::LightRgb]>);
+type BakedLight = (Arc<[u8]>, Arc<[petramond_world::light::LightRgb]>);
 
 fn run_prediction_terrain(
     work: PredictionTerrainWork,
@@ -396,7 +396,7 @@ fn run_prediction_terrain(
 fn finish_prediction_light(
     result: LightBakeResult,
     prev_skylight: Option<Arc<[u8]>>,
-    prev_blocklight: Option<Arc<[crate::light::LightRgb]>>,
+    prev_blocklight: Option<Arc<[petramond_world::light::LightRgb]>>,
 ) -> PredictionLightResult {
     let first_bake = prev_skylight.is_none();
     let mask = if first_bake {
@@ -405,11 +405,11 @@ fn finish_prediction_light(
         super::light::cube_region_changes(
             prev_skylight.as_deref(),
             &result.skylight,
-            crate::chunk::SKY_FULL,
+            petramond_world::chunk::SKY_FULL,
         ) | super::light::cube_region_changes(
             prev_blocklight.as_deref(),
             &result.blocklight,
-            crate::light::LightRgb::ZERO,
+            petramond_world::light::LightRgb::ZERO,
         )
     };
     PredictionLightResult {

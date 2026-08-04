@@ -1,11 +1,11 @@
 use super::{app, app_with_grass, cursor_over_slot};
 use crate::app::{App, CursorIcon, CursorPolicy};
 #[cfg(feature = "audio")] // only the engine-gated ui-click test reads it
-use petramond::sound_registry::Sound;
+use petramond_world::sound_registry::Sound;
 use petramond_render::camera::Camera;
-use petramond::controls::{Control, Modifiers, TextKey, TextShortcut};
-use petramond::gui_state::PointerButton;
-use petramond::mathh::Vec3;
+use petramond_world::controls::{Control, Modifiers, TextKey, TextShortcut};
+use petramond_world::gui_state::PointerButton;
+use petramond_math::math::Vec3;
 use petramond::net::protocol::{ClientToServer, ServerToClient};
 use petramond::player::PlayerMode;
 use petramond::save::WorldInfo;
@@ -31,7 +31,7 @@ fn app_starts_on_title_without_loading_a_game() {
 /// whose Cancel returns to world select with the selection intact.
 #[test]
 fn world_settings_requires_selection_and_hosts_the_delete_flow() {
-    use petramond::gui_state::GuiKind;
+    use petramond_world::gui_state::GuiKind;
     let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     app.screen = crate::app::AppScreen::WorldSelect;
     app.worlds = test_worlds(1);
@@ -74,7 +74,7 @@ fn world_settings_requires_selection_and_hosts_the_delete_flow() {
 /// (Editor semantics themselves are tested in petramond-ui's text_edit suite.)
 #[test]
 fn create_world_document_input_types_selects_and_uses_clipboard() {
-    use petramond::gui_state::GuiKind;
+    use petramond_world::gui_state::GuiKind;
     let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     app.screen = crate::app::AppScreen::CreateWorld;
     let screen = (1280, 720);
@@ -119,17 +119,17 @@ fn create_world_document_input_types_selects_and_uses_clipboard() {
         shift: false,
         ..Modifiers::default()
     });
-    assert!(app.handle_text_shortcut_code(petramond::keycode::KeyCode::KeyA));
-    assert!(app.handle_text_shortcut_code(petramond::keycode::KeyCode::KeyC));
+    assert!(app.handle_text_shortcut_code(petramond_world::keycode::KeyCode::KeyA));
+    assert!(app.handle_text_shortcut_code(petramond_world::keycode::KeyCode::KeyC));
     drive(&mut app, 0.3);
     assert_eq!(shared.borrow().as_deref(), Some("abXYef"));
 
-    assert!(app.handle_text_shortcut_code(petramond::keycode::KeyCode::KeyX));
+    assert!(app.handle_text_shortcut_code(petramond_world::keycode::KeyCode::KeyX));
     drive(&mut app, 0.4);
     assert_eq!(app.ui.state_mut().get_str("create_name"), Some(""));
 
     *shared.borrow_mut() = Some("Pasted $#@!^{}".to_string());
-    assert!(app.handle_text_shortcut_code(petramond::keycode::KeyCode::KeyV));
+    assert!(app.handle_text_shortcut_code(petramond_world::keycode::KeyCode::KeyV));
     drive(&mut app, 0.5);
     assert_eq!(
         app.ui.state_mut().get_str("create_name"),
@@ -155,7 +155,7 @@ fn create_world_document_input_types_selects_and_uses_clipboard() {
 /// calls, resolved by the document runtime's hit-testing.
 #[test]
 fn document_shell_screens_flow_via_pointer_and_keys() {
-    use petramond::gui_state::GuiKind;
+    use petramond_world::gui_state::GuiKind;
     let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
     let click_id = click_doc_id;
@@ -195,7 +195,7 @@ fn document_shell_screens_flow_via_pointer_and_keys() {
 #[cfg(feature = "audio")]
 #[test]
 fn shell_button_and_toggle_activations_play_ui_click_sound() {
-    use petramond::gui_state::GuiKind;
+    use petramond_world::gui_state::GuiKind;
     let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
 
@@ -266,7 +266,7 @@ fn play_after_rename_opens_the_original_save_directory() {
 #[test]
 fn world_settings_tabs_swap_pages() {
     use crate::app::shell::SettingsTab;
-    use petramond::gui_state::GuiKind;
+    use petramond_world::gui_state::GuiKind;
     let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
     app.screen = crate::app::AppScreen::WorldSelect;
@@ -316,7 +316,7 @@ fn world_settings_tabs_swap_pages() {
 /// Create.)
 #[test]
 fn create_world_writes_buffered_settings_at_create() {
-    use petramond::gui_state::GuiKind;
+    use petramond_world::gui_state::GuiKind;
     let name = "tabbed-create-regress-test";
     let dir_name = petramond::save::dir_name_for(name);
     let _ = petramond::save::delete_world(&dir_name);
@@ -643,7 +643,7 @@ pub(super) fn click_doc_id(app: &mut App, id: &str) {
 
 #[test]
 fn options_opens_from_title_and_esc_walks_back_out() {
-    use petramond::gui_state::GuiKind;
+    use petramond_world::gui_state::GuiKind;
     let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
 
@@ -666,7 +666,7 @@ fn options_opens_from_title_and_esc_walks_back_out() {
 
 #[test]
 fn options_opened_from_pause_returns_to_pause() {
-    use petramond::gui_state::GuiKind;
+    use petramond_world::gui_state::GuiKind;
     let mut app = app();
     let screen = (1280, 720);
     app.handle_control(Control::CloseScreen, true); // pause
@@ -691,9 +691,9 @@ fn options_opened_from_pause_returns_to_pause() {
 /// remap; clicking a different action's button switches the armed action.
 #[test]
 fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
-    use petramond::controls::{BindableAction, Binding, BoundInput};
-    use petramond::gui_state::GuiKind;
-    use petramond::keycode::KeyCode;
+    use petramond_world::controls::{BindableAction, Binding, BoundInput};
+    use petramond_world::gui_state::GuiKind;
+    use petramond_world::keycode::KeyCode;
 
     let mut app = App::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
     let screen = (1280, 720);
@@ -776,16 +776,16 @@ fn click_bind_row(app: &mut App, action_id: &str) {
 /// drives the same state.
 #[test]
 fn attack_rebinds_from_mouse_to_key() {
-    use petramond::controls::{BindableAction, Binding};
-    use petramond::keycode::KeyCode;
+    use petramond_world::controls::{BindableAction, Binding};
+    use petramond_world::keycode::KeyCode;
 
     let mut app = app();
     assert!(app.screen.gameplay_enabled());
 
-    app.handle_raw_mouse(petramond::keycode::MouseButton::Left, true);
+    app.handle_raw_mouse(petramond_world::keycode::MouseButton::Left, true);
     let input = app.take_game_input();
     assert!(input.break_held && input.attack_clicked);
-    app.handle_raw_mouse(petramond::keycode::MouseButton::Left, false);
+    app.handle_raw_mouse(petramond_world::keycode::MouseButton::Left, false);
     app.pointer.clear_edges();
 
     app.settings
@@ -802,13 +802,13 @@ fn attack_rebinds_from_mouse_to_key() {
     assert!(!input.break_held);
     // The unbound left button no longer mines...
     app.pointer.clear_edges();
-    app.handle_raw_mouse(petramond::keycode::MouseButton::Left, true);
+    app.handle_raw_mouse(petramond_world::keycode::MouseButton::Left, true);
     let input = app.take_game_input();
     assert!(
         !input.break_held,
         "left click moved off Attack; it must not mine"
     );
-    app.handle_raw_mouse(petramond::keycode::MouseButton::Left, false);
+    app.handle_raw_mouse(petramond_world::keycode::MouseButton::Left, false);
 }
 
 /// Mod-registered key actions join the remappable table under their pack's
@@ -835,7 +835,7 @@ fn mod_key_actions_join_the_controls_table_with_their_own_category() {
 /// screen releases the pointer like any modal).
 #[test]
 fn mod_bound_key_dispatches_to_the_client_mod() {
-    use petramond::keycode::KeyCode;
+    use petramond_world::keycode::KeyCode;
     let mut app = app();
     // A couple of frames so the client mod publishes its canvas scene.
     app.update_frame((1280, 720));
@@ -855,7 +855,7 @@ fn mod_bound_key_dispatches_to_the_client_mod() {
 /// With the cursor off the canvas the travel is dropped.
 #[test]
 fn canvas_wheel_scroll_reaches_the_client_mod() {
-    use petramond::keycode::KeyCode;
+    use petramond_world::keycode::KeyCode;
     let mut app = app();
     app.update_frame((1280, 720));
     assert!(app.handle_raw_key(KeyCode::KeyM, true));
@@ -911,11 +911,11 @@ fn menu_click_that_enters_gameplay_leaves_no_mining_held() {
     app.handle_control(Control::CloseScreen, true); // pause menu
                                                     // Physical press over the menu: recorded in the pointer state, routed to
                                                     // the UI (this is the double-click's second press).
-    app.handle_raw_mouse(petramond::keycode::MouseButton::Left, true);
+    app.handle_raw_mouse(petramond_world::keycode::MouseButton::Left, true);
     // The controller flips to gameplay between press and release.
     app.resume_game();
     // The release lands in gameplay and resolves through the binding engine.
-    app.handle_raw_mouse(petramond::keycode::MouseButton::Left, false);
+    app.handle_raw_mouse(petramond_world::keycode::MouseButton::Left, false);
     let input = app.take_game_input();
     assert!(
         !input.break_held && !input.attack_clicked,

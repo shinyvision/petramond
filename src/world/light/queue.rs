@@ -1,11 +1,11 @@
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-use crate::chunk::{ChunkPos, SectionPos};
-use crate::column::Column;
-use crate::light::LightRgb;
-use crate::mathh::IVec3;
-use crate::section::Section;
+use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_world::column::Column;
+use petramond_world::light::LightRgb;
+use petramond_math::math::IVec3;
+use petramond_world::section::Section;
 
 use petramond_world::world::light::shape::{LightCells, ShapeStateSnapshot};
 use petramond_world::world::light::skylight::SkyPlan;
@@ -235,8 +235,8 @@ pub fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
             .unwrap_or_default();
 
         let skylight = match sky {
-            SkyPlan::Full => crate::section::uniform_cube(crate::chunk::SKY_FULL),
-            SkyPlan::Dark => crate::section::uniform_cube(0),
+            SkyPlan::Full => petramond_world::section::uniform_cube(petramond_world::chunk::SKY_FULL),
+            SkyPlan::Dark => petramond_world::section::uniform_cube(0),
             SkyPlan::Flood { surface } => {
                 let blocks =
                     blocks.expect("a flooding skylight bake carries its neighbourhood blocks");
@@ -250,7 +250,7 @@ pub fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
         };
 
         let blocklight = if emitters.is_empty() {
-            crate::light::dark_cube()
+            petramond_world::light::dark_cube()
         } else {
             let blocks = blocks.expect("a block-light bake carries its neighbourhood blocks");
             flood::block_light(

@@ -10,9 +10,9 @@
 
 use rustc_hash::FxHashSet;
 
-use crate::block::Block;
-use crate::chunk::ChunkPos;
-use crate::mathh::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_world::chunk::ChunkPos;
+use petramond_math::math::{IVec3, Vec3};
 
 use super::brain::AiMob;
 use super::noise::Noise;
@@ -82,7 +82,7 @@ pub struct Mobs {
     solid_index_scratch: Vec<usize>,
     solid_limit_scratch: Vec<f32>,
     solid_checked_scratch: Vec<f32>,
-    solid_support_scratch: Vec<crate::collision::DynBox>,
+    solid_support_scratch: Vec<petramond_world::collision::DynBox>,
     solid_motion_solver: super::SolidMotionSolver,
     /// Reused per-tick stable-id snapshot (index-aligned with `list`), so the
     /// push pass can name contacts while mutating instances.
@@ -153,7 +153,7 @@ impl Mobs {
     /// Drop cached confined regions a block change could have altered — the
     /// world drains its per-tick change buffer here before each mob tick.
     /// `all` means the buffer overflowed (exact positions unknown).
-    pub fn invalidate_confined_regions(&mut self, changed: &[crate::mathh::IVec3], all: bool) {
+    pub fn invalidate_confined_regions(&mut self, changed: &[petramond_math::math::IVec3], all: bool) {
         self.confined_regions.invalidate(changed, all);
     }
 
@@ -212,7 +212,7 @@ impl Mobs {
     /// Whether the supplied cell-local collision boxes at `p` overlap a mob's body.
     /// Used by oriented bbmodel placement, where each occupied cell has its own rotated
     /// per-cell shape.
-    pub fn any_overlapping_boxes(&self, p: IVec3, boxes: &[crate::block::Aabb]) -> bool {
+    pub fn any_overlapping_boxes(&self, p: IVec3, boxes: &[petramond_world::block::Aabb]) -> bool {
         self.list
             .iter()
             .filter(|m| !m.is_dead())

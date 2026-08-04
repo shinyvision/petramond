@@ -1,8 +1,8 @@
 //! Client cache of custom shapes' baked ITEM geometry — the boxes a
 //! shape's `BakeShapeItem` produced once at client-mod load, reused for the
 //! block-item's icon, dropped entity, and in-hand form. Keyed by block id
-//! (stable for a session); populated by [`ClientModRuntime::bake_item_geometry`]
-//! and read by [`render::item_cube`]'s custom branch. A miss (no client bake,
+//! (stable for a session); populated by `ClientModRuntime::bake_item_geometry`
+//! and read by `render::item_cube`'s custom branch. A miss (no client bake,
 //! trapped, or empty) falls back to the block's plain cube there.
 
 use std::collections::HashMap;

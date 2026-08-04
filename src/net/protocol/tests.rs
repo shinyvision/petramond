@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 
 use super::*;
 
@@ -150,9 +150,9 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
     let blocks: Vec<u16> = (0..4096u32).map(|i| (i % 251) as u16).collect();
     // A COLOURED light cube: two bytes per cell, all three channels distinct,
     // so a lane slip or an endianness flip in `SectionLight` cannot pass.
-    let light: Vec<crate::light::LightRgb> = (0..4096u32)
+    let light: Vec<petramond_world::light::LightRgb> = (0..4096u32)
         .map(|i| {
-            crate::light::LightRgb::new((i % 31) as u8, (i / 7 % 31) as u8, (i / 53 % 31) as u8)
+            petramond_world::light::LightRgb::new((i % 31) as u8, (i / 7 % 31) as u8, (i / 53 % 31) as u8)
         })
         .collect();
     let payload = SectionPayload {
@@ -171,9 +171,9 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
         states: SectionStatesPayload {
             draws: Vec::new(),
             cell_states: vec![
-                (4095, crate::block::ShapeState::new(&[7])),
-                (9, crate::block::ShapeState::with_ids(&[5, 3, 0], 0b110)),
-                (80, crate::block::ShapeState::new(&[1, 0, 1, 2])),
+                (4095, petramond_world::block::ShapeState::new(&[7])),
+                (9, petramond_world::block::ShapeState::with_ids(&[5, 3, 0], 0b110)),
+                (80, petramond_world::block::ShapeState::new(&[1, 0, 1, 2])),
             ],
             cell_kv: vec![(12, vec![("kitchen:burn".into(), vec![1, 2, 3])])],
         },
@@ -211,14 +211,14 @@ fn tick_updates_roundtrip() {
                 pos: IVec3::new(4, 65, 4),
                 block_id: 12,
                 water: None,
-                state: Some(crate::block::ShapeState::with_ids(&[1, 12, 0], 0b110)),
+                state: Some(petramond_world::block::ShapeState::with_ids(&[1, 12, 0], 0b110)),
                 cell_kv: vec![],
             },
             BlockDelta {
                 pos: IVec3::new(5, 65, 4),
                 block_id: 30,
                 water: None,
-                state: Some(crate::block::ShapeState::new(&[1, 0, 0, 3])),
+                state: Some(petramond_world::block::ShapeState::new(&[1, 0, 0, 3])),
                 cell_kv: vec![],
             },
         ],

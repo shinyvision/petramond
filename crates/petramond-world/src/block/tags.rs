@@ -1,9 +1,9 @@
 /// A named category a block belongs to — a PROPERTY OF BLOCKS, exactly as
 /// [`ItemTag`](crate::item::ItemTag) is a property of items. Each block lists its
-/// tags in its [`BlockDef`](definition::BlockDef) data row and code asks via
-/// [`Block::has_tag`]; keeping membership in the data means a block joins a
+/// tags in its `BlockDef` data row and code asks via
+/// `Block::has_tag`; keeping membership in the data means a block joins a
 /// category by editing its row, never a `match` in this file. Tags answer "what
-/// *is* this block" (categorisation); [`behavior`] answers "what does it *do*".
+/// *is* this block" (categorisation); `behavior` answers "what does it *do*".
 ///
 /// The vocabulary is OPEN: engine tags are the named consts below (bare
 /// snake_case in `blocks.json`); a pack introduces its own tag by listing a
@@ -61,7 +61,7 @@ impl BlockTag {
     /// bursting as if a player hand-broke it — the instant it loses the support it
     /// rests on (a plant whose ground is dug away; a wall-torch whose wall is mined),
     /// and it is washed away when water flows or falls into its cell. The reactive
-    /// break is the [`FRAGILE`](behavior::FRAGILE) behaviour; this tag is the
+    /// break is the `FRAGILE` behaviour; this tag is the
     /// *categorisation* the water sim reads to treat the cell as one it may flow
     /// into. Carried by the cross-plants (grass, ferns, flowers, mushrooms), the
     /// cactus, and the torch — every block whose row points at `behavior::FRAGILE`.
@@ -69,11 +69,11 @@ impl BlockTag {
     /// A cell a placement may overwrite in place: building into it — or right-clicking
     /// it while holding a block — replaces it with no drop, as if it were empty.
     /// Air and water carry it, as does walk-through grassy foliage (short grass, fern,
-    /// dead bush). The one predicate is [`Block::is_replaceable`].
+    /// dead bush). The one predicate is `Block::is_replaceable`.
     pub const REPLACEABLE: BlockTag = BlockTag(5);
     /// Fertile ground — grass and dirt — that small plants take root in: the
     /// *category of ground* the cross-plants ([`ROOTS_IN_SOIL`](BlockTag::ROOTS_IN_SOIL))
-    /// require beneath them to be placed. Read via [`Block::required_ground`].
+    /// require beneath them to be placed. Read via `Block::required_ground`.
     pub const SOIL: BlockTag = BlockTag(6);
     /// Loose sandy ground — sand and red sand — that desert flora root in: the
     /// substrate [`ROOTS_IN_SAND`](BlockTag::ROOTS_IN_SAND) blocks (cactus, dead
@@ -81,16 +81,16 @@ impl BlockTag {
     pub const SAND: BlockTag = BlockTag(7);
     /// A plant that may only be PLACED on [`SOIL`](BlockTag::SOIL) (grass or dirt) —
     /// the cross-plants: flowers, ferns, short grass. The placement gate
-    /// (`game::try_place`) reads it through [`Block::required_ground`]; staying rooted
-    /// once placed is the separate physical job of [`FRAGILE`](behavior::FRAGILE).
+    /// (`game::try_place`) reads it through `Block::required_ground`; staying rooted
+    /// once placed is the separate physical job of `FRAGILE`.
     pub const ROOTS_IN_SOIL: BlockTag = BlockTag(8);
     /// A plant that may only be PLACED on [`SAND`](BlockTag::SAND) (sand or red sand)
     /// — the desert flora: cactus and dead bush.
     pub const ROOTS_IN_SAND: BlockTag = BlockTag(9);
     /// A plant that may also be PLACED on stone — any block of the
-    /// [`BlockMaterial::Stone`] class (stone, cobblestone, sandstone, granite…). The
+    /// `BlockMaterial::Stone` class (stone, cobblestone, sandstone, granite…). The
     /// mushrooms carry it ALONGSIDE [`ROOTS_IN_SOIL`](BlockTag::ROOTS_IN_SOIL), so they
-    /// take to soil OR stone; the `RootsIn*` tags combine (see [`Block::can_root_on`]).
+    /// take to soil OR stone; the `RootsIn*` tags combine (see `Block::can_root_on`).
     pub const ROOTS_IN_STONE: BlockTag = BlockTag(10);
     /// A block a glass pane never joins toward, even though its row would
     /// otherwise qualify — cube rows whose REAL shape is not the full cell (the
@@ -102,7 +102,7 @@ impl BlockTag {
     /// ladder, and the exploration pack's vine curtains. A row that declares a
     /// `panel_facing` also climbs by pressing INTO its wall; one that does not
     /// hangs free, so holding jump is its only ascent. The player physics reads
-    /// both through [`World::climb_at`](crate::world::World); the climb speed
+    /// both through `World::climb_at`; the climb speed
     /// and feel live in `player::movement`, never per-block.
     pub const CLIMBABLE: BlockTag = BlockTag(12);
     /// A blanket of snow covering the cell — the snow layer and the snow block.
@@ -116,7 +116,7 @@ impl BlockTag {
     pub const SLIPPERY: BlockTag = BlockTag(14);
     /// Frozen water — plain ice, NOT packed ice. Breaking it leaves a water
     /// source behind when something below can hold it (see
-    /// [`Block::break_residue`]), so mining the frozen sea never leaves a dry
+    /// `Block::break_residue`), so mining the frozen sea never leaves a dry
     /// pocket the water sim cannot refill.
     pub const MELTS: BlockTag = BlockTag(15);
     /// A planted tree-to-be — every growth-stage row of the sapling behaviour

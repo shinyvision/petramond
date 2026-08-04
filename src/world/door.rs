@@ -1,5 +1,5 @@
 //! Wooden doors at the world level: the per-cell state lookup the position-aware
-//! collision/selection in [`model`](super::model) reads, plus 2-cell placement, the
+//! collision/selection in `model` reads, plus 2-cell placement, the
 //! whole-door break, and the open/close toggle.
 //!
 //! A door spans two stacked cells, each holding its own [`DoorState`] in the chunk
@@ -9,11 +9,11 @@
 //! see `render::door_model`), and its collision is read live from the door state, so a
 //! toggle needs no remesh — only the placement/break edits relight + remesh neighbours.
 
-use crate::tile::Tile;
-use crate::block::{Block, ShapeFamily};
-use crate::door::DoorState;
-use crate::facing::Facing;
-use crate::mathh::IVec3;
+use petramond_world::tile::Tile;
+use petramond_world::block::{Block, ShapeFamily};
+use petramond_world::door::DoorState;
+use petramond_math::facing::Facing;
+use petramond_math::math::IVec3;
 
 use petramond_world::world::query::door_support;
 use super::store::World;
@@ -64,7 +64,7 @@ impl World {
     /// `Game::door_swing_angle`.
     pub fn collect_doors(
         &self,
-        out: &mut Vec<(IVec3, DoorState, [Tile; 3], u8, crate::light::BlockLight6)>,
+        out: &mut Vec<(IVec3, DoorState, [Tile; 3], u8, petramond_world::light::BlockLight6)>,
     ) {
         out.clear();
         for sp in &self.block_entity_sections {
@@ -76,7 +76,7 @@ impl World {
             }
             let (ox, oy, oz) = section.origin_world();
             for &key in section.cell_states().keys() {
-                let (lx, ly, lz) = crate::chunk::section_local(key as usize);
+                let (lx, ly, lz) = petramond_world::chunk::section_local(key as usize);
                 // The gated wrapper answers `None` for every non-door state
                 // sharing the unified map (stairs, torch mounts, fronts).
                 let Some(state) = section.door_state(lx, ly, lz) else {
@@ -90,7 +90,7 @@ impl World {
                 let [top, bottom, side] = Block::from_id(section.block_raw(lx, ly, lz)).tiles();
                 let pos = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
                 let sky = self.skylight6_at_world(pos.x, pos.y, pos.z);
-                let block = crate::light::BlockLight6::from_x2(
+                let block = petramond_world::light::BlockLight6::from_x2(
                     self.blocklight_rgb_at_world(pos.x, pos.y, pos.z),
                 );
                 out.push((pos, state, [bottom, top, side], sky, block));
@@ -100,7 +100,7 @@ impl World {
 
     /// The door state (facing + open + which-half) at world `pos`, or `None` when no
     /// door is recorded there or the cell is unloaded. Read by the position-aware
-    /// collision/selection (see [`collision_boxes_at`](Self::collision_boxes_at)) and
+    /// collision/selection (see `collision_boxes_at`) and
     /// the dynamic door renderer.
     #[inline]
     pub fn door_state_at(&self, wx: i32, wy: i32, wz: i32) -> Option<DoorState> {
@@ -243,8 +243,8 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunk::{Chunk, ChunkPos};
-    use crate::crafting::Recipes;
+    use petramond_world::chunk::{Chunk, ChunkPos};
+    use petramond_world::crafting::Recipes;
 
     const DOOR: Block = Block::OakDoor;
 

@@ -1,7 +1,7 @@
 //! World-space geometry for dropped item-entities, baked each frame into a
 //! reusable dynamic vbuf/ibuf and drawn by the **existing** opaque block pipeline
 //! (no new pipeline). Each [`ItemEntityInstance`] becomes either:
-//! - a small spinning + bobbing lit cube ([`block_model::cube_textured`])
+//! - a small spinning + bobbing lit cube (`block_model::cube_textured`)
 //!   for `BlockCube` items (logs etc. keep their per-face tiles), or
 //! - a spinning extruded pixel-perfect 3D slab for `Sprite` items (flowers /
 //!   tools), baked by [`build_item_sprite_entities`] into the explicit-UV
@@ -21,8 +21,8 @@ use super::item_cube::push_block_item_cube_lit;
 use super::item_model::ItemVertex;
 use super::lighting::{DynLight, LightEnv};
 use super::ItemEntityInstance;
-use petramond::block::Block;
-use petramond::item::ItemRenderKind;
+use petramond_world::block::Block;
+use petramond_world::item::ItemRenderKind;
 use petramond_mesh::Vertex;
 
 /// Side length (metres) of a dropped block-cube. Small so items read as loot, not
@@ -90,7 +90,7 @@ pub fn build_item_entities(
 /// Bake the sprite-kind dropped items as EXTRUDED, pixel-perfect 3D slabs into
 /// `verts`/`indices` (cleared first, capacity reused): the sprite's alpha mask
 /// gains one texel of depth (front + back faces plus per-texel boundary side
-/// walls, see [`super::item_model::build_extruded_item_lit`]) and the slab
+/// walls, see `super::item_model::build_extruded_item_lit`) and the slab
 /// spins and bobs about Y exactly like a dropped block cube — no camera-facing
 /// billboard. `scratch` holds one instance's extrusion in model space before
 /// per-layer placement (cleared per instance, capacity reused). Returns the
@@ -261,7 +261,7 @@ fn spin_into_world(verts: &mut [Vertex], start: usize, inst: &ItemEntityInstance
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond::item::ItemType;
+    use petramond_world::item::ItemType;
 
     #[test]
     fn empty_instances_produce_no_geometry() {
@@ -279,11 +279,11 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::new(10.0, 64.0, -5.0),
             item: ItemType::Stone,
-            variant: petramond::item::VariantId::NONE,
+            variant: petramond_world::item::VariantId::NONE,
             count: 1,
             spin: 0.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: petramond::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
         };
         let n = build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
         assert_eq!(v.len(), 24, "one textured cube = 24 verts");
@@ -300,11 +300,11 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::new(3.0, 10.0, -2.0),
             item: ItemType::Poppy,
-            variant: petramond::item::VariantId::NONE,
+            variant: petramond_world::item::VariantId::NONE,
             count: 1,
             spin: 1.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: petramond::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
         };
         let mut v = Vec::new();
         let mut i = Vec::new();
@@ -349,11 +349,11 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::ZERO,
             item: ItemType::Poppy,
-            variant: petramond::item::VariantId::NONE,
+            variant: petramond_world::item::VariantId::NONE,
             count: 3,
             spin: 0.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: petramond::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
         };
         let mut scratch = Vec::new();
         let mut sv = Vec::new();
@@ -388,11 +388,11 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::ZERO,
             item: ItemType::Dirt,
-            variant: petramond::item::VariantId::NONE,
+            variant: petramond_world::item::VariantId::NONE,
             count: 1,
             spin: 0.5,
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: petramond::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
         };
         build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
         let (cap_v, cap_i) = (v.capacity(), i.capacity());
@@ -411,11 +411,11 @@ mod tests {
         let inst = ItemEntityInstance {
             pos: Vec3::ZERO,
             item: ItemType::Stone,
-            variant: petramond::item::VariantId::NONE,
+            variant: petramond_world::item::VariantId::NONE,
             count: 1,
             spin: 0.0,
             skylight: 12,
-            blocklight: petramond::light::BlockLight6::grey(7),
+            blocklight: petramond_world::light::BlockLight6::grey(7),
         };
 
         build_item_entities(std::slice::from_ref(&inst), &mut v, &mut i);
@@ -438,11 +438,11 @@ mod tests {
         let three = ItemEntityInstance {
             pos: Vec3::new(2.0, 5.0, 2.0),
             item: ItemType::Stone,
-            variant: petramond::item::VariantId::NONE,
+            variant: petramond_world::item::VariantId::NONE,
             count: 3,
             spin: 0.0,
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: petramond::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
         };
         let n = build_item_entities(std::slice::from_ref(&three), &mut v, &mut i);
         assert_eq!(v.len(), 24 * 3, "3-stack = 3 layered cubes");

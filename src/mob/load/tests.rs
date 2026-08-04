@@ -1,8 +1,8 @@
 use super::*;
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 
 fn base() -> String {
-    let (text, _) = crate::assets::read_base_text("mobs.json").expect("assets/mobs.json must ship");
+    let (text, _) = petramond_world::assets::read_base_text("mobs.json").expect("assets/mobs.json must ship");
     text
 }
 
@@ -160,8 +160,8 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
     // melee emits an attack intent in reach — driven through the real Brain.
     let mut brain = super::super::build_brain(z);
     let world = {
-        use crate::block::Block;
-        use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+        use petramond_world::block::Block;
+        use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
         let mut w = crate::world::World::new(0, 1);
         let mut c = Chunk::new(0, 0);
         for zz in 0..CHUNK_SZ {
@@ -188,7 +188,7 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
     let decision = brain.decide(&mut ctx);
     assert_eq!(
         decision.goal,
-        Some(crate::mathh::IVec3::new(3, 64, 2)),
+        Some(petramond_math::math::IVec3::new(3, 64, 2)),
         "chase_player steers navigation at the player's cell"
     );
     assert!(
@@ -580,8 +580,8 @@ fn dynamic_pack_mob_inner() {
     std::fs::create_dir_all(&save).unwrap();
     // An "old" palette with a stranger between the engine mobs and ours, so
     // disk ids and runtime ids genuinely diverge.
-    let blocks: Vec<&str> = crate::block::ENGINE_BLOCK_NAMES.to_vec();
-    let items: Vec<&str> = crate::item::ENGINE_ITEM_NAMES.to_vec();
+    let blocks: Vec<&str> = petramond_world::block::ENGINE_BLOCK_NAMES.to_vec();
+    let items: Vec<&str> = petramond_world::item::ENGINE_ITEM_NAMES.to_vec();
     std::fs::write(
         save.join("palette.json"),
         serde_json::json!({

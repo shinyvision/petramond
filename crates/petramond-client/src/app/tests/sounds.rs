@@ -11,7 +11,7 @@ use crate::app::{
 use petramond_audio::SpatialListener;
 use crate::game::presentation::{FootstepSource, MobPresentation};
 use crate::game::{GameEvents, WorldEvent};
-use petramond::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 
 #[test]
 fn world_anchored_sounds_come_from_events_once_never_from_one_shots() {
@@ -20,15 +20,15 @@ fn world_anchored_sounds_come_from_events_once_never_from_one_shots() {
     let events = GameEvents {
         // The actor's own one-shots (hand animation feeds) — their former
         // local sound plays are gone.
-        placed_block: Some(petramond::block::Block::Dirt),
+        placed_block: Some(petramond_world::block::Block::Dirt),
         toggled_door: Some(true),
-        open_gui: Some((petramond::gui_state::GuiKind::Chest, Some(pos))),
+        open_gui: Some((petramond_world::gui_state::GuiKind::Chest, Some(pos))),
         interacted: true,
         // The broadcast events every observer presents, positionally.
         world_events: vec![
             WorldEvent::BlockPlaced {
                 pos,
-                block: petramond::block::Block::Dirt,
+                block: petramond_world::block::Block::Dirt,
             },
             WorldEvent::DoorToggled {
                 lower: pos,
@@ -143,7 +143,7 @@ fn mob_presentation(id: u64) -> MobPresentation {
         prev_head_pitch: 0.0,
         head_pitch: 0.0,
         skylight: 0,
-        blocklight: petramond::light::BlockLight6::DARK,
+        blocklight: petramond_world::light::BlockLight6::DARK,
         hurt_flash: 0.0,
         dead: false,
         shorn: false,
@@ -168,7 +168,7 @@ fn footsteps_fire_on_first_sight_then_hold_their_cadence() {
     let walking = |id: u64| FootstepSource {
         id,
         pos: Vec3::new(0.0, 64.0, 0.0),
-        ground: Some(petramond::block::Block::Stone),
+        ground: Some(petramond_world::block::Block::Stone),
         sprinting: false,
     };
     // A sneaking body arrives exactly as a standing one — presentation, not

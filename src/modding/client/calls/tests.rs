@@ -35,7 +35,7 @@ fn weather_era_client_calls_validate_and_forgive() {
         handle_host_call(
             &mut data,
             HostCall::ClientAmbientSet {
-                key: crate::particle_emitters::WATER_SPLASH_KEY.into(),
+                key: petramond_world::particle_emitters::WATER_SPLASH_KEY.into(),
                 intensity: 1.0,
                 wind: [0.0, 0.0],
             },
@@ -394,9 +394,9 @@ fn client_surface_columns_gate_on_revision_and_pack_cells() {
         Some(std::env::temp_dir().join("petramond-unused-client-surface-test")),
     );
     let mut world = crate::world::World::new(0, 0);
-    let sp = crate::chunk::SectionPos::new(0, 4, 0);
-    world.insert_section_for_test(sp, crate::section::Section::new(0, 4, 0));
-    assert!(world.set_block_world(3, 64, 5, crate::block::Block::Stone));
+    let sp = petramond_world::chunk::SectionPos::new(0, 4, 0);
+    world.insert_section_for_test(sp, petramond_world::section::Section::new(0, 4, 0));
+    assert!(world.set_block_world(3, 64, 5, petramond_world::block::Block::Stone));
 
     let query = |revision| HostCall::ClientSurfaceColumns {
         queries: vec![
@@ -442,7 +442,7 @@ fn client_surface_columns_gate_on_revision_and_pack_cells() {
     assert!(unchanged.cells.is_none(), "unchanged column sends no cells");
 
     // …until an edit moves the column revision.
-    assert!(world.set_block_world(3, 64, 5, crate::block::Block::Dirt));
+    assert!(world.set_block_world(3, 64, 5, petramond_world::block::Block::Dirt));
     let HostRet::ClientSurfaceColumns(replies) =
         super::client_scope::enter(&world, || handle_host_call(&mut data, query(revision)))
     else {
@@ -462,9 +462,9 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
         Some(std::env::temp_dir().join("petramond-unused-client-blocks-test")),
     );
     let mut world = crate::world::World::new(0, 0);
-    let sp = crate::chunk::SectionPos::new(0, 4, 0);
-    world.insert_section_for_test(sp, crate::section::Section::new(0, 4, 0));
-    assert!(world.set_block_world(3, 64, 5, crate::block::Block::Stone));
+    let sp = petramond_world::chunk::SectionPos::new(0, 4, 0);
+    world.insert_section_for_test(sp, petramond_world::section::Section::new(0, 4, 0));
+    assert!(world.set_block_world(3, 64, 5, petramond_world::block::Block::Stone));
 
     let query = || HostCall::ClientBlocksAt {
         positions: vec![[3, 64, 5], [3, 65, 5], [150, 64, 5]],
@@ -476,11 +476,11 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
     };
     assert_eq!(
         blocks[0],
-        Some(mod_api::BlockId(crate::block::Block::Stone.id()))
+        Some(mod_api::BlockId(petramond_world::block::Block::Stone.id()))
     );
     assert_eq!(
         blocks[1],
-        Some(mod_api::BlockId(crate::block::Block::Air.id()))
+        Some(mod_api::BlockId(petramond_world::block::Block::Air.id()))
     );
     assert_eq!(blocks[2], None, "an unloaded section reads None");
 
@@ -507,7 +507,7 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
                 name: "petramond:stone".into()
             }
         ),
-        HostRet::Block(Some(mod_api::BlockId(crate::block::Block::Stone.id())))
+        HostRet::Block(Some(mod_api::BlockId(petramond_world::block::Block::Stone.id())))
     );
     let HostRet::BlockList(leaves) = handle_host_call(
         &mut data,

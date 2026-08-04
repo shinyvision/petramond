@@ -1,15 +1,15 @@
 use super::*;
-use crate::block::Block;
-use crate::chunk::SectionPos;
-use crate::item::{ItemStack, ItemType};
-use crate::mathh::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_world::chunk::SectionPos;
+use petramond_world::item::{ItemStack, ItemType};
+use petramond_math::math::{IVec3, Vec3};
 use crate::net::connection::TcpClientConn;
 use crate::net::framing::{read_msg, write_msg};
 use crate::net::handshake::{client_handshake, installed_mod_ids};
 use crate::net::protocol::{PlayerAction, PlayerUpdate, TargetRef};
 use crate::net::remap::IdRemap;
 use crate::server::handle::ServerHandle;
-use crate::test_time::TEST_HARD_DEADLINE;
+use petramond_util::test_time::TEST_HARD_DEADLINE;
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
@@ -158,7 +158,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
     // it — the reach eye is ring-bounded, so the visitor builds from
     // where it actually stands) + dirt to place (a fresh spawn would be
     // empty-handed).
-    let spawn = crate::worldgen::spawn::find_spawn(7);
+    let spawn = petramond_worldgen::spawn::find_spawn(7);
     let visitor_feet = Vec3::new(
         spawn.x as f32 + 0.5,
         (spawn.y + 1) as f32,

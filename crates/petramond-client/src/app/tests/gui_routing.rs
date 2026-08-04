@@ -2,8 +2,8 @@ use super::{
     app, app_with_grass, cursor_over_craft_result, cursor_over_menu, cursor_over_slot,
     cursor_over_widget, panel_gap_point,
 };
-use petramond::controls::{Control, Modifiers};
-use petramond::item::{ItemStack, ItemType};
+use petramond_world::controls::{Control, Modifiers};
+use petramond_world::item::{ItemStack, ItemType};
 
 fn search_recipes(app: &mut super::TestApp, screen: (u32, u32), query: &str) {
     let (x, y) = cursor_over_widget(app, screen, "craft_search", None);
@@ -24,7 +24,7 @@ fn replace_recipe_search(app: &mut super::TestApp, screen: (u32, u32), query: &s
         ctrl: true,
         ..Modifiers::default()
     });
-    assert!(app.handle_text_shortcut_code(petramond::keycode::KeyCode::KeyA));
+    assert!(app.handle_text_shortcut_code(petramond_world::keycode::KeyCode::KeyA));
     app.set_modifiers(Modifiers::default());
     assert!(app.handle_text_input(query));
     app.solve_menu_frame_for_test(screen);
@@ -105,7 +105,7 @@ fn unaffordable_recipe_row_stays_disabled_and_cannot_be_selected() {
 
 #[test]
 fn crafting_search_owns_key_presses_but_not_releases_or_escape() {
-    use petramond::keycode::KeyCode;
+    use petramond_world::keycode::KeyCode;
 
     let mut app = app();
     assert!(app.handle_raw_key(KeyCode::KeyW, true));
@@ -233,7 +233,7 @@ fn closing_a_menu_stashes_untaken_craft_output() {
     assert!(app.handle_control(Control::CloseScreen, true));
     app.apply_latched_actions_for_test();
     assert!(!app.screen.inventory_open());
-    let sticks: u32 = (0..petramond::inventory::TOTAL_SLOTS)
+    let sticks: u32 = (0..petramond_world::inventory::TOTAL_SLOTS)
         .filter_map(|i| app.inventory().slot(i))
         .filter(|s| s.item == ItemType::Stick)
         .map(|s| s.count as u32)
@@ -257,7 +257,7 @@ fn closing_a_menu_stashes_the_cursor_stack() {
     app.apply_latched_actions_for_test();
 
     assert!(app.inventory().cursor().is_none());
-    let grass: u32 = (0..petramond::inventory::TOTAL_SLOTS)
+    let grass: u32 = (0..petramond_world::inventory::TOTAL_SLOTS)
         .filter_map(|i| app.inventory().slot(i))
         .filter(|s| s.item == ItemType::Grass)
         .map(|s| s.count as u32)
@@ -332,7 +332,7 @@ fn fast_click_on_a_different_slot_is_not_a_double_click() {
 
     // A fast click on a DIFFERENT slot is a normal drop, not a gather: the held
     // stack lands in the first (empty) main-grid slot.
-    let dest = petramond::inventory::HOTBAR_LEN;
+    let dest = petramond_world::inventory::HOTBAR_LEN;
     let (dx, dy) = cursor_over_slot(&mut app, screen, dest);
     app.set_cursor_position(dx, dy);
     app.click_screen_for_test(screen, 0.05);
@@ -379,9 +379,9 @@ fn primary_drag_preview_redivides_slots_before_release() {
     app.click_screen_for_test(screen, 0.0);
 
     let destinations = [
-        petramond::gui_state::MenuSlot::Inventory(9),
-        petramond::gui_state::MenuSlot::Inventory(10),
-        petramond::gui_state::MenuSlot::Inventory(11),
+        petramond_world::gui_state::MenuSlot::Inventory(9),
+        petramond_world::gui_state::MenuSlot::Inventory(10),
+        petramond_world::gui_state::MenuSlot::Inventory(11),
     ];
     let points: Vec<_> = destinations
         .iter()
@@ -390,7 +390,7 @@ fn primary_drag_preview_redivides_slots_before_release() {
     let kind = app.doc_ui_kind().expect("inventory document");
 
     app.set_cursor_position(points[0].0, points[0].1);
-    app.set_pointer_button(petramond::gui_state::PointerButton::Primary, true);
+    app.set_pointer_button(petramond_world::gui_state::PointerButton::Primary, true);
     app.drive_doc_menu(kind, screen, 0.1);
     let preview = app.menu_snapshot_for_test();
     assert_eq!(preview.slots[9], Some(ItemStack::new(ItemType::Grass, 10)));
@@ -421,7 +421,7 @@ fn primary_drag_preview_redivides_slots_before_release() {
     assert!(app.inventory().slot(10).is_none());
     assert!(app.inventory().slot(11).is_none());
 
-    app.set_pointer_button(petramond::gui_state::PointerButton::Primary, false);
+    app.set_pointer_button(petramond_world::gui_state::PointerButton::Primary, false);
     app.drive_doc_menu(kind, screen, 0.5);
     let released = app.menu_snapshot_for_test();
     assert_eq!(released.slots[9], Some(ItemStack::new(ItemType::Grass, 3)));
@@ -455,7 +455,7 @@ fn secondary_drag_preview_places_one_on_each_new_slot_before_release() {
     let second = cursor_over_slot(&mut app, screen, 10);
     let kind = app.doc_ui_kind().expect("inventory document");
     app.set_cursor_position(first.0, first.1);
-    app.set_pointer_button(petramond::gui_state::PointerButton::Secondary, true);
+    app.set_pointer_button(petramond_world::gui_state::PointerButton::Secondary, true);
     app.drive_doc_menu(kind, screen, 0.1);
     let preview = app.menu_snapshot_for_test();
     assert_eq!(preview.slots[9], Some(ItemStack::new(ItemType::Grass, 1)));
@@ -474,7 +474,7 @@ fn secondary_drag_preview_places_one_on_each_new_slot_before_release() {
     assert!(app.inventory().slot(9).is_none());
     assert!(app.inventory().slot(10).is_none());
 
-    app.set_pointer_button(petramond::gui_state::PointerButton::Secondary, false);
+    app.set_pointer_button(petramond_world::gui_state::PointerButton::Secondary, false);
     app.drive_doc_menu(kind, screen, 0.4);
     let released = app.menu_snapshot_for_test();
     assert_eq!(released.slots[9], Some(ItemStack::new(ItemType::Grass, 1)));
@@ -500,12 +500,12 @@ fn primary_drag_evenly_splits_the_cursor_and_puts_remainder_last() {
     app.drag_screen_for_test(
         screen,
         0.1,
-        petramond::gui_state::PointerButton::Primary,
+        petramond_world::gui_state::PointerButton::Primary,
         &[
-            petramond::gui_state::MenuSlot::Inventory(9),
-            petramond::gui_state::MenuSlot::Inventory(10),
-            petramond::gui_state::MenuSlot::Inventory(9),
-            petramond::gui_state::MenuSlot::Inventory(11),
+            petramond_world::gui_state::MenuSlot::Inventory(9),
+            petramond_world::gui_state::MenuSlot::Inventory(10),
+            petramond_world::gui_state::MenuSlot::Inventory(9),
+            petramond_world::gui_state::MenuSlot::Inventory(11),
         ],
     );
 
@@ -526,15 +526,15 @@ fn secondary_drag_places_once_per_distinct_slot_per_press() {
     app.click_screen_for_test(screen, 0.0);
 
     let destinations = [
-        petramond::gui_state::MenuSlot::Inventory(9),
-        petramond::gui_state::MenuSlot::Inventory(10),
-        petramond::gui_state::MenuSlot::Inventory(9),
-        petramond::gui_state::MenuSlot::Inventory(11),
+        petramond_world::gui_state::MenuSlot::Inventory(9),
+        petramond_world::gui_state::MenuSlot::Inventory(10),
+        petramond_world::gui_state::MenuSlot::Inventory(9),
+        petramond_world::gui_state::MenuSlot::Inventory(11),
     ];
     app.drag_screen_for_test(
         screen,
         0.1,
-        petramond::gui_state::PointerButton::Secondary,
+        petramond_world::gui_state::PointerButton::Secondary,
         &destinations,
     );
     assert_eq!(app.inventory().cursor().map(|stack| stack.count), Some(2));
@@ -545,7 +545,7 @@ fn secondary_drag_places_once_per_distinct_slot_per_press() {
     app.drag_screen_for_test(
         screen,
         0.2,
-        petramond::gui_state::PointerButton::Secondary,
+        petramond_world::gui_state::PointerButton::Secondary,
         &destinations[..2],
     );
     assert!(app.inventory().cursor().is_none());
@@ -579,7 +579,7 @@ fn route_inventory_shift_click_moves_hotbar_to_main_grid() {
     assert!(app.inventory().slot(0).is_none(), "hotbar slot emptied");
     assert_eq!(
         app.inventory()
-            .slot(petramond::inventory::HOTBAR_LEN)
+            .slot(petramond_world::inventory::HOTBAR_LEN)
             .unwrap()
             .item,
         item0,

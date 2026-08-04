@@ -2,16 +2,16 @@
 //! support they rest on is gone.
 //!
 //! Lives here in `world` (not `block`) for the same reason water does — it drives the
-//! world tick scheduler ([`World::schedule_block_tick`]) and the natural-break hand-off
+//! world tick scheduler (`World::schedule_block_tick`) and the natural-break hand-off
 //! ([`World::note_block_destroyed`]), world internals a `block`-side behaviour can't
-//! reach — while still implementing the `block`-defined [`BlockBehavior`]. Carried by
-//! every block tagged [`BlockTag::FRAGILE`](crate::block::BlockTag::FRAGILE) (see
+//! reach — while still implementing the `block`-defined `BlockBehavior`. Carried by
+//! every block tagged [`BlockTag::FRAGILE`](petramond_world::block::BlockTag::FRAGILE) (see
 //! `block::data`): the tag is the categorisation (the water sim reads it to know which
 //! cells it may flow into), this behaviour is what such a block DOES when its support
 //! changes.
 
-use crate::block::Block;
-use crate::mathh::IVec3;
+use petramond_world::block::Block;
+use petramond_math::math::IVec3;
 
 use super::store::World;
 
@@ -58,13 +58,13 @@ pub static FRAGILE: Fragile = Fragile;
 
 #[cfg(test)]
 mod tests {
-    use crate::block::{Block, SupportDir};
+    use petramond_world::block::{Block, SupportDir};
     use super::*;
-    use crate::block_state::{StairHalf, StairState};
-    use crate::chunk::{Chunk, ChunkPos};
-    use crate::crafting::Recipes;
-    use crate::facing::Facing;
-    use crate::torch::TorchPlacement;
+    use petramond_world::block_state::{StairHalf, StairState};
+    use petramond_world::chunk::{Chunk, ChunkPos};
+    use petramond_world::crafting::Recipes;
+    use petramond_math::facing::Facing;
+    use petramond_world::torch::TorchPlacement;
 
     /// A world with one empty loaded chunk at the origin.
     fn world() -> World {
@@ -99,12 +99,12 @@ mod tests {
             let mut w = world();
             let p = IVec3::new(8, 64, 8);
             w.set_block_world(p.x, p.y, p.z, b);
-            crate::block::full_face_at(&w, p, dir)
+            petramond_world::block::full_face_at(&w, p, dir)
         };
         // A one-texel cover: its floor is against the boundary, its top is not.
         assert_eq!(
             face(Block::SnowLayer, -IVec3::Y),
-            Some(crate::block::FullFace::Shaped),
+            Some(petramond_world::block::FullFace::Shaped),
             "a cover rests on its own floor"
         );
         assert_eq!(
@@ -116,7 +116,7 @@ mod tests {
         // planes = face carriers (they draw, and are not matter).
         assert_eq!(
             face(Block::Cactus, IVec3::Y),
-            Some(crate::block::FullFace::Shaped),
+            Some(petramond_world::block::FullFace::Shaped),
             "the cap plate is matter"
         );
         assert_eq!(
@@ -128,7 +128,7 @@ mod tests {
         // face (opaque-only fence joins) must not start binding box sets.
         assert_eq!(
             face(Block::Stone, IVec3::Y),
-            Some(crate::block::FullFace::Cube)
+            Some(petramond_world::block::FullFace::Cube)
         );
     }
 
@@ -283,7 +283,7 @@ mod tests {
         let mut w = world();
         let ladder = IVec3::new(8, 65, 8);
         // An east-facing ladder (its own block row) hangs on the wall to its west.
-        let wall = crate::ladder::support_cell(ladder, Facing::East);
+        let wall = petramond_world::ladder::support_cell(ladder, Facing::East);
         w.set_block_world(wall.x, wall.y, wall.z, Block::Stone);
         w.set_block_world(ladder.x, ladder.y, ladder.z, Block::LadderEast);
         run_ticks(&mut w, 2);
@@ -427,7 +427,7 @@ mod tests {
     fn hanging_support_inner() {
         let by_name = |name: &str| {
             Block(
-                crate::registry::names()
+                petramond_world::registry::names()
                     .blocks
                     .id(name)
                     .unwrap_or_else(|| panic!("fixture pack row '{name}' must be registered")),
@@ -504,12 +504,12 @@ mod tests {
         // row has no substrate vocabulary — `roots_on` names GROUNDS and its
         // support is a ceiling — so without a gate it places on open air and
         // this very tick shatters it, eating the item.
-        let mut never_occupied = |_: IVec3, _: &[crate::block::Aabb]| false;
+        let mut never_occupied = |_: IVec3, _: &[petramond_world::block::Aabb]| false;
         let mut plan = |w: &World, p: IVec3, b: Block| {
             w.finish_single_cell_placement(
                 b,
                 p,
-                crate::block::ShapeState::NONE,
+                petramond_world::block::ShapeState::NONE,
                 &[],
                 &mut never_occupied,
             )

@@ -81,7 +81,7 @@ fn resampled_sessions_should_rewrite_no_unchanged_tiles() {
 
     // Both sessions sample from the same pinned spot, so their explored sets
     // overlap fully and a byte diff is meaningful.
-    let home = petramond::mathh::Vec3::new(100.5, 90.0, 100.5);
+    let home = petramond_math::math::Vec3::new(100.5, 90.0, 100.5);
     let session = || {
         let mut app = app_with_render_dist(4);
         app.app.game.as_mut().unwrap().place_player_for_test(home);
@@ -106,7 +106,7 @@ fn resampled_sessions_should_rewrite_no_unchanged_tiles() {
             })
             .filter(|&(cx, cz)| {
                 replica
-                    .client_surface_column_revision(petramond::chunk::ChunkPos::new(cx, cz))
+                    .client_surface_column_revision(petramond_world::chunk::ChunkPos::new(cx, cz))
                     .is_some()
             })
             .count();
@@ -193,7 +193,7 @@ fn world_map_zoom_out_frame_profile() {
     for _ in 0..10 {
         frame(&mut app);
     }
-    use petramond::keycode::KeyCode;
+    use petramond_world::keycode::KeyCode;
     assert!(app.app.handle_raw_key(KeyCode::KeyM, true));
     let _ = app.app.handle_raw_key(KeyCode::KeyM, false);
     let mut open_frames = Vec::new();
@@ -225,7 +225,7 @@ fn world_map_zoom_out_frame_profile() {
 
     // Pan a long diagonal drag: boundary crossings + band loads.
     app.app
-        .set_pointer_button(petramond::gui_state::PointerButton::Primary, true);
+        .set_pointer_button(petramond_world::gui_state::PointerButton::Primary, true);
     let mut pan_frames = Vec::new();
     for step in 1..=120 {
         app.app
@@ -233,6 +233,6 @@ fn world_map_zoom_out_frame_profile() {
         pan_frames.push(frame(&mut app));
     }
     app.app
-        .set_pointer_button(petramond::gui_state::PointerButton::Primary, false);
+        .set_pointer_button(petramond_world::gui_state::PointerButton::Primary, false);
     profile("pan @ −2", &pan_frames);
 }

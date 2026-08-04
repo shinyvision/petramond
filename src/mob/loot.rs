@@ -1,9 +1,9 @@
 //! Mob loot tables loaded from `assets/loot_tables.json` (serde).
 //!
-//! Mirrors the crafting recipe loader ([`crate::crafting`]): the on-disk file is
+//! Mirrors the crafting recipe loader ([`petramond_world::crafting`]): the on-disk file is
 //! preferred so loot can be tuned without a rebuild, with an embedded copy as the
 //! fallback when the game runs outside the project tree. Items are referenced by their
-//! stable namespaced [`key`](crate::item::ItemType::key); tables are keyed by a mob's
+//! stable namespaced [`key`](petramond_world::item::ItemType::key); tables are keyed by a mob's
 //! [`key`](crate::mob::MobDef::key). Malformed entries are logged and skipped rather
 //! than aborting the world load.
 
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::item::{ItemStack, ItemType};
+use petramond_world::item::{ItemStack, ItemType};
 
 /// Embedded fallback so the game always has loot tables, even run outside the project
 /// tree. The on-disk copy, when found, takes priority.
@@ -103,7 +103,7 @@ impl LootTables {
 /// later layer REPLACES a mob's whole table by its key), falling back to the
 /// embedded copy when nothing on disk provides one.
 pub fn load_loot() -> LootTables {
-    let layers = crate::assets::read_layers("loot_tables.json");
+    let layers = petramond_world::assets::read_layers("loot_tables.json");
     let texts: Vec<String> = if layers.is_empty() {
         log::info!("loot tables: no on-disk loot_tables.json found, using embedded defaults");
         vec![EMBEDDED.to_string()]

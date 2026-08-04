@@ -1,12 +1,12 @@
 use crate::world::WorldData;
 use std::sync::Arc;
 
-use crate::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
+use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
 use crate::net::protocol::{
     ColumnPayload, LightPayload, SectionBlocks, SectionBytes, SectionLight, SectionPayload,
     SectionStatesPayload,
 };
-use crate::section::Section;
+use petramond_world::section::Section;
 use crate::world::store::World;
 
 use super::sorted_entries;
@@ -56,7 +56,7 @@ impl SectionPayloadExt for Section {
 
 impl World {
     /// One column's client-relevant facts: biome skin, visible surface,
-    /// direct-sky cover, and a per-cy [`SectionSummary`] for the whole world
+    /// direct-sky cover, and a per-cy `SectionSummary` for the whole world
     /// height range so replica physics can answer for absent sections. `None`
     /// for an unloaded column.
     pub fn column_payload(&self, pos: ChunkPos) -> Option<ColumnPayload> {
@@ -84,7 +84,7 @@ impl World {
                 }
                 (
                     Arc::from(halo.into_boxed_slice()),
-                    crate::chunk::SECTION_MIN_CY,
+                    petramond_world::chunk::SECTION_MIN_CY,
                 )
             },
             |gen| {

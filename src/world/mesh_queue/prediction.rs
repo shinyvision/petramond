@@ -2,7 +2,7 @@ use crate::world::WorldData;
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
-use crate::chunk::{self, ChunkPos, SectionPos};
+use petramond_world::chunk::{self, ChunkPos, SectionPos};
 use crate::world::store::{SkyCoverChange, World};
 
 impl World {
@@ -12,7 +12,7 @@ impl World {
     ///
     /// `previous` carries each cell's block id before the predicted mutation;
     /// the world already contains the post-edit state when this is called.
-    pub fn reconcile_predicted_edit(&mut self, previous: &[(crate::mathh::IVec3, u16)]) {
+    pub fn reconcile_predicted_edit(&mut self, previous: &[(petramond_math::math::IVec3, u16)]) {
         if previous.is_empty() {
             return;
         }
@@ -27,7 +27,7 @@ impl World {
     /// light -> mesh bundle runs on the caller, so exact predicted presentation
     /// is installed before this method returns. Reconciliation uses
     /// [`Self::reconcile_predicted_edit`] and remains asynchronous.
-    pub fn present_predicted_edit(&mut self, previous: &[(crate::mathh::IVec3, u16)]) {
+    pub fn present_predicted_edit(&mut self, previous: &[(petramond_math::math::IVec3, u16)]) {
         use crate::world::prediction_render::run_prediction_terrain_synchronously;
 
         if previous.is_empty() {
@@ -48,7 +48,7 @@ impl World {
 
     fn prepare_prediction_terrain(
         &mut self,
-        previous: &[(crate::mathh::IVec3, u16)],
+        previous: &[(petramond_math::math::IVec3, u16)],
     ) -> Option<crate::world::prediction_render::PredictionTerrainWork> {
         use crate::world::light::{group_positions, snapshot_batch, LightBakeJob};
         use crate::world::prediction_render::{
@@ -163,7 +163,7 @@ impl World {
     /// an edited cell) rebuild unconditionally.
     fn prediction_candidate_sections(
         &self,
-        previous: &[(crate::mathh::IVec3, u16)],
+        previous: &[(petramond_math::math::IVec3, u16)],
     ) -> (Vec<SectionPos>, Vec<SectionPos>) {
         const SAMPLER_REACH: i32 = chunk::SKY_FULL as i32 / 2 - 1 + 1;
         let mut candidates = Vec::new();
@@ -239,9 +239,9 @@ impl World {
                         .iter()
                         .find(|(cell, _)| cell.x == wx && cell.y == wy && cell.z == wz)
                         .map_or_else(|| self.chunk_block(wx, wy, wz), |(_, id)| *id);
-                    !crate::block::Block::from_id(old_id).transmits_direct_skylight()
+                    !petramond_world::block::Block::from_id(old_id).transmits_direct_skylight()
                 })
-                .unwrap_or(crate::column::NO_SURFACE);
+                .unwrap_or(petramond_world::column::NO_SURFACE);
             let Some(change) = SkyCoverChange::between(old_cover, new_cover) else {
                 continue;
             };

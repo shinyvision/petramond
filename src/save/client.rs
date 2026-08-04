@@ -53,7 +53,7 @@ pub struct ClientSettings {
     pub particles: ParticlesMode,
     /// Remapped controls (Options → Controls). Actions absent here use their
     /// defaults, so files from before a binding existed stay valid.
-    pub bindings: crate::controls::BindingSet,
+    pub bindings: petramond_world::controls::BindingSet,
 }
 
 /// Decorative-particle density: emitter-derived particles (torch flames…) and
@@ -109,7 +109,7 @@ impl Default for ClientSettings {
             sound_volume: 1.0,
             music_volume: 1.0,
             particles: ParticlesMode::Full,
-            bindings: crate::controls::BindingSet::default(),
+            bindings: petramond_world::controls::BindingSet::default(),
         }
     }
 }

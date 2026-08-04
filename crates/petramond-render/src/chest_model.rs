@@ -19,7 +19,7 @@ use glam::Vec3;
 
 use super::item_cube::{orient_faces_to_block, push_box_faces_lit};
 use super::ChestInstance;
-use petramond::tile::Tile;
+use petramond_world::tile::Tile;
 use petramond_mesh::Vertex;
 
 /// Inset (m) of the body/lid from the block edges — the chest is 14/16 wide & deep.
@@ -55,7 +55,7 @@ const ITEM_LIFT: f32 = (1.0 - 14.0 / 16.0) * 0.5;
 /// body box. Front (`+Z`) carries the chest-front art; the top is the interior (seen
 /// when the lid opens; hidden by the lid when closed).
 fn body_faces() -> [Tile; 6] {
-    let e = petramond::tile::engine();
+    let e = petramond_world::tile::engine();
     [
         e.chest_side,   // PosX
         e.chest_side,   // NegX
@@ -68,7 +68,7 @@ fn body_faces() -> [Tile; 6] {
 /// Per-face tiles for the lid box. Top is the chest's visible top; the underside is
 /// the interior, seen when the lid opens.
 fn lid_faces() -> [Tile; 6] {
-    let e = petramond::tile::engine();
+    let e = petramond_world::tile::engine();
     [
         e.chest_lid_side,  // PosX
         e.chest_lid_side,  // NegX
@@ -80,7 +80,7 @@ fn lid_faces() -> [Tile; 6] {
 }
 /// The latch knob is small; the metallic latch tile reads fine on every face.
 fn latch_faces() -> [Tile; 6] {
-    [petramond::tile::engine().chest_latch; 6]
+    [petramond_world::tile::engine().chest_latch; 6]
 }
 
 /// Bake all `instances` into `verts`/`indices` (cleared first, capacity reused) and
@@ -188,7 +188,7 @@ pub(super) fn push_chest_item_full(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond::facing::Facing;
+    use petramond_math::facing::Facing;
 
     fn inst(facing: Facing, lid01: f32) -> ChestInstance {
         ChestInstance {
@@ -196,7 +196,7 @@ mod tests {
             facing,
             lid01,
             skylight: super::super::lighting::FULL_SKYLIGHT,
-            blocklight: petramond::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
         }
     }
 

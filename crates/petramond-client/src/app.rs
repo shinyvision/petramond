@@ -34,7 +34,7 @@ use crate::app::input::{ControlEvent, InputController};
 use crate::app::pointer::PointerState;
 use petramond_audio::Audio;
 use petramond_render::camera::Camera;
-use petramond::controls::{Control, Modifiers};
+use petramond_world::controls::{Control, Modifiers};
 use crate::game::presentation::GamePresentationScratch;
 use crate::game::Game;
 use petramond_render::Scene;
@@ -60,13 +60,13 @@ pub struct App {
     /// Spatial sound commands emitted by ticks since the last render. They are
     /// applied alongside the same mob presentation snapshot the renderer uses.
     spatial_sound_commands: Vec<crate::game::ModSpatialSoundCommand>,
-    spatial_mob_positions: Vec<(u64, petramond::mathh::Vec3)>,
+    spatial_mob_positions: Vec<(u64, petramond_math::math::Vec3)>,
     /// Gameplay-originated mob sound events waiting for the next presentation
     /// snapshot, where they can be pinned to interpolated mob positions.
     mob_sound_events: Vec<crate::game::MobSoundEvent>,
     /// Positional world-event one-shots (block place/break, doors, chest
     /// lids, foreign pickups) waiting for the next render's spatial listener.
-    world_sound_cues: Vec<(petramond::sound_registry::Sound, petramond::mathh::Vec3)>,
+    world_sound_cues: Vec<(petramond_world::sound_registry::Sound, petramond_math::math::Vec3)>,
     /// Client-owned idle sound scheduling per live mob session id.
     mob_sound_state: HashMap<u64, MobSoundState>,
     /// Client-owned footstep cadence per walking body (see
@@ -74,7 +74,7 @@ pub struct App {
     /// due. Retired with the bodies themselves each frame.
     footstep_next_tick: HashMap<u64, u64>,
     /// Reused per-frame scratch for client-mod loop gains (rain/wind beds).
-    mod_loop_scratch: Vec<(petramond::sound_registry::Sound, f32)>,
+    mod_loop_scratch: Vec<(petramond_world::sound_registry::Sound, f32)>,
     next_mob_sound_handle: u64,
     /// Client-side sound engine. Drains the sim's per-tick [`petramond_audio::SoundEvent`]s
     /// each frame and plays them; never part of the deterministic simulation.
@@ -109,9 +109,9 @@ pub struct App {
     /// Every remappable action of the current session: the engine actions
     /// plus what the loaded client mods registered. Rebuilt on session
     /// start/end (`rebuild_action_table`).
-    action_table: petramond::controls::ActionTable,
+    action_table: petramond_world::controls::ActionTable,
     /// Which bound actions are currently held (raw input → action edges).
-    binding_engine: petramond::controls::BindingEngine,
+    binding_engine: petramond_world::controls::BindingEngine,
     /// The action ID armed for remapping on the Options → Controls screen
     /// (`None` = not remapping; engine ids like `jump`, mod ids like
     /// `minimap:open_map`). While set, raw input is CAPTURED as the new
@@ -119,7 +119,7 @@ pub struct App {
     remap: Option<String>,
     /// The modifier key held down while remapping (a chord starter). If it
     /// releases with nothing else captured, the tap binds the modifier itself.
-    remap_armed_mod: Option<petramond::keycode::KeyCode>,
+    remap_armed_mod: Option<petramond_world::keycode::KeyCode>,
     /// Whether the open Options flow was entered from the pause menu (Back
     /// returns there) rather than the title screen.
     options_from_pause: bool,
@@ -148,8 +148,8 @@ pub struct App {
     /// or slowed sim must not stretch it). Presentation-only.
     heart_wiggle: Option<HeartWiggle>,
     /// Returns the allocator's free pages to the OS once terrain settles (see
-    /// [`petramond::memory`]).
-    heap_reclaim: petramond::memory::IdleHeapReclaim,
+    /// [`petramond_util::memory`]).
+    heap_reclaim: petramond_util::memory::IdleHeapReclaim,
     worlds: Vec<petramond::save::WorldInfo>,
     selected_world: Option<usize>,
     /// The World Settings session for the selected world (`None` unless the
@@ -254,8 +254,8 @@ impl App {
             screen: AppScreen::Title,
             modifiers: Modifiers::default(),
             settings,
-            action_table: petramond::controls::ActionTable::engine(),
-            binding_engine: petramond::controls::BindingEngine::default(),
+            action_table: petramond_world::controls::ActionTable::engine(),
+            binding_engine: petramond_world::controls::BindingEngine::default(),
             remap: None,
             remap_armed_mod: None,
             options_from_pause: false,
@@ -361,14 +361,14 @@ impl App {
             ControlEvent::Attack { down } => {
                 if self.screen.gameplay_enabled() || !down {
                     self.pointer
-                        .set_gameplay_button(petramond::gui_state::PointerButton::Primary, down);
+                        .set_gameplay_button(petramond_world::gui_state::PointerButton::Primary, down);
                 }
                 true
             }
             ControlEvent::Interact { down } => {
                 if self.screen.gameplay_enabled() || !down {
                     self.pointer
-                        .set_gameplay_button(petramond::gui_state::PointerButton::Secondary, down);
+                        .set_gameplay_button(petramond_world::gui_state::PointerButton::Secondary, down);
                 }
                 true
             }
@@ -435,8 +435,8 @@ impl App {
     /// Which GUI document backs the current screen, if any. Document-backed
     /// screens draw + route input through the petramond-ui runtime; a screen with
     /// no loaded document draws (and routes) nothing.
-    pub fn doc_ui_kind(&self) -> Option<petramond::gui_state::GuiKind> {
-        use petramond::gui_state::GuiKind;
+    pub fn doc_ui_kind(&self) -> Option<petramond_world::gui_state::GuiKind> {
+        use petramond_world::gui_state::GuiKind;
         let kind = match self.screen {
             AppScreen::Title if std::env::var_os("PETRAMOND_UI_DEMO").is_some() => GuiKind::Demo,
             AppScreen::Title => GuiKind::Title,
@@ -465,7 +465,7 @@ impl App {
     /// belongs to the shell (no game simulation behind it). Game menus (mod
     /// GUIs, containers) return `None` here — they drive their document UI
     /// AND tick the game.
-    pub fn doc_shell_kind(&self) -> Option<petramond::gui_state::GuiKind> {
+    pub fn doc_shell_kind(&self) -> Option<petramond_world::gui_state::GuiKind> {
         if self.screen.ui_open() || self.screen.client_ui_open() || self.screen.overlay_open() {
             return None;
         }
@@ -477,7 +477,7 @@ impl App {
     /// its events dispatch to a controller, not to slot routing — but the
     /// simulation keeps ticking underneath (the sleep timer and respawn are
     /// tick-owned).
-    pub fn doc_overlay_kind(&self) -> Option<petramond::gui_state::GuiKind> {
+    pub fn doc_overlay_kind(&self) -> Option<petramond_world::gui_state::GuiKind> {
         if !self.screen.overlay_open() {
             return None;
         }
@@ -489,7 +489,7 @@ impl App {
     pub fn doc_hud_active(&self) -> bool {
         matches!(self.screen, AppScreen::Game | AppScreen::Chat)
             && self.game.is_some()
-            && ui_runtime::AppUi::doc_backed(petramond::gui_state::GuiKind::Hotbar)
+            && ui_runtime::AppUi::doc_backed(petramond_world::gui_state::GuiKind::Hotbar)
     }
 }
 

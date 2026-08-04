@@ -1,8 +1,8 @@
 use super::geometry_arena::{GeometryArena, LayerAlloc};
 use crate::atlas::decode_atlas_mips;
-use petramond::chunk::SectionPos;
+use petramond_world::chunk::SectionPos;
 use petramond_mesh::{ChunkMesh, ContactShadowVertex, ModelVertex, TerrainVertex, Vertex};
-use petramond::texture_mips::build_cutout_mips;
+use petramond_util::texture_mips::build_cutout_mips;
 
 /// Upload a standalone GUI PNG (e.g. the HUD heart atlas) as its own
 /// texture + nearest sampler (sRGB, like the gui atlas). Arbitrary size —
@@ -101,7 +101,7 @@ pub(super) fn create_rgba_nearest(
 
 /// Upload an entity/model RGBA texture (decoded from a `.bbmodel`) as its own GPU
 /// texture + nearest sampler — a SEPARATE atlas from the block atlas, because model
-/// faces carry arbitrary sub-rectangle UVs into this sheet (see `petramond::bbmodel`).
+/// faces carry arbitrary sub-rectangle UVs into this sheet (see `petramond_world::bbmodel`).
 /// Mips use cutout-alpha expansion so thin transparent decals, like the workbench's
 /// tabletop grid, stay stable at distance under the shader's alpha test.
 ///
@@ -259,7 +259,7 @@ pub struct GpuSectionMesh {
     pub contact_vertex_start: u32,
     pub contact_vertex_count: u32,
     /// Fingerprint of the section-local index streams (see
-    /// [`section_index_hash`]). Guards the vertex-only patch path: equal layer
+    /// `section_index_hash`). Guards the vertex-only patch path: equal layer
     /// counts pin every start offset, but NOT the index topology — plant quads
     /// (12 indices per 4 vertices) interleave with inline cube faces in cell
     /// order, and faces migrate between the inline and deferred-greedy
@@ -542,7 +542,7 @@ pub(super) static TERRAIN_SUBALLOCS: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
 /// Growth headroom on a terrain layer buffer: a quarter of its size, but never
-/// more than [`LAYER_HEADROOM_CAP`].
+/// more than `LAYER_HEADROOM_CAP`.
 ///
 /// The headroom exists so a column that remeshes slightly larger writes into
 /// the buffer it already has instead of reallocating on the render thread. That

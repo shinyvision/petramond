@@ -218,7 +218,7 @@ impl BiomeClimateIndex {
 
     /// Build from a flat, ordered list of `(rectangle, biome)` rows. Row order is
     /// the only tiebreak between equal-fitness rectangles, so the caller's ordering
-    /// is preserved verbatim (unlike [`Self::new`], which groups by biome first).
+    /// is preserved verbatim (unlike `Self::new`, which groups by biome first).
     pub fn from_rects(rows: &[(ClimateRect, Biome)]) -> Self {
         let rects = rows
             .iter()

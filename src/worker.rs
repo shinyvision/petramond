@@ -12,9 +12,9 @@
 //! lower = sooner), which share one scale so keys from different stages compare
 //! meaningfully. Ties run FIFO via a submission sequence number.
 
-use crate::chunk::{ChunkPos, SectionPos};
-use crate::section::Section;
-use crate::worldgen::driver::{ChunkGenerator, ColumnGen};
+use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_world::section::Section;
+use petramond_worldgen::driver::{ChunkGenerator, ColumnGen};
 use std::cell::RefCell;
 use std::collections::BinaryHeap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -81,7 +81,7 @@ struct PoolShared {
     seq: AtomicU64,
 }
 
-/// The shared background pool. Owned once per [`World`](crate::world::store::World)
+/// The shared background pool. Owned once per `World`
 /// behind an `Arc`; each stage adapter (gen [`WorkerPool`], mesh, light) holds a clone
 /// and submits closures with a distance-priority key.
 pub struct JobPool {

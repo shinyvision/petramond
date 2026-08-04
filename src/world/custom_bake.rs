@@ -12,8 +12,8 @@
 
 use crate::world::WorldData;
 
-use crate::block::{Block, ShapeFamily};
-use crate::mathh::IVec3;
+use petramond_world::block::{Block, ShapeFamily};
+use petramond_math::math::IVec3;
 
 use super::store::World;
 
@@ -64,11 +64,11 @@ impl World {
     pub fn set_custom_render_bake(
         &mut self,
         pos: IVec3,
-        boxes: Box<[crate::block::ShapeRenderBox]>,
+        boxes: Box<[petramond_world::block::ShapeRenderBox]>,
     ) {
         if let Some((sp, lx, ly, lz)) = WorldData::split_world(pos.x, pos.y, pos.z) {
             if let Some(section) = self.section_mut(sp) {
-                let idx = crate::chunk::section_idx(lx, ly, lz) as u16;
+                let idx = petramond_world::chunk::section_idx(lx, ly, lz) as u16;
                 section.set_shape_render(idx, boxes);
                 // A fresh bake must ALWAYS end in a remesh. The revision bump
                 // above only re-triggers a mesh job already in flight — a
@@ -97,7 +97,7 @@ impl World {
         };
         if let Some((sp, lx, ly, lz)) = WorldData::split_world(pos.x, pos.y, pos.z) {
             if let Some(section) = self.section_mut(sp) {
-                let idx = crate::chunk::section_idx(lx, ly, lz) as u16;
+                let idx = petramond_world::chunk::section_idx(lx, ly, lz) as u16;
                 if section.set_custom_light_aperture(idx, opaque) {
                     self.mark_light_dirty_neighborhood(sp, true);
                 }
@@ -109,7 +109,7 @@ impl World {
     fn clear_custom_light_aperture(&mut self, pos: IVec3) {
         if let Some((sp, lx, ly, lz)) = WorldData::split_world(pos.x, pos.y, pos.z) {
             if let Some(section) = self.section_mut(sp) {
-                let idx = crate::chunk::section_idx(lx, ly, lz) as u16;
+                let idx = petramond_world::chunk::section_idx(lx, ly, lz) as u16;
                 if section.clear_custom_light_aperture(idx) {
                     self.mark_light_dirty_neighborhood(sp, true);
                 }
@@ -120,7 +120,7 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-    use crate::block::Aabb;
+    use petramond_world::block::Aabb;
     use petramond_world::world::custom_bake::intern_boxes;
     use super::*;
 

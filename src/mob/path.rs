@@ -26,7 +26,7 @@ use rustc_hash::FxHashMap;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use crate::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 
 /// Cost of a flat (same-level) step. Costs are integers (scaled ×10 of "one cell")
 /// so the open set can order on a total `Ord` without floats.

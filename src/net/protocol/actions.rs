@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 
 use super::Transform;
 
@@ -54,7 +54,7 @@ pub struct ActionOutcome {
 /// Movement F2: `wishdir` / `jump` / `sprint` / `sneak` are the authoritative
 /// input; the server integrates physics on the fixed tick. `pos`/`vel`/
 /// `on_ground` remain the client's prediction (used for soft comparison / fall
-/// bookkeeping until a hard correct ships via [`SelfTransform`]).
+/// bookkeeping until a hard correct ships via `SelfTransform`).
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlayerUpdate {
     /// The client's predicted transform (see the struct doc).
@@ -166,26 +166,26 @@ pub enum PlayerAction {
     /// Request a survival/spectator toggle (Ctrl+Y). Applied at message time
     /// only when the sending session is an operator; the session's fall
     /// tracker re-anchors so the switch is never measured as a fall. The
-    /// authoritative mode flows back via [`SelfState::mode`].
+    /// authoritative mode flows back via `SelfState::mode`.
     ToggleMode,
     /// The inventory key (E): the server opens the inventory crafting session
-    /// on the next tick and answers with an [`OpenScreen::Gui`] ack carrying
+    /// on the next tick and answers with an `OpenScreen::Gui` ack carrying
     /// the inventory kind (the client's screen is already up).
     OpenInventory,
     CloseMenu,
 }
 
-/// [`crate::gui_state::PointerButton`] on the wire.
-pub fn button_to_wire(button: crate::gui_state::PointerButton) -> u8 {
+/// [`petramond_world::gui_state::PointerButton`] on the wire.
+pub fn button_to_wire(button: petramond_world::gui_state::PointerButton) -> u8 {
     match button {
-        crate::gui_state::PointerButton::Primary => 0,
-        crate::gui_state::PointerButton::Secondary => 1,
+        petramond_world::gui_state::PointerButton::Primary => 0,
+        petramond_world::gui_state::PointerButton::Secondary => 1,
     }
 }
 
-pub fn button_from_wire(button: u8) -> crate::gui_state::PointerButton {
+pub fn button_from_wire(button: u8) -> petramond_world::gui_state::PointerButton {
     match button {
-        0 => crate::gui_state::PointerButton::Primary,
-        _ => crate::gui_state::PointerButton::Secondary,
+        0 => petramond_world::gui_state::PointerButton::Primary,
+        _ => petramond_world::gui_state::PointerButton::Secondary,
     }
 }

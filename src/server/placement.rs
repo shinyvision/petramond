@@ -4,11 +4,11 @@
 //! placement path owes.
 
 use super::game::ServerGame;
-use crate::block::{Aabb, Block, CellPart, ShapeFamily};
+use petramond_world::block::{Aabb, Block, CellPart, ShapeFamily};
 use crate::events::{BlockPlacePre, Outcome, PostEvent, SimCtx};
-use crate::facing::Facing;
+use petramond_math::facing::Facing;
 use crate::events::tick::TickEvents;
-use crate::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 use crate::net::protocol::TargetRef;
 
 impl ServerGame {
@@ -260,7 +260,7 @@ impl ServerGame {
             };
             mods.bake_placement_sim_boxes(&mut ctx, shape_key, shape_kind, input)
         };
-        let boxes: &[crate::block::Aabb] = match &boxes {
+        let boxes: &[petramond_world::block::Aabb] = match &boxes {
             Some(b) => b,
             None => self
                 .world
@@ -276,7 +276,7 @@ impl ServerGame {
         let plan = crate::world::placement::PlacementPlan::single(
             anchor,
             write_block,
-            crate::block::ShapeState::NONE,
+            petramond_world::block::ShapeState::NONE,
         );
         if !self.world.commit_placement(&plan, true) {
             return Some(None);
@@ -303,7 +303,7 @@ impl ServerGame {
         let Some(held) = self.sessions[s].player.inventory.selected() else {
             return;
         };
-        let Some(map) = crate::item::variant::get(held.variant) else {
+        let Some(map) = petramond_world::item::variant::get(held.variant) else {
             return;
         };
         for &key in carry {
@@ -312,7 +312,7 @@ impl ServerGame {
                     anchor.x,
                     anchor.y,
                     anchor.z,
-                    crate::block::part_kv_key(key, part),
+                    petramond_world::block::part_kv_key(key, part),
                     v.clone(),
                 );
             }

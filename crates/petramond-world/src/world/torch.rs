@@ -3,7 +3,7 @@
 //!
 //! A torch never ticks and — unlike a chest — is baked into the chunk mesh rather
 //! than gathered per frame, so this is just thin world↔chunk wrappers for placement
-//! and breaking. Mirrors [`world::chest`](super::chest) minus the GUI/gather paths.
+//! and breaking. Mirrors `world::chest` minus the GUI/gather paths.
 
 use crate::mathh::IVec3;
 use crate::torch::TorchPlacement;
@@ -64,7 +64,7 @@ impl WorldData {
         self.mount_face_complete(support, normal)
     }
 
-    /// The face test behind [`block_supports_torch`](Self::block_supports_torch)
+    /// The face test behind `block_supports_torch`
     /// and [`wall_face_complete`](Self::wall_face_complete): the support
     /// FAMILY answers whether its face toward the mount is complete
     /// (`ShapeSim::full_face` — no family knowledge here); a full-cube face

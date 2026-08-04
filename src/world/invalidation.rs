@@ -4,7 +4,7 @@
 use crate::world::WorldData;
 use rustc_hash::FxHashSet;
 
-use crate::chunk::{self, ChunkPos, SectionPos, SECTION_MIN_CY, SECTION_SIZE};
+use petramond_world::chunk::{self, ChunkPos, SectionPos, SECTION_MIN_CY, SECTION_SIZE};
 
 use super::store::{SkyCoverChange, World, WorldRole};
 

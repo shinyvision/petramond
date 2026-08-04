@@ -12,13 +12,13 @@ use super::{all, def, posed_cube_bounds, BlockDisplay};
 
 /// One cube of a model: an axis-aligned box with a pivot + static rotation and a
 /// per-face UV rect (in `Face::ALL` order; `None` = the face is omitted). The cached
-/// [`BlockModel`] stores these in MODEL space; the runtime [`ModelInstance`] re-stores
+/// [`BlockModel`] stores these in MODEL space; the runtime `ModelInstance` re-stores
 /// them in footprint space with atlas-remapped UVs.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ModelCube {
     /// The authored Blockbench element name — preserved because names carry
     /// per-ROW meaning: a `models.json` row may list `hidden_parts` by name
-    /// (the unlit oven hides its `fire` cube; see [`BlockModel::hide_parts`]).
+    /// (the unlit oven hides its `fire` cube; see `BlockModel::hide_parts`).
     pub name: String,
     pub from: Vec3,
     pub to: Vec3,
@@ -41,7 +41,7 @@ pub struct ModelCube {
 /// A compiled bbmodel block: cubes + the embedded RGBA texture, PLUS the collision
 /// boxes and bounding box BAKED FROM THE GEOMETRY at compile time — all in MODEL space.
 /// The cached, expensive-to-produce parse; placement/render/collision derive from this
-/// (the cheap footprint fit + per-cell split happens at startup, see [`ModelInstance`]).
+/// (the cheap footprint fit + per-cell split happens at startup, see `ModelInstance`).
 #[derive(Serialize, Deserialize)]
 pub struct BlockModel {
     pub cubes: Vec<ModelCube>,

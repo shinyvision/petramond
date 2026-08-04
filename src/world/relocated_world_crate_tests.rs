@@ -10,7 +10,7 @@ mod behavior_dirt {
     use petramond_world::block::behavior::test_shims::dirt::*;
     use crate::world::World;
     
-    use crate::chunk::{Chunk, ChunkPos};
+    use petramond_world::chunk::{Chunk, ChunkPos};
 
     /// A world with one loaded chunk at (0,0). Coords kept a few blocks inside the
     /// 16-wide chunk so a `SPREAD_RADIUS` scan stays within the loaded cell.
@@ -112,7 +112,7 @@ mod behavior_grass {
     use petramond_world::block::behavior::test_shims::grass::*;
     use crate::world::World;
     
-    use crate::chunk::{Chunk, ChunkPos};
+    use petramond_world::chunk::{Chunk, ChunkPos};
 
     fn world_with_chunk() -> World {
         let mut w = World::new(1, 1);
@@ -171,8 +171,8 @@ mod behavior_leaves {
     use petramond_world::block::behavior::test_shims::leaves::*;
     use crate::world::World;
     
-    use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos};
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{Chunk, ChunkPos};
 
     fn world_with_chunk() -> World {
         let mut w = World::new(1, 1);
@@ -297,8 +297,8 @@ mod shape_kind {
     /// `families::collision_is_state_free` — and this is what says so.
     #[test]
     fn collision_state_free_kinds_resolve_identically() {
-        use crate::block::Block;
-        use crate::chunk::ChunkPos;
+        use petramond_world::block::Block;
+        use petramond_world::chunk::ChunkPos;
         let mut world = World::new(0, 1);
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
         // Neighbours that a state-reading family WOULD react to (a fence arm, a
@@ -319,9 +319,9 @@ mod shape_kind {
                 continue;
             };
             for pos in [
-                crate::mathh::IVec3::new(8, 65, 8),
-                crate::mathh::IVec3::new(8, 66, 8),
-                crate::mathh::IVec3::new(3, 70, 12),
+                petramond_math::math::IVec3::new(8, 65, 8),
+                petramond_math::math::IVec3::new(8, 66, 8),
+                petramond_math::math::IVec3::new(3, 70, 12),
             ] {
                 let live = k.sim.collision_boxes(&k.params, &world, pos, block);
                 assert_eq!(
@@ -403,8 +403,8 @@ mod shape_kind {
             sim.light_apertures(
                 &params,
                 &facets::NoNeighborhood,
-                crate::mathh::IVec3::ZERO,
-                crate::block::Block::Air,
+                petramond_math::math::IVec3::ZERO,
+                petramond_world::block::Block::Air,
             )
         };
         // 15/16 tall: fills most of its top octant, seals none of its top face.
@@ -520,7 +520,7 @@ mod shape_kind {
     fn the_uv_turn_undoes_the_shape_turn_on_every_face() {
         use petramond_math::face::Face;
         const FACES: [Face; 6] = Face::ALL;
-        use crate::mesh::plane::cell_uv;
+        use petramond_mesh::plane::cell_uv;
 
         // A cell-local point off-centre on every axis, so no symmetry can hide
         // a mistake.
@@ -538,7 +538,7 @@ mod shape_kind {
                 // face sampled the authored point.
                 let want = cell_uv(FACES[FACE_BEFORE_TURN_N(i, turns)], authored);
                 let [u, v] = cell_uv(face, p);
-                let got = crate::block::ShapeFace::turn_uv(face_uv_turns(i, turns), u, v);
+                let got = petramond_world::block::ShapeFace::turn_uv(face_uv_turns(i, turns), u, v);
                 assert!(
                     (got.0 - want[0]).abs() < 1e-5 && (got.1 - want[1]).abs() < 1e-5,
                     "turn {turns} face {i}: sampled {got:?}, authored {want:?}"
@@ -608,7 +608,7 @@ mod shape_kind {
         assert!(!draws_front(body[0], 1, 0), "back-side face stays side art");
         // ...and that is what the DRAW puts on the face: TWO faces of one box
         // carry the row's `front` tile, which no single turn index can name.
-        let furnace = crate::block::Block::Furnace;
+        let furnace = petramond_world::block::Block::Furnace;
         let front = furnace.front_tile().expect("the furnace row has a front");
         let drawn = families::box_set_box(body[0], 0, furnace, &|_| [1.0; 3]);
         let tile_at = |i: usize| drawn.faces[i].expect("a drawn face").tile;
@@ -718,7 +718,7 @@ mod shape_kind {
         // they were authored in different frames. Reading the cell's turn
         // alone gives both `0` and is the bug this pins.
         let drawn_top = |b: &BoxDef| {
-            families::box_set_box(b, 0, crate::block::Block::Stone, &|_| [1.0; 3]).faces[2]
+            families::box_set_box(b, 0, petramond_world::block::Block::Stone, &|_| [1.0; 3]).faces[2]
                 .expect("a top face")
                 .uv_turns
         };
@@ -969,12 +969,12 @@ mod registry_palette {
     #[test]
     #[ignore = "spawned by dynamic_pack_content_flows_end_to_end with a fixture pack env"]
     fn dynamic_pack_world_inner() {
-        use crate::block::Block;
-        use crate::chunk::{Chunk, ChunkPos};
-        use crate::item::ItemType;
+        use petramond_world::block::Block;
+        use petramond_world::chunk::{Chunk, ChunkPos};
+        use petramond_world::item::ItemType;
 
-        let engine_blocks = crate::block::ENGINE_BLOCK_NAMES.len();
-        let engine_items = crate::item::ENGINE_ITEM_NAMES.len();
+        let engine_blocks = petramond_world::block::ENGINE_BLOCK_NAMES.len();
+        let engine_items = petramond_world::item::ENGINE_ITEM_NAMES.len();
 
         // --- Registration: one fresh id past each engine set, name-addressed. ---
         assert_eq!(Block::all().len(), engine_blocks + 1);
@@ -1024,9 +1024,9 @@ mod registry_palette {
         // An "old" palette written before the mod existed, with a stranger
         // entry so disk ids and runtime ids genuinely diverge.
         std::fs::create_dir_all(&save).unwrap();
-        let mut blocks: Vec<&str> = crate::block::ENGINE_BLOCK_NAMES.to_vec();
+        let mut blocks: Vec<&str> = petramond_world::block::ENGINE_BLOCK_NAMES.to_vec();
         blocks.push("othermod:stranger");
-        let items: Vec<&str> = crate::item::ENGINE_ITEM_NAMES.to_vec();
+        let items: Vec<&str> = petramond_world::item::ENGINE_ITEM_NAMES.to_vec();
         std::fs::write(
             save.join("palette.json"),
             serde_json::json!({ "blocks": blocks, "items": items }).to_string(),
@@ -1060,10 +1060,10 @@ mod world_fence {
     #[allow(unused_imports)]
     use petramond_world::world::fence::test_exports::*;
     
-    use crate::block::Block;
-    use crate::block_state::{SlabSplit, StairHalf, StairState};
-    use crate::chunk::{Chunk, ChunkPos};
-    use crate::facing::Facing;
+    use petramond_world::block::Block;
+    use petramond_world::block_state::{SlabSplit, StairHalf, StairState};
+    use petramond_world::chunk::{Chunk, ChunkPos};
+    use petramond_math::facing::Facing;
 
     fn world() -> World {
         let mut w = World::new(0, 4);
@@ -1082,13 +1082,13 @@ mod world_fence {
 
         w.set_block_world(7, 64, 8, Block::Stone);
         w.set_block_world(9, 64, 8, Block::OakFence);
-        assert_eq!(w.fence_mask_at(p), crate::pane::WEST | crate::pane::EAST);
+        assert_eq!(w.fence_mask_at(p), petramond_world::pane::WEST | petramond_world::pane::EAST);
 
         w.set_block_world(7, 64, 8, Block::OakLeaves);
         w.set_block_world(8, 64, 9, Block::Glass);
         assert_eq!(
             w.fence_mask_at(p),
-            crate::pane::EAST,
+            petramond_world::pane::EAST,
             "transparent blocks must not grow fence arms"
         );
     }
@@ -1106,7 +1106,7 @@ mod world_fence {
             Block::OakStairs,
             StairState::new(Facing::East, StairHalf::Bottom),
         ));
-        assert_eq!(w.fence_mask_at(p), crate::pane::EAST);
+        assert_eq!(w.fence_mask_at(p), petramond_world::pane::EAST);
 
         // Stair west of the fence, also facing east: its open side faces the fence.
         assert!(w.place_stair(
@@ -1114,7 +1114,7 @@ mod world_fence {
             Block::OakStairs,
             StairState::new(Facing::East, StairHalf::Bottom),
         ));
-        assert_eq!(w.fence_mask_at(p), crate::pane::EAST);
+        assert_eq!(w.fence_mask_at(p), petramond_world::pane::EAST);
     }
 
     #[test]
@@ -1125,14 +1125,14 @@ mod world_fence {
         // the cell must hold the block whose state the cascade maintains.
         assert!(w.set_block_world(p.x, p.y, p.z, Block::OakFence));
         let n = IVec3::new(8, 64, 7);
-        let slot = |index| crate::slab::SlabSlot {
+        let slot = |index| petramond_world::slab::SlabSlot {
             split: SlabSplit::Y,
             index,
         };
         assert!(w.place_slab_layer(n, Block::OakSlab, slot(0)));
         assert_eq!(w.fence_mask_at(p), 0, "a single slab is not a full face");
         assert!(w.place_slab_layer(n, Block::OakSlab, slot(1)));
-        assert_eq!(w.fence_mask_at(p), crate::pane::NORTH);
+        assert_eq!(w.fence_mask_at(p), petramond_world::pane::NORTH);
     }
 }
 
@@ -1142,7 +1142,7 @@ mod world_ladder {
     #[allow(unused_imports)]
     use petramond_world::world::ladder::test_exports::*;
     
-    use crate::chunk::{Chunk, ChunkPos};
+    use petramond_world::chunk::{Chunk, ChunkPos};
 
     fn world() -> World {
         let mut w = World::new(0, 4);
@@ -1155,7 +1155,7 @@ mod world_ladder {
         let mut w = world();
         let ladder = IVec3::new(8, 64, 8);
         // An east-facing ladder hangs on the wall to its west.
-        let wall = crate::ladder::support_cell(ladder, Facing::East);
+        let wall = petramond_world::ladder::support_cell(ladder, Facing::East);
         assert!(
             !w.ladder_supported_at(ladder, Facing::East),
             "no wall, no support"
@@ -1172,7 +1172,7 @@ mod world_ladder {
         let p = IVec3::new(8, 64, 8);
         w.set_block_world(p.x, p.y, p.z, Block::LadderEast);
         let boxes = w.collision_boxes_at(p.x, p.y, p.z);
-        assert_eq!(boxes, crate::ladder::collision_boxes(Facing::East));
+        assert_eq!(boxes, petramond_world::ladder::collision_boxes(Facing::East));
         // The panel is thin, standable geometry hugging the wall side — not a
         // full cube and not empty (a body bumps it and can stand on top).
         assert_eq!(boxes.len(), 1);
@@ -1186,14 +1186,14 @@ mod world_ladder {
         use crate::world::placement::PlacementPlan;
         let mut w = world();
         let p = IVec3::new(8, 64, 8);
-        let wall = crate::ladder::support_cell(p, Facing::East);
+        let wall = petramond_world::ladder::support_cell(p, Facing::East);
         w.set_block_world(wall.x, wall.y, wall.z, Block::Stone);
         // The ladder family's plan resolves the held (base) row to the facing
         // sibling; the commit is the generic write path.
         let plan = PlacementPlan::single(
             p,
             Block::Ladder.wall_panel_row(Facing::East),
-            crate::block::ShapeState::NONE,
+            petramond_world::block::ShapeState::NONE,
         );
         assert!(w.commit_placement(&plan, true));
         assert_eq!(
@@ -1224,16 +1224,16 @@ mod world_ladder {
 
 #[cfg(test)]
 mod light_batch {
-    use crate::chunk::SECTION_VOLUME;
+    use petramond_world::chunk::SECTION_VOLUME;
 
     use crate::world::light::{run_light_bake, LightBakeJob};
     #[allow(unused_imports)]
     use petramond_world::world::light::batch::test_exports::*;
     
-    use crate::block::Block;
-    use crate::block_state::{StairHalf, StairState};
-    use crate::facing::Facing;
-    use crate::torch::TorchPlacement;
+    use petramond_world::block::Block;
+    use petramond_world::block_state::{StairHalf, StairState};
+    use petramond_math::facing::Facing;
+    use petramond_world::torch::TorchPlacement;
 
     fn xorshift(state: &mut u64) -> u64 {
         *state ^= *state << 13;
@@ -1310,7 +1310,7 @@ mod light_batch {
                     let mut col = Column::new();
                     for lz in 0..SECTION_SIZE {
                         for lx in 0..SECTION_SIZE {
-                            let mut cover = crate::column::NO_SURFACE;
+                            let mut cover = petramond_world::column::NO_SURFACE;
                             'scan: for dy in (0..SPAN).rev() {
                                 let pos =
                                     SectionPos::new(dcx as i32 - 1, dy as i32 - 1, dcz as i32 - 1);
@@ -1363,7 +1363,7 @@ mod light_batch {
             ) {
                 for i in 0..SECTION_VOLUME {
                     if got[i] != want[i] {
-                        let (lx, ly, lz) = crate::chunk::section_local(i);
+                        let (lx, ly, lz) = petramond_world::chunk::section_local(i);
                         panic!(
                             "{label} mismatch at {pos:?} cell ({lx},{ly},{lz}) in round \
                              {round}: batched {:?} vs per-section {:?}",
@@ -1395,10 +1395,10 @@ mod world_pane {
     #[allow(unused_imports)]
     use petramond_world::world::pane::test_exports::*;
     
-    use crate::block::Block;
-    use crate::block_state::{SlabSplit, StairHalf, StairState};
-    use crate::chunk::{Chunk, ChunkPos};
-    use crate::facing::Facing;
+    use petramond_world::block::Block;
+    use petramond_world::block_state::{SlabSplit, StairHalf, StairState};
+    use petramond_world::chunk::{Chunk, ChunkPos};
+    use petramond_math::facing::Facing;
 
     fn world() -> World {
         let mut w = World::new(0, 4);
@@ -1417,13 +1417,13 @@ mod world_pane {
 
         w.set_block_world(7, 64, 8, Block::Stone);
         w.set_block_world(9, 64, 8, Block::GlassPane);
-        assert_eq!(w.pane_mask_at(p), crate::pane::WEST | crate::pane::EAST);
+        assert_eq!(w.pane_mask_at(p), petramond_world::pane::WEST | petramond_world::pane::EAST);
 
         w.set_block_world(8, 64, 7, Block::Chest);
         w.set_block_world(8, 64, 9, Block::Cactus);
         assert_eq!(
             w.pane_mask_at(p),
-            crate::pane::WEST | crate::pane::EAST,
+            petramond_world::pane::WEST | petramond_world::pane::EAST,
             "no_pane_connect blocks must not add arms"
         );
     }
@@ -1441,7 +1441,7 @@ mod world_pane {
             Block::OakStairs,
             StairState::new(Facing::East, StairHalf::Bottom),
         ));
-        assert_eq!(w.pane_mask_at(p), crate::pane::EAST);
+        assert_eq!(w.pane_mask_at(p), petramond_world::pane::EAST);
 
         // Stair west of the pane, also facing east: its open side faces the pane.
         assert!(w.place_stair(
@@ -1449,7 +1449,7 @@ mod world_pane {
             Block::OakStairs,
             StairState::new(Facing::East, StairHalf::Bottom),
         ));
-        assert_eq!(w.pane_mask_at(p), crate::pane::EAST);
+        assert_eq!(w.pane_mask_at(p), petramond_world::pane::EAST);
     }
 
     #[test]
@@ -1460,14 +1460,14 @@ mod world_pane {
         // the cell must hold the block whose state the cascade maintains.
         assert!(w.set_block_world(p.x, p.y, p.z, Block::GlassPane));
         let n = IVec3::new(8, 64, 7);
-        let slot = |index| crate::slab::SlabSlot {
+        let slot = |index| petramond_world::slab::SlabSlot {
             split: SlabSplit::Y,
             index,
         };
         assert!(w.place_slab_layer(n, Block::OakSlab, slot(0)));
         assert_eq!(w.pane_mask_at(p), 0, "a single slab is not a full face");
         assert!(w.place_slab_layer(n, Block::OakSlab, slot(1)));
-        assert_eq!(w.pane_mask_at(p), crate::pane::NORTH);
+        assert_eq!(w.pane_mask_at(p), petramond_world::pane::NORTH);
     }
 }
 
@@ -1477,10 +1477,10 @@ mod world_torch {
     #[allow(unused_imports)]
     use petramond_world::world::torch::test_exports::*;
     
-    use crate::block::Block;
-    use crate::block_state::{SlabSplit, StairHalf, StairState};
-    use crate::chunk::{Chunk, ChunkPos};
-    use crate::facing::Facing;
+    use petramond_world::block::Block;
+    use petramond_world::block_state::{SlabSplit, StairHalf, StairState};
+    use petramond_world::chunk::{Chunk, ChunkPos};
+    use petramond_math::facing::Facing;
 
     fn world() -> World {
         let mut w = World::new(0, 4);
@@ -1512,7 +1512,7 @@ mod world_torch {
         assert!(w.place_slab_layer(
             slab,
             Block::DirtSlab,
-            crate::slab::SlabSlot {
+            petramond_world::slab::SlabSlot {
                 split: SlabSplit::Y,
                 index: 0,
             }
@@ -1575,7 +1575,7 @@ mod world_torch {
             assert!(w.place_slab_layer(
                 slab,
                 block,
-                crate::slab::SlabSlot {
+                petramond_world::slab::SlabSlot {
                     split: SlabSplit::Y,
                     index,
                 }

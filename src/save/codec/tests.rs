@@ -1,9 +1,9 @@
 use super::*;
-use crate::block::Block;
-use crate::block_state::{LogAxis, SlabSplit, SlabState, StairState};
-use crate::facing::Facing;
-use crate::item::{ItemStack, ItemType};
-use crate::mathh::Vec3;
+use petramond_world::block::Block;
+use petramond_world::block_state::{LogAxis, SlabSplit, SlabState, StairState};
+use petramond_math::facing::Facing;
+use petramond_world::item::{ItemStack, ItemType};
+use petramond_math::math::Vec3;
 
 fn sec(cx: i32, cy: i32, cz: i32) -> Section {
     Section::new(cx, cy, cz)
@@ -32,8 +32,8 @@ fn baked_light_persists_only_when_clean_and_roundtrips() {
     let sky: Vec<u8> = (0..SECTION_VOLUME).map(|i| (i % 16) as u8).collect();
     // A COLOURED cell, so the record must carry all three channels through
     // the widened blob rather than a luminance.
-    let mut bl = vec![crate::light::LightRgb::ZERO; SECTION_VOLUME];
-    bl[100] = crate::light::LightRgb::new(9, 2, 30);
+    let mut bl = vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME];
+    bl[100] = petramond_world::light::LightRgb::new(9, 2, 30);
     s.set_skylight(Arc::from(sky.clone().into_boxed_slice()));
     s.set_blocklight(Arc::from(bl.clone().into_boxed_slice()));
     let rec = encode_snapshot(&SectionSnapshot::from_section(&s));
@@ -134,24 +134,24 @@ fn section_record_roundtrips_mobs() {
 
 #[test]
 fn section_record_roundtrips_furnaces() {
-    use crate::furnace::{FURNACE_SLOTS, SLOT_FUEL, SLOT_INPUT};
+    use petramond_world::furnace::{FURNACE_SLOTS, SLOT_FUEL, SLOT_INPUT};
     let mut s = sec(1, 4, 1);
     s.set_block(2, 1, 3, Block::Furnace);
     s.insert_furnace(
         2,
         1,
         3,
-        crate::furnace::Furnace {
+        petramond_world::furnace::Furnace {
             cook_progress: 200,
             burn_remaining: 1000,
             burn_max: 4800,
         },
     );
-    let mut container = crate::container::Container::with_len(FURNACE_SLOTS);
+    let mut container = petramond_world::container::Container::with_len(FURNACE_SLOTS);
     container.slots[SLOT_INPUT] = Some(ItemStack::new(ItemType::RawCopper, 12));
     container.slots[SLOT_FUEL] = Some(ItemStack::new(ItemType::Coal, 1));
     s.insert_container(2, 1, 3, container);
-    s.insert_entity_facing(2, 1, 3, crate::facing::Facing::West);
+    s.insert_entity_facing(2, 1, 3, petramond_math::facing::Facing::West);
 
     let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
     let (back, _entities, _mobs) =
@@ -170,7 +170,7 @@ fn section_record_roundtrips_furnaces() {
     assert_eq!(c.slots[SLOT_FUEL], Some(ItemStack::new(ItemType::Coal, 1)));
     assert_eq!(
         back.entity_facing(2, 1, 3),
-        crate::facing::Facing::West,
+        petramond_math::facing::Facing::West,
         "facing persists"
     );
 }
@@ -183,9 +183,9 @@ fn foreign_state_bytes_never_decode_through_another_blocks_reader() {
     // identity) reads as the default, not as a front.
     let mut s = sec(0, 4, 0);
     s.set_block(3, 3, 3, Block::Ladder);
-    s.insert_entity_facing(3, 3, 3, crate::facing::Facing::East);
+    s.insert_entity_facing(3, 3, 3, petramond_math::facing::Facing::East);
     s.set_block(5, 3, 3, Block::Chest);
-    s.insert_entity_facing(5, 3, 3, crate::facing::Facing::South);
+    s.insert_entity_facing(5, 3, 3, petramond_math::facing::Facing::South);
 
     let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
     let (back, _entities, _mobs) =
@@ -194,17 +194,17 @@ fn foreign_state_bytes_never_decode_through_another_blocks_reader() {
     assert_eq!(back.block_raw(3, 3, 3), Block::Ladder.id());
     assert_eq!(
         back.entity_facing(3, 3, 3),
-        crate::facing::Facing::North,
+        petramond_math::facing::Facing::North,
         "a non-directional block's facing read answers the default"
     );
     assert_eq!(
         back.stair_state(5, 3, 3),
-        crate::block_state::StairState::default(),
+        petramond_world::block_state::StairState::default(),
         "a chest's facing byte never decodes as a stair state"
     );
     assert_eq!(
         back.entity_facing(5, 3, 3),
-        crate::facing::Facing::South,
+        petramond_math::facing::Facing::South,
         "genuine chest fronts persist"
     );
 }
@@ -213,11 +213,11 @@ fn foreign_state_bytes_never_decode_through_another_blocks_reader() {
 fn section_record_roundtrips_chests() {
     let mut s = sec(4, 4, -2);
     s.set_block(9, 2, 1, Block::Chest);
-    let mut chest = crate::container::Container::with_len(crate::world::chest::CHEST_SLOTS);
+    let mut chest = petramond_world::container::Container::with_len(crate::world::chest::CHEST_SLOTS);
     chest.slots[0] = Some(ItemStack::new(ItemType::Stone, 64));
     chest.slots[26] = Some(ItemStack::new(ItemType::OakLog, 5));
     s.insert_container(9, 2, 1, chest);
-    s.insert_entity_facing(9, 2, 1, crate::facing::Facing::South);
+    s.insert_entity_facing(9, 2, 1, petramond_math::facing::Facing::South);
 
     let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
     let (back, _entities, _mobs) =
@@ -230,14 +230,14 @@ fn section_record_roundtrips_chests() {
     assert_eq!(got.slots[5], None);
     assert_eq!(
         back.entity_facing(9, 2, 1),
-        crate::facing::Facing::South,
+        petramond_math::facing::Facing::South,
         "facing persists"
     );
 }
 
 #[test]
 fn section_record_roundtrips_torches() {
-    use crate::torch::TorchPlacement;
+    use petramond_world::torch::TorchPlacement;
     let mut s = sec(6, 4, 6);
     s.set_block(3, 3, 4, Block::Torch);
     s.insert_torch(3, 3, 4, TorchPlacement::East);
@@ -299,8 +299,8 @@ fn section_record_roundtrips_model_cells() {
 fn section_record_roundtrips_doors() {
     // A placed door's facing + open + which-half state must reload exactly. State is
     // set AFTER the block.
-    use crate::door::DoorState;
-    use crate::facing::Facing;
+    use petramond_world::door::DoorState;
+    use petramond_math::facing::Facing;
     let mut s = sec(3, 4, 7);
     s.set_block(4, 0, 5, Block::OakDoor);
     s.set_door_state(
@@ -357,7 +357,7 @@ fn section_record_roundtrips_stair_states() {
         9,
         5,
         1,
-        StairState::new(Facing::South, crate::block_state::StairHalf::Top),
+        StairState::new(Facing::South, petramond_world::block_state::StairHalf::Top),
     );
 
     let blob = encode_snapshot(&SectionSnapshot::from_section(&s));
@@ -369,7 +369,7 @@ fn section_record_roundtrips_stair_states() {
     assert_eq!(back.block_raw(9, 5, 1), Block::StoneStairs.id());
     assert_eq!(
         back.stair_state(9, 5, 1),
-        StairState::new(Facing::South, crate::block_state::StairHalf::Top)
+        StairState::new(Facing::South, petramond_world::block_state::StairHalf::Top)
     );
     assert_eq!(back.stair_state(0, 0, 0), StairState::default());
 }
@@ -501,7 +501,7 @@ fn the_record_block_cube_carries_ids_past_one_byte() {
     let pal = crate::save::palette::Palette::identity();
     let roundtrip = |ids: &[u16]| {
         let mut buf = Vec::new();
-        put_block_cube(&mut buf, &crate::section::BlockCube::from_ids(ids), &pal);
+        put_block_cube(&mut buf, &petramond_world::section::BlockCube::from_ids(ids), &pal);
         let mut r = Reader::new(&buf);
         let back = get_block_cube(&mut r, &pal).expect("cube decodes");
         assert_eq!(&back[..], ids);
@@ -548,13 +548,13 @@ fn a_high_id_survives_the_whole_section_record() {
     s.set_block_raw(1, 2, 3, HIGH_A);
     s.set_block_raw(4, 5, 6, HIGH_B);
     s.set_block(7, 8, 9, Block::Stone);
-    let [a_lo, a_hi] = crate::block::ShapeState::id_bytes(HIGH_A);
-    let [b_lo, b_hi] = crate::block::ShapeState::id_bytes(HIGH_B);
+    let [a_lo, a_hi] = petramond_world::block::ShapeState::id_bytes(HIGH_A);
+    let [b_lo, b_hi] = petramond_world::block::ShapeState::id_bytes(HIGH_B);
     s.set_cell_state(
         1,
         2,
         3,
-        crate::block::ShapeState::with_ids(&[0b0111, a_lo, a_hi, b_lo, b_hi], 0b0_1010),
+        petramond_world::block::ShapeState::with_ids(&[0b0111, a_lo, a_hi, b_lo, b_hi], 0b0_1010),
     );
 
     // Explicit identity palette, for the same reason as the cube test above:
@@ -569,7 +569,7 @@ fn a_high_id_survives_the_whole_section_record() {
     assert_eq!(back.block_raw(7, 8, 9), Block::Stone.id());
     let state = back
         .cell_states()
-        .get(&(crate::chunk::section_idx(1, 2, 3) as u16))
+        .get(&(petramond_world::chunk::section_idx(1, 2, 3) as u16))
         .copied()
         .expect("cell state persisted");
     assert_eq!(

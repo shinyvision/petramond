@@ -3,7 +3,7 @@
 //! matches are exhaustive on the WINIT side, so a winit upgrade that adds or
 //! renames variants fails to compile right here.
 
-use petramond::keycode::{KeyCode, MouseButton};
+use petramond_world::keycode::{KeyCode, MouseButton};
 
 /// A winit physical key code as the engine's key identity.
 pub fn key_code(code: winit::keyboard::KeyCode) -> Option<KeyCode> {
@@ -421,7 +421,7 @@ pub fn mouse_button(b: winit::event::MouseButton) -> MouseButton {
     }
 }
 
-use petramond::controls::TextKey;
+use petramond_world::controls::TextKey;
 
 pub fn text_key_from_named(key: &winit::keyboard::NamedKey) -> Option<TextKey> {
     use winit::keyboard::NamedKey;

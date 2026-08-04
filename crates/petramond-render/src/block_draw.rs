@@ -15,7 +15,7 @@
 
 use glam::{Mat4, Vec3};
 
-use petramond::item::ItemRenderKind;
+use petramond_world::item::ItemRenderKind;
 use petramond_math::face::Face;
 use petramond_mesh::Vertex;
 use crate::BlockDrawInstance;

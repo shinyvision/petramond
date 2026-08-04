@@ -1,6 +1,6 @@
 //! TCP frame codec: `[u32 LE len][u8 flags][body]`,
 //! body = postcard. Flag bit 0 marks a zlib-compressed body — applied when the
-//! serialized body exceeds [`COMPRESS_MIN`] and compression actually shrinks
+//! serialized body exceeds `COMPRESS_MIN` and compression actually shrinks
 //! it (terrain `SectionData`/`ColumnData` mainly; tick batches stay raw).
 //!
 //! Frames are bounded by [`MAX_FRAME`] in BOTH directions and on BOTH sides of
@@ -123,7 +123,7 @@ mod tests {
     fn large_section_payloads_ship_zlib_compressed_and_roundtrip() {
         let blocks: Vec<u16> = (0..4096u32).map(|i| (i / 512) as u16).collect();
         let msg = ServerToClient::SectionData(Box::new(crate::net::protocol::SectionPayload {
-            pos: crate::chunk::SectionPos::new(1, 4, -2),
+            pos: petramond_world::chunk::SectionPos::new(1, 4, -2),
             blocks: SectionBlocks(std::sync::Arc::from(blocks.into_boxed_slice())),
             metrics: Default::default(),
             water: None,

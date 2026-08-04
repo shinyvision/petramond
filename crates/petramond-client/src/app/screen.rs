@@ -34,11 +34,11 @@ pub(super) enum AppScreen {
     /// mod GUIs, one screen variant for all of them. Carries which registered
     /// kind it draws; the open server session (`ContainerTarget`) speaks the
     /// same kind.
-    Menu(petramond::gui_state::GuiKind),
+    Menu(petramond_world::gui_state::GuiKind),
     /// A presentation-only client mod document. It releases the cursor and
     /// receives client-WASM UI events while the replicated world keeps
     /// running; no server menu session exists.
-    ClientModGui(petramond::gui_state::GuiKind),
+    ClientModGui(petramond_world::gui_state::GuiKind),
     /// A presentation-only client mod's centered physical-pixel canvas. The
     /// concrete owner/image lives in `App::client_canvas`; this screen gates
     /// gameplay and releases the cursor without selecting a GUI document.
@@ -94,7 +94,7 @@ impl AppScreen {
     #[inline]
     #[cfg(test)]
     pub(super) fn inventory_open(self) -> bool {
-        self == AppScreen::Menu(petramond::gui_state::GuiKind::Inventory)
+        self == AppScreen::Menu(petramond_world::gui_state::GuiKind::Inventory)
     }
 
     /// A gameplay overlay screen is up (sleep fade / death): the document UI
@@ -126,8 +126,8 @@ impl AppScreen {
     /// HUD (gameplay). The single source of "which screen" for the data-driven
     /// GUI — it selects the document the runtime draws and hit-tests.
     #[inline]
-    pub(super) fn gui_kind(self) -> petramond::gui_state::GuiKind {
-        use petramond::gui_state::GuiKind;
+    pub(super) fn gui_kind(self) -> petramond_world::gui_state::GuiKind {
+        use petramond_world::gui_state::GuiKind;
         match self {
             AppScreen::Game => GuiKind::Hotbar,
             AppScreen::Chat => GuiKind::Hotbar,

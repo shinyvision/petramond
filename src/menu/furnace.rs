@@ -1,6 +1,6 @@
 //! Gauge state published by an open container's block entity.
 //!
-//! A machine's slots ride the generic [`SlotSpec`](crate::container::SlotSpec)
+//! A machine's slots ride the generic [`SlotSpec`](petramond_world::container::SlotSpec)
 //! path in [`super::generic`] like every other container's. What a machine
 //! additionally has is READINGS — the furnace's cook arrow and burn flame —
 //! and those ship as ordinary named GUI-state values, the same channel a
@@ -27,7 +27,7 @@ impl ContainerMenu {
         vec![
             (
                 "cook01".to_string(),
-                f.cook_progress as f32 / crate::furnace::COOK_TICKS as f32,
+                f.cook_progress as f32 / petramond_world::furnace::COOK_TICKS as f32,
             ),
             (
                 "burn01".to_string(),

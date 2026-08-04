@@ -25,7 +25,7 @@ use petramond_text::tiny as ui_text;
 pub(super) fn push_slot_icon(
     build: &mut UiBuild,
     _screen: (u32, u32),
-    stack: &petramond::item::ItemStack,
+    stack: &petramond_world::item::ItemStack,
     r: SlotRect,
 ) {
     build
@@ -36,15 +36,15 @@ pub(super) fn push_slot_icon(
 /// Whether the stack's icon should draw from its DYED atlas cell (the twin
 /// baked off the dye-base tiles, one per ITEM — never per variant) — exactly
 /// when a tint multiply applies.
-pub(super) fn stack_dyed(stack: &petramond::item::ItemStack) -> bool {
-    petramond::item::variant::tint(stack.variant).is_some()
+pub(super) fn stack_dyed(stack: &petramond_world::item::ItemStack) -> bool {
+    petramond_world::item::variant::tint(stack.variant).is_some()
 }
 
 /// The quad multiply color for a stack's icon: its `petramond:tint` instance
 /// data, or white. The COLOR applies at draw on the quad, so a thousand tints
 /// share the item's two baked cells (base + dye-base twin).
-pub(super) fn stack_tint(stack: &petramond::item::ItemStack) -> [f32; 4] {
-    match petramond::item::variant::tint(stack.variant) {
+pub(super) fn stack_tint(stack: &petramond_world::item::ItemStack) -> [f32; 4] {
+    match petramond_world::item::variant::tint(stack.variant) {
         Some([r, g, b]) => [r, g, b, 1.0],
         None => [1.0; 4],
     }
@@ -125,21 +125,21 @@ pub fn iso_icon_mvp(screen: (u32, u32), r: SlotRect) -> Mat4 {
 /// Blockbench's handedness is applied separately in [`icon_mvp_for_rot`] (the negative
 /// X scale). NOTE: the first-person hand context does NOT mirror its euler — see
 /// `render::hand::held_model`.
-fn gui_rotation(kind: petramond::block_model::BlockModelKind) -> glam::Quat {
-    let r = petramond::block_model::display(kind).gui.rotation;
+fn gui_rotation(kind: petramond_world::block_model::BlockModelKind) -> glam::Quat {
+    let r = petramond_world::block_model::display(kind).gui.rotation;
     glam::Quat::from_rotation_y(std::f32::consts::PI)
-        * petramond::bbmodel::euler_quat(Vec3::new(r[0], -r[1], -r[2]))
+        * petramond_world::bbmodel::euler_quat(Vec3::new(r[0], -r[1], -r[2]))
 }
 
 /// Icon MVP for a bbmodel block: the authored Blockbench `display.gui` pose mapped through
-/// [`gui_rotation`] into our icon camera, auto-framed to fill ~0.9 of the slot (square on
+/// `gui_rotation` into our icon camera, auto-framed to fill ~0.9 of the slot (square on
 /// screen at any aspect, like [`iso_icon_mvp`]). `build_block_model_icon` bakes it into
 /// the geometry; the model-icon pass depth-tests so panels/drawers order correctly.
 /// Called by the one-time icon-atlas bake (with a 64×64 square cell `r`).
 pub fn model_icon_mvp(
     screen: (u32, u32),
     r: SlotRect,
-    kind: petramond::block_model::BlockModelKind,
+    kind: petramond_world::block_model::BlockModelKind,
 ) -> Mat4 {
     icon_mvp_for_rot(screen, r, kind, gui_rotation(kind))
 }
@@ -149,7 +149,7 @@ pub fn model_icon_mvp(
 fn icon_mvp_for_rot(
     screen: (u32, u32),
     r: SlotRect,
-    kind: petramond::block_model::BlockModelKind,
+    kind: petramond_world::block_model::BlockModelKind,
     rot_quat: glam::Quat,
 ) -> Mat4 {
     let center = slot_ndc_center(screen, r);
@@ -157,10 +157,10 @@ fn icon_mvp_for_rot(
     let rot = Mat4::from_quat(rot_quat);
     // The model's centred-unit bounds (matching `build_block_model_icon`'s centring:
     // subtract the footprint centre, divide by the largest footprint axis).
-    let fp = petramond::block_model::footprint(kind);
+    let fp = petramond_world::block_model::footprint(kind);
     let fpv = Vec3::new(fp[0] as f32, fp[1] as f32, fp[2] as f32);
     let span = fpv.max_element().max(1.0);
-    let (bmn, bmx) = petramond::block_model::outline_bounds(kind);
+    let (bmn, bmx) = petramond_world::block_model::outline_bounds(kind);
     // Frame about the GEOMETRY centre, not the footprint centre: a model whose
     // silhouette overhangs its footprint (`fit: native` — the chair backrest,
     // the miller tray) otherwise pivots around a point off its visual centre
@@ -289,7 +289,7 @@ mod tests {
     /// by playtest).
     #[test]
     fn model_icon_bakes_the_real_model_into_the_slot() {
-        use petramond::block_model::BlockModelKind;
+        use petramond_world::block_model::BlockModelKind;
         let screen = (1280u32, 720u32);
         let r = slot_rect(0, screen, false, gui_scale(screen)).unwrap();
         let kind = BlockModelKind::FurnitureWorkbench;
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     #[ignore = "visual preview harness; run explicitly to regenerate /tmp/model_icon.png"]
     fn render_model_icon_preview() {
-        use petramond::block_model::{self, BlockModelKind};
+        use petramond_world::block_model::{self, BlockModelKind};
         use glam::Quat;
 
         let (atlas_rgba, aw, ah) = block_model::atlas().texture();

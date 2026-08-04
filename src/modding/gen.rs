@@ -40,9 +40,9 @@ use std::sync::Arc;
 use mod_api::{GuestCall, GuestRet, WorldgenStage};
 use wasmtime::Module;
 
-use crate::biome::BIOME_COUNT;
-use crate::block::Block;
-use crate::chunk::{SEA_LEVEL, SECTION_VOLUME};
+use petramond_world::biome::BIOME_COUNT;
+use petramond_world::block::Block;
+use petramond_world::chunk::{SEA_LEVEL, SECTION_VOLUME};
 
 use super::host::Registration;
 use super::instance::ModInstance;
@@ -552,8 +552,8 @@ pub fn installed_epoch() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunk::SectionPos;
-    use crate::worldgen::driver::ChunkGenerator;
+    use petramond_world::chunk::SectionPos;
+    use petramond_worldgen::driver::ChunkGenerator;
 
     /// A minimal guest whose init succeeds and whose every dispatch traps —
     /// the "runaway/broken gen mod" for the fallback contract.

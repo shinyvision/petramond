@@ -1,6 +1,6 @@
 use super::collision::Axis;
 use super::state::{Input, Player, HALF_W};
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 use crate::world::World;
 
 pub(super) const WALK: f32 = 4.3;
@@ -21,7 +21,7 @@ pub const TERMINAL: f32 = 30.0;
 /// rather than stopping dead — firmer than the air, but still a slide, not a snap.
 pub(super) const GROUND_FRICTION: f32 = 0.2;
 /// Horizontal friction while idle on SLIPPERY ground (ice, packed ice — the
-/// [`BlockTag::SLIPPERY`](crate::block::BlockTag::SLIPPERY) rows): a tenth of
+/// [`BlockTag::SLIPPERY`](petramond_world::block::BlockTag::SLIPPERY) rows): a tenth of
 /// the ordinary ground decay, so momentum carries and a walk-off glides.
 pub(super) const ICE_FRICTION: f32 = 0.02;
 /// Ground acceleration on slippery ground: the whole "walking on ice" feel is
@@ -138,7 +138,7 @@ impl Player {
     /// take a climb-out boost like a block ledge grants — and since a deck
     /// sits higher above the waterline than a block ledge, the caller derives
     /// the boost from this returned height.
-    fn deck_ahead(&self, dir: Vec3, obstacles: &[crate::collision::DynBox]) -> Option<f32> {
+    fn deck_ahead(&self, dir: Vec3, obstacles: &[petramond_world::collision::DynBox]) -> Option<f32> {
         let d = Vec3::new(dir.x, 0.0, dir.z);
         if d.length_squared() <= 1e-12 {
             return None;
@@ -194,7 +194,7 @@ impl Player {
         self.update_with_obstacles(dt, world, input, &[]);
     }
 
-    /// [`update`](Self::update) that also resolves against dynamic collision
+    /// `update` that also resolves against dynamic collision
     /// boxes — solid entities (a boat's hull): the body walks into them and
     /// stops, lands on them and stands. The DRIVERS supply the boxes because
     /// the sources differ by side: the server reads its live mob instances,
@@ -204,7 +204,7 @@ impl Player {
         dt: f32,
         world: &World,
         input: Input,
-        obstacles: &[crate::collision::DynBox],
+        obstacles: &[petramond_world::collision::DynBox],
     ) {
         // Position-aware so a multi-cell bbmodel block collides per its own cell shape.
         let boxes = |x: i32, y: i32, z: i32| world.collision_boxes_at(x, y, z);
@@ -292,9 +292,9 @@ impl Player {
         let still_water = |_: Vec3| Vec3::ZERO;
         let boxes = |x: i32, y: i32, z: i32| {
             if solid(x, y, z) {
-                crate::block::Block::Stone
+                petramond_world::block::Block::Stone
             } else {
-                crate::block::Block::Air
+                petramond_world::block::Block::Air
             }
             .collision_boxes()
         };
@@ -311,9 +311,9 @@ impl Player {
         climb: &L,
         slippery: &S,
         input: Input,
-        obstacles: &[crate::collision::DynBox],
+        obstacles: &[petramond_world::collision::DynBox],
     ) where
-        F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
+        F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
         W: Fn(i32, i32, i32) -> bool,
         C: Fn(Vec3) -> Vec3,
         L: Fn(i32, i32, i32) -> Option<crate::world::Climb>,
@@ -417,7 +417,7 @@ impl Player {
             //   against, so jump is its only ascent — pressing a compass
             //   direction must do nothing, which is why the grip carries the
             //   DECLARED facing rather than `Block::panel_facing`'s North default.
-            let into_wall = |facing: crate::facing::Facing| {
+            let into_wall = |facing: petramond_math::facing::Facing| {
                 let d = facing.dir();
                 -(input.wishdir.x * d.x as f32 + input.wishdir.z * d.z as f32)
             };
@@ -450,13 +450,13 @@ impl Player {
         {
             let mn = self.aabb_min();
             let mx = self.aabb_max();
-            let lift = crate::collision::depenetrate_up_dyn(
+            let lift = petramond_world::collision::depenetrate_up_dyn(
                 [mn.x, mn.y, mn.z],
                 [mx.x, mx.y, mx.z],
-                crate::collision::STEP_HEIGHT,
+                petramond_world::collision::STEP_HEIGHT,
                 boxes,
                 obstacles,
-                crate::collision::NOT_AN_ENTITY,
+                petramond_world::collision::NOT_AN_ENTITY,
             );
             self.pos.y += lift;
         }
@@ -620,15 +620,15 @@ impl Player {
         if sneak_guard {
             let mn = self.aabb_min();
             let mx = self.aabb_max();
-            let (cx, cz) = crate::collision::clamp_to_supported_dyn(
+            let (cx, cz) = petramond_world::collision::clamp_to_supported_dyn(
                 [mn.x, mn.y, mn.z],
                 [mx.x, mx.y, mx.z],
                 dx,
                 dz,
-                crate::collision::STEP_HEIGHT,
+                petramond_world::collision::STEP_HEIGHT,
                 boxes,
                 obstacles,
-                crate::collision::NOT_AN_ENTITY,
+                petramond_world::collision::NOT_AN_ENTITY,
             );
             if cx != dx {
                 self.vel.x = 0.0;
@@ -643,13 +643,13 @@ impl Player {
         // ledge (a slab / a model block's low edge) without jumping. Airborne → step 0.
         // Same `collision::step_horizontal` the mob/item resolver uses.
         let step = if self.on_ground {
-            crate::collision::STEP_HEIGHT
+            petramond_world::collision::STEP_HEIGHT
         } else {
             0.0
         };
         let mn = self.aabb_min();
         let mx = self.aabb_max();
-        let (moved, hit_x, hit_z) = crate::collision::step_horizontal_dyn(
+        let (moved, hit_x, hit_z) = petramond_world::collision::step_horizontal_dyn(
             [mn.x, mn.y, mn.z],
             [mx.x, mx.y, mx.z],
             dx,
@@ -657,7 +657,7 @@ impl Player {
             step,
             boxes,
             obstacles,
-            crate::collision::NOT_AN_ENTITY,
+            petramond_world::collision::NOT_AN_ENTITY,
         );
         self.pos.x += moved[0];
         self.pos.y += moved[1];
@@ -680,17 +680,17 @@ impl Player {
         // drop the guard allowed lands here; anything deeper stays put (only the
         // untouched clamp can refuse it).
         if sneak_guard {
-            let probe = -(crate::collision::STEP_HEIGHT + crate::collision::SUPPORT_PROBE_MARGIN);
+            let probe = -(petramond_world::collision::STEP_HEIGHT + petramond_world::collision::SUPPORT_PROBE_MARGIN);
             let mn = self.aabb_min();
             let mx = self.aabb_max();
-            let down = crate::collision::sweep_axis_dyn(
+            let down = petramond_world::collision::sweep_axis_dyn(
                 [mn.x, mn.y, mn.z],
                 [mx.x, mx.y, mx.z],
                 1,
                 probe,
                 boxes,
                 obstacles,
-                crate::collision::NOT_AN_ENTITY,
+                petramond_world::collision::NOT_AN_ENTITY,
             );
             if down > probe {
                 // Blocked within a step: rest on it (0 while anything is still

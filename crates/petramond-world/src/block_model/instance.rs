@@ -35,7 +35,7 @@ pub struct CellInstance {
     pub collision: Vec<Aabb>,
     /// Cell-local selection/targeting box (`0..1`): the bbox of the cube geometry
     /// OVERLAPPING this cell, so the raycast targets the cell where the model actually is
-    /// (the drawn outline is the whole-model box — see [`ModelInstance::bounds`]).
+    /// (the drawn outline is the whole-model box — see `ModelInstance::bounds`).
     pub selection_min: [f32; 3],
     pub selection_max: [f32; 3],
 }
@@ -135,8 +135,8 @@ pub struct ContactCellTemplate {
 }
 
 /// The runtime bake of a model kind: its footprint, the cubes in footprint space with
-/// atlas-remapped UVs, and the per-cell split. Derived from the cached [`BlockModel`] +
-/// its data row + the [`ModelAtlas`].
+/// atlas-remapped UVs, and the per-cell split. Derived from the cached `BlockModel` +
+/// its data row + the `ModelAtlas`.
 pub struct ModelInstance {
     pub footprint: [u8; 3],
     /// Cubes in FOOTPRINT space (coords `0..footprint`, 1 unit = 1 world cell), with
@@ -163,7 +163,7 @@ pub struct ModelInstance {
     /// once so a remesh just translates + lights the verts.
     pub oriented_render: [Vec<ModelCellTemplate>; 4],
     /// Per-cube, per-face (`Face::ALL` order), per-corner (`face_corners` order)
-    /// self-AO shade multipliers (see [`super::ao`]). Baked once from the fitted
+    /// self-AO shade multipliers (see `super::ao`). Baked once from the fitted
     /// footprint-space cubes; already folded into `oriented_render` shades, and
     /// applied by the held/dropped/icon bakes (`render::item_model`) so every
     /// presentation shades identically.
@@ -182,7 +182,7 @@ pub struct ModelInstance {
     /// centred on the origin, largest axis spanning ±0.5) back to the model's AUTHORED
     /// display space in blocks — origin at the authored display pivot, 1 unit = 16
     /// authored pixels. This undoes the placement fit (floor-rest, centring, fill
-    /// scale) so a Blockbench `display` pose ([`DisplayTransform::base_matrix`])
+    /// scale) so a Blockbench `display` pose (`DisplayTransform::base_matrix`)
     /// composes about the exact geometry Blockbench posed, and renders identically.
     pub display_from_unit: Mat4,
 }

@@ -1,5 +1,5 @@
 use super::{input::InputController, App};
-use petramond::gui_state::PointerButton;
+use petramond_world::gui_state::PointerButton;
 use crate::game::GameInput;
 
 /// Wheel notches of travel per hotbar slot. One classic detent is `1.0`
@@ -321,7 +321,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond::controls::Control;
+    use petramond_world::controls::Control;
 
     #[test]
     fn scroll_step_needs_a_full_notch() {

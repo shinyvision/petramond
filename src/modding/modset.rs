@@ -33,7 +33,7 @@ struct ModsFile {
 /// The ENABLED id-bearing packs (installed minus the world's disabled set),
 /// sorted by id — the deterministic order the file is written in.
 pub fn active(disabled: &BTreeSet<String>) -> Vec<ModSetEntry> {
-    let mut mods: Vec<ModSetEntry> = crate::assets::packs()
+    let mut mods: Vec<ModSetEntry> = petramond_world::assets::packs()
         .iter()
         .filter_map(|p| {
             let id = p.id.clone()?;

@@ -3,11 +3,11 @@
 //! invalidation.
 
 use crate::world::WorldData;
-use crate::block::Block;
-use crate::chunk::{
+use petramond_world::block::Block;
+use petramond_world::chunk::{
     section_idx, ChunkPos, SectionPos, SECTION_SIZE,
 };
-use crate::column::NO_SURFACE;
+use petramond_world::column::NO_SURFACE;
 
 use petramond_world::world::column_heightmaps::SkyCoverChange;
 use super::store::World;

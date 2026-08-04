@@ -10,8 +10,8 @@
 
 use crate::game::Game;
 use petramond::gui::Role;
-use petramond::inventory::HOTBAR_LEN;
-use petramond::item::ItemStack;
+use petramond_world::inventory::HOTBAR_LEN;
+use petramond_world::item::ItemStack;
 use petramond_ui::{UiState, UiValue};
 
 /// Publish the item-tip keys for the slot hovered on the last solved frame.
@@ -25,7 +25,7 @@ pub(super) fn populate(game: &Game, hover_slot: Option<&(String, u32)>, state: &
     } else {
         hover_slot.and_then(|(role, index)| hovered_stack(game, role, *index as usize))
     };
-    let stack = stack.filter(|stack| stack.item != petramond::item::ItemType::Air && stack.count > 0);
+    let stack = stack.filter(|stack| stack.item != petramond_world::item::ItemType::Air && stack.count > 0);
     state.set("show_item_tip", UiValue::Bool(stack.is_some()));
     state.set(
         "item_tip_name",

@@ -21,7 +21,7 @@
 
 use std::sync::Arc;
 
-use crate::crafting::UnlockIndex;
+use petramond_world::crafting::UnlockIndex;
 use crate::events::{EventBus, PostEvent, PostEventKind};
 use crate::player::Player;
 
@@ -64,7 +64,7 @@ impl ServerGame {
     /// Runs inside the last stage so the events drain at that stage's
     /// boundary: a recipe unlocked by a pickup is craftable on the same tick.
     pub fn detect_obtained_items(&mut self) {
-        let mut fresh: Vec<(crate::player::PlayerId, crate::item::ItemType)> = Vec::new();
+        let mut fresh: Vec<(crate::player::PlayerId, petramond_world::item::ItemType)> = Vec::new();
         for sess in &mut self.sessions {
             let revision = sess.player.inventory.revision();
             if sess.last_obtained_scan == Some(revision) {
@@ -98,7 +98,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::events::{PostEvent, PostEventKind};
-    use crate::item::{ItemStack, ItemType};
+    use petramond_world::item::{ItemStack, ItemType};
 
     /// `item_obtained` is a FIRST-EVER transition, not "an item moved": it
     /// fires once per kind however the item arrived, never again for that

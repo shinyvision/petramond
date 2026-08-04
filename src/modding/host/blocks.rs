@@ -4,7 +4,7 @@
 
 use mod_api::{HostCall, HostRet};
 
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 
 use super::guards::{
     batch_guard, checked_block, key_owned_by_namespace, sim_call, sim_query, stream_final_cell,
@@ -21,10 +21,10 @@ fn owned_block_at(
     mod_id: &str,
     pos: [i32; 3],
     call: &str,
-) -> Result<crate::block::Block, HostRet> {
+) -> Result<petramond_world::block::Block, HostRet> {
     let p = IVec3::from(pos);
     let block = stream_final_cell(ctx, p)?;
-    let name = crate::registry::names()
+    let name = petramond_world::registry::names()
         .blocks
         .name(block.id())
         .unwrap_or("?");
@@ -180,7 +180,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                         .iter()
                         .map(|&q| {
                             to_world
-                                .transform_point3(crate::mathh::Vec3::from(q))
+                                .transform_point3(petramond_math::math::Vec3::from(q))
                                 .to_array()
                         })
                         .collect(),
@@ -194,7 +194,7 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 // flipping ITS placed variant, never a tool for rewriting
                 // someone else's content. The destination is checked here
                 // because it needs no world read.
-                let new_name = crate::registry::names().blocks.name(b.id()).unwrap_or("?");
+                let new_name = petramond_world::registry::names().blocks.name(b.id()).unwrap_or("?");
                 if !key_owned_by_namespace(mod_id, new_name) {
                     return HostRet::Error(format!(
                         "SwapModelBlock: block '{new_name}' is not owned by mod '{mod_id}'"
@@ -286,8 +286,8 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                 // empty — they can never match, and treating them as
                 // unreadable would starve every search near the world's top
                 // or bottom. Clamp instead of gating.
-                let y_lo = min[1].max(crate::chunk::WORLD_MIN_Y);
-                let y_hi = max[1].min(crate::chunk::WORLD_MAX_Y - 1);
+                let y_lo = min[1].max(petramond_world::chunk::WORLD_MIN_Y);
+                let y_hi = max[1].min(petramond_world::chunk::WORLD_MAX_Y - 1);
                 // Scan order (y, then z, then x ascending) is the documented
                 // ABI contract — deterministic for every caller.
                 for y in y_lo..=y_hi {
@@ -376,11 +376,11 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
 mod tests {
     use mod_api::{CollisionShape, HostCall, HostRet};
 
-    use crate::block::Block;
-    use crate::chunk::ChunkPos;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::ChunkPos;
     use crate::events::{PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use crate::mathh::Vec3;
+    use petramond_math::math::Vec3;
     use crate::modding::host::guards::SIM_BATCH_MAX;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
@@ -392,7 +392,7 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world,
             player: &mut player,
@@ -699,14 +699,14 @@ mod tests {
     /// placement transform is that same rule written a second time.
     #[test]
     fn a_footprint_local_point_follows_the_placed_facing() {
-        use crate::facing::Facing;
+        use petramond_math::facing::Facing;
 
         let mut store = ModStoreData::new("alpha", 1);
-        let base = crate::mathh::IVec3::new(4, 64, 4);
+        let base = petramond_math::math::IVec3::new(4, 64, 4);
         let kind = Block::FurnitureWorkbench
             .model_kind()
             .expect("fixture: a model block");
-        let size = crate::block_model::def(kind).cells.map(f32::from);
+        let size = petramond_world::block_model::def(kind).cells.map(f32::from);
         // Off centre on every axis, so a lost rotation cannot coincide with
         // the right answer.
         let local = [size[0] * 0.8, size[1] * 0.2, size[2] * 0.9];

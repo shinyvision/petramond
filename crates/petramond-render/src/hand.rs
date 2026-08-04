@@ -3,9 +3,9 @@
 //! Builds, each frame, the small full-bright model shown in the lower-right of the
 //! screen from the flat [`HeldItemView`] prepared by the renderer:
 //! - `item == None` -> a skin-colored first-person ARM cuboid
-//!   ([`block_model::cube_solid`]) rising from the lower-right toward centre,
+//!   (`block_model::cube_solid`) rising from the lower-right toward centre,
 //!   tilted up, broad back-of-hand face to the camera + a darker side visible.
-//! - `item` is a block-cube -> the [`block_model::cube_textured`] block, held with a
+//! - `item` is a block-cube -> the `block_model::cube_textured` block, held with a
 //!   corner toward the camera (MC-style three-quarter view).
 //! - `item` is a sprite (flower / future tool) -> NOT model3d geometry; the
 //!   renderer instead draws an EXTRUDED 3D item (see [`super::item_model`]) via
@@ -23,9 +23,9 @@ use glam::{Mat4, Quat, Vec3};
 use super::item_cube::{push_block_item_cube_lit_with_state, push_cube_solid_lit};
 use super::lighting::DynLight;
 use super::HeldItemView;
-use petramond::tile::Tile;
-use petramond::block::Block;
-use petramond::item::ItemRenderKind;
+use petramond_world::tile::Tile;
+use petramond_world::block::Block;
+use petramond_world::item::ItemRenderKind;
 use petramond_mesh::Vertex;
 
 /// Skin tone for the bare-hand cuboid.
@@ -148,14 +148,14 @@ pub(super) fn build_hand_lit(
 /// MVP to draw the EXTRUDED 3D item (built by [`super::item_model`]) in the hand
 /// pass at the held three-quarter angle (so the extrusion depth is visible), with
 /// the same swing / place-pop animation folded in as the rest of the hand.
-/// `None` for bare hand or a held block (those go through [`build_hand`]).
+/// `None` for bare hand or a held block (those go through `build_hand`).
 pub fn held_sprite(view: &HeldItemView, aspect: f32) -> Option<(Tile, Mat4)> {
     let item = view.item?;
     let ItemRenderKind::Sprite(tile) = item.render_kind() else {
         return None;
     };
     // First-person hold of a sprite item. The extruded sprite is a unit, origin-
-    // centred slab built upright; the item's own [`held_pose`](petramond::item::ItemType::held_pose)
+    // centred slab built upright; the item's own [`held_pose`](petramond_world::item::ItemType::held_pose)
     // (item data) tilts it before it's seated in the hand:
     //   * roll (Z), applied FIRST in the sprite's own plane, lays the long axis
     //     diagonally for a swung tool (pickaxes); it's 0 for upright items;
@@ -198,24 +198,24 @@ const MODEL_HAND_ANCHOR: Vec3 = Vec3::new(9.039 / 16.0, -8.318 / 16.0, -11.6 / 1
 /// the item3d pipeline in the hand pass. `None` for a bare hand, a held block, or a
 /// sprite.
 ///
-/// The whole pose is DATA: [`ModelInstance::display_from_unit`] rebases the baked
+/// The whole pose is DATA: `ModelInstance::display_from_unit` rebases the baked
 /// unit geometry into the authored display space (blocks about the authored block
-/// centre), [`DisplayTransform::base_matrix`] applies the authored
+/// centre), `DisplayTransform::base_matrix` applies the authored
 /// translation/rotation/scale/pivots exactly as Blockbench's preview does (raw euler,
-/// no mirroring for the right hand), and [`MODEL_HAND_ANCHOR`] seats the result at
-/// the vanilla hand point under [`model_hand_view_proj`], the exact camera
+/// no mirroring for the right hand), and `MODEL_HAND_ANCHOR` seats the result at
+/// the vanilla hand point under `model_hand_view_proj`, the exact camera
 /// Blockbench's preview renders with. Editing the pose in Blockbench (then
 /// recompiling the `.llblock`) moves the in-game hold, no code.
 pub fn held_model(
     view: &HeldItemView,
     aspect: f32,
-) -> Option<(petramond::block_model::BlockModelKind, Mat4)> {
+) -> Option<(petramond_world::block_model::BlockModelKind, Mat4)> {
     let item = view.item?;
     let ItemRenderKind::Model(kind) = item.render_kind() else {
         return None;
     };
-    let pose = &petramond::block_model::display(kind).firstperson_righthand;
-    let model = pose.base_matrix() * petramond::block_model::instance(kind).display_from_unit;
+    let pose = &petramond_world::block_model::display(kind).firstperson_righthand;
+    let model = pose.base_matrix() * petramond_world::block_model::instance(kind).display_from_unit;
     // The swing amplitude was tuned at the legacy HAND_DEPTH; the vanilla anchor is
     // much nearer the camera, so the punch translation scales down proportionally.
     let placement = placement_at(view, MODEL_HAND_ANCHOR, -MODEL_HAND_ANCHOR.z / HAND_DEPTH);

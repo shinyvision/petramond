@@ -2,7 +2,7 @@
 //! per field, so adding a perception fact costs one default here instead of a
 //! struct-literal edit in every behavior/brain/manager test module.
 
-use crate::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 use crate::mob::brain::AiCtx;
 use crate::mob::MobRng;
 use crate::world::World;
@@ -53,6 +53,6 @@ pub fn empty_tags() -> &'static std::collections::BTreeMap<String, crate::mob::M
 pub fn ctx_at<'a>(world: &'a World, rng: &'a mut MobRng, pos: Vec3) -> AiCtx<'a> {
     let mut c = ctx(world, rng);
     c.pos = pos;
-    c.cell = crate::mathh::voxel_at(pos);
+    c.cell = petramond_math::math::voxel_at(pos);
     c
 }

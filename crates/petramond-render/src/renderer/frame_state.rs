@@ -244,7 +244,7 @@ impl Renderer {
     /// Store the two-channel light to apply to the first-person hand / held item
     /// (so it brightens AND takes the colour of nearby block light, and block
     /// light keeps it lit at night).
-    pub fn set_held_item_light(&mut self, skylight: u8, blocklight: petramond::light::BlockLight6) {
+    pub fn set_held_item_light(&mut self, skylight: u8, blocklight: petramond_world::light::BlockLight6) {
         self.hand.held_item_skylight = skylight.min(crate::lighting::FULL_SKYLIGHT);
         self.hand.held_item_blocklight = blocklight;
     }
@@ -370,12 +370,12 @@ impl Renderer {
         let priority = |column: ChunkPos| {
             let min = glam::Vec3::new(
                 (column.cx * 16) as f32,
-                petramond::chunk::WORLD_MIN_Y as f32,
+                petramond_world::chunk::WORLD_MIN_Y as f32,
                 (column.cz * 16) as f32,
             );
             let max = glam::Vec3::new(
                 (column.cx * 16 + 16) as f32,
-                petramond::chunk::WORLD_MAX_Y as f32,
+                petramond_world::chunk::WORLD_MAX_Y as f32,
                 (column.cz * 16 + 16) as f32,
             );
             let visible_soon = frustum.aabb_visible(min - render_origin, max - render_origin)

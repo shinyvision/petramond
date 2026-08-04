@@ -6,7 +6,7 @@ use super::pump_one_tick;
 use petramond::events::DamageSource;
 use crate::game::presentation::GamePresentationScratch;
 use petramond::events::tick::{TickEvents, TICK_DT};
-use petramond::mathh::Vec3;
+use petramond_math::math::Vec3;
 
 /// The HUD reads the replicated self view, and after a damage tick's batch it
 /// matches session truth exactly.
@@ -77,8 +77,8 @@ fn every_sessions_player_row_reaches_the_local_batch() {
 /// bed's base→pillow direction) and flags the tuck teleport as a snap.
 #[test]
 fn a_sleeping_sessions_row_carries_the_lying_head_yaw() {
-    use petramond::block::Block;
-    use petramond::mathh::IVec3;
+    use petramond_world::block::Block;
+    use petramond_math::math::IVec3;
 
     let mut game = game_on_empty_chunk();
     for x in 0..16 {
@@ -177,7 +177,7 @@ fn env_params_ship_on_change_and_none_when_static() {
 /// its own stage; an invisible remote (spectator/dead) draws none.
 #[test]
 fn break_overlays_collect_own_and_visible_remote_miners() {
-    use petramond::mathh::IVec3;
+    use petramond_math::math::IVec3;
     use petramond::net::protocol::PlayerStateRow;
     use petramond::player::PlayerId;
     use std::collections::HashMap;

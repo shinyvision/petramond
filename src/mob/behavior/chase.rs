@@ -25,7 +25,7 @@
 
 use serde::Deserialize;
 
-use crate::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
 use super::super::path::{is_navigation_foothold_with, PathParams};
@@ -186,9 +186,9 @@ pub(super) fn goal_cell_near(ctx: &AiCtx, pos: Vec3) -> Option<IVec3> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
-    use crate::mathh::Vec3;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    use petramond_math::math::Vec3;
     use crate::mob::MobRng;
     use crate::world::World;
 
@@ -225,7 +225,7 @@ mod tests {
             .expect("in-radius player produces a goal");
         assert_eq!(
             goal,
-            crate::mathh::IVec3::new(7, 64, 2),
+            petramond_math::math::IVec3::new(7, 64, 2),
             "the goal is the player's foothold cell"
         );
     }

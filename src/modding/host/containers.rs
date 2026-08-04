@@ -52,13 +52,13 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
             }
             // Resolve+validate every entry BEFORE any write, so a bad entry
             // can't leave a half-applied batch.
-            let mut writes: Vec<(usize, Option<crate::item::ItemStack>)> = Vec::new();
+            let mut writes: Vec<(usize, Option<petramond_world::item::ItemStack>)> = Vec::new();
             for (i, slot) in &slots {
                 let i = *i as usize;
-                if i >= crate::container::MAX_CONTAINER_SLOTS {
+                if i >= petramond_world::container::MAX_CONTAINER_SLOTS {
                     return HostRet::Error(format!(
                         "ContainerSet: slot {i} is past the cap ({})",
-                        crate::container::MAX_CONTAINER_SLOTS
+                        petramond_world::container::MAX_CONTAINER_SLOTS
                     ));
                 }
                 let stack = match slot {
@@ -82,7 +82,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                                     Err(e) => return e,
                                 };
                             (data.count > 0).then(|| {
-                                crate::item::ItemStack::with_variant(item, data.count, variant)
+                                petramond_world::item::ItemStack::with_variant(item, data.count, variant)
                             })
                         }
                     }
@@ -101,7 +101,7 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
                     Ok(b) => b,
                     Err(miss) => return miss,
                 };
-                let block_name = crate::registry::names()
+                let block_name = petramond_world::registry::names()
                     .blocks
                     .name(block.id())
                     .unwrap_or("?");
@@ -144,10 +144,10 @@ pub(super) fn handle_container_call(mod_id: &str, call: HostCall) -> HostRet {
 mod tests {
     use mod_api::{HostCall, HostRet};
 
-    use crate::chunk::ChunkPos;
+    use petramond_world::chunk::ChunkPos;
     use crate::events::{PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use crate::mathh::Vec3;
+    use petramond_math::math::Vec3;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
@@ -161,9 +161,9 @@ mod tests {
     fn container_calls_canonicalize_to_the_group_anchor() {
         let mut world = World::new(1, 4);
         world.clear_world();
-        world.insert_chunk_for_test(ChunkPos::new(0, 0), crate::chunk::Chunk::new(0, 0));
-        let origin = crate::mathh::IVec3::new(5, 64, 5);
-        assert!(world.place_model_block(origin, crate::block::Block::FurnitureWorkbench));
+        world.insert_chunk_for_test(ChunkPos::new(0, 0), petramond_world::chunk::Chunk::new(0, 0));
+        let origin = petramond_math::math::IVec3::new(5, 64, 5);
+        assert!(world.place_model_block(origin, petramond_world::block::Block::FurnitureWorkbench));
         let (_, anchor, cells) = world.model_group(origin).expect("a placed model group");
         let far = *cells
             .iter()
@@ -173,11 +173,11 @@ mod tests {
         // The workbench is engine-owned and ContainerSet is guarded to the
         // caller's own namespace, so the test store impersonates the engine
         // namespace — this keeps the test off the heavy WASM fixture.
-        let mut store = ModStoreData::new(crate::registry::ENGINE_NAMESPACE, 1);
+        let mut store = ModStoreData::new(petramond_world::registry::ENGINE_NAMESPACE, 1);
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,

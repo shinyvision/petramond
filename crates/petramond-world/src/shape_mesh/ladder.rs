@@ -1,9 +1,9 @@
 //! In-world geometry for a ladder: a 1/16-thick cutout panel flush against the
 //! wall it hangs on, baked into the chunk's opaque (cutout) pass.
 //!
-//! The panel box comes from [`crate::ladder::panel_aabb`] — the same box the
+//! The panel box comes from `crate::ladder::panel_aabb` — the same box the
 //! raycast target, the selection outline, and the break-crack overlay use.
-//! The chunk mesher wraps it into the unified [`super::boxset`] emitter with
+//! The chunk mesher wraps it into the unified `super::boxset` emitter with
 //! the face flush against the supporting wall declared never-emitted: the
 //! wall (a complete face, by the support rule) covers that plane, and
 //! emitting it would z-fight. Cell-local UVs, so the rung art maps 0..1

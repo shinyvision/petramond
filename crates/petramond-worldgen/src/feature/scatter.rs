@@ -3,13 +3,13 @@
 //! This is the `DecoStep::RawGeneration` + `DecoStep::Ores` content: small
 //! veins that overwrite Stone below the surface, spanning the FULL cubic world
 //! depth (down to `WORLD_MIN_Y`). Two vein shapes:
-//!   - [`VeinShape::Blob`]: a roughly-spherical blob of `~size` cells (dirt,
+//!   - `VeinShape::Blob`: a roughly-spherical blob of `~size` cells (dirt,
 //!     gravel, tuff, and the bulk ores).
-//!   - [`VeinShape::Grid3`]: a single-layer 3×3 patch holding 1..=9 ore
+//!   - `VeinShape::Grid3`: a single-layer 3×3 patch holding 1..=9 ore
 //!     blocks — the iron/diamond rule: a vein always fits a 3×3 area and never
 //!     exceeds 9.
 //!
-//! A config may carry a [`DepthRamp`]: each rolled vein is then only accepted
+//! A config may carry a `DepthRamp`: each rolled vein is then only accepted
 //! with a chance that grows quadratically toward the bottom of its Y band —
 //! diamonds get more likely the deeper you dig, yet stay rare even at the floor.
 //!

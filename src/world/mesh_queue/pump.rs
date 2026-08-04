@@ -1,5 +1,5 @@
 #[cfg(test)]
-use crate::chunk::{ChunkPos, SectionPos};
+use petramond_world::chunk::{ChunkPos, SectionPos};
 use crate::world::store::World;
 
 use super::{

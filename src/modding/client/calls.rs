@@ -376,7 +376,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             }
             // Unknown keys and non-ambient bundles are forgiving `false`
             // (a disabled pack's bundle is not a protocol break).
-            let Some(bundle) = crate::particle_emitters::by_key(&key) else {
+            let Some(bundle) = petramond_world::particle_emitters::by_key(&key) else {
                 return HostRet::Bool(false);
             };
             if bundle.ambient.is_none() {
@@ -391,7 +391,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             if !gain.is_finite() {
                 return HostRet::Error("ClientLoopSet: gain must be finite".into());
             }
-            let Some(sound) = crate::sound_registry::by_name(&key) else {
+            let Some(sound) = petramond_world::sound_registry::by_name(&key) else {
                 return HostRet::Bool(false);
             };
             client.sound_loops.insert(sound, gain.clamp(0.0, 4.0));
@@ -418,7 +418,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
                 let columns = queries
                     .iter()
                     .map(|query| {
-                        let pos = crate::chunk::ChunkPos::new(query.coord[0], query.coord[1]);
+                        let pos = petramond_world::chunk::ChunkPos::new(query.coord[0], query.coord[1]);
                         let revision = world.client_surface_column_revision(pos)?;
                         // A zero query revision means "never seen complete" —
                         // it must never match, even against a defaulted host

@@ -3,10 +3,10 @@
 
 use mod_api::HostRet;
 
-use crate::block::Block;
+use petramond_world::block::Block;
 use crate::events::SimCtx;
-use crate::item::ItemType;
-use crate::mathh::{IVec3, Vec3};
+use petramond_world::item::ItemType;
+use petramond_math::math::{IVec3, Vec3};
 use crate::modding::scope;
 
 /// Every bound this module enforces is declared in the ABI crate, because a
@@ -64,12 +64,12 @@ pub(in crate::modding) fn key_owned_by_namespace(namespace: &str, key: &str) -> 
 
 pub(super) fn public_write_key_guard(mod_id: &str, key: &str) -> Option<HostRet> {
     let mod_owned = key_owned_by_namespace(mod_id, key);
-    let engine_owned = key_owned_by_namespace(crate::registry::ENGINE_NAMESPACE, key);
+    let engine_owned = key_owned_by_namespace(petramond_world::registry::ENGINE_NAMESPACE, key);
     if !(mod_owned || engine_owned) {
         return Some(HostRet::Error(format!(
             "mod writes must use this mod's own namespace ('{mod_id}:name') or an engine-owned \
              '{engine}:name' key; got '{key}' (reads may cross namespaces)",
-            engine = crate::registry::ENGINE_NAMESPACE
+            engine = petramond_world::registry::ENGINE_NAMESPACE
         )));
     }
     None
@@ -158,15 +158,15 @@ pub(super) fn item_by_name(name: &str) -> Option<ItemType> {
 /// An item's registry NAME (every registered item has one; `"?"` guards the
 /// unreachable unregistered case).
 pub(super) fn item_name(item: ItemType) -> &'static str {
-    crate::registry::names()
+    petramond_world::registry::names()
         .items
         .name(item.id())
         .unwrap_or("?")
 }
 
 /// An engine stack as its ABI crossing (registry name + count + data).
-pub(super) fn item_stack_data(stack: crate::item::ItemStack) -> mod_api::ItemStackData {
-    let data = crate::item::variant::get(stack.variant)
+pub(super) fn item_stack_data(stack: petramond_world::item::ItemStack) -> mod_api::ItemStackData {
+    let data = petramond_world::item::variant::get(stack.variant)
         .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
         .unwrap_or_default();
     mod_api::ItemStackData {
@@ -176,7 +176,7 @@ pub(super) fn item_stack_data(stack: crate::item::ItemStack) -> mod_api::ItemSta
     }
 }
 
-/// An ABI instance-data list as an interned [`crate::item::VariantId`].
+/// An ABI instance-data list as an interned [`petramond_world::item::VariantId`].
 /// Empty = `NONE`. A duplicate key, bare key, or over-cap map is a HARD error
 /// (`Err(HostRet::Error)` — loud mod bug, same shape as the KV size caps):
 /// silently degrading a write the mod asked for would fork its view of the
@@ -186,8 +186,8 @@ pub(super) fn item_stack_data(stack: crate::item::ItemStack) -> mod_api::ItemSta
 pub(super) fn intern_abi_data(
     what: &str,
     data: &[(String, Vec<u8>)],
-) -> Result<crate::item::VariantId, mod_api::HostRet> {
-    use crate::item::variant;
+) -> Result<petramond_world::item::VariantId, mod_api::HostRet> {
+    use petramond_world::item::variant;
     if data.is_empty() {
         return Ok(variant::VariantId::NONE);
     }

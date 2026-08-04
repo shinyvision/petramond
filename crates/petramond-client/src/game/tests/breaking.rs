@@ -1,7 +1,7 @@
 use super::common::game;
-use petramond::block::Block;
-use petramond::item::ItemType;
-use petramond::mathh::IVec3;
+use petramond_world::block::Block;
+use petramond_world::item::ItemType;
+use petramond_math::math::IVec3;
 
 #[test]
 fn stone_pickaxe_harvests_iron_as_raw_iron() {
@@ -12,8 +12,8 @@ fn stone_pickaxe_harvests_iron_as_raw_iron() {
     game.server.spawn_drops(
         IVec3::new(0, 64, 0),
         Block::IronOre,
-        (15, petramond::light::BlockLight6::DARK),
-        petramond::item::VariantId::NONE,
+        (15, petramond_world::light::BlockLight6::DARK),
+        petramond_world::item::VariantId::NONE,
     );
     assert_eq!(game.server.world.item_entities().len(), 1);
     assert_eq!(
@@ -28,8 +28,8 @@ fn copper_ore_drops_two_to_four_raw_copper() {
     game.server.spawn_drops(
         IVec3::new(1, 64, 1),
         Block::CopperOre,
-        (15, petramond::light::BlockLight6::DARK),
-        petramond::item::VariantId::NONE,
+        (15, petramond_world::light::BlockLight6::DARK),
+        petramond_world::item::VariantId::NONE,
     );
     let drops = game.server.world.item_entities();
     assert_eq!(drops.len(), 1);

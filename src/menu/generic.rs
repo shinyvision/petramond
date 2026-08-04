@@ -9,13 +9,13 @@
 //! machine state rather than authored layout.
 
 use super::{ContainerMenu, ContainerTarget};
-use crate::container::{Container, SlotSpec};
-use crate::gui_state::PointerButton;
-use crate::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
-use crate::gui_state::ContainerView;
-use crate::inventory::{merge_stack, Inventory};
-use crate::item::ItemTag;
-use crate::mathh::IVec3;
+use petramond_world::container::{Container, SlotSpec};
+use petramond_world::gui_state::PointerButton;
+use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
+use petramond_world::gui_state::ContainerView;
+use petramond_world::inventory::{merge_stack, Inventory};
+use petramond_world::item::ItemTag;
+use petramond_math::math::IVec3;
 use crate::world::World;
 use std::sync::{Arc, OnceLock};
 
@@ -26,9 +26,9 @@ fn furnace_slot_specs() -> Arc<Vec<SlotSpec>> {
     static SPECS: OnceLock<Arc<Vec<SlotSpec>>> = OnceLock::new();
     SPECS
         .get_or_init(|| {
-            let mut specs = vec![SlotSpec::default(); crate::furnace::FURNACE_SLOTS];
-            specs[SLOT_INPUT].accepts = vec![crate::container::SlotFilter::Tag(ItemTag::SMELTABLE)];
-            specs[SLOT_FUEL].accepts = vec![crate::container::SlotFilter::Tag(ItemTag::FUEL)];
+            let mut specs = vec![SlotSpec::default(); petramond_world::furnace::FURNACE_SLOTS];
+            specs[SLOT_INPUT].accepts = vec![petramond_world::container::SlotFilter::Tag(ItemTag::SMELTABLE)];
+            specs[SLOT_FUEL].accepts = vec![petramond_world::container::SlotFilter::Tag(ItemTag::FUEL)];
             specs[SLOT_OUTPUT].take_only = true;
             Arc::new(specs)
         })
@@ -65,7 +65,7 @@ impl ContainerMenu {
     /// machine state (smeltable/fuel/output) rather than authored layout.
     pub(super) fn slot_specs(&self) -> Arc<Vec<SlotSpec>> {
         match self.target.kind() {
-            Some(crate::gui_state::GuiKind::Furnace) => furnace_slot_specs(),
+            Some(petramond_world::gui_state::GuiKind::Furnace) => furnace_slot_specs(),
             Some(kind) => crate::gui::documents::container_slot_specs(kind),
             None => Arc::default(),
         }

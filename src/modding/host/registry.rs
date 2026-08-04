@@ -13,13 +13,13 @@ use super::guards::batch_guard;
 pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
     match call {
         HostCall::ResolveBlock { name } => HostRet::Block(
-            crate::registry::names()
+            petramond_world::registry::names()
                 .blocks
                 .id(&name)
                 .map(mod_api::BlockId),
         ),
         HostCall::ResolveItem { name } => HostRet::Item(
-            crate::registry::names()
+            petramond_world::registry::names()
                 .items
                 .id(&name)
                 .map(mod_api::ItemId),
@@ -33,7 +33,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
             None => HostRet::Names(
                 blocks
                     .iter()
-                    .map(|b| crate::registry::names().blocks.name(b.0).map(str::to_owned))
+                    .map(|b| petramond_world::registry::names().blocks.name(b.0).map(str::to_owned))
                     .collect(),
             ),
         },
@@ -42,7 +42,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
             None => HostRet::Names(
                 items
                     .iter()
-                    .map(|i| crate::registry::names().items.name(i.0).map(str::to_owned))
+                    .map(|i| petramond_world::registry::names().items.name(i.0).map(str::to_owned))
                     .collect(),
             ),
         },
@@ -67,8 +67,8 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
         // Tag membership never interns: a name nothing lists is an empty
         // set, and a query cannot grow the tag table.
         HostCall::BlocksByTag { tag } => {
-            HostRet::BlockList(match crate::block::BlockTag::lookup(&tag) {
-                Some(t) => crate::block::Block::all()
+            HostRet::BlockList(match petramond_world::block::BlockTag::lookup(&tag) {
+                Some(t) => petramond_world::block::Block::all()
                     .iter()
                     .filter(|b| b.has_tag(t))
                     .map(|b| mod_api::BlockId(b.id()))
@@ -77,8 +77,8 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
             })
         }
         HostCall::ItemsByTag { tag } => {
-            HostRet::ItemList(match crate::item::ItemTag::lookup(&tag) {
-                Some(t) => crate::item::ItemType::all()
+            HostRet::ItemList(match petramond_world::item::ItemTag::lookup(&tag) {
+                Some(t) => petramond_world::item::ItemType::all()
                     .iter()
                     .filter(|i| i.has_tag(t))
                     .map(|i| mod_api::ItemId(i.id()))
@@ -87,22 +87,22 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
             })
         }
         HostCall::ItemInfo { item } => HostRet::ItemInfo(
-            crate::item::ItemType::by_name(&item).map(|t| Box::new(item_info_data(t))),
+            petramond_world::item::ItemType::by_name(&item).map(|t| Box::new(item_info_data(t))),
         ),
         // The shape-kind resolver: like the block/item/mob resolvers, a key→id
         // lookup over the process-wide registry, unknown key = `None`.
         HostCall::ResolveShape { key } => {
-            HostRet::MaybeByte(crate::block::shape_kind_id_by_key(&key))
+            HostRet::MaybeByte(petramond_world::block::shape_kind_id_by_key(&key))
         }
         // The row-data interop surface: opaque raw JSON a consuming system's
         // key names — same never-interns contract as the tag queries.
         HostCall::ItemDataGet { item, key } => HostRet::Bytes(
-            crate::item::ItemType(item.0)
+            petramond_world::item::ItemType(item.0)
                 .data_value(&key)
                 .map(|v| v.as_bytes().to_vec()),
         ),
         HostCall::ItemsWithData { key } => HostRet::ItemDataRows(
-            crate::item::ItemType::all()
+            petramond_world::item::ItemType::all()
                 .iter()
                 .filter_map(|i| {
                     i.data_value(&key)
@@ -111,12 +111,12 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                 .collect(),
         ),
         HostCall::BlockDataGet { block, key } => HostRet::Bytes(
-            crate::block::Block::from_id(block.0)
+            petramond_world::block::Block::from_id(block.0)
                 .data_value(&key)
                 .map(|v| v.as_bytes().to_vec()),
         ),
         HostCall::BlocksWithData { key } => HostRet::BlockDataRows(
-            crate::block::Block::all()
+            petramond_world::block::Block::all()
                 .iter()
                 .filter_map(|b| {
                     b.data_value(&key)
@@ -132,7 +132,7 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
 
 /// One item row as its ABI crossing — the stable, mod-relevant fields of the
 /// `items.json` row (presentation internals stay engine-side).
-fn item_info_data(item: crate::item::ItemType) -> mod_api::ItemInfoData {
+fn item_info_data(item: petramond_world::item::ItemType) -> mod_api::ItemInfoData {
     mod_api::ItemInfoData {
         max_stack: item.max_stack_size(),
         fuel_burn_ticks: item.fuel_burn_ticks() as u32,
@@ -161,8 +161,8 @@ fn item_info_data(item: crate::item::ItemType) -> mod_api::ItemInfoData {
 /// The `items.json` `use` key a resolved handler was declared as. Wildcard
 /// field patterns keep this stable across handler-param reshapes; a NEW
 /// handler variant must pick its key here (exhaustive on purpose).
-fn item_use_key(u: crate::item::ItemUse) -> &'static str {
-    use crate::item::ItemUse;
+fn item_use_key(u: petramond_world::item::ItemUse) -> &'static str {
+    use petramond_world::item::ItemUse;
     match u {
         ItemUse::BucketFill { .. } => "bucket_fill",
         ItemUse::BucketPour { .. } => "bucket_pour",
@@ -192,7 +192,7 @@ mod tests {
         let HostRet::Item(Some(id)) = got else {
             panic!("expected a resolved id for petramond:stick, got {got:?}");
         };
-        assert_eq!(id.0, crate::item::ItemType::Stick.id());
+        assert_eq!(id.0, petramond_world::item::ItemType::Stick.id());
         // id → name inverts the resolution; an out-of-range id is None.
         let names = handle_host_call(
             &mut store,
@@ -285,8 +285,8 @@ mod tests {
         ) else {
             panic!("block list expected");
         };
-        assert!(leaves.contains(&mod_api::BlockId(crate::block::Block::OakLeaves.id())));
-        assert!(!leaves.contains(&mod_api::BlockId(crate::block::Block::Stone.id())));
+        assert!(leaves.contains(&mod_api::BlockId(petramond_world::block::Block::OakLeaves.id())));
+        assert!(!leaves.contains(&mod_api::BlockId(petramond_world::block::Block::Stone.id())));
         for tag in ["no_such_tag", "mymod:no_such_tag"] {
             assert_eq!(
                 handle_host_call(&mut data, HostCall::BlocksByTag { tag: tag.into() }),
@@ -312,7 +312,7 @@ mod tests {
         };
         let by_name = |name: &str| {
             mod_api::ItemId(
-                crate::registry::names()
+                petramond_world::registry::names()
                     .items
                     .id(name)
                     .expect("engine item registered"),
@@ -359,7 +359,7 @@ mod tests {
         };
         assert_eq!(
             stone.block,
-            Some(mod_api::BlockId(crate::block::Block::Stone.id())),
+            Some(mod_api::BlockId(petramond_world::block::Block::Stone.id())),
             "a placeable item exposes its block link"
         );
         assert_eq!(

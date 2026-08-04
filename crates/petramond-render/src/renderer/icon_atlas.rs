@@ -35,13 +35,13 @@
 use wgpu::util::DeviceExt;
 
 use petramond::gui::SlotRect;
-use petramond::item::{ItemRenderKind, ItemType};
+use petramond_world::item::{ItemRenderKind, ItemType};
 use crate::ui::icon::{flat_icon_mvp, iso_icon_mvp, model_icon_mvp};
 
 use super::super::chest_model::push_chest_item_full;
 use super::super::item_cube::{push_billboard_quad, push_block_item_cube};
 use super::super::item_model::{build_block_model_icon, ItemVertex};
-use petramond::block::Block;
+use petramond_world::block::Block;
 use petramond_mesh::Vertex;
 use glam::Vec3;
 

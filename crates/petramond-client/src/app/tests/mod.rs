@@ -1,11 +1,11 @@
 use super::App;
 use petramond_render::camera::Camera;
-use petramond::gui_state::PointerButton;
+use petramond_world::gui_state::PointerButton;
 use crate::game::Game;
-use petramond::gui_state::MenuSlot;
-use petramond::inventory::Inventory;
-use petramond::item::{ItemStack, ItemType};
-use petramond::mathh::Vec3;
+use petramond_world::gui_state::MenuSlot;
+use petramond_world::inventory::Inventory;
+use petramond_world::item::{ItemStack, ItemType};
+use petramond_math::math::Vec3;
 use petramond::server::game::ServerGame;
 use petramond::server::handle::LoopbackServer;
 
@@ -195,14 +195,14 @@ impl TestApp {
             .apply_views_for_test(&state, sync);
     }
 
-    fn install_test_crafting_catalog(&mut self, recipes: Vec<petramond::crafting::CraftingRecipe>) {
+    fn install_test_crafting_catalog(&mut self, recipes: Vec<petramond_world::crafting::CraftingRecipe>) {
         self.server
-            .install_recipes_for_test(petramond::crafting::Recipes::new(recipes.clone(), Vec::new()));
+            .install_recipes_for_test(petramond_world::crafting::Recipes::new(recipes.clone(), Vec::new()));
         self.app
             .game
             .as_mut()
             .expect("test app has a loaded game")
-            .set_crafting_catalog_for_test(petramond::crafting::CraftingCatalog::new(recipes));
+            .set_crafting_catalog_for_test(petramond_world::crafting::CraftingCatalog::new(recipes));
     }
 
     fn install_test_crafting_recipe(&mut self) {
@@ -219,8 +219,8 @@ fn test_recipe(
     key: &str,
     ingredient: ItemType,
     result: ItemStack,
-) -> petramond::crafting::CraftingRecipe {
-    use petramond::crafting::{
+) -> petramond_world::crafting::CraftingRecipe {
+    use petramond_world::crafting::{
         CraftingIngredient, CraftingRecipe, CraftingStation, IngredientSelector, IngredientUse,
     };
     CraftingRecipe::new(

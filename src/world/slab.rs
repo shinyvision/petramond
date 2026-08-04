@@ -1,9 +1,9 @@
 //! Stackable slabs at the world level: position-aware state lookup, collision,
 //! and placement.
 
-use crate::block::Block;
-use crate::mathh::IVec3;
-use crate::slab::SlabSlot;
+use petramond_world::block::Block;
+use petramond_math::math::IVec3;
+use petramond_world::slab::SlabSlot;
 
 use super::store::World;
 
@@ -19,7 +19,7 @@ impl World {
         let Some(next) = self.slab_layer_target_state(pos, block, slot) else {
             return false;
         };
-        let representative = crate::slab::representative_block(next);
+        let representative = petramond_world::slab::representative_block(next);
         let Some((section, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
             return false;
         };

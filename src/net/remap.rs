@@ -41,7 +41,7 @@ impl IdRemap {
     /// Build the LUTs from the server's tables against THIS process's loaded
     /// registries.
     pub fn build(tables: &NameTables) -> IdRemap {
-        let names = crate::registry::names();
+        let names = petramond_world::registry::names();
         let blocks: Vec<u16> = tables
             .blocks
             .iter()
@@ -49,7 +49,7 @@ impl IdRemap {
                 Some(id) => id,
                 None => {
                     log::warn!("remap: unknown server block '{n}' maps to air");
-                    crate::block::Block::Air.0
+                    petramond_world::block::Block::Air.0
                 }
             })
             .collect();
@@ -64,13 +64,13 @@ impl IdRemap {
             .collect();
         let mobs = build_lut(&tables.mobs, "mob", |n| mob_ids.get(n).copied());
         let sounds = build_lut(&tables.sounds, "sound", |n| {
-            crate::sound_registry::by_name(n).map(|s| s.0 as u16)
+            petramond_world::sound_registry::by_name(n).map(|s| s.0 as u16)
         });
         let effects = build_lut(&tables.effects, "effect", |n| {
-            crate::effect::by_name(n).map(|e| e.0 as u16)
+            petramond_world::effect::by_name(n).map(|e| e.0 as u16)
         });
         let emitters = build_lut(&tables.emitters, "emitter", |n| {
-            crate::particle_emitters::by_key(n).map(|b| b.id as u16)
+            petramond_world::particle_emitters::by_key(n).map(|b| b.id as u16)
         });
 
         let identity = blocks.iter().enumerate().all(|(i, &v)| i == v as usize)
@@ -99,7 +99,7 @@ impl IdRemap {
         self.blocks
             .get(server_id as usize)
             .copied()
-            .unwrap_or(crate::block::Block::Air.0)
+            .unwrap_or(petramond_world::block::Block::Air.0)
     }
 
     #[inline]
@@ -137,7 +137,7 @@ impl IdRemap {
         match msg {
             ServerToClient::SectionData(p) => {
                 remap_block_cube(&mut p.blocks, |id| self.block(id));
-                p.metrics = crate::section::Section::metrics_from_blocks(&p.blocks.0);
+                p.metrics = petramond_world::section::Section::metrics_from_blocks(&p.blocks.0);
                 // A cell state's id-masked bytes are raw BLOCK IDS (a slab's
                 // two layers) — rewrite them like the block buffer. GENERIC:
                 // the state declares its own id bytes, so a new stateful kind
@@ -352,7 +352,7 @@ impl IdRemap {
 /// THIS process's registry names, in id order — what a server sends as its
 /// wire vocabulary at join.
 pub fn local_name_tables() -> NameTables {
-    let names = crate::registry::names();
+    let names = petramond_world::registry::names();
     NameTables {
         blocks: (0..names.blocks.len())
             .map(|i| {
@@ -370,14 +370,14 @@ pub fn local_name_tables() -> NameTables {
             .iter()
             .map(|m| crate::mob::def(*m).key.to_string())
             .collect(),
-        sounds: crate::sound_registry::defs()
+        sounds: petramond_world::sound_registry::defs()
             .iter()
             .map(|d| d.name.to_string())
             .collect(),
-        effects: crate::effect::Effect::all()
+        effects: petramond_world::effect::Effect::all()
             .map(|e| e.def().name.to_string())
             .collect(),
-        emitters: crate::particle_emitters::defs()
+        emitters: petramond_world::particle_emitters::defs()
             .iter()
             .map(|b| b.key.to_string())
             .collect(),
@@ -429,15 +429,15 @@ fn remap_block_cube(cube: &mut SectionBlocks, f: impl Fn(u16) -> u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mathh::IVec3;
+    use petramond_math::math::IVec3;
 
     /// A two-layer slab state: a meta byte plus two two-byte BLOCK IDS — the
     /// only engine shape carrying id-masked bytes, and therefore the guard
     /// that the id boundary rewrites a WHOLE id, not its low byte.
-    fn slab_state(a: u16, b: u16) -> crate::block::ShapeState {
-        let [a_lo, a_hi] = crate::block::ShapeState::id_bytes(a);
-        let [b_lo, b_hi] = crate::block::ShapeState::id_bytes(b);
-        crate::block::ShapeState::with_ids(&[0b0111, a_lo, a_hi, b_lo, b_hi], 0b0_1010)
+    fn slab_state(a: u16, b: u16) -> petramond_world::block::ShapeState {
+        let [a_lo, a_hi] = petramond_world::block::ShapeState::id_bytes(a);
+        let [b_lo, b_hi] = petramond_world::block::ShapeState::id_bytes(b);
+        petramond_world::block::ShapeState::with_ids(&[0b0111, a_lo, a_hi, b_lo, b_hi], 0b0_1010)
     }
 
     /// A "server" whose tables exactly match this process: identity.
@@ -460,7 +460,7 @@ mod tests {
 
         let map = IdRemap::build(&tables);
         assert!(!map.is_identity());
-        assert_eq!(map.block(unknown_block), crate::block::Block::Air.0);
+        assert_eq!(map.block(unknown_block), petramond_world::block::Block::Air.0);
         assert_eq!(map.item(unknown_item), None);
         // Known ids still map through unchanged.
         assert_eq!(map.block(3), 3);
@@ -514,7 +514,7 @@ mod tests {
         );
 
         let mut msg = ServerToClient::SectionData(Box::new(crate::net::protocol::SectionPayload {
-            pos: crate::chunk::SectionPos {
+            pos: petramond_world::chunk::SectionPos {
                 cx: 0,
                 cy: 0,
                 cz: 0,
@@ -566,7 +566,7 @@ mod tests {
         assert_eq!(map.item(300), Some(1000));
         assert_eq!(
             map.block(5000),
-            crate::block::Block::Air.0,
+            petramond_world::block::Block::Air.0,
             "past the table"
         );
 
@@ -644,7 +644,7 @@ mod tests {
         let mob_row = |kind_id: u8| MobStateRow {
             id: kind_id as u64,
             kind_id,
-            pos: crate::mathh::Vec3::ZERO,
+            pos: petramond_math::math::Vec3::ZERO,
             yaw: 0.0,
             anim_time: 0.0,
             moving: false,
@@ -663,14 +663,14 @@ mod tests {
             item_id,
             count: 1,
             data: None,
-            pos: crate::mathh::Vec3::ZERO,
+            pos: petramond_math::math::Vec3::ZERO,
             spin: 0.0,
         };
         let player_row = |held_item: Option<u16>| crate::net::protocol::PlayerStateRow {
             id: crate::player::PlayerId(1),
             transform: crate::net::protocol::Transform {
-                pos: crate::mathh::Vec3::ZERO,
-                vel: crate::mathh::Vec3::ZERO,
+                pos: petramond_math::math::Vec3::ZERO,
+                vel: petramond_math::math::Vec3::ZERO,
                 yaw: 0.0,
                 pitch: 0.0,
             },

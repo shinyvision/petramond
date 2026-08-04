@@ -1,5 +1,5 @@
 use crate::world::WorldData;
-use crate::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
+use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
 
 use super::World;
 

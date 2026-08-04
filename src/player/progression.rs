@@ -12,7 +12,7 @@
 
 use std::collections::HashSet;
 
-use crate::item::{ItemSet, ItemType};
+use petramond_world::item::{ItemSet, ItemType};
 
 /// One player's discovery record.
 #[derive(Clone, Default)]

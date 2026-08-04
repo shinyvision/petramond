@@ -220,7 +220,7 @@ fn tool_power(block: Block, tool: Option<Tool>) -> u8 {
 }
 
 /// Whether `tool` harvests `block` (i.e. the break yields its drop). True when the
-/// effective [`tool_power`] meets the block's [`harvest_tier`](Block::harvest_tier):
+/// effective `tool_power` meets the block's [`harvest_tier`](Block::harvest_tier):
 /// hand-harvestable blocks (tier `0` — dirt, wood, plants) always drop, while
 /// stone/ore need a pickaxe of sufficient tier and never drop to an axe or a hand.
 #[inline]

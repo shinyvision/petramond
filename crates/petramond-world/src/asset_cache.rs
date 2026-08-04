@@ -16,7 +16,7 @@
 //! # Staleness — the whole game
 //!
 //! A cache entry is reused only when BOTH agree with the request:
-//! - **source hash** — an [FNV-1a](hash_source) digest of the authored bytes; any edit to
+//! - **source hash** — an `FNV-1a` digest of the authored bytes; any edit to
 //!   the source changes it and forces a rebuild.
 //! - **format version** — [`CompiledAsset::FORMAT_VERSION`]; bump it whenever the on-disk
 //!   layout or the `compile` logic changes and every stale entry rebuilds itself.

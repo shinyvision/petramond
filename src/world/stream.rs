@@ -1,7 +1,7 @@
-use crate::chunk::SectionPos;
+use petramond_world::chunk::SectionPos;
 use crate::entity::DroppedItem;
 use crate::mob::SavedMob;
-use crate::section::Section;
+use petramond_world::section::Section;
 
 mod poll;
 mod requests;

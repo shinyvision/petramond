@@ -281,7 +281,7 @@ pub struct ShapeMount {
 
 pub trait ShapeSim: Send + Sync + 'static {
     /// The block's position-aware collision boxes — the resolve behind
-    /// [`World::collision_boxes_at`]. The default is the row's position-less
+    /// `World::collision_boxes_at`. The default is the row's position-less
     /// [`Block::collision_boxes`] (right for cube/cross/crop/torch/lowered);
     /// stateful and neighbour-aware families override. Reads the world ONLY
     /// through the primitive seam (the sim `World` implements it), so one
@@ -426,7 +426,7 @@ pub trait ShapeSim: Send + Sync + 'static {
     ///
     /// The default DERIVES them from [`occupies_pocket`](Self::occupies_pocket):
     /// a face quadrant is open exactly when nothing sits against the boundary
-    /// in the middle of it (see [`aperture_probe`]). No family should override
+    /// in the middle of it (see `aperture_probe`). No family should override
     /// this — "what
     /// blocks light" is "what matter is there", and a second hand-written
     /// answer is a second thing to keep in sync (stairs and slabs each had
@@ -476,7 +476,7 @@ pub trait ShapeSim: Send + Sync + 'static {
 /// requirement. Never called on a headless server.
 pub trait ShapeRender: Send + Sync + 'static {
     /// The selection / raycast-target box (union) — the resolve behind
-    /// [`World::selection_box_at`]. `None` = the full-cube default. Must agree
+    /// `World::selection_box_at`. `None` = the full-cube default. Must agree
     /// with [`ShapeSim::collision_boxes`] so "aim inside the outline" hits the
     /// real box — which is why it reads through the same primitive seam.
     /// Default is the family's position-less

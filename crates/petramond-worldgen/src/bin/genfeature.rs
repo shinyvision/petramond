@@ -4,7 +4,7 @@
 //! feature shape can be reviewed directly.
 //!
 //! Run:
-//!   cargo run --quiet --bin genfeature -- [feature] [out.png] [seed] [view] [scale]
+//!   cargo run --quiet --bin genfeature -- `feature` [out.png] `seed` `view` `scale`
 //! e.g.
 //!   cargo run --quiet --bin genfeature -- redwood /tmp/redwood.png 42 side 8
 //!   cargo run --quiet --bin genfeature -- redwood /tmp/redwood.png 42 all 8

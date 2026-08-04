@@ -7,14 +7,14 @@
 //! share with the legacy packed path is its texturing — bbmodel faces carry arbitrary
 //! sub-rectangle UVs, which the tile-packed vertex + fixed atlas can't express — so model
 //! geometry rides a second, explicit-UV vertex stream in the chunk mesh and samples a
-//! combined [`ModelAtlas`] instead of the block atlas.
+//! combined `ModelAtlas` instead of the block atlas.
 //!
 //! # Three layers
 //!
 //! 1. [`BlockModel`] — the CACHED parse: cube geometry (model space) + the decoded
 //!    texture. This is the expensive step (`serde_json` + base64 + PNG decode), compiled
 //!    once into a `.llblock` (see [`crate::asset_cache`]) and reused.
-//! 2. [`ModelAtlas`] — all kinds' textures stacked into one sheet, with a per-kind UV
+//! 2. `ModelAtlas` — all kinds' textures stacked into one sheet, with a per-kind UV
 //!    transform, built once from the cached models. Shared by the off-thread mesher (UV
 //!    remap) and the renderer (GPU upload).
 //! 3. [`ModelInstance`] — the runtime bake derived from the cached model + its data row:

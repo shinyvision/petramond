@@ -1,5 +1,5 @@
 //! World-space geometry for animated entity models (mobs), baked each frame into
-//! the explicit-UV [`ItemVertex`](super::item_model::ItemVertex) stream and drawn by
+//! the explicit-UV [`ItemVertex`] stream and drawn by
 //! the dedicated `mob` pipeline (see `pipeline.rs` / `mob.wgsl`).
 //!
 //! Generic over species: the caller passes the parsed [`Model`], its render `scale`,
@@ -21,7 +21,7 @@ use glam::{Mat4, Vec3};
 use super::item_model::ItemVertex;
 use super::lighting::{fold_tint, mul3, DynLight, LightEnv};
 use super::MobRenderInstance;
-use petramond::bbmodel::{euler_quat, face_corners, Animation, Cube, Model};
+use petramond_world::bbmodel::{euler_quat, face_corners, Animation, Cube, Model};
 use petramond_math::face::Face;
 use petramond_mesh::SHADES;
 
@@ -253,7 +253,7 @@ mod tests {
             head_yaw: 0.0,
             head_pitch: 0.0,
             skylight: 63,
-            blocklight: petramond::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
             hurt: 0.0,
             shorn: false,
             emitter_tint: [1.0, 1.0, 1.0],

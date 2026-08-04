@@ -1,5 +1,5 @@
 use super::*;
-use crate::bbmodel::Model;
+use petramond_world::bbmodel::Model;
 use crate::mob::model_meta::{self, SkBone};
 
 fn boxed(pivot: Vec3, min: Vec3, max: Vec3, parent: Option<usize>) -> SkBone {

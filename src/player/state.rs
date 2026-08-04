@@ -1,4 +1,4 @@
-use crate::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 use crate::world::World;
 
 /// Half the horizontal width (box is 0.6 wide on x and z).
@@ -27,7 +27,7 @@ pub struct Input {
     pub sprint: bool,
     /// Sneaking (held): halves land speed and, while grounded, refuses any
     /// horizontal move that would drop the feet farther than a step-down —
-    /// see the edge guard in [`Player::update`]. Overrides `sprint`.
+    /// see the edge guard in `Player::update`. Overrides `sprint`.
     pub sneak: bool,
 }
 
@@ -73,7 +73,7 @@ pub struct PlayerRosterSnapshot {
     /// Sneak intent, gated on gameplay focus (the session's one sneak rule).
     pub sneak: bool,
     /// The selected hotbar stack's item, if any, with its count.
-    pub held: Option<crate::item::ItemType>,
+    pub held: Option<petramond_world::item::ItemType>,
     pub held_count: u8,
 }
 
@@ -118,7 +118,7 @@ pub struct Player {
     health: i32,
     /// Engine-owned global damage immunity. Transient: a fresh connection or
     /// respawn starts vulnerable regardless of saved health.
-    damage_immunity: crate::damage::DamageImmunity,
+    damage_immunity: petramond_world::damage::DamageImmunity,
     /// Highest feet-`y` reached since the player last stood on the ground (or was in
     /// water). The fall distance of a landing is this minus the landing `y`. Reset when
     /// grounded/submerged so a fall is measured from where it began, and the arc of a
@@ -131,7 +131,7 @@ pub struct Player {
     fall_distance: f32,
     /// The player's 36-slot inventory (9 hotbar + 27 main). Owns the active
     /// hotbar selection that drives the held item and placement.
-    pub inventory: crate::inventory::Inventory,
+    pub inventory: petramond_world::inventory::Inventory,
     /// Bed spawn point, if a bed interaction set one (see [`BedSpawn`]).
     pub bed_spawn: Option<BedSpawn>,
     /// The recipe browser's craftable-only filter — a per-player UI preference
@@ -145,7 +145,7 @@ pub struct Player {
     /// Active status effects, in application order (deterministic iteration).
     /// Stepped once per game tick by `Game::tick_effects`; persisted by
     /// registry name in `level.dat`.
-    effects: Vec<crate::effect::ActiveEffect>,
+    effects: Vec<petramond_world::effect::ActiveEffect>,
 }
 
 impl Player {
@@ -162,7 +162,7 @@ impl Player {
             damage_immunity: Default::default(),
             fall_peak_y: feet.y,
             fall_distance: 0.0,
-            inventory: crate::inventory::Inventory::new(),
+            inventory: petramond_world::inventory::Inventory::new(),
             bed_spawn: None,
             craft_craftable_only: false,
             progression: Default::default(),
@@ -191,7 +191,7 @@ impl Player {
         }
         self.health = (self.health - points).max(0);
         self.damage_immunity
-            .grant_for(crate::damage::PLAYER_DAMAGE_IFRAME_TICKS);
+            .grant_for(petramond_world::damage::PLAYER_DAMAGE_IFRAME_TICKS);
         true
     }
 
@@ -221,21 +221,21 @@ impl Player {
 
     /// Active status effects in application order.
     #[inline]
-    pub fn effects(&self) -> &[crate::effect::ActiveEffect] {
+    pub fn effects(&self) -> &[petramond_world::effect::ActiveEffect] {
         &self.effects
     }
 
     /// Grant `effect` for `ticks`. An already-active effect is overwritten with
     /// the new duration (keeping its original slot in the application order);
     /// zero ticks removes it. Call on the tick.
-    pub fn apply_effect(&mut self, effect: crate::effect::Effect, ticks: u32) {
+    pub fn apply_effect(&mut self, effect: petramond_world::effect::Effect, ticks: u32) {
         if ticks == 0 {
             self.remove_effect(effect);
             return;
         }
         match self.effects.iter_mut().find(|e| e.effect == effect) {
             Some(e) => e.remaining = ticks,
-            None => self.effects.push(crate::effect::ActiveEffect {
+            None => self.effects.push(petramond_world::effect::ActiveEffect {
                 effect,
                 remaining: ticks,
             }),
@@ -243,7 +243,7 @@ impl Player {
     }
 
     /// Remove `effect` if active.
-    pub fn remove_effect(&mut self, effect: crate::effect::Effect) {
+    pub fn remove_effect(&mut self, effect: petramond_world::effect::Effect) {
         self.effects.retain(|e| e.effect != effect);
     }
 
@@ -259,14 +259,14 @@ impl Player {
     /// duration concern — but never WHAT it does: consequences are applied by
     /// `Game::tick_effects`, because damaging behaviors must route through
     /// the `Game::damage_player` funnel this type cannot reach.
-    pub fn tick_effects(&mut self) -> Vec<crate::effect::EffectBehavior> {
+    pub fn tick_effects(&mut self) -> Vec<petramond_world::effect::EffectBehavior> {
         let mut fired = Vec::new();
         for e in &mut self.effects {
             e.remaining -= 1;
             let behavior = e.effect.def().behavior;
             match behavior {
-                crate::effect::EffectBehavior::None => {}
-                crate::effect::EffectBehavior::Regen { interval, .. } => {
+                petramond_world::effect::EffectBehavior::None => {}
+                petramond_world::effect::EffectBehavior::Regen { interval, .. } => {
                     if e.remaining % interval == 0 {
                         fired.push(behavior);
                     }
@@ -381,7 +381,7 @@ impl Player {
     }
 
     /// View direction from yaw/pitch — the sim-side twin of
-    /// [`crate::camera::Camera::forward`]. Per-player actions (placement
+    /// `crate::camera::Camera::forward`. Per-player actions (placement
     /// facing, bucket rays, thrown drops) read THIS, not the camera: the
     /// camera is presentation, exists only for the local player, and can lag
     /// the eye during a step-up glide.
@@ -401,8 +401,8 @@ impl Player {
 
     /// Gameplay body: feet at `pos`, using the player's collision dimensions.
     #[inline]
-    pub fn body(&self) -> crate::body::Body {
-        crate::body::Body::new(self.pos, HALF_W, HEIGHT)
+    pub fn body(&self) -> petramond_world::body::Body {
+        petramond_world::body::Body::new(self.pos, HALF_W, HEIGHT)
     }
 
     /// AABB min corner.

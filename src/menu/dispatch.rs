@@ -1,7 +1,7 @@
 use super::{ContainerMenu, ContainerTarget};
-use crate::gui_state::PointerButton;
-use crate::gui_state::MenuSlot;
-use crate::inventory::Inventory;
+use petramond_world::gui_state::PointerButton;
+use petramond_world::gui_state::MenuSlot;
+use petramond_world::inventory::Inventory;
 use crate::world::World;
 
 impl ContainerMenu {

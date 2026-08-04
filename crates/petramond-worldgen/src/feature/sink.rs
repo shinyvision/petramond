@@ -8,7 +8,7 @@ use petramond_world::section::Section;
 /// into one [`Chunk`] clipped to its footprint ([`ChunkSink`]), and runtime sapling
 /// growth, which writes into the live `World` through a validating overlay (see
 /// `world::sapling`). `get` returns the sink's CURRENT occupant so the overwrite
-/// predicates on [`FeatureCtx`] see a feature's own earlier writes; it reads `Air`
+/// predicates on `FeatureCtx` see a feature's own earlier writes; it reads `Air`
 /// for any cell the sink can't address.
 pub trait VoxelSink {
     fn get(&self, p: IVec3) -> Block;

@@ -158,7 +158,7 @@ impl Section {
     ///
     /// Runs on every generated/loaded section, so it avoids per-cell block
     /// dispatch: one id histogram pass over the 4096 cells, folded through the
-    /// per-id [`metrics_bits`] class table (derived from the same predicates
+    /// per-id `metrics_bits` class table (derived from the same predicates
     /// the incremental setters use, so the two paths cannot disagree), then a
     /// boundary-plane pass for `plane_opaque`.
     pub fn metrics_from_blocks(blocks: &[u16]) -> SectionMetrics {

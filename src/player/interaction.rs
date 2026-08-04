@@ -1,8 +1,8 @@
 use super::state::Player;
-use crate::tile_alpha::{tile_alpha_bounds, TileAlphaBounds};
-use crate::block::{Block, ShapeFamily};
-use crate::mathh::{IVec3, SelectionBoxes, SelectionShape, Vec3};
-use crate::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
+use petramond_world::tile_alpha::{tile_alpha_bounds, TileAlphaBounds};
+use petramond_world::block::{Block, ShapeFamily};
+use petramond_math::math::{IVec3, SelectionBoxes, SelectionShape, Vec3};
+use petramond_world::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
 use crate::world::World;
 
 /// Max block-interaction distance, measured from the eye.
@@ -106,8 +106,8 @@ impl Player {
                 // Nothing resolved (an unbaked custom-shape cell, a connection row
                 // missing its params): keep the row's default outline rather
                 // than drawing an empty wireframe.
-            } else if boxes.len() <= crate::mathh::MAX_SELECTION_BOXES {
-                let (boxes, len) = crate::connect::world_boxes(hit.block, boxes);
+            } else if boxes.len() <= petramond_math::math::MAX_SELECTION_BOXES {
+                let (boxes, len) = petramond_world::connect::world_boxes(hit.block, boxes);
                 hit.outline = SelectionShape::Boxes {
                     boxes: SelectionBoxes { boxes, len },
                 };
@@ -356,8 +356,8 @@ fn plant_selection_aabb(block_pos: IVec3, block: Block) -> Option<(Vec3, Vec3)> 
         // The lattice's flanks are inset; the box hangs 1/16 below the cell,
         // rooted on sunken farmland (mirroring `mesh::face::crop_quads`).
         ShapeFamily::Crop => {
-            let inset = crate::block::CROP_PLANE_INSET;
-            let drop = crate::block::CROP_PLANE_DROP;
+            let inset = petramond_world::block::CROP_PLANE_INSET;
+            let drop = petramond_world::block::CROP_PLANE_DROP;
             (
                 base + Vec3::new(inset, b.v_min - drop, inset),
                 base + Vec3::new(1.0 - inset, b.v_max - drop, 1.0 - inset),
@@ -404,9 +404,9 @@ fn precise_shape_hit(
     if let Some(kind) = block.model_kind() {
         let off = world.model_offset_at(pos.x, pos.y, pos.z);
         let facing = world.model_facing_at(pos.x, pos.y, pos.z);
-        let base = crate::block_model::base_from_cell(pos, kind, off, facing);
-        let inv = crate::block_model::placement_transform(base, kind, facing).inverse();
-        return crate::block_model::ray_vs_model(
+        let base = petramond_world::block_model::base_from_cell(pos, kind, off, facing);
+        let inv = petramond_world::block_model::placement_transform(base, kind, facing).inverse();
+        return petramond_world::block_model::ray_vs_model(
             inv.transform_point3(eye),
             inv.transform_vector3(dir),
             kind,

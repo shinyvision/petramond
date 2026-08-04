@@ -3,7 +3,7 @@
 //! bundle opts out of the two outdoor assumptions: the per-column
 //! precipitation ceiling (`kill`) and the full-skylight constant (`light`).
 //!
-//! An `ambient` bundle (see [`petramond::particle_emitters`]) is DERIVED, not
+//! An `ambient` bundle (see [`petramond_world::particle_emitters`]) is DERIVED, not
 //! simulated: every frame, each active drive re-computes its particle set as
 //! a pure function of `(bundle, slot, cycle, time)` around the local camera.
 //! Nothing persists, nothing runs on the tick, nothing replicates — a drive
@@ -24,7 +24,7 @@ use rustc_hash::FxHashMap;
 use glam::Vec3;
 
 use petramond::entity::hash01;
-use petramond::particle_emitters::{
+use petramond_world::particle_emitters::{
     AmbientHit, AmbientKill, AmbientLight, AmbientMotion, AmbientSpec, BurstSpec,
 };
 use petramond::world::World;
@@ -121,7 +121,7 @@ impl AmbientDrives {
 
     /// Ease every drive toward its target and append this frame's derived
     /// particle rows. `time` is the app's render clock (only its DELTAS are
-    /// consumed — see [`Self::clock`]); `cam` is the camera position;
+    /// consumed — see `Self::clock`); `cam` is the camera position;
     /// `density` is the particles graphics option (0 = off, the option
     /// exists to shed exactly this cost).
     pub fn collect(
@@ -157,7 +157,7 @@ impl AmbientDrives {
                 if drive.intensity <= DEAD_INTENSITY {
                     continue;
                 }
-                let Some(def) = petramond::particle_emitters::def(*bundle) else {
+                let Some(def) = petramond_world::particle_emitters::def(*bundle) else {
                     continue;
                 };
                 let Some(spec) = def.ambient.as_ref() else {
@@ -171,7 +171,7 @@ impl AmbientDrives {
                 let splash = match &spec.hit {
                     AmbientHit::Die => None,
                     AmbientHit::Burst(key) => {
-                        petramond::particle_emitters::by_key(key).and_then(|b| b.burst.as_ref())
+                        petramond_world::particle_emitters::by_key(key).and_then(|b| b.burst.as_ref())
                     }
                 };
                 derive_volume(
@@ -354,7 +354,7 @@ fn derive_volume(
                 let Some((kill_y, hit_biome)) = column_ceiling(world, ceilings, hx, hz) else {
                     continue;
                 };
-                if !petramond::particle_emitters::biome_allowed(&spec.biome_allow, hit_biome) {
+                if !petramond_world::particle_emitters::biome_allowed(&spec.biome_allow, hit_biome) {
                     continue;
                 }
                 if kill_y >= y_top || kill_y <= y_top - span {
@@ -382,7 +382,7 @@ fn derive_volume(
                 };
                 // The refinement can land columns away: keep the biome
                 // divide exact for crowns too.
-                if !petramond::particle_emitters::biome_allowed(&spec.biome_allow, refined_biome) {
+                if !petramond_world::particle_emitters::biome_allowed(&spec.biome_allow, refined_biome) {
                     continue;
                 }
                 if kill_y >= y_top || kill_y <= y_top - span {
@@ -406,7 +406,7 @@ fn derive_volume(
                         (0.0, 0.0)
                     };
                     let light = match spec.light {
-                        AmbientLight::Sky => (SKY_OPEN_LIGHT, petramond::light::BlockLight6::DARK),
+                        AmbientLight::Sky => (SKY_OPEN_LIGHT, petramond_world::light::BlockLight6::DARK),
                         AmbientLight::World => world.dynamic_light_at_world(
                             hx.floor() as i32,
                             kill_y.floor() as i32,
@@ -448,7 +448,7 @@ fn derive_volume(
             };
             // The bundle's per-column biome filter: at a biome border, rain
             // and snow bundles draw their divide column-exactly.
-            if !petramond::particle_emitters::biome_allowed(&spec.biome_allow, biome) {
+            if !petramond_world::particle_emitters::biome_allowed(&spec.biome_allow, biome) {
                 continue;
             }
             if spec.kill == AmbientKill::Ceiling {
@@ -472,7 +472,7 @@ fn derive_volume(
         alpha *= (t_band / EDGE_FADE).min(1.0);
         alpha *= ((1.0 - t_band) / EDGE_FADE).min(1.0);
         let (skylight, blocklight) = match spec.light {
-            AmbientLight::Sky => (SKY_OPEN_LIGHT, petramond::light::BlockLight6::DARK),
+            AmbientLight::Sky => (SKY_OPEN_LIGHT, petramond_world::light::BlockLight6::DARK),
             AmbientLight::World => world.dynamic_light_at_world(cx, cy, cz),
         };
         out.push(ParticlePresentation {
@@ -500,7 +500,7 @@ fn derive_splash(
     kill_y: f32,
     z: f32,
     age: f32,
-    light: (u8, petramond::light::BlockLight6),
+    light: (u8, petramond_world::light::BlockLight6),
     out: &mut Vec<ParticlePresentation>,
 ) {
     if age < 0.0 {
@@ -629,8 +629,8 @@ mod tests {
 
     #[test]
     fn covered_camera_derives_nothing_below_the_roof() {
-        use petramond::block::Block;
-        use petramond::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+        use petramond_world::block::Block;
+        use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
         // A floor at y=64 AND a roof at y=80; the camera stands between them.
         let mut world = petramond::world::World::new(0, 1);
         for cz in -1..=1 {
@@ -884,8 +884,8 @@ mod tests {
 
     /// A 3×3-chunk box: stone floor at y=64, stone roof at y=80, air between.
     fn roofed_world() -> petramond::world::World {
-        use petramond::block::Block;
-        use petramond::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+        use petramond_world::block::Block;
+        use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
         let mut world = petramond::world::World::new(0, 1);
         for cz in -1..=1 {
             for cx in -1..=1 {
@@ -981,8 +981,8 @@ mod tests {
     /// the cell, `light: "sky"` keeps the precipitation constant.
     #[test]
     fn world_lit_motes_take_the_cells_own_light() {
-        use petramond::chunk::SECTION_VOLUME;
-        use petramond::light::{BlockLight6, LightRgb};
+        use petramond_world::chunk::SECTION_VOLUME;
+        use petramond_world::light::{BlockLight6, LightRgb};
         let mut world = roofed_world();
         // Bake the band the camera stands in DARK, then flood ONE chunk's
         // section with a coloured emitter's light. A constant would pass a

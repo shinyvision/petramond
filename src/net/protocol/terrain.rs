@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::chunk::{ChunkPos, SectionPos};
+use petramond_world::chunk::{ChunkPos, SectionPos};
 
 /// A shared byte buffer on the wire: refcount-bumped over the local
 /// connection, serialized as plain bytes over TCP (deserialization allocates a
@@ -94,7 +94,7 @@ fn unpack_blocks(v: &[u8]) -> Option<Arc<[u16]>> {
         Some(s)
     };
     let cells = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
-    if cells > crate::chunk::SECTION_VOLUME {
+    if cells > petramond_world::chunk::SECTION_VOLUME {
         return None;
     }
     let distinct = u16::from_le_bytes(take(2)?.try_into().ok()?) as usize;
@@ -160,14 +160,14 @@ impl<'de> Deserialize<'de> for SectionBlocks {
 /// A shared BLOCK-LIGHT cube on the wire: the sibling of [`SectionBytes`] for
 /// the packed RGB cell. Same deal — the local connection ships a refcount
 /// bump; TCP pays one little-endian byte pass in each direction. Decode forces
-/// canonical cells (see [`LightRgb::from_bits`]) so a mangled frame cannot
+/// canonical cells (see `LightRgb::from_bits`) so a mangled frame cannot
 /// introduce a second spelling of black and desync the region diff.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SectionLight(pub Arc<[crate::light::LightRgb]>);
+pub struct SectionLight(pub Arc<[petramond_world::light::LightRgb]>);
 
 impl Serialize for SectionLight {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_bytes(&crate::light::to_le_bytes(&self.0))
+        s.serialize_bytes(&petramond_world::light::to_le_bytes(&self.0))
     }
 }
 
@@ -180,7 +180,7 @@ impl<'de> Deserialize<'de> for SectionLight {
                 f.write_str("a packed RGB light buffer")
             }
             fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<SectionLight, E> {
-                let cells = crate::light::from_le_bytes(v)
+                let cells = petramond_world::light::from_le_bytes(v)
                     .ok_or_else(|| E::custom("odd-length light buffer"))?;
                 Ok(SectionLight(Arc::from(cells)))
             }
@@ -255,14 +255,14 @@ pub struct SectionPayload {
     pub blocks: SectionBlocks,
     /// Block-derived counters and boundary planes. The replica adopts these
     /// with the shared buffers instead of rescanning the section on its frame.
-    pub metrics: crate::section::SectionMetrics,
+    pub metrics: petramond_world::section::SectionMetrics,
     /// 4096 water meta bytes, present when any cell holds water.
     pub water: Option<SectionBytes>,
     /// Server-baked light. The ship gate (`plan_terrain_send`) holds a section
     /// back until its light is final, so this is `None` ONLY for sections that
     /// never bake (fully opaque). Replica ingest does no light work of its own;
     /// local predicted edits may compute disposable presentation light.
-    /// Post-install rebakes arrive as [`LightData`](ServerToClient::LightData).
+    /// Post-install rebakes arrive as `LightData`.
     pub skylight: Option<SectionBytes>,
     pub blocklight: Option<SectionLight>,
     /// Sparse per-cell block states (doors, stairs, slabs, log axes, torches,
@@ -313,7 +313,7 @@ pub struct SectionStatesPayload {
     /// store bytes (opaque to the transport except the id-masked BLOCK-ID
     /// bytes, rewritten through the block LUT at the boundary via
     /// `ShapeState::remap_ids`).
-    pub cell_states: Vec<(u16, crate::block::ShapeState)>,
+    pub cell_states: Vec<(u16, petramond_world::block::ShapeState)>,
     /// Per-cell mod KV, preserved opaquely (entries sorted by key — the map
     /// is a `BTreeMap` section-side).
     pub cell_kv: Vec<CellKvEntry>,

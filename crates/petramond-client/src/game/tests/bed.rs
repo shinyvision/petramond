@@ -3,9 +3,9 @@
 
 use petramond::events::tick::TickEvents;
 use super::common::{game_on_empty_chunk, hit};
-use petramond::block::Block;
+use petramond_world::block::Block;
 use petramond::events::DamageSource;
-use petramond::mathh::IVec3;
+use petramond_math::math::IVec3;
 use petramond::player::{MAX_HEALTH, PITCH_LIMIT};
 use petramond::server::bed::SLEEP_TICKS;
 
@@ -247,7 +247,7 @@ fn damage_while_sleeping_cancels_the_sleep_immediately() {
 
 #[test]
 fn keep_inventory_rule_skips_the_death_spill() {
-    use petramond::item::{ItemStack, ItemType};
+    use petramond_world::item::{ItemStack, ItemType};
 
     // Default rule: death spills every stack as item entities and empties
     // the inventory (the classic corpse pile).

@@ -31,10 +31,10 @@
 //! on-load water kick when that terrain streams in
 //! (`world::stream::queue_loaded_section_water_updates`).
 
-use crate::block::Block;
-use crate::chunk::{SectionPos, SECTION_SIZE};
-use crate::mathh::IVec3;
-use crate::section::SectionSummary;
+use petramond_world::block::Block;
+use petramond_world::chunk::{SectionPos, SECTION_SIZE};
+use petramond_math::math::IVec3;
+use petramond_world::section::SectionSummary;
 
 use super::store::World;
 
@@ -91,7 +91,7 @@ impl World {
             .is_some_and(|sp| self.sections.contains_key(&sp) && self.stream_writable(sp))
     }
 
-    /// Whether [`World::physics_block`](Self::physics_block) is a truthful,
+    /// Whether `World::physics_block` is a truthful,
     /// final read at this cell. Unlike [`Self::section_stream_final_at`], this
     /// accepts absent sections whose generated summary proves their uniform
     /// contents. Collision-driven snapshots use this before treating an
@@ -184,15 +184,15 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-    use crate::chunk::{CHUNK_SX, CHUNK_SZ, Chunk, ChunkPos, SECTION_SIZE, SectionPos};
-    use crate::mathh::{IVec3, Vec3};
+    use petramond_world::chunk::{CHUNK_SX, CHUNK_SZ, Chunk, ChunkPos, SECTION_SIZE, SectionPos};
+    use petramond_math::math::{IVec3, Vec3};
     use crate::mob::Mob;
     use crate::world::testutil::flat_world;
     use super::super::store::World;
-    use crate::block::Block;
+    use petramond_world::block::Block;
 
     fn run_ticks(w: &mut World, n: u32) {
-        let recipes = crate::crafting::Recipes::default();
+        let recipes = petramond_world::crafting::Recipes::default();
         for _ in 0..n {
             w.game_tick(&recipes);
         }
@@ -427,7 +427,7 @@ mod tests {
         // that never unloaded. When the absent section lands, the kick must
         // re-arm the kept side that deep; the 1-cell inflow plane cannot.
         let mut w = World::new(0, 1);
-        let mut kept = crate::section::Section::new(0, 4, 0);
+        let mut kept = petramond_world::section::Section::new(0, 4, 0);
         for z in 0..SECTION_SIZE {
             for x in 0..SECTION_SIZE {
                 kept.set_block(x, 0, z, Block::Stone);
@@ -438,7 +438,7 @@ mod tests {
         w.insert_section_for_test(SectionPos::new(0, 4, 0), kept);
         w.insert_section_for_test(
             SectionPos::new(1, 4, 0),
-            crate::section::Section::new(1, 4, 0),
+            petramond_world::section::Section::new(1, 4, 0),
         );
 
         w.queue_loaded_section_water_updates(&[SectionPos::new(1, 4, 0)]);

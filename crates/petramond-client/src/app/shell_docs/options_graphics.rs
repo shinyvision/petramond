@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn the_widest_view_distance_readout_fits_its_column() {
         use petramond_ui::{solve, InstTree, ThemeEnv};
-        let doc = petramond::gui::documents::doc_for(petramond::gui_state::GuiKind::OptionsGraphics)
+        let doc = petramond::gui::documents::doc_for(petramond_world::gui_state::GuiKind::OptionsGraphics)
             .expect("graphics document loads");
         let theme = petramond::gui::doc_theme::theme();
         let mut state = UiState::new();

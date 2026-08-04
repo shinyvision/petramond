@@ -16,7 +16,7 @@ pub struct ClientImageData {
     pub height: u16,
     pub rgba: Arc<[u8]>,
     pub revision: u64,
-    /// The last [`IMAGE_BLIT_WINDOW`] partial updates as (revision after the
+    /// The last `IMAGE_BLIT_WINDOW` partial updates as (revision after the
     /// blit, pixel rect `[x, y, w, h]`), oldest first and CONSECUTIVE up to
     /// `revision`: a consumer holding revision R ≥ `blits[0].0 − 1` needs
     /// only the union of rects with revision > R. Cleared by any whole-image
@@ -84,7 +84,7 @@ pub(in crate::modding) struct ClientStoreData {
     /// Looping-sound gains this mod drives: resolved sound → gain. Read by
     /// the app each frame; gain changes are eased audio-side. Zero-gain
     /// entries stay (the ease-to-silence request); bounded by sounds.json.
-    pub sound_loops: BTreeMap<crate::sound_registry::Sound, f32>,
+    pub sound_loops: BTreeMap<petramond_world::sound_registry::Sound, f32>,
     /// This mod's post-process mood `[darken, desaturate]` (each `0..=0.5`).
     /// Mods combine by max; eased app-side before it reaches the grade pass.
     pub mood: [f32; 2],

@@ -15,7 +15,7 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 use crate::world::World;
 
 use super::model_meta::IdleAnimMeta;
@@ -111,11 +111,11 @@ pub struct TickInputs<'a> {
     /// Rigid movement obstacles for this mob. Soft bodies receive the complete
     /// start-of-tick solid snapshot; a moving solid receives only exact peer
     /// supports, with every other solid handled by the simultaneous solver.
-    pub solid: &'a [crate::collision::DynBox],
+    pub solid: &'a [petramond_world::collision::DynBox],
     /// Complete start-of-tick solid snapshot used only to clamp the mandatory
     /// shallow-foot healing lift. Moving solids otherwise receive just their
     /// exact supports here and meet all other peers in the simultaneous solve.
-    pub solid_heal: &'a [crate::collision::DynBox],
+    pub solid_heal: &'a [petramond_world::collision::DynBox],
 }
 
 /// Per-tick context a behavior reads to decide what the mob should do. Behaviors
@@ -151,7 +151,7 @@ pub struct AiCtx<'a> {
     pub player_sneaking: bool,
     /// That player's selected (held) item — the hand fact lure/beg behaviors
     /// read. `None` for an empty hand or a spectator.
-    pub player_held: Option<crate::item::ItemType>,
+    pub player_held: Option<petramond_world::item::ItemType>,
     /// EVERY connected player's anchor, for behaviors that track a SPECIFIC
     /// player (a heard target, an attacker) rather than the nearest one.
     pub players: &'a [PlayerAnchor],

@@ -11,10 +11,10 @@
 //! the gate and the mutation it guards cannot drift apart.
 
 use super::Game;
-use petramond::gui_state::PointerButton;
-use petramond::gui_state::{GuiKind, MenuSlot, MAX_MENU_DRAG_SLOTS};
-use petramond::inventory::{plan_drag_distribution, slot_capacity};
-use petramond::item::ItemStack;
+use petramond_world::gui_state::PointerButton;
+use petramond_world::gui_state::{GuiKind, MenuSlot, MAX_MENU_DRAG_SLOTS};
+use petramond_world::inventory::{plan_drag_distribution, slot_capacity};
+use petramond_world::item::ItemStack;
 use petramond::net::protocol::{ClientToServer, MenuSlotWire};
 
 impl Game {
@@ -66,7 +66,7 @@ impl Game {
 
     fn predicted_drag_capacity(
         &self,
-        specs: &[petramond::container::SlotSpec],
+        specs: &[petramond_world::container::SlotSpec],
         slot: MenuSlot,
         held: &ItemStack,
     ) -> u8 {
@@ -82,7 +82,7 @@ impl Game {
             // same helper: a slot one side counts and the other refuses does
             // not just snap that leg back — the split is by the NUMBER of
             // destinations, so every other slot of the drag lands wrong too.
-            MenuSlot::Container(i) if petramond::container::slot_admits(specs, i, Some(held.item)) => {
+            MenuSlot::Container(i) if petramond_world::container::slot_admits(specs, i, Some(held.item)) => {
                 self.menu_view
                     .container
                     .as_ref()
@@ -96,7 +96,7 @@ impl Game {
 
     fn predicted_drag_place(
         &mut self,
-        specs: &[petramond::container::SlotSpec],
+        specs: &[petramond_world::container::SlotSpec],
         slot: MenuSlot,
         wanted: u8,
     ) {
@@ -110,7 +110,7 @@ impl Game {
             // helper. A leg the client mirrors and the server refuses is a
             // stack that visibly lands and then snaps back.
             MenuSlot::Container(i)
-                if petramond::container::slot_admits(
+                if petramond_world::container::slot_admits(
                     specs,
                     i,
                     inventory.cursor().map(|held| held.item),
@@ -140,11 +140,11 @@ impl Game {
     /// those still ride track-only (the single-apply-path rule).
     fn menu_click_is_predictable(
         &self,
-        slot: petramond::gui_state::MenuSlot,
+        slot: petramond_world::gui_state::MenuSlot,
         shift: bool,
         gather: bool,
     ) -> bool {
-        use petramond::gui_state::MenuSlot;
+        use petramond_world::gui_state::MenuSlot;
         let v = &self.menu_view;
         match slot {
             MenuSlot::Inventory(_) => {
@@ -167,13 +167,13 @@ impl Game {
     /// decode runs, against the mirror cell instead of the world container.
     fn predict_menu_click(
         &mut self,
-        slot: petramond::gui_state::MenuSlot,
-        button: petramond::gui_state::PointerButton,
+        slot: petramond_world::gui_state::MenuSlot,
+        button: petramond_world::gui_state::PointerButton,
         shift: bool,
         gather: bool,
     ) {
-        use petramond::gui_state::PointerButton;
-        use petramond::gui_state::MenuSlot;
+        use petramond_world::gui_state::PointerButton;
+        use petramond_world::gui_state::MenuSlot;
         let secondary = button == PointerButton::Secondary;
         let inv = &mut self.self_view.inventory;
         match slot {
@@ -207,14 +207,14 @@ impl Game {
     }
 
     /// Latch a hit-tested container click for the next game tick: resolved by
-    /// the App to a [`MenuSlot`](petramond::gui_state::MenuSlot), a button, Shift, and
+    /// the App to a [`MenuSlot`], a button, Shift, and
     /// its double-click `gather` verdict, shipped as a `MenuClick` message and
     /// applied in arrival order by the tick's menu stage. Optimistically
     /// mutates the predicted inventory when the ledger has room.
     pub fn menu_click(
         &mut self,
-        slot: petramond::gui_state::MenuSlot,
-        button: petramond::gui_state::PointerButton,
+        slot: petramond_world::gui_state::MenuSlot,
+        button: petramond_world::gui_state::PointerButton,
         shift: bool,
         gather: bool,
     ) {
@@ -223,7 +223,7 @@ impl Game {
         // container-slot click mutates the open menu mirror too, so its
         // rollback unit spans both stores.
         let (can, request_id) = if self.menu_click_is_predictable(slot, shift, gather) {
-            if matches!(slot, petramond::gui_state::MenuSlot::Inventory(_)) {
+            if matches!(slot, petramond_world::gui_state::MenuSlot::Inventory(_)) {
                 self.begin_inventory_prediction()
             } else {
                 self.begin_menu_prediction()
@@ -246,15 +246,15 @@ impl Game {
     /// Drop from the hovered menu slot (Q / Ctrl-Q by default). Inventory
     /// cells can be predicted locally; container and transient output cells
     /// ride track-only until the authoritative menu tick applies them.
-    pub fn menu_drop(&mut self, slot: petramond::gui_state::MenuSlot, all: bool) {
+    pub fn menu_drop(&mut self, slot: petramond_world::gui_state::MenuSlot, all: bool) {
         self.local_hand_threw |= self.menu_slot_has_stack(slot);
-        let (can, request_id) = if matches!(slot, petramond::gui_state::MenuSlot::Inventory(_)) {
+        let (can, request_id) = if matches!(slot, petramond_world::gui_state::MenuSlot::Inventory(_)) {
             self.begin_inventory_prediction()
         } else {
             (false, self.prediction.begin_track_only())
         };
         if can {
-            if let petramond::gui_state::MenuSlot::Inventory(i) = slot {
+            if let petramond_world::gui_state::MenuSlot::Inventory(i) = slot {
                 self.self_view.inventory.take_slot_for_drop(i, all);
             }
         }
@@ -265,8 +265,8 @@ impl Game {
         });
     }
 
-    fn menu_slot_has_stack(&self, slot: petramond::gui_state::MenuSlot) -> bool {
-        use petramond::gui_state::MenuSlot;
+    fn menu_slot_has_stack(&self, slot: petramond_world::gui_state::MenuSlot) -> bool {
+        use petramond_world::gui_state::MenuSlot;
         match slot {
             MenuSlot::Inventory(i) => self.self_view.inventory.slot(i).is_some(),
             MenuSlot::CraftResult => self.menu_view.craft_output.is_some(),

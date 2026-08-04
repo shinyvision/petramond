@@ -4,8 +4,8 @@
 //! presentation. The sim never touches audio or particles — it only queues
 //! these values.
 
-use crate::block::Block;
-use crate::mathh::{IVec3, Vec3};
+use petramond_world::block::Block;
+use petramond_math::math::{IVec3, Vec3};
 use crate::player::PlayerId;
 
 /// Fixed simulation timestep: 20 game ticks per second, independent of frame
@@ -14,14 +14,14 @@ use crate::player::PlayerId;
 pub const TICK_DT: f32 = 0.05;
 
 /// One sound a mod emitted on the tick (`EmitSound` HostCall): resolved to a
-/// runtime [`Sound`](crate::sound_registry::Sound) id at call time, carried through the
+/// runtime [`Sound`](petramond_world::sound_registry::Sound) id at call time, carried through the
 /// tick→presentation channel, and played by the app layer each frame — the sim
 /// never touches audio. `pos` is where it happened (`None` = non-spatial);
 /// positional reach comes from the sound row's `attenuation_distance`.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ModSound {
-    pub sound: crate::sound_registry::Sound,
-    pub pos: Option<crate::mathh::Vec3>,
+    pub sound: petramond_world::sound_registry::Sound,
+    pub pos: Option<petramond_math::math::Vec3>,
 }
 
 /// A semantic mob sound event produced by gameplay. The app resolves the
@@ -31,7 +31,7 @@ pub struct MobSoundEvent {
     pub mob_id: u64,
     pub kind: crate::mob::Mob,
     pub category: crate::mob::MobSoundCategory,
-    pub pos: crate::mathh::Vec3,
+    pub pos: petramond_math::math::Vec3,
 }
 
 /// A deterministic presentation command produced by the spatial sound HostCalls.
@@ -41,20 +41,20 @@ pub struct MobSoundEvent {
 pub enum ModSpatialSoundCommand {
     PlayAt {
         handle: u64,
-        sound: crate::sound_registry::Sound,
-        pos: crate::mathh::Vec3,
+        sound: petramond_world::sound_registry::Sound,
+        pos: petramond_math::math::Vec3,
         volume: f32,
         pitch: f32,
     },
     PlayOnMob {
         handle: u64,
-        sound: crate::sound_registry::Sound,
+        sound: petramond_world::sound_registry::Sound,
         mob_id: u64,
         volume: f32,
         pitch: f32,
         /// The mob position when the command was emitted. If the mob despawns
         /// before the app sees a frame snapshot, playback starts and finishes here.
-        last_pos: crate::mathh::Vec3,
+        last_pos: petramond_math::math::Vec3,
     },
     Stop {
         handle: u64,
@@ -62,7 +62,7 @@ pub enum ModSpatialSoundCommand {
 }
 
 /// The per-PLAYER slice of what the tick did: the lossy latched one-shots that
-/// feed that player's [`GameEvents`] (hand jabs, hurt shake, screen requests).
+/// feed that player's `GameEvents` (hand jabs, hurt shake, screen requests).
 /// One per session per tick; the acting session's slice is written by the
 /// per-player stages.
 #[derive(Copy, Clone, Debug, Default)]
@@ -104,7 +104,7 @@ pub struct BlockBrokenEvent {
     /// The mined face (for directional burst spread), when known.
     pub normal: Option<IVec3>,
     /// The cell's `petramond:tint` KV at break time (see
-    /// [`WorldEvent::BlockBroken`]).
+    /// `WorldEvent::BlockBroken`).
     pub tint: Option<[u8; 3]>,
 }
 

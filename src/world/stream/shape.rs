@@ -1,5 +1,5 @@
-use crate::chunk::{ChunkPos, SectionPos, SEA_LEVEL, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE};
-use crate::worldgen::driver::ColumnGen;
+use petramond_world::chunk::{ChunkPos, SectionPos, SEA_LEVEL, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE};
+use petramond_worldgen::driver::ColumnGen;
 
 use crate::world::store::{LoadTarget, World, VERTICAL_LOAD_RADIUS};
 

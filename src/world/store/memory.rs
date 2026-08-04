@@ -74,7 +74,7 @@ impl World {
         let mut seen: HashSet<usize> = HashSet::with_capacity(self.sections.len() * 2);
         c.sections = self.sections.len();
         c.section_structs =
-            (std::mem::size_of::<crate::section::Section>() as u64) * (c.sections as u64);
+            (std::mem::size_of::<petramond_world::section::Section>() as u64) * (c.sections as u64);
         for s in self.sections.values() {
             let (ptr, bytes) = s.block_cube_heap();
             if seen.insert(ptr) {
@@ -91,7 +91,7 @@ impl World {
                 if seen.insert(bl.as_ptr() as usize) {
                     c.blocklight_cubes += 1;
                     c.blocklight_bytes +=
-                        (bl.len() * std::mem::size_of::<crate::light::LightRgb>()) as u64;
+                        (bl.len() * std::mem::size_of::<petramond_world::light::LightRgb>()) as u64;
                 }
             }
             let (water_ptr, water_len, sparse, entities, emitters) = s.memory_parts();
@@ -107,7 +107,7 @@ impl World {
         }
         c.columns = self.columns.len();
         c.column_bytes = (self.columns.len() as u64)
-            * (std::mem::size_of::<crate::column::Column>() as u64 + 2 * 1024 + 256);
+            * (std::mem::size_of::<petramond_world::column::Column>() as u64 + 2 * 1024 + 256);
         c.column_gen = self.gen.column_gen.len();
         for g in self.gen.column_gen.values() {
             c.column_gen_bytes += g.memory_bytes();
@@ -125,25 +125,25 @@ impl World {
             }
         }
         c.index_bytes = map_bytes::<
-            crate::chunk::SectionPos,
-            std::sync::Arc<crate::section::Section>,
+            petramond_world::chunk::SectionPos,
+            std::sync::Arc<petramond_world::section::Section>,
         >(self.sections.len())
-            + map_bytes::<crate::chunk::ChunkPos, crate::column::Column>(self.columns.len())
-            + map_bytes::<crate::chunk::SectionPos, crate::mesh::ChunkMesh>(
+            + map_bytes::<petramond_world::chunk::ChunkPos, petramond_world::column::Column>(self.columns.len())
+            + map_bytes::<petramond_world::chunk::SectionPos, petramond_mesh::ChunkMesh>(
                 self.terrain.meshes.len(),
             )
-            + map_bytes::<crate::chunk::ChunkPos, u64>(self.column_payload_revisions.len())
-            + map_bytes::<crate::chunk::ChunkPos, u32>(self.terrain.mesh_column_cys.len())
-            + map_bytes::<crate::chunk::ChunkPos, u32>(self.data.section_column_cys.len())
-            + map_bytes::<crate::chunk::ChunkPos, u64>(self.terrain.mesh_upload_revisions.len())
-            + map_bytes::<crate::chunk::ChunkPos, ()>(self.terrain.mesh_columns.len())
-            + map_bytes::<crate::chunk::SectionPos, ()>(self.terrain.deep_sections.len())
-            + map_bytes::<crate::chunk::SectionPos, ()>(self.terrain.visible_deep.len())
-            + map_bytes::<crate::chunk::SectionPos, ()>(self.terrain.hidden_parked.len())
-            + map_bytes::<crate::chunk::SectionPos, ()>(self.terrain.sealed_parked.len())
-            + map_bytes::<crate::chunk::SectionPos, ()>(self.light_deferred.len())
-            + map_bytes::<crate::chunk::SectionPos, ()>(self.terrain.light_blocked_meshes.len())
-            + map_bytes::<crate::chunk::ChunkPos, u64>(self.terrain.mesh_release_after.len());
+            + map_bytes::<petramond_world::chunk::ChunkPos, u64>(self.column_payload_revisions.len())
+            + map_bytes::<petramond_world::chunk::ChunkPos, u32>(self.terrain.mesh_column_cys.len())
+            + map_bytes::<petramond_world::chunk::ChunkPos, u32>(self.data.section_column_cys.len())
+            + map_bytes::<petramond_world::chunk::ChunkPos, u64>(self.terrain.mesh_upload_revisions.len())
+            + map_bytes::<petramond_world::chunk::ChunkPos, ()>(self.terrain.mesh_columns.len())
+            + map_bytes::<petramond_world::chunk::SectionPos, ()>(self.terrain.deep_sections.len())
+            + map_bytes::<petramond_world::chunk::SectionPos, ()>(self.terrain.visible_deep.len())
+            + map_bytes::<petramond_world::chunk::SectionPos, ()>(self.terrain.hidden_parked.len())
+            + map_bytes::<petramond_world::chunk::SectionPos, ()>(self.terrain.sealed_parked.len())
+            + map_bytes::<petramond_world::chunk::SectionPos, ()>(self.light_deferred.len())
+            + map_bytes::<petramond_world::chunk::SectionPos, ()>(self.terrain.light_blocked_meshes.len())
+            + map_bytes::<petramond_world::chunk::ChunkPos, u64>(self.terrain.mesh_release_after.len());
         c
     }
 }

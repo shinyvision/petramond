@@ -9,8 +9,8 @@
 //!
 //! Worldgen oceans/rivers are written as plain `Block::Water` with meta 0 —
 //! sources that sit still until disturbed. A neighbouring block change queues a
-//! block update, which schedules the cell's flow check [`WATER_FLOW_DELAY`]
-//! ticks out. The check, [`FluidSim::flow_check`], does two things:
+//! block update, which schedules the cell's flow check `WATER_FLOW_DELAY`
+//! ticks out. The check, `FluidSim::flow_check`, does two things:
 //!
 //!   1. **Re-level** (flowing/falling cells only; a source is never
 //!      re-evaluated, only a bucket or block edit removes one): recompute the
@@ -29,7 +29,7 @@
 //!      flowing cell suspended over other water is part of a column, not a
 //!      surface, and never spreads. Sideways flow prefers the direction(s)
 //!      whose open path reaches a drop soonest (a bounded slope search,
-//!      [`SLOPE_FIND_DIST`] steps past the first ring); with no drop in range
+//!      `SLOPE_FIND_DIST` steps past the first ring); with no drop in range
 //!      it spreads every open way. A falling cell landing on solid ground
 //!      spreads a full-strength ring, like a source's outflow.
 //!
@@ -38,13 +38,13 @@
 //! its neighbours, so a sheet advances one ring per flow delay and naturally
 //! crosses chunk borders.
 
-use crate::block::Block;
+use petramond_world::block::Block;
 pub use petramond_world::water_math::{
     amount, fills_cell, fluid_height, is_falling, is_source, is_still_source, level,
     surface_flow_dir, CARDINALS, DOWN, FALLING, LEVEL_MASK, UP,
 };
 
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 
 use super::store::World;
 
@@ -58,11 +58,11 @@ use sim::FluidSim;
 /// Ticks between a water cell being disturbed and its flow check running.
 pub(super) const WATER_FLOW_DELAY: u64 = 5;
 
-/// Water's block behaviour. Both hooks delegate to the [`FluidSim`] below, so this
+/// Water's block behaviour. Both hooks delegate to the `FluidSim` below, so this
 /// is just the wiring that puts water on the generic reaction path. It lives here
 /// in `world` (not in `block`) because it drives the world tick scheduler and
 /// `FluidSim` — world internals a `block`-side behaviour can't reach — while still
-/// implementing the `block`-defined [`BlockBehavior`].
+/// implementing the `block`-defined `BlockBehavior`.
 pub struct Water;
 
 impl crate::world::engine_behavior::EngineBlockBehavior for Water {

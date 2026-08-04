@@ -26,8 +26,8 @@
 
 use std::collections::VecDeque;
 
-use crate::chunk::SectionPos;
-use crate::mathh::FACE_NEIGHBORS;
+use petramond_world::chunk::SectionPos;
+use petramond_math::math::FACE_NEIGHBORS;
 
 use super::store::World;
 
@@ -70,7 +70,7 @@ impl World {
     /// columns (CPU-mesh release retention around every anchor). Unlike the
     /// section variant, NO target means nothing is retained: the ring exists
     /// for players, and a world without anchors has none.
-    pub(super) fn column_near_load_center(&self, pos: crate::chunk::ChunkPos) -> bool {
+    pub(super) fn column_near_load_center(&self, pos: petramond_world::chunk::ChunkPos) -> bool {
         let near = |target: super::store::LoadTarget| {
             (pos.cx - target.center.cx).abs() <= NEAR_LOAD_RADIUS
                 && (pos.cz - target.center.cz).abs() <= NEAR_LOAD_RADIUS
@@ -197,11 +197,11 @@ impl World {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use crate::block::Block;
-    use crate::chunk::{ChunkPos, SECTION_SIZE, SectionPos};
-    use crate::section::Section;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{ChunkPos, SECTION_SIZE, SectionPos};
+    use petramond_world::section::Section;
     use crate::world::store::LoadTarget;
-    use crate::worldgen::driver::ChunkGenerator;
+    use petramond_worldgen::driver::ChunkGenerator;
     use super::World;
 
     fn solid_section(pos: SectionPos) -> Section {

@@ -2,15 +2,15 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::block::Block;
-use crate::chunk::{ChunkPos, SectionPos};
-use crate::mesh::ChunkMesh;
+use petramond_world::block::Block;
+use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_mesh::ChunkMesh;
 use crate::mob::Mobs;
 use crate::save::WorldSave;
-use crate::section::{Section, SectionSummary};
+use petramond_world::section::{Section, SectionSummary};
 use crate::worker::{JobCancel, JobPool, WorkerPool};
-use crate::worldgen::driver::ChunkGenerator;
-use crate::worldgen::driver::ColumnGen;
+use petramond_worldgen::driver::ChunkGenerator;
+use petramond_worldgen::driver::ColumnGen;
 
 use super::entities::DroppedItems;
 use petramond_world::world::saved_index::SavedIndex;
@@ -174,17 +174,17 @@ pub(in crate::world) struct ReplicationLog {
     /// This tick's coalesced block/water changes, latest state per cell —
     /// drained by [`take_block_deltas`](Self::take_block_deltas).
     pub(in crate::world) block_delta_log:
-        FxHashMap<crate::mathh::IVec3, crate::net::protocol::BlockDelta>,
+        FxHashMap<petramond_math::math::IVec3, crate::net::protocol::BlockDelta>,
     /// This tick's coalesced per-cell mod KV changes, latest value per
     /// `(pos, key)` — drained by
     /// [`take_cell_kv_deltas`](Self::take_cell_kv_deltas). Captured behind
     /// the same [`replication_capture`](Self::replication_capture) gate.
     pub(in crate::world) cell_kv_delta_log:
-        FxHashMap<(crate::mathh::IVec3, String), Option<Vec<u8>>>,
+        FxHashMap<(petramond_math::math::IVec3, String), Option<Vec<u8>>>,
     /// Cells whose mod DRAW SET changed this tick — drained by
     /// [`take_block_draw_deltas`](Self::take_block_draw_deltas) as whole sets
     /// (they are a handful of prims, and half a set draws nothing sensible).
-    pub(in crate::world) block_draw_log: FxHashSet<crate::mathh::IVec3>,
+    pub(in crate::world) block_draw_log: FxHashSet<petramond_math::math::IVec3>,
     /// ServerHeadless only: sections whose bake LANDED since the last
     /// streaming pump — drained by [`take_light_ship_log`](Self::take_light_ship_log)
     /// into per-connection `LightData` messages (filtered to each recipient's
@@ -228,13 +228,13 @@ pub(in crate::world) struct ModStreamState {
     /// in almost every world) and per-cell, exactly like `custom_bake` — mod
     /// state, so it lives with the rest of it rather than on the root.
     pub(in crate::world) block_draws:
-        FxHashMap<crate::mathh::IVec3, crate::world::draw::PlacedDraw>,
+        FxHashMap<petramond_math::math::IVec3, crate::world::draw::PlacedDraw>,
     /// The same sets indexed by the SECTION their anchor sits in, with a union
     /// bound per section. Every consumer of this store is section-shaped (a
     /// section payload, an eviction, a frame's view cull), and each of them
     /// walked the whole map before this index existed.
     pub(in crate::world) block_draw_sections:
-        FxHashMap<crate::chunk::SectionPos, crate::world::draw::SectionDraws>,
+        FxHashMap<petramond_world::chunk::SectionPos, crate::world::draw::SectionDraws>,
     /// Section installs the per-frame streamer buffered for the tick-side event bus
     /// (`section_generated` / `section_loaded`); drained by the next game tick.
     pub(in crate::world) stream_events: Vec<super::stream::StreamEvent>,
@@ -450,7 +450,7 @@ impl World {
     pub(in crate::world) fn set_column_gen(
         &mut self,
         pos: ChunkPos,
-        col: Arc<crate::worldgen::driver::ColumnGen>,
+        col: Arc<petramond_worldgen::driver::ColumnGen>,
     ) {
         let summaries: Box<[SectionSummary]> = WorldData::column_section_range()
             .map(|cy| col.section_summary(cy))
@@ -588,7 +588,7 @@ impl World {
 
     /// [`materialize_section`](Self::materialize_section) for the section owning world
     /// cell `c`. Returns `false` if `c` is outside the world vertical range.
-    pub(super) fn materialize_section_at(&mut self, c: crate::mathh::IVec3) -> bool {
+    pub(super) fn materialize_section_at(&mut self, c: petramond_math::math::IVec3) -> bool {
         match SectionPos::from_world(c.x, c.y, c.z) {
             Some(sp) => self.materialize_section(sp),
             None => false,
@@ -606,9 +606,9 @@ impl World {
 
 }
 
-use crate::block::{Aabb, ShapeRenderBox, ShapeState};
-use crate::mathh::IVec3;
-use crate::block::ShapeNeighborhood;
+use petramond_world::block::{Aabb, ShapeRenderBox, ShapeState};
+use petramond_math::math::IVec3;
+use petramond_world::block::ShapeNeighborhood;
 /// `&World` coerces to `&WorldData` only at concrete argument positions, not
 /// through trait bounds — so the orchestration wrapper forwards the seam.
 impl ShapeNeighborhood for World {
@@ -630,11 +630,11 @@ impl ShapeNeighborhood for World {
 }
 
 impl petramond_world::block::behavior::BehaviorWorld for World {
-    fn set_block_world(&mut self, wx: i32, wy: i32, wz: i32, b: crate::block::Block) -> bool {
+    fn set_block_world(&mut self, wx: i32, wy: i32, wz: i32, b: petramond_world::block::Block) -> bool {
         World::set_block_world(self, wx, wy, wz, b)
     }
 
-    fn break_block_naturally(&mut self, pos: crate::mathh::IVec3) {
+    fn break_block_naturally(&mut self, pos: petramond_math::math::IVec3) {
         World::break_block_naturally(self, pos)
     }
 }

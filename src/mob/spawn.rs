@@ -25,12 +25,12 @@
 use mod_api::HostileSpawnCandidate;
 use rustc_hash::FxHashSet;
 
-use crate::biome::Biome;
-use crate::block::Block;
-use crate::chunk::{
+use petramond_world::biome::Biome;
+use petramond_world::block::Block;
+use petramond_world::chunk::{
     ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE,
 };
-use crate::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 use crate::world::{World, VERTICAL_LOAD_RADIUS};
 
 use super::path::{body_clear, is_foothold, PathParams};
@@ -45,7 +45,7 @@ const MAX_PLAYER_DIST: f32 = 128.0;
 /// Passive natural spawning is a slow backfill trickle: one attempt per player
 /// every this many game ticks (20 s at 20 TPS — the reference game's creature
 /// cycle cadence). The initial animal stock comes from the one-time worldgen
-/// herds ([`super::populate`]); a fast cadence here would turn killing animals
+/// herds (`super::populate`); a fast cadence here would turn killing animals
 /// into a respawn faucet, which is exactly what the trickle exists to avoid.
 pub const PASSIVE_SPAWN_INTERVAL_TICKS: u64 = 400;
 
@@ -635,7 +635,7 @@ fn random_column(rng: &mut MobRng, cx: i32, cz: i32, r: i32) -> Option<(i32, i32
 /// disabled for this world (per-world `settings.json`). Shared by the natural
 /// picker and worldgen population.
 pub(super) fn species_enabled(kind: Mob, disabled: &std::collections::BTreeSet<String>) -> bool {
-    !crate::registry::namespace(def(kind).name).is_some_and(|ns| disabled.contains(ns))
+    !petramond_world::registry::namespace(def(kind).name).is_some_and(|ns| disabled.contains(ns))
 }
 
 /// Pick one species uniformly among those with population room, or `None` if none
@@ -673,9 +673,9 @@ fn choose_kind(
 mod tests {
     use super::*;
 
-    fn flat_grass_spawn_world(extra: impl FnOnce(&mut crate::chunk::Chunk)) -> World {
+    fn flat_grass_spawn_world(extra: impl FnOnce(&mut petramond_world::chunk::Chunk)) -> World {
         let mut world = World::new(0, 1);
-        let mut chunk = crate::chunk::Chunk::new(0, 0);
+        let mut chunk = petramond_world::chunk::Chunk::new(0, 0);
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
                 chunk.set_block(x, 64, z, Block::Grass);
@@ -683,7 +683,7 @@ mod tests {
             }
         }
         extra(&mut chunk);
-        world.insert_chunk_for_test(crate::chunk::ChunkPos::new(0, 0), chunk);
+        world.insert_chunk_for_test(petramond_world::chunk::ChunkPos::new(0, 0), chunk);
         world
     }
 

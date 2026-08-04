@@ -16,10 +16,10 @@
 
 use std::cell::Cell;
 
-use crate::block::{Aabb, Block};
-use crate::chunk::{self, SectionPos, SECTION_SIZE};
-use crate::mathh::IVec3;
-use crate::section::Section;
+use petramond_world::block::{Aabb, Block};
+use petramond_world::chunk::{self, SectionPos, SECTION_SIZE};
+use petramond_math::math::IVec3;
+use petramond_world::section::Section;
 
 use super::store::World;
 
@@ -66,7 +66,7 @@ impl<'w> SectionCursor<'w> {
         Some((section, local.0, local.1, local.2))
     }
 
-    /// Mirror of [`World::physics_block`].
+    /// Mirror of `World::physics_block`.
     #[inline]
     pub fn physics_block(&self, c: IVec3) -> Block {
         match self.section_at(c.x, c.y, c.z) {
@@ -75,13 +75,13 @@ impl<'w> SectionCursor<'w> {
         }
     }
 
-    /// Mirror of [`World::water_cell_at`].
+    /// Mirror of `World::water_cell_at`.
     #[inline]
     pub fn water_cell(&self, c: IVec3) -> bool {
         self.physics_block(c) == Block::Water
     }
 
-    /// Mirror of [`World::collision_boxes_at`], taking the dense per-id table
+    /// Mirror of `World::collision_boxes_at`, taking the dense per-id table
     /// first exactly like it does.
     #[inline]
     pub fn collision_boxes(&self, c: IVec3) -> &'static [Aabb] {

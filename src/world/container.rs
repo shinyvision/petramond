@@ -7,8 +7,8 @@
 //! mod — so these are thin world↔section coordinate wrappers for GUI edits,
 //! mod host calls, and breaking.
 
-use crate::container::Container;
-use crate::mathh::IVec3;
+use petramond_world::container::Container;
+use petramond_math::math::IVec3;
 
 use super::store::World;
 

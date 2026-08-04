@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
 
-use crate::block::Block;
-use crate::chunk::{ChunkPos, SectionPos, SECTION_SIZE, SECTION_VOLUME};
+use petramond_world::block::Block;
+use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE, SECTION_VOLUME};
 use crate::net::protocol::{BlockDelta, ColumnPayload, LightPayload, SectionPayload};
-use crate::section::{Section, SectionSummary};
+use petramond_world::section::{Section, SectionSummary};
 use crate::world::store::{LoadTarget, World, WorldRole};
 
 impl World {
@@ -120,7 +120,7 @@ impl World {
             pos.cx,
             pos.cy,
             pos.cz,
-            crate::section::BlockCube::from_ids(&payload.blocks.0),
+            petramond_world::section::BlockCube::from_ids(&payload.blocks.0),
             payload.water.map(|w| w.0),
             // No furnace machine state on a replica: burn/cook counters are sim
             // state (progress reaches clients through menu sync), and the lit
@@ -166,8 +166,8 @@ impl World {
         // server has since cleared drawing on the replica forever.
         self.forget_block_draws_in_section(pos);
         for (cell, prims) in draws {
-            let (lx, ly, lz) = crate::chunk::section_local(cell as usize);
-            let at = crate::mathh::IVec3::new(
+            let (lx, ly, lz) = petramond_world::chunk::section_local(cell as usize);
+            let at = petramond_math::math::IVec3::new(
                 pos.cx * 16 + lx as i32,
                 pos.cy * 16 + ly as i32,
                 pos.cz * 16 + lz as i32,
@@ -235,19 +235,19 @@ impl World {
             let sky = crate::world::light::cube_region_changes(
                 s.skylight_arc().as_deref(),
                 &payload.skylight.0,
-                crate::chunk::SKY_FULL,
+                petramond_world::chunk::SKY_FULL,
             );
             let blk = match &payload.blocklight {
                 Some(b) => crate::world::light::cube_region_changes(
                     s.blocklight_arc().as_deref(),
                     &b.0,
-                    crate::light::LightRgb::ZERO,
+                    petramond_world::light::LightRgb::ZERO,
                 ),
                 None => match s.blocklight_arc() {
                     Some(old) => crate::world::light::cube_region_changes(
                         Some(&old),
                         &crate::world::light::ZERO_CUBE,
-                        crate::light::LightRgb::ZERO,
+                        petramond_world::light::LightRgb::ZERO,
                     ),
                     None => 0,
                 },
@@ -371,7 +371,7 @@ impl World {
         let Some(section) = self.section_mut(pos) else {
             return;
         };
-        let affects_mesh = crate::block::kv_key_affects_mesh(&kv.key);
+        let affects_mesh = petramond_world::block::kv_key_affects_mesh(&kv.key);
         match kv.value {
             Some(value) => section.cell_kv_set(lx, ly, lz, kv.key, value),
             None => {
@@ -383,7 +383,7 @@ impl World {
         // Mesh-feeding presentation keys render through the ordinary mesher
         // for NON-custom shapes (a dyed wool cube), which the custom-bake
         // re-mark above does not cover — re-mesh the section directly.
-        if affects_mesh && block.shape_family() != crate::block::ShapeFamily::Custom {
+        if affects_mesh && block.shape_family() != petramond_world::block::ShapeFamily::Custom {
             self.queue_dirty_meshes_sampling_cell(kv.pos.x, kv.pos.y, kv.pos.z);
         }
     }

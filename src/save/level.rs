@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::chunk::ChunkPos;
+use petramond_world::chunk::ChunkPos;
 use crate::save::codec::{get_kv_map, put_kv_map, put_u32, put_u64, Reader};
 
 /// The one supported `level.dat` version. Only the CURRENT version decodes —

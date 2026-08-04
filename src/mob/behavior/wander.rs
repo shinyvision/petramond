@@ -25,8 +25,8 @@
 //! sheep spent their lives pressed against the fence chasing pasture they
 //! could never reach.
 
-use crate::biome::Biome;
-use crate::mathh::{IVec3, Vec3};
+use petramond_world::biome::Biome;
+use petramond_math::math::{IVec3, Vec3};
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
 use super::super::confined::ConfinedRegion;
@@ -515,8 +515,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     use crate::mob::brain::AiMob;
     use crate::mob::{Mob, MobRng, MobTagValue};
     use crate::world::World;

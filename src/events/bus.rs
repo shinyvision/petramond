@@ -55,7 +55,7 @@ pub struct SimCtx<'a> {
     pub player: &'a mut Player,
     /// The ACTING session's mod-GUI state map (one map per player session):
     /// `GuiStateSet/Get` HostCalls read/write it here.
-    pub gui_state: &'a mut std::sync::Arc<crate::gui_state::GuiStateMap>,
+    pub gui_state: &'a mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
     pub feed: &'a mut TickEvents,
     pub queue: &'a mut PostQueue,
 }
@@ -69,7 +69,7 @@ pub struct SessionPlayerRef<'a> {
     /// This session's mod-GUI state map. Lent alongside the player because a
     /// tick system's gauges belong to whoever is LOOKING, and the acting
     /// session (host, session 0) is nobody in particular on a server.
-    pub gui_state: &'a mut std::sync::Arc<crate::gui_state::GuiStateMap>,
+    pub gui_state: &'a mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
     /// The open GUI session: kind, and the cell it was opened on. `None` =
     /// nothing open (or a non-mod screen).
     pub gui: Option<OpenGui>,
@@ -78,8 +78,8 @@ pub struct SessionPlayerRef<'a> {
 /// One session's open GUI, as the roster publishes it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct OpenGui {
-    pub kind: crate::gui_state::GuiKind,
-    pub anchor: Option<crate::mathh::IVec3>,
+    pub kind: petramond_world::gui_state::GuiKind,
+    pub anchor: Option<petramond_math::math::IVec3>,
 }
 
 // The sessions-view seam ships ahead of its first in-engine consumer (it
@@ -89,7 +89,7 @@ pub struct OpenGui {
 struct ScopeEntry {
     id: PlayerId,
     player: *mut Player,
-    gui_state: *mut std::sync::Arc<crate::gui_state::GuiStateMap>,
+    gui_state: *mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
     gui: Option<OpenGui>,
 }
 
@@ -147,7 +147,7 @@ pub fn with_sessions_scope<R>(
         .map(|o| ScopeEntry {
             id: o.id,
             player: o.player as *mut Player,
-            gui_state: o.gui_state as *mut std::sync::Arc<crate::gui_state::GuiStateMap>,
+            gui_state: o.gui_state as *mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
             gui: o.gui,
         })
         .collect();
@@ -235,11 +235,11 @@ impl SimCtx<'_> {
     pub fn with_gui_state<R>(
         &mut self,
         id: PlayerId,
-        f: impl FnOnce(&mut std::sync::Arc<crate::gui_state::GuiStateMap>) -> R,
+        f: impl FnOnce(&mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>) -> R,
     ) -> Option<R> {
         enum Hit {
             Acting,
-            Other(*mut std::sync::Arc<crate::gui_state::GuiStateMap>),
+            Other(*mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>),
         }
         let hit = SESSIONS_SCOPE.with(|s| {
             let scope = s.borrow();
@@ -394,7 +394,7 @@ macro_rules! pre_events {
                     &mut self,
                     world: &mut World,
                     player: &mut Player,
-                    gui_state: &mut std::sync::Arc<crate::gui_state::GuiStateMap>,
+                    gui_state: &mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
                     feed: &mut TickEvents,
                     ev: &mut $ty,
                 ) -> Outcome {
@@ -513,7 +513,7 @@ impl EventBus {
         &mut self,
         world: &mut World,
         player: &mut Player,
-        gui_state: &mut std::sync::Arc<crate::gui_state::GuiStateMap>,
+        gui_state: &mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
         feed: &mut TickEvents,
     ) {
         if self.queue.events.is_empty() {
@@ -553,20 +553,20 @@ mod tests {
 
     use super::super::payload::*;
     use super::*;
-    use crate::block::Block;
-    use crate::item::ItemType;
-    use crate::mathh::{IVec3, Vec3};
+    use petramond_world::block::Block;
+    use petramond_world::item::ItemType;
+    use petramond_math::math::{IVec3, Vec3};
 
     fn sim() -> (
         World,
         Player,
-        std::sync::Arc<crate::gui_state::GuiStateMap>,
+        std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
         TickEvents,
     ) {
         (
             World::new(1, 1),
             Player::new(Vec3::new(0.0, 80.0, 0.0)),
-            crate::gui_state::empty_gui_state(),
+            petramond_world::gui_state::empty_gui_state(),
             TickEvents::default(),
         )
     }
@@ -597,7 +597,7 @@ mod tests {
             assert!(ctx.with_player(PlayerId(0), |_| ()).is_none());
         }
 
-        let mut other_gui = crate::gui_state::empty_gui_state();
+        let mut other_gui = petramond_world::gui_state::empty_gui_state();
         let others = vec![SessionPlayerRef {
             id: PlayerId(0),
             player: &mut other,

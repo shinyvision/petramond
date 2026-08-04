@@ -2,9 +2,9 @@ use petramond::events::tick::TickEvents;
 use super::super::Game;
 use petramond_render::camera::Camera;
 use crate::game::{GameEvents, GameInput};
-use petramond::inventory::Inventory;
-use petramond::item::{ItemStack, ItemType};
-use petramond::mathh::{IVec3, Vec3};
+use petramond_world::inventory::Inventory;
+use petramond_world::item::{ItemStack, ItemType};
+use petramond_math::math::{IVec3, Vec3};
 use petramond::net::protocol::{ClientToServer, PlayerUpdate, TargetRef};
 use petramond::server::game::ServerGame;
 use petramond::server::handle::LoopbackServer;
@@ -126,8 +126,8 @@ impl TestGame {
 
     pub(super) fn menu_click(
         &mut self,
-        slot: petramond::gui_state::MenuSlot,
-        button: petramond::gui_state::PointerButton,
+        slot: petramond_world::gui_state::MenuSlot,
+        button: petramond_world::gui_state::PointerButton,
         shift: bool,
         gather: bool,
     ) {
@@ -258,7 +258,7 @@ pub(super) fn player_update(game: &TestGame, gameplay: bool) -> PlayerUpdate {
         target: None,
         hotbar_slot: p.inventory.active_slot(),
         held_rotation: 0,
-        wishdir: petramond::mathh::Vec3::ZERO,
+        wishdir: petramond_math::math::Vec3::ZERO,
         jump: false,
         sprint: false,
     }
@@ -296,11 +296,11 @@ pub(super) fn hit(pos: IVec3, normal: IVec3) -> TargetRef {
 }
 
 pub(super) fn install_empty_chunk(game: &mut TestGame) {
-    let pos = petramond::chunk::ChunkPos::new(0, 0);
+    let pos = petramond_world::chunk::ChunkPos::new(0, 0);
     game.server.world.clear_world();
     game.server
         .world
-        .insert_chunk_for_test(pos, petramond::chunk::Chunk::new(0, 0));
+        .insert_chunk_for_test(pos, petramond_world::chunk::Chunk::new(0, 0));
 }
 
 /// Clear the world and install one chunk at (0,0) with a solid one-block
@@ -308,16 +308,16 @@ pub(super) fn install_empty_chunk(game: &mut TestGame) {
 /// sections first, so the air ABOVE the floor reads as LOADED — sim reads
 /// treat unloaded air as absent.
 /// Takes the `World` directly so tests driving a bare world can use it too.
-pub(super) fn flat_floor_loaded_air(world: &mut petramond::world::World, floor: petramond::block::Block) {
+pub(super) fn flat_floor_loaded_air(world: &mut petramond::world::World, floor: petramond_world::block::Block) {
     install_flat_floor(world, floor, true);
 }
 
 fn install_flat_floor(
     world: &mut petramond::world::World,
-    floor: petramond::block::Block,
+    floor: petramond_world::block::Block,
     loaded_air: bool,
 ) {
-    use petramond::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     let pos = ChunkPos::new(0, 0);
     world.clear_world();
     if loaded_air {
@@ -354,7 +354,7 @@ pub(super) fn aim_server_at_mob(game: &mut TestGame, index: usize) {
 }
 
 pub(super) fn count_item(inv: &Inventory, item: ItemType) -> u32 {
-    (0..petramond::inventory::TOTAL_SLOTS)
+    (0..petramond_world::inventory::TOTAL_SLOTS)
         .filter_map(|i| inv.slot(i))
         .filter(|s| s.item == item)
         .map(|s| s.count as u32)

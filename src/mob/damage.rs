@@ -2,7 +2,7 @@
 //! feedback, hurt flash, damage immunity, retaliation memory recording, the
 //! death state (ragdoll or bare), and the despawn queries the manager culls by.
 
-use crate::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 use crate::world::World;
 
 use super::instance::{hurt_flash01, Instance};
@@ -282,7 +282,7 @@ mod tests {
         let from = Vec3::new(5.0, 0.0, 0.5);
         for _ in 0..3 {
             assert!(!owl.damage(1.0, Some(from), true, None, &default_feedback()));
-            for _ in 0..crate::damage::MOB_DAMAGE_IFRAME_TICKS {
+            for _ in 0..petramond_world::damage::MOB_DAMAGE_IFRAME_TICKS {
                 owl.tick_damage_immunity();
             }
         }

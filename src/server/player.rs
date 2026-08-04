@@ -10,12 +10,12 @@
 //! transform, targeting, and held intents; `PlayerAction`/menu actions latch the
 //! one-shot edges. The tick stages consume the latches exactly as before.
 
-use crate::gui_state::PointerButton;
+use petramond_world::gui_state::PointerButton;
 use crate::menu::ContainerMenu;
-use crate::gui_state::MenuSlot;
-use crate::item::ItemType;
-use crate::mathh::IVec3;
-use crate::mining::MiningState;
+use petramond_world::gui_state::MenuSlot;
+use petramond_world::item::ItemType;
+use petramond_math::math::IVec3;
+use petramond_world::mining::MiningState;
 use crate::net::protocol::TargetRef;
 use crate::player::Player;
 use crate::server::bed::SleepState;
@@ -167,7 +167,7 @@ pub enum PendingMenuAction {
     /// inventory key and programmatic `GuiOpen`s); per-kind session semantics
     /// resolve at the menu stage's kind dispatch, not here.
     OpenGui {
-        kind: crate::gui_state::GuiKind,
+        kind: petramond_world::gui_state::GuiKind,
         pos: Option<IVec3>,
     },
     Close,
@@ -259,7 +259,7 @@ pub struct ConnectedPlayer {
     /// Player position when this frame's fixed ticks began — a tick-side
     /// position change is a teleport, which re-anchors [`fall`](Self::fall)
     /// (see `ServerGame::pump`).
-    pub pos_before_ticks: crate::mathh::Vec3,
+    pub pos_before_ticks: petramond_math::math::Vec3,
     /// Whether the LAST tick window teleported this player (the drift check
     /// over [`pos_before_ticks`](Self::pos_before_ticks)) — replicated as
     /// `PlayerStateRow::snap` so observers skip interpolating across the
@@ -290,7 +290,7 @@ pub struct ConnectedPlayer {
     /// must not grow the set forever).
     pub pending_break_ack: rustc_hash::FxHashMap<IVec3, u64>,
     /// Movement intent from the latest `PlayerUpdate` (F2 server integrate).
-    pub move_wishdir: crate::mathh::Vec3,
+    pub move_wishdir: petramond_math::math::Vec3,
     pub move_jump: bool,
     pub move_sprint: bool,
     /// SESSION MIRROR of this player's entry in the world riding registry,
@@ -304,8 +304,8 @@ pub struct ConnectedPlayer {
     /// edge state; see `ConnectedPlayer::sneaking`).
     pub prev_sneak: bool,
     /// Client-predicted transform from the latest `PlayerUpdate` (F1 soft accept).
-    pub claim_pos: crate::mathh::Vec3,
-    pub claim_vel: crate::mathh::Vec3,
+    pub claim_pos: petramond_math::math::Vec3,
+    pub claim_vel: petramond_math::math::Vec3,
     pub claim_on_ground: bool,
     /// Set by `PlayerUpdate`; cleared after `tick_movement` consumes the claim.
     /// Stale claims must not yank the player back every tick.
@@ -326,13 +326,13 @@ pub struct ConnectedPlayer {
     // (INTERNAL — the client only sees `OpenScreen`). ---
     /// The GUI session the tick opened for this client this tick, if any —
     /// one field for every kind (engine containers and mod GUIs alike).
-    pub request_open_gui: Option<(crate::gui_state::GuiKind, Option<IVec3>)>,
+    pub request_open_gui: Option<(petramond_world::gui_state::GuiKind, Option<IVec3>)>,
     pub request_close_mod_gui: bool,
     pub request_open_sleep: bool,
     /// The open mod-GUI session's state map (written by mods on the tick via
     /// `GuiStateSet`, cleared by the menu funnels on open/close). Snapshotted
     /// behind the `Arc` per replication batch — copy-on-write on writes.
-    pub gui_state: std::sync::Arc<crate::gui_state::GuiStateMap>,
+    pub gui_state: std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
     /// The inventory revision the last emitted `SelfState` carried a full
     /// inventory for — per-recipient replication bookkeeping, not sim state.
     /// `None` = nothing sent yet, so the first update after join always
@@ -352,7 +352,7 @@ pub struct ConnectedPlayer {
     /// The `gui_state` map allocation the last sync shipped. Holding the
     /// `Arc` is what makes identity comparison sound: the next tick-side
     /// write is forced to copy-on-write onto a fresh allocation.
-    pub last_sent_gui_state: Option<std::sync::Arc<crate::gui_state::GuiStateMap>>,
+    pub last_sent_gui_state: Option<std::sync::Arc<petramond_world::gui_state::GuiStateMap>>,
     /// Per-connection terrain replication state (which columns/sections this
     /// client holds) — see `server::streaming`.
     pub terrain: crate::server::streaming::TerrainSync,
@@ -407,13 +407,13 @@ impl ConnectedPlayer {
             pending_break_finished: None,
             deferred_break_finished: None,
             pending_break_ack: Default::default(),
-            move_wishdir: crate::mathh::Vec3::ZERO,
+            move_wishdir: petramond_math::math::Vec3::ZERO,
             move_jump: false,
             move_sprint: false,
             mount: None,
             prev_sneak: false,
             claim_pos: pos_before_ticks,
-            claim_vel: crate::mathh::Vec3::ZERO,
+            claim_vel: petramond_math::math::Vec3::ZERO,
             claim_on_ground: false,
             claim_fresh: false,
             ticks_since_claim: 0,
@@ -424,7 +424,7 @@ impl ConnectedPlayer {
             request_open_gui: None,
             request_close_mod_gui: false,
             request_open_sleep: false,
-            gui_state: crate::gui_state::empty_gui_state(),
+            gui_state: petramond_world::gui_state::empty_gui_state(),
             last_sent_inventory_revision: None,
             last_obtained_scan: None,
             sent_unlock_count: 0,
@@ -459,7 +459,7 @@ impl ConnectedPlayer {
     }
 
     #[inline]
-    pub fn held_slab_rotation(&self) -> crate::slab::SlabRotation {
+    pub fn held_slab_rotation(&self) -> petramond_world::slab::SlabRotation {
         self.held_rotation.slab_rotation(self.selected_item())
     }
 

@@ -31,7 +31,7 @@ pub(super) fn sample_track(kfs: &[Keyframe], t: f32) -> Vec3 {
 }
 
 /// Quaternion from euler degrees (XYZ order — exact for single-axis rotations).
-/// Shared with [`crate::render::mob_model`] for the static per-cube tilt.
+/// Shared with `crate::render::mob_model` for the static per-cube tilt.
 pub fn euler_quat(deg: Vec3) -> Quat {
     Quat::from_euler(
         glam::EulerRot::XYZ,

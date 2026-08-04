@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
-use crate::body::Body;
-use crate::mathh::{voxel_at, Vec3};
+use petramond_world::body::Body;
+use petramond_math::math::{voxel_at, Vec3};
 use crate::mob::brain::{AiMob, TickInputs};
 use crate::mob::model_meta::{self, IdleAnimMeta, Skeleton};
 use crate::mob::noise::{Noise, NoiseKind};
@@ -27,7 +27,7 @@ pub struct PlayerAnchor {
     /// The player's selected (held) item — the visible-to-the-world hand
     /// fact behaviors may react to (a wheat lure). `None` for an empty hand
     /// or a spectator (who shows nothing to the world).
-    pub held: Option<crate::item::ItemType>,
+    pub held: Option<petramond_world::item::ItemType>,
 }
 
 /// A neutral anchor (player 0 at the origin, bodiless, empty-handed) — the
@@ -122,7 +122,7 @@ struct MobMeta {
 }
 
 /// Every species' [`MobMeta`], derived once for the whole process from the precached
-/// [`Model`](crate::bbmodel::Model)s (see [`model`](super::model)) and indexed by `Mob as
+/// [`Model`](petramond_world::bbmodel::Model)s (see [`model`](super::model)) and indexed by `Mob as
 /// usize`. It's identical for every world, so computing it once keeps each `World::new` (of
 /// which the tests make dozens) from re-deriving it — and nothing here re-reads a `.bbmodel`.
 static MOB_META: LazyLock<Vec<MobMeta>> = LazyLock::new(|| {
@@ -484,7 +484,7 @@ impl Mobs {
             let c = voxel_at(mob.pos + Vec3::new(0.0, 0.3, 0.0));
             mob.skylight = world.skylight6_at_world(c.x, c.y, c.z);
             mob.blocklight =
-                crate::light::BlockLight6::from_x2(world.blocklight_rgb_at_world(c.x, c.y, c.z));
+                petramond_world::light::BlockLight6::from_x2(world.blocklight_rgb_at_world(c.x, c.y, c.z));
         }
         self.ticked_scratch = ticked;
         self.motion_finish_scratch = motion_finish;
@@ -644,7 +644,7 @@ impl Mobs {
     /// their movement against, beside the world's cell boxes. A dead body
     /// stops blocking (a wreck is not a wall). Long bodies emit a run of
     /// boxes along their facing (see [`super::solid_boxes`]).
-    pub fn solid_obstacles(&self) -> Vec<crate::collision::DynBox> {
+    pub fn solid_obstacles(&self) -> Vec<petramond_world::collision::DynBox> {
         let mut out = Vec::new();
         for m in &self.list {
             let d = def(m.kind);

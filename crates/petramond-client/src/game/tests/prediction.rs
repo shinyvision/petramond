@@ -1,13 +1,13 @@
 //! Optimistic client prediction: ledger rollback, mining deny, movement snap.
 
 use super::common::*;
-use petramond::block::Block;
-use petramond::gui_state::PointerButton;
+use petramond_world::block::Block;
+use petramond_world::gui_state::PointerButton;
 use crate::game::prediction::PredictionSnapshot;
 use petramond::events::tick::{TickEvents, TICK_DT};
 use crate::game::tick::{GameInput, PlacePrediction};
-use petramond::gui_state::{GuiKind, MenuSlot};
-use petramond::mathh::{IVec3, Vec3};
+use petramond_world::gui_state::{GuiKind, MenuSlot};
+use petramond_math::math::{IVec3, Vec3};
 use petramond::net::protocol::{
     ActionDenyReason, ClientToServer, MenuSlotWire, PlayerAction, SelfTransform, TickUpdate,
 };
@@ -44,15 +44,15 @@ fn mixed_menu_drag_prediction_rolls_back_as_one_unit_on_deny() {
     game.game
         .self_view
         .inventory
-        .add(petramond::item::ItemStack::new(
-            petramond::item::ItemType::Grass,
+        .add(petramond_world::item::ItemStack::new(
+            petramond_world::item::ItemType::Grass,
             10,
         ));
     game.game.self_view.inventory.click_slot(0);
-    game.game.menu_view.container = Some(petramond::gui_state::ContainerView {
+    game.game.menu_view.container = Some(petramond_world::gui_state::ContainerView {
         slots: vec![None; petramond::world::chest::CHEST_SLOTS],
     });
-    game.game.menu_view.container_kind = petramond::gui_state::resolve_kind("petramond:chest");
+    game.game.menu_view.container_kind = petramond_world::gui_state::resolve_kind("petramond:chest");
 
     game.game.menu_drag(
         GuiKind::Chest,
@@ -96,12 +96,12 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
     game.server.world.set_block_world(3, 64, 3, Block::Chest);
     game.server
         .world
-        .insert_chest(pos, petramond::block_model::DEFAULT_MODEL_FACING);
+        .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     game.server.sessions[0]
         .player
         .inventory
-        .add(petramond::item::ItemStack::new(
-            petramond::item::ItemType::Grass,
+        .add(petramond_world::item::ItemStack::new(
+            petramond_world::item::ItemType::Grass,
             10,
         ));
     game.server.sessions[0].player.inventory.click_slot(0);
@@ -174,14 +174,14 @@ fn a_drag_leg_over_a_filtered_slot_predicts_what_the_server_applies() {
     game.server.world.set_block_world(3, 64, 3, Block::Furnace);
     game.server
         .world
-        .insert_furnace(pos, petramond::block_model::DEFAULT_MODEL_FACING);
+        .insert_furnace(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     // Grass is neither fuel nor smeltable, so the furnace's fuel slot refuses
     // it — the one slot of the gesture that is not a destination.
     game.server.sessions[0]
         .player
         .inventory
-        .add(petramond::item::ItemStack::new(
-            petramond::item::ItemType::Grass,
+        .add(petramond_world::item::ItemStack::new(
+            petramond_world::item::ItemType::Grass,
             10,
         ));
     game.server.sessions[0].player.inventory.click_slot(0);
@@ -193,7 +193,7 @@ fn a_drag_leg_over_a_filtered_slot_predicts_what_the_server_applies() {
         GuiKind::Furnace,
         vec![
             MenuSlot::Inventory(9),
-            MenuSlot::Container(petramond::furnace::SLOT_FUEL),
+            MenuSlot::Container(petramond_world::furnace::SLOT_FUEL),
         ],
         PointerButton::Primary,
     );
@@ -218,7 +218,7 @@ fn a_drag_leg_over_a_filtered_slot_predicts_what_the_server_applies() {
         game.server
             .world
             .container_at(pos)
-            .is_some_and(|c| c.slots[petramond::furnace::SLOT_FUEL].is_none()),
+            .is_some_and(|c| c.slots[petramond_world::furnace::SLOT_FUEL].is_none()),
         "and nothing reached the filtered slot"
     );
 }
@@ -234,12 +234,12 @@ fn predicted_chest_slot_click_applies_immediately_and_survives_reconcile() {
     game.server.world.set_block_world(3, 64, 3, Block::Chest);
     game.server
         .world
-        .insert_chest(pos, petramond::block_model::DEFAULT_MODEL_FACING);
+        .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
     game.server.sessions[0]
         .player
         .inventory
-        .add(petramond::item::ItemStack::new(
-            petramond::item::ItemType::Grass,
+        .add(petramond_world::item::ItemStack::new(
+            petramond_world::item::ItemType::Grass,
             10,
         ));
     game.server.sessions[0].player.inventory.click_slot(0);
@@ -295,18 +295,18 @@ fn predicted_chest_slot_click_applies_immediately_and_survives_reconcile() {
 fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
     use petramond::net::protocol::{ItemSlotWire, MenuSyncMsg, MenuTargetWire, SelfState};
 
-    let grass = petramond::item::ItemType::Grass;
+    let grass = petramond_world::item::ItemType::Grass;
     let pos = IVec3::new(3, 64, 3);
     let mut game = game();
     game.game
         .self_view
         .inventory
-        .add(petramond::item::ItemStack::new(grass, 10));
+        .add(petramond_world::item::ItemStack::new(grass, 10));
     game.game.self_view.inventory.click_slot(0);
-    game.game.menu_view.container = Some(petramond::gui_state::ContainerView {
+    game.game.menu_view.container = Some(petramond_world::gui_state::ContainerView {
         slots: vec![None; petramond::world::chest::CHEST_SLOTS],
     });
-    game.game.menu_view.container_kind = petramond::gui_state::resolve_kind("petramond:chest");
+    game.game.menu_view.container_kind = petramond_world::gui_state::resolve_kind("petramond:chest");
 
     game.game.menu_click(
         MenuSlot::Container(0),
@@ -455,7 +455,7 @@ fn lagged_break_finished_after_hold_path_accepts_without_restore() {
         .apply_message(0, ClientToServer::PlayerUpdate(u));
 
     // Hold-path clears the cell BEFORE BreakFinished arrives (slow uplink).
-    let expected_ticks = (petramond::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    let expected_ticks = (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks + 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
         if Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
@@ -548,7 +548,7 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
     );
 
     // Hold until the server's timer breaks the block.
-    let expected_ticks = (petramond::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    let expected_ticks = (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks + 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
         if Block::from_id(game.server.world.chunk_block(pos.x, pos.y, pos.z)) == Block::Air {
@@ -589,7 +589,7 @@ fn break_finished_after_the_observed_mining_window_is_accepted() {
     game.server
         .apply_message(0, ClientToServer::PlayerUpdate(u));
 
-    let expected_ticks = (petramond::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    let expected_ticks = (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     // Hold just short of the server's own finish, then deliver the client's.
     for _ in 0..expected_ticks - 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
@@ -840,8 +840,8 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
     // A loaded replica cell the ghost writes into.
     let pos = IVec3::new(3, 64, 3);
     game.game.replica.insert_chunk_for_test(
-        petramond::chunk::ChunkPos::new(0, 0),
-        petramond::chunk::Chunk::new(0, 0),
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
     );
 
     // Predict a ghost placement (World snapshot, prev = air).
@@ -1038,8 +1038,8 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
     let mut game = game_on_empty_chunk();
     // Mirror the chunk onto the replica so the place ghost can write.
     game.game.replica.insert_chunk_for_test(
-        petramond::chunk::ChunkPos::new(0, 0),
-        petramond::chunk::Chunk::new(0, 0),
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
     );
     let floor = IVec3::new(8, 63, 8);
     assert!(game
@@ -1101,11 +1101,11 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
 /// claim, so the same click then ghosts normally.
 #[test]
 fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
-    use petramond::block::ShapeFamily;
+    use petramond_world::block::ShapeFamily;
     // Any mod-registered custom-shape block with a linked item (the
     // furniture chain, when the pack is installed). The engine ships no
     // custom rows, so without an installed pack there is nothing to pin.
-    let Some(item) = petramond::item::ItemType::all().iter().copied().find(|i| {
+    let Some(item) = petramond_world::item::ItemType::all().iter().copied().find(|i| {
         i.as_block()
             .is_some_and(|b| !b.is_engine() && b.shape_family() == ShapeFamily::Custom)
     }) else {
@@ -1113,8 +1113,8 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
     };
     let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
-        petramond::chunk::ChunkPos::new(0, 0),
-        petramond::chunk::Chunk::new(0, 0),
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
     );
     let chest = IVec3::new(8, 64, 8);
     assert!(game
@@ -1168,8 +1168,8 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
 fn optimistic_torch_place_records_wall_mount_immediately() {
     let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
-        petramond::chunk::ChunkPos::new(0, 0),
-        petramond::chunk::Chunk::new(0, 0),
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
     );
     let wall = IVec3::new(8, 64, 8);
     assert!(game
@@ -1177,7 +1177,7 @@ fn optimistic_torch_place_records_wall_mount_immediately() {
         .replica
         .set_block_world(wall.x, wall.y, wall.z, Block::Stone));
     game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
-    give(&mut game, petramond::item::ItemType::Torch, 1);
+    give(&mut game, petramond_world::item::ItemType::Torch, 1);
     game.sync_self_view_for_test();
 
     // Click the wall's west face: the predicted torch must carry its mount
@@ -1195,7 +1195,7 @@ fn optimistic_torch_place_records_wall_mount_immediately() {
     );
     assert_eq!(
         game.game.replica.torch_placement(torch),
-        petramond::torch::TorchPlacement::West,
+        petramond_world::torch::TorchPlacement::West,
         "predicted place must record the wall mount for the same-frame mesh"
     );
 }
@@ -1204,8 +1204,8 @@ fn optimistic_torch_place_records_wall_mount_immediately() {
 fn optimistic_stair_place_records_orientation_immediately() {
     let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
-        petramond::chunk::ChunkPos::new(0, 0),
-        petramond::chunk::Chunk::new(0, 0),
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
     );
     let floor = IVec3::new(8, 63, 8);
     assert!(game
@@ -1213,7 +1213,7 @@ fn optimistic_stair_place_records_orientation_immediately() {
         .replica
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
     game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
-    give(&mut game, petramond::item::ItemType::OakStairs, 1);
+    give(&mut game, petramond_world::item::ItemType::OakStairs, 1);
     game.sync_self_view_for_test();
 
     // The absent-state fallback the mesher would read pre-fix; make the
@@ -1226,9 +1226,9 @@ fn optimistic_stair_place_records_orientation_immediately() {
         .expect("floor section")
         .stair_state(0, 0, 0);
     let expected_state = |g: &crate::game::Game| {
-        petramond::block_state::StairState::new(
+        petramond_world::block_state::StairState::new(
             petramond::server::placement::facing_from_forward(g.player.forward()),
-            petramond::block_state::StairHalf::Bottom,
+            petramond_world::block_state::StairHalf::Bottom,
         )
     };
     if expected_state(&game.game) == default_state {
@@ -1262,8 +1262,8 @@ fn optimistic_stair_place_records_orientation_immediately() {
 fn optimistic_chest_place_records_front_facing_immediately() {
     let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
-        petramond::chunk::ChunkPos::new(0, 0),
-        petramond::chunk::Chunk::new(0, 0),
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
     );
     let floor = IVec3::new(8, 63, 8);
     assert!(game
@@ -1271,7 +1271,7 @@ fn optimistic_chest_place_records_front_facing_immediately() {
         .replica
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
     game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
-    give(&mut game, petramond::item::ItemType::Chest, 1);
+    give(&mut game, petramond_world::item::ItemType::Chest, 1);
     game.sync_self_view_for_test();
 
     let default_facing = game
@@ -1313,8 +1313,8 @@ fn optimistic_ladder_place_commits_the_facing_row() {
     // entity-facing map untouched (a ladder is not a block entity).
     let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
-        petramond::chunk::ChunkPos::new(0, 0),
-        petramond::chunk::Chunk::new(0, 0),
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
     );
     let wall = IVec3::new(8, 64, 8);
     assert!(game
@@ -1322,7 +1322,7 @@ fn optimistic_ladder_place_commits_the_facing_row() {
         .replica
         .set_block_world(wall.x, wall.y, wall.z, Block::Stone));
     game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
-    give(&mut game, petramond::item::ItemType::Ladder, 1);
+    give(&mut game, petramond_world::item::ItemType::Ladder, 1);
     game.sync_self_view_for_test();
 
     // Click the wall's +X face: the panel front points east, hanging on the
@@ -1353,8 +1353,8 @@ fn optimistic_ladder_place_commits_the_facing_row() {
 fn slab_stack_click_is_not_predicted() {
     let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
-        petramond::chunk::ChunkPos::new(0, 0),
-        petramond::chunk::Chunk::new(0, 0),
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
     );
     game.game.player.pos = Vec3::new(100.0, 64.0, 100.0);
     // A bottom slab in the cell: clicking its top face stacks INTO that cell
@@ -1362,12 +1362,12 @@ fn slab_stack_click_is_not_predicted() {
     // request denies by design — the client must not ghost a slab above.
     let cell = IVec3::new(8, 64, 8);
     let facing = petramond::server::placement::facing_from_forward(game.game.player.forward());
-    let slot = petramond::slab::slot_for_rotation(Default::default(), IVec3::Y, facing);
+    let slot = petramond_world::slab::slot_for_rotation(Default::default(), IVec3::Y, facing);
     assert!(game
         .game
         .replica
         .place_slab_layer(cell, Block::OakSlab, slot));
-    give(&mut game, petramond::item::ItemType::OakSlab, 1);
+    give(&mut game, petramond_world::item::ItemType::OakSlab, 1);
     game.sync_self_view_for_test();
 
     assert!(
@@ -1389,8 +1389,8 @@ fn slab_stack_click_is_not_predicted() {
 fn optimistic_break_clears_replica_and_queues_world_event() {
     let mut game = game_on_empty_chunk();
     game.game.replica.insert_chunk_for_test(
-        petramond::chunk::ChunkPos::new(0, 0),
-        petramond::chunk::Chunk::new(0, 0),
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
     );
     let pos = IVec3::new(8, 64, 8);
     assert!(game
@@ -1420,8 +1420,8 @@ fn denied_place_restores_cell_and_inventory_silently() {
     let mut game = game();
     let pos = IVec3::new(3, 64, 3);
     game.game.replica.insert_chunk_for_test(
-        petramond::chunk::ChunkPos::new(0, 0),
-        petramond::chunk::Chunk::new(0, 0),
+        petramond_world::chunk::ChunkPos::new(0, 0),
+        petramond_world::chunk::Chunk::new(0, 0),
     );
     game.server.sessions[0].player.inventory = filled_inventory();
     game.sync_self_view_for_test();
@@ -1565,7 +1565,7 @@ fn fake_on_ground_claims_do_not_evade_fall_damage() {
 
 #[test]
 fn sprint_descent_down_steps_is_not_one_tall_fall() {
-    use petramond::block_state::{StairHalf, StairState};
+    use petramond_world::block_state::{StairHalf, StairState};
     let mut game = game_on_empty_chunk();
     // A staircase of real stair blocks descending +x (low half downhill), onto
     // a floor at y = 59 — half-block steps every half block, like any player
@@ -1574,7 +1574,7 @@ fn sprint_descent_down_steps_is_not_one_tall_fall() {
         assert!(game.server.world.place_stair(
             IVec3::new(2 + i, 70 - i, 8),
             Block::OakStairs,
-            StairState::new(petramond::facing::Facing::East, StairHalf::Bottom),
+            StairState::new(petramond_math::facing::Facing::East, StairHalf::Bottom),
         ));
     }
     for x in 14..16 {
@@ -1662,7 +1662,7 @@ fn unpredicted_break_finish_keeps_the_initiators_break_event() {
     u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
     game.server
         .apply_message(0, ClientToServer::PlayerUpdate(u));
-    let expected_ticks = (petramond::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
+    let expected_ticks = (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks - 2 {
         game.server.tick_mining(0, &mut TickEvents::default());
     }

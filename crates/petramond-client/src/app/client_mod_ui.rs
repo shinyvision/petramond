@@ -4,7 +4,7 @@
 
 use super::{App, AppScreen};
 use petramond::gui::{documents, DocImageSource};
-use petramond::gui_state::GuiKind;
+use petramond_world::gui_state::GuiKind;
 
 pub(super) struct ClientCanvasState {
     owner: String,
@@ -23,7 +23,7 @@ impl App {
         self.flush_client_canvas_move();
         self.flush_client_canvas_scroll();
         let open = match self.screen {
-            AppScreen::ClientModGui(kind) => petramond::gui_state::kind_key(kind),
+            AppScreen::ClientModGui(kind) => petramond_world::gui_state::kind_key(kind),
             _ => None,
         };
         let open_canvas = self
@@ -45,7 +45,7 @@ impl App {
     }
 
     pub(super) fn drive_client_doc_ui(&mut self, kind: GuiKind, screen: (u32, u32), now: f64) {
-        let Some(kind_key) = petramond::gui_state::kind_key(kind) else {
+        let Some(kind_key) = petramond_world::gui_state::kind_key(kind) else {
             return;
         };
         let Some(view) = self
@@ -233,7 +233,7 @@ impl App {
                         );
                         continue;
                     }
-                    let Some(kind) = petramond::gui_state::intern_kind(&key) else {
+                    let Some(kind) = petramond_world::gui_state::intern_kind(&key) else {
                         log::warn!("client mod requested invalid GUI kind '{key}'");
                         continue;
                     };
@@ -519,7 +519,7 @@ fn client_gui_owned_by(screen: AppScreen, owner: &str) -> bool {
     let AppScreen::ClientModGui(kind) = screen else {
         return false;
     };
-    petramond::gui_state::kind_key(kind)
+    petramond_world::gui_state::kind_key(kind)
         .and_then(|key| key.split_once(':'))
         .is_some_and(|(namespace, _)| namespace == owner)
 }
@@ -561,8 +561,8 @@ mod tests {
 
     #[test]
     fn client_gui_commands_are_context_and_owner_scoped() {
-        let map = petramond::gui_state::intern_kind("map:screen").unwrap();
-        let other = petramond::gui_state::intern_kind("other:screen").unwrap();
+        let map = petramond_world::gui_state::intern_kind("map:screen").unwrap();
+        let other = petramond_world::gui_state::intern_kind("other:screen").unwrap();
         let no_canvas = None;
         let canvas = Some(ClientCanvasState {
             owner: "map".into(),
@@ -601,7 +601,7 @@ mod tests {
         ));
         for screen in [
             AppScreen::Pause,
-            AppScreen::Menu(petramond::gui_state::GuiKind::Inventory),
+            AppScreen::Menu(petramond_world::gui_state::GuiKind::Inventory),
             AppScreen::Sleeping,
             AppScreen::Dead,
         ] {

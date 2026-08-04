@@ -5,7 +5,7 @@
 
 use std::f32::consts::{PI, TAU};
 
-use crate::mathh::{voxel_at, IVec3, Vec3};
+use petramond_math::math::{voxel_at, IVec3, Vec3};
 
 use super::instance::Instance;
 use super::MobDef;
@@ -91,7 +91,7 @@ impl Instance {
     }
 
     /// Current velocity (m/s) — read-only; mods steer through
-    /// [`set_drive`](Self::set_drive), never by writing velocity directly.
+    /// `set_drive`, never by writing velocity directly.
     #[inline]
     pub fn vel(&self) -> Vec3 {
         self.vel
@@ -177,9 +177,9 @@ impl Instance {
         wish: Vec3,
         jump: bool,
         can_steer: bool,
-        boxes: &impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
-        obstacles: &[crate::collision::DynBox],
-        healing_obstacles: &[crate::collision::DynBox],
+        boxes: &impl Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
+        obstacles: &[petramond_world::collision::DynBox],
+        healing_obstacles: &[petramond_world::collision::DynBox],
         support: &impl Fn(IVec3) -> bool,
         water: &impl Fn(IVec3) -> bool,
         water_surface: &impl Fn(IVec3) -> Option<f32>,
@@ -306,7 +306,7 @@ impl Instance {
             d.size,
             self.vel.to_array(),
             dt,
-            crate::collision::STEP_HEIGHT,
+            petramond_world::collision::STEP_HEIGHT,
             boxes,
             obstacles,
             healing_obstacles,
@@ -492,10 +492,10 @@ fn add_flow_push(vel: Vec3, dir: Vec3, target_speed: f32, max_delta: f32) -> Vec
 #[cfg(test)]
 fn boxes_of(
     solid: &impl Fn(IVec3) -> bool,
-) -> impl Fn(i32, i32, i32) -> &'static [crate::block::Aabb] + '_ {
+) -> impl Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb] + '_ {
     move |x, y, z| {
         if solid(IVec3::new(x, y, z)) {
-            crate::block::Block::Stone.collision_boxes()
+            petramond_world::block::Block::Stone.collision_boxes()
         } else {
             &[]
         }

@@ -1,5 +1,5 @@
 use crate::events::tick::{TickEvents, WorldEvents};
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 use crate::net::protocol::{
     BlockDelta, ItemSlotWire, ItemStateRow, MobStateRow, ModSpatialSoundMsg, OpenScreen,
     PlayerActionKind, PlayerStateRow, SelfEvents, SelfState, SelfTransform, TickUpdate, Transform,
@@ -55,7 +55,7 @@ impl ServerGame {
                 id: it.id,
                 item_id: it.stack.item.0,
                 count: it.stack.count,
-                data: crate::item::variant::blob(it.stack.variant).map(|b| (*b).clone()),
+                data: petramond_world::item::variant::blob(it.stack.variant).map(|b| (*b).clone()),
                 pos: it.pos,
                 spin: it.spin,
             })
@@ -88,7 +88,7 @@ impl ServerGame {
                         .player
                         .inventory
                         .selected()
-                        .and_then(|st| crate::item::variant::blob(st.variant))
+                        .and_then(|st| petramond_world::item::variant::blob(st.variant))
                         .map(|b| (*b).clone()),
                     // The same overlay state `SelfState::mining` ships for the
                     // player's own hand: target cell + crack stage. Observers
@@ -271,7 +271,7 @@ impl ServerGame {
         let open_screen = if let Some((kind, pos)) = gui {
             // The wire speaks kind KEYS (GuiKind ids are process-local) — one
             // lane for engine containers and mod GUIs alike.
-            crate::gui_state::kind_key(kind).map(|kind_key| OpenScreen::Gui {
+            petramond_world::gui_state::kind_key(kind).map(|kind_key| OpenScreen::Gui {
                 kind_key: kind_key.to_string(),
                 pos,
             })
@@ -425,7 +425,7 @@ impl ServerGame {
         &self,
         s: usize,
         target: crate::menu::ContainerTarget,
-    ) -> std::sync::Arc<crate::gui_state::GuiStateMap> {
+    ) -> std::sync::Arc<petramond_world::gui_state::GuiStateMap> {
         let own = self.sessions[s].gui_state.clone();
         if s == 0 || !own.is_empty() {
             return own;

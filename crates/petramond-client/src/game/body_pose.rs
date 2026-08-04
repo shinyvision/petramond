@@ -27,7 +27,7 @@ const SNEAK_BLEND_RATE: f32 = 10.0;
 #[derive(Copy, Clone, Debug, Default)]
 pub struct BodyPose {
     /// The body's facing yaw (engine yaw space, like `Player::yaw`). Trails
-    /// the head within [`HEAD_YAW_LIMIT`]; re-aligns while walking.
+    /// the head within `HEAD_YAW_LIMIT`; re-aligns while walking.
     pub body_yaw: f32,
     /// Seconds into the walk animation while `moving`.
     pub anim_time: f32,
@@ -107,7 +107,7 @@ impl BodyPose {
 }
 
 /// One frame of the body-yaw follow rule: the head (look) turns freely within
-/// [`HEAD_YAW_LIMIT`] of the body; past it the body is dragged along so the
+/// `HEAD_YAW_LIMIT` of the body; past it the body is dragged along so the
 /// neck never over-twists, and while walking the body eases toward the look
 /// direction (a walking body faces where it goes).
 pub fn follow_body_yaw(body_yaw: f32, head_yaw: f32, moving: bool, dt: f32) -> f32 {

@@ -1,8 +1,8 @@
 use petramond::events::tick::{TickEvents, TICK_DT};
 use super::common::{self, filled_inventory, game, game_on_empty_chunk, hit};
-use petramond::block::Block;
+use petramond_world::block::Block;
 use petramond::events::{DamageSource, Outcome};
-use petramond::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 use petramond::mob::{Mob, MobAttack, MobDamageFeedback};
 use petramond::net::protocol::{ClientToServer, PlayerAction};
 use petramond::player;
@@ -111,7 +111,7 @@ fn immunity_is_a_composable_pipeline_component() {
     );
     // The DoT hits granted no window: once the original expires, the next
     // default hit lands on schedule.
-    for _ in 1..petramond::damage::MOB_DAMAGE_IFRAME_TICKS {
+    for _ in 1..petramond_world::damage::MOB_DAMAGE_IFRAME_TICKS {
         game.server.game_tick_step(&mut ev);
     }
     game.server.game_tick_step(&mut ev);
@@ -128,7 +128,7 @@ fn immunity_is_a_composable_pipeline_component() {
 
 #[test]
 fn engine_iframes_are_global_per_victim_for_players_and_mobs() {
-    use petramond::damage::{MOB_DAMAGE_IFRAME_TICKS, PLAYER_DAMAGE_IFRAME_TICKS};
+    use petramond_world::damage::{MOB_DAMAGE_IFRAME_TICKS, PLAYER_DAMAGE_IFRAME_TICKS};
 
     let mut game = game();
     let mut ev = TickEvents::default();
@@ -337,7 +337,7 @@ fn a_mods_damage_player_action_routes_through_the_funnel() {
         "the handler saw the distinguishable Mod source"
     );
 
-    for _ in 0..petramond::damage::PLAYER_DAMAGE_IFRAME_TICKS {
+    for _ in 0..petramond_world::damage::PLAYER_DAMAGE_IFRAME_TICKS {
         game.server.tick_damage_immunity();
     }
 
@@ -505,7 +505,7 @@ fn fist_takes_four_hits_to_kill_an_owl() {
     let mut game = game();
     let pos = Vec3::new(8.0, 64.0, 8.0);
     assert!(game.server.world.mobs_mut().spawn(Mob::Owl, pos, 0.0));
-    assert_eq!(petramond::item::attack_damage(None), (1.0, 1.0));
+    assert_eq!(petramond_world::item::attack_damage(None), (1.0, 1.0));
     let from = pos + Vec3::X;
     for i in 0..3 {
         assert!(
@@ -523,7 +523,7 @@ fn fist_takes_four_hits_to_kill_an_owl() {
                 .is_none(),
             "fist hit {i} isn't lethal"
         );
-        for _ in 0..petramond::damage::MOB_DAMAGE_IFRAME_TICKS {
+        for _ in 0..petramond_world::damage::MOB_DAMAGE_IFRAME_TICKS {
             game.server.world.mobs_mut().tick_damage_immunity();
         }
     }
@@ -798,15 +798,15 @@ fn a_killed_mob_ragdolls_then_despawns() {
 fn mobs_take_player_rule_fall_damage_when_they_land() {
     let mut game = game();
     game.server.world.clear_world();
-    let mut chunk = petramond::chunk::Chunk::new(0, 0);
-    for z in 0..petramond::chunk::CHUNK_SZ {
-        for x in 0..petramond::chunk::CHUNK_SX {
+    let mut chunk = petramond_world::chunk::Chunk::new(0, 0);
+    for z in 0..petramond_world::chunk::CHUNK_SZ {
+        for x in 0..petramond_world::chunk::CHUNK_SX {
             chunk.set_block(x, 63, z, Block::Grass);
         }
     }
     game.server
         .world
-        .insert_chunk_for_test(petramond::chunk::ChunkPos::new(0, 0), chunk);
+        .insert_chunk_for_test(petramond_world::chunk::ChunkPos::new(0, 0), chunk);
 
     let spawn = Vec3::new(8.5, 70.0, 8.5);
     assert!(game.server.world.mobs_mut().spawn(Mob::Owl, spawn, 0.0));
@@ -1107,7 +1107,7 @@ fn click_attack_player(
 /// damage roll.
 fn pvp_pair(game: &mut super::common::TestGame) -> usize {
     game.server.sessions[0].player.pos = Vec3::new(0.5, 64.0, 0.5);
-    game.server.sessions[0].player.inventory = petramond::inventory::Inventory::new();
+    game.server.sessions[0].player.inventory = petramond_world::inventory::Inventory::new();
     let t = game
         .server
         .add_session_for_test(petramond::player::Player::new(Vec3::new(2.5, 64.0, 0.5)));

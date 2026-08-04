@@ -1,11 +1,11 @@
-use crate::chunk::SectionPos;
+use petramond_world::chunk::SectionPos;
 
 use super::World;
 
 impl World {
     /// [`refresh_block_entity_index`](Self::refresh_block_entity_index) for the
     /// section owning world cell `pos`.
-    pub(in crate::world) fn note_block_entity_change(&mut self, pos: crate::mathh::IVec3) {
+    pub(in crate::world) fn note_block_entity_change(&mut self, pos: petramond_math::math::IVec3) {
         if let Some(sp) = SectionPos::from_world(pos.x, pos.y, pos.z) {
             self.refresh_block_entity_index(sp);
         }
@@ -22,9 +22,9 @@ impl World {
                 // index: a section belongs when any stateful cell is a door
                 // or a directional block-entity front.
                 || s.cell_states().keys().any(|&idx| {
-                    let (lx, ly, lz) = crate::chunk::section_local(idx as usize);
+                    let (lx, ly, lz) = petramond_world::chunk::section_local(idx as usize);
                     let b = s.block(lx, ly, lz);
-                    b.shape_family() == crate::block::ShapeFamily::Door || b.directional_view()
+                    b.shape_family() == petramond_world::block::ShapeFamily::Door || b.directional_view()
                 })
         });
         if has {

@@ -2,15 +2,15 @@ use crate::world::remote::payload::SectionPayloadExt;
 use crate::world::WorldData;
 use std::sync::Arc;
 
-use crate::block::Block;
-use crate::block_state::{LogAxis, SlabSplit, StairHalf, StairState};
-use crate::chunk::{Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ};
-use crate::facing::Facing;
-use crate::mathh::IVec3;
+use petramond_world::block::Block;
+use petramond_world::block_state::{LogAxis, SlabSplit, StairHalf, StairState};
+use petramond_world::chunk::{Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ};
+use petramond_math::facing::Facing;
+use petramond_math::math::IVec3;
 use crate::net::protocol::BlockDelta;
-use crate::section::Section;
-use crate::slab::SlabSlot;
-use crate::torch::TorchPlacement;
+use petramond_world::section::Section;
+use petramond_world::slab::SlabSlot;
+use petramond_world::torch::TorchPlacement;
 use crate::worker::JobPool;
 use crate::world::store::{LoadTarget, World, WorldRole};
 
@@ -68,7 +68,7 @@ fn furnace_lit_flip_reaches_the_replica_through_a_delta() {
         furnace.burn_remaining = 50;
         furnace.burn_max = 100;
     }
-    server.game_tick(&crate::crafting::Recipes::default());
+    server.game_tick(&petramond_world::crafting::Recipes::default());
     assert_eq!(
         Block::from_id(server.chunk_block(4, 65, 4)),
         Block::FurnaceLit,
@@ -96,7 +96,7 @@ fn furnace_lit_flip_reaches_the_replica_through_a_delta() {
         let (furnace, _) = server.furnace_parts_mut(pos).unwrap();
         furnace.burn_remaining = 1;
     }
-    server.game_tick(&crate::crafting::Recipes::default());
+    server.game_tick(&petramond_world::crafting::Recipes::default());
     for d in server.take_block_deltas() {
         replica.apply_remote_delta(d);
     }
@@ -352,7 +352,7 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
     assert!(server.place_stair(
         stair,
         Block::OakStairs,
-        crate::block_state::StairState::new(Facing::South, crate::block_state::StairHalf::Top),
+        petramond_world::block_state::StairState::new(Facing::South, petramond_world::block_state::StairHalf::Top),
     ));
     assert!(server.set_block_world(torch.x, torch.y, torch.z, Block::Torch));
     server.insert_torch(torch, TorchPlacement::East);
@@ -380,8 +380,8 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
     };
     let stair_state = state_at(stair).expect("stair delta carries state");
     assert_eq!(
-        <crate::block_state::StairState as crate::block::CellView>::from_cell(stair_state),
-        crate::block_state::StairState::new(Facing::South, crate::block_state::StairHalf::Top),
+        <petramond_world::block_state::StairState as petramond_world::block::CellView>::from_cell(stair_state),
+        petramond_world::block_state::StairState::new(Facing::South, petramond_world::block_state::StairHalf::Top),
         "placed bits ride the delta"
     );
     assert_ne!(
@@ -391,7 +391,7 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
     );
     assert_eq!(
         state_at(torch),
-        Some(crate::block::CellCodec::to_cell(&TorchPlacement::East))
+        Some(petramond_world::block::CellCodec::to_cell(&TorchPlacement::East))
     );
     assert!(state_at(door).is_some());
     assert!(state_at(door + IVec3::Y).is_some());
@@ -459,7 +459,7 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
     }
     assert_eq!(
         replica.stair_state_at(stair.x, stair.y, stair.z),
-        crate::block_state::StairState::default(),
+        petramond_world::block_state::StairState::default(),
         "a cleared cell reads the default state again"
     );
 }
@@ -516,7 +516,7 @@ fn door_toggles_replicate_the_open_bit_without_a_block_change() {
 /// A hand-built column payload: flat maps, all-unknown summaries, and the
 /// given deep band floor — the minimum a replica needs to classify deep.
 fn column_payload_fixture(pos: ChunkPos, deep_band_lo: i32) -> crate::net::protocol::ColumnPayload {
-    use crate::chunk::SECTION_SIZE;
+    use petramond_world::chunk::SECTION_SIZE;
     use crate::net::protocol::{ColumnPayload, SectionBytes};
     let flat = |n: usize| SectionBytes(Arc::from(vec![0u8; n].into_boxed_slice()));
     ColumnPayload {
@@ -608,8 +608,8 @@ fn replication_log_coalesces_latest_wins_and_respects_capture() {
 /// incrementality gate.
 #[test]
 fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
-    use crate::chunk::SECTION_VOLUME;
-    use crate::section::Section;
+    use petramond_world::chunk::SECTION_VOLUME;
+    use petramond_world::section::Section;
     use crate::world::store::LoadAnchor;
     use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -752,22 +752,22 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
 /// on the replica without meshing anyway.
 #[test]
 fn terrain_send_defers_deep_sections_outside_the_anchor_window() {
-    use crate::chunk::SECTION_VOLUME;
-    use crate::section::Section;
+    use petramond_world::chunk::SECTION_VOLUME;
+    use petramond_world::section::Section;
     use crate::world::store::LoadAnchor;
     use rustc_hash::{FxHashMap, FxHashSet};
 
     let sky = || Arc::from(vec![0u8; SECTION_VOLUME].into_boxed_slice());
     let mut w = World::new(0, 8);
     let cp = ChunkPos::new(0, 0);
-    let gen = crate::worldgen::driver::ChunkGenerator::new(0).generate_column_gen(cp.cx, cp.cz);
+    let gen = petramond_worldgen::driver::ChunkGenerator::new(0).generate_column_gen(cp.cx, cp.cz);
     let band_lo = *World::surface_window_for_column(&gen, 0).start();
     w.set_column_gen(cp, Arc::new(gen));
 
     // Deepest legal cy: a surface anchor at band_lo+2 has vwin down to
     // band_lo-3, so SECTION_MIN_CY must sit below that for the deferral
     // case to be distinguishable (true for any band_lo ≥ SECTION_MIN_CY+4).
-    let deep_cy = crate::chunk::SECTION_MIN_CY;
+    let deep_cy = petramond_world::chunk::SECTION_MIN_CY;
     assert!(
         deep_cy < band_lo,
         "seed 0 column must have a surface band above world floor (band_lo={band_lo})"

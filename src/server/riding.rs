@@ -14,7 +14,7 @@
 //! it back through the `PlayerInput` HostCall.
 
 use crate::events::PostEvent;
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 use crate::mob::riding::{
     dismount_spot, player_body_free, player_body_known_free, seat_world_pos, Mount, MountTarget,
 };
@@ -187,7 +187,7 @@ impl ServerGame {
     pub fn player_snapshot_for_save(
         &self,
         s: usize,
-        obstacles: &[crate::collision::DynBox],
+        obstacles: &[petramond_world::collision::DynBox],
     ) -> Option<Player> {
         let sess = &self.sessions[s];
         let mut snapshot = sess.player.clone();
@@ -250,14 +250,14 @@ impl ServerGame {
     fn dismount_spot_for(
         &self,
         player: &Player,
-        obstacles: &[crate::collision::DynBox],
+        obstacles: &[petramond_world::collision::DynBox],
     ) -> Option<Vec3> {
         dismount_spot(
             player.pos,
             player.yaw,
             |feet| player_body_free(&self.world, feet, obstacles),
             |feet| {
-                let c = crate::mathh::voxel_at(feet);
+                let c = petramond_math::math::voxel_at(feet);
                 !self.world.water_cell_at(c.x, c.y, c.z)
                     && !self.world.water_cell_at(c.x, c.y - 1, c.z)
             },
@@ -272,11 +272,11 @@ impl ServerGame {
     fn save_dismount_spot_for(
         &self,
         player: &Player,
-        obstacles: &[crate::collision::DynBox],
+        obstacles: &[petramond_world::collision::DynBox],
     ) -> Option<Vec3> {
         let known_free = |feet| player_body_known_free(&self.world, feet, obstacles);
         let dry = |feet| {
-            let c = crate::mathh::voxel_at(feet);
+            let c = petramond_math::math::voxel_at(feet);
             self.world.physics_cell_final_at(c.x, c.y, c.z)
                 && self.world.physics_cell_final_at(c.x, c.y - 1, c.z)
                 && !self.world.water_cell_at(c.x, c.y, c.z)
@@ -289,7 +289,7 @@ impl ServerGame {
             return None;
         }
 
-        let origin = crate::mathh::voxel_at(player.pos);
+        let origin = petramond_math::math::voxel_at(player.pos);
         for radius in 1..=SAVE_DISMOUNT_RADIUS {
             let mut wet = None;
             for dy in SAVE_DISMOUNT_DY {

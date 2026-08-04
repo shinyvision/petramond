@@ -5,10 +5,10 @@
 //! deterministic, no-loss mutation.
 
 use super::{ContainerMenu, ContainerTarget};
-use crate::gui_state::PointerButton;
-use crate::gui_state::{MenuSlot, MAX_MENU_DRAG_SLOTS};
-use crate::inventory::{plan_drag_distribution, slot_capacity, take_slot_stack, Inventory};
-use crate::item::ItemStack;
+use petramond_world::gui_state::PointerButton;
+use petramond_world::gui_state::{MenuSlot, MAX_MENU_DRAG_SLOTS};
+use petramond_world::inventory::{plan_drag_distribution, slot_capacity, take_slot_stack, Inventory};
+use petramond_world::item::ItemStack;
 use crate::world::World;
 
 impl ContainerMenu {
@@ -113,9 +113,9 @@ impl ContainerMenu {
     }
 
     /// Whether container slot `i` accepts `held` on a deliberate placement —
-    /// this menu's specs through the shared [`crate::container::slot_admits`].
-    fn slot_admits(&self, i: usize, held: Option<crate::item::ItemType>) -> bool {
-        crate::container::slot_admits(&self.slot_specs(), i, held)
+    /// this menu's specs through the shared [`petramond_world::container::slot_admits`].
+    fn slot_admits(&self, i: usize, held: Option<petramond_world::item::ItemType>) -> bool {
+        petramond_world::container::slot_admits(&self.slot_specs(), i, held)
     }
 
     fn place_cursor_in(

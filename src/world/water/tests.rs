@@ -1,11 +1,11 @@
 use super::*;
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 // Source/flow tests place water at y>=65, above flat_world's stone floor.
 use crate::world::testutil::flat_world;
 
 fn run_ticks(w: &mut World, n: u32) {
     // Water flow needs no recipes; an empty set keeps the furnace step a no-op.
-    let recipes = crate::crafting::Recipes::default();
+    let recipes = petramond_world::crafting::Recipes::default();
     for _ in 0..n {
         w.game_tick(&recipes);
     }
@@ -93,7 +93,7 @@ fn game_tick_advances_and_block_update_schedules_a_water_check() {
     w.set_block_world(8, 65, 8, Block::Water);
     // First tick dispatches the placement update and schedules the flow check;
     // the source has not spread yet.
-    w.game_tick(&crate::crafting::Recipes::default());
+    w.game_tick(&petramond_world::crafting::Recipes::default());
     assert_eq!(w.current_tick(), 1);
     assert_eq!(block(&w, 9, 65, 8), Block::Air);
     // After the flow delay the source has spread to its cardinal neighbours.
@@ -445,7 +445,7 @@ fn flowing_water_washes_away_a_fragile_plant() {
 /// owning section's light first so a still-dirty band can't mask the regression.
 #[test]
 fn a_water_write_reschedules_the_light() {
-    use crate::chunk::SECTION_VOLUME;
+    use petramond_world::chunk::SECTION_VOLUME;
     let mut w = flat_world();
     let cell = IVec3::new(10, 65, 8); // section (0,4,0)
     w.set_block_world(cell.x, cell.y, cell.z, Block::Torch);

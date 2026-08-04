@@ -1,5 +1,5 @@
-use crate::body::Body;
-use crate::chunk::SectionPos;
+use petramond_world::body::Body;
+use petramond_world::chunk::SectionPos;
 use crate::mob::{Mob, MobDamageFeedback, MobTagValue, SavedMob};
 use crate::world::World;
 
@@ -556,8 +556,8 @@ fn indices_with_tag_filters_by_presence_and_value_and_skips_the_dead() {
 
 #[test]
 fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
-    use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
     // 3×3 chunk grass field (48×48): big enough that open ground outgrows the
     // 24×24 confinement span, with a 5×5 fence pen at its centre.
@@ -609,7 +609,7 @@ fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
 /// two mobs standing inside each other, and it would only show up in a crowd.
 #[test]
 fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
-    use crate::mathh::Vec3;
+    use petramond_math::math::Vec3;
     use crate::mob::{def, Mob};
 
     let kinds: Vec<Mob> = crate::mob::defs().iter().map(|d| d.mob).collect();

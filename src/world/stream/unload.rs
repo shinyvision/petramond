@@ -1,4 +1,4 @@
-use crate::chunk::{ChunkPos, SectionPos};
+use petramond_world::chunk::{ChunkPos, SectionPos};
 
 use crate::world::store::{LoadTarget, World};
 
@@ -20,7 +20,7 @@ impl World {
             }
             let mut b = bits;
             while b != 0 {
-                let cy = crate::chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
+                let cy = petramond_world::chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
                 b &= b - 1;
                 if targets
                     .iter()
@@ -63,7 +63,7 @@ impl World {
                 }
                 let mut b = bits;
                 while b != 0 {
-                    let cy = crate::chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
+                    let cy = petramond_world::chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
                     b &= b - 1;
                     if vwindow.contains(&cy) {
                         continue;

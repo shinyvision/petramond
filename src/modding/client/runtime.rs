@@ -67,7 +67,7 @@ pub struct ModKeyAction {
     /// Controls-screen category: the owning pack's display name.
     pub category: String,
     /// The registered DEFAULT key (the player may remap it away).
-    pub default_code: crate::keycode::KeyCode,
+    pub default_code: petramond_world::keycode::KeyCode,
     mod_index: usize,
     action_id: u32,
 }
@@ -97,7 +97,7 @@ impl ClientModRuntime {
     pub fn load(world_seed: u32, session_key: &str, enabled: &BTreeSet<String>) -> Self {
         let mut mods = Vec::new();
         let mut predictor_rows: Vec<(i32, Predictor)> = Vec::new();
-        let session = session_client_mods(crate::assets::packs(), enabled);
+        let session = session_client_mods(petramond_world::assets::packs(), enabled);
         crate::modding::host::module_cache::prewarm(session.iter().map(|(_, path)| path.clone()));
         for (id, path) in session {
             let module = match crate::modding::host::module_for(&path) {
@@ -169,7 +169,7 @@ impl ClientModRuntime {
             overlays.extend(data.overlays.iter().cloned());
             // Category = the pack's display name; the id keys the category
             // when a pack somehow has no display row.
-            let category = crate::assets::packs()
+            let category = petramond_world::assets::packs()
                 .iter()
                 .find(|p| p.id.as_deref() == Some(loaded.id.as_str()))
                 .map(|p| p.name.clone())
@@ -230,8 +230,8 @@ impl ClientModRuntime {
     /// block. A block whose owner ships no client wasm (or a trapped bake) is
     /// simply skipped, and its item draws as a plain cube.
     fn bake_item_geometry(&mut self) {
-        use crate::block::ShapeFamily;
-        for &block in crate::block::Block::all() {
+        use petramond_world::block::ShapeFamily;
+        for &block in petramond_world::block::Block::all() {
             if block.shape_family() != ShapeFamily::Custom {
                 continue;
             }
@@ -249,7 +249,7 @@ impl ClientModRuntime {
                 // Sanitize the guest boxes; a breach falls back to the cube icon.
                 if let Ok(boxes) = crate::world::ingest_shape_boxes(&geo.boxes) {
                     if !boxes.is_empty() {
-                        crate::block::item_shape_bake::set_item_bake(block_id, boxes);
+                        petramond_world::block::item_shape_bake::set_item_bake(block_id, boxes);
                     }
                 }
             }
@@ -333,7 +333,7 @@ impl ClientModRuntime {
         }
     }
 
-    /// The client twin of [`ModHost::bake_placement_sim_boxes`]: the would-be
+    /// The client twin of `ModHost::bake_placement_sim_boxes`: the would-be
     /// SIM and RENDER boxes of a not-yet-placed custom cell, baked against
     /// the replica. The ghost installs them eagerly so a predicted placement
     /// collides and draws exactly from frame 0; the per-tick pump re-bakes
@@ -345,8 +345,8 @@ impl ClientModRuntime {
         shape_kind: u8,
         input: mod_api::CellInput,
     ) -> (
-        Option<Vec<crate::block::Aabb>>,
-        Option<Box<[crate::block::ShapeRenderBox]>>,
+        Option<Vec<petramond_world::block::Aabb>>,
+        Option<Box<[petramond_world::block::ShapeRenderBox]>>,
     ) {
         let Some(loaded) = self.owner_mod_mut(shape_key) else {
             return (None, None);
@@ -418,11 +418,11 @@ impl ClientModRuntime {
         }
         // Dispatch under an immutable world borrow, collect, then populate.
         let mut baked_sim: Vec<(
-            crate::mathh::IVec3,
-            Vec<crate::block::Aabb>,
+            petramond_math::math::IVec3,
+            Vec<petramond_world::block::Aabb>,
             mod_api::LightAperture,
         )> = Vec::new();
-        let mut baked_render: Vec<(crate::mathh::IVec3, Box<[crate::block::ShapeRenderBox]>)> =
+        let mut baked_render: Vec<(petramond_math::math::IVec3, Box<[petramond_world::block::ShapeRenderBox]>)> =
             Vec::new();
         for ((shape_key, shape_kind), group) in &groups {
             let Some(loaded) = self.owner_mod_mut(shape_key) else {
@@ -692,7 +692,7 @@ impl ClientModRuntime {
     /// The audio side keys its loop table on the resolved sound, so two mods
     /// driving one sound key resolve last-writer-wins there. Disabled mods
     /// contribute nothing — their loops sweep to silence.
-    pub fn sound_loops(&self, out: &mut Vec<(crate::sound_registry::Sound, f32)>) {
+    pub fn sound_loops(&self, out: &mut Vec<(petramond_world::sound_registry::Sound, f32)>) {
         out.clear();
         for m in &self.mods {
             if m.instance.disabled() {
@@ -746,19 +746,19 @@ impl ClientModRuntime {
 /// no registration); the per-world runtime re-bakes the enabled subset at join,
 /// idempotently. A headless server has no icon atlas and never calls this.
 pub fn bake_installed_custom_item_geometry() {
-    use crate::block::{Block, ShapeFamily};
+    use petramond_world::block::{Block, ShapeFamily};
 
-    let all: BTreeSet<String> = crate::assets::packs()
+    let all: BTreeSet<String> = petramond_world::assets::packs()
         .iter()
         .filter_map(|p| p.id.clone())
         .collect();
-    for (id, path) in session_client_mods(crate::assets::packs(), &all) {
+    for (id, path) in session_client_mods(petramond_world::assets::packs(), &all) {
         let blocks: Vec<Block> = Block::all()
             .iter()
             .copied()
             .filter(|b| {
                 b.shape_family() == ShapeFamily::Custom
-                    && crate::registry::namespace(b.shape_kind().key()) == Some(id.as_str())
+                    && petramond_world::registry::namespace(b.shape_kind().key()) == Some(id.as_str())
             })
             .collect();
         if blocks.is_empty() {
@@ -787,7 +787,7 @@ pub fn bake_installed_custom_item_geometry() {
                 // disable for the session).
                 if let Ok(boxes) = crate::world::ingest_shape_boxes(&geo.boxes) {
                     if !boxes.is_empty() {
-                        crate::block::item_shape_bake::set_item_bake(block.id(), boxes);
+                        petramond_world::block::item_shape_bake::set_item_bake(block.id(), boxes);
                     }
                 }
             }
@@ -801,7 +801,7 @@ pub fn bake_installed_custom_item_geometry() {
 /// unit-tested against synthetic pack lists (the client twin of
 /// `session_wasm_mods` in `modding/mod.rs`).
 fn session_client_mods(
-    packs: &[crate::assets::Pack],
+    packs: &[petramond_world::assets::Pack],
     enabled: &BTreeSet<String>,
 ) -> Vec<(String, PathBuf)> {
     packs
@@ -830,15 +830,15 @@ fn dispatch_unit(instance: &mut ModInstance, world: &World, call: &GuestCall, wh
 /// player's live remaps deliberately don't move this set — a mod key that was
 /// valid at pack load must not turn invalid because the player rebound Sneak.
 fn reserved_key(key: &str) -> bool {
-    let defaults = crate::controls::BindingSet::default();
-    let default_bound = |code: crate::keycode::KeyCode| {
-        crate::controls::BindableAction::ALL
+    let defaults = petramond_world::controls::BindingSet::default();
+    let default_bound = |code: petramond_world::keycode::KeyCode| {
+        petramond_world::controls::BindableAction::ALL
             .iter()
-            .any(|a| defaults.binding(*a).input == crate::controls::BoundInput::Key(code))
+            .any(|a| defaults.binding(*a).input == petramond_world::controls::BoundInput::Key(code))
     };
     PHYSICAL_KEYS.iter().any(|(code, name)| {
         *name == key
-            && (crate::controls::fixed_control_from_key_code(*code).is_some()
+            && (petramond_world::controls::fixed_control_from_key_code(*code).is_some()
                 || default_bound(*code))
     })
 }
@@ -925,8 +925,8 @@ fn delete_local_world_storage_at(base: &Path, world_dir_name: &str) -> std::io::
 
 /// The bindable physical keys and their stable ABI names — the one table
 /// behind [`key_code_for_name`] and [`reserved_key`].
-const PHYSICAL_KEYS: &[(crate::keycode::KeyCode, &str)] = {
-    use crate::keycode::KeyCode;
+const PHYSICAL_KEYS: &[(petramond_world::keycode::KeyCode, &str)] = {
+    use petramond_world::keycode::KeyCode;
     &[
         (KeyCode::KeyA, "key_a"),
         (KeyCode::KeyB, "key_b"),
@@ -968,7 +968,7 @@ const PHYSICAL_KEYS: &[(crate::keycode::KeyCode, &str)] = {
 };
 
 /// The `KeyCode` behind a registered default-key name (`"key_m"` → `KeyM`).
-pub fn key_code_for_name(name: &str) -> Option<crate::keycode::KeyCode> {
+pub fn key_code_for_name(name: &str) -> Option<petramond_world::keycode::KeyCode> {
     PHYSICAL_KEYS
         .iter()
         .find(|(_, bindable)| *bindable == name)
@@ -1034,7 +1034,7 @@ mod tests {
     /// minimap against a server without it) stays inactive.
     #[test]
     fn unlisted_packs_contribute_no_client_instance() {
-        let pack = |name: &str, id: Option<&str>, client_wasm: Option<&str>| crate::assets::Pack {
+        let pack = |name: &str, id: Option<&str>, client_wasm: Option<&str>| petramond_world::assets::Pack {
             dir: PathBuf::from(format!("/fixture/{name}")),
             name: name.to_owned(),
             id: id.map(str::to_owned),

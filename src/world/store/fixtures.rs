@@ -1,8 +1,8 @@
 use crate::world::WorldData;
 use std::sync::Arc;
 
-use crate::chunk::{ChunkPos, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY};
-use crate::section::{Section, SectionSummary};
+use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY};
+use petramond_world::section::{Section, SectionSummary};
 
 use super::World;
 
@@ -46,7 +46,7 @@ impl World {
     /// block-entity should build the [`Section`] directly (with `insert_section_for_test`)
     /// or place it through the world API after install.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn insert_chunk_for_test(&mut self, pos: ChunkPos, chunk: crate::chunk::Chunk) {
+    pub fn insert_chunk_for_test(&mut self, pos: ChunkPos, chunk: petramond_world::chunk::Chunk) {
         debug_assert_eq!((pos.cx, pos.cz), (chunk.cx, chunk.cz));
         let (column, sections) = crate::world::stream::split_generated_column(&chunk);
         self.columns.insert(pos, column);

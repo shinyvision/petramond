@@ -105,7 +105,7 @@ impl TickSystems {
         at: Attach,
         world: &mut World,
         player: &mut Player,
-        gui_state: &mut std::sync::Arc<crate::gui_state::GuiStateMap>,
+        gui_state: &mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
         feed: &mut TickEvents,
         queue: &mut PostQueue,
     ) {
@@ -127,7 +127,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::mathh::Vec3;
+    use petramond_math::math::Vec3;
 
     #[test]
     fn systems_in_one_slot_run_in_priority_then_registration_order() {
@@ -145,7 +145,7 @@ mod tests {
 
         let mut world = World::new(1, 1);
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         systems.run(

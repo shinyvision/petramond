@@ -217,7 +217,7 @@ impl BlockEntities {
 /// copy-on-write path.
 /// A shared all-`value` 16³ byte cube. The light bakes' `Full` / `Dark` sky
 /// shortcuts return one directly instead of allocating and filling a fresh
-/// cube that [`compact_uniform_cube`] would immediately throw away — most
+/// cube that `compact_uniform_cube` would immediately throw away — most
 /// sections in a loaded world take one of those two shortcuts.
 pub fn uniform_cube(value: u8) -> Arc<[u8]> {
     static CACHE: [std::sync::OnceLock<Arc<[u8]>>; 256] =

@@ -2,7 +2,7 @@
 //! (`flush_modified_chunks`) and eviction (`harvest_section_snapshot`), plus
 //! the save-handle plumbing.
 
-use crate::chunk::SectionPos;
+use petramond_world::chunk::SectionPos;
 use crate::entity::DroppedItem;
 use crate::mob::SavedMob;
 use crate::save::{SectionSnapshot, WorldSave};

@@ -1,16 +1,16 @@
 //! Voxel game CLIENT session and scene state.
 //!
 //! `Game` is the client half of the client/server split: the
-//! camera, the locally-predicted player ([`Game::player`] — movement physics
-//! and the camera source), per-frame targeting ([`Game::look`]/
-//! [`Game::targeted_mob`]), particles, transient animation state, and the
+//! camera, the locally-predicted player (`Game::player` — movement physics
+//! and the camera source), per-frame targeting (`Game::look`/
+//! `Game::targeted_mob`), particles, transient animation state, and the
 //! app-facing API. The SIMULATION — world, player sessions, entities, the
 //! fixed-tick stage ladder — lives in [`petramond::server::game::ServerGame`].
 //!
 //! Input reaches the sim ONLY as [`petramond::net::protocol`]
 //! messages: every frame the client translates its input + targeting into a
 //! `PlayerUpdate` (+ one-shot `Action`s/menu actions queued in
-//! [`Game::outbox`]) and sends them to the server. The server
+//! `Game::outbox`) and sends them to the server. The server
 //! (`ServerGame`) runs on its OWN self-clocked thread behind a
 //! [`ServerHandle`] — the handoff is std::sync::mpsc channels of message
 //! VALUES (Arc payloads are refcount bumps); a remote join swaps TCP under
@@ -18,12 +18,12 @@
 //!
 //! The server replies with ordered server→client MESSAGES (terrain payloads +
 //! `TickUpdate`s): the client installs terrain into its own REPLICA world
-//! ([`Game::replica`] — rendering, collision, raycast, particles, door/chest
+//! (`Game::replica` — rendering, collision, raycast, particles, door/chest
 //! presentation all read it), entity/self state into the REPLICATED stores
-//! ([`Game::self_view`], `replicated.rs`). The client consumes ONLY those
+//! (`Game::self_view`, `replicated.rs`). The client consumes ONLY those
 //! messages: the tick's events (world-anchored + self one-shots) and the
 //! menu-session view ride the `TickUpdate` (`ClientEvents`/
-//! [`Game::menu_view`]); menus open server-side on the tick; tick-side
+//! `Game::menu_view`); menus open server-side on the tick; tick-side
 //! transform mutations come back as `SelfState::transform` corrections;
 //! `tick_alpha` is a client-side clock over received updates
 //! ([`tick::ReplicaClock`]). MOVEMENT-derived presentation (camera eye,
@@ -54,10 +54,10 @@ mod world_prediction;
 
 use std::collections::{HashMap, VecDeque};
 
-use petramond::block_state::HeldBlockState;
+use petramond_world::block_state::HeldBlockState;
 use petramond_render::camera::Camera;
 use crate::particle::ParticleSystem;
-use petramond::mathh::IVec3;
+use petramond_math::math::IVec3;
 use petramond::net::protocol::{ChatLine, ClientToServer, PlayerAction, SelfTransform, ThrowAmount};
 #[cfg(test)]
 use petramond::player::PlayerMode;
@@ -65,7 +65,7 @@ use petramond::player::{Player, RaycastHit};
 use petramond::server::handle::ServerHandle;
 use petramond::server::player::HeldRotation;
 use petramond::world::World;
-use petramond::worldgen::density::surface::SurfaceDensitySystem;
+use petramond_worldgen::density::surface::SurfaceDensitySystem;
 
 pub use environment::GameEnvironment;
 pub use tick::{
@@ -174,7 +174,7 @@ pub struct Game {
     incoming: Vec<petramond::net::protocol::ServerToClient>,
     /// Replica sections installed during the current message drain. Their
     /// overlapping mesh invalidations are applied once after the batch.
-    remote_section_installs: Vec<petramond::chunk::SectionPos>,
+    remote_section_installs: Vec<petramond_world::chunk::SectionPos>,
     /// Chat lines received from the server and not yet adopted by the app's
     /// client-side chat history.
     pending_chat_lines: Vec<ChatLine>,
@@ -203,7 +203,7 @@ pub struct Game {
     menu_view: replicated::MenuView,
     /// Immutable enabled player-crafting catalog agreed at join. Remote
     /// clients use the server's name-addressed rows, never local pack files.
-    crafting: petramond::crafting::CraftingCatalog,
+    crafting: petramond_world::crafting::CraftingCatalog,
     /// This frame's replicated tick events (world-anchored + self one-shots +
     /// sound queues), buffered by `apply_tick_update` and drained once per
     /// `Game::tick` into `GameEvents`.
@@ -230,7 +230,7 @@ pub struct Game {
     /// Optimistic prediction ledger (request ids + undo snapshots).
     pub prediction: prediction::PredictionLedger,
     /// Local mining timer for crack overlay + `BreakFinished` (P2).
-    local_mining: petramond::mining::MiningState,
+    local_mining: petramond_world::mining::MiningState,
     /// The movement `Input` this frame's local physics consumed
     /// (`tick_player`) — reused verbatim by `build_player_update` so the wire
     /// intent can never drift from what the prediction simulated.
@@ -246,9 +246,9 @@ pub struct Game {
     local_hand_swing: bool,
     local_hand_threw: bool,
     /// The block the LOCAL mining timer finished this frame (hand pop).
-    local_broke_block: Option<petramond::block::Block>,
+    local_broke_block: Option<petramond_world::block::Block>,
     /// The block the place ghost predicted this frame (hand pop).
-    local_placed_block: Option<petramond::block::Block>,
+    local_placed_block: Option<petramond_world::block::Block>,
     /// Optimistic place cell (cleared on accept/deny or replica delta).
     place_ghost: Option<(IVec3, u16)>,
     /// Cells this client already presented place/break for (local WorldEvent).
@@ -276,7 +276,7 @@ pub struct Game {
     /// its (now flipped) logical open state by [`Game::advance_door_swings`]; once it
     /// reaches the target it is dropped (the renderer then reads the resting angle
     /// straight from the door state). Client-side animation only, never persisted — the
-    /// authoritative open/closed bit lives in the chunk door map. See [`petramond::door`].
+    /// authoritative open/closed bit lives in the chunk door map. See [`petramond_world::door`].
     door_swings: HashMap<IVec3, f32>,
 }
 
@@ -289,7 +289,7 @@ impl Game {
     /// attenuation of positional mod sounds. Movement-derived → the client's
     /// predicted player.
     #[inline]
-    pub fn listener_position(&self) -> petramond::mathh::Vec3 {
+    pub fn listener_position(&self) -> petramond_math::math::Vec3 {
         self.player.eye()
     }
 
@@ -625,7 +625,7 @@ impl Game {
             .push(ClientToServer::SetCraftFilter { craftable_only });
     }
 
-    pub fn crafting_catalog(&self) -> &petramond::crafting::CraftingCatalog {
+    pub fn crafting_catalog(&self) -> &petramond_world::crafting::CraftingCatalog {
         &self.crafting
     }
 
@@ -644,9 +644,9 @@ impl Game {
     /// Pin the locally-simulated player for tests that need a deterministic
     /// sampling location (the server session is placed by the caller).
     #[cfg(test)]
-    pub fn place_player_for_test(&mut self, feet: petramond::mathh::Vec3) {
+    pub fn place_player_for_test(&mut self, feet: petramond_math::math::Vec3) {
         self.player.pos = feet;
-        self.player.vel = petramond::mathh::Vec3::ZERO;
+        self.player.vel = petramond_math::math::Vec3::ZERO;
     }
 
     pub fn replicated_inventory_revision(&self) -> u64 {
@@ -660,7 +660,7 @@ impl Game {
     #[cfg(test)]
     pub fn set_crafting_catalog_for_test(
         &mut self,
-        catalog: petramond::crafting::CraftingCatalog,
+        catalog: petramond_world::crafting::CraftingCatalog,
     ) {
         for recipe in catalog.iter() {
             self.player.progression.unlock(recipe.key());
@@ -699,7 +699,7 @@ impl Game {
 
     /// Ack of a server-opened GUI session — any kind, engine container or mod
     /// GUI (no-op; see above).
-    pub fn open_gui_screen(&mut self, kind: petramond::gui_state::GuiKind, pos: Option<IVec3>) {
+    pub fn open_gui_screen(&mut self, kind: petramond_world::gui_state::GuiKind, pos: Option<IVec3>) {
         let _ = (kind, pos);
     }
 
@@ -757,11 +757,11 @@ impl Game {
 
     /// The LOCAL player's health for the HUD hearts (replicated self view), or
     /// `None` when there is no survival bar to draw (a floating spectator).
-    pub fn player_health(&self) -> Option<petramond::gui_state::HealthView> {
+    pub fn player_health(&self) -> Option<petramond_world::gui_state::HealthView> {
         if self.self_view.mode == petramond::player::PlayerMode::Spectator {
             return None;
         }
-        Some(petramond::gui_state::HealthView {
+        Some(petramond_world::gui_state::HealthView {
             current: self.self_view.health,
             max: petramond::player::MAX_HEALTH,
         })
@@ -770,7 +770,7 @@ impl Game {
     /// The LOCAL player's active status effects for the HUD icon row, in
     /// application order (replicated self view). Empty for a spectator — the
     /// row hides with the hearts.
-    pub fn player_effect_icons(&self) -> Vec<petramond::effect::Effect> {
+    pub fn player_effect_icons(&self) -> Vec<petramond_world::effect::Effect> {
         if self.self_view.mode == petramond::player::PlayerMode::Spectator {
             return Vec::new();
         }
@@ -789,7 +789,7 @@ impl Game {
         self.look = Some(RaycastHit {
             block,
             normal,
-            outline: petramond::mathh::SelectionShape::full_block(block),
+            outline: petramond_math::math::SelectionShape::full_block(block),
         });
         // The full click composition (mod interact predictors first), so
         // tests exercise the same walk production clicks run.
@@ -798,7 +798,7 @@ impl Game {
 
     /// Test injection: run the full local break prediction at `pos`.
     #[cfg(test)]
-    pub fn predict_break_at_for_test(&mut self, pos: IVec3, block: petramond::block::Block) {
+    pub fn predict_break_at_for_test(&mut self, pos: IVec3, block: petramond_world::block::Block) {
         self.apply_predicted_break(pos, block, Some(IVec3::Y));
     }
 }

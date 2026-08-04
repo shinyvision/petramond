@@ -5,7 +5,7 @@
 //! identity) belongs to the CONSUMER that cares about it, read from the
 //! actor's state, never pre-interpreted by the dispatcher.
 //!
-//! The attempt walks [`CONSUMERS`] — an ordered registry, not an if-ladder.
+//! The attempt walks `CONSUMERS` — an ordered registry, not an if-ladder.
 //! Each consumer inspects the attempt and either claims it or passes; the
 //! first claim wins and nothing later runs. Mods participate through the
 //! `interact_attempt` bus event (one consumer entry dispatches it; a
@@ -16,10 +16,10 @@
 //! initiator's replica could not foresee).
 
 use super::game::ServerGame;
-use crate::block::{Block, BlockInteraction};
+use petramond_world::block::{Block, BlockInteraction};
 use crate::events::{InteractAttempt, Outcome, PostEvent};
 use crate::events::tick::TickEvents;
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 use crate::net::protocol::TargetRef;
 use crate::server::player::PendingUseClick;
 
@@ -344,7 +344,7 @@ impl ServerGame {
             return Claim::Pass;
         };
         let block = Block::from_id(self.world.chunk_block(pos.x, pos.y, pos.z));
-        if !crate::block::builtin_claims_click(block, self.sessions[s].sneaking()) {
+        if !petramond_world::block::builtin_claims_click(block, self.sessions[s].sneaking()) {
             return Claim::Pass;
         }
         // Menu opens join the ordered menu-action stream. Placement resolves

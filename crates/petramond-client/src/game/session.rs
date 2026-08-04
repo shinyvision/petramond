@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use petramond_render::camera::Camera;
-use petramond::crafting::CraftingCatalog;
+use petramond_world::crafting::CraftingCatalog;
 use crate::particle::ParticleSystem;
 use petramond::player::Player;
 use petramond::server::game::ServerGame;
@@ -10,7 +10,7 @@ use petramond::server::handle::ServerHandle;
 use petramond::player::PlayerId;
 use petramond::worker::JobPool;
 use petramond::world::{World, WorldRole};
-use petramond::worldgen::density::surface::SurfaceDensitySystem;
+use petramond_worldgen::density::surface::SurfaceDensitySystem;
 
 use petramond::server::session_build::build_server_with_pool;
 
@@ -164,7 +164,7 @@ impl Game {
             replicated_tick: bootstrap.replicated_tick,
             open_chests: Default::default(),
             prediction: super::prediction::PredictionLedger::new(),
-            local_mining: petramond::mining::MiningState::new(),
+            local_mining: petramond_world::mining::MiningState::new(),
             predicted_input: Default::default(),
             view_bob: Default::default(),
             local_hand_jab: false,
@@ -320,7 +320,7 @@ fn player_from_restore(r: &petramond::net::protocol::SelfRestore) -> Player {
         .progression
         .restore(std::iter::empty(), r.unlocked_recipes.clone());
     for (name, remaining) in &r.effects {
-        match petramond::effect::by_name(name) {
+        match petramond_world::effect::by_name(name) {
             Some(effect) => player.apply_effect(effect, *remaining),
             None => log::warn!("join restore: dropping unknown status effect '{name}'"),
         }

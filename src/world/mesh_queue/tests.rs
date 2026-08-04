@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::block::Block;
-use crate::chunk::{SectionPos, SECTION_VOLUME};
-use crate::section::Section;
+use petramond_world::block::Block;
+use petramond_world::chunk::{SectionPos, SECTION_VOLUME};
+use petramond_world::section::Section;
 use crate::world::store::{LoadTarget, World, WorldRole};
 
 use super::DirtyMeshQueue;
@@ -44,7 +44,7 @@ fn mesh_job_uses_column_generated_biome_tint_halo() {
     let mut world = World::new(0, 0);
     let pos = SectionPos::new(0, 0, 0);
     insert_solid_section(&mut world, pos);
-    let gen = crate::worldgen::driver::ChunkGenerator::new(0).generate_column_gen(pos.cx, pos.cz);
+    let gen = petramond_worldgen::driver::ChunkGenerator::new(0).generate_column_gen(pos.cx, pos.cz);
     world.set_column_gen(pos.chunk_pos(), Arc::new(gen));
 
     let job = world
@@ -266,14 +266,14 @@ fn predicted_mine_relights_and_remeshes_the_opened_shaft_synchronously() {
     ground_section.set_skylight(vec![0u8; SECTION_VOLUME].into());
 
     let mut shaft_section = solid_section(shaft);
-    for y in 0..crate::chunk::SECTION_SIZE {
+    for y in 0..petramond_world::chunk::SECTION_SIZE {
         shaft_section.set_block(8, y, 8, Block::Air);
     }
     shaft_section.set_skylight(vec![0u8; SECTION_VOLUME].into());
 
     let mut roof_section = Section::new(roof.cx, roof.cy, roof.cz);
-    for z in 0..crate::chunk::SECTION_SIZE {
-        for x in 0..crate::chunk::SECTION_SIZE {
+    for z in 0..petramond_world::chunk::SECTION_SIZE {
+        for x in 0..petramond_world::chunk::SECTION_SIZE {
             roof_section.set_block(x, 0, z, Block::Dirt);
         }
     }
@@ -287,8 +287,8 @@ fn predicted_mine_relights_and_remeshes_the_opened_shaft_synchronously() {
     world.sections.insert(roof, Arc::new(roof_section));
     world.note_section_loaded(roof);
     let column = world.columns.get_mut(&ground.chunk_pos()).unwrap();
-    for z in 0..crate::chunk::SECTION_SIZE {
-        for x in 0..crate::chunk::SECTION_SIZE {
+    for z in 0..petramond_world::chunk::SECTION_SIZE {
+        for x in 0..petramond_world::chunk::SECTION_SIZE {
             column.set_surface_y(x, z, 32);
             column.set_sky_cover_y(x, z, 32);
         }
@@ -296,14 +296,14 @@ fn predicted_mine_relights_and_remeshes_the_opened_shaft_synchronously() {
     world.last_load_target = Some(LoadTarget::new(0, 2, 0, 4));
     world.light_deferred.insert(shaft);
 
-    let cell = crate::mathh::IVec3::new(8, 32, 8);
+    let cell = petramond_math::math::IVec3::new(8, 32, 8);
     assert!(world.set_block_world(cell.x, cell.y, cell.z, Block::Air));
     world.present_predicted_edit(&[(cell, Block::Dirt.id())]);
 
     assert!(!world.sections[&shaft].light_dirty);
     assert_eq!(
         world.sections[&shaft].skylight_at(8, 15, 8),
-        crate::chunk::SKY_FULL
+        petramond_world::chunk::SKY_FULL
     );
     assert!(world.terrain.meshes.contains_key(&shaft));
     assert!(!world.light_deferred.contains(&shaft));
@@ -324,7 +324,7 @@ fn reconciliation_is_async_and_never_overrides_authoritative_light() {
     world.mesh_section_blocking_for_test(pos);
     let before = world.terrain.mesh_upload_revisions[&pos.chunk_pos()];
 
-    let cell = crate::mathh::IVec3::new(8, 8, 8);
+    let cell = petramond_math::math::IVec3::new(8, 8, 8);
     assert!(world.set_block_world(8, 8, 8, Block::Air));
     world.reconcile_predicted_edit(&[(cell, Block::Stone.id())]);
 

@@ -2,7 +2,7 @@
 //!
 //! The chunk mesher draws a slab cell as a plain box set — one half-cell box
 //! per material-bearing layer slot ([`slot_box`]) — through the unified
-//! [`super::boxset`] emitter, which owns hidden-face removal (between the
+//! `super::boxset` emitter, which owns hidden-face removal (between the
 //! cell's own layers, against neighbour slabs/stairs/boxes, and against full
 //! occluders) and the per-plane cube lighting.
 //!

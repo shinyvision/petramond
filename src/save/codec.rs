@@ -23,13 +23,13 @@ pub use petramond_util::bytecodec::{
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use crate::block::ShapeState;
-use crate::chunk::{SectionPos, SECTION_VOLUME};
-use crate::container::Container;
+use petramond_world::block::ShapeState;
+use petramond_world::chunk::{SectionPos, SECTION_VOLUME};
+use petramond_world::container::Container;
 use crate::entity::DroppedItem;
-use crate::furnace::Furnace;
+use petramond_world::furnace::Furnace;
 use crate::mob::SavedMob;
-use crate::section::Section;
+use petramond_world::section::Section;
 
 use super::palette;
 
@@ -75,7 +75,7 @@ use super::palette;
 /// palette-translated. A new stateful block kind needs NO codec change.
 /// Clean break; dev worlds regenerate.
 /// v14 widens the persisted BLOCK-LIGHT cube from one byte per cell to one
-/// packed RGB `u16` (little-endian, `crate::light::LightRgb`): block light
+/// packed RGB `u16` (little-endian, `petramond_world::light::LightRgb`): block light
 /// carries colour now. Skylight is untouched. Clean break — a v13 record's
 /// 4096-byte block-light blob is half the length this build reads; dev worlds
 /// regenerate.
@@ -121,7 +121,7 @@ pub struct SectionSnapshot {
     /// Derived explored-terrain cache, not authoritative player/entity state.
     /// Routing metadata only; it is not encoded inside the section record.
     pub cache_only: bool,
-    pub blocks: crate::section::BlockCube,
+    pub blocks: petramond_world::section::BlockCube,
     pub water: Option<Arc<[u8]>>,
     /// Item entities resting in this section, captured at save time so their
     /// lifetime timers persist with it. Empty for the common case.
@@ -147,7 +147,7 @@ pub struct SectionSnapshot {
     /// Baked block-light cube (packed RGB cells); independent of `skylight`
     /// presence on the wire but only ever written alongside it (absent = no
     /// emitter in range).
-    pub blocklight: Option<Arc<[crate::light::LightRgb]>>,
+    pub blocklight: Option<Arc<[petramond_world::light::LightRgb]>>,
     /// Per-cell mod KV entries (`mod_id:key` → bytes), keyed by section-local
     /// index. Opaque to the engine and PRESERVED byte-exact through load/save —
     /// unknown keys are never dropped, so an absent mod's data survives. See
@@ -278,7 +278,7 @@ pub fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<
         payload.extend_from_slice(sky);
     }
     if let Some(bl) = &s.blocklight {
-        payload.extend_from_slice(&crate::light::to_le_bytes(bl));
+        payload.extend_from_slice(&petramond_world::light::to_le_bytes(bl));
     }
     deflate(&payload)
 }
@@ -288,7 +288,7 @@ pub fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<
 /// (every section a world ever produces) and a `u16` otherwise. The palette is
 /// what keeps the record ~4 KiB after block ids widened to two bytes, and it
 /// also gives deflate a much shorter dictionary to chew on.
-fn put_block_cube(buf: &mut Vec<u8>, blocks: &crate::section::BlockCube, pal: &palette::Palette) {
+fn put_block_cube(buf: &mut Vec<u8>, blocks: &petramond_world::section::BlockCube, pal: &palette::Palette) {
     let mut ids: Vec<u16> = Vec::new();
     let mut index: Vec<u16> = Vec::with_capacity(blocks.len());
     for b in blocks.iter() {
@@ -319,7 +319,7 @@ fn put_block_cube(buf: &mut Vec<u8>, blocks: &crate::section::BlockCube, pal: &p
 /// save palette on the way out.
 fn get_block_cube(r: &mut Reader, pal: &palette::Palette) -> Option<Vec<u16>> {
     let distinct = r.u16()? as usize;
-    if distinct == 0 || distinct > crate::registry::WIDE_ID_CAP {
+    if distinct == 0 || distinct > petramond_world::registry::WIDE_ID_CAP {
         return None;
     }
     let mut ids = Vec::with_capacity(distinct);
@@ -384,10 +384,10 @@ pub fn decode_section_with(
         get_indexed(&mut r, |r| {
             let len = r.u8()? as usize;
             let id_mask = r.u8()?;
-            if len > crate::block::SHAPE_STATE_MAX {
+            if len > petramond_world::block::SHAPE_STATE_MAX {
                 return None;
             }
-            let mut bytes = [0u8; crate::block::SHAPE_STATE_MAX];
+            let mut bytes = [0u8; petramond_world::block::SHAPE_STATE_MAX];
             let mut i = 0;
             while i < len {
                 if id_mask & (1 << i) != 0 && i + 1 < len {
@@ -426,7 +426,7 @@ pub fn decode_section_with(
         None
     };
     let blocklight = if flags3 & FLAG3_HAS_BLOCKLIGHT != 0 {
-        Some(crate::light::from_le_bytes(r.bytes(SECTION_VOLUME * 2)?)?)
+        Some(petramond_world::light::from_le_bytes(r.bytes(SECTION_VOLUME * 2)?)?)
     } else {
         None
     };

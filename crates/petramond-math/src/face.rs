@@ -49,7 +49,7 @@ impl Face {
     }
 
     /// Face-normal code for `Vertex::packed2` bits 16..19 (see
-    /// [`super::vertex::pack_normal_code`]): 1..=6 in `Face::ALL` order. Code 0
+    /// `super::vertex::pack_normal_code`): 1..=6 in `Face::ALL` order. Code 0
     /// is reserved for "neutral" geometry with no meaningful world-space face
     /// direction (cross plants, torches, dynamic props) — the shader falls back
     /// to the classic `SHADES` table for it instead of sun N·L shading.

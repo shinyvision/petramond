@@ -38,7 +38,7 @@ impl LightRgb {
     /// Unlit. The canonical zero — the ONLY bit pattern that reads as dark.
     pub const ZERO: Self = Self(0);
 
-    /// A channel above [`CH_MASK`] does not clamp, it WRAPS — the brightest
+    /// A channel above `CH_MASK` does not clamp, it WRAPS — the brightest
     /// possible lamp would silently go out. The real guard is the block
     /// loader, which rejects an over-bright row before it can reach here; the
     /// assert is a debug-build backstop for any other producer.

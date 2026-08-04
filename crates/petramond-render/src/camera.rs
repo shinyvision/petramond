@@ -1,7 +1,7 @@
 //! Fly camera: yaw/pitch orientation, WASD/space/shift translation.
 
-use petramond::chunk::CHUNK_SX;
-use petramond::mathh::{Mat4, Vec3};
+use petramond_world::chunk::CHUNK_SX;
+use petramond_math::math::{Mat4, Vec3};
 use petramond::world::RENDER_DIST;
 
 /// Far clip plane (world blocks). The far plane only has to sit beyond the point
@@ -27,7 +27,7 @@ const FAR_HEADROOM: f32 = 102.0;
 /// `32.0 * 17.0 * 24.0 * 2.0 * 2.0`.
 const CAMERA_FAR: f32 = LOADED_WORLD_DIAMETER * FAR_HEADROOM;
 
-pub use petramond::view_volume::{aabb_distance_sq, Frustum, ViewVolume};
+pub use petramond_world::view_volume::{aabb_distance_sq, Frustum, ViewVolume};
 
 #[derive(Clone)]
 pub struct Camera {

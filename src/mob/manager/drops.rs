@@ -1,4 +1,4 @@
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 use crate::mob::{EntityRef, Mob, MobDamageFeedback};
 
 use super::Mobs;
@@ -10,7 +10,7 @@ pub struct DeathDrop {
     pub kind: Mob,
     pub pos: Vec3,
     pub skylight: u8,
-    pub blocklight: crate::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
 }
 
 /// What a successful shear yields, so `Game` can spawn the drop (like [`DeathDrop`],
@@ -18,11 +18,11 @@ pub struct DeathDrop {
 /// mob's own deterministic RNG.
 #[derive(Copy, Clone, Debug)]
 pub struct ShearDrop {
-    pub item: crate::item::ItemType,
+    pub item: petramond_world::item::ItemType,
     pub count: u8,
     pub pos: Vec3,
     pub skylight: u8,
-    pub blocklight: crate::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
 }
 
 impl Mobs {

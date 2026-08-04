@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use crate::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
-use crate::column::{Column, NO_SURFACE};
-use crate::section::Section;
+use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
+use petramond_world::column::{Column, NO_SURFACE};
+use petramond_world::section::Section;
 
 use super::store::World;
 
@@ -63,7 +63,7 @@ impl World {
                 };
                 let block = section.block(lx, height.rem_euclid(SECTION_SIZE as i32) as usize, lz);
                 let tile = block.tiles()[0];
-                let base = crate::tile::map_rgb(tile);
+                let base = petramond_world::tile::map_rgb(tile);
                 let rgb = match tile.world_tint() {
                     None => base,
                     Some(kind) => {
@@ -108,11 +108,11 @@ impl<'a> SurfaceTintGrids<'a> {
         }
     }
 
-    fn at(&mut self, kind: crate::tile::TileTint, lx: usize, lz: usize) -> [f32; 3] {
+    fn at(&mut self, kind: petramond_world::tile::TileTint, lx: usize, lz: usize) -> [f32; 3] {
         let slot = match kind {
-            crate::tile::TileTint::Grass => &mut self.grids[0],
-            crate::tile::TileTint::Foliage => &mut self.grids[1],
-            crate::tile::TileTint::Water => &mut self.grids[2],
+            petramond_world::tile::TileTint::Grass => &mut self.grids[0],
+            petramond_world::tile::TileTint::Foliage => &mut self.grids[1],
+            petramond_world::tile::TileTint::Water => &mut self.grids[2],
         };
         slot.get_or_insert_with(|| Self::build(self.halo, self.column, kind))[lz * 16 + lx]
     }
@@ -120,14 +120,14 @@ impl<'a> SurfaceTintGrids<'a> {
     fn build(
         halo: Option<&[u8]>,
         column: &Column,
-        kind: crate::tile::TileTint,
+        kind: petramond_world::tile::TileTint,
     ) -> Box<[[f32; 3]; 256]> {
         let color_of = |id: u8| {
-            let biome = crate::biome::Biome::from_id(id);
+            let biome = petramond_world::biome::Biome::from_id(id);
             match kind {
-                crate::tile::TileTint::Grass => biome.grass_color(),
-                crate::tile::TileTint::Foliage => biome.foliage_color(),
-                crate::tile::TileTint::Water => biome.water_color(),
+                petramond_world::tile::TileTint::Grass => biome.grass_color(),
+                petramond_world::tile::TileTint::Foliage => biome.foliage_color(),
+                petramond_world::tile::TileTint::Water => biome.water_color(),
             }
         };
         let mut out = Box::new([[0.0f32; 3]; 256]);

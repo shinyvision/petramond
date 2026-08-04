@@ -11,7 +11,7 @@ use std::sync::Arc;
 /// Per-row pack icons for the documents' `bind.image` — registered as extra
 /// images on the UI driver before `populate` runs.
 pub(super) fn extra_images() -> Vec<(String, PathBuf)> {
-    petramond::assets::packs()
+    petramond_world::assets::packs()
         .iter()
         .filter_map(|pack| {
             let icon = pack.icon.clone()?;
@@ -26,7 +26,7 @@ fn icon_name(id: Option<&str>, name: &str) -> String {
 
 /// Bind the Mods-tab rows: one entry per installed pack, enabled state read
 /// from `settings.disabled_mods`. `rows` is parallel to
-/// `petramond::assets::packs()` (both screens build it from pack discovery).
+/// `petramond_world::assets::packs()` (both screens build it from pack discovery).
 pub(super) fn populate(
     rows: &[ModPackRow],
     settings: &WorldSettings,
@@ -35,7 +35,7 @@ pub(super) fn populate(
 ) {
     let bound: Vec<UiMap> = rows
         .iter()
-        .zip(petramond::assets::packs())
+        .zip(petramond_world::assets::packs())
         .map(|(pack, asset)| {
             let mut m = UiMap::new();
             m.insert("name".into(), UiValue::Str(pack.name.clone()));

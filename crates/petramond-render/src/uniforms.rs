@@ -7,7 +7,7 @@
 /// the loaded-world edge: a lower render distance pulls the fog in with it instead
 /// of ending terrain before the fade.
 pub fn fog_range(render_dist_chunks: i32) -> (f32, f32) {
-    let end = (render_dist_chunks.max(1) * petramond::chunk::SECTION_SIZE as i32) as f32;
+    let end = (render_dist_chunks.max(1) * petramond_world::chunk::SECTION_SIZE as i32) as f32;
     (end * 0.75, end)
 }
 

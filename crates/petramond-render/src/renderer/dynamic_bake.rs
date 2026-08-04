@@ -506,10 +506,10 @@ impl Renderer {
             // A sleeper's hands are empty — the held item would poke through the bed.
             let held_item = (!inst.sleeping).then_some(held.item).flatten();
             match held_item.map(|it| it.render_kind()) {
-                Some(petramond::item::ItemRenderKind::BlockCube(block)) => {
+                Some(petramond_world::item::ItemRenderKind::BlockCube(block)) => {
                     let m = crate::player_model::held_block_transform(hand);
                     let start = block_verts.len();
-                    if block == petramond::block::Block::Chest {
+                    if block == petramond_world::block::Block::Chest {
                         crate::chest_model::push_chest_item(
                             &mut block_verts,
                             &mut block_indices,
@@ -540,7 +540,7 @@ impl Renderer {
                         m,
                     );
                 }
-                Some(petramond::item::ItemRenderKind::Sprite(tile)) => {
+                Some(petramond_world::item::ItemRenderKind::Sprite(tile)) => {
                     // The extrusion clears its buffer and emits a non-indexed
                     // triangle list; transform in place, then append with
                     // sequential offset indices to ride the indexed draw.
@@ -560,7 +560,7 @@ impl Renderer {
                     sprite_verts.extend_from_slice(&sprite_scratch);
                     sprite_indices.extend((0..count).map(|i| i + base));
                 }
-                Some(petramond::item::ItemRenderKind::Model(kind)) => {
+                Some(petramond_world::item::ItemRenderKind::Model(kind)) => {
                     // Appends with absolute indices into the shared buffer.
                     let m = crate::player_model::held_model_transform(hand, kind);
                     crate::item_model::build_block_model_item(

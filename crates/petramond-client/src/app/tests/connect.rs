@@ -8,10 +8,10 @@ use super::controls::click_doc_id;
 use crate::app::connect::ConnectPhase;
 use crate::app::{App, AppScreen};
 use petramond_render::camera::Camera;
-use petramond::controls::{Control, TextKey, TextShortcut};
+use petramond_world::controls::{Control, TextKey, TextShortcut};
 use crate::game::{Game, GameEvents};
-use petramond::gui_state::GuiKind;
-use petramond::mathh::Vec3;
+use petramond_world::gui_state::GuiKind;
+use petramond_math::math::Vec3;
 use petramond::net::protocol::{JoinData, ModEntry, SelfRestore};
 use petramond::server::handle::ServerHandle;
 use petramond::player::PlayerId;
@@ -300,7 +300,7 @@ fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
     app.begin_connect();
     assert!(app.connect.connecting(), "the worker attempt is running");
 
-    let deadline = std::time::Instant::now() + petramond::test_time::TEST_HARD_DEADLINE;
+    let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     loop {
         app.poll_connect_worker();
         if app.screen == AppScreen::Game {

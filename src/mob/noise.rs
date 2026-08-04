@@ -19,7 +19,7 @@
 //! needs kind-dependent ranges, put the tuning on ITS node params — the
 //! vocabulary here already distinguishes the kinds.
 
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 
 use super::EntityRef;
 

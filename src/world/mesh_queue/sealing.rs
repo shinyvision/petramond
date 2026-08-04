@@ -1,4 +1,4 @@
-use crate::chunk::SectionPos;
+use petramond_world::chunk::SectionPos;
 use crate::world::store::World;
 
 impl World {
@@ -20,7 +20,7 @@ impl World {
         if self.last_load_target.is_some() && self.near_load_center(pos) {
             return false;
         }
-        crate::mathh::FACE_NEIGHBORS.into_iter().all(|d| {
+        petramond_math::math::FACE_NEIGHBORS.into_iter().all(|d| {
             self.sections
                 .get(&SectionPos::new(pos.cx + d.x, pos.cy + d.y, pos.cz + d.z))
                 .is_some_and(|s| s.face_plane_fully_opaque(-d.x, -d.y, -d.z))

@@ -1,6 +1,6 @@
 //! Shared plane primitives for sub-cell shapes: the cell-local UV mapping
 //! that matches a full cube face, and the per-plane four-corner light field
-//! ([`PlaneLight`]) the unified box-set emitter ([`super::boxset`]) samples
+//! (`PlaneLight`) the unified box-set emitter (`super::boxset`) samples
 //! bilinearly so coplanar quads stay seam-free.
 
 use super::face::Face;

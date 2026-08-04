@@ -1,5 +1,5 @@
 use crate::atlas::tile_uv;
-use petramond::tile::Tile;
+use petramond_world::tile::Tile;
 use petramond_mesh::{TerrainVertex, Vertex};
 
 use wgpu::util::DeviceExt;

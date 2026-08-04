@@ -1,7 +1,7 @@
 use super::state::Player;
-use crate::block::Aabb;
+use petramond_world::block::Aabb;
 #[cfg(test)]
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 
 /// Boundary epsilon in world units. The AABB is shrunk by this on every side before
 /// its float edges are compared to block faces, so an edge flush on a voxel boundary
@@ -48,7 +48,7 @@ impl Player {
     /// Move along one axis by `delta`, stopping where the player's AABB first meets a
     /// block collision box. `boxes(x,y,z)` returns the cell-local collision AABBs of
     /// the block at that cell (empty = no collision); see
-    /// [`Block::collision_boxes`](crate::block::Block::collision_boxes).
+    /// [`Block::collision_boxes`](petramond_world::block::Block::collision_boxes).
     ///
     /// A swept-AABB over those boxes: it scans every cell the body sweeps through
     /// (nearest wins, so it never tunnels) and, for each box, clamps travel on `axis`
@@ -72,7 +72,7 @@ impl Player {
         axis: Axis,
         delta: f32,
         boxes: &F,
-        obstacles: &[crate::collision::DynBox],
+        obstacles: &[petramond_world::collision::DynBox],
     ) -> bool
     where
         F: Fn(i32, i32, i32) -> &'static [Aabb],
@@ -87,14 +87,14 @@ impl Player {
         // The swept-AABB itself is the shared, model-aware primitive — every moving entity
         // resolves against the same `collision::sweep_axis`; the player just applies the
         // travel to its body and reports whether it was clamped short.
-        let travel = crate::collision::sweep_axis_dyn(
+        let travel = petramond_world::collision::sweep_axis_dyn(
             [mn.x, mn.y, mn.z],
             [mx.x, mx.y, mx.z],
             ai,
             delta,
             boxes,
             obstacles,
-            crate::collision::NOT_AN_ENTITY,
+            petramond_world::collision::NOT_AN_ENTITY,
         );
         match axis {
             Axis::X => self.pos.x += travel,

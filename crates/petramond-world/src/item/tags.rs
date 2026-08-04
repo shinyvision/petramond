@@ -1,7 +1,7 @@
 /// A named group of items shared across recipes (e.g. any wood planks). Tags are
-/// a PROPERTY OF ITEMS: each item lists its tags in its [`ItemDef`](definition::ItemDef)
+/// a PROPERTY OF ITEMS: each item lists its tags in its `ItemDef`
 /// data row, a recipe references a tag by name, and the crafting matcher asks each
-/// item whether it carries the tag (see [`ItemType::has_tag`]). Keeping membership
+/// item whether it carries the tag (see `ItemType::has_tag`). Keeping membership
 /// in item data (not the recipe loader) means a new item joins a group by editing
 /// its data row, never any recipe code.
 ///

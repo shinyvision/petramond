@@ -93,7 +93,7 @@ mod tests {
     use super::*;
     use crate::events::PostQueue;
     use crate::events::tick::TickEvents;
-    use crate::mathh::Vec3;
+    use petramond_math::math::Vec3;
     use crate::player::Player;
     use crate::world::World;
 
@@ -105,7 +105,7 @@ mod tests {
         let mut queue = PostQueue::default();
 
         assert!(with_active(|_| ()).is_none(), "no scope outside enter");
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::chunk::{self, ChunkPos, SectionPos};
+use petramond_world::chunk::{self, ChunkPos, SectionPos};
 use crate::world::store::World;
 
 use super::{RESULT_DRAIN_MIN, RESULT_DRAIN_TIME_BUDGET};

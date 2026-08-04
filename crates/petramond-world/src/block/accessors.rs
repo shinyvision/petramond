@@ -122,7 +122,7 @@ impl Block {
     }
 
     /// The block's collision shape: cell-local AABBs (`0.0..1.0`), a per-row
-    /// [`BlockDef`] field. Empty = no collision: air, water, walk-through plants,
+    /// `BlockDef` field. Empty = no collision: air, water, walk-through plants,
     /// and the torch (selectable by its custom pole shape yet stepped through — see
     /// `player::interaction`). One unit box
     /// for an ordinary full cube; the chest is a single inset box; future
@@ -148,7 +148,7 @@ impl Block {
     /// This block's CELL collision when the shape's boxes are fully determined
     /// by the block id; `None` when they must be resolved against the cell (a
     /// stair corner, a fence's arms, a door's swing, a box set's stored form).
-    /// The fast path behind [`World::collision_boxes_at`](crate::world::World::collision_boxes_at)
+    /// The fast path behind `World::collision_boxes_at`
     /// and the navigation cell probes — for plain terrain it replaces a shape
     /// lookup plus a virtual resolve with one dense array read.
     #[inline]
@@ -181,11 +181,11 @@ impl Block {
     /// cube (or a block with nothing to aim at), which needs no special outline.
     ///
     /// Position-LESS: the SHAPE answers for itself
-    /// ([`ShapeRender::default_selection_box`]), so a walk-through thin cover
+    /// (`ShapeRender::default_selection_box`), so a walk-through thin cover
     /// and a no-collision bbmodel stay selectable while everything else
     /// outlines what it collides with. The per-cell outline of a stateful shape
     /// (a multi-cell model, a door's swung slab) is resolved by
-    /// [`World::selection_box_at`](crate::world::World::selection_box_at).
+    /// `World::selection_box_at`.
     #[inline]
     pub fn visual_aabb(self) -> Option<([f32; 3], [f32; 3])> {
         let k = self.shape_kind_def();
@@ -236,7 +236,7 @@ impl Block {
 
     /// Whether this is any tree-leaves variant. Leaves form the canopy: they take
     /// random ticks and decay when cut off from wood, and are the support a
-    /// neighbouring leaf looks for (alongside logs). See [`behavior`].
+    /// neighbouring leaf looks for (alongside logs). See `behavior`.
     #[inline]
     pub fn is_leaves(self) -> bool {
         self.has_tag(BlockTag::LEAVES)
@@ -251,7 +251,7 @@ impl Block {
 
     /// Whether this is any tree-log variant. A log keeps nearby leaves alive: a
     /// leaf with no log within a few steps (through leaves) decays — see the flood
-    /// in [`behavior`].
+    /// in `behavior`.
     #[inline]
     pub fn is_log(self) -> bool {
         self.has_tag(BlockTag::LOG)
@@ -267,7 +267,7 @@ impl Block {
     }
 
     /// This block's behaviour — the world-reactive "class" assigned in its data
-    /// row (random ticks, …). Most blocks are [`behavior::INERT`].
+    /// row (random ticks, …). Most blocks are `behavior::INERT`.
     #[inline]
     pub fn behavior(self) -> &'static dyn BlockBehavior {
         self.def().behavior
@@ -443,7 +443,7 @@ impl Block {
 
     /// Whether this block is [`Fragile`](BlockTag::FRAGILE) — it shatters when it
     /// loses support or water enters its cell. Read by the water sim (a fragile cell
-    /// is one water may flow into) and paired with the [`FRAGILE`](behavior) break
+    /// is one water may flow into) and paired with the `FRAGILE` break
     /// behaviour on every fragile block's row.
     #[inline]
     pub fn is_fragile(self) -> bool {
@@ -539,7 +539,7 @@ impl Block {
     /// mushroom (which carries both soil + stone) in soil or stone. `game::try_place`
     /// refuses a spot this rejects. PLACEMENT only — whether an already-placed block
     /// *stays* (its support wasn't dug out) is the separate physical
-    /// [`FRAGILE`](behavior::FRAGILE) check, which asks merely whether something solid is
+    /// `FRAGILE` check, which asks merely whether something solid is
     /// still beneath it, not what type. A block joins a substrate class by editing the
     /// `RootsIn*` tags on its data row.
     pub fn can_root_on(self, ground: Block) -> bool {
@@ -568,7 +568,7 @@ impl Block {
     }
 
     /// The SHAPE its support face must have for this block to be placed (see
-    /// [`RootsFace`]) — the geometric half of the substrate gate, asked
+    /// `RootsFace`) — the geometric half of the substrate gate, asked
     /// alongside [`can_root_on`](Self::can_root_on)'s material half.
     #[inline]
     pub fn roots_face(self) -> crate::block::RootsFace {
@@ -679,7 +679,7 @@ impl Block {
     }
 
     /// Whether a targeting ray must test this block's precise shape instead of
-    /// stopping on cell entry — see [`ShapeRender::precise_pick`].
+    /// stopping on cell entry — see `ShapeRender::precise_pick`.
     #[inline]
     pub fn precise_pick(self) -> bool {
         let k = self.shape_kind_def();
@@ -705,14 +705,14 @@ impl Block {
             .map(|i| data[i].1)
     }
 
-    /// The [`Sound`](crate::sound_registry::Sound) this block makes for `action` — mining,
+    /// The [`Sound`] this block makes for `action` — mining,
     /// breaking, placing, a footstep — or `None` if that interaction is silent.
     ///
     /// Data-driven and resolved by **material** (wood sounds woody, stone stony),
     /// exactly as [`preferred_tool`](Self::preferred_tool) is, so a new block of an
     /// existing material is heard automatically. The mapping lives in
-    /// [`sounds`]; the simulation emits the resolved id as an `audio::SoundEvent`
-    /// for the client to play (see [`crate::audio`]).
+    /// `sounds`; the simulation emits the resolved id as an `audio::SoundEvent`
+    /// for the client to play (see `crate::audio`).
     #[inline]
     pub fn sound(self, action: BlockSoundAction) -> Option<Sound> {
         self.sound_set().get(action)

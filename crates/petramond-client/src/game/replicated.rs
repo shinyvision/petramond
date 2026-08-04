@@ -17,12 +17,12 @@ use std::sync::Arc;
 
 use glam::{Quat, Vec3};
 
-use petramond::gui_state::ContainerView;
+use petramond_world::gui_state::ContainerView;
 
-use petramond::gui_state::GuiStateMap;
-use petramond::inventory::Inventory;
-use petramond::item::ItemStack;
-use petramond::mathh::IVec3;
+use petramond_world::gui_state::GuiStateMap;
+use petramond_world::inventory::Inventory;
+use petramond_world::item::ItemStack;
+use petramond_math::math::IVec3;
 use petramond::net::protocol::{
     ItemSlotWire, ItemStateRow, MenuSyncMsg, MenuTargetWire, MobStateRow, ModSpatialSoundMsg,
     PlayerActionKind, PlayerStateRow, SelfState, TickUpdate, WorldEventMsg,
@@ -82,7 +82,7 @@ impl ReplicatedMob {
     pub fn interpolated_pose(&self, alpha: f32) -> (Vec3, f32) {
         (
             self.prev.pos.lerp(self.curr.pos, alpha),
-            petramond::mathh::lerp_angle(self.prev.yaw, self.curr.yaw, alpha),
+            petramond_math::math::lerp_angle(self.prev.yaw, self.curr.yaw, alpha),
         )
     }
 }
@@ -239,7 +239,7 @@ pub struct SelfView {
     pub mode: PlayerMode,
     /// Active effects (id, remaining ticks) in application order. Wire effect
     /// ids arrive already remapped to local ids, so they are stored directly.
-    pub effects: Vec<(petramond::effect::Effect, u32)>,
+    pub effects: Vec<(petramond_world::effect::Effect, u32)>,
     /// A real `Inventory` value reconstructed from the wire slots — the menu
     /// renders slots + cursor from it. Contents refresh only when the server
     /// shipped them (revision moved); the active slot refreshes every batch.
@@ -292,7 +292,7 @@ impl SelfView {
         self.effects = state
             .effects
             .iter()
-            .map(|&(id, remaining)| (petramond::effect::Effect(id), remaining))
+            .map(|&(id, remaining)| (petramond_world::effect::Effect(id), remaining))
             .collect();
         // The active hotbar INDEX is client-owned (it rides `PlayerUpdate`):
         // a full-body ship keeps the CURRENT local selection, never a server
@@ -323,7 +323,7 @@ pub struct MenuView {
     pub container: Option<ContainerView>,
     /// The open mod GUI's kind — resolves the document's slot semantics
     /// (take-only outputs) for click prediction against `container`.
-    pub container_kind: Option<petramond::gui_state::GuiKind>,
+    pub container_kind: Option<petramond_world::gui_state::GuiKind>,
     /// The open mod GUI's state map. Only replaced when a sync carries one
     /// (the server ships it on `Arc` change only).
     pub gui_state: Option<Arc<GuiStateMap>>,
@@ -354,7 +354,7 @@ impl MenuView {
                 gui_state,
                 ..
             } => {
-                self.container_kind = petramond::gui_state::resolve_kind(&kind_key);
+                self.container_kind = petramond_world::gui_state::resolve_kind(&kind_key);
                 self.container = slots.map(|slots| ContainerView {
                     slots: slots.iter().map(stack_from_wire).collect(),
                 });
@@ -368,7 +368,7 @@ impl MenuView {
                 } else if self.gui_state.is_none() {
                     // First sight of this session without a map yet: render
                     // from the shared empty map until a change ships one.
-                    self.gui_state = Some(petramond::gui_state::empty_gui_state());
+                    self.gui_state = Some(petramond_world::gui_state::empty_gui_state());
                 }
             }
         }
@@ -403,13 +403,13 @@ pub fn inventory_from_wire(
     slots: &[Option<petramond::net::protocol::ItemSlotWire>],
     active: u8,
 ) -> Inventory {
-    let mut grid: [Option<ItemStack>; petramond::inventory::TOTAL_SLOTS] =
-        [None; petramond::inventory::TOTAL_SLOTS];
+    let mut grid: [Option<ItemStack>; petramond_world::inventory::TOTAL_SLOTS] =
+        [None; petramond_world::inventory::TOTAL_SLOTS];
     for (dst, src) in grid.iter_mut().zip(slots.iter()) {
         *dst = src.as_ref().map(ItemSlotWire::to_stack);
     }
     let cursor = slots
-        .get(petramond::inventory::TOTAL_SLOTS)
+        .get(petramond_world::inventory::TOTAL_SLOTS)
         .and_then(|s| s.as_ref())
         .map(ItemSlotWire::to_stack);
     Inventory::from_parts(grid, cursor, active)
@@ -555,15 +555,15 @@ impl Game {
     /// SectionCacheMiss round-trip if the section ever comes back.
     fn park_evicted_section(
         &mut self,
-        pos: petramond::chunk::SectionPos,
-        section: std::sync::Arc<petramond::section::Section>,
+        pos: petramond_world::chunk::SectionPos,
+        section: std::sync::Arc<petramond_world::section::Section>,
         hash: u64,
     ) {
         let predicted = self
             .prediction
             .predicted_cells()
             .chain(self.predicted_presentation_cells.iter().copied())
-            .any(|c| petramond::chunk::SectionPos::from_world(c.x, c.y, c.z) == Some(pos));
+            .any(|c| petramond_world::chunk::SectionPos::from_world(c.x, c.y, c.z) == Some(pos));
         if !predicted {
             self.section_cache.park(pos, section, hash);
         }
@@ -668,7 +668,7 @@ impl Game {
             self.player.yaw,
             |feet| petramond::mob::riding::player_body_free(&self.replica, feet, &obstacles),
             |feet| {
-                let c = petramond::mathh::voxel_at(feet);
+                let c = petramond_math::math::voxel_at(feet);
                 !self.replica.water_cell_at(c.x, c.y, c.z)
                     && !self.replica.water_cell_at(c.x, c.y - 1, c.z)
             },
@@ -838,7 +838,7 @@ impl Game {
                             pos.x,
                             pos.y,
                             pos.z,
-                            petramond::block::Block::from_id(prev_block_id),
+                            petramond_world::block::Block::from_id(prev_block_id),
                         );
                         restored.push((pos, before));
                         if self.place_ghost.is_some_and(|(p, _)| p == pos) {
@@ -903,7 +903,7 @@ impl Game {
                 }
                 ev.world.push(WorldEvent::BlockBroken {
                     pos,
-                    block: petramond::block::Block::from_id(block_id),
+                    block: petramond_world::block::Block::from_id(block_id),
                     normal,
                     tint,
                 });
@@ -914,7 +914,7 @@ impl Game {
                 }
                 ev.world.push(WorldEvent::BlockPlaced {
                     pos,
-                    block: petramond::block::Block::from_id(block_id),
+                    block: petramond_world::block::Block::from_id(block_id),
                 });
             }
             WorldEventMsg::DoorToggled { lower, open } => {
@@ -938,7 +938,7 @@ impl Game {
                 pos,
             }),
             WorldEventMsg::ModSound { sound_id, pos } => ev.mod_sounds.push(ModSound {
-                sound: petramond::sound_registry::Sound(sound_id),
+                sound: petramond_world::sound_registry::Sound(sound_id),
                 pos,
             }),
             WorldEventMsg::EmitterBurst {
@@ -959,7 +959,7 @@ impl Game {
                     pitch,
                 } => ModSpatialSoundCommand::PlayAt {
                     handle,
-                    sound: petramond::sound_registry::Sound(sound_id),
+                    sound: petramond_world::sound_registry::Sound(sound_id),
                     pos,
                     volume,
                     pitch,
@@ -973,7 +973,7 @@ impl Game {
                     last_pos,
                 } => ModSpatialSoundCommand::PlayOnMob {
                     handle,
-                    sound: petramond::sound_registry::Sound(sound_id),
+                    sound: petramond_world::sound_registry::Sound(sound_id),
                     mob_id,
                     volume,
                     pitch,

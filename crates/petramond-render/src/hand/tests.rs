@@ -1,11 +1,11 @@
 use super::*;
-use petramond::item::ItemType;
+use petramond_world::item::ItemType;
 
 #[test]
 fn bare_hand_builds_solid_cuboid() {
     let view = HeldItemView {
         item: None,
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -28,7 +28,7 @@ fn bare_hand_builds_solid_cuboid() {
 fn held_block_builds_textured_cube() {
     let view = HeldItemView {
         item: Some(ItemType::OakLog),
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -45,7 +45,7 @@ fn held_block_builds_textured_cube() {
 fn lit_hand_packs_sampled_skylight() {
     let view = HeldItemView {
         item: Some(ItemType::Stone),
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -55,7 +55,7 @@ fn lit_hand_packs_sampled_skylight() {
         16.0 / 9.0,
         DynLight {
             sky: 9,
-            block: petramond::light::BlockLight6::new(5, 2, 63),
+            block: petramond_world::light::BlockLight6::new(5, 2, 63),
         },
         &mut v,
         &mut i,
@@ -72,7 +72,7 @@ fn lit_hand_packs_sampled_skylight() {
         // on the dynamic path too, not just in the chunk mesher.
         assert_eq!(
             petramond_mesh::vertex::decode_vertex_light(vert),
-            petramond::light::BlockLight6::new(5, 2, 63),
+            petramond_world::light::BlockLight6::new(5, 2, 63),
             "block light colour in the split lanes"
         );
     }
@@ -84,7 +84,7 @@ fn held_sprite_emits_no_model3d_geometry() {
     // pipeline, NOT the model3d hand pass, so build_hand emits nothing.
     let view = HeldItemView {
         item: Some(ItemType::Poppy),
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -97,14 +97,14 @@ fn held_sprite_emits_no_model3d_geometry() {
 /// sampling — exactly what the item3d hand pass draws) into row `row` of a stacked
 /// `w`×`h`-per-row RGB canvas. Shared by the preview harnesses below.
 fn raster_held_cell(
-    kind: petramond::block_model::BlockModelKind,
+    kind: petramond_world::block_model::BlockModelKind,
     mvp: Mat4,
     (w, h): (usize, usize),
     row: usize,
     color: &mut [u8],
 ) {
     use crate::lighting::{DynLight, LightEnv};
-    let (atlas_rgba, aw, ah) = petramond::block_model::atlas().texture();
+    let (atlas_rgba, aw, ah) = petramond_world::block_model::atlas().texture();
     let (mut verts, mut indices) = (Vec::new(), Vec::new());
     crate::item_model::build_block_model_item(
         kind,
@@ -210,7 +210,7 @@ fn render_held_model_preview() {
     for (row, (label, item)) in items.iter().enumerate() {
         let view = HeldItemView {
             item: Some(*item),
-            variant: petramond::item::VariantId::NONE,
+            variant: petramond_world::item::VariantId::NONE,
             ..Default::default()
         };
         let (kind, mvp) = held_model(&view, aspect).expect("model item");
@@ -234,22 +234,22 @@ fn held_sprite_reports_tile_and_mvp() {
     // tile (and a finite MVP) for a sprite item and None otherwise.
     let poppy = HeldItemView {
         item: Some(ItemType::Poppy),
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         ..Default::default()
     };
     let (tile, mvp) = held_sprite(&poppy, 16.0 / 9.0).expect("sprite reports a tile");
-    assert_eq!(tile, petramond::tile::Tile::named("poppy"));
+    assert_eq!(tile, petramond_world::tile::Tile::named("poppy"));
     assert!(mvp.to_cols_array().iter().all(|f| f.is_finite()));
     // Bare hand + held block return None (they go through build_hand).
     let bare = HeldItemView {
         item: None,
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         block_state: Default::default(),
         ..poppy
     };
     let block = HeldItemView {
         item: Some(ItemType::Stone),
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         block_state: Default::default(),
         ..poppy
     };
@@ -262,12 +262,12 @@ fn build_hand_reuses_buffers_without_growth() {
     // The hand buffers are cleared + refilled each call, never reallocated.
     let block = HeldItemView {
         item: Some(ItemType::Stone),
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         ..Default::default()
     };
     let bare = HeldItemView {
         item: None,
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -332,7 +332,7 @@ fn bare_hand_rest_is_anchored_lower_right() {
     let screens: [(u32, u32); 4] = [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)];
     let view = HeldItemView {
         item: None,
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -371,7 +371,7 @@ fn bare_hand_rest_is_anchored_lower_right() {
 fn bare_hand_rest_does_not_show_large_fist_cap() {
     let view = HeldItemView {
         item: None,
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         ..Default::default()
     };
     let (mut v, mut i) = (Vec::new(), Vec::new());
@@ -432,7 +432,7 @@ fn swing_punches_forward_instead_of_right_hooking() {
     let aspect = 16.0 / 9.0;
     let rest_view = HeldItemView {
         item: None,
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         ..Default::default()
     };
     let early_view = HeldItemView {
@@ -497,7 +497,7 @@ fn arm_punch_hinges_the_fist_forward_from_the_shoulder() {
     let fist_local = Vec3::new(0.0, 6.0, 0.0); // +Y end of the arm cuboid
     let view = |swing| HeldItemView {
         item: None,
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         block_state: Default::default(),
         swing,
         swing_scale: 1.0,
@@ -537,7 +537,7 @@ fn arm_punch_hinges_the_fist_forward_from_the_shoulder() {
 fn swing_and_place_change_the_mvp() {
     let rest = HeldItemView {
         item: Some(ItemType::Stone),
-        variant: petramond::item::VariantId::NONE,
+        variant: petramond_world::item::VariantId::NONE,
         ..Default::default()
     };
     let mid_punch = HeldItemView { swing: 0.5, ..rest };
@@ -567,7 +567,7 @@ fn swing_and_place_change_the_mvp() {
 #[ignore = "visual preview harness; run explicitly to regenerate /tmp PNGs"]
 fn render_held_item_preview() {
     use crate::atlas::tile_uv;
-    use petramond::item::ItemType;
+    use petramond_world::item::ItemType;
     use glam::Vec4;
 
     // (item, texture, eat blend, bite phase, approach) — the eat rows
@@ -588,7 +588,7 @@ fn render_held_item_preview() {
     for (item, file, eat, eat_bob, eat_near) in targets {
         let view = HeldItemView {
             item: Some(item),
-            variant: petramond::item::VariantId::NONE,
+            variant: petramond_world::item::VariantId::NONE,
             block_state: Default::default(),
             bob: [0.0, 0.0],
             swing: 0.0,

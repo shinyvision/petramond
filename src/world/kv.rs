@@ -20,7 +20,7 @@ impl World {
         if !self.cell_kv_writable(wx, wy, wz) {
             return false;
         }
-        let pos = crate::mathh::IVec3::new(wx, wy, wz);
+        let pos = petramond_math::math::IVec3::new(wx, wy, wz);
         // Capture only when NO block delta covers this cell this tick: that
         // delta's drain re-reads the cell's whole KV map, so a separate KV
         // delta would be redundant — and one logged BEFORE a wiping block
@@ -41,7 +41,7 @@ impl World {
         // A mesh-feeding presentation write renders through the mesher —
         // re-mesh the host's own view (the replica side re-meshes in its KV
         // ingest).
-        if crate::block::kv_key_affects_mesh(&key) {
+        if petramond_world::block::kv_key_affects_mesh(&key) {
             self.queue_dirty_meshes_sampling_cell(wx, wy, wz);
         }
         // A stateful custom shape resolving from this key (here or a
@@ -61,7 +61,7 @@ impl World {
         let removed = s.cell_kv_remove(lx, ly, lz, key);
         if removed {
             s.modified = true;
-            let pos = crate::mathh::IVec3::new(wx, wy, wz);
+            let pos = petramond_math::math::IVec3::new(wx, wy, wz);
             // Same block-delta skip as `cell_kv_set`: a covering block delta's
             // drain-time KV snapshot already reflects the removal.
             if self.replication.replication_capture
@@ -71,7 +71,7 @@ impl World {
                     .cell_kv_delta_log
                     .insert((pos, key.to_string()), None);
             }
-            if crate::block::kv_key_affects_mesh(key) {
+            if petramond_world::block::kv_key_affects_mesh(key) {
                 self.queue_dirty_meshes_sampling_cell(wx, wy, wz);
             }
             self.remark_state_key_bakes(wx, wy, wz, key);

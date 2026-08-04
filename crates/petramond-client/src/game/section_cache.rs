@@ -14,9 +14,9 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use petramond::chunk::SectionPos;
+use petramond_world::chunk::SectionPos;
 use petramond::net::protocol::{NameTables, SectionCacheClaim, SECTION_CACHE_CAP};
-use petramond::section::Section;
+use petramond_world::section::Section;
 
 /// Fingerprint of a remote session's block-id vocabulary: the server's block
 /// name table (wire-id order) plus this client's own — together they define

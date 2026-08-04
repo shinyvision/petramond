@@ -23,7 +23,7 @@
 
 use serde::Deserialize;
 
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
 use super::super::{EntityRef, Mob, MobDef};
@@ -203,8 +203,8 @@ impl AiBehavior for ChaseSoundAi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     use crate::mob::{brain::AiMob, MobRng, Noise, NoiseKind, PlayerAnchor};
     use crate::player::PlayerId;
     use crate::world::World;

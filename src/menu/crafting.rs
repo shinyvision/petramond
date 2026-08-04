@@ -1,8 +1,8 @@
 use super::ContainerMenu;
-use crate::gui_state::PointerButton;
-use crate::crafting::{CraftFailure, Recipes};
-use crate::inventory::Inventory;
-use crate::item::ItemStack;
+use petramond_world::gui_state::PointerButton;
+use petramond_world::crafting::{CraftFailure, Recipes};
+use petramond_world::inventory::Inventory;
+use petramond_world::item::ItemStack;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CraftMenuFailure {
@@ -38,7 +38,7 @@ impl ContainerMenu {
             .crafting()
             .get_at(recipe_key, station)
             .ok_or(CraftMenuFailure::InvalidRecipe)?;
-        let mut overflow = crate::crafting::craft(recipe, inventory, &mut self.craft_output)
+        let mut overflow = petramond_world::crafting::craft(recipe, inventory, &mut self.craft_output)
             .map_err(|error| match error {
                 CraftFailure::OutputOccupied => CraftMenuFailure::OutputOccupied,
                 CraftFailure::MissingIngredients => CraftMenuFailure::MissingIngredients,
@@ -46,7 +46,7 @@ impl ContainerMenu {
         if bulk {
             // Bounded: every round consumes ingredients and the output stack
             // caps at the result's max stack size.
-            while let Ok(more) = crate::crafting::craft(recipe, inventory, &mut self.craft_output) {
+            while let Ok(more) = petramond_world::crafting::craft(recipe, inventory, &mut self.craft_output) {
                 overflow.extend(more);
             }
         }

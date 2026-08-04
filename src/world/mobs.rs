@@ -3,8 +3,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::chunk::ChunkPos;
-use crate::mathh::{voxel_at, Vec3};
+use petramond_world::chunk::ChunkPos;
+use petramond_math::math::{voxel_at, Vec3};
 use crate::mob::{Mobs, SavedMob};
 
 use super::store::World;
@@ -33,7 +33,7 @@ impl World {
 
     /// Atomically spawn a mob only when its complete collision body fits in
     /// loaded, stream-final world state and does not overlap another live solid mob.
-    /// This is the programmatic-placement counterpart to [`spawn_mob`]: mods
+    /// This is the programmatic-placement counterpart to `spawn_mob`: mods
     /// can create vehicles and other player-placed solid entities without a
     /// racy centre-cell approximation.
     pub fn spawn_mob_checked(&mut self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> Option<u64> {
@@ -62,10 +62,10 @@ impl World {
         }
     }
 
-    fn mob_render_light_at(&self, pos: Vec3) -> (u8, crate::light::BlockLight6) {
+    fn mob_render_light_at(&self, pos: Vec3) -> (u8, petramond_world::light::BlockLight6) {
         let c = voxel_at(pos + Vec3::new(0.0, 0.3, 0.0));
         let sky = self.skylight6_at_world(c.x, c.y, c.z);
-        let block = crate::light::BlockLight6::from_x2(self.blocklight_rgb_at_world(c.x, c.y, c.z));
+        let block = petramond_world::light::BlockLight6::from_x2(self.blocklight_rgb_at_world(c.x, c.y, c.z));
         (sky, block)
     }
 

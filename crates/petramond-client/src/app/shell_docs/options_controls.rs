@@ -25,7 +25,7 @@ pub(super) enum RowEntry {
 /// The list rows in display order: table order, a header wherever the
 /// category changes. Shared by `populate` (builds the bound items) and
 /// `handle` (maps a clicked row index back to its action id).
-pub(super) fn row_entries(table: &petramond::controls::ActionTable) -> Vec<RowEntry> {
+pub(super) fn row_entries(table: &petramond_world::controls::ActionTable) -> Vec<RowEntry> {
     let mut rows = Vec::new();
     let mut current: Option<&str> = None;
     for row in table.rows() {
@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn both_remap_hints_fit_the_fixed_hint_box() {
         use petramond_ui::{solve, InstTree, ThemeEnv, UiState};
-        let doc = petramond::gui::documents::doc_for(petramond::gui_state::GuiKind::OptionsControls)
+        let doc = petramond::gui::documents::doc_for(petramond_world::gui_state::GuiKind::OptionsControls)
             .expect("controls document loads");
         let theme = petramond::gui::doc_theme::theme();
         let mut state = UiState::new();
@@ -155,9 +155,9 @@ mod tests {
     /// "Previous Ho...". Widen the panel or shorten the wording.
     #[test]
     fn every_engine_action_label_fits_the_controls_row() {
-        use petramond::controls::BindableAction;
+        use petramond_world::controls::BindableAction;
         use petramond_ui::{solve, InstTree, ThemeEnv, UiState};
-        let doc = petramond::gui::documents::doc_for(petramond::gui_state::GuiKind::OptionsControls)
+        let doc = petramond::gui::documents::doc_for(petramond_world::gui_state::GuiKind::OptionsControls)
             .expect("controls document loads");
         let theme = petramond::gui::doc_theme::theme();
         let mut state = UiState::new();

@@ -19,7 +19,7 @@ fn bodies_overlap(
     let mut b_boxes = Vec::new();
     super::super::solid_boxes(2, b_pos, b_yaw, b_size, &mut b_boxes);
     body_boxes(a_pos, a_yaw, a_size).any(|(min, max)| {
-        crate::collision::aabb_hits_dynamic(min.to_array(), max.to_array(), &b_boxes, 1)
+        petramond_world::collision::aabb_hits_dynamic(min.to_array(), max.to_array(), &b_boxes, 1)
     })
 }
 
@@ -52,11 +52,11 @@ fn a_long_body_does_not_fill_its_enclosing_square_corners() {
 fn a_long_body_blocks_placement_at_its_bow_and_stern() {
     let size = long_body();
     let pos = Vec3::ZERO;
-    let bow_cell = crate::mathh::IVec3::new(0, 0, -2);
-    let full = crate::block::Block::Stone.collision_boxes();
+    let bow_cell = petramond_math::math::IVec3::new(0, 0, -2);
+    let full = petramond_world::block::Block::Stone.collision_boxes();
 
     assert!(
-        !crate::body::Body::new(pos, size.half_width, size.height)
+        !petramond_world::body::Body::new(pos, size.half_width, size.height)
             .overlaps_block_boxes(bow_cell, full),
         "the legacy centre square does not reach the bow cell"
     );
@@ -65,7 +65,7 @@ fn a_long_body_blocks_placement_at_its_bow_and_stern() {
         "the shared segmented body prevents bow-clipping placement"
     );
     assert!(
-        body_overlaps_block_boxes(pos, 0.0, size, crate::mathh::IVec3::new(0, 0, 1), full,),
+        body_overlaps_block_boxes(pos, 0.0, size, petramond_math::math::IVec3::new(0, 0, 1), full,),
         "the stern participates too"
     );
 }
@@ -82,9 +82,9 @@ fn a_bow_only_soft_contact_produces_one_compound_shove() {
     let soft_pos = Vec3::new(0.0, 0.0, -1.6);
 
     assert!(
-        crate::body::separation(
-            crate::body::Body::new(hull_pos, hull.half_width, hull.height),
-            crate::body::Body::new(soft_pos, soft.half_width, soft.height),
+        petramond_world::body::separation(
+            petramond_world::body::Body::new(hull_pos, hull.half_width, hull.height),
+            petramond_world::body::Body::new(soft_pos, soft.half_width, soft.height),
         )
         .is_none(),
         "the former centre-only snapshot misses this bow contact"
@@ -98,9 +98,9 @@ fn a_bow_only_soft_contact_produces_one_compound_shove() {
 
     let deepest_single = segment_centres(hull_pos, 0.0, hull)
         .filter_map(|centre| {
-            crate::body::separation(
-                crate::body::Body::new(centre, hull.half_width, hull.height),
-                crate::body::Body::new(soft_pos, soft.half_width, soft.height),
+            petramond_world::body::separation(
+                petramond_world::body::Body::new(centre, hull.half_width, hull.height),
+                petramond_world::body::Body::new(soft_pos, soft.half_width, soft.height),
             )
         })
         .max_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
@@ -234,9 +234,9 @@ fn a_peer_truncated_turn_and_translation_stays_clear_of_shore() {
     };
     let shore = |x: i32, y: i32, z: i32| {
         if (x, y, z) == (2, 0, -2) {
-            crate::block::Block::Stone.collision_boxes()
+            petramond_world::block::Block::Stone.collision_boxes()
         } else {
-            crate::block::Block::Air.collision_boxes()
+            petramond_world::block::Block::Air.collision_boxes()
         }
     };
     let start = Vec3::ZERO;
@@ -313,9 +313,9 @@ fn a_peer_truncated_axis_slide_is_clamped_before_its_terrain_corner() {
     };
     let corner = |x: i32, y: i32, z: i32| {
         if (x, y, z) == (1, 0, 1) {
-            crate::block::Block::Stone.collision_boxes()
+            petramond_world::block::Block::Stone.collision_boxes()
         } else {
-            crate::block::Block::Air.collision_boxes()
+            petramond_world::block::Block::Air.collision_boxes()
         }
     };
     let start = Vec3::new(0.5, 0.0, 0.5);
@@ -385,9 +385,9 @@ fn checked_body_fit_rejects_shore_and_solid_entity_overlap() {
     let known = |_: i32, _: i32, _: i32| true;
     let shore = |x: i32, y: i32, z: i32| {
         if (x, y, z) == (0, 0, -2) {
-            crate::block::Block::Stone.collision_boxes()
+            petramond_world::block::Block::Stone.collision_boxes()
         } else {
-            crate::block::Block::Air.collision_boxes()
+            petramond_world::block::Block::Air.collision_boxes()
         }
     };
     assert!(
@@ -395,8 +395,8 @@ fn checked_body_fit_rejects_shore_and_solid_entity_overlap() {
         "terrain touching only the bow rejects the complete pose"
     );
 
-    let air = |_: i32, _: i32, _: i32| crate::block::Block::Air.collision_boxes();
-    let obstacle = crate::collision::DynBox {
+    let air = |_: i32, _: i32, _: i32| petramond_world::block::Block::Air.collision_boxes();
+    let obstacle = petramond_world::collision::DynBox {
         id: 7,
         min: [-0.5, 0.0, -1.5],
         max: [0.5, 1.0, -0.5],
@@ -447,7 +447,7 @@ fn a_long_body_bow_stops_at_shore_before_its_centre_box_arrives() {
     let size = long_body();
     let boxes = |x: i32, y: i32, _z: i32| {
         if x == 2 && y == 0 {
-            crate::block::Block::Stone.collision_boxes()
+            petramond_world::block::Block::Stone.collision_boxes()
         } else {
             &[]
         }
@@ -461,7 +461,7 @@ fn a_long_body_bow_stops_at_shore_before_its_centre_box_arrives() {
         size,
         [2.0, 0.0, 0.0],
         1.0,
-        crate::collision::STEP_HEIGHT,
+        petramond_world::collision::STEP_HEIGHT,
         &boxes,
         &[],
         &[],
@@ -481,7 +481,7 @@ fn a_long_body_cannot_rotate_its_bow_through_shore() {
     let size = long_body();
     let boxes = |x: i32, y: i32, _z: i32| {
         if x == 1 && y == 0 {
-            crate::block::Block::Stone.collision_boxes()
+            petramond_world::block::Block::Stone.collision_boxes()
         } else {
             &[]
         }
@@ -490,7 +490,7 @@ fn a_long_body_cannot_rotate_its_bow_through_shore() {
     let requested = -std::f32::consts::FRAC_PI_2;
     assert!(
         body_boxes(pos, requested, size).any(|(min, max)| {
-            crate::collision::aabb_hits_cells(min.to_array(), max.to_array(), boxes)
+            petramond_world::collision::aabb_hits_cells(min.to_array(), max.to_array(), boxes)
         }),
         "the unvalidated quarter-turn would put the bow in shore"
     );
@@ -499,7 +499,7 @@ fn a_long_body_cannot_rotate_its_bow_through_shore() {
     assert_ne!(accepted, requested, "the clipping rotation is clamped");
     assert!(
         body_boxes(pos, accepted, size).all(|(min, max)| {
-            !crate::collision::aabb_hits_cells(min.to_array(), max.to_array(), boxes)
+            !petramond_world::collision::aabb_hits_cells(min.to_array(), max.to_array(), boxes)
         }),
         "every accepted body segment remains outside terrain"
     );
@@ -510,7 +510,7 @@ fn a_long_body_touching_shore_can_rotate_away() {
     let size = long_body();
     let boxes = |x: i32, y: i32, _z: i32| {
         if x == 2 && y == 0 {
-            crate::block::Block::Stone.collision_boxes()
+            petramond_world::block::Block::Stone.collision_boxes()
         } else {
             &[]
         }

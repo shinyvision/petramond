@@ -15,7 +15,7 @@ impl WorldData {
     /// Merge one deterministic generated/cache section into the analytical bare
     /// surface and sky-cover maps. It can only add feature blocks above those
     /// baselines; authoritative saved terrain uses
-    /// [`recompute_column_heightmaps`](Self::recompute_column_heightmaps) because
+    /// `recompute_column_heightmaps` because
     /// it may also remove them. Returns the changed cover envelope.
     pub fn raise_column_heightmaps_from_section(
         &mut self,

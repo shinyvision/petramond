@@ -31,16 +31,16 @@ mod shape_bake;
 /// The session's loaded recipe catalog, shared with the host so `RecipeResult`
 /// answers from the exact table the engine cooks from (same process-wide
 /// install pattern as [`gen`]; replaced by each `Game::new`).
-static ACTIVE_RECIPES: std::sync::RwLock<Option<std::sync::Arc<crate::crafting::Recipes>>> =
+static ACTIVE_RECIPES: std::sync::RwLock<Option<std::sync::Arc<petramond_world::crafting::Recipes>>> =
     std::sync::RwLock::new(None);
 
 /// Install the session's recipe snapshot (called by `Game::new`).
-pub fn install_recipes(recipes: std::sync::Arc<crate::crafting::Recipes>) {
+pub fn install_recipes(recipes: std::sync::Arc<petramond_world::crafting::Recipes>) {
     *ACTIVE_RECIPES.write().unwrap() = Some(recipes);
 }
 
 /// The installed recipe snapshot, if a session has published one.
-pub fn active_recipes() -> Option<std::sync::Arc<crate::crafting::Recipes>> {
+pub fn active_recipes() -> Option<std::sync::Arc<petramond_world::crafting::Recipes>> {
     ACTIVE_RECIPES.read().unwrap().clone()
 }
 
@@ -53,7 +53,7 @@ pub fn prewarm_modules() {
     let spawned = std::thread::Builder::new()
         .name("mod-prewarm".into())
         .spawn(|| {
-            let paths: Vec<PathBuf> = crate::assets::packs()
+            let paths: Vec<PathBuf> = petramond_world::assets::packs()
                 .iter()
                 .flat_map(|p| [p.wasm.clone(), p.client_wasm.clone()])
                 .flatten()
@@ -75,7 +75,7 @@ use crate::events::{
     TickSystems,
 };
 use crate::events::tick::TickEvents;
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 use crate::mob::{Mob, MobCategory};
 use crate::player::Player;
 use crate::world::World;
@@ -117,7 +117,7 @@ pub struct ModHost {
     metas: Vec<ModMeta>,
     hostile_spawners: Vec<HostileSpawnerRegistration>,
     /// `blocks.json` `behavior` key (`mod_id:name`) → the owning mod's
-    /// handler, for routing [`ModBlockHook`](crate::block::behavior::ModBlockHook)s.
+    /// handler, for routing [`ModBlockHook`](petramond_world::block::behavior::ModBlockHook)s.
     block_behaviors: std::collections::HashMap<String, BlockBehaviorRegistration>,
     /// The session's scripted AI-node registrations, retained so the server
     /// thread can install them into ITS thread-local dispatch registry
@@ -136,7 +136,7 @@ impl ModHost {
     /// process-wide registries — only reachability is gated; the save palette
     /// makes its world content decode to air.)
     pub fn load(world_seed: u32, disabled: &std::collections::BTreeSet<String>) -> Self {
-        let mods = session_wasm_mods(crate::assets::packs(), disabled);
+        let mods = session_wasm_mods(petramond_world::assets::packs(), disabled);
         Self::from_wasm_list(world_seed, &mods)
     }
 
@@ -241,7 +241,7 @@ impl ModHost {
         &mut self,
         world: &mut World,
         player: &mut Player,
-        gui_state: &mut std::sync::Arc<crate::gui_state::GuiStateMap>,
+        gui_state: &mut std::sync::Arc<petramond_world::gui_state::GuiStateMap>,
         bus: &mut EventBus,
         systems: &mut TickSystems,
         next_spatial_sound_handle: &mut u64,
@@ -397,7 +397,7 @@ impl ModHost {
     pub fn dispatch_block_hooks(
         &self,
         ctx: &mut SimCtx,
-        hooks: &[crate::block::behavior::ModBlockHook],
+        hooks: &[petramond_world::block::behavior::ModBlockHook],
     ) {
         for hook in hooks {
             let Some(reg) = self.block_behaviors.get(hook.key) else {
@@ -441,7 +441,7 @@ impl ModHost {
             Vec<super::world::CustomBakeCell>,
         > = std::collections::BTreeMap::new();
         for cell in cells {
-            let mod_id = crate::registry::namespace(cell.shape_key)
+            let mod_id = petramond_world::registry::namespace(cell.shape_key)
                 .unwrap_or_default()
                 .to_owned();
             groups
@@ -453,7 +453,7 @@ impl ModHost {
             let Some(inst) = self.instance_by_id(&mod_id) else {
                 continue;
             };
-            let positions: Vec<crate::mathh::IVec3> = group.iter().map(|c| c.pos).collect();
+            let positions: Vec<petramond_math::math::IVec3> = group.iter().map(|c| c.pos).collect();
             let inputs: Vec<mod_api::CellInput> =
                 group.iter().map(shape_bake::cell_input).collect();
             let call = GuestCall::BakeShapeSim {
@@ -493,8 +493,8 @@ impl ModHost {
         shape_key: &str,
         shape_kind: u8,
         input: mod_api::CellInput,
-    ) -> Option<Vec<crate::block::Aabb>> {
-        let mod_id = crate::registry::namespace(shape_key)?;
+    ) -> Option<Vec<petramond_world::block::Aabb>> {
+        let mod_id = petramond_world::registry::namespace(shape_key)?;
         let inst = self.instance_by_id(mod_id)?;
         let call = GuestCall::BakeShapeSim {
             shape_kind,
@@ -530,7 +530,7 @@ impl ModHost {
         block_id: u16,
         inputs: mod_api::PlaceInputsView,
     ) -> Option<mod_api::ShapePlacementResult> {
-        let mod_id = crate::registry::namespace(shape_key)?;
+        let mod_id = petramond_world::registry::namespace(shape_key)?;
         let inst = self.instance_by_id(mod_id)?;
         let call = GuestCall::ShapePlacementPlan {
             shape_kind,
@@ -609,7 +609,7 @@ fn hostile_kind_for_key(
     if def.category != MobCategory::Hostile {
         return None;
     }
-    if crate::registry::namespace(def.name).is_some_and(|ns| world.disabled_mods().contains(ns)) {
+    if petramond_world::registry::namespace(def.name).is_some_and(|ns| world.disabled_mods().contains(ns)) {
         return None;
     }
     let feet = IVec3::from(candidate.cell);
@@ -620,7 +620,7 @@ fn hostile_kind_for_key(
 /// pack that ships wasm, minus the world's disabled set. Pure — the enabled-
 /// set filtering contract, unit-tested against synthetic pack lists.
 fn session_wasm_mods(
-    packs: &[crate::assets::Pack],
+    packs: &[petramond_world::assets::Pack],
     disabled: &std::collections::BTreeSet<String>,
 ) -> Vec<(String, PathBuf)> {
     packs

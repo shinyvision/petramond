@@ -1,5 +1,5 @@
 use super::common::game;
-use petramond::mathh::Vec3;
+use petramond_math::math::Vec3;
 
 #[test]
 fn camera_eases_grounded_step_up_to_the_player_eye() {
@@ -11,7 +11,7 @@ fn camera_eases_grounded_step_up_to_the_player_eye() {
     game.sync_camera_to_player_eye(1.0 / 60.0);
 
     let old_eye_y = game.player.eye().y;
-    let stepped_feet_y = game.player.pos.y + petramond::collision::STEP_HEIGHT;
+    let stepped_feet_y = game.player.pos.y + petramond_world::collision::STEP_HEIGHT;
     game.player.pos.y = stepped_feet_y;
     game.player.vel.y = 0.0;
     game.player.on_ground = true;

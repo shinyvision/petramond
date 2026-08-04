@@ -1,4 +1,4 @@
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 use crate::mob::MobSize;
 
 use super::{
@@ -20,28 +20,28 @@ pub fn resolve_body_motion<F>(
     dt: f32,
     step_height: f32,
     boxes_fn: &F,
-    dyn_boxes: &[crate::collision::DynBox],
-    healing_dyn_boxes: &[crate::collision::DynBox],
+    dyn_boxes: &[petramond_world::collision::DynBox],
+    healing_dyn_boxes: &[petramond_world::collision::DynBox],
     ignore: u64,
 ) -> ([f32; 3], bool, [bool; 3], f32)
 where
-    F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
+    F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
 {
     if size.body_segments() <= 1 {
         let hw = size.half_width;
         let mut min = [pos.x - hw, pos.y, pos.z - hw];
         let mut max = [pos.x + hw, pos.y + size.height, pos.z + hw];
-        let healed = crate::collision::depenetrate_up_dyn(
+        let healed = petramond_world::collision::depenetrate_up_dyn(
             min,
             max,
-            crate::collision::STEP_HEIGHT,
+            petramond_world::collision::STEP_HEIGHT,
             boxes_fn,
             healing_dyn_boxes,
             ignore,
         );
         min[1] += healed;
         max[1] += healed;
-        let (mut moved, grounded, hit) = crate::collision::resolve_body_dyn_from_depenetrated(
+        let (mut moved, grounded, hit) = petramond_world::collision::resolve_body_dyn_from_depenetrated(
             min,
             max,
             vel,
@@ -66,7 +66,7 @@ where
     let wanted_lift = body
         .iter()
         .map(|&(min, max)| {
-            crate::collision::depenetrate_up_dyn(
+            petramond_world::collision::depenetrate_up_dyn(
                 min,
                 max,
                 step_height,
@@ -136,11 +136,11 @@ fn compound_slide<F>(
     dx: f32,
     dz: f32,
     boxes_fn: &F,
-    dyn_boxes: &[crate::collision::DynBox],
+    dyn_boxes: &[petramond_world::collision::DynBox],
     ignore: u64,
 ) -> ([f32; 3], bool, bool)
 where
-    F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
+    F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
 {
     let x = compound_sweep_axis(body, offset, 0, dx, boxes_fn, dyn_boxes, ignore);
     let mut after_x = offset;
@@ -160,11 +160,11 @@ fn compound_sweep_axis<F>(
     axis: usize,
     delta: f32,
     boxes_fn: &F,
-    dyn_boxes: &[crate::collision::DynBox],
+    dyn_boxes: &[petramond_world::collision::DynBox],
     ignore: u64,
 ) -> f32
 where
-    F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
+    F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
 {
     let mut travel = delta;
     for &(mut min, mut max) in body {
@@ -173,7 +173,7 @@ where
             max[i] += offset[i];
         }
         let allowed =
-            crate::collision::sweep_axis_dyn(min, max, axis, delta, boxes_fn, dyn_boxes, ignore);
+            petramond_world::collision::sweep_axis_dyn(min, max, axis, delta, boxes_fn, dyn_boxes, ignore);
         if delta > 0.0 {
             travel = travel.min(allowed);
         } else {
@@ -580,7 +580,7 @@ fn position_component_range(motion: BodyMotion, axis: usize, lo: f32, hi: f32) -
 /// closes that corner-cutting gap before the pose is committed.
 pub fn terrain_safe_motion_prefix<F>(motion: BodyMotion, requested: f32, boxes_fn: &F) -> f32
 where
-    F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
+    F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
 {
     let requested = requested.clamp(0.0, 1.0);
     if requested <= TOI_TIME_EPS {
@@ -600,7 +600,7 @@ fn motion_terrain_toi<F>(
     budget: &mut usize,
 ) -> Option<f32>
 where
-    F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
+    F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
 {
     if *budget == 0 {
         return Some(lo);
@@ -619,7 +619,7 @@ where
 
 fn motion_interval_hits_terrain<F>(motion: BodyMotion, boxes_fn: &F, lo: f32, hi: f32) -> bool
 where
-    F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
+    F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],
 {
     segment_offsets(motion.size).any(|offset| {
         let x = motion_segment_component_range(motion, offset, 0, lo, hi);
@@ -635,7 +635,7 @@ where
             y.1 + motion.size.height,
             z.1 + motion.size.half_width,
         ];
-        crate::collision::aabb_hits_cells(min, max, boxes_fn)
+        petramond_world::collision::aabb_hits_cells(min, max, boxes_fn)
     })
 }
 

@@ -1,4 +1,4 @@
-//! Geometry helpers that build small meshes in the 32-byte [`mesh::Vertex`]
+//! Geometry helpers that build small meshes in the 32-byte `mesh::Vertex`
 //! format for the held-item hand, dropped item-entities, and the isometric
 //! inventory icons.
 //!
@@ -10,8 +10,8 @@
 //! ## Packing conventions (shared with `block.wgsl`'s `packed` layout)
 //! The bit positions live in `mesh::vertex` and this module encodes through
 //! those constants — see [`mesh::pack_vertex`](petramond_mesh::Vertex) for the
-//! layout of both words. For the textured path ([`cube_textured`],
-//! [`billboard_quad`]) we set the tile, corner, shade, AO = 3, skylight = 63.
+//! layout of both words. For the textured path (`cube_textured`,
+//! `billboard_quad`) we set the tile, corner, shade, AO = 3, skylight = 63.
 //!
 //! ### Out-of-world foliage tint + grass-side overlay
 //! Icons / held items / dropped cubes have no biome context, so foliage greens
@@ -22,13 +22,13 @@
 //! `packed2` overlay payload with the has-overlay flag set (the same
 //! overlay-composite path the chunk mesher uses, which `model3d.wgsl` mirrors).
 //! Note that flag bit is overloaded: in the textured path it means "has
-//! grass-side overlay"; the solid-color path ([`cube_solid`]) reuses it for
+//! grass-side overlay"; the solid-color path (`cube_solid`) reuses it for
 //! [`SOLID_COLOR_FLAG`].
 //! The two never collide because a solid cuboid carries no tile/overlay and the
 //! shader reads the flag only on the appropriate branch.
 //!
 //! ### Solid-color sentinel ([`SOLID_COLOR_FLAG`])
-//! The skin hand has no texture. [`cube_solid`] packs the RGB tint into the
+//! The skin hand has no texture. `cube_solid` packs the RGB tint into the
 //! `tint` field (as every textured vertex already carries a tint) and sets the
 //! chunk mesher's "has-overlay" bit, which has no meaning in the model3d
 //! pipeline. The STEP 2 model3d fragment shader reads
@@ -39,10 +39,10 @@
 use petramond_mesh::vertex::BlockLightVertexExt;
 use super::foliage_tint::{self, FaceMaterial};
 use super::lighting::{self, DynLight};
-use petramond::tile::Tile;
-use petramond::block::Block;
-use petramond::block_state::{HeldBlockState, LogAxis};
-use petramond::facing::Facing;
+use petramond_world::tile::Tile;
+use petramond_world::block::Block;
+use petramond_world::block_state::{HeldBlockState, LogAxis};
+use petramond_math::facing::Facing;
 use petramond_math::face::Face;
 use petramond_mesh::{pack_cell_uv, pack_tint, Vertex, UV_MODE_CELL_LOCAL, UV_MODE_SHIFT};
 
@@ -481,7 +481,7 @@ pub(super) fn push_block_item_cube_lit_with_state(
     // A WASM-baked custom shape's item is its own baked geometry, cached at
     // client-mod load. Asked FIRST and by block id, so no family is named: a
     // block with no bake simply has none.
-    if let Some(boxes) = petramond::block::item_shape_bake::item_bake(block.id()) {
+    if let Some(boxes) = petramond_world::block::item_shape_bake::item_bake(block.id()) {
         if !boxes.is_empty() {
             for b in icon_painter_order(&boxes, |b| b, sort_for_icon) {
                 for (i, face) in ALL_FACES.into_iter().enumerate() {
@@ -556,7 +556,7 @@ pub(super) fn push_block_item_cube_lit_with_state(
 /// in-hand / dropped forms skip the sort entirely.
 fn icon_painter_order<T>(
     items: &[T],
-    aabb: impl Fn(&T) -> &petramond::block::Aabb,
+    aabb: impl Fn(&T) -> &petramond_world::block::Aabb,
     sort_for_icon: bool,
 ) -> Vec<&T> {
     let mut order: Vec<&T> = items.iter().collect();
@@ -592,7 +592,7 @@ pub(super) fn push_cell_local_face(
 
 /// [`push_cell_local_face`] with the cell-local UV turned `uv_turns` quarter
 /// turns — the item-side twin of the chunk mesher's
-/// [`ShapeFace::uv_turns`](petramond::block::ShapeFace::uv_turns), so a turned box
+/// [`ShapeFace::uv_turns`](petramond_world::block::ShapeFace::uv_turns), so a turned box
 /// set's top and bottom art reads the same in the icon as in the world.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn push_cell_local_face_turned(
@@ -616,7 +616,7 @@ pub(super) fn push_cell_local_face_turned(
     let local = face.quad_box(min, max);
     push_quad_with(verts, indices, corners, |corner, pos| {
         let [u, v] = petramond_mesh::plane::cell_uv(face, local[corner]);
-        let (u, v) = petramond::block::ShapeFace::turn_uv(uv_turns, u, v);
+        let (u, v) = petramond_world::block::ShapeFace::turn_uv(uv_turns, u, v);
         // Cell-local UV is 0..=1 by definition; a caller whose box reaches past
         // its cell (a mod draw prim spanning a multi-cell footprint) would
         // otherwise pack a lane it cannot hold and sample past its own tile.

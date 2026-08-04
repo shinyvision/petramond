@@ -10,15 +10,15 @@ fn inst(alpha: f32) -> ParticleInstance {
         alpha,
         size: 0.1,
         skylight: lighting::FULL_SKYLIGHT,
-        blocklight: petramond::light::BlockLight6::DARK,
+        blocklight: petramond_world::light::BlockLight6::DARK,
     }
 }
 
 fn emitter_inst() -> ParticleEmitterInstance {
     ParticleEmitterInstance {
         origin: Vec3::new(1.0, 2.0, 3.0),
-        emitter: petramond::block::ParticleEmitter {
-            anchor: petramond::block::ParticleEmitterAnchor::BlockTop,
+        emitter: petramond_world::block::ParticleEmitter {
+            anchor: petramond_world::block::ParticleEmitterAnchor::BlockTop,
             origin: [0.5, 1.0, 0.5],
             offset: [0.0, 0.0, 0.0],
             rate: [1.0, 1.0],
@@ -37,7 +37,7 @@ fn emitter_inst() -> ParticleEmitterInstance {
         },
         seed: 0x1234_5678_9ABC_DEF0,
         skylight: 0,
-        blocklight: petramond::light::BlockLight6::DARK,
+        blocklight: petramond_world::light::BlockLight6::DARK,
     }
 }
 
@@ -126,7 +126,7 @@ fn sampled_light_folds_into_the_particle_tint() {
     let expect = lighting::light_rgb(
         DynLight {
             sky: 0,
-            block: petramond::light::BlockLight6::DARK,
+            block: petramond_world::light::BlockLight6::DARK,
         },
         LightEnv::IDENTITY,
     );
@@ -286,7 +286,7 @@ fn spiral_emitter_particles_orbit_the_vertical_axis_as_they_age() {
 #[test]
 fn ramp_emitter_particles_cool_through_the_ramp_as_they_age() {
     let mut inst = emitter_inst();
-    let ramp: petramond::block::ColorRamp =
+    let ramp: petramond_world::block::ColorRamp =
         serde_json::from_str(r#"[[1.0, 1.0, 0.9], [1.0, 0.5, 0.1], [0.1, 0.1, 0.1]]"#)
             .expect("3-stop ramp parses");
     inst.emitter.color = None;

@@ -5,14 +5,14 @@
 //! the growth step reaches into world internals — it runs a worldgen `Feature`
 //! against the LIVE world through a validating overlay and commits across chunk
 //! borders — which a `block`-side behaviour can't. It still implements the
-//! `block`-defined [`BlockBehavior`] and is re-exported in the behaviour registry,
+//! `block`-defined `BlockBehavior` and is re-exported in the behaviour registry,
 //! so a data row reads `behavior::SAPLING`.
 //!
 //! A sapling is BOTH fragile and a grower, but a block has ONE behaviour, so this
-//! one composes: its support hooks ([`neighbor_update`](Sapling::neighbor_update) /
-//! [`scheduled_tick`](Sapling::scheduled_tick)) delegate to [`FRAGILE`] (the sapling
+//! one composes: its support hooks (`neighbor_update` /
+//! `scheduled_tick`) delegate to [`FRAGILE`] (the sapling
 //! breaks when its ground is dug, exactly like a flower), while
-//! [`random_tick`](Sapling::random_tick) drives the growth.
+//! `random_tick` drives the growth.
 //!
 //! Growth stages are DISTINCT BLOCK ROWS (visually identical): on each random
 //! tick a sapling has a 50% chance to advance, and advancing swaps the cell to
@@ -31,11 +31,11 @@
 use crate::world::WorldData;
 use std::collections::HashMap;
 
-use crate::block::Block;
-use crate::mathh::IVec3;
-use crate::section::SectionSummary;
-use crate::worldgen::feature::{ConfiguredFeature, FeatureCtx, VoxelSink};
-use crate::worldgen::rng::FeatureRng;
+use petramond_world::block::Block;
+use petramond_math::math::IVec3;
+use petramond_world::section::SectionSummary;
+use petramond_worldgen::feature::{ConfiguredFeature, FeatureCtx, VoxelSink};
+use petramond_worldgen::rng::FeatureRng;
 
 use super::fragile::FRAGILE;
 use super::store::World;
@@ -110,7 +110,7 @@ fn pick_growth(
         }
         remaining -= weight;
     }
-    crate::worldgen::data::features::by_name(picked)
+    petramond_worldgen::data::features::by_name(picked)
 }
 
 impl World {
@@ -251,8 +251,8 @@ impl VoxelSink for GrowSink<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunk::{Chunk, ChunkPos};
-    use crate::crafting::Recipes;
+    use petramond_world::chunk::{Chunk, ChunkPos};
+    use petramond_world::crafting::Recipes;
 
     use super::super::store::LoadTarget;
 
@@ -445,7 +445,7 @@ mod tests {
                 break;
             }
             assert!(
-                b.has_tag(crate::block::BlockTag::SAPLING),
+                b.has_tag(petramond_world::block::BlockTag::SAPLING),
                 "every intermediate stage is a sapling row, got {b:?}"
             );
         }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::block::Block;
+use petramond_world::block::Block;
 use crate::mob::{def, Mob, MobDamageFeedback};
 
 fn floor_at_zero(p: IVec3) -> bool {
@@ -46,7 +46,7 @@ fn mob_body_rests_on_an_inset_block_top_not_the_cell_top() {
     // 14/16) rests its feet on that real top, not the full-cube cell top (y = 1). The
     // mob body now collides through the shared `collision_boxes_at` shape (nav stays
     // cell-based, but that's a separate concern).
-    let chest = crate::block::Block::Chest.collision_boxes();
+    let chest = petramond_world::block::Block::Chest.collision_boxes();
     let chest_top = chest.iter().map(|b| b.max[1]).fold(0.0, f32::max);
     assert!(
         chest_top < 1.0,
@@ -85,11 +85,11 @@ fn mob_body_rests_on_an_inset_block_top_not_the_cell_top() {
 fn grounded_mob_auto_steps_up_a_half_block() {
     // A grounded mob walking into a 0.5-tall ledge auto-climbs it (same STEP_HEIGHT as
     // the player), without needing a jump.
-    let half_step = |x: i32, y: i32, _z: i32| -> &'static [crate::block::Aabb] {
+    let half_step = |x: i32, y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] {
         if y == 0 {
             Block::Stone.collision_boxes()
         } else if y == 1 && x >= 1 {
-            &[crate::block::Aabb {
+            &[petramond_world::block::Aabb {
                 min: [0.0, 0.0, 0.0],
                 max: [1.0, 0.5, 1.0],
             }]
@@ -231,7 +231,7 @@ fn wish_direction_drives_horizontal_motion_and_facing() {
 
 #[test]
 fn airborne_sheep_carries_velocity_without_walk_steering() {
-    let empty_boxes = |_x: i32, _y: i32, _z: i32| -> &'static [crate::block::Aabb] { &[] };
+    let empty_boxes = |_x: i32, _y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] { &[] };
     let dry = |_: IVec3| false;
     let still = |_: Vec3| Vec3::ZERO;
     let mut sheep = Instance::new(Mob::Sheep, Vec3::new(0.5, 5.0, 0.5), 0.0, 1);
@@ -270,7 +270,7 @@ fn airborne_sheep_carries_velocity_without_walk_steering() {
 
 #[test]
 fn an_airborne_drive_cannot_replace_carry_or_yaw() {
-    let empty_boxes = |_x: i32, _y: i32, _z: i32| -> &'static [crate::block::Aabb] { &[] };
+    let empty_boxes = |_x: i32, _y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] { &[] };
     let dry = |_: IVec3| false;
     let still = |_: Vec3| Vec3::ZERO;
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.25, 1);

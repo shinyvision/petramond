@@ -7,7 +7,7 @@
 //! edge — an opaque texel adjacent to a transparent texel or the tile border —
 //! so the stepped silhouette gains thickness. Walls
 //! are textured with that boundary texel's own sub-UV sampled from the block
-//! atlas, which the [`model3d`](super::model3d) packed-vertex shader cannot do
+//! atlas, which the `model3d` packed-vertex shader cannot do
 //! (it can only SELECT whole-tile UV corners), so this drives the dedicated
 //! `item3d` pipeline + shader with EXPLICIT per-vertex `(pos, uv, shade)`.
 //!
@@ -20,10 +20,10 @@
 use super::foliage_tint;
 use super::lighting::{self, DynLight, LightEnv};
 use crate::atlas::tile_uv;
-use petramond::tile_alpha::tile_alpha_opaque;
-use petramond::tile::Tile;
-use petramond::bbmodel::face_corners;
-use petramond::block_model::{self, BlockModelKind};
+use petramond_world::tile_alpha::tile_alpha_opaque;
+use petramond_world::tile::Tile;
+use petramond_world::bbmodel::face_corners;
+use petramond_world::block_model::{self, BlockModelKind};
 use petramond_math::face::Face;
 use petramond_mesh::SHADES;
 use glam::{Mat4, Vec3};
@@ -79,7 +79,7 @@ pub fn build_block_model_item(
         let cube = &inst.cubes[ci];
         let m = map
             * Mat4::from_translation(cube.origin)
-            * Mat4::from_quat(petramond::bbmodel::euler_quat(cube.rotation))
+            * Mat4::from_quat(petramond_world::bbmodel::euler_quat(cube.rotation))
             * Mat4::from_translation(-cube.origin);
         for (slot, face) in Face::ALL.into_iter().enumerate() {
             let Some(uv) = cube.faces[slot] else { continue };
@@ -153,7 +153,7 @@ pub fn build_block_model_icon(
     for (ci, cube) in inst.cubes.iter().enumerate() {
         let m = map
             * Mat4::from_translation(cube.origin)
-            * Mat4::from_quat(petramond::bbmodel::euler_quat(cube.rotation))
+            * Mat4::from_quat(petramond_world::bbmodel::euler_quat(cube.rotation))
             * Mat4::from_translation(-cube.origin);
         for (slot, face) in Face::ALL.into_iter().enumerate() {
             let Some(uv) = cube.faces[slot] else { continue };
@@ -295,8 +295,8 @@ fn push_quad(
 /// multiply the tint in and shift the UVs into the atlas's dye-base half
 /// (desaturated, peak-white twins), so the tint can both dye and whiten.
 /// No-op for a plain stack.
-pub(super) fn dye_item_verts(verts: &mut [ItemVertex], variant: petramond::item::VariantId) {
-    let Some(t) = petramond::item::variant::tint(variant) else {
+pub(super) fn dye_item_verts(verts: &mut [ItemVertex], variant: petramond_world::item::VariantId) {
+    let Some(t) = petramond_world::item::variant::tint(variant) else {
         return;
     };
     for v in verts.iter_mut() {
@@ -313,8 +313,8 @@ pub(super) fn dye_item_verts(verts: &mut [ItemVertex], variant: petramond::item:
 /// no caller can multiply without the flag (or vice versa).
 ///
 /// [`Vertex`]: petramond_mesh::Vertex
-pub(super) fn dye_block_verts(verts: &mut [petramond_mesh::Vertex], variant: petramond::item::VariantId) {
-    let Some(t) = petramond::item::variant::tint(variant) else {
+pub(super) fn dye_block_verts(verts: &mut [petramond_mesh::Vertex], variant: petramond_world::item::VariantId) {
+    let Some(t) = petramond_world::item::variant::tint(variant) else {
         return;
     };
     for v in verts.iter_mut() {
@@ -551,7 +551,7 @@ mod tests {
             Tile::named("poppy"),
             DynLight {
                 sky: 0,
-                block: petramond::light::BlockLight6::DARK,
+                block: petramond_world::light::BlockLight6::DARK,
             },
             LightEnv::IDENTITY,
             &mut out,
@@ -561,7 +561,7 @@ mod tests {
         let dark = lighting::light_rgb(
             DynLight {
                 sky: 0,
-                block: petramond::light::BlockLight6::DARK,
+                block: petramond_world::light::BlockLight6::DARK,
             },
             LightEnv::IDENTITY,
         );

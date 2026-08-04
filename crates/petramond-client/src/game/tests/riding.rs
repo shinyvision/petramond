@@ -1,8 +1,8 @@
 //! Cross-subsystem riding boundaries that need the full server fixture.
 
 use super::common::{game, game_on_empty_chunk};
-use petramond::block::Block;
-use petramond::mathh::Vec3;
+use petramond_world::block::Block;
+use petramond_math::math::Vec3;
 use petramond::mob::Mob;
 
 #[test]
@@ -39,7 +39,7 @@ fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_ride
     let ordinary = probes.into_inner();
     assert_eq!(ordinary.len(), 8);
     for feet in ordinary.iter().copied().chain(std::iter::once(seat)) {
-        let c = petramond::mathh::voxel_at(feet);
+        let c = petramond_math::math::voxel_at(feet);
         assert!(game
             .server
             .world

@@ -522,7 +522,7 @@ impl Painter<'_> {
 
     /// [`Self::text_wrapped`] one gui-scale step smaller. Wrap breaks are
     /// computed in FONT pixels at the smaller step (the same conversion
-    /// [`Self::ellipsized_at`] uses), so the lines the layout reserved room
+    /// `Self::ellipsized_at` uses), so the lines the layout reserved room
     /// for are the lines drawn.
     pub fn text_wrapped_small(&mut self, s: &str, r: RectI, color: [f32; 4], clip: Option<RectI>) {
         let k = self.small_text_step();

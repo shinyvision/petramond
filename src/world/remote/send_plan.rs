@@ -1,6 +1,6 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
+use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
 use crate::world::store::{LoadAnchor, LoadTarget, World};
 
 impl World {
@@ -95,7 +95,7 @@ impl World {
                     .gen
                     .column_gen
                     .get(&cp)
-                    .map_or(crate::chunk::SECTION_MIN_CY, |col| {
+                    .map_or(petramond_world::chunk::SECTION_MIN_CY, |col| {
                         *Self::surface_window_for_column(col, 0).start()
                     })
             })
@@ -117,7 +117,7 @@ impl World {
                 (cp.cx - target.center.cx).abs() <= 2 && (cp.cz - target.center.cz).abs() <= 2;
             let mut b = bits;
             while b != 0 {
-                let cy = crate::chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
+                let cy = petramond_world::chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
                 b &= b - 1;
                 if cy < band_lo {
                     let near = near_xz && (cy - target.center_cy).abs() <= 2;
@@ -160,7 +160,7 @@ impl World {
             for &cy in cys {
                 let sp = SectionPos::new(cp.cx, cy, cp.cz);
                 debug_assert!(
-                    (SECTION_MIN_CY..=crate::chunk::SECTION_MAX_CY).contains(&cy),
+                    (SECTION_MIN_CY..=petramond_world::chunk::SECTION_MAX_CY).contains(&cy),
                     "sent_by_column cy out of world range"
                 );
                 if column_gone || !self.sections.contains_key(&sp) {

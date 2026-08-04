@@ -17,7 +17,7 @@ use super::{
     ChestInstance, DoorInstance, ItemEntityInstance, MobRenderInstance, ParticleEmitterInstance,
     ParticleInstance, PlayerRenderInstance, RemotePlayerRender, Renderer, SolidParticleInstance,
 };
-use petramond::mathh::lerp_angle;
+use petramond_math::math::lerp_angle;
 use crate::views::{
     ChestPresentation, DoorPresentation, DroppedItemPresentation, GamePresentation,
     MobPresentation, ParticleAtlas, ParticlePresentation,
@@ -60,7 +60,7 @@ pub struct Scene {
     /// camera each frame so it brightens AND takes the colour of nearby block
     /// light (which keeps it lit at night).
     held_item_skylight: u8,
-    held_item_blocklight: petramond::light::BlockLight6,
+    held_item_blocklight: petramond_world::light::BlockLight6,
 }
 
 impl Scene {
@@ -81,7 +81,7 @@ impl Scene {
         self.player = None;
         self.remote_players.clear();
         self.held_item_skylight = 0;
-        self.held_item_blocklight = petramond::light::BlockLight6::DARK;
+        self.held_item_blocklight = petramond_world::light::BlockLight6::DARK;
     }
 
     /// Translate the current presentation snapshot into this scene's reused buffers.
@@ -287,12 +287,12 @@ fn bake_particles(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use petramond::item::ItemType;
+    use petramond_world::item::ItemType;
 
     /// A settled drop with `prev_pos == pos`, so it bakes to `pos` at any alpha.
     fn fresh_drop(pos: Vec3, item: ItemType) -> DroppedItemPresentation {
         DroppedItemPresentation {
-            variant: petramond::item::VariantId::NONE,
+            variant: petramond_world::item::VariantId::NONE,
             prev_pos: pos,
             pos,
             item,
@@ -300,7 +300,7 @@ mod tests {
             prev_spin: 0.0,
             spin: 0.0,
             skylight: 0,
-            blocklight: petramond::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
         }
     }
 
@@ -315,7 +315,7 @@ mod tests {
             size: 0.1,
             stretch: 1.0,
             skylight: 0,
-            blocklight: petramond::light::BlockLight6::DARK,
+            blocklight: petramond_world::light::BlockLight6::DARK,
         }
     }
 

@@ -1,4 +1,4 @@
-//! Sim-side metadata derived from a mob's compiled [`Model`](crate::bbmodel::Model): the
+//! Sim-side metadata derived from a mob's compiled [`Model`](petramond_world::bbmodel::Model): the
 //! idle-animation info the AI needs and the bone hierarchy the death ragdoll tumbles.
 //!
 //! These are pure functions of the precached [`Model`] (see [`crate::mob::model`]) — the
@@ -6,8 +6,8 @@
 //! data and never re-parses a `.bbmodel`. Bone indices line up with the renderer's by
 //! construction, since both come from the one `Model`.
 
-use crate::bbmodel::{euler_quat, Model};
-use crate::mathh::Vec3;
+use petramond_world::bbmodel::{euler_quat, Model};
+use petramond_math::math::Vec3;
 
 /// Length + loop mode of one NAMED animation, for the sim's one-shot layer
 /// retirement: a mod-activated `once` clip (`MobAnimSet`) retires itself when
@@ -86,7 +86,7 @@ pub struct SkBone {
 }
 
 /// The bone hierarchy of a mob, in the SAME index order as the renderer's
-/// [`Model`](crate::bbmodel::Model) (it is derived from that very model), so a sim-computed
+/// [`Model`](petramond_world::bbmodel::Model) (it is derived from that very model), so a sim-computed
 /// per-bone pose drops straight into the render bake.
 #[derive(Clone, Debug, Default)]
 pub struct Skeleton {

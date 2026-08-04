@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::chunk::{ChunkPos, SectionPos};
-use crate::mathh::{voxel_at, Vec3};
+use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_math::math::{voxel_at, Vec3};
 use crate::mob::{populate, spawn, Instance, Mob, SavedMob};
 use crate::world::World;
 
@@ -15,7 +15,7 @@ impl Mobs {
     /// Spawn a mob of `kind` at `pos` (feet) facing `yaw`. Returns `false` if the
     /// mob cap is reached (the spawn is dropped).
     pub fn spawn(&mut self, kind: Mob, pos: Vec3, yaw: f32) -> bool {
-        self.spawn_lit(kind, pos, yaw, 63, crate::light::BlockLight6::DARK)
+        self.spawn_lit(kind, pos, yaw, 63, petramond_world::light::BlockLight6::DARK)
             .is_some()
     }
 
@@ -31,7 +31,7 @@ impl Mobs {
         pos: Vec3,
         yaw: f32,
         skylight: u8,
-        blocklight: crate::light::BlockLight6,
+        blocklight: petramond_world::light::BlockLight6,
     ) -> Option<u64> {
         if self.list.len() >= MAX_MOBS {
             return None;
@@ -56,7 +56,7 @@ impl Mobs {
     /// to report as `mob_spawned` events.
     ///
     /// Mobs that leave the loaded area are no longer dropped here — they are saved into
-    /// their chunk as it unloads (see [`take_in_chunk`](Self::take_in_chunk)) and reload
+    /// their chunk as it unloads (see `take_in_chunk`) and reload
     /// with it. Because the unload harvests them out of the live set, the set still only
     /// holds loaded-area mobs, so the "in the loaded area" caps stay honest — provided
     /// the spawn-relevant area is actually loaded. While saved records within the
@@ -71,9 +71,9 @@ impl Mobs {
         let mut spawned = Vec::new();
         if let Some(spawns) = chosen {
             for s in spawns {
-                let c = crate::mathh::voxel_at(s.pos + Vec3::new(0.0, 0.3, 0.0));
+                let c = petramond_math::math::voxel_at(s.pos + Vec3::new(0.0, 0.3, 0.0));
                 let sky = world.skylight6_at_world(c.x, c.y, c.z);
-                let block = crate::light::BlockLight6::from_x2(
+                let block = petramond_world::light::BlockLight6::from_x2(
                     world.blocklight_rgb_at_world(c.x, c.y, c.z),
                 );
                 if let Some(id) = self.spawn_lit(s.kind, s.pos, s.yaw, sky, block) {
@@ -84,9 +84,9 @@ impl Mobs {
         spawned
     }
 
-    /// Run one worldgen-population step around `player_pos` (see [`populate`]):
+    /// Run one worldgen-population step around `player_pos` (see `populate`):
     /// roll a budgeted batch of nearby unchecked chunks and place their one-time
-    /// herds, ignoring the population caps (worldgen stock — only the [`MAX_MOBS`]
+    /// herds, ignoring the population caps (worldgen stock — only the `MAX_MOBS`
     /// memory backstop applies). Returns the spawns performed plus the chunks to
     /// record as populated; the caller owns the persisted populated set, and a
     /// chunk is only recorded once at least one member actually spawned, so a
@@ -104,7 +104,7 @@ impl Mobs {
             for s in herd.spawns {
                 let c = voxel_at(s.pos + Vec3::new(0.0, 0.3, 0.0));
                 let sky = world.skylight6_at_world(c.x, c.y, c.z);
-                let block = crate::light::BlockLight6::from_x2(
+                let block = petramond_world::light::BlockLight6::from_x2(
                     world.blocklight_rgb_at_world(c.x, c.y, c.z),
                 );
                 if let Some(id) = self.spawn_lit(s.kind, s.pos, s.yaw, sky, block) {
@@ -165,7 +165,7 @@ impl Mobs {
     /// so a shorn, wounded sheep reloads shorn and wounded.
     pub fn restore(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
         for m in mobs {
-            self.restore_saved_mob_lit(m, 63, crate::light::BlockLight6::DARK);
+            self.restore_saved_mob_lit(m, 63, petramond_world::light::BlockLight6::DARK);
         }
     }
 
@@ -173,7 +173,7 @@ impl Mobs {
         &mut self,
         m: SavedMob,
         skylight: u8,
-        blocklight: crate::light::BlockLight6,
+        blocklight: petramond_world::light::BlockLight6,
     ) {
         if self
             .spawn_lit(m.kind, m.pos, m.yaw, skylight, blocklight)

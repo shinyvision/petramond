@@ -126,9 +126,9 @@ impl AiBehavior for RetaliateAi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
-    use crate::mathh::Vec3;
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+    use petramond_math::math::Vec3;
     use crate::mob::{brain::AiMob, Mob, MobRng, PlayerAnchor};
     use crate::player::PlayerId;
     use crate::world::World;
@@ -148,7 +148,7 @@ mod tests {
     fn ctx<'a>(
         world: &'a World,
         rng: &'a mut MobRng,
-        pos: crate::mathh::Vec3,
+        pos: petramond_math::math::Vec3,
         players: &'a [PlayerAnchor],
         mobs: &'a [AiMob],
         attacker: Option<(EntityRef, u32)>,

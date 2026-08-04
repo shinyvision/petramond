@@ -264,7 +264,7 @@ impl SurfaceHeights {
 }
 
 /// Per-section feature field backed by data precomputed ONCE per column (in
-/// [`super::driver::ColumnGen`]) and shared, immutably, by every section job of that
+/// `super::driver::ColumnGen`) and shared, immutably, by every section job of that
 /// column. Returns values identical to [`RuntimeFeatureField`] — the candidate region
 /// and support surfaces are the same `region`/`surface_heights` queries — but holds no
 /// `SurfaceDensitySystem` and does no lazy work, so it is cheap to clone per section

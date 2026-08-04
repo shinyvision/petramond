@@ -3,7 +3,7 @@
 
 use mod_api::{HostCall, HostRet};
 
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 
 use super::guards::{finite3, sim_call, sim_query};
 
@@ -23,7 +23,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                 if !intensity.is_finite() {
                     return HostRet::Error("EmitterBurst: non-finite intensity".into());
                 }
-                let Some(bundle) = crate::particle_emitters::by_key(&key) else {
+                let Some(bundle) = petramond_world::particle_emitters::by_key(&key) else {
                     log::warn!("[mod {mod_id}] EmitterBurst: unknown emitter '{key}'");
                     return HostRet::Bool(false);
                 };
@@ -39,7 +39,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             }),
         },
         HostCall::EmitSound { key, pos } => sim_query(|ctx| {
-            let Some(sound) = crate::sound_registry::by_name(&key) else {
+            let Some(sound) = petramond_world::sound_registry::by_name(&key) else {
                 log::warn!("[mod {mod_id}] EmitSound: unknown sound '{key}'");
                 return HostRet::Bool(false);
             };
@@ -57,7 +57,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             volume,
             pitch,
         } => sim_query(|ctx| {
-            let Some(sound) = crate::sound_registry::by_name(&key) else {
+            let Some(sound) = petramond_world::sound_registry::by_name(&key) else {
                 log::warn!("[mod {mod_id}] SoundPlayAt: unknown sound '{key}'");
                 return HostRet::U64(0);
             };
@@ -84,7 +84,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             volume,
             pitch,
         } => sim_query(|ctx| {
-            let Some(sound) = crate::sound_registry::by_name(&key) else {
+            let Some(sound) = petramond_world::sound_registry::by_name(&key) else {
                 log::warn!("[mod {mod_id}] SoundPlayOnMob: unknown sound '{key}'");
                 return HostRet::U64(0);
             };
@@ -147,7 +147,7 @@ mod tests {
 
     use crate::events::{PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use crate::mathh::Vec3;
+    use petramond_math::math::Vec3;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
@@ -162,7 +162,7 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
@@ -208,7 +208,7 @@ mod tests {
             let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
             let mut feed = TickEvents::default();
             let mut queue = PostQueue::default();
-            let mut gui = crate::gui_state::empty_gui_state();
+            let mut gui = petramond_world::gui_state::empty_gui_state();
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut player,
@@ -273,7 +273,7 @@ mod tests {
         );
 
         let sound =
-            crate::sound_registry::by_name("petramond:item_pickup").expect("engine sound exists");
+            petramond_world::sound_registry::by_name("petramond:item_pickup").expect("engine sound exists");
         assert_eq!(first.2.len(), 3);
         assert_eq!(
             first.2[0],

@@ -123,7 +123,7 @@ pub fn group_positions(
         .collect()
 }
 
-/// Snapshot one batch: the same cheap per-section handles [`super::queue::LightBakeJob`]
+/// Snapshot one batch: the same cheap per-section handles `super::queue::LightBakeJob`
 /// takes, gathered once for the whole group.
 pub fn snapshot_batch(
     base: SectionPos,

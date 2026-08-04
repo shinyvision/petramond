@@ -75,7 +75,7 @@ pub struct Chamber {
     /// Stream salt, derived from the row's namespaced NAME — never from its id
     /// or index, which move the moment another pack is enabled.
     pub salt: u64,
-    /// Candidate-COLUMN spacing in blocks; a multiple of [`CAVE_LATTICE_STEP`].
+    /// Candidate-COLUMN spacing in blocks; a multiple of `CAVE_LATTICE_STEP`.
     ///
     /// Candidates live on a 2-D lattice and roll their depth inside the row's
     /// own `y` band, rather than on a 3-D lattice. That is not a shortcut: it
@@ -191,7 +191,7 @@ impl Chamber {
 
     /// The depth band a room's CENTRE may be rolled in: the row's own band,
     /// clipped to the range the carvers actually cut. Nothing is carved below
-    /// [`CAVE_MIN_Y`], so a room rolled under it is not tapered by its own sill
+    /// `CAVE_MIN_Y`, so a room rolled under it is not tapered by its own sill
     /// but sliced by the world floor — a dead-flat plane of bare rock, since
     /// the lining shell needs the same `interior` gate the carve does.
     #[inline]

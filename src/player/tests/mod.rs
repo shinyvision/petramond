@@ -7,8 +7,8 @@ use super::{
     },
     *,
 };
-use crate::block::Block;
-use crate::mathh::{IVec3, SelectionShape, Vec3};
+use petramond_world::block::Block;
+use petramond_math::math::{IVec3, SelectionShape, Vec3};
 
 mod fall;
 mod health;

@@ -3,7 +3,7 @@
 //! (`Game::look`/`Game::targeted_mob`). None of this touches the sessions —
 //! the results reach the sim as the next `PlayerUpdate` message.
 
-use petramond::mathh::Vec3;
+use petramond_math::math::Vec3;
 use petramond::player::{self, Input, Player};
 
 use super::{Game, GameInput};
@@ -150,7 +150,7 @@ impl Game {
     /// every live SOLID entity (see `MobCollision::Solid`) at its
     /// interpolated replicated transform — except the own mount, whose box
     /// the slaved rider sits inside.
-    pub(super) fn solid_entity_obstacles(&self) -> Vec<petramond::collision::DynBox> {
+    pub(super) fn solid_entity_obstacles(&self) -> Vec<petramond_world::collision::DynBox> {
         let alpha = self.tick_alpha();
         let own_mount = self.self_mount.and_then(|m| match m {
             petramond::net::protocol::PlayerMount::Mob { id, .. } => Some(id),
@@ -202,7 +202,7 @@ impl Game {
             }
             petramond::net::protocol::PlayerMount::Anchor { yaw, .. } => yaw,
         };
-        Some(petramond::mathh::wrap_angle(yaw))
+        Some(petramond_math::math::wrap_angle(yaw))
     }
 
     /// Per-frame push of the player out of overlapping soft bodies (mobs +
@@ -229,8 +229,8 @@ impl Game {
                 // on top would fight the contact (skating a deck-stander).
                 continue;
             }
-            let mob = petramond::body::Body::new(entry.curr.pos, d.size.half_width, d.size.height);
-            if let Some(p) = petramond::body::separation(body, mob) {
+            let mob = petramond_world::body::Body::new(entry.curr.pos, d.size.half_width, d.size.height);
+            if let Some(p) = petramond_world::body::separation(body, mob) {
                 push += p;
             }
         }
@@ -238,7 +238,7 @@ impl Game {
             let Some(other) = remote.push_body() else {
                 continue; // hidden (spectator/dead) or asleep in a bed
             };
-            if let Some(p) = petramond::body::separation(body, other) {
+            if let Some(p) = petramond_world::body::separation(body, other) {
                 push += p;
             }
         }
@@ -256,13 +256,13 @@ impl Game {
             self.camera_step_y_offset = 0.0;
         } else if grounded_still
             && eye_dy > STEP_CAMERA_EPS
-            && eye_dy <= petramond::collision::STEP_HEIGHT + STEP_CAMERA_EPS
+            && eye_dy <= petramond_world::collision::STEP_HEIGHT + STEP_CAMERA_EPS
         {
-            let max_lag = petramond::collision::STEP_HEIGHT * 1.5;
+            let max_lag = petramond_world::collision::STEP_HEIGHT * 1.5;
             self.camera_step_y_offset = (self.camera_step_y_offset - eye_dy).max(-max_lag);
         } else if grounded_still
             && self.predicted_input.sneak
-            && (-(petramond::collision::STEP_HEIGHT + STEP_CAMERA_EPS)..-STEP_CAMERA_EPS)
+            && (-(petramond_world::collision::STEP_HEIGHT + STEP_CAMERA_EPS)..-STEP_CAMERA_EPS)
                 .contains(&eye_dy)
         {
             // The sneak snap-down: physics dropped the feet onto the lower step
@@ -270,7 +270,7 @@ impl Game {
             // camera starts the step ABOVE and settles down — the mirror of the
             // step-up glide. Sneak-gated so ordinary landing dips keep their
             // un-eased feel.
-            let max_lag = petramond::collision::STEP_HEIGHT * 1.5;
+            let max_lag = petramond_world::collision::STEP_HEIGHT * 1.5;
             self.camera_step_y_offset = (self.camera_step_y_offset - eye_dy).min(max_lag);
         }
 
@@ -362,7 +362,7 @@ impl Game {
             .self_view
             .inventory
             .selected()
-            .is_some_and(|st| st.item.use_ray() == petramond::item::UseRay::Water);
+            .is_some_and(|st| st.item.use_ray() == petramond_world::item::UseRay::Water);
         self.use_look = if held_water_ray {
             Player::raycast_including_water(self.cam.pos, self.cam.forward(), &self.replica)
                 .map(|(h, _)| h)

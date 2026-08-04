@@ -27,7 +27,7 @@ impl ServerGame {
 
     /// One fixed game tick: world and entity mutation only. The hardwired engine
     /// steps run in [`Stage`] order; between them the scheduler runs attached
-    /// systems and the post-event queue drains (see [`end_stage`](Self::end_stage)).
+    /// systems and the post-event queue drains (see `end_stage`).
     /// `pub` so tests can drive exactly one tick.
     pub fn game_tick_step(&mut self, events: &mut TickEvents) {
         // Victim-owned i-frames advance before ANY source can deal damage,
@@ -192,7 +192,7 @@ impl ServerGame {
         self.begin_stage(Stage::ItemPhysics, events);
         // The magnet pulls each requested drop toward ITS requester, so the
         // anchors carry ids alongside the body centres.
-        let magnet_anchors: Vec<(PlayerId, crate::mathh::Vec3)> =
+        let magnet_anchors: Vec<(PlayerId, petramond_math::math::Vec3)> =
             anchors.iter().map(|a| (a.id, a.pos)).collect();
         // Row-declared dropped-item reactions (flour landing in water) return
         // their presentation batch: one burst + sound per transformed ENTITY,

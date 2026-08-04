@@ -5,9 +5,9 @@
 //! the `outliner` tree), named bone-rotation animations, and the embedded texture.
 //! This is GPU-agnostic data + pose math (no `wgpu`) — the engine's golden mob model,
 //! compiled from the `.bbmodel` once (see [`crate::asset_cache`]) and then shared: the
-//! renderer bakes geometry in [`crate::render::mob_model`] and uploads the texture in
-//! [`crate::render::resources`], while the simulation derives its skeleton + idle metadata
-//! in [`crate::mob::model_meta`]. At runtime nothing reads the `.bbmodel`; this `Model` (and
+//! renderer bakes geometry in `crate::render::mob_model` and uploads the texture in
+//! `crate::render::resources`, while the simulation derives its skeleton + idle metadata
+//! in `crate::mob::model_meta`. At runtime nothing reads the `.bbmodel`; this `Model` (and
 //! its `.llmob`) is authoritative.
 //!
 //! Coordinate notes:

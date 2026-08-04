@@ -11,7 +11,7 @@ use rodio::source::Source;
 use rodio::{ChannelCount, DeviceSinkBuilder, MixerDeviceSink, SampleRate, SpatialPlayer};
 
 use super::keep_alive::KeepAlive;
-use petramond::sound_registry::defs as sound_defs;
+use petramond_world::sound_registry::defs as sound_defs;
 use super::{Sound, SoundCategory, SpatialListener, SpatialSoundSource};
 
 /// Mining punch sounds retrigger at a fixed cadence while held. Each trigger is a
@@ -134,7 +134,7 @@ impl Audio {
                 def.variants
                     .iter()
                     .filter_map(|&rel| {
-                        let Some((bytes, _)) = petramond::assets::read_bytes(rel) else {
+                        let Some((bytes, _)) = petramond_world::assets::read_bytes(rel) else {
                             log::warn!("sound {:?} clip '{rel}' not found (skipped)", def.sound);
                             return None;
                         };
@@ -572,7 +572,7 @@ mod tests {
         // embed + decode path. Format isn't pinned (freely-edited asset data): we
         // only require a sane, playable buffer with a real duration.
         let rel = sound_defs()[Sound::WoodPunch.0 as usize].variants[0];
-        let bytes = petramond::assets::read_bytes(rel).expect("clip file exists").0;
+        let bytes = petramond_world::assets::read_bytes(rel).expect("clip file exists").0;
         let d = decode(bytes).expect("wood_punch variant should decode");
         assert!(!d.samples.is_empty(), "decoded to some samples");
         assert!(d.sample_rate.get() > 0);

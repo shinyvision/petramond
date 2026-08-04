@@ -3,10 +3,10 @@
 //! `SelfView`.)
 //!
 //! Physics only *measures* a fall (per-frame, for local feel — see
-//! [`crate::player::Player::track_fall`]); the health *mutation* happens here, on the
+//! `crate::player::Player::track_fall`); the health *mutation* happens here, on the
 //! deterministic game tick, so it stays multiplayer-safe (no wall-clock, no RNG).
 //! Every damage source must route through the single
-//! [`damage_player`](Game::damage_player) funnel so the `player_damage_pre` /
+//! `damage_player` funnel so the `player_damage_pre` /
 //! `player_damaged` / `player_died` events fire consistently.
 
 use crate::events::{DamageSource, Outcome, PlayerDamagePre, PostEvent};
@@ -89,7 +89,7 @@ impl ServerGame {
         s: usize,
         amount: i32,
         source: DamageSource,
-        origin: Option<crate::mathh::Vec3>,
+        origin: Option<petramond_math::math::Vec3>,
         events: &mut TickEvents,
     ) -> bool {
         // Non-positive damage is a non-event (matching Player::apply_damage's
@@ -175,8 +175,8 @@ impl ServerGame {
         // instead of quietly surviving in a menu the app closes a frame later.
         self.close_open_menu_for(s, events);
         let centre = self.sessions[s].player.body_center();
-        let mut stacks: Vec<crate::item::ItemStack> = Vec::new();
-        for i in 0..crate::inventory::TOTAL_SLOTS {
+        let mut stacks: Vec<petramond_world::item::ItemStack> = Vec::new();
+        for i in 0..petramond_world::inventory::TOTAL_SLOTS {
             if let Some(slot) = self.sessions[s].player.inventory.slot_mut(i) {
                 if let Some(stack) = slot.take() {
                     stacks.push(stack);
@@ -216,8 +216,8 @@ impl ServerGame {
         let player = &mut self.sessions[s].player;
         for behavior in player.tick_effects() {
             match behavior {
-                crate::effect::EffectBehavior::None => {}
-                crate::effect::EffectBehavior::Regen { amount, .. } => {
+                petramond_world::effect::EffectBehavior::None => {}
+                petramond_world::effect::EffectBehavior::Regen { amount, .. } => {
                     player.heal(amount);
                 }
             }

@@ -11,11 +11,11 @@
 
 use petramond_render::atlas;
 
-use petramond::tile::Tile;
-use petramond::biome::Biome;
-use petramond::block::Block;
-use petramond::block_model::{self, BlockModelKind};
-use petramond::mathh::{voxel_at, IVec3, Vec3};
+use petramond_world::tile::Tile;
+use petramond_world::biome::Biome;
+use petramond_world::block::Block;
+use petramond_world::block_model::{self, BlockModelKind};
+use petramond_math::math::{voxel_at, IVec3, Vec3};
 use petramond::world::World;
 
 use petramond::entity::hash01;
@@ -49,8 +49,8 @@ fn mul_kv_tint(tint: [f32; 3], kv: Option<[u8; 3]>) -> [f32; 3] {
 
 fn tile_tint(tile: Tile) -> [f32; 3] {
     match tile.icon_tint() {
-        Some(petramond::tile::TileTint::Grass) => Biome::Plains.grass_color(),
-        Some(petramond::tile::TileTint::Foliage) => Biome::Plains.foliage_color(),
+        Some(petramond_world::tile::TileTint::Grass) => Biome::Plains.grass_color(),
+        Some(petramond_world::tile::TileTint::Foliage) => Biome::Plains.foliage_color(),
         _ => NO_TINT,
     }
 }
@@ -80,7 +80,7 @@ pub struct Particle {
     pub skylight: u8,
     /// 6-bit COLOURED block light, re-sampled alongside `skylight` —
     /// night-invariant, so a fleck near a coloured lamp takes its hue.
-    pub blocklight: petramond::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
     /// Block face tile this fleck is cut from (BLOCK-atlas flecks). Ignored when
     /// [`model`](Self::model) is set — a bbmodel block has no block-atlas tile, so its
     /// flecks sample the model atlas instead.
@@ -157,7 +157,7 @@ impl Particle {
     }
 
     /// Normalized opacity in `[0, 1]`: full for most of the life, fading to 0 over
-    /// the final [`FADE_TAIL`] fraction.
+    /// the final `FADE_TAIL` fraction.
     #[inline]
     pub fn alpha(&self) -> f32 {
         if self.lifetime <= 0.0 {
@@ -172,7 +172,7 @@ impl Particle {
     }
 
     /// World-space cube edge length for rendering, shrinking over the final
-    /// [`FADE_TAIL`] fraction so a dying fleck visibly collapses to nothing. The
+    /// `FADE_TAIL` fraction so a dying fleck visibly collapses to nothing. The
     /// cubes use an alpha CUTOUT (no smooth alpha fade), so shrinking is the fade
     /// cue; tracks the same curve as [`alpha`](Self::alpha).
     #[inline]
@@ -367,12 +367,12 @@ impl ParticleSystem {
             face_normal,
             block,
             63,
-            petramond::light::BlockLight6::DARK,
+            petramond_world::light::BlockLight6::DARK,
             None,
         );
     }
 
-    /// Same as [`spawn_mining`](Self::spawn_mining), with caller-provided render
+    /// Same as `spawn_mining`, with caller-provided render
     /// light (6-bit, coloured); both are re-sampled each tick.
     pub fn spawn_mining_lit(
         &mut self,
@@ -380,7 +380,7 @@ impl ParticleSystem {
         face_normal: IVec3,
         block: Block,
         skylight: u8,
-        blocklight: petramond::light::BlockLight6,
+        blocklight: petramond_world::light::BlockLight6,
         kv_tint: Option<[u8; 3]>,
     ) {
         let tile = Self::face_tile(block, face_normal);
@@ -442,17 +442,17 @@ impl ParticleSystem {
     /// [`spawn_break_burst_model`]: Self::spawn_break_burst_model
     #[cfg(test)]
     pub fn spawn_break_burst(&mut self, block_pos: IVec3, block: Block) {
-        self.spawn_break_burst_lit(block_pos, block, 63, petramond::light::BlockLight6::DARK, None);
+        self.spawn_break_burst_lit(block_pos, block, 63, petramond_world::light::BlockLight6::DARK, None);
     }
 
-    /// Same as [`spawn_break_burst`](Self::spawn_break_burst), with caller-provided
+    /// Same as `spawn_break_burst`, with caller-provided
     /// render light (6-bit, coloured); both re-sampled each tick.
     pub fn spawn_break_burst_lit(
         &mut self,
         block_pos: IVec3,
         block: Block,
         skylight: u8,
-        blocklight: petramond::light::BlockLight6,
+        blocklight: petramond_world::light::BlockLight6,
         kv_tint: Option<[u8; 3]>,
     ) {
         let tiles = block.tiles();
@@ -513,7 +513,7 @@ impl ParticleSystem {
         block_pos: IVec3,
         kind: BlockModelKind,
         skylight: u8,
-        blocklight: petramond::light::BlockLight6,
+        blocklight: petramond_world::light::BlockLight6,
     ) {
         let center = Vec3::new(block_pos.x as f32, block_pos.y as f32, block_pos.z as f32)
             + Vec3::splat(0.5);
@@ -538,18 +538,18 @@ impl ParticleSystem {
     }
 
     /// One-shot emitter burst (a `particle_emitters.json` burst bundle — see
-    /// [`petramond::particle_emitters::BurstSpec`]): `count_per_intensity ×
+    /// [`petramond_world::particle_emitters::BurstSpec`]): `count_per_intensity ×
     /// intensity` solid-color cubes (capped) launched upward and outward in a
     /// rough circle from `pos`, falling under gravity like every other
     /// particle here. With `die_on_contact` they are destroyed the instant
     /// they touch a collision box or water.
     pub fn spawn_emitter_burst(
         &mut self,
-        spec: &petramond::particle_emitters::BurstSpec,
+        spec: &petramond_world::particle_emitters::BurstSpec,
         pos: Vec3,
         intensity: f32,
         skylight: u8,
-        blocklight: petramond::light::BlockLight6,
+        blocklight: petramond_world::light::BlockLight6,
     ) {
         let count = self.scaled_count(
             ((spec.count_per_intensity * intensity.max(0.0)).round() as u32)
@@ -608,7 +608,7 @@ impl ParticleSystem {
         face_normal: IVec3,
         kind: BlockModelKind,
         skylight: u8,
-        blocklight: petramond::light::BlockLight6,
+        blocklight: petramond_world::light::BlockLight6,
     ) {
         let n = Vec3::new(
             face_normal.x as f32,
@@ -650,7 +650,7 @@ fn model_fleck(
     pos: Vec3,
     vel: Vec3,
     skylight: u8,
-    blocklight: petramond::light::BlockLight6,
+    blocklight: petramond_world::light::BlockLight6,
     lifetime: f32,
     patch_r: f32,
 ) -> Particle {

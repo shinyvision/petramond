@@ -47,8 +47,8 @@ pub use scene::Scene;
 #[cfg(test)]
 pub use item_cube::SOLID_COLOR_FLAG;
 
-use petramond::block_state::HeldBlockState;
-use petramond::item::ItemType;
+use petramond_world::block_state::HeldBlockState;
+use petramond_world::item::ItemType;
 use glam::{Quat, Vec3};
 use std::sync::Arc;
 
@@ -72,7 +72,7 @@ pub struct ClientOverlayImage {
 /// single stamped unit so none can be paired with another layout generation.
 pub struct DocumentUiFrame<'a> {
     pub viewport: petramond::gui::UiViewport,
-    pub kind: petramond::gui_state::GuiKind,
+    pub kind: petramond_world::gui_state::GuiKind,
     pub draw: &'a petramond_ui::DrawList,
     pub images: &'a [petramond::gui::DocImageSource],
     pub slots: &'a [petramond::gui::DocSlot],
@@ -109,14 +109,14 @@ mod ui_frame_coherence_tests {
         let images: Vec<petramond::gui::DocImageSource> = Vec::new();
         let slots = Vec::new();
         let content = petramond::gui::UiSnapshot {
-            kind: petramond::gui_state::GuiKind::Hotbar,
+            kind: petramond_world::gui_state::GuiKind::Hotbar,
             ..Default::default()
         };
         let frame = UiFrame {
             viewport,
             document: Some(DocumentUiFrame {
                 viewport,
-                kind: petramond::gui_state::GuiKind::Hotbar,
+                kind: petramond_world::gui_state::GuiKind::Hotbar,
                 draw: &draw,
                 images: &images,
                 slots: &slots,
@@ -134,7 +134,7 @@ mod ui_frame_coherence_tests {
             viewport,
             document: Some(DocumentUiFrame {
                 viewport: petramond::gui::UiViewport::new((1280, 720), 6),
-                kind: petramond::gui_state::GuiKind::Hotbar,
+                kind: petramond_world::gui_state::GuiKind::Hotbar,
                 draw: &draw,
                 images: &images,
                 slots: &slots,
@@ -147,7 +147,7 @@ mod ui_frame_coherence_tests {
         assert!(!stale_document.matches_viewport(viewport));
 
         let wrong_kind = petramond::gui::UiSnapshot {
-            kind: petramond::gui_state::GuiKind::Inventory,
+            kind: petramond_world::gui_state::GuiKind::Inventory,
             ..Default::default()
         };
         let frame = UiFrame {
@@ -167,7 +167,7 @@ mod ui_frame_coherence_tests {
 pub struct HeldItemView {
     pub item: Option<ItemType>,
     /// The held stack's instance-data variant (tint resolution at draw).
-    pub variant: petramond::item::VariantId,
+    pub variant: petramond_world::item::VariantId,
     pub block_state: HeldBlockState,
     /// The hand's own sway: the camera's bob run through a first-order lag, so
     /// the arm trails the body instead of moving with it (see
@@ -195,7 +195,7 @@ impl Default for HeldItemView {
     fn default() -> Self {
         HeldItemView {
             item: None,
-            variant: petramond::item::VariantId::NONE,
+            variant: petramond_world::item::VariantId::NONE,
             block_state: HeldBlockState::None,
             bob: [0.0, 0.0],
             swing: 0.0,
@@ -213,7 +213,7 @@ impl Default for HeldItemView {
 pub struct HeldItemFrame {
     pub item: Option<ItemType>,
     /// The held stack's instance-data variant (tint resolution at draw).
-    pub variant: petramond::item::VariantId,
+    pub variant: petramond_world::item::VariantId,
     pub block_state: HeldBlockState,
     pub mining: bool,
     /// True on the frame a block breaks, including instant hardness-0 blocks.
@@ -244,7 +244,7 @@ pub struct ItemEntityInstance {
     pub pos: Vec3,
     pub item: ItemType,
     /// The stack's instance-data variant (tint resolution at draw).
-    pub variant: petramond::item::VariantId,
+    pub variant: petramond_world::item::VariantId,
     /// Stack size. Drives how many layered geometries the pile draws (1..=5).
     pub count: u8,
     /// Y-axis spin in radians.
@@ -252,7 +252,7 @@ pub struct ItemEntityInstance {
     /// 6-bit skylight sampled from the world at the dropped item's position.
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    pub blocklight: petramond::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
 }
 
 /// One placed block's mod DRAW SET to draw this frame. Owned by the gather
@@ -287,7 +287,7 @@ pub struct MobRenderInstance {
     /// 6-bit skylight sampled from the world at the mob's position.
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    pub blocklight: petramond::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
     /// Hurt-flash intensity in `[0, 1]`: tints the mob red after a non-lethal hit,
     /// fading out. `0` for an unhurt or dead mob.
     pub hurt: f32,
@@ -345,7 +345,7 @@ pub struct PlayerRenderInstance {
     pub hurt: f32,
     /// 6-bit two-channel light sampled at the player.
     pub skylight: u8,
-    pub blocklight: petramond::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
 }
 
 /// One REMOTE player's body + held item to draw this frame, already
@@ -371,13 +371,13 @@ pub struct ChestInstance {
     /// World position of the block's min corner (block coords as f32).
     pos: Vec3,
     /// Placement orientation (which way the front + latch face).
-    facing: petramond::facing::Facing,
+    facing: petramond_math::facing::Facing,
     /// Lid open fraction: `0.0` closed, `1.0` fully open.
     lid01: f32,
     /// 6-bit skylight sampled from the world at the chest's cell.
     skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    blocklight: petramond::light::BlockLight6,
+    blocklight: petramond_world::light::BlockLight6,
 }
 
 /// A placed door to draw in the world this frame: a 2-tall thin slab on the `facing`
@@ -390,21 +390,21 @@ pub struct ChestInstance {
 pub struct DoorInstance {
     /// World position of the lower cell's min corner (block coords as f32).
     pos: Vec3,
-    /// The edge the CLOSED door rests on (its outward normal); see [`petramond::door`].
-    facing: petramond::facing::Facing,
+    /// The edge the CLOSED door rests on (its outward normal); see [`petramond_world::door`].
+    facing: petramond_math::facing::Facing,
     /// Swing fraction: `0.0` closed, `1.0` fully open onto the adjacent edge.
     open01: f32,
     /// Atlas tile for the lower half's front/back (door art).
-    bottom_tile: petramond::tile::Tile,
+    bottom_tile: petramond_world::tile::Tile,
     /// Atlas tile for the upper half's front/back (door art).
-    top_tile: petramond::tile::Tile,
+    top_tile: petramond_world::tile::Tile,
     /// Atlas tile for the four thin EDGE faces (the door's side — distinct from the
     /// front art, e.g. a plank strip).
-    side_tile: petramond::tile::Tile,
+    side_tile: petramond_world::tile::Tile,
     /// 6-bit skylight sampled from the world at the door's lower cell.
     skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    blocklight: petramond::light::BlockLight6,
+    blocklight: petramond_world::light::BlockLight6,
 }
 
 /// A single terrain particle cube to draw this frame. `uv_min` / `uv_size` are
@@ -428,7 +428,7 @@ pub struct ParticleInstance {
     /// 6-bit skylight sampled from the world at the particle position.
     pub skylight: u8,
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
-    pub blocklight: petramond::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
 }
 
 /// One SOLID-COLOR simulated particle this frame (an emitter-burst droplet —
@@ -445,7 +445,7 @@ pub struct SolidParticleInstance {
     pub stretch: f32,
     /// 6-bit light sampled at the particle, folded into the color.
     pub skylight: u8,
-    pub blocklight: petramond::light::BlockLight6,
+    pub blocklight: petramond_world::light::BlockLight6,
 }
 
 /// One VISIBLE particle emitter to draw this frame (a block row's or a mob's).

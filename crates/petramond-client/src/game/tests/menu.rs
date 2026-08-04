@@ -1,7 +1,7 @@
 use super::common::{apply_drop_actions, filled_inventory, game, game_on_empty_chunk};
-use petramond::gui_state::MenuSlot;
-use petramond::inventory::Inventory;
-use petramond::item::{ItemStack, ItemType};
+use petramond_world::gui_state::MenuSlot;
+use petramond_world::inventory::Inventory;
+use petramond_world::item::{ItemStack, ItemType};
 
 #[test]
 fn container_edits_apply_on_the_tick_not_the_frame() {
@@ -12,7 +12,7 @@ fn container_edits_apply_on_the_tick_not_the_frame() {
     // container edit, so it's latched, not applied this frame.
     game.menu_click(
         MenuSlot::Inventory(0),
-        petramond::gui_state::PointerButton::Primary,
+        petramond_world::gui_state::PointerButton::Primary,
         false,
         false,
     );
@@ -42,7 +42,7 @@ fn cursor_has_stack_tracks_the_held_stack() {
 #[test]
 fn closing_cursor_stack_uses_empty_inventory_slot_after_matching_stacks() {
     let mut game = game();
-    let mut slots = [Some(ItemStack::new(ItemType::Stone, 64)); petramond::inventory::TOTAL_SLOTS];
+    let mut slots = [Some(ItemStack::new(ItemType::Stone, 64)); petramond_world::inventory::TOTAL_SLOTS];
     slots[4] = None;
     game.server.sessions[0].player.inventory =
         Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), 0);
@@ -64,7 +64,7 @@ fn closing_cursor_stack_uses_empty_inventory_slot_after_matching_stacks() {
 #[test]
 fn closing_cursor_stack_queues_a_drop_when_inventory_is_full() {
     let mut game = game();
-    let slots = [Some(ItemStack::new(ItemType::Stone, 64)); petramond::inventory::TOTAL_SLOTS];
+    let slots = [Some(ItemStack::new(ItemType::Stone, 64)); petramond_world::inventory::TOTAL_SLOTS];
     game.server.sessions[0].player.inventory =
         Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 12)), 0);
 
@@ -86,7 +86,7 @@ fn closing_cursor_stack_queues_a_drop_when_inventory_is_full() {
 #[test]
 fn closing_cursor_stack_fills_matching_partials_then_drops_leftover() {
     let mut game = game();
-    let mut slots = [Some(ItemStack::new(ItemType::Stone, 64)); petramond::inventory::TOTAL_SLOTS];
+    let mut slots = [Some(ItemStack::new(ItemType::Stone, 64)); petramond_world::inventory::TOTAL_SLOTS];
     slots[2] = Some(ItemStack::new(ItemType::Dirt, 60));
     slots[10] = Some(ItemStack::new(ItemType::Dirt, 63));
     game.server.sessions[0].player.inventory =
@@ -117,13 +117,13 @@ fn closing_cursor_stack_fills_matching_partials_then_drops_leftover() {
 
 #[test]
 fn collect_to_cursor_tops_up_from_hotbar_and_grid() {
-    use petramond::inventory::{Inventory, TOTAL_SLOTS};
+    use petramond_world::inventory::{Inventory, TOTAL_SLOTS};
     let mut game = game();
     // Cursor holds a partial Dirt stack; matching partials sit in the hotbar
     // and the main grid, with an unrelated stack that must be left alone.
     let mut slots = [None; TOTAL_SLOTS];
     slots[2] = Some(ItemStack::new(ItemType::Dirt, 20)); // hotbar
-    slots[petramond::inventory::HOTBAR_LEN] = Some(ItemStack::new(ItemType::Dirt, 30)); // main grid
+    slots[petramond_world::inventory::HOTBAR_LEN] = Some(ItemStack::new(ItemType::Dirt, 30)); // main grid
     slots[5] = Some(ItemStack::new(ItemType::Stone, 64)); // untouched
     game.server.sessions[0].player.inventory =
         Inventory::from_parts(slots, Some(ItemStack::new(ItemType::Dirt, 5)), 0);
@@ -144,7 +144,7 @@ fn collect_to_cursor_tops_up_from_hotbar_and_grid() {
     assert!(game.server.sessions[0]
         .player
         .inventory
-        .slot(petramond::inventory::HOTBAR_LEN)
+        .slot(petramond_world::inventory::HOTBAR_LEN)
         .is_none());
     assert_eq!(
         game.server.sessions[0]
@@ -164,21 +164,21 @@ fn collect_to_cursor_tops_up_from_hotbar_and_grid() {
 /// clears the map again.
 #[test]
 fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
-    use petramond::gui_state::PointerButton;
-    use petramond::gui_state::GuiValue;
+    use petramond_world::gui_state::PointerButton;
+    use petramond_world::gui_state::GuiValue;
 
     let mut game = game();
     game.set_mods_for_test(petramond::modding::ModHost::test_unit_guest_host("modtest"));
-    let kind = petramond::gui_state::intern_kind("modtest:panel").expect("mod kind registers");
+    let kind = petramond_world::gui_state::intern_kind("modtest:panel").expect("mod kind registers");
 
     // Stale values from before the session must not survive the open.
-    petramond::gui_state::gui_state_set(
+    petramond_world::gui_state::gui_state_set(
         &mut game.server.sessions[0].gui_state,
         "modtest:stale".into(),
         GuiValue::I32(9),
     );
     game.server
-        .open_mod_gui_screen_for(0, kind, Some(petramond::mathh::IVec3::new(1, 2, 3)));
+        .open_mod_gui_screen_for(0, kind, Some(petramond_math::math::IVec3::new(1, 2, 3)));
     assert!(
         game.server.sessions[0]
             .gui_state
@@ -192,7 +192,7 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
 
     // The click latches this frame; nothing dispatches until the tick.
     game.menu_click(
-        petramond::gui_state::MenuSlot::Widget("bump"),
+        petramond_world::gui_state::MenuSlot::Widget("bump"),
         PointerButton::Primary,
         false,
         false,
@@ -208,7 +208,7 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
 
     // A secondary click over a button is consumed but triggers nothing.
     game.menu_click(
-        petramond::gui_state::MenuSlot::Widget("bump"),
+        petramond_world::gui_state::MenuSlot::Widget("bump"),
         PointerButton::Secondary,
         false,
         false,
@@ -218,7 +218,7 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
 
     // Closing the session clears the map and drops the target. The close
     // message latches and applies on the tick (like play).
-    petramond::gui_state::gui_state_set(
+    petramond_world::gui_state::gui_state_set(
         &mut game.server.sessions[0].gui_state,
         "modtest:mid".into(),
         GuiValue::F32(0.5),
@@ -232,7 +232,7 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
 
     // With no mod GUI session open, a stray widget click dispatches nothing.
     game.menu_click(
-        petramond::gui_state::MenuSlot::Widget("bump"),
+        petramond_world::gui_state::MenuSlot::Widget("bump"),
         PointerButton::Primary,
         false,
         false,
@@ -243,14 +243,14 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
 
 #[test]
 fn chest_lids_follow_the_viewer_count_not_the_local_menu() {
-    use petramond::block::Block;
-    use petramond::mathh::IVec3;
+    use petramond_world::block::Block;
+    use petramond_math::math::IVec3;
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(8, 64, 8);
     game.server.world.set_block_world(8, 64, 8, Block::Chest);
     game.server
         .world
-        .insert_chest(pos, petramond::block_model::DEFAULT_MODEL_FACING);
+        .insert_chest(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
 
     let mut ev = petramond::events::tick::TickEvents::default();
     game.server.open_chest_screen_for(0, pos, &mut ev);

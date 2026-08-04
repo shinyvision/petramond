@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use petramond_ui::{UiEvent, UiMap, UiState, UiValue};
 
-use petramond::crafting::CraftingStation;
+use petramond_world::crafting::CraftingStation;
 use crate::game::Game;
 use petramond::gui::CraftingRecipeView;
 
@@ -167,7 +167,7 @@ impl CraftingBrowser {
 
         // The station's screen title: its block item's display name (a pack
         // workbench key is its block item's key), or the engine table's.
-        let title = petramond::item::ItemType::by_key(station.key())
+        let title = petramond_world::item::ItemType::by_key(station.key())
             .map(|item| item.name().to_owned())
             .unwrap_or_else(|| "Crafting Table".to_owned());
         state.set("craft_station_title", UiValue::Str(title));
@@ -209,7 +209,7 @@ impl CraftingBrowser {
     /// same item with room for one more full result.
     fn output_accepts(&self, game: &Game, key: &str) -> bool {
         game.crafting_catalog().get(key).is_some_and(|recipe| {
-            petramond::crafting::output_accepts(recipe, game.menu_read_model().craft_output)
+            petramond_world::crafting::output_accepts(recipe, game.menu_read_model().craft_output)
         })
     }
 

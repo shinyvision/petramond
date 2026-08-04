@@ -3,10 +3,10 @@
 //! The plan/outcome/trait VOCABULARY lives in `petramond_world::world::placement`.
 
 pub use petramond_world::world::placement::*;
-use crate::block::{Aabb, Block, ShapeState};
+use petramond_world::block::{Aabb, Block, ShapeState};
 use crate::world::World;
 
-use crate::mathh::IVec3;
+use petramond_math::math::IVec3;
 
 impl World {
     /// The placement ladder: whether `block` can be placed at all for this
@@ -51,9 +51,9 @@ impl World {
             let axis = inputs
                 .held_rotation
                 .log_axis_for_facing(inputs.held, inputs.player_facing);
-            crate::block::CellCodec::to_cell(&axis)
+            petramond_world::block::CellCodec::to_cell(&axis)
         } else if block.directional_view() {
-            crate::block::CellCodec::to_cell(&crate::block_state::EntityFront(inputs.player_facing))
+            petramond_world::block::CellCodec::to_cell(&petramond_world::block_state::EntityFront(inputs.player_facing))
         } else {
             ShapeState::NONE
         };
@@ -131,7 +131,7 @@ impl World {
             }
             if with_block_entities {
                 let facing =
-                    <crate::block_state::EntityFront as crate::block::CellView>::from_cell(state).0;
+                    <petramond_world::block_state::EntityFront as petramond_world::block::CellView>::from_cell(state).0;
                 if b == Block::Furnace {
                     self.insert_furnace(c, facing);
                 } else if b == Block::Chest {

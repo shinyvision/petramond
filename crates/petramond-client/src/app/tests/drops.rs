@@ -1,5 +1,5 @@
 use super::{app_with_grass, cursor_over_slot};
-use petramond::controls::{Control, Modifiers};
+use petramond_world::controls::{Control, Modifiers};
 
 #[test]
 fn drop_key_drops_one_held_item_while_playing() {

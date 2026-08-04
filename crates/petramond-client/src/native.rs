@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use crate::app::{App, CursorIcon as AppCursorIcon, CursorPolicy};
 use petramond_render::camera::Camera;
 use crate::keymap::{key_code, mouse_button, text_key_from_named};
-use petramond::controls::Modifiers;
-use petramond::mathh::Vec3;
+use petramond_world::controls::Modifiers;
+use petramond_math::math::Vec3;
 use petramond_render::{new_renderer_from_target, Renderer};
 
 use winit::application::ApplicationHandler;

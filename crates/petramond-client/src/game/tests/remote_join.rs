@@ -3,8 +3,8 @@
 //! no `ServerGame`), and the roster tracks join/leave broadcasts.
 
 use crate::game::Game;
-use petramond::item::ItemType;
-use petramond::mathh::{IVec3, Vec3};
+use petramond_world::item::ItemType;
+use petramond_math::math::{IVec3, Vec3};
 use petramond::net::protocol::{ItemSlotWire, JoinData, SelfRestore, ServerToClient};
 use petramond::server::handle::ServerHandle;
 use petramond::player::PlayerId;
@@ -79,7 +79,7 @@ fn new_remote_seeds_the_client_from_join_data() {
             .iter()
             .map(|e| (e.effect, e.remaining))
             .collect::<Vec<_>>(),
-        vec![(petramond::effect::Effect::Regeneration, 400)],
+        vec![(petramond_world::effect::Effect::Regeneration, 400)],
         "effects resolve by registry name"
     );
     // The HUD read model seeded from the same restore, before any batch.

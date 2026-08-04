@@ -1,4 +1,4 @@
-use crate::chunk::{self, SectionPos};
+use petramond_world::chunk::{self, SectionPos};
 use crate::world::store::World;
 
 use super::{RESULT_DRAIN_MIN, RESULT_DRAIN_TIME_BUDGET};
@@ -111,7 +111,7 @@ impl World {
                 ) | crate::world::light::cube_region_changes(
                     s.blocklight_arc().as_deref(),
                     &res.blocklight,
-                    crate::light::LightRgb::ZERO,
+                    petramond_world::light::LightRgb::ZERO,
                 )
             };
             if mask == 0 {

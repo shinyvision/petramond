@@ -1,5 +1,5 @@
-use petramond::gui_state::PointerButton;
-use petramond::gui_state::MenuSlot;
+use petramond_world::gui_state::PointerButton;
+use petramond_world::gui_state::MenuSlot;
 
 /// App-side GUI click state: double-click gather detection for the
 /// document-routed slot clicks (`drive_doc_menu`). The document runtime owns

@@ -6,11 +6,11 @@
 
 use super::super::tick::TICK_DT;
 use super::common::game;
-use petramond::block::Block;
-use petramond::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
-use petramond::facing::Facing;
+use petramond_world::block::Block;
+use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
+use petramond_math::facing::Facing;
 use crate::game::GameInput;
-use petramond::mathh::{IVec3, Vec3};
+use petramond_math::math::{IVec3, Vec3};
 
 /// A flat stone floor at y=64 in column (0,0) on the SERVER world, with the
 /// player (client + session) standing on it — the fixture the pipe then
@@ -50,7 +50,7 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     // The first pumps stream the fixture into the replica. Sections ship only
     // once the server's light bake lands (the light-final ship gate); with the
     // inline test pool that completes inside the pump.
-    let deadline = std::time::Instant::now() + petramond::test_time::TEST_HARD_DEADLINE;
+    let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     while game.replica.chunk_block(8, 64, 8) != Block::Stone.id() {
         assert!(
             std::time::Instant::now() < deadline,
@@ -133,7 +133,7 @@ fn server_rebakes_replicate_as_light_data() {
     let torch = IVec3::new(6, 65, 6);
 
     // Wait for the lit floor section to ship.
-    let deadline = std::time::Instant::now() + petramond::test_time::TEST_HARD_DEADLINE;
+    let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     while game.replica.chunk_block(8, 64, 8) != Block::Stone.id() {
         assert!(std::time::Instant::now() < deadline, "the floor replicated");
         frame(&mut game);
@@ -142,7 +142,7 @@ fn server_rebakes_replicate_as_light_data() {
         g.replica
             .section_at_world_for_test(torch.x, torch.y, torch.z)
             .map(|s| s.blocklight_at(6, 1, 6))
-            .unwrap_or(petramond::light::LightRgb::ZERO)
+            .unwrap_or(petramond_world::light::LightRgb::ZERO)
     };
     assert!(
         block_at(&game).is_dark(),
@@ -158,8 +158,8 @@ fn server_rebakes_replicate_as_light_data() {
         .set_block_world(torch.x, torch.y, torch.z, Block::Torch));
     game.server
         .world
-        .insert_torch(torch, petramond::torch::TorchPlacement::Floor);
-    let deadline = std::time::Instant::now() + petramond::test_time::TEST_HARD_DEADLINE;
+        .insert_torch(torch, petramond_world::torch::TorchPlacement::Floor);
+    let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     while block_at(&game).is_dark() {
         assert!(
             std::time::Instant::now() < deadline,

@@ -11,7 +11,7 @@
 use crate::sound_registry::Sound;
 
 /// An interaction that can make a block sound — the data-driven vocabulary. Code
-/// asks `block.sound(action)` and the [`BlockSoundSet`] answers, so wiring a new
+/// asks `block.sound(action)` and the `BlockSoundSet` answers, so wiring a new
 /// interaction's sounds is a field here plus a lookup arm, never per-block logic.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BlockSoundAction {

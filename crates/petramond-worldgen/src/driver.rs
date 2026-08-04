@@ -552,7 +552,7 @@ impl ChunkGenerator {
     /// fixed stage order — terrain → underground scatter → vegetation → trees — but
     /// each stage clips to this section, and the deep/high stages are skipped when the
     /// section provably cannot hold their output. Byte-identical, above ground, to the
-    /// same slab of [`generate_chunk_with`]; works for any `cy` (incl. below y=0).
+    /// same slab of `generate_chunk_with`; works for any `cy` (incl. below y=0).
     ///
     /// Mod worldgen hooks attach here (and ONLY here — the whole-chunk path routes
     /// through this function when hooks are active, so both paths dispatch every hook

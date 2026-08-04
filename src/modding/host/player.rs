@@ -5,7 +5,7 @@
 use mod_api::{HostCall, HostRet, PlayerSnapshot};
 
 use crate::events::ModAction;
-use crate::item::ItemStack;
+use petramond_world::item::ItemStack;
 
 use super::entities::give_item;
 use super::guards::{batch_guard, finite3, item_by_name, sim_call, sim_query};
@@ -166,7 +166,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         // mutation, no events. Unknown keys are forgiving (Bool(false)) — a
         // typo'd key is not a protocol break.
         HostCall::EffectApply { key, ticks } => sim_query(|ctx| {
-            let Some(effect) = crate::effect::by_name(&key) else {
+            let Some(effect) = petramond_world::effect::by_name(&key) else {
                 log::warn!("[mod {mod_id}] EffectApply: unknown effect '{key}'");
                 return HostRet::Bool(false);
             };
@@ -250,7 +250,7 @@ mod tests {
 
     use crate::events::{PostQueue, SimCtx};
     use crate::events::tick::TickEvents;
-    use crate::mathh::Vec3;
+    use petramond_math::math::Vec3;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
     use crate::player::Player;
@@ -271,7 +271,7 @@ mod tests {
         // FROM it. A synthetic catalog would be stomped by any concurrently
         // building session; naming a specific engine recipe would pin editable
         // data. Neither is this test's subject.
-        let recipes = crate::crafting::load_recipes_for(&Default::default());
+        let recipes = petramond_world::crafting::load_recipes_for(&Default::default());
         let key = recipes
             .crafting()
             .iter()
@@ -287,7 +287,7 @@ mod tests {
         let mut other = Player::new(Vec3::new(4.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui_state::empty_gui_state();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
 
         let unlock = |data: &mut ModStoreData, id: u8| {
             handle_host_call(
@@ -308,7 +308,7 @@ mod tests {
             )
         };
 
-        let mut other_gui = crate::gui_state::empty_gui_state();
+        let mut other_gui = petramond_world::gui_state::empty_gui_state();
         let others = vec![crate::events::SessionPlayerRef {
             id: PlayerId(1),
             player: &mut other,

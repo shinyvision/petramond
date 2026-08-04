@@ -43,7 +43,7 @@ impl Game {
     /// action table: `(full_id, label, category, default binding)`.
     pub fn client_bindable_actions(
         &self,
-    ) -> Vec<(String, String, String, petramond::controls::Binding)> {
+    ) -> Vec<(String, String, String, petramond_world::controls::Binding)> {
         self.client_mods
             .key_actions()
             .iter()
@@ -52,7 +52,7 @@ impl Game {
                     a.full_id.clone(),
                     a.label.clone(),
                     a.category.clone(),
-                    petramond::controls::Binding::key(a.default_code),
+                    petramond_world::controls::Binding::key(a.default_code),
                 )
             })
             .collect()
@@ -116,7 +116,7 @@ impl Game {
     }
 
     /// Every client mod's desired looping-sound gains this frame.
-    pub fn client_mod_sound_loops(&self, out: &mut Vec<(petramond::sound_registry::Sound, f32)>) {
+    pub fn client_mod_sound_loops(&self, out: &mut Vec<(petramond_world::sound_registry::Sound, f32)>) {
         self.client_mods.sound_loops(out);
     }
 

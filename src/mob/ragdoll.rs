@@ -27,7 +27,7 @@
 
 use glam::{Mat3, Quat};
 
-use crate::mathh::{voxel_at, IVec3, Vec3};
+use petramond_math::math::{voxel_at, IVec3, Vec3};
 
 use super::model_meta::Skeleton;
 

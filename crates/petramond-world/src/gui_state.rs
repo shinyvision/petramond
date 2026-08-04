@@ -71,7 +71,7 @@ pub struct ContainerView {
 }
 
 /// The player's health for the HUD hearts: `current` and `max` in half-heart points
-/// (a full heart is 2). `None` in a [`UiSnapshot`] hides the bar (spectator).
+/// (a full heart is 2). `None` in a `UiSnapshot` hides the bar (spectator).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct HealthView {
     pub current: i32,

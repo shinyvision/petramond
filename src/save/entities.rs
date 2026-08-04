@@ -8,7 +8,7 @@
 //! block/biome/water data; see `save::codec`.
 
 use crate::entity::DroppedItem;
-use crate::mathh::Vec3;
+use petramond_math::math::Vec3;
 use crate::save::codec::{get_item_slot, put_f32, put_item_slot, put_u16, put_u32, Reader};
 
 /// Bytes per serialized entity: pos(12) + vel(12) + slot(4, plain stack) +
@@ -62,7 +62,7 @@ pub fn get_entities(r: &mut Reader) -> Option<Vec<DroppedItem>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::item::{ItemStack, ItemType};
+    use petramond_world::item::{ItemStack, ItemType};
 
     #[test]
     fn entities_roundtrip_through_a_buffer() {
@@ -100,13 +100,13 @@ mod tests {
 
     #[test]
     fn instance_data_survives_the_entity_roundtrip() {
-        use crate::item::variant;
+        use petramond_world::item::variant;
         let mut m = variant::VariantMap::new();
         m.insert("petramond:tint".into(), vec![1, 2, 3]);
         let v = variant::intern(&m).unwrap();
         let d = DroppedItem::new(
             Vec3::new(0.0, 64.0, 0.0),
-            crate::item::ItemStack::with_variant(ItemType::Stone, 2, v),
+            petramond_world::item::ItemStack::with_variant(ItemType::Stone, 2, v),
             1,
         );
         let mut buf = Vec::new();
