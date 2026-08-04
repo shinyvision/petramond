@@ -11,10 +11,7 @@ use super::World;
 
 fn install_column_summary(world: &mut World, generator: &ChunkGenerator, pos: ChunkPos) {
     world.ensure_column(pos);
-    world
-        .gen
-        .column_gen
-        .insert(pos, Arc::new(generator.generate_column_gen(pos.cx, pos.cz)));
+    world.set_column_gen(pos, Arc::new(generator.generate_column_gen(pos.cx, pos.cz)));
 }
 
 #[test]
@@ -115,7 +112,7 @@ fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
     let _ = std::fs::remove_dir_all(&dir);
     let opened = crate::save::open_at(dir.clone()).expect("open save");
     let mut world = World::new(0, 0);
-    world.attach_save(opened.save);
+    world.attach_save(opened.save, opened.saved);
 
     let a = SectionPos::new(0, 4, 0);
     let b = SectionPos::new(1, 4, 0);
@@ -134,7 +131,7 @@ fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
     }
     world.flush_modified_chunks();
     assert!(
-        world.save().expect("save").manifest_contains(b),
+        world.saved_index().contains(b),
         "fixture: B's record is on disk"
     );
     assert!(
@@ -238,7 +235,7 @@ fn heightmap_recompute_preserves_generated_cave_mouth_surface() {
 
     let mut world = World::new(seed, 0);
     world.ensure_column(cp);
-    world.gen.column_gen.insert(cp, Arc::clone(&col));
+    world.set_column_gen(cp, Arc::clone(&col));
 
     let cy = cave_top.div_euclid(SECTION_SIZE as i32);
     let sp = SectionPos::new(cp.cx, cy, cp.cz);
@@ -319,7 +316,7 @@ fn heightmap_recompute_preserves_loaded_dug_shaft_below_generated_surface() {
     let column = world.ensure_column(cp);
     column.set_surface_y(x, z, ground);
     column.set_sky_cover_y(x, z, ground);
-    world.gen.column_gen.insert(cp, col);
+    world.set_column_gen(cp, col);
 
     let ground_sp = SectionPos::from_world(
         cp.cx * SECTION_SIZE as i32 + x as i32,
@@ -367,7 +364,7 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
     let _ = std::fs::remove_dir_all(&dir);
     let opened = crate::save::open_at(dir.clone()).expect("open save");
     let mut world = World::new(0, 0);
-    world.attach_save(opened.save);
+    world.attach_save(opened.save, opened.saved);
     let cp = ChunkPos::new(0, 0);
     let shaft_x = 8;
     let shaft_z = 8;

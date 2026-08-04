@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::mathh::{IVec3, Vec3};
-use crate::server::player::PlayerId;
+use crate::player::PlayerId;
 
 use super::{ActionOutcome, ItemSlotWire, MenuSyncMsg, Transform};
 
@@ -9,7 +9,7 @@ use super::{ActionOutcome, ItemSlotWire, MenuSyncMsg, Transform};
 /// byte when the cell holds water. Coalesced latest-wins per cell per tick,
 /// sent only for sections in the recipient's sent set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct BlockDelta {
+pub struct BlockDelta {
     pub pos: IVec3,
     pub block_id: u16,
     pub water: Option<u8>,
@@ -37,7 +37,7 @@ pub(crate) struct BlockDelta {
 /// a same-tick write-block-then-KV lands in order). Coalesced latest-wins per
 /// `(pos, key)` per tick.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct CellKvDelta {
+pub struct CellKvDelta {
     pub pos: IVec3,
     pub key: String,
     pub value: Option<Vec<u8>>,
@@ -47,7 +47,7 @@ pub(crate) struct CellKvDelta {
 /// a handful of prims and half a set draws nothing sensible. An empty `prims`
 /// clears the cell.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct BlockDrawDelta {
+pub struct BlockDrawDelta {
     pub pos: IVec3,
     /// SHARED with the world's stored set: filtering the lane per recipient
     /// costs a refcount bump per delta, not a prim-list deep copy per viewer.
@@ -59,7 +59,7 @@ pub(crate) struct BlockDrawDelta {
 /// The client store keeps the previous batch's row per id and interpolates
 /// prev→curr, exactly as the renderer interpolates `Instance::prev_*`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct MobStateRow {
+pub struct MobStateRow {
     /// Stable mob identity (`Instance::id`).
     pub id: u64,
     /// Wire mob id (`Mob.0` on the server).
@@ -99,7 +99,7 @@ pub(crate) struct MobStateRow {
 /// One dropped item entity's replicated state as of the batch's tick — the
 /// `DroppedItemPresentation` fields minus light (client-sampled at `pos`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ItemStateRow {
+pub struct ItemStateRow {
     /// Stable per-spawn identity (`DroppedItem::id`).
     pub id: u64,
     /// Wire item id.
@@ -117,7 +117,7 @@ pub(crate) struct ItemStateRow {
 /// skips its OWN id (the local body renders from the predicted player). Light
 /// is client-sampled at `pos`, like mobs and items.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct PlayerStateRow {
+pub struct PlayerStateRow {
     pub id: PlayerId,
     /// `pos` is the feet position (the body model's `y = 0`).
     pub transform: Transform,
@@ -162,7 +162,7 @@ pub(crate) struct PlayerStateRow {
 
 /// Wire form of a player's seat attachment.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum PlayerMount {
+pub enum PlayerMount {
     Mob {
         id: u64,
         seat: u8,
@@ -178,7 +178,7 @@ pub(crate) enum PlayerMount {
 }
 
 impl PlayerMount {
-    pub(crate) fn from_mount(m: crate::mob::riding::Mount) -> Self {
+    pub fn from_mount(m: crate::mob::riding::Mount) -> Self {
         match m.target {
             crate::mob::riding::MountTarget::Mob(id) => PlayerMount::Mob { id, seat: m.seat },
             crate::mob::riding::MountTarget::Anchor(a) => PlayerMount::Anchor {
@@ -194,7 +194,7 @@ impl PlayerMount {
 /// rows as `(player, kind)` pairs — the wire form of that session's lossy
 /// `PlayerTickEvents` one-shots. No registry ids ride here.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum PlayerActionKind {
+pub enum PlayerActionKind {
     Swung,
     Broke,
     Placed,
@@ -213,7 +213,7 @@ pub(crate) enum PlayerActionKind {
 /// fields that differ from what it last SENT (per-field, so its newer
 /// per-frame look/movement is not stomped by an echo of an older frame).
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct SelfTransform {
+pub struct SelfTransform {
     pub transform: Transform,
     pub on_ground: bool,
 }
@@ -223,7 +223,7 @@ pub(crate) struct SelfTransform {
 /// every `TickUpdate`; the inventory body rides only when its revision moved
 /// (and always on the first update after join).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct SelfState {
+pub struct SelfState {
     /// Health in half-heart points.
     pub health: i32,
     /// `PlayerMode` as its discriminant (0 = survival, 1 = spectator).
@@ -259,7 +259,7 @@ pub(crate) struct SelfState {
 /// Registry ids (`block_id`/`kind_id`/`sound_id`) are wire ids, remapped at
 /// the transport boundary like every other id field.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum WorldEventMsg {
+pub enum WorldEventMsg {
     BlockBroken {
         pos: IVec3,
         block_id: u16,
@@ -314,9 +314,9 @@ pub(crate) enum WorldEventMsg {
     ModSpatialSound(ModSpatialSoundMsg),
 }
 
-/// [`crate::game::ModSpatialSoundCommand`] on the wire (sound ids as wire ids).
+/// [`crate::events::tick::ModSpatialSoundCommand`] on the wire (sound ids as wire ids).
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum ModSpatialSoundMsg {
+pub enum ModSpatialSoundMsg {
     PlayAt {
         handle: u64,
         sound_id: u8,
@@ -341,7 +341,7 @@ pub(crate) enum ModSpatialSoundMsg {
 /// Which screen the server opened for the recipient this tick (the menu
 /// session is already open server-side; the client shows the matching screen).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum OpenScreen {
+pub enum OpenScreen {
     /// A GUI session opened for the recipient — engine containers and mod
     /// GUIs ride the one lane. `kind_key` is the registered kind's stable
     /// string key (GuiKind ids are process-local, so the wire speaks keys);
@@ -359,7 +359,7 @@ pub(crate) enum OpenScreen {
 /// session's `request_open_gui`/`request_open_sleep` outbox. `broke_block`/`placed_block` carry wire
 /// block ids (they pick the client's hand animation + sound mapping).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub(crate) struct SelfEvents {
+pub struct SelfEvents {
     // The hand-animation one-shots (broke/placed/swung/threw/used/interacted)
     // deliberately do NOT ride here: the recipient initiated those actions and
     // already animated them at click time — echoing them back replays the
@@ -388,7 +388,7 @@ pub(crate) struct SelfEvents {
 impl SelfEvents {
     /// Fold another batch's one-shots in (booleans OR, options latest-wins) —
     /// used client-side if more than one `TickUpdate` lands in a frame.
-    pub(crate) fn merge_from(&mut self, other: SelfEvents) {
+    pub fn merge_from(&mut self, other: SelfEvents) {
         self.picked_up_item |= other.picked_up_item;
         self.bed_interacted |= other.bed_interacted;
         self.player_damaged |= other.player_damaged;
@@ -408,7 +408,7 @@ impl SelfEvents {
 /// (states as of the latest executed tick); the client applies it atomically
 /// and interpolates between consecutive updates.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub(crate) struct TickUpdate {
+pub struct TickUpdate {
     pub tick: u64,
     pub clock: u64,
     pub block_deltas: Vec<BlockDelta>,

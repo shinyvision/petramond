@@ -14,12 +14,13 @@ impl World {
     /// streamer and flush-on-evict) and gives `Game` a handle for level/entities.
     /// Never on a replica — the server owns persistence; a replica persisting its
     /// installed copies would shadow the authoritative world.
-    pub fn attach_save(&mut self, save: WorldSave) {
+    pub fn attach_save(&mut self, save: WorldSave, saved: super::SavedIndex) {
         debug_assert!(
             self.role != WorldRole::ClientReplica,
             "a replica must not persist replicated sections"
         );
         self.save = Some(save);
+        self.data.saved = saved;
     }
 
     pub fn save(&self) -> Option<&WorldSave> {
@@ -28,13 +29,6 @@ impl World {
 
     pub fn save_mut(&mut self) -> Option<&mut WorldSave> {
         self.save.as_mut()
-    }
-
-    /// Whether an authoritative record or an explored cache record exists.
-    pub(super) fn saved_section_contains(&self, pos: SectionPos) -> bool {
-        self.save.as_ref().is_some_and(|save| {
-            save.authoritative_manifest_contains(pos) || save.explored_manifest_contains(pos)
-        })
     }
 
     /// The single snapshot-and-persist gate shared by [`flush_modified_chunks`]
@@ -67,11 +61,11 @@ impl World {
         let authoritative_exists = self
             .save
             .as_ref()
-            .is_some_and(|s| s.authoritative_manifest_contains(pos));
+            .is_some() && self.data.saved.authoritative_contains(pos);
         let explored_exists = self
             .save
             .as_ref()
-            .is_some_and(|s| s.explored_manifest_contains(pos));
+            .is_some() && self.data.saved.explored_contains(pos);
         let explored_first_persist = light_final && !authoritative_exists && !explored_exists;
         // A record already on disk whose light rebaked since it was written
         // (a lightless neighbour landed at the explored boundary, or an edit's
@@ -139,7 +133,7 @@ impl World {
             self.light_edited_since_persist.remove(&pos);
         }
         if let Some(save) = self.save.as_mut() {
-            save.save_sections(snaps);
+            save.save_sections(&mut self.data.saved, snaps);
         }
         self.flush_pending_colgen_records();
     }

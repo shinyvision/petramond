@@ -60,7 +60,7 @@ fn drain_until<T>(
 /// suffixed name IS the session name (it keys the per-name save file).
 #[test]
 fn duplicate_join_names_dedupe_with_the_lowest_free_numeric_suffix() {
-    let (mut server, _) = crate::game::session::build_session_inline("", 3, 2);
+    let mut server = crate::server::session_build::build_server_inline("", 3, 2);
     // The local session's name resolves from the REAL environment
     // (client.json / $USER); pin it so an ambient "Rachel"-ish name
     // can't occupy a suffix the assertions below count on.
@@ -80,7 +80,7 @@ fn duplicate_join_names_dedupe_with_the_lowest_free_numeric_suffix() {
 
 #[test]
 fn headless_disconnect_detaches_before_player_id_reuse() {
-    let mut server = crate::game::session::build_headless_session("", 3, 2);
+    let mut server = crate::server::session_build::build_headless_session("", 3, 2);
     let dismounts = Arc::new(AtomicUsize::new(0));
     let observed = Arc::clone(&dismounts);
     server.bus.on_post(
@@ -122,9 +122,9 @@ fn headless_disconnect_detaches_before_player_id_reuse() {
     assert_eq!(server.world.riding().mount_of(0), None);
     assert_eq!(server.sessions[0].mount, None);
 
-    server.pump_tagged(crate::game::tick::TICK_DT * 1.01, &mut Vec::new(), &[]);
+    server.pump_tagged(crate::events::tick::TICK_DT * 1.01, &mut Vec::new(), &[]);
     assert_eq!(dismounts.load(AtomicOrdering::SeqCst), 1);
-    server.pump_tagged(crate::game::tick::TICK_DT * 1.01, &mut Vec::new(), &[]);
+    server.pump_tagged(crate::events::tick::TICK_DT * 1.01, &mut Vec::new(), &[]);
     assert_eq!(
         dismounts.load(AtomicOrdering::SeqCst),
         1,
@@ -184,9 +184,12 @@ fn full_lan_join_place_pause_gate_and_leave() {
         .expect("player file");
     }
 
-    let (mut server, _) = crate::game::session::build_session("", 7, 2);
+    let player_name =
+        crate::save::client::resolve_player_name(&crate::save::client::load());
+    let (mut server, _, _) =
+        crate::server::session_build::build_server("", 7, 2, Some(player_name));
     let opened = crate::save::open_at(dir.clone()).expect("temp save opens");
-    server.world.attach_save(opened.save);
+    server.world.attach_save(opened.save, opened.saved);
     // Pre-build a tiny stone pad at the visitor's feet (threaded pool, but a
     // single column) so the place claim targets a known cell instead of
     // scanning streamed worldgen under CPU contention.
@@ -509,7 +512,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
 /// having passed.
 #[test]
 fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
-    let mut server = crate::game::session::build_headless_session("", 11, 2);
+    let mut server = crate::server::session_build::build_headless_session("", 11, 2);
     assert!(!server.has_local_session);
     assert!(server.sessions.is_empty());
     assert!(server.lan_ever_opened, "the pause gate starts open");

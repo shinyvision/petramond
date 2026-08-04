@@ -38,7 +38,7 @@ pub mod riding;
 mod spawn;
 pub mod tags;
 
-pub(crate) use body_geometry::{
+pub use body_geometry::{
     append_body_supports, body_boxes, body_has_peer_support, body_overlaps_block_boxes,
     body_pose_fits, body_separation, body_separation_from_body, clamp_body_yaw,
     closest_body_ray_hit, resolve_body_motion, terrain_safe_motion_prefix, BodyMotion,
@@ -46,13 +46,13 @@ pub(crate) use body_geometry::{
 };
 pub use brain::Brain;
 pub use instance::{hurt_flash01, Instance};
-pub(crate) use load::validate_brain_extensions;
+pub use petramond_world::ai_vocab::validate_brain_extensions;
 pub use loot::{load_loot, LootTables};
 pub use manager::{DeathDrop, MobAttack, MobFall, MobTickEvents, Mobs, PlayerAnchor, ShearDrop};
 pub use nav::mob_can_reach;
-pub(crate) use nav::ReachBudget;
+pub use nav::ReachBudget;
 pub use noise::{player_steps_are_audible, Noise, NoiseKind};
-pub(crate) use spawn::{
+pub use spawn::{
     body_fits_at as spawn_body_fits_at, hostile_attempt_sites, hostile_kind_has_room,
     hostile_spawn_plan, HostileSpawnCache, HOSTILE_SPAWN_ATTEMPTS, PASSIVE_SPAWN_INTERVAL_TICKS,
 };
@@ -93,7 +93,7 @@ impl Mob {
 /// onto exactly what a noise or a hit named.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EntityRef {
-    Player(crate::server::player::PlayerId),
+    Player(crate::player::PlayerId),
     Mob(u64),
 }
 
@@ -170,7 +170,7 @@ impl MobTagValue {
 /// Append-only: save palettes identify mobs by these ids/names. Must stay in
 /// lockstep with the consts above; the shipped `mobs.json` covering every name
 /// keeps a typo here from going unnoticed.
-pub(crate) const ENGINE_MOB_NAMES: &[&str] = &["petramond:owl", "petramond:sheep"];
+pub const ENGINE_MOB_NAMES: &[&str] = &["petramond:owl", "petramond:sheep"];
 
 impl std::fmt::Debug for Mob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -222,13 +222,13 @@ impl Mob {
 }
 
 /// Compatibility default for hostile rows that omit `despawn_radius`.
-pub(crate) const DEFAULT_HOSTILE_DESPAWN_RADIUS: f32 = 128.0;
+pub const DEFAULT_HOSTILE_DESPAWN_RADIUS: f32 = 128.0;
 
 /// The outer edge of player-reactive mob AI (blocks): beyond this distance a
 /// mob no longer reacts to a player at all. One design constant, two
 /// consumers: random-despawn eligibility (`instance`) and the scripted-node
 /// foothold scan gate (`behavior::wasm`) — retune it here, never re-literal it.
-pub(crate) const PLAYER_REACTIVE_RANGE: f32 = 32.0;
+pub const PLAYER_REACTIVE_RANGE: f32 = 32.0;
 
 /// The population group a species belongs to. Natural spawning caps each group
 /// independently across the loaded area (so the world can't fill with one kind),
@@ -257,7 +257,7 @@ impl MobCategory {
     }
 
     /// Compatibility default for rows that omit `despawn_radius`.
-    pub(crate) fn default_despawn_radius(self) -> Option<f32> {
+    pub fn default_despawn_radius(self) -> Option<f32> {
         match self {
             MobCategory::Passive => None,
             MobCategory::Hostile => Some(DEFAULT_HOSTILE_DESPAWN_RADIUS),
@@ -370,8 +370,8 @@ crate::wire_enum::wire_enum! {
     default Idle
 }
 
-pub(crate) const DEFAULT_DAMAGE_FLASH_SECS: f32 = 0.3;
-pub(crate) const DEFAULT_DAMAGE_KNOCKBACK_SECS: f32 = 0.3;
+pub const DEFAULT_DAMAGE_FLASH_SECS: f32 = 0.3;
+pub const DEFAULT_DAMAGE_KNOCKBACK_SECS: f32 = 0.3;
 
 /// Damage feedback components a species applies when a damage request survives
 /// `mob_damage_pre`. Empty `damage_feedback` rows resolve to [`Default`], so a mob
@@ -475,15 +475,15 @@ impl Default for MobDamageFeedback {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MobSoundSpec {
     pub category: MobSoundCategory,
-    pub sound: crate::audio::Sound,
+    pub sound: crate::sound_registry::Sound,
     pub tick_interval: Option<u32>,
     pub tick_interval_variance: u32,
 }
 
-pub(crate) const MAX_MOB_BODY_HALF_EXTENT: f32 = 32.0;
-pub(crate) const MAX_MOB_BODY_HEIGHT: f32 = 32.0;
-pub(crate) const MAX_MOB_BODY_SEGMENTS: usize = 64;
-pub(crate) const MAX_MOB_SEAT_OFFSET: f32 = 32.0;
+pub const MAX_MOB_BODY_HALF_EXTENT: f32 = 32.0;
+pub const MAX_MOB_BODY_HEIGHT: f32 = 32.0;
+pub const MAX_MOB_BODY_SEGMENTS: usize = 64;
+pub const MAX_MOB_SEAT_OFFSET: f32 = 32.0;
 
 /// A mob's collision/render footprint: a centred AABB `half_width` across and
 /// `height` tall, with the feet at the mob position. A LONG body (a hull) may
@@ -505,7 +505,7 @@ impl MobSize {
     /// Validate the geometry envelope shared by collision, targeting, and
     /// riding. Pack rows are untrusted input, and long-body segment count is
     /// bounded independently of absolute dimensions.
-    pub(crate) fn validate(self) -> Result<(), String> {
+    pub fn validate(self) -> Result<(), String> {
         if !self.half_width.is_finite()
             || self.half_width <= 0.0
             || self.half_width > MAX_MOB_BODY_HALF_EXTENT
@@ -541,7 +541,7 @@ impl MobSize {
         Ok(())
     }
 
-    pub(crate) fn body_segments(self) -> usize {
+    pub fn body_segments(self) -> usize {
         if self.validate().is_err() {
             return 0;
         }
@@ -634,7 +634,7 @@ impl BrainNode {
 /// extension composes onto). Called per spawned mob (behaviors hold
 /// per-instance state). Factories were validated at catalog load, so a
 /// failure here is a loader bug, not bad data.
-pub(crate) fn build_brain(def: &'static MobDef) -> Brain {
+pub fn build_brain(def: &'static MobDef) -> Brain {
     let mut brain = Brain::new();
     let extension_nodes = loaded()
         .extensions

@@ -169,7 +169,7 @@ impl Mobs {
         }
     }
 
-    pub(crate) fn restore_saved_mob_lit(
+    pub fn restore_saved_mob_lit(
         &mut self,
         m: SavedMob,
         skylight: u8,

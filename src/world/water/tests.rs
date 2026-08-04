@@ -1,4 +1,5 @@
 use super::*;
+use crate::mathh::Vec3;
 // Source/flow tests place water at y>=65, above flat_world's stone floor.
 use crate::world::testutil::flat_world;
 

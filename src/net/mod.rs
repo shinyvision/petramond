@@ -7,12 +7,12 @@
 //! while the TCP transport encodes length-prefixed postcard frames on
 //! its own reader/writer threads.
 
-pub(crate) mod address;
-pub(crate) mod connection;
-pub(crate) mod framing;
-pub(crate) mod handshake;
-pub(crate) mod protocol;
-pub(crate) mod remap;
+pub mod address;
+pub mod connection;
+pub mod framing;
+pub mod handshake;
+pub mod protocol;
+pub mod remap;
 
 /// Bumped on ANY wire-incompatible change. Checked first in the handshake —
 /// nothing else is parseable across a mismatch.
@@ -23,8 +23,8 @@ pub(crate) mod remap;
 //     container ships as the keyed generic `Container` target with
 //     `Container(i)` slots and named gauge readings in `gui_state`, so no
 //     engine content identity remains in the menu protocol.
-pub(crate) const PROTOCOL_VERSION: u16 = 30;
+pub const PROTOCOL_VERSION: u16 = 30;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.
-pub(crate) const DEFAULT_PORT: u16 = 7434;
+pub const DEFAULT_PORT: u16 = 7434;

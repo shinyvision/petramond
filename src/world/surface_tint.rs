@@ -12,7 +12,7 @@ use super::store::World;
 impl World {
     /// Whether the column is loaded, and if so its payload revision — the
     /// change-detection half of [`client_surface_column`](Self::client_surface_column).
-    pub(crate) fn client_surface_column_revision(&self, pos: ChunkPos) -> Option<u64> {
+    pub fn client_surface_column_revision(&self, pos: ChunkPos) -> Option<u64> {
         self.columns
             .contains_key(&pos)
             .then(|| self.column_payload_revision(pos))
@@ -27,7 +27,7 @@ impl World {
     /// Column, section finality, and the 5×5 biome tint blend are resolved
     /// once per column / per section / per tint kind, not per cell — this is
     /// the sampling hot path.
-    pub(crate) fn client_surface_column(
+    pub fn client_surface_column(
         &self,
         pos: ChunkPos,
         out: &mut [Option<(i16, [u8; 3])>; 256],
@@ -63,7 +63,7 @@ impl World {
                 };
                 let block = section.block(lx, height.rem_euclid(SECTION_SIZE as i32) as usize, lz);
                 let tile = block.tiles()[0];
-                let base = tile.map_rgb();
+                let base = crate::tile::map_rgb(tile);
                 let rgb = match tile.world_tint() {
                     None => base,
                     Some(kind) => {
@@ -108,11 +108,11 @@ impl<'a> SurfaceTintGrids<'a> {
         }
     }
 
-    fn at(&mut self, kind: crate::atlas::TileTint, lx: usize, lz: usize) -> [f32; 3] {
+    fn at(&mut self, kind: crate::tile::TileTint, lx: usize, lz: usize) -> [f32; 3] {
         let slot = match kind {
-            crate::atlas::TileTint::Grass => &mut self.grids[0],
-            crate::atlas::TileTint::Foliage => &mut self.grids[1],
-            crate::atlas::TileTint::Water => &mut self.grids[2],
+            crate::tile::TileTint::Grass => &mut self.grids[0],
+            crate::tile::TileTint::Foliage => &mut self.grids[1],
+            crate::tile::TileTint::Water => &mut self.grids[2],
         };
         slot.get_or_insert_with(|| Self::build(self.halo, self.column, kind))[lz * 16 + lx]
     }
@@ -120,14 +120,14 @@ impl<'a> SurfaceTintGrids<'a> {
     fn build(
         halo: Option<&[u8]>,
         column: &Column,
-        kind: crate::atlas::TileTint,
+        kind: crate::tile::TileTint,
     ) -> Box<[[f32; 3]; 256]> {
         let color_of = |id: u8| {
             let biome = crate::biome::Biome::from_id(id);
             match kind {
-                crate::atlas::TileTint::Grass => biome.grass_color(),
-                crate::atlas::TileTint::Foliage => biome.foliage_color(),
-                crate::atlas::TileTint::Water => biome.water_color(),
+                crate::tile::TileTint::Grass => biome.grass_color(),
+                crate::tile::TileTint::Foliage => biome.foliage_color(),
+                crate::tile::TileTint::Water => biome.water_color(),
             }
         };
         let mut out = Box::new([[0.0f32; 3]; 256]);

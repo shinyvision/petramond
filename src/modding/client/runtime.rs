@@ -43,23 +43,23 @@ fn predictable(kind: EventKind) -> bool {
 }
 
 #[derive(Clone)]
-pub(crate) struct ClientUiView {
+pub struct ClientUiView {
     pub state: Arc<std::collections::BTreeMap<String, mod_api::GuiValue>>,
     pub images: Vec<ClientImageData>,
 }
 
-pub(crate) struct ClientCanvasElementView {
+pub struct ClientCanvasElementView {
     pub element: mod_api::ClientCanvasElement,
     pub image: ClientImageData,
 }
 
-pub(crate) struct ClientCanvasView {
+pub struct ClientCanvasView {
     pub offset: [f32; 2],
     pub elements: Vec<ClientCanvasElementView>,
 }
 
 /// One mod-registered remappable key action, resolved for this session.
-pub(crate) struct ModKeyAction {
+pub struct ModKeyAction {
     /// Namespaced identity (`mod_id:action`): the remap-persistence key, the
     /// dispatch handle, and the controls-screen row id.
     pub full_id: String,
@@ -67,12 +67,12 @@ pub(crate) struct ModKeyAction {
     /// Controls-screen category: the owning pack's display name.
     pub category: String,
     /// The registered DEFAULT key (the player may remap it away).
-    pub default_code: winit::keyboard::KeyCode,
+    pub default_code: crate::keycode::KeyCode,
     mod_index: usize,
     action_id: u32,
 }
 
-pub(crate) struct ClientModRuntime {
+pub struct ClientModRuntime {
     mods: Vec<ClientMod>,
     /// Prediction handlers in dispatch order: `(priority, load order,
     /// registration order)` — the same ordering contract as the server bus.
@@ -84,8 +84,8 @@ pub(crate) struct ClientModRuntime {
     pressed: HashSet<String>,
     /// Test-only scripted answer for [`Self::placement_plan`]: lets prediction
     /// tests drive the custom-shape placement arm without a wasm instance.
-    #[cfg(test)]
-    pub(crate) scripted_shape_plan: Option<mod_api::ShapePlacementResult>,
+    #[cfg(any(test, feature = "test-support"))]
+    pub scripted_shape_plan: Option<mod_api::ShapePlacementResult>,
 }
 
 impl ClientModRuntime {
@@ -94,7 +94,7 @@ impl ClientModRuntime {
     /// world's disabled set; on a remote join the server's
     /// handshake-reported mod set. A locally installed client mod the
     /// server does not run therefore never activates.
-    pub(crate) fn load(world_seed: u32, session_key: &str, enabled: &BTreeSet<String>) -> Self {
+    pub fn load(world_seed: u32, session_key: &str, enabled: &BTreeSet<String>) -> Self {
         let mut mods = Vec::new();
         let mut predictor_rows: Vec<(i32, Predictor)> = Vec::new();
         let session = session_client_mods(crate::assets::packs(), enabled);
@@ -217,7 +217,7 @@ impl ClientModRuntime {
             actions,
             overlays,
             pressed: HashSet::new(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             scripted_shape_plan: None,
         };
         rt.bake_item_geometry();
@@ -249,7 +249,7 @@ impl ClientModRuntime {
                 // Sanitize the guest boxes; a breach falls back to the cube icon.
                 if let Ok(boxes) = crate::world::ingest_shape_boxes(&geo.boxes) {
                     if !boxes.is_empty() {
-                        crate::render::item_shape_bake::set_item_bake(block_id, boxes);
+                        crate::block::item_shape_bake::set_item_bake(block_id, boxes);
                     }
                 }
             }
@@ -263,7 +263,7 @@ impl ClientModRuntime {
     /// claim (interact/use) or veto (place_pre) this attempt". Prediction is
     /// presentation-only: handlers must not mutate (mutating host calls are
     /// capability-blocked on client instances anyway).
-    pub(crate) fn predict_claim(
+    pub fn predict_claim(
         &mut self,
         world: &World,
         actor: &PlayerSnapshot,
@@ -306,7 +306,7 @@ impl ClientModRuntime {
     /// sides compute the same write — the ghost presents it and the
     /// authoritative delta confirms. `None` = no reachable owner; the caller
     /// falls through to the ordinary ghost, the server's fall-through twin.
-    pub(crate) fn placement_plan(
+    pub fn placement_plan(
         &mut self,
         world: &World,
         actor: &PlayerSnapshot,
@@ -315,7 +315,7 @@ impl ClientModRuntime {
         block_id: u16,
         inputs: mod_api::PlaceInputsView,
     ) -> Option<mod_api::ShapePlacementResult> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         if let Some(plan) = self.scripted_shape_plan.clone() {
             return Some(plan);
         }
@@ -338,7 +338,7 @@ impl ClientModRuntime {
     /// the replica. The ghost installs them eagerly so a predicted placement
     /// collides and draws exactly from frame 0; the per-tick pump re-bakes
     /// the same pure result when the delta dirties the cell.
-    pub(crate) fn bake_placement_geometry(
+    pub fn bake_placement_geometry(
         &mut self,
         world: &World,
         shape_key: &str,
@@ -398,7 +398,7 @@ impl ClientModRuntime {
     /// custom shape would fall back to its (often empty) static boxes and desync.
     /// A missing owner / disabled mod / wrong reply leaves cells uncached
     /// (static fallback), the failure policy.
-    pub(crate) fn bake_custom_shapes(&mut self, world: &mut World) {
+    pub fn bake_custom_shapes(&mut self, world: &mut World) {
         let cells = world.drain_custom_bake_dirty();
         if cells.is_empty() {
             return;
@@ -487,7 +487,7 @@ impl ClientModRuntime {
 
     /// The session's mod-registered remappable actions, for the app's action
     /// table and the controls screen.
-    pub(crate) fn key_actions(&self) -> &[ModKeyAction] {
+    pub fn key_actions(&self) -> &[ModKeyAction] {
         &self.actions
     }
 
@@ -507,7 +507,7 @@ impl ClientModRuntime {
             .find(|loaded| loaded.id == owner && !loaded.instance.disabled())
     }
 
-    pub(crate) fn frame(&mut self, world: &World, frame: ClientFrameData) {
+    pub fn frame(&mut self, world: &World, frame: ClientFrameData) {
         let call = GuestCall::ClientFrame { frame };
         for loaded in &mut self.mods {
             dispatch_unit(&mut loaded.instance, world, &call, "client frame");
@@ -516,7 +516,7 @@ impl ClientModRuntime {
 
     /// Dispatch one bound-action edge to its owning mod, by the action's
     /// namespaced `full_id`. Returns whether a live mod owns the action.
-    pub(crate) fn action(&mut self, world: &World, full_id: &str, pressed: bool) -> bool {
+    pub fn action(&mut self, world: &World, full_id: &str, pressed: bool) -> bool {
         let Some((index, action_id)) = self
             .actions
             .iter()
@@ -543,7 +543,7 @@ impl ClientModRuntime {
         true
     }
 
-    pub(crate) fn ui_event(&mut self, world: &World, kind_key: &str, event: ClientUiEvent) {
+    pub fn ui_event(&mut self, world: &World, kind_key: &str, event: ClientUiEvent) {
         let call = GuestCall::ClientUi {
             kind_key: kind_key.to_owned(),
             event,
@@ -554,7 +554,7 @@ impl ClientModRuntime {
         dispatch_unit(&mut loaded.instance, world, &call, "client UI event");
     }
 
-    pub(crate) fn canvas_event(
+    pub fn canvas_event(
         &mut self,
         world: &World,
         canvas_key: &str,
@@ -570,7 +570,7 @@ impl ClientModRuntime {
         dispatch_unit(&mut loaded.instance, world, &call, "client canvas event");
     }
 
-    pub(crate) fn canvas_scroll(
+    pub fn canvas_scroll(
         &mut self,
         world: &World,
         canvas_key: &str,
@@ -590,7 +590,7 @@ impl ClientModRuntime {
         dispatch_unit(&mut loaded.instance, world, &call, "client canvas scroll");
     }
 
-    pub(crate) fn release_all_keys(&mut self, world: &World) {
+    pub fn release_all_keys(&mut self, world: &World) {
         let pressed: Vec<_> = self.pressed.drain().collect();
         for full_id in pressed {
             let Some((index, action_id)) = self
@@ -614,11 +614,11 @@ impl ClientModRuntime {
         }
     }
 
-    pub(crate) fn overlays(&self) -> &[super::state::ClientOverlayRegistration] {
+    pub fn overlays(&self) -> &[super::state::ClientOverlayRegistration] {
         &self.overlays
     }
 
-    pub(crate) fn image(&self, image_key: &str) -> Option<ClientImageData> {
+    pub fn image(&self, image_key: &str) -> Option<ClientImageData> {
         self.owner_mod(image_key)?
             .instance
             .client_data()?
@@ -627,7 +627,7 @@ impl ClientModRuntime {
             .cloned()
     }
 
-    pub(crate) fn canvas_view(&self, canvas_key: &str) -> Option<ClientCanvasView> {
+    pub fn canvas_view(&self, canvas_key: &str) -> Option<ClientCanvasView> {
         let data = self.owner_mod(canvas_key)?.instance.client_data()?;
         let scene = data.canvas_scenes.get(canvas_key)?;
         let elements = scene
@@ -653,7 +653,7 @@ impl ClientModRuntime {
         })
     }
 
-    pub(crate) fn view_for(&self, kind_key: &str) -> Option<ClientUiView> {
+    pub fn view_for(&self, kind_key: &str) -> Option<ClientUiView> {
         let data = self.owner_mod(kind_key)?.instance.client_data()?;
         Some(ClientUiView {
             state: data.ui_state.clone(),
@@ -661,30 +661,38 @@ impl ClientModRuntime {
         })
     }
 
-    /// Push every mod's current ambient-volume targets into `drives`
-    /// (per-(mod, bundle) keyed — two mods driving one bundle stay
-    /// independent). The drives ease and derive; this only syncs targets.
-    pub(crate) fn sync_ambient_targets(&self, drives: &mut crate::game::ambient::AmbientDrives) {
-        for m in &self.mods {
-            // A disabled (trapped/watchdogged) mod must not freeze its last
-            // weather on for the rest of the session: zero its targets so
-            // the drives ease out and retire (mirrors `take_commands`).
+    /// Every mod's current ambient-volume targets, per (mod id, bundle):
+    /// `(intensity, wind)` rows the presentation layer pushes into its
+    /// ambient drives. A disabled (trapped/watchdogged) mod must not freeze
+    /// its last weather on for the rest of the session: its targets read as
+    /// zero intensity so the drives ease out and retire (mirrors
+    /// `take_commands`).
+    pub fn ambient_targets(
+        &self,
+    ) -> impl Iterator<Item = (&str, u8, f32, [f32; 2])> + '_ {
+        self.mods.iter().flat_map(|m| {
             let disabled = m.instance.disabled();
-            let Some(data) = m.instance.client_data() else {
-                continue;
-            };
-            for (&bundle, &(intensity, wind)) in &data.ambient_sets {
-                let intensity = if disabled { 0.0 } else { intensity };
-                drives.set(&m.id, bundle, intensity, wind);
-            }
-        }
+            m.instance
+                .client_data()
+                .into_iter()
+                .flat_map(move |data| {
+                    data.ambient_sets.iter().map(move |(&bundle, &(intensity, wind))| {
+                        (
+                            m.id.as_str(),
+                            bundle,
+                            if disabled { 0.0 } else { intensity },
+                            wind,
+                        )
+                    })
+                })
+        })
     }
 
     /// Every mod's looping-sound gains: `(sound, gain)`, mods in load order.
     /// The audio side keys its loop table on the resolved sound, so two mods
     /// driving one sound key resolve last-writer-wins there. Disabled mods
     /// contribute nothing — their loops sweep to silence.
-    pub(crate) fn sound_loops(&self, out: &mut Vec<(crate::audio::Sound, f32)>) {
+    pub fn sound_loops(&self, out: &mut Vec<(crate::sound_registry::Sound, f32)>) {
         out.clear();
         for m in &self.mods {
             if m.instance.disabled() {
@@ -699,7 +707,7 @@ impl ClientModRuntime {
 
     /// The combined post-process mood: component-wise MAX over enabled mods
     /// (disabled mods contribute nothing — their mood dies with them).
-    pub(crate) fn mood(&self) -> [f32; 2] {
+    pub fn mood(&self) -> [f32; 2] {
         let mut mood = [0.0f32, 0.0];
         for m in &self.mods {
             if m.instance.disabled() {
@@ -713,7 +721,7 @@ impl ClientModRuntime {
         mood
     }
 
-    pub(crate) fn take_commands(&mut self) -> Vec<ClientCommand> {
+    pub fn take_commands(&mut self) -> Vec<ClientCommand> {
         let mut out = Vec::new();
         for loaded in &mut self.mods {
             if loaded.instance.disabled() {
@@ -737,7 +745,7 @@ impl ClientModRuntime {
 /// the plain cube fallback (which reads a plank). Side-effect-free (no storage,
 /// no registration); the per-world runtime re-bakes the enabled subset at join,
 /// idempotently. A headless server has no icon atlas and never calls this.
-pub(crate) fn bake_installed_custom_item_geometry() {
+pub fn bake_installed_custom_item_geometry() {
     use crate::block::{Block, ShapeFamily};
 
     let all: BTreeSet<String> = crate::assets::packs()
@@ -779,7 +787,7 @@ pub(crate) fn bake_installed_custom_item_geometry() {
                 // disable for the session).
                 if let Ok(boxes) = crate::world::ingest_shape_boxes(&geo.boxes) {
                     if !boxes.is_empty() {
-                        crate::render::item_shape_bake::set_item_bake(block.id(), boxes);
+                        crate::block::item_shape_bake::set_item_bake(block.id(), boxes);
                     }
                 }
             }
@@ -823,7 +831,7 @@ fn dispatch_unit(instance: &mut ModInstance, world: &World, call: &GuestCall, wh
 /// valid at pack load must not turn invalid because the player rebound Sneak.
 fn reserved_key(key: &str) -> bool {
     let defaults = crate::controls::BindingSet::default();
-    let default_bound = |code: winit::keyboard::KeyCode| {
+    let default_bound = |code: crate::keycode::KeyCode| {
         crate::controls::BindableAction::ALL
             .iter()
             .any(|a| defaults.binding(*a).input == crate::controls::BoundInput::Key(code))
@@ -839,12 +847,12 @@ fn reserved_key(key: &str) -> bool {
 /// never the display name. A world's directory never changes after creation
 /// (renames rewrite only `world.json`), so personal mod data — minimap
 /// exploration, waypoints — follows a renamed world with zero migration.
-pub(crate) fn local_session_key(world_dir_name: &str) -> String {
+pub fn local_session_key(world_dir_name: &str) -> String {
     format!("local:{world_dir_name}")
 }
 
 /// The client-storage identity of a remote server (its address string).
-pub(crate) fn remote_session_key(server_identity: &str) -> String {
+pub fn remote_session_key(server_identity: &str) -> String {
     format!("remote:{server_identity}")
 }
 
@@ -860,19 +868,19 @@ fn session_storage_bucket(base: &Path, session_key: &str) -> PathBuf {
 }
 
 fn client_storage_dir(session_key: &str, mod_id: &str) -> PathBuf {
-    session_storage_bucket(&crate::save::base_data_dir(), session_key).join(mod_id)
+    session_storage_bucket(&petramond_util::paths::base_data_dir(), session_key).join(mod_id)
 }
 
-#[cfg(test)]
-pub(crate) fn client_storage_dir_for_test(session_key: &str, mod_id: &str) -> PathBuf {
+#[cfg(any(test, feature = "test-support"))]
+pub fn client_storage_dir_for_test(session_key: &str, mod_id: &str) -> PathBuf {
     client_storage_dir(session_key, mod_id)
 }
 
 /// Test seeding: write entries into a mod's session storage bucket through
 /// the ordered worker, flushed before return — perf harnesses fabricate a
 /// large explored world without driving real exploration.
-#[cfg(test)]
-pub(crate) fn seed_client_storage_for_test(
+#[cfg(any(test, feature = "test-support"))]
+pub fn seed_client_storage_for_test(
     session_key: &str,
     mod_id: &str,
     mut entries: Vec<(String, Vec<u8>)>,
@@ -902,8 +910,8 @@ pub(crate) fn seed_client_storage_for_test(
 /// them — explored terrain from a dead seed on a supposed-to-be-black map.
 /// Safe against in-flight writes: the storage worker drains synchronously on
 /// session drop, and deletion is only reachable from the world-select menu.
-pub(crate) fn delete_local_world_storage(world_dir_name: &str) -> std::io::Result<()> {
-    delete_local_world_storage_at(&crate::save::base_data_dir(), world_dir_name)
+pub fn delete_local_world_storage(world_dir_name: &str) -> std::io::Result<()> {
+    delete_local_world_storage_at(&petramond_util::paths::base_data_dir(), world_dir_name)
 }
 
 fn delete_local_world_storage_at(base: &Path, world_dir_name: &str) -> std::io::Result<()> {
@@ -917,8 +925,8 @@ fn delete_local_world_storage_at(base: &Path, world_dir_name: &str) -> std::io::
 
 /// The bindable physical keys and their stable ABI names — the one table
 /// behind [`key_code_for_name`] and [`reserved_key`].
-const PHYSICAL_KEYS: &[(winit::keyboard::KeyCode, &str)] = {
-    use winit::keyboard::KeyCode;
+const PHYSICAL_KEYS: &[(crate::keycode::KeyCode, &str)] = {
+    use crate::keycode::KeyCode;
     &[
         (KeyCode::KeyA, "key_a"),
         (KeyCode::KeyB, "key_b"),
@@ -960,7 +968,7 @@ const PHYSICAL_KEYS: &[(winit::keyboard::KeyCode, &str)] = {
 };
 
 /// The `KeyCode` behind a registered default-key name (`"key_m"` → `KeyM`).
-pub(crate) fn key_code_for_name(name: &str) -> Option<winit::keyboard::KeyCode> {
+pub fn key_code_for_name(name: &str) -> Option<crate::keycode::KeyCode> {
     PHYSICAL_KEYS
         .iter()
         .find(|(_, bindable)| *bindable == name)

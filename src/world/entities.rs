@@ -26,7 +26,7 @@ use crate::chunk::SectionPos;
 use crate::entity::DroppedItem;
 use crate::item::ItemStack;
 use crate::mathh::{voxel_at, Vec3};
-use crate::server::player::PlayerId;
+use crate::player::PlayerId;
 
 use super::store::World;
 
@@ -47,7 +47,7 @@ pub struct ItemReactionFx {
     /// The item row's one-shot burst bundle id, if declared.
     pub burst: Option<u8>,
     /// The item row's one-shot sound, if declared.
-    pub sound: Option<crate::audio::Sound>,
+    pub sound: Option<crate::sound_registry::Sound>,
     pub pos: Vec3,
 }
 
@@ -87,7 +87,7 @@ impl DroppedItems {
     }
 
     /// Mutable access to the active item list, for tests that seed or trim it.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn items_mut(&mut self) -> &mut Vec<DroppedItem> {
         &mut self.items
     }
@@ -383,7 +383,7 @@ impl World {
     }
 
     /// Mutable access to the active item list, for tests that seed or trim it.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn item_entities_mut(&mut self) -> &mut Vec<DroppedItem> {
         self.dropped_items.items_mut()
     }

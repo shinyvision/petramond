@@ -196,17 +196,17 @@ impl Player {
     }
 
     #[inline]
-    pub(crate) fn is_damage_immune(&self) -> bool {
+    pub fn is_damage_immune(&self) -> bool {
         self.damage_immunity.is_active()
     }
 
     #[inline]
-    pub(crate) fn tick_damage_immunity(&mut self) {
+    pub fn tick_damage_immunity(&mut self) {
         self.damage_immunity.tick();
     }
 
     #[inline]
-    pub(crate) fn clear_damage_immunity(&mut self) {
+    pub fn clear_damage_immunity(&mut self) {
         self.damage_immunity.clear();
     }
 
@@ -259,7 +259,7 @@ impl Player {
     /// duration concern — but never WHAT it does: consequences are applied by
     /// `Game::tick_effects`, because damaging behaviors must route through
     /// the `Game::damage_player` funnel this type cannot reach.
-    pub(crate) fn tick_effects(&mut self) -> Vec<crate::effect::EffectBehavior> {
+    pub fn tick_effects(&mut self) -> Vec<crate::effect::EffectBehavior> {
         let mut fired = Vec::new();
         for e in &mut self.effects {
             e.remaining -= 1;
@@ -301,7 +301,7 @@ impl Player {
     /// tracking into damage instead (`ConnectedPlayer::fall`) — nothing consumes this
     /// latch in the game anymore.
     #[cfg(test)]
-    pub(crate) fn take_fall_distance(&mut self) -> f32 {
+    pub fn take_fall_distance(&mut self) -> f32 {
         std::mem::replace(&mut self.fall_distance, 0.0)
     }
 
@@ -401,7 +401,7 @@ impl Player {
 
     /// Gameplay body: feet at `pos`, using the player's collision dimensions.
     #[inline]
-    pub(crate) fn body(&self) -> crate::body::Body {
+    pub fn body(&self) -> crate::body::Body {
         crate::body::Body::new(self.pos, HALF_W, HEIGHT)
     }
 

@@ -9,14 +9,15 @@
 //! re-baking the whole explored area; the cubes are mostly uniform and deflate
 //! to almost nothing.
 
-mod primitives;
+mod item_slot;
 #[cfg(test)]
 mod tests;
 
-pub use primitives::{deflate, get_item_slot, inflate, put_item_slot, Reader};
-pub(crate) use primitives::{
+pub use item_slot::{get_item_slot, put_item_slot};
+pub use petramond_util::bytecodec::{deflate, inflate, Reader};
+pub use petramond_util::bytecodec::{
     get_indexed, get_kv_map, put_f32, put_f64, put_i64, put_indexed, put_kv_map, put_u16, put_u32,
-    put_u64, put_u8, read_u16, read_u32, write_u16, write_u32,
+    put_u64, put_u8,
 };
 
 use std::collections::{BTreeMap, HashMap};
@@ -119,7 +120,7 @@ pub struct SectionSnapshot {
     pub pos: SectionPos,
     /// Derived explored-terrain cache, not authoritative player/entity state.
     /// Routing metadata only; it is not encoded inside the section record.
-    pub(crate) cache_only: bool,
+    pub cache_only: bool,
     pub blocks: crate::section::BlockCube,
     pub water: Option<Arc<[u8]>>,
     /// Item entities resting in this section, captured at save time so their
@@ -191,7 +192,7 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
 /// [`encode_snapshot`] against an explicit palette — the world's is a
 /// process-wide handle, and a test that means to state something about the
 /// FORMAT must not depend on which world happens to be open.
-pub(crate) fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<u8> {
+pub fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<u8> {
     let extra = s.water.as_ref().map_or(0, |w| w.len());
     let mut payload = Vec::with_capacity(4 + s.blocks.len() + extra);
     put_u8(&mut payload, SECTION_REC_VERSION);
@@ -349,7 +350,7 @@ pub fn decode_section(
 }
 
 /// [`decode_section`] against an explicit palette (see [`encode_snapshot_with`]).
-pub(crate) fn decode_section_with(
+pub fn decode_section_with(
     pos: SectionPos,
     blob: &[u8],
     pal: &palette::Palette,

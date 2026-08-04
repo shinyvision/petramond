@@ -1,3 +1,5 @@
+use crate::world::remote::payload::SectionPayloadExt;
+use crate::world::WorldData;
 use std::sync::Arc;
 
 use crate::block::Block;
@@ -523,7 +525,7 @@ fn column_payload_fixture(pos: ChunkPos, deep_band_lo: i32) -> crate::net::proto
         mesh_biomes: flat(20 * 20),
         surface_heightmap: vec![64; SECTION_SIZE * SECTION_SIZE],
         sky_cover: vec![64; SECTION_SIZE * SECTION_SIZE],
-        summaries: vec![0u8; World::column_section_range().count()],
+        summaries: vec![0u8; WorldData::column_section_range().count()],
         deep_band_lo,
     }
 }
@@ -694,6 +696,7 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
     // A loaded section whose saved overlay is still in flight is NOT
     // final: it must not ship until the overlay resolves.
     w.gen.awaited_overlays.insert(SectionPos::new(1, 4, 0));
+    w.note_stream_nonfinal(SectionPos::new(1, 4, 0));
     let plan = w.plan_terrain_send(
         anchor(0),
         &sent_columns,
@@ -706,6 +709,7 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
         "an in-flight section must not be sent (its base would lie)"
     );
     w.gen.awaited_overlays.clear();
+    w.rebuild_stream_nonfinal();
     let plan = w.plan_terrain_send(
         anchor(0),
         &sent_columns,
@@ -758,7 +762,7 @@ fn terrain_send_defers_deep_sections_outside_the_anchor_window() {
     let cp = ChunkPos::new(0, 0);
     let gen = crate::worldgen::driver::ChunkGenerator::new(0).generate_column_gen(cp.cx, cp.cz);
     let band_lo = *World::surface_window_for_column(&gen, 0).start();
-    w.gen.column_gen.insert(cp, Arc::new(gen));
+    w.set_column_gen(cp, Arc::new(gen));
 
     // Deepest legal cy: a surface anchor at band_lo+2 has vwin down to
     // band_lo-3, so SECTION_MIN_CY must sit below that for the deferral

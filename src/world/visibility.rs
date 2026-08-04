@@ -197,13 +197,11 @@ impl World {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-
     use crate::block::Block;
-    use crate::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
+    use crate::chunk::{ChunkPos, SECTION_SIZE, SectionPos};
     use crate::section::Section;
     use crate::world::store::LoadTarget;
     use crate::worldgen::driver::ChunkGenerator;
-
     use super::World;
 
     fn solid_section(pos: SectionPos) -> Section {

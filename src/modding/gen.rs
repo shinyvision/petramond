@@ -34,8 +34,8 @@
 //! — no snapshots, no allocation, byte-identical output (the genparity pin).
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use mod_api::{GuestCall, GuestRet, WorldgenStage};
 use wasmtime::Module;
@@ -93,7 +93,7 @@ struct StageHook {
 
 /// One session's worldgen hook set. Immutable after build; shared by `Arc`
 /// with every `ChunkGenerator` of the session.
-pub(crate) struct GenHooks {
+pub struct GenHooks {
     epoch: u64,
     seed: u32,
     mods: Vec<GenModule>,
@@ -104,34 +104,23 @@ pub(crate) struct GenHooks {
     fallback_logged: [AtomicBool; STAGE_COUNT],
 }
 
-/// Borrowed inputs of one per-section hook dispatch (copied into the guest
-/// call only when a hook actually fires).
-pub(crate) struct GenInputs<'a> {
-    pub seed: u32,
-    pub section_pos: [i32; 3],
-    /// Section snapshot at this attach point (`None` for climate/terrain,
-    /// which run before the section has content).
-    pub blocks: Option<&'a crate::section::BlockCube>,
-    /// Post-cave bare-ground top per column (`z*16 + x`).
-    pub surface_heights: &'a [i32],
-    /// Biome id per column (`z*16 + x`).
-    pub biomes: &'a [u8],
-}
+pub use petramond_worldgen::hooks::GenInputs;
+use petramond_worldgen::hooks::GenHookDispatch;
 
 impl GenHooks {
     /// Whether `stage` has a registered replacement.
-    pub(crate) fn replaces(&self, stage: WorldgenStage) -> bool {
+    pub fn replaces(&self, stage: WorldgenStage) -> bool {
         self.replacements[stage_index(stage)].is_some()
     }
 
     /// Whether any feature attaches after `stage` (the driver's cheap gate).
-    pub(crate) fn any_features_after(&self, stage: WorldgenStage) -> bool {
+    pub fn any_features_after(&self, stage: WorldgenStage) -> bool {
         let i = stage_index(stage);
         self.features.iter().any(|f| f.stage_idx == i)
     }
 
     /// Indices (dispatch order) of the features attached after `stage`.
-    pub(crate) fn features_after(&self, stage: WorldgenStage) -> Vec<usize> {
+    pub fn features_after(&self, stage: WorldgenStage) -> Vec<usize> {
         let i = stage_index(stage);
         (0..self.features.len())
             .filter(|&f| self.features[f].stage_idx == i)
@@ -140,7 +129,7 @@ impl GenHooks {
 
     /// Dispatch feature `idx` for one section. `None` = the feature failed
     /// (instance disabled with a logged error) and is skipped.
-    pub(crate) fn dispatch_feature(
+    pub fn dispatch_feature(
         &self,
         idx: usize,
         inputs: &GenInputs,
@@ -164,7 +153,7 @@ impl GenHooks {
     /// Run the registered replacement of a write-list stage
     /// (underground/vegetation/trees). `None` = no replacement registered OR
     /// it failed — either way the caller runs the ENGINE stage.
-    pub(crate) fn replace_stage(
+    pub fn replace_stage(
         &self,
         stage: WorldgenStage,
         inputs: &GenInputs,
@@ -183,7 +172,7 @@ impl GenHooks {
 
     /// Run the registered terrain replacement: the full 4096-block fill.
     /// `None` = unregistered or failed (engine fill+carve runs).
-    pub(crate) fn replace_terrain(&self, inputs: &GenInputs) -> Option<Vec<u16>> {
+    pub fn replace_terrain(&self, inputs: &GenInputs) -> Option<Vec<u16>> {
         let stage = WorldgenStage::Terrain;
         let hook = self.replacements[stage_index(stage)].as_ref()?;
         let call = self.stage_call(hook, stage, inputs);
@@ -214,7 +203,7 @@ impl GenHooks {
 
     /// Run the registered climate replacement: the 256-entry column biome map.
     /// `None` = unregistered or failed (the engine map stands).
-    pub(crate) fn replace_climate(&self, inputs: &GenInputs) -> Option<Vec<u8>> {
+    pub fn replace_climate(&self, inputs: &GenInputs) -> Option<Vec<u8>> {
         let stage = WorldgenStage::Climate;
         let hook = self.replacements[stage_index(stage)].as_ref()?;
         let call = self.stage_call(hook, stage, inputs);
@@ -396,7 +385,7 @@ thread_local! {
 // Builder (fed by ModHost::initialize from the main-load registrations).
 // ---------------------------------------------------------------------------
 
-pub(crate) struct GenHooksBuilder {
+pub struct GenHooksBuilder {
     seed: u32,
     mods: Vec<GenModule>,
     features: Vec<FeatureHook>,
@@ -404,7 +393,7 @@ pub(crate) struct GenHooksBuilder {
 }
 
 impl GenHooksBuilder {
-    pub(crate) fn new(seed: u32) -> Self {
+    pub fn new(seed: u32) -> Self {
         Self {
             seed,
             mods: Vec::new(),
@@ -433,7 +422,7 @@ impl GenHooksBuilder {
         }
     }
 
-    pub(crate) fn add_feature(
+    pub fn add_feature(
         &mut self,
         mod_id: &str,
         module: &Module,
@@ -448,7 +437,7 @@ impl GenHooksBuilder {
         });
     }
 
-    pub(crate) fn add_stage_replacement(
+    pub fn add_stage_replacement(
         &mut self,
         mod_id: &str,
         module: &Module,
@@ -473,7 +462,7 @@ impl GenHooksBuilder {
 
     /// Whole-generator replacement == every stage replaced by `callback_id`
     /// (the guest switches on the dispatched stage).
-    pub(crate) fn add_generator(&mut self, mod_id: &str, module: &Module, callback_id: u32) {
+    pub fn add_generator(&mut self, mod_id: &str, module: &Module, callback_id: u32) {
         for stage in ALL_STAGES {
             self.add_stage_replacement(mod_id, module, stage, callback_id);
         }
@@ -496,12 +485,12 @@ impl GenHooksBuilder {
     }
 
     /// `None` when nothing registered — the empty-hook fast path.
-    pub(crate) fn build(self) -> Option<Arc<GenHooks>> {
+    pub fn build(self) -> Option<Arc<GenHooks>> {
         if self.features.is_empty() && self.replacements.iter().all(Option::is_none) {
             return None;
         }
         Some(Arc::new(GenHooks {
-            epoch: NEXT_EPOCH.fetch_add(1, Ordering::Relaxed),
+            epoch: petramond_worldgen::hooks::next_epoch(),
             seed: self.seed,
             mods: self.mods,
             features: self.features,
@@ -515,38 +504,49 @@ impl GenHooksBuilder {
 // Process-wide installation (captured by ChunkGenerator::new).
 // ---------------------------------------------------------------------------
 
-static NEXT_EPOCH: AtomicU64 = AtomicU64::new(1);
-static INSTALLED_EPOCH: AtomicU64 = AtomicU64::new(0);
-static INSTALLED: RwLock<Option<Arc<GenHooks>>> = RwLock::new(None);
 
-/// Install the session's hook config (or `None` for a hookless session).
-/// Always bumps the epoch, so cached per-thread generators rebuild and capture
-/// the new config. Called from `ModHost::initialize`, BEFORE any generation
-/// for the new session is submitted.
-pub(crate) fn install(hooks: Option<Arc<GenHooks>>) {
-    let epoch = match &hooks {
-        Some(h) => h.epoch,
-        None => NEXT_EPOCH.fetch_add(1, Ordering::Relaxed),
-    };
-    *INSTALLED.write().unwrap() = hooks;
-    INSTALLED_EPOCH.store(epoch, Ordering::Release);
-}
-
-/// The installed config, if any. Read at `ChunkGenerator` construction — never
-/// per section.
-pub(crate) fn active() -> Option<Arc<GenHooks>> {
-    // Cheap out before touching the lock: 0 = nothing was ever installed
-    // (tooling binaries and hookless test processes never pay the lock).
-    if INSTALLED_EPOCH.load(Ordering::Acquire) == 0 {
-        return None;
+impl GenHookDispatch for GenHooks {
+    fn epoch(&self) -> u64 {
+        self.epoch
     }
-    INSTALLED.read().unwrap().clone()
+    fn replaces(&self, stage: WorldgenStage) -> bool {
+        GenHooks::replaces(self, stage)
+    }
+    fn replace_climate(&self, inputs: &GenInputs) -> Option<Vec<u8>> {
+        GenHooks::replace_climate(self, inputs)
+    }
+    fn replace_terrain(&self, inputs: &GenInputs) -> Option<Vec<u16>> {
+        GenHooks::replace_terrain(self, inputs)
+    }
+    fn replace_stage(
+        &self,
+        stage: WorldgenStage,
+        inputs: &GenInputs,
+    ) -> Option<Vec<([i32; 3], u16)>> {
+        GenHooks::replace_stage(self, stage, inputs)
+    }
+    fn any_features_after(&self, stage: WorldgenStage) -> bool {
+        GenHooks::any_features_after(self, stage)
+    }
+    fn features_after(&self, stage: WorldgenStage) -> Vec<usize> {
+        GenHooks::features_after(self, stage)
+    }
+    fn dispatch_feature(&self, idx: usize, inputs: &GenInputs) -> Option<Vec<([i32; 3], u16)>> {
+        GenHooks::dispatch_feature(self, idx, inputs)
+    }
 }
 
-/// Identity of the installed config for per-thread generator cache keys
-/// (`(seed, installed_epoch)`): one atomic load on the job hot path.
-pub(crate) fn installed_epoch() -> u64 {
-    INSTALLED_EPOCH.load(Ordering::Acquire)
+/// Install the session's hook config into the worldgen-owned seam
+/// (`petramond_worldgen::hooks`): worldgen consumes the trait object, this
+/// module provides it.
+pub fn install(hooks: Option<Arc<GenHooks>>) {
+    petramond_worldgen::hooks::install(hooks.map(|h| h as Arc<dyn GenHookDispatch>));
+}
+
+/// The worldgen-owned installed-epoch (kept as a module fn for the worker's
+/// per-thread generator cache keys).
+pub fn installed_epoch() -> u64 {
+    petramond_worldgen::hooks::installed_epoch()
 }
 
 #[cfg(test)]

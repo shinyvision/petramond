@@ -193,7 +193,7 @@ impl Registration {
 
 /// Diagnostics counters (also the observability hooks the contract tests use).
 #[derive(Default, Copy, Clone)]
-pub(crate) struct HostStats {
+pub struct HostStats {
     /// `host_dispatch` calls that decoded successfully.
     pub host_calls: u64,
     /// Registrations accepted during the init window.

@@ -13,10 +13,10 @@ mod queries;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use motion::{
+pub use motion::{
     resolve_body_motion, terrain_safe_motion_prefix, BodyMotion, SolidMotionSolver,
 };
-pub(crate) use queries::{
+pub use queries::{
     append_body_supports, body_has_peer_support, body_overlaps_block_boxes, body_pose_fits,
     body_separation, body_separation_from_body, clamp_body_yaw, closest_body_ray_hit,
 };
@@ -52,7 +52,7 @@ fn segment_centres(pos: Vec3, yaw: f32, size: MobSize) -> impl Iterator<Item = V
 /// run of overlapping square boxes along its facing axis, matching the solid
 /// collision staircase at diagonal yaws without filling the enclosing
 /// square's empty corners.
-pub(crate) fn body_boxes(pos: Vec3, yaw: f32, size: MobSize) -> impl Iterator<Item = (Vec3, Vec3)> {
+pub fn body_boxes(pos: Vec3, yaw: f32, size: MobSize) -> impl Iterator<Item = (Vec3, Vec3)> {
     let hw = size.half_width;
     segment_centres(pos, yaw, size).map(move |centre| {
         (

@@ -1,3 +1,4 @@
+use crate::world::WorldData;
 use crate::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
 
 use super::World;
@@ -5,7 +6,7 @@ use super::World;
 impl World {
     #[inline]
     pub(in crate::world) fn column_cy_bit(cy: i32) -> u32 {
-        debug_assert!(Self::column_section_range().contains(&cy));
+        debug_assert!(WorldData::column_section_range().contains(&cy));
         1u32 << (cy - SECTION_MIN_CY) as u32
     }
 
@@ -22,7 +23,7 @@ impl World {
 
     pub(in crate::world) fn note_section_loaded(&mut self, pos: SectionPos) {
         *self
-            .terrain
+            .data
             .section_column_cys
             .entry(pos.chunk_pos())
             .or_insert(0) |= Self::column_cy_bit(pos.cy);
@@ -40,12 +41,12 @@ impl World {
     #[inline]
     pub(in crate::world) fn note_section_unloaded(&mut self, pos: SectionPos) {
         let column = pos.chunk_pos();
-        let Some(bits) = self.terrain.section_column_cys.get_mut(&column) else {
+        let Some(bits) = self.data.section_column_cys.get_mut(&column) else {
             return;
         };
         *bits &= !Self::column_cy_bit(pos.cy);
         if *bits == 0 {
-            self.terrain.section_column_cys.remove(&column);
+            self.data.section_column_cys.remove(&column);
         }
         self.random_tick_dirty.remove(&pos);
         self.clear_random_tick_bit(pos);
@@ -53,8 +54,8 @@ impl World {
 
     #[inline]
     pub(in crate::world) fn clear_section_column_index(&mut self, pos: ChunkPos) {
-        self.terrain.section_column_cys.remove(&pos);
-        self.terrain.section_column_rt.remove(&pos);
+        self.data.section_column_cys.remove(&pos);
+        self.data.section_column_rt.remove(&pos);
     }
 
     /// Clear one section's random-tickable bit, dropping the column entry when
@@ -62,10 +63,10 @@ impl World {
     #[inline]
     fn clear_random_tick_bit(&mut self, pos: SectionPos) {
         let column = pos.chunk_pos();
-        if let Some(bits) = self.terrain.section_column_rt.get_mut(&column) {
+        if let Some(bits) = self.data.section_column_rt.get_mut(&column) {
             *bits &= !Self::column_cy_bit(pos.cy);
             if *bits == 0 {
-                self.terrain.section_column_rt.remove(&column);
+                self.data.section_column_rt.remove(&column);
             }
         }
     }
@@ -86,7 +87,7 @@ impl World {
                 .is_some_and(|s| s.has_random_tickable());
             if tickable {
                 *self
-                    .terrain
+                    .data
                     .section_column_rt
                     .entry(pos.chunk_pos())
                     .or_insert(0) |= Self::column_cy_bit(pos.cy);
@@ -104,6 +105,7 @@ impl World {
     #[inline]
     pub(in crate::world) fn insert_pending_section(&mut self, sp: SectionPos) -> bool {
         if self.gen.pending_sections.insert(sp) {
+            self.note_stream_nonfinal(sp);
             *self
                 .gen
                 .pending_section_columns
@@ -121,6 +123,7 @@ impl World {
         if !self.gen.pending_sections.remove(&sp) {
             return false;
         }
+        self.settle_stream_nonfinal(sp);
         let column = sp.chunk_pos();
         let Some(count) = self.gen.pending_section_columns.get_mut(&column) else {
             return true;
@@ -141,11 +144,13 @@ impl World {
     pub(in crate::world) fn clear_pending_sections_for_column(&mut self, pos: ChunkPos) {
         self.gen.pending_sections.retain(|sp| sp.chunk_pos() != pos);
         self.gen.pending_section_columns.remove(&pos);
+        self.rebuild_stream_nonfinal();
     }
 
     #[inline]
     pub(in crate::world) fn clear_all_pending_sections(&mut self) {
         self.gen.pending_sections.clear();
         self.gen.pending_section_columns.clear();
+        self.rebuild_stream_nonfinal();
     }
 }

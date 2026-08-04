@@ -7,9 +7,9 @@
 //! single-slot latch denies the id it supersedes; an intent that cannot even
 //! queue is denied immediately.
 
-use crate::game::prediction::deny;
+
 use crate::mathh::IVec3;
-use crate::net::protocol::{ActionDenyReason, ClientRequestId, PlayerAction, TargetRef};
+use crate::net::protocol::{ActionDenyReason, ActionOutcome, ClientRequestId, PlayerAction, TargetRef};
 use crate::server::game::ServerGame;
 use crate::server::player::{PendingBreakFinished, PendingMenuAction, PendingUseClick};
 
@@ -41,7 +41,7 @@ impl ServerGame {
                     .queue_cursor(&sess.player.inventory, amount, Some(request_id))
                 {
                     sess.pending_action_outcomes
-                        .push(deny(request_id, ActionDenyReason::Denied));
+                        .push(ActionOutcome::deny(request_id, ActionDenyReason::Denied));
                 }
             }
             PlayerAction::BreakFinished {
@@ -70,7 +70,7 @@ impl ServerGame {
                 self.sessions[s]
                     .pending_menu_actions
                     .push(PendingMenuAction::OpenGui {
-                        kind: crate::gui::GuiKind::Inventory,
+                        kind: crate::gui_state::GuiKind::Inventory,
                         pos: None,
                     })
             }
@@ -109,7 +109,7 @@ impl ServerGame {
             .and_then(|old| old.request_id)
         {
             sess.pending_action_outcomes
-                .push(deny(old, ActionDenyReason::Denied));
+                .push(ActionOutcome::deny(old, ActionDenyReason::Denied));
         }
     }
 
@@ -133,12 +133,12 @@ impl ServerGame {
         if let Some(old) = old_pending {
             self.sessions[s]
                 .pending_action_outcomes
-                .push(deny(old.request_id, ActionDenyReason::Denied));
+                .push(ActionOutcome::deny(old.request_id, ActionDenyReason::Denied));
         }
         if let Some(old) = old_deferred {
             self.sessions[s]
                 .pending_action_outcomes
-                .push(deny(old.request_id, ActionDenyReason::Denied));
+                .push(ActionOutcome::deny(old.request_id, ActionDenyReason::Denied));
             // Old optimistic clear may still be on the client.
             let cells = self.world.break_footprint_cells(old.pos);
             self.sessions[s].pending_corrective_cells.extend(cells);
@@ -151,7 +151,7 @@ impl ServerGame {
         });
     }
 
-    pub(crate) fn push_action_outcome(
+    pub fn push_action_outcome(
         &mut self,
         s: usize,
         id: ClientRequestId,

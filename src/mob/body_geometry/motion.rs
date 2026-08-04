@@ -12,7 +12,7 @@ use super::{
 /// return value is the mandatory shallow-foot healing lift, exposed separately
 /// so peer solving cannot roll it back into grown terrain.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn resolve_body_motion<F>(
+pub fn resolve_body_motion<F>(
     pos: Vec3,
     yaw: f32,
     size: MobSize,
@@ -187,7 +187,7 @@ where
 /// after mandatory shallow-foot healing. Peer progress rotates first and then
 /// translates; any shortened translation is terrain-validated before commit.
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct BodyMotion {
+pub struct BodyMotion {
     pub id: u64,
     pub start_pos: Vec3,
     pub start_yaw: f32,
@@ -197,7 +197,7 @@ pub(crate) struct BodyMotion {
 }
 
 impl BodyMotion {
-    pub(crate) fn pose_at(self, fraction: f32) -> (Vec3, f32) {
+    pub fn pose_at(self, fraction: f32) -> (Vec3, f32) {
         let fraction = fraction.clamp(0.0, 1.0);
         (self.pos_at(fraction), self.yaw_at(fraction))
     }
@@ -244,7 +244,7 @@ impl BodyMotion {
         self.start_pos.lerp(self.end_pos, progress)
     }
 
-    pub(crate) fn moves_down(self) -> bool {
+    pub fn moves_down(self) -> bool {
         self.end_pos.y < self.start_pos.y - TOI_TIME_EPS
     }
 
@@ -281,7 +281,7 @@ impl MotionBounds {
 /// a swept X-axis broadphase; constraint passes are synchronous, so list order
 /// cannot decide which member of a pair gets the remaining gap.
 #[derive(Default)]
-pub(crate) struct SolidMotionSolver {
+pub struct SolidMotionSolver {
     fractions: Vec<f32>,
     next_fractions: Vec<f32>,
     bounds: Vec<MotionBounds>,
@@ -291,11 +291,11 @@ pub(crate) struct SolidMotionSolver {
 
 impl SolidMotionSolver {
     #[cfg(test)]
-    pub(crate) fn resolve(&mut self, motions: &[BodyMotion]) -> &[f32] {
+    pub fn resolve(&mut self, motions: &[BodyMotion]) -> &[f32] {
         self.resolve_with_limits(motions, &[])
     }
 
-    pub(crate) fn resolve_with_limits(&mut self, motions: &[BodyMotion], limits: &[f32]) -> &[f32] {
+    pub fn resolve_with_limits(&mut self, motions: &[BodyMotion], limits: &[f32]) -> &[f32] {
         debug_assert!(limits.is_empty() || limits.len() == motions.len());
         self.fractions.clear();
         if limits.is_empty() {
@@ -368,7 +368,7 @@ impl SolidMotionSolver {
         &self.fractions
     }
 
-    pub(crate) fn fractions(&self) -> &[f32] {
+    pub fn fractions(&self) -> &[f32] {
         &self.fractions
     }
 }
@@ -578,7 +578,7 @@ fn position_component_range(motion: BodyMotion, axis: usize, lo: f32, hi: f32) -
 /// is terrain-safe, but its axis-ordered slide can differ from the straight
 /// translation used by the peer solver; this conservative interval sweep
 /// closes that corner-cutting gap before the pose is committed.
-pub(crate) fn terrain_safe_motion_prefix<F>(motion: BodyMotion, requested: f32, boxes_fn: &F) -> f32
+pub fn terrain_safe_motion_prefix<F>(motion: BodyMotion, requested: f32, boxes_fn: &F) -> f32
 where
     F: Fn(i32, i32, i32) -> &'static [crate::block::Aabb],
 {

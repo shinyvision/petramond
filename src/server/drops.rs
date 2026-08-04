@@ -5,7 +5,7 @@ use crate::net::protocol::ThrowAmount;
 
 use super::entities::light_at_pos;
 use super::game::ServerGame;
-use crate::game::tick::TickEvents;
+use crate::events::tick::TickEvents;
 
 type RequestId = crate::net::protocol::ClientRequestId;
 
@@ -13,7 +13,7 @@ type RequestId = crate::net::protocol::ClientRequestId;
 /// drop is individually answered — a shared per-session latch would orphan all
 /// but the last id queued in a tick window (leaking the client's ledger).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct DropQueue {
+pub struct DropQueue {
     pending: Vec<(PendingDropAction, Option<RequestId>)>,
 }
 
@@ -25,11 +25,11 @@ enum PendingDropAction {
 }
 
 impl DropQueue {
-    pub(crate) fn queue_stack(&mut self, stack: ItemStack) {
+    pub fn queue_stack(&mut self, stack: ItemStack) {
         self.pending.push((PendingDropAction::Stack(stack), None));
     }
 
-    pub(crate) fn queue_selected(&mut self, slot: u8, all: bool, id: Option<RequestId>) {
+    pub fn queue_selected(&mut self, slot: u8, all: bool, id: Option<RequestId>) {
         self.pending
             .push((PendingDropAction::Selected { slot, all }, id));
     }
@@ -37,7 +37,7 @@ impl DropQueue {
     /// Queue a cursor throw of the whole available stack or a single item per
     /// `amount`. `false` when there is nothing throwable — the caller must
     /// answer the request id itself.
-    pub(crate) fn queue_cursor(
+    pub fn queue_cursor(
         &mut self,
         inventory: &Inventory,
         amount: ThrowAmount,
@@ -54,7 +54,7 @@ impl DropQueue {
         true
     }
 
-    pub(crate) fn close_cursor_stack(&mut self, inventory: &mut Inventory) {
+    pub fn close_cursor_stack(&mut self, inventory: &mut Inventory) {
         let Some(cursor) = inventory.cursor().copied() else {
             return;
         };
@@ -98,7 +98,7 @@ impl ServerGame {
     /// the world on the next tick. Cursor throws already queued by an outside-panel
     /// click are reservations: closing the menu stashes only the unreserved remainder
     /// so the fixed tick can still apply the user's throw.
-    pub(crate) fn close_cursor_stack_for(&mut self, s: usize) {
+    pub fn close_cursor_stack_for(&mut self, s: usize) {
         let sess = &mut self.sessions[s];
         sess.drop_queue
             .close_cursor_stack(&mut sess.player.inventory);
@@ -107,7 +107,7 @@ impl ServerGame {
     /// Apply queued drop intents on the tick: remove the item from the inventory/cursor
     /// and spawn the matching dropped entity in the same fixed-tick phase, before item
     /// physics gives fresh drops their first step.
-    pub(crate) fn tick_drops(&mut self, s: usize, events: &mut TickEvents) {
+    pub fn tick_drops(&mut self, s: usize, events: &mut TickEvents) {
         for (action, request_id) in self.sessions[s].drop_queue.drain() {
             let stack = match action {
                 PendingDropAction::Selected { slot, all } => {

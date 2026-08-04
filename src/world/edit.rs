@@ -1,3 +1,4 @@
+use crate::world::WorldData;
 use crate::block::{Block, ShapeFamily};
 use crate::block_state::LogAxis;
 use crate::chunk::{ChunkPos, SECTION_SIZE, WORLD_MIN_Y};
@@ -64,7 +65,7 @@ impl World {
     /// meshes. Returns false if the section is not loaded or `wy` is out of
     /// range. In-memory only.
     pub fn set_block_world(&mut self, wx: i32, wy: i32, wz: i32, b: Block) -> bool {
-        let Some((pos, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
+        let Some((pos, lx, ly, lz)) = WorldData::split_world(wx, wy, wz) else {
             return false;
         };
         // Streaming-finality guard: a section whose gen result or saved overlay is
@@ -164,7 +165,7 @@ impl World {
     /// costume (`furnace` ⇄ `furnace_lit`). Announces itself through the
     /// ordinary block-write lanes (delta capture, relight, remesh, block
     /// updates, save `modified`) — a skin swap needs no bespoke promotion.
-    pub(crate) fn swap_block_skin(&mut self, pos: IVec3, to: Block) -> bool {
+    pub fn swap_block_skin(&mut self, pos: IVec3, to: Block) -> bool {
         let Some((chunk, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
             return false;
         };
@@ -234,7 +235,7 @@ impl World {
         if !block.is_log() || !self.materialize_section_at(pos) {
             return false;
         }
-        let Some((section_pos, _, _, _)) = Self::split_world(pos.x, pos.y, pos.z) else {
+        let Some((section_pos, _, _, _)) = WorldData::split_world(pos.x, pos.y, pos.z) else {
             return false;
         };
         let Some((section, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) else {

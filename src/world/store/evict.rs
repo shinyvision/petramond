@@ -27,6 +27,7 @@ impl World {
         }
         self.particle_emitter_sections.remove(&pos);
         self.gen.awaited_overlays.remove(&pos);
+        self.settle_stream_nonfinal(pos);
         self.gen.disk_primary_sections.remove(&pos);
         if self.remove_mesh(pos) {
             self.terrain
@@ -55,7 +56,7 @@ impl World {
         // the settled short-circuit must not hide it from the next scan.
         self.missing_columns_settled = false;
         let bits = self
-            .terrain
+            .data
             .section_column_cys
             .get(&pos)
             .copied()
@@ -127,8 +128,8 @@ impl World {
         self.terrain.hidden_parked.clear();
         self.terrain.sealed_parked.clear();
         self.block_entity_sections.clear();
-        self.mods.block_draws.clear();
-        self.mods.block_draw_sections.clear();
+        self.mod_stream.block_draws.clear();
+        self.mod_stream.block_draw_sections.clear();
         self.particle_emitter_sections.clear();
         self.columns.clear();
         self.column_payload_revisions.clear();
@@ -143,8 +144,8 @@ impl World {
         self.terrain.mesh_job_cancels.clear();
         self.terrain.mesh_columns.clear();
         self.terrain.mesh_column_cys.clear();
-        self.terrain.section_column_cys.clear();
-        self.terrain.section_column_rt.clear();
+        self.data.section_column_cys.clear();
+        self.data.section_column_rt.clear();
         self.random_tick_dirty.clear();
         self.terrain.mesh_upload_revisions.clear();
         self.terrain.mesh_upload_dirty_columns.clear();
@@ -166,6 +167,7 @@ impl World {
         self.clear_all_pending_sections();
         self.gen.pending_overlays.clear();
         self.gen.awaited_overlays.clear();
+        self.rebuild_stream_nonfinal();
         self.gen.disk_primary_sections.clear();
         self.clear_custom_bake();
         self.bump_terrain_revision();

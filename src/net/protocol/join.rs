@@ -2,14 +2,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::crafting::CraftingRecipeData;
 use crate::mathh::IVec3;
-use crate::server::player::PlayerId;
+use crate::player::PlayerId;
 
 use super::{ItemSlotWire, Transform};
 
 /// One enabled mod, as the handshake reports it. Version is display-only —
 /// compatibility checks are by ID.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ModEntry {
+pub struct ModEntry {
     pub id: String,
     pub version: String,
 }
@@ -19,7 +19,7 @@ pub(crate) struct ModEntry {
 /// auto-deduped with a numeric suffix at admission instead (see
 /// `ServerGame::admit_remote_player`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum JoinRejectReason {
+pub enum JoinRejectReason {
     /// A connected player already uses this name (case-insensitive).
     NameTaken,
 }
@@ -28,7 +28,7 @@ pub(crate) enum JoinRejectReason {
 /// id vocabulary (the on-disk analogue is `palette.json`). The client builds
 /// server-id→client-id LUTs from these at join.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct NameTables {
+pub struct NameTables {
     pub blocks: Vec<String>,
     pub items: Vec<String>,
     pub mobs: Vec<String>,
@@ -40,7 +40,7 @@ pub(crate) struct NameTables {
 
 /// The joining player's own restored state.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct SelfRestore {
+pub struct SelfRestore {
     pub transform: Transform,
     /// `PlayerMode` as its discriminant (tiny closed enum).
     pub mode: u8,
@@ -66,7 +66,7 @@ pub(crate) struct SelfRestore {
 
 /// Everything a client needs to enter the world, sent on `JoinAccept`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct JoinData {
+pub struct JoinData {
     pub player_id: PlayerId,
     pub seed: u32,
     /// The day/night clock (`petramond:clock` contract) so the sky renders right

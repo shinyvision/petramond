@@ -7,7 +7,7 @@ use super::game::ServerGame;
 use crate::block::{Aabb, Block, CellPart, ShapeFamily};
 use crate::events::{BlockPlacePre, Outcome, PostEvent, SimCtx};
 use crate::facing::Facing;
-use crate::game::tick::TickEvents;
+use crate::events::tick::TickEvents;
 use crate::mathh::{IVec3, Vec3};
 use crate::net::protocol::TargetRef;
 
@@ -53,7 +53,7 @@ impl ServerGame {
     /// returns the anchor cell it landed in (the front-left-bottom cell for
     /// multi-cell models, the lower cell for doors), or `None` if nothing was
     /// placed.
-    pub(crate) fn try_place(
+    pub fn try_place(
         &mut self,
         s: usize,
         target: Option<TargetRef>,
@@ -333,8 +333,8 @@ impl ServerGame {
 
     /// Test-only wrapper keeping the old bool-shaped call for placement tests
     /// (the latched look stands in for the click target they never build).
-    #[cfg(test)]
-    pub(crate) fn try_place_for_test(&mut self) -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn try_place_for_test(&mut self) -> bool {
         let target = self.sessions[0].look;
         self.try_place(0, target, &mut Default::default()).is_some()
     }
@@ -343,7 +343,7 @@ impl ServerGame {
 /// The furnace facing for a block placed while looking along `forward`: the front
 /// (mouth) points back toward the player — opposite the camera's horizontal look
 /// direction — snapped to the nearest cardinal.
-pub(crate) fn facing_from_forward(forward: Vec3) -> Facing {
+pub fn facing_from_forward(forward: Vec3) -> Facing {
     let (fx, fz) = (-forward.x, -forward.z);
     if fx.abs() >= fz.abs() {
         if fx >= 0.0 {

@@ -29,7 +29,7 @@ use super::game::ServerGame;
 
 /// Register the engine's default unlock rule. Runs before mod init, so a mod
 /// handler at equal priority observes an already-applied default.
-pub(crate) fn install_core(bus: &mut EventBus, unlocks: Arc<UnlockIndex>) {
+pub fn install_core(bus: &mut EventBus, unlocks: Arc<UnlockIndex>) {
     bus.on_post(PostEventKind::ItemObtained, 0, move |ctx, ev| {
         let PostEvent::ItemObtained { player, item } = *ev else {
             return;
@@ -46,7 +46,7 @@ pub(crate) fn install_core(bus: &mut EventBus, unlocks: Arc<UnlockIndex>) {
 /// session starts: it reconciles a restored record with the catalog this world
 /// actually loaded, so installing a pack (or editing a recipe row) never
 /// leaves an earned recipe permanently invisible.
-pub(crate) fn catch_up(player: &mut Player, unlocks: &UnlockIndex) {
+pub fn catch_up(player: &mut Player, unlocks: &UnlockIndex) {
     let opened: Vec<String> = unlocks
         .opened_by_all(player.progression.obtained())
         .map(str::to_owned)
@@ -63,8 +63,8 @@ impl ServerGame {
     ///
     /// Runs inside the last stage so the events drain at that stage's
     /// boundary: a recipe unlocked by a pickup is craftable on the same tick.
-    pub(crate) fn detect_obtained_items(&mut self) {
-        let mut fresh: Vec<(crate::server::player::PlayerId, crate::item::ItemType)> = Vec::new();
+    pub fn detect_obtained_items(&mut self) {
+        let mut fresh: Vec<(crate::player::PlayerId, crate::item::ItemType)> = Vec::new();
         for sess in &mut self.sessions {
             let revision = sess.player.inventory.revision();
             if sess.last_obtained_scan == Some(revision) {
@@ -107,7 +107,7 @@ mod tests {
     /// scan is revision-gated, which is exactly what could silently drop one.
     #[test]
     fn an_item_kind_announces_itself_once_and_only_once() {
-        let (mut server, _) = crate::game::session::build_session_inline("", 1, 2);
+        let mut server = crate::server::session_build::build_server_inline("", 1, 2);
         let seen = Arc::new(AtomicUsize::new(0));
         let logs = Arc::new(std::sync::Mutex::new(Vec::new()));
         {

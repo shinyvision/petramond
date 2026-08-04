@@ -1,3 +1,4 @@
+use crate::world::WorldData;
 use crate::block::Block;
 use crate::chunk::WORLD_MIN_Y;
 use crate::mathh::{IVec3, Vec3};
@@ -82,7 +83,7 @@ impl World {
     ///
     /// [`notify_block_and_neighbors`]: World::notify_block_and_neighbors
     pub(in crate::world) fn set_water_world(&mut self, pos: IVec3, block: Block, meta: u8) -> bool {
-        let Some((cpos, lx, ly, lz)) = Self::split_world(pos.x, pos.y, pos.z) else {
+        let Some((cpos, lx, ly, lz)) = WorldData::split_world(pos.x, pos.y, pos.z) else {
             return false;
         };
         // Streaming-finality guard: never mutate a section whose gen result or saved

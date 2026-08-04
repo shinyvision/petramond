@@ -89,7 +89,7 @@ fn terrain_budget(allowance: usize) -> usize {
 
 /// One connection's terrain replication state: what it currently holds, plus
 /// the ack-windowed flow-control state for remote connections.
-pub(crate) struct TerrainSync {
+pub struct TerrainSync {
     sent_columns: FxHashSet<ChunkPos>,
     sent_column_revisions: FxHashMap<ChunkPos, u64>,
     sent_sections: FxHashSet<SectionPos>,
@@ -176,7 +176,7 @@ impl Default for TerrainSync {
 impl TerrainSync {
     /// Whether the cell's owning section was sent to this connection — the
     /// per-recipient block-delta filter.
-    pub(crate) fn covers(&self, pos: IVec3) -> bool {
+    pub fn covers(&self, pos: IVec3) -> bool {
         SectionPos::from_world(pos.x, pos.y, pos.z)
             .is_some_and(|sp| self.sent_sections.contains(&sp))
     }
@@ -221,7 +221,7 @@ impl TerrainSync {
     /// this connection's configured cap, and adopt the client's
     /// measured rate (clamped; non-finite reports are ignored entirely —
     /// a NaN must never poison the quota).
-    pub(crate) fn apply_batch_ack(&mut self, messages_per_second: f32) {
+    pub fn apply_batch_ack(&mut self, messages_per_second: f32) {
         self.unacked_batches = self.unacked_batches.saturating_sub(1);
         self.max_unacked = self.window_limit;
         if messages_per_second.is_finite() {
@@ -254,7 +254,7 @@ impl TerrainSync {
     /// Claims cost nothing to believe: a stale or fabricated one either
     /// hash-mismatches into an ordinary full send or heals through
     /// `SectionCacheMiss`.
-    pub(crate) fn seed_client_cache(&mut self, claims: &[SectionCacheClaim]) {
+    pub fn seed_client_cache(&mut self, claims: &[SectionCacheClaim]) {
         for claim in claims.iter().take(SECTION_CACHE_CAP) {
             self.note_client_cached(claim.pos, claim.hash);
         }
@@ -264,7 +264,7 @@ impl TerrainSync {
     /// `SectionCached` re-promotion, so the pos never landed. Forget the
     /// belief and, if we had marked it sent, queue it for an ordinary full
     /// send on the next pump.
-    pub(crate) fn handle_cache_miss(&mut self, pos: SectionPos) {
+    pub fn handle_cache_miss(&mut self, pos: SectionPos) {
         self.client_cache.remove(&pos);
         if self.sent_remove(pos) {
             self.pending_light.remove(&pos);
@@ -610,7 +610,7 @@ mod tests {
     use crate::net::connection::SERVER_QUEUE_MSGS;
     use crate::net::protocol::ClientToServer;
     use crate::server::game::PumpOutput;
-    use crate::server::player::PlayerId;
+    use crate::player::PlayerId;
     use crate::test_time::TEST_HARD_DEADLINE;
     use std::time::Instant;
 
@@ -695,8 +695,8 @@ mod tests {
     fn starved_sessions_pause_streaming_and_resume_without_losing_any() {
         // Inline pool: gen/light finish inside the pump that queued them, so
         // loops stay compute-bound (no sleep-wait on background workers).
-        let (mut server, _) = crate::game::session::build_session_inline("", 1, 2);
-        let player = crate::game::session::spawn_player(server.world.seed);
+        let mut server = crate::server::session_build::build_server_inline("", 1, 2);
+        let player = crate::server::session_build::spawn_player(server.world.seed);
         let s = server.add_session_for_test(player);
         let remote_id = server.sessions[s].id;
 
@@ -739,8 +739,8 @@ mod tests {
     /// it, so streaming resumes.
     #[test]
     fn stream_batches_window_on_acks_and_stall_without_them() {
-        let (mut server, _) = crate::game::session::build_session_inline("", 1, 2);
-        let player = crate::game::session::spawn_player(server.world.seed);
+        let mut server = crate::server::session_build::build_server_inline("", 1, 2);
+        let player = crate::server::session_build::spawn_player(server.world.seed);
         let s = server.add_session_for_test(player);
         let remote_id = server.sessions[s].id;
 
@@ -798,8 +798,8 @@ mod tests {
     /// plans' diffs, because a lost unload leaks replica memory forever.
     #[test]
     fn unload_bursts_clip_to_the_allowance_and_all_arrive() {
-        let (mut server, _) = crate::game::session::build_session_inline("", 1, 2);
-        let player = crate::game::session::spawn_player(server.world.seed);
+        let mut server = crate::server::session_build::build_server_inline("", 1, 2);
+        let player = crate::server::session_build::spawn_player(server.world.seed);
         let s = server.add_session_for_test(player);
         let remote_id = server.sessions[s].id;
 
@@ -845,8 +845,8 @@ mod tests {
     /// refresh would be lost and the replica's light permanently stale).
     #[test]
     fn light_refreshes_defer_for_starved_sessions_and_ship_later() {
-        let (mut server, _) = crate::game::session::build_session_inline("", 1, 2);
-        let player = crate::game::session::spawn_player(server.world.seed);
+        let mut server = crate::server::session_build::build_server_inline("", 1, 2);
+        let player = crate::server::session_build::spawn_player(server.world.seed);
         let s = server.add_session_for_test(player);
         let remote_id = server.sessions[s].id;
 

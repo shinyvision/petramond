@@ -85,11 +85,9 @@ impl World {
         slack: i32,
     ) -> Vec<i32> {
         let mut out = Self::wanted_section_cys(col, center_cy, slack);
-        if let Some(save) = self.save.as_ref() {
-            for sp in save.manifest_sections_in_column(pos) {
-                if !out.contains(&sp.cy) {
-                    out.push(sp.cy);
-                }
+        for &cy in self.data.saved.sections_in_column(pos) {
+            if !out.contains(&cy) {
+                out.push(cy);
             }
         }
         out
@@ -131,10 +129,7 @@ impl World {
     /// meshing, AND lighting, since each scales with the number of loaded sections.
     pub(super) fn skip_empty_sky_section(&self, sp: SectionPos, content_top: i32) -> bool {
         (sp.cy * SECTION_SIZE as i32) > content_top
-            && !self
-                .save
-                .as_ref()
-                .is_some_and(|s| s.authoritative_manifest_contains(sp))
+            && !self.data.saved.authoritative_contains(sp)
     }
 
     pub(super) fn within_current_keep_radius(&self, pos: ChunkPos) -> bool {

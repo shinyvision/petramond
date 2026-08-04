@@ -50,7 +50,7 @@ pub(in crate::modding) fn module_for(path: &Path) -> Result<Module, String> {
 /// in-flight slot instead of duplicating work, so callers about to load a
 /// list of modules get parallel cold compiles for free. Already-cached paths
 /// spawn nothing.
-pub(crate) fn prewarm(paths: impl IntoIterator<Item = PathBuf>) {
+pub fn prewarm(paths: impl IntoIterator<Item = PathBuf>) {
     for path in paths {
         {
             let cache = CACHE.lock().unwrap();
@@ -118,7 +118,7 @@ fn artifact_path(path: &Path, bytes: &[u8]) -> Option<PathBuf> {
     if cfg!(test) && std::env::var_os("PETRAMOND_DATA_DIR").is_none() {
         return None;
     }
-    let dir = crate::save::base_data_dir().join("modcache");
+    let dir = petramond_util::paths::base_data_dir().join("modcache");
     std::fs::create_dir_all(&dir).ok()?;
     let mut compat = std::hash::DefaultHasher::new();
     engine().precompile_compatibility_hash().hash(&mut compat);

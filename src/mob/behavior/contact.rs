@@ -112,7 +112,7 @@ mod tests {
     use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     use crate::mathh::Vec3;
     use crate::mob::{brain::AiMob, Mob, MobRng, PlayerAnchor};
-    use crate::server::player::PlayerId;
+    use crate::player::PlayerId;
     use crate::world::World;
 
     fn flat_world() -> World {

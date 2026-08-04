@@ -49,20 +49,20 @@ pub(super) fn install(map: HashMap<String, AiNodeRegistration>) {
 /// Whether `key` has a live registration on this thread — the pre-dispatch
 /// gate that lets an unclaimed scripted node (mod disabled, mid-load) skip
 /// building its ctx snapshot entirely.
-pub(crate) fn is_claimed(key: &str) -> bool {
+pub fn is_claimed(key: &str) -> bool {
     INSTALLED.with(|cell| cell.borrow().contains_key(key))
 }
 
 /// The tick published for the current detached AI dispatch, if one is in
 /// flight on this thread. Read by the `CurrentTick` host-call handler as its
 /// scope-free fallback.
-pub(crate) fn detached_tick() -> Option<u64> {
+pub fn detached_tick() -> Option<u64> {
     DETACHED_TICK.with(Cell::get)
 }
 
 /// Publish `tick` as this thread's detached-dispatch tick for the duration of
 /// `f` — wrapped around every guest AI call by [`dispatch`].
-pub(crate) fn with_detached_tick<T>(tick: u64, f: impl FnOnce() -> T) -> T {
+pub fn with_detached_tick<T>(tick: u64, f: impl FnOnce() -> T) -> T {
     DETACHED_TICK.with(|t| t.set(Some(tick)));
     let out = f();
     DETACHED_TICK.with(|t| t.set(None));
@@ -72,7 +72,7 @@ pub(crate) fn with_detached_tick<T>(tick: u64, f: impl FnOnce() -> T) -> T {
 /// One node decision for one mob. `None` when the key has no live
 /// registration (mod never claimed it, disabled, or mid-load) — the node
 /// contributes no opinion, exactly like an engine node returning defaults.
-pub(crate) fn dispatch(key: &str, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
+pub fn dispatch(key: &str, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
     INSTALLED.with(|cell| {
         let map = cell.borrow();
         let reg = map.get(key)?;

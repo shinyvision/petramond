@@ -11,8 +11,8 @@ fn temp_world_dir(tag: &str) -> PathBuf {
     dir
 }
 
-fn load_blocking(save: &WorldSave, pos: SectionPos) -> Option<LoadedSection> {
-    save.request_load(pos, true);
+fn load_blocking(save: &WorldSave, saved: &crate::world::SavedIndex, pos: SectionPos) -> Option<LoadedSection> {
+    save.request_load(saved, pos, true);
     for _ in 0..500 {
         if let Some(l) = save.poll_loaded() {
             return Some(l);
@@ -38,7 +38,7 @@ fn save_reopen_roundtrips_section_level_entities() {
             opened.save.load_player("Rachel S!").is_none(),
             "fresh world has no player files"
         );
-        assert!(!opened.save.manifest_contains(pos));
+        assert!(!opened.saved.contains(pos));
 
         let mut section = Section::new(pos.cx, pos.cy, pos.cz);
         section.set_block(3, 0, 7, Block::Stone);
@@ -51,7 +51,7 @@ fn save_reopen_roundtrips_section_level_entities() {
         );
         drop.ticks_lived = 2500;
         snap.entities.push(drop);
-        opened.save.save_sections(vec![snap]);
+        opened.save.save_sections(&mut opened.saved, vec![snap]);
 
         opened.save.save_level(level::encode(
             0xABCD,
@@ -85,11 +85,11 @@ fn save_reopen_roundtrips_section_level_entities() {
         assert_eq!(restored.inventory.active_slot(), 4);
 
         assert!(
-            opened.save.manifest_contains(pos),
+            opened.saved.contains(pos),
             "manifest sees saved section"
         );
 
-        let loaded = load_blocking(&opened.save, pos).expect("section loads from disk");
+        let loaded = load_blocking(&opened.save, &opened.saved, pos).expect("section loads from disk");
         let section = loaded.section.expect("section record decodes");
         assert_eq!(section.block_raw(3, 0, 7), Block::Stone.id());
         assert_eq!(section.block_raw(3, 1, 7), Block::Water.id());
@@ -124,16 +124,13 @@ fn explored_cache_does_not_expand_the_authoritative_manifest() {
         edited.set_block(6, 7, 8, Block::Dirt);
         opened
             .save
-            .save_sections(vec![cached_snap, SectionSnapshot::from_section(&edited)]);
+            .save_sections(&mut opened.saved, vec![cached_snap, SectionSnapshot::from_section(&edited)]);
 
-        assert!(opened.save.explored_manifest_contains(cached_pos));
-        assert!(!opened.save.authoritative_manifest_contains(cached_pos));
+        assert!(opened.saved.explored_contains(cached_pos));
+        assert!(!opened.saved.authoritative_contains(cached_pos));
         assert_eq!(
-            opened
-                .save
-                .manifest_sections_in_column(cached_pos.chunk_pos())
-                .collect::<Vec<_>>(),
-            vec![edited_pos],
+            opened.saved.sections_in_column(cached_pos.chunk_pos()),
+            &[edited_pos.cy],
             "disposable cache sections must not widen the wanted vertical range"
         );
         opened.save.shutdown();
@@ -141,10 +138,10 @@ fn explored_cache_does_not_expand_the_authoritative_manifest() {
 
     {
         let opened = open_at(dir.clone()).expect("reopen");
-        assert!(opened.save.explored_manifest_contains(cached_pos));
-        assert!(!opened.save.authoritative_manifest_contains(cached_pos));
-        assert!(opened.save.authoritative_manifest_contains(edited_pos));
-        let loaded = load_blocking(&opened.save, cached_pos).expect("cache section loads");
+        assert!(opened.saved.explored_contains(cached_pos));
+        assert!(!opened.saved.authoritative_contains(cached_pos));
+        assert!(opened.saved.authoritative_contains(edited_pos));
+        let loaded = load_blocking(&opened.save, &opened.saved, cached_pos).expect("cache section loads");
         assert_eq!(
             loaded
                 .section
@@ -208,25 +205,25 @@ fn re_saving_a_drop_free_section_clears_its_stale_record() {
         ItemStack::new(ItemType::Dirt, 3),
         1,
     ));
-    opened.save.save_sections(vec![snap]);
+    opened.save.save_sections(&mut opened.saved, vec![snap]);
     assert!(
         opened.save.record_holds_entities(pos),
         "record now carries a drop"
     );
 
-    let with_item = load_blocking(&opened.save, pos).expect("loads with item");
+    let with_item = load_blocking(&opened.save, &opened.saved, pos).expect("loads with item");
     assert_eq!(with_item.entities.len(), 1, "drop is present before pickup");
 
     // Pickup-then-unload: the section is re-saved with no drops. The channel is
     // ordered, so this write lands before the load below reads it back.
     let empty = SectionSnapshot::from_section(&section); // entities default to empty
-    opened.save.save_sections(vec![empty]);
+    opened.save.save_sections(&mut opened.saved, vec![empty]);
     assert!(
         !opened.save.record_holds_entities(pos),
         "rewrite cleared the flag"
     );
 
-    let after = load_blocking(&opened.save, pos).expect("loads after pickup");
+    let after = load_blocking(&opened.save, &opened.saved, pos).expect("loads after pickup");
     assert!(
         after.entities.is_empty(),
         "the stale drop must not resurrect"
@@ -262,25 +259,25 @@ fn re_saving_a_mob_free_section_clears_its_stale_record() {
         yaw: 0.5,
         tags: Default::default(),
     });
-    opened.save.save_sections(vec![snap]);
+    opened.save.save_sections(&mut opened.saved, vec![snap]);
     assert!(
         opened.save.record_holds_entities(pos),
         "record now carries a mob"
     );
 
-    let with_mob = load_blocking(&opened.save, pos).expect("loads with mob");
+    let with_mob = load_blocking(&opened.save, &opened.saved, pos).expect("loads with mob");
     assert_eq!(with_mob.mobs.len(), 1, "mob present before it leaves");
 
     // The mob is gone: the section is re-saved mob-free. The record must be rewritten
     // so the stale mob can't resurrect on the next load.
     let empty = SectionSnapshot::from_section(&section);
-    opened.save.save_sections(vec![empty]);
+    opened.save.save_sections(&mut opened.saved, vec![empty]);
     assert!(
         !opened.save.record_holds_entities(pos),
         "rewrite cleared the flag"
     );
 
-    let after = load_blocking(&opened.save, pos).expect("loads after");
+    let after = load_blocking(&opened.save, &opened.saved, pos).expect("loads after");
     assert!(after.mobs.is_empty(), "the stale mob must not resurrect");
 
     opened.save.shutdown();

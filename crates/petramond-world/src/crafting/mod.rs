@@ -1,0 +1,16 @@
+//! Data-driven crafting and processing recipes.
+
+mod load;
+mod plan;
+mod recipe;
+mod station;
+mod unlock;
+
+pub use load::load_recipes_for;
+pub use plan::{craft, output_accepts, CraftFailure};
+pub use recipe::CraftingRecipeData;
+pub use recipe::{CraftingCatalog, CraftingRecipe, IngredientSelector, IngredientUse, Recipes};
+#[cfg(any(test, feature = "test-support"))]
+pub use recipe::{CraftingIngredient, ProcessingRecipe, SMELTING_CLASS};
+pub use station::CraftingStation;
+pub use unlock::UnlockIndex;

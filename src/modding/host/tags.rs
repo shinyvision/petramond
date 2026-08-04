@@ -117,7 +117,7 @@ mod tests {
     use mod_api::{HostCall, HostRet, MobTagValue as Api};
 
     use crate::events::{PostEvent, PostEventKind, PostQueue, SimCtx};
-    use crate::game::TickEvents;
+    use crate::events::tick::TickEvents;
     use crate::mathh::Vec3;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
@@ -142,7 +142,7 @@ mod tests {
         let mut queue = PostQueue::default();
         queue.want_for_test(PostEventKind::MobTagAdded);
         queue.want_for_test(PostEventKind::MobTagRemoved);
-        let mut gui = crate::gui::empty_gui_state();
+        let mut gui = crate::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,

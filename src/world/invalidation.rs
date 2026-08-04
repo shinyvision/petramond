@@ -1,6 +1,7 @@
 //! Dirty-mark fan-out: the light and mesh invalidation choke points edits,
 //! ingest, and sky-cover moves route through.
 
+use crate::world::WorldData;
 use rustc_hash::FxHashSet;
 
 use crate::chunk::{self, ChunkPos, SectionPos, SECTION_MIN_CY, SECTION_SIZE};
@@ -104,7 +105,7 @@ impl World {
             for dx in -1..=1 {
                 let cp = ChunkPos::new(center.cx + dx, center.cz + dz);
                 let bits = self
-                    .terrain
+                    .data
                     .section_column_cys
                     .get(&cp)
                     .copied()
@@ -138,7 +139,7 @@ impl World {
                 for dx in -1..=1 {
                     let cp = ChunkPos::new(center.cx + dx, center.cz + dz);
                     let bits = self
-                        .terrain
+                        .data
                         .section_column_cys
                         .get(&cp)
                         .copied()
@@ -219,7 +220,7 @@ impl World {
         wz: i32,
         radius: i32,
     ) {
-        let Some((center, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
+        let Some((center, lx, ly, lz)) = WorldData::split_world(wx, wy, wz) else {
             return;
         };
         let note_persist = self.save.is_some();
@@ -258,7 +259,7 @@ impl World {
                 &[0]
             }
         }
-        let Some((center, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
+        let Some((center, lx, ly, lz)) = WorldData::split_world(wx, wy, wz) else {
             return;
         };
         for &dy in deltas(ly) {

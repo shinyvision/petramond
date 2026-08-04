@@ -25,6 +25,12 @@ use std::thread;
 #[derive(Clone)]
 pub struct JobCancel(Arc<AtomicBool>);
 
+impl Default for JobCancel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl JobCancel {
     pub fn new() -> Self {
         Self(Arc::new(AtomicBool::new(false)))
@@ -171,7 +177,7 @@ impl JobPool {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn lower_current_thread_priority() {
+pub fn lower_current_thread_priority() {
     // Background throughput should not preempt the render or simulation owner
     // threads. Failure is harmless (for example under a restrictive sandbox).
     unsafe {
@@ -181,7 +187,7 @@ pub(crate) fn lower_current_thread_priority() {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn lower_current_thread_priority() {}
+pub fn lower_current_thread_priority() {}
 
 impl Drop for JobPool {
     fn drop(&mut self) {

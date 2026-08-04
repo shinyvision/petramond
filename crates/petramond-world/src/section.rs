@@ -1,0 +1,550 @@
+//! Cubic section storage: a 16×16×16 voxel cube — the unit of the cubic-chunks
+//! world. A vertical stack of sections sharing one `(cx,cz)` forms a column; the
+//! inherently-2D per-column data (biome, surface heightmap, sky occlusion) lives
+//! in [`crate::column::Column`], not here.
+//!
+//! This is the cubic successor to [`crate::chunk::Chunk`]: same battle-tested API
+//! shape (block access, per-cell block-entity maps keyed by a `u16` local index,
+//! water metadata, light, the random-tick gate) but scoped to one 16³ cube and
+//! addressed by [`crate::chunk::section_idx`].
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::block::Block;
+use crate::block_state::BlockStates;
+use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME, SKY_FULL};
+use crate::container::Container;
+use crate::furnace::Furnace;
+use crate::light::LightRgb;
+
+pub use cube::BlockCube;
+
+mod block_entities;
+mod cell_states;
+mod cube;
+mod metrics;
+mod restore;
+
+#[cfg(test)]
+mod tests;
+
+crate::wire_enum::wire_enum! {
+    // The byte form rides the wire (`ColumnPayload::summaries`); the `Unknown`
+    // fallback is the conservative "reads lie" answer.
+    pub enum SectionSummary: u8 {
+        Unknown = 0,
+        Empty = 1,
+        FullOpaque = 2,
+        FullWater = 3,
+        Mixed = 4,
+    }
+    default Unknown
+}
+
+impl SectionSummary {
+    #[inline]
+    pub fn virtual_block(self) -> Block {
+        match self {
+            SectionSummary::FullOpaque => Block::Stone,
+            SectionSummary::FullWater => Block::Water,
+            _ => Block::Air,
+        }
+    }
+}
+
+/// Counter and boundary-plane metadata that can travel with an immutable block
+/// buffer. Loopback replicas adopt it directly instead of rescanning 4,096 cells;
+/// network remapping recomputes it on the transport thread when ids change.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SectionMetrics {
+    pub random_tick_count: u32,
+    pub opaque_count: u32,
+    pub plane_opaque: [u16; 6],
+    pub non_air_count: u32,
+    pub water_count: u32,
+    pub biome_tint_count: u32,
+    pub particle_emitter_count: u32,
+    pub light_emitter_count: u32,
+}
+
+impl SectionMetrics {
+    pub fn valid(self) -> bool {
+        let volume = SECTION_VOLUME as u32;
+        self.random_tick_count <= volume
+            && self.opaque_count <= volume
+            && self.non_air_count <= volume
+            && self.water_count <= volume
+            && self.biome_tint_count <= volume
+            && self.particle_emitter_count <= volume
+            && self.light_emitter_count <= volume
+            && self.plane_opaque.iter().all(|&n| n <= 256)
+    }
+}
+
+/// One 16³ cube of voxels, indexed by [`section_idx`].
+///
+/// `blocks` is a [`BlockCube`] — 4096 ids `Arc`-shared at the narrowest width
+/// that holds them (see `section::cube`) — so the off-thread light and mesh
+/// pools can take a cheap shared handle to a section's block buffer (and its
+/// neighbours') without copying the cube per section on the render thread;
+/// assembling the flood neighbourhood used to be a multi-millisecond
+/// main-thread spike while streaming. Mutation is copy-on-write via
+/// `Arc::make_mut`: a setter clones the buffer only if a bake is mid-flight
+/// against it.
+///
+/// Block ids stay dense and minimal. Per-cell state that changes block behavior or
+/// rendering lives in `states`, which keeps uncommon states sparse and centralized.
+#[derive(Clone)]
+pub struct Section {
+    pub cx: i32,
+    pub cy: i32,
+    pub cz: i32,
+    blocks: BlockCube,
+    states: BlockStates,
+    /// Block-entity state, allocated on first insert — `None` for the common
+    /// generated section (together with `BlockStates`' boxed sparse maps this
+    /// keeps `size_of::<Section>()` small across thousands of loaded sections).
+    entities: Option<Box<BlockEntities>>,
+    pub dirty: bool,
+    /// Set true by runtime edits, never by generation, so only player-touched
+    /// sections are written to disk.
+    pub modified: bool,
+    /// Cached skylight (x2 scale), a full 16³ array indexed by [`section_idx`].
+    /// `None` until first computed; an uncomputed section reads as open sky. `Arc` so the
+    /// light drain can swap in a fresh cube on a shared section without a deep clone, and so
+    /// a mesh job's snapshot keeps reading the old one safely.
+    skylight: Option<Arc<[u8]>>,
+    /// Cached block-light radiated by emitters, one packed RGB cell per voxel
+    /// (see [`LightRgb`]). `None`/outside reads as [`LightRgb::ZERO`] (no block
+    /// light beyond the flood). `Arc` like [`skylight`](Self::skylight).
+    blocklight: Option<Arc<[LightRgb]>>,
+    /// Set when blocks change; cleared when light is recomputed.
+    pub light_dirty: bool,
+    /// This section's light cubes are the UNTOUCHED persisted bake seeded at
+    /// decode — no live bake or invalidation has touched them since load.
+    /// Records only persist light captured in a globally settled state, so all
+    /// such cubes (and all persisted content) are mutually consistent: a
+    /// sky-cover change sourced from another persisted record landing cannot
+    /// stale them (see the streamer's cover-change invalidation). Cleared by
+    /// [`mark_light_dirty`](Self::mark_light_dirty).
+    pub light_from_persist: bool,
+    /// Bumped whenever cached light needs a new bake; async workers echo it back so
+    /// stale results can be discarded.
+    pub light_revision: u64,
+    /// Bumped whenever this section is (re)queued for meshing; the async mesh worker
+    /// echoes it back so a result built from a now-stale snapshot is discarded.
+    pub mesh_revision: u64,
+    /// Count of blocks in this section that receive random ticks. Maintained
+    /// incrementally by every setter; the simulation skips the section when `0`.
+    random_tick_count: u32,
+    /// Count of OPAQUE cells. Maintained incrementally like `random_tick_count`. When it
+    /// equals the section volume the section is fully solid: its cells carry no light, so
+    /// neighbours' mesh jobs skip waiting on (and requesting) its light bake.
+    opaque_count: u32,
+    /// Opaque cells per 16×16 boundary plane, order [+X, −X, +Y, −Y, +Z, −Z].
+    /// A count of 256 means that face of the section is fully walled: no sightline
+    /// can cross it and every boundary face behind it is culled. Maintained by the
+    /// setters and `recompute_opaque_count`; read by the deep-section visibility
+    /// BFS as O(1) plane-openness.
+    plane_opaque: [u16; 6],
+    /// Count of NON-AIR cells. `0` ⇒ the section is empty air, which emits no mesh faces
+    /// at all (air draws nothing; solid neighbours draw their own faces toward it), so it
+    /// is skipped from meshing/drawing unconditionally — the empty-sky fast path for the
+    /// air band above the surface.
+    non_air_count: u32,
+    /// Count of Water cells. `0` ⇒ skip the streamed-water kick scan for this section
+    /// (the vast majority of sections hold no water).
+    water_count: u32,
+    /// Count of cells whose emitted mesh can use biome tint. `0` lets meshing skip the
+    /// biome halo/tint precompute for stone/cave/building sections.
+    biome_tint_count: u32,
+    /// Section-local indices (ascending) of the cells whose block row declares a
+    /// visual particle emitter — the SPARSE set presentation walks, so gathering
+    /// a frame's emitters never rescans 4,096 dense ids (the chest/door
+    /// block-entity gathers have always worked this way). Also the emitter
+    /// COUNT: there is deliberately no second counter to fall out of step with.
+    particle_emitter_cells: Vec<u16>,
+    /// Count of cells whose block row EMITS block light (`emission > 0` —
+    /// torches, lit furnaces, pack glow blocks). `0` lets the light flood's
+    /// emitter gather skip this section without scanning its cells.
+    light_emitter_count: u32,
+    /// custom-shape RENDER bake: per-cell baked BOXES a pack's
+    /// `client_wasm` produced, keyed by section-local index. `None` for the
+    /// common section (no custom shapes). `Arc` so a mesh job's snapshot keeps
+    /// reading it safely and a clone is cheap; NOT persisted (re-baked on the
+    /// client). The mesher draws each box face-by-face for `Custom`-family cells
+    /// (falling back to a cube on a miss).
+    shape_render: Option<Arc<std::collections::HashMap<u16, Box<[crate::block::ShapeRenderBox]>>>>,
+    /// custom-shape SIM light aperture: per-cell "opaque to light" bit a
+    /// pack's `wasm` baked (`BakedSimCell.light_aperture`), keyed by section-local
+    /// index. `None` for the common section. Deterministic (server + every client
+    /// replica bake it identically), so the light flood reads the SAME value on
+    /// each side; NOT persisted (re-baked on load). The light snapshot gathers it
+    /// for `CustomAperture`-lit cells (absent = passes light until baked).
+    light_apertures: Option<Arc<std::collections::HashMap<u16, bool>>>,
+}
+
+/// A section's block-entity maps, keyed by section-local block index
+/// (`section_idx`, max 4095 — fits `u16`).
+#[derive(Clone, Default)]
+struct BlockEntities {
+    /// Furnace machine state (burn/cook counters). A furnace's SLOTS live in
+    /// [`containers`](Self::containers) under the same key.
+    furnaces: HashMap<u16, Furnace>,
+    /// Generic item-slot containers — chests, furnaces, and mod container
+    /// blocks all store their stacks here. (A block-entity's FACING is
+    /// ordinary per-cell state in the unified cell store, not an entity map.)
+    containers: HashMap<u16, Container>,
+}
+
+impl BlockEntities {
+    fn is_empty(&self) -> bool {
+        self.furnaces.is_empty() && self.containers.is_empty()
+    }
+
+    fn memory_bytes(&self) -> u64 {
+        std::mem::size_of::<Self>() as u64
+            + (self.furnaces.len() * (2 + std::mem::size_of::<Furnace>() + 1)) as u64
+            + (self.containers.len() * (2 + std::mem::size_of::<Container>() + 1)) as u64
+    }
+}
+
+/// Process-wide shared 16³ cubes filled with one byte value. Uniform light
+/// cubes (open sky, pitch dark) point at these instead of owning a 4 KiB
+/// buffer each; the cache entry keeps the refcount ≥ 2, so the first
+/// heterogeneous write un-shares through the existing `Arc::make_mut`
+/// copy-on-write path.
+/// A shared all-`value` 16³ byte cube. The light bakes' `Full` / `Dark` sky
+/// shortcuts return one directly instead of allocating and filling a fresh
+/// cube that [`compact_uniform_cube`] would immediately throw away — most
+/// sections in a loaded world take one of those two shortcuts.
+pub fn uniform_cube(value: u8) -> Arc<[u8]> {
+    static CACHE: [std::sync::OnceLock<Arc<[u8]>>; 256] =
+        [const { std::sync::OnceLock::new() }; 256];
+    CACHE[value as usize]
+        .get_or_init(|| vec![value; SECTION_VOLUME].into())
+        .clone()
+}
+
+/// Collapse `cube` onto the shared per-value buffer when all its cells are equal.
+fn compact_uniform_cube(cube: Arc<[u8]>) -> Arc<[u8]> {
+    let first = cube[0];
+    if cube.iter().all(|&v| v == first) {
+        uniform_cube(first)
+    } else {
+        cube
+    }
+}
+
+impl Section {
+    pub fn new(cx: i32, cy: i32, cz: i32) -> Self {
+        Self {
+            cx,
+            cy,
+            cz,
+            blocks: BlockCube::uniform(0),
+            states: BlockStates::new(),
+            entities: None,
+            dirty: true,
+            modified: false,
+            skylight: None,
+            blocklight: None,
+            light_dirty: true,
+            light_from_persist: false,
+            light_revision: 0,
+            mesh_revision: 0,
+            random_tick_count: 0,
+            opaque_count: 0,
+            plane_opaque: [0; 6],
+            non_air_count: 0,
+            water_count: 0,
+            biome_tint_count: 0,
+            particle_emitter_cells: Vec::new(),
+            light_emitter_count: 0,
+            shape_render: None,
+            light_apertures: None,
+        }
+    }
+
+    /// The per-cell "opaque to light" bits of this section's baked custom-shape
+    /// apertures (empty when none), for the light snapshot to gather.
+    #[inline]
+    pub fn custom_light_apertures(&self) -> Option<&std::collections::HashMap<u16, bool>> {
+        self.light_apertures.as_deref()
+    }
+
+    /// Record a custom-shape cell's baked light aperture (`opaque` = blocks light
+    /// like a full cube). Returns whether it CHANGED, so the caller relights the
+    /// section only on a real transition (a gate toggling open/closed).
+    pub fn set_custom_light_aperture(&mut self, idx: u16, opaque: bool) -> bool {
+        let map = Arc::make_mut(self.light_apertures.get_or_insert_with(Default::default));
+        map.insert(idx, opaque) != Some(opaque)
+    }
+
+    /// Drop a cell's stored light aperture (the cell stopped being a custom
+    /// shape). Returns whether an entry was actually removed, so the caller
+    /// relights only on a real change.
+    pub fn clear_custom_light_aperture(&mut self, idx: u16) -> bool {
+        match self.light_apertures.as_ref() {
+            Some(map) if map.contains_key(&idx) => {
+                Arc::make_mut(self.light_apertures.as_mut().unwrap()).remove(&idx);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The baked render boxes for the custom-shape cell at section-local index
+    /// `idx`, or `None` when the cell has no render bake (the mesher then draws
+    /// the cube fallback).
+    #[inline]
+    pub fn shape_render_boxes(&self, idx: u16) -> Option<&[crate::block::ShapeRenderBox]> {
+        self.shape_render.as_ref()?.get(&idx).map(|b| &b[..])
+    }
+
+    /// Record a custom-shape cell's freshly-baked render boxes (the client
+    /// render-bake pump). Bumps `mesh_revision` so the section remeshes.
+    pub fn set_shape_render(
+        &mut self,
+        idx: u16,
+        boxes: Box<[crate::block::ShapeRenderBox]>,
+    ) {
+        Arc::make_mut(self.shape_render.get_or_insert_with(Default::default)).insert(idx, boxes);
+        self.mesh_revision += 1;
+    }
+
+    /// World-space origin (minimum corner) of this section.
+    #[inline]
+    pub fn origin_world(&self) -> (i32, i32, i32) {
+        (
+            self.cx * SECTION_SIZE as i32,
+            self.cy * SECTION_SIZE as i32,
+            self.cz * SECTION_SIZE as i32,
+        )
+    }
+
+    // --- Blocks -----------------------------------------------------------------
+
+    #[inline]
+    pub fn block(&self, x: usize, y: usize, z: usize) -> Block {
+        Block::from_id(self.blocks.get(section_idx(x, y, z)))
+    }
+
+    #[inline]
+    pub fn block_raw(&self, x: usize, y: usize, z: usize) -> u16 {
+        self.blocks.get(section_idx(x, y, z))
+    }
+
+    /// The id at a section-local cell index.
+    #[inline]
+    pub fn block_at_idx(&self, idx: usize) -> u16 {
+        self.blocks.get(idx)
+    }
+
+    /// A borrowed handle to this section's block cube, for the scans that walk
+    /// cells by index.
+    #[inline]
+    pub fn blocks(&self) -> &BlockCube {
+        &self.blocks
+    }
+
+    /// Every cell's id in section-local index order.
+    pub fn blocks_iter(&self) -> impl Iterator<Item = u16> + '_ {
+        self.blocks.iter()
+    }
+
+    pub fn set_block(&mut self, x: usize, y: usize, z: usize, b: Block) {
+        self.set_block_raw(x, y, z, b.id());
+    }
+
+    pub fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u16) {
+        let i = section_idx(x, y, z);
+        let old = self.blocks.get(i);
+        self.blocks.set(i, id);
+        self.adjust_random_tick_count(old, id);
+        self.adjust_opaque_count(x, y, z, old, id);
+        self.states.clear_on_block_change(i);
+        self.dirty = true;
+        self.mark_light_dirty();
+    }
+
+    /// Direct write access to the cube, for the BULK fills (worldgen terrain,
+    /// cave carving, test scaffolding) that maintain the derived counters
+    /// themselves via `recompute_opaque_count`.
+    pub fn blocks_mut(&mut self) -> &mut BlockCube {
+        &mut self.blocks
+    }
+
+    /// Run a BULK terrain writer over this section's ids as a FLAT slice.
+    ///
+    /// The worldgen fills and the cave carve write thousands of cells through
+    /// index arithmetic and must not pay a per-cell representation test, so
+    /// they get a plain `[u16]` and the cube is rebuilt (re-narrowed) on
+    /// install. Derived counters are NOT maintained — the caller still owes
+    /// `recompute_opaque_count`, exactly as it did for a raw buffer write.
+    pub fn edit_ids_bulk(&mut self, f: impl FnOnce(&mut [u16])) {
+        thread_local! {
+            static SCRATCH: std::cell::Cell<Vec<u16>> = const { std::cell::Cell::new(Vec::new()) };
+        }
+        let mut ids = SCRATCH.with(|c| c.take());
+        ids.clear();
+        ids.extend(self.blocks.iter());
+        f(&mut ids);
+        self.blocks = BlockCube::from_ids(&ids);
+        SCRATCH.with(|c| c.set(ids));
+    }
+
+    /// A cheap shared handle to this section's block buffer (refcount bumps, no
+    /// copy). The off-thread light/mesh pools take these for the flood/mesh
+    /// neighbourhood instead of the render thread copying the whole cube per
+    /// neighbour section.
+    pub fn block_cube(&self) -> BlockCube {
+        self.blocks.clone()
+    }
+
+    /// Heap accounting for the memory census: `(water buffer ptr, water len,
+    /// sparse-state bytes, block-entity bytes, emitter-list bytes)`.
+    pub fn memory_parts(&self) -> (Option<usize>, usize, u64, u64, u64) {
+        let (water_ptr, water_len, sparse) = self.states.memory_parts();
+        let entities = self.entities.as_ref().map_or(0, |e| e.memory_bytes());
+        let emitters = (self.particle_emitter_cells.capacity() * 2) as u64;
+        (water_ptr, water_len, sparse, entities, emitters)
+    }
+
+    /// `(buffer identity, resident bytes)` of this section's block cube, so
+    /// the census counts each distinct shared buffer once.
+    pub fn block_cube_heap(&self) -> (usize, u64) {
+        self.blocks.heap()
+    }
+
+    /// Cheap shared handles to this section's water / skylight / block-light buffers (`Arc`
+    /// clones, no copy; `None` when the buffer is absent). Used to snapshot a section's
+    /// neighbour for off-thread meshing without deep-copying any voxel array.
+    pub fn water_arc(&self) -> Option<Arc<[u8]>> {
+        self.states.water_arc()
+    }
+    pub fn skylight_arc(&self) -> Option<Arc<[u8]>> {
+        self.skylight.clone()
+    }
+    pub fn blocklight_arc(&self) -> Option<Arc<[LightRgb]>> {
+        self.blocklight.clone()
+    }
+
+    /// Whether a light bake has ever landed on this section (`set_skylight`).
+    /// Distinguishes "stale light" (`light_dirty` after an edit) from "never lit",
+    /// which the streamer defers differently.
+    #[inline]
+    pub fn has_baked_light(&self) -> bool {
+        self.skylight.is_some()
+    }
+
+    // --- Water ------------------------------------------------------------------
+
+    /// Water-flow metadata at a local voxel (0 where not flowing water).
+    #[inline]
+    pub fn water_meta(&self, x: usize, y: usize, z: usize) -> u8 {
+        self.states.water_meta(section_idx(x, y, z))
+    }
+
+    /// Set a water cell (block + flow meta) WITHOUT marking skylight dirty: water
+    /// is transparent, so flow updates only need a remesh. `meta` is treated as 0
+    /// when `b` is not water.
+    pub fn set_water(&mut self, x: usize, y: usize, z: usize, b: Block, meta: u8) {
+        let i = section_idx(x, y, z);
+        let id = b.id();
+        let old = self.blocks.get(i);
+        self.blocks.set(i, id);
+        self.adjust_random_tick_count(old, id);
+        self.adjust_opaque_count(x, y, z, old, id);
+        let meta = if b == Block::Water { meta } else { 0 };
+        self.states.store_water_meta(i, meta);
+        self.dirty = true;
+    }
+
+    /// Bulk water-flow metadata for saving (`None` when nothing is mid-flow —
+    /// the buffer is dropped once the last cell settles).
+    pub fn water_slice(&self) -> Option<&[u8]> {
+        self.states.water_slice()
+    }
+
+    /// Whether any water cell is mid-flow (nonzero flow meta). O(1) from the
+    /// states counter; the streamed-water kick uses it to skip settled sections
+    /// without scanning the 4 KiB meta buffer.
+    #[inline]
+    pub fn has_flowing_water(&self) -> bool {
+        self.states.has_flowing()
+    }
+
+    // --- Light ------------------------------------------------------------------
+
+    /// Skylight (x2 scale) at a local voxel. An uncomputed section reads as open
+    /// sky (so a not-yet-lit section renders bright rather than black for the brief
+    /// moment before its light bakes). Underground darkness is established once the
+    /// band is computed (see `mesh::skylight`).
+    #[inline]
+    pub fn skylight_at(&self, x: usize, y: usize, z: usize) -> u8 {
+        match &self.skylight {
+            Some(s) => s[section_idx(x, y, z)],
+            None => SKY_FULL,
+        }
+    }
+
+    /// Install a freshly computed skylight cube and clear the dirty flag.
+    /// Uniform cubes (fully open sky above the surface, fully dark deep
+    /// underground — most lit sections) collapse onto the shared per-value
+    /// buffer instead of retaining the bake's 4 KiB allocation.
+    pub fn set_skylight(&mut self, cube: Arc<[u8]>) {
+        self.skylight = Some(compact_uniform_cube(cube));
+        self.light_dirty = false;
+    }
+
+    /// Block-light at a local voxel: [`LightRgb::ZERO`] when uncomputed.
+    #[inline]
+    pub fn blocklight_at(&self, x: usize, y: usize, z: usize) -> LightRgb {
+        match &self.blocklight {
+            Some(b) => b[section_idx(x, y, z)],
+            None => LightRgb::ZERO,
+        }
+    }
+
+    /// Install a freshly computed block-light cube. All-dark (no emitter in
+    /// range — the overwhelmingly common bake) stores as `None`, which reads
+    /// identically and costs zero bytes.
+    ///
+    /// Non-dark cubes do NOT share a per-value buffer the way skylight does:
+    /// [`uniform_cube`]'s cache is keyed by a BYTE, and a colour cell has 32k
+    /// spellings. Nothing is lost — light decays 2 per step, so a 16³ cube can
+    /// only be uniform if it is uniformly dark, which is exactly the case
+    /// `None` already covers.
+    pub fn set_blocklight(&mut self, cube: Arc<[LightRgb]>) {
+        if cube.iter().all(|v| v.is_dark()) {
+            self.blocklight = None;
+        } else {
+            self.blocklight = Some(cube);
+        }
+    }
+
+    pub fn mark_light_dirty(&mut self) {
+        self.light_dirty = true;
+        self.light_from_persist = false;
+        self.light_revision = self.light_revision.wrapping_add(1);
+    }
+
+    /// Mark light final as-is WITHOUT installing cubes. Two legitimate
+    /// callers: the replica's authoritative-delta ingest (light is
+    /// server-owned there; keep sampling the old cubes until the server's
+    /// rebake arrives as `LightData`), and a landed rebake whose cubes proved
+    /// byte-identical to the cached ones (nothing to install or republish).
+    /// Local predicted edits instead install their disposable revision-gated
+    /// relight, which can never override server light.
+    pub fn mark_light_clean(&mut self) {
+        self.light_dirty = false;
+    }
+
+    /// Drop the block-light cubes (a rebake that reaches no emitter ships no
+    /// buffer; absent reads as all-zero — see [`Self::set_blocklight`]).
+    pub fn clear_blocklight(&mut self) {
+        self.blocklight = None;
+    }
+}

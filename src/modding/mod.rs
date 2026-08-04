@@ -17,14 +17,14 @@
 //! A trapping / deadline-blowing / protocol-breaking mod is
 //! disabled for the session with a visible error and the tick continues.
 
-pub(crate) mod ai;
-pub(crate) mod client;
+pub mod ai;
+pub mod client;
 mod convert;
-pub(crate) mod gen;
+pub mod gen;
 mod host;
 mod instance;
-pub(crate) mod manifest;
-pub(crate) mod modset;
+pub use petramond_world::pack_manifest as manifest;
+pub mod modset;
 mod scope;
 mod shape_bake;
 
@@ -35,12 +35,12 @@ static ACTIVE_RECIPES: std::sync::RwLock<Option<std::sync::Arc<crate::crafting::
     std::sync::RwLock::new(None);
 
 /// Install the session's recipe snapshot (called by `Game::new`).
-pub(crate) fn install_recipes(recipes: std::sync::Arc<crate::crafting::Recipes>) {
+pub fn install_recipes(recipes: std::sync::Arc<crate::crafting::Recipes>) {
     *ACTIVE_RECIPES.write().unwrap() = Some(recipes);
 }
 
 /// The installed recipe snapshot, if a session has published one.
-pub(crate) fn active_recipes() -> Option<std::sync::Arc<crate::crafting::Recipes>> {
+pub fn active_recipes() -> Option<std::sync::Arc<crate::crafting::Recipes>> {
     ACTIVE_RECIPES.read().unwrap().clone()
 }
 
@@ -49,7 +49,7 @@ pub(crate) fn active_recipes() -> Option<std::sync::Arc<crate::crafting::Recipes
 /// discovery and any cold compiles happen behind the shell menu, so opening a
 /// world finds every module ready (or blocks only on the tail of an in-flight
 /// compile) instead of paying cranelift on the click.
-pub(crate) fn prewarm_modules() {
+pub fn prewarm_modules() {
     let spawned = std::thread::Builder::new()
         .name("mod-prewarm".into())
         .spawn(|| {
@@ -74,13 +74,13 @@ use crate::events::{
     EventBus, MobDamageFeedback, MobDamageFeedbackComponent, MobDamageSound, Outcome, SimCtx,
     TickSystems,
 };
-use crate::game::TickEvents;
+use crate::events::tick::TickEvents;
 use crate::mathh::IVec3;
 use crate::mob::{Mob, MobCategory};
 use crate::player::Player;
 use crate::world::World;
 
-pub(crate) use client::{ClientCommand, ClientImageData, ClientOverlayRegistration};
+pub use client::{ClientCommand, ClientImageData, ClientOverlayRegistration};
 use host::Registration;
 use instance::ModInstance;
 
@@ -111,7 +111,7 @@ struct BlockBehaviorRegistration {
 }
 
 /// Every loaded mod instance, in pack load order.
-pub(crate) struct ModHost {
+pub struct ModHost {
     instances: Vec<SharedInstance>,
     /// Parallel to `instances`.
     metas: Vec<ModMeta>,
@@ -135,7 +135,7 @@ impl ModHost {
     /// click ownership for this session. (Its catalog CONTENT stays in the
     /// process-wide registries — only reachability is gated; the save palette
     /// makes its world content decode to air.)
-    pub(crate) fn load(world_seed: u32, disabled: &std::collections::BTreeSet<String>) -> Self {
+    pub fn load(world_seed: u32, disabled: &std::collections::BTreeSet<String>) -> Self {
         let mods = session_wasm_mods(crate::assets::packs(), disabled);
         Self::from_wasm_list(world_seed, &mods)
     }
@@ -143,7 +143,7 @@ impl ModHost {
     /// Load explicit `(mod id, wasm path)` pairs — the pack-independent entry
     /// tests use. A module that fails to compile/instantiate is skipped with a
     /// logged error (= disabled at load).
-    pub(crate) fn from_wasm_list(world_seed: u32, mods: &[(String, PathBuf)]) -> Self {
+    pub fn from_wasm_list(world_seed: u32, mods: &[(String, PathBuf)]) -> Self {
         // Fan the cold compiles out before the sequential load loop: each
         // `module_for` below then blocks only on its own module's slot, so an
         // unwarmed session pays the slowest compile, not the sum.
@@ -183,8 +183,8 @@ impl ModHost {
     /// `mod_dispatch` answers `GuestRet::Unit` (postcard `[0]` staged at 512)
     /// to everything — for driving engine-side dispatch plumbing (the GUI
     /// click drain) without a compiled mod.
-    #[cfg(test)]
-    pub(crate) fn test_unit_guest_host(mod_id: &str) -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_unit_guest_host(mod_id: &str) -> Self {
         let wat = r#"(module
   (memory (export "memory") 1)
   (data (i32.const 512) "\00")
@@ -237,11 +237,11 @@ impl ModHost {
     /// a fresh epoch, is what evicts a previous session's config). Call once,
     /// after the engine's own handlers (if any) have registered, so mods sort
     /// behind them at equal priority.
-    pub(crate) fn initialize(
+    pub fn initialize(
         &mut self,
         world: &mut World,
         player: &mut Player,
-        gui_state: &mut std::sync::Arc<crate::gui::GuiStateMap>,
+        gui_state: &mut std::sync::Arc<crate::gui_state::GuiStateMap>,
         bus: &mut EventBus,
         systems: &mut TickSystems,
         next_spatial_sound_handle: &mut u64,
@@ -351,7 +351,7 @@ impl ModHost {
     /// registry. The server thread calls it once at startup:
     /// `initialize` installed on the constructing thread, and the
     /// registry is deliberately thread-local (test isolation — see `ai.rs`).
-    pub(crate) fn install_thread_ai_nodes(&self) {
+    pub fn install_thread_ai_nodes(&self) {
         ai::install(self.ai_nodes.clone());
     }
 
@@ -360,7 +360,7 @@ impl ModHost {
     /// menu stage's click drain. Engine kinds carry the reserved `petramond`
     /// namespace but are not mod kinds, and a content-only pack may ship a GUI
     /// with no wasm: both simply dispatch nothing.
-    pub(crate) fn dispatch_gui_click(
+    pub fn dispatch_gui_click(
         &mut self,
         ctx: &mut SimCtx,
         kind_key: &str,
@@ -381,11 +381,11 @@ impl ModHost {
         self.instances[i].lock().unwrap().call_guest(ctx, &call);
     }
 
-    pub(crate) fn has_hostile_spawners(&self) -> bool {
+    pub fn has_hostile_spawners(&self) -> bool {
         !self.hostile_spawners.is_empty()
     }
 
-    pub(crate) fn has_block_behaviors(&self) -> bool {
+    pub fn has_block_behaviors(&self) -> bool {
         !self.block_behaviors.is_empty()
     }
 
@@ -394,7 +394,7 @@ impl ModHost {
     /// their keys. A hook whose key no mod registered is dropped silently —
     /// the block stays inert, exactly like a row pointing at a disabled
     /// pack's behavior.
-    pub(crate) fn dispatch_block_hooks(
+    pub fn dispatch_block_hooks(
         &self,
         ctx: &mut SimCtx,
         hooks: &[crate::block::behavior::ModBlockHook],
@@ -426,7 +426,7 @@ impl ModHost {
     /// disabled mod, or a wrong-shaped/short reply leaves the cells uncached, so
     /// their collision falls back to the row's static boxes (the failure policy)
     /// while placed world data stays intact.
-    pub(crate) fn bake_custom_shapes(&self, ctx: &mut SimCtx) {
+    pub fn bake_custom_shapes(&self, ctx: &mut SimCtx) {
         let cells = ctx.world.drain_custom_bake_dirty();
         if cells.is_empty() {
             return;
@@ -487,7 +487,7 @@ impl ModHost {
     /// function of the cell input, so this equals what the post-placement
     /// pump caches. `None` = no reachable owner or a declined/invalid reply:
     /// the caller falls back to the row's static collision.
-    pub(crate) fn bake_placement_sim_boxes(
+    pub fn bake_placement_sim_boxes(
         &self,
         ctx: &mut SimCtx,
         shape_key: &str,
@@ -522,7 +522,7 @@ impl ModHost {
     /// namespace or a disabled/trapped mod), so the caller falls back to the
     /// ordinary engine placement ladder; a reachable owner always answers (the
     /// SDK default accepts at the click cell).
-    pub(crate) fn shape_placement_plan(
+    pub fn shape_placement_plan(
         &self,
         ctx: &mut SimCtx,
         shape_key: &str,
@@ -553,7 +553,7 @@ impl ModHost {
             .map(|i| &self.instances[i])
     }
 
-    pub(crate) fn hostile_spawn_kind(
+    pub fn hostile_spawn_kind(
         &self,
         ctx: &mut SimCtx,
         candidate: &HostileSpawnCandidate,
@@ -589,8 +589,8 @@ impl ModHost {
         None
     }
 
-    #[cfg(test)]
-    pub(crate) fn probe(&self, index: usize) -> (bool, u64, host::HostStats) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn probe(&self, index: usize) -> (bool, u64, host::HostStats) {
         let inst = self.instances[index].lock().unwrap();
         (inst.disabled(), inst.dispatches(), inst.stats())
     }
@@ -837,4 +837,4 @@ fn finite_nonnegative(value: f32, fallback: f32) -> f32 {
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+pub mod tests;

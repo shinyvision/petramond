@@ -11,16 +11,16 @@
 
 pub mod client;
 mod codec;
-pub mod colgen;
+pub use petramond_worldgen::colgen;
 mod container;
 pub mod entities;
 mod furnace;
 mod io;
 pub mod level;
 pub mod mobs;
-pub(crate) mod palette;
+pub mod palette;
 pub mod player;
-mod region;
+pub(crate) use petramond_world::region;
 pub mod settings;
 mod worlds;
 
@@ -28,9 +28,9 @@ mod worlds;
 mod tests;
 
 pub use codec::SectionSnapshot;
-pub(crate) use io::write_atomic;
+pub use io::write_atomic;
 pub use level::LevelData;
-pub(crate) use worlds::base_data_dir;
+pub use petramond_util::paths::base_data_dir;
 pub use worlds::{
     delete_world, dir_name_for, list_worlds, random_seed, read_world_seed, read_world_settings,
     rename_world, seed_from_text, world_dir, world_exists, world_size_bytes, write_world_metadata,
@@ -53,7 +53,7 @@ use io::{read_thread, write_thread, IoMsg, ReadMsg};
 use worlds::player_path;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum SectionStore {
+pub enum SectionStore {
     Authoritative,
     ExploredCache,
 }
@@ -63,7 +63,7 @@ pub(crate) enum SectionStore {
 /// saved).
 pub struct LoadedSection {
     pub pos: SectionPos,
-    pub(crate) store: SectionStore,
+    pub store: SectionStore,
     pub section: Option<Section>,
     pub entities: Vec<DroppedItem>,
     pub mobs: Vec<SavedMob>,
@@ -87,17 +87,6 @@ pub struct WorldSave {
     colgen_rx: Receiver<LoadedColumnGen>,
     writer_handle: Option<JoinHandle<()>>,
     reader_handle: Option<JoinHandle<()>>,
-    /// Section coords present on disk: seeded at open from region headers, grown
-    /// as we save. The load path consults it to choose overlay-from-disk vs
-    /// regenerate.
-    manifest: rustc_hash::FxHashSet<SectionPos>,
-    /// Per-column view of `manifest`, so the streamer's per-column wanted-section
-    /// scans don't walk the whole manifest for every column (that made vertical
-    /// crossings O(columns × manifest) on a lived-in save).
-    manifest_columns: rustc_hash::FxHashMap<ChunkPos, Vec<i32>>,
-    /// Disposable full-section records created by Optimize explored terrain.
-    /// They accelerate normal wanted windows but never widen them vertically.
-    explored_manifest: rustc_hash::FxHashSet<SectionPos>,
     /// Columns with a column-gen cache record on disk ("Optimize explored
     /// terrain"): seeded at open from `colgen/` headers, grown as we save.
     /// Presence only — a hit still validates seed/version at decode.
@@ -118,6 +107,9 @@ pub struct WorldSave {
 /// The result of opening (or creating) a world.
 pub struct OpenedWorld {
     pub save: WorldSave,
+    /// The scanned on-disk record index — WORLD DATA the sim consults (see
+    /// `world::SavedIndex`); attach it to the world beside the save handle.
+    pub saved: crate::world::SavedIndex,
     /// `Some` if a `level.dat` already existed (a returning world): seed, the
     /// world tick, and the mod world KV. Per-player state is NOT here — the
     /// session reads it per name via [`WorldSave::load_player`].
@@ -154,30 +146,6 @@ impl WorldSave {
         }
     }
 
-    /// `true` if either authoritative state or an explored cache record exists.
-    pub fn manifest_contains(&self, pos: SectionPos) -> bool {
-        self.manifest.contains(&pos) || self.explored_manifest.contains(&pos)
-    }
-
-    pub fn authoritative_manifest_contains(&self, pos: SectionPos) -> bool {
-        self.manifest.contains(&pos)
-    }
-
-    pub fn explored_manifest_contains(&self, pos: SectionPos) -> bool {
-        self.explored_manifest.contains(&pos)
-    }
-
-    pub fn manifest_sections_in_column(
-        &self,
-        pos: ChunkPos,
-    ) -> impl Iterator<Item = SectionPos> + '_ {
-        self.manifest_columns
-            .get(&pos)
-            .into_iter()
-            .flatten()
-            .map(move |&cy| SectionPos::new(pos.cx, cy, pos.cz))
-    }
-
     /// `true` if `pos`'s written record currently carries live entities (dropped items
     /// or mobs) — so a save that now finds the section free of both must rewrite it, or
     /// the stale record resurrects them on the next load.
@@ -194,24 +162,23 @@ impl WorldSave {
     }
 
     /// Queue modified sections for compression + region write (non-blocking).
-    pub fn save_sections(&mut self, snaps: Vec<SectionSnapshot>) {
+    /// `saved` is the world's on-disk record index; this is one of its two
+    /// write choke points (the other is [`note_section_load_miss`]).
+    ///
+    /// [`note_section_load_miss`]: Self::note_section_load_miss
+    pub fn save_sections(&mut self, saved: &mut crate::world::SavedIndex, snaps: Vec<SectionSnapshot>) {
         if snaps.is_empty() {
             return;
         }
         let mut authoritative = Vec::new();
         let mut explored = Vec::new();
         for s in snaps {
-            if s.cache_only && !self.manifest.contains(&s.pos) {
-                self.explored_manifest.insert(s.pos);
+            if s.cache_only && !saved.authoritative_contains(s.pos) {
+                saved.insert_explored(s.pos);
                 explored.push(s);
                 continue;
             }
-            if self.manifest.insert(s.pos) {
-                self.manifest_columns
-                    .entry(s.pos.chunk_pos())
-                    .or_default()
-                    .push(s.pos.cy);
-            }
+            saved.insert_authoritative(s.pos);
             // Track whether the record we're about to write carries any live entities —
             // drops or mobs (matching `encode_snapshot`'s FLAG_HAS_ENTITIES /
             // FLAG_HAS_MOBS). A section that loses them all is then re-saved once to clear
@@ -260,10 +227,15 @@ impl WorldSave {
     /// Ask the I/O thread to read `pos`; the result arrives via [`poll_loaded`].
     ///
     /// [`poll_loaded`]: Self::poll_loaded
-    pub fn request_load(&self, pos: SectionPos, use_explored_cache: bool) {
-        let store = if self.manifest.contains(&pos) {
+    pub fn request_load(
+        &self,
+        saved: &crate::world::SavedIndex,
+        pos: SectionPos,
+        use_explored_cache: bool,
+    ) {
+        let store = if saved.authoritative_contains(pos) {
             Some(SectionStore::Authoritative)
-        } else if use_explored_cache && self.explored_manifest.contains(&pos) {
+        } else if use_explored_cache && saved.explored_contains(pos) {
             Some(SectionStore::ExploredCache)
         } else {
             None
@@ -287,22 +259,17 @@ impl WorldSave {
         self.load_rx.try_recv().ok()
     }
 
-    /// A missing/corrupt record must not stay in the presence manifest or every
+    /// A missing/corrupt record must not stay in the presence index or every
     /// revisit repeats the failed read and suppresses cache replacement.
-    pub(crate) fn note_section_load_miss(&mut self, pos: SectionPos, store: SectionStore) {
+    pub fn note_section_load_miss(
+        &mut self,
+        saved: &mut crate::world::SavedIndex,
+        pos: SectionPos,
+        store: SectionStore,
+    ) {
         match store {
-            SectionStore::Authoritative => {
-                self.manifest.remove(&pos);
-                if let Some(cys) = self.manifest_columns.get_mut(&pos.chunk_pos()) {
-                    cys.retain(|&cy| cy != pos.cy);
-                    if cys.is_empty() {
-                        self.manifest_columns.remove(&pos.chunk_pos());
-                    }
-                }
-            }
-            SectionStore::ExploredCache => {
-                self.explored_manifest.remove(&pos);
-            }
+            SectionStore::Authoritative => saved.remove_authoritative(pos),
+            SectionStore::ExploredCache => saved.remove_explored(pos),
         }
     }
 
@@ -349,7 +316,7 @@ impl WorldSave {
         self.colgen_rx.try_recv().ok()
     }
 
-    pub(crate) fn note_colgen_load_miss(&mut self, pos: ChunkPos) {
+    pub fn note_colgen_load_miss(&mut self, pos: ChunkPos) {
         self.colgen_manifest.remove(&pos);
     }
 
@@ -381,7 +348,7 @@ pub fn open(name: &str) -> std::io::Result<OpenedWorld> {
 
 /// Open (or create) a world at an explicit directory. Backs [`open`]; tests use
 /// it directly against a temp dir so they never touch the real data dir.
-pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
+pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let t0 = std::time::Instant::now();
     let region_dir = dir.join("region");
     let explored_dir = dir.join("explored");
@@ -534,16 +501,8 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
         .spawn(move || read_thread(dir, read_rx, load_tx, colgen_tx, completed))
         .expect("spawn save reader");
 
-    let mut manifest_columns: rustc_hash::FxHashMap<ChunkPos, Vec<i32>> =
-        rustc_hash::FxHashMap::default();
-    for sp in &manifest {
-        manifest_columns
-            .entry(sp.chunk_pos())
-            .or_default()
-            .push(sp.cy);
-    }
-
     Ok(OpenedWorld {
+        saved: crate::world::SavedIndex::from_scan(manifest, explored_manifest),
         save: WorldSave {
             tx,
             read_tx,
@@ -554,9 +513,6 @@ pub(crate) fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
             colgen_rx,
             writer_handle: Some(writer_handle),
             reader_handle: Some(reader_handle),
-            manifest,
-            manifest_columns,
-            explored_manifest,
             colgen_manifest,
             entities_on_disk: HashSet::new(),
             players_dir,

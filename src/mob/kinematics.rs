@@ -408,7 +408,7 @@ impl Instance {
     }
 
     #[cfg(test)]
-    pub(crate) fn on_ground(&self) -> bool {
+    pub fn on_ground(&self) -> bool {
         self.on_ground
     }
 }

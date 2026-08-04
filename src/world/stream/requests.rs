@@ -354,11 +354,9 @@ impl World {
                     }
                 }
             }
-            if let Some(save) = self.save.as_ref() {
-                for sp in save.manifest_sections_in_column(*pos) {
-                    if !cys.contains(&sp.cy) {
-                        cys.push(sp.cy);
-                    }
+            for &cy in self.data.saved.sections_in_column(*pos) {
+                if !cys.contains(&cy) {
+                    cys.push(cy);
                 }
             }
             let content_top = col.content_top();
@@ -471,8 +469,9 @@ impl World {
             // answers: the sim guard blocks mutation and the harvest skips
             // persisting it meanwhile (same contract as the overlay path).
             self.gen.awaited_overlays.insert(sp);
+            self.note_stream_nonfinal(sp);
             if let Some(save) = self.save.as_ref() {
-                save.request_load(sp, true);
+                save.request_load(&self.data.saved, sp, true);
             }
             return;
         }
@@ -487,12 +486,13 @@ impl World {
         self.insert_pending_section(sp);
         self.gen.pending_section_jobs.insert(sp, job);
         if let Some(save) = self.save.as_ref() {
-            if save.authoritative_manifest_contains(sp) {
-                save.request_load(sp, false);
+            if self.data.saved.authoritative_contains(sp) {
+                save.request_load(&self.data.saved, sp, false);
                 // The section's true content is now in flight until the save thread
                 // answers (and the overlay applies): the sim guard blocks mutation
                 // and the harvest skips persisting it meanwhile.
                 self.gen.awaited_overlays.insert(sp);
+                self.note_stream_nonfinal(sp);
             }
         }
     }

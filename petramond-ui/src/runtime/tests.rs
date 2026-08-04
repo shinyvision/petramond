@@ -1104,7 +1104,7 @@ fn a_hover_anchored_tooltip_shows_only_over_its_widget() {
     state.set("fill", UiValue::F32(0.5));
     // The tip's TEXT is its visibility: a non-empty string is true.
     state.set("tip", UiValue::Str("Iron".to_owned()));
-    let mut run = |fs: &mut FrameState, out: &mut FrameOutput, input: &[InputEvent]| {
+    let run = |fs: &mut FrameState, out: &mut FrameOutput, input: &[InputEvent]| {
         rt.frame(
             FrameArgs {
                 screen: (400, 400),

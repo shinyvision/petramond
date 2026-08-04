@@ -18,20 +18,20 @@
 use super::game::ServerGame;
 use crate::block::{Block, BlockInteraction};
 use crate::events::{InteractAttempt, Outcome, PostEvent};
-use crate::game::tick::TickEvents;
+use crate::events::tick::TickEvents;
 use crate::mathh::IVec3;
 use crate::net::protocol::TargetRef;
 use crate::server::player::PendingUseClick;
 
 /// Hold-to-interact repeat cadence: a HELD use button re-runs the interact
 /// dispatch this many ticks apart (250 ms at the 20 TPS tick).
-pub(crate) const USE_REPEAT_TICKS: u32 = 5;
+pub const USE_REPEAT_TICKS: u32 = 5;
 
 /// Click plumbing that rides beside the attempt but is not part of the
 /// gesture: the raw click target (the placement consumers' input), the
 /// client's prediction claims, and the hold-repeat flag. Consumers read it;
 /// the attempt payload the mods see never carries it.
-pub(crate) struct ClickMeta {
+pub struct ClickMeta {
     /// The claimed block target (click-time latch, reach-validated).
     pub target: Option<TargetRef>,
     /// Whether the client ran a full place ghost for this click.
@@ -88,7 +88,7 @@ impl ServerGame {
     /// Interact / placement, on the tick: consume a buffered secondary-button
     /// press once and dispatch it down the consumer registry. An in-progress
     /// EAT (held button on a food item) advances every tick, click or not.
-    pub(crate) fn tick_place(&mut self, s: usize, events: &mut TickEvents) {
+    pub fn tick_place(&mut self, s: usize, events: &mut TickEvents) {
         // Taking the whole click clears its target, request, presentation
         // verdict, and held-selection guard together. A newer hotbar
         // selection invalidates the attempt before any consumer can observe
@@ -487,8 +487,8 @@ impl ServerGame {
 
     /// Test-only: latch a use click on session `s` aimed at its current look —
     /// what a real client click ships as its click-time target.
-    #[cfg(test)]
-    pub(crate) fn queue_place_click_for_test(&mut self, s: usize) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn queue_place_click_for_test(&mut self, s: usize) {
         let sess = &mut self.sessions[s];
         // The hook models a client that ran its full place prediction (the
         // common case), so the echo strip applies like production.
@@ -506,8 +506,8 @@ impl ServerGame {
     /// stable mob id instead of a block target.
     ///
     /// [`queue_place_click_for_test`]: Self::queue_place_click_for_test
-    #[cfg(test)]
-    pub(crate) fn queue_mob_use_click_for_test(&mut self, s: usize, mob: u64) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn queue_mob_use_click_for_test(&mut self, s: usize, mob: u64) {
         let sess = &mut self.sessions[s];
         sess.pending_use_click = Some(PendingUseClick::capture(
             &sess.player,

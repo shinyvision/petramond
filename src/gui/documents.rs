@@ -21,7 +21,7 @@ use std::time::{Duration, Instant, SystemTime};
 /// Where GUI documents live, relative to the asset roots.
 const DOCUMENTS_DIR: &str = "ui/documents";
 
-pub(crate) struct DocEntry {
+pub struct DocEntry {
     pub kind: GuiKind,
     pub doc: Arc<Document>,
     /// Every image the document references (resolved beside the document, in
@@ -35,7 +35,7 @@ pub(crate) struct DocEntry {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DocImageRef {
+pub struct DocImageRef {
     pub name: String,
     pub path: PathBuf,
     pub size: (u32, u32),
@@ -43,7 +43,7 @@ pub(crate) struct DocImageRef {
 
 /// A cheap handle to one loaded document.
 #[derive(Clone)]
-pub(crate) struct DocRef {
+pub struct DocRef {
     pub doc: Arc<Document>,
     pub images: Arc<Vec<DocImageRef>>,
     pub container_slots: Arc<Vec<SlotSpec>>,
@@ -63,7 +63,7 @@ static REGISTRY: Mutex<Option<Registry>> = Mutex::new(None);
 /// workbench — is backed by the crafting table's: a station runs the
 /// ordinary crafting session, so its screen is the ordinary crafting screen
 /// unless a dedicated document ships.
-pub(crate) fn doc_for(kind: GuiKind) -> Option<DocRef> {
+pub fn doc_for(kind: GuiKind) -> Option<DocRef> {
     doc_entry_for(kind).or_else(|| {
         // Only stations WITHOUT a document of their own fall back — the
         // inventory and table own their browser screens, and a validation
@@ -109,13 +109,13 @@ fn doc_entry_for(kind: GuiKind) -> Option<DocRef> {
 /// A rejected document is the one failure in this area with no symptom: the
 /// kind still opens, the specs come back empty, and the pack machine silently
 /// becomes plain storage. Nothing else surfaces it without launching the game.
-pub(crate) fn loaded_documents() -> Vec<(&'static str, usize)> {
+pub fn loaded_documents() -> Vec<(&'static str, usize)> {
     let mut guard = REGISTRY.lock().expect("gui document registry");
     let registry = guard.get_or_insert_with(load);
     let mut out: Vec<(&'static str, usize)> = registry
         .entries
         .iter()
-        .filter_map(|e| Some((super::kind::kind_key(e.kind)?, e.container_slots.len())))
+        .filter_map(|e| Some((crate::gui_state::kind_key(e.kind)?, e.container_slots.len())))
         .collect();
     out.sort_unstable();
     out
@@ -125,7 +125,7 @@ pub(crate) fn loaded_documents() -> Vec<(&'static str, usize)> {
 /// ENGINE kinds as well as mod ones (the chest's 27 unfiltered cells come from
 /// here; only the furnace's are hardcoded, in `ContainerMenu::slot_specs`).
 /// Empty for widgets-only mod GUIs and unknown kinds.
-pub(crate) fn container_slot_specs(kind: GuiKind) -> Arc<Vec<SlotSpec>> {
+pub fn container_slot_specs(kind: GuiKind) -> Arc<Vec<SlotSpec>> {
     doc_for(kind).map(|d| d.container_slots).unwrap_or_default()
 }
 
@@ -223,7 +223,7 @@ fn resolve_slot_filter(
 /// The engine's slot expectations per kind. Mod kinds derive their contract
 /// from their own document via [`mod_contract_for`]; shell kinds carry no
 /// role slots.
-pub(crate) fn contract_for(kind: GuiKind) -> SlotContract {
+pub fn contract_for(kind: GuiKind) -> SlotContract {
     match kind {
         GuiKind::Chest => SlotContract::new(&[
             ("container", crate::world::chest::CHEST_SLOTS),

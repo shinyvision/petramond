@@ -19,7 +19,7 @@ mod los;
 mod melee;
 mod retaliate;
 #[cfg(test)]
-pub(crate) mod test_support;
+pub mod test_support;
 mod wander;
 mod wasm;
 
@@ -31,7 +31,7 @@ pub use idle_anim::IdleAnimAi;
 pub use melee::MeleeAttackAi;
 pub use retaliate::RetaliateAi;
 pub use wander::WanderAi;
-pub(crate) use wasm::ScriptedInputs;
+pub use wasm::ScriptedInputs;
 
 use super::brain::{
     AiBehavior, PRIORITY_ATTACK, PRIORITY_CHASE, PRIORITY_CONTACT, PRIORITY_EXPRESSION,

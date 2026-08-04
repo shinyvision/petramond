@@ -30,20 +30,16 @@
 //!   callback. Air picks are skipped on the spot and sections with nothing
 //!   random-tickable are skipped wholesale via a per-section counter.
 
-use rustc_hash::FxHashSet;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, VecDeque};
 
 use crate::block::Block;
 use crate::chunk::{SectionPos, SECTION_SIZE, SECTION_VOLUME};
 use crate::crafting::Recipes;
 use crate::mathh::{IVec3, FACE_NEIGHBORS};
 
+use petramond_world::world::tick_state::NAV_CHANGE_CAP;
 use super::sim_guard::{SimReadiness, SIM_RETRY_DELAY};
 use super::store::World;
-
-/// One pending scheduled tick, min-heap ordered: `(due tick, schedule order, x, y, z)`.
-type ScheduledTick = Reverse<(u64, u64, i32, i32, i32)>;
 
 /// Random-tick draws per loaded 16³ section per tick.
 const RANDOM_TICK_SPEED: u32 = 3;
@@ -56,49 +52,6 @@ const RANDOM_TICK_SPEED: u32 = 3;
 /// server tick thread on an idle world. 8 chunks (128 blocks)
 const RANDOM_TICK_CHUNK_RADIUS: i32 = 8;
 
-/// Per-world tick/update/schedule bookkeeping.
-#[derive(Default)]
-pub(super) struct TickState {
-    /// Monotonic game-tick counter (20 per second).
-    tick: u64,
-    /// Cells whose neighbourhood changed since the last tick, awaiting dispatch.
-    update_queue: VecDeque<IVec3>,
-    update_set: FxHashSet<IVec3>,
-    /// Pending scheduled ticks ordered by due tick, then by scheduling order
-    /// (min-heap via `Reverse`); the position rides along in the entry.
-    scheduled: BinaryHeap<ScheduledTick>,
-    /// Monotonic counter that timestamps each schedule, so ticks due on the same
-    /// game tick execute in the order they were scheduled.
-    scheduled_seq: u64,
-    /// Positions with a scheduled tick already pending, for dedup.
-    scheduled_set: FxHashSet<IVec3>,
-    /// Blocks the simulation itself destroyed this tick (a fragile block losing its
-    /// support, or one washed away by water), each as `(pos, block)`. Purely a
-    /// hand-off to the presentation layer: `Game` drains it right after the tick (see
-    /// [`World::take_natural_breaks`]) to play the break burst + roll the drops, so the
-    /// visual effect lives in `Game` while the world stays the authority on the change.
-    pending_breaks: Vec<(IVec3, crate::block::Block)>,
-    /// xorshift64 state for random-tick cell selection (kept non-zero; see
-    /// [`TickState::new`]).
-    rng: u64,
-    /// Reused per-phase batch buffer (scheduled dues, update drain, random-tick
-    /// cells). The phases run strictly in sequence, so one buffer serves all
-    /// three without a fresh allocation every tick.
-    batch_scratch: Vec<IVec3>,
-    /// Block positions announced changed since the last mob tick — the feed
-    /// for confinement-cache invalidation (`mob::confined::RegionCache`),
-    /// drained by `tick_mobs`. Bounded: past [`NAV_CHANGE_CAP`] the overflow
-    /// flag stands in for the exact positions (invalidate everything), so a
-    /// world that never drains (a pure client) cannot grow it unbounded.
-    nav_changes: Vec<IVec3>,
-    nav_changes_overflow: bool,
-    /// Bumped by every announced nav-relevant change (see
-    /// [`World::nav_revision`]).
-    nav_revision: u64,
-}
-
-/// Cap on the per-tick nav-change buffer (see [`TickState::nav_changes`]).
-const NAV_CHANGE_CAP: usize = 256;
 
 /// Whether replacing `old` with `new` provably CANNOT change what a mob can
 /// walk on or through — the confinement-invalidation filter for
@@ -128,29 +81,6 @@ pub(super) fn edit_nav_equivalent(old: Block, new: Block) -> bool {
     static_shape(old) && static_shape(new) && old.collision_boxes() == new.collision_boxes()
 }
 
-impl TickState {
-    /// Seed the per-world tick state. Only `rng` needs a non-default value
-    /// (xorshift64 is stuck at 0); the world seed is mixed in purely to
-    /// decorrelate leaf-decay order between worlds — random ticks are real-time
-    /// gameplay RNG, not part of deterministic worldgen.
-    pub(super) fn new(seed: u32) -> Self {
-        Self {
-            rng: (seed as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
-            ..Default::default()
-        }
-    }
-
-    /// Next xorshift64 word, for choosing random-tick cells.
-    #[inline]
-    fn next_random(&mut self) -> u64 {
-        let mut x = self.rng;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.rng = x;
-        x
-    }
-}
 
 impl World {
     /// Current game-tick number (advances once per [`World::game_tick`]).
@@ -187,7 +117,7 @@ impl World {
     /// those stay in `Game`; everything the world owns alone sequences here.
     pub fn game_tick(&mut self, recipes: &Recipes) {
         debug_assert!(
-            self.role != crate::world::store::WorldRole::ClientReplica,
+            self.role != crate::world::WorldRole::ClientReplica,
             "a replica never simulates: the server owns the tick"
         );
         self.sim.tick = self.sim.tick.wrapping_add(1);
@@ -357,7 +287,7 @@ impl World {
     /// A counter that moves whenever anything a mob could walk on or through
     /// changed. Cheap staleness witness for verdicts derived from terrain.
     #[inline]
-    pub(crate) fn nav_revision(&self) -> u64 {
+    pub fn nav_revision(&self) -> u64 {
         self.sim.nav_revision
     }
 
@@ -404,7 +334,7 @@ impl World {
     /// occupant — air for a support loss, water when a fluid took its place.
     ///
     /// [`take_natural_breaks`]: Self::take_natural_breaks
-    pub(crate) fn note_block_destroyed(&mut self, pos: IVec3, block: Block) {
+    pub fn note_block_destroyed(&mut self, pos: IVec3, block: Block) {
         self.sim.pending_breaks.push((pos, block));
         // Sweep any block-entity record the block owned (a torch's mount, a
         // chest/furnace front) — the same unconditional sweep the player-break
@@ -428,7 +358,7 @@ impl World {
     /// player's hand would: record it as a natural break (so `Game` plays the burst
     /// and rolls its drops, e.g. a decayed leaf's 10% sapling) and clear the cell to
     /// air. Reads the current occupant at `pos`; a no-op if that cell is already air.
-    pub(crate) fn break_block_naturally(&mut self, pos: IVec3) {
+    pub fn break_block_naturally(&mut self, pos: IVec3) {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
         if block == Block::Air {
             return;
@@ -445,7 +375,13 @@ impl World {
     /// concrete block — water (and any future reactor) carries its own reaction.
     fn dispatch_block_update(&mut self, pos: IVec3) {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        block.behavior().neighbor_update(self, pos);
+        let behavior = block.behavior();
+        // Engine behaviours (water/fragile/sapling/door) dispatch through the
+        // orchestration registry; everything else through the data-layer object.
+        match crate::world::engine_behavior::engine_behavior(behavior.key()) {
+            Some(engine) => engine.neighbor_update(self, pos),
+            None => behavior.neighbor_update(self, pos),
+        }
     }
 
     /// Generic EXECUTE step: run the scheduled behaviour for the block at `pos`.
@@ -453,7 +389,11 @@ impl World {
     /// concrete block.
     fn run_scheduled_tick(&mut self, pos: IVec3) {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        block.behavior().scheduled_tick(self, pos);
+        let behavior = block.behavior();
+        match crate::world::engine_behavior::engine_behavior(behavior.key()) {
+            Some(engine) => engine.scheduled_tick(self, pos),
+            None => behavior.scheduled_tick(self, pos),
+        }
     }
 
     /// Random block ticks: for each loaded 16³ section near a player that holds
@@ -518,7 +458,7 @@ impl World {
                     // stone costs one map read for the whole column instead of
                     // a `Section` deref per loaded section.
                     let mut cys = self
-                        .terrain
+                        .data
                         .section_column_rt
                         .get(&crate::chunk::ChunkPos::new(cx, cz))
                         .copied()
@@ -526,13 +466,13 @@ impl World {
                     while cys != 0 {
                         let cy = crate::chunk::SECTION_MIN_CY + cys.trailing_zeros() as i32;
                         cys &= cys - 1;
-                        let Some(section) = self.sections.get(&SectionPos::new(cx, cy, cz)) else {
+                        let Some(section) = self.data.sections.get(&SectionPos::new(cx, cy, cz)) else {
                             continue;
                         };
                         let (ox, oy, oz) = SectionPos::new(cx, cy, cz).origin_world();
                         let blocks = section.blocks();
                         for _ in 0..RANDOM_TICK_SPEED {
-                            let i = (self.sim.next_random() >> 16) as usize % SECTION_VOLUME;
+                            let i = (self.data.sim.next_random() >> 16) as usize % SECTION_VOLUME;
                             let id = blocks.get(i);
                             if id == 0 {
                                 continue; // air — nothing ticks; the overwhelming majority
@@ -568,7 +508,11 @@ impl World {
     /// same batch that changed this cell is respected — like `run_scheduled_tick`.
     fn run_random_tick(&mut self, pos: IVec3) {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
-        block.behavior().random_tick(self, pos);
+        let behavior = block.behavior();
+        match crate::world::engine_behavior::engine_behavior(behavior.key()) {
+            Some(engine) => engine.random_tick(self, pos),
+            None => behavior.random_tick(self, pos),
+        }
     }
 }
 
@@ -576,7 +520,6 @@ impl World {
 mod tests {
     use super::*;
     use crate::chunk::ChunkPos;
-    use crate::crafting::Recipes;
 
     use super::super::store::LoadTarget;
 
@@ -605,7 +548,7 @@ mod tests {
 
     fn live_random_tick_index(world: &World) -> Vec<(ChunkPos, u32)> {
         let mut out: Vec<(ChunkPos, u32)> = world
-            .terrain
+            .data
             .section_column_rt
             .iter()
             .map(|(&p, &b)| (p, b))

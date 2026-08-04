@@ -4,16 +4,16 @@ use crate::mathh::Vec3;
 use crate::world::World;
 
 pub(super) const WALK: f32 = 4.3;
-pub(crate) const SPRINT: f32 = 5.6;
+pub const SPRINT: f32 = 5.6;
 /// Land-speed multiplier while sneaking (applies to walk; sneak overrides sprint).
 pub(super) const SNEAK_FACTOR: f32 = 0.5;
 pub(super) const SPECTATOR_SPEED: f32 = 48.0;
-pub(crate) const SPECTATOR_SPRINT: f32 = 96.0;
-pub(crate) const GRAVITY: f32 = 28.0;
+pub const SPECTATOR_SPRINT: f32 = 96.0;
+pub const GRAVITY: f32 = 28.0;
 /// Jump take-off speed. Apex height = v0² / (2·g) = 8.4²/56 ≈ 1.26 blocks, so a
 /// held jump clears a single full block with margin.
-pub(crate) const JUMP_V0: f32 = 8.4;
-pub(crate) const TERMINAL: f32 = 30.0;
+pub const JUMP_V0: f32 = 8.4;
+pub const TERMINAL: f32 = 30.0;
 /// Horizontal friction on the ground — purely a decay rate, applied only when
 /// there is no input: the fraction of the player's speed shed in one reference
 /// frame (see [`friction_retain`]). Modest, so a body that lands or stops with
@@ -73,7 +73,7 @@ const SWIM_VACCEL: f32 = 14.0;
 /// water reaches roughly thigh height the player switches to swim physics, so
 /// shallow wading still walks. Probing the body (not the eye) lets the head break
 /// the surface and gravity resume, so you bob at the waterline.
-pub(crate) const WATER_PROBE_Y: f32 = 0.6;
+pub const WATER_PROBE_Y: f32 = 0.6;
 /// Probe just above the feet so shallow flowing sheets can nudge a walking
 /// player even when they are not deep enough to switch to swim physics.
 const WADING_CURRENT_PROBE_Y: f32 = 0.05;
@@ -83,7 +83,7 @@ const WADING_CURRENT_PROBE_Y: f32 = 0.05;
 /// at its base. It engages while still submerged (see [`Player::ledge_ahead`]) so
 /// the velocity carries you up through the waterline.
 pub(super) const SWIM_CLIMB: f32 = 7.5;
-pub(crate) const CLIMB_SPEED: f32 = WALK * 0.5;
+pub const CLIMB_SPEED: f32 = WALK * 0.5;
 const CLIMB_VACCEL: f32 = 40.0;
 /// Sideways speed while on a ladder: the sneak factor of walk. Full walk speed
 /// with air-style drift scooted the body off the panel's edge mid-climb — the
@@ -189,7 +189,7 @@ impl Player {
     /// loaded (see [`Player::columns_loaded`]) before stepping survival
     /// physics. Spectator mode ignores world solidity and may move through
     /// unloaded columns.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn update(&mut self, dt: f32, world: &World, input: Input) {
         self.update_with_obstacles(dt, world, input, &[]);
     }

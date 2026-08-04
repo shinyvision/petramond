@@ -5,11 +5,11 @@
 
 use crate::net::protocol::{ChatColor, ChatLine, ChatSpan, MAX_CHAT_CHARS};
 use crate::server::game::ServerGame;
-use crate::server::player::PlayerId;
+use crate::player::PlayerId;
 
 /// Who should receive one accepted chat line on the next pump.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ChatTargets {
+pub enum ChatTargets {
     /// Every currently connected session (console `say`, player chat, join/leave).
     All,
     /// Only the listed player ids; unknown / already-left ids are ignored.
@@ -18,7 +18,7 @@ pub(crate) enum ChatTargets {
 
 impl ChatTargets {
     #[inline]
-    pub(crate) fn includes(&self, id: PlayerId) -> bool {
+    pub fn includes(&self, id: PlayerId) -> bool {
         match self {
             Self::All => true,
             Self::Players(ids) => ids.contains(&id),
@@ -28,7 +28,7 @@ impl ChatTargets {
 
 /// One accepted line waiting to ship on the next pump.
 #[derive(Clone, Debug)]
-pub(crate) struct PendingChat {
+pub struct PendingChat {
     pub line: ChatLine,
     pub targets: ChatTargets,
 }
@@ -39,13 +39,13 @@ impl ServerGame {
     /// Queue one accepted chat line for the next pump. Console `say`, player
     /// chat, and join/leave always use [`ChatTargets::All`]; mods may target a
     /// player-id list.
-    pub(crate) fn enqueue_chat(&mut self, line: ChatLine, targets: ChatTargets) {
+    pub fn enqueue_chat(&mut self, line: ChatLine, targets: ChatTargets) {
         self.pending_chat.push(PendingChat { line, targets });
     }
 
     /// Ordinary player chat (`<Name> text`). Logged on a headless server,
     /// where no local client would otherwise show it.
-    pub(crate) fn enqueue_player_chat(&mut self, name: &str, text: &str) {
+    pub fn enqueue_player_chat(&mut self, name: &str, text: &str) {
         let seq = self.alloc_chat_seq();
         if let Some(line) = player_line(seq, name, text) {
             if !self.has_local_session {
@@ -55,18 +55,18 @@ impl ServerGame {
         }
     }
 
-    pub(crate) fn enqueue_server_chat(&mut self, text: &str) {
+    pub fn enqueue_server_chat(&mut self, text: &str) {
         let seq = self.alloc_chat_seq();
         self.enqueue_line(server_line(seq, text), ChatTargets::All);
     }
 
     /// Mod-/engine-authored helper text (markup allowed; no `[Server]` prefix).
-    pub(crate) fn enqueue_authored_chat(&mut self, text: &str, targets: ChatTargets) {
+    pub fn enqueue_authored_chat(&mut self, text: &str, targets: ChatTargets) {
         let seq = self.alloc_chat_seq();
         self.enqueue_line(authored_line(seq, text), targets);
     }
 
-    pub(crate) fn enqueue_plain_chat(
+    pub fn enqueue_plain_chat(
         &mut self,
         text: &str,
         color: ChatColor,
@@ -76,12 +76,12 @@ impl ServerGame {
         self.enqueue_line(plain_line(seq, text, color), targets);
     }
 
-    pub(crate) fn enqueue_join_chat(&mut self, name: &str) {
+    pub fn enqueue_join_chat(&mut self, name: &str) {
         let seq = self.alloc_chat_seq();
         self.enqueue_chat(joined_line(seq, name), ChatTargets::All);
     }
 
-    pub(crate) fn enqueue_leave_chat(&mut self, name: &str) {
+    pub fn enqueue_leave_chat(&mut self, name: &str) {
         let seq = self.alloc_chat_seq();
         self.enqueue_chat(left_line(seq, name), ChatTargets::All);
     }
@@ -99,7 +99,7 @@ impl ServerGame {
     }
 }
 
-pub(crate) fn player_line(seq: u64, name: &str, text: &str) -> Option<ChatLine> {
+pub fn player_line(seq: u64, name: &str, text: &str) -> Option<ChatLine> {
     let text = clean_text(text)?;
     Some(ChatLine {
         seq,
@@ -110,14 +110,14 @@ pub(crate) fn player_line(seq: u64, name: &str, text: &str) -> Option<ChatLine> 
     })
 }
 
-pub(crate) fn server_line(seq: u64, text: &str) -> Option<ChatLine> {
+pub fn server_line(seq: u64, text: &str) -> Option<ChatLine> {
     let text = clean_text(text)?;
     let source = format!("[Server] {text}");
     Some(parse_markup(seq, &source))
 }
 
 /// Mod-/engine-authored helper text: sanitized, markup-parsed, no forced prefix.
-pub(crate) fn authored_line(seq: u64, text: &str) -> Option<ChatLine> {
+pub fn authored_line(seq: u64, text: &str) -> Option<ChatLine> {
     let text = clean_text(text)?;
     Some(parse_markup(seq, &text))
 }
@@ -125,7 +125,7 @@ pub(crate) fn authored_line(seq: u64, text: &str) -> Option<ChatLine> {
 /// Engine-authored plain text with an explicit color. Unlike mod-authored
 /// helper text, this never parses markup; command feedback may include a
 /// player name and player-controlled names must not become formatting.
-pub(crate) fn plain_line(seq: u64, text: &str, fg: ChatColor) -> Option<ChatLine> {
+pub fn plain_line(seq: u64, text: &str, fg: ChatColor) -> Option<ChatLine> {
     let text = clean_text(text)?;
     Some(ChatLine {
         seq,
@@ -133,19 +133,19 @@ pub(crate) fn plain_line(seq: u64, text: &str, fg: ChatColor) -> Option<ChatLine
     })
 }
 
-pub(crate) fn display_text(line: &ChatLine) -> String {
+pub fn display_text(line: &ChatLine) -> String {
     line.spans.iter().map(|span| span.text.as_str()).collect()
 }
 
-pub(crate) fn joined_line(seq: u64, name: &str) -> ChatLine {
+pub fn joined_line(seq: u64, name: &str) -> ChatLine {
     parse_markup(seq, &format!("$[fg=yellow]{name} has joined the game"))
 }
 
-pub(crate) fn left_line(seq: u64, name: &str) -> ChatLine {
+pub fn left_line(seq: u64, name: &str) -> ChatLine {
     parse_markup(seq, &format!("$[fg=yellow]{name} has left the game"))
 }
 
-pub(crate) fn clean_text(text: &str) -> Option<String> {
+pub fn clean_text(text: &str) -> Option<String> {
     let mut out = String::new();
     for ch in text.chars() {
         let ch = if ch.is_control() { ' ' } else { ch };
@@ -210,7 +210,7 @@ fn color_from_name(name: &str) -> Option<ChatColor> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::player::PlayerId;
+    use crate::player::PlayerId;
 
     #[test]
     fn player_chat_is_sanitized_and_formatted() {

@@ -8,7 +8,7 @@ impl ServerGame {
     /// view ray. The id is only a claim: it must name the nearest live body
     /// before both terrain and reach, from the drift-bounded authoritative
     /// eye. Dead players and spectators have no actionable mob target.
-    pub(crate) fn authoritative_mob_target(
+    pub fn authoritative_mob_target(
         &self,
         s: usize,
         requested: Option<u64>,

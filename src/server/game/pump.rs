@@ -1,7 +1,8 @@
-use crate::game::tick::TickEvents;
+use crate::events::tick::TickEvents;
 use crate::net::protocol::{ClientToServer, PlayerUpdate, SelfTransform, ServerToClient};
 use crate::player;
-use crate::server::player::{PendingMenuAction, PlayerId};
+use crate::server::player::PendingMenuAction;
+use crate::player::PlayerId;
 
 use super::{wire_world_events, PumpOutput, ServerGame};
 
@@ -9,8 +10,8 @@ impl ServerGame {
     /// [`pump_tagged`](Self::pump_tagged) for a local-only server — the
     /// synchronous test harness's pipe service; production always goes
     /// through the thread loop's `pump_tagged`.
-    #[cfg(test)]
-    pub(crate) fn pump(&mut self, dt: f32, inbox: &mut Vec<ClientToServer>) -> PumpOutput {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn pump(&mut self, dt: f32, inbox: &mut Vec<ClientToServer>) -> PumpOutput {
         let local = self.sessions[0].id;
         let mut tagged: Vec<(PlayerId, ClientToServer)> =
             inbox.drain(..).map(|msg| (local, msg)).collect();
@@ -33,7 +34,7 @@ impl ServerGame {
     /// (`RemoteHub::send_headroom`), keyed by `PlayerId`; the streamer paces
     /// terrain against it. A session with no entry (the local pipe, tests) is
     /// unbounded.
-    pub(crate) fn pump_tagged(
+    pub fn pump_tagged(
         &mut self,
         dt: f32,
         inbox: &mut Vec<(PlayerId, ClientToServer)>,
@@ -73,7 +74,7 @@ impl ServerGame {
         // once, and a terminal-speed fall legitimately covers 1.5 blocks per
         // tick. A fixed bound wiped the fall tracker mid-fall — flashing the
         // inventory while falling cancelled the landing's damage.
-        let legit_motion = ticks_ran as f32 * crate::player::TERMINAL * crate::game::tick::TICK_DT;
+        let legit_motion = ticks_ran as f32 * crate::player::TERMINAL * crate::events::tick::TICK_DT;
         for sess in &mut self.sessions {
             let delta = (sess.player.pos - sess.pos_before_ticks).length();
             sess.tick_teleported = delta > 2.0 + legit_motion;
@@ -162,7 +163,7 @@ impl ServerGame {
 
     /// Apply one message from session `s`, latching intents/edges the fixed
     /// tick consumes. Message order within a frame is preserved.
-    pub(crate) fn apply_message(&mut self, s: usize, msg: ClientToServer) {
+    pub fn apply_message(&mut self, s: usize, msg: ClientToServer) {
         match msg {
             ClientToServer::PlayerUpdate(u) => self.apply_player_update(s, &u),
             ClientToServer::Action(action) => self.apply_action(s, action),
@@ -190,7 +191,7 @@ impl ServerGame {
             } => {
                 let slots = slots
                     .into_iter()
-                    .take(crate::gui::MAX_MENU_DRAG_SLOTS)
+                    .take(crate::gui_state::MAX_MENU_DRAG_SLOTS)
                     .map(|slot| slot.to_menu_slot())
                     .collect();
                 self.sessions[s]
@@ -335,7 +336,7 @@ impl ServerGame {
                 .and_then(|click| click.request_id)
             {
                 sess.pending_action_outcomes
-                    .push(crate::game::prediction::deny(
+                    .push(crate::net::protocol::ActionOutcome::deny(
                         id,
                         crate::net::protocol::ActionDenyReason::Denied,
                     ));

@@ -12,7 +12,7 @@
 use crate::events::{DamageSource, Outcome, PlayerDamagePre, PostEvent};
 
 use super::game::ServerGame;
-use crate::game::tick::TickEvents;
+use crate::events::tick::TickEvents;
 
 /// Blocks you can fall with no damage. Beyond this, each further whole block costs one
 /// half-heart, so a 4-block fall (one past the safe 3) is the first to hurt — half a
@@ -28,7 +28,7 @@ const FALL_EPS: f32 = 1e-3;
 
 /// Half-hearts of fall damage for a landing that fell `distance` blocks: the whole
 /// blocks past the safe distance, never negative. `3 → 0`, `4 → 1`, `5 → 2`, ….
-pub(crate) fn fall_damage_health(distance: f32) -> i32 {
+pub fn fall_damage_health(distance: f32) -> i32 {
     (distance - SAFE_FALL_BLOCKS + FALL_EPS).floor().max(0.0) as i32
 }
 
@@ -36,7 +36,7 @@ impl ServerGame {
     /// Advance every victim-owned damage-immunity timer exactly once at the
     /// start of the fixed tick. Running before queued mod actions makes all
     /// damage stages share each victim type's exact boundary.
-    pub(crate) fn tick_damage_immunity(&mut self) {
+    pub fn tick_damage_immunity(&mut self) {
         for session in &mut self.sessions {
             session.player.tick_damage_immunity();
         }
@@ -49,7 +49,7 @@ impl ServerGame {
     /// physics still measures its own falls per frame, but nothing reads that
     /// latch anymore — the server trusts only what it measured itself.
     /// Spectators float, so their (absent) fall is drained without harm.
-    pub(crate) fn tick_fall_damage(&mut self, s: usize, events: &mut TickEvents) {
+    pub fn tick_fall_damage(&mut self, s: usize, events: &mut TickEvents) {
         let distance = std::mem::replace(&mut self.sessions[s].pending_fall, 0.0);
         if self.sessions[s].player.is_spectator() {
             return;
@@ -66,7 +66,7 @@ impl ServerGame {
     /// Consume the water entry the fall tracker latched (a fall INTO water —
     /// `FallOutcome::Splashed`) and throw the `petramond:water_splash` burst at
     /// the surface. Presentation only, no damage: water broke the fall.
-    pub(crate) fn tick_water_splash(&mut self, s: usize, events: &mut TickEvents) {
+    pub fn tick_water_splash(&mut self, s: usize, events: &mut TickEvents) {
         let fall = std::mem::replace(&mut self.sessions[s].pending_splash, 0.0);
         if self.sessions[s].player.is_spectator() {
             return;
@@ -84,7 +84,7 @@ impl ServerGame {
     ///
     /// Returns whether damage was actually applied, so a caller can gate the
     /// side effects that must die with a cancelled hit (a mob strike's knockback).
-    pub(crate) fn damage_player(
+    pub fn damage_player(
         &mut self,
         s: usize,
         amount: i32,
@@ -212,7 +212,7 @@ impl ServerGame {
     /// no-op inside [`crate::player::Player::heal`].
     ///
     /// [`damage_player`]: ServerGame::damage_player
-    pub(crate) fn tick_effects(&mut self, s: usize) {
+    pub fn tick_effects(&mut self, s: usize) {
         let player = &mut self.sessions[s].player;
         for behavior in player.tick_effects() {
             match behavior {

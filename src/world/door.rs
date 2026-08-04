@@ -9,12 +9,13 @@
 //! see `render::door_model`), and its collision is read live from the door state, so a
 //! toggle needs no remesh — only the placement/break edits relight + remesh neighbours.
 
-use crate::atlas::Tile;
-use crate::block::{Block, BlockBehavior, ShapeFamily};
+use crate::tile::Tile;
+use crate::block::{Block, ShapeFamily};
 use crate::door::DoorState;
 use crate::facing::Facing;
 use crate::mathh::IVec3;
 
+use petramond_world::world::query::door_support;
 use super::store::World;
 
 /// Cell offset from a door's lower cell to its upper cell.
@@ -24,14 +25,6 @@ const UP: IVec3 = IVec3::new(0, 1, 0);
 /// scheduled-break model fragile blocks and water use (see [`Door`]).
 const DOOR_BREAK_DELAY: u64 = 1;
 
-/// Whether `floor` can hold up a door: a FULL OPAQUE block. This is the one rule both
-/// placement ([`World::door_footprint_clear`]) and the break behaviour ([`Door`]) read,
-/// so the two agree — and it matches the torch/fragile support test. Chests, the
-/// furniture workbench and cactuses are SOLID but NOT opaque (non-full-cube models), so
-/// a door refuses to stand on them and falls if its opaque floor is dug out.
-fn door_support(floor: Block) -> bool {
-    floor.is_opaque()
-}
 
 /// Break behaviour for doors: a neighbour change that takes away the floor under the
 /// door's LOWER cell schedules the whole door to break next tick; the scheduled tick
@@ -42,10 +35,7 @@ fn door_support(floor: Block) -> bool {
 /// opaque block) is never mistaken for unsupported.
 pub struct Door;
 
-impl BlockBehavior for Door {
-    fn key(&self) -> &'static str {
-        "door"
-    }
+impl crate::world::engine_behavior::EngineBlockBehavior for Door {
 
     fn neighbor_update(&self, world: &mut World, pos: IVec3) {
         if !world.door_supported(pos) {
@@ -125,15 +115,6 @@ impl World {
         }
     }
 
-    /// Whether a 2-tall door with its lower cell at `base` can be placed: both cells
-    /// are loaded + replaceable, and the cell directly below has something to stand on
-    /// (so a door never floats). The caller adds the entity-overlap gate.
-    pub fn door_footprint_clear(&self, base: IVec3) -> bool {
-        let upper = base + UP;
-        let floor = self.physics_block(base.x, base.y - 1, base.z);
-        self.placement_cell_open(base) && self.placement_cell_open(upper) && door_support(floor)
-    }
-
     /// Whether the door `pos` belongs to still has a valid floor under its LOWER cell
     /// (a full opaque block, per [`door_support`]). The upper half's "floor" is the
     /// lower door cell, which is never opaque, so we always resolve to the lower cell
@@ -208,7 +189,7 @@ impl World {
 
     /// The (lower, upper) cells of the door `pos` belongs to, found via the recorded
     /// `top` bit. `None` if `pos` isn't a door cell.
-    pub(crate) fn door_cells(&self, pos: IVec3) -> Option<(IVec3, IVec3)> {
+    pub fn door_cells(&self, pos: IVec3) -> Option<(IVec3, IVec3)> {
         let state = self.door_state_at(pos.x, pos.y, pos.z)?;
         Some(if state.top {
             (pos - UP, pos)

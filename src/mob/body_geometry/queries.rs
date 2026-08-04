@@ -8,7 +8,7 @@ use super::{
 /// One deterministic soft separation for two complete mob bodies. Segment
 /// overlaps are candidates, not independent pushes: the deepest contact wins
 /// so a long body cannot multiply its shove by its segment count.
-pub(crate) fn body_separation(
+pub fn body_separation(
     a_pos: Vec3,
     a_yaw: f32,
     a_size: MobSize,
@@ -31,7 +31,7 @@ pub(crate) fn body_separation(
 
 /// One deterministic soft separation for a complete mob body away from an
 /// ordinary entity body (currently a player).
-pub(crate) fn body_separation_from_body(
+pub fn body_separation_from_body(
     pos: Vec3,
     yaw: f32,
     size: MobSize,
@@ -59,7 +59,7 @@ const PEER_SUPPORT_HORIZONTAL_EPS: f32 = 1e-4;
 /// Append the candidate solid boxes whose top faces currently support this
 /// complete body. The vertical band is deliberately tight and horizontal
 /// face-touching is excluded, so a wall contact cannot masquerade as ground.
-pub(crate) fn append_body_supports(
+pub fn append_body_supports(
     pos: Vec3,
     yaw: f32,
     size: MobSize,
@@ -77,7 +77,7 @@ pub(crate) fn append_body_supports(
 }
 
 /// Whether a final compound pose rests on a peer solid's top face.
-pub(crate) fn body_has_peer_support(
+pub fn body_has_peer_support(
     pos: Vec3,
     yaw: f32,
     size: MobSize,
@@ -156,7 +156,7 @@ where
 /// collision boxes. This is the shared placement-occupancy query: ordinary
 /// bodies take the single-segment fast path naturally, while a long body's
 /// bow and stern participate exactly like its centre.
-pub(crate) fn body_overlaps_block_boxes(
+pub fn body_overlaps_block_boxes(
     pos: Vec3,
     yaw: f32,
     size: MobSize,
@@ -176,7 +176,7 @@ pub(crate) fn body_overlaps_block_boxes(
 /// terrain or a live solid entity. Every covered cell must have final physics
 /// state: unresolved or in-flight terrain is not permission to spawn through
 /// whatever its generated or saved content may later restore.
-pub(crate) fn body_pose_fits<F, K>(
+pub fn body_pose_fits<F, K>(
     pos: Vec3,
     yaw: f32,
     size: MobSize,
@@ -231,7 +231,7 @@ where
 /// conservative arc AABB, so a bow cannot rotate through terrain or another
 /// solid body between two otherwise-clear endpoint poses.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn clamp_body_yaw<F>(
+pub fn clamp_body_yaw<F>(
     pos: Vec3,
     current: f32,
     requested: f32,
@@ -307,7 +307,7 @@ where
 /// Callers choose which bodies participate and attach any key they need. The
 /// body-box emitter and nearest-hit rule stay shared between client picking
 /// and authoritative server validation.
-pub(crate) fn closest_body_ray_hit<K: Ord>(
+pub fn closest_body_ray_hit<K: Ord>(
     eye: Vec3,
     dir: Vec3,
     max_dist: f32,

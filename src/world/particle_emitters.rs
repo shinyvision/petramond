@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 
 use crate::block::{Block, ParticleEmitter, ParticleEmitterAnchor, ShapeFamily};
 use crate::block_model::{self, BlockModelKind};
-use crate::camera::ViewVolume;
+use crate::view_volume::ViewVolume;
 use crate::chunk::{section_local, SectionPos, SECTION_SIZE};
 use crate::facing::Facing;
 use crate::light::BlockLight6;

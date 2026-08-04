@@ -14,7 +14,7 @@ const THEME_JSON: &str = "ui/theme/theme.json";
 
 static THEME: OnceLock<Arc<Theme>> = OnceLock::new();
 
-pub(crate) fn theme() -> Arc<Theme> {
+pub fn theme() -> Arc<Theme> {
     THEME
         .get_or_init(|| {
             let theme = load();

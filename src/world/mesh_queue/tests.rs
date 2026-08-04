@@ -45,7 +45,7 @@ fn mesh_job_uses_column_generated_biome_tint_halo() {
     let pos = SectionPos::new(0, 0, 0);
     insert_solid_section(&mut world, pos);
     let gen = crate::worldgen::driver::ChunkGenerator::new(0).generate_column_gen(pos.cx, pos.cz);
-    world.gen.column_gen.insert(pos.chunk_pos(), Arc::new(gen));
+    world.set_column_gen(pos.chunk_pos(), Arc::new(gen));
 
     let job = world
         .build_mesh_job(pos)
@@ -72,7 +72,7 @@ fn stale_rejected_light_bake_requests_a_rebake() {
 
     world
         .light_bakes
-        .request(0, pos, &world.sections, &world.columns);
+        .request(0, pos, &world.data.sections, &world.data.columns);
     // Invalidate the in-flight bake exactly as an edit / landing does. The
     // result is drained on this thread, so the bump always beats it.
     world.mark_light_dirty_pos(pos);

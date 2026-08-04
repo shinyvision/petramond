@@ -92,7 +92,7 @@ pub(super) fn with_active<R>(f: impl FnOnce(&mut SimCtx<'_>) -> R) -> Option<R> 
 mod tests {
     use super::*;
     use crate::events::PostQueue;
-    use crate::game::TickEvents;
+    use crate::events::tick::TickEvents;
     use crate::mathh::Vec3;
     use crate::player::Player;
     use crate::world::World;
@@ -105,7 +105,7 @@ mod tests {
         let mut queue = PostQueue::default();
 
         assert!(with_active(|_| ()).is_none(), "no scope outside enter");
-        let mut gui = crate::gui::empty_gui_state();
+        let mut gui = crate::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,

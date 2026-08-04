@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 /// Hard cap on a frame body (and on its decompressed size): 8 MiB.
-pub(crate) const MAX_FRAME: usize = 8 * 1024 * 1024;
+pub const MAX_FRAME: usize = 8 * 1024 * 1024;
 
 /// Bodies larger than this are candidates for zlib compression.
 const COMPRESS_MIN: usize = 1024;
@@ -28,7 +28,7 @@ fn invalid<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> io::Error
 
 /// Encode `msg` as one frame and write it with a single `write_all` (one
 /// packet under NODELAY). Flushing is the caller's concern.
-pub(crate) fn write_msg<T: Serialize, W: Write>(w: &mut W, msg: &T) -> io::Result<()> {
+pub fn write_msg<T: Serialize, W: Write>(w: &mut W, msg: &T) -> io::Result<()> {
     let body = postcard::to_allocvec(msg).map_err(invalid)?;
     if body.len() > MAX_FRAME {
         return Err(invalid(format!("oversize frame ({} bytes)", body.len())));
@@ -56,7 +56,7 @@ pub(crate) fn write_msg<T: Serialize, W: Write>(w: &mut W, msg: &T) -> io::Resul
 /// `InvalidData` for oversize/undecodable frames, the underlying I/O error for
 /// EOF/timeout/reset. Reads exactly the frame's bytes (no over-read), so a
 /// handshake over the raw stream can hand off to a buffered reader safely.
-pub(crate) fn read_msg<T: DeserializeOwned, R: Read>(r: &mut R) -> io::Result<T> {
+pub fn read_msg<T: DeserializeOwned, R: Read>(r: &mut R) -> io::Result<T> {
     let mut header = [0u8; 5];
     r.read_exact(&mut header)?;
     let len = u32::from_le_bytes(header[0..4].try_into().expect("4 bytes")) as usize;

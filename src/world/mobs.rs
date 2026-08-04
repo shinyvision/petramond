@@ -43,7 +43,7 @@ impl World {
         self.spawn_mob(kind, pos, yaw)
     }
 
-    pub(crate) fn mob_spawn_pose_clear(&self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> bool {
+    pub fn mob_spawn_pose_clear(&self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> bool {
         let obstacles = self.mobs.solid_obstacles();
         crate::mob::body_pose_fits(
             pos,
@@ -55,7 +55,7 @@ impl World {
         )
     }
 
-    pub(crate) fn restore_mobs(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
+    pub fn restore_mobs(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
         for mob in mobs {
             let (sky, block) = self.mob_render_light_at(mob.pos);
             self.mobs.restore_saved_mob_lit(mob, sky, block);

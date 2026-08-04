@@ -5,7 +5,7 @@
 use super::DEFAULT_PORT;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum AddressError {
+pub enum AddressError {
     Empty,
     InvalidPort,
     EmptyHost,
@@ -28,7 +28,7 @@ impl std::fmt::Display for AddressError {
 /// WITHOUT brackets read as a bare IPv6 host with the default port — bracket
 /// syntax is required to give an IPv6 address a port. Exactly one colon splits
 /// host:port; the port must parse to a nonzero u16. No colon → default port.
-pub(crate) fn parse_server_address(input: &str) -> Result<(String, u16), AddressError> {
+pub fn parse_server_address(input: &str) -> Result<(String, u16), AddressError> {
     let input = input.trim();
     if input.is_empty() {
         return Err(AddressError::Empty);

@@ -1,0 +1,417 @@
+use petramond_world::tile::Tile;
+use petramond_world::block::Block;
+use petramond_world::block_state::{LogAxis, SlabState};
+use petramond_world::chunk::SKY_FULL;
+use petramond_world::facing::Facing;
+use petramond_world::light::{BlockLight6, LightRgb};
+
+use super::super::face::{quad_ao, Face};
+use super::super::face_emit::{fold_light, fold_light_smooth, slab_corner_open};
+
+/// The horizontal cube face a directional block's front points to, for its
+/// stored entity [`Facing`] (furnace/chest fronts).
+#[inline]
+pub(super) fn facing_face(facing: Facing) -> Face {
+    match facing {
+        Facing::North => Face::NegZ,
+        Facing::South => Face::PosZ,
+        Facing::West => Face::NegX,
+        Facing::East => Face::PosX,
+    }
+}
+
+#[inline]
+pub(super) fn cube_face_tile(
+    block: Block,
+    face: Face,
+    tiles: [Tile; 3],
+    front: Option<(Face, Tile)>,
+    log_axis: LogAxis,
+) -> Tile {
+    let [tile_top, tile_bot, tile_side] = tiles;
+    if block.is_log() {
+        return match (log_axis, face) {
+            (LogAxis::X, Face::PosX) | (LogAxis::Y, Face::PosY) | (LogAxis::Z, Face::PosZ) => {
+                tile_top
+            }
+            (LogAxis::X, Face::NegX) | (LogAxis::Y, Face::NegY) | (LogAxis::Z, Face::NegZ) => {
+                tile_bot
+            }
+            _ => tile_side,
+        };
+    }
+    match face {
+        Face::PosY => tile_top,
+        Face::NegY => tile_bot,
+        // A row-declared `front` tile replaces the side tile on the one face
+        // the block's stored entity facing points to (furnace fronts).
+        _ => match front {
+            Some((front_face, front_tile)) if face == front_face => front_tile,
+            _ => tile_side,
+        },
+    }
+}
+
+#[inline]
+fn uv_16ths(value: f32) -> u32 {
+    (value.clamp(0.0, 1.0) * 16.0).round() as u32
+}
+
+/// Whether a log's side cell-local UVs apply to this face — exactly
+/// `log_side_cell_uvs(..).is_some()`, asked WITHOUT the quad corners so a
+/// greedy-mergeable face never builds them.
+#[inline]
+pub(super) fn log_side_uvs_apply(axis: LogAxis, face: Face) -> bool {
+    let axis_idx = match axis {
+        LogAxis::X => 0,
+        LogAxis::Y => return false,
+        LogAxis::Z => 2,
+    };
+    let normal_idx = match face {
+        Face::PosX | Face::NegX => 0,
+        Face::PosY | Face::NegY => 1,
+        Face::PosZ | Face::NegZ => 2,
+    };
+    normal_idx != axis_idx
+}
+
+#[inline]
+pub(super) fn log_side_cell_uvs(
+    axis: LogAxis,
+    face: Face,
+    corners: [[f32; 3]; 4],
+    base: [f32; 3],
+) -> Option<[(u32, u32); 4]> {
+    let mut uvs = [(0, 0); 4];
+    for (i, corner) in corners.into_iter().enumerate() {
+        let local = [
+            corner[0] - base[0],
+            corner[1] - base[1],
+            corner[2] - base[2],
+        ];
+        let [u, v] = crate::face::log_side_cell_uv(face, axis, local)?;
+        uvs[i] = (uv_16ths(u), uv_16ths(v));
+    }
+    Some(uvs)
+}
+
+/// Whether a NON-occluding ring cell still deserves a sub-cell AO cast probe:
+/// a box-shaped cell occupies only part of itself, so a corner pocket inside
+/// it can be solid even though the whole cell is not. Reads the loader-derived
+/// dense flag rather than listing families, so a new box family — engine or
+/// mod — casts sub-cell AO the moment it resolves to boxes.
+#[inline]
+pub(in crate) fn probe_worthy(block: Block) -> bool {
+    block.has_box_shape()
+}
+
+/// The four sub-cell AO cast probe POCKETS of one face corner — the
+/// side-u / side-v / diagonal / interior quadrants of a
+/// [`PROBE_REACH`]-sized volume around the corner `(su, sv)` on the face
+/// fronted by world voxel `f`, lifted [`PROBE_LIFT`] off the face plane
+/// into the front region. `plane` is the face plane's WORLD coordinate along
+/// the face normal: the voxel boundary for cube faces
+/// ([`boundary_plane`]), but an INTERIOR height for a box family's inner
+/// planes (a slab's top at 0.5) — pockets must sit off the actual plane, or
+/// they probe matter BELOW it (the slab's own bottom half, the neighbouring
+/// slab it forms a continuous floor with) and shadow a face that nothing
+/// overhangs. Each
+/// pocket is an AABB `(lo, hi)` in WORLD space, overlap-tested against its
+/// ring cell's occupancy — the grid-AO generalization: for an opaque ring
+/// cell the whole-cell bit answers; for a box-family cell the pocket must
+/// overlap its actual matter. Pockets are VOLUMES, not points: an inset base
+/// (the cauldron's) still overlaps the edge-adjacent pockets, so casting is
+/// uniform along an edge instead of sparking only at diagonal corners. A
+/// fence's centred post overlaps no corner pocket and correctly casts
+/// nothing.
+///
+/// [`PROBE_LIFT`]: super::super::boxset::PROBE_LIFT
+/// [`PROBE_REACH`]: super::super::boxset::PROBE_REACH
+#[inline]
+pub(in crate) fn corner_cast_probes(
+    face: Face,
+    f: (i32, i32, i32),
+    su: i32,
+    sv: i32,
+    plane: f32,
+) -> [([f32; 3], [f32; 3]); 4] {
+    use super::super::boxset::{PROBE_LIFT, PROBE_REACH};
+    let (dx, dy, dz) = face.dir();
+    let d = [dx, dy, dz];
+    let (ux, uy, uz) = face.ao_u();
+    let u = [ux, uy, uz];
+
+    // The corner's world position: on the face plane, at the corner the
+    // (su, sv) signs pick.
+    let mut corner = [f.0 as f32, f.1 as f32, f.2 as f32];
+    for a in 0..3 {
+        if d[a] != 0 {
+            corner[a] = plane;
+        } else if u[a] != 0 {
+            corner[a] += (su > 0) as u32 as f32;
+        } else {
+            corner[a] += (sv > 0) as u32 as f32;
+        }
+    }
+    // Per pocket: the normal axis spans (lift, lift + reach) into the front
+    // region; a tangent spans REACH beyond the corner when the pocket lies
+    // on that side (`beyond`), else REACH back toward the face interior.
+    let pocket = |u_beyond: bool, v_beyond: bool| -> ([f32; 3], [f32; 3]) {
+        let mut lo = [0.0f32; 3];
+        let mut hi = [0.0f32; 3];
+        for a in 0..3 {
+            let (l, h) = if d[a] != 0 {
+                if d[a] > 0 {
+                    (corner[a] + PROBE_LIFT, corner[a] + PROBE_LIFT + PROBE_REACH)
+                } else {
+                    (corner[a] - PROBE_LIFT - PROBE_REACH, corner[a] - PROBE_LIFT)
+                }
+            } else {
+                let (sign, beyond) = if u[a] != 0 {
+                    (su, u_beyond)
+                } else {
+                    (sv, v_beyond)
+                };
+                let dir = if beyond { sign } else { -sign } as f32;
+                let end = corner[a] + dir * PROBE_REACH;
+                (corner[a].min(end), corner[a].max(end))
+            };
+            lo[a] = l;
+            hi[a] = h;
+        }
+        (lo, hi)
+    };
+    [
+        pocket(true, false),
+        pocket(false, true),
+        pocket(true, true),
+        // The INTERIOR quadrant — inside the front cell itself. Grid AO
+        // assumes it empty (matter in front of a cube face culls the face),
+        // but sub-cell matter STANDS on faces it doesn't cull: the exposed
+        // ring of the cell under a cauldron must darken toward the base
+        // rising from it, or it stays bright beside darkened neighbours (a
+        // hard edge at the cell boundary).
+        pocket(false, false),
+    ]
+}
+
+/// The world coordinate (along the face normal) of a cube face's plane: the
+/// front voxel `f`'s boundary toward the cell it fronts.
+#[inline]
+pub(in crate) fn boundary_plane(face: Face, f: (i32, i32, i32)) -> f32 {
+    let (dx, dy, dz) = face.dir();
+    let (axis, _, _) = face_axes(face);
+    let d = [dx, dy, dz][axis];
+    [f.0, f.1, f.2][axis] as f32 + (d < 0) as u32 as f32
+}
+
+/// One cube face's per-corner AO + smooth light (skylight + coloured block light),
+/// gathered from the shared 3×3 tangent-plane ring around the front voxel F ONCE. The
+/// four corners share these eight ring cells (each edge cell feeds two corners, each
+/// diagonal one), so a single gather replaces per-corner re-reads. `occ` = AO occluders
+/// (opaque cubes AND leaves, for canopy self-occlusion); `opq` = full-opaque, which carry
+/// no light and so are excluded from the smooth-light mean (leaves differ between the two,
+/// hence both bits). The centre cell (a=b=0) is F itself and is never sampled, so skipped.
+///
+/// Split from the vertex push so the greedy mesher can test a face for flatness (all four
+/// corners equal — the merge condition) before deciding to emit it per-cell or merge it.
+///
+/// `probe(cell, lo, hi)` is the sub-cell AO cast query — does the cell's
+/// occupancy overlap the cell-local pocket AABB (see [`corner_cast_probes`])?
+/// Consulted only for ring cells that are box-shape families or partial
+/// slabs, so pure cube/air neighbourhoods pay nothing.
+#[allow(clippy::too_many_arguments)]
+pub(in crate) fn cube_face_lighting<B, S, L, K, P>(
+    face: Face,
+    fx: i32,
+    fy: i32,
+    fz: i32,
+    // The face plane's world coordinate along the normal —
+    // `boundary_plane(face, f)` for cube faces, the actual plane height for a
+    // box family's interior planes (see `corner_cast_probes`).
+    plane: f32,
+    f_l: u32,
+    f_bl: LightRgb,
+    smooth_light: bool,
+    block_at: &B,
+    slab_at: &S,
+    neighbour_light: &L,
+    neighbour_blocklight: &K,
+    probe: &P,
+) -> ([u32; 4], [u32; 4], [BlockLight6; 4])
+where
+    B: Fn(i32, i32, i32) -> Block,
+    S: Fn(i32, i32, i32) -> Option<SlabState>,
+    L: Fn(i32, i32, i32) -> u8,
+    K: Fn(i32, i32, i32) -> LightRgb,
+    P: Fn((i32, i32, i32), [f32; 3], [f32; 3]) -> bool,
+{
+    let (ux, uy, uz) = face.ao_u();
+    let (vx, vy, vz) = face.ao_v();
+
+    // The ring-cell half along the normal that lies on the plane's FRONT
+    // side — what a partial slab's single light value must describe to feed
+    // a corner (see `slab_corner_open`). Boundary planes reproduce the
+    // fixed halves of old (front-half 0 for positive faces, 1 for
+    // negative); an interior plane at 0.5 flips them, so a neighbouring
+    // bottom slab's open-top light DOES feed the slab-top plane beside it.
+    let front_half = {
+        let (dx, dy, dz) = face.dir();
+        let (axis, _, _) = face_axes(face);
+        let plane_local = plane - [fx, fy, fz][axis] as f32;
+        if dx + dy + dz > 0 {
+            (plane_local >= 0.25) as usize
+        } else {
+            (plane_local > 0.75) as usize
+        }
+    };
+
+    // Whether the FRONT cell itself holds sub-cell matter: its interior
+    // quadrant then joins the corner occlusion (the exposed ring of a face
+    // something box-shaped stands on).
+    let front_probe = probe_worthy(block_at(fx, fy, fz));
+
+    let mut occ = [[false; 3]; 3];
+    let mut probe_cell = [[false; 3]; 3];
+    let mut opq = [[false; 3]; 3];
+    let mut sky = [[0u32; 3]; 3];
+    let mut blk = [[LightRgb::ZERO; 3]; 3];
+    let mut slab = [[SlabState::EMPTY; 3]; 3];
+    for a in -1i32..=1 {
+        for b in -1i32..=1 {
+            if a == 0 && b == 0 {
+                continue;
+            }
+            let (cx, cy, cz) = (
+                fx + a * ux + b * vx,
+                fy + a * uy + b * vy,
+                fz + a * uz + b * vz,
+            );
+            let cell = block_at(cx, cy, cz);
+            // ONE dense flag word per ring cell: the four shape questions
+            // below are bit tests off it, not four separate table lookups.
+            let cf = cell.flags();
+            let (ia, ib) = ((a + 1) as usize, (b + 1) as usize);
+            // A full slab stack occludes AO and carries no light, exactly like an
+            // opaque cube — without this it darkens corners twice (it blocks the
+            // light flood, then still enters the smooth-light mean as a dark open
+            // cell). Partial slab states are kept for the per-corner octant gate
+            // below. The dense `is_slab` flag gates the state lookup.
+            let slab_state = if cf.is_slab() {
+                slab_at(cx, cy, cz)
+            } else {
+                None
+            };
+            let full_stack = slab_state.is_some_and(|s| s.is_full());
+            occ[ia][ib] = cf.occludes_ao() || full_stack;
+            // A non-occluding cell that still holds sub-cell matter (a box
+            // shape, a partial slab) gets corner-probe casting below.
+            probe_cell[ia][ib] = !occ[ia][ib] && cf.has_box_shape();
+            if smooth_light {
+                opq[ia][ib] = cf.is_opaque() || full_stack;
+                if !opq[ia][ib] {
+                    sky[ia][ib] = neighbour_light(cx, cy, cz) as u32;
+                    blk[ia][ib] = neighbour_blocklight(cx, cy, cz);
+                    if let Some(state) = slab_state {
+                        slab[ia][ib] = state;
+                    }
+                }
+            }
+        }
+    }
+
+    // Per corner, resolve AO + light from the gathered ring: its two edge cells
+    // (`[iu][1]` along u, `[1][iv]` along v) and its diagonal (`[iu][iv]`).
+    let signs = face.ao_signs();
+    let mut ao = [3u32; 4];
+    let mut light6 = [0u32; 4];
+    let mut block6 = [BlockLight6::DARK; 4];
+    let flat = fold_light(f_l, f_bl.channels().map(u32::from), SKY_FULL as u32);
+    for corner in 0..4 {
+        let (su, sv) = signs[corner];
+        let (iu, iv) = ((su + 1) as usize, (sv + 1) as usize);
+        let (mut s1, mut s2, mut c) = (occ[iu][1], occ[1][iv], occ[iu][iv]);
+        let mut q_int = false;
+        if front_probe
+            || (probe_cell[iu][1] && !s1)
+            || (probe_cell[1][iv] && !s2)
+            || (probe_cell[iu][iv] && !c)
+        {
+            let pk = corner_cast_probes(face, (fx, fy, fz), su, sv, plane);
+            let cell_of = |s_u: i32, s_v: i32| {
+                (
+                    fx + s_u * ux + s_v * vx,
+                    fy + s_u * uy + s_v * vy,
+                    fz + s_u * uz + s_v * vz,
+                )
+            };
+            let local = |p: [f32; 3], cl: (i32, i32, i32)| {
+                [p[0] - cl.0 as f32, p[1] - cl.1 as f32, p[2] - cl.2 as f32]
+            };
+            if probe_cell[iu][1] && !s1 {
+                let cl = cell_of(su, 0);
+                s1 = probe(cl, local(pk[0].0, cl), local(pk[0].1, cl));
+            }
+            if probe_cell[1][iv] && !s2 {
+                let cl = cell_of(0, sv);
+                s2 = probe(cl, local(pk[1].0, cl), local(pk[1].1, cl));
+            }
+            if probe_cell[iu][iv] && !c {
+                let cl = cell_of(su, sv);
+                c = probe(cl, local(pk[2].0, cl), local(pk[2].1, cl));
+            }
+            if front_probe {
+                let cl = (fx, fy, fz);
+                q_int = probe(cl, local(pk[3].0, cl), local(pk[3].1, cl));
+            }
+        }
+        ao[corner] = quad_ao(q_int, s1, s2, c);
+        if !smooth_light {
+            (light6[corner], block6[corner]) = flat;
+            continue;
+        }
+        let mut sum = f_l;
+        // Per-channel mean: hues average in the linear light space only.
+        let mut sum_block = f_bl.channels().map(u32::from);
+        let mut cnt = 1u32;
+        for (ia, ib, a, b) in [(iu, 1, su, 0), (1, iv, 0, sv), (iu, iv, su, sv)] {
+            if opq[ia][ib] || !slab_corner_open(slab[ia][ib], face, a, b, su, sv, front_half) {
+                continue;
+            }
+            sum += sky[ia][ib];
+            let c = blk[ia][ib];
+            sum_block[0] += c.r() as u32;
+            sum_block[1] += c.g() as u32;
+            sum_block[2] += c.b() as u32;
+            cnt += 1;
+        }
+        (light6[corner], block6[corner]) = fold_light_smooth(sum, sum_block, cnt);
+    }
+    (ao, light6, block6)
+}
+
+/// A cube face's `(normal, U, V)` local axes (0=X, 1=Y, 2=Z), derived from `Face::quad_box`
+/// so the greedy slice's `(u,v)` grid and a merged quad's tiled UV (W tiles along U, H along
+/// V) align with `corner_local`: normal-X → U=Z,V=Y; normal-Y → U=X,V=Z; normal-Z → U=X,V=Y.
+#[inline]
+pub(in crate) fn face_axes(face: Face) -> (usize, usize, usize) {
+    match face {
+        Face::PosX | Face::NegX => (0, 2, 1),
+        Face::PosY | Face::NegY => (1, 0, 2),
+        Face::PosZ | Face::NegZ => (2, 0, 1),
+    }
+}
+
+/// Index of a face in [`FACES`] — the per-direction plane in [`GreedyScratch::faces`]. Must
+/// match `FACES.into_iter().enumerate()` in [`emit_greedy_quads`].
+#[inline]
+pub(super) fn face_index(face: Face) -> usize {
+    match face {
+        Face::PosX => 0,
+        Face::NegX => 1,
+        Face::PosY => 2,
+        Face::NegY => 3,
+        Face::PosZ => 4,
+        Face::NegZ => 5,
+    }
+}

@@ -63,11 +63,13 @@ fn mob_census_waits_for_nearby_columns_and_overlays_only() {
 
     let near = SectionPos::new(1, 4, 0);
     world.gen.awaited_overlays.insert(near);
+    world.note_stream_nonfinal(near);
     assert!(!world.mob_census_loaded_around(center, census_radius));
     world.gen.awaited_overlays.clear();
 
     let far = SectionPos::new(20, 4, 0);
     world.gen.awaited_overlays.insert(far);
+    world.note_stream_nonfinal(far);
     assert!(
         world.mob_census_loaded_around(center, census_radius),
         "far streaming does not block the local census"
@@ -487,7 +489,7 @@ fn horizontal_move_requests_sections_for_newly_wanted_loaded_columns() {
 
     let generator = crate::worldgen::driver::ChunkGenerator::new(world.seed);
     let col = Arc::new(generator.generate_column_gen(newly_wanted.cx, newly_wanted.cz));
-    world.gen.column_gen.insert(newly_wanted, col);
+    world.set_column_gen(newly_wanted, col);
     world.last_load_target = Some(old);
 
     world.update_load(1, 5, 0);
@@ -515,7 +517,7 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     let _ = std::fs::remove_dir_all(&dir);
     let opened = crate::save::open_at(dir.clone()).expect("open save");
     let mut world = World::new(0x51EED, 2);
-    world.attach_save(opened.save);
+    world.attach_save(opened.save, opened.saved);
     let deadline = Instant::now() + crate::test_time::TEST_HARD_DEADLINE;
 
     // Stream the origin column: generate (worker) + ingest. The later edit lands well
@@ -545,12 +547,12 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     world.flush_modified_chunks();
     let sp = SectionPos::from_world(edit.x, edit.y, edit.z).unwrap();
     {
-        let save = world.save().expect("save attached");
         assert!(
-            save.manifest_contains(sp),
+            world.saved_section_contains(sp),
             "edit's section is in the manifest"
         );
-        save.request_load(sp, false);
+        let save = world.save().expect("save attached");
+        save.request_load(world.saved_index(), sp, false);
         let mut got = None;
         while got.is_none() {
             assert!(Instant::now() < deadline, "section read back from disk");
@@ -645,7 +647,7 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     // every explored section and the column-gen cache.
     let opened = crate::save::open_at(dir.clone()).expect("open save");
     let mut world = World::new(0x51EED, 2);
-    world.attach_save(opened.save);
+    world.attach_save(opened.save, opened.saved);
     stream_settled(&mut world);
     assert!(light_settled(&mut world), "first-visit light bakes settle");
     let first_sections: Vec<SectionPos> = world.sections.keys().copied().collect();
@@ -656,13 +658,13 @@ fn explored_terrain_reloads_from_disk_without_generating() {
         .collect();
     world.flush_modified_chunks();
     {
-        let save = world.save().expect("save attached");
         for sp in &first_sections {
             assert!(
-                save.manifest_contains(*sp),
+                world.saved_section_contains(*sp),
                 "explored section {sp:?} must persist"
             );
         }
+        let save = world.save().expect("save attached");
         assert!(
             save.colgen_manifest_contains(ChunkPos::new(0, 0)),
             "explored columns must enter the column-gen cache"
@@ -673,7 +675,7 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     // Reload: same area must come back entirely from disk.
     let opened = crate::save::open_at(dir.clone()).expect("reopen save");
     let mut world = World::new(0x51EED, 2);
-    world.attach_save(opened.save);
+    world.attach_save(opened.save, opened.saved);
     world.set_stream_event_capture(true);
     stream_settled(&mut world);
 

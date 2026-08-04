@@ -58,4 +58,9 @@ impl World {
         self.terrain.mesh_columns.remove(&pos);
         self.terrain.mesh_column_cys.remove(&pos);
     }
+
+    /// Iterate loaded section meshes for rendering (caller culls by camera).
+    pub fn iter_meshes(&self) -> impl Iterator<Item = (SectionPos, &ChunkMesh)> {
+        self.terrain.meshes.iter().map(|(p, m)| (*p, m))
+    }
 }

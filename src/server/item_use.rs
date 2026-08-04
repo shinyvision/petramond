@@ -8,7 +8,7 @@ use super::placement::facing_from_forward;
 use crate::block::Block;
 use crate::entity::DroppedItem;
 use crate::events::{BlockPlacePre, ItemUsePre, Outcome, PostEvent};
-use crate::game::tick::TickEvents;
+use crate::events::tick::TickEvents;
 use crate::item::{ItemStack, ItemType, ItemUse, UseRay};
 use crate::mathh::Vec3;
 use crate::mob::ShearDrop;
@@ -21,10 +21,10 @@ use crate::player::Player;
 /// changes — the SLOT is tracked so switching to a different slot holding the
 /// same food still aborts (switching slots aborts).
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) struct EatingState {
-    pub(crate) slot: u8,
-    pub(crate) item: ItemType,
-    pub(crate) progress: u32,
+pub struct EatingState {
+    pub slot: u8,
+    pub item: ItemType,
+    pub progress: u32,
 }
 
 impl ServerGame {
@@ -36,7 +36,7 @@ impl ServerGame {
     /// for a water-stopping ray must additionally match the first hit of that
     /// same ray in the authoritative world; otherwise a client could name a
     /// different in-reach water cell behind an occluder.
-    pub(crate) fn authoritative_use_target(
+    pub fn authoritative_use_target(
         &self,
         s: usize,
         held_item: Option<ItemType>,
@@ -68,7 +68,7 @@ impl ServerGame {
     /// cancelled by a mod, or was already running) so placement never fires
     /// from a food click. Fires `item_use_pre` at the START — a cancel eats
     /// the click, not the food.
-    pub(crate) fn try_start_eating(&mut self, s: usize, events: &mut TickEvents) -> bool {
+    pub fn try_start_eating(&mut self, s: usize, events: &mut TickEvents) -> bool {
         let sess = &self.sessions[s];
         let Some(item) = sess.player.inventory.selected().map(|st| st.item) else {
             return false;
@@ -119,7 +119,7 @@ impl ServerGame {
     /// abort when the button lifted, the selection moved to ANY other slot,
     /// or the slot's item changed under the eat; consume the item and grant
     /// its effects when the hold reaches the row's `eat_ticks`.
-    pub(crate) fn advance_eating(&mut self, s: usize, events: &mut TickEvents) {
+    pub fn advance_eating(&mut self, s: usize, events: &mut TickEvents) {
         let sess = &mut self.sessions[s];
         let Some(eat) = sess.eating else {
             return;
@@ -154,7 +154,7 @@ impl ServerGame {
 
     /// Apply the held item's own right-click use, if it has one. Returns `true`
     /// when the click was consumed: the world and the held item changed together.
-    pub(crate) fn try_use_item(
+    pub fn try_use_item(
         &mut self,
         s: usize,
         click_target: Option<crate::net::protocol::TargetRef>,
@@ -215,7 +215,7 @@ impl ServerGame {
     /// Returns `true` when the click was consumed. `target` is the stable mob id
     /// the `UseClick` claimed; the authoritative view-ray validator resolves
     /// it before mutation. A forged or vanished target is a no-op.
-    pub(crate) fn try_shear_mob(&mut self, s: usize, target: Option<u64>) -> bool {
+    pub fn try_shear_mob(&mut self, s: usize, target: Option<u64>) -> bool {
         if self.sessions[s]
             .selected_item()
             .and_then(ItemType::item_use)

@@ -68,18 +68,6 @@ enum StreamState {
 }
 
 impl World {
-    /// Whether `sp` may be written (or materialized) right now: no in-flight
-    /// gen job and no in-flight saved overlay. A write into a pending-gen
-    /// section would be clobbered by the landing result; a write into a
-    /// section whose overlay is still in flight mutates content about to be
-    /// replaced by the player's saved record.
-    #[inline]
-    pub(super) fn stream_writable(&self, sp: SectionPos) -> bool {
-        !self.gen.pending_sections.contains(&sp)
-            && !self.gen.awaited_overlays.contains(&sp)
-            && !self.gen.pending_overlays.contains_key(&sp)
-    }
-
     /// Block read for the mod ABI (`GetBlock`/`GetBlocks`): `None` not only
     /// for unloaded sections but also while the section's streamed content is
     /// not final (in-flight gen job or saved overlay). During that window a
@@ -109,7 +97,7 @@ impl World {
     /// contents. Collision-driven snapshots use this before treating an
     /// apparent air cell as safe; unresolved or still-streaming terrain must
     /// defer instead of being persisted as though it were empty.
-    pub(crate) fn physics_cell_final_at(&self, wx: i32, wy: i32, wz: i32) -> bool {
+    pub fn physics_cell_final_at(&self, wx: i32, wy: i32, wz: i32) -> bool {
         SectionPos::from_world(wx, wy, wz)
             .is_some_and(|sp| self.section_stream_state(sp, false) == StreamState::Final)
     }
@@ -196,13 +184,12 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-    use crate::block::Block;
-    use crate::chunk::{Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_SIZE};
+    use crate::chunk::{CHUNK_SX, CHUNK_SZ, Chunk, ChunkPos, SECTION_SIZE, SectionPos};
     use crate::mathh::{IVec3, Vec3};
     use crate::mob::Mob;
     use crate::world::testutil::flat_world;
-
     use super::super::store::World;
+    use crate::block::Block;
 
     fn run_ticks(w: &mut World, n: u32) {
         let recipes = crate::crafting::Recipes::default();
@@ -260,8 +247,10 @@ mod tests {
         // An awaited saved overlay blocks writes the same way, and unblocks.
         let awaited = SectionPos::new(0, 4, 0);
         w.gen.awaited_overlays.insert(awaited);
+        w.note_stream_nonfinal(awaited);
         assert!(!w.set_block_world(8, 70, 8, Block::Stone));
         w.gen.awaited_overlays.remove(&awaited);
+        w.settle_stream_nonfinal(awaited);
         assert!(w.set_block_world(8, 70, 8, Block::Stone));
     }
 
@@ -282,11 +271,13 @@ mod tests {
         w.insert_empty_column_for_test(column);
         let section = SectionPos::new(0, 4, 0);
         w.gen.awaited_overlays.insert(section);
+        w.note_stream_nonfinal(section);
         assert!(
             w.spawn_mob_checked(Mob::Owl, pos, 0.0).is_none(),
             "a loaded base with an in-flight save overlay is not final"
         );
         w.gen.awaited_overlays.remove(&section);
+        w.settle_stream_nonfinal(section);
         assert!(w.spawn_mob_checked(Mob::Owl, pos, 0.0).is_some());
     }
 
@@ -297,11 +288,13 @@ mod tests {
         assert!(w.set_block_world(1, 70, 1, Block::Stone)); // marks it modified
 
         w.gen.awaited_overlays.insert(sp);
+        w.note_stream_nonfinal(sp);
         assert!(
             w.harvest_section_snapshot(sp).is_none(),
             "persisting a base whose overlay is in flight would shadow the on-disk record"
         );
         w.gen.awaited_overlays.remove(&sp);
+        w.settle_stream_nonfinal(sp);
         assert!(w.harvest_section_snapshot(sp).is_some());
     }
 
@@ -319,6 +312,7 @@ mod tests {
         assert!(w.section_stream_final_at(8, 64, 8));
 
         w.gen.awaited_overlays.insert(sp);
+        w.note_stream_nonfinal(sp);
         assert_eq!(
             w.block_if_stream_final(8, 64, 8),
             None,
@@ -331,6 +325,7 @@ mod tests {
         );
 
         w.gen.awaited_overlays.remove(&sp);
+        w.settle_stream_nonfinal(sp);
         assert_eq!(w.block_if_stream_final(8, 64, 8), Some(Block::Stone));
         assert!(w.cell_kv_set(8, 64, 8, "kitchen:state".into(), vec![1]));
     }

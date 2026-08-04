@@ -96,9 +96,9 @@ fn local_to_world(cpos: SectionPos, lx: usize, ly: usize, lz: usize) -> IVec3 {
 mod tests {
     use super::*;
 
-    use crate::atlas::Tile;
+    use crate::tile::Tile;
     use crate::block::Block;
-    use crate::chunk::{SectionPos, SECTION_VOLUME};
+    use crate::chunk::SECTION_VOLUME;
     use crate::crafting::{ProcessingRecipe, SMELTING_CLASS};
     use crate::furnace::{SLOT_FUEL, SLOT_INPUT};
     use crate::item::{ItemStack, ItemType};

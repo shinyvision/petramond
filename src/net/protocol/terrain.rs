@@ -8,7 +8,7 @@ use crate::chunk::{ChunkPos, SectionPos};
 /// connection, serialized as plain bytes over TCP (deserialization allocates a
 /// fresh `Arc`, which the remap then rewrites in place — no extra copies).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SectionBytes(pub Arc<[u8]>);
+pub struct SectionBytes(pub Arc<[u8]>);
 
 impl Serialize for SectionBytes {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -52,7 +52,7 @@ impl<'de> Deserialize<'de> for SectionBytes {
 /// holds ≤ 256 distinct blocks — which keeps a section payload the size it was
 /// when ids were bytes. Local connections still ship a refcount bump.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SectionBlocks(pub Arc<[u16]>);
+pub struct SectionBlocks(pub Arc<[u16]>);
 
 /// Palette-encode a block cube into the wire/save byte form.
 fn pack_blocks(blocks: &[u16]) -> Vec<u8> {
@@ -163,7 +163,7 @@ impl<'de> Deserialize<'de> for SectionBlocks {
 /// canonical cells (see [`LightRgb::from_bits`]) so a mangled frame cannot
 /// introduce a second spelling of black and desync the region diff.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SectionLight(pub Arc<[crate::light::LightRgb]>);
+pub struct SectionLight(pub Arc<[crate::light::LightRgb]>);
 
 impl Serialize for SectionLight {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -207,7 +207,7 @@ impl<'de> Deserialize<'de> for SectionLight {
 /// for ABSENT sections without running worldgen. Sent before the column's first
 /// section.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ColumnPayload {
+pub struct ColumnPayload {
     pub pos: ChunkPos,
     /// 16×16 biome ids, row-major (z * 16 + x).
     pub biomes: SectionBytes,
@@ -233,7 +233,7 @@ pub(crate) struct ColumnPayload {
 /// One cached section a joining client claims to still hold, by the
 /// server-domain content hash the server vouched at unload time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct SectionCacheClaim {
+pub struct SectionCacheClaim {
     pub pos: SectionPos,
     pub hash: u64,
 }
@@ -244,12 +244,12 @@ pub(crate) struct SectionCacheClaim {
 /// chatter; any residual drift heals through `SectionCacheMiss`. ~4k sections
 /// ≈ a generous re-explorable ring at RD32 while bounding worst-case replica
 /// memory to a few hundred MB.
-pub(crate) const SECTION_CACHE_CAP: usize = 4096;
+pub const SECTION_CACHE_CAP: usize = 4096;
 
 /// Container SLOT contents, mobs, and dropped items are deliberately absent:
 /// they replicate through menu sync and entity batches.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct SectionPayload {
+pub struct SectionPayload {
     pub pos: SectionPos,
     /// 4096 wire block ids.
     pub blocks: SectionBlocks,
@@ -278,7 +278,7 @@ impl SectionPayload {
     /// hashes identically. Raw session ids make this meaningless outside the
     /// process runs that share this server's registries — the in-memory
     /// session cache is its only valid consumer; NEVER persist these hashes.
-    pub(crate) fn content_hash(&self) -> u64 {
+    pub fn content_hash(&self) -> u64 {
         use std::hash::Hasher;
         let bytes = postcard::to_allocvec(self).expect("section payload postcard-encodes");
         let mut h = rustc_hash::FxHasher::default();
@@ -292,7 +292,7 @@ impl SectionPayload {
 /// after a neighbour's landing invalidated a seam). Arc-backed like
 /// [`SectionPayload`]: the local pipe ships refcount bumps.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct LightPayload {
+pub struct LightPayload {
     pub pos: SectionPos,
     /// 4096 skylight bytes (x2 scale).
     pub skylight: SectionBytes,
@@ -308,7 +308,7 @@ pub(crate) struct LightPayload {
 /// delegates to the same `encode`/`to_u8` state packers, so replication is as
 /// lossless as a save/load roundtrip. Built/consumed by `world::remote`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub(crate) struct SectionStatesPayload {
+pub struct SectionStatesPayload {
     /// The section's UNIFIED per-cell block state, cell-sorted: verbatim
     /// store bytes (opaque to the transport except the id-masked BLOCK-ID
     /// bytes, rewritten through the block LUT at the boundary via
@@ -330,8 +330,8 @@ pub(crate) struct SectionStatesPayload {
 
 /// One cell's draw set on the wire: `(cell, prims)`, in the mod's own
 /// submitted form — names, like every other replicated identity.
-pub(crate) type BlockDrawEntry = (u16, crate::world::draw::DrawPrims);
+pub type BlockDrawEntry = (u16, crate::world::draw::DrawPrims);
 
 /// One cell's opaque mod KV: `(cell, sorted (key, value-bytes) entries)` —
 /// the wire mirror of the section's per-cell `BTreeMap`.
-pub(crate) type CellKvEntry = (u16, Vec<(String, Vec<u8>)>);
+pub type CellKvEntry = (u16, Vec<(String, Vec<u8>)>);

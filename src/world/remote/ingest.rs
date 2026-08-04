@@ -1,3 +1,4 @@
+use crate::world::WorldData;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -17,12 +18,12 @@ impl World {
     /// sections, which may only partially cover the column. Idempotent — the
     /// sender re-ships only when the column revision changes, including
     /// immediately before a section unload changes an absent summary.
-    pub(crate) fn install_remote_column(&mut self, payload: ColumnPayload) {
+    pub fn install_remote_column(&mut self, payload: ColumnPayload) {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "remote installs are the replica's ingest path"
         );
-        let expected_sections = Self::column_section_range().count();
+        let expected_sections = WorldData::column_section_range().count();
         if payload.biomes.0.len() != SECTION_SIZE * SECTION_SIZE
             || payload.mesh_biomes.0.len() != 20 * 20
             || payload.surface_heightmap.len() != SECTION_SIZE * SECTION_SIZE
@@ -59,7 +60,7 @@ impl World {
         // but the deep classification must not silently die if that ordering
         // ever regresses: re-classify anything already installed in this
         // column now that the band floor is known.
-        for cy in Self::column_section_range() {
+        for cy in WorldData::column_section_range() {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             if self.sections.contains_key(&sp) {
                 self.classify_deep_on_install(sp);
@@ -77,7 +78,7 @@ impl World {
     /// lengths drop the payload (a byte-corrupting transport, never the local
     /// connection).
     #[cfg(test)]
-    pub(crate) fn install_remote_section(&mut self, payload: SectionPayload) {
+    pub fn install_remote_section(&mut self, payload: SectionPayload) {
         if let Some(pos) = self.install_remote_section_deferred(payload) {
             self.finish_remote_install_batch(&[pos]);
         }
@@ -85,7 +86,7 @@ impl World {
 
     /// Install without invalidating meshes yet. The message pump batches the
     /// overlapping neighbourhoods from all sections it received this frame.
-    pub(crate) fn install_remote_section_deferred(
+    pub fn install_remote_section_deferred(
         &mut self,
         payload: SectionPayload,
     ) -> Option<SectionPos> {
@@ -183,7 +184,7 @@ impl World {
     /// Invalidate every loaded section touched by a replica install batch once.
     /// This prevents contiguous terrain bursts from repeatedly bumping revisions
     /// and invalidating jobs for the same 3x3x3 overlap.
-    pub(crate) fn finish_remote_install_batch(&mut self, installed: &[SectionPos]) {
+    pub fn finish_remote_install_batch(&mut self, installed: &[SectionPos]) {
         if installed.is_empty() {
             return;
         }
@@ -206,7 +207,7 @@ impl World {
     /// Apply a server light rebake on a replica — the exact seam a local bake
     /// result enters through (`pump_light_bakes`' drain), minus the dirty/
     /// revision handshake: the server is authoritative, the cubes always land.
-    pub(crate) fn install_remote_light(&mut self, payload: LightPayload) {
+    pub fn install_remote_light(&mut self, payload: LightPayload) {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "remote light is the replica's ingest path"
@@ -286,12 +287,12 @@ impl World {
     /// (`clear_on_block_change`), mirroring the server's own write — so
     /// `state: None` leaves the cell clean and `Some` re-installs the entry
     /// verbatim (the transport already rewrote its id-masked bytes).
-    pub(crate) fn apply_remote_delta(&mut self, delta: BlockDelta) {
+    pub fn apply_remote_delta(&mut self, delta: BlockDelta) {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "remote deltas are the replica's ingest path"
         );
-        let Some((pos, lx, ly, lz)) = Self::split_world(delta.pos.x, delta.pos.y, delta.pos.z)
+        let Some((pos, lx, ly, lz)) = WorldData::split_world(delta.pos.x, delta.pos.y, delta.pos.z)
         else {
             return;
         };
@@ -359,12 +360,12 @@ impl World {
     /// re-marked for the client bake pump: replicated KV is presentation
     /// state a render bake may derive from (a dye vat's fluid tint), so a
     /// value change must re-bake and remesh even though no block changed.
-    pub(crate) fn apply_remote_cell_kv(&mut self, kv: crate::net::protocol::CellKvDelta) {
+    pub fn apply_remote_cell_kv(&mut self, kv: crate::net::protocol::CellKvDelta) {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "remote KV deltas are the replica's ingest path"
         );
-        let Some((pos, lx, ly, lz)) = Self::split_world(kv.pos.x, kv.pos.y, kv.pos.z) else {
+        let Some((pos, lx, ly, lz)) = WorldData::split_world(kv.pos.x, kv.pos.y, kv.pos.z) else {
             return;
         };
         let Some(section) = self.section_mut(pos) else {
@@ -391,7 +392,7 @@ impl World {
     /// (nearest-first) and anchors the always-mesh near ring — the replica's
     /// stand-in for the load target a streaming world maintains. Pure
     /// prioritisation: no gen, save, or streaming bookkeeping is touched.
-    pub(crate) fn set_replica_view_center(&mut self, cx: i32, cy: i32, cz: i32) {
+    pub fn set_replica_view_center(&mut self, cx: i32, cy: i32, cz: i32) {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "streaming worlds derive their view centre from update_load*"
@@ -408,7 +409,7 @@ impl World {
     /// the column summaries again. Returns the evicted section so the game's
     /// section cache can park it; the store no longer holds the `Arc`, so
     /// later deltas/light for the pos can never mutate the parked copy.
-    pub(crate) fn uninstall_remote_section(&mut self, pos: SectionPos) -> Option<Arc<Section>> {
+    pub fn uninstall_remote_section(&mut self, pos: SectionPos) -> Option<Arc<Section>> {
         debug_assert!(
             self.role == WorldRole::ClientReplica,
             "remote unloads are the replica's ingest path"
@@ -423,7 +424,7 @@ impl World {
     /// server's `ColumnUnload`. Returns the evicted live sections — a
     /// `ColumnUnload` implicitly drops them with no per-section message, so
     /// this is the section cache's only sight of them.
-    pub(crate) fn uninstall_remote_column(
+    pub fn uninstall_remote_column(
         &mut self,
         pos: ChunkPos,
     ) -> Vec<(SectionPos, Arc<Section>)> {
@@ -432,7 +433,7 @@ impl World {
             "remote unloads are the replica's ingest path"
         );
         let bits = self
-            .terrain
+            .data
             .section_column_cys
             .get(&pos)
             .copied()
@@ -455,7 +456,7 @@ impl World {
     /// exact counters, sparse maps, and final light it was evicted with. The
     /// caller batches the returned pos into `finish_remote_install_batch`
     /// like any other install.
-    pub(crate) fn install_cached_section(
+    pub fn install_cached_section(
         &mut self,
         pos: SectionPos,
         section: Arc<Section>,

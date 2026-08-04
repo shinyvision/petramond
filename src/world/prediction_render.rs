@@ -49,7 +49,7 @@ pub(super) enum PredictionMeshResult {
     Built {
         pos: SectionPos,
         revision: u64,
-        mesh: ChunkMesh,
+        mesh: Box<ChunkMesh>,
     },
     Remove {
         pos: SectionPos,
@@ -379,7 +379,7 @@ fn run_prediction_terrain(
             PredictionMeshResult::Built {
                 pos,
                 revision,
-                mesh,
+                mesh: Box::new(mesh),
             }
         }
         PredictionMeshJob::Remove { pos, revision } => {

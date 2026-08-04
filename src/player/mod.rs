@@ -26,6 +26,23 @@
 
 mod collision;
 mod interaction;
+/// A connected player's session id: the small per-world slot byte that names a
+/// player on the wire, in mob aggro/hearing, and in per-player server state.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub struct PlayerId(pub u8);
+
 pub mod model;
 mod movement;
 mod progression;
@@ -34,16 +51,16 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use interaction::block_within_reach;
-pub(crate) use interaction::ray_vs_aabb;
+pub use interaction::block_within_reach;
+pub use interaction::ray_vs_aabb;
 pub use interaction::{RaycastHit, REACH};
 /// The swim probe height above the feet — also what the server-side fall
 /// tracker samples to mirror `track_fall`'s water reset from reported positions.
-pub(crate) use movement::WATER_PROBE_Y;
+pub use movement::WATER_PROBE_Y;
 /// Speed caps used by server movement validation (F1): horizontal sprint
 /// speeds plus the vertical envelope (jump take-off up, terminal fall down)
 /// and gravity (correction deadband scaling).
-pub(crate) use movement::{GRAVITY, JUMP_V0, SPECTATOR_SPRINT, SPRINT, TERMINAL};
+pub use movement::{GRAVITY, JUMP_V0, SPECTATOR_SPRINT, SPRINT, TERMINAL};
 pub use progression::Progression;
 pub use state::{
     BedSpawn, Input, Player, PlayerInputSnapshot, PlayerMode, PlayerRosterSnapshot, DT_MAX, EYE,

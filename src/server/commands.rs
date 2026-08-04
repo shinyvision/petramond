@@ -4,7 +4,7 @@
 use crate::net::protocol::ChatColor;
 use crate::server::chat::ChatTargets;
 use crate::server::game::ServerGame;
-use crate::server::player::PlayerId;
+use crate::player::PlayerId;
 
 #[derive(Copy, Clone)]
 enum CommandSource {
@@ -16,14 +16,14 @@ impl ServerGame {
     /// Execute one unprefixed dedicated-server console line. `stop` and `save`
     /// stay in the host loop because they control the server thread itself;
     /// every gameplay-visible command lands here.
-    pub(crate) fn execute_console_command(&mut self, line: &str) {
+    pub fn execute_console_command(&mut self, line: &str) {
         self.execute_command(CommandSource::Console, line.trim());
     }
 
     /// Execute a player chat command after the chat ingress has proved `/` was
     /// the message's very first character. The slash itself is not part of the
     /// shared console grammar.
-    pub(crate) fn execute_player_command(&mut self, player: PlayerId, command: &str) {
+    pub fn execute_player_command(&mut self, player: PlayerId, command: &str) {
         if !self.is_operator_id(player) {
             self.command_reply(
                 CommandSource::Player(player),
@@ -35,7 +35,7 @@ impl ServerGame {
         self.execute_command(CommandSource::Player(player), command);
     }
 
-    pub(crate) fn is_operator(&self, s: usize) -> bool {
+    pub fn is_operator(&self, s: usize) -> bool {
         (self.has_local_session && s == 0)
             || self
                 .operators
@@ -238,8 +238,8 @@ mod tests {
     use crate::player::PlayerMode;
 
     fn server_with_guest() -> (ServerGame, usize) {
-        let (mut server, _) = crate::game::session::build_session_inline("", 1, 2);
-        let guest = crate::game::session::spawn_player(server.world.seed);
+        let mut server = crate::server::session_build::build_server_inline("", 1, 2);
+        let guest = crate::server::session_build::spawn_player(server.world.seed);
         let s = server.add_session_for_test(guest);
         (server, s)
     }

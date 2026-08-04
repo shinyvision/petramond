@@ -235,7 +235,7 @@ fn write_sections(region_dir: &Path, snaps: Vec<SectionSnapshot>) -> Vec<PathBuf
 }
 
 /// Atomic file write: tmp + rename, so a crash mid-write can't truncate the live file.
-pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)

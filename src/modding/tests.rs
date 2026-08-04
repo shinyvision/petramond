@@ -8,7 +8,7 @@ use std::process::Command;
 use mod_api::{AttachSide, HostCall, Stage as ApiStage};
 
 use crate::events::{Attach, EventBus, PostEvent, Stage, TickSystems};
-use crate::game::TickEvents;
+use crate::events::tick::TickEvents;
 use crate::mathh::Vec3;
 use crate::player::Player;
 use crate::world::World;
@@ -19,7 +19,7 @@ use super::ModHost;
 struct Sim {
     world: World,
     player: Player,
-    gui_state: std::sync::Arc<crate::gui::GuiStateMap>,
+    gui_state: std::sync::Arc<crate::gui_state::GuiStateMap>,
     feed: TickEvents,
     bus: EventBus,
     systems: TickSystems,
@@ -30,7 +30,7 @@ impl Sim {
         Self {
             world: World::new(1, 1),
             player: Player::new(Vec3::new(0.0, 80.0, 0.0)),
-            gui_state: crate::gui::empty_gui_state(),
+            gui_state: crate::gui_state::empty_gui_state(),
             feed: TickEvents::default(),
             bus: EventBus::default(),
             systems: TickSystems::default(),
@@ -104,7 +104,7 @@ fn disabled_packs_contribute_no_wasm_instance() {
 /// the wasm path, or `None` (with a visible message) when the wasm target
 /// isn't installed so plain `cargo test` never hard-fails on machines without
 /// it. Shipped `make mods` builds remain release-profile work, never tests.
-pub(crate) fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
+pub fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
     let mods_src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mods-src");
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let out = Command::new(cargo)
@@ -143,7 +143,7 @@ pub(crate) fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
 /// (`PETRAMOND_MODS` + the 2a re-spawn pattern). Returns the fixture root
 /// (removed by [`run_child_test`]), or `None` when the wasm32 target is
 /// missing (the test skips, like [`built_mod_wasm`]).
-pub(crate) fn stage_mods_fixture(tag: &str, ids: &[&str]) -> Option<PathBuf> {
+pub fn stage_mods_fixture(tag: &str, ids: &[&str]) -> Option<PathBuf> {
     let wasms: Vec<PathBuf> = ids
         .iter()
         .map(|id| built_mod_wasm(id))
@@ -180,7 +180,7 @@ pub(crate) fn stage_mods_fixture(tag: &str, ids: &[&str]) -> Option<PathBuf> {
 /// the app tests use): saves stay out of the developer's real data dir, and
 /// the disk module cache there lets every child after the first deserialize
 /// precompiled mod modules (~1 ms) instead of recompiling them (~1 s).
-pub(crate) fn run_child_test(root: &std::path::Path, test_path: &str) {
+pub fn run_child_test(root: &std::path::Path, test_path: &str) {
     let exe = std::env::current_exe().expect("test binary path");
     let out = std::process::Command::new(exe)
         .arg(test_path)

@@ -7,7 +7,7 @@ use crate::mining::{BreakEvent, MiningState};
 use crate::world::World;
 
 use super::game::ServerGame;
-use crate::game::tick::{BlockBrokenEvent, TickEvents, TICK_DT};
+use crate::events::tick::{BlockBrokenEvent, TickEvents, TICK_DT};
 
 /// How long a broken cell stays in `pending_break_ack` waiting for its lagged
 /// `BreakFinished` (10 s — far beyond any real finish RTT). An expired entry
@@ -21,7 +21,7 @@ impl ServerGame {
     /// Mining, on the tick: advance the break timer against the block under the
     /// crosshair while held, AND resolve client `BreakFinished` requests
     /// (duration/tool/reach validated).
-    pub(crate) fn tick_mining(&mut self, s: usize, events: &mut TickEvents) {
+    pub fn tick_mining(&mut self, s: usize, events: &mut TickEvents) {
         let now = self.world.current_tick();
         self.sessions[s]
             .pending_break_ack
@@ -261,7 +261,7 @@ impl ServerGame {
     /// `predicted`) — gates the echo strip. A client that never presented
     /// (frozen ledger, replica disagreement, or a hold-path finish that
     /// outpaced its timer) must still receive its `BlockBroken`.
-    pub(crate) fn finish_player_break(
+    pub fn finish_player_break(
         &mut self,
         s: usize,
         event: BreakEvent,
@@ -414,7 +414,7 @@ impl ServerGame {
     /// drops materialise on this tick like every other entity. The block is already gone
     /// (the world cleared the cell), so light is sampled from the now-empty cell — which is
     /// what the burst should glow with.
-    pub(crate) fn process_natural_breaks(&mut self, events: &mut TickEvents) {
+    pub fn process_natural_breaks(&mut self, events: &mut TickEvents) {
         for (pos, block) in self.world.take_natural_breaks() {
             // The cell is already cleared, so the group base can't be derived;
             // re-checking the stored spawn bed still exists covers it.
@@ -455,7 +455,7 @@ impl ServerGame {
     /// stamp onto the block's own item drop: the row's `petramond:carry` KV
     /// entries for sub-cell `part`, read while the cell still holds them.
     /// `NONE` when the row carries nothing or the entries are absent.
-    pub(crate) fn carry_variant_at(
+    pub fn carry_variant_at(
         &self,
         pos: IVec3,
         block: Block,
@@ -486,7 +486,7 @@ impl ServerGame {
     /// when they agree on BOTH item and instance data — two layers of the same
     /// wool dyed differently are two stacks, which is the same rule
     /// `can_stack_with` applies everywhere else.
-    pub(crate) fn part_drop_stacks(
+    pub fn part_drop_stacks(
         &self,
         pos: IVec3,
         parts: &[(crate::block::CellPart, Block)],
@@ -511,7 +511,7 @@ impl ServerGame {
         stacks
     }
 
-    pub(crate) fn spawn_drops(
+    pub fn spawn_drops(
         &mut self,
         pos: IVec3,
         block: Block,
@@ -575,7 +575,7 @@ impl ServerGame {
 /// particles: the mined face's `(sky6, block6)`, or the brightest neighbour
 /// (by combined `max(sky, block luminance)`, matching the old single-channel
 /// pick) when the face is unknown.
-pub(crate) fn break_light(
+pub fn break_light(
     world: &World,
     pos: IVec3,
     normal: Option<IVec3>,

@@ -1,5 +1,5 @@
 use super::state::Player;
-use crate::atlas::{tile_alpha_bounds, TileAlphaBounds};
+use crate::tile_alpha::{tile_alpha_bounds, TileAlphaBounds};
 use crate::block::{Block, ShapeFamily};
 use crate::mathh::{IVec3, SelectionBoxes, SelectionShape, Vec3};
 use crate::torch::{TorchPlacement, POLE_HALF, POLE_HEIGHT};
@@ -13,7 +13,7 @@ const EPS: f32 = 1.0e-5;
 /// point of cell `block` within `REACH` (+1 slack for latency between the
 /// claimed eye and the resolving tick) of `eye`. The one rule every
 /// server-side block-reach check shares (look latch, `BreakFinished`).
-pub(crate) fn block_within_reach(eye: Vec3, block: IVec3) -> bool {
+pub fn block_within_reach(eye: Vec3, block: IVec3) -> bool {
     let lo = Vec3::new(block.x as f32, block.y as f32, block.z as f32);
     let closest = eye.clamp(lo, lo + Vec3::ONE);
     (closest - eye).length() <= REACH + 1.0
@@ -58,7 +58,7 @@ impl Player {
     /// at a mob interrupts block selection). Voxel DDA (Amanatides & Woo), with
     /// plant-shaped blocks tested against their square selection box (see
     /// `plant_selection_aabb`).
-    pub(crate) fn raycast_with_dist(
+    pub fn raycast_with_dist(
         eye: Vec3,
         dir: Vec3,
         world: &World,
@@ -149,7 +149,7 @@ impl Player {
     /// Solids still stop the ray first. The caller inspects the hit cell's real
     /// block — the hit may be water or any normally selectable block, whichever
     /// the ray reaches first.
-    pub(crate) fn raycast_including_water(
+    pub fn raycast_including_water(
         eye: Vec3,
         dir: Vec3,
         world: &World,
@@ -163,7 +163,7 @@ impl Player {
     /// a thin film (both of which can render exactly like still water) must
     /// never shadow the source beneath or behind it: the ray reads through them
     /// to the source the player is actually aiming at.
-    pub(crate) fn raycast_water_sources(
+    pub fn raycast_water_sources(
         eye: Vec3,
         dir: Vec3,
         world: &World,
@@ -470,7 +470,7 @@ fn ray_vs_torch(eye: Vec3, dir: Vec3, pos: IVec3, placement: TorchPlacement) -> 
 /// Ray vs axis-aligned box (slab method): the entry distance `t >= 0`, or `None`
 /// when the ray misses the box or it lies entirely behind the eye. Shared with mob
 /// targeting (a mob is an AABB) — that's why it's crate-visible.
-pub(crate) fn ray_vs_aabb(eye: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
+pub fn ray_vs_aabb(eye: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     ray_vs_aabb_hit(eye, dir, min, max).map(|hit| hit.t)
 }
 

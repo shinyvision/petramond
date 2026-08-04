@@ -1,3 +1,4 @@
+use crate::world::WorldData;
 use std::sync::Arc;
 
 use crate::chunk::{ChunkPos, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY};
@@ -7,8 +8,8 @@ use super::World;
 
 impl World {
     /// Install a section for a test, mirroring the streamer's per-section install.
-    #[cfg(test)]
-    pub(crate) fn insert_section_for_test(&mut self, pos: SectionPos, section: Section) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn insert_section_for_test(&mut self, pos: SectionPos, section: Section) {
         self.ensure_column(pos.chunk_pos());
         self.sections.insert(pos, Arc::new(section));
         self.note_section_loaded(pos);
@@ -22,16 +23,17 @@ impl World {
     /// Fixture sections bypass the streamer's settle/defer path, so a headless
     /// world would never bake them — and the light-final ship gate would hold
     /// them back forever. Feed the relight queue like an edit does.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     fn request_fixture_bake(&mut self, pos: SectionPos) {
         self.relight_demand.insert(pos);
     }
 
     /// Mark a section's saved overlay in flight for a test: stream-finality
     /// gated reads there must report unloaded until it lands.
-    #[cfg(test)]
-    pub(crate) fn mark_overlay_in_flight_for_test(&mut self, pos: SectionPos) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn mark_overlay_in_flight_for_test(&mut self, pos: SectionPos) {
         self.gen.awaited_overlays.insert(pos);
+        self.note_stream_nonfinal(pos);
     }
 
     /// Install a whole column [`Chunk`] for a test, splitting it into sections + column
@@ -43,8 +45,8 @@ impl World {
     /// chests, …) — matching real worldgen, which produces none. A test that needs a
     /// block-entity should build the [`Section`] directly (with `insert_section_for_test`)
     /// or place it through the world API after install.
-    #[cfg(test)]
-    pub(crate) fn insert_chunk_for_test(&mut self, pos: ChunkPos, chunk: crate::chunk::Chunk) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn insert_chunk_for_test(&mut self, pos: ChunkPos, chunk: crate::chunk::Chunk) {
         debug_assert_eq!((pos.cx, pos.cz), (chunk.cx, chunk.cz));
         let (column, sections) = crate::world::stream::split_generated_column(&chunk);
         self.columns.insert(pos, column);
@@ -72,10 +74,10 @@ impl World {
     /// Unlike [`insert_chunk_for_test`](Self::insert_chunk_for_test) with an empty
     /// `Chunk` (whose all-air surface sections would be skipped), this keeps every
     /// section present — the cubic analogue of the column era's "one empty loaded chunk".
-    #[cfg(test)]
-    pub(crate) fn insert_empty_column_for_test(&mut self, pos: ChunkPos) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn insert_empty_column_for_test(&mut self, pos: ChunkPos) {
         self.ensure_column(pos);
-        for cy in Self::column_section_range() {
+        for cy in WorldData::column_section_range() {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
             self.sections
                 .insert(sp, Arc::new(Section::new(pos.cx, cy, pos.cz)));
@@ -89,15 +91,15 @@ impl World {
 
     /// The loaded section owning world voxel `(wx,wy,wz)`, for a test that inspects
     /// per-section light/flags after a world-coordinate edit.
-    #[cfg(test)]
-    pub(crate) fn section_at_world_for_test(&self, wx: i32, wy: i32, wz: i32) -> Option<&Section> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn section_at_world_for_test(&self, wx: i32, wy: i32, wz: i32) -> Option<&Section> {
         let pos = SectionPos::from_world(wx, wy, wz)?;
         self.sections.get(&pos).map(|s| &**s)
     }
 
     /// Mutable counterpart of [`section_at_world_for_test`](Self::section_at_world_for_test).
-    #[cfg(test)]
-    pub(crate) fn section_at_world_mut_for_test(
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn section_at_world_mut_for_test(
         &mut self,
         wx: i32,
         wy: i32,

@@ -6,11 +6,11 @@ use super::Transform;
 
 /// Per-connection monotonic id for discrete mutating intents that need an
 /// [`ActionOutcome`]. Client allocates; server echoes.
-pub(crate) type ClientRequestId = u32;
+pub type ClientRequestId = u32;
 
 /// Coarse deny reasons for [`ActionOutcome`] — enough for rollback/UI.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum ActionDenyReason {
+pub enum ActionDenyReason {
     OutOfReach,
     InvalidSlot,
     Busy,
@@ -19,9 +19,31 @@ pub(crate) enum ActionDenyReason {
     BadTool,
 }
 
+impl ActionOutcome {
+    /// The one deny-outcome constructor, shared by the server's message-time
+    /// denials and the client ledger tests.
+    pub fn deny(id: ClientRequestId, reason: ActionDenyReason) -> ActionOutcome {
+        ActionOutcome {
+            id,
+            accepted: false,
+            reason: Some(reason),
+        }
+    }
+
+    /// The accept twin of [`deny`](Self::deny).
+    #[allow(dead_code)]
+    pub fn accept(id: ClientRequestId) -> ActionOutcome {
+        ActionOutcome {
+            id,
+            accepted: true,
+            reason: None,
+        }
+    }
+}
+
 /// Server answer to one client request id (accept or deny).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ActionOutcome {
+pub struct ActionOutcome {
     pub id: ClientRequestId,
     pub accepted: bool,
     pub reason: Option<ActionDenyReason>,
@@ -34,7 +56,7 @@ pub(crate) struct ActionOutcome {
 /// `on_ground` remain the client's prediction (used for soft comparison / fall
 /// bookkeeping until a hard correct ships via [`SelfTransform`]).
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct PlayerUpdate {
+pub struct PlayerUpdate {
     /// The client's predicted transform (see the struct doc).
     pub transform: Transform,
     pub on_ground: bool,
@@ -59,7 +81,7 @@ pub(crate) struct PlayerUpdate {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct TargetRef {
+pub struct TargetRef {
     pub block: IVec3,
     pub normal: IVec3,
 }
@@ -67,14 +89,14 @@ pub(crate) struct TargetRef {
 /// How much a cursor throw takes off the held stack: the whole stack
 /// (primary click outside the panel) or a single item (secondary click).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum ThrowAmount {
+pub enum ThrowAmount {
     All,
     One,
 }
 
 /// One-shot player actions, applied in arrival order on the next server tick.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum PlayerAction {
+pub enum PlayerAction {
     /// Secondary press: the interact/eat/use/place ladder. `mob` is the mob
     /// under the crosshair at click time (stable id) — the shear target, like
     /// `AttackClick`'s. `target` is the block under the crosshair AT CLICK
@@ -153,17 +175,17 @@ pub(crate) enum PlayerAction {
     CloseMenu,
 }
 
-/// [`crate::controls::PointerButton`] on the wire.
-pub(crate) fn button_to_wire(button: crate::controls::PointerButton) -> u8 {
+/// [`crate::gui_state::PointerButton`] on the wire.
+pub fn button_to_wire(button: crate::gui_state::PointerButton) -> u8 {
     match button {
-        crate::controls::PointerButton::Primary => 0,
-        crate::controls::PointerButton::Secondary => 1,
+        crate::gui_state::PointerButton::Primary => 0,
+        crate::gui_state::PointerButton::Secondary => 1,
     }
 }
 
-pub(crate) fn button_from_wire(button: u8) -> crate::controls::PointerButton {
+pub fn button_from_wire(button: u8) -> crate::gui_state::PointerButton {
     match button {
-        0 => crate::controls::PointerButton::Primary,
-        _ => crate::controls::PointerButton::Secondary,
+        0 => crate::gui_state::PointerButton::Primary,
+        _ => crate::gui_state::PointerButton::Secondary,
     }
 }

@@ -75,7 +75,7 @@ impl Palette {
     /// the palette a record round-trips through when no world is open, and a
     /// codec test must be able to prove the record carries an id the shipped
     /// registry happens not to have reached yet.
-    pub(crate) fn identity() -> Palette {
+    pub fn identity() -> Palette {
         let ids = |n: usize| -> Box<[u16]> { (0..n as u16).collect::<Vec<_>>().into_boxed_slice() };
         let n = crate::registry::WIDE_ID_CAP;
         let mut mob_identity = [None; 256];

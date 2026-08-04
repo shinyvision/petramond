@@ -5,7 +5,7 @@ use crate::mob::{def as mob_def, DeathDrop, MobAttack, MobDamageSound, MobFall, 
 
 /// Falls shorter than this into water make no splash — walking or a one-block
 /// step-down stays quiet; a real fall throws the burst.
-pub(crate) const WATER_SPLASH_MIN_FALL: f32 = 1.5;
+pub const WATER_SPLASH_MIN_FALL: f32 = 1.5;
 /// Falls at least this deep play the BIG splash sound instead of the small one.
 const WATER_SPLASH_BIG_FALL: f32 = 5.0;
 use crate::player;
@@ -13,7 +13,7 @@ use crate::world::World;
 
 use super::game::{ServerGame, ATTACK_COOLDOWN_TICKS};
 use super::player::PlayerId;
-use crate::game::tick::TickEvents;
+use crate::events::tick::TickEvents;
 use crate::server::health::fall_damage_health;
 
 /// Upward pop of a mob strike's knockback, as a fraction of its horizontal strength —
@@ -35,7 +35,7 @@ impl ServerGame {
     /// land a hit every tick — only one swing per cooldown connects, so an owl can't be
     /// spam-clicked to death. A swing that connects (a mob hit or a punch at the air) arms
     /// the cooldown and reports `swung_hand`; a click on a block (mining) does neither.
-    pub(crate) fn tick_attack(&mut self, s: usize, events: &mut TickEvents) {
+    pub fn tick_attack(&mut self, s: usize, events: &mut TickEvents) {
         let sess = &mut self.sessions[s];
         sess.attack_cooldown = sess.attack_cooldown.saturating_sub(1);
         // Consume the press AND its targets whether or not it lands (no
@@ -165,7 +165,7 @@ impl ServerGame {
     /// component is DoT (burn ticks): neither blocked by an active i-frame
     /// window nor granting one.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn damage_mob_through_pipeline(
+    pub fn damage_mob_through_pipeline(
         &mut self,
         s: usize,
         idx: usize,
@@ -274,7 +274,7 @@ impl ServerGame {
     ///   memory records the biter.
     ///
     /// [`damage_player`]: ServerGame::damage_player
-    pub(crate) fn apply_mob_attacks(&mut self, attacks: Vec<MobAttack>, events: &mut TickEvents) {
+    pub fn apply_mob_attacks(&mut self, attacks: Vec<MobAttack>, events: &mut TickEvents) {
         for a in attacks {
             match a.target {
                 crate::mob::EntityRef::Player(pid) => {
@@ -323,7 +323,7 @@ impl ServerGame {
     /// Apply fall landings reported by `World::tick_mobs` through the mob damage
     /// pipeline. Mobs use the same distance curve as players, but fall damage is not an
     /// attack and carries no origin, so default knockback does not run.
-    pub(crate) fn apply_mob_fall_damage(&mut self, falls: Vec<MobFall>, events: &mut TickEvents) {
+    pub fn apply_mob_fall_damage(&mut self, falls: Vec<MobFall>, events: &mut TickEvents) {
         for fall in falls {
             let amount = fall_damage_health(fall.distance) as f32;
             if amount <= 0.0 {
@@ -350,7 +350,7 @@ impl ServerGame {
     /// `count_per_intensity` scales the count). Falls below
     /// [`WATER_SPLASH_MIN_FALL`] stay quiet, so walking or stepping into water
     /// never splashes.
-    pub(crate) fn push_water_splash(&mut self, feet: Vec3, fall: f32, events: &mut TickEvents) {
+    pub fn push_water_splash(&mut self, feet: Vec3, fall: f32, events: &mut TickEvents) {
         if fall < WATER_SPLASH_MIN_FALL {
             return;
         }
@@ -378,11 +378,11 @@ impl ServerGame {
         // The splash SOUND rides the ordinary one-shot sound channel (the
         // emitter catalog is particles-only); the fall depth picks the clip.
         let sound = if fall >= WATER_SPLASH_BIG_FALL {
-            crate::audio::Sound::WaterSplashBig
+            crate::sound_registry::Sound::WaterSplashBig
         } else {
-            crate::audio::Sound::WaterSplashSmall
+            crate::sound_registry::Sound::WaterSplashSmall
         };
-        events.world.sounds.push(crate::game::ModSound {
+        events.world.sounds.push(crate::events::tick::ModSound {
             sound,
             pos: Some(pos),
         });
@@ -392,7 +392,7 @@ impl ServerGame {
     /// (place/break), for hearing-based mob AI. The noise sounds at the BLOCK's
     /// centre and names the acting player — that's what a listener locks onto.
     /// Natural (sim-caused) breaks stay silent: they have no actor.
-    pub(crate) fn push_block_noise(
+    pub fn push_block_noise(
         &mut self,
         s: usize,
         pos: crate::mathh::IVec3,
@@ -409,7 +409,7 @@ impl ServerGame {
     /// AI batch — called once per tick right before the mob stage. Sneaking
     /// players are silent (the whole point of sneaking near a listener);
     /// airborne players are silent until they land.
-    pub(crate) fn push_player_step_noises(&mut self) {
+    pub fn push_player_step_noises(&mut self) {
         for s in 0..self.sessions.len() {
             let p = &self.sessions[s].player;
             let horizontal_sq = p.vel.x * p.vel.x + p.vel.z * p.vel.z;
@@ -432,7 +432,7 @@ impl ServerGame {
     /// Roll a dead mob's loot table and scatter the drops at its body. Called the
     /// instant a mob dies (from the attack that killed it), so loot appears "when
     /// killed" while the corpse ragdolls. No-op for a species with no table.
-    pub(crate) fn spawn_mob_loot(&mut self, death: DeathDrop) {
+    pub fn spawn_mob_loot(&mut self, death: DeathDrop) {
         let Some(table) = self.loot.get(crate::mob::def(death.kind).key) else {
             return;
         };
@@ -453,7 +453,7 @@ impl ServerGame {
     /// within their pickup radius into their inventory. Item lifetime advances
     /// once per tick in the stage driver, not here. Returns whether at least
     /// one item was collected this tick, so the client can play the pickup sound.
-    pub(crate) fn item_pickup_tick(&mut self, s: usize) -> bool {
+    pub fn item_pickup_tick(&mut self, s: usize) -> bool {
         // A dead body vacuums nothing: without this the corpse standing at the
         // death spot would re-collect its own spilled inventory behind the
         // death screen.
@@ -515,7 +515,7 @@ fn queue_mob_sound(
     pos: Vec3,
 ) {
     if crate::mob::def(kind).sound_for(category).is_some() {
-        events.world.mob_sounds.push(crate::game::MobSoundEvent {
+        events.world.mob_sounds.push(crate::events::tick::MobSoundEvent {
             mob_id,
             kind,
             category,
@@ -527,7 +527,7 @@ fn queue_mob_sound(
 /// The two 6-bit light channels `(sky6, block)` for dynamic geometry at a world
 /// position, so the held item, particles, and dropped items are lit — and
 /// coloured — by nearby emitters just like the static blocks around them.
-pub(crate) fn light_at_pos(world: &World, pos: Vec3) -> (u8, crate::light::BlockLight6) {
+pub fn light_at_pos(world: &World, pos: Vec3) -> (u8, crate::light::BlockLight6) {
     let c = voxel_at(pos);
     world.dynamic_light_at_world(c.x, c.y, c.z)
 }

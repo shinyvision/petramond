@@ -20,7 +20,7 @@ use crate::mob::{Mob, MobDamageFeedback};
 /// `block_place_pre` — cancel = placement refused (the click does nothing and the
 /// held item is kept).
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct BlockPlacePre {
+pub struct BlockPlacePre {
     /// The cell the placement targets (the anchor cell for multi-cell models).
     pub pos: IVec3,
     pub block: Block,
@@ -32,7 +32,7 @@ pub(crate) struct BlockPlacePre {
 /// progress is the cost). Fires only for player mining; sim-destroyed blocks
 /// (natural breaks) are not cancellable.
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct BlockBreakPre {
+pub struct BlockBreakPre {
     pub pos: IVec3,
     pub block: Block,
     /// Whether the held tool harvests drops from this block.
@@ -45,7 +45,7 @@ pub(crate) struct BlockBreakPre {
 /// its own claim by querying the world and the acting player's snapshot
 /// (held item, sneak); the attempt itself interprets nothing.
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct InteractAttempt {
+pub struct InteractAttempt {
     /// The clicked block cell, if the crosshair held a block.
     pub block: Option<IVec3>,
     /// The clicked face's normal (back toward the eye; zero when the eye
@@ -56,13 +56,13 @@ pub(crate) struct InteractAttempt {
     /// or occluded claim never appears here).
     pub mob: Option<u64>,
     /// The interacting session.
-    pub player: crate::server::player::PlayerId,
+    pub player: crate::player::PlayerId,
 }
 
 /// `item_use_pre` — cancel = the click was consumed (the engine's own use is
 /// skipped, but the item still reports as used).
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct ItemUsePre {
+pub struct ItemUsePre {
     pub item: ItemType,
     /// The looked-at block, if any.
     pub target: Option<IVec3>,
@@ -70,7 +70,7 @@ pub(crate) struct ItemUsePre {
 
 /// `mob_damage_pre` — `amount` and `feedback` are mutable; cancel = no damage.
 #[derive(Clone, Debug)]
-pub(crate) struct MobDamagePre {
+pub struct MobDamagePre {
     /// Stable session id of the struck mob (the mob's one mod-facing address).
     pub mob_id: u64,
     pub kind: Mob,
@@ -85,7 +85,7 @@ pub(crate) struct MobDamagePre {
 /// `player_damage_pre` — `amount` is mutable; cancel = no damage. Non-positive
 /// or engine-immunity-blocked damage is a non-event and never dispatches.
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct PlayerDamagePre {
+pub struct PlayerDamagePre {
     pub amount: i32,
     pub source: DamageSource,
     /// Optional world-space origin for attack knockback or spatial feedback.
@@ -96,10 +96,10 @@ pub(crate) struct PlayerDamagePre {
 /// explicit attack sources; `origin` on a payload is spatial context, not proof
 /// that knockback should happen.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum DamageSource {
+pub enum DamageSource {
     Fall,
     /// A player's melee strike; carries the attacking session.
-    PlayerAttack(crate::server::player::PlayerId),
+    PlayerAttack(crate::player::PlayerId),
     /// A mob's melee strike; carries the attacking species AND the attacker's
     /// stable mob id — the source names WHO caused the damage, and for a mob
     /// that identity is the instance (the struck target's retaliation memory
@@ -116,7 +116,7 @@ pub(crate) enum DamageSource {
 
 impl DamageSource {
     #[inline]
-    pub(crate) fn is_attack(self) -> bool {
+    pub fn is_attack(self) -> bool {
         matches!(self, Self::PlayerAttack(_) | Self::MobAttack { .. })
     }
 
@@ -124,7 +124,7 @@ impl DamageSource {
     /// recorded as a struck mob's retaliation memory. Fall and mod damage have
     /// no attacker identity.
     #[inline]
-    pub(crate) fn attacker(self) -> Option<crate::mob::EntityRef> {
+    pub fn attacker(self) -> Option<crate::mob::EntityRef> {
         match self {
             Self::PlayerAttack(pid) => Some(crate::mob::EntityRef::Player(pid)),
             Self::MobAttack { id, .. } => Some(crate::mob::EntityRef::Mob(id)),
@@ -139,7 +139,7 @@ impl DamageSource {
 /// post-event drain) and routes each through the same funnel the engine's own
 /// code uses, so global engine immunity and registered pre handlers still apply.
 #[derive(Clone, Debug)]
-pub(crate) enum ModAction {
+pub enum ModAction {
     /// `Game::damage_player(amount, DamageSource::Mod(mod_id))`.
     DamagePlayer { amount: i32, mod_id: &'static str },
     /// The mob-damage pipeline (`mob_damage_pre` → `Mobs::damage_mob` → death loot).
@@ -158,7 +158,7 @@ pub(crate) enum ModAction {
     },
     /// A mod's `GuiOpen` HostCall: request the app shell open this mod GUI
     /// (honoured only from gameplay, like a block-interact open request).
-    OpenGui { kind: crate::gui::GuiKind },
+    OpenGui { kind: crate::gui_state::GuiKind },
     /// A mod's `GuiClose` HostCall: close the open mod GUI, if one is open.
     CloseGui,
     /// A mod's `ChatSend` HostCall: deliver one authored chat line on the next
@@ -175,7 +175,7 @@ pub(crate) enum ModAction {
 /// (`Copy` was dropped when the tag events gained String keys — a Rust-trait
 /// change only, like `ContainerKind`'s.)
 #[derive(Clone, Debug)]
-pub(crate) enum PostEvent {
+pub enum PostEvent {
     BlockPlaced {
         pos: IVec3,
         block: Block,
@@ -216,11 +216,11 @@ pub(crate) enum PostEvent {
     /// included) and mod GUIs speak the one kind registry; the ABI mirror
     /// carries the kind's key string.
     ContainerOpened {
-        kind: crate::gui::GuiKind,
+        kind: crate::gui_state::GuiKind,
         pos: Option<IVec3>,
     },
     ContainerClosed {
-        kind: crate::gui::GuiKind,
+        kind: crate::gui_state::GuiKind,
         pos: Option<IVec3>,
     },
     SectionGenerated {
@@ -236,7 +236,7 @@ pub(crate) enum PostEvent {
     /// vehicle); mounting itself has no event — only a mod's own mount call
     /// starts a ride.
     PlayerDismounted {
-        player: crate::server::player::PlayerId,
+        player: crate::player::PlayerId,
         mount: crate::mob::riding::Mount,
     },
     /// A key BECAME PRESENT in a live mob's tag map through the ABI tag
@@ -259,7 +259,7 @@ pub(crate) enum PostEvent {
     },
     /// A player vacuumed one dropped-item stack off the ground.
     ItemPickedUp {
-        player: crate::server::player::PlayerId,
+        player: crate::player::PlayerId,
         item: ItemType,
         count: u8,
         /// The collector's body centre — the drop entity is already gone.
@@ -270,7 +270,7 @@ pub(crate) enum PostEvent {
     /// The once-per-kind guarantee is the player's persisted obtained set
     /// (`player::Progression`), so handlers need no memory of their own.
     ItemObtained {
-        player: crate::server::player::PlayerId,
+        player: crate::player::PlayerId,
         item: ItemType,
     },
     /// Damage LANDED on a mob: it survived the i-frame gate, `mob_damage_pre`,
@@ -292,7 +292,7 @@ pub(crate) enum PostEvent {
         block: Option<IVec3>,
         face: Option<IVec3>,
         mob: Option<u64>,
-        player: crate::server::player::PlayerId,
+        player: crate::player::PlayerId,
         consumed: bool,
     },
     /// A mod emitted its own event (`EmitEvent`). `key` is namespaced to the
@@ -307,7 +307,7 @@ pub(crate) enum PostEvent {
 /// Registration key for post handlers; one bit per kind gates enqueueing so an
 /// unheard event costs nothing.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PostEventKind {
+pub enum PostEventKind {
     BlockPlaced,
     BlockBroken,
     ItemUsed,
@@ -330,11 +330,11 @@ pub(crate) enum PostEventKind {
 }
 
 impl PostEventKind {
-    pub(crate) const COUNT: usize = 19;
+    pub const COUNT: usize = 19;
 }
 
 impl PostEvent {
-    pub(crate) fn kind(&self) -> PostEventKind {
+    pub fn kind(&self) -> PostEventKind {
         match self {
             PostEvent::BlockPlaced { .. } => PostEventKind::BlockPlaced,
             PostEvent::BlockBroken { .. } => PostEventKind::BlockBroken,

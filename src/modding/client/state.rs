@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 /// How many consecutive partial updates an image remembers; a consumer whose
 /// held revision fell out of the window uploads the whole texture.
-pub(crate) const IMAGE_BLIT_WINDOW: usize = 8;
+pub const IMAGE_BLIT_WINDOW: usize = 8;
 
 #[derive(Clone)]
-pub(crate) struct ClientImageData {
+pub struct ClientImageData {
     pub key: String,
     pub width: u16,
     pub height: u16,
@@ -25,7 +25,7 @@ pub(crate) struct ClientImageData {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ClientCommand {
+pub enum ClientCommand {
     OpenGui {
         owner: String,
         kind: String,
@@ -44,13 +44,13 @@ pub(crate) enum ClientCommand {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct ClientCanvasSceneData {
+pub struct ClientCanvasSceneData {
     pub elements: Vec<mod_api::ClientCanvasElement>,
     pub offset: [f32; 2],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ClientOverlayRegistration {
+pub struct ClientOverlayRegistration {
     pub image_key: String,
     pub anchor: mod_api::ClientOverlayAnchor,
     pub margin: [u16; 2],
@@ -84,7 +84,7 @@ pub(in crate::modding) struct ClientStoreData {
     /// Looping-sound gains this mod drives: resolved sound → gain. Read by
     /// the app each frame; gain changes are eased audio-side. Zero-gain
     /// entries stay (the ease-to-silence request); bounded by sounds.json.
-    pub sound_loops: BTreeMap<crate::audio::Sound, f32>,
+    pub sound_loops: BTreeMap<crate::sound_registry::Sound, f32>,
     /// This mod's post-process mood `[darken, desaturate]` (each `0..=0.5`).
     /// Mods combine by max; eased app-side before it reaches the grade pass.
     pub mood: [f32; 2],

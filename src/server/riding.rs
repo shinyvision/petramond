@@ -34,7 +34,7 @@ impl ServerGame {
     /// frame with the client's exact wish basis (forward = `(sin yaw, cos
     /// yaw)`, right = `(-cos yaw, sin yaw)`), gameplay-gated like the intents
     /// `tick_movement` integrates.
-    pub(crate) fn publish_player_inputs(&mut self) {
+    pub fn publish_player_inputs(&mut self) {
         let inputs = self
             .sessions
             .iter()
@@ -85,7 +85,7 @@ impl ServerGame {
     /// The riding pass (see module docs). Order matters: valves first, then
     /// publish completed detaches, reconcile mirrors (physical consequences),
     /// then slave riders to the moved mobs.
-    pub(crate) fn tick_riding(&mut self) {
+    pub fn tick_riding(&mut self) {
         // Engine dismount valves, session side: the sneak RISING EDGE while
         // mounted is the get-off gesture; death and spectator shed the seat.
         for s in 0..self.sessions.len() {
@@ -154,11 +154,11 @@ impl ServerGame {
     /// Move completed registry transitions onto the event bus. The remote
     /// leave path also calls this before an id can be recycled, so a headless
     /// server retains the notification while it has no sessions or ticks.
-    pub(crate) fn publish_dismounted(&mut self) {
+    pub fn publish_dismounted(&mut self) {
         let detached: Vec<_> = self.world.riding_mut().drain_dismounted().collect();
         for (player, mount) in detached {
             self.bus.emit(PostEvent::PlayerDismounted {
-                player: crate::server::player::PlayerId(player),
+                player: crate::player::PlayerId(player),
                 mount,
             });
         }
@@ -167,7 +167,7 @@ impl ServerGame {
     /// Detach one session before it is persisted and removed. The registry
     /// transition is authoritative; the session mirror only decides whether
     /// the body needs physical dismount placement before saving.
-    pub(crate) fn detach_departing_session(&mut self, s: usize) {
+    pub fn detach_departing_session(&mut self, s: usize) {
         let id = self.sessions[s].id.0;
         self.world.riding_mut().dismount(id);
         if self.sessions[s].mount.take().is_some() {
@@ -184,7 +184,7 @@ impl ServerGame {
     /// `None` means no such position was provable inside the bounded search.
     /// The caller must defer this player's write, retaining the last complete
     /// save (or letting a never-saved player use fresh-spawn restore policy).
-    pub(crate) fn player_snapshot_for_save(
+    pub fn player_snapshot_for_save(
         &self,
         s: usize,
         obstacles: &[crate::collision::DynBox],

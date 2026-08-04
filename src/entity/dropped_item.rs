@@ -80,7 +80,7 @@ pub struct DroppedItem {
     /// order). Only a requested drop may magnet, and it flies toward ITS
     /// requester; save/load deliberately reconstructs this as `None` so
     /// reservations are recomputed from inventory.
-    pub pickup_requested: Option<crate::server::player::PlayerId>,
+    pub pickup_requested: Option<crate::player::PlayerId>,
     /// Accumulated Y-rotation in radians for the idle spin.
     pub spin: f32,
     /// Previous-tick `pos`/`spin`, snapshotted at the top of each physics tick so the
@@ -151,7 +151,7 @@ impl DroppedItem {
 
     /// Reserve this drop for player `by`'s pickup. The world pickup planner
     /// owns when this is set; physics only consumes the decision.
-    pub fn request_pickup(&mut self, by: crate::server::player::PlayerId) {
+    pub fn request_pickup(&mut self, by: crate::player::PlayerId) {
         self.pickup_requested = Some(by);
     }
 

@@ -47,14 +47,14 @@ impl World {
                         key,
                         base,
                         &members,
-                        &self.sections,
-                        &self.columns,
+                        &self.data.sections,
+                        &self.data.columns,
                     );
                 } else {
                     for pos in members {
                         let key = target.map_or(0, |t| t.section_priority_key(pos));
                         self.light_bakes
-                            .request(key, pos, &self.sections, &self.columns);
+                            .request(key, pos, &self.data.sections, &self.data.columns);
                     }
                 }
             }
@@ -87,7 +87,7 @@ impl World {
                         .last_load_target
                         .map_or(0, |t| t.section_priority_key(res.pos));
                     self.light_bakes
-                        .request(key, res.pos, &self.sections, &self.columns);
+                        .request(key, res.pos, &self.data.sections, &self.data.columns);
                 }
                 continue;
             }
@@ -140,7 +140,7 @@ impl World {
                 self.relit_since_persist.insert(res.pos);
                 self.light_edited_since_persist.remove(&res.pos);
             }
-            if self.role == crate::world::store::WorldRole::ServerHeadless {
+            if self.role == crate::world::WorldRole::ServerHeadless {
                 // A landed bake is new shippable content: LightData for
                 // recipients that already hold the section, and (via the
                 // revision) a replan for those still waiting on the light-final
@@ -217,7 +217,7 @@ impl World {
                                 .last_load_target
                                 .map_or(0, |t| t.section_priority_key(p));
                             self.light_bakes
-                                .request(key, p, &self.sections, &self.columns);
+                                .request(key, p, &self.data.sections, &self.data.columns);
                         }
                         waiting = true;
                     }

@@ -1,0 +1,242 @@
+use std::sync::Arc;
+
+use petramond::biome::{blended_fog_color, Biome};
+use petramond::block::Block;
+use petramond::mathh::{lerp, voxel_at, IVec3, Vec3};
+use petramond::world::environment::ShaderParamMap;
+use petramond::world::World;
+
+use super::Game;
+use petramond_render::uniforms::UNDERWATER_FOG_COLOR;
+
+/// Require the camera eye to sit this far below an open water surface before the
+/// underwater shader/fog kicks in. This keeps shallow flowing films from tinting
+/// the view when the eye is only barely clipping their rendered surface.
+const UNDERWATER_SURFACE_MARGIN: f32 = 0.03;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GameEnvironment {
+    pub fog: [f32; 3],
+    pub time: f32,
+    pub underwater: bool,
+    /// Named visual shader parameters, written by mods on the tick and mapped
+    /// to fixed GPU slots by the active shader pack.
+    pub shader_params: Arc<ShaderParamMap>,
+}
+
+impl Game {
+    pub(super) fn environment(&self, now: f64) -> GameEnvironment {
+        // Fog/underwater follow the RENDERED camera: a third-person boom dipping
+        // into water must show underwater fog even while the player's eye is dry.
+        let eye = self.render_camera().pos;
+        let (fog, underwater) = camera_fog(&self.replica, eye, |wx, wz| {
+            if let Some(id) = self.replica.column_biome(wx, wz) {
+                return Biome::from_id(id);
+            }
+
+            self.fallback_world.biome_at(wx, wz)
+        });
+
+        GameEnvironment {
+            fog,
+            underwater,
+            time: (now % 3600.0) as f32,
+            shader_params: self.replica.environment().shader_params().clone(),
+        }
+    }
+}
+
+/// Fog colour and the underwater flag for an eye at `eye` in `world` — the two
+/// environment inputs a renderer driver hands to `update_uniforms`. `biome_at`
+/// is a parameter because the game reads its replica (falling back to the
+/// generator for columns it has not received), while a driver holding a plain
+/// world reads that world directly.
+pub fn camera_fog(
+    world: &World,
+    eye: Vec3,
+    biome_at: impl FnMut(i32, i32) -> Biome,
+) -> ([f32; 3], bool) {
+    let underwater = camera_eye_underwater(world, eye);
+    let fog = if underwater {
+        UNDERWATER_FOG_COLOR
+    } else {
+        blended_fog_color(eye.x, eye.z, biome_at)
+    };
+    (fog, underwater)
+}
+
+fn camera_eye_underwater(world: &World, eye: Vec3) -> bool {
+    let cell = voxel_at(eye);
+    if Block::from_id(world.chunk_block(cell.x, cell.y, cell.z)) != Block::Water {
+        return false;
+    }
+
+    // Water above means this is an interior water volume, not the open surface.
+    if Block::from_id(world.chunk_block(cell.x, cell.y + 1, cell.z)) == Block::Water {
+        return true;
+    }
+
+    let surface_y = water_surface_y_at(world, cell, eye.x, eye.z);
+    eye.y < surface_y - UNDERWATER_SURFACE_MARGIN
+}
+
+fn water_surface_y_at(world: &World, cell: IVec3, eye_x: f32, eye_z: f32) -> f32 {
+    if water_fills_cell_at(world, cell.x, cell.y, cell.z) {
+        return cell.y as f32 + 1.0;
+    }
+
+    let mut h = [[1.0f32; 2]; 2];
+
+    // Match the water mesher's corner-height rule: each top vertex averages the
+    // water cells meeting that corner, so flowing water forms one sloped sheet.
+    for cx in 0..2i32 {
+        for cz in 0..2i32 {
+            let mut sum = 0.0;
+            let mut cnt = 0;
+            for ox in (cx - 1)..=cx {
+                for oz in (cz - 1)..=cz {
+                    if let Some(height) = fluid_height_at(world, cell.x + ox, cell.y, cell.z + oz) {
+                        sum += height;
+                        cnt += 1;
+                    }
+                }
+            }
+            h[cx as usize][cz as usize] = if cnt == 0 { 1.0 } else { sum / cnt as f32 };
+        }
+    }
+
+    let fx = (eye_x - cell.x as f32).clamp(0.0, 1.0);
+    let fz = (eye_z - cell.z as f32).clamp(0.0, 1.0);
+    let z0 = lerp(h[0][0], h[1][0], fx);
+    let z1 = lerp(h[0][1], h[1][1], fx);
+    cell.y as f32 + lerp(z0, z1, fz)
+}
+
+fn fluid_height_at(world: &World, wx: i32, wy: i32, wz: i32) -> Option<f32> {
+    if Block::from_id(world.chunk_block(wx, wy, wz)) != Block::Water {
+        return None;
+    }
+    Some(petramond::world::water::fluid_height(
+        world.water_meta_world(wx, wy, wz),
+        Block::from_id(world.chunk_block(wx, wy + 1, wz)),
+    ))
+}
+
+fn water_fills_cell_at(world: &World, wx: i32, wy: i32, wz: i32) -> bool {
+    if Block::from_id(world.chunk_block(wx, wy, wz)) != Block::Water {
+        return false;
+    }
+    petramond::world::water::fills_cell(
+        world.water_meta_world(wx, wy, wz),
+        Block::from_id(world.chunk_block(wx, wy + 1, wz)),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use petramond_render::camera::Camera;
+    use petramond::chunk::ChunkPos;
+    use crate::game::Game;
+    use petramond::mathh::{IVec3, Vec3};
+
+    use super::UNDERWATER_SURFACE_MARGIN;
+    use petramond::block::Block;
+
+    fn game() -> Game {
+        Game::new(Camera::new(Vec3::new(0.0, 80.0, 0.0), 16.0 / 9.0), "", 1, 1)
+    }
+
+    fn install_empty_chunk(game: &mut Game) {
+        let pos = ChunkPos::new(0, 0);
+        // The environment reads the REPLICA (what the camera sees), so the
+        // fixture water lands there.
+        game.replica.clear_world();
+        // A full empty column (every section present) so a water write at any Y lands in
+        // a loaded section — an empty `Chunk` would split to no surface sections.
+        game.replica.insert_empty_column_for_test(pos);
+    }
+
+    fn set_test_water(game: &mut Game, pos: IVec3, meta: u8) {
+        let section = game
+            .replica
+            .section_at_world_mut_for_test(pos.x, pos.y, pos.z)
+            .expect("test section must be installed");
+        section.set_water(
+            (pos.x & 0x0F) as usize,
+            pos.y.rem_euclid(16) as usize,
+            (pos.z & 0x0F) as usize,
+            Block::Water,
+            meta,
+        );
+    }
+
+    #[test]
+    fn underwater_shader_uses_flowing_water_surface_height() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let p = IVec3::new(4, 64, 4);
+        set_test_water(&mut game, p, 7); // the flow's leading edge: level 7, the thinnest film
+
+        game.cam.pos = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.5, p.z as f32 + 0.5);
+        assert!(!game.environment(0.0).underwater);
+
+        let surface = p.y as f32 + petramond::world::water::fluid_height(7, Block::Air);
+        game.cam.pos = Vec3::new(
+            p.x as f32 + 0.5,
+            surface - UNDERWATER_SURFACE_MARGIN - 0.01,
+            p.z as f32 + 0.5,
+        );
+        assert!(game.environment(0.0).underwater);
+    }
+
+    #[test]
+    fn underwater_shader_waits_until_confidently_below_source_surface() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let p = IVec3::new(5, 64, 5);
+        set_test_water(&mut game, p, 0);
+
+        let surface = p.y as f32 + petramond::world::water::fluid_height(0, Block::Air);
+        game.cam.pos = Vec3::new(p.x as f32 + 0.5, surface + 0.01, p.z as f32 + 0.5);
+        assert!(!game.environment(0.0).underwater);
+
+        game.cam.pos = Vec3::new(
+            p.x as f32 + 0.5,
+            surface - UNDERWATER_SURFACE_MARGIN * 0.5,
+            p.z as f32 + 0.5,
+        );
+        assert!(!game.environment(0.0).underwater);
+
+        game.cam.pos = Vec3::new(
+            p.x as f32 + 0.5,
+            surface - UNDERWATER_SURFACE_MARGIN - 0.01,
+            p.z as f32 + 0.5,
+        );
+        assert!(game.environment(0.0).underwater);
+    }
+
+    #[test]
+    fn capped_water_cell_is_underwater_even_near_its_top() {
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let p = IVec3::new(6, 64, 6);
+        set_test_water(&mut game, p, 0);
+        set_test_water(&mut game, p + IVec3::Y, 0);
+
+        game.cam.pos = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.99, p.z as f32 + 0.5);
+        assert!(game.environment(0.0).underwater);
+    }
+
+    #[test]
+    fn underwater_shader_treats_falling_water_as_full_height() {
+        const FALLING_META: u8 = 0x80;
+
+        let mut game = game();
+        install_empty_chunk(&mut game);
+        let p = IVec3::new(7, 64, 7);
+        set_test_water(&mut game, p, FALLING_META);
+
+        game.cam.pos = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.5, p.z as f32 + 0.5);
+        assert!(game.environment(0.0).underwater);
+    }
+}

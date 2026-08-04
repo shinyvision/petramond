@@ -2269,7 +2269,6 @@ dependencies = [
 name = "petramond"
 version = "0.4.0"
 dependencies = [
- "arboard",
  "bincode",
  "bytemuck",
  "directories",
@@ -2281,18 +2280,99 @@ dependencies = [
  "log",
  "mimalloc",
  "mod-api",
- "naga",
  "noise",
+ "petramond-math",
+ "petramond-mesh",
  "petramond-text",
  "petramond-ui",
- "pollster",
+ "petramond-util",
+ "petramond-world",
+ "petramond-worldgen",
  "postcard",
  "rayon",
- "rodio",
  "rustc-hash 2.1.3",
  "serde",
  "serde_json",
  "wasmtime",
+]
+
+[[package]]
+name = "petramond-audio"
+version = "0.4.0"
+dependencies = [
+ "log",
+ "petramond",
+ "petramond-math",
+ "rodio",
+]
+
+[[package]]
+name = "petramond-client"
+version = "0.4.0"
+dependencies = [
+ "arboard",
+ "env_logger",
+ "glam",
+ "image",
+ "log",
+ "mimalloc",
+ "mod-api",
+ "petramond",
+ "petramond-audio",
+ "petramond-math",
+ "petramond-render",
+ "petramond-text",
+ "petramond-ui",
+ "petramond-util",
+ "pollster",
+ "rustc-hash 2.1.3",
+ "serde",
+ "serde_json",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "petramond-math"
+version = "0.4.0"
+dependencies = [
+ "glam",
+]
+
+[[package]]
+name = "petramond-mesh"
+version = "0.4.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "log",
+ "petramond-math",
+ "petramond-util",
+ "petramond-world",
+ "petramond-worldgen",
+ "rayon",
+ "rustc-hash 2.1.3",
+]
+
+[[package]]
+name = "petramond-render"
+version = "0.4.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "image",
+ "log",
+ "naga",
+ "petramond",
+ "petramond-math",
+ "petramond-mesh",
+ "petramond-text",
+ "petramond-ui",
+ "petramond-util",
+ "pollster",
+ "rustc-hash 2.1.3",
+ "serde",
+ "serde_json",
  "wgpu",
  "winit",
 ]
@@ -2311,6 +2391,48 @@ dependencies = [
  "bytemuck",
  "image",
  "petramond-text",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "petramond-util"
+version = "0.4.0"
+dependencies = [
+ "directories",
+ "flate2",
+]
+
+[[package]]
+name = "petramond-world"
+version = "0.4.0"
+dependencies = [
+ "bincode",
+ "bytemuck",
+ "directories",
+ "glam",
+ "image",
+ "log",
+ "mod-api",
+ "petramond-math",
+ "petramond-util",
+ "rustc-hash 2.1.3",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "petramond-worldgen"
+version = "0.4.0"
+dependencies = [
+ "image",
+ "log",
+ "mod-api",
+ "noise",
+ "petramond-math",
+ "petramond-util",
+ "petramond-world",
+ "rustc-hash 2.1.3",
  "serde",
  "serde_json",
 ]

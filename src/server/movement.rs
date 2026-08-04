@@ -10,7 +10,7 @@ use crate::mathh::Vec3;
 use crate::player::{self, Input};
 
 use super::game::ServerGame;
-use crate::game::tick::TICK_DT;
+use crate::events::tick::TICK_DT;
 
 /// Base allowance of the claim-closeness ring, in ticks of worst-case
 /// legitimate speed on top of the observed claim gap: absorbs frame/tick
@@ -42,7 +42,7 @@ impl ServerGame {
     /// snapshot. Building segmented solid-body geometry once keeps movement
     /// cost proportional to players + solid mobs, rather than their product
     /// just for snapshot construction.
-    pub(crate) fn tick_movements(&mut self) {
+    pub fn tick_movements(&mut self) {
         let obstacles = self.world.mobs().solid_obstacles();
         for s in 0..self.sessions.len() {
             self.tick_movement_with_obstacles(s, &obstacles);
@@ -51,8 +51,8 @@ impl ServerGame {
 
     /// Focused tests often advance one session without running the whole
     /// stage; production uses [`tick_movements`](Self::tick_movements).
-    #[cfg(test)]
-    pub(crate) fn tick_movement(&mut self, s: usize) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn tick_movement(&mut self, s: usize) {
         let obstacles = self.world.mobs().solid_obstacles();
         self.tick_movement_with_obstacles(s, &obstacles);
     }
@@ -253,7 +253,7 @@ fn drift_ring(rate: f32, gap_ticks: u32) -> f32 {
 /// so a fall stays as relaxed as ever while a fabricated sideways jump can no
 /// longer ride the (much larger) terminal-speed allowance. Spectators
 /// legitimately fly fast in any direction and keep one isotropic ring.
-pub(crate) fn claim_within_drift(spectator: bool, gap_ticks: u32, delta: Vec3) -> bool {
+pub fn claim_within_drift(spectator: bool, gap_ticks: u32, delta: Vec3) -> bool {
     if spectator {
         return delta.length() <= drift_ring(player::SPECTATOR_SPRINT * CLAIM_VEL_SLACK, gap_ticks);
     }
@@ -269,7 +269,7 @@ pub(crate) fn claim_within_drift(spectator: bool, gap_ticks: u32, delta: Vec3) -
 /// and a `SelfTransform` correction is in flight), so reach never tightens
 /// for real clients — but a fabricated far-away claim no longer grants
 /// remote reach over mining, placement, and interaction.
-pub(crate) fn reach_eye(sess: &crate::server::player::ConnectedPlayer) -> Vec3 {
+pub fn reach_eye(sess: &crate::server::player::ConnectedPlayer) -> Vec3 {
     let delta = sess.claim_pos - sess.player.pos;
     let base = if claim_within_drift(sess.player.is_spectator(), sess.ticks_since_claim, delta) {
         sess.claim_pos
@@ -283,7 +283,7 @@ pub(crate) fn reach_eye(sess: &crate::server::player::ConnectedPlayer) -> Vec3 {
 /// large enough to ignore the gravity the server accrued past the client's
 /// last report (scaled by the claim gap), small enough that a knockback
 /// impulse corrects immediately.
-pub(crate) fn vel_correction_eps(gap_ticks: u32) -> f32 {
+pub fn vel_correction_eps(gap_ticks: u32) -> f32 {
     4.0 + gap_ticks.min(MAX_CLAIM_GAP_TICKS) as f32 * player::GRAVITY * TICK_DT
 }
 
@@ -354,7 +354,7 @@ fn feet_supported(
 
 /// Whether the world AABB `[min, max]` overlaps any collision box of any cell
 /// it spans.
-pub(crate) fn aabb_hits_collision(world: &crate::world::World, min: Vec3, max: Vec3) -> bool {
+pub fn aabb_hits_collision(world: &crate::world::World, min: Vec3, max: Vec3) -> bool {
     crate::collision::aabb_hits_cells(min.to_array(), max.to_array(), |x, y, z| {
         world.collision_boxes_at(x, y, z)
     })

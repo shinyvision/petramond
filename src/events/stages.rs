@@ -5,7 +5,7 @@
 //! `Before(stage)` / `After(stage)`. The scheduler owns only the seams — it never
 //! reorders or replaces engine steps.
 
-use crate::game::TickEvents;
+use crate::events::tick::TickEvents;
 use crate::player::Player;
 use crate::world::World;
 
@@ -15,7 +15,7 @@ use super::bus::{PostQueue, SimCtx};
 /// is `World::game_tick`, whose internal order (scheduled → block updates →
 /// furnaces → random ticks) is its own contract and stays sealed.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Stage {
+pub enum Stage {
     Mining,
     Placement,
     Attack,
@@ -31,13 +31,13 @@ pub(crate) enum Stage {
 }
 
 impl Stage {
-    pub(crate) const COUNT: usize = 12;
+    pub const COUNT: usize = 12;
 }
 
 /// Where a system attaches relative to an engine stage. At a boundary between
 /// stage N and N+1, `After(N)` systems run before `Before(N+1)` systems.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Attach {
+pub enum Attach {
     Before(Stage),
     After(Stage),
 }
@@ -63,13 +63,13 @@ struct SystemEntry {
 /// in `(priority ascending, registration order)` — kept by sorted insertion, same
 /// determinism contract as the event bus.
 #[derive(Default)]
-pub(crate) struct TickSystems {
+pub struct TickSystems {
     slots: [Vec<SystemEntry>; Stage::COUNT * 2],
 }
 
 impl TickSystems {
     /// Attach a system at `at`; runs every fixed tick.
-    pub(crate) fn attach(
+    pub fn attach(
         &mut self,
         at: Attach,
         priority: i32,
@@ -88,7 +88,7 @@ impl TickSystems {
 
     /// Whether nothing is attached at `at` (the per-stage fast path).
     #[inline]
-    pub(crate) fn is_empty_at(&self, at: Attach) -> bool {
+    pub fn is_empty_at(&self, at: Attach) -> bool {
         self.slots[at.slot()].is_empty()
     }
 
@@ -100,12 +100,12 @@ impl TickSystems {
     /// the caller publishes around this run (`ServerGame::with_sessions_view`);
     /// with no roster published (unit fixtures) the context is single-session
     /// and anonymous.
-    pub(crate) fn run(
+    pub fn run(
         &mut self,
         at: Attach,
         world: &mut World,
         player: &mut Player,
-        gui_state: &mut std::sync::Arc<crate::gui::GuiStateMap>,
+        gui_state: &mut std::sync::Arc<crate::gui_state::GuiStateMap>,
         feed: &mut TickEvents,
         queue: &mut PostQueue,
     ) {
@@ -145,7 +145,7 @@ mod tests {
 
         let mut world = World::new(1, 1);
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
-        let mut gui = crate::gui::empty_gui_state();
+        let mut gui = crate::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
         systems.run(

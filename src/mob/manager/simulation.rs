@@ -15,7 +15,7 @@ use super::{nearest_anchor, Mobs};
 /// is NEAREST per mob, so N players share one world of mobs.
 #[derive(Copy, Clone, Debug)]
 pub struct PlayerAnchor {
-    pub id: crate::server::player::PlayerId,
+    pub id: crate::player::PlayerId,
     /// Body centre — the AI's target/despawn anchor (matches the old single
     /// `player_pos` argument).
     pub pos: Vec3,
@@ -633,7 +633,7 @@ impl Mobs {
     /// Advance every mob's global damage-immunity window once. The server
     /// calls this at the start of the fixed tick, before any damage source or
     /// queued mod action can run.
-    pub(crate) fn tick_damage_immunity(&mut self) {
+    pub fn tick_damage_immunity(&mut self) {
         for mob in &mut self.list {
             mob.tick_damage_immunity();
         }

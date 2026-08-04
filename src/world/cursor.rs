@@ -37,7 +37,7 @@ impl World {
     /// A read cursor over this world (see [`SectionCursor`]). Free to make;
     /// make one per probe-bound walk and share it between that walk's probes.
     #[inline]
-    pub(crate) fn cursor(&self) -> SectionCursor<'_> {
+    pub fn cursor(&self) -> SectionCursor<'_> {
         SectionCursor {
             world: self,
             last: Cell::new(None),
@@ -68,7 +68,7 @@ impl<'w> SectionCursor<'w> {
 
     /// Mirror of [`World::physics_block`].
     #[inline]
-    pub(crate) fn physics_block(&self, c: IVec3) -> Block {
+    pub fn physics_block(&self, c: IVec3) -> Block {
         match self.section_at(c.x, c.y, c.z) {
             Some((s, lx, ly, lz)) => s.block(lx, ly, lz),
             None => self.world.physics_block(c.x, c.y, c.z),
@@ -77,21 +77,21 @@ impl<'w> SectionCursor<'w> {
 
     /// Mirror of [`World::water_cell_at`].
     #[inline]
-    pub(crate) fn water_cell(&self, c: IVec3) -> bool {
+    pub fn water_cell(&self, c: IVec3) -> bool {
         self.physics_block(c) == Block::Water
     }
 
     /// Mirror of [`World::collision_boxes_at`], taking the dense per-id table
     /// first exactly like it does.
     #[inline]
-    pub(crate) fn collision_boxes(&self, c: IVec3) -> &'static [Aabb] {
+    pub fn collision_boxes(&self, c: IVec3) -> &'static [Aabb] {
         self.boxes_of(c, self.physics_block(c))
     }
 
     /// The boxes of a block already read at `c` — so a probe that needs both
     /// the block and its boxes reads the cell once.
     #[inline]
-    pub(crate) fn boxes_of(&self, c: IVec3, block: Block) -> &'static [Aabb] {
+    pub fn boxes_of(&self, c: IVec3, block: Block) -> &'static [Aabb] {
         if let Some(boxes) = block.static_collision_boxes() {
             return boxes;
         }
@@ -102,7 +102,7 @@ impl<'w> SectionCursor<'w> {
     /// Mirror of [`World::physics_cell_final_at`] — a per-section fact, so it
     /// is cached per section rather than per cell.
     #[inline]
-    pub(crate) fn cell_final(&self, c: IVec3) -> bool {
+    pub fn cell_final(&self, c: IVec3) -> bool {
         let Some(sp) = SectionPos::from_world(c.x, c.y, c.z) else {
             // Outside the world reads air forever; defer to the world's own
             // answer rather than duplicating the rule.

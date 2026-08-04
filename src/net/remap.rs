@@ -20,11 +20,11 @@ use super::protocol::{ClientToServer, NameTables, SectionBlocks, ServerToClient}
 /// LUT entry for "the client doesn't know this name". Registry ids are `u16`
 /// and the tables are dense, so a sentinel VALUE would collide with a real id;
 /// entries are `Option`-shaped instead, which niche-packs to the same size.
-pub(crate) const MISSING: Option<u16> = None;
+pub const MISSING: Option<u16> = None;
 
 /// Dense server-id → client-id lookup tables.
 #[derive(Debug)]
-pub(crate) struct IdRemap {
+pub struct IdRemap {
     /// Blocks: unknown maps to air (0) — a cell must still hold SOMETHING.
     blocks: Vec<u16>,
     items: Vec<Option<u16>>,
@@ -40,7 +40,7 @@ pub(crate) struct IdRemap {
 impl IdRemap {
     /// Build the LUTs from the server's tables against THIS process's loaded
     /// registries.
-    pub(crate) fn build(tables: &NameTables) -> IdRemap {
+    pub fn build(tables: &NameTables) -> IdRemap {
         let names = crate::registry::names();
         let blocks: Vec<u16> = tables
             .blocks
@@ -64,7 +64,7 @@ impl IdRemap {
             .collect();
         let mobs = build_lut(&tables.mobs, "mob", |n| mob_ids.get(n).copied());
         let sounds = build_lut(&tables.sounds, "sound", |n| {
-            crate::audio::sound_by_name(n).map(|s| s.0 as u16)
+            crate::sound_registry::by_name(n).map(|s| s.0 as u16)
         });
         let effects = build_lut(&tables.effects, "effect", |n| {
             crate::effect::by_name(n).map(|e| e.0 as u16)
@@ -90,12 +90,12 @@ impl IdRemap {
 
     #[inline]
     #[allow(dead_code)] // the identity fast path reads the field; tests read this
-    pub(crate) fn is_identity(&self) -> bool {
+    pub fn is_identity(&self) -> bool {
         self.identity
     }
 
     #[inline]
-    pub(crate) fn block(&self, server_id: u16) -> u16 {
+    pub fn block(&self, server_id: u16) -> u16 {
         self.blocks
             .get(server_id as usize)
             .copied()
@@ -103,34 +103,34 @@ impl IdRemap {
     }
 
     #[inline]
-    pub(crate) fn item(&self, server_id: u16) -> Option<u16> {
+    pub fn item(&self, server_id: u16) -> Option<u16> {
         lookup(&self.items, server_id as usize)
     }
 
     #[inline]
-    pub(crate) fn mob(&self, server_id: u8) -> Option<u8> {
+    pub fn mob(&self, server_id: u8) -> Option<u8> {
         lookup(&self.mobs, server_id as usize).map(|id| id as u8)
     }
 
     #[inline]
-    pub(crate) fn sound(&self, server_id: u8) -> Option<u8> {
+    pub fn sound(&self, server_id: u8) -> Option<u8> {
         lookup(&self.sounds, server_id as usize).map(|id| id as u8)
     }
 
     #[inline]
-    pub(crate) fn effect(&self, server_id: u8) -> Option<u8> {
+    pub fn effect(&self, server_id: u8) -> Option<u8> {
         lookup(&self.effects, server_id as usize).map(|id| id as u8)
     }
 
     #[inline]
-    pub(crate) fn emitter(&self, server_id: u8) -> Option<u8> {
+    pub fn emitter(&self, server_id: u8) -> Option<u8> {
         lookup(&self.emitters, server_id as usize).map(|id| id as u8)
     }
 
     /// Rewrite a freshly-decoded server message to client-local ids, in place.
     /// EXHAUSTIVE over the enum: a new variant fails compilation here until
     /// its id story is decided (a `=> {}` arm is that decision, made visibly).
-    pub(crate) fn remap_to_client(&self, msg: &mut ServerToClient) {
+    pub fn remap_to_client(&self, msg: &mut ServerToClient) {
         if self.identity {
             return;
         }
@@ -320,7 +320,7 @@ impl IdRemap {
     /// Rewrite an outbound client message to server-local ids. No current
     /// client message carries registry ids; the exhaustive match makes a
     /// future one impossible to forget.
-    pub(crate) fn remap_to_server(&self, msg: &mut ClientToServer) {
+    pub fn remap_to_server(&self, msg: &mut ClientToServer) {
         if self.identity {
             return;
         }
@@ -351,7 +351,7 @@ impl IdRemap {
 
 /// THIS process's registry names, in id order — what a server sends as its
 /// wire vocabulary at join.
-pub(crate) fn local_name_tables() -> NameTables {
+pub fn local_name_tables() -> NameTables {
     let names = crate::registry::names();
     NameTables {
         blocks: (0..names.blocks.len())
@@ -370,7 +370,7 @@ pub(crate) fn local_name_tables() -> NameTables {
             .iter()
             .map(|m| crate::mob::def(*m).key.to_string())
             .collect(),
-        sounds: crate::audio::sound_defs_for_net()
+        sounds: crate::sound_registry::defs()
             .iter()
             .map(|d| d.name.to_string())
             .collect(),
@@ -667,7 +667,7 @@ mod tests {
             spin: 0.0,
         };
         let player_row = |held_item: Option<u16>| crate::net::protocol::PlayerStateRow {
-            id: crate::server::player::PlayerId(1),
+            id: crate::player::PlayerId(1),
             transform: crate::net::protocol::Transform {
                 pos: crate::mathh::Vec3::ZERO,
                 vel: crate::mathh::Vec3::ZERO,

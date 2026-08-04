@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use crate::net::connection::TcpServerConn;
 use crate::net::protocol::{ClientToServer, ModEntry, ServerToClient};
 use crate::net::PROTOCOL_VERSION;
-use crate::server::player::PlayerId;
+use crate::player::PlayerId;
 
 use super::game::ServerGame;
 
@@ -115,7 +115,7 @@ enum PendingVerdict {
 
 /// Everything the server thread owns about remote transport.
 #[derive(Default)]
-pub(crate) struct RemoteHub {
+pub struct RemoteHub {
     listener: Option<LanListener>,
     pending: Vec<PendingConn>,
     clients: Vec<RemoteClient>,
@@ -124,7 +124,7 @@ pub(crate) struct RemoteHub {
 impl RemoteHub {
     /// Bind the LAN listener ("Open to LAN"): port 0 = ephemeral. Idempotent —
     /// already open just reports the bound port.
-    pub(crate) fn open_to_lan(&mut self, port: u16) -> io::Result<u16> {
+    pub fn open_to_lan(&mut self, port: u16) -> io::Result<u16> {
         if let Some(l) = &self.listener {
             return Ok(l.port);
         }
@@ -138,7 +138,7 @@ impl RemoteHub {
     /// Server shutdown: farewell every joined client with `ServerClosing`,
     /// then drop all transport state (each writer drains + flushes the
     /// farewell before its socket closes).
-    pub(crate) fn shutdown(&mut self) {
+    pub fn shutdown(&mut self) {
         for c in &self.clients {
             c.conn.send(ServerToClient::ServerClosing);
         }
@@ -151,7 +151,7 @@ impl RemoteHub {
     /// handshakes, then process leaves and drain the joined connections'
     /// messages into `inbound` (tagged by `PlayerId`; the pump resolves the
     /// tags against the post-leave session list).
-    pub(crate) fn pump(
+    pub fn pump(
         &mut self,
         server: &mut ServerGame,
         inbound: &mut Vec<(PlayerId, ClientToServer)>,
@@ -165,7 +165,7 @@ impl RemoteHub {
     /// Every joined client's outbound-queue headroom, snapshot before the
     /// pump so the terrain streamer can pace each session's plan to what its
     /// connection is actually draining (`ServerGame::pump_streaming`).
-    pub(crate) fn send_headroom(&self) -> Vec<(PlayerId, usize)> {
+    pub fn send_headroom(&self) -> Vec<(PlayerId, usize)> {
         self.clients
             .iter()
             .map(|c| (c.id, c.conn.queue_headroom()))
@@ -175,7 +175,7 @@ impl RemoteHub {
     /// Route each remote recipient's pump output through its connection
     /// queue. A refused send (dead reader/writer, or a slow client's FULL
     /// queue) marks the connection dead; the next pump runs its leave path.
-    pub(crate) fn route(&mut self, remote: Vec<(PlayerId, Vec<ServerToClient>)>) {
+    pub fn route(&mut self, remote: Vec<(PlayerId, Vec<ServerToClient>)>) {
         for (id, msgs) in remote {
             let Some(c) = self.clients.iter().find(|c| c.id == id) else {
                 continue;

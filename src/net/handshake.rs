@@ -23,7 +23,7 @@ use super::protocol::{
 use super::PROTOCOL_VERSION;
 
 #[derive(Debug)]
-pub(crate) enum HandshakeError {
+pub enum HandshakeError {
     Io(io::Error),
     /// A reply did not arrive within the stream's read deadline.
     Timeout,
@@ -108,7 +108,7 @@ fn reply<S: Read>(stream: &mut S) -> Result<ServerToClient, HandshakeError> {
 /// (`modding/client`): client wasm loads only for packs the server runs, so
 /// a locally installed extra never activates against a server without it.
 #[derive(Debug)]
-pub(crate) struct HandshakeJoin {
+pub struct HandshakeJoin {
     pub join: Box<JoinData>,
     pub server_mods: BTreeSet<String>,
 }
@@ -118,7 +118,7 @@ pub(crate) struct HandshakeJoin {
 /// [`super::connection::TcpClientConn::spawn`] with
 /// `IdRemap::build(&join.tables)`. On ANY `Err` the caller drops the stream
 /// (in particular for [`HandshakeError::MissingMods`]: no farewell frame).
-pub(crate) fn client_handshake<S: Read + Write>(
+pub fn client_handshake<S: Read + Write>(
     stream: &mut S,
     player_name: &str,
     view_distance: i32,
@@ -173,7 +173,7 @@ pub(crate) fn client_handshake<S: Read + Write>(
 
 /// The ids of every INSTALLED id-bearing pack — what this client can satisfy,
 /// regardless of any per-world disables (those are the server's concern).
-pub(crate) fn installed_mod_ids() -> BTreeSet<String> {
+pub fn installed_mod_ids() -> BTreeSet<String> {
     crate::modding::modset::active(&BTreeSet::new())
         .into_iter()
         .map(|m| m.id)
@@ -184,7 +184,7 @@ pub(crate) fn installed_mod_ids() -> BTreeSet<String> {
 mod tests {
     use super::*;
     use crate::net::protocol::{NameTables, SelfRestore};
-    use crate::server::player::PlayerId;
+    use crate::player::PlayerId;
 
     /// A scripted in-memory duplex: the pre-baked server replies are read in
     /// order; everything the client writes is captured for exact-sequence

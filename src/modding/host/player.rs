@@ -212,7 +212,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 log::warn!("[mod {mod_id}] UnlockRecipe: no crafting recipe '{recipe}'");
                 return HostRet::Bool(false);
             }
-            match ctx.with_player(crate::server::player::PlayerId(player.0), |p| {
+            match ctx.with_player(crate::player::PlayerId(player.0), |p| {
                 p.progression.unlock(&recipe)
             }) {
                 Some(unlocked) => HostRet::Bool(unlocked),
@@ -232,7 +232,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
         }),
         HostCall::RecipeUnlocked { player, recipe } => sim_query(|ctx| {
             let unlocked = ctx
-                .with_player(crate::server::player::PlayerId(player.0), |p| {
+                .with_player(crate::player::PlayerId(player.0), |p| {
                     p.progression.is_unlocked(&recipe)
                 })
                 .unwrap_or(false);
@@ -249,7 +249,7 @@ mod tests {
     use mod_api::{HostCall, HostRet};
 
     use crate::events::{PostQueue, SimCtx};
-    use crate::game::TickEvents;
+    use crate::events::tick::TickEvents;
     use crate::mathh::Vec3;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
@@ -263,7 +263,7 @@ mod tests {
     /// `false` rather than silently unlocking the acting one.
     #[test]
     fn unlocking_is_per_player_idempotent_and_refuses_unknown_keys() {
-        use crate::server::player::PlayerId;
+        use crate::player::PlayerId;
 
         // The validation reads the process-wide installed catalog (the same
         // snapshot `RecipeResult` answers from), and every session build
@@ -287,7 +287,7 @@ mod tests {
         let mut other = Player::new(Vec3::new(4.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui::empty_gui_state();
+        let mut gui = crate::gui_state::empty_gui_state();
 
         let unlock = |data: &mut ModStoreData, id: u8| {
             handle_host_call(
@@ -308,7 +308,7 @@ mod tests {
             )
         };
 
-        let mut other_gui = crate::gui::empty_gui_state();
+        let mut other_gui = crate::gui_state::empty_gui_state();
         let others = vec![crate::events::SessionPlayerRef {
             id: PlayerId(1),
             player: &mut other,

@@ -25,11 +25,11 @@ use crate::player::{BedSpawn, MAX_HEALTH, PITCH_LIMIT};
 use crate::world::World;
 
 use super::game::ServerGame;
-use crate::game::tick::TickEvents;
+use crate::events::tick::TickEvents;
 
 /// Fixed ticks a full sleep takes — 3 seconds at 20 TPS, matching the overlay
 /// fade the presentation draws from the same progress.
-pub(crate) const SLEEP_TICKS: u32 = 60;
+pub const SLEEP_TICKS: u32 = 60;
 
 /// Horizontal Chebyshev reach of the wake-spot scan around the bed cells. Past
 /// this the bed is walled in tightly enough that waking ON the bed reads better
@@ -42,7 +42,7 @@ const WAKE_SCAN_DY: [i32; 5] = [0, 1, -1, 2, -2];
 
 /// The in-flight sleep session: which bed (rotated-footprint base cell) and how
 /// many ticks have elapsed.
-pub(crate) struct SleepState {
+pub struct SleepState {
     base: IVec3,
     progress: u32,
 }
@@ -100,7 +100,7 @@ impl ServerGame {
     /// The bed base cell session `s` currently sleeps in (a session read — the
     /// client derives the lying body's head yaw from it against the REPLICA's
     /// model group; see `Game::sleep_head_yaw`). `None` while awake.
-    pub(crate) fn sleep_bed_base(&self, s: usize) -> Option<IVec3> {
+    pub fn sleep_bed_base(&self, s: usize) -> Option<IVec3> {
         Some(self.sessions[s].sleep.as_ref()?.base)
     }
 
@@ -109,7 +109,7 @@ impl ServerGame {
     /// twin of `Game::sleep_head_yaw`, computed against the AUTHORITATIVE
     /// model group and replicated in `PlayerStateRow::sleep_yaw` so observers
     /// without the bed's section still pose the sleeper right.
-    pub(crate) fn sleep_head_yaw(&self, s: usize) -> Option<f32> {
+    pub fn sleep_head_yaw(&self, s: usize) -> Option<f32> {
         let base = self.sleep_bed_base(s)?;
         let (_, _, cells) = self.world.model_group(base)?;
         let other = cells.iter().copied().find(|c| *c != base)?;
@@ -121,7 +121,7 @@ impl ServerGame {
     /// sleeper waiting on other players holds at full). `None` while awake.
     /// Replicated per tick in the session's `SelfState`; the client overlay
     /// reads its `SelfView` mirror.
-    pub(crate) fn sleep_progress01(&self, s: usize) -> Option<f32> {
+    pub fn sleep_progress01(&self, s: usize) -> Option<f32> {
         self.sessions[s]
             .sleep
             .as_ref()
@@ -131,7 +131,7 @@ impl ServerGame {
     /// Advance sleeping and consume any latched respawn request, on the tick.
     /// Sleep COMPLETION (the morning skip) is cross-player and resolves once
     /// per tick in [`resolve_sleep_completion`](Self::resolve_sleep_completion).
-    pub(crate) fn tick_bed_and_respawn(&mut self, s: usize, events: &mut TickEvents) {
+    pub fn tick_bed_and_respawn(&mut self, s: usize, events: &mut TickEvents) {
         self.tick_respawn(s, events);
         self.tick_sleep(s, events);
     }
@@ -164,7 +164,7 @@ impl ServerGame {
     /// then every sleeper wakes at their own bed. A single awake player blocks
     /// the skip; sleepers just keep lying (ESC leaves the bed). With one player
     /// this matches the old single-player behaviour tick-for-tick.
-    pub(crate) fn resolve_sleep_completion(&mut self, events: &mut TickEvents) {
+    pub fn resolve_sleep_completion(&mut self, events: &mut TickEvents) {
         let everyone_asleep = self.sessions.iter().all(|sess| {
             sess.sleep.is_some() || sess.player.is_spectator() || sess.player.health() == 0
         });
@@ -263,7 +263,7 @@ impl ServerGame {
 
     /// A bed cell at `pos` was broken (before the group is removed): any
     /// session whose spawn bed it was loses that spawn point.
-    pub(crate) fn clear_bed_spawn_at(&mut self, pos: IVec3) {
+    pub fn clear_bed_spawn_at(&mut self, pos: IVec3) {
         let Some(base) = self.world.model_group(pos).map(|(_, base, _)| base) else {
             return;
         };

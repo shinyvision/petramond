@@ -9,7 +9,7 @@ impl World {
     /// meshes cull against it and sample nothing). The terrain sender holds a
     /// section back until this holds, so every install lands light-complete
     /// and the replica performs NO light work of its own.
-    pub(crate) fn section_light_final(&self, sp: SectionPos) -> bool {
+    pub fn section_light_final(&self, sp: SectionPos) -> bool {
         self.sections
             .get(&sp)
             .is_some_and(|s| s.has_baked_light() || s.all_opaque())
@@ -17,7 +17,7 @@ impl World {
 
     /// Drain the sections whose server bake landed since the last streaming
     /// pump (ServerHeadless fills it in `pump_light_bakes`).
-    pub(crate) fn take_light_ship_log(&mut self) -> Vec<SectionPos> {
+    pub fn take_light_ship_log(&mut self) -> Vec<SectionPos> {
         self.replication.light_ship_log.drain().collect()
     }
 
@@ -38,7 +38,7 @@ impl World {
         )
     }
 
-    pub(crate) fn terrain_send_key(&self, anchor: LoadAnchor) -> u64 {
+    pub fn terrain_send_key(&self, anchor: LoadAnchor) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = rustc_hash::FxHasher::default();
         (
@@ -52,7 +52,7 @@ impl World {
     /// Anchor-only part of [`terrain_send_key`](Self::terrain_send_key). A
     /// connection consumes its current plan across content revisions, but an
     /// anchor move invalidates that plan immediately.
-    pub(crate) fn terrain_target_key(&self, anchor: LoadAnchor) -> u64 {
+    pub fn terrain_target_key(&self, anchor: LoadAnchor) -> u64 {
         let t = self.send_target(anchor);
         use std::hash::{Hash, Hasher};
         let mut h = rustc_hash::FxHasher::default();
@@ -69,7 +69,7 @@ impl World {
     /// The wanted/keep shapes are exactly the streamer's own
     /// (`column_wanted`/`column_kept` over the anchor's target), so a
     /// client is offered precisely what the server streams for its anchor.
-    pub(crate) fn plan_terrain_send(
+    pub fn plan_terrain_send(
         &self,
         anchor: LoadAnchor,
         sent_columns: &FxHashSet<ChunkPos>,
@@ -108,7 +108,7 @@ impl World {
         // the plan). Already-sent deep sections are not yanked here.
         let vwin = Self::vertical_window(target.center_cy, 0);
         let mut sections: Vec<(i64, SectionPos)> = Vec::new();
-        for (&cp, &bits) in &self.terrain.section_column_cys {
+        for (&cp, &bits) in &self.data.section_column_cys {
             if bits == 0 || !Self::column_wanted(target, cp) {
                 continue;
             }
@@ -178,11 +178,11 @@ impl World {
 }
 
 /// Output of [`World::plan_terrain_send`].
-pub(crate) struct TerrainSendPlan {
+pub struct TerrainSendPlan {
     /// Loaded, stream-final, wanted, unsent sections — nearest-first, budgeted.
-    pub(crate) sections: Vec<SectionPos>,
+    pub sections: Vec<SectionPos>,
     /// Sent sections that left the keep shape or the server world.
-    pub(crate) drop_sections: Vec<SectionPos>,
+    pub drop_sections: Vec<SectionPos>,
     /// Sent columns that left the keep shape (their sections drop with them).
-    pub(crate) drop_columns: Vec<ChunkPos>,
+    pub drop_columns: Vec<ChunkPos>,
 }

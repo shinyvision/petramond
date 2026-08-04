@@ -3,12 +3,12 @@ use crate::mesh::ChunkMesh;
 
 use super::World;
 
-pub(crate) struct TerrainRenderHandoff<'a> {
+pub struct TerrainRenderHandoff<'a> {
     world: &'a mut World,
 }
 
 impl World {
-    pub(crate) fn terrain_render_handoff(&mut self) -> TerrainRenderHandoff<'_> {
+    pub fn terrain_render_handoff(&mut self) -> TerrainRenderHandoff<'_> {
         TerrainRenderHandoff { world: self }
     }
 }
@@ -16,17 +16,17 @@ impl World {
 impl TerrainRenderHandoff<'_> {
     /// Whether terrain still has streaming, meshing or upload work in flight —
     /// the "not settled" signal behind idle-only frame work.
-    pub(crate) fn is_streaming(&self) -> bool {
+    pub fn is_streaming(&self) -> bool {
         self.world.has_dirty_meshes()
             || !self.world.terrain.mesh_upload_dirty_columns.is_empty()
             || self.world.has_pending_stream_work()
     }
 
-    pub(crate) fn has_column_mesh(&self, pos: ChunkPos) -> bool {
+    pub fn has_column_mesh(&self, pos: ChunkPos) -> bool {
         self.world.column_has_mesh(pos)
     }
 
-    pub(crate) fn for_dirty_columns(&self, f: &mut dyn FnMut(ChunkPos, u64)) {
+    pub fn for_dirty_columns(&self, f: &mut dyn FnMut(ChunkPos, u64)) {
         for &column in &self.world.terrain.mesh_upload_dirty_columns {
             f(
                 column,
@@ -40,7 +40,7 @@ impl TerrainRenderHandoff<'_> {
         }
     }
 
-    pub(crate) fn column_meshes(&self, pos: ChunkPos) -> Vec<(SectionPos, &ChunkMesh)> {
+    pub fn column_meshes(&self, pos: ChunkPos) -> Vec<(SectionPos, &ChunkMesh)> {
         let Some(&bits) = self.world.terrain.mesh_column_cys.get(&pos) else {
             return Vec::new();
         };
@@ -60,7 +60,7 @@ impl TerrainRenderHandoff<'_> {
     /// return true: the caller must skip this column's upload (leaving it
     /// upload-dirty) until the fresh meshes land. The installed GPU column keeps
     /// drawing meanwhile, so the cost is latency on the repack, never a hole.
-    pub(crate) fn needs_repack_remeshes(&mut self, pos: ChunkPos) -> bool {
+    pub fn needs_repack_remeshes(&mut self, pos: ChunkPos) -> bool {
         let Some(&bits) = self.world.terrain.mesh_column_cys.get(&pos) else {
             return false;
         };
@@ -89,7 +89,7 @@ impl TerrainRenderHandoff<'_> {
         waiting
     }
 
-    pub(crate) fn mark_column_uploaded(&mut self, pos: ChunkPos) {
+    pub fn mark_column_uploaded(&mut self, pos: ChunkPos) {
         if let Some(&bits) = self.world.terrain.mesh_column_cys.get(&pos) {
             World::for_each_mesh_cy(bits, |cy| {
                 if let Some(mesh) = self
@@ -115,11 +115,10 @@ impl TerrainRenderHandoff<'_> {
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
-
     use crate::block::Block;
-    use crate::chunk::SectionPos;
     use crate::section::Section;
     use crate::world::store::World;
+    use crate::chunk::SectionPos;
 
     /// The CPU-release contract: a settled column frees its mesh buffers, a later
     /// repack refuses to upload from released meshes (no silent geometry loss) and

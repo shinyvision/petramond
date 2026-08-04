@@ -9,13 +9,13 @@ use crate::world::World;
 /// Full day-night cycle ticks for the DEFAULT day length (15-minute day +
 /// 15-minute night at 20 TPS). The actual cycle is per-world: see
 /// [`cycle_ticks_for_day_minutes`] and `World::day_cycle_ticks`.
-pub(crate) const DEFAULT_CYCLE_TICKS: u64 =
+pub const DEFAULT_CYCLE_TICKS: u64 =
     cycle_ticks_for_day_minutes(crate::save::settings::DEFAULT_DAY_MINUTES);
 
 /// The world's full cycle ticks for a "day length" setting in real minutes:
 /// the night lasts as long as the day, so a 15-minute day is 18 000 day ticks
 /// + 18 000 night ticks at 20 TPS. Clamps to the slider range (10..=30 min).
-pub(crate) const fn cycle_ticks_for_day_minutes(minutes: u32) -> u64 {
+pub const fn cycle_ticks_for_day_minutes(minutes: u32) -> u64 {
     let m = if minutes < 10 {
         10
     } else if minutes > 30 {
@@ -36,14 +36,14 @@ const NIGHT_SKY_SCALE: f32 = 0.04;
 const NIGHT_SKY_COLOR: [f32; 3] = [0.52, 0.62, 1.0];
 const MOON_PHASES: u64 = 8;
 
-pub(crate) const CLOCK_KEY: &str = "petramond:clock";
-pub(crate) const TIME_KEY: &str = "petramond:time";
-pub(crate) const NIGHT_KEY: &str = "petramond:is_night";
-pub(crate) const FROZEN_KEY: &str = "petramond:time_frozen";
-pub(crate) const SKY_TIME_PARAM: &str = "petramond:time";
-pub(crate) const SKY_LIGHT_PARAM: &str = "petramond:light";
+pub const CLOCK_KEY: &str = "petramond:clock";
+pub const TIME_KEY: &str = "petramond:time";
+pub const NIGHT_KEY: &str = "petramond:is_night";
+pub const FROZEN_KEY: &str = "petramond:time_frozen";
+pub const SKY_TIME_PARAM: &str = "petramond:time";
+pub const SKY_LIGHT_PARAM: &str = "petramond:light";
 
-pub(crate) fn install_core(world: &mut World, systems: &mut TickSystems) {
+pub fn install_core(world: &mut World, systems: &mut TickSystems) {
     let mut cycle = DayNightCycle::from_world(world);
     cycle.publish(world);
 
@@ -130,7 +130,7 @@ impl DayNightCycle {
 /// (`[sky scale, r, g, b]`). Derived here rather than inline in `publish` so
 /// anything that drives the sky from a clock — the live cycle, an offscreen
 /// capture — gets the same sky for the same fraction.
-pub(crate) fn sky_params(day_fraction: f32, moon_phase: f32) -> ([f32; 4], [f32; 4]) {
+pub fn sky_params(day_fraction: f32, moon_phase: f32) -> ([f32; 4], [f32; 4]) {
     let t = day_fraction.rem_euclid(1.0);
     let day = daylight(t);
     let scale = NIGHT_SKY_SCALE + (1.0 - NIGHT_SKY_SCALE) * day;
@@ -160,7 +160,7 @@ pub(super) fn current_clock(world: &World) -> u64 {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum TimePreset {
+pub enum TimePreset {
     Day,
     Noon,
     Night,
@@ -169,7 +169,7 @@ pub(crate) enum TimePreset {
 
 /// Set the named point within the current absolute day. The core cycle adopts
 /// this ordinary clock write on its next deterministic tick.
-pub(crate) fn set_time(world: &mut World, preset: TimePreset) {
+pub fn set_time(world: &mut World, preset: TimePreset) {
     let cycle = world.day_cycle_ticks();
     let within_day = match preset {
         TimePreset::Day => fresh_clock(cycle),
@@ -184,7 +184,7 @@ pub(crate) fn set_time(world: &mut World, preset: TimePreset) {
 
 /// Freeze/unfreeze the deterministic cycle at its current clock. The flag is
 /// world KV, so save-all/autosave and reload preserve it.
-pub(crate) fn set_frozen(world: &mut World, frozen: bool) {
+pub fn set_frozen(world: &mut World, frozen: bool) {
     world.mod_kv_set(FROZEN_KEY.into(), vec![u8::from(frozen)]);
 }
 
@@ -307,7 +307,7 @@ mod tests {
     }
 
     use crate::events::EventBus;
-    use crate::game::TickEvents;
+    use crate::events::tick::TickEvents;
     use crate::mathh::Vec3;
     use crate::player::Player;
 
@@ -342,7 +342,7 @@ mod tests {
 
         world.game_tick(&Recipes::default());
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
-        let mut gui = crate::gui::empty_gui_state();
+        let mut gui = crate::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut bus = EventBus::default();
         systems.run(
@@ -415,7 +415,7 @@ mod tests {
         let mut systems = TickSystems::default();
         install_core(&mut world, &mut systems);
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
-        let mut gui = crate::gui::empty_gui_state();
+        let mut gui = crate::gui_state::empty_gui_state();
         let mut feed = TickEvents::default();
         let mut bus = EventBus::default();
         for _ in 0..3 {

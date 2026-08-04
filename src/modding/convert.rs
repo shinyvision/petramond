@@ -104,25 +104,25 @@ fn facing(f: Facing) -> api::Facing {
 /// Engine container sessions speak `GuiKind` end-to-end; the ABI names the
 /// same kinds by their REGISTRY KEY, so engine and pack containers convert
 /// through one line and no engine identity is baked into the wire enum.
-fn container(kind: crate::gui::GuiKind) -> api::ContainerKind {
-    api::ContainerKind::new(crate::gui::kind_key(kind).unwrap_or("?"))
+fn container(kind: crate::gui_state::GuiKind) -> api::ContainerKind {
+    api::ContainerKind::new(crate::gui_state::kind_key(kind).unwrap_or("?"))
 }
 
 /// ABI → engine GUI state value.
-pub(super) fn gui_value(v: api::GuiValue) -> crate::gui::GuiValue {
+pub(super) fn gui_value(v: api::GuiValue) -> crate::gui_state::GuiValue {
     match v {
-        api::GuiValue::F32(x) => crate::gui::GuiValue::F32(x),
-        api::GuiValue::I32(x) => crate::gui::GuiValue::I32(x),
-        api::GuiValue::Str(s) => crate::gui::GuiValue::Str(s),
+        api::GuiValue::F32(x) => crate::gui_state::GuiValue::F32(x),
+        api::GuiValue::I32(x) => crate::gui_state::GuiValue::I32(x),
+        api::GuiValue::Str(s) => crate::gui_state::GuiValue::Str(s),
     }
 }
 
 /// Engine → ABI GUI state value.
-pub(super) fn gui_value_out(v: &crate::gui::GuiValue) -> api::GuiValue {
+pub(super) fn gui_value_out(v: &crate::gui_state::GuiValue) -> api::GuiValue {
     match v {
-        crate::gui::GuiValue::F32(x) => api::GuiValue::F32(*x),
-        crate::gui::GuiValue::I32(x) => api::GuiValue::I32(*x),
-        crate::gui::GuiValue::Str(s) => api::GuiValue::Str(s.clone()),
+        crate::gui_state::GuiValue::F32(x) => api::GuiValue::F32(*x),
+        crate::gui_state::GuiValue::I32(x) => api::GuiValue::I32(*x),
+        crate::gui_state::GuiValue::Str(s) => api::GuiValue::Str(s.clone()),
     }
 }
 

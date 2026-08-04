@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-pub(crate) const MAX_CHAT_CHARS: usize = 256;
+pub const MAX_CHAT_CHARS: usize = 256;
 
 /// The small fixed chat palette understood by clients. Messages carry
 /// structured spans, not inline control text, so clients never parse player
 /// content as formatting.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum ChatColor {
+pub enum ChatColor {
     White,
     Red,
     Yellow,
@@ -16,7 +16,7 @@ pub(crate) enum ChatColor {
 
 /// One styled text run in a chat line.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ChatSpan {
+pub struct ChatSpan {
     pub fg: ChatColor,
     pub text: String,
 }
@@ -25,7 +25,7 @@ pub(crate) struct ChatSpan {
 /// provide a stable ordering key for clients/tests; chat history is not
 /// retained server-side or replayed to later joiners.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ChatLine {
+pub struct ChatLine {
     pub seq: u64,
     pub spans: Vec<ChatSpan>,
 }

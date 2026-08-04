@@ -10,13 +10,12 @@ mod shape;
 mod unload;
 mod water_kick;
 
-#[cfg(test)]
-mod column_split;
+#[cfg(any(test, feature = "test-support"))]
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-pub(crate) use column_split::split_generated_column;
+#[cfg(any(test, feature = "test-support"))]
+pub use petramond_world::column_split::split_generated_column;
 
 /// A saved section read back from disk, awaiting overlay over its generated column:
 /// the decoded `Section` plus the item entities and mobs that rode in its record.

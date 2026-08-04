@@ -40,6 +40,7 @@ use crate::block::Block;
 use crate::registry::NameTable;
 
 use super::brain::AiBehavior;
+use crate::ai_vocab::{RawBrainExtension, RawBrainNode};
 use super::{
     behavior, BrainNode, Buoyancy, Habitat, Mob, MobCategory, MobCollision, MobDamageFeedback,
     MobDamageFeedbackComponent, MobDamageSound, MobDef, MobSize, MobSoundCategory, MobSoundSpec,
@@ -72,62 +73,6 @@ struct RawFile {
     /// per-layer parse pass.
     #[serde(default)]
     brain_extensions: Vec<RawBrainExtension>,
-}
-
-/// The extension-only lenient view a pack's `mobs.json` gets at ADMISSION
-/// (before any registry exists) — see [`validate_brain_extensions`].
-#[derive(Deserialize)]
-struct RawExtFile {
-    #[serde(default)]
-    brain_extensions: Vec<RawBrainExtension>,
-}
-
-/// One additive brain extension: nodes appended to `mob`'s merged row.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawBrainExtension {
-    /// Registry name of the TARGET species — deliberately anyone's.
-    mob: String,
-    brain: Vec<RawBrainNode>,
-}
-
-/// Pack-admission validation of a layer's optional `brain_extensions`,
-/// surfaced early (`manifest::registration_keys`) so a bad extension disables
-/// the PACK — the admission contract — instead of panicking the whole catalog
-/// load. Everything checkable WITHOUT the loaded def table is checked here:
-/// the strict shape parse, node-key resolution through the same registry the
-/// loader uses, and the declared-inputs vocabulary. Factory param validation
-/// needs the target def and runs at catalog load, where a failing extension
-/// is skipped with its source named (see the module docs).
-pub(crate) fn validate_brain_extensions(text: &str) -> Result<(), String> {
-    let file = serde_json::from_str::<RawExtFile>(text)
-        .map_err(|e| format!("invalid brain_extensions: {e}"))?;
-    for ext in &file.brain_extensions {
-        for node in &ext.brain {
-            admission_check_node(node).map_err(|e| {
-                format!(
-                    "invalid brain_extensions: extension for '{}': node '{}': {e}",
-                    ext.mob, node.node
-                )
-            })?;
-        }
-    }
-    Ok(())
-}
-
-/// The def-free half of extension-node validation (shared vocabulary with the
-/// loader: `node_spec` + [`behavior::ScriptedInputs::parse`]).
-fn admission_check_node(node: &RawBrainNode) -> Result<(), String> {
-    if behavior::node_spec(&node.node).is_none() {
-        return Err(format!("unknown AI node '{}'", node.node));
-    }
-    let inputs = behavior::ScriptedInputs::parse(&node.inputs)?;
-    let scripted = crate::registry::namespace(&node.node)
-        .is_some_and(|ns| ns != crate::registry::ENGINE_NAMESPACE);
-    if !scripted && !inputs.is_empty() {
-        return Err("'inputs' are only declarable on scripted (mod_id:name) nodes".into());
-    }
-    Ok(())
 }
 
 /// One species row as written in `mobs.json`: a mirror of [`MobDef`] with owned
@@ -267,24 +212,6 @@ fn default_immunity_ticks() -> u32 {
 enum RawMobDamageSound {
     Hurt,
     Death,
-}
-
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawBrainNode {
-    node: String,
-    /// Omitted = the node's canonical slot (wander lowest, expression above it,
-    /// chase above wander, attack on top — see `brain::PRIORITY_*`).
-    #[serde(default)]
-    priority: Option<u8>,
-    #[serde(default)]
-    params: serde_json::Value,
-    /// Scripted-node perception facts this node DECLARES it reads
-    /// (`"inputs": ["player_held"]`) — only declared facts are computed and
-    /// shipped per dispatch (see `behavior::ScriptedInputs`). Engine nodes
-    /// read the sim context directly and must declare none.
-    #[serde(default)]
-    inputs: Vec<String>,
 }
 
 /// The mob catalog as loaded: the id-ordered def rows plus the validated
@@ -637,7 +564,7 @@ fn convert_sounds(rows: Vec<RawMobSound>) -> Result<&'static [MobSoundSpec], Str
         if !categories.insert(r.category) {
             return Err(format!("duplicate {:?} sound category", r.category));
         }
-        let sound = crate::audio::sound_by_name(&r.sound)
+        let sound = crate::sound_registry::by_name(&r.sound)
             .ok_or_else(|| format!("sound '{}' is not registered in sounds.json", r.sound))?;
         let (tick_interval, tick_interval_variance) = match r.category {
             MobSoundCategory::Idle => {

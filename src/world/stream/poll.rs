@@ -69,7 +69,7 @@ impl World {
                 .pending_colgen_records
                 .push(col.cache_record(self.seed));
         }
-        self.gen.column_gen.insert(pos, col);
+        self.set_column_gen(pos, col);
         self.bump_column_payload_revision(pos);
     }
 
@@ -111,14 +111,14 @@ impl World {
     /// touches the buffer. Turning capture off drops anything already buffered.
     pub fn set_stream_event_capture(&mut self, on: bool) {
         if !on {
-            self.mods.stream_events.clear();
+            self.mod_stream.stream_events.clear();
         }
-        self.mods.stream_events_enabled = on;
+        self.mod_stream.stream_events_enabled = on;
     }
 
     /// Drain the section stream events buffered by `poll` since the last take.
     pub fn take_stream_events(&mut self) -> Vec<StreamEvent> {
-        std::mem::take(&mut self.mods.stream_events)
+        std::mem::take(&mut self.mod_stream.stream_events)
     }
 
     /// Poll the worker and the save thread, then ingest: install each landed column's
@@ -239,8 +239,8 @@ impl World {
                     w.refresh_block_entity_index(sp);
                     w.refresh_particle_emitter_index(sp);
                     w.classify_deep_on_install(sp);
-                    if w.mods.stream_events_enabled {
-                        w.mods.stream_events.push(StreamEvent::Generated(sp));
+                    if w.mod_stream.stream_events_enabled {
+                        w.mod_stream.stream_events.push(StreamEvent::Generated(sp));
                     }
                     if ingested_set.insert(sp) {
                         ingested.push(sp);
@@ -313,6 +313,7 @@ impl World {
                 // The save thread answered: the record is no longer in flight (whatever
                 // the answer), so the sim guard must not keep the section blocked.
                 w.gen.awaited_overlays.remove(&sp);
+                w.settle_stream_nonfinal(sp);
                 let disk_primary = w.gen.disk_primary_sections.remove(&sp);
                 if disk_primary {
                     w.remove_pending_section(sp);
@@ -323,7 +324,7 @@ impl World {
                 }
                 let Some(section) = loaded.section else {
                     if let Some(save) = w.save.as_mut() {
-                        save.note_section_load_miss(sp, loaded.store);
+                        save.note_section_load_miss(&mut w.data.saved, sp, loaded.store);
                     }
                     // Missing/corrupt record. Overlay path: generation stands.
                     // Disk-primary path: no base exists — generate it after all.
@@ -361,8 +362,8 @@ impl World {
                     w.classify_deep_on_install(sp);
                     w.dropped_items.extend(loaded.entities);
                     w.restore_mobs(loaded.mobs);
-                    if w.mods.stream_events_enabled {
-                        w.mods.stream_events.push(StreamEvent::Loaded(sp));
+                    if w.mod_stream.stream_events_enabled {
+                        w.mod_stream.stream_events.push(StreamEvent::Loaded(sp));
                     }
                     if ingested_set.insert(sp) {
                         ingested.push(sp);
@@ -374,15 +375,16 @@ impl World {
                     w.gen
                         .pending_overlays
                         .insert(sp, (section, loaded.entities, loaded.mobs));
+                    w.note_stream_nonfinal(sp);
                 }
             },
         );
 
         // 4. Overlay any buffered saved sections whose generated section is now installed.
         let overlaid = self.apply_pending_overlays();
-        if self.mods.stream_events_enabled {
+        if self.mod_stream.stream_events_enabled {
             for sp in &overlaid {
-                self.mods.stream_events.push(StreamEvent::Loaded(*sp));
+                self.mod_stream.stream_events.push(StreamEvent::Loaded(*sp));
             }
         }
         for sp in &overlaid {
@@ -615,6 +617,7 @@ impl World {
             .collect();
         for sp in &ready {
             let (section, entities, mobs) = self.gen.pending_overlays.remove(sp).unwrap();
+            self.settle_stream_nonfinal(*sp);
             // The record carried drops or mobs: remember that, so a later flush that finds
             // the section free of them rewrites the record instead of leaving stale
             // entities to resurrect (cross-session dupe).

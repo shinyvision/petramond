@@ -1,0 +1,35 @@
+[package]
+name = "petramond-worldgen"
+version = "0.4.0"
+edition = "2021"
+license = "MIT"
+description = "Deterministic worldgen pipeline: climate, terrain density, caves, features — plus the mod-gen hook seam and the column-gen cache records."
+
+[features]
+# Worldgen tests are slow (heavy noise/terrain generation) and worldgen is
+# stable, so they are opt-in; the root crate forwards its `worldgen-tests`
+# feature here.
+worldgen-tests = []
+
+[dependencies]
+petramond-math = { path = "../petramond-math" }
+petramond-util = { path = "../petramond-util" }
+petramond-world = { path = "../petramond-world" }
+mod-api = { path = "../../mod-api" }
+noise = { version = "0.9", default-features = false }
+log = "0.4"
+rustc-hash = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[[bin]]
+name = "genfeature"
+path = "src/bin/genfeature.rs"
+
+[[bin]]
+name = "genparity"
+path = "src/bin/genparity.rs"
+
+[dev-dependencies]
+petramond-world = { path = "../petramond-world", features = ["test-support"] }

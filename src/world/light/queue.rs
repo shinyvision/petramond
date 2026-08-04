@@ -7,11 +7,11 @@ use crate::light::LightRgb;
 use crate::mathh::IVec3;
 use crate::section::Section;
 
-use super::shape::{LightCells, ShapeStateSnapshot};
-use super::skylight::SkyPlan;
-use super::{flood, neighborhood, skylight};
+use petramond_world::world::light::shape::{LightCells, ShapeStateSnapshot};
+use petramond_world::world::light::skylight::SkyPlan;
+use petramond_world::world::light::{flood, neighborhood, skylight};
 
-pub(in crate::world) struct LightBakeQueue {
+pub struct LightBakeQueue {
     backend: Backend,
     pending: FxHashMap<SectionPos, PendingLightBake>,
     next_id: u64,
@@ -23,7 +23,7 @@ struct PendingLightBake {
     cancel: crate::worker::JobCancel,
 }
 
-pub(in crate::world) struct LightBakeJob {
+pub struct LightBakeJob {
     id: u64,
     pos: SectionPos,
     revision: u64,
@@ -32,7 +32,7 @@ pub(in crate::world) struct LightBakeJob {
     emitters: Vec<(IVec3, LightRgb)>,
 }
 
-pub(in crate::world) struct LightBakeResult {
+pub struct LightBakeResult {
     id: u64,
     pub pos: SectionPos,
     pub revision: u64,
@@ -43,7 +43,7 @@ pub(in crate::world) struct LightBakeResult {
 impl LightBakeResult {
     /// Build a result outside the async queue (prediction batch clips).
     /// `id` is unused by the prediction install path.
-    pub(in crate::world) fn from_batch_output(out: super::batch::LightBatchOutput) -> Self {
+    pub fn from_batch_output(out: petramond_world::world::light::batch::LightBatchOutput) -> Self {
         Self {
             id: 0,
             pos: out.pos,
@@ -105,7 +105,7 @@ impl LightBakeQueue {
         if fresh.is_empty() {
             return;
         }
-        let Some(job) = super::batch::snapshot_batch(base, &fresh, sections, columns) else {
+        let Some(job) = petramond_world::world::light::batch::snapshot_batch(base, &fresh, sections, columns) else {
             return;
         };
         // Pending slots only for members the snapshot actually carries — an
@@ -152,7 +152,7 @@ impl LightBakeJob {
     /// Capture the same cheap section/column snapshot used by the ordinary
     /// asynchronous queue. Prediction bundles call this directly so their
     /// relight and mesh stages consume one post-edit snapshot.
-    pub(in crate::world) fn snapshot(
+    pub fn snapshot(
         id: u64,
         pos: SectionPos,
         sections: &FxHashMap<SectionPos, Arc<Section>>,
@@ -167,7 +167,7 @@ impl LightBakeJob {
 
     /// [`Self::snapshot`] without the dirty gate — the batch parity test
     /// rebakes settled sections to compare against the batched bake.
-    pub(in crate::world) fn snapshot_unchecked(
+    pub fn snapshot_unchecked(
         id: u64,
         pos: SectionPos,
         sections: &FxHashMap<SectionPos, Arc<Section>>,
@@ -189,7 +189,7 @@ impl LightBakeJob {
         })
     }
 
-    pub(in crate::world) fn pos(&self) -> SectionPos {
+    pub fn pos(&self) -> SectionPos {
         self.pos
     }
 }
@@ -211,7 +211,7 @@ thread_local! {
     });
 }
 
-pub(in crate::world) fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
+pub fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
     let LightBakeJob {
         id,
         pos,
@@ -308,7 +308,7 @@ impl Backend {
     fn submit_batch(
         &self,
         key: i64,
-        mut job: super::batch::LightBatchJob,
+        mut job: petramond_world::world::light::batch::LightBatchJob,
         cancels: Vec<(SectionPos, u64, crate::worker::JobCancel)>,
     ) {
         let tx = self.tx_res.clone();
@@ -321,7 +321,7 @@ impl Backend {
             if job.is_empty() {
                 return;
             }
-            for out in super::batch::run_light_bake_batch(job) {
+            for out in petramond_world::world::light::batch::run_light_bake_batch(job) {
                 let Some((_, id, _)) = cancels.iter().find(|(p, _, _)| *p == out.pos) else {
                     continue;
                 };

@@ -14,7 +14,7 @@ impl World {
             .copied()
             .collect();
         let mut drop_sections = Vec::new();
-        for (&cp, &bits) in &self.terrain.section_column_cys {
+        for (&cp, &bits) in &self.data.section_column_cys {
             if !targets.iter().any(|t| Self::column_kept(*t, cp)) {
                 continue;
             }
@@ -57,7 +57,7 @@ impl World {
             // Walk loaded stacks of kept columns only — sections in columns
             // already selected for full drop are removed with the column.
             let mut out = Vec::new();
-            for (&cp, &bits) in &self.terrain.section_column_cys {
+            for (&cp, &bits) in &self.data.section_column_cys {
                 if !Self::column_kept(target, cp) {
                     continue;
                 }
@@ -97,7 +97,7 @@ impl World {
             let mut snaps = Vec::new();
             for &cpos in &drop_columns {
                 let bits = self
-                    .terrain
+                    .data
                     .section_column_cys
                     .get(&cpos)
                     .copied()
@@ -116,7 +116,7 @@ impl World {
                 }
             }
             if let Some(save) = self.save.as_mut() {
-                save.save_sections(snaps);
+                save.save_sections(&mut self.data.saved, snaps);
             }
             self.flush_pending_colgen_records();
         }
@@ -129,6 +129,7 @@ impl World {
         for sp in drop_sections {
             self.remove_section(sp);
             self.gen.pending_overlays.remove(&sp);
+            self.settle_stream_nonfinal(sp);
             self.remove_pending_section(sp);
             if let Some(job) = self.gen.pending_section_jobs.remove(&sp) {
                 job.cancel();

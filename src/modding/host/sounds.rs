@@ -39,13 +39,13 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             }),
         },
         HostCall::EmitSound { key, pos } => sim_query(|ctx| {
-            let Some(sound) = crate::audio::sound_by_name(&key) else {
+            let Some(sound) = crate::sound_registry::by_name(&key) else {
                 log::warn!("[mod {mod_id}] EmitSound: unknown sound '{key}'");
                 return HostRet::Bool(false);
             };
             // The sim never touches audio: the sound rides the NON-lossy tick
             // queue on `TickEvents` and the app layer plays it next frame.
-            ctx.feed.world.sounds.push(crate::game::ModSound {
+            ctx.feed.world.sounds.push(crate::events::tick::ModSound {
                 sound,
                 pos: pos.map(Vec3::from),
             });
@@ -57,7 +57,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             volume,
             pitch,
         } => sim_query(|ctx| {
-            let Some(sound) = crate::audio::sound_by_name(&key) else {
+            let Some(sound) = crate::sound_registry::by_name(&key) else {
                 log::warn!("[mod {mod_id}] SoundPlayAt: unknown sound '{key}'");
                 return HostRet::U64(0);
             };
@@ -69,7 +69,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             ctx.feed
                 .world
                 .spatial_sounds
-                .push(crate::game::ModSpatialSoundCommand::PlayAt {
+                .push(crate::events::tick::ModSpatialSoundCommand::PlayAt {
                     handle,
                     sound,
                     pos: pos.into(),
@@ -84,7 +84,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             volume,
             pitch,
         } => sim_query(|ctx| {
-            let Some(sound) = crate::audio::sound_by_name(&key) else {
+            let Some(sound) = crate::sound_registry::by_name(&key) else {
                 log::warn!("[mod {mod_id}] SoundPlayOnMob: unknown sound '{key}'");
                 return HostRet::U64(0);
             };
@@ -109,7 +109,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
             ctx.feed
                 .world
                 .spatial_sounds
-                .push(crate::game::ModSpatialSoundCommand::PlayOnMob {
+                .push(crate::events::tick::ModSpatialSoundCommand::PlayOnMob {
                     handle,
                     sound,
                     mob_id,
@@ -124,7 +124,7 @@ pub(super) fn handle_sound_call(mod_id: &str, call: HostCall) -> HostRet {
                 ctx.feed
                     .world
                     .spatial_sounds
-                    .push(crate::game::ModSpatialSoundCommand::Stop { handle });
+                    .push(crate::events::tick::ModSpatialSoundCommand::Stop { handle });
             }
         }),
         other => HostRet::Error(format!(
@@ -146,7 +146,7 @@ mod tests {
     use mod_api::{HostCall, HostRet};
 
     use crate::events::{PostQueue, SimCtx};
-    use crate::game::TickEvents;
+    use crate::events::tick::TickEvents;
     use crate::mathh::Vec3;
     use crate::modding::host::{handle_host_call, ModStoreData};
     use crate::modding::scope;
@@ -162,7 +162,7 @@ mod tests {
         let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
         let mut feed = TickEvents::default();
         let mut queue = PostQueue::default();
-        let mut gui = crate::gui::empty_gui_state();
+        let mut gui = crate::gui_state::empty_gui_state();
         let mut ctx = SimCtx {
             world: &mut world,
             player: &mut player,
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn spatial_sound_calls_queue_resolved_commands_with_deterministic_handles() {
-        fn run_once() -> (u64, u64, Vec<crate::game::ModSpatialSoundCommand>) {
+        fn run_once() -> (u64, u64, Vec<crate::events::tick::ModSpatialSoundCommand>) {
             let mut data = ModStoreData::new("alpha", 1);
             let mut world = World::new(1, 1);
             assert!(world
@@ -208,7 +208,7 @@ mod tests {
             let mut player = Player::new(Vec3::new(0.0, 80.0, 0.0));
             let mut feed = TickEvents::default();
             let mut queue = PostQueue::default();
-            let mut gui = crate::gui::empty_gui_state();
+            let mut gui = crate::gui_state::empty_gui_state();
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut player,
@@ -273,11 +273,11 @@ mod tests {
         );
 
         let sound =
-            crate::audio::sound_by_name("petramond:item_pickup").expect("engine sound exists");
+            crate::sound_registry::by_name("petramond:item_pickup").expect("engine sound exists");
         assert_eq!(first.2.len(), 3);
         assert_eq!(
             first.2[0],
-            crate::game::ModSpatialSoundCommand::PlayAt {
+            crate::events::tick::ModSpatialSoundCommand::PlayAt {
                 handle: first.0,
                 sound,
                 pos: Vec3::new(1.0, 81.0, 1.0),
@@ -286,7 +286,7 @@ mod tests {
             }
         );
         match first.2[1] {
-            crate::game::ModSpatialSoundCommand::PlayOnMob {
+            crate::events::tick::ModSpatialSoundCommand::PlayOnMob {
                 handle,
                 sound: queued_sound,
                 mob_id,
@@ -305,7 +305,7 @@ mod tests {
         }
         assert_eq!(
             first.2[2],
-            crate::game::ModSpatialSoundCommand::Stop { handle: first.0 }
+            crate::events::tick::ModSpatialSoundCommand::Stop { handle: first.0 }
         );
     }
 }

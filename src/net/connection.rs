@@ -51,7 +51,7 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// backlog fit comfortably; a client that lets 4096 messages pile up is not
 /// keeping up and gets disconnected. Terrain is paced against the live
 /// headroom (`queue_headroom`), so only non-terrain traffic can fill it.
-pub(crate) const SERVER_QUEUE_MSGS: usize = 4096;
+pub const SERVER_QUEUE_MSGS: usize = 4096;
 
 fn configure(stream: &TcpStream) -> io::Result<()> {
     stream.set_nodelay(true)?;
@@ -151,7 +151,7 @@ impl std::fmt::Display for SendStats {
 }
 
 /// The server side of one remote client's connection.
-pub(crate) struct TcpServerConn {
+pub struct TcpServerConn {
     tx: SyncSender<ServerToClient>,
     rx: Receiver<ClientToServer>,
     dead: Arc<AtomicBool>,
@@ -167,7 +167,7 @@ pub(crate) struct TcpServerConn {
 
 impl TcpServerConn {
     /// Take ownership of an accepted socket and spawn its reader/writer.
-    pub(crate) fn spawn(stream: TcpStream) -> io::Result<TcpServerConn> {
+    pub fn spawn(stream: TcpStream) -> io::Result<TcpServerConn> {
         configure(&stream)?;
         let peer = stream
             .peer_addr()
@@ -229,7 +229,7 @@ impl TcpServerConn {
     /// Queue one message. `false` = the connection is dead or its queue is
     /// FULL (a slow client): the caller runs the leave path — the server tick
     /// never blocks on a socket.
-    pub(crate) fn send(&self, msg: ServerToClient) -> bool {
+    pub fn send(&self, msg: ServerToClient) -> bool {
         // Count up BEFORE the send: the writer may dequeue (and decrement)
         // the instant try_send returns, and a post-send increment would then
         // transiently wrap the depth so headroom reads as zero.
@@ -260,20 +260,20 @@ impl TcpServerConn {
     /// terrain streamer paces each pump's plan against this so a joining
     /// client's world load throttles to what the writer (encode + zlib +
     /// socket) actually sustains instead of overflowing the queue.
-    pub(crate) fn queue_headroom(&self) -> usize {
+    pub fn queue_headroom(&self) -> usize {
         SERVER_QUEUE_MSGS.saturating_sub(self.queued.load(Ordering::Relaxed))
     }
 
-    pub(crate) fn try_recv(&self) -> Option<ClientToServer> {
+    pub fn try_recv(&self) -> Option<ClientToServer> {
         self.rx.try_recv().ok()
     }
 
     #[inline]
-    pub(crate) fn is_dead(&self) -> bool {
+    pub fn is_dead(&self) -> bool {
         self.dead.load(Ordering::SeqCst)
     }
 
-    pub(crate) fn peer(&self) -> &str {
+    pub fn peer(&self) -> &str {
         &self.peer
     }
 }
@@ -290,7 +290,7 @@ impl Drop for TcpServerConn {
 /// The client side of a remote-server connection, spawned over a
 /// post-handshake stream. `ServerHandle::from_remote` splits it into the
 /// same sender/receiver pair the in-process server thread presents.
-pub(crate) struct TcpClientConn {
+pub struct TcpClientConn {
     to_server: Sender<ClientToServer>,
     from_server: Option<Receiver<ServerToClient>>,
     lost: Arc<AtomicBool>,
@@ -301,7 +301,7 @@ impl TcpClientConn {
     /// Spawn the reader/writer threads. `remap` comes from
     /// `IdRemap::build(&join.tables)` (identity when the registries match) and
     /// is installed in both threads before any message crosses.
-    pub(crate) fn spawn(stream: TcpStream, remap: IdRemap) -> io::Result<TcpClientConn> {
+    pub fn spawn(stream: TcpStream, remap: IdRemap) -> io::Result<TcpClientConn> {
         configure(&stream)?;
         let remap = Arc::new(remap);
         let lost = Arc::new(AtomicBool::new(false));
@@ -352,18 +352,18 @@ impl TcpClientConn {
         })
     }
 
-    pub(crate) fn sender(&self) -> Sender<ClientToServer> {
+    pub fn sender(&self) -> Sender<ClientToServer> {
         self.to_server.clone()
     }
 
     /// The inbound message stream; taken once, by `ServerHandle::from_remote`.
-    pub(crate) fn take_receiver(&mut self) -> Receiver<ServerToClient> {
+    pub fn take_receiver(&mut self) -> Receiver<ServerToClient> {
         self.from_server.take().expect("receiver taken once")
     }
 
     /// Set once the connection is lost (reader EOF/timeout, writer error) —
     /// the remote `ServerHandle`'s crashed flag.
-    pub(crate) fn lost_flag(&self) -> Arc<AtomicBool> {
+    pub fn lost_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.lost)
     }
 }

@@ -38,11 +38,11 @@ NV_OFFLOAD ?= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GL
 run: run-native
 run-native:
 	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) $(if $(RD),PETRAMOND_RD=$(RD)) \
-		$(CARGO) run --profile playtest --bin petramond_native
+		$(CARGO) run --profile playtest -p petramond-client --bin petramond_native
 
 run-release: build-native
 	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) $(if $(RD),PETRAMOND_RD=$(RD)) \
-		$(CARGO) run --release --bin petramond_native
+		$(CARGO) run --release -p petramond-client --bin petramond_native
 
 # Headless dedicated server (no GPU, no window, no audio libs — built without
 # the default `audio` feature). `make run-server WORLD=myworld`.
@@ -50,15 +50,15 @@ PORT ?= 7434
 run-server:
 	@test -n "$(WORLD)" || { echo "usage: make run-server WORLD=<world-name> [PORT=7434]"; exit 2; }
 	PETRAMOND_SEED=$(SEED) PETRAMOND_RD=$(or $(RD),32) PETRAMOND_PORT=$(PORT) \
-		$(CARGO) run --profile playtest --no-default-features --bin petramond_server -- $(WORLD)
+		$(CARGO) run --profile playtest -p petramond --bin petramond_server -- $(WORLD)
 
 dev:
 	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) $(if $(RD),PETRAMOND_RD=$(RD)) \
-		$(CARGO) run --bin petramond_native
+		$(CARGO) run -p petramond-client --bin petramond_native
 
 build: build-native
 build-native:
-	$(CARGO) build --release --bin petramond_native
+	$(CARGO) build --release -p petramond-client --bin petramond_native
 
 clean:
 	$(CARGO) clean

@@ -1,3 +1,4 @@
+use crate::world::WorldData;
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
@@ -104,7 +105,7 @@ impl World {
         let mut lights = Vec::new();
         for (base, members) in group_positions(&light_positions) {
             if members.len() >= 3 {
-                let job = snapshot_batch(base, &members, &self.sections, &self.columns)?;
+                let job = snapshot_batch(base, &members, &self.data.sections, &self.data.columns)?;
                 let mut prev = Vec::with_capacity(members.len());
                 for pos in job.member_positions() {
                     let section = self.sections.get(&pos).expect("batch members are loaded");
@@ -113,7 +114,7 @@ impl World {
                 lights.push(PredictionLightUnit::Batch { job, prev });
             } else {
                 for pos in members {
-                    let job = LightBakeJob::snapshot(0, pos, &self.sections, &self.columns)?;
+                    let job = LightBakeJob::snapshot(0, pos, &self.data.sections, &self.data.columns)?;
                     let section = self.sections.get(&pos).expect("filtered on presence");
                     lights.push(PredictionLightUnit::Single(Box::new(PredictionLightJob {
                         job,
@@ -169,7 +170,7 @@ impl World {
         let mut seen = FxHashSet::default();
         let mut always_mesh: Vec<SectionPos> = Vec::new();
         for &(cell, _) in previous {
-            let Some((center, lx, ly, lz)) = World::split_world(cell.x, cell.y, cell.z) else {
+            let Some((center, lx, ly, lz)) = WorldData::split_world(cell.x, cell.y, cell.z) else {
                 continue;
             };
             for dy in -1..=1 {
@@ -248,7 +249,7 @@ impl World {
                 for cx in cpos.cx - 1..=cpos.cx + 1 {
                     let cp = ChunkPos::new(cx, cz);
                     let bits = self
-                        .terrain
+                        .data
                         .section_column_cys
                         .get(&cp)
                         .copied()
@@ -352,7 +353,7 @@ impl World {
             match mesh {
                 PredictionMeshResult::Built { mut mesh, .. } => {
                     mesh.mesh_dirty = true;
-                    self.install_mesh(pos, mesh);
+                    self.install_mesh(pos, *mesh);
                 }
                 PredictionMeshResult::Remove { .. } => {
                     if self.remove_mesh(pos) {

@@ -8,9 +8,9 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 
-use crate::game::TickEvents;
+use crate::events::tick::TickEvents;
 use crate::player::Player;
-use crate::server::player::PlayerId;
+use crate::player::PlayerId;
 use crate::world::World;
 
 use super::payload::{
@@ -27,7 +27,7 @@ use super::payload::{
 /// `item_use_pre` (cancel = consumed = used). Other posts (`player_damaged`,
 /// `block_broken`) fire only when the action actually happened.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Outcome {
+pub enum Outcome {
     Continue,
     Cancel,
 }
@@ -50,12 +50,12 @@ pub(crate) enum Outcome {
 /// [`acting_player_id`]: Self::acting_player_id
 /// [`player_ids`]: Self::player_ids
 /// [`with_player`]: Self::with_player
-pub(crate) struct SimCtx<'a> {
+pub struct SimCtx<'a> {
     pub world: &'a mut World,
     pub player: &'a mut Player,
     /// The ACTING session's mod-GUI state map (one map per player session):
     /// `GuiStateSet/Get` HostCalls read/write it here.
-    pub gui_state: &'a mut std::sync::Arc<crate::gui::GuiStateMap>,
+    pub gui_state: &'a mut std::sync::Arc<crate::gui_state::GuiStateMap>,
     pub feed: &'a mut TickEvents,
     pub queue: &'a mut PostQueue,
 }
@@ -63,13 +63,13 @@ pub(crate) struct SimCtx<'a> {
 /// One NON-acting session lent into [`with_sessions_scope`] — its stable id,
 /// its authoritative player, and the two things a per-player GUI write needs:
 /// that session's own state map and what it currently has open.
-pub(crate) struct SessionPlayerRef<'a> {
+pub struct SessionPlayerRef<'a> {
     pub id: PlayerId,
     pub player: &'a mut Player,
     /// This session's mod-GUI state map. Lent alongside the player because a
     /// tick system's gauges belong to whoever is LOOKING, and the acting
     /// session (host, session 0) is nobody in particular on a server.
-    pub gui_state: &'a mut std::sync::Arc<crate::gui::GuiStateMap>,
+    pub gui_state: &'a mut std::sync::Arc<crate::gui_state::GuiStateMap>,
     /// The open GUI session: kind, and the cell it was opened on. `None` =
     /// nothing open (or a non-mod screen).
     pub gui: Option<OpenGui>,
@@ -77,8 +77,8 @@ pub(crate) struct SessionPlayerRef<'a> {
 
 /// One session's open GUI, as the roster publishes it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct OpenGui {
-    pub kind: crate::gui::GuiKind,
+pub struct OpenGui {
+    pub kind: crate::gui_state::GuiKind,
     pub anchor: Option<crate::mathh::IVec3>,
 }
 
@@ -89,7 +89,7 @@ pub(crate) struct OpenGui {
 struct ScopeEntry {
     id: PlayerId,
     player: *mut Player,
-    gui_state: *mut std::sync::Arc<crate::gui::GuiStateMap>,
+    gui_state: *mut std::sync::Arc<crate::gui_state::GuiStateMap>,
     gui: Option<OpenGui>,
 }
 
@@ -127,7 +127,7 @@ thread_local! {
 /// and the underlying storage must stay untouched for the whole call. The
 /// borrows in `others` prove validity at entry; [`SimCtx::with_player`]'s
 /// deref relies on this contract for the rest.
-pub(crate) fn with_sessions_scope<R>(
+pub fn with_sessions_scope<R>(
     acting: PlayerId,
     acting_index: usize,
     acting_gui: Option<OpenGui>,
@@ -147,7 +147,7 @@ pub(crate) fn with_sessions_scope<R>(
         .map(|o| ScopeEntry {
             id: o.id,
             player: o.player as *mut Player,
-            gui_state: o.gui_state as *mut std::sync::Arc<crate::gui::GuiStateMap>,
+            gui_state: o.gui_state as *mut std::sync::Arc<crate::gui_state::GuiStateMap>,
             gui: o.gui,
         })
         .collect();
@@ -169,13 +169,13 @@ impl SimCtx<'_> {
     /// carries. `None` when the dispatch site published no roster (mod init,
     /// unit fixtures, not-yet-migrated pre-event sites): the context is then
     /// single-session and anonymous, exactly the pre-roster behaviour.
-    pub(crate) fn acting_player_id(&self) -> Option<PlayerId> {
+    pub fn acting_player_id(&self) -> Option<PlayerId> {
         SESSIONS_SCOPE.with(|s| s.borrow().as_ref().map(|d| d.acting))
     }
 
     /// Every connected session's player id, in session order (acting session
     /// included). Empty when no roster is published.
-    pub(crate) fn player_ids(&self) -> Vec<PlayerId> {
+    pub fn player_ids(&self) -> Vec<PlayerId> {
         SESSIONS_SCOPE.with(|s| match s.borrow().as_ref() {
             None => Vec::new(),
             Some(d) => {
@@ -190,7 +190,7 @@ impl SimCtx<'_> {
     /// id resolves to `self.player` (the one live borrow); any other
     /// connected session resolves through the published roster. `None` = no
     /// such session, or no roster published here.
-    pub(crate) fn with_player<R>(
+    pub fn with_player<R>(
         &mut self,
         id: PlayerId,
         f: impl FnOnce(&mut Player) -> R,
@@ -232,14 +232,14 @@ impl SimCtx<'_> {
     /// could only write the ACTING session's map — and the acting session for
     /// a tick stage is the host, so a machine's readings reached exactly one
     /// player however many were standing at machines.
-    pub(crate) fn with_gui_state<R>(
+    pub fn with_gui_state<R>(
         &mut self,
         id: PlayerId,
-        f: impl FnOnce(&mut std::sync::Arc<crate::gui::GuiStateMap>) -> R,
+        f: impl FnOnce(&mut std::sync::Arc<crate::gui_state::GuiStateMap>) -> R,
     ) -> Option<R> {
         enum Hit {
             Acting,
-            Other(*mut std::sync::Arc<crate::gui::GuiStateMap>),
+            Other(*mut std::sync::Arc<crate::gui_state::GuiStateMap>),
         }
         let hit = SESSIONS_SCOPE.with(|s| {
             let scope = s.borrow();
@@ -265,7 +265,7 @@ impl SimCtx<'_> {
 
     /// Every connected session that currently has a GUI open, in session
     /// order: `(id, kind, anchor cell)`. Empty when no roster is published.
-    pub(crate) fn gui_viewers(&self) -> Vec<(PlayerId, OpenGui)> {
+    pub fn gui_viewers(&self) -> Vec<(PlayerId, OpenGui)> {
         SESSIONS_SCOPE.with(|s| {
             let scope = s.borrow();
             let Some(d) = scope.as_ref() else {
@@ -301,7 +301,7 @@ struct PostHandler {
 /// kind nobody listens to is dropped at `emit`, so the gameplay hot paths neither
 /// allocate nor queue while the bus is idle.
 #[derive(Default)]
-pub(crate) struct PostQueue {
+pub struct PostQueue {
     events: VecDeque<PostEvent>,
     /// Bit per [`PostEventKind`] with at least one registered handler.
     wanted: u32,
@@ -314,7 +314,7 @@ pub(crate) struct PostQueue {
 impl PostQueue {
     /// Queue `ev` for the next drain point; dropped if nothing listens for its kind.
     #[inline]
-    pub(crate) fn emit(&mut self, ev: PostEvent) {
+    pub fn emit(&mut self, ev: PostEvent) {
         if self.wanted & (1 << ev.kind() as u32) != 0 {
             self.events.push_back(ev);
         }
@@ -322,7 +322,7 @@ impl PostQueue {
 
     /// Queue an engine action for `Game`'s next action drain point.
     #[inline]
-    pub(crate) fn push_action(&mut self, action: ModAction) {
+    pub fn push_action(&mut self, action: ModAction) {
         self.actions.push(action);
     }
 
@@ -330,25 +330,25 @@ impl PostQueue {
     /// being applied land in the fresh vector, for the NEXT drain point — no
     /// recursion.
     #[inline]
-    pub(crate) fn take_actions(&mut self) -> Vec<ModAction> {
+    pub fn take_actions(&mut self) -> Vec<ModAction> {
         std::mem::take(&mut self.actions)
     }
 
     /// Whether any action is queued, so the per-stage fast path stays a read.
     #[inline]
-    pub(crate) fn has_actions(&self) -> bool {
+    pub fn has_actions(&self) -> bool {
         !self.actions.is_empty()
     }
 
     /// Mark `kind` as listened-to without a bus (emission contract tests).
     #[cfg(test)]
-    pub(crate) fn want_for_test(&mut self, kind: PostEventKind) {
+    pub fn want_for_test(&mut self, kind: PostEventKind) {
         self.wanted |= 1 << kind as u32;
     }
 
     /// Drain the queued events (emission contract tests).
     #[cfg(test)]
-    pub(crate) fn take_events_for_test(&mut self) -> Vec<PostEvent> {
+    pub fn take_events_for_test(&mut self) -> Vec<PostEvent> {
         self.events.drain(..).collect()
     }
 
@@ -360,7 +360,7 @@ impl PostQueue {
 
 /// Handler registry + post-event queue, owned by `Game` alongside the world.
 #[derive(Default)]
-pub(crate) struct EventBus {
+pub struct EventBus {
     pre_block_place: Vec<PreHandler<BlockPlacePre>>,
     pre_block_break: Vec<PreHandler<BlockBreakPre>>,
     pre_interact_attempt: Vec<PreHandler<InteractAttempt>>,
@@ -377,7 +377,7 @@ macro_rules! pre_events {
             $(
                 /// Register a handler; runs in `(priority ascending, registration
                 /// order)`.
-                pub(crate) fn $on(
+                pub fn $on(
                     &mut self,
                     priority: i32,
                     f: impl FnMut(&mut SimCtx, &mut $ty) -> Outcome + Send + 'static,
@@ -390,11 +390,11 @@ macro_rules! pre_events {
                 /// registration)` order. The first `Cancel` ends the dispatch —
                 /// later handlers never see a consumed event (see [`Outcome`]).
                 /// `player`/`gui_state` are the ACTING session's.
-                pub(crate) fn $dispatch(
+                pub fn $dispatch(
                     &mut self,
                     world: &mut World,
                     player: &mut Player,
-                    gui_state: &mut std::sync::Arc<crate::gui::GuiStateMap>,
+                    gui_state: &mut std::sync::Arc<crate::gui_state::GuiStateMap>,
                     feed: &mut TickEvents,
                     ev: &mut $ty,
                 ) -> Outcome {
@@ -458,7 +458,7 @@ pre_events!(
 impl EventBus {
     /// Register a post-event handler for `kind`; runs in `(priority ascending,
     /// registration order)` when the queue drains.
-    pub(crate) fn on_post(
+    pub fn on_post(
         &mut self,
         kind: PostEventKind,
         priority: i32,
@@ -478,21 +478,21 @@ impl EventBus {
 
     /// Queue a post event for the next drain point (dropped if nothing listens).
     #[inline]
-    pub(crate) fn emit(&mut self, ev: PostEvent) {
+    pub fn emit(&mut self, ev: PostEvent) {
         self.queue.emit(ev);
     }
 
     /// Whether any handler listens for `kind` — gates optional producer-side work
     /// (e.g. the world's stream-event capture).
     #[inline]
-    pub(crate) fn wants(&self, kind: PostEventKind) -> bool {
+    pub fn wants(&self, kind: PostEventKind) -> bool {
         self.queue.wants(kind)
     }
 
     /// The out-queue, for lending into a [`SimCtx`] built outside a bus dispatch
     /// (the tick-stage scheduler).
     #[inline]
-    pub(crate) fn queue_mut(&mut self) -> &mut PostQueue {
+    pub fn queue_mut(&mut self) -> &mut PostQueue {
         &mut self.queue
     }
 
@@ -500,7 +500,7 @@ impl EventBus {
     /// drain site can skip its setup (publishing the sessions roster) on the
     /// common empty tick edge.
     #[inline]
-    pub(crate) fn has_queued_posts(&self) -> bool {
+    pub fn has_queued_posts(&self) -> bool {
         !self.queue.events.is_empty()
     }
 
@@ -509,11 +509,11 @@ impl EventBus {
     /// already-queued events (no recursion). The bound stops a runaway handler
     /// cascade from hanging the tick: hitting it is a handler bug, and the
     /// remainder of the queue is dropped loudly.
-    pub(crate) fn drain_post(
+    pub fn drain_post(
         &mut self,
         world: &mut World,
         player: &mut Player,
-        gui_state: &mut std::sync::Arc<crate::gui::GuiStateMap>,
+        gui_state: &mut std::sync::Arc<crate::gui_state::GuiStateMap>,
         feed: &mut TickEvents,
     ) {
         if self.queue.events.is_empty() {
@@ -560,13 +560,13 @@ mod tests {
     fn sim() -> (
         World,
         Player,
-        std::sync::Arc<crate::gui::GuiStateMap>,
+        std::sync::Arc<crate::gui_state::GuiStateMap>,
         TickEvents,
     ) {
         (
             World::new(1, 1),
             Player::new(Vec3::new(0.0, 80.0, 0.0)),
-            crate::gui::empty_gui_state(),
+            crate::gui_state::empty_gui_state(),
             TickEvents::default(),
         )
     }
@@ -577,7 +577,7 @@ mod tests {
     /// unpublished context stays honestly single-session and anonymous.
     #[test]
     fn the_sessions_view_reaches_every_session_and_routes_the_acting_player() {
-        use crate::server::player::PlayerId;
+        use crate::player::PlayerId;
 
         let (mut world, mut acting, mut gui, mut feed) = sim();
         let mut other = Player::new(Vec3::new(4.0, 80.0, 0.0));
@@ -597,7 +597,7 @@ mod tests {
             assert!(ctx.with_player(PlayerId(0), |_| ()).is_none());
         }
 
-        let mut other_gui = crate::gui::empty_gui_state();
+        let mut other_gui = crate::gui_state::empty_gui_state();
         let others = vec![SessionPlayerRef {
             id: PlayerId(0),
             player: &mut other,

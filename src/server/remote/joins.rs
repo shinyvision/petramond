@@ -1,7 +1,8 @@
-use crate::game::tick::TickEvents;
+use crate::events::tick::TickEvents;
 use crate::net::protocol::{ItemSlotWire, JoinData, SelfRestore};
 use crate::server::game::{wire_world_events, ServerGame};
-use crate::server::player::{ConnectedPlayer, PlayerId};
+use crate::server::player::ConnectedPlayer;
+use crate::player::PlayerId;
 
 impl ServerGame {
     /// Admit `requested` as a new remote session and return the `JoinAccept`
@@ -14,7 +15,7 @@ impl ServerGame {
     /// while the original "Rachel" is still connected to claim the base
     /// name). Restore from `players/<name>.dat` when the world has a save,
     /// else a fresh surface spawn — exactly the local session's restore path.
-    pub(crate) fn admit_remote_player(
+    pub fn admit_remote_player(
         &mut self,
         requested: &str,
         view_distance: i32,
@@ -28,7 +29,7 @@ impl ServerGame {
             .and_then(|save| save.load_player(&name))
             .and_then(|bytes| crate::save::player::decode(&bytes))
             .map(|data| data.restore())
-            .unwrap_or_else(|| crate::game::session::spawn_player(self.world.seed));
+            .unwrap_or_else(|| crate::server::session_build::spawn_player(self.world.seed));
         // Reconcile the restored record against this world's catalog before
         // the handshake ships it (see `server::progression::catch_up`).
         crate::server::progression::catch_up(&mut player, &self.unlocks);
@@ -95,7 +96,7 @@ impl ServerGame {
     /// with its element; nothing stores session INDICES across loop
     /// iterations — the hub re-resolves ids at every drain, and the pump
     /// resolves its tagged inbox against the post-leave list.
-    pub(crate) fn remove_remote_session(&mut self, id: PlayerId) -> Option<String> {
+    pub fn remove_remote_session(&mut self, id: PlayerId) -> Option<String> {
         let s = self.sessions.iter().position(|x| x.id == id)?;
         if s == 0 && self.has_local_session {
             debug_assert!(false, "the local session never leaves");

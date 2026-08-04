@@ -11,11 +11,11 @@ use crate::world::World;
 
 const OPERATORS_KEY: &str = "petramond:operators";
 
-pub(crate) fn canonical_name(name: &str) -> String {
+pub fn canonical_name(name: &str) -> String {
     name.trim().to_ascii_lowercase()
 }
 
-pub(crate) fn load(world: &World) -> BTreeSet<String> {
+pub fn load(world: &World) -> BTreeSet<String> {
     let Some(bytes) = world.mod_kv_get(OPERATORS_KEY) else {
         return BTreeSet::new();
     };
@@ -32,7 +32,7 @@ pub(crate) fn load(world: &World) -> BTreeSet<String> {
     }
 }
 
-pub(crate) fn store(world: &mut World, names: &BTreeSet<String>) {
+pub fn store(world: &mut World, names: &BTreeSet<String>) {
     let bytes = serde_json::to_vec(names).expect("a string set always serializes");
     world.mod_kv_set(OPERATORS_KEY.into(), bytes);
 }

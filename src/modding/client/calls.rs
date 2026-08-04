@@ -391,7 +391,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Host
             if !gain.is_finite() {
                 return HostRet::Error("ClientLoopSet: gain must be finite".into());
             }
-            let Some(sound) = crate::audio::sound_by_name(&key) else {
+            let Some(sound) = crate::sound_registry::by_name(&key) else {
                 return HostRet::Bool(false);
             };
             client.sound_loops.insert(sound, gain.clamp(0.0, 4.0));

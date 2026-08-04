@@ -18,7 +18,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ModSetEntry {
+pub struct ModSetEntry {
     pub id: String,
     /// The pack's declared version string (`""` when the pack declares none).
     #[serde(default)]
@@ -32,7 +32,7 @@ struct ModsFile {
 
 /// The ENABLED id-bearing packs (installed minus the world's disabled set),
 /// sorted by id — the deterministic order the file is written in.
-pub(crate) fn active(disabled: &BTreeSet<String>) -> Vec<ModSetEntry> {
+pub fn active(disabled: &BTreeSet<String>) -> Vec<ModSetEntry> {
     let mut mods: Vec<ModSetEntry> = crate::assets::packs()
         .iter()
         .filter_map(|p| {
@@ -51,7 +51,7 @@ pub(crate) fn active(disabled: &BTreeSet<String>) -> Vec<ModSetEntry> {
 }
 
 /// The `mods.json` bytes for the current session's enabled set.
-pub(crate) fn encode_active(disabled: &BTreeSet<String>) -> Vec<u8> {
+pub fn encode_active(disabled: &BTreeSet<String>) -> Vec<u8> {
     encode(active(disabled))
 }
 
@@ -65,7 +65,7 @@ fn encode(mods: Vec<ModSetEntry>) -> Vec<u8> {
 /// save writes it. Both sides exclude the world's deliberately disabled mods
 /// (the record was written that way too), so per-world disables never warn.
 /// Called at world open (`save::open_at`).
-pub(crate) fn warn_on_mismatch(save_dir: &Path, disabled: &BTreeSet<String>) {
+pub fn warn_on_mismatch(save_dir: &Path, disabled: &BTreeSet<String>) {
     let Ok(bytes) = std::fs::read(save_dir.join("mods.json")) else {
         return;
     };

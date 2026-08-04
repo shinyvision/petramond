@@ -19,47 +19,9 @@
 use mod_api::AiNodeCtx;
 
 use super::super::brain::{AiBehavior, AiCtx, AttackIntent, BehaviorOutput, HeadLook};
+pub use crate::ai_vocab::ScriptedInputs;
+
 use crate::mathh::IVec3;
-
-/// The declarable scripted-node input facts a brain row may request. Engine
-/// nodes read `AiCtx` directly and declare none (the loader rejects `inputs`
-/// on them); only the scripted node ships facts across the ABI.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ScriptedInputs {
-    /// The nearest player's selected (held) item.
-    pub player_held: bool,
-    /// The engine foothold scan near the nearest player (`chase_player`'s
-    /// goal cell) — the expensive multi-cell probe.
-    pub player_foothold: bool,
-}
-
-impl ScriptedInputs {
-    /// The declarable input names, in `mobs.json` vocabulary.
-    const KNOWN: &'static [&'static str] = &["player_held", "player_foothold"];
-
-    /// Parse a brain row's `inputs` list. Unknown names are errors (a typo'd
-    /// fact must fail the load, not silently read `None` forever).
-    pub fn parse(names: &[String]) -> Result<Self, String> {
-        let mut inputs = ScriptedInputs::default();
-        for name in names {
-            match name.as_str() {
-                "player_held" => inputs.player_held = true,
-                "player_foothold" => inputs.player_foothold = true,
-                other => {
-                    return Err(format!(
-                        "unknown input '{other}' (declarable inputs: {})",
-                        Self::KNOWN.join(", ")
-                    ));
-                }
-            }
-        }
-        Ok(inputs)
-    }
-
-    pub fn is_empty(self) -> bool {
-        self == ScriptedInputs::default()
-    }
-}
 
 pub struct WasmNodeAi {
     key: &'static str,

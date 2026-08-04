@@ -1,0 +1,21 @@
+[package]
+name = "petramond-audio"
+version = "0.4.0"
+edition = "2021"
+license = "MIT"
+description = "Client-side sound playback engine (rodio); the sound registry stays in the core crate."
+
+[features]
+default = ["playback"]
+# Sound PLAYBACK (rodio → cpal → ALSA on Linux). Off, `Audio` is a
+# signature-identical silent stub and no audio system library is needed at
+# build or run time.
+playback = ["dep:rodio"]
+# Exposes the played-sound probe to dependent crates' test suites.
+test-support = []
+
+[dependencies]
+petramond = { path = "../.." }
+petramond-math = { path = "../petramond-math" }
+log = "0.4"
+rodio = { version = "0.22", default-features = false, features = ["playback", "vorbis"], optional = true }

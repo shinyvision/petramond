@@ -134,7 +134,7 @@ impl World {
             )
             + map_bytes::<crate::chunk::ChunkPos, u64>(self.column_payload_revisions.len())
             + map_bytes::<crate::chunk::ChunkPos, u32>(self.terrain.mesh_column_cys.len())
-            + map_bytes::<crate::chunk::ChunkPos, u32>(self.terrain.section_column_cys.len())
+            + map_bytes::<crate::chunk::ChunkPos, u32>(self.data.section_column_cys.len())
             + map_bytes::<crate::chunk::ChunkPos, u64>(self.terrain.mesh_upload_revisions.len())
             + map_bytes::<crate::chunk::ChunkPos, ()>(self.terrain.mesh_columns.len())
             + map_bytes::<crate::chunk::SectionPos, ()>(self.terrain.deep_sections.len())

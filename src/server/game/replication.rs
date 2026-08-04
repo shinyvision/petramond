@@ -1,4 +1,4 @@
-use crate::game::tick::{TickEvents, WorldEvents};
+use crate::events::tick::{TickEvents, WorldEvents};
 use crate::mathh::IVec3;
 use crate::net::protocol::{
     BlockDelta, ItemSlotWire, ItemStateRow, MobStateRow, ModSpatialSoundMsg, OpenScreen,
@@ -12,7 +12,7 @@ impl ServerGame {
     /// The per-tick batch parts every recipient shares, built once per window
     /// and cheaply cloned per recipient (small rows; `SectionBytes` never
     /// rides here). `&mut` for the env-diff bookkeeping only.
-    pub(crate) fn shared_tick_rows(&mut self, events: &TickEvents) -> SharedTickRows {
+    pub fn shared_tick_rows(&mut self, events: &TickEvents) -> SharedTickRows {
         let mobs = self
             .world
             .mobs()
@@ -172,7 +172,7 @@ impl ServerGame {
     /// per-player streaming), the window's coalesced block deltas restricted
     /// to the recipient's sent sections, the window's world events + session
     /// `s`'s one-shots, its menu sync (when changed), and its own state.
-    pub(crate) fn build_tick_update(
+    pub fn build_tick_update(
         &mut self,
         s: usize,
         events: &TickEvents,
@@ -271,7 +271,7 @@ impl ServerGame {
         let open_screen = if let Some((kind, pos)) = gui {
             // The wire speaks kind KEYS (GuiKind ids are process-local) — one
             // lane for engine containers and mod GUIs alike.
-            crate::gui::kind_key(kind).map(|kind_key| OpenScreen::Gui {
+            crate::gui_state::kind_key(kind).map(|kind_key| OpenScreen::Gui {
                 kind_key: kind_key.to_string(),
                 pos,
             })
@@ -301,7 +301,7 @@ impl ServerGame {
     /// Session `s`'s own replicated state. The full inventory rides only when
     /// its revision moved since the last state this session was sent (always
     /// on the first update after join).
-    pub(crate) fn build_self_state(&mut self, s: usize) -> SelfState {
+    pub fn build_self_state(&mut self, s: usize) -> SelfState {
         let sleeping = self.sleep_progress01(s).map(|p| (p * 255.0).round() as u8);
         let sleep_bed = self.sleep_bed_base(s);
         let sess = &mut self.sessions[s];
@@ -382,7 +382,7 @@ impl ServerGame {
     /// state map compares by `Arc` identity — holding the shipped `Arc` in
     /// `last_sent_gui_state` forces the next tick-side write to copy-on-write
     /// onto a fresh allocation, which is what makes identity sound here.
-    pub(crate) fn build_menu_sync(
+    pub fn build_menu_sync(
         &mut self,
         s: usize,
     ) -> Option<crate::net::protocol::MenuSyncMsg> {
@@ -424,8 +424,8 @@ impl ServerGame {
     fn mod_gui_state_for_menu_sync(
         &self,
         s: usize,
-        target: crate::game::container::ContainerTarget,
-    ) -> std::sync::Arc<crate::gui::GuiStateMap> {
+        target: crate::menu::ContainerTarget,
+    ) -> std::sync::Arc<crate::gui_state::GuiStateMap> {
         let own = self.sessions[s].gui_state.clone();
         if s == 0 || !own.is_empty() {
             return own;
@@ -439,7 +439,7 @@ impl ServerGame {
 
     fn host_mod_gui_state_applies_to(
         &self,
-        target: crate::game::container::ContainerTarget,
+        target: crate::menu::ContainerTarget,
     ) -> bool {
         if self.sessions[0].menu.target() == target {
             return true;
@@ -463,7 +463,7 @@ impl ServerGame {
 /// every recipient shares. Order: block/door/chest/pickup events first (they
 /// key presentation state seeds), then the sound queues, each in emission
 /// order.
-pub(crate) fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
+pub fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
     let mut out = Vec::new();
     for ev in world.block_broken.drain(..) {
         out.push(WorldEventMsg::BlockBroken {
@@ -514,7 +514,7 @@ pub(crate) fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
         });
     }
     for c in world.spatial_sounds.drain(..) {
-        use crate::game::ModSpatialSoundCommand as Cmd;
+        use crate::events::tick::ModSpatialSoundCommand as Cmd;
         out.push(WorldEventMsg::ModSpatialSound(match c {
             Cmd::PlayAt {
                 handle,

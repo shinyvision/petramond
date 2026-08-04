@@ -102,7 +102,7 @@ pub fn run() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(crate::net::DEFAULT_PORT);
 
-    let server = crate::game::session::build_headless_session(&world_name, seed, rd);
+    let server = crate::server::session_build::build_headless_session(&world_name, seed, rd);
     let mut handle = ServerHandle::spawn(server);
     let port = match handle.open_to_lan(port) {
         Ok(port) => port,

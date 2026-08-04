@@ -138,7 +138,7 @@ impl World {
     /// Synchronously mesh `pos` for a test: meshing is async now, so pump the budget +
     /// drain until the section's mesh lands (or time out).
     #[cfg(test)]
-    pub(crate) fn mesh_section_blocking_for_test(&mut self, pos: SectionPos) {
+    pub fn mesh_section_blocking_for_test(&mut self, pos: SectionPos) {
         use std::time::{Duration, Instant};
         for dz in -1..=1 {
             for dx in -1..=1 {

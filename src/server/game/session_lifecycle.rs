@@ -1,15 +1,15 @@
-use crate::game::tick::TickEvents;
-#[cfg(test)]
+use crate::events::tick::TickEvents;
+#[cfg(any(test, feature = "test-support"))]
 use crate::server::player::ConnectedPlayer;
-use crate::server::player::PlayerId;
+use crate::player::PlayerId;
 
 use super::ServerGame;
 
 impl ServerGame {
     /// Test-only: connect a second (remote-shaped) session and return its index.
-    #[cfg(test)]
-    pub(crate) fn add_session_for_test(&mut self, player: crate::player::Player) -> usize {
-        let id = crate::server::player::PlayerId(self.sessions.len() as u8);
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn add_session_for_test(&mut self, player: crate::player::Player) -> usize {
+        let id = crate::player::PlayerId(self.sessions.len() as u8);
         let radius = self.world.render_dist;
         // A fresh session must receive the CURRENT env params even when the
         // map is static (a frozen clock freezes day/night AND weather params;
@@ -31,8 +31,8 @@ impl ServerGame {
     /// session — the fixture twin of session start, where the catalog and the
     /// player's unlocked record arrive together. Tests about crafting
     /// mechanics are not tests about discovery.
-    #[cfg(test)]
-    pub(crate) fn install_recipes_for_test(&mut self, recipes: crate::crafting::Recipes) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn install_recipes_for_test(&mut self, recipes: crate::crafting::Recipes) {
         self.recipes = recipes;
         self.unlocks =
             std::sync::Arc::new(crate::crafting::UnlockIndex::build(self.recipes.crafting()));
@@ -41,7 +41,7 @@ impl ServerGame {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     fn unlock_all_recipes_for_test(&mut self, s: usize) {
         let keys: Vec<String> = self
             .recipes
@@ -65,7 +65,7 @@ impl ServerGame {
     /// attachment itself is transient; the live autosave state stays mounted,
     /// and a player write defers if no detached position is provably safe. A
     /// no-op without an attached save.
-    pub(crate) fn save_all(&mut self) {
+    pub fn save_all(&mut self) {
         self.world.flush_modified_chunks();
         if self.world.save().is_none() {
             return;
@@ -121,7 +121,7 @@ impl ServerGame {
     /// recover every cursor/crafting/workbench stack (and materialize safe
     /// overflow drops) before encoding players and world entities. This runs
     /// independently of fixed ticks and therefore also works while paused.
-    pub(crate) fn close_sessions_and_save(&mut self) {
+    pub fn close_sessions_and_save(&mut self) {
         let mut events = TickEvents::with_next_spatial_sound_handle(self.next_mod_sound_handle);
         for s in 0..self.sessions.len() {
             self.close_open_menu_for(s, &mut events);
@@ -131,7 +131,7 @@ impl ServerGame {
         self.save_all();
     }
 
-    pub(crate) fn maybe_autosave(&mut self, dt: f32) {
+    pub fn maybe_autosave(&mut self, dt: f32) {
         const AUTOSAVE_SECS: f32 = 30.0;
         if self.world.save().is_none() {
             return;
@@ -145,7 +145,7 @@ impl ServerGame {
 
     /// The local session's id (always index 0 on a listen server); `None` on
     /// a headless server, whose sessions are all remote.
-    pub(crate) fn local_session_id(&self) -> Option<PlayerId> {
+    pub fn local_session_id(&self) -> Option<PlayerId> {
         self.has_local_session.then(|| self.sessions[0].id)
     }
 }

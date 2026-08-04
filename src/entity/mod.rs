@@ -10,19 +10,17 @@
 //! [`crate::atlas`]; the App maps these to render instances in a later layer.
 
 mod dropped_item;
-mod particle;
 
 pub use dropped_item::DroppedItem;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use dropped_item::ATTRACT_RADIUS;
-pub use particle::{ParticleSystem, PARTICLE_CAPACITY};
 
 /// A tiny deterministic hash → `f32` in `[0, 1)`. Replaces an RNG so spawns are
 /// reproducible and we never pull in the `rand` crate (banned in workflow
 /// scripts; unnecessary for this much variety). A SplitMix64-style finalizer
 /// gives good bit avalanche from a small incrementing counter.
 #[inline]
-pub(crate) fn hash01(seed: u64) -> f32 {
+pub fn hash01(seed: u64) -> f32 {
     let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -33,7 +31,7 @@ pub(crate) fn hash01(seed: u64) -> f32 {
 
 /// Symmetric variant of [`hash01`]: a deterministic value in `[-1, 1)`.
 #[inline]
-pub(crate) fn hash_signed(seed: u64) -> f32 {
+pub fn hash_signed(seed: u64) -> f32 {
     hash01(seed) * 2.0 - 1.0
 }
 

@@ -7,12 +7,12 @@ use crate::world::World;
 fn mobs_anchor_on_the_nearest_player() {
     use super::PlayerAnchor;
     let a = PlayerAnchor {
-        id: crate::server::player::PlayerId(0),
+        id: crate::player::PlayerId(0),
         pos: Vec3::new(0.0, 64.0, 0.0),
         ..Default::default()
     };
     let b = PlayerAnchor {
-        id: crate::server::player::PlayerId(1),
+        id: crate::player::PlayerId(1),
         pos: Vec3::new(10.0, 64.0, 0.0),
         ..Default::default()
     };
@@ -333,7 +333,7 @@ fn the_push_pass_records_touch_contacts_both_ways() {
     let ids: Vec<u64> = mobs.instances().iter().map(Instance::id).collect();
 
     let player = crate::mob::PlayerAnchor {
-        id: crate::server::player::PlayerId(3),
+        id: crate::player::PlayerId(3),
         pos: Vec3::new(8.0, 64.9, 8.1),
         body: Some(Body::new(Vec3::new(8.0, 64.0, 8.1), 0.3, 1.8)),
         sneaking: true, // touch is felt, not heard — sneak is irrelevant
@@ -350,7 +350,7 @@ fn the_push_pass_records_touch_contacts_both_ways() {
     );
     assert!(
         contacts[0].contains(&crate::mob::EntityRef::Player(
-            crate::server::player::PlayerId(3)
+            crate::player::PlayerId(3)
         )),
         "the touching (sneaking) player is felt: {contacts:?}"
     );

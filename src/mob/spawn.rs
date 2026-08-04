@@ -47,7 +47,7 @@ const MAX_PLAYER_DIST: f32 = 128.0;
 /// cycle cadence). The initial animal stock comes from the one-time worldgen
 /// herds ([`super::populate`]); a fast cadence here would turn killing animals
 /// into a respawn faucet, which is exactly what the trickle exists to avoid.
-pub(crate) const PASSIVE_SPAWN_INTERVAL_TICKS: u64 = 400;
+pub const PASSIVE_SPAWN_INTERVAL_TICKS: u64 = 400;
 
 /// How many times to resample a column offset to land one inside the loaded disc
 /// before giving up for this tick (a near-degenerate disc could miss every time).
@@ -57,7 +57,7 @@ const GROUP_RADIUS: i32 = 4;
 /// Attempts per extra group member to find another nearby site satisfying the same
 /// species spawn rule.
 const GROUP_MEMBER_TRIES: u32 = 24;
-pub(crate) const HOSTILE_SPAWN_ATTEMPTS: u32 = 32;
+pub const HOSTILE_SPAWN_ATTEMPTS: u32 = 32;
 const HOSTILE_SPAWN_CHUNK_RADIUS: i32 = 8;
 /// One chunk beyond the 128-block hostile spawn/despawn range. This margin makes the
 /// local live list trustworthy before applying population caps without waiting for
@@ -76,7 +76,7 @@ pub(super) struct Spawn {
 
 /// A core-selected hostile spawn candidate plus the spawn transform core will use
 /// if a registered hostile spawner admits it.
-pub(crate) struct HostileSpawnSite {
+pub struct HostileSpawnSite {
     pub candidate: HostileSpawnCandidate,
     pub pos: Vec3,
     pub yaw: f32,
@@ -100,7 +100,7 @@ impl HostileSpawnAnchor {
 /// Per-tick hostile spawn-cap data
 /// a global cap scaled by the union of each player's 17x17 spawnable chunks,
 /// plus a per-player local cap that gates each candidate chunk.
-pub(crate) struct HostileSpawnPlan {
+pub struct HostileSpawnPlan {
     anchors: Vec<HostileSpawnAnchor>,
     spawnable_chunks: Vec<ChunkPos>,
     attempt_chunks: Vec<ChunkPos>,
@@ -203,7 +203,7 @@ pub(super) fn site_for(world: &World, kind: Mob, wx: i32, wz: i32) -> Option<Vec
 }
 
 /// Whether `kind` can physically stand with its feet in `feet`.
-pub(crate) fn body_fits_at(world: &World, kind: Mob, feet: IVec3) -> bool {
+pub fn body_fits_at(world: &World, kind: Mob, feet: IVec3) -> bool {
     let d = def(kind);
     let params = PathParams::for_body(d.size.head_cells(), d.size.half_width);
     let solid = |c: IVec3| world.blocks_movement_at(c.x, c.y, c.z);
@@ -225,7 +225,7 @@ pub(crate) fn body_fits_at(world: &World, kind: Mob, feet: IVec3) -> bool {
 /// themselves carry each player's exact position (their altitude picks the
 /// candidate scan band), so they are rebuilt from live positions every tick.
 #[derive(Default)]
-pub(crate) struct HostileSpawnCache {
+pub struct HostileSpawnCache {
     key: Option<(Vec<ChunkPos>, u64)>,
     /// Per player, in `player_positions` order: did the census gate pass?
     census_ready: Vec<bool>,
@@ -257,7 +257,7 @@ impl HostileSpawnCache {
     }
 }
 
-pub(crate) fn hostile_spawn_plan(
+pub fn hostile_spawn_plan(
     world: &World,
     cache: &mut HostileSpawnCache,
     player_positions: &[Vec3],
@@ -311,7 +311,7 @@ pub(super) fn mob_census_ready(world: &World, player_pos: Vec3) -> bool {
     world.mob_census_loaded_around(center, MOB_CENSUS_CHUNK_RADIUS)
 }
 
-pub(crate) fn hostile_kind_has_room(world: &World, plan: &HostileSpawnPlan, kind: Mob) -> bool {
+pub fn hostile_kind_has_room(world: &World, plan: &HostileSpawnPlan, kind: Mob) -> bool {
     let d = def(kind);
     if d.category != MobCategory::Hostile || plan.hostile_count >= plan.hostile_cap {
         return false;
@@ -325,7 +325,7 @@ pub(crate) fn hostile_kind_has_room(world: &World, plan: &HostileSpawnPlan, kind
     species < scaled_mob_cap(d.cap, plan.spawnable_chunks.len() as u32)
 }
 
-pub(crate) fn hostile_attempt_sites(
+pub fn hostile_attempt_sites(
     world: &World,
     plan: &HostileSpawnPlan,
     attempt: u32,

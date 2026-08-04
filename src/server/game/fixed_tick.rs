@@ -1,13 +1,14 @@
 use crate::events::{Attach, PostEvent, SessionPlayerRef, SimCtx, Stage};
-use crate::game::tick::{TickEvents, TICK_DT};
-use crate::server::player::{ConnectedPlayer, PlayerId};
+use crate::events::tick::{TickEvents, TICK_DT};
+use crate::server::player::ConnectedPlayer;
+use crate::player::PlayerId;
 
 use super::{ServerGame, MAX_TICKS_PER_FRAME};
 
 impl ServerGame {
     /// Run the fixed ticks `dt` banked. Returns the events plus how many ticks
     /// actually executed (the pump emits a replication batch only when > 0).
-    pub(crate) fn run_fixed_ticks(&mut self, dt: f32) -> (TickEvents, u32) {
+    pub fn run_fixed_ticks(&mut self, dt: f32) -> (TickEvents, u32) {
         // Clamp long stalls and cap catch-up so fixed ticks never spiral.
         self.tick_accumulator += dt.clamp(0.0, 1.0);
         let mut ran = 0;
@@ -27,8 +28,8 @@ impl ServerGame {
     /// One fixed game tick: world and entity mutation only. The hardwired engine
     /// steps run in [`Stage`] order; between them the scheduler runs attached
     /// systems and the post-event queue drains (see [`end_stage`](Self::end_stage)).
-    /// `pub(crate)` so tests can drive exactly one tick.
-    pub(crate) fn game_tick_step(&mut self, events: &mut TickEvents) {
+    /// `pub` so tests can drive exactly one tick.
+    pub fn game_tick_step(&mut self, events: &mut TickEvents) {
         // Victim-owned i-frames advance before ANY source can deal damage,
         // including mod actions queued at the previous drain point.
         self.tick_damage_immunity();
@@ -202,7 +203,7 @@ impl ServerGame {
                 events.world.emitter_bursts.push((bundle, fx.pos, 1.0));
             }
             if let Some(sound) = fx.sound {
-                events.world.sounds.push(crate::game::ModSound {
+                events.world.sounds.push(crate::events::tick::ModSound {
                     sound,
                     pos: Some(fx.pos),
                 });
@@ -368,7 +369,7 @@ impl ServerGame {
     /// never be reachable on two paths (the `with_sessions_scope` soundness
     /// contract). The other sessions' borrows are taken here, before `f`, and
     /// nothing else touches `sessions` until it returns.
-    pub(crate) fn with_sessions_view<R>(
+    pub fn with_sessions_view<R>(
         sessions: &mut [ConnectedPlayer],
         acting: usize,
         f: impl FnOnce(&mut ConnectedPlayer) -> R,
@@ -394,8 +395,8 @@ impl ServerGame {
     /// open GUI lives so it can never drift out of step with the panel.
     fn open_gui_of(sess: &ConnectedPlayer) -> Option<crate::events::OpenGui> {
         match sess.menu.target() {
-            crate::game::container::ContainerTarget::None => None,
-            crate::game::container::ContainerTarget::Gui { kind, pos } => {
+            crate::menu::ContainerTarget::None => None,
+            crate::menu::ContainerTarget::Gui { kind, pos } => {
                 Some(crate::events::OpenGui { kind, anchor: pos })
             }
         }

@@ -5,70 +5,34 @@
 
 #![allow(clippy::too_many_arguments)]
 
-/// The gen/light/mesh worker pools allocate large short-lived buffers from many
-/// threads at once; mimalloc's per-thread heaps keep that churn off the system
-/// allocator's shared arena locks (measured as residual frame-time spikes).
-#[global_allocator]
-static GLOBAL_ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-mod app;
-mod asset_cache;
-mod assets;
-mod atlas;
-mod audio;
-mod bbmodel;
-mod biome;
-mod block;
-mod block_model;
-mod block_state;
-mod body;
-mod camera;
-mod chunk;
-mod collision;
-mod column;
-mod connect;
-mod container;
-mod controls;
-mod crafting;
-mod damage;
-mod door;
-mod effect;
-mod entity;
-mod events;
-mod facing;
-mod fence;
-mod furnace;
-mod game;
-mod gui;
-mod inventory;
-mod item;
-mod ladder;
-mod light;
-mod mathh;
-mod memory;
-mod mesh;
-mod mining;
-mod mob;
-mod modding;
-mod net;
-mod pane;
-mod particle_emitters;
+pub mod entity;
+pub mod events;
+// Transitional aliases while the core is decomposed into workspace crates:
+// extracted modules stay addressable under their old `crate::` paths until the
+// facade dissolves.
+pub use petramond_math::{face, facing, math as mathh, wire_enum};
+// The deterministic world core, re-exported under its historical module paths.
+pub use petramond_world::{
+    ai_vocab, block_model, shade, shape_mesh,
+    asset_cache, assets, bbmodel, biome, block, block_state, body, chunk, collision, column,
+    connect, container, controls, crafting, damage, door, effect, fence, furnace, gui_state,
+    inventory, item, keycode, ladder, light, mining, pack_manifest, pane, particle_emitters,
+    registry, section, slab, sound_registry, stair, tile, tile_alpha, torch, view_volume,
+};
+pub use petramond_util::{memory, texture_mips};
+pub mod gui;
+pub mod menu;
+pub use petramond_mesh as mesh;
+pub mod mob;
+pub mod modding;
+pub mod net;
 pub mod platform;
-mod player;
-mod registry;
-mod render;
-mod save;
-mod section;
-mod server;
-mod slab;
-mod stair;
-mod texture_mips;
+pub mod player;
+pub mod save;
+pub mod server;
 pub mod tooling;
-mod torch;
-mod wire_enum;
-mod worker;
-mod world;
-mod worldgen;
+pub mod worker;
+pub mod world;
+pub use petramond_worldgen as worldgen;
 
-#[cfg(test)]
-pub(crate) mod test_time;
+pub use petramond_util::test_time;

@@ -143,7 +143,7 @@ pub struct AiCtx<'a> {
     pub reach: Option<&'a super::nav::ReachBudget>,
     /// The NEAREST player's session id — pairs with [`player_pos`](Self::player_pos);
     /// what a player-anchored behavior (chase, melee fallback) targets.
-    pub player_id: crate::server::player::PlayerId,
+    pub player_id: crate::player::PlayerId,
     /// Player body-centre — for head-look (and future flee / attack).
     pub player_pos: Vec3,
     /// Whether that player is sneaking — sneaking shrinks hostile detection

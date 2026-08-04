@@ -171,7 +171,7 @@ impl Instance {
     }
 
     #[inline]
-    pub(crate) fn is_damage_immune(&self) -> bool {
+    pub fn is_damage_immune(&self) -> bool {
         self.damage_immunity.is_active()
     }
 

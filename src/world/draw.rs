@@ -74,7 +74,7 @@ pub enum BlockDrawPrim {
     Cuboid {
         min: [f32; 3],
         max: [f32; 3],
-        tile: crate::atlas::Tile,
+        tile: crate::tile::Tile,
         tint: [u8; 3],
         emissive: bool,
     },
@@ -101,7 +101,7 @@ impl BlockDrawPrim {
                 tint,
                 emissive,
             } => {
-                let tile = crate::atlas::Tile::from_name(tile)?;
+                let tile = crate::tile::Tile::from_name(tile)?;
                 // Degenerate, inverted, or non-finite: a box with an infinite
                 // corner passes an ordering test and reaches the vertex buffer.
                 let sane =
@@ -173,7 +173,7 @@ impl BlockDrawSet {
 /// A prim-space box in world axes: the bounds of its transformed corners.
 /// The transform is a yaw plus a translation, so that is exact rather than
 /// conservative.
-pub(crate) fn world_bounds(to_world: &crate::mathh::Mat4, lo: [f32; 3], hi: [f32; 3]) -> DrawBox {
+pub fn world_bounds(to_world: &crate::mathh::Mat4, lo: [f32; 3], hi: [f32; 3]) -> DrawBox {
     let mut mn = [f32::MAX; 3];
     let mut mx = [f32::MIN; 3];
     for cx in [lo[0], hi[0]] {
@@ -316,7 +316,7 @@ impl World {
         // redraws itself every tick — so it is answered by comparing the
         // submitted form, before any name resolves or allocation.
         if self
-            .mods
+            .mod_stream
             .block_draws
             .get(&pos)
             .is_some_and(|s| s.set.wire == prims)
@@ -360,7 +360,7 @@ impl World {
         };
         let (to_world, world) = self.draw_placement(pos, &set);
         let fresh = self
-            .mods
+            .mod_stream
             .block_draws
             .insert(
                 pos,
@@ -372,7 +372,7 @@ impl World {
             )
             .is_none();
         let entry = self
-            .mods
+            .mod_stream
             .block_draw_sections
             .entry(sp)
             .or_insert_with(SectionDraws::empty);
@@ -385,13 +385,13 @@ impl World {
     /// Drop the set at `pos`, refolding its section's bound exactly (a removal
     /// is rare, and a grow-only bound would otherwise never shrink).
     fn remove_draw(&mut self, pos: IVec3) -> bool {
-        if self.mods.block_draws.remove(&pos).is_none() {
+        if self.mod_stream.block_draws.remove(&pos).is_none() {
             return false;
         }
         let Some(sp) = crate::chunk::SectionPos::from_world(pos.x, pos.y, pos.z) else {
             return true;
         };
-        let Some(mut entry) = self.mods.block_draw_sections.remove(&sp) else {
+        let Some(mut entry) = self.mod_stream.block_draw_sections.remove(&sp) else {
             return true;
         };
         entry.cells.retain(|c| *c != pos);
@@ -400,7 +400,7 @@ impl World {
         }
         let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
         for c in &entry.cells {
-            let Some(Some((l, h))) = self.mods.block_draws.get(c).map(|p| p.world) else {
+            let Some(Some((l, h))) = self.mod_stream.block_draws.get(c).map(|p| p.world) else {
                 continue;
             };
             for a in 0..3 {
@@ -410,7 +410,7 @@ impl World {
         }
         entry.lo = lo;
         entry.hi = hi;
-        self.mods.block_draw_sections.insert(sp, entry);
+        self.mod_stream.block_draw_sections.insert(sp, entry);
         true
     }
 
@@ -422,21 +422,21 @@ impl World {
     /// restores a cell's state under a set the server has not cleared. A stale
     /// transform would draw the machine's liquid where it used to face.
     pub(in crate::world) fn refresh_block_draw_placement(&mut self, pos: IVec3) {
-        if self.mods.block_draws.is_empty() {
+        if self.mod_stream.block_draws.is_empty() {
             return;
         }
-        let Some(set) = self.mods.block_draws.get(&pos).map(|p| Arc::clone(&p.set)) else {
+        let Some(set) = self.mod_stream.block_draws.get(&pos).map(|p| Arc::clone(&p.set)) else {
             return;
         };
         let (to_world, _) = self.draw_placement(pos, &set);
-        if self.mods.block_draws[&pos].to_world == to_world {
+        if self.mod_stream.block_draws[&pos].to_world == to_world {
             return;
         }
         self.insert_draw(pos, set);
     }
 
     pub fn block_draw_at(&self, pos: IVec3) -> Option<&BlockDraw> {
-        self.mods.block_draws.get(&pos).map(|p| &p.set)
+        self.mod_stream.block_draws.get(&pos).map(|p| &p.set)
     }
 
     /// Every live draw set with the light at its cell, for the frame's
@@ -444,7 +444,7 @@ impl World {
     /// `is_empty` test in the common case rather than a walk.
     pub fn collect_block_draws(
         &self,
-        view: &crate::camera::ViewVolume,
+        view: &crate::view_volume::ViewVolume,
         out: &mut Vec<BlockDrawInstance>,
     ) {
         out.clear();
@@ -452,12 +452,12 @@ impl World {
         // and only a section the view keeps costs a per-set test. Both boxes
         // were resolved at store time, so a set that is not on screen costs no
         // transform, no eight-corner fold and no light sample.
-        for entry in self.mods.block_draw_sections.values() {
+        for entry in self.mod_stream.block_draw_sections.values() {
             if !view.aabb_visible(entry.lo.into(), entry.hi.into()) {
                 continue;
             }
             for &pos in &entry.cells {
-                let Some(placed) = self.mods.block_draws.get(&pos) else {
+                let Some(placed) = self.mod_stream.block_draws.get(&pos) else {
                     continue;
                 };
                 let Some((mn, mx)) = placed.world else {
@@ -492,7 +492,7 @@ impl World {
     /// ONE rule with two consumers: the draw-set gather below, and the ABI's
     /// `BlockLocalToWorld`, which is what lets a mod ask for a world point off
     /// its own model instead of writing this transform out a second time.
-    pub(crate) fn block_local_transform(&self, pos: IVec3) -> crate::mathh::Mat4 {
+    pub fn block_local_transform(&self, pos: IVec3) -> crate::mathh::Mat4 {
         let block = crate::block::Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
         if let Some(kind) = block.model_kind() {
             let offset = self.model_offset_at(pos.x, pos.y, pos.z);
@@ -516,7 +516,7 @@ impl World {
     /// a world with no draw sets at all — nearly every world — it costs a
     /// length check rather than a hash.
     pub(in crate::world) fn forget_block_draw(&mut self, pos: IVec3) {
-        if self.mods.block_draws.is_empty() {
+        if self.mod_stream.block_draws.is_empty() {
             return;
         }
         if self.remove_draw(pos) {
@@ -527,11 +527,11 @@ impl World {
     /// Every draw set whose anchor cell lies in `sp`, as wire rows — the
     /// INITIAL state a streaming-in section carries, beside the per-tick
     /// delta lane that carries changes to it.
-    pub(crate) fn section_block_draws(
+    pub fn section_block_draws(
         &self,
         sp: crate::chunk::SectionPos,
     ) -> Vec<crate::net::protocol::BlockDrawEntry> {
-        let Some(entry) = self.mods.block_draw_sections.get(&sp) else {
+        let Some(entry) = self.mod_stream.block_draw_sections.get(&sp) else {
             return Vec::new();
         };
         let (ox, oy, oz) = (sp.cx * 16, sp.cy * 16, sp.cz * 16);
@@ -539,7 +539,7 @@ impl World {
             .cells
             .iter()
             .filter_map(|p| {
-                let placed = self.mods.block_draws.get(p)?;
+                let placed = self.mod_stream.block_draws.get(p)?;
                 let cell = crate::chunk::section_idx(
                     (p.x - ox) as usize,
                     (p.y - oy) as usize,
@@ -559,11 +559,11 @@ impl World {
         &mut self,
         pos: crate::chunk::SectionPos,
     ) {
-        let Some(entry) = self.mods.block_draw_sections.remove(&pos) else {
+        let Some(entry) = self.mod_stream.block_draw_sections.remove(&pos) else {
             return;
         };
         for cell in entry.cells {
-            self.mods.block_draws.remove(&cell);
+            self.mod_stream.block_draws.remove(&cell);
         }
     }
 
@@ -575,13 +575,13 @@ impl World {
 
     /// Drain this tick's changed draw sets as whole-set wire rows, sorted so
     /// the batch is deterministic.
-    pub(crate) fn take_block_draw_deltas(&mut self) -> Vec<crate::net::protocol::BlockDrawDelta> {
+    pub fn take_block_draw_deltas(&mut self) -> Vec<crate::net::protocol::BlockDrawDelta> {
         let mut out: Vec<_> = self
             .replication
             .block_draw_log
             .drain()
             .map(|pos| {
-                let set = self.mods.block_draws.get(&pos);
+                let set = self.mod_stream.block_draws.get(&pos);
                 crate::net::protocol::BlockDrawDelta {
                     pos,
                     prims: set.map(|p| p.set.wire.clone()).unwrap_or_default(),
@@ -645,7 +645,7 @@ mod tests {
         assert!(w.place_model_block_facing(base, WB, Facing::East));
         let anchor = w.container_anchor(base);
         w.set_block_draw(anchor, prims());
-        let before = w.mods.block_draws[&anchor].to_world;
+        let before = w.mod_stream.block_draws[&anchor].to_world;
         assert_eq!(before, w.block_local_transform(anchor), "stored fresh");
 
         // The cell turns under a surviving set — exactly what a costume swap
@@ -658,7 +658,7 @@ mod tests {
             chunk.set_model_facing(lx, ly, lz, Facing::North);
         }
         w.refresh_region(&cells);
-        let after = w.mods.block_draws[&anchor].to_world;
+        let after = w.mod_stream.block_draws[&anchor].to_world;
         assert_ne!(before, after, "fixture: the placement must actually move");
         assert_eq!(after, w.block_local_transform(anchor), "refreshed");
     }
@@ -678,7 +678,7 @@ mod tests {
         w.set_replication_capture(true);
         w.set_block_draw(at, prims());
 
-        let stored = Arc::clone(&w.mods.block_draws[&at].set);
+        let stored = Arc::clone(&w.mod_stream.block_draws[&at].set);
         let deltas = w.take_block_draw_deltas();
         assert!(
             Arc::ptr_eq(&deltas[0].prims.0, &stored.wire.0),
@@ -704,13 +704,13 @@ mod tests {
             w.set_block_draw(c, prims());
         }
         let indexed = |w: &World| {
-            w.mods
+            w.mod_stream
                 .block_draw_sections
                 .get(&sp)
                 .map(|e| e.cells.len())
                 .unwrap_or(0)
         };
-        assert_eq!((w.mods.block_draws.len(), indexed(&w)), (3, 3));
+        assert_eq!((w.mod_stream.block_draws.len(), indexed(&w)), (3, 3));
         assert_eq!(w.section_block_draws(sp).len(), 3);
 
         // Resubmitting a DIFFERENT set replaces in place — no duplicate index
@@ -720,15 +720,15 @@ mod tests {
             max[1] = 0.9;
         }
         w.set_block_draw(cells[0], other.into());
-        assert_eq!((w.mods.block_draws.len(), indexed(&w)), (3, 3));
+        assert_eq!((w.mod_stream.block_draws.len(), indexed(&w)), (3, 3));
 
         // A clear, then a block change, then the section going away.
         w.set_block_draw(cells[0], DrawPrims::default());
-        assert_eq!((w.mods.block_draws.len(), indexed(&w)), (2, 2));
+        assert_eq!((w.mod_stream.block_draws.len(), indexed(&w)), (2, 2));
         w.set_block_world(cells[1].x, cells[1].y, cells[1].z, Block::Air);
-        assert_eq!((w.mods.block_draws.len(), indexed(&w)), (1, 1));
+        assert_eq!((w.mod_stream.block_draws.len(), indexed(&w)), (1, 1));
         w.forget_block_draws_in_section(sp);
-        assert_eq!((w.mods.block_draws.len(), indexed(&w)), (0, 0));
+        assert_eq!((w.mod_stream.block_draws.len(), indexed(&w)), (0, 0));
         assert!(w.section_block_draws(sp).is_empty());
     }
 }

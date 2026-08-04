@@ -1,6 +1,7 @@
 //! Server-side replication delta log: the per-tick coalesced block/water
 //! change capture and the sparse per-cell wire state it ships.
 
+use crate::world::WorldData;
 use crate::block::Block;
 use crate::chunk::section_idx;
 
@@ -12,7 +13,7 @@ impl World {
     /// already logged, mirroring [`set_stream_event_capture`].
     ///
     /// [`set_stream_event_capture`]: Self::set_stream_event_capture
-    pub(crate) fn set_replication_capture(&mut self, on: bool) {
+    pub fn set_replication_capture(&mut self, on: bool) {
         if !on {
             self.replication.block_delta_log.clear();
             self.replication.cell_kv_delta_log.clear();
@@ -25,7 +26,7 @@ impl World {
     /// recipient applies them AFTER the same batch's block deltas — a block
     /// write wipes the cell's KV on both sides, so a same-tick
     /// write-block-then-KV sequence survives in order.
-    pub(crate) fn take_cell_kv_deltas(&mut self) -> Vec<crate::net::protocol::CellKvDelta> {
+    pub fn take_cell_kv_deltas(&mut self) -> Vec<crate::net::protocol::CellKvDelta> {
         let mut out: Vec<_> = self
             .replication
             .cell_kv_delta_log
@@ -44,7 +45,7 @@ impl World {
     /// write their state maps AFTER the block write that announced the change
     /// (chest/furnace/torch insert their facing after `set_block_world`), so
     /// only the drain sees the whole tick's final state for the cell.
-    pub(crate) fn take_block_deltas(&mut self) -> Vec<crate::net::protocol::BlockDelta> {
+    pub fn take_block_deltas(&mut self) -> Vec<crate::net::protocol::BlockDelta> {
         let mut out: Vec<_> = self
             .replication
             .block_delta_log
@@ -69,7 +70,7 @@ impl World {
     /// delta without it would erase KV the server still holds (the corrective
     /// delta is a snapshot of an UNCHANGED cell — the gray-dye bug).
     fn cell_kv_map_at(&self, wx: i32, wy: i32, wz: i32) -> Vec<(String, Vec<u8>)> {
-        let Some((pos, lx, ly, lz)) = Self::split_world(wx, wy, wz) else {
+        let Some((pos, lx, ly, lz)) = WorldData::split_world(wx, wy, wz) else {
             return Vec::new();
         };
         let Some(s) = self.sections.get(&pos) else {
@@ -86,7 +87,7 @@ impl World {
     /// [`record_block_delta`](Self::record_block_delta) logs, but on demand:
     /// the per-recipient corrective sync a use click that disagreed with the
     /// client's replica ships. `None` when the section is not loaded.
-    pub(crate) fn block_delta_at(
+    pub fn block_delta_at(
         &self,
         pos: crate::mathh::IVec3,
     ) -> Option<crate::net::protocol::BlockDelta> {
@@ -148,7 +149,7 @@ impl World {
         wy: i32,
         wz: i32,
     ) -> Option<crate::block::ShapeState> {
-        let (pos, lx, ly, lz) = Self::split_world(wx, wy, wz)?;
+        let (pos, lx, ly, lz) = WorldData::split_world(wx, wy, wz)?;
         let s = self.sections.get(&pos)?;
         s.cell_states()
             .get(&(section_idx(lx, ly, lz) as u16))

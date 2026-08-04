@@ -1,0 +1,12 @@
+use petramond_world::biome::Biome;
+use petramond_world::block::Block;
+
+use super::{surfaces, trees, BiomeSpec, SnowCover, TreeProfile, VegetationProfile};
+
+pub(super) static SPEC: BiomeSpec = BiomeSpec {
+    biome: Biome::Swamp,
+    surface: &surfaces::WETLAND_TOP,
+    trees: TreeProfile::new(0.018, trees::swamp_oak),
+    vegetation: VegetationProfile::grass(Block::ShortGrass, 0.10).with_hemp(0.016),
+    snow_cover: SnowCover::None,
+};

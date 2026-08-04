@@ -1,0 +1,10 @@
+[package]
+name = "petramond-util"
+version = "0.4.0"
+edition = "2021"
+license = "MIT"
+description = "Cross-cutting utilities: memory census, mip generation, deterministic test time."
+
+[dependencies]
+flate2 = "1"
+directories = "5"

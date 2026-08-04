@@ -10,7 +10,7 @@
 //! cells it may flow into), this behaviour is what such a block DOES when its support
 //! changes.
 
-use crate::block::{Block, BlockBehavior, SupportDir};
+use crate::block::Block;
 use crate::mathh::IVec3;
 
 use super::store::World;
@@ -29,10 +29,7 @@ const FRAGILE_BREAK_DELAY: u64 = 1;
 /// [`World::note_block_destroyed`]).
 pub struct Fragile;
 
-impl BlockBehavior for Fragile {
-    fn key(&self) -> &'static str {
-        "fragile"
-    }
+impl crate::world::engine_behavior::EngineBlockBehavior for Fragile {
 
     fn neighbor_update(&self, world: &mut World, pos: IVec3) {
         // Dispatch already read this cell as the fragile block; re-read to learn which
@@ -59,79 +56,9 @@ impl BlockBehavior for Fragile {
 /// The fragile singleton a row points at (`behavior: &behavior::FRAGILE`).
 pub static FRAGILE: Fragile = Fragile;
 
-impl World {
-    /// Whether the fragile block at `pos` still has something holding it up.
-    ///
-    /// WHICH cell that is, is the row's own declaration
-    /// ([`Block::support_dir`]): a plant reads its ground, a hanging block
-    /// reads its ceiling. Torches and ladders are the exception the data
-    /// cannot state yet — their support cell derives from stored placement
-    /// state, so they keep the same mounted-face test as their placement.
-    ///
-    /// The ACCEPT rule then depends only on the direction:
-    /// - `below`: a block that LIES FLAT on its floor rests on ANY full
-    ///   collision cube, everything else (the plants) keeps the full-opaque
-    ///   ground rule. "Lies flat" is the shape's own answer — its matter
-    ///   fills the whole floor of its cell — not a family name: a dusting of
-    ///   snow sits on leaves or glass just as well as on soil, while stairs,
-    ///   slabs, and model blocks shed it (per Rachel: snow stays on any full
-    ///   block, and canopy snow must not shatter the tick after the weather
-    ///   mod lays it), and a pack block shaped like a cover behaves the same
-    ///   with no engine edit.
-    /// - `above`: any full collision CUBE above holds it — deliberately not
-    ///   `is_opaque`, because a solid-but-not-opaque ceiling (leaves, a pack's
-    ///   glowing cap) is a real ceiling — OR another hanging block, so a run
-    ///   of them chains up to whatever the topmost one grips. Chaining is a
-    ///   property of the DECLARATION, not of block identity, so a curtain may
-    ///   mix rows freely; each link's own support is checked in turn, which is
-    ///   what makes a cut at the top unzip the whole run downward while a cut
-    ///   at the bottom takes nothing with it.
-    pub(crate) fn fragile_supported(&self, pos: IVec3, block: Block) -> bool {
-        // A shape whose support comes from its PLACEMENT answers where it
-        // grips; the face-completeness test is then the shared one. No family
-        // is named here, so a pack's wall lantern supports itself for free.
-        let k = block.shape_kind_def();
-        if let Some(m) = k.sim.mount(&k.params, self, pos, block) {
-            return self.mount_face_complete(m.cell, m.normal);
-        }
-        let dir = block.support_dir();
-        let s = dir.support_cell(pos);
-        match dir {
-            SupportDir::Below => {
-                let ground = self.physics_block(s.x, s.y, s.z);
-                // DECLARED beats derived. A row that stated what its floor must
-                // look like keeps that same rule once placed, so the gate that
-                // let it be placed and the rule that keeps it there cannot
-                // disagree. It has to come first: `rests_flat_on_floor` probes
-                // octant VOLUMES, so anything with a foot on the floor — a
-                // lantern's 8-wide base — reads as lying flat and would take
-                // the cover rule instead of its own.
-                if block.roots_face() != crate::block::RootsFace::Any {
-                    return self.roots_face_ok(block, crate::mathh::IVec3::Y, s, ground);
-                }
-                if crate::block::rests_flat_on_floor(self, pos, block) {
-                    return super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z));
-                }
-                ground.is_opaque()
-            }
-            SupportDir::Above => {
-                super::query::full_unit_cube(self.collision_boxes_at(s.x, s.y, s.z))
-                    || Block::from_id(self.chunk_block(s.x, s.y, s.z)).support_dir()
-                        == SupportDir::Above
-            }
-            // A WALL holds it exactly when a wall torch would hold: the
-            // support's face toward this cell is complete — an opaque cube's,
-            // or any shaped face that is geometrically whole (a stair's flat
-            // side, a counter's back). The same test the torch/ladder mounts
-            // run, reached here through the row's declaration instead of
-            // through stored placement state.
-            _ => self.mount_face_complete(s, pos - s),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::block::{Block, SupportDir};
     use super::*;
     use crate::block_state::{StairHalf, StairState};
     use crate::chunk::{Chunk, ChunkPos};
@@ -353,7 +280,6 @@ mod tests {
 
     #[test]
     fn a_ladder_breaks_the_tick_after_its_wall_is_mined() {
-        use crate::facing::Facing;
         let mut w = world();
         let ladder = IVec3::new(8, 65, 8);
         // An east-facing ladder (its own block row) hangs on the wall to its west.

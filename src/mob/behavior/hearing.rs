@@ -206,7 +206,7 @@ mod tests {
     use crate::block::Block;
     use crate::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
     use crate::mob::{brain::AiMob, MobRng, Noise, NoiseKind, PlayerAnchor};
-    use crate::server::player::PlayerId;
+    use crate::player::PlayerId;
     use crate::world::World;
 
     fn flat_world() -> World {

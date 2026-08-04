@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::chunk::{ChunkPos, SectionPos};
 use crate::mathh::Vec3;
-use crate::server::player::PlayerId;
+use crate::player::PlayerId;
 
 mod actions;
 mod chat;
@@ -27,19 +27,19 @@ mod terrain;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use actions::*;
-pub(crate) use chat::*;
-pub(crate) use join::*;
-pub(crate) use menu::*;
-pub(crate) use state::*;
-pub(crate) use terrain::*;
+pub use actions::*;
+pub use chat::*;
+pub use join::*;
+pub use menu::*;
+pub use state::*;
+pub use terrain::*;
 
 /// The kinematic transform every player-shaped wire row carries: feet
 /// position, velocity, and look angles. Embedded, not flattened — postcard
 /// encodes a nested struct as its fields in order, so the wire bytes equal the
 /// four fields spelled inline.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Transform {
+pub struct Transform {
     pub pos: Vec3,
     pub vel: Vec3,
     pub yaw: f32,
@@ -51,7 +51,7 @@ pub(crate) struct Transform {
 /// case) — variant ids are process-local and never cross the wire; the
 /// receiver re-interns the blob.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ItemSlotWire {
+pub struct ItemSlotWire {
     pub item_id: u16,
     pub count: u8,
     pub data: Option<Vec<u8>>,
@@ -59,7 +59,7 @@ pub(crate) struct ItemSlotWire {
 
 impl ItemSlotWire {
     /// Encode a stack for the wire (blob resolved from the variant table).
-    pub(crate) fn from_stack(st: crate::item::ItemStack) -> Self {
+    pub fn from_stack(st: crate::item::ItemStack) -> Self {
         ItemSlotWire {
             item_id: st.item.0,
             count: st.count,
@@ -69,7 +69,7 @@ impl ItemSlotWire {
 
     /// Decode back to a stack, re-interning the blob. An unreadable blob
     /// degrades to a plain stack (mirrors the save codec's policy).
-    pub(crate) fn to_stack(&self) -> crate::item::ItemStack {
+    pub fn to_stack(&self) -> crate::item::ItemStack {
         let mut st = crate::item::ItemStack::new(crate::item::ItemType(self.item_id), self.count);
         if let Some(blob) = &self.data {
             match crate::item::variant::intern_blob(blob) {
@@ -83,7 +83,7 @@ impl ItemSlotWire {
 
 /// Client → server messages.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum ClientToServer {
+pub enum ClientToServer {
     /// First frame on any fresh connection; nothing else parses across a
     /// protocol mismatch.
     Hello {
@@ -176,7 +176,7 @@ pub(crate) enum ClientToServer {
 
 /// Server → client messages.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum ServerToClient {
+pub enum ServerToClient {
     HelloAck {
         protocol: u16,
     },

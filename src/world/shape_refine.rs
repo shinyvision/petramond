@@ -40,7 +40,7 @@ impl World {
     /// neighbourhood, cascading through cells whose stored state changed.
     /// Called from every edit chokepoint (`set_block_world`,
     /// `refresh_region`) on the server AND the predicting replica.
-    pub(crate) fn refine_shape_states_around(&mut self, wx: i32, wy: i32, wz: i32) {
+    pub fn refine_shape_states_around(&mut self, wx: i32, wy: i32, wz: i32) {
         let seed = IVec3::new(wx, wy, wz);
         let mut queue: VecDeque<IVec3> = VecDeque::with_capacity(8);
         queue.push_back(seed);
@@ -186,13 +186,13 @@ impl World {
 
 #[cfg(test)]
 mod tests {
+    use crate::mathh::IVec3;
     use crate::block::{Block, CellCodec, ShapeNeighborhood};
     use crate::block_state::{StairHalf, StairState};
-    use crate::chunk::SectionPos;
     use crate::facing::Facing;
-    use crate::mathh::IVec3;
     use crate::section::Section;
     use crate::world::World;
+    use crate::chunk::SectionPos;
 
     /// The oracle: what the cell's own family would refine its state to right
     /// now — the sweep must leave every cell agreeing with it.

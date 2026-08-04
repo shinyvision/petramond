@@ -56,7 +56,7 @@ pub struct Mount {
 /// Rotate a mount-local seat offset (`x` right, `y` up, `z` facing) into world
 /// space. Both authoritative slaving and client presentation use this exact
 /// transform for mob seats.
-pub(crate) fn seat_world_pos(mob_pos: Vec3, mob_yaw: f32, seat: [f32; 3]) -> Vec3 {
+pub fn seat_world_pos(mob_pos: Vec3, mob_yaw: f32, seat: [f32; 3]) -> Vec3 {
     let (sy, cy) = mob_yaw.sin_cos();
     let facing = Vec3::new(-sy, 0.0, -cy);
     let right = Vec3::new(cy, 0.0, -sy);
@@ -66,7 +66,7 @@ pub(crate) fn seat_world_pos(mob_pos: Vec3, mob_yaw: f32, seat: [f32; 3]) -> Vec
 /// Pick the first collision-free dismount candidate beside `base` (right,
 /// left, behind, ahead; base height then one block up), preferring dry feet.
 /// Pure over its probes so server authority and client prediction agree.
-pub(crate) fn dismount_spot(
+pub fn dismount_spot(
     base: Vec3,
     yaw: f32,
     body_free: impl Fn(Vec3) -> bool,
@@ -94,7 +94,7 @@ pub(crate) fn dismount_spot(
 
 /// Whether a standing player body at `feet` overlaps neither cell collision
 /// nor a dynamic solid body. Water is not collision; callers rank dryness.
-pub(crate) fn player_body_free(
+pub fn player_body_free(
     world: &crate::world::World,
     feet: Vec3,
     obstacles: &[crate::collision::DynBox],
@@ -113,7 +113,7 @@ pub(crate) fn player_body_free(
 /// body reads must be stream-final as well as collision-free. This prevents an
 /// absent mixed section or an in-flight saved overlay from masquerading as
 /// open air while a mounted player's detached snapshot is chosen.
-pub(crate) fn player_body_known_free(
+pub fn player_body_known_free(
     world: &crate::world::World,
     feet: Vec3,
     obstacles: &[crate::collision::DynBox],

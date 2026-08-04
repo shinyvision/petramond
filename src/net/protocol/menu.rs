@@ -5,10 +5,10 @@ use crate::mathh::IVec3;
 use super::ItemSlotWire;
 
 /// A container-menu slot identity on the wire — the message twin of
-/// [`crate::gui::MenuSlot`], self-contained (widget ids travel as strings; the
+/// [`crate::gui_state::MenuSlot`], self-contained (widget ids travel as strings; the
 /// server re-interns them).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum MenuSlotWire {
+pub enum MenuSlotWire {
     Inventory(u32),
     CraftResult,
     Container(u32),
@@ -16,8 +16,8 @@ pub(crate) enum MenuSlotWire {
 }
 
 impl MenuSlotWire {
-    pub(crate) fn from_menu_slot(slot: &crate::gui::MenuSlot) -> Self {
-        use crate::gui::MenuSlot;
+    pub fn from_menu_slot(slot: &crate::gui_state::MenuSlot) -> Self {
+        use crate::gui_state::MenuSlot;
         match slot {
             MenuSlot::Inventory(i) => Self::Inventory(*i as u32),
             MenuSlot::CraftResult => Self::CraftResult,
@@ -26,39 +26,39 @@ impl MenuSlotWire {
         }
     }
 
-    pub(crate) fn to_menu_slot(&self) -> crate::gui::MenuSlot {
-        use crate::gui::MenuSlot;
+    pub fn to_menu_slot(&self) -> crate::gui_state::MenuSlot {
+        use crate::gui_state::MenuSlot;
         match self {
             Self::Inventory(i) => MenuSlot::Inventory(*i as usize),
             Self::CraftResult => MenuSlot::CraftResult,
             Self::Container(i) => MenuSlot::Container(*i as usize),
-            Self::Widget(id) => MenuSlot::Widget(crate::gui::intern_str(id)),
+            Self::Widget(id) => MenuSlot::Widget(crate::gui_state::intern_str(id)),
         }
     }
 }
 
-/// One [`crate::gui::GuiValue`] on the wire.
+/// One [`crate::gui_state::GuiValue`] on the wire.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum GuiValueWire {
+pub enum GuiValueWire {
     F32(f32),
     I32(i32),
     Str(String),
 }
 
 impl GuiValueWire {
-    pub(crate) fn from_value(v: &crate::gui::GuiValue) -> Self {
+    pub fn from_value(v: &crate::gui_state::GuiValue) -> Self {
         match v {
-            crate::gui::GuiValue::F32(x) => Self::F32(*x),
-            crate::gui::GuiValue::I32(x) => Self::I32(*x),
-            crate::gui::GuiValue::Str(s) => Self::Str(s.clone()),
+            crate::gui_state::GuiValue::F32(x) => Self::F32(*x),
+            crate::gui_state::GuiValue::I32(x) => Self::I32(*x),
+            crate::gui_state::GuiValue::Str(s) => Self::Str(s.clone()),
         }
     }
 
-    pub(crate) fn into_value(self) -> crate::gui::GuiValue {
+    pub fn into_value(self) -> crate::gui_state::GuiValue {
         match self {
-            Self::F32(x) => crate::gui::GuiValue::F32(x),
-            Self::I32(x) => crate::gui::GuiValue::I32(x),
-            Self::Str(s) => crate::gui::GuiValue::Str(s),
+            Self::F32(x) => crate::gui_state::GuiValue::F32(x),
+            Self::I32(x) => crate::gui_state::GuiValue::I32(x),
+            Self::Str(s) => crate::gui_state::GuiValue::Str(s),
         }
     }
 }
@@ -67,7 +67,7 @@ impl GuiValueWire {
 /// renders. Item slots are wire ids ([`ItemSlotWire`]), remapped at the
 /// transport boundary.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub(crate) enum MenuTargetWire {
+pub enum MenuTargetWire {
     /// No menu session is open (sent once when a session closes).
     #[default]
     None,
@@ -91,6 +91,6 @@ pub(crate) enum MenuTargetWire {
 /// changed since the last one this session was sent (value compare; the
 /// `gui_state` map compares by `Arc` identity).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub(crate) struct MenuSyncMsg {
+pub struct MenuSyncMsg {
     pub target: MenuTargetWire,
 }

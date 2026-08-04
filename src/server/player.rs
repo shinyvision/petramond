@@ -10,11 +10,9 @@
 //! transform, targeting, and held intents; `PlayerAction`/menu actions latch the
 //! one-shot edges. The tick stages consume the latches exactly as before.
 
-use crate::block::ShapeFamily;
-use crate::block_state::{HeldBlockState, LogAxis, SlabState, StairHalf, StairState};
-use crate::controls::PointerButton;
-use crate::game::ContainerMenu;
-use crate::gui::MenuSlot;
+use crate::gui_state::PointerButton;
+use crate::menu::ContainerMenu;
+use crate::gui_state::MenuSlot;
 use crate::item::ItemType;
 use crate::mathh::IVec3;
 use crate::mining::MiningState;
@@ -24,160 +22,16 @@ use crate::server::bed::SleepState;
 use crate::server::drops::DropQueue;
 use crate::server::item_use::EatingState;
 
-/// Session-scoped player identity: index-stable for a connection's lifetime,
-/// re-used after disconnect. Rides the wire as a single byte. (`pub` for the
-/// `pub` mob-API fields that carry it; the `server` module is crate-private.)
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    serde::Serialize,
-    serde::Deserialize,
-)]
-pub struct PlayerId(pub u8);
+pub use crate::player::PlayerId;
 
-/// The held block's placement-rotation state (the R-key cycle): which item the
-/// cycle was armed on and the raw counter. Lives BOTH client-side (the client
-/// owns the R key and previews the rotated held block) and session-side (the
-/// placement paths read the session's copy, fed from `PlayerUpdate`'s raw
-/// counter) — one struct so the two can never drift in logic.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct HeldRotation {
-    pub item: Option<ItemType>,
-    pub rotation: u8,
-}
-
-impl HeldRotation {
-    /// Cycle the rotation for `selected` (stairs upside-down, slab column/row,
-    /// log axis). Selecting a non-rotatable item clears it.
-    pub(crate) fn toggle(&mut self, selected: Option<ItemType>) {
-        let Some(item) = selected else {
-            self.clear();
-            return;
-        };
-        if !item.as_block().is_some_and(rotatable_block) {
-            self.clear();
-            return;
-        }
-        if self.item == Some(item) {
-            let count = item.as_block().map_or(1, rotation_count).max(1);
-            self.rotation = (self.rotation + 1) % count;
-        } else {
-            self.item = Some(item);
-            self.rotation = 1 % item.as_block().map_or(1, rotation_count).max(1);
-        }
-    }
-
-    #[inline]
-    pub(crate) fn clear(&mut self) {
-        self.item = None;
-        self.rotation = 0;
-    }
-
-    /// Latch the raw counter a `PlayerUpdate` carried. The wire carries ONLY
-    /// the counter; the session re-derives the armed item as its own currently
-    /// selected item whenever the counter changes to nonzero (the client
-    /// resets the counter to 0 on every hotbar change, so a changed nonzero
-    /// counter can only mean an R-press on the current selection). An
-    /// unchanged counter keeps the armed item as-is, preserving the
-    /// "rotation is remembered per item" activity check.
-    pub(crate) fn apply_wire(&mut self, counter: u8, selected: Option<ItemType>) {
-        if counter == self.rotation {
-            return;
-        }
-        if counter == 0 {
-            self.clear();
-        } else {
-            self.rotation = counter;
-            self.item = selected;
-        }
-    }
-
-    #[inline]
-    fn active(&self, selected: Option<ItemType>) -> bool {
-        let Some(item) = selected else {
-            return false;
-        };
-        self.item == Some(item)
-            && self.rotation != 0
-            && item.as_block().is_some_and(rotatable_block)
-    }
-
-    #[inline]
-    pub(crate) fn held_block_state(&self, selected: Option<ItemType>) -> HeldBlockState {
-        let Some(block) = selected.and_then(ItemType::as_block) else {
-            return HeldBlockState::None;
-        };
-        if block.shape_family() == ShapeFamily::Stair {
-            return HeldBlockState::Stair(StairState::new(
-                crate::block_model::DEFAULT_MODEL_FACING,
-                self.stair_half(selected),
-            ));
-        }
-        if block.shape_family() == ShapeFamily::Slab {
-            let slot = crate::slab::slot_for_rotation(
-                self.slab_rotation(selected),
-                IVec3::ZERO,
-                crate::facing::Facing::South,
-            );
-            return HeldBlockState::Slab(SlabState::single(slot.split, slot.index, block));
-        }
-        if block.is_log() {
-            return HeldBlockState::Log(if self.active(selected) {
-                LogAxis::X
-            } else {
-                LogAxis::Y
-            });
-        }
-        HeldBlockState::None
-    }
-
-    #[inline]
-    pub(crate) fn stair_half(&self, selected: Option<ItemType>) -> StairHalf {
-        if self.active(selected) {
-            StairHalf::Top
-        } else {
-            StairHalf::Bottom
-        }
-    }
-
-    #[inline]
-    pub(crate) fn slab_rotation(&self, selected: Option<ItemType>) -> crate::slab::SlabRotation {
-        if self.active(selected) {
-            crate::slab::SlabRotation::from_index(self.rotation)
-        } else {
-            crate::slab::SlabRotation::Bottom
-        }
-    }
-
-    #[inline]
-    pub(crate) fn log_axis_for_facing(
-        &self,
-        selected: Option<ItemType>,
-        facing: crate::facing::Facing,
-    ) -> LogAxis {
-        if !self.active(selected) {
-            return LogAxis::Y;
-        }
-        match facing {
-            crate::facing::Facing::East | crate::facing::Facing::West => LogAxis::X,
-            crate::facing::Facing::North | crate::facing::Facing::South => LogAxis::Z,
-        }
-    }
-}
+pub use crate::world::placement_types::HeldRotation;
 
 /// One latched `BreakFinished` request, resolved by the mining stage against
 /// the server's own observed mining window. Only the fields the resolution
 /// needs — never the whole `PlayerAction` (the latch site would otherwise have
 /// to re-prove the variant).
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct PendingBreakFinished {
+pub struct PendingBreakFinished {
     pub request_id: crate::net::protocol::ClientRequestId,
     pub pos: IVec3,
     /// Wire item id of the tool the client claims it used (`None` = bare hand).
@@ -192,7 +46,7 @@ pub(crate) struct PendingBreakFinished {
 /// same held slot/item, even when a newer `PlayerUpdate` changes the hotbar
 /// before the Placement stage consumes the click.
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct PendingUseClick {
+pub struct PendingUseClick {
     pub mob: Option<u64>,
     pub target: Option<TargetRef>,
     pub request_id: Option<crate::net::protocol::ClientRequestId>,
@@ -203,7 +57,7 @@ pub(crate) struct PendingUseClick {
 }
 
 impl PendingUseClick {
-    pub(crate) fn capture(
+    pub fn capture(
         player: &Player,
         mob: Option<u64>,
         target: Option<TargetRef>,
@@ -223,12 +77,12 @@ impl PendingUseClick {
     }
 
     #[inline]
-    pub(crate) fn held_item(self) -> Option<ItemType> {
+    pub fn held_item(self) -> Option<ItemType> {
         self.held_item
     }
 
     #[inline]
-    pub(crate) fn selection_still_matches(self, player: &Player) -> bool {
+    pub fn selection_still_matches(self, player: &Player) -> bool {
         player.inventory.active_slot() == self.held_slot
             && player.inventory.selected().map(|stack| stack.item) == self.held_item
     }
@@ -244,13 +98,13 @@ impl PendingUseClick {
 /// a sprint down stairs touches each step for less than a sample interval,
 /// and without those contacts the staircase would measure as one tall fall.
 #[derive(Clone, Debug)]
-pub(crate) struct FallTracker {
+pub struct FallTracker {
     peak_y: f32,
     airborne: bool,
 }
 
 impl FallTracker {
-    pub(crate) fn new(y: f32) -> Self {
+    pub fn new(y: f32) -> Self {
         Self {
             peak_y: y,
             airborne: false,
@@ -259,7 +113,7 @@ impl FallTracker {
 
     /// Re-anchor at `y` and drop any airborne state — teleports and mode
     /// switches are never falls (mirrors `Player::teleport`/`set_mode`).
-    pub(crate) fn reset(&mut self, y: f32) {
+    pub fn reset(&mut self, y: f32) {
         self.peak_y = y;
         self.airborne = false;
     }
@@ -268,7 +122,7 @@ impl FallTracker {
     /// landing (airborne → grounded) with its fall distance, or a water entry
     /// (airborne → in water) with the distance fallen into the surface —
     /// walking into water arrives grounded/level and reports nothing.
-    pub(crate) fn observe(
+    pub fn observe(
         &mut self,
         y: f32,
         on_ground: bool,
@@ -296,7 +150,7 @@ impl FallTracker {
 
 /// What one [`FallTracker::observe`] concluded, with the fall distance in blocks.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) enum FallOutcome {
+pub enum FallOutcome {
     /// Airborne → grounded, dry: fall damage applies.
     Landed(f32),
     /// Airborne → in water: no damage (water breaks the fall), but a hard
@@ -307,13 +161,13 @@ pub(crate) enum FallOutcome {
 /// One ordered menu intent. Open, close, slot clicks, and explicit crafts
 /// share a queue so network arrival order is also simulation order.
 #[derive(Clone, Debug)]
-pub(crate) enum PendingMenuAction {
+pub enum PendingMenuAction {
     /// Open the GUI session for `kind` — engine containers and mod GUIs ride
     /// this one lane. `pos` is the block the open came from (`None` for the
     /// inventory key and programmatic `GuiOpen`s); per-kind session semantics
     /// resolve at the menu stage's kind dispatch, not here.
     OpenGui {
-        kind: crate::gui::GuiKind,
+        kind: crate::gui_state::GuiKind,
         pos: Option<IVec3>,
     },
     Close,
@@ -343,7 +197,7 @@ pub(crate) enum PendingMenuAction {
 
 /// One player's simulation session: authoritative player state plus every
 /// per-player latch, timer, and menu session the tick stages consume.
-pub(crate) struct ConnectedPlayer {
+pub struct ConnectedPlayer {
     pub id: PlayerId,
     /// Display / save-key name (`players/<name>.dat`). The local session takes
     /// the client's configured name (`save::client::resolve_player_name`).
@@ -472,13 +326,13 @@ pub(crate) struct ConnectedPlayer {
     // (INTERNAL — the client only sees `OpenScreen`). ---
     /// The GUI session the tick opened for this client this tick, if any —
     /// one field for every kind (engine containers and mod GUIs alike).
-    pub request_open_gui: Option<(crate::gui::GuiKind, Option<IVec3>)>,
+    pub request_open_gui: Option<(crate::gui_state::GuiKind, Option<IVec3>)>,
     pub request_close_mod_gui: bool,
     pub request_open_sleep: bool,
     /// The open mod-GUI session's state map (written by mods on the tick via
     /// `GuiStateSet`, cleared by the menu funnels on open/close). Snapshotted
     /// behind the `Arc` per replication batch — copy-on-write on writes.
-    pub gui_state: std::sync::Arc<crate::gui::GuiStateMap>,
+    pub gui_state: std::sync::Arc<crate::gui_state::GuiStateMap>,
     /// The inventory revision the last emitted `SelfState` carried a full
     /// inventory for — per-recipient replication bookkeeping, not sim state.
     /// `None` = nothing sent yet, so the first update after join always
@@ -498,7 +352,7 @@ pub(crate) struct ConnectedPlayer {
     /// The `gui_state` map allocation the last sync shipped. Holding the
     /// `Arc` is what makes identity comparison sound: the next tick-side
     /// write is forced to copy-on-write onto a fresh allocation.
-    pub last_sent_gui_state: Option<std::sync::Arc<crate::gui::GuiStateMap>>,
+    pub last_sent_gui_state: Option<std::sync::Arc<crate::gui_state::GuiStateMap>>,
     /// Per-connection terrain replication state (which columns/sections this
     /// client holds) — see `server::streaming`.
     pub terrain: crate::server::streaming::TerrainSync,
@@ -518,7 +372,7 @@ pub(crate) struct ConnectedPlayer {
 }
 
 impl ConnectedPlayer {
-    pub(crate) fn new(id: PlayerId, name: String, player: Player, view_radius: i32) -> Self {
+    pub fn new(id: PlayerId, name: String, player: Player, view_radius: i32) -> Self {
         let fall = FallTracker::new(player.pos.y);
         let pos_before_ticks = player.pos;
         Self {
@@ -570,7 +424,7 @@ impl ConnectedPlayer {
             request_open_gui: None,
             request_close_mod_gui: false,
             request_open_sleep: false,
-            gui_state: crate::gui::empty_gui_state(),
+            gui_state: crate::gui_state::empty_gui_state(),
             last_sent_inventory_revision: None,
             last_obtained_scan: None,
             sent_unlock_count: 0,
@@ -583,7 +437,7 @@ impl ConnectedPlayer {
     }
 
     #[inline]
-    pub(crate) fn selected_item(&self) -> Option<ItemType> {
+    pub fn selected_item(&self) -> Option<ItemType> {
         self.player.inventory.selected().map(|s| s.item)
     }
 
@@ -593,41 +447,31 @@ impl ConnectedPlayer {
     /// the interact-vs-place gate, the replicated `sneaking` row, and the mob
     /// AI's player anchor.
     #[inline]
-    pub(crate) fn sneaking(&self) -> bool {
+    pub fn sneaking(&self) -> bool {
         self.intent_sneak && self.intent_gameplay
     }
 
     /// A snapshot of the raw held-rotation state for the placement inputs —
     /// each family derives its own reading from it.
     #[inline]
-    pub(crate) fn held_rotation_snapshot(&self) -> HeldRotation {
+    pub fn held_rotation_snapshot(&self) -> HeldRotation {
         self.held_rotation.clone()
     }
 
     #[inline]
-    pub(crate) fn held_slab_rotation(&self) -> crate::slab::SlabRotation {
+    pub fn held_slab_rotation(&self) -> crate::slab::SlabRotation {
         self.held_rotation.slab_rotation(self.selected_item())
     }
 
     /// The in-progress eat as `(progress / eat_ticks)` in `[0, 1)`, or `None`.
-    pub(crate) fn eating_progress(&self) -> Option<f32> {
+    pub fn eating_progress(&self) -> Option<f32> {
         let eat = self.eating?;
         let ticks = eat.item.food()?.eat_ticks.max(1);
         Some(eat.progress as f32 / ticks as f32)
     }
 }
 
-fn rotatable_block(block: crate::block::Block) -> bool {
-    matches!(block.shape_family(), ShapeFamily::Stair | ShapeFamily::Slab) || block.is_log()
-}
 
-fn rotation_count(block: crate::block::Block) -> u8 {
-    if block.shape_family() == ShapeFamily::Slab {
-        3
-    } else {
-        2
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -8,7 +8,7 @@
 use crate::events::{DamageSource, ModAction};
 
 use super::game::ServerGame;
-use crate::game::tick::TickEvents;
+use crate::events::tick::TickEvents;
 
 impl ServerGame {
     /// Apply every queued mod action through the engine's own funnels, so
@@ -16,7 +16,7 @@ impl ServerGame {
     /// engine-originated damage. Actions queued *while* this batch runs (e.g.
     /// by a `player_damage_pre` handler) land at the next action point — the
     /// per-tick point count bounds them, no recursion.
-    pub(crate) fn apply_mod_actions(&mut self, events: &mut TickEvents) {
+    pub fn apply_mod_actions(&mut self, events: &mut TickEvents) {
         if !self.bus.queue_mut().has_actions() {
             return;
         }
@@ -67,7 +67,7 @@ impl ServerGame {
                         None => crate::server::chat::ChatTargets::All,
                         Some(ids) => crate::server::chat::ChatTargets::Players(
                             ids.into_iter()
-                                .map(crate::server::player::PlayerId)
+                                .map(crate::player::PlayerId)
                                 .collect(),
                         ),
                     };

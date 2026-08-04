@@ -321,7 +321,7 @@ impl Solver<'_, '_, '_> {
             // Grid list: uniform cells, so the natural size is just the cell
             // size times the grid extent. Stamp margins play no part — cells
             // are the grid's, not the stamp's.
-            let content_avail_w = wrap_hint(&l, pad_w, avail_w);
+            let content_avail_w = wrap_hint(l, pad_w, avail_w);
             let cols_i = cols as i32;
             let cell_hint = content_avail_w.map(|a| ((a - l.gap * (cols_i - 1)) / cols_i).max(0));
             let (mut cell_w, mut cell_h) = (0i32, 0i32);
@@ -349,7 +349,7 @@ impl Solver<'_, '_, '_> {
             let cross = Ax {
                 horizontal: !main.horizontal,
             };
-            let content_avail_w = wrap_hint(&l, pad_w, avail_w);
+            let content_avail_w = wrap_hint(l, pad_w, avail_w);
             let mut main_sum = 0i32;
             let mut cross_max = 0i32;
             let mut n_flow = 0i32;
@@ -377,7 +377,7 @@ impl Solver<'_, '_, '_> {
             let (w, h) = main.pack(main_sum, cross_max);
             (w + pad_w, h + pad_h)
         } else {
-            let inner_avail = wrap_hint(&l, pad_w, avail_w);
+            let inner_avail = wrap_hint(l, pad_w, avail_w);
             let (w, h) =
                 self.env
                     .leaf_size(node, inst.text.as_deref(), inst.image_name(), inner_avail);

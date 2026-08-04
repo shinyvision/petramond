@@ -28,9 +28,10 @@
 //! other block in the footprint refuses growth, and the sapling waits and
 //! tries again later.
 
+use crate::world::WorldData;
 use std::collections::HashMap;
 
-use crate::block::{Block, BlockBehavior};
+use crate::block::Block;
 use crate::mathh::IVec3;
 use crate::section::SectionSummary;
 use crate::worldgen::feature::{ConfiguredFeature, FeatureCtx, VoxelSink};
@@ -50,14 +51,8 @@ const ADVANCE_CHANCE: f32 = 0.5;
 /// A sapling. See the module docs: fragile, and grows on random ticks.
 pub struct Sapling;
 
-impl BlockBehavior for Sapling {
-    fn key(&self) -> &'static str {
-        "sapling"
-    }
+impl crate::world::engine_behavior::EngineBlockBehavior for Sapling {
 
-    fn has_random_tick(&self) -> bool {
-        true
-    }
 
     fn random_tick(&self, world: &mut World, pos: IVec3) {
         // A fresh deterministic stream per (sapling, tick): the tick number folds
@@ -194,7 +189,7 @@ impl World {
                 // materializes it on demand. Any other absent cell (unloaded
                 // column, saved-but-unloaded, solid/water summary) refuses
                 // growth as before.
-                None => match Self::split_world(cell.x, cell.y, cell.z) {
+                None => match WorldData::split_world(cell.x, cell.y, cell.z) {
                     Some((sp, ..)) if self.section_summary(sp) == SectionSummary::Empty => {}
                     _ => return,
                 },
