@@ -219,7 +219,12 @@ impl CraftingBrowser {
                 self.search.clone_from(text);
                 true
             }
-            UiEvent::Toggle { id, on, .. } if id == "craft_filter" => {
+            UiEvent::Toggle {
+                id,
+                on,
+                button: petramond_ui::PointerButton::Primary,
+                ..
+            } if id == "craft_filter" => {
                 game.set_craft_craftable_only(*on);
                 true
             }

@@ -1,6 +1,6 @@
 //! A dense set of item kinds.
 //!
-//! Item ids are one byte, so a whole set of them is four words — small enough
+//! The set covers the whole item id space as a bitset — small enough
 //! to live on a player, cheap enough to intersect per event. Progression uses
 //! it for "every item this player has ever held" and the recipe-unlock index
 //! for "any item that satisfies this ingredient", which makes an ingredient
@@ -11,11 +11,19 @@
 
 use super::ItemType;
 
-const WORDS: usize = 4;
+/// One bit per possible item id, so the set can never miss a registered item
+/// (an out-of-range `insert` would silently drop a progression fact).
+const WORDS: usize = crate::registry::WIDE_ID_CAP / 64;
 
 /// A set of [`ItemType`]s, one bit per id.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ItemSet([u64; WORDS]);
+
+impl Default for ItemSet {
+    fn default() -> Self {
+        ItemSet::EMPTY
+    }
+}
 
 impl ItemSet {
     pub const EMPTY: ItemSet = ItemSet([0; WORDS]);
@@ -50,7 +58,7 @@ impl ItemSet {
                 (bits != 0).then(|| {
                     let bit = bits.trailing_zeros() as usize;
                     bits &= bits - 1;
-                    ItemType((w * 64 + bit) as u8)
+                    ItemType((w * 64 + bit) as u16)
                 })
             })
         })

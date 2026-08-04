@@ -81,7 +81,7 @@ impl World {
                 continue;
             };
             let oy = cy * SECTION_SIZE as i32;
-            let blocks = section.blocks_slice();
+            let blocks = section.blocks();
             for lz in 0..SECTION_SIZE {
                 for lx in 0..SECTION_SIZE {
                     let col = lz * SECTION_SIZE + lx;
@@ -89,7 +89,7 @@ impl World {
                         continue;
                     }
                     for ly in (0..SECTION_SIZE).rev() {
-                        let id = blocks[section_idx(lx, ly, lz)];
+                        let id = blocks.get(section_idx(lx, ly, lz));
                         if surf[col] == NO_SURFACE && id != Block::Air.id() {
                             surf[col] = oy + ly as i32;
                             surface_remaining -= 1;
@@ -173,7 +173,7 @@ impl World {
         let mut raised_sky = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
         let section = self.sections.get(&pos)?;
         let column = self.columns.get(&cpos)?;
-        let blocks = section.blocks_slice();
+        let blocks = section.blocks();
         let mut any = false;
         for lz in 0..SECTION_SIZE {
             for lx in 0..SECTION_SIZE {
@@ -185,7 +185,7 @@ impl World {
                         if wy <= surface {
                             break;
                         }
-                        if blocks[section_idx(lx, ly, lz)] != Block::Air.id() {
+                        if blocks.get(section_idx(lx, ly, lz)) != Block::Air.id() {
                             raised_surface[i] = wy;
                             any = true;
                             break;
@@ -200,7 +200,7 @@ impl World {
                         if wy <= sky_cover {
                             break;
                         }
-                        let block = Block::from_id(blocks[section_idx(lx, ly, lz)]);
+                        let block = Block::from_id(blocks.get(section_idx(lx, ly, lz)));
                         if !block.transmits_direct_skylight() {
                             raised_sky[i] = wy;
                             any = true;

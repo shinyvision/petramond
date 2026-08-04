@@ -86,10 +86,15 @@ pub enum UiEvent {
         item: Option<u32>,
         button: PointerButton,
     },
+    /// A checkbox or toggle was pressed. `on` is the value the widget's bound
+    /// state would take; `button` is the pointer button that pressed it, so a
+    /// host applies the same primary-only policy it applies to
+    /// [`Click`](Self::Click) instead of flipping under a right-click.
     Toggle {
         id: String,
         item: Option<u32>,
         on: bool,
+        button: PointerButton,
     },
     SliderChange {
         id: String,
@@ -215,6 +220,10 @@ pub struct FrameState {
     /// Last observed bound selection per list, so a selection change (e.g.
     /// keyboard nav) can auto-scroll the enclosing scroll region.
     pub(crate) last_selected: BTreeMap<InstKey, i32>,
+    /// The id of the named widget under the cursor on the LAST frame — the
+    /// hover anchor a `tooltip` node's `hover` property matches against.
+    /// One frame old, the same contract as hover-revealed list content.
+    pub(crate) hover_widget: Option<String>,
 }
 
 impl FrameState {
@@ -278,6 +287,7 @@ impl FrameState {
         self.clicked = None;
         self.last_row_click = None;
         self.last_selected.clear();
+        self.hover_widget = None;
     }
 }
 

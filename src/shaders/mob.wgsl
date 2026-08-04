@@ -110,9 +110,10 @@ fn fs_mob(in: VsOut) -> @location(0) vec4<f32> {
 // face shade, so the sim's sky scale/colour darkens a placed model at night
 // exactly like the terrain around it. The curve constants mirror block.wgsl —
 // keep them in sync (at sky scale 1.0 + white sky the result is identical to
-// the old mesh-time bake of max(sky, block)). Unlike a mob vertex there is no
-// tint lane: a model block's colour is its texture, and its light is the light
-// vector.
+// the old mesh-time bake of max(sky, block)). The tint lane is PACKED here
+// (unlike the mob vertex's three floats): a model block's colour is its
+// texture, and the tint is a rare per-cell multiply on the cubes its row
+// declared tintable.
 const SKY_MIN: f32 = 0.02;
 const FINAL_MIN: f32 = 0.006;
 const SKY_GAMMA: f32 = 3.0;
@@ -121,9 +122,15 @@ struct WmIn {
     @location(0) pos:   vec3<f32>,
     @location(1) uv:    vec2<f32>,
     @location(2) shade: f32,
-    // (sky01, block_r01, block_g01, block_b01) — the block channel is per
+    // (sky, block_r, block_g, block_b) as four 6-bit levels packed
+    // `sky | r<<6 | g<<12 | b<<18` (mesh::vertex::pack_model_light). They were
+    // four floats; they are four integers scaled by 1/63, so the divide moved
+    // here and the vertex lost 12 bytes of stride. The block channel is per
     // colour so a placed model sits in coloured light like the terrain.
-    @location(3) light: vec4<f32>,
+    @location(3) light: u32,
+    // Packed 0x00RRGGBB multiply colour; white unless the row declared this
+    // cube tintable and the cell carries a tint.
+    @location(4) tint: u32,
 };
 
 struct WmOut {
@@ -133,6 +140,7 @@ struct WmOut {
     @location(2) view:  vec3<f32>,
     @location(3) light: vec4<f32>,
     @location(4) world_y: f32,
+    @location(5) tint: vec3<f32>,
 };
 
 @vertex
@@ -144,7 +152,17 @@ fn vs_world_model(in: WmIn) -> WmOut {
     out.shade = in.shade;
     out.view = local_pos - u.cam_pos.xyz;
     out.world_y = in.pos.y;
-    out.light = in.light;
+    out.light = vec4<f32>(
+        f32(in.light & 63u),
+        f32((in.light >> 6u) & 63u),
+        f32((in.light >> 12u) & 63u),
+        f32((in.light >> 18u) & 63u),
+    ) / 63.0;
+    out.tint = vec3<f32>(
+        f32((in.tint >> 16u) & 255u),
+        f32((in.tint >> 8u) & 255u),
+        f32(in.tint & 255u),
+    ) / 255.0;
     return out;
 }
 
@@ -159,7 +177,7 @@ fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
     let blk = in.light.yzw;
     let block_term = mix(vec3<f32>(SKY_MIN), vec3<f32>(1.0), blk * blk * blk);
     let lit = max(max(sky_term, block_term), vec3<f32>(FINAL_MIN));
-    var color = tex_color.rgb * in.shade * lit;
+    var color = tex_color.rgb * in.tint * in.shade * lit;
     if (u.fog.w > 0.5) {
         color = color * WATER_TINT;
         let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
@@ -177,4 +195,37 @@ fn fs_world_model(in: WmOut) -> @location(0) vec4<f32> {
         u.sun_dir.w,
     );
     return vec4<f32>(out, 1.0);
+}
+
+// The alpha-BLEND twin of fs_world_model for the chunk's semi-transparent model
+// faces (the `model_blend_idx` stream): identical lighting, but the texture
+// alpha survives to the blend unit instead of a 0.5 cutout. Only truly empty
+// texels discard — a face reaches this stream because SOME texel in its rect
+// has partial alpha, and the rest of the rect may still hold cutout holes.
+@fragment
+fn fs_world_model_blend(in: WmOut) -> @location(0) vec4<f32> {
+    let tex_color = textureSample(tex, samp, in.uv);
+    if (tex_color.a < 0.004) { discard; }
+    let sky_term = mix(SKY_MIN, 1.0, pow(in.light.x, SKY_GAMMA) * u.fog_color.w) * u.sky_color.rgb;
+    let blk = in.light.yzw;
+    let block_term = mix(vec3<f32>(SKY_MIN), vec3<f32>(1.0), blk * blk * blk);
+    let lit = max(max(sky_term, block_term), vec3<f32>(FINAL_MIN));
+    var color = tex_color.rgb * in.tint * in.shade * lit;
+    if (u.fog.w > 0.5) {
+        color = color * WATER_TINT;
+        let f = clamp((length(in.view) - u.fog.x) / (u.fog.y - u.fog.x), 0.0, 1.0);
+        return vec4<f32>(mix(color, u.fog_color.rgb, f), tex_color.a);
+    }
+    let out = atmosphere_apply(
+        color,
+        in.view,
+        in.world_y,
+        u.cam_pos.y + u.render_origin.y,
+        u.fog.x,
+        u.fog.y,
+        u.fog_color.rgb,
+        u.sun_dir.xyz,
+        u.sun_dir.w,
+    );
+    return vec4<f32>(out, tex_color.a);
 }

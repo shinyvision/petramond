@@ -9,43 +9,26 @@ use crate::item::ItemType;
 use crate::mathh::{IVec3, Vec3};
 use crate::modding::scope;
 
-/// Per-entry limits for the mod KV surfaces (world / section-cell / mob).
-/// Violations are [`HostRet::Error`] — a mod bug, surfaced loudly by the SDK.
-pub(in crate::modding) const KV_MAX_KEY_BYTES: usize = 256;
-pub(super) const KV_MAX_VALUE_BYTES: usize = 64 * 1024;
-
-/// A mod event's payload bound (`EmitEvent`). Same order as a KV value: the
-/// post queue holds these until the next drain point, and an event is a
-/// notification, not a transport.
-pub(super) const EVENT_MAX_DATA_BYTES: usize = 8 * 1024;
-
-/// Aggregate cap: distinct KV keys ON ONE CELL. Per-entry sizes alone don't
-/// bound a cell — every `BlockDelta` (including per-recipient corrective
-/// syncs) ships the cell's WHOLE KV map, so an unbounded key count would
-/// make each delta of that cell arbitrarily expensive. 16 is an order of
-/// magnitude above real per-cell state (the dye pot peaks at 2) while a
-/// maximal cell stays a bounded wire payload. Overwrites of an existing key
-/// always pass; only a NEW key beyond the cap errors.
-pub(super) const CELL_KV_MAX_KEYS: usize = 16;
-
-/// Element cap for every batched sim/registry call (`GetBlocks`, `SetBlocks`,
-/// `ContainerGetMany`, `ContainerSet` slots, the `*Names` reverse resolvers,
-/// `ChatSend` targets) — the documented ABI bound, mirroring the client
-/// surface's per-call caps (`CLIENT_BLOCKS_QUERY_MAX` etc.). The watchdog
-/// deliberately charges GUEST compute only, so host-side per-element work is
-/// unmetered; without this bound one maximal batch (the 64 MiB guest memory
-/// allows millions of positions) stalls the sim with no backstop. 4096 is
-/// orders of magnitude above legitimate per-tick batches (bundled mods peak
-/// in the low hundreds) while a maximal capped batch stays microseconds of
-/// host work. Violations are [`HostRet::Error`] — a mod bug, surfaced loudly
-/// by the SDK (panic → mod disabled), like every other cap on this surface.
-pub(super) const SIM_BATCH_MAX: usize = 4096;
-
-/// Cell cap for the `FindBlocks` box scan — the same "bounded host work"
-/// doctrine as [`SIM_BATCH_MAX`], but a VOLUME bound: the scan pays per cell,
-/// not per element. 32³ comfortably covers radius-8..15 neighbourhood
-/// searches (17³ = 4913) while a maximal capped scan stays microseconds.
-pub(super) const FIND_BLOCKS_VOLUME_MAX: i64 = 32 * 32 * 32;
+/// Every bound this module enforces is declared in the ABI crate, because a
+/// mod has to obey them and can only do that by reading them — the SDK
+/// re-exports these same items. Violations are [`HostRet::Error`]: a mod bug,
+/// surfaced loudly by the SDK (panic → mod disabled).
+///
+/// Why these particular numbers. The watchdog deliberately charges GUEST
+/// compute only, so host-side per-element work is unmetered: without
+/// [`SIM_BATCH_MAX`] one maximal batch (the 64 MiB guest memory allows
+/// millions of positions) stalls the sim with no backstop, and 4096 is orders
+/// of magnitude above legitimate per-tick batches (bundled mods peak in the
+/// low hundreds) while a maximal capped batch stays microseconds of host work.
+/// It mirrors the client surface's per-call caps (`CLIENT_BLOCKS_QUERY_MAX`
+/// etc.). [`CELL_KV_MAX_KEYS`] is an order of magnitude above real per-cell
+/// state (the dye pot peaks at 2) while keeping a maximal cell's `BlockDelta` a
+/// bounded wire payload.
+pub(in crate::modding) use mod_api::KV_MAX_KEY_BYTES;
+pub(super) use mod_api::{
+    CELL_KV_MAX_KEYS, EVENT_MAX_DATA_BYTES, FIND_BLOCKS_VOLUME_MAX, KV_MAX_VALUE_BYTES,
+    SIM_BATCH_MAX,
+};
 
 /// `Some(err)` when a batched call's element count exceeds
 /// [`SIM_BATCH_MAX`]; `what` names the call and lane for the error line.

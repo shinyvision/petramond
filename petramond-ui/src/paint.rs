@@ -520,6 +520,21 @@ impl Painter<'_> {
         }
     }
 
+    /// [`Self::text_wrapped`] one gui-scale step smaller. Wrap breaks are
+    /// computed in FONT pixels at the smaller step (the same conversion
+    /// [`Self::ellipsized_at`] uses), so the lines the layout reserved room
+    /// for are the lines drawn.
+    pub fn text_wrapped_small(&mut self, s: &str, r: RectI, color: [f32; 4], clip: Option<RectI>) {
+        let k = self.small_text_step();
+        let room_font_px = r.w * self.scale / k.max(1);
+        let advance = self.font.line_advance() * k / self.scale.max(1);
+        let mut y = r.y;
+        for line in self.font.wrap(s, room_font_px) {
+            self.text_at(&s[line], r.x, y, k, color, clip);
+            y += advance;
+        }
+    }
+
     /// A texture sub-rect over `r`, rotated by `angle` radians around `pivot`
     /// (logical px from `r`'s top-left; `None` = centre).
     #[allow(clippy::too_many_arguments)]

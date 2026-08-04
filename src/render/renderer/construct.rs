@@ -432,6 +432,7 @@ pub(super) fn new_renderer_inner(
     });
     let model_pipe = pipelines.mob_pipe.clone();
     let world_model_pipe = pipelines.world_model_pipe.clone();
+    let world_model_blend_pipe = pipelines.world_model_blend_pipe.clone();
     let contact_pipe = pipelines.contact_pipe.clone();
     // Dropped bbmodel item-entities ride the model pipeline (world-space ItemVertex,
     // model atlas) in their OWN buffers, sized like the packed item-entity buffers.
@@ -609,9 +610,12 @@ pub(super) fn new_renderer_inner(
         atlas_array_bind: pipelines.atlas_array_bind,
         model_pipe: model_pipe.clone(),
         world_model_pipe,
+        world_model_blend_pipe,
         contact_pipe,
         model_atlas_bind,
         item_entity: ItemEntityPass {
+            block_draws: Vec::new(),
+            block_draws_visible: Vec::new(),
             draw: DynamicDraw::new(
                 item_entity_pipe,
                 pipelines.item_entity_vbuf,

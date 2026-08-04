@@ -10,15 +10,190 @@ use super::guards::{
     batch_guard, checked_block, key_owned_by_namespace, sim_call, sim_query, stream_final_cell,
 };
 
+/// The three presentation WRITES below all ask the same question first: does
+/// the caller OWN the placed block it is addressing? A mod dresses ITS OWN
+/// machine, never someone else's block — and none of them may act on a cell
+/// whose streaming state is not final.
+///
+/// `call` names the caller only so the error says which one refused.
+fn owned_block_at(
+    ctx: &mut crate::modding::SimCtx<'_>,
+    mod_id: &str,
+    pos: [i32; 3],
+    call: &str,
+) -> Result<crate::block::Block, HostRet> {
+    let p = IVec3::from(pos);
+    let block = stream_final_cell(ctx, p)?;
+    let name = crate::registry::names()
+        .blocks
+        .name(block.id())
+        .unwrap_or("?");
+    if !key_owned_by_namespace(mod_id, name) {
+        return Err(HostRet::Error(format!(
+            "{call}: block '{name}' at {pos:?} is not owned by mod '{mod_id}'"
+        )));
+    }
+    Ok(block)
+}
+
+/// Whether every float a draw prim carries is finite.
+///
+/// A non-finite one is a loud mod bug rather than a dropped box, and the reason
+/// is the IDEMPOTENCE gate: a machine resubmits its set every tick and the
+/// engine drops an unchanged submission by comparing the submitted prims, but
+/// `NaN != NaN` — so one NaN corner makes every tick a change, replicating a
+/// set that (having been dropped at resolve) draws nothing at all. Refusing it
+/// here is what keeps that comparison total.
+fn draw_prim_finite(prim: &mod_api::DrawPrim) -> bool {
+    match prim {
+        mod_api::DrawPrim::Cuboid { min, max, .. } => min.iter().chain(max).all(|v| v.is_finite()),
+        mod_api::DrawPrim::Item {
+            at,
+            scale,
+            yaw,
+            pitch,
+            ..
+        } => at.iter().chain([scale, yaw, pitch]).all(|v| v.is_finite()),
+    }
+}
+
+/// The per-set validation both draw calls run: the prim cap and finiteness.
+/// `what` names the caller for the error line.
+fn check_draw_set(what: &str, prims: &[mod_api::DrawPrim]) -> Option<HostRet> {
+    const MAX: usize = mod_api::DRAW_PRIMS_MAX;
+    if prims.len() > MAX {
+        return Some(HostRet::Error(format!(
+            "{what}: {} prims; the cap is {MAX}",
+            prims.len()
+        )));
+    }
+    let bad = prims.iter().position(|p| !draw_prim_finite(p))?;
+    Some(HostRet::Error(format!(
+        "{what}: prim {bad} has a non-finite component"
+    )))
+}
+
 /// Block calls (all sim-scoped, delegating to World).
 pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
     match call {
+        // The batched presentation writes. They exist because a mod's tick
+        // cost must not scale with how many machines the player has built:
+        // one crossing for the whole kind, not one per placed block.
+        //
+        // The per-SET checks (prim cap, finiteness) fail the WHOLE call like
+        // the single form: they are malformed input, and a mod that sends one
+        // is broken. Per-CELL outcomes — unloaded, or a block that stopped
+        // being this mod's — answer `false` in the parallel reply instead,
+        // where the single form errors: submitting one machine that was
+        // broken this tick is the normal way to lose a race, and taking the
+        // pack down for it would make the batched form unusable.
+        // Pinned by `a_batched_draw_answers_per_entry_where_the_single_call_errors`.
+        HostCall::SetBlockDraws { sets } => {
+            if let Some(err) = batch_guard("SetBlockDraws set", sets.len()) {
+                return err;
+            }
+            for (_, prims) in &sets {
+                if let Some(err) = check_draw_set("SetBlockDraws", prims) {
+                    return err;
+                }
+            }
+            let mod_id = mod_id.to_owned();
+            sim_query(move |ctx| {
+                HostRet::Bools(
+                    sets.into_iter()
+                        .map(|(pos, prims)| {
+                            if owned_block_at(ctx, &mod_id, pos, "SetBlockDraws").is_err() {
+                                return false;
+                            }
+                            ctx.world.set_block_draw(IVec3::from(pos), prims.into());
+                            true
+                        })
+                        .collect(),
+                )
+            })
+        }
+        HostCall::SetModelPartsMany { sets } => {
+            if let Some(err) = batch_guard("SetModelPartsMany set", sets.len()) {
+                return err;
+            }
+            let mod_id = mod_id.to_owned();
+            sim_query(move |ctx| {
+                HostRet::Bools(
+                    sets.into_iter()
+                        .map(|(pos, parts, tint)| {
+                            owned_block_at(ctx, &mod_id, pos, "SetModelPartsMany").is_ok()
+                                && ctx.world.set_model_parts(IVec3::from(pos), parts, tint)
+                        })
+                        .collect(),
+                )
+            })
+        }
+        HostCall::SetBlockDraw { pos, prims } => {
+            if let Some(err) = check_draw_set("SetBlockDraw", &prims) {
+                return err;
+            }
+            let mod_id = mod_id.to_owned();
+            sim_query(
+                move |ctx| match owned_block_at(ctx, &mod_id, pos, "SetBlockDraw") {
+                    Err(e) => e,
+                    Ok(_) => {
+                        ctx.world.set_block_draw(IVec3::from(pos), prims.into());
+                        // TRUE = the submission was accepted, which an empty
+                        // (clearing) one is: a mod checking the reply must not
+                        // read its own clear as a refusal. `false` means
+                        // UNLOADED and nothing else — a foreign block already
+                        // left through the `Err` arm above.
+                        HostRet::Bool(true)
+                    }
+                },
+            )
+        }
+        HostCall::SetModelParts { pos, parts, tint } => {
+            let mod_id = mod_id.to_owned();
+            sim_query(
+                move |ctx| match owned_block_at(ctx, &mod_id, pos, "SetModelParts") {
+                    Err(e) => e,
+                    Ok(_) => {
+                        HostRet::Bool(ctx.world.set_model_parts(IVec3::from(pos), parts, tint))
+                    }
+                },
+            )
+        }
+        // A READ of the same space `SetBlockDraw` writes in, so it needs no
+        // ownership check: knowing where another mod's spout points is no more
+        // than `GetBlock` already tells you.
+        HostCall::BlockLocalToWorld { pos, points } => {
+            if let Some(err) = batch_guard("BlockLocalToWorld point", points.len()) {
+                return err;
+            }
+            sim_query(move |ctx| {
+                let p = IVec3::from(pos);
+                // Gated like every other mod read: mid-stream the cell shows
+                // the generated base where a saved overlay is about to land,
+                // and a machine's facing is exactly what that overlay carries.
+                if stream_final_cell(ctx, p).is_err() {
+                    return HostRet::Points(None);
+                }
+                let to_world = ctx.world.block_local_transform(p);
+                HostRet::Points(Some(
+                    points
+                        .iter()
+                        .map(|&q| {
+                            to_world
+                                .transform_point3(crate::mathh::Vec3::from(q))
+                                .to_array()
+                        })
+                        .collect(),
+                ))
+            })
+        }
         HostCall::SwapModelBlock { pos, block } => match checked_block(block) {
             Err(e) => e,
             Ok(b) => {
-                // Both sides of the swap must be the caller's own blocks: this
-                // is a machine flipping ITS placed variant, never a tool for
-                // rewriting someone else's content.
+                // BOTH sides must be the caller's own: this is a machine
+                // flipping ITS placed variant, never a tool for rewriting
+                // someone else's content. The destination is checked here
+                // because it needs no world read.
                 let new_name = crate::registry::names().blocks.name(b.id()).unwrap_or("?");
                 if !key_owned_by_namespace(mod_id, new_name) {
                     return HostRet::Error(format!(
@@ -26,24 +201,12 @@ pub(super) fn handle_block_call(mod_id: &str, call: HostCall) -> HostRet {
                     ));
                 }
                 let mod_id = mod_id.to_owned();
-                sim_query(move |ctx| {
-                    let p = IVec3::from(pos);
-                    let old = match stream_final_cell(ctx, p) {
-                        Ok(b) => b,
-                        Err(miss) => return miss,
-                    };
-                    let old_name = crate::registry::names()
-                        .blocks
-                        .name(old.id())
-                        .unwrap_or("?");
-                    if !key_owned_by_namespace(&mod_id, old_name) {
-                        return HostRet::Error(format!(
-                            "SwapModelBlock: block '{old_name}' at {pos:?} is not owned by mod \
-                             '{mod_id}'"
-                        ));
-                    }
-                    HostRet::Bool(ctx.world.swap_model_block(p, b))
-                })
+                sim_query(
+                    move |ctx| match owned_block_at(ctx, &mod_id, pos, "SwapModelBlock") {
+                        Err(e) => e,
+                        Ok(_) => HostRet::Bool(ctx.world.swap_model_block(IVec3::from(pos), b)),
+                    },
+                )
             }
         },
         // Biomes are column-level data fixed at generation (saved overlays
@@ -416,6 +579,197 @@ mod tests {
                 find(&mut store, [10, 60, 10], [20, 70, 20], stone),
                 None,
                 "a box reaching an unloaded column is unreadable whole"
+            );
+        });
+    }
+
+    /// A non-finite prim is REFUSED, not quietly dropped — because the engine
+    /// answers an unchanged resubmission by comparing the submitted prims, and
+    /// `NaN != NaN`. Dropping it would leave a machine at rest logging a
+    /// replication delta every tick for a box that draws nothing, which is a
+    /// pathology with no local symptom at all.
+    #[test]
+    fn a_non_finite_draw_prim_is_refused_rather_than_dropped() {
+        let mut store = ModStoreData::new("alpha", 1);
+        let nan = mod_api::DrawPrim::Cuboid {
+            min: [0.0, 0.0, 0.0],
+            max: [1.0, f32::NAN, 1.0],
+            tile: "stone".into(),
+            tint: [255, 255, 255],
+            emissive: false,
+        };
+        // Refused BEFORE the sim scope is consulted (there is none here), so a
+        // malformed submission cannot depend on where the caller was.
+        match handle_host_call(
+            &mut store,
+            HostCall::SetBlockDraw {
+                pos: [0, 0, 0],
+                prims: vec![nan],
+            },
+        ) {
+            HostRet::Error(e) => assert!(e.contains("non-finite"), "got '{e}'"),
+            other => panic!("a NaN corner answered {other:?}"),
+        }
+    }
+
+    /// THE TWO DRAW CALLS ANSWER A FOREIGN BLOCK DIFFERENTLY, and that is a
+    /// decision rather than an oversight — so it is pinned here, because three
+    /// doc comments had already drifted into describing the single call's
+    /// error as a `false`.
+    ///
+    /// A single submission naming a block the mod does not own is a mod bug:
+    /// it asked about one cell and got the cell wrong. A BATCHED submission is
+    /// the whole kind at once, and one of its machines being broken between
+    /// the read and the write is ordinary — erroring there would disable the
+    /// pack for losing a race it cannot avoid.
+    #[test]
+    fn a_batched_draw_answers_per_entry_where_the_single_call_errors() {
+        let mut store = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 4);
+        world.clear_world();
+        world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+        // An engine block: loaded, readable, and not this mod's.
+        world.set_block_world(4, 64, 4, Block::Stone);
+        let foreign = [4, 64, 4];
+
+        with_world_ctx(&mut world, || {
+            match handle_host_call(
+                &mut store,
+                HostCall::SetBlockDraw {
+                    pos: foreign,
+                    prims: Vec::new(),
+                },
+            ) {
+                HostRet::Error(e) => assert!(e.contains("not owned"), "got '{e}'"),
+                other => panic!("a foreign block answered {other:?}, not an error"),
+            }
+            match handle_host_call(
+                &mut store,
+                HostCall::SetBlockDraws {
+                    sets: vec![(foreign, Vec::new())],
+                },
+            ) {
+                HostRet::Bools(v) => assert_eq!(v, vec![false], "per entry, and the call survives"),
+                other => panic!("the batched form answered {other:?}"),
+            }
+        });
+    }
+
+    /// The router's arms are one long `|` chain per handler, so deleting or
+    /// moving a variant welds the arm that ended on it onto the next
+    /// handler's: every call above that line silently starts going somewhere
+    /// else, and the compiler only notices if a whole handler becomes
+    /// unreachable. Dispatched through `handle_host_call` — going straight to
+    /// `handle_block_call` would prove only that this file has the arm.
+    #[test]
+    fn block_presentation_calls_route_to_the_block_handler() {
+        let mut store = ModStoreData::new("alpha", 1);
+        for call in [
+            HostCall::SetBlockDraw {
+                pos: [0, 0, 0],
+                prims: Vec::new(),
+            },
+            HostCall::SetModelParts {
+                pos: [0, 0, 0],
+                parts: 0,
+                tint: None,
+            },
+            HostCall::SwapModelBlock {
+                pos: [0, 0, 0],
+                block: mod_api::BlockId(1),
+            },
+            HostCall::BlockLocalToWorld {
+                pos: [0, 0, 0],
+                points: Vec::new(),
+            },
+        ] {
+            let name = format!("{call:?}");
+            let ret = handle_host_call(&mut store, call);
+            assert!(
+                !matches!(&ret, HostRet::Error(e) if e.contains("mis-routed")),
+                "{name} did not reach the block handler: {ret:?}"
+            );
+        }
+    }
+
+    /// A footprint-local point must land inside the PLACED footprint at every
+    /// facing. This is the whole reason the call exists: an anchor plus a
+    /// fixed world offset is right at one facing and puts the point inside or
+    /// behind the machine at the other three, and a mod re-deriving the
+    /// placement transform is that same rule written a second time.
+    #[test]
+    fn a_footprint_local_point_follows_the_placed_facing() {
+        use crate::facing::Facing;
+
+        let mut store = ModStoreData::new("alpha", 1);
+        let base = crate::mathh::IVec3::new(4, 64, 4);
+        let kind = Block::FurnitureWorkbench
+            .model_kind()
+            .expect("fixture: a model block");
+        let size = crate::block_model::def(kind).cells.map(f32::from);
+        // Off centre on every axis, so a lost rotation cannot coincide with
+        // the right answer.
+        let local = [size[0] * 0.8, size[1] * 0.2, size[2] * 0.9];
+
+        let mut seen: Vec<[f32; 3]> = Vec::new();
+        for facing in [Facing::North, Facing::East, Facing::South, Facing::West] {
+            let mut world = World::new(1, 4);
+            world.clear_world();
+            for (cx, cz) in [(0, 0), (-1, 0), (0, -1), (-1, -1)] {
+                world.insert_empty_column_for_test(ChunkPos::new(cx, cz));
+            }
+            assert!(
+                world.place_model_block_facing(base, Block::FurnitureWorkbench, facing),
+                "fixture: the workbench places facing {facing:?}"
+            );
+            let (_, _, cells) = world.model_group(base).expect("fixture: a placed group");
+            with_world_ctx(&mut world, || {
+                let got = match handle_host_call(
+                    &mut store,
+                    HostCall::BlockLocalToWorld {
+                        pos: [base.x, base.y, base.z],
+                        points: vec![local],
+                    },
+                ) {
+                    HostRet::Points(Some(p)) => p[0],
+                    other => panic!("{facing:?}: {other:?}"),
+                };
+                let inside = cells.iter().any(|c| {
+                    (0..3).all(|a| {
+                        let lo = [c.x, c.y, c.z][a] as f32;
+                        got[a] >= lo && got[a] <= lo + 1.0
+                    })
+                });
+                assert!(inside, "{facing:?}: {got:?} fell outside {cells:?}");
+                seen.push(got);
+            });
+        }
+        assert!(
+            seen.iter().any(|p| p != &seen[0]),
+            "the four facings all answered {:?} — the placement rotation is gone",
+            seen[0]
+        );
+    }
+
+    /// Every other mod read of a cell gates on stream finality; this one has
+    /// the extra reason that a machine's FACING is exactly what the saved
+    /// overlay about to land carries.
+    #[test]
+    fn local_to_world_gates_an_unreadable_cell() {
+        let mut store = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 4);
+        world.clear_world();
+        world.insert_empty_column_for_test(ChunkPos::new(0, 0));
+        with_world_ctx(&mut world, || {
+            assert_eq!(
+                handle_host_call(
+                    &mut store,
+                    HostCall::BlockLocalToWorld {
+                        pos: [512, 64, 512],
+                        points: vec![[0.5, 0.5, 0.5]],
+                    },
+                ),
+                HostRet::Points(None)
             );
         });
     }

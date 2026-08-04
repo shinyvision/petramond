@@ -52,9 +52,9 @@ pub enum GuestCall {
         section_pos: [i32; 3],
         /// The world seed — feed it to the SDK's positional RNG.
         seed: u32,
-        /// 4096-byte snapshot of the section as of this attach point (engine
-        /// stages + earlier hooks applied), layout `y*256 + z*16 + x`.
-        blocks: Vec<u8>,
+        /// 4096-cell block-id snapshot of the section as of this attach point
+        /// (engine stages + earlier hooks applied), layout `y*256 + z*16 + x`.
+        blocks: Vec<u16>,
         /// 256 entries (`z*16 + x`), the column's post-cave bare-ground top
         /// (world Y, before vegetation/trees; below `sea_level` = submerged
         /// or floorless). Identical for every section of one column.
@@ -75,7 +75,7 @@ pub enum GuestCall {
         stage: WorldgenStage,
         section_pos: [i32; 3],
         seed: u32,
-        blocks: Vec<u8>,
+        blocks: Vec<u16>,
         surface_heights: Vec<i32>,
         biomes: Vec<u8>,
         sea_level: i32,
@@ -159,8 +159,10 @@ pub enum GuestCall {
     /// every cell of one custom shape kind in a section, in one batch. Run on the
     /// server `wasm` AND re-run against the client replica for prediction — each
     /// cell's reply MUST be a pure function of that cell's [`CellInput`] (same
-    /// determinism contract as [`GuestCall::GenFeature`]; see the per-cell purity
-    /// note on the [`crate::shape`] module). → [`GuestRet::BakedSim`].
+    /// determinism contract as [`GuestCall::GenFeature`]; the full rule is the
+    /// "Per-cell purity" section at the top of `mod-api/src/shape.rs`, which is
+    /// a private module — the types it defines are re-exported flat, its prose
+    /// is not). → [`GuestRet::BakedSim`].
     BakeShapeSim {
         shape_kind: u8,
         cells: Vec<CellInput>,
@@ -210,7 +212,7 @@ pub enum GuestRet {
     /// Reply to a `Terrain` [`GuestCall::GenStage`]: the complete 4096-block
     /// section fill (layout `y*256 + z*16 + x`). Must be exactly 4096
     /// registered ids.
-    GenBlocks(#[serde(with = "serde_bytes")] Vec<u8>),
+    GenBlocks(Vec<u16>),
     /// Reply to a `Climate` [`GuestCall::GenStage`]: the 256-entry column
     /// biome map (`z*16 + x`). Must be exactly 256 valid biome ids.
     GenBiomes(#[serde(with = "serde_bytes")] Vec<u8>),

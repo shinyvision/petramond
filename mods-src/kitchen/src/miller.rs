@@ -19,9 +19,9 @@
 
 use mod_sdk::*;
 
-use crate::machine::{
+use machine_core::{
     consume_one, merge_output, output_accepts, write_changed_slots, Caches, Machine, MachineSpec,
-    StepCtx,
+    Presentation, StepCtx,
 };
 
 const STATE_KEY: &str = "kitchen:mill_state";
@@ -45,8 +45,9 @@ impl MachineSpec for MillerSpec {
     const BLOCK_KEY: &'static str = "kitchen:miller";
     /// The output-holding variant: same authored model with the `flour` cube
     /// visible (the empty row lists it in `hidden_parts`).
-    const VARIANT_KEY: &'static str = "kitchen:miller_full";
+    const VARIANT_KEYS: &'static [&'static str] = &["kitchen:miller_full"];
     const ANCHORS_KEY: &'static str = "kitchen:millers";
+    const STATE_KEY: &'static str = STATE_KEY;
 
     /// One miller's game tick. Writes back only what changed. A `None`
     /// container = never opened, never written — but the machine still steps
@@ -54,14 +55,15 @@ impl MachineSpec for MillerSpec {
     /// strand the flour cube).
     fn step(
         &mut self,
-        ctx: &StepCtx,
+        ctx: &StepCtx<'_>,
         caches: &mut Caches,
         slots: Option<Vec<Option<ItemStackData>>>,
+        stored: &mut Vec<u8>,
+        _out: &mut Presentation,
     ) {
         let mut slots = slots.unwrap_or_default();
         slots.resize(2, None);
-        let state_bytes = section_kv_get(ctx.pos, STATE_KEY).unwrap_or_default();
-        let mut progress = ByteReader::new(&state_bytes).u32().unwrap_or(0);
+        let mut progress = ByteReader::new(stored).u32().unwrap_or(0);
         let before_progress = progress;
         let before_slots = slots.clone();
 
@@ -90,12 +92,12 @@ impl MachineSpec for MillerSpec {
 
         write_changed_slots(ctx.pos, &before_slots, &slots);
         if progress != before_progress {
-            section_kv_set(ctx.pos, STATE_KEY, progress.to_le_bytes().to_vec());
+            *stored = progress.to_le_bytes().to_vec();
         }
         // The flour cube shows exactly while the output holds anything.
         // Compared against the CURRENT block, so the flip is idempotent and
         // self-healing, and still crosses the ABI only on a real mismatch.
-        if let Some(full) = ctx.variant {
+        if let Some(full) = ctx.variant(0) {
             let want = if slots[SLOT_OUTPUT].is_some() {
                 full
             } else {
@@ -105,8 +107,8 @@ impl MachineSpec for MillerSpec {
                 swap_model_block(ctx.pos, want);
             }
         }
-        if ctx.gui_open {
-            gui_state_set(
+        if ctx.gui_open() {
+            ctx.publish(
                 "kitchen:mill01",
                 GuiValue::F32(progress as f32 / MILL_TICKS as f32),
             );

@@ -50,7 +50,7 @@ pub fn style_key(kind: &NodeKind) -> Option<&'static str> {
         | NodeKind::List { .. }
         | NodeKind::Gauge { .. }
         | NodeKind::Hook
-        | NodeKind::Tooltip => return None,
+        | NodeKind::Tooltip { .. } => return None,
     })
 }
 
@@ -84,7 +84,7 @@ pub fn pointer_target(kind: &NodeKind) -> bool {
         | NodeKind::Badge { .. }
         | NodeKind::Alert { .. }
         | NodeKind::Hook
-        | NodeKind::Tooltip => false,
+        | NodeKind::Tooltip { .. } => false,
     }
 }
 
@@ -106,7 +106,7 @@ mod tests {
             NodeKind::Column,
             NodeKind::Spacer,
             NodeKind::Hook,
-            NodeKind::Tooltip,
+            NodeKind::Tooltip { hover: None },
         ] {
             let container = matches!(
                 kind,

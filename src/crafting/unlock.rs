@@ -36,7 +36,7 @@ struct Gate {
 pub struct UnlockIndex {
     gates: Vec<Gate>,
     /// Item id → gates naming it (directly or through a tag it carries).
-    by_item: HashMap<u8, Vec<u32>>,
+    by_item: HashMap<u16, Vec<u32>>,
 }
 
 impl UnlockIndex {

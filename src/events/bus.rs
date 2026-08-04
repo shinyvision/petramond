@@ -60,11 +60,26 @@ pub(crate) struct SimCtx<'a> {
     pub queue: &'a mut PostQueue,
 }
 
-/// One NON-acting session lent into [`with_sessions_scope`] — its stable id
-/// and its authoritative player.
+/// One NON-acting session lent into [`with_sessions_scope`] — its stable id,
+/// its authoritative player, and the two things a per-player GUI write needs:
+/// that session's own state map and what it currently has open.
 pub(crate) struct SessionPlayerRef<'a> {
     pub id: PlayerId,
     pub player: &'a mut Player,
+    /// This session's mod-GUI state map. Lent alongside the player because a
+    /// tick system's gauges belong to whoever is LOOKING, and the acting
+    /// session (host, session 0) is nobody in particular on a server.
+    pub gui_state: &'a mut std::sync::Arc<crate::gui::GuiStateMap>,
+    /// The open GUI session: kind, and the cell it was opened on. `None` =
+    /// nothing open (or a non-mod screen).
+    pub gui: Option<OpenGui>,
+}
+
+/// One session's open GUI, as the roster publishes it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OpenGui {
+    pub kind: crate::gui::GuiKind,
+    pub anchor: Option<crate::mathh::IVec3>,
 }
 
 // The sessions-view seam ships ahead of its first in-engine consumer (it
@@ -74,6 +89,8 @@ pub(crate) struct SessionPlayerRef<'a> {
 struct ScopeEntry {
     id: PlayerId,
     player: *mut Player,
+    gui_state: *mut std::sync::Arc<crate::gui::GuiStateMap>,
+    gui: Option<OpenGui>,
 }
 
 /// The published sessions roster: the acting session's identity plus raw
@@ -86,6 +103,9 @@ struct ScopeData {
     acting: PlayerId,
     /// The acting session's position in the full session order.
     acting_index: usize,
+    /// What the ACTING session has open — its map is the live `SimCtx` borrow,
+    /// so only this half of it can ride the roster.
+    acting_gui: Option<OpenGui>,
     others: Vec<ScopeEntry>,
 }
 
@@ -110,6 +130,7 @@ thread_local! {
 pub(crate) fn with_sessions_scope<R>(
     acting: PlayerId,
     acting_index: usize,
+    acting_gui: Option<OpenGui>,
     others: Vec<SessionPlayerRef<'_>>,
     f: impl FnOnce() -> R,
 ) -> R {
@@ -126,12 +147,15 @@ pub(crate) fn with_sessions_scope<R>(
         .map(|o| ScopeEntry {
             id: o.id,
             player: o.player as *mut Player,
+            gui_state: o.gui_state as *mut std::sync::Arc<crate::gui::GuiStateMap>,
+            gui: o.gui,
         })
         .collect();
     let prev = SESSIONS_SCOPE.with(|s| {
         s.borrow_mut().replace(ScopeData {
             acting,
             acting_index,
+            acting_gui,
             others: entries,
         })
     });
@@ -197,6 +221,66 @@ impl SimCtx<'_> {
             // same player while `f` runs.
             Hit::Other(ptr) => Some(f(unsafe { &mut *ptr })),
         }
+    }
+
+    /// Lend session `id`'s MOD-GUI state map to `f`, the same routing
+    /// [`with_player`](Self::with_player) does: the acting session resolves to
+    /// the one live borrow, any other through the roster. `None` = no such
+    /// session (or no roster published).
+    ///
+    /// This is the seam under a per-player gauge. Without it a tick system
+    /// could only write the ACTING session's map — and the acting session for
+    /// a tick stage is the host, so a machine's readings reached exactly one
+    /// player however many were standing at machines.
+    pub(crate) fn with_gui_state<R>(
+        &mut self,
+        id: PlayerId,
+        f: impl FnOnce(&mut std::sync::Arc<crate::gui::GuiStateMap>) -> R,
+    ) -> Option<R> {
+        enum Hit {
+            Acting,
+            Other(*mut std::sync::Arc<crate::gui::GuiStateMap>),
+        }
+        let hit = SESSIONS_SCOPE.with(|s| {
+            let scope = s.borrow();
+            let d = scope.as_ref()?;
+            if d.acting == id {
+                return Some(Hit::Acting);
+            }
+            d.others
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| Hit::Other(e.gui_state))
+        })?;
+        match hit {
+            Hit::Acting => Some(f(self.gui_state)),
+            // SAFETY: as `with_player` — the pointer came from a live `&mut`
+            // to a NON-acting session's map (so it cannot alias
+            // `self.gui_state`), the publisher keeps the storage untouched for
+            // the scope's extent, and the `&mut self` receiver plus the
+            // module-private scope internals leave no second path to it.
+            Hit::Other(ptr) => Some(f(unsafe { &mut *ptr })),
+        }
+    }
+
+    /// Every connected session that currently has a GUI open, in session
+    /// order: `(id, kind, anchor cell)`. Empty when no roster is published.
+    pub(crate) fn gui_viewers(&self) -> Vec<(PlayerId, OpenGui)> {
+        SESSIONS_SCOPE.with(|s| {
+            let scope = s.borrow();
+            let Some(d) = scope.as_ref() else {
+                return Vec::new();
+            };
+            let mut out: Vec<(PlayerId, OpenGui)> = d
+                .others
+                .iter()
+                .map(|e| (e.id, e.gui))
+                .chain(std::iter::once((d.acting, d.acting_gui)))
+                .filter_map(|(id, gui)| gui.map(|g| (id, g)))
+                .collect();
+            out.sort_by_key(|(id, _)| id.0);
+            out
+        })
     }
 }
 
@@ -513,11 +597,14 @@ mod tests {
             assert!(ctx.with_player(PlayerId(0), |_| ()).is_none());
         }
 
+        let mut other_gui = crate::gui::empty_gui_state();
         let others = vec![SessionPlayerRef {
             id: PlayerId(0),
             player: &mut other,
+            gui_state: &mut other_gui,
+            gui: None,
         }];
-        with_sessions_scope(PlayerId(1), 1, others, || {
+        with_sessions_scope(PlayerId(1), 1, None, others, || {
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut acting,

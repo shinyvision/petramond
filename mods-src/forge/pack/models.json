@@ -1,0 +1,60 @@
+{
+  "models": [
+    {
+      "key": "forge:pottery_table",
+      "model_file": "models/pottery_table.bbmodel",
+      "cells": [
+        2,
+        2,
+        1
+      ],
+      "orientation": "left_to_right",
+      "fit": "native"
+    },
+    {
+      "key": "forge:forging_furnace",
+      "model_file": "models/forging_furnace.bbmodel",
+      "cells": [
+        2,
+        3,
+        2
+      ],
+      "orientation": "left_to_right",
+      "fit": "native",
+      "parts": [
+        "coals"
+      ],
+      "tint_parts": []
+    },
+    {
+      "key": "forge:forging_furnace_lit",
+      "model_file": "models/forging_furnace.bbmodel",
+      "cells": [
+        2,
+        3,
+        2
+      ],
+      "orientation": "left_to_right",
+      "fit": "native",
+      "parts": [
+        "coals"
+      ],
+      "tint_parts": []
+    },
+    {
+      "key": "forge:forging_furnace_pour",
+      "model_file": "models/forging_furnace.bbmodel",
+      "cells": [
+        2,
+        3,
+        2
+      ],
+      "orientation": "left_to_right",
+      "fit": "native",
+      "parts": [
+        "coals"
+      ],
+      "tint_parts": []
+    }
+  ]
+}

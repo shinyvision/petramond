@@ -120,6 +120,10 @@ pub(in crate::render) struct VisibleSection {
     translucent_quads: u32,
     model_index_start: u32,
     model_idx_count: u32,
+    /// The section's alpha-blend model face range in the column index buffer
+    /// (drawn by the model-blend pass; see [`crate::mesh::ChunkMesh::model_blend_idx`]).
+    model_blend_index_start: u32,
+    model_blend_idx_count: u32,
 }
 
 /// Per-species GPU resources for the mob pipeline, built once at renderer init by
@@ -236,6 +240,16 @@ struct ItemEntityPass {
     visible: Vec<ItemEntityInstance>,
     /// Dropped item-entities to draw in the world this frame.
     instances: Vec<ItemEntityInstance>,
+    /// Mod-submitted per-block draw sets for this frame. They share this
+    /// pass's stream deliberately: block atlas, CPU-lit, no re-mesh.
+    block_draws: Vec<crate::render::BlockDrawInstance>,
+    /// INDICES into `block_draws` that survived THIS frame's camera — the
+    /// draw-set twin of `visible`, and separate for the same reason: the
+    /// published list is state, so filtering in place would make the next
+    /// frame's contents depend on where the camera happened to point during
+    /// this one. Indices rather than rows: a re-cull must not pay a refcount
+    /// pair and a struct copy per visible set to record a verdict.
+    block_draws_visible: Vec<u32>,
     /// Dropped bbmodel item-entities (world-space ItemVertex, model atlas), drawn by the
     /// model pipeline in the model pass — the explicit-UV counterpart of `draw`.
     model_draw: DynamicDraw,
@@ -689,6 +703,10 @@ pub struct Renderer {
     /// Pipeline for the chunk `ModelVertex` stream (day/night-aware lighting);
     /// `model_pipe` (mob layout) keeps drawing dropped bbmodel item entities.
     world_model_pipe: wgpu::RenderPipeline,
+    /// The alpha-BLEND twin of `world_model_pipe` for the chunk's
+    /// semi-transparent bbmodel faces; draws in the model-blend pass after the
+    /// translucent-block pass.
+    world_model_blend_pipe: wgpu::RenderPipeline,
     /// Model→terrain contact-shadow pipeline (multiplicative, depth read-only,
     /// own coplanar bias); draws the packed columns' contact streams between
     /// the opaque and sky passes.

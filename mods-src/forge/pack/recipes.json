@@ -1,0 +1,485 @@
+{
+    "recipes": [
+        {
+            "type": "crafting",
+            "recipe": "forge:pottery_table",
+            "station": "petramond:crafting_table",
+            "ingredients": [
+                {
+                    "item": "petramond:furnace",
+                    "count": 1
+                },
+                {
+                    "item": "petramond:cobblestone",
+                    "count": 4
+                },
+                {
+                    "item": "petramond:stone",
+                    "count": 3
+                }
+            ],
+            "result": {
+                "item": "forge:pottery_table",
+                "count": 1
+            }
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:forging_furnace",
+            "station": "petramond:crafting_table",
+            "ingredients": [
+                {
+                    "item": "petramond:furnace",
+                    "count": 1
+                },
+                {
+                    "item": "petramond:stone",
+                    "count": 8
+                },
+                {
+                    "item": "petramond:cobblestone",
+                    "count": 8
+                }
+            ],
+            "result": {
+                "item": "forge:forging_furnace",
+                "count": 1
+            }
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:clay_ingot_mould",
+            "station": "forge:pottery_table",
+            "ingredients": [
+                {
+                    "item": "petramond:clay",
+                    "count": 4
+                }
+            ],
+            "result": {
+                "item": "forge:clay_ingot_mould",
+                "count": 1
+            }
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:fire_ingot_mould",
+            "class": "petramond:smelting",
+            "ingredient": "forge:clay_ingot_mould",
+            "result": "forge:ingot_mould"
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:clay_pickaxe_head_mould",
+            "station": "forge:pottery_table",
+            "ingredients": [
+                {
+                    "item": "petramond:clay",
+                    "count": 4
+                }
+            ],
+            "result": {
+                "item": "forge:clay_pickaxe_head_mould",
+                "count": 1
+            }
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:fire_pickaxe_head_mould",
+            "class": "petramond:smelting",
+            "ingredient": "forge:clay_pickaxe_head_mould",
+            "result": "forge:pickaxe_head_mould"
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:clay_axe_head_mould",
+            "station": "forge:pottery_table",
+            "ingredients": [
+                {
+                    "item": "petramond:clay",
+                    "count": 4
+                }
+            ],
+            "result": {
+                "item": "forge:clay_axe_head_mould",
+                "count": 1
+            }
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:fire_axe_head_mould",
+            "class": "petramond:smelting",
+            "ingredient": "forge:clay_axe_head_mould",
+            "result": "forge:axe_head_mould"
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:clay_shovel_head_mould",
+            "station": "forge:pottery_table",
+            "ingredients": [
+                {
+                    "item": "petramond:clay",
+                    "count": 4
+                }
+            ],
+            "result": {
+                "item": "forge:clay_shovel_head_mould",
+                "count": 1
+            }
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:fire_shovel_head_mould",
+            "class": "petramond:smelting",
+            "ingredient": "forge:clay_shovel_head_mould",
+            "result": "forge:shovel_head_mould"
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:clay_shears_mould",
+            "station": "forge:pottery_table",
+            "ingredients": [
+                {
+                    "item": "petramond:clay",
+                    "count": 4
+                }
+            ],
+            "result": {
+                "item": "forge:clay_shears_mould",
+                "count": 1
+            }
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:fire_shears_mould",
+            "class": "petramond:smelting",
+            "ingredient": "forge:clay_shears_mould",
+            "result": "forge:shears_mould"
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_plate_raw_iron",
+            "class": "forge:cast_plate",
+            "ingredient": "petramond:raw_iron",
+            "result": "forge:iron_plate"
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_ingot_raw_iron",
+            "class": "forge:cast_ingot",
+            "ingredient": "petramond:raw_iron",
+            "result": "petramond:iron_ingot"
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_plate_raw_copper",
+            "class": "forge:cast_plate",
+            "ingredient": "petramond:raw_copper",
+            "result": "forge:copper_plate"
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_ingot_raw_copper",
+            "class": "forge:cast_ingot",
+            "ingredient": "petramond:raw_copper",
+            "result": "petramond:copper_ingot"
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_plate_raw_gold",
+            "class": "forge:cast_plate",
+            "ingredient": "petramond:raw_gold",
+            "result": "forge:gold_plate"
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_ingot_raw_gold",
+            "class": "forge:cast_ingot",
+            "ingredient": "petramond:raw_gold",
+            "result": "petramond:gold_ingot"
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_pickaxe_head_raw_iron",
+            "class": "forge:cast_pickaxe_head",
+            "ingredient": "petramond:raw_iron",
+            "result": "forge:iron_pickaxe_head"
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_axe_head_raw_iron",
+            "class": "forge:cast_axe_head",
+            "ingredient": "petramond:raw_iron",
+            "result": "forge:iron_axe_head"
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_shovel_head_raw_iron",
+            "class": "forge:cast_shovel_head",
+            "ingredient": "petramond:raw_iron",
+            "result": "forge:iron_shovel_head"
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_shears_raw_iron",
+            "class": "forge:cast_shears",
+            "ingredient": "petramond:raw_iron",
+            "result": "petramond:shears"
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:iron_pickaxe",
+            "station": "petramond:inventory",
+            "ingredients": [
+                {
+                    "item": "forge:iron_pickaxe_head",
+                    "count": 1
+                },
+                {
+                    "item": "petramond:stick",
+                    "count": 2
+                }
+            ],
+            "result": {
+                "item": "petramond:iron_pickaxe",
+                "count": 1
+            }
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:iron_axe",
+            "station": "petramond:inventory",
+            "ingredients": [
+                {
+                    "item": "forge:iron_axe_head",
+                    "count": 1
+                },
+                {
+                    "item": "petramond:stick",
+                    "count": 2
+                }
+            ],
+            "result": {
+                "item": "petramond:iron_axe",
+                "count": 1
+            }
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:iron_shovel",
+            "station": "petramond:inventory",
+            "ingredients": [
+                {
+                    "item": "forge:iron_shovel_head",
+                    "count": 1
+                },
+                {
+                    "item": "petramond:stick",
+                    "count": 2
+                }
+            ],
+            "result": {
+                "item": "petramond:iron_shovel",
+                "count": 1
+            }
+        },
+        {
+            "patch": "petramond:iron_pickaxe",
+            "data": {
+                "petramond:enabled": false
+            }
+        },
+        {
+            "patch": "petramond:iron_axe",
+            "data": {
+                "petramond:enabled": false
+            }
+        },
+        {
+            "patch": "petramond:iron_shovel",
+            "data": {
+                "petramond:enabled": false
+            }
+        },
+        {
+            "patch": "petramond:shears",
+            "data": {
+                "petramond:enabled": false
+            }
+        },
+        {
+            "patch": "petramond:raw_iron_to_iron_ingot",
+            "data": {
+                "petramond:enabled": false
+            }
+        },
+        {
+            "patch": "petramond:raw_copper_to_copper_ingot",
+            "data": {
+                "petramond:enabled": false
+            }
+        },
+        {
+            "patch": "petramond:raw_gold_to_gold_ingot",
+            "data": {
+                "petramond:enabled": false
+            }
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_pickaxe_head_copper",
+            "class": "forge:cast_pickaxe_head",
+            "ingredient": "petramond:raw_copper",
+            "result": "forge:copper_pickaxe_head"
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:copper_pickaxe_from_head",
+            "station": "petramond:inventory",
+            "ingredients": [
+                {
+                    "item": "forge:copper_pickaxe_head",
+                    "count": 1
+                },
+                {
+                    "item": "petramond:stick",
+                    "count": 2
+                }
+            ],
+            "result": {
+                "item": "forge:copper_pickaxe",
+                "count": 1
+            }
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_axe_head_copper",
+            "class": "forge:cast_axe_head",
+            "ingredient": "petramond:raw_copper",
+            "result": "forge:copper_axe_head"
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:copper_axe_from_head",
+            "station": "petramond:inventory",
+            "ingredients": [
+                {
+                    "item": "forge:copper_axe_head",
+                    "count": 1
+                },
+                {
+                    "item": "petramond:stick",
+                    "count": 2
+                }
+            ],
+            "result": {
+                "item": "forge:copper_axe",
+                "count": 1
+            }
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_shovel_head_copper",
+            "class": "forge:cast_shovel_head",
+            "ingredient": "petramond:raw_copper",
+            "result": "forge:copper_shovel_head"
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:copper_shovel_from_head",
+            "station": "petramond:inventory",
+            "ingredients": [
+                {
+                    "item": "forge:copper_shovel_head",
+                    "count": 1
+                },
+                {
+                    "item": "petramond:stick",
+                    "count": 2
+                }
+            ],
+            "result": {
+                "item": "forge:copper_shovel",
+                "count": 1
+            }
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_pickaxe_head_gold",
+            "class": "forge:cast_pickaxe_head",
+            "ingredient": "petramond:raw_gold",
+            "result": "forge:gold_pickaxe_head"
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:gold_pickaxe_from_head",
+            "station": "petramond:inventory",
+            "ingredients": [
+                {
+                    "item": "forge:gold_pickaxe_head",
+                    "count": 1
+                },
+                {
+                    "item": "petramond:stick",
+                    "count": 2
+                }
+            ],
+            "result": {
+                "item": "forge:gold_pickaxe",
+                "count": 1
+            }
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_axe_head_gold",
+            "class": "forge:cast_axe_head",
+            "ingredient": "petramond:raw_gold",
+            "result": "forge:gold_axe_head"
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:gold_axe_from_head",
+            "station": "petramond:inventory",
+            "ingredients": [
+                {
+                    "item": "forge:gold_axe_head",
+                    "count": 1
+                },
+                {
+                    "item": "petramond:stick",
+                    "count": 2
+                }
+            ],
+            "result": {
+                "item": "forge:gold_axe",
+                "count": 1
+            }
+        },
+        {
+            "type": "processing",
+            "recipe": "forge:cast_shovel_head_gold",
+            "class": "forge:cast_shovel_head",
+            "ingredient": "petramond:raw_gold",
+            "result": "forge:gold_shovel_head"
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:gold_shovel_from_head",
+            "station": "petramond:inventory",
+            "ingredients": [
+                {
+                    "item": "forge:gold_shovel_head",
+                    "count": 1
+                },
+                {
+                    "item": "petramond:stick",
+                    "count": 2
+                }
+            ],
+            "result": {
+                "item": "forge:gold_shovel",
+                "count": 1
+            }
+        }
+    ]
+}

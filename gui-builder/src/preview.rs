@@ -14,7 +14,8 @@ use std::sync::Arc;
 
 // ---- document images ----------------------------------------------------------
 
-/// PNGs referenced by `image`/`rotimage` nodes, loaded from beside the project.
+/// PNGs referenced by `image`/`rotimage` nodes and image-backed `button`
+/// faces, loaded from beside the project.
 /// Generated samples keep shipped document paths, so those also fall back to
 /// the game's `assets/ui/documents/` directory. Missing images resolve to
 /// nothing and simply don't draw.
@@ -27,16 +28,26 @@ pub struct DiskImages {
 
 impl DiskImages {
     pub fn empty() -> DiskImages {
-        DiskImages { names: Vec::new(), images: Vec::new(), key: (Vec::new(), None) }
+        DiskImages {
+            names: Vec::new(),
+            images: Vec::new(),
+            key: (Vec::new(), None),
+        }
     }
 
     fn wanted(doc: &Document) -> Vec<String> {
         let mut names = Vec::new();
         doc.root.visit(&mut |n| {
-            if let petramond_ui::NodeKind::Image { image, .. } | petramond_ui::NodeKind::Rotimage { image, .. } =
-                &n.kind
-            {
-                if !names.contains(image) {
+            let name = match &n.kind {
+                petramond_ui::NodeKind::Image { image, .. }
+                | petramond_ui::NodeKind::Rotimage { image, .. } => Some(image),
+                petramond_ui::NodeKind::Button {
+                    image: Some(image), ..
+                } => Some(image),
+                _ => None,
+            };
+            if let Some(image) = name {
+                if !image.is_empty() && !names.contains(image) {
                     names.push(image.clone());
                 }
             }
@@ -74,7 +85,10 @@ impl DiskImages {
                 let img = img.to_rgba8();
                 let size = img.dimensions();
                 names.push(name.clone());
-                images.push(ImageData { rgba: img.into_raw(), size });
+                images.push(ImageData {
+                    rgba: img.into_raw(),
+                    size,
+                });
             }
         }
         DiskImages { names, images, key }
@@ -151,7 +165,18 @@ pub fn render_project(
     let images = DiskImages::load(&project.document, doc_dir);
     let screen = project.editor.screen;
     let scale = project.editor.preview_scale.clamp(1, 4) as i32;
-    (render_rgba(&project.document, theme, &state, &images, screen, scale, None), screen)
+    (
+        render_rgba(
+            &project.document,
+            theme,
+            &state,
+            &images,
+            screen,
+            scale,
+            None,
+        ),
+        screen,
+    )
 }
 
 // ---- editor-chrome geometry -------------------------------------------------------
@@ -179,7 +204,11 @@ pub fn layout_rects(
 ) -> Vec<RectEntry> {
     // Pointer-identity map doc node -> path.
     let mut by_ptr: Vec<(*const petramond_ui::Node, NodePath)> = Vec::new();
-    fn walk(n: &petramond_ui::Node, path: &mut NodePath, out: &mut Vec<(*const petramond_ui::Node, NodePath)>) {
+    fn walk(
+        n: &petramond_ui::Node,
+        path: &mut NodePath,
+        out: &mut Vec<(*const petramond_ui::Node, NodePath)>,
+    ) {
         out.push((n as *const _, path.clone()));
         for (i, c) in n.children.iter().enumerate() {
             path.push(i);
@@ -207,9 +236,8 @@ pub fn layout_rects(
             continue;
         };
         let slot_role = match &inst.node.kind {
-            petramond_ui::NodeKind::Slot { role, .. } | petramond_ui::NodeKind::SlotGrid { role, .. } => {
-                Some(role.clone())
-            }
+            petramond_ui::NodeKind::Slot { role, .. }
+            | petramond_ui::NodeKind::SlotGrid { role, .. } => Some(role.clone()),
             _ => None,
         };
         out.push(RectEntry {
@@ -262,7 +290,10 @@ mod tests {
         // Root plus every child expands (no bindings hide anything).
         assert_eq!(rects.len(), 1 + p.document.root.children.len());
         assert_eq!(rects[0].path, Vec::<usize>::new());
-        let storage = rects.iter().find(|r| r.slot_role.as_deref() == Some("storage")).unwrap();
+        let storage = rects
+            .iter()
+            .find(|r| r.slot_role.as_deref() == Some("storage"))
+            .unwrap();
         let node = crate::doc_edit::node_at(&p.document.root, &storage.path).unwrap();
         assert_eq!(node.kind.type_name(), "slot_grid");
         assert!(storage.rect.w > 0 && storage.rect.h > 0);

@@ -530,10 +530,10 @@ impl World {
                             continue;
                         };
                         let (ox, oy, oz) = SectionPos::new(cx, cy, cz).origin_world();
-                        let blocks = section.blocks_slice();
+                        let blocks = section.blocks();
                         for _ in 0..RANDOM_TICK_SPEED {
                             let i = (self.sim.next_random() >> 16) as usize % SECTION_VOLUME;
-                            let id = blocks[i];
+                            let id = blocks.get(i);
                             if id == 0 {
                                 continue; // air — nothing ticks; the overwhelming majority
                             }

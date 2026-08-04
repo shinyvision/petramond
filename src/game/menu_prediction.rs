@@ -78,13 +78,18 @@ impl Game {
                 .get(i)
                 .map(|cell| slot_capacity(cell, held))
                 .unwrap_or(0),
-            MenuSlot::Container(i) if specs.get(i).is_some_and(|spec| !spec.take_only) => self
-                .menu_view
-                .container
-                .as_ref()
-                .and_then(|container| container.slots.get(i))
-                .map(|cell| slot_capacity(cell, held))
-                .unwrap_or(0),
+            // The same question the server's `drag_capacity` asks, through the
+            // same helper: a slot one side counts and the other refuses does
+            // not just snap that leg back — the split is by the NUMBER of
+            // destinations, so every other slot of the drag lands wrong too.
+            MenuSlot::Container(i) if crate::container::slot_admits(specs, i, Some(held.item)) => {
+                self.menu_view
+                    .container
+                    .as_ref()
+                    .and_then(|container| container.slots.get(i))
+                    .map(|cell| slot_capacity(cell, held))
+                    .unwrap_or(0)
+            }
             MenuSlot::CraftResult | MenuSlot::Container(_) | MenuSlot::Widget(_) => 0,
         }
     }
@@ -101,7 +106,16 @@ impl Game {
             MenuSlot::Inventory(i) => {
                 inventory.place_cursor_count_in_slot(i, wanted);
             }
-            MenuSlot::Container(i) if specs.get(i).is_some_and(|spec| !spec.take_only) => {
+            // The same question the server's drag asks, through the same
+            // helper. A leg the client mirrors and the server refuses is a
+            // stack that visibly lands and then snaps back.
+            MenuSlot::Container(i)
+                if crate::container::slot_admits(
+                    specs,
+                    i,
+                    inventory.cursor().map(|held| held.item),
+                ) =>
+            {
                 if let Some(cell) = menu
                     .container
                     .as_mut()
@@ -185,13 +199,7 @@ impl Game {
                     .as_mut()
                     .and_then(|container| container.slots.get_mut(i))
                 {
-                    if specs.get(i).is_some_and(|spec| spec.take_only) {
-                        inv.click_take_only_external_slot(cell, secondary);
-                    } else if secondary {
-                        inv.right_click_external_slot(cell);
-                    } else {
-                        inv.click_external_slot(cell);
-                    }
+                    inv.click_container_cell(specs.get(i), cell, secondary);
                 }
             }
             _ => {}

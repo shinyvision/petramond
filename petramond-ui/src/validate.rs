@@ -71,6 +71,10 @@ impl Document {
         }
         let mut seen_ids: HashSet<&str> = HashSet::new();
         walk(&self.root, "root", &mut seen_ids, styles, &mut issues);
+        // Hover anchors resolve against the WHOLE id set, so they get their
+        // own pass: a tooltip may sit earlier in document order than the
+        // widget it names.
+        check_hover_anchors(&self.root, "root", &seen_ids, &mut issues);
 
         if let Some(contract) = contract {
             let declared = self.role_slots();
@@ -99,6 +103,50 @@ impl Document {
             }
         }
         issues
+    }
+}
+
+/// Sprite-sheet grid rule shared by `image` and image-backed `button`:
+/// both dimensions must be non-zero.
+fn check_frames(frames: &Option<[u32; 2]>, issue: &mut impl FnMut(String)) {
+    if let Some([cols, rows]) = frames {
+        if *cols == 0 || *rows == 0 {
+            issue(format!("frames grid must be >= 1x1, got {cols}x{rows}"));
+        }
+    }
+}
+
+/// Animation-rate rule: when `fps` is present it must be positive and finite
+/// (anything else would silently rest on frame 0).
+fn check_fps(fps: &Option<f32>, issue: &mut impl FnMut(String)) {
+    if let Some(fps) = fps {
+        if !fps.is_finite() || *fps <= 0.0 {
+            issue(format!("fps must be positive and finite, got {fps}"));
+        }
+    }
+}
+
+/// A tooltip's `hover` anchor must name a widget that exists — a typo'd id
+/// would not error anywhere else, the tooltip would just never show.
+fn check_hover_anchors(
+    node: &Node,
+    path: &str,
+    ids: &HashSet<&str>,
+    issues: &mut Vec<DocIssue>,
+) {
+    if let NodeKind::Tooltip {
+        hover: Some(anchor),
+    } = &node.kind
+    {
+        if !ids.contains(anchor.as_str()) {
+            issues.push(DocIssue {
+                path: path.into(),
+                message: format!("tooltip hover anchor '{anchor}' names no widget id"),
+            });
+        }
+    }
+    for (i, child) in node.children.iter().enumerate() {
+        check_hover_anchors(child, &format!("{path}/{i}"), ids, issues);
     }
 }
 
@@ -153,7 +201,7 @@ fn walk<'a>(
                 issue("list cols must be >= 1".into());
             }
         }
-        NodeKind::Tooltip => {
+        NodeKind::Tooltip { .. } => {
             if node.children.is_empty() {
                 issue("tooltip needs at least one child".into());
             }
@@ -184,12 +232,23 @@ fn walk<'a>(
                 issue("rotimage needs an image name or an 'image' binding".into());
             }
         }
-        NodeKind::Image { image, .. } => {
+        NodeKind::Image {
+            image, frames, fps, ..
+        } => {
             if image.is_empty() && node.bind.image.is_none() {
                 issue("image needs a name or an 'image' binding".into());
             }
+            check_frames(frames, &mut issue);
+            check_fps(fps, &mut issue);
         }
-        NodeKind::Button { icon, .. } => {
+        NodeKind::Button {
+            icon,
+            image,
+            frames,
+            fps,
+            ..
+        } => {
+            let image_backed = image.as_deref().is_some_and(|s| !s.is_empty());
             if !node.children.is_empty()
                 && (node.bind.text.is_some()
                     || matches!(&node.kind, NodeKind::Button { text: Some(_), .. })
@@ -200,6 +259,18 @@ fn walk<'a>(
                         .into(),
                 );
             }
+            if image_backed
+                && (!node.children.is_empty()
+                    || node.bind.text.is_some()
+                    || matches!(&node.kind, NodeKind::Button { text: Some(_), .. })
+                    || icon.is_some())
+            {
+                issue(
+                    "an image-backed button carries no text, icon, or children; remove them".into(),
+                );
+            }
+            check_frames(frames, &mut issue);
+            check_fps(fps, &mut issue);
             if let (Some(styles), Some(icon)) = (styles, icon.as_deref()) {
                 if !styles.has_style(icon) {
                     issue(format!("unknown icon part '{icon}'"));
@@ -415,5 +486,48 @@ mod tests {
         assert!(overlapping.validate(None, None).iter().any(|issue| issue
             .message
             .contains("children replace its inline text/icon")));
+    }
+
+    #[test]
+    fn framed_nodes_validate_grid_fps_and_image_button_content() {
+        let d = doc(r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "column", "children": [
+                { "type": "image", "image": "a.png", "frames": [0, 2] },
+                { "type": "image", "image": "b.png", "fps": 0.0 },
+                { "type": "image", "image": "c.png", "fps": -2.0 },
+                { "type": "button", "id": "i1", "image": "d.png", "text": "Hi" },
+                { "type": "button", "id": "i2", "image": "d.png", "frames": [3, 0] },
+                { "type": "button", "id": "i3", "image": "d.png",
+                  "children": [ { "type": "label", "text": "x" } ] }
+            ] }
+        }"#);
+        let issues = d.validate(None, None);
+        let all = issues
+            .iter()
+            .map(|i| i.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let count = |needle: &str| issues.iter().filter(|i| i.message.contains(needle)).count();
+        assert_eq!(count("frames grid must be >= 1x1"), 2, "{all}");
+        assert_eq!(count("fps must be positive and finite"), 2, "{all}");
+        assert_eq!(
+            count("an image-backed button carries no text, icon, or children"),
+            2,
+            "{all}"
+        );
+    }
+
+    #[test]
+    fn framed_nodes_with_valid_animation_pass() {
+        let d = doc(r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "column", "children": [
+                { "type": "image", "image": "flame.png", "frames": [4, 1], "fps": 8.0,
+                  "bind": { "frame": "flame_frame" } },
+                { "type": "button", "id": "go", "image": "go.png", "frames": [2, 2], "fps": 4.0 }
+            ] }
+        }"#);
+        assert_eq!(d.validate(None, None), vec![]);
     }
 }

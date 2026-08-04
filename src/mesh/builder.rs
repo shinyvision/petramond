@@ -56,7 +56,7 @@ impl MeshOptions {
 pub fn build_section_mesh(
     section: &Section,
     pos: SectionPos,
-    neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_block: impl Fn(i32, i32, i32) -> u16,
     neighbour_cell_state: impl Fn(i32, i32, i32) -> ShapeState,
     neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_biome: impl Fn(i32, i32) -> u8,
@@ -81,7 +81,7 @@ pub fn build_section_mesh(
         MeshOptions::DETAILED,
         None,
     );
-    if !section.blocks_slice().contains(&Block::OakLeaves.id()) {
+    if !section.blocks_iter().any(|id| id == Block::OakLeaves.id()) {
         return mesh;
     }
     let far = section_geometry(
@@ -132,7 +132,7 @@ pub(crate) fn build_section_mesh_from_pad(
         MeshOptions::DETAILED,
         Some(&pad),
     );
-    if !section.blocks_slice().contains(&Block::OakLeaves.id()) {
+    if !section.blocks_iter().any(|id| id == Block::OakLeaves.id()) {
         return mesh;
     }
     let far = section_geometry(

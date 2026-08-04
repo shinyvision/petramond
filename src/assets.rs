@@ -243,6 +243,7 @@ fn discover_packs() -> Vec<Pack> {
     let order = manifest::resolve_load_order(&metas, |i, why| {
         log::error!("mod pack '{}' disabled: {why}", metas[i].dir_name);
     });
+    let order = enforce_id_budget(&found, &metas, order);
 
     order
         .into_iter()
@@ -262,6 +263,88 @@ fn discover_packs() -> Vec<Pack> {
             }
         })
         .collect()
+}
+
+/// Drop, from the resolved load order, any pack whose block/item rows would
+/// push a shared registry past its id ceiling — and re-run order resolution so
+/// a dropped pack's dependents go with it.
+///
+/// The ceiling is real (ids are save- and wire-relevant, so the width is a
+/// format decision, not a local one) but it is no longer tight: `Block` and
+/// `ItemType` are `u16`. What this rule guarantees is that reaching it is an
+/// ADMISSION outcome — the offending pack is disabled, loudly, and everything
+/// before it still runs — rather than a panic inside the shared registry
+/// bootstrap long after admission, which used to brick the game and name no
+/// pack.
+fn enforce_id_budget(
+    found: &[(String, PathBuf, PackManifest)],
+    metas: &[crate::modding::manifest::PackMeta],
+    order: Vec<usize>,
+) -> Vec<usize> {
+    use crate::modding::manifest::{self, ID_CAP, ID_CAPPED_CATALOGS};
+
+    // One catalog read per pack, reused for both capped catalogs. Admission
+    // already parsed these files; a second read here keeps the budget rule
+    // where the rest of the load-order policy lives.
+    let per_pack: Vec<Vec<(&'static str, Vec<String>)>> = order
+        .iter()
+        .map(|&i| manifest::registration_keys_by_catalog(&found[i].1).unwrap_or_default())
+        .collect();
+
+    let mut dropped: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    for (rel, engine_names) in [
+        (
+            ID_CAPPED_CATALOGS[0],
+            crate::block::ENGINE_BLOCK_NAMES as &[&str],
+        ),
+        (ID_CAPPED_CATALOGS[1], crate::item::ENGINE_ITEM_NAMES),
+    ] {
+        let costs: Vec<Vec<String>> = per_pack
+            .iter()
+            .map(|catalogs| {
+                catalogs
+                    .iter()
+                    .find(|(r, _)| *r == rel)
+                    .map(|(_, keys)| keys.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        for (slot, would_be) in manifest::id_budget_overflow(engine_names, &costs) {
+            log::error!(
+                "mod pack '{}' disabled: its {rel} rows would register {would_be} names, but \
+                 the registry caps at {ID_CAP}",
+                metas[order[slot]].dir_name
+            );
+            dropped.insert(order[slot]);
+        }
+    }
+    if dropped.is_empty() {
+        return order;
+    }
+    // Re-resolve so the dependency cascade takes the dropped packs' dependents
+    // with them, instead of leaving a pack running against content that is no
+    // longer there.
+    let survivors: Vec<usize> = order
+        .iter()
+        .copied()
+        .filter(|i| !dropped.contains(i))
+        .collect();
+    let sub: Vec<crate::modding::manifest::PackMeta> = survivors
+        .iter()
+        .map(|&i| crate::modding::manifest::PackMeta {
+            dir_name: metas[i].dir_name.clone(),
+            id: metas[i].id.clone(),
+            wasm: metas[i].wasm,
+            dependencies: metas[i].dependencies.clone(),
+            after: metas[i].after.clone(),
+        })
+        .collect();
+    manifest::resolve_load_order(&sub, |j, why| {
+        log::error!("mod pack '{}' disabled: {why}", sub[j].dir_name);
+    })
+    .into_iter()
+    .map(|j| survivors[j])
+    .collect()
 }
 
 /// Candidate absolute paths for the asset at `rel` (e.g. `recipes.json`), in

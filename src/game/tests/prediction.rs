@@ -157,6 +157,71 @@ fn accepted_menu_drag_prediction_reconciles_without_double_applying() {
     );
 }
 
+/// A drag leg over a FILTERED slot must be predicted exactly as the server
+/// applies it.
+///
+/// The two sides read their specs from different places (the client from the
+/// document, the server from its own list), so "does this slot admit what I am
+/// holding" is asked twice and can drift — and a drag splits the held stack by
+/// the NUMBER of admitting destinations, so a slot only one side counts moves
+/// the amount landing in every OTHER slot too. The divergence is never
+/// confined to the leg that snaps back.
+#[test]
+fn a_drag_leg_over_a_filtered_slot_predicts_what_the_server_applies() {
+    let mut game = game_on_empty_chunk();
+    let pos = IVec3::new(3, 64, 3);
+    game.server.world.set_block_world(3, 64, 3, Block::Furnace);
+    game.server
+        .world
+        .insert_furnace(pos, crate::block_model::DEFAULT_MODEL_FACING);
+    // Grass is neither fuel nor smeltable, so the furnace's fuel slot refuses
+    // it — the one slot of the gesture that is not a destination.
+    game.server.sessions[0]
+        .player
+        .inventory
+        .add(crate::item::ItemStack::new(
+            crate::item::ItemType::Grass,
+            10,
+        ));
+    game.server.sessions[0].player.inventory.click_slot(0);
+    game.server.open_furnace_screen_for(0, pos);
+    game.sync_self_view_for_test();
+    game.sync_menu_view_for_test();
+
+    game.game.menu_drag(
+        GuiKind::Furnace,
+        vec![
+            MenuSlot::Inventory(9),
+            MenuSlot::Container(crate::furnace::SLOT_FUEL),
+        ],
+        PointerButton::Primary,
+    );
+    let predicted_inv = game.game.self_view.inventory.slot(9).map(|s| s.count);
+    assert_eq!(
+        predicted_inv,
+        Some(10),
+        "the refused leg is not a destination, so the whole stack goes to the other one"
+    );
+
+    game.tick(TICK_DT, &GameInput::default());
+    assert_eq!(
+        game.server.sessions[0]
+            .player
+            .inventory
+            .slot(9)
+            .map(|s| s.count),
+        predicted_inv,
+        "the server split the same way the client predicted"
+    );
+    assert!(
+        game.server
+            .world
+            .container_at(pos)
+            .is_some_and(|c| c.slots[crate::furnace::SLOT_FUEL].is_none()),
+        "and nothing reached the filtered slot"
+    );
+}
+
 /// The one-by-one container fill: a plain click on an open chest's slot is a
 /// P1 prediction — the mirror slot and cursor move at click time, and the
 /// outcome batch reconciles to the same state, never back through the

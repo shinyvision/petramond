@@ -263,6 +263,22 @@ pub struct PlayerListEntry {
     pub state: PlayerSnapshot,
 }
 
+/// One session with a mod GUI open, as [`HostCall::GuiViewers`] reports it.
+///
+/// `anchor` is the cell the session was opened on — the SAME cell a machine is
+/// keyed at (its container anchor), so matching a viewer to one of your placed
+/// machines is an equality test, not a search. `None` for a GUI with no block
+/// behind it (a station, a programmatic `GuiOpen`).
+///
+/// [`HostCall::GuiViewers`]: crate::HostCall::GuiViewers
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct GuiViewerData {
+    pub player_id: PlayerId,
+    /// The GUI kind key (`mod_id:name`) this session has open.
+    pub kind: String,
+    pub anchor: Option<[i32; 3]>,
+}
+
 /// One core-selected candidate for programmatic hostile spawning. The engine
 /// owns physical site selection; registered hostile spawners decide whether a
 /// specific hostile species admits this site.
@@ -291,6 +307,55 @@ pub enum RuntimeSide {
     Server,
     Worldgen,
     Client,
+}
+
+/// One thing a mod draws on a placed block, in the BLOCK'S OWN SPACE.
+///
+/// For a MODEL block that is its FOOTPRINT space — the coordinates its
+/// `.bbmodel` is authored in (16 authored px = 1.0), origin at the footprint
+/// base and turned by the placed facing — so `[0,0,0]` is the same corner
+/// whichever of its cells you addressed, and geometry computed against the
+/// model in Blockbench lands right at every placement. For anything else it is
+/// the cell, `0..1`.
+///
+/// This is the primitive under any presentation a mod SIMULATES rather than
+/// stages: liquid in a channel, a needle on a dial, a part sliding. The set is
+/// retained and replaced wholesale, redrawn every frame from the replica, and
+/// costs no re-mesh — which is what makes it usable at tick rate, unlike a
+/// block-row swap or a parts mask.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum DrawPrim {
+    /// An axis-aligned box wearing an atlas TILE (the same names a block row's
+    /// `tiles` use). `tint` multiplies it; `emissive` lifts it out of the
+    /// cell's light so molten metal glows in a dark forge.
+    ///
+    /// The tile maps over the box's faces in CELL units, so a face longer than
+    /// one block along either of its axes gets the tile STRETCHED rather than
+    /// repeated — a prim is a machine's moving part, not a wall. Split a long
+    /// run into per-cell boxes if you want the texture to tile.
+    Cuboid {
+        min: [f32; 3],
+        max: [f32; 3],
+        tile: String,
+        tint: [u8; 3],
+        emissive: bool,
+    },
+    /// An ITEM, drawn the way the game draws that item everywhere else — its
+    /// sprite extruded, or its bbmodel — so a mould in a basin and the mould
+    /// in your hand cannot drift apart when the art changes. `scale` is in
+    /// block units (1.0 = one block wide).
+    ///
+    /// `pitch` (about +X) is applied BEFORE `yaw` (about +Y), both in radians.
+    /// Pitch is not decoration: a sprite item is a VERTICAL slab, so laying
+    /// one flat in a basin is `pitch = FRAC_PI_2` and nothing else will do it.
+    Item {
+        at: [f32; 3],
+        scale: f32,
+        yaw: f32,
+        pitch: f32,
+        item: String,
+        tint: [u8; 3],
+    },
 }
 
 /// One item stack crossing the ABI: the item's registry NAME (the one

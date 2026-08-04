@@ -227,6 +227,9 @@ pub(crate) struct GamePresentation<'a> {
     /// this frame's view volume, already culled by the gather.
     pub(crate) particle_emitters: &'a [PlacedEmitter],
     pub(crate) chests: &'a [ChestPresentation],
+    /// Mod-submitted per-block draw sets with the light at their cell — the
+    /// gather's own rows, handed on without a re-spelling copy.
+    pub(crate) block_draws: &'a [crate::world::draw::BlockDrawInstance],
     pub(crate) doors: &'a [DoorPresentation],
     pub(crate) mobs: &'a [MobPresentation],
     /// Every OTHER connected player's body + held item for this frame,
@@ -278,6 +281,7 @@ pub(crate) struct GamePresentationScratch {
     particles: Vec<ParticlePresentation>,
     particle_emitters: Vec<PlacedEmitter>,
     chest_rows: Vec<(IVec3, Facing, u8, crate::light::BlockLight6)>,
+    block_draws: Vec<crate::world::draw::BlockDrawInstance>,
     door_rows: Vec<(IVec3, DoorState, [Tile; 3], u8, crate::light::BlockLight6)>,
     chests: Vec<ChestPresentation>,
     doors: Vec<DoorPresentation>,
@@ -308,6 +312,7 @@ impl GamePresentationScratch {
         self.collect_ambient(game, now);
         self.collect_particle_emitters(game, view);
         self.collect_chests(game);
+        self.collect_block_draws(game, view);
         self.collect_doors(game);
         self.collect_mobs(game, tick_alpha);
         self.collect_mob_emitters(tick_alpha, view);
@@ -321,6 +326,7 @@ impl GamePresentationScratch {
             particles: &self.particles,
             particle_emitters: &self.particle_emitters,
             chests: &self.chests,
+            block_draws: &self.block_draws,
             doors: &self.doors,
             mobs: &self.mobs,
             remote_players: &self.remote_players,
@@ -413,6 +419,11 @@ impl GamePresentationScratch {
         }
         game.replica
             .collect_particle_emitters(view, &mut self.particle_emitters);
+    }
+
+    fn collect_block_draws(&mut self, game: &Game, view: &ViewVolume) {
+        game.replica
+            .collect_block_draws(view, &mut self.block_draws);
     }
 
     fn collect_chests(&mut self, game: &Game) {

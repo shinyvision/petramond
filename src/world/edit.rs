@@ -30,12 +30,12 @@ impl World {
     /// the footprint the same way the server's break funnel does (door /
     /// model / single air). No drops. Returns `(broken_block, cells_with_prev)`
     /// or `None` when the cell is already air / unbreakable.
-    pub fn clear_broken_block(&mut self, pos: IVec3) -> Option<(Block, Vec<(IVec3, u8)>)> {
+    pub fn clear_broken_block(&mut self, pos: IVec3) -> Option<(Block, Vec<(IVec3, u16)>)> {
         let block = Block::from_id(self.chunk_block(pos.x, pos.y, pos.z));
         if block.hardness() < 0.0 {
             return None;
         }
-        let cells: Vec<(IVec3, u8)> = self
+        let cells: Vec<(IVec3, u16)> = self
             .break_footprint_cells(pos)
             .into_iter()
             .map(|c| (c, self.chunk_block(c.x, c.y, c.z)))
@@ -103,6 +103,21 @@ impl World {
             old
         };
         self.refresh_particle_emitter_index(pos);
+        // A mod's drawing belongs to the block that submitted it, and the write
+        // above already cleared the cell's per-cell state and mod KV for that
+        // reason. Without this the set outlives its machine: it keeps drawing
+        // at a cell the mod no longer owns, keeps riding the section payload to
+        // every new joiner, and cannot be cleared afterwards — `SetBlockDraw`
+        // is gated on owning the block that is now gone. A costume swap does
+        // NOT come through here (`swap_model_block` writes its cells itself),
+        // which is exactly why a machine changing row keeps what it owns.
+        if old != b {
+            self.forget_block_draw(IVec3::new(wx, wy, wz));
+        } else {
+            // The write kept the block but cleared and re-derived the cell's
+            // state, so a surviving set's cached placement has to be re-read.
+            self.refresh_block_draw_placement(IVec3::new(wx, wy, wz));
+        }
         if let Some(change) = self.update_column_heights_after_set(wx, wy, wz, b) {
             self.mark_sky_cover_edited_at(wx, wz, change);
         }

@@ -8,8 +8,8 @@ use crate::bindings::{field_matches, BindField};
 use crate::doc_edit;
 use eframe::egui::{self, DragValue, Response, Ui};
 use petramond_ui::{
-    AbsPos, Align, AlertLevel, Anchor, AnchorEdge, Dir, DocClass, GaugeMode, ImageFit, Justify,
-    LayoutProps, NodeKind, ScrollAxis, Size, TabSpec,
+    doc::Accept, AbsPos, AlertLevel, Align, Anchor, AnchorEdge, Dir, DocClass, GaugeMode, ImageFit,
+    Justify, LayoutProps, NodeKind, ScrollAxis, Size, TabSpec,
 };
 
 /// Catalog-fed options for the binding pickers: per-field global state keys
@@ -33,6 +33,7 @@ impl BindOptions {
             BindField::Items,
             BindField::Selected,
             BindField::Image,
+            BindField::Frame,
         ];
         let global = fields
             .iter()
@@ -59,13 +60,19 @@ impl BindOptions {
             }
             if let Some(key) = anc.bind.items.as_deref() {
                 if let Some(sk) = info.state.get(key) {
-                    item_fields =
-                        sk.item.iter().map(|(f, ty)| (f.clone(), ty.clone())).collect();
+                    item_fields = sk
+                        .item
+                        .iter()
+                        .map(|(f, ty)| (f.clone(), ty.clone()))
+                        .collect();
                 }
             }
             break;
         }
-        Some(BindOptions { global, item_fields })
+        Some(BindOptions {
+            global,
+            item_fields,
+        })
     }
 
     fn keys(&self, field: BindField) -> &[(String, String)] {
@@ -113,7 +120,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let bind_opts = BindOptions::build(app, &path);
     let mut focus_text = app.focus_text_edit;
     let is_root = path.is_empty();
-    let project_dir = app.path.as_ref().and_then(|p| p.parent().map(std::path::PathBuf::from));
+    let project_dir = app
+        .path
+        .as_ref()
+        .and_then(|p| p.parent().map(std::path::PathBuf::from));
     let mut status_msg: Option<String> = None;
 
     ui.label(
@@ -180,12 +190,19 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         .default_open(true)
         .show(ui, |ui| {
             let current = edited.style.clone().unwrap_or_default();
-            let shown = if current.is_empty() { "(widget default)" } else { &current };
+            let shown = if current.is_empty() {
+                "(widget default)"
+            } else {
+                &current
+            };
             egui::ComboBox::from_id_salt("style_combo")
                 .selected_text(shown)
                 .width(180.0)
                 .show_ui(ui, |ui| {
-                    if ui.selectable_label(current.is_empty(), "(widget default)").clicked() {
+                    if ui
+                        .selectable_label(current.is_empty(), "(widget default)")
+                        .clicked()
+                    {
                         edited.style = None;
                         t.changed = true;
                     }
@@ -210,7 +227,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     egui::CollapsingHeader::new("Bindings")
         .default_open(false)
         .show(ui, |ui| {
-            let rows: [(&str, BindField, &mut Option<String>); 7] = [
+            // `frame` drives a sprite-sheet frame, so it only makes sense on
+            // framed nodes: `image`, or an image-backed `button`.
+            let frame_relevant = match &edited.kind {
+                NodeKind::Image { .. } => true,
+                NodeKind::Button {
+                    image: Some(img), ..
+                } => !img.is_empty(),
+                _ => false,
+            };
+            let mut rows: Vec<(&str, BindField, &mut Option<String>)> = vec![
                 ("text", BindField::Text, &mut edited.bind.text),
                 ("value", BindField::Value, &mut edited.bind.value),
                 ("enabled", BindField::Enabled, &mut edited.bind.enabled),
@@ -219,6 +245,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 ("selected", BindField::Selected, &mut edited.bind.selected),
                 ("image", BindField::Image, &mut edited.bind.image),
             ];
+            if frame_relevant {
+                rows.push(("frame", BindField::Frame, &mut edited.bind.frame));
+            }
             for (label, field, v) in rows {
                 match &bind_opts {
                     Some(opts) => bind_pick(ui, label, field, v, opts, &mut t),
@@ -285,7 +314,9 @@ fn document_meta(app: &mut App, ui: &mut Ui) {
             changed = true;
         }
         if let Some(w) = &mut compact_below_w {
-            changed |= ui.add(DragValue::new(w).range(1..=4096).suffix(" px")).changed();
+            changed |= ui
+                .add(DragValue::new(w).range(1..=4096).suffix(" px"))
+                .changed();
         }
     });
     if changed {
@@ -324,7 +355,11 @@ fn bind_pick(
     ui.horizontal(|ui| {
         ui.label(label);
         let current = v.clone().unwrap_or_default();
-        let shown = if current.is_empty() { "(none)" } else { current.as_str() };
+        let shown = if current.is_empty() {
+            "(none)"
+        } else {
+            current.as_str()
+        };
         egui::ComboBox::from_id_salt(("bind_pick", label))
             .selected_text(shown)
             .width(130.0)
@@ -394,7 +429,13 @@ struct KindCtx<'a> {
     status: &'a mut Option<String>,
 }
 
-fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool, ctx: &mut KindCtx<'_>) {
+fn kind_props(
+    ui: &mut Ui,
+    kind: &mut NodeKind,
+    t: &mut Track,
+    focus: &mut bool,
+    ctx: &mut KindCtx<'_>,
+) {
     match kind {
         NodeKind::Label {
             text,
@@ -414,11 +455,80 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
                 t.hit(r);
             });
         }
-        NodeKind::Button { text, icon } => {
-            text_prop(ui, "text", text, t, focus);
-            // Icon = a theme part key (e.g. `icon.edit`), drawn centred when
-            // there's no label, else left of it.
-            icon_pick(ui, "button_icon", icon, ctx.style_keys, t);
+        NodeKind::Button {
+            text,
+            icon,
+            image,
+            frames,
+            fps,
+        } => {
+            // An image-backed button draws document art instead of theme
+            // chrome; validation forbids text/icon/children on it, so those
+            // controls hide (and their values clear) while `image` is set.
+            let mut backed = image.is_some();
+            let r = ui.checkbox(&mut backed, "custom image").on_hover_text(
+                "draw a document image as the button face instead of theme chrome \
+                 (no text, icon, or children)",
+            );
+            let toggled = r.changed();
+            t.hit(r);
+            if toggled {
+                if backed {
+                    *image = Some("image.png".into());
+                    *text = None;
+                    *icon = None;
+                } else {
+                    *image = None;
+                    *frames = None;
+                    *fps = None;
+                }
+            }
+            if let Some(name) = image.as_mut() {
+                ui.horizontal(|ui| {
+                    ui.label("image");
+                    let mut s = name.clone();
+                    let r = ui.text_edit_singleline(&mut s);
+                    if r.changed() {
+                        *name = s;
+                    }
+                    t.hit(r);
+                });
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("Choose image…")
+                        .on_hover_text("Copies the PNG next to the project file")
+                        .clicked()
+                    {
+                        match crate::io::choose_project_image(ctx.project_dir) {
+                            Ok(Some(picked)) => {
+                                *ctx.status = Some(format!("copied '{picked}' beside the project"));
+                                *name = picked;
+                                t.changed = true;
+                            }
+                            Ok(None) => {}
+                            Err(e) => *ctx.status = Some(e),
+                        }
+                    }
+                });
+                framed_props(ui, frames, fps, t);
+                ui.label(
+                    egui::RichText::new("image face: no text, icon, or children")
+                        .weak()
+                        .small(),
+                );
+            } else {
+                text_prop(ui, "text", text, t, focus);
+                // Icon = a theme part key (e.g. `icon.edit`), drawn centred when
+                // there's no label, else left of it.
+                icon_pick(ui, "button_icon", icon, ctx.style_keys, t);
+            }
+            // Clearing the name reverts to a plain button (an empty `image`
+            // is not image-backed as far as the runtime is concerned).
+            if image.as_deref() == Some("") {
+                *image = None;
+                *frames = None;
+                *fps = None;
+            }
         }
         NodeKind::Toggle { icon } => {
             // Icon = a theme part key drawn centred on the toggle face
@@ -486,7 +596,13 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
                 }
             });
         }
-        NodeKind::Image { image, fit, interactive } => {
+        NodeKind::Image {
+            image,
+            fit,
+            frames,
+            fps,
+            interactive,
+        } => {
             string_prop(ui, "image", image, t);
             ui.horizontal(|ui| {
                 if ui
@@ -526,6 +642,7 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
             if let ImageFit::Slice(insets) = fit {
                 quad_edit(ui, "insets", insets, t);
             }
+            framed_props(ui, frames, fps, t);
             t.hit(ui.checkbox(interactive, "interactive canvas"));
         }
         NodeKind::Rotimage { image, pivot } => {
@@ -562,7 +679,10 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
                 }
             });
         }
-        NodeKind::TextInput { placeholder, max_chars } => {
+        NodeKind::TextInput {
+            placeholder,
+            max_chars,
+        } => {
             text_prop(ui, "placeholder", placeholder, t, focus);
             ui.horizontal(|ui| {
                 ui.label("max chars");
@@ -572,7 +692,10 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
         NodeKind::Scroll { axis } => {
             ui.horizontal(|ui| {
                 ui.label("axis");
-                for (a, name) in [(ScrollAxis::Vertical, "vertical"), (ScrollAxis::Horizontal, "horizontal")] {
+                for (a, name) in [
+                    (ScrollAxis::Vertical, "vertical"),
+                    (ScrollAxis::Horizontal, "horizontal"),
+                ] {
                     if ui.selectable_label(*axis == a, name).clicked() {
                         *axis = a;
                         t.changed = true;
@@ -587,11 +710,21 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
                 ui.label("(1 = flow, >1 = row-major grid)");
             });
         }
-        NodeKind::Slot { role, accepts, take_only } => {
+        NodeKind::Slot {
+            role,
+            accepts,
+            take_only,
+        } => {
             string_prop(ui, "role", role, t);
             slot_semantics(ui, accepts, take_only, t);
         }
-        NodeKind::SlotGrid { role, cols, rows, accepts, take_only } => {
+        NodeKind::SlotGrid {
+            role,
+            cols,
+            rows,
+            accepts,
+            take_only,
+        } => {
             string_prop(ui, "role", role, t);
             ui.horizontal(|ui| {
                 ui.label("cols");
@@ -604,7 +737,10 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
         NodeKind::Gauge { mode } => {
             ui.horizontal(|ui| {
                 ui.label("mode");
-                for (m, name) in [(GaugeMode::GrowLr, "grow_lr"), (GaugeMode::DepleteTd, "deplete_td")] {
+                for (m, name) in [
+                    (GaugeMode::GrowLr, "grow_lr"),
+                    (GaugeMode::DepleteTd, "deplete_td"),
+                ] {
                     if ui.selectable_label(*mode == m, name).clicked() {
                         *mode = m;
                         t.changed = true;
@@ -612,13 +748,16 @@ fn kind_props(ui: &mut Ui, kind: &mut NodeKind, t: &mut Track, focus: &mut bool,
                 }
             });
         }
+        NodeKind::Tooltip { hover } => {
+            opt_text(ui, "hover", hover, t);
+            ui.label("(widget id anchoring the tooltip to its hover; empty = none)");
+        }
         NodeKind::Frame
         | NodeKind::Row
         | NodeKind::Column
         | NodeKind::Spacer
         | NodeKind::Checkbox
-        | NodeKind::Hook
-        | NodeKind::Tooltip => {}
+        | NodeKind::Hook => {}
     }
 }
 
@@ -641,7 +780,11 @@ fn icon_pick(
     ui.horizontal(|ui| {
         ui.label("icon");
         let current = icon.clone().unwrap_or_default();
-        let shown = if current.is_empty() { "(none)" } else { current.as_str() };
+        let shown = if current.is_empty() {
+            "(none)"
+        } else {
+            current.as_str()
+        };
         egui::ComboBox::from_id_salt(salt)
             .selected_text(shown)
             .width(150.0)
@@ -660,14 +803,55 @@ fn icon_pick(
     });
 }
 
-/// Host-interpreted slot semantics: the `accepts` item-tag list (one text row
-/// per tag, so typing never fights a reparse) and the `take_only` flag.
-fn slot_semantics(ui: &mut Ui, accepts: &mut Vec<String>, take_only: &mut bool, t: &mut Track) {
-    ui.label(egui::RichText::new("accepts (item tags)").weak().small());
+/// Optional sprite-sheet grid + animation rate, shared by `image` nodes and
+/// image-backed buttons. The drag ranges keep the document valid (grid ≥ 1×1,
+/// fps positive — the runtime's validator rejects anything else).
+fn framed_props(ui: &mut Ui, frames: &mut Option<[u32; 2]>, fps: &mut Option<f32>, t: &mut Track) {
+    ui.horizontal(|ui| {
+        let mut has = frames.is_some();
+        let r = ui
+            .checkbox(&mut has, "frames")
+            .on_hover_text("sprite-sheet grid: one cols×rows frame draws and sizes the node");
+        if r.changed() {
+            *frames = has.then_some([1, 1]);
+        }
+        t.hit(r);
+        if let Some([cols, rows]) = frames {
+            ui.label("cols");
+            t.hit(ui.add(DragValue::new(cols).range(1..=64)));
+            ui.label("rows");
+            t.hit(ui.add(DragValue::new(rows).range(1..=64)));
+        }
+    });
+    ui.horizontal(|ui| {
+        let mut has = fps.is_some();
+        let r = ui
+            .checkbox(&mut has, "fps")
+            .on_hover_text("animation rate in frames/sec; a bound 'frame' wins over it");
+        if r.changed() {
+            *fps = has.then_some(8.0);
+        }
+        t.hit(r);
+        if let Some(f) = fps {
+            t.hit(ui.add(DragValue::new(f).speed(0.5).range(0.1..=120.0)));
+        }
+    });
+}
+
+/// Host-interpreted slot semantics: the `accepts` item-group list (one text
+/// row per group — an item-tag name or a row-`data` key) and the `take_only`
+/// flag.
+fn slot_semantics(ui: &mut Ui, accepts: &mut Vec<Accept>, take_only: &mut bool, t: &mut Track) {
+    ui.label(egui::RichText::new("accepts (item groups)").weak().small());
     let mut remove: Option<usize> = None;
-    for (i, tag) in accepts.iter_mut().enumerate() {
+    for (i, accept) in accepts.iter_mut().enumerate() {
         ui.horizontal(|ui| {
-            t.hit(ui.add(egui::TextEdit::singleline(tag).desired_width(150.0)));
+            let (kind, s) = match accept {
+                Accept::Tag(s) => ("tag", s),
+                Accept::Data { data } => ("data", data),
+            };
+            ui.label(egui::RichText::new(kind).weak().small().monospace());
+            t.hit(ui.add(egui::TextEdit::singleline(s).desired_width(150.0)));
             if ui.small_button("✕").clicked() {
                 remove = Some(i);
             }
@@ -677,10 +861,22 @@ fn slot_semantics(ui: &mut Ui, accepts: &mut Vec<String>, take_only: &mut bool, 
         accepts.remove(i);
         t.changed = true;
     }
-    if ui.small_button("+ tag").clicked() {
-        accepts.push(String::new());
-        t.changed = true;
-    }
+    ui.horizontal(|ui| {
+        if ui.small_button("+ tag").clicked() {
+            accepts.push(Accept::Tag(String::new()));
+            t.changed = true;
+        }
+        if ui
+            .small_button("+ data key")
+            .on_hover_text("admit any item whose row carries this namespaced data key")
+            .clicked()
+        {
+            accepts.push(Accept::Data {
+                data: String::new(),
+            });
+            t.changed = true;
+        }
+    });
     t.hit(ui.checkbox(take_only, "take only (output slot)"));
 }
 
@@ -698,10 +894,10 @@ fn layout_props(ui: &mut Ui, l: &mut LayoutProps, kind: &NodeKind, t: &mut Track
     if matches!(
         kind,
         NodeKind::Frame
-        | NodeKind::Button { .. }
-        | NodeKind::Scroll { .. }
-        | NodeKind::List { .. }
-        | NodeKind::Tooltip
+            | NodeKind::Button { .. }
+            | NodeKind::Scroll { .. }
+            | NodeKind::List { .. }
+            | NodeKind::Tooltip { .. }
     ) {
         ui.horizontal(|ui| {
             ui.label("dir");

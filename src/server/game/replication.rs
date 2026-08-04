@@ -179,6 +179,7 @@ impl ServerGame {
         world_events: &[WorldEventMsg],
         deltas: &[BlockDelta],
         kv_deltas: &[crate::net::protocol::CellKvDelta],
+        draw_deltas: &[crate::net::protocol::BlockDrawDelta],
         shared: &SharedTickRows,
     ) -> TickUpdate {
         // Per-recipient delta filter: only sections this client holds.
@@ -189,6 +190,12 @@ impl ServerGame {
             .collect();
         // Cell KV deltas ride the same recipient filter as block deltas.
         let cell_kv_deltas: Vec<crate::net::protocol::CellKvDelta> = kv_deltas
+            .iter()
+            .filter(|d| self.sessions[s].terrain.covers(d.pos))
+            .cloned()
+            .collect();
+        // Mod draw sets ride the same recipient filter.
+        let block_draws: Vec<crate::net::protocol::BlockDrawDelta> = draw_deltas
             .iter()
             .filter(|d| self.sessions[s].terrain.covers(d.pos))
             .cloned()
@@ -232,6 +239,7 @@ impl ServerGame {
                     .collect()
             };
         TickUpdate {
+            block_draws,
             tick: shared.tick,
             clock: shared.clock,
             block_deltas,

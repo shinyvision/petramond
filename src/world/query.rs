@@ -67,7 +67,7 @@ impl World {
 
     /// Raw block id at a world voxel. Out of range (above/below the column) or in
     /// an unloaded chunk reads as `0` (air) — the mesh-border air fallback.
-    pub fn chunk_block(&self, wx: i32, wy: i32, wz: i32) -> u8 {
+    pub fn chunk_block(&self, wx: i32, wy: i32, wz: i32) -> u16 {
         match self.chunk_at_world(wx, wy, wz) {
             Some((c, lx, ly, lz)) => c.block_raw(lx, ly, lz),
             None => 0,

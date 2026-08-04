@@ -11,7 +11,7 @@ impl World {
     ///
     /// `previous` carries each cell's block id before the predicted mutation;
     /// the world already contains the post-edit state when this is called.
-    pub fn reconcile_predicted_edit(&mut self, previous: &[(crate::mathh::IVec3, u8)]) {
+    pub fn reconcile_predicted_edit(&mut self, previous: &[(crate::mathh::IVec3, u16)]) {
         if previous.is_empty() {
             return;
         }
@@ -26,7 +26,7 @@ impl World {
     /// light -> mesh bundle runs on the caller, so exact predicted presentation
     /// is installed before this method returns. Reconciliation uses
     /// [`Self::reconcile_predicted_edit`] and remains asynchronous.
-    pub fn present_predicted_edit(&mut self, previous: &[(crate::mathh::IVec3, u8)]) {
+    pub fn present_predicted_edit(&mut self, previous: &[(crate::mathh::IVec3, u16)]) {
         use crate::world::prediction_render::run_prediction_terrain_synchronously;
 
         if previous.is_empty() {
@@ -47,7 +47,7 @@ impl World {
 
     fn prepare_prediction_terrain(
         &mut self,
-        previous: &[(crate::mathh::IVec3, u8)],
+        previous: &[(crate::mathh::IVec3, u16)],
     ) -> Option<crate::world::prediction_render::PredictionTerrainWork> {
         use crate::world::light::{group_positions, snapshot_batch, LightBakeJob};
         use crate::world::prediction_render::{
@@ -162,7 +162,7 @@ impl World {
     /// an edited cell) rebuild unconditionally.
     fn prediction_candidate_sections(
         &self,
-        previous: &[(crate::mathh::IVec3, u8)],
+        previous: &[(crate::mathh::IVec3, u16)],
     ) -> (Vec<SectionPos>, Vec<SectionPos>) {
         const SAMPLER_REACH: i32 = chunk::SKY_FULL as i32 / 2 - 1 + 1;
         let mut candidates = Vec::new();

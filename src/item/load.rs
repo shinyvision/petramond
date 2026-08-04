@@ -29,6 +29,10 @@ pub(super) struct RawItemDef {
     pub item: String,
     pub key: String,
     pub name: String,
+    /// Optional info line shown under the name in the item's slot tooltip
+    /// (usage hints a name alone cannot carry); absent for ordinary items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info: Option<String>,
     pub max_stack_size: u8,
     pub held_pose: RawPose,
     /// Atlas tile name of the flat billboard sprite, for the items drawn as one
@@ -42,7 +46,10 @@ pub(super) struct RawItemDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<crate::block_model::BlockModelKind>,
     /// Tag names: bare engine tags or namespaced `mod_id:name` pack tags
-    /// (interned at load — see [`ItemTag::resolve`]).
+    /// (interned at load — see [`ItemTag::resolve`]). Optional: a row that
+    /// describes its membership through the `data` surface instead (which is
+    /// the form a `patch` row can reach) has no tags to state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     /// Registry name of the block this item places — the ONE source of the
     /// block↔item mapping (`ItemType::from_block`/`as_block`), engine and
@@ -153,15 +160,28 @@ fn is_default_use_ray(v: &super::UseRay) -> bool {
     *v == super::UseRay::default()
 }
 
-/// The `petramond:tool` data entry: family + material tier. The shipped
-/// mining ladder is stone `2`, iron `3`, diamond `4`; rung `1` carries only
-/// the shears since the wooden tools were retired, and is where a softer
-/// metal would land.
+/// The `petramond:tool` data entry: family, harvest gate, and — optionally —
+/// the two properties a gate cannot express on its own.
+///
+/// The shipped mining ladder is stone `2`, iron `3`, diamond `4`; rung `1`
+/// carries only the shears since the wooden tools were retired. A row that
+/// states only `kind` and `tier` gets exactly that ladder's speed and damage,
+/// so this surface costs the engine's own rows nothing.
+///
+/// `speed` and `damage` exist because a MOD adding a material owns what that
+/// material is like, and materials are not points on one line: a soft metal
+/// can reach everything and dig like a fist.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawTool {
     pub kind: ToolKind,
     pub tier: u8,
+    /// Mining speed over the bare hand. Defaults to the tier's rung.
+    #[serde(default)]
+    pub speed: Option<f32>,
+    /// Melee damage `[min, max]`. Defaults to the `(kind, tier)` rung.
+    #[serde(default)]
+    pub damage: Option<[f32; 2]>,
 }
 
 /// The `petramond:fuel` data entry: game ticks one of this item burns as
@@ -317,9 +337,27 @@ fn convert(
                     t.tier
                 ));
             }
+            let speed = match t.speed {
+                None => crate::item::default_speed(t.tier),
+                Some(s) if s.is_finite() && s > 0.0 => s,
+                Some(s) => return Err(format!("tool speed {s} must be finite and positive")),
+            };
+            let damage = match t.damage {
+                None => crate::item::default_damage(t.kind, t.tier),
+                Some([lo, hi]) if lo.is_finite() && hi.is_finite() && lo >= 0.0 && hi >= lo => {
+                    (lo, hi)
+                }
+                Some(d) => {
+                    return Err(format!(
+                        "tool damage {d:?} must be finite, non-negative and ordered [min, max]"
+                    ))
+                }
+            };
             Some(Tool {
                 kind: t.kind,
                 tier: t.tier,
+                speed,
+                damage,
             })
         }
         None => None,
@@ -390,6 +428,7 @@ fn convert(
         item,
         key: Box::leak(r.key.into_boxed_str()),
         name: Box::leak(r.name.into_boxed_str()),
+        info: r.info.map(|info| &*Box::leak(info.into_boxed_str())),
         max_stack_size: r.max_stack_size,
         held_pose: HeldPose {
             pitch: r.held_pose.pitch as f32,
@@ -441,6 +480,16 @@ mod tests {
     }
 
     #[test]
+    fn a_rows_info_line_loads_and_defaults_to_none() {
+        let (base, _) =
+            crate::assets::read_base_text("items.json").expect("assets/items.json must ship");
+        let layer = r#"{"items": [{"item": "petramond:stone", "key": "petramond:stone", "name": "Stone", "info": "A hint", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}]}"#;
+        let defs = parse_test_layers(&[&base, layer]).expect("info row loads");
+        assert_eq!(defs[ItemType::Stone.id() as usize].info, Some("A hint"));
+        assert_eq!(defs[ItemType::Dirt.id() as usize].info, None);
+    }
+
+    #[test]
     fn namespaced_pack_row_registers_a_new_item_with_links() {
         let (base, _) =
             crate::assets::read_base_text("items.json").expect("assets/items.json must ship");
@@ -457,7 +506,7 @@ mod tests {
         assert_eq!(defs.len(), engine + 2, "fresh ids past the engine set");
         let filled = defs[engine].item;
         let gadget = &defs[engine + 1];
-        assert_eq!(gadget.item, ItemType((engine + 1) as u8));
+        assert_eq!(gadget.item, ItemType((engine + 1) as u16));
         assert_eq!(gadget.block, Some(crate::block::Block::Stone));
         assert_eq!(
             gadget.item_use,

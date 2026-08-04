@@ -255,6 +255,85 @@ impl World {
         true
     }
 
+    /// Set the PER-INSTANCE presentation state of the model block at `pos`:
+    /// which of its row's optional `parts` are visible, and the tint its row's
+    /// `tint_parts` multiply by. `false` = `pos` is not a model block, or a
+    /// footprint cell is unloaded.
+    ///
+    /// It writes the whole footprint because the mesher reads the mask from
+    /// the cell it is meshing — a group straddles sections, so a mask stored
+    /// only at the anchor would be invisible to every other section. A mod
+    /// addresses the machine by any of its cells, exactly like `container_set`.
+    ///
+    /// RENDER ONLY: collision, selection and lighting stay the row's, so a
+    /// machine's hitbox never changes under the player mid-cast.
+    pub fn set_model_parts(&mut self, pos: IVec3, parts: u32, tint: Option<[u8; 3]>) -> bool {
+        let Some((_, _, cells)) = self.model_group(pos) else {
+            return false;
+        };
+        if cells
+            .iter()
+            .any(|&c| self.chunk_at_world(c.x, c.y, c.z).is_none())
+        {
+            return false;
+        }
+        // Resubmitting the same picture is the obvious idiom — a machine
+        // compares against what the world CURRENTLY shows so a visual that
+        // drifts heals itself — and every cell of this write queues a re-mesh
+        // and a relight, so an idempotent call must not cost one.
+        //
+        // EVERY cell is checked, not just the addressed one. `cell_kv_set`
+        // below refuses a write racing an in-flight saved overlay, so a
+        // footprint straddling sections can come out half written; a check on
+        // the anchor alone then answers "already correct" forever after, and
+        // the other cells show the wrong parts until the mask happens to
+        // change value. Self-healing that only heals the cell you asked about
+        // is the bug it was built to prevent.
+        let has = |c: IVec3, key: &str, want: &[u8]| {
+            self.cell_kv_get(c.x, c.y, c.z, key)
+                .is_some_and(|v| v == want)
+        };
+        let unchanged = cells.iter().all(|&c| {
+            has(c, block_model::PARTS_KV_KEY, &parts.to_le_bytes())
+                && tint.is_none_or(|rgb| has(c, crate::block::TINT_KV_KEY, &rgb))
+        });
+        if unchanged {
+            return true;
+        }
+        for &c in &cells {
+            // Through the WORLD accessor, not the section's: it refuses a write
+            // racing an in-flight saved overlay, and a footprint spans sections
+            // the addressed cell's finality says nothing about.
+            self.cell_kv_set(
+                c.x,
+                c.y,
+                c.z,
+                block_model::PARTS_KV_KEY.to_owned(),
+                parts.to_le_bytes().to_vec(),
+            );
+            // Only WRITE the dye key, never clear it: it is shared with the dye
+            // system, so `tint: None` must mean "I am not tinting" rather than
+            // "erase whatever colour this cell had".
+            if let Some(rgb) = tint {
+                self.cell_kv_set(
+                    c.x,
+                    c.y,
+                    c.z,
+                    crate::block::TINT_KV_KEY.to_owned(),
+                    rgb.to_vec(),
+                );
+            }
+        }
+        // No `refresh_region` here, deliberately. Each `cell_kv_set` above
+        // already queued the meshes that sample its cell (the mask is a
+        // mesh-feeding key) and re-marked any custom bake reading it. What
+        // `refresh_region` adds on top — a relight ball and a shape re-resolve
+        // per cell — is block-CHANGE work, and this call changes no block: its
+        // whole contract is that collision, selection and lighting stay the
+        // row's.
+        true
+    }
+
     /// Break the whole multi-block `pos` belongs to: set every footprint cell to air
     /// (clearing its offset) and relight + remesh the region once. Returns the cells
     /// removed (for drops/particles), or `None` if `pos` isn't a model block. The
@@ -296,6 +375,10 @@ impl World {
                     self.refresh_particle_emitter_index(pos);
                 }
             }
+            // A costume swap rewrites the cell's block and model state without
+            // dropping its draw set (that is the point of a swap), so the
+            // set's cached prim→world transform is re-read here.
+            self.refresh_block_draw_placement(c);
             self.queue_dirty_meshes_sampling_cell(c.x, c.y, c.z);
             // The matching relight ball rides along with each cell's announce.
             self.notify_block_and_neighbors(c.x, c.y, c.z);
@@ -515,5 +598,47 @@ mod tests {
                 "offset cleared"
             );
         }
+    }
+
+    /// A parts mask covers the WHOLE footprint, and resubmitting the same mask
+    /// REPAIRS a cell that lost it.
+    ///
+    /// The mesher reads the mask from the cell it is meshing, and `cell_kv_set`
+    /// refuses a write racing an in-flight saved overlay — so a footprint
+    /// straddling sections can end up half written. A machine resubmits its
+    /// current mask every tick precisely so that heals; an idempotence check
+    /// that only consults the addressed cell answers "already correct" forever
+    /// and the rest of the machine stays wrong.
+    #[test]
+    fn a_parts_mask_covers_every_footprint_cell_and_repairs_a_lost_one() {
+        let mut w = world_with_empty_chunk();
+        let origin = IVec3::new(5, 64, 5);
+        assert!(w.place_model_block(origin, WB));
+        let cells = w.model_group(origin).expect("a placed group").2;
+        assert!(cells.len() > 1, "fixture: this row is multi-cell");
+
+        assert!(w.set_model_parts(origin, 0b101, None));
+        let mask_at = |w: &World, c: IVec3| {
+            w.cell_kv_get(c.x, c.y, c.z, block_model::PARTS_KV_KEY)
+                .map(<[u8; 4]>::try_from)
+                .and_then(Result::ok)
+                .map(u32::from_le_bytes)
+        };
+        for &c in &cells {
+            assert_eq!(mask_at(&w, c), Some(0b101), "{c:?}");
+        }
+
+        // A cell loses its mask (a refused write, a stale saved overlay).
+        let lost = *cells.last().expect("a cell");
+        assert!(w.cell_kv_remove(lost.x, lost.y, lost.z, block_model::PARTS_KV_KEY));
+        assert_eq!(mask_at(&w, lost), None, "fixture: the cell is now bare");
+
+        // The SAME mask again — the machine's every-tick resubmission.
+        assert!(w.set_model_parts(origin, 0b101, None));
+        assert_eq!(
+            mask_at(&w, lost),
+            Some(0b101),
+            "resubmitting the current mask must heal a footprint cell that lost it"
+        );
     }
 }

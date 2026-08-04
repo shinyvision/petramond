@@ -40,6 +40,15 @@ pub(super) fn handle_worldgen_call(data: &mut ModStoreData, call: HostCall) -> H
                 )),
             }
         }
+        HostCall::SurfaceBiomeAt { columns } => {
+            match batch_guard("SurfaceBiomeAt column", columns.len()) {
+                Some(err) => err,
+                None => HostRet::SurfaceBiomes(crate::worldgen::surface_biome_at(
+                    data.world_seed(),
+                    &columns,
+                )),
+            }
+        }
         HostCall::RegisterWorldgenFeature { feature_id, stage } => {
             if stage == mod_api::WorldgenStage::Climate {
                 return HostRet::Error(
@@ -201,6 +210,58 @@ mod tests {
             },
         ) {
             HostRet::UndergroundBiomes(ids) => assert_eq!(ids.len(), extremes.len()),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The surface-biome query answers outside the init window on a detached
+    /// instance, and — the part with a real failure mode — a batch spanning
+    /// several generation tiles in ARBITRARY order answers exactly what
+    /// one-column calls do. The handler keeps a single hot tile as it walks
+    /// the batch, so a cursor bug shows up only when the order shuffles.
+    #[test]
+    fn the_surface_biome_query_batches_across_tiles_in_any_order() {
+        let mut data = ModStoreData::new("alpha", 0x312);
+        data.phase = Phase::Run;
+
+        let columns = vec![[3, 5], [900, -1100], [-40, 12], [900, -1100], [-1500, 700]];
+        let ids = match handle_host_call(
+            &mut data,
+            HostCall::SurfaceBiomeAt {
+                columns: columns.clone(),
+            },
+        ) {
+            HostRet::SurfaceBiomes(ids) => ids,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(ids.len(), columns.len(), "reply parallels the request");
+        for (column, got) in columns.iter().zip(&ids) {
+            assert_eq!(
+                crate::biome::Biome::from_id(*got).id(),
+                *got,
+                "every column answers a real biome id; {column:?} answered {got}"
+            );
+            let alone = match handle_host_call(
+                &mut data,
+                HostCall::SurfaceBiomeAt {
+                    columns: vec![*column],
+                },
+            ) {
+                HostRet::SurfaceBiomes(ids) => ids[0],
+                other => panic!("{other:?}"),
+            };
+            assert_eq!(*got, alone, "batched answer differs at {column:?}");
+        }
+
+        // Integer-limit input must be clamped before it reaches any lattice
+        // multiply — a guest may not steer a host call into overflow.
+        match handle_host_call(
+            &mut data,
+            HostCall::SurfaceBiomeAt {
+                columns: vec![[i32::MIN, i32::MAX], [i32::MAX, i32::MIN]],
+            },
+        ) {
+            HostRet::SurfaceBiomes(ids) => assert_eq!(ids.len(), 2),
             other => panic!("{other:?}"),
         }
     }

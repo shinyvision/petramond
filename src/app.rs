@@ -11,6 +11,7 @@ mod connect;
 mod crafting_browser;
 mod gui_router;
 mod input;
+mod item_tooltip;
 mod menu_lifecycle;
 mod options;
 mod pointer;

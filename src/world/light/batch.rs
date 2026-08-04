@@ -71,7 +71,7 @@ pub(in crate::world) struct LightBatchJob {
     base: SectionPos,
     members: Vec<BatchMember>,
     /// `SPAN`³ field-`Arc` block buffers (`None` = absent, reads as air).
-    blocks: Vec<Option<Arc<[u8]>>>,
+    blocks: Vec<Option<crate::section::BlockCube>>,
     states: Vec<SparseCellState>,
     /// `BDIM`² sky-cover map, gathered only when a member needs the sky flood.
     surface: Option<Box<[i32]>>,
@@ -154,7 +154,7 @@ pub(in crate::world) fn snapshot_batch(
     let any_flood = members.iter().any(|m| m.sky == SkyClass::Flood);
 
     let mut emitters = Vec::new();
-    let mut blocks: Vec<Option<Arc<[u8]>>> = vec![None; SPAN * SPAN * SPAN];
+    let mut blocks: Vec<Option<crate::section::BlockCube>> = vec![None; SPAN * SPAN * SPAN];
     let mut states = Vec::new();
     for dy in 0..SPAN {
         for dz in 0..SPAN {
@@ -168,7 +168,7 @@ pub(in crate::world) fn snapshot_batch(
                     continue;
                 };
                 neighborhood::collect_section_emitters(npos, section, &mut emitters);
-                blocks[span_idx(dx, dy, dz)] = Some(section.blocks_arc());
+                blocks[span_idx(dx, dy, dz)] = Some(section.block_cube());
                 let (bx, by, bz) = (dx * SECTION_SIZE, dy * SECTION_SIZE, dz * SECTION_SIZE);
                 super::shape::collect_shape_states(
                     section,
@@ -200,7 +200,7 @@ pub(in crate::world) fn snapshot_batch(
 
 /// Assemble the batch block cube from the gathered `Arc`s, one 16-wide row copy at
 /// a time (absent sections stay air).
-fn assemble_blocks(arcs: &[Option<Arc<[u8]>>], out: &mut [u8]) {
+fn assemble_blocks(arcs: &[Option<crate::section::BlockCube>], out: &mut [u16]) {
     debug_assert_eq!(out.len(), BVOL);
     out.fill(0);
     for dy in 0..SPAN {
@@ -214,7 +214,7 @@ fn assemble_blocks(arcs: &[Option<Arc<[u8]>>], out: &mut [u8]) {
                     for lz in 0..SECTION_SIZE {
                         let d = bidx(bx, by + ly, bz + lz);
                         let s = section_idx(0, ly, lz);
-                        out[d..d + SECTION_SIZE].copy_from_slice(&src[s..s + SECTION_SIZE]);
+                        src.expand_row_into(s, &mut out[d..d + SECTION_SIZE]);
                     }
                 }
             }
@@ -223,14 +223,14 @@ fn assemble_blocks(arcs: &[Option<Arc<[u8]>>], out: &mut [u8]) {
 }
 
 struct BatchScratch {
-    blocks: Vec<u8>,
+    blocks: Vec<u16>,
     flood: flood::FloodScratch,
 }
 
 thread_local! {
     static BATCH_SCRATCH: std::cell::RefCell<BatchScratch> =
         std::cell::RefCell::new(BatchScratch {
-            blocks: vec![0u8; BVOL],
+            blocks: vec![0u16; BVOL],
             flood: flood::FloodScratch::new(),
         });
 }
@@ -424,9 +424,9 @@ mod tests {
                                 let Some(section) = sections.get(&pos) else {
                                     continue;
                                 };
-                                let blocks = section.blocks_arc();
+                                let blocks = section.blocks();
                                 for ly in (0..SECTION_SIZE).rev() {
-                                    let b = Block::from_id(blocks[section_idx(lx, ly, lz)]);
+                                    let b = Block::from_id(blocks.get(section_idx(lx, ly, lz)));
                                     if !b.transmits_direct_skylight() {
                                         cover = pos.origin_world().1 + ly as i32;
                                         break 'scan;

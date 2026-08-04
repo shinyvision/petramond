@@ -27,8 +27,8 @@ fn furnace_slot_specs() -> Arc<Vec<SlotSpec>> {
     SPECS
         .get_or_init(|| {
             let mut specs = vec![SlotSpec::default(); crate::furnace::FURNACE_SLOTS];
-            specs[SLOT_INPUT].accepts = vec![ItemTag::SMELTABLE];
-            specs[SLOT_FUEL].accepts = vec![ItemTag::FUEL];
+            specs[SLOT_INPUT].accepts = vec![crate::container::SlotFilter::Tag(ItemTag::SMELTABLE)];
+            specs[SLOT_FUEL].accepts = vec![crate::container::SlotFilter::Tag(ItemTag::FUEL)];
             specs[SLOT_OUTPUT].take_only = true;
             Arc::new(specs)
         })
@@ -121,16 +121,7 @@ impl ContainerMenu {
             let Some(slot) = c.slots.get_mut(i) else {
                 return;
             };
-            // A take-only output never accepts the cursor stack: any click
-            // only moves product out (the furnace-output read). Secondary
-            // follows the same half/one take rule as every other slot.
-            if specs.get(i).is_some_and(|s| s.take_only) {
-                inv.click_take_only_external_slot(slot, secondary);
-            } else if secondary {
-                inv.right_click_external_slot(slot);
-            } else {
-                inv.click_external_slot(slot);
-            }
+            inv.click_container_cell(specs.get(i), slot, secondary);
         });
     }
 

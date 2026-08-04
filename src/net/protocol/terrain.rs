@@ -45,6 +45,118 @@ impl<'de> Deserialize<'de> for SectionBytes {
     }
 }
 
+/// A section's BLOCK-ID cube on the wire. Block ids are two bytes, so the
+/// naive encoding would double every section frame; this ships the same
+/// per-section palette the save record uses — `[distinct: u16][ids: u16 x
+/// distinct][one index per cell]`, index width one byte while the section
+/// holds ≤ 256 distinct blocks — which keeps a section payload the size it was
+/// when ids were bytes. Local connections still ship a refcount bump.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SectionBlocks(pub Arc<[u16]>);
+
+/// Palette-encode a block cube into the wire/save byte form.
+fn pack_blocks(blocks: &[u16]) -> Vec<u8> {
+    let mut ids: Vec<u16> = Vec::new();
+    let mut index: Vec<u16> = Vec::with_capacity(blocks.len());
+    for &b in blocks {
+        let at = match ids.iter().position(|&p| p == b) {
+            Some(i) => i,
+            None => {
+                ids.push(b);
+                ids.len() - 1
+            }
+        };
+        index.push(at as u16);
+    }
+    let wide = ids.len() > u8::MAX as usize + 1;
+    let mut out = Vec::with_capacity(6 + ids.len() * 2 + index.len() * (1 + wide as usize));
+    out.extend_from_slice(&(blocks.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(ids.len() as u16).to_le_bytes());
+    for id in &ids {
+        out.extend_from_slice(&id.to_le_bytes());
+    }
+    if wide {
+        for i in &index {
+            out.extend_from_slice(&i.to_le_bytes());
+        }
+    } else {
+        out.extend(index.iter().map(|&i| i as u8));
+    }
+    out
+}
+
+/// Inverse of [`pack_blocks`]; `None` on a malformed buffer.
+fn unpack_blocks(v: &[u8]) -> Option<Arc<[u16]>> {
+    let mut at = 0usize;
+    let mut take = |n: usize| -> Option<&[u8]> {
+        let s = v.get(at..at + n)?;
+        at += n;
+        Some(s)
+    };
+    let cells = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+    if cells > crate::chunk::SECTION_VOLUME {
+        return None;
+    }
+    let distinct = u16::from_le_bytes(take(2)?.try_into().ok()?) as usize;
+    let mut ids = Vec::with_capacity(distinct);
+    for _ in 0..distinct {
+        ids.push(u16::from_le_bytes(take(2)?.try_into().ok()?));
+    }
+    let mut out = Vec::with_capacity(cells);
+    if distinct > u8::MAX as usize + 1 {
+        for _ in 0..cells {
+            let i = u16::from_le_bytes(take(2)?.try_into().ok()?) as usize;
+            out.push(*ids.get(i)?);
+        }
+    } else {
+        for &i in take(cells)? {
+            out.push(*ids.get(i as usize)?);
+        }
+    }
+    Some(Arc::from(out.into_boxed_slice()))
+}
+
+impl Serialize for SectionBlocks {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_bytes(&pack_blocks(&self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for SectionBlocks {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'a> serde::de::Visitor<'a> for V {
+            type Value = SectionBlocks;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a palette-packed block cube")
+            }
+            fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<SectionBlocks, E> {
+                unpack_blocks(v)
+                    .map(SectionBlocks)
+                    .ok_or_else(|| E::custom("malformed block cube"))
+            }
+            fn visit_byte_buf<E: serde::de::Error>(self, v: Vec<u8>) -> Result<SectionBlocks, E> {
+                unpack_blocks(&v)
+                    .map(SectionBlocks)
+                    .ok_or_else(|| E::custom("malformed block cube"))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'a>>(
+                self,
+                mut seq: A,
+            ) -> Result<SectionBlocks, A::Error> {
+                let mut v = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+                while let Some(b) = seq.next_element::<u8>()? {
+                    v.push(b);
+                }
+                unpack_blocks(&v)
+                    .map(SectionBlocks)
+                    .ok_or_else(|| serde::de::Error::custom("malformed block cube"))
+            }
+        }
+        d.deserialize_bytes(V)
+    }
+}
+
 /// A shared BLOCK-LIGHT cube on the wire: the sibling of [`SectionBytes`] for
 /// the packed RGB cell. Same deal — the local connection ships a refcount
 /// bump; TCP pays one little-endian byte pass in each direction. Decode forces
@@ -140,7 +252,7 @@ pub(crate) const SECTION_CACHE_CAP: usize = 4096;
 pub(crate) struct SectionPayload {
     pub pos: SectionPos,
     /// 4096 wire block ids.
-    pub blocks: SectionBytes,
+    pub blocks: SectionBlocks,
     /// Block-derived counters and boundary planes. The replica adopts these
     /// with the shared buffers instead of rescanning the section on its frame.
     pub metrics: crate::section::SectionMetrics,
@@ -205,7 +317,20 @@ pub(crate) struct SectionStatesPayload {
     /// Per-cell mod KV, preserved opaquely (entries sorted by key — the map
     /// is a `BTreeMap` section-side).
     pub cell_kv: Vec<CellKvEntry>,
+    /// Mod-submitted per-block DRAW SETS in this section (`world::draw`),
+    /// cell-sorted.
+    ///
+    /// They ride the section rather than only the per-tick delta lane because
+    /// a set is retained per-block state: the delta carries CHANGES, so a
+    /// machine that last redrew itself an hour ago would be invisible to
+    /// everyone who joined since — and a mod cannot force a resend, because
+    /// resubmitting an unchanged set logs nothing by design.
+    pub draws: Vec<BlockDrawEntry>,
 }
+
+/// One cell's draw set on the wire: `(cell, prims)`, in the mod's own
+/// submitted form — names, like every other replicated identity.
+pub(crate) type BlockDrawEntry = (u16, crate::world::draw::DrawPrims);
 
 /// One cell's opaque mod KV: `(cell, sorted (key, value-bytes) entries)` —
 /// the wire mirror of the section's per-cell `BTreeMap`.

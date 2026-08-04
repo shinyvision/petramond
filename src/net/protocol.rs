@@ -52,7 +52,7 @@ pub(crate) struct Transform {
 /// receiver re-interns the blob.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ItemSlotWire {
-    pub item_id: u8,
+    pub item_id: u16,
     pub count: u8,
     pub data: Option<Vec<u8>>,
 }

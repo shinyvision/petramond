@@ -195,6 +195,7 @@
               "text": "No matching recipes",
               "style": "label.muted",
               "bind": {
+                "text": "craft_empty_hint",
                 "visible": "no_craft_results"
               }
             },
@@ -622,7 +623,19 @@
       "craft_tip_name": {
         "str": "Sample text"
       },
+      "item_tip_has_info": {
+        "bool": true
+      },
+      "item_tip_info": {
+        "str": "Sample text"
+      },
+      "item_tip_name": {
+        "str": "Sample text"
+      },
       "no_craft_results": {
+        "bool": true
+      },
+      "show_item_tip": {
         "bool": true
       },
       "show_recipe_tip": {

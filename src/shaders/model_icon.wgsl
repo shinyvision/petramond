@@ -46,5 +46,8 @@ fn fs_model_icon(in: VsOut) -> @location(0) vec4<f32> {
     if (c.a < 0.25) {
         discard;
     }
-    return vec4<f32>(c.rgb * in.shade * in.tint, 1.0);
+    // Forward the texture alpha (the icon bake pipeline alpha-blends into the
+    // icon atlas), so a SEMI-transparent texel — a machine's glass window —
+    // stays translucent over the slot background instead of baking opaque.
+    return vec4<f32>(c.rgb * in.shade * in.tint, c.a);
 }

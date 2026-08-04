@@ -168,6 +168,7 @@ pub(crate) const ENGINE_ITEM_NAMES: &[&str] = &[
     "petramond:jungle_fence",
     "petramond:acacia_fence",
     "petramond:redwood_fence",
+    "petramond:clay_block",
 ];
 
 /// The JSON-loaded item table. Loads exactly once, on first access; the loader
@@ -177,18 +178,18 @@ static TABLE: LazyLock<&'static [ItemDef]> = LazyLock::new(load::table);
 /// Every registered item in id order (engine + pack-registered).
 pub(super) fn all() -> &'static [ItemType] {
     static ALL: LazyLock<Vec<ItemType>> =
-        LazyLock::new(|| (0..TABLE.len()).map(|id| ItemType(id as u8)).collect());
+        LazyLock::new(|| (0..TABLE.len()).map(|id| ItemType(id as u16)).collect());
     &ALL
 }
 
 #[inline]
-pub(super) fn from_id(id: u8) -> ItemType {
+pub(super) fn from_id(id: u16) -> ItemType {
     TABLE.get(id as usize).map_or(ItemType::Air, |d| d.item)
 }
 
 #[inline]
 pub(super) fn def(item: ItemType) -> &'static ItemDef {
-    &TABLE[item.id() as usize]
+    TABLE.get(item.id() as usize).unwrap_or(&TABLE[0])
 }
 
 /// Dense block-id → item LUT, inverted once from the rows' `block` links
@@ -196,9 +197,10 @@ pub(super) fn def(item: ItemType) -> &'static ItemDef {
 /// (nothing to hold); if several rows link one block, the lowest item id
 /// wins (the growth-stage pattern: only the planting item links the stage-0
 /// block, later stages link nothing).
-static BLOCK_TO_ITEM: LazyLock<[ItemType; 256]> = LazyLock::new(|| {
-    let mut lut = [ItemType::Air; 256];
-    let mut set = [false; 256];
+static BLOCK_TO_ITEM: LazyLock<Box<[ItemType]>> = LazyLock::new(|| {
+    let n = crate::block::Block::all().len();
+    let mut lut = vec![ItemType::Air; n].into_boxed_slice();
+    let mut set = vec![false; n].into_boxed_slice();
     for d in TABLE.iter() {
         if let Some(b) = d.block {
             if !set[b.id() as usize] {
@@ -213,7 +215,10 @@ static BLOCK_TO_ITEM: LazyLock<[ItemType; 256]> = LazyLock::new(|| {
 /// The item whose row links it to `block`, or `Air` if none does.
 #[inline]
 pub(super) fn item_for_block(block: Block) -> ItemType {
-    BLOCK_TO_ITEM[block.id() as usize]
+    BLOCK_TO_ITEM
+        .get(block.id() as usize)
+        .copied()
+        .unwrap_or(ItemType::Air)
 }
 
 /// Keyed hash index over the rows' recipe `key`s (unique — the loader

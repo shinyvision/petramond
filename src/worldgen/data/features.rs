@@ -246,7 +246,7 @@ mod tests {
         }
         assert_eq!(
             table.id("mymod:palm"),
-            Some(ENGINE_FEATURE_NAMES.len() as u8)
+            Some(ENGINE_FEATURE_NAMES.len() as u16)
         );
     }
 

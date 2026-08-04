@@ -141,7 +141,7 @@ struct RawFile {
 /// The runtime [`Effect`] registered under `name` (engine `petramond:*` and pack
 /// `mod_id:name` keys alike), or `None` when no such row is loaded.
 pub fn by_name(name: &str) -> Option<Effect> {
-    catalog().id(name).map(Effect)
+    catalog().id(name).map(|id| Effect(id as u8))
 }
 
 /// The loaded effect table, id-ordered (`defs()[effect.0]`). Loads exactly
@@ -169,7 +169,7 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EffectDef>, S
                 return Err(format!("effect '{}': icon path is empty", r.effect));
             }
             Ok(EffectDef {
-                effect: Effect(id),
+                effect: Effect(id as u8),
                 name: names.name(id).expect("id resolved from this table"),
                 display: Box::leak(r.display.into_boxed_str()),
                 icon: Box::leak(r.icon.into_boxed_str()),

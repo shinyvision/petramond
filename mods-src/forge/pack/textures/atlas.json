@@ -1,0 +1,116 @@
+{
+    "tiles": [
+        {
+            "name": "forge:clay_ingot_mould",
+            "file": "clay_ingot_mould.png"
+        },
+        {
+            "name": "forge:ingot_mould",
+            "file": "ingot_mould.png"
+        },
+        {
+            "name": "forge:clay_pickaxe_head_mould",
+            "file": "clay_pickaxe_head_mould.png"
+        },
+        {
+            "name": "forge:pickaxe_head_mould",
+            "file": "pickaxe_head_mould.png"
+        },
+        {
+            "name": "forge:clay_axe_head_mould",
+            "file": "clay_axe_head_mould.png"
+        },
+        {
+            "name": "forge:axe_head_mould",
+            "file": "axe_head_mould.png"
+        },
+        {
+            "name": "forge:clay_shovel_head_mould",
+            "file": "clay_shovel_head_mould.png"
+        },
+        {
+            "name": "forge:shovel_head_mould",
+            "file": "shovel_head_mould.png"
+        },
+        {
+            "name": "forge:clay_shears_mould",
+            "file": "clay_shears_mould.png"
+        },
+        {
+            "name": "forge:shears_mould",
+            "file": "shears_mould.png"
+        },
+        {
+            "name": "forge:iron_plate",
+            "file": "iron_plate.png"
+        },
+        {
+            "name": "forge:copper_plate",
+            "file": "copper_plate.png"
+        },
+        {
+            "name": "forge:gold_plate",
+            "file": "gold_plate.png"
+        },
+        {
+            "name": "forge:iron_pickaxe_head",
+            "file": "iron_pickaxe_head.png"
+        },
+        {
+            "name": "forge:iron_axe_head",
+            "file": "iron_axe_head.png"
+        },
+        {
+            "name": "forge:iron_shovel_head",
+            "file": "iron_shovel_head.png"
+        },
+        {
+            "name": "forge:copper_pickaxe_head",
+            "file": "copper_pickaxe_head.png"
+        },
+        {
+            "name": "forge:copper_pickaxe",
+            "file": "copper_pickaxe.png"
+        },
+        {
+            "name": "forge:copper_axe_head",
+            "file": "copper_axe_head.png"
+        },
+        {
+            "name": "forge:copper_axe",
+            "file": "copper_axe.png"
+        },
+        {
+            "name": "forge:copper_shovel_head",
+            "file": "copper_shovel_head.png"
+        },
+        {
+            "name": "forge:copper_shovel",
+            "file": "copper_shovel.png"
+        },
+        {
+            "name": "forge:gold_pickaxe_head",
+            "file": "gold_pickaxe_head.png"
+        },
+        {
+            "name": "forge:gold_pickaxe",
+            "file": "gold_pickaxe.png"
+        },
+        {
+            "name": "forge:gold_axe_head",
+            "file": "gold_axe_head.png"
+        },
+        {
+            "name": "forge:gold_axe",
+            "file": "gold_axe.png"
+        },
+        {
+            "name": "forge:gold_shovel_head",
+            "file": "gold_shovel_head.png"
+        },
+        {
+            "name": "forge:gold_shovel",
+            "file": "gold_shovel.png"
+        }
+    ]
+}

@@ -1,5 +1,6 @@
 //! WGPU renderer: atlas texture, opaque + transparent pipelines, fog.
 
+mod block_draw;
 mod break_overlay;
 mod chest_model;
 mod crosshair;
@@ -248,6 +249,10 @@ pub struct ItemEntityInstance {
     /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
     pub blocklight: crate::light::BlockLight6,
 }
+
+/// One placed block's mod DRAW SET to draw this frame. Owned by the gather
+/// that produces it (`world::draw`) and carried here UNCHANGED — see its doc.
+pub use crate::world::draw::BlockDrawInstance;
 
 /// One animated mob to draw in the world this frame: a species (`kind`) posed at
 /// `anim_time` into its walk cycle (when `moving`; otherwise its rest pose), placed

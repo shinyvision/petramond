@@ -4,9 +4,9 @@
 
 use mod_sdk::*;
 
-use crate::machine::{
+use machine_core::{
     consume_one, merge_output, output_accepts, write_changed_slots, Caches, Machine, MachineSpec,
-    StepCtx,
+    Presentation, StepCtx,
 };
 
 const STATE_KEY: &str = "kitchen:state";
@@ -63,23 +63,26 @@ impl MachineSpec for OvenSpec {
     /// pack data on its rows. The spec's only visual job is swapping the
     /// placed block between the two on burn transitions (`swap_model_block`
     /// keeps container + state).
-    const VARIANT_KEY: &'static str = "kitchen:oven_lit";
+    const VARIANT_KEYS: &'static [&'static str] = &["kitchen:oven_lit"];
     const ANCHORS_KEY: &'static str = "kitchen:ovens";
+    const STATE_KEY: &'static str = STATE_KEY;
 
     /// One oven's game tick: the engine furnace algorithm over its container
     /// slots. Writes back only what changed. A `None` container = never
     /// opened, never written: an empty oven has nothing to do.
     fn step(
         &mut self,
-        ctx: &StepCtx,
+        ctx: &StepCtx<'_>,
         caches: &mut Caches,
         slots: Option<Vec<Option<ItemStackData>>>,
+        stored: &mut Vec<u8>,
+        _out: &mut Presentation,
     ) {
         let Some(mut slots) = slots else {
             return;
         };
         slots.resize(3, None);
-        let mut state = OvenState::decode(&section_kv_get(ctx.pos, STATE_KEY).unwrap_or_default());
+        let mut state = OvenState::decode(stored);
         let before_state = state;
         let before_slots = slots.clone();
 
@@ -125,8 +128,11 @@ impl MachineSpec for OvenSpec {
         }
 
         write_changed_slots(ctx.pos, &before_slots, &slots);
+        // Only on a real change: the driver writes back whatever this leaves,
+        // and an idle machine must not put a record on its cell every tick
+        // (or, first time round, at all).
         if state != before_state {
-            section_kv_set(ctx.pos, STATE_KEY, state.encode());
+            *stored = state.encode();
         }
         // Flip the placed block between the unlit/lit rows on burn transitions
         // only (the swap is engine-idempotent, but there is no reason to cross
@@ -134,12 +140,12 @@ impl MachineSpec for OvenSpec {
         // all data on the lit row.
         let now_lit = state.burn_remaining > 0;
         if was_lit != now_lit {
-            if let Some(lit) = ctx.variant {
+            if let Some(lit) = ctx.variant(0) {
                 swap_model_block(ctx.pos, if now_lit { lit } else { ctx.block });
             }
         }
-        if ctx.gui_open {
-            gui_state_set(
+        if ctx.gui_open() {
+            ctx.publish(
                 "kitchen:cook01",
                 GuiValue::F32(state.cook_progress as f32 / COOK_TICKS as f32),
             );
@@ -148,7 +154,7 @@ impl MachineSpec for OvenSpec {
             } else {
                 state.burn_remaining as f32 / state.burn_max as f32
             };
-            gui_state_set("kitchen:burn01", GuiValue::F32(burn01));
+            ctx.publish("kitchen:burn01", GuiValue::F32(burn01));
         }
     }
 }

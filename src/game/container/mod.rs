@@ -57,10 +57,14 @@ mod tests {
         assert_eq!(specs.len(), crate::furnace::FURNACE_SLOTS);
         assert!(specs[SLOT_INPUT]
             .accepts
-            .contains(&crate::item::ItemTag::SMELTABLE));
+            .contains(&crate::container::SlotFilter::Tag(
+                crate::item::ItemTag::SMELTABLE
+            )));
         assert!(specs[SLOT_FUEL]
             .accepts
-            .contains(&crate::item::ItemTag::FUEL));
+            .contains(&crate::container::SlotFilter::Tag(
+                crate::item::ItemTag::FUEL
+            )));
         assert!(
             specs[SLOT_OUTPUT].take_only,
             "the furnace output must refuse inserts"

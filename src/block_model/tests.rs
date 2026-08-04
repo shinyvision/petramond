@@ -25,6 +25,43 @@ fn workbench_compiles_with_geometry_and_texture() {
     assert_eq!(m.texture_rgba.len(), 128 * 128 * 4);
 }
 
+/// A face's authored `cullface` lands on the cube in `Face::ALL` slot order,
+/// holding the CULL direction's slot — the mesher's neighbour test key. The
+/// shared mob frontend never reads it, so a model without cullfaces compiles
+/// to all-`None`.
+#[test]
+fn cullfaces_compile_into_face_slots() {
+    const SRC: &str = r##"{
+        "resolution": { "width": 16, "height": 16 },
+        "textures": [{ "uv_width": 16, "uv_height": 16, "source": "URI" }],
+        "elements": [
+            { "uuid": "c", "type": "cube", "name": "body", "from": [0,0,0], "to": [16,16,16],
+              "faces": {
+                  "up":    { "uv": [0,0,16,16], "texture": 0, "cullface": "up" },
+                  "north": { "uv": [0,0,16,16], "texture": 0, "cullface": "down" },
+                  "south": { "uv": [0,0,16,16], "texture": 0 }
+              } }
+        ],
+        "outliner": ["c"]
+    }"##;
+    let m = BlockModel::compile(
+        SRC.replace("\"URI\"", &format!("\"{GOLDEN_URI}\""))
+            .as_bytes(),
+    )
+    .expect("compiles");
+    assert_eq!(m.cubes.len(), 1);
+    // Face::ALL order: PosX, NegX, PosY(up)=2, NegY(down)=3, PosZ, NegZ(north)=5.
+    assert_eq!(m.cubes[0].cull[2], Some(2), "up culls against the block above");
+    assert_eq!(m.cubes[0].cull[5], Some(3), "north's cullface names down");
+    assert_eq!(m.cubes[0].cull[4], None, "no cullface authored on south");
+
+    let plain = BlockModel::compile(&model_bytes(WB)).expect("compiles");
+    assert!(
+        plain.cubes.iter().all(|c| c.cull.iter().all(Option::is_none)),
+        "the workbench authors no cullfaces"
+    );
+}
+
 #[test]
 fn every_registered_model_compiles_with_geometry_and_texture() {
     // A bad bbmodel export degrades to an EMPTY model at runtime (log +
@@ -56,6 +93,7 @@ fn flat_model_cubes_emit_one_biased_surface_face() {
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
         faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        cull: [None; 6],
     };
     let support = ModelCube {
         name: String::new(),
@@ -64,6 +102,7 @@ fn flat_model_cubes_emit_one_biased_surface_face() {
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
         faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        cull: [None; 6],
     };
     let all = [cube, support];
     assert_eq!(
@@ -84,6 +123,7 @@ fn flat_model_cubes_bias_away_from_backing_surface() {
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
         faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        cull: [None; 6],
     };
     let backing = ModelCube {
         name: String::new(),
@@ -92,6 +132,7 @@ fn flat_model_cubes_bias_away_from_backing_surface() {
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
         faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        cull: [None; 6],
     };
     let all = [poster, backing];
     assert_eq!(
@@ -110,6 +151,7 @@ fn unsupported_flat_model_cubes_fall_back_to_authored_positive_face() {
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
         faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        cull: [None; 6],
     };
     let all = [cube.clone()];
     assert_eq!(
@@ -133,6 +175,7 @@ fn thick_model_cubes_emit_all_faces_without_bias() {
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
         faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        cull: [None; 6],
     };
 
     for face in Face::ALL {
@@ -218,6 +261,7 @@ fn collision_hidden_parts_keep_visuals_but_remove_collision() {
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
         faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        cull: [None; 6],
     };
     let water = ModelCube {
         name: "water".into(),
@@ -226,6 +270,7 @@ fn collision_hidden_parts_keep_visuals_but_remove_collision() {
         origin: Vec3::ZERO,
         rotation: Vec3::ZERO,
         faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+        cull: [None; 6],
     };
     let mut model = BlockModel {
         cubes: vec![solid, water],
@@ -255,6 +300,58 @@ fn collision_hidden_parts_keep_visuals_but_remove_collision() {
         "bounds still hug the visible water"
     );
     assert_eq!(model.cubes.len(), 2, "water cube is still rendered");
+}
+
+/// A row that declares no OPTIONAL parts must bake exactly what it always did:
+/// only part-ungated segments, contiguous and covering every vertex/index in
+/// order (the cullface/blend split still applies — those segments stay
+/// gate-checked per placement, not per parts mask). Every shipped model is in
+/// that class, so this is the guard that per-instance parts did not quietly
+/// reshape the whole model stream.
+#[test]
+fn a_row_without_optional_parts_bakes_only_part_free_segments() {
+    for &kind in all() {
+        if !def(kind).parts.is_empty() {
+            continue;
+        }
+        let inst = instance(kind);
+        for cell in inst.cells.iter() {
+            for facing in (0..4).map(crate::facing::Facing::from_u8) {
+                let Some(tmpl) = inst.cell_template(cell.offset, facing) else {
+                    continue;
+                };
+                let (mut covered_v, mut covered_i) = (0u32, 0u32);
+                for seg in &tmpl.segments {
+                    assert!(
+                        seg.part.is_none(),
+                        "{kind:?} declares no parts but baked a part-gated segment"
+                    );
+                    assert_eq!(
+                        seg.run.vert_start, covered_v,
+                        "{kind:?} cell {:?}: segments must be contiguous",
+                        cell.offset
+                    );
+                    assert_eq!(seg.run.index_start, covered_i);
+                    covered_v += seg.run.vert_len;
+                    covered_i += seg.run.index_len;
+                }
+                assert_eq!(
+                    covered_v as usize,
+                    tmpl.verts.len(),
+                    "{kind:?} cell {:?}: the segments must cover every vertex",
+                    cell.offset
+                );
+                assert_eq!(covered_i as usize, tmpl.indices.len());
+                assert!(
+                    tmpl.indices
+                        .iter()
+                        .all(|&i| (i as usize) < tmpl.verts.len()),
+                    "{kind:?} cell {:?}: index out of range",
+                    cell.offset
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -384,20 +481,22 @@ const GOLDEN_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB
 /// update GOLDEN_VERSION + GOLDEN_HEX together.
 #[test]
 fn compiled_block_model_layout_change_requires_a_format_version_bump() {
-    const GOLDEN_VERSION: u32 = 8;
+    const GOLDEN_VERSION: u32 = 9;
     const GOLDEN_HEX: &str = concat!(
-        "01000000000000000400000000000000626f647900000000000000000000000000008041",
-        "000080400000804100000000000000000000000000000000000000000000000000000100",
-        "000000000000000000803f0000803f0000000400000000000000ff0000ff010000000100",
-        "000001000000000000000000000000000000000000000000804100008040000080410000",
-        "000000000000000000000000804100008040000080410000000000007041000000000000",
-        "000000000000000000000000803f0000803f0000803f0000000000000000000000000000",
-        "000000000000000000000000f0410000344200000000000000000000803f000000009a99",
-        "193f9a99193f9a99193f0000000000000000000000000000000000000000000000000000",
-        "000000000000000000000000000000000000000000000000803f0000803f0000803f0000",
-        "000000000000000000000000000000000000000000000000000000000000000000000000",
-        "000000000000000000000000803f0000803f0000803f0000000000000000000000000000",
-        "00000000000000000000000000000000004100000000",
+        "01000000000000000400000000000000626f6479000000000000000000000000",
+        "0000804100008040000080410000000000000000000000000000000000000000",
+        "0000000000000100000000000000000000803f0000803f000000000000000000",
+        "0400000000000000ff0000ff0100000001000000010000000000000000000000",
+        "0000000000000000000080410000804000008041000000000000000000000000",
+        "0000804100008040000080410000000000007041000000000000000000000000",
+        "000000000000803f0000803f0000803f00000000000000000000000000000000",
+        "00000000000000000000f0410000344200000000000000000000803f00000000",
+        "9a99193f9a99193f9a99193f0000000000000000000000000000000000000000",
+        "000000000000000000000000000000000000000000000000000000000000803f",
+        "0000803f0000803f000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000803f0000803f",
+        "0000803f00000000000000000000000000000000000000000000000000000000",
+        "0000004100000000",
     );
 
     const SRC: &str = r##"{

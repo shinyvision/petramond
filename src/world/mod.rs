@@ -11,6 +11,7 @@ mod container;
 mod cursor;
 mod custom_bake;
 pub(crate) mod door;
+pub mod draw;
 mod edit;
 mod entities;
 pub(crate) mod environment;

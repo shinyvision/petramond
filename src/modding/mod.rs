@@ -527,7 +527,7 @@ impl ModHost {
         ctx: &mut SimCtx,
         shape_key: &str,
         shape_kind: u8,
-        block_id: u8,
+        block_id: u16,
         inputs: mod_api::PlaceInputsView,
     ) -> Option<mod_api::ShapePlacementResult> {
         let mod_id = crate::registry::namespace(shape_key)?;

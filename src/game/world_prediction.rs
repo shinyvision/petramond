@@ -459,7 +459,7 @@ impl Game {
         }
         // `cells` lists every replica cell the write touches, with its
         // previous id — the deny-rollback footprint.
-        let previous_cells: Vec<(IVec3, u8)> = plan
+        let previous_cells: Vec<(IVec3, u16)> = plan
             .cells()
             .map(|c| (c, self.replica.chunk_block(c.x, c.y, c.z)))
             .collect();

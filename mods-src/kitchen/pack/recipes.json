@@ -29,6 +29,7 @@
     },
     {
       "type": "processing",
+      "recipe": "kitchen:raw_mutton_to_cooked_mutton",
       "class": "kitchen:cooking",
       "ingredient": "kitchen:raw_mutton",
       "result": "kitchen:cooked_mutton"

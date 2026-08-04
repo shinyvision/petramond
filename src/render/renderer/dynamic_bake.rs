@@ -233,12 +233,68 @@ impl Renderer {
                 self.item_entity.visible.push(*inst);
             }
         }
+        // Re-cull against THIS frame's camera, like the item entities above.
+        // The gather already culled, but against the camera the game thread
+        // published; these sets share the item-entity vertex budget, so a set
+        // that turned off-screen since must not eat a dropped item's slot.
+        // Recorded as INDICES into the published list, not as a filtered copy
+        // of it: the published list is state (narrowing it in place would make
+        // the next frame's contents depend on where this frame's camera
+        // pointed), but saying WHICH rows survived costs a `u32`, where
+        // cloning them cost an atomic refcount pair and ~96 bytes each.
+        //
+        // The bound is the set's OWN, carried into world axes by its transform:
+        // a set is authored in its block's footprint space and may reach a few
+        // cells, and a hardcoded box big enough for the largest machine is a
+        // cull that stops culling.
+        let mut visible_draws = std::mem::take(&mut self.item_entity.block_draws_visible);
+        visible_draws.clear();
+        visible_draws.extend(
+            self.item_entity
+                .block_draws
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| match d.set.bounds {
+                    None => false,
+                    Some((lo, hi)) => {
+                        let (mn, mx) = crate::world::draw::world_bounds(&d.transform, lo, hi);
+                        visible_world_aabb(mn.into(), mx.into())
+                    }
+                })
+                .map(|(i, _)| i as u32),
+        );
+        let draws = crate::render::block_draw::VisibleDraws {
+            all: &self.item_entity.block_draws,
+            visible: &visible_draws,
+        };
         let visible = &self.item_entity.visible;
+        // Each stream's remaining room, read before the bake borrows it. The
+        // sets go in SECOND and stop at the cap, because the bake is
+        // all-or-nothing: without a bound, enough machines in view would take
+        // every dropped item in the world down with them.
+        let budget = |d: &super::DynamicDraw| crate::render::block_draw::StreamBudget {
+            verts: d.vbuf_cap,
+            indices: d.ibuf_cap,
+        };
+        let (opaque, models, sprites) = (
+            budget(&self.item_entity.draw),
+            budget(&self.item_entity.model_draw),
+            budget(&self.item_entity.sprite_draw),
+        );
         self.item_entity.draw.bake(
             &self.queue,
             &mut self.item_entity.verts,
             &mut self.item_entity.indices,
-            |verts, indices| build_item_entities(visible, verts, indices),
+            |verts, indices| {
+                // Mod draw sets share this stream: same atlas, same pipeline,
+                // rebuilt from scratch every frame like everything else in it.
+                // A second producer means the closure's index count is the
+                // BUFFER's length, not the first builder's return — the
+                // builders each report only their own share.
+                build_item_entities(visible, verts, indices);
+                crate::render::block_draw::build_block_draws(draws, opaque, verts, indices);
+                indices.len() as u32
+            },
         );
         // Dropped bbmodel items (their own model atlas), baked from the same visible set.
         let visible = &self.item_entity.visible;
@@ -248,7 +304,12 @@ impl Renderer {
             &mut self.item_entity.model_verts,
             &mut self.item_entity.model_indices,
             |verts, indices| {
-                crate::render::item_entity::build_item_model_entities(visible, env, verts, indices)
+                // Two producers: the count is the buffer's (see above).
+                crate::render::item_entity::build_item_model_entities(visible, env, verts, indices);
+                crate::render::block_draw::build_block_draw_models(
+                    draws, env, models, verts, indices,
+                );
+                indices.len() as u32
             },
         );
         // Dropped sprite items as extruded pixel-perfect 3D slabs (block atlas,
@@ -260,16 +321,27 @@ impl Renderer {
             &mut self.item_entity.sprite_verts,
             &mut self.item_entity.sprite_indices,
             |verts, indices| {
+                // Two producers: the count is the buffer's (see above).
                 crate::render::item_entity::build_item_sprite_entities(
                     visible,
                     env,
                     &mut sprite_scratch,
                     verts,
                     indices,
-                )
+                );
+                crate::render::block_draw::build_block_draw_sprites(
+                    draws,
+                    env,
+                    sprites,
+                    &mut sprite_scratch,
+                    verts,
+                    indices,
+                );
+                indices.len() as u32
             },
         );
         self.item_entity.sprite_scratch = sprite_scratch;
+        self.item_entity.block_draws_visible = visible_draws;
 
         // Chests (inset body + hinged lid), frustum-culled like item entities and
         // reusing their CPU scratch. Drawn by the EXISTING opaque pipeline.

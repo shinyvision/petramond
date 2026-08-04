@@ -163,8 +163,8 @@ impl crate::block::CellView for SlabState {
         }
         Self::decode(
             s.byte(0),
-            Block::from_id(s.byte(1)),
-            Block::from_id(s.byte(2)),
+            Block::from_id(s.id_at(1)),
+            Block::from_id(s.id_at(3)),
         )
     }
 }
@@ -174,12 +174,12 @@ impl crate::block::CellCodec for SlabState {
             // An empty stack clears its entry (the cell stops being a slab).
             return ShapeState::NONE;
         }
-        // The two layer bytes are BLOCK IDS, declared through the id mask so
-        // the save palette / net transport rewrite them generically.
-        ShapeState::with_ids(
-            &[self.encode_meta(), self.layers[0].id(), self.layers[1].id()],
-            0b110,
-        )
+        // The two layer slots are BLOCK IDS — two bytes each, declared
+        // through the id mask so the save palette / net transport rewrite them
+        // generically.
+        let [a_lo, a_hi] = ShapeState::id_bytes(self.layers[0].id());
+        let [b_lo, b_hi] = ShapeState::id_bytes(self.layers[1].id());
+        ShapeState::with_ids(&[self.encode_meta(), a_lo, a_hi, b_lo, b_hi], 0b0_1010)
     }
 }
 

@@ -18,8 +18,11 @@ use crate::container::Container;
 use crate::furnace::Furnace;
 use crate::light::LightRgb;
 
+pub use cube::BlockCube;
+
 mod block_entities;
 mod cell_states;
+mod cube;
 mod metrics;
 mod restore;
 
@@ -79,14 +82,16 @@ impl SectionMetrics {
     }
 }
 
-/// One 16³ cube of voxels. Blocks stored as a flat `Arc<[u8; 4096]>` indexed by
-/// [`section_idx`].
+/// One 16³ cube of voxels, indexed by [`section_idx`].
 ///
-/// `blocks` is an `Arc` so the off-thread light and mesh pools can take a cheap shared
-/// reference to a section's block buffer (and its neighbours') without copying 4096 bytes
-/// per section on the render thread — assembling the flood neighbourhood used to be a
-/// multi-millisecond main-thread spike while streaming. Mutation is copy-on-write via
-/// `Arc::make_mut`: a setter clones the buffer only if a bake is mid-flight against it.
+/// `blocks` is a [`BlockCube`] — 4096 ids `Arc`-shared at the narrowest width
+/// that holds them (see `section::cube`) — so the off-thread light and mesh
+/// pools can take a cheap shared handle to a section's block buffer (and its
+/// neighbours') without copying the cube per section on the render thread;
+/// assembling the flood neighbourhood used to be a multi-millisecond
+/// main-thread spike while streaming. Mutation is copy-on-write via
+/// `Arc::make_mut`: a setter clones the buffer only if a bake is mid-flight
+/// against it.
 ///
 /// Block ids stay dense and minimal. Per-cell state that changes block behavior or
 /// rendering lives in `states`, which keeps uncommon states sparse and centralized.
@@ -95,7 +100,7 @@ pub struct Section {
     pub cx: i32,
     pub cy: i32,
     pub cz: i32,
-    blocks: Arc<[u8]>,
+    blocks: BlockCube,
     states: BlockStates,
     /// Block-entity state, allocated on first insert — `None` for the common
     /// generated section (together with `BlockStates`' boxed sparse maps this
@@ -205,11 +210,11 @@ impl BlockEntities {
     }
 }
 
-/// Process-wide shared 16³ cubes filled with one byte value. Uniform sections
-/// (all-air sky band, all-stone deep, all-water ocean) and uniform light cubes
-/// (open sky, pitch dark) point at these instead of owning a 4 KiB buffer each;
-/// the cache entry keeps the refcount ≥ 2, so the first heterogeneous write
-/// un-shares through the existing `Arc::make_mut` copy-on-write path.
+/// Process-wide shared 16³ cubes filled with one byte value. Uniform light
+/// cubes (open sky, pitch dark) point at these instead of owning a 4 KiB
+/// buffer each; the cache entry keeps the refcount ≥ 2, so the first
+/// heterogeneous write un-shares through the existing `Arc::make_mut`
+/// copy-on-write path.
 /// A shared all-`value` 16³ byte cube. The light bakes' `Full` / `Dark` sky
 /// shortcuts return one directly instead of allocating and filling a fresh
 /// cube that [`compact_uniform_cube`] would immediately throw away — most
@@ -238,7 +243,7 @@ impl Section {
             cx,
             cy,
             cz,
-            blocks: uniform_cube(0),
+            blocks: BlockCube::uniform(0),
             states: BlockStates::new(),
             entities: None,
             dirty: true,
@@ -323,23 +328,40 @@ impl Section {
 
     #[inline]
     pub fn block(&self, x: usize, y: usize, z: usize) -> Block {
-        Block::from_id(self.blocks[section_idx(x, y, z)])
+        Block::from_id(self.blocks.get(section_idx(x, y, z)))
     }
 
     #[inline]
-    pub fn block_raw(&self, x: usize, y: usize, z: usize) -> u8 {
-        self.blocks[section_idx(x, y, z)]
+    pub fn block_raw(&self, x: usize, y: usize, z: usize) -> u16 {
+        self.blocks.get(section_idx(x, y, z))
+    }
+
+    /// The id at a section-local cell index.
+    #[inline]
+    pub fn block_at_idx(&self, idx: usize) -> u16 {
+        self.blocks.get(idx)
+    }
+
+    /// A borrowed handle to this section's block cube, for the scans that walk
+    /// cells by index.
+    #[inline]
+    pub fn blocks(&self) -> &BlockCube {
+        &self.blocks
+    }
+
+    /// Every cell's id in section-local index order.
+    pub fn blocks_iter(&self) -> impl Iterator<Item = u16> + '_ {
+        self.blocks.iter()
     }
 
     pub fn set_block(&mut self, x: usize, y: usize, z: usize, b: Block) {
         self.set_block_raw(x, y, z, b.id());
     }
 
-    pub fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8) {
+    pub fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u16) {
         let i = section_idx(x, y, z);
-        let blocks = Arc::make_mut(&mut self.blocks);
-        let old = blocks[i];
-        blocks[i] = id;
+        let old = self.blocks.get(i);
+        self.blocks.set(i, id);
         self.adjust_random_tick_count(old, id);
         self.adjust_opaque_count(x, y, z, old, id);
         self.states.clear_on_block_change(i);
@@ -347,18 +369,38 @@ impl Section {
         self.mark_light_dirty();
     }
 
-    pub fn blocks_slice(&self) -> &[u8] {
-        &self.blocks
-    }
-    pub fn blocks_slice_mut(&mut self) -> &mut [u8] {
-        Arc::make_mut(&mut self.blocks)
+    /// Direct write access to the cube, for the BULK fills (worldgen terrain,
+    /// cave carving, test scaffolding) that maintain the derived counters
+    /// themselves via `recompute_opaque_count`.
+    pub fn blocks_mut(&mut self) -> &mut BlockCube {
+        &mut self.blocks
     }
 
-    /// A cheap shared handle to this section's block buffer (an `Arc` clone, no copy).
-    /// The off-thread light/mesh pools take these for the flood/mesh neighbourhood instead
-    /// of the render thread copying 4096 bytes per neighbour section.
-    pub fn blocks_arc(&self) -> Arc<[u8]> {
-        Arc::clone(&self.blocks)
+    /// Run a BULK terrain writer over this section's ids as a FLAT slice.
+    ///
+    /// The worldgen fills and the cave carve write thousands of cells through
+    /// index arithmetic and must not pay a per-cell representation test, so
+    /// they get a plain `[u16]` and the cube is rebuilt (re-narrowed) on
+    /// install. Derived counters are NOT maintained — the caller still owes
+    /// `recompute_opaque_count`, exactly as it did for a raw buffer write.
+    pub fn edit_ids_bulk(&mut self, f: impl FnOnce(&mut [u16])) {
+        thread_local! {
+            static SCRATCH: std::cell::Cell<Vec<u16>> = const { std::cell::Cell::new(Vec::new()) };
+        }
+        let mut ids = SCRATCH.with(|c| c.take());
+        ids.clear();
+        ids.extend(self.blocks.iter());
+        f(&mut ids);
+        self.blocks = BlockCube::from_ids(&ids);
+        SCRATCH.with(|c| c.set(ids));
+    }
+
+    /// A cheap shared handle to this section's block buffer (refcount bumps, no
+    /// copy). The off-thread light/mesh pools take these for the flood/mesh
+    /// neighbourhood instead of the render thread copying the whole cube per
+    /// neighbour section.
+    pub fn block_cube(&self) -> BlockCube {
+        self.blocks.clone()
     }
 
     /// Heap accounting for the memory census: `(water buffer ptr, water len,
@@ -368,6 +410,12 @@ impl Section {
         let entities = self.entities.as_ref().map_or(0, |e| e.memory_bytes());
         let emitters = (self.particle_emitter_cells.capacity() * 2) as u64;
         (water_ptr, water_len, sparse, entities, emitters)
+    }
+
+    /// `(buffer identity, resident bytes)` of this section's block cube, so
+    /// the census counts each distinct shared buffer once.
+    pub(crate) fn block_cube_heap(&self) -> (usize, u64) {
+        self.blocks.heap()
     }
 
     /// Cheap shared handles to this section's water / skylight / block-light buffers (`Arc`
@@ -405,9 +453,8 @@ impl Section {
     pub fn set_water(&mut self, x: usize, y: usize, z: usize, b: Block, meta: u8) {
         let i = section_idx(x, y, z);
         let id = b.id();
-        let blocks = Arc::make_mut(&mut self.blocks);
-        let old = blocks[i];
-        blocks[i] = id;
+        let old = self.blocks.get(i);
+        self.blocks.set(i, id);
         self.adjust_random_tick_count(old, id);
         self.adjust_opaque_count(x, y, z, old, id);
         let meta = if b == Block::Water { meta } else { 0 };

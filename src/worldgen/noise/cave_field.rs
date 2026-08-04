@@ -1067,24 +1067,24 @@ impl CaveField {
             oz + SECTION_SIZE as i32 - 1,
         );
         let batch = BatchCarve::new(self, &lat);
-        let blocks = section.blocks_slice_mut();
-
-        for z in 0..SECTION_SIZE {
-            for x in 0..SECTION_SIZE {
-                let surf_y = surf[z * SECTION_SIZE + x];
-                let y1 = (oy + SECTION_SIZE as i32 - 1).min(surf_y);
-                if y0 > y1 {
-                    continue;
-                }
-                let slot = |y| section_idx(x, (y - oy) as usize, z);
-                let (wx, wz) = (ox + x as i32, oz + z as i32);
-                if batch.faces {
-                    batch.column::<true, _>(blocks, slot, wx, wz, y0, y1, surf_y);
-                } else {
-                    batch.column::<false, _>(blocks, slot, wx, wz, y0, y1, surf_y);
+        section.edit_ids_bulk(|blocks| {
+            for z in 0..SECTION_SIZE {
+                for x in 0..SECTION_SIZE {
+                    let surf_y = surf[z * SECTION_SIZE + x];
+                    let y1 = (oy + SECTION_SIZE as i32 - 1).min(surf_y);
+                    if y0 > y1 {
+                        continue;
+                    }
+                    let slot = |y| section_idx(x, (y - oy) as usize, z);
+                    let (wx, wz) = (ox + x as i32, oz + z as i32);
+                    if batch.faces {
+                        batch.column::<true, _>(blocks, slot, wx, wz, y0, y1, surf_y);
+                    } else {
+                        batch.column::<false, _>(blocks, slot, wx, wz, y0, y1, surf_y);
+                    }
                 }
             }
-        }
+        });
     }
 
     /// The entrance GATE: exactly-sampled (hot per-column in `ColumnGen`, where a
@@ -1158,9 +1158,9 @@ struct BatchCarve<'a> {
     /// the biome read on a SOLID cell — hangs off this, so a table without it
     /// walks exactly the loop it always did.
     faces: bool,
-    air: u8,
-    water: u8,
-    stone: u8,
+    air: u16,
+    water: u16,
+    stone: u16,
 }
 
 impl<'a> BatchCarve<'a> {
@@ -1189,7 +1189,7 @@ impl<'a> BatchCarve<'a> {
     /// the neighbouring voxel belongs to another batch.
     fn column<const FACES: bool, F: Fn(i32) -> usize>(
         &self,
-        blocks: &mut [u8],
+        blocks: &mut [u16],
         slot: F,
         wx: i32,
         wz: i32,
@@ -1304,7 +1304,7 @@ impl<'a> BatchCarve<'a> {
     #[inline]
     fn paint_run(
         &self,
-        blocks: &mut [u8],
+        blocks: &mut [u16],
         run: &[(i32, usize)],
         f: &LiningFaces,
         wx: i32,
@@ -1326,7 +1326,7 @@ impl<'a> BatchCarve<'a> {
     /// Paint the rock under a cave floor the walk just cut: the run's top cell
     /// IS the course top.
     #[inline]
-    fn paint_floor(&self, blocks: &mut [u8], run: &[(i32, usize)], wx: i32, wz: i32) {
+    fn paint_floor(&self, blocks: &mut [u16], run: &[(i32, usize)], wx: i32, wz: i32) {
         let Some(&(top_y, _)) = run.last() else {
             return;
         };
@@ -1343,7 +1343,7 @@ impl<'a> BatchCarve<'a> {
     /// resolves against too.
     fn paint_floor_below_top(
         &self,
-        blocks: &mut [u8],
+        blocks: &mut [u16],
         run: &[(i32, usize)],
         wx: i32,
         wz: i32,
@@ -1371,7 +1371,7 @@ impl<'a> BatchCarve<'a> {
     #[inline]
     fn paint_side<const FACES: bool>(
         &self,
-        blocks: &mut [u8],
+        blocks: &mut [u16],
         i: usize,
         below_open: bool,
         wx: i32,
@@ -1379,7 +1379,7 @@ impl<'a> BatchCarve<'a> {
         wz: i32,
     ) {
         let id = self.field.biome_id_lat(self.lat, wx, y, wz);
-        let bare = |blocks: &mut [u8]| {
+        let bare = |blocks: &mut [u16]| {
             let lining = self.field.underground.lining(id);
             if lining != self.air {
                 blocks[i] = lining;
@@ -2072,7 +2072,7 @@ mod tests {
                 let carved: Vec<Section> = (-4..=-2)
                     .map(|cy| {
                         let mut s = Section::new(cx, cy, cz);
-                        s.blocks_slice_mut().fill(stone);
+                        s.blocks_mut().fill(stone);
                         field.carve_section(&mut s, &surf);
                         s
                     })
@@ -2080,7 +2080,7 @@ mod tests {
                 let at = |wy: i32, x: usize, z: usize| {
                     let cy = wy.div_euclid(SECTION_SIZE as i32);
                     carved.get((cy + 4) as usize).map(|s| {
-                        s.blocks_slice()
+                        s.blocks_iter().collect::<Vec<_>>()
                             [section_idx(x, wy.rem_euclid(SECTION_SIZE as i32) as usize, z)]
                     })
                 };
@@ -2156,7 +2156,7 @@ mod tests {
                 let carved: Vec<Section> = (-4..=-2)
                     .map(|cy| {
                         let mut s = Section::new(cx, cy, cz);
-                        s.blocks_slice_mut().fill(stone);
+                        s.blocks_mut().fill(stone);
                         field.carve_section(&mut s, &surf);
                         s
                     })
@@ -2164,7 +2164,7 @@ mod tests {
                 let at = |wy: i32, x: usize, z: usize| {
                     let cy = wy.div_euclid(SECTION_SIZE as i32);
                     carved.get((cy + 4) as usize).map(|s| {
-                        s.blocks_slice()
+                        s.blocks_iter().collect::<Vec<_>>()
                             [section_idx(x, wy.rem_euclid(SECTION_SIZE as i32) as usize, z)]
                     })
                 };
@@ -2240,7 +2240,7 @@ mod tests {
                 let carved: Vec<Section> = (-4..=-2)
                     .map(|cy| {
                         let mut s = Section::new(cx, cy, cz);
-                        s.blocks_slice_mut().fill(stone);
+                        s.blocks_mut().fill(stone);
                         field.carve_section(&mut s, &surf);
                         s
                     })
@@ -2248,7 +2248,7 @@ mod tests {
                 let at = |wy: i32, x: usize, z: usize| {
                     let cy = wy.div_euclid(SECTION_SIZE as i32);
                     carved.get((cy + 4) as usize).map(|s| {
-                        s.blocks_slice()
+                        s.blocks_iter().collect::<Vec<_>>()
                             [section_idx(x, wy.rem_euclid(SECTION_SIZE as i32) as usize, z)]
                     })
                 };
@@ -2355,25 +2355,27 @@ mod tests {
                 field.carve_chunk(&mut chunk, &csurf);
                 for cy in 0..3i32 {
                     let mut s = Section::new(cx, cy, cz);
-                    for z in 0..SECTION_SIZE {
-                        for ly in 0..SECTION_SIZE {
-                            for x in 0..SECTION_SIZE {
-                                let (wx, wz) = (
-                                    cx * SECTION_SIZE as i32 + x as i32,
-                                    cz * SECTION_SIZE as i32 + z as i32,
-                                );
-                                let wy = cy * SECTION_SIZE as i32 + ly as i32;
-                                s.blocks_slice_mut()[section_idx(x, ly, z)] = rock(wx, wy, wz);
+                    s.edit_ids_bulk(|dst| {
+                        for z in 0..SECTION_SIZE {
+                            for ly in 0..SECTION_SIZE {
+                                for x in 0..SECTION_SIZE {
+                                    let (wx, wz) = (
+                                        cx * SECTION_SIZE as i32 + x as i32,
+                                        cz * SECTION_SIZE as i32 + z as i32,
+                                    );
+                                    let wy = cy * SECTION_SIZE as i32 + ly as i32;
+                                    dst[section_idx(x, ly, z)] = rock(wx, wy, wz);
+                                }
                             }
                         }
-                    }
+                    });
                     field.carve_section(&mut s, &ssurf);
                     for z in 0..SECTION_SIZE {
                         for ly in 0..SECTION_SIZE {
                             for x in 0..SECTION_SIZE {
                                 let wy = cy as usize * SECTION_SIZE + ly;
                                 let want = chunk.blocks_slice()[idx(x, wy, z)];
-                                let got = s.blocks_slice()[section_idx(x, ly, z)];
+                                let got = s.block_raw(x, ly, z);
                                 assert_eq!(
                                     got, want,
                                     "section and chunk disagree at ({x},{wy},{z}) of chunk \

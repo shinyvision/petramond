@@ -708,17 +708,43 @@ pub(crate) const UV_MODE_CELL_LOCAL: u32 = 3;
 /// the sim's day/night sky scale at DRAW time — a placed model darkens at night
 /// exactly like the terrain around it (a remesh-time bake could not, since
 /// meshes don't rebuild when the sun sets).
+/// **32 bytes.** It was 44 while the four light fractions rode `[f32;4]`: the
+/// sky and the three block channels are 6-bit integers scaled by 1/63, so 160
+/// bits carried 24 bits of information. [`pack_model_light`] folds them into
+/// one word and the shader divides — the same `f32(k)/63.0` the CPU did, so
+/// the packing is bit-for-bit lossless, not a quality trade. `shade` stays a
+/// float: it is a baked AO product with no integer form to recover.
+///
+/// This stream rides the packed terrain columns, so the stride is VRAM, CPU
+/// mesh RAM and upload bandwidth on every model block in the world.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ModelVertex {
     pub pos: [f32; 3],
     pub uv: [f32; 2],
     pub shade: f32,
-    /// `(sky01, block_r01, block_g01, block_b01)` light fractions (0..1 of the
-    /// 6-bit channels) — the block channel is per-colour so a placed model sits
-    /// in coloured light like the terrain around it.
-    pub light: [f32; 4],
+    /// `(sky, block_r, block_g, block_b)` as four 6-bit levels — see
+    /// [`pack_model_light`]. The block channel is per-colour so a placed model
+    /// sits in coloured light like the terrain around it.
+    pub light: u32,
+    /// Multiply colour packed as `0x00RRGGBB`; `0xFFFFFF` (white) for every
+    /// vertex of a row that declares no `tint_parts`, which is almost all of
+    /// them. Packed rather than three floats because this stream is sparse but
+    /// not free — a model block pays it per vertex.
+    pub tint: u32,
 }
+
+/// The four 6-bit light levels of a [`ModelVertex`], `sky | r<<6 | g<<12 |
+/// b<<18`. The sole owner of that layout; `mob.wgsl`'s `vs_world_model`
+/// mirrors the decode by hand and divides each lane by 63.
+#[inline]
+pub fn pack_model_light(sky6: u32, block: BlockLight6) -> u32 {
+    let [r, g, b] = block.channels();
+    (sky6 & 0x3F) | ((r & 0x3F) << 6) | ((g & 0x3F) << 12) | ((b & 0x3F) << 18)
+}
+
+/// The untinted `ModelVertex::tint` — white, i.e. the texture unmodified.
+pub const MODEL_TINT_NONE: u32 = 0x00FF_FFFF;
 
 /// GPU vertex of the model→terrain contact-shadow stream: a non-indexed
 /// triangle of the soft stamp a bbmodel block lays on the opaque terrain under
@@ -783,6 +809,11 @@ pub struct ChunkMesh {
     /// of the chunk; empty for the common chunk with no bbmodel blocks.
     pub model: Vec<ModelVertex>,
     pub model_idx: Vec<u32>,
+    /// The alpha-BLEND model faces (semi-transparent texels, routed at template-bake
+    /// time): indices into the SAME `model` vertex buffer, drawn by the model-blend
+    /// pass after the translucent-block pass. Kept as a second index stream so the
+    /// opaque pass never touches a blended triangle.
+    pub model_blend_idx: Vec<u32>,
     /// Model→terrain contact-shadow triangles (non-indexed, see
     /// [`ContactShadowVertex`]), drawn by the renderer's dedicated contact pass.
     /// A section can hold contact triangles with an EMPTY model stream (a
@@ -817,6 +848,7 @@ impl ChunkMesh {
             far_opaque: vec![],
             model: vec![],
             model_idx: vec![],
+            model_blend_idx: vec![],
             contact: vec![],
             mesh_dirty: false,
             released: false,
@@ -835,6 +867,7 @@ impl ChunkMesh {
             && self.transparent_two_sided.is_empty()
             && self.translucent.is_empty()
             && self.model_idx.is_empty()
+            && self.model_blend_idx.is_empty()
             && self.contact.is_empty()
     }
 
@@ -859,7 +892,7 @@ impl ChunkMesh {
             (self.translucent.len() * V) as u64,
             0,
             (self.model.len() * M) as u64,
-            (self.model_idx.len() * 4) as u64,
+            ((self.model_idx.len() + self.model_blend_idx.len()) * 4) as u64,
             (self.contact.len() * C) as u64,
         ]
     }
@@ -877,7 +910,8 @@ impl ChunkMesh {
             + self.far_opaque.len() * V
             + self.model.len() * M
             + self.contact.len() * C
-            + self.model_idx.len() * 4;
+            + self.model_idx.len() * 4
+            + self.model_blend_idx.len() * 4;
         let cap = self.opaque.capacity() * V
             + self.transparent.capacity() * V
             + self.transparent_two_sided.capacity() * V
@@ -885,7 +919,8 @@ impl ChunkMesh {
             + self.far_opaque.capacity() * V
             + self.model.capacity() * M
             + self.contact.capacity() * C
-            + self.model_idx.capacity() * 4;
+            + self.model_idx.capacity() * 4
+            + self.model_blend_idx.capacity() * 4;
         (used as u64, (cap + std::mem::size_of::<Self>()) as u64)
     }
 
@@ -902,6 +937,7 @@ impl ChunkMesh {
         self.far_opaque = Vec::new();
         self.model = Vec::new();
         self.model_idx = Vec::new();
+        self.model_blend_idx = Vec::new();
         self.contact = Vec::new();
     }
 }

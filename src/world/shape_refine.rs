@@ -147,15 +147,15 @@ impl World {
         if section.is_empty_air() {
             return;
         }
-        let blocks = section.blocks_slice();
+        let blocks = section.blocks();
         let (ox, oy, oz) = pos.origin_world();
-        let mut push = |lx: usize, ly: usize, lz: usize, id: u8| {
+        let mut push = |lx: usize, ly: usize, lz: usize, id: u16| {
             if Block::id_refines_shape(id) {
                 out.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
             }
         };
         let Some(d) = facing else {
-            for (idx, &id) in blocks.iter().enumerate() {
+            for (idx, id) in blocks.iter().enumerate() {
                 let (lx, ly, lz) = section_local(idx);
                 push(lx, ly, lz, id);
             }
@@ -178,7 +178,7 @@ impl World {
                 } else {
                     (a, b, fixed)
                 };
-                push(lx, ly, lz, blocks[section_idx(lx, ly, lz)]);
+                push(lx, ly, lz, blocks.get(section_idx(lx, ly, lz)));
             }
         }
     }

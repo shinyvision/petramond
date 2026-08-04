@@ -123,8 +123,12 @@ impl UiRuntime {
             (args.screen.0 as i32) / scale,
             (args.screen.1 as i32) / scale,
         );
-        let tree =
-            InstTree::expand_form(&self.doc, args.state, self.doc.compact_active(viewport.0));
+        let tree = InstTree::expand_form_hover(
+            &self.doc,
+            args.state,
+            self.doc.compact_active(viewport.0),
+            fs.hover_widget.as_deref(),
+        );
         if tree.is_empty() {
             return;
         }
@@ -291,6 +295,15 @@ impl UiRuntime {
             _ => None,
         });
 
+        // The anchor for hover-anchored tooltips, resolved like `hover_item`:
+        // the topmost NAMED widget under the cursor, interactive or not — a
+        // gauge a machine fills can describe itself exactly like a disabled
+        // list row. Next frame's expansion reads it (one frame of lag).
+        fs.hover_widget = (0..tree.len() as u32)
+            .rev()
+            .filter(|&i| visible_at(i))
+            .find_map(|i| tree.get(i).key.as_ref().map(|k| k.id.clone()));
+
         // Paint: dim backdrop (physical fullscreen), then the tree.
         if let Some(color) = args.dim {
             let (w, h) = (args.screen.0 as f32, args.screen.1 as f32);
@@ -378,7 +391,7 @@ fn place_tooltips(
     viewport: (i32, i32),
 ) {
     for i in 0..tree.len() as u32 {
-        if !matches!(tree.get(i).node.kind, NodeKind::Tooltip) {
+        if !matches!(tree.get(i).node.kind, NodeKind::Tooltip { .. }) {
             continue;
         }
         let rect = solved.rects[i as usize];

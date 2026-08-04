@@ -490,7 +490,7 @@ mod tests {
         ShapeStateSnapshot::default()
     }
 
-    fn cells<'a>(blocks: &'a [u8], states: &'a ShapeStateSnapshot) -> LightCells<'a> {
+    fn cells<'a>(blocks: &'a [u16], states: &'a ShapeStateSnapshot) -> LightCells<'a> {
         LightCells::new(blocks, states, NBHD)
     }
 
@@ -573,7 +573,7 @@ mod tests {
             rng
         };
         for round in 0..4 {
-            let mut blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+            let mut blocks = vec![0u16; NBHD_VOLUME].into_boxed_slice();
             let mut surface = vec![0i32; NBHD_AREA].into_boxed_slice();
             for z in 0..NBHD {
                 for x in 0..NBHD {
@@ -613,7 +613,7 @@ mod tests {
                 surface[z * NBHD + x] = i32::MAX;
             }
         }
-        let blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+        let blocks = vec![0u16; NBHD_VOLUME].into_boxed_slice();
         let states = default_states();
 
         let got = skylight(
@@ -632,7 +632,7 @@ mod tests {
     fn block_light_floods_across_a_section_seam() {
         let pos = SectionPos::new(0, 0, 0);
         let emitter = IVec3::new(-1, 8, 8);
-        let blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+        let blocks = vec![0u16; NBHD_VOLUME].into_boxed_slice();
         let states = default_states();
 
         let cube = block_light(
@@ -651,7 +651,7 @@ mod tests {
     fn opaque_seam_blocks_the_cross_section_flood() {
         let pos = SectionPos::new(0, 0, 0);
         let emitter = IVec3::new(-1, 8, 8);
-        let mut blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+        let mut blocks = vec![0u16; NBHD_VOLUME].into_boxed_slice();
         for ly in 0..SECTION_SIZE {
             for lz in 0..SECTION_SIZE {
                 blocks[nbhd_idx(SECTION_SIZE, ly + SECTION_SIZE, lz + SECTION_SIZE)] =
@@ -716,7 +716,7 @@ mod tests {
     fn block_light_enters_a_stair_only_through_an_open_side() {
         let pos = SectionPos::new(0, 0, 0);
         let emitter = IVec3::new(-1, 8, 8);
-        let mut blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+        let mut blocks = vec![0u16; NBHD_VOLUME].into_boxed_slice();
         let (x, y, z) = (SECTION_SIZE, SECTION_SIZE + 8, SECTION_SIZE + 8);
         let stair_i = nbhd_idx(x, y, z);
         blocks[stair_i] = Block::OakStairs.id();
@@ -760,7 +760,7 @@ mod tests {
             rng ^= rng << 17;
             rng
         };
-        let mut blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+        let mut blocks = vec![0u16; NBHD_VOLUME].into_boxed_slice();
         for b in blocks.iter_mut() {
             if next() % 5 == 0 {
                 *b = Block::Stone.id();
@@ -842,7 +842,7 @@ mod tests {
     #[test]
     fn two_lamps_of_different_colour_mix_where_they_overlap() {
         let pos = SectionPos::new(0, 0, 0);
-        let blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+        let blocks = vec![0u16; NBHD_VOLUME].into_boxed_slice();
         let states = default_states();
 
         let red = LightRgb::new(28, 0, 0);
@@ -903,7 +903,7 @@ mod tests {
     #[test]
     fn skylight_seeps_under_a_single_covering_block() {
         let pos = SectionPos::new(0, 0, 0);
-        let blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+        let blocks = vec![0u16; NBHD_VOLUME].into_boxed_slice();
         let mut surface = vec![-100i32; NBHD_AREA].into_boxed_slice();
         let (gx, gz) = (8 + SECTION_SIZE, 8 + SECTION_SIZE);
         surface[gz * NBHD + gx] = 40;
@@ -927,7 +927,7 @@ mod tests {
         let states = default_states();
 
         for glass in [Block::Glass, Block::GlassPane] {
-            let mut blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+            let mut blocks = vec![0u16; NBHD_VOLUME].into_boxed_slice();
             blocks[nbhd_idx(x, y, z)] = glass.id();
             let mut surface = vec![-100i32; NBHD_AREA].into_boxed_slice();
             surface[z * NBHD + x] = 10;
@@ -950,7 +950,7 @@ mod tests {
     #[test]
     fn skylight_enters_a_stair_top_gap_but_not_its_solid_bottom() {
         let pos = SectionPos::new(0, 0, 0);
-        let mut blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+        let mut blocks = vec![0u16; NBHD_VOLUME].into_boxed_slice();
         let (x, y, z) = (SECTION_SIZE + 8, SECTION_SIZE + 8, SECTION_SIZE + 8);
         let stair_i = nbhd_idx(x, y, z);
         blocks[stair_i] = Block::OakStairs.id();
@@ -978,12 +978,12 @@ mod tests {
     #[test]
     fn stair_walls_with_solid_backs_inside_and_stair_roof_keep_interior_dark() {
         let pos = SectionPos::new(0, 0, 0);
-        let mut blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+        let mut blocks = vec![0u16; NBHD_VOLUME].into_boxed_slice();
         let mut stairs = Vec::new();
         let mut surface = vec![-100i32; NBHD_AREA].into_boxed_slice();
         let (cx, cy, cz) = (SECTION_SIZE + 8, SECTION_SIZE + 8, SECTION_SIZE + 8);
 
-        let place_stair = |blocks: &mut [u8],
+        let place_stair = |blocks: &mut [u16],
                            stairs: &mut Vec<(usize, Facing)>,
                            surface: &mut [i32],
                            x: usize,
@@ -1058,7 +1058,7 @@ mod tests {
     #[test]
     fn skylight_stays_dark_under_full_cover() {
         let pos = SectionPos::new(0, 0, 0);
-        let blocks = vec![0u8; NBHD_VOLUME].into_boxed_slice();
+        let blocks = vec![0u16; NBHD_VOLUME].into_boxed_slice();
         let surface = vec![40i32; NBHD_AREA].into_boxed_slice();
         let states = default_states();
 

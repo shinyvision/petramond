@@ -15,21 +15,23 @@
 //! consumer skips), each with one warning — the palette's unknown-name
 //! semantics, never a rejection.
 
-use super::protocol::{ClientToServer, NameTables, SectionBytes, ServerToClient};
+use super::protocol::{ClientToServer, NameTables, SectionBlocks, ServerToClient};
 
-/// LUT value for "the client doesn't know this name" in the non-block tables.
-pub(crate) const MISSING: u16 = u16::MAX;
+/// LUT entry for "the client doesn't know this name". Registry ids are `u16`
+/// and the tables are dense, so a sentinel VALUE would collide with a real id;
+/// entries are `Option`-shaped instead, which niche-packs to the same size.
+pub(crate) const MISSING: Option<u16> = None;
 
 /// Dense server-id → client-id lookup tables.
 #[derive(Debug)]
 pub(crate) struct IdRemap {
     /// Blocks: unknown maps to air (0) — a cell must still hold SOMETHING.
-    blocks: Vec<u8>,
-    items: Vec<u16>,
-    mobs: Vec<u16>,
-    sounds: Vec<u16>,
-    effects: Vec<u16>,
-    emitters: Vec<u16>,
+    blocks: Vec<u16>,
+    items: Vec<Option<u16>>,
+    mobs: Vec<Option<u16>>,
+    sounds: Vec<Option<u16>>,
+    effects: Vec<Option<u16>>,
+    emitters: Vec<Option<u16>>,
     /// True when every table is the identity — the fast path (a client whose
     /// registries happen to match the server's exactly).
     identity: bool,
@@ -40,7 +42,7 @@ impl IdRemap {
     /// registries.
     pub(crate) fn build(tables: &NameTables) -> IdRemap {
         let names = crate::registry::names();
-        let blocks: Vec<u8> = tables
+        let blocks: Vec<u16> = tables
             .blocks
             .iter()
             .map(|n| match names.blocks.id(n) {
@@ -51,30 +53,30 @@ impl IdRemap {
                 }
             })
             .collect();
-        let items = build_u16(&tables.items, "item", |n| names.items.id(n));
+        let items = build_lut(&tables.items, "item", |n| names.items.id(n));
         // The mob wire vocabulary is `MobDef::key` (not the registry name), so
         // the mob name table can't answer it; a one-shot hash join keeps this
         // O(server ids + species) instead of a per-id linear scan.
-        let mob_ids: std::collections::HashMap<&str, u8> = crate::mob::defs()
+        let mob_ids: std::collections::HashMap<&str, u16> = crate::mob::defs()
             .iter()
             .enumerate()
-            .map(|(id, d)| (d.key, id as u8))
+            .map(|(id, d)| (d.key, id as u16))
             .collect();
-        let mobs = build_u16(&tables.mobs, "mob", |n| mob_ids.get(n).copied());
-        let sounds = build_u16(&tables.sounds, "sound", |n| {
-            crate::audio::sound_by_name(n).map(|s| s.0)
+        let mobs = build_lut(&tables.mobs, "mob", |n| mob_ids.get(n).copied());
+        let sounds = build_lut(&tables.sounds, "sound", |n| {
+            crate::audio::sound_by_name(n).map(|s| s.0 as u16)
         });
-        let effects = build_u16(&tables.effects, "effect", |n| {
-            crate::effect::by_name(n).map(|e| e.0)
+        let effects = build_lut(&tables.effects, "effect", |n| {
+            crate::effect::by_name(n).map(|e| e.0 as u16)
         });
-        let emitters = build_u16(&tables.emitters, "emitter", |n| {
-            crate::particle_emitters::by_key(n).map(|b| b.id)
+        let emitters = build_lut(&tables.emitters, "emitter", |n| {
+            crate::particle_emitters::by_key(n).map(|b| b.id as u16)
         });
 
         let identity = blocks.iter().enumerate().all(|(i, &v)| i == v as usize)
             && [&items, &mobs, &sounds, &effects, &emitters]
                 .into_iter()
-                .all(|t| t.iter().enumerate().all(|(i, &v)| i == v as usize));
+                .all(|t| t.iter().enumerate().all(|(i, &v)| v == Some(i as u16)));
         IdRemap {
             blocks,
             items,
@@ -93,7 +95,7 @@ impl IdRemap {
     }
 
     #[inline]
-    pub(crate) fn block(&self, server_id: u8) -> u8 {
+    pub(crate) fn block(&self, server_id: u16) -> u16 {
         self.blocks
             .get(server_id as usize)
             .copied()
@@ -101,28 +103,28 @@ impl IdRemap {
     }
 
     #[inline]
-    pub(crate) fn item(&self, server_id: u8) -> Option<u8> {
-        lut_u16(&self.items, server_id)
+    pub(crate) fn item(&self, server_id: u16) -> Option<u16> {
+        lookup(&self.items, server_id as usize)
     }
 
     #[inline]
     pub(crate) fn mob(&self, server_id: u8) -> Option<u8> {
-        lut_u16(&self.mobs, server_id)
+        lookup(&self.mobs, server_id as usize).map(|id| id as u8)
     }
 
     #[inline]
     pub(crate) fn sound(&self, server_id: u8) -> Option<u8> {
-        lut_u16(&self.sounds, server_id)
+        lookup(&self.sounds, server_id as usize).map(|id| id as u8)
     }
 
     #[inline]
     pub(crate) fn effect(&self, server_id: u8) -> Option<u8> {
-        lut_u16(&self.effects, server_id)
+        lookup(&self.effects, server_id as usize).map(|id| id as u8)
     }
 
     #[inline]
     pub(crate) fn emitter(&self, server_id: u8) -> Option<u8> {
-        lut_u16(&self.emitters, server_id)
+        lookup(&self.emitters, server_id as usize).map(|id| id as u8)
     }
 
     /// Rewrite a freshly-decoded server message to client-local ids, in place.
@@ -134,7 +136,7 @@ impl IdRemap {
         }
         match msg {
             ServerToClient::SectionData(p) => {
-                remap_bytes(&mut p.blocks, |id| self.block(id));
+                remap_block_cube(&mut p.blocks, |id| self.block(id));
                 p.metrics = crate::section::Section::metrics_from_blocks(&p.blocks.0);
                 // A cell state's id-masked bytes are raw BLOCK IDS (a slab's
                 // two layers) — rewrite them like the block buffer. GENERIC:
@@ -353,10 +355,16 @@ pub(crate) fn local_name_tables() -> NameTables {
     let names = crate::registry::names();
     NameTables {
         blocks: (0..names.blocks.len())
-            .map(|i| names.blocks.name(i as u8).expect("dense table").to_string())
+            .map(|i| {
+                names
+                    .blocks
+                    .name(i as u16)
+                    .expect("dense table")
+                    .to_string()
+            })
             .collect(),
         items: (0..names.items.len())
-            .map(|i| names.items.name(i as u8).expect("dense table").to_string())
+            .map(|i| names.items.name(i as u16).expect("dense table").to_string())
             .collect(),
         mobs: crate::mob::Mob::all()
             .iter()
@@ -376,11 +384,15 @@ pub(crate) fn local_name_tables() -> NameTables {
     }
 }
 
-fn build_u16(server: &[String], what: &str, lookup: impl Fn(&str) -> Option<u8>) -> Vec<u16> {
+fn build_lut(
+    server: &[String],
+    what: &str,
+    resolve: impl Fn(&str) -> Option<u16>,
+) -> Vec<Option<u16>> {
     server
         .iter()
-        .map(|n| match lookup(n) {
-            Some(id) => id as u16,
+        .map(|n| match resolve(n) {
+            Some(id) => Some(id),
             None => {
                 log::warn!("remap: unknown server {what} '{n}' will be skipped");
                 MISSING
@@ -390,11 +402,8 @@ fn build_u16(server: &[String], what: &str, lookup: impl Fn(&str) -> Option<u8>)
 }
 
 #[inline]
-fn lut_u16(table: &[u16], server_id: u8) -> Option<u8> {
-    match table.get(server_id as usize).copied() {
-        Some(MISSING) | None => None,
-        Some(id) => Some(id as u8),
-    }
+fn lookup(table: &[Option<u16>], server_id: usize) -> Option<u16> {
+    table.get(server_id).copied().flatten()
 }
 
 /// Rewrite one item slot through the item LUT; unknown items read empty.
@@ -407,11 +416,11 @@ fn remap_slot(map: &IdRemap, slot: &mut Option<super::protocol::ItemSlotWire>) {
     }
 }
 
-/// Rewrite a section-sized id buffer in place. Decoded buffers are uniquely
+/// Rewrite a section's block cube in place. Decoded buffers are uniquely
 /// owned, so this is a plain walk; a shared buffer (unexpected here) falls
 /// back to copy-on-write.
-fn remap_bytes(bytes: &mut SectionBytes, f: impl Fn(u8) -> u8) {
-    let buf = std::sync::Arc::make_mut(&mut bytes.0);
+fn remap_block_cube(cube: &mut SectionBlocks, f: impl Fn(u16) -> u16) {
+    let buf = std::sync::Arc::make_mut(&mut cube.0);
     for b in buf.iter_mut() {
         *b = f(*b);
     }
@@ -421,6 +430,15 @@ fn remap_bytes(bytes: &mut SectionBytes, f: impl Fn(u8) -> u8) {
 mod tests {
     use super::*;
     use crate::mathh::IVec3;
+
+    /// A two-layer slab state: a meta byte plus two two-byte BLOCK IDS — the
+    /// only engine shape carrying id-masked bytes, and therefore the guard
+    /// that the id boundary rewrites a WHOLE id, not its low byte.
+    fn slab_state(a: u16, b: u16) -> crate::block::ShapeState {
+        let [a_lo, a_hi] = crate::block::ShapeState::id_bytes(a);
+        let [b_lo, b_hi] = crate::block::ShapeState::id_bytes(b);
+        crate::block::ShapeState::with_ids(&[0b0111, a_lo, a_hi, b_lo, b_hi], 0b0_1010)
+    }
 
     /// A "server" whose tables exactly match this process: identity.
     #[test]
@@ -437,8 +455,8 @@ mod tests {
         let mut tables = local_name_tables();
         tables.blocks.push("ghost_mod:block".to_string());
         tables.items.push("ghost_mod:item".to_string());
-        let unknown_block = (tables.blocks.len() - 1) as u8;
-        let unknown_item = (tables.items.len() - 1) as u8;
+        let unknown_block = (tables.blocks.len() - 1) as u16;
+        let unknown_item = (tables.items.len() - 1) as u16;
 
         let map = IdRemap::build(&tables);
         assert!(!map.is_identity());
@@ -460,7 +478,7 @@ mod tests {
         let map = IdRemap::build(&tables);
         assert!(!map.is_identity());
 
-        let n = local.blocks.len() as u8;
+        let n = local.blocks.len() as u16;
         let mut msg = ServerToClient::Tick(Box::new(crate::net::protocol::TickUpdate {
             tick: 1,
             clock: 0,
@@ -478,7 +496,7 @@ mod tests {
                     pos: IVec3::new(1, 64, 0),
                     block_id: 2,
                     water: None,
-                    state: Some(crate::block::ShapeState::with_ids(&[0b0111, 2, 3], 0b110)),
+                    state: Some(slab_state(2, 3)),
                     cell_kv: vec![],
                 },
             ],
@@ -491,10 +509,7 @@ mod tests {
         assert_eq!(t.block_deltas[0].block_id, 1 % n);
         assert_eq!(
             t.block_deltas[1].state,
-            Some(crate::block::ShapeState::with_ids(
-                &[0b0111, 3 % n, 4 % n],
-                0b110
-            )),
+            Some(slab_state(3 % n, 4 % n)),
             "id-masked state bytes rewrite through the block LUT"
         );
 
@@ -504,16 +519,13 @@ mod tests {
                 cy: 0,
                 cz: 0,
             },
-            blocks: SectionBytes(std::sync::Arc::from(vec![0u8, 1, 2].into_boxed_slice())),
+            blocks: SectionBlocks(std::sync::Arc::from(vec![0u16, 1, 2].into_boxed_slice())),
             metrics: Default::default(),
             water: None,
             skylight: None,
             blocklight: None,
             states: crate::net::protocol::SectionStatesPayload {
-                cell_states: vec![(
-                    9,
-                    crate::block::ShapeState::with_ids(&[0b0111, 2, 3], 0b110),
-                )],
+                cell_states: vec![(9, slab_state(2, 3))],
                 ..Default::default()
             },
         }));
@@ -524,12 +536,49 @@ mod tests {
         assert_eq!(&p.blocks.0[..], &[1 % n, 2 % n, 3 % n]);
         assert_eq!(
             p.states.cell_states,
-            vec![(
-                9,
-                crate::block::ShapeState::with_ids(&[0b0111, 3 % n, 4 % n], 0b110)
-            )],
+            vec![(9, slab_state(3 % n, 4 % n))],
             "SectionStatesPayload id-masked state bytes rewrite through the block LUT"
         );
+    }
+
+    /// The transport rewrites ids at the boundary, and ids no longer fit a
+    /// byte. Built directly (a synthetic server with more content than this
+    /// client), the LUTs must carry whole ids through the block cube and
+    /// through a cell state's id-masked bytes — a truncation here would swap
+    /// one pack's block for another's at every join.
+    #[test]
+    fn the_boundary_rewrites_whole_two_byte_ids() {
+        let mut blocks = vec![0u16; 1200];
+        for (server, slot) in blocks.iter_mut().enumerate() {
+            *slot = (server as u16).wrapping_add(500);
+        }
+        let map = IdRemap {
+            blocks,
+            items: (0..1200u16).map(|i| Some(i + 700)).collect(),
+            mobs: Vec::new(),
+            sounds: Vec::new(),
+            effects: Vec::new(),
+            emitters: Vec::new(),
+            identity: false,
+        };
+        assert_eq!(map.block(0), 500);
+        assert_eq!(map.block(300), 800);
+        assert_eq!(map.item(300), Some(1000));
+        assert_eq!(
+            map.block(5000),
+            crate::block::Block::Air.0,
+            "past the table"
+        );
+
+        let mut cube = SectionBlocks(std::sync::Arc::from(
+            vec![0u16, 255, 256, 700].into_boxed_slice(),
+        ));
+        remap_block_cube(&mut cube, |id| map.block(id));
+        assert_eq!(&cube.0[..], &[500, 755, 756, 1200]);
+
+        let mut state = slab_state(300, 400);
+        state.remap_ids(|id| map.block(id));
+        assert_eq!((state.id_at(1), state.id_at(3)), (800, 900));
     }
 
     /// Crafting output moved inside the menu target, so both crafting
@@ -543,7 +592,7 @@ mod tests {
         let mut tables = local.clone();
         tables.items.rotate_left(1);
         tables.items.push("ghost_mod:result".to_string());
-        let unknown = (tables.items.len() - 1) as u8;
+        let unknown = (tables.items.len() - 1) as u16;
         let map = IdRemap::build(&tables);
 
         let mut known = MenuSyncMsg {
@@ -588,7 +637,7 @@ mod tests {
         tables.items.push("ghost_mod:trinket".to_string());
         tables.effects.push("ghost_mod:curse".to_string());
         let unknown_mob = (tables.mobs.len() - 1) as u8;
-        let unknown_item = (tables.items.len() - 1) as u8;
+        let unknown_item = (tables.items.len() - 1) as u16;
         let unknown_effect = (tables.effects.len() - 1) as u8;
         let map = IdRemap::build(&tables);
 
@@ -609,7 +658,7 @@ mod tests {
             anims: Vec::new(),
             ragdoll: None,
         };
-        let item_row = |item_id: u8| ItemStateRow {
+        let item_row = |item_id: u16| ItemStateRow {
             id: item_id as u64,
             item_id,
             count: 1,
@@ -617,7 +666,7 @@ mod tests {
             pos: crate::mathh::Vec3::ZERO,
             spin: 0.0,
         };
-        let player_row = |held_item: Option<u8>| crate::net::protocol::PlayerStateRow {
+        let player_row = |held_item: Option<u16>| crate::net::protocol::PlayerStateRow {
             id: crate::server::player::PlayerId(1),
             transform: crate::net::protocol::Transform {
                 pos: crate::mathh::Vec3::ZERO,

@@ -200,13 +200,13 @@ impl LightBakeJob {
 /// (the returned per-section light cubes are still allocated fresh — they outlive
 /// the bake).
 struct BakeScratch {
-    blocks: Box<[u8]>,
+    blocks: Box<[u16]>,
     flood: flood::FloodScratch,
 }
 
 thread_local! {
     static BAKE_SCRATCH: std::cell::RefCell<BakeScratch> = std::cell::RefCell::new(BakeScratch {
-        blocks: vec![0u8; super::NBHD_VOLUME].into_boxed_slice(),
+        blocks: vec![0u16; super::NBHD_VOLUME].into_boxed_slice(),
         flood: flood::FloodScratch::new(),
     });
 }
@@ -225,7 +225,7 @@ pub(in crate::world) fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
         let mut scratch = scratch.borrow_mut();
         let BakeScratch { blocks, flood } = &mut *scratch;
 
-        let blocks: Option<&[u8]> = nbhd.as_ref().map(|n| {
+        let blocks: Option<&[u16]> = nbhd.as_ref().map(|n| {
             neighborhood::assemble_blocks(n, blocks);
             &blocks[..]
         });

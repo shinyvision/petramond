@@ -76,21 +76,44 @@ impl Project {
             gap: 6,
             anchor: Some(Anchor {
                 h: AnchorEdge::Center,
-                v: if kind == "petramond:hotbar" { AnchorEdge::End } else { AnchorEdge::Center },
+                v: if kind == "petramond:hotbar" {
+                    AnchorEdge::End
+                } else {
+                    AnchorEdge::Center
+                },
             }),
             ..LayoutProps::default()
         };
         if kind != "petramond:hotbar" {
-            let title = kind.split(':').last().unwrap_or(kind).replace('_', " ").to_uppercase();
-            root.children
-                .push(Node::leaf(NodeKind::Label { text: Some(title), wrap: false, scale: 1, small: false }));
+            let title = kind
+                .split(':')
+                .last()
+                .unwrap_or(kind)
+                .replace('_', " ")
+                .to_uppercase();
+            root.children.push(Node::leaf(NodeKind::Label {
+                text: Some(title),
+                wrap: false,
+                scale: 1,
+                small: false,
+            }));
         }
         for (role, count) in &contract.roles {
             let (cols, rows) = contracts::default_grid(*count);
             root.children.push(Node::leaf(if *count == 1 {
-                NodeKind::Slot { role: role.clone(), accepts: Vec::new(), take_only: false }
+                NodeKind::Slot {
+                    role: role.clone(),
+                    accepts: Vec::new(),
+                    take_only: false,
+                }
             } else {
-                NodeKind::SlotGrid { role: role.clone(), cols, rows, accepts: Vec::new(), take_only: false }
+                NodeKind::SlotGrid {
+                    role: role.clone(),
+                    cols,
+                    rows,
+                    accepts: Vec::new(),
+                    take_only: false,
+                }
             }));
         }
         Project {
@@ -161,7 +184,11 @@ pub fn value_to_json(v: &UiValue) -> Value {
             let rows: Vec<Value> = items
                 .iter()
                 .map(|m| {
-                    Value::Object(m.iter().map(|(k, v)| (k.clone(), value_to_json(v))).collect())
+                    Value::Object(
+                        m.iter()
+                            .map(|(k, v)| (k.clone(), value_to_json(v)))
+                            .collect(),
+                    )
                 })
                 .collect();
             json!({ "list": rows })
@@ -170,16 +197,24 @@ pub fn value_to_json(v: &UiValue) -> Value {
 }
 
 pub fn json_to_value(v: &Value) -> Result<UiValue, String> {
-    let obj = v.as_object().ok_or("expected a tagged object like {\"str\": ...}")?;
+    let obj = v
+        .as_object()
+        .ok_or("expected a tagged object like {\"str\": ...}")?;
     if obj.len() != 1 {
         return Err("tagged value must have exactly one key".into());
     }
     let (tag, val) = obj.iter().next().unwrap();
     match tag.as_str() {
-        "f32" => Ok(UiValue::F32(val.as_f64().ok_or("f32 wants a number")? as f32)),
-        "i32" => Ok(UiValue::I32(val.as_i64().ok_or("i32 wants an integer")? as i32)),
+        "f32" => Ok(UiValue::F32(
+            val.as_f64().ok_or("f32 wants a number")? as f32
+        )),
+        "i32" => Ok(UiValue::I32(
+            val.as_i64().ok_or("i32 wants an integer")? as i32
+        )),
         "bool" => Ok(UiValue::Bool(val.as_bool().ok_or("bool wants true/false")?)),
-        "str" => Ok(UiValue::Str(val.as_str().ok_or("str wants a string")?.to_owned())),
+        "str" => Ok(UiValue::Str(
+            val.as_str().ok_or("str wants a string")?.to_owned(),
+        )),
         "list" => {
             let rows = val.as_array().ok_or("list wants an array of item maps")?;
             let mut out: Vec<UiMap> = Vec::with_capacity(rows.len());
@@ -204,7 +239,9 @@ mod tests {
     #[test]
     fn save_load_save_is_idempotent() {
         let mut p = Project::new("petramond:furnace");
-        p.editor.sample_state.insert("cook01".into(), json!({ "f32": 0.5 }));
+        p.editor
+            .sample_state
+            .insert("cook01".into(), json!({ "f32": 0.5 }));
         p.editor.zoom = 3.0;
         let s1 = p.to_json_pretty();
         let p2 = Project::from_json(&s1).unwrap();
@@ -244,8 +281,12 @@ mod tests {
     #[test]
     fn sample_ui_state_reports_bad_entries_without_dying() {
         let mut p = Project::new("petramond:pause");
-        p.editor.sample_state.insert("ok".into(), json!({ "i32": 4 }));
-        p.editor.sample_state.insert("bad".into(), json!("untagged"));
+        p.editor
+            .sample_state
+            .insert("ok".into(), json!({ "i32": 4 }));
+        p.editor
+            .sample_state
+            .insert("bad".into(), json!("untagged"));
         let (state, errors) = p.sample_ui_state();
         assert_eq!(state.get_i32("ok"), Some(4));
         assert_eq!(errors.len(), 1);
@@ -268,10 +309,13 @@ mod tests {
             ImageFit::Tile,
             ImageFit::Slice([2, 3, 4, 5]),
         ] {
-            p.document
-                .root
-                .children
-                .push(Node::leaf(NodeKind::Image { image: "art.png".into(), fit, interactive: false }));
+            p.document.root.children.push(Node::leaf(NodeKind::Image {
+                image: "art.png".into(),
+                fit,
+                frames: None,
+                fps: None,
+                interactive: false,
+            }));
         }
         p.document.root.children.last_mut().unwrap().bind.image = Some("icon".into());
 

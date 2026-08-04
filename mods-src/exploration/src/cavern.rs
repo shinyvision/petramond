@@ -112,11 +112,10 @@ const MAX_REACH: i32 = 14;
 /// Vertical span a mushroom can occupy above its root, for the same reason.
 const MAX_RISE: i32 = 26;
 
-/// The ABI's per-call element cap. Batches are SPLIT at it rather than
-/// truncated: a truncated batch drops candidates by list position, which both
-/// makes the result depend on how many other candidates happened to roll and
-/// lets a cell that is going to lose to a giant displace a legitimate floor.
-const ABI_BATCH_MAX: usize = 4096;
+// Batches are SPLIT at the ABI's per-call element cap (`SIM_BATCH_MAX`) rather
+// than truncated: a truncated batch drops candidates by list position, which
+// both makes the result depend on how many other candidates happened to roll
+// and lets a cell that is going to lose to a giant displace a legitimate floor.
 
 /// Giant mushrooms anchor on a COARSE LATTICE rather than per cell.
 ///
@@ -1014,11 +1013,11 @@ fn batched<T>(positions: Vec<[i32; 3]>, call: fn(Vec<[i32; 3]>) -> Vec<T>) -> Ve
     if positions.is_empty() {
         return Vec::new();
     }
-    if positions.len() <= ABI_BATCH_MAX {
+    if positions.len() <= SIM_BATCH_MAX {
         return call(positions);
     }
     let mut out = Vec::with_capacity(positions.len());
-    for chunk in positions.chunks(ABI_BATCH_MAX) {
+    for chunk in positions.chunks(SIM_BATCH_MAX) {
         out.extend(call(chunk.to_vec()));
     }
     out
@@ -1444,7 +1443,7 @@ mod tests {
         let dressing = 2 * 256 + 256 * PROBE_PER_MARGIN;
         let worst = giants + dressing;
         assert!(
-            worst <= 2 * ABI_BATCH_MAX,
+            worst <= 2 * SIM_BATCH_MAX,
             "worst-case probe batch {worst} ({giants} giants, {dressing} dressing) \
              needs more than two ABI batches"
         );
@@ -1505,7 +1504,7 @@ mod ctx_tests {
     /// Solid rock below the section's mid-line, open air above — so the
     /// occupancy predicates have a real floor plane and ceiling plane to find.
     fn split_section(section: [i32; 3]) -> GenCtx {
-        let mut blocks = vec![0u8; 4096];
+        let mut blocks = vec![0u16; 4096];
         for ly in 0..8 {
             for lz in 0..16 {
                 for lx in 0..16 {
@@ -1522,7 +1521,7 @@ mod ctx_tests {
         GenCtx::for_test(
             section,
             0xC0FFEE,
-            vec![0u8; 4096],
+            vec![0u16; 4096],
             vec![64; 256],
             vec![0; 256],
             62,
@@ -1617,7 +1616,7 @@ mod ctx_tests {
         }
         // a section with a sealed roof pays nothing for the margin scan
         let sealed = split_section([0, -3, 0]);
-        let mut blocks = vec![3u8; 4096];
+        let mut blocks = vec![3u16; 4096];
         for i in 0..256 {
             blocks[i] = 0; // one open row at the bottom, roof solid
         }
@@ -1720,7 +1719,7 @@ mod ctx_tests {
         for d in 0..8 {
             assert_eq!(at(d, d), base, "species changed inside one stand");
         }
-        let far: Vec<u8> = (1..12).map(|k| at(k * 40, k * 40)).collect();
+        let far: Vec<u16> = (1..12).map(|k| at(k * 40, k * 40)).collect();
         assert!(
             far.iter().any(|&c| c != base),
             "species never varies between distant stands: {far:?}"
@@ -1739,7 +1738,7 @@ mod ctx_tests {
     fn a_curtain_picks_each_segment_from_that_cell_alone() {
         let content = test_content();
         let seed = 0x1D001;
-        let run = |root: i32, len: i32| -> Vec<u8> {
+        let run = |root: i32, len: i32| -> Vec<u16> {
             // A stream the choice must not read: if the bloom ever comes off
             // the root's draws again, the two runs diverge here.
             let mut stream = GenRng::positional(seed, SALT_CEILING, 4, root, -9);

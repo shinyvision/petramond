@@ -305,6 +305,47 @@ fn samples() -> Samples {
     s.pin("HostCall::EmitEvent", &HostCall::EmitEvent {
         key: "m:e".into(), data: vec![1, 2],
     });
+    s.pin("HostCall::SurfaceBiomeAt", &HostCall::SurfaceBiomeAt {
+        columns: vec![[1, -2]],
+    });
+    s.pin("HostCall::SetModelParts", &HostCall::SetModelParts {
+        pos: [1, 2, 3], parts: 5, tint: Some([9, 8, 7]),
+    });
+    s.pin("HostCall::SetBlockDraw", &HostCall::SetBlockDraw {
+        pos: [1, 2, 3],
+        prims: vec![
+            crate::DrawPrim::Cuboid {
+                min: [0.0, 0.25, 0.0], max: [1.0, 0.5, 1.0],
+                tile: "stone".into(), tint: [9, 8, 7], emissive: true,
+            },
+            crate::DrawPrim::Item {
+                at: [0.5, 0.5, 0.5], scale: 0.5, yaw: 1.5, pitch: 0.25,
+                item: "m:i".into(), tint: [1, 2, 3],
+            },
+        ],
+    });
+    s.pin("HostCall::BlockLocalToWorld", &HostCall::BlockLocalToWorld {
+        pos: [1, 2, 3], points: vec![[0.25, 0.5, 0.75]],
+    });
+    s.pin("HostCall::SetBlockDraws", &HostCall::SetBlockDraws {
+        sets: vec![([1, 2, 3], vec![crate::DrawPrim::Cuboid {
+            min: [0.0, 0.25, 0.0], max: [1.0, 0.5, 1.0],
+            tile: "stone".into(), tint: [9, 8, 7], emissive: true,
+        }])],
+    });
+    s.pin("HostCall::SetModelPartsMany", &HostCall::SetModelPartsMany {
+        sets: vec![([1, 2, 3], 5, Some([9, 8, 7]))],
+    });
+    s.pin("HostCall::SectionKvGetMany", &HostCall::SectionKvGetMany {
+        key: "m:k".into(), positions: vec![[1, 2, 3]],
+    });
+    s.pin("HostCall::SectionKvSetMany", &HostCall::SectionKvSetMany {
+        key: "m:k".into(), writes: vec![([1, 2, 3], Some(vec![7])), ([4, 5, 6], None)],
+    });
+    s.pin("HostCall::GuiViewers", &HostCall::GuiViewers);
+    s.pin("HostCall::GuiStateSetFor", &HostCall::GuiStateSetFor {
+        player_id: PlayerId(2), key: "k".into(), value: GuiValue::F32(0.5),
+    });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -398,6 +439,12 @@ fn samples() -> Samples {
     s.pin("HostRet::BlockDataRows", &HostRet::BlockDataRows(vec![(BlockId(4), "{}".into())]));
     s.pin("HostRet::UndergroundBiomes", &HostRet::UndergroundBiomes(vec![0, 2]));
     s.pin("HostRet::TerrainSolid", &HostRet::TerrainSolid(vec![true, false]));
+    s.pin("HostRet::SurfaceBiomes", &HostRet::SurfaceBiomes(vec![3, 6]));
+    s.pin("HostRet::Points", &HostRet::Points(Some(vec![[1.5, 2.5, 3.5]])));
+    s.pin("HostRet::Bools", &HostRet::Bools(vec![true, false]));
+    s.pin("HostRet::GuiViewers", &HostRet::GuiViewers(vec![GuiViewerData {
+        player_id: PlayerId(2), kind: "m:g".into(), anchor: Some([1, 2, 3]),
+    }]));
 
     // --- GuestCall: every variant, declaration order -------------------------
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
@@ -492,6 +539,15 @@ fn samples() -> Samples {
         idle_anim: Some(1), attack: Some([2.0, 3.0]),
         tags: vec![MobTagWrite { key: "m:k".into(), value: Some(MobTagValue::Bool(true)) }],
     })));
+    // Registry ids are TWO bytes, and postcard varint-encodes them: any sample
+    // below 128 encodes byte-for-byte like the one-byte ids used to, so ONLY a
+    // high id pins the width. Without these, silently narrowing `BlockId` /
+    // `ItemId` back to `u8` would pass every other pin in this file.
+    s.pin("BlockId (wide)", &BlockId(300));
+    s.pin("ItemId (wide)", &ItemId(4095));
+    s.pin("GuestRet::GenWrites (wide)", &GuestRet::GenWrites(vec![([1, 2, 3], BlockId(300))]));
+    s.pin("GuestRet::GenBlocks (wide)", &GuestRet::GenBlocks(vec![1, 300]));
+
     s.pin("GuestRet::BakedSim", &GuestRet::BakedSim(vec![BakedSimCell {
         collision_boxes: vec![ShapeAabb { min: [0.0, 0.0, 0.0], max: [1.0, 1.0, 1.0] }],
         light_aperture: LightAperture::Open,
@@ -811,6 +867,16 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::UnlockRecipe", "7c01036d3a72"),
     ("HostCall::RecipeUnlocked", "7d01036d3a72"),
     ("HostCall::EmitEvent", "7e036d3a65020102"),
+    ("HostCall::SurfaceBiomeAt", "7f010203"),
+    ("HostCall::SetModelParts", "80010204060501090807"),
+    ("HostCall::SetBlockDraw", "81010204060200000000000000803e000000000000803f0000003f0000803f0573746f6e6509080701010000003f0000003f0000003f0000003f0000c03f0000803e036d3a69010203"),
+    ("HostCall::BlockLocalToWorld", "8201020406010000803e0000003f0000403f"),
+    ("HostCall::SetBlockDraws", "8301010204060100000000000000803e000000000000803f0000003f0000803f0573746f6e6509080701"),
+    ("HostCall::SetModelPartsMany", "8401010204060501090807"),
+    ("HostCall::SectionKvGetMany", "8501036d3a6b01020406"),
+    ("HostCall::SectionKvSetMany", "8601036d3a6b02020406010107080a0c00"),
+    ("HostCall::GuiViewers", "8701"),
+    ("HostCall::GuiStateSetFor", "880102016b000000003f"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -856,6 +922,10 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::BlockDataRows", "2a0104027b7d"),
     ("HostRet::UndergroundBiomes", "2b020002"),
     ("HostRet::TerrainSolid", "2c020100"),
+    ("HostRet::SurfaceBiomes", "2d020306"),
+    ("HostRet::Points", "2e01010000c03f0000204000006040"),
+    ("HostRet::Bools", "2f020100"),
+    ("HostRet::GuiViewers", "300102036d3a6701020406"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
@@ -880,6 +950,10 @@ const PINS: &[(&str, &str)] = &[
     ("GuestRet::GenBiomes", "040103"),
     ("GuestRet::HostileSpawn", "0501036d3a6b"),
     ("GuestRet::AiDecision", "060101020406010000003f0000803e010101000000400000404001036d3a6b010001"),
+    ("BlockId (wide)", "ac02"),
+    ("ItemId (wide)", "ff1f"),
+    ("GuestRet::GenWrites (wide)", "0201020406ac02"),
+    ("GuestRet::GenBlocks (wide)", "030201ac02"),
     ("GuestRet::BakedSim", "0701010000000000000000000000000000803f0000803f0000803f01"),
     ("GuestRet::BakedRender", "0801010000000000000000000000000000803f0000803f0000803f01c81e28011e01"),
     ("GuestRet::BakedItem", "0900"),

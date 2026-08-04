@@ -18,6 +18,13 @@ impl World {
             self.bump_column_payload_revision(pos.chunk_pos());
         }
         self.block_entity_sections.remove(&pos);
+        // Mod draw sets are per-cell presentation state: they die with the
+        // section like every other per-cell record. Without this the replica's
+        // map grows monotonically with distance travelled and keeps drawing
+        // machines the player walked away from.
+        if section_removed {
+            self.forget_block_draws_in_section(pos);
+        }
         self.particle_emitter_sections.remove(&pos);
         self.gen.awaited_overlays.remove(&pos);
         self.gen.disk_primary_sections.remove(&pos);
@@ -55,6 +62,7 @@ impl World {
             .unwrap_or(0);
         Self::for_each_column_cy(bits, |cy| {
             let sp = SectionPos::new(pos.cx, cy, pos.cz);
+            self.forget_block_draws_in_section(sp);
             self.terrain.prediction_terrain.cancel_section(sp);
             self.sections.remove(&sp);
             self.block_entity_sections.remove(&sp);
@@ -119,6 +127,8 @@ impl World {
         self.terrain.hidden_parked.clear();
         self.terrain.sealed_parked.clear();
         self.block_entity_sections.clear();
+        self.mods.block_draws.clear();
+        self.mods.block_draw_sections.clear();
         self.particle_emitter_sections.clear();
         self.columns.clear();
         self.column_payload_revisions.clear();

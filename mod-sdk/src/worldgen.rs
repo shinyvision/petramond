@@ -50,7 +50,7 @@ host_fn! {
 
 host_fn! {
     /// The underground biome id owning each world position, parallel to
-    /// `positions` (at most 4096 per call). A pure function of position — the
+    /// `positions` (at most [`crate::SIM_BATCH_MAX`] per call). A pure function of position — the
     /// same partition the cave carver's wall lining and caliber read — so it
     /// is seam-safe inside a worldgen feature and needs no loaded section. A
     /// position no row claims answers `0`, the fallback biome.
@@ -87,7 +87,7 @@ host_fn! {
 
 host_fn! {
     /// Whether the generated TERRAIN is solid at each world position, parallel
-    /// to `positions` (at most 4096 per call). `false` = air or water. A pure
+    /// to `positions` (at most [`crate::SIM_BATCH_MAX`] per call). `false` = air or water. A pure
     /// function of (world seed, position) — the density surface minus the cave
     /// carve — so, like [`underground_biome_at`], it answers before any
     /// section exists and every section's dispatch gets the same answer.
@@ -104,6 +104,27 @@ host_fn! {
     /// handful of cells a decision needs, never a volume.
     pub fn terrain_solid_at(positions: Vec<[i32; 3]>) -> Vec<bool>
         => TerrainSolidAt { positions } => TerrainSolid
+}
+
+host_fn! {
+    /// The final SURFACE biome of each world column `[x, z]`, parallel to
+    /// `columns` (at most [`crate::SIM_BATCH_MAX`] per call). Ids are [`mod_api::biome`] names.
+    ///
+    /// The day-surface member of the same positional family, and it answers
+    /// the two questions [`GenCtx::biome`] structurally cannot:
+    ///
+    /// - a decision about a structure that SPANS sections (the owner and its
+    ///   neighbours must agree, and `GenCtx::biome` is `None` outside the
+    ///   dispatching section, so they would not); and
+    /// - anything about a NEIGHBOURING column — "is there a river within 4
+    ///   blocks", which is what tells a river bank apart from ordinary plains,
+    ///   and which no column knows about itself.
+    ///
+    /// Roll the cheap positional dice FIRST and batch only the survivors'
+    /// anchors and probe offsets into one call per dispatch. A per-column
+    /// query over a section is the shape that trips the mod watchdog.
+    pub fn surface_biome_at(columns: Vec<[i32; 2]>) -> Vec<u8>
+        => SurfaceBiomeAt { columns } => SurfaceBiomes
 }
 
 /// One worldgen dispatch's inputs, with the accessors a well-behaved feature
@@ -142,7 +163,7 @@ host_fn! {
 pub struct GenCtx {
     pub(crate) section_pos: [i32; 3],
     pub(crate) seed: u32,
-    pub(crate) blocks: Vec<u8>,
+    pub(crate) blocks: Vec<u16>,
     pub(crate) surface_heights: Vec<i32>,
     pub(crate) biomes: Vec<u8>,
     pub(crate) sea_level: i32,
@@ -164,7 +185,7 @@ impl GenCtx {
     pub fn for_test(
         section_pos: [i32; 3],
         seed: u32,
-        blocks: Vec<u8>,
+        blocks: Vec<u16>,
         surface_heights: Vec<i32>,
         biomes: Vec<u8>,
         sea_level: i32,

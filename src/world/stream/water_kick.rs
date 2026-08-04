@@ -51,13 +51,13 @@ impl World {
             let has_flowing = section.has_flowing_water();
 
             if has_water && (has_air || has_flowing) {
-                let blocks = section.blocks_slice();
+                let blocks = section.blocks();
                 let metas = section.water_slice();
                 for ly in 0..SECTION_SIZE {
                     for lz in 0..SECTION_SIZE {
                         for lx in 0..SECTION_SIZE {
                             let idx = section_idx(lx, ly, lz);
-                            if blocks[idx] != water {
+                            if blocks.get(idx) != water {
                                 continue;
                             }
                             let wx = ox + lx as i32;
@@ -88,7 +88,7 @@ impl World {
             } else if has_water {
                 // No air inside: only boundary water can flow, and only outward
                 // through the five outflow faces.
-                let blocks = section.blocks_slice();
+                let blocks = section.blocks();
                 for &(dx, dy, dz) in &KICK_OUTFLOW_DIRS {
                     let npos = SectionPos::new(sp.cx + dx, sp.cy + dy, sp.cz + dz);
                     let Some(ns) = self.sections.get(&npos) else {
@@ -100,7 +100,7 @@ impl World {
                     for a in 0..SECTION_SIZE {
                         for b in 0..SECTION_SIZE {
                             let (lx, ly, lz) = boundary_cell(dx, dy, dz, a, b);
-                            if blocks[section_idx(lx, ly, lz)] != water {
+                            if blocks.get(section_idx(lx, ly, lz)) != water {
                                 continue;
                             }
                             let (wx, wy, wz) = (
@@ -119,7 +119,7 @@ impl World {
             if has_air {
                 // Water in a LOADED neighbour may now have this section's air to
                 // flow into: from above (falls in) or from the four sides.
-                let blocks = section.blocks_slice();
+                let blocks = section.blocks();
                 for &(dx, dy, dz) in &KICK_INFLOW_DIRS {
                     let npos = SectionPos::new(sp.cx + dx, sp.cy + dy, sp.cz + dz);
                     let Some(ns) = self.sections.get(&npos) else {
@@ -131,7 +131,7 @@ impl World {
                     for a in 0..SECTION_SIZE {
                         for b in 0..SECTION_SIZE {
                             let (lx, ly, lz) = boundary_cell(dx, dy, dz, a, b);
-                            if blocks[section_idx(lx, ly, lz)] != air {
+                            if blocks.get(section_idx(lx, ly, lz)) != air {
                                 continue;
                             }
                             let (nx, ny, nz) = (
@@ -170,13 +170,13 @@ impl World {
                         let Some(metas) = ns.water_slice() else {
                             continue; // no mid-flow cells: nothing to re-arm
                         };
-                        let nblocks = ns.blocks_slice();
+                        let nblocks = ns.blocks();
                         let (nox, noy, noz) = npos.origin_world();
                         for ly in local_range(ndy) {
                             for lz in local_range(ndz) {
                                 for lx in local_range(ndx) {
                                     let idx = section_idx(lx, ly, lz);
-                                    if metas[idx] != 0 && nblocks[idx] == water {
+                                    if metas[idx] != 0 && nblocks.get(idx) == water {
                                         updates.push(IVec3::new(
                                             nox + lx as i32,
                                             noy + ly as i32,

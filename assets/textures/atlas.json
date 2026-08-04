@@ -53,6 +53,7 @@
     {"name": "coarse_dirt", "file": "coarse_dirt.png"},
     {"name": "gravel", "file": "gravel.png"},
     {"name": "clay", "file": "clay.png"},
+    {"name": "clay_ball", "file": "clay_ball.png"},
     {"name": "mud", "file": "mud.png"},
     {"name": "moss_block", "file": "moss_block.png"},
     {"name": "packed_ice", "file": "packed_ice.png"},

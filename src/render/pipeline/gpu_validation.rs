@@ -133,6 +133,9 @@ fn packed_vertex_pipeline_validates() {
         36
     );
     // world-model vertex stride must match ITS declared attribute layout
-    // (pos f32x3 @0, uv f32x2 @12, shade f32 @20, light f32x4 @24 = 40 bytes).
-    assert_eq!(std::mem::size_of::<crate::mesh::ModelVertex>(), 40);
+    // (pos f32x3 @0, uv f32x2 @12, shade f32 @20, packed light u32 @24,
+    // tint u32 @28 = 32 bytes).
+    assert_eq!(std::mem::size_of::<crate::mesh::ModelVertex>(), 32);
+    assert_eq!(std::mem::offset_of!(crate::mesh::ModelVertex, light), 24);
+    assert_eq!(std::mem::offset_of!(crate::mesh::ModelVertex, tint), 28);
 }

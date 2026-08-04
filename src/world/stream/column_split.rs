@@ -39,8 +39,7 @@ pub(crate) fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Sectio
     for cy in 0..surface_sections {
         let mut section = Section::new(cx, cy, cz);
         let mut any = false;
-        {
-            let dst = section.blocks_slice_mut();
+        section.edit_ids_bulk(|dst| {
             for ly in 0..SECTION_SIZE {
                 let wy = cy as usize * SECTION_SIZE + ly;
                 for z in 0..CHUNK_SZ {
@@ -53,7 +52,7 @@ pub(crate) fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Sectio
                     }
                 }
             }
-        }
+        });
         if !any {
             continue; // all-air section: absent reads as air.
         }
@@ -65,12 +64,7 @@ pub(crate) fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Sectio
     // Expanded range below y=0: solid stone, so caves have somewhere to carve.
     for cy in SECTION_MIN_CY..0 {
         let mut section = Section::new(cx, cy, cz);
-        {
-            let dst = section.blocks_slice_mut();
-            for d in dst.iter_mut() {
-                *d = Block::Stone.id();
-            }
-        }
+        section.blocks_mut().fill(Block::Stone.id());
         section.recompute_opaque_count();
         out.push((cy, section));
     }

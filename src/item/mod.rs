@@ -40,7 +40,7 @@ pub use stack::ItemStack;
 pub use tags::ItemTag;
 #[allow(unused_imports)]
 pub use tool::FIST_DAMAGE;
-pub use tool::{attack_damage, Tool, ToolKind};
+pub use tool::{attack_damage, default_damage, default_speed, Tool, ToolKind};
 pub use uses::{ItemUse, UseRay};
 pub use variant::VariantId;
 
@@ -53,7 +53,7 @@ pub use variant::VariantId;
 /// An item links to the block it places through its row's `block` field;
 /// `from_block` / `as_block` are table lookups over those links.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct ItemType(pub u8);
+pub struct ItemType(pub u16);
 
 /// Engine item consts, named like the enum variants they replaced so every
 /// existing `ItemType::Stick` expression and match pattern keeps compiling.
@@ -206,6 +206,7 @@ impl ItemType {
     pub const JungleFence: ItemType = ItemType(144);
     pub const AcaciaFence: ItemType = ItemType(145);
     pub const RedwoodFence: ItemType = ItemType(146);
+    pub const ClayBlock: ItemType = ItemType(147);
 }
 
 impl std::fmt::Debug for ItemType {

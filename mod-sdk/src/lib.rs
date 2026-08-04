@@ -17,12 +17,12 @@
 pub use mod_api::*;
 
 mod bytes;
-pub mod json;
 mod client;
 mod containers;
 mod core_calls;
 mod entities;
 mod gui;
+pub mod json;
 mod kv;
 mod player;
 mod registry;
@@ -105,7 +105,7 @@ pub trait Mod: Default {
     /// 4096-block fill (layout `y*256 + z*16 + x`). Anything but exactly 4096
     /// registered block ids disables the mod and the engine terrain runs
     /// instead.
-    fn gen_terrain(&mut self, _callback_id: u32, _ctx: &GenCtx) -> Vec<u8> {
+    fn gen_terrain(&mut self, _callback_id: u32, _ctx: &GenCtx) -> Vec<u16> {
         Vec::new()
     }
 

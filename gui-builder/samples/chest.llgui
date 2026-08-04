@@ -33,7 +33,7 @@
         },
         {
           "type": "slot_grid",
-          "role": "storage",
+          "role": "container",
           "cols": 9,
           "rows": 3
         },
@@ -94,7 +94,20 @@
     }
   },
   "editor": {
-    "sample_state": {},
+    "sample_state": {
+      "item_tip_has_info": {
+        "bool": true
+      },
+      "item_tip_info": {
+        "str": "Sample text"
+      },
+      "item_tip_name": {
+        "str": "Sample text"
+      },
+      "show_item_tip": {
+        "bool": true
+      }
+    },
     "zoom": 1.0,
     "preview_scale": 2,
     "screen": [

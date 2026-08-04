@@ -28,11 +28,14 @@ enum RawRecipe {
         data: serde_json::Map<String, serde_json::Value>,
     },
     Processing {
+        recipe: String,
         class: String,
         ingredient: String,
         result: String,
         #[serde(default = "one_u8")]
         count: u8,
+        #[serde(default)]
+        data: serde_json::Map<String, serde_json::Value>,
     },
 }
 
@@ -56,10 +59,10 @@ struct RawCraftingIngredient {
 }
 
 enum Converted {
-    /// A crafting row plus its own raw `data` map — compiled AFTER all layers
-    /// parse, so patch rows from later packs can target it.
+    /// A row plus its own raw `data` map — compiled AFTER all layers parse, so
+    /// patch rows from later packs can target it.
     Crafting(CraftingRecipe, serde_json::Map<String, serde_json::Value>),
-    Processing(ProcessingRecipe),
+    Processing(ProcessingRecipe, serde_json::Map<String, serde_json::Value>),
 }
 
 fn one_u8() -> u8 {
@@ -96,19 +99,15 @@ fn load_layers(
         crafting.extend(c);
         processing.extend(p);
     }
-    // Compile each crafting row's data map now that every layer's patch rows
-    // are in (a patch targets the FINAL row, cross-namespace by design).
+    // Compile each row's data map now that every layer's patch rows are in (a
+    // patch targets the FINAL row, cross-namespace by design). BOTH row kinds
+    // go through the same gate: a recipe is a recipe, and a pack retires one
+    // the same way whichever machine consumes it.
+    let mut retired: Vec<String> = Vec::new();
     let mut compiled = Vec::with_capacity(crafting.len());
     for (mut recipe, own) in crafting {
-        let entries = match crate::registry::compile_data_map(recipe.key(), &own, &patches) {
-            Ok(slice) => slice
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
-            Err(error) => {
-                log::error!("skipping recipe '{}': {error}", recipe.key());
-                continue;
-            }
+        let Some(entries) = compile_row(recipe.key(), &own, &patches, &mut retired) else {
+            continue;
         };
         if let Err(error) = recipe.set_data(entries) {
             log::error!("skipping recipe '{}': {error}", recipe.key());
@@ -116,15 +115,63 @@ fn load_layers(
         }
         compiled.push(recipe);
     }
-    for patch in &patches {
-        if !compiled.iter().any(|r| r.key() == patch.patch) {
-            log::error!(
-                "recipe patch targets unknown crafting recipe '{}'",
-                patch.patch
-            );
+    let mut compiled_processing = Vec::with_capacity(processing.len());
+    for (recipe, own) in processing {
+        if compile_row(&recipe.key, &own, &patches, &mut retired).is_some() {
+            compiled_processing.push(recipe);
         }
     }
-    Recipes::new(compiled, processing)
+    for patch in &patches {
+        // A patch that RETIRED its target is the one case where the target is
+        // legitimately absent from the catalog.
+        let known = compiled.iter().any(|r| r.key() == patch.patch)
+            || compiled_processing.iter().any(|r| r.key == patch.patch)
+            || retired.contains(&patch.patch);
+        if !known {
+            log::error!("recipe patch targets unknown recipe '{}'", patch.patch);
+        }
+    }
+    Recipes::new(compiled, compiled_processing)
+}
+
+/// Merge one row's own `data` map with every patch targeting it and apply the
+/// engine's `petramond:enabled` gate. `None` = the row does not join the
+/// catalog (retired, or malformed data).
+///
+/// The merged map is READ and dropped: `petramond:enabled` is the only key the
+/// engine understands on a recipe row. Everything else a pack writes there is
+/// carried for the patch mechanism's sake — a pack retires an engine recipe by
+/// patching a row it does not own — and is deliberately not surfaced to the
+/// compiled recipe.
+fn compile_row(
+    key: &str,
+    own: &serde_json::Map<String, serde_json::Value>,
+    patches: &[crate::registry::RawDataPatch],
+    retired: &mut Vec<String>,
+) -> Option<Vec<(String, String)>> {
+    let entries: Vec<(String, String)> = match crate::registry::compile_data_map(key, own, patches)
+    {
+        Ok(slice) => slice
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        Err(error) => {
+            log::error!("skipping recipe '{key}': {error}");
+            return None;
+        }
+    };
+    match CraftingRecipe::row_enabled(&entries) {
+        Ok(true) => Some(entries),
+        Ok(false) => {
+            log::info!("recipe '{key}' is retired by row data");
+            retired.push(key.to_owned());
+            None
+        }
+        Err(error) => {
+            log::error!("skipping recipe '{key}': {error}");
+            None
+        }
+    }
 }
 
 fn read_recipe_layers() -> Vec<(String, std::path::PathBuf, Option<String>)> {
@@ -146,7 +193,10 @@ fn parse(text: &str) -> (Vec<CraftingRecipe>, Vec<ProcessingRecipe>) {
     let mut patches = Vec::new();
     let (crafting, processing) =
         parse_for(text, &std::collections::BTreeSet::new(), None, &mut patches);
-    (crafting.into_iter().map(|(r, _)| r).collect(), processing)
+    (
+        crafting.into_iter().map(|(r, _)| r).collect(),
+        processing.into_iter().map(|(r, _)| r).collect(),
+    )
 }
 
 #[allow(clippy::type_complexity)]
@@ -157,7 +207,7 @@ fn parse_for(
     patches: &mut Vec<crate::registry::RawDataPatch>,
 ) -> (
     Vec<(CraftingRecipe, serde_json::Map<String, serde_json::Value>)>,
-    Vec<ProcessingRecipe>,
+    Vec<(ProcessingRecipe, serde_json::Map<String, serde_json::Value>)>,
 ) {
     // Patch rows (`{"patch", "data"}`) split out before the tagged-enum
     // parse, exactly like items/blocks; they register nothing and are exempt
@@ -179,7 +229,7 @@ fn parse_for(
         }
         match convert(raw, owner) {
             Ok(Converted::Crafting(recipe, data)) => crafting.push((recipe, data)),
-            Ok(Converted::Processing(recipe)) => processing.push(recipe),
+            Ok(Converted::Processing(recipe, data)) => processing.push((recipe, data)),
             Err(error) => log::error!("skipping recipe #{index}: {error}"),
         }
     }
@@ -195,7 +245,7 @@ fn convert(raw: RawRecipe, owner: Option<&str>) -> Result<Converted, String> {
             result,
             data,
         } => {
-            validate_recipe_owner(&recipe, owner)?;
+            validate_recipe_owner("crafting recipe", &recipe, owner)?;
             let station = CraftingStation::from_key(&station)
                 .ok_or_else(|| format!("unknown crafting station '{station}'"))?;
             let ingredients: Vec<CraftingIngredient> = ingredients
@@ -214,22 +264,29 @@ fn convert(raw: RawRecipe, owner: Option<&str>) -> Result<Converted, String> {
             ))
         }
         RawRecipe::Processing {
+            recipe,
             class,
             ingredient,
             result,
             count,
+            data,
         } => {
+            validate_recipe_owner("processing recipe", &recipe, owner)?;
             if !crate::registry::is_namespaced(&class) {
                 return Err(format!("processing class '{class}' is not namespaced"));
             }
             let input = resolve_item(&ingredient)?;
             let result = resolve_item(&result)?;
             validate_stack_count(result, count, "processing result")?;
-            Ok(Converted::Processing(ProcessingRecipe {
-                class,
-                input,
-                result: ItemStack::new(result, count),
-            }))
+            Ok(Converted::Processing(
+                ProcessingRecipe {
+                    key: recipe,
+                    class,
+                    input,
+                    result: ItemStack::new(result, count),
+                },
+                data,
+            ))
         }
     }
 }
@@ -261,18 +318,19 @@ fn convert_ingredient(raw: RawCraftingIngredient) -> Result<CraftingIngredient, 
     })
 }
 
-fn validate_recipe_owner(key: &str, owner: Option<&str>) -> Result<(), String> {
+/// Both recipe kinds go through this, so `kind` names which one the author is
+/// actually looking at — "crafting recipe" on a malformed processing key sends
+/// them to the wrong file.
+fn validate_recipe_owner(kind: &str, key: &str, owner: Option<&str>) -> Result<(), String> {
     let namespace = crate::registry::namespace(key)
-        .ok_or_else(|| format!("crafting recipe key '{key}' is not namespaced"))?;
+        .ok_or_else(|| format!("{kind} key '{key}' is not namespaced"))?;
     match owner {
         Some(owner) if namespace == owner => Ok(()),
         Some(owner) => Err(format!(
-            "crafting recipe key '{key}' does not belong to pack '{owner}'"
+            "{kind} key '{key}' does not belong to pack '{owner}'"
         )),
         None if namespace == crate::registry::ENGINE_NAMESPACE => Ok(()),
-        None => Err(format!(
-            "crafting recipe key '{key}' ships without its owning pack"
-        )),
+        None => Err(format!("{kind} key '{key}' ships without its owning pack")),
     }
 }
 
@@ -321,11 +379,13 @@ fn disabled_namespace_in<'a>(
             })
             .or_else(|| hit(&result.item)),
         RawRecipe::Processing {
+            recipe,
             class,
             ingredient,
             result,
             ..
-        } => hit(class)
+        } => hit(recipe)
+            .or_else(|| hit(class))
             .or_else(|| hit(ingredient))
             .or_else(|| hit(result)),
     }
@@ -396,7 +456,7 @@ mod tests {
     #[test]
     fn processing_lookup_contract_remains_distinct() {
         let text = r#"{ "recipes": [
-            {"type":"processing","class":"test:cooking","ingredient":"petramond:raw_iron","result":"petramond:iron_ingot"}
+            {"type":"processing","recipe":"petramond:test_cook","class":"test:cooking","ingredient":"petramond:raw_iron","result":"petramond:iron_ingot"}
         ] }"#;
         let (crafting, processing) = parse(text);
         let recipes = Recipes::new(crafting, processing);
@@ -404,6 +464,86 @@ mod tests {
             recipes.process("test:cooking", ItemType::RawIron),
             Some(ItemStack::new(ItemType::IronIngot, 1))
         );
+    }
+
+    #[test]
+    fn a_pack_patch_retires_a_recipe_it_does_not_own() {
+        let base = r#"{ "recipes": [{
+            "type":"crafting","recipe":"petramond:test_retire","station":"petramond:inventory",
+            "ingredients":[{"item":"petramond:iron_ingot","count":3}],
+            "result":{"item":"petramond:iron_pickaxe","count":1}
+        }] }"#;
+        let layers = |pack: Option<&str>| {
+            let mut layers = vec![(
+                base.to_owned(),
+                std::path::PathBuf::from("<base>"),
+                None::<String>,
+            )];
+            if let Some(text) = pack {
+                layers.push((
+                    text.to_owned(),
+                    std::path::PathBuf::from("forge/recipes.json"),
+                    Some("forge".to_owned()),
+                ));
+            }
+            layers
+        };
+        let loaded = |pack: Option<&str>| load_layers(layers(pack), &Default::default());
+
+        assert!(loaded(None)
+            .crafting()
+            .get("petramond:test_retire")
+            .is_some());
+
+        // A pack cannot restate an engine recipe key, but it can PATCH one —
+        // which is how it replaces a whole crafting route with its own.
+        let retire = r#"{ "recipes": [
+            {"patch":"petramond:test_retire","data":{"petramond:enabled":false}}
+        ] }"#;
+        assert!(loaded(Some(retire))
+            .crafting()
+            .get("petramond:test_retire")
+            .is_none());
+
+        // A PROCESSING row is retired by the same key — the forge takes raw
+        // metal off the ordinary furnace this way.
+        let smelt = r#"{ "recipes": [{
+            "type":"processing","recipe":"petramond:test_smelt","class":"petramond:smelting",
+            "ingredient":"petramond:raw_iron","result":"petramond:iron_ingot"
+        }] }"#;
+        let retire_smelt = r#"{ "recipes": [
+            {"patch":"petramond:test_smelt","data":{"petramond:enabled":false}}
+        ] }"#;
+        let with_smelt = |pack: Option<&str>| {
+            let mut layers = vec![(
+                smelt.to_owned(),
+                std::path::PathBuf::from("<base>"),
+                None::<String>,
+            )];
+            if let Some(text) = pack {
+                layers.push((
+                    text.to_owned(),
+                    std::path::PathBuf::from("forge/recipes.json"),
+                    Some("forge".to_owned()),
+                ));
+            }
+            load_layers(layers, &Default::default())
+        };
+        assert!(with_smelt(None)
+            .process("petramond:smelting", ItemType::RawIron)
+            .is_some());
+        assert!(with_smelt(Some(retire_smelt))
+            .process("petramond:smelting", ItemType::RawIron)
+            .is_none());
+
+        // A non-boolean value is a load error, not a silent "still enabled".
+        let malformed = r#"{ "recipes": [
+            {"patch":"petramond:test_retire","data":{"petramond:enabled":"no"}}
+        ] }"#;
+        assert!(loaded(Some(malformed))
+            .crafting()
+            .get("petramond:test_retire")
+            .is_none());
     }
 
     #[test]
@@ -423,7 +563,8 @@ mod tests {
         // cannot remove it. Disabling its owning pack must remove the layer
         // before parse, including non-selectable processing rows.
         let core_only = r#"{ "recipes": [{
-            "type":"processing","class":"petramond:test_disabled_owner",
+            "type":"processing","recipe":"wheel:test_disabled_owner",
+            "class":"petramond:test_disabled_owner",
             "ingredient":"petramond:coal","result":"petramond:stick"
         }] }"#;
         let layer = || {

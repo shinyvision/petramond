@@ -249,6 +249,15 @@ impl Renderer {
         self.hand.held_item_blocklight = blocklight;
     }
 
+    /// This frame's mod draw sets. They ride the ITEM-ENTITY opaque stream:
+    /// same block atlas, same double-sided CPU-lit pipeline, and no chunk
+    /// re-mesh — which is the whole reason a mod may submit a new set every
+    /// tick.
+    pub fn set_block_draws(&mut self, v: &[crate::render::BlockDrawInstance]) {
+        self.item_entity.block_draws.clear();
+        self.item_entity.block_draws.extend_from_slice(v);
+    }
+
     /// Store the dropped item-entities to draw this frame. Reuses the existing
     /// `Vec` capacity (clear + extend) to avoid per-frame reallocation.
     pub fn set_item_entities(&mut self, v: &[ItemEntityInstance]) {

@@ -59,7 +59,7 @@ pub(super) fn biome_pad_idx(x: usize, z: usize) -> usize {
 /// `Arc<Section>`, so streaming edits never copy-on-write a section because a mesh job holds
 /// it. Absent (`None`) buffers fall back exactly like [`Section`]'s accessors.
 pub(super) struct NeighborSnap {
-    pub blocks: std::sync::Arc<[u8]>,
+    pub blocks: crate::section::BlockCube,
     pub water: Option<std::sync::Arc<[u8]>>,
     pub skylight: Option<std::sync::Arc<[u8]>>,
     pub blocklight: Option<std::sync::Arc<[crate::light::LightRgb]>>,
@@ -184,7 +184,7 @@ pub(super) fn build_inline(job: MeshJob) -> Option<ChunkMesh> {
 /// block ids, water/light state, per-cell stair facing, and a loaded flag. Reads beyond
 /// the pad fall back exactly as the live world's accessors do (air / open sky / not-loaded).
 struct Pad {
-    blocks: Box<[u8]>,
+    blocks: Box<[u16]>,
     water: Box<[u8]>,
     skylight: Box<[u8]>,
     blocklight: Box<[crate::light::LightRgb]>,
@@ -195,7 +195,7 @@ struct Pad {
 impl Pad {
     fn new() -> Self {
         Self {
-            blocks: vec![0u8; PAD_VOL].into_boxed_slice(),
+            blocks: vec![0u16; PAD_VOL].into_boxed_slice(),
             water: vec![0u8; PAD_VOL].into_boxed_slice(),
             skylight: vec![SKY_FULL; PAD_VOL].into_boxed_slice(),
             blocklight: vec![crate::light::LightRgb::ZERO; PAD_VOL].into_boxed_slice(),
@@ -256,8 +256,8 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
             let src = crate::chunk::section_idx(0, ly, lz); // local x=0 of this row
             match nbhd[nbhd_idx27(0, ddy, ddz)].as_ref() {
                 Some(s) => {
-                    blocks[base..base + SECTION_SIZE]
-                        .copy_from_slice(&s.blocks[src..src + SECTION_SIZE]);
+                    s.blocks
+                        .expand_row_into(src, &mut blocks[base..base + SECTION_SIZE]);
                     if let Some(w) = s.water.as_ref() {
                         water[base..base + SECTION_SIZE]
                             .copy_from_slice(&w[src..src + SECTION_SIZE]);
@@ -297,7 +297,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                 let li = crate::chunk::section_idx(lx, ly, lz);
                 match nbhd[nbhd_idx27(ddx, ddy, ddz)].as_ref() {
                     Some(s) => {
-                        blocks[pi] = s.blocks[li];
+                        blocks[pi] = s.blocks.get(li);
                         water[pi] = s.water.as_ref().map_or(0, |w| w[li]);
                         skylight[pi] = s.skylight.as_ref().map_or(SKY_FULL, |s| s[li]);
                         blocklight[pi] = s

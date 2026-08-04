@@ -128,9 +128,18 @@ impl UiValue {
         }
     }
 
+    /// A number counts as a bool, and that is what lets a value published from
+    /// outside the UI drive `visible`, `enabled` and a checkbox/toggle's face.
+    /// Without it those bindings silently resolve to their default (`true`)
+    /// and the node just never changes. A STRING counts too — non-empty is
+    /// true — so one published value (a tooltip's text) can be both the
+    /// content and the condition, with no parallel `has_*` key.
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             UiValue::Bool(v) => Some(*v),
+            UiValue::I32(v) => Some(*v != 0),
+            UiValue::F32(v) => Some(*v != 0.0),
+            UiValue::Str(s) => Some(!s.is_empty()),
             _ => None,
         }
     }

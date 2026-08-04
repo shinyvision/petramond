@@ -51,7 +51,12 @@ pub fn is_same_or_descendant(ancestor: &[usize], descendant: &[usize]) -> bool {
 
 /// Move the node at `from` to become child `index` of `to_parent`. Refuses
 /// moves into the node's own subtree. Returns the node's new path.
-pub fn move_node(root: &mut Node, from: &[usize], to_parent: &[usize], index: usize) -> Option<NodePath> {
+pub fn move_node(
+    root: &mut Node,
+    from: &[usize],
+    to_parent: &[usize],
+    index: usize,
+) -> Option<NodePath> {
     if from.is_empty() || is_same_or_descendant(from, to_parent) {
         return None;
     }
@@ -136,29 +141,83 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
         "row" => NodeKind::Row,
         "column" => NodeKind::Column,
         "spacer" => NodeKind::Spacer,
-        "label" => NodeKind::Label { text: Some("Label".into()), wrap: false, scale: 1, small: false },
-        "image" => NodeKind::Image { image: "image.png".into(), fit: Default::default(), interactive: false },
-        "rotimage" => NodeKind::Rotimage { image: "image.png".into(), pivot: None },
-        "button" => NodeKind::Button { text: Some("BUTTON".into()), icon: None },
+        "label" => NodeKind::Label {
+            text: Some("Label".into()),
+            wrap: false,
+            scale: 1,
+            small: false,
+        },
+        "image" => NodeKind::Image {
+            image: "image.png".into(),
+            fit: Default::default(),
+            frames: None,
+            fps: None,
+            interactive: false,
+        },
+        "rotimage" => NodeKind::Rotimage {
+            image: "image.png".into(),
+            pivot: None,
+        },
+        "button" => NodeKind::Button {
+            text: Some("BUTTON".into()),
+            icon: None,
+            image: None,
+            frames: None,
+            fps: None,
+        },
         "checkbox" => NodeKind::Checkbox,
         "toggle" => NodeKind::Toggle { icon: None },
-        "slider" => NodeKind::Slider { min: 0.0, max: 100.0, step: None },
-        "text_input" => NodeKind::TextInput { placeholder: None, max_chars: 64 },
-        "scroll" => NodeKind::Scroll { axis: petramond_ui::ScrollAxis::Vertical },
+        "slider" => NodeKind::Slider {
+            min: 0.0,
+            max: 100.0,
+            step: None,
+        },
+        "text_input" => NodeKind::TextInput {
+            placeholder: None,
+            max_chars: 64,
+        },
+        "scroll" => NodeKind::Scroll {
+            axis: petramond_ui::ScrollAxis::Vertical,
+        },
         "list" => NodeKind::List { cols: 1 },
-        "slot" => NodeKind::Slot { role: "storage".into(), accepts: Vec::new(), take_only: false },
-        "slot_grid" => NodeKind::SlotGrid { role: "storage".into(), cols: 9, rows: 3, accepts: Vec::new(), take_only: false },
-        "gauge" => NodeKind::Gauge { mode: petramond_ui::GaugeMode::GrowLr },
-        "badge" => NodeKind::Badge { text: Some("badge".into()) },
-        "alert" => NodeKind::Alert { level: petramond_ui::AlertLevel::Info, text: Some("Alert text".into()) },
+        "slot" => NodeKind::Slot {
+            role: "storage".into(),
+            accepts: Vec::new(),
+            take_only: false,
+        },
+        "slot_grid" => NodeKind::SlotGrid {
+            role: "storage".into(),
+            cols: 9,
+            rows: 3,
+            accepts: Vec::new(),
+            take_only: false,
+        },
+        "gauge" => NodeKind::Gauge {
+            mode: petramond_ui::GaugeMode::GrowLr,
+        },
+        "badge" => NodeKind::Badge {
+            text: Some("badge".into()),
+        },
+        "alert" => NodeKind::Alert {
+            level: petramond_ui::AlertLevel::Info,
+            text: Some("Alert text".into()),
+        },
         "tab_bar" => NodeKind::TabBar {
             tabs: vec![
-                petramond_ui::TabSpec { key: "one".into(), icon: None, label: Some("One".into()) },
-                petramond_ui::TabSpec { key: "two".into(), icon: None, label: Some("Two".into()) },
+                petramond_ui::TabSpec {
+                    key: "one".into(),
+                    icon: None,
+                    label: Some("One".into()),
+                },
+                petramond_ui::TabSpec {
+                    key: "two".into(),
+                    icon: None,
+                    label: Some("Two".into()),
+                },
             ],
         },
         "hook" => NodeKind::Hook,
-        "tooltip" => NodeKind::Tooltip,
+        "tooltip" => NodeKind::Tooltip { hover: None },
         _ => return None,
     };
     let mut node = Node::leaf(kind);
@@ -171,7 +230,7 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
     if let NodeKind::TabBar { .. } = node.kind {
         node.bind.selected = Some("tab_sel".into());
     }
-    if let NodeKind::Tooltip = node.kind {
+    if let NodeKind::Tooltip { .. } = node.kind {
         node.bind.visible = Some("show_tooltip".into());
         node.children.push(Node::leaf(NodeKind::Label {
             text: Some("Tooltip".into()),
@@ -194,9 +253,28 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
 
 /// Every insertable node type name, palette order.
 pub const NODE_TYPES: &[&str] = &[
-    "frame", "row", "column", "spacer", "label", "image", "rotimage", "button", "checkbox",
-    "toggle", "slider", "text_input", "scroll", "list", "tab_bar", "slot", "slot_grid", "gauge",
-    "badge", "alert", "hook", "tooltip",
+    "frame",
+    "row",
+    "column",
+    "spacer",
+    "label",
+    "image",
+    "rotimage",
+    "button",
+    "checkbox",
+    "toggle",
+    "slider",
+    "text_input",
+    "scroll",
+    "list",
+    "tab_bar",
+    "slot",
+    "slot_grid",
+    "gauge",
+    "badge",
+    "alert",
+    "hook",
+    "tooltip",
 ];
 
 /// Wrap the node at `path` in a fresh row/column container in place.
@@ -208,20 +286,33 @@ pub fn wrap_in(root: &mut Node, path: &[usize], kind: NodeKind) -> Option<()> {
     let mut wrapper = Node::leaf(kind);
     wrapper.layout = LayoutProps::default();
     wrapper.children.push(node);
-    insert_at(root, &path[..path.len() - 1], *path.last().unwrap(), wrapper)?;
+    insert_at(
+        root,
+        &path[..path.len() - 1],
+        *path.last().unwrap(),
+        wrapper,
+    )?;
     Some(())
 }
 
 // ---- static images ----------------------------------------------------------
 
 /// Every static image file name the document references (`image`/`rotimage`
-/// nodes), deduplicated in document order. Bound image names (`bind.image`)
-/// are state keys, not files, so they don't count.
+/// nodes and image-backed `button` faces), deduplicated in document order.
+/// Bound image names (`bind.image`) are state keys, not files, so they don't
+/// count.
 pub fn static_image_names(doc: &Document) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     doc.root.visit(&mut |n| {
-        if let NodeKind::Image { image, .. } | NodeKind::Rotimage { image, .. } = &n.kind {
-            if !out.contains(image) {
+        let name = match &n.kind {
+            NodeKind::Image { image, .. } | NodeKind::Rotimage { image, .. } => Some(image),
+            NodeKind::Button {
+                image: Some(image), ..
+            } => Some(image),
+            _ => None,
+        };
+        if let Some(image) = name {
+            if !image.is_empty() && !out.contains(image) {
                 out.push(image.clone());
             }
         }
@@ -242,8 +333,15 @@ pub fn missing_image_issues(
         exists: &dyn Fn(&str) -> bool,
         out: &mut Vec<petramond_ui::DocIssue>,
     ) {
-        if let NodeKind::Image { image, .. } | NodeKind::Rotimage { image, .. } = &node.kind {
-            if !exists(image) {
+        let image_ref: Option<&String> = match &node.kind {
+            NodeKind::Image { image, .. } | NodeKind::Rotimage { image, .. } => Some(image),
+            NodeKind::Button {
+                image: Some(image), ..
+            } => Some(image),
+            _ => None,
+        };
+        if let Some(image) = image_ref {
+            if !image.is_empty() && !exists(image) {
                 out.push(petramond_ui::DocIssue {
                     path: format!("{path}({})", node.kind.type_name()),
                     message: format!(
@@ -311,7 +409,10 @@ mod tests {
         let d = sample();
         // The duplicate-id issue is anchored at the second button.
         let issues = d.validate(None, None);
-        let dup = issues.iter().find(|i| i.message.contains("duplicate id")).unwrap();
+        let dup = issues
+            .iter()
+            .find(|i| i.message.contains("duplicate id"))
+            .unwrap();
         let path = resolve_issue_path(&dup.path).expect("path parses");
         let node = node_at(&d.root, &path).expect("path resolves");
         assert_eq!(node.kind.type_name(), "button");
@@ -366,15 +467,34 @@ mod tests {
                 { "type": "image", "image": "ok.png" },
                 { "type": "row", "children": [
                     { "type": "image", "image": "missing.png" }
-                ] }
+                ] },
+                { "type": "button", "id": "go", "image": "missing_btn.png" }
             ] }
         }"#);
         let issues = missing_image_issues(&d, &|name| name == "ok.png");
-        assert_eq!(issues.len(), 1);
+        assert_eq!(issues.len(), 2);
         assert!(issues[0].message.contains("missing.png"));
         // The panel's click-to-select resolver understands the path.
         let path = resolve_issue_path(&issues[0].path).unwrap();
         assert_eq!(path, vec![1, 0]);
         assert_eq!(node_at(&d.root, &path).unwrap().kind.type_name(), "image");
+        // Image-backed button faces are checked too.
+        assert!(issues[1].message.contains("missing_btn.png"));
+        let path = resolve_issue_path(&issues[1].path).unwrap();
+        assert_eq!(node_at(&d.root, &path).unwrap().kind.type_name(), "button");
+    }
+
+    #[test]
+    fn static_image_names_include_button_faces() {
+        let d = doc(r#"{
+            "format": 1, "kind": "petramond:pause", "class": "screen",
+            "root": { "type": "column", "children": [
+                { "type": "image", "image": "a.png" },
+                { "type": "button", "id": "go", "image": "a.png" },
+                { "type": "button", "id": "back", "image": "b.png" },
+                { "type": "button", "id": "plain", "text": "OK" }
+            ] }
+        }"#);
+        assert_eq!(static_image_names(&d), vec!["a.png", "b.png"]);
     }
 }

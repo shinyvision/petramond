@@ -156,6 +156,35 @@ fn toggle_reports_inverted_bound_state() {
             .any(|e| matches!(e, UiEvent::Toggle { id, on: false, .. } if id == "snd")),
         "{ev:?}"
     );
+
+    // The pressing BUTTON rides the event, exactly as it does on a click:
+    // whether a right-click flips a checkbox is a host policy, and a host that
+    // cannot see which button pressed cannot have one.
+    let ev = h.frame(&[
+        InputEvent::PointerDown {
+            x: tx,
+            y: ty,
+            button: PointerButton::Secondary,
+            shift: false,
+            slot_drag: false,
+        },
+        InputEvent::PointerUp {
+            x: tx,
+            y: ty,
+            button: PointerButton::Secondary,
+        },
+    ]);
+    assert!(
+        ev.iter().any(|e| matches!(
+            e,
+            UiEvent::Toggle {
+                id,
+                button: PointerButton::Secondary,
+                ..
+            } if id == "snd"
+        )),
+        "{ev:?}"
+    );
 }
 
 #[test]
@@ -990,7 +1019,7 @@ fn tab_faces_track_bound_selection_and_hover() {
         let mut out = FrameOutput::default();
         let mut state = UiState::new();
         state.set("tab", UiValue::I32(selected));
-        let mut run = |input: &[InputEvent], fs: &mut FrameState, out: &mut FrameOutput| {
+        let run = |input: &[InputEvent], fs: &mut FrameState, out: &mut FrameOutput| {
             rt.frame(
                 FrameArgs {
                     screen: (400, 200),
@@ -1042,6 +1071,114 @@ fn tab_faces_track_bound_selection_and_hover() {
     assert_ne!(default, selected, "bound selection changes the tab face");
     assert_ne!(default, hovered, "cell-level hover changes the tab face");
     assert_ne!(selected, hovered);
+}
+
+/// A tooltip with a `hover` anchor expands only while its widget is under the
+/// cursor: hover is resolved after input and read by the NEXT frame's
+/// expansion, so the show/hide lands one frame after the pointer move — the
+/// same contract as hover-revealed list content.
+#[test]
+fn a_hover_anchored_tooltip_shows_only_over_its_widget() {
+    let doc = Arc::new(
+        Document::from_json(
+            r#"{
+                "format": 1, "kind": "petramond:tip_test", "class": "container",
+                "root": { "type": "frame", "layout": { "w": 200, "h": 120, "pad": [4,4,4,4], "gap": 4 },
+                    "children": [
+                        { "type": "gauge", "id": "tank", "mode": "grow_lr",
+                          "bind": { "value": "fill" }, "layout": { "w": 20, "h": 40 } },
+                        { "type": "tooltip", "hover": "tank", "bind": { "visible": "tip" },
+                          "layout": { "max_w": 100, "abs": { "x": 2, "y": 2 } },
+                          "children": [
+                              { "type": "label", "id": "tip_text", "bind": { "text": "tip" } }
+                          ] }
+                    ] }
+            }"#,
+        )
+        .unwrap(),
+    );
+    let rt = UiRuntime::new(doc, Arc::new(Theme::placeholder()));
+    let mut fs = FrameState::new();
+    let mut out = FrameOutput::default();
+    let mut state = UiState::new();
+    state.set("fill", UiValue::F32(0.5));
+    // The tip's TEXT is its visibility: a non-empty string is true.
+    state.set("tip", UiValue::Str("Iron".to_owned()));
+    let mut run = |fs: &mut FrameState, out: &mut FrameOutput, input: &[InputEvent]| {
+        rt.frame(
+            FrameArgs {
+                screen: (400, 400),
+                scale: 2,
+                now: 0.0,
+                state: &state,
+                input,
+                clipboard: None,
+                images: &NoImages,
+                dim: None,
+                preview: None,
+            },
+            fs,
+            out,
+        );
+    };
+
+    run(&mut fs, &mut out, &[]);
+    assert!(out.rect("tip_text").is_none(), "nothing hovered, no tooltip");
+    let tank = out.rect("tank").expect("gauge is named");
+    let (gx, gy) = ((tank.x + tank.w / 2) as f32, (tank.y + tank.h / 2) as f32);
+
+    run(&mut fs, &mut out, &[InputEvent::PointerMove { x: gx, y: gy }]);
+    assert!(
+        out.rect("tip_text").is_none(),
+        "hover lands in the NEXT frame's expansion"
+    );
+    run(&mut fs, &mut out, &[]);
+    assert!(
+        out.rect("tip_text").is_some(),
+        "over its widget, the anchored tooltip shows"
+    );
+
+    run(&mut fs, &mut out, &[InputEvent::PointerMove { x: 2.0, y: 2.0 }]);
+    run(&mut fs, &mut out, &[]);
+    assert!(
+        out.rect("tip_text").is_none(),
+        "off the widget, it hides again"
+    );
+
+    // An EMPTY published string hides it even under the cursor (Str-as-bool).
+    let mut empty = UiState::new();
+    empty.set("fill", UiValue::F32(0.5));
+    empty.set("tip", UiValue::Str(String::new()));
+    run_state(&rt, &empty, &mut fs, &mut out, &[]);
+    assert!(
+        out.rect("tip_text").is_none(),
+        "no text, no tooltip panel"
+    );
+}
+
+#[cfg(test)]
+fn run_state(
+    rt: &UiRuntime,
+    state: &UiState,
+    fs: &mut FrameState,
+    out: &mut FrameOutput,
+    input: &[InputEvent],
+) {
+    rt.frame(
+        FrameArgs {
+            screen: (400, 400),
+            scale: 2,
+            now: 0.0,
+            state,
+            input,
+            clipboard: None,
+            images: &NoImages,
+            dim: None,
+            preview: None,
+        },
+        fs,
+        out,
+    );
 }
 
 #[test]

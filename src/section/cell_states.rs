@@ -212,6 +212,23 @@ impl Section {
         out
     }
 
+    /// The section's `petramond:parts` entries as cell-index → the model
+    /// block's per-instance visible-part mask. Sparse like the tint map, and
+    /// collected once per mesh build for the same reason. A malformed value
+    /// (not 4 bytes) is ignored, which shows as the base row rather than as a
+    /// crash.
+    pub fn cell_parts_map(&self) -> HashMap<u16, u32> {
+        let mut out = HashMap::new();
+        for (&idx, map) in self.states.cell_kv() {
+            if let Some(v) = map.get(crate::block_model::PARTS_KV_KEY) {
+                if let Ok(bytes) = <[u8; 4]>::try_from(v.as_slice()) {
+                    out.insert(idx, u32::from_le_bytes(bytes));
+                }
+            }
+        }
+        out
+    }
+
     /// Detach one cell's whole mod-KV map — the state-preserving half of a
     /// model-block swap (see `World::swap_model_block`).
     pub fn cell_kv_take(

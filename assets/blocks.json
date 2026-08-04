@@ -1457,8 +1457,8 @@
       "drops": [
         {
           "item": "petramond:clay",
-          "min": 1,
-          "max": 1,
+          "min": 2,
+          "max": 4,
           "chance": 1
         }
       ]

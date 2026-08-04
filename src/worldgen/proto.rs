@@ -55,7 +55,7 @@ impl ProtoChunk {
     /// Writes through this slice intentionally skip runtime setter bookkeeping;
     /// `into_chunk` rebuilds the derived indexes before runtime feature edits run.
     #[inline]
-    pub(crate) fn terrain_blocks_mut(&mut self) -> &mut [u8] {
+    pub(crate) fn terrain_blocks_mut(&mut self) -> &mut [u16] {
         self.chunk.blocks_slice_mut()
     }
 

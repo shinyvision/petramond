@@ -168,7 +168,7 @@ impl Section {
             } else {
                 Block::Furnace
             };
-            let current = self.blocks[key as usize];
+            let current = self.blocks.get(key as usize);
             if (current == Block::Furnace.id() || current == Block::FurnaceLit.id())
                 && current != desired.id()
             {

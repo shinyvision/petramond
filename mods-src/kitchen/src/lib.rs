@@ -9,11 +9,11 @@
 //! - [`miller`] — the miller: grinds one input into its `kitchen:milling`
 //!   product every 200 ticks, no fuel. While the output slot holds anything
 //!   it flips to the `kitchen:miller_full` row (the authored `flour` cube).
-//! - [`machine`] — what they share: the generic `Machine` driver (a machine
-//!   kind is a `MachineSpec` — its block/kind/anchor keys plus one `step`),
-//!   the persisted world-KV anchor registries (self-healingly pruned each
-//!   tick from ONE batched block read), the session registry caches, and the
-//!   slot arithmetic.
+//!
+//! Both are `MachineSpec`s over the shared `machine-core` driver, which owns
+//! the persisted world-KV anchor registries (self-healingly pruned each tick
+//! from ONE batched block read), the session registry caches, and the slot
+//! arithmetic.
 //!
 //! Content is pack data (blocks/items/recipes/models/GUI documents); this
 //! crate is only the machine logic. Both machines follow the same
@@ -28,20 +28,17 @@
 //! `WorldScheduled` window, reading every machine's slots through batched
 //! calls (the ABI hot-loop rule) and writing back only what changed.
 
-mod machine;
 mod miller;
 mod oven;
 
-use mod_sdk::*;
-
-use machine::Caches;
+use machine_core::Caches;
 use miller::Miller;
+use mod_sdk::*;
 use oven::Oven;
 
 const TICK_SYSTEM: u32 = 1;
 const ON_BLOCK_PLACED: u32 = 1;
 const ON_CONTAINER_OPENED: u32 = 2;
-const ON_CONTAINER_CLOSED: u32 = 3;
 
 #[derive(Default)]
 struct Kitchen {
@@ -60,7 +57,6 @@ impl Mod for Kitchen {
         }
         register_event_handler(EventKind::BlockPlaced, 0, ON_BLOCK_PLACED);
         register_event_handler(EventKind::ContainerOpened, 0, ON_CONTAINER_OPENED);
-        register_event_handler(EventKind::ContainerClosed, 0, ON_CONTAINER_CLOSED);
         // After WorldScheduled = right after the engine's own furnace step.
         register_tick_system(Stage::WorldScheduled, AttachSide::After, 0, TICK_SYSTEM);
     }
@@ -72,12 +68,8 @@ impl Mod for Kitchen {
                 self.miller.on_placed(*pos, *block);
             }
             (ON_CONTAINER_OPENED, EventPayload::ContainerOpened { kind, pos }) => {
-                self.oven.on_container(kind, *pos, true);
-                self.miller.on_container(kind, *pos, true);
-            }
-            (ON_CONTAINER_CLOSED, EventPayload::ContainerClosed { kind, pos }) => {
-                self.oven.on_container(kind, *pos, false);
-                self.miller.on_container(kind, *pos, false);
+                self.oven.on_container_opened(kind, *pos);
+                self.miller.on_container_opened(kind, *pos);
             }
             _ => {}
         }

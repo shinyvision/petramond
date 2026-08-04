@@ -64,7 +64,7 @@ pub use tags::BlockTag;
 /// [`crate::registry`]). Serde carries a block as its registered NAME string,
 /// so persisted data never depends on numeric ids.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct Block(pub u8);
+pub struct Block(pub u16);
 
 /// Engine block consts, named like the enum variants they replaced so every
 /// existing `Block::OakLog` expression and match pattern keeps compiling
@@ -317,5 +317,6 @@ pub fn split_part_kv_key(stored: &str) -> (&str, CellPart) {
 /// tint feeds the mesh, so the base key is what is compared.
 #[inline]
 pub fn kv_key_affects_mesh(key: &str) -> bool {
-    split_part_kv_key(key).0 == TINT_KV_KEY
+    let base = split_part_kv_key(key).0;
+    base == TINT_KV_KEY || base == crate::block_model::PARTS_KV_KEY
 }

@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use crate::chunk::{ChunkPos, SectionPos, SECTION_SIZE};
 use crate::net::protocol::{
-    ColumnPayload, LightPayload, SectionBytes, SectionLight, SectionPayload, SectionStatesPayload,
+    ColumnPayload, LightPayload, SectionBlocks, SectionBytes, SectionLight, SectionPayload,
+    SectionStatesPayload,
 };
 use crate::section::Section;
 use crate::world::store::World;
@@ -29,7 +30,7 @@ impl Section {
 
         SectionPayload {
             pos: SectionPos::new(self.cx, self.cy, self.cz),
-            blocks: SectionBytes(self.blocks_arc()),
+            blocks: SectionBlocks(self.blocks_iter().collect()),
             metrics: self.stream_metrics(),
             water: self.water_arc().map(SectionBytes),
             skylight: self.skylight_arc().map(SectionBytes),
@@ -37,6 +38,10 @@ impl Section {
             states: SectionStatesPayload {
                 cell_states: sorted_entries(self.cell_states(), |&s| s),
                 cell_kv,
+                // Filled by `World::section_payload`: draw sets are world-level
+                // records (keyed at a machine's ANCHOR, which need not be in
+                // this section's own cells), so a section cannot see its own.
+                draws: Vec::new(),
             },
         }
     }
@@ -95,7 +100,9 @@ impl World {
 
     /// One loaded section's wire payload, or `None` when it isn't loaded.
     pub(crate) fn section_payload(&self, pos: SectionPos) -> Option<SectionPayload> {
-        self.sections.get(&pos).map(|s| s.to_payload())
+        let mut payload = self.sections.get(&pos)?.to_payload();
+        payload.states.draws = self.section_block_draws(pos);
+        Some(payload)
     }
 
     /// One section's CURRENT light cubes as a wire payload; `None` when the

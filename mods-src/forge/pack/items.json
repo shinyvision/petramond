@@ -1,0 +1,646 @@
+{
+    "items": [
+        {
+            "item": "forge:pottery_table",
+            "key": "forge:pottery_table",
+            "name": "Pottery Table",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 1.8,
+                "roll": 0
+            },
+            "tags": [],
+            "block": "forge:pottery_table"
+        },
+        {
+            "item": "forge:forging_furnace",
+            "key": "forge:forging_furnace",
+            "name": "Forging Furnace",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 1.8,
+                "roll": 0
+            },
+            "tags": [],
+            "block": "forge:forging_furnace"
+        },
+        {
+            "item": "forge:clay_ingot_mould",
+            "key": "forge:clay_ingot_mould",
+            "name": "Unfired Ingot Mould",
+            "info": "Heat this in a furnace to start crafting advanced tools",
+            "max_stack_size": 16,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:clay_ingot_mould",
+            "tags": [
+                "smeltable"
+            ]
+        },
+        {
+            "item": "forge:ingot_mould",
+            "key": "forge:ingot_mould",
+            "name": "Ingot Mould",
+            "max_stack_size": 16,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:ingot_mould",
+            "data": {
+                "forge:mould": {
+                    "class": "forge:cast_ingot"
+                }
+            }
+        },
+        {
+            "item": "forge:clay_pickaxe_head_mould",
+            "key": "forge:clay_pickaxe_head_mould",
+            "name": "Unfired Pickaxe Head Mould",
+            "info": "Heat this in a furnace to start crafting advanced tools",
+            "max_stack_size": 16,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:clay_pickaxe_head_mould",
+            "tags": [
+                "smeltable"
+            ]
+        },
+        {
+            "item": "forge:pickaxe_head_mould",
+            "key": "forge:pickaxe_head_mould",
+            "name": "Pickaxe Head Mould",
+            "max_stack_size": 16,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:pickaxe_head_mould",
+            "data": {
+                "forge:mould": {
+                    "class": "forge:cast_pickaxe_head"
+                }
+            }
+        },
+        {
+            "item": "forge:clay_axe_head_mould",
+            "key": "forge:clay_axe_head_mould",
+            "name": "Unfired Axe Head Mould",
+            "info": "Heat this in a furnace to start crafting advanced tools",
+            "max_stack_size": 16,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:clay_axe_head_mould",
+            "tags": [
+                "smeltable"
+            ]
+        },
+        {
+            "item": "forge:axe_head_mould",
+            "key": "forge:axe_head_mould",
+            "name": "Axe Head Mould",
+            "max_stack_size": 16,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:axe_head_mould",
+            "data": {
+                "forge:mould": {
+                    "class": "forge:cast_axe_head"
+                }
+            }
+        },
+        {
+            "item": "forge:clay_shovel_head_mould",
+            "key": "forge:clay_shovel_head_mould",
+            "name": "Unfired Shovel Head Mould",
+            "info": "Heat this in a furnace to start crafting advanced tools",
+            "max_stack_size": 16,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:clay_shovel_head_mould",
+            "tags": [
+                "smeltable"
+            ]
+        },
+        {
+            "item": "forge:shovel_head_mould",
+            "key": "forge:shovel_head_mould",
+            "name": "Shovel Head Mould",
+            "max_stack_size": 16,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:shovel_head_mould",
+            "data": {
+                "forge:mould": {
+                    "class": "forge:cast_shovel_head"
+                }
+            }
+        },
+        {
+            "item": "forge:clay_shears_mould",
+            "key": "forge:clay_shears_mould",
+            "name": "Unfired Shears Mould",
+            "info": "Heat this in a furnace to start crafting advanced tools",
+            "max_stack_size": 16,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:clay_shears_mould",
+            "tags": [
+                "smeltable"
+            ]
+        },
+        {
+            "item": "forge:shears_mould",
+            "key": "forge:shears_mould",
+            "name": "Shears Mould",
+            "max_stack_size": 16,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:shears_mould",
+            "data": {
+                "forge:mould": {
+                    "class": "forge:cast_shears"
+                }
+            }
+        },
+        {
+            "item": "forge:iron_plate",
+            "key": "forge:iron_plate",
+            "name": "Iron Plate",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:iron_plate",
+            "tags": [
+                "smeltable"
+            ],
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_iron"
+                }
+            }
+        },
+        {
+            "item": "forge:copper_plate",
+            "key": "forge:copper_plate",
+            "name": "Copper Plate",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:copper_plate",
+            "tags": [
+                "smeltable"
+            ],
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_copper"
+                }
+            }
+        },
+        {
+            "item": "forge:gold_plate",
+            "key": "forge:gold_plate",
+            "name": "Gold Plate",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:gold_plate",
+            "tags": [
+                "smeltable"
+            ],
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_gold"
+                }
+            }
+        },
+        {
+            "item": "forge:iron_pickaxe_head",
+            "key": "forge:iron_pickaxe_head",
+            "name": "Iron Pickaxe Head",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:iron_pickaxe_head",
+            "tags": [],
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_iron"
+                }
+            }
+        },
+        {
+            "item": "forge:iron_axe_head",
+            "key": "forge:iron_axe_head",
+            "name": "Iron Axe Head",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:iron_axe_head",
+            "tags": [],
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_iron"
+                }
+            }
+        },
+        {
+            "item": "forge:iron_shovel_head",
+            "key": "forge:iron_shovel_head",
+            "name": "Iron Shovel Head",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:iron_shovel_head",
+            "tags": [],
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_iron"
+                }
+            }
+        },
+        {
+            "patch": "petramond:raw_iron",
+            "data": {
+                "forge:metal": {
+                    "melt_ticks": 300,
+                    "name": "Iron",
+                    "molten": [
+                        168,
+                        96,
+                        54
+                    ],
+                    "solid": [
+                        96,
+                        62,
+                        44
+                    ]
+                }
+            }
+        },
+        {
+            "patch": "petramond:raw_copper",
+            "data": {
+                "forge:metal": {
+                    "melt_ticks": 220,
+                    "name": "Copper",
+                    "molten": [
+                        222,
+                        112,
+                        44
+                    ],
+                    "solid": [
+                        148,
+                        78,
+                        36
+                    ]
+                }
+            }
+        },
+        {
+            "patch": "petramond:raw_gold",
+            "data": {
+                "forge:metal": {
+                    "melt_ticks": 160,
+                    "name": "Gold",
+                    "molten": [
+                        236,
+                        200,
+                        72
+                    ],
+                    "solid": [
+                        158,
+                        132,
+                        50
+                    ]
+                }
+            }
+        },
+        {
+            "patch": "petramond:iron_ingot",
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_iron"
+                }
+            }
+        },
+        {
+            "patch": "petramond:copper_ingot",
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_copper"
+                }
+            }
+        },
+        {
+            "patch": "petramond:gold_ingot",
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_gold"
+                }
+            }
+        },
+        {
+            "item": "forge:copper_pickaxe_head",
+            "key": "forge:copper_pickaxe_head",
+            "name": "Copper Pickaxe Head",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:copper_pickaxe_head",
+            "tags": [],
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_copper"
+                }
+            }
+        },
+        {
+            "item": "forge:copper_pickaxe",
+            "key": "forge:copper_pickaxe",
+            "name": "Copper Pickaxe",
+            "max_stack_size": 1,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": -1.5,
+                "roll": 0.5
+            },
+            "sprite": "forge:copper_pickaxe",
+            "tags": [],
+            "data": {
+                "petramond:tool": {
+                    "kind": "pickaxe",
+                    "tier": 3,
+                    "speed": 5.0,
+                    "damage": [
+                        1.8,
+                        3.5
+                    ]
+                }
+            }
+        },
+        {
+            "item": "forge:copper_axe_head",
+            "key": "forge:copper_axe_head",
+            "name": "Copper Axe Head",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:copper_axe_head",
+            "tags": [],
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_copper"
+                }
+            }
+        },
+        {
+            "item": "forge:copper_axe",
+            "key": "forge:copper_axe",
+            "name": "Copper Axe",
+            "max_stack_size": 1,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": -1.5,
+                "roll": 0.5
+            },
+            "sprite": "forge:copper_axe",
+            "tags": [],
+            "data": {
+                "petramond:tool": {
+                    "kind": "axe",
+                    "tier": 3,
+                    "speed": 5.0,
+                    "damage": [
+                        3.0,
+                        4.5
+                    ]
+                }
+            }
+        },
+        {
+            "item": "forge:copper_shovel_head",
+            "key": "forge:copper_shovel_head",
+            "name": "Copper Shovel Head",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:copper_shovel_head",
+            "tags": [],
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_copper"
+                }
+            }
+        },
+        {
+            "item": "forge:copper_shovel",
+            "key": "forge:copper_shovel",
+            "name": "Copper Shovel",
+            "max_stack_size": 1,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": -1.5,
+                "roll": 0.5
+            },
+            "sprite": "forge:copper_shovel",
+            "tags": [
+                "shovels"
+            ],
+            "data": {
+                "petramond:tool": {
+                    "kind": "shovel",
+                    "tier": 3,
+                    "speed": 5.0,
+                    "damage": [
+                        1.8,
+                        3.5
+                    ]
+                }
+            }
+        },
+        {
+            "item": "forge:gold_pickaxe_head",
+            "key": "forge:gold_pickaxe_head",
+            "name": "Gold Pickaxe Head",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:gold_pickaxe_head",
+            "tags": [],
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_gold"
+                }
+            }
+        },
+        {
+            "item": "forge:gold_pickaxe",
+            "key": "forge:gold_pickaxe",
+            "name": "Gold Pickaxe",
+            "max_stack_size": 1,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": -1.5,
+                "roll": 0.5
+            },
+            "sprite": "forge:gold_pickaxe",
+            "tags": [],
+            "data": {
+                "petramond:tool": {
+                    "kind": "pickaxe",
+                    "tier": 3,
+                    "speed": 1.0,
+                    "damage": [
+                        1.0,
+                        1.0
+                    ]
+                }
+            }
+        },
+        {
+            "item": "forge:gold_axe_head",
+            "key": "forge:gold_axe_head",
+            "name": "Gold Axe Head",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:gold_axe_head",
+            "tags": [],
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_gold"
+                }
+            }
+        },
+        {
+            "item": "forge:gold_axe",
+            "key": "forge:gold_axe",
+            "name": "Gold Axe",
+            "max_stack_size": 1,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": -1.5,
+                "roll": 0.5
+            },
+            "sprite": "forge:gold_axe",
+            "tags": [],
+            "data": {
+                "petramond:tool": {
+                    "kind": "axe",
+                    "tier": 3,
+                    "speed": 1.0,
+                    "damage": [
+                        1.0,
+                        1.5
+                    ]
+                }
+            }
+        },
+        {
+            "item": "forge:gold_shovel_head",
+            "key": "forge:gold_shovel_head",
+            "name": "Gold Shovel Head",
+            "max_stack_size": 64,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": 0,
+                "roll": 0
+            },
+            "sprite": "forge:gold_shovel_head",
+            "tags": [],
+            "data": {
+                "forge:metal": {
+                    "melts_to": "petramond:raw_gold"
+                }
+            }
+        },
+        {
+            "item": "forge:gold_shovel",
+            "key": "forge:gold_shovel",
+            "name": "Gold Shovel",
+            "max_stack_size": 1,
+            "held_pose": {
+                "pitch": 0,
+                "yaw": -1.5,
+                "roll": 0.5
+            },
+            "sprite": "forge:gold_shovel",
+            "tags": [
+                "shovels"
+            ],
+            "data": {
+                "petramond:tool": {
+                    "kind": "shovel",
+                    "tier": 3,
+                    "speed": 1.0,
+                    "damage": [
+                        1.0,
+                        1.0
+                    ]
+                }
+            }
+        }
+    ]
+}

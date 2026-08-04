@@ -81,6 +81,11 @@ pub fn build_block_model_item(
             * Mat4::from_translation(-cube.origin);
         for (slot, face) in Face::ALL.into_iter().enumerate() {
             let Some(uv) = cube.faces[slot] else { continue };
+            // Faces the chunk bake dropped (fully transparent atlas rect) drop
+            // here too — same faces in every presentation.
+            if !inst.face_draw[ci][slot] {
+                continue;
+            }
             let Some(bias) = block_model::render_face_bias(cube, &inst.cubes, face) else {
                 continue;
             };
@@ -98,7 +103,8 @@ pub fn build_block_model_item(
             // The same startup-baked self-AO the chunk mesh shades with, so the
             // held/dropped model matches the placed one.
             let ao = inst.face_ao[ci][slot];
-            let [u0, v0, u1, v1] = uv;
+            // Half-texel-inset against edge-texel spill, like the chunk bake.
+            let [u0, v0, u1, v1] = block_model::atlas().inset_face_uv(uv);
             let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
             let start = verts.len() as u32;
             for i in 0..4 {
@@ -117,10 +123,9 @@ pub fn build_block_model_item(
 /// Bake a bbmodel block's model into [`ItemVertex`] geometry for the inventory-icon pass:
 /// like [`build_block_model_item`] but `transform` is the full icon clip-space MVP (so
 /// positions come out in clip space, ready for the pass-through `model_icon` shader). The
-/// model-icon pass is DEPTH-BUFFERED (the model is double-sided like the in-world block,
-/// so depth — not winding — orders its panels/drawers), but the faces are also emitted
-/// FAR→NEAR by clip-z as a cheap, stable tiebreak for coincident decals. Full-bright (no
-/// block light); APPENDS (caller clears).
+/// model-icon pass is DEPTH-BUFFERED (depth — not winding — orders its panels/drawers),
+/// but the faces are also emitted FAR→NEAR by clip-z as a cheap, stable tiebreak for
+/// coincident decals. Full-bright (no block light); APPENDS (caller clears).
 pub fn build_block_model_icon(
     kind: BlockModelKind,
     mvp: Mat4,
@@ -150,6 +155,9 @@ pub fn build_block_model_icon(
             * Mat4::from_translation(-cube.origin);
         for (slot, face) in Face::ALL.into_iter().enumerate() {
             let Some(uv) = cube.faces[slot] else { continue };
+            if !inst.face_draw[ci][slot] {
+                continue;
+            }
             let Some(bias) = block_model::render_face_bias(cube, &inst.cubes, face) else {
                 continue;
             };
@@ -166,7 +174,8 @@ pub fn build_block_model_icon(
             let shade = SHADES[face.shade_idx() as usize] * light;
             // Icons carry the same baked self-AO as the placed/held model.
             let ao = inst.face_ao[ci][slot];
-            let [u0, v0, u1, v1] = uv;
+            // Half-texel-inset against edge-texel spill, like the chunk bake.
+            let [u0, v0, u1, v1] = block_model::atlas().inset_face_uv(uv);
             let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
             let corner = |i: usize| ItemVertex {
                 pos: p[i].to_array(),
@@ -332,15 +341,49 @@ pub(super) fn build_extruded_item_lit(
     env: LightEnv,
     out: &mut Vec<ItemVertex>,
 ) -> u32 {
-    out.clear();
-
-    // Foliage tint for the whole sprite: grass-green for a held fern / short grass,
-    // white (no-op) for flowers / tools / blocks. The fern tile is grayscale and
-    // would read gray in-hand without this — matches the dropped-item + icon paths
-    // (both via `foliage_tint::face_material`).
-    // RGB light folds into the tint (see `build_block_model_item`); `shade` keeps
-    // the front/back/side directional terms only.
+    // The GEOMETRY depends on nothing but the tile — light and foliage tint
+    // only scale the per-vertex colour — so it is built once per tile and
+    // re-tinted after. The scan below issues five alpha probes per texel over a
+    // 16x16 grid; a mod draw set may ask for several sprite prims EVERY FRAME,
+    // and rebuilding them was three quarters of the whole draw-set frame cost.
     let tint = lighting::fold_tint(foliage_tint::face_material(tile).tint, light, env);
+    SPRITE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let geom = cache
+            .entry(tile)
+            .or_insert_with(|| build_extruded_item_geometry(tile));
+        out.clear();
+        out.extend(geom.iter().map(|v| ItemVertex {
+            tint: [
+                v.tint[0] * tint[0],
+                v.tint[1] * tint[1],
+                v.tint[2] * tint[2],
+            ],
+            ..*v
+        }));
+        out.len() as u32
+    })
+}
+
+thread_local! {
+    /// Per-tile extruded sprite geometry, white-tinted. Thread-local rather
+    /// than shared: only the render thread builds these, so this costs no lock.
+    /// Never invalidated, and does not need to be: `Tile` indexes the
+    /// process-wide atlas, which is a `LazyLock` built once.
+    static SPRITE_CACHE: std::cell::RefCell<rustc_hash::FxHashMap<Tile, Vec<ItemVertex>>> =
+        std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+}
+
+/// [`build_extruded_item_lit`]'s geometry, untinted.
+fn build_extruded_item_geometry(tile: Tile) -> Vec<ItemVertex> {
+    let mut verts = Vec::new();
+    let out = &mut verts;
+
+    // WHITE, deliberately: the foliage tint (grass-green for a fern, white for
+    // everything else) and the RGB light fold are both a per-vertex multiply,
+    // so the caller applies them to this cached geometry instead. `shade`,
+    // which is per-FACE, is baked in below.
+    let tint = [1.0, 1.0, 1.0];
     let zf = DEPTH * 0.5;
     let zb = -DEPTH * 0.5;
     let [fu0, fv0, fu1, fv1] = tile_uv(tile);
@@ -435,7 +478,7 @@ pub(super) fn build_extruded_item_lit(
         }
     }
 
-    out.len() as u32
+    verts
 }
 
 #[cfg(test)]

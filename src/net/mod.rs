@@ -23,7 +23,7 @@ pub(crate) mod remap;
 //     container ships as the keyed generic `Container` target with
 //     `Container(i)` slots and named gauge readings in `gui_state`, so no
 //     engine content identity remains in the menu protocol.
-pub(crate) const PROTOCOL_VERSION: u16 = 28;
+pub(crate) const PROTOCOL_VERSION: u16 = 30;
 
 /// The default server port: used by "Open to LAN" and by "Connect to server"
 /// addresses that don't name a `:port`.

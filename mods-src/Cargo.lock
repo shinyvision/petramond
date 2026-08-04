@@ -39,6 +39,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge"
+version = "0.1.0"
+dependencies = [
+ "machine-core",
+ "mod-sdk",
+]
+
+[[package]]
 name = "furniture"
 version = "0.1.0"
 dependencies = [
@@ -47,6 +55,14 @@ dependencies = [
 
 [[package]]
 name = "kitchen"
+version = "0.1.0"
+dependencies = [
+ "machine-core",
+ "mod-sdk",
+]
+
+[[package]]
+name = "machine-core"
 version = "0.1.0"
 dependencies = [
  "mod-sdk",

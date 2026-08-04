@@ -1,0 +1,9 @@
+[package]
+name = "machine-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared placed-machine plumbing for container-slot mod machines: the generic Machine driver over a MachineSpec, the world-KV anchor registry, session registry caches, and the slot arithmetic. Depended on by the kitchen and forge packs."
+license = "MIT"
+
+[dependencies]
+mod-sdk = { path = "../../mod-sdk" }

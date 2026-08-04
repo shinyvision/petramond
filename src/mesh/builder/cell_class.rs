@@ -41,26 +41,28 @@ pub(super) const PAD_SLAB: u8 = 1 << 1;
 pub(super) const PAD_SEALS: u8 = 1 << 2;
 
 #[inline]
-pub(super) fn pad_classes() -> &'static [u8; 256] {
-    static CLASSES: LazyLock<[u8; 256]> = LazyLock::new(|| {
-        std::array::from_fn(|id| {
-            let block = Block::from_id(id as u8);
-            let mut c = 0;
-            if block.is_opaque() {
-                c |= PAD_OPAQUE;
-            }
-            if block.is_slab() {
-                c |= PAD_SLAB;
-            }
-            if block != Block::Air
-                && block.has_box_shape()
-                && !block.is_transparent()
-                && !block.is_translucent()
-            {
-                c |= PAD_SEALS;
-            }
-            c
-        })
+pub(super) fn pad_classes() -> &'static [u8] {
+    static CLASSES: LazyLock<Box<[u8]>> = LazyLock::new(|| {
+        Block::all()
+            .iter()
+            .map(|&block| {
+                let mut c = 0;
+                if block.is_opaque() {
+                    c |= PAD_OPAQUE;
+                }
+                if block.is_slab() {
+                    c |= PAD_SLAB;
+                }
+                if block != Block::Air
+                    && block.has_box_shape()
+                    && !block.is_transparent()
+                    && !block.is_translucent()
+                {
+                    c |= PAD_SEALS;
+                }
+                c
+            })
+            .collect()
     });
     &CLASSES
 }
@@ -69,13 +71,16 @@ pub(super) fn pad_classes() -> &'static [u8; 256] {
 /// it ONCE and index it per cell, so 4096 cells cost 4096 byte loads rather
 /// than 4096 lazy-static checks.
 #[inline]
-pub(super) fn cell_classes() -> &'static [u8; 256] {
-    static CLASSES: LazyLock<[u8; 256]> = LazyLock::new(|| {
-        std::array::from_fn(|id| {
-            let block = Block::from_id(id as u8);
-            let family = block.shape_family();
-            let mut c =
-                if block == Block::Air || block == Block::Chest || family == ShapeFamily::Door {
+pub(super) fn cell_classes() -> &'static [u8] {
+    static CLASSES: LazyLock<Box<[u8]>> = LazyLock::new(|| {
+        Block::all()
+            .iter()
+            .map(|&block| {
+                let family = block.shape_family();
+                let mut c = if block == Block::Air
+                    || block == Block::Chest
+                    || family == ShapeFamily::Door
+                {
                     SKIP
                 } else if family == ShapeFamily::Cross {
                     CROSS
@@ -90,18 +95,19 @@ pub(super) fn cell_classes() -> &'static [u8; 256] {
                 } else {
                     0
                 };
-            // A cell the scan skips outright is never a cube candidate either.
-            // Air's row IS the cube family, so without this it would enter the
-            // exposure masks' candidate rows and put every open-sky cell back
-            // into the visit set the masks exist to shrink.
-            if c & SKIP == 0 && fast_cube_candidate(block) {
-                c |= FAST_CUBE;
-            }
-            if block == Block::Water {
-                c |= WATER;
-            }
-            c
-        })
+                // A cell the scan skips outright is never a cube candidate either.
+                // Air's row IS the cube family, so without this it would enter the
+                // exposure masks' candidate rows and put every open-sky cell back
+                // into the visit set the masks exist to shrink.
+                if c & SKIP == 0 && fast_cube_candidate(block) {
+                    c |= FAST_CUBE;
+                }
+                if block == Block::Water {
+                    c |= WATER;
+                }
+                c
+            })
+            .collect()
     });
     &CLASSES
 }
@@ -119,4 +125,12 @@ fn fast_cube_candidate(block: Block) -> bool {
         && !block.is_translucent()
         && block.shape_family() == ShapeFamily::Cube
         && block != Block::Chest
+}
+
+/// A class-table read at a RAW id. The tables cover the loaded registry, and
+/// a raw id can outrun it exactly where `Block::from_id` degrades to air —
+/// which is air's class, row 0.
+#[inline]
+pub(super) fn class_of(table: &[u8], id: u16) -> u8 {
+    table.get(id as usize).copied().unwrap_or(table[0])
 }

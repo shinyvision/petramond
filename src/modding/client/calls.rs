@@ -127,6 +127,8 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::SectionKvGet { .. }
         | HostCall::SectionKvSet { .. }
         | HostCall::SectionKvDelete { .. }
+        | HostCall::SectionKvGetMany { .. }
+        | HostCall::SectionKvSetMany { .. }
         | HostCall::MobTagGet { .. }
         | HostCall::MobTagSet { .. }
         | HostCall::MobTagDelete { .. }
@@ -136,6 +138,8 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::RegisterStageReplacement { .. }
         | HostCall::RegisterGenerator { .. }
         | HostCall::GuiStateSet { .. }
+        | HostCall::GuiStateSetFor { .. }
+        | HostCall::GuiViewers
         | HostCall::GuiStateGet { .. }
         | HostCall::GuiOpen { .. }
         | HostCall::GuiClose
@@ -180,6 +184,21 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         // presentation-side has a use for it. (`underground_biome_at`, which
         // is a cheap partition lookup, is legal above.)
         | HostCall::TerrainSolidAt { .. }
+        // `surface_biome_at` builds the same generation tile — the density
+        // surface, the cave adjustment and the climate classification — so it
+        // is a generation-cost query too. A client instance that wants the
+        // biome under a column asks the REPLICA (`ClientBiomeAt`, legal
+        // above), which is what it can actually see.
+        | HostCall::SurfaceBiomeAt { .. }
+        // Presentation, but AUTHORITATIVE presentation: it writes replicated
+        // cell state the server owns. A client mirror only ever mirrors.
+        | HostCall::SetModelParts { .. }
+        | HostCall::SetBlockDraw { .. }
+        | HostCall::SetModelPartsMany { .. }
+        | HostCall::SetBlockDraws { .. }
+        // ...and its READ twin reaches the sim world's placement records the
+        // same way `BlockModelGroup` above does, so it shares that verdict.
+        | HostCall::BlockLocalToWorld { .. }
         // Progression is authoritative player state and its events queue on
         // the sim's post bus: unlocking from a presentation instance would
         // write state the server owns, and a client mirror only ever mirrors.

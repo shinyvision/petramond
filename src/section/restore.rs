@@ -7,7 +7,7 @@ use crate::chunk::SECTION_VOLUME;
 use crate::container::Container;
 use crate::furnace::Furnace;
 
-use super::{uniform_cube, BlockEntities, Section, SectionMetrics};
+use super::{BlockEntities, Section, SectionMetrics};
 
 impl Section {
     /// Rebuild a section from saved arrays. `modified` starts false — it already
@@ -17,7 +17,7 @@ impl Section {
         cx: i32,
         cy: i32,
         cz: i32,
-        blocks: Box<[u8]>,
+        blocks: &[u16],
         water: Option<Box<[u8]>>,
         furnaces: HashMap<u16, Furnace>,
         containers: HashMap<u16, Container>,
@@ -28,7 +28,7 @@ impl Section {
             cx,
             cy,
             cz,
-            blocks.into(),
+            super::BlockCube::from_ids(blocks),
             water.map(Arc::from),
             furnaces,
             containers,
@@ -45,7 +45,7 @@ impl Section {
         cx: i32,
         cy: i32,
         cz: i32,
-        blocks: Arc<[u8]>,
+        blocks: super::BlockCube,
         water: Option<Arc<[u8]>>,
         furnaces: HashMap<u16, Furnace>,
         containers: HashMap<u16, Container>,
@@ -73,7 +73,7 @@ impl Section {
         cx: i32,
         cy: i32,
         cz: i32,
-        blocks: Arc<[u8]>,
+        blocks: super::BlockCube,
         water: Option<Arc<[u8]>>,
         furnaces: HashMap<u16, Furnace>,
         containers: HashMap<u16, Container>,
@@ -114,9 +114,9 @@ impl Section {
         if let Some(metrics) = metrics {
             s.install_metrics(metrics);
             if s.non_air_count == 0 {
-                s.blocks = uniform_cube(0);
+                s.blocks.fill(0);
             } else if s.water_count as usize == SECTION_VOLUME {
-                s.blocks = uniform_cube(Block::Water.id());
+                s.blocks.fill(Block::Water.id());
             }
         } else {
             s.recompute_opaque_count();

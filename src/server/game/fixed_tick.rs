@@ -375,15 +375,30 @@ impl ServerGame {
     ) -> R {
         let (left, rest) = sessions.split_at_mut(acting);
         let (act, right) = rest.split_first_mut().expect("acting session in range");
+        let acting_gui = Self::open_gui_of(act);
         let others: Vec<SessionPlayerRef> = left
             .iter_mut()
             .chain(right.iter_mut())
             .map(|sess| SessionPlayerRef {
                 id: sess.id,
+                gui: Self::open_gui_of(sess),
                 player: &mut sess.player,
+                gui_state: &mut sess.gui_state,
             })
             .collect();
-        crate::events::with_sessions_scope(act.id, acting, others, || f(act))
+        crate::events::with_sessions_scope(act.id, acting, acting_gui, others, || f(act))
+    }
+
+    /// One session's open GUI, as the sessions roster publishes it — the
+    /// answer `GuiViewers` gives a mod, read from the ONE place a session's
+    /// open GUI lives so it can never drift out of step with the panel.
+    fn open_gui_of(sess: &ConnectedPlayer) -> Option<crate::events::OpenGui> {
+        match sess.menu.target() {
+            crate::game::container::ContainerTarget::None => None,
+            crate::game::container::ContainerTarget::Gui { kind, pos } => {
+                Some(crate::events::OpenGui { kind, anchor: pos })
+            }
+        }
     }
 
     /// Run the systems attached at `at` — the mod seam. A slot with nothing

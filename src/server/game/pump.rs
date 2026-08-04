@@ -126,6 +126,7 @@ impl ServerGame {
             world_events.extend(wire_world_events(&mut events.world));
             let deltas = self.world.take_block_deltas();
             let kv_deltas = self.world.take_cell_kv_deltas();
+            let draw_deltas = self.world.take_block_draw_deltas();
             let shared = self.shared_tick_rows(&events);
             for (s, out) in per_session.iter_mut().enumerate() {
                 out.push(ServerToClient::Tick(Box::new(self.build_tick_update(
@@ -134,6 +135,7 @@ impl ServerGame {
                     &world_events,
                     &deltas,
                     &kv_deltas,
+                    &draw_deltas,
                     &shared,
                 ))));
             }

@@ -61,6 +61,7 @@ pub use query::{
 };
 
 pub(crate) use geometry::render_face_bias;
+pub(crate) use geometry::cube_is_flat_plane;
 pub(crate) use placement::placement_transform_fp;
 
 use compiled::MODELS;
@@ -70,6 +71,18 @@ use placement::oriented_cell_instance;
 /// Canonical bbmodel orientation: Blockbench model fronts face `-Z` (North).
 /// Old model placements that predate per-cell facing read as this unrotated orientation.
 pub const DEFAULT_MODEL_FACING: Facing = Facing::North;
+
+/// The cell-KV key carrying a model block's PER-INSTANCE parts mask (4 bytes,
+/// little-endian): bit `i` shows the row's `parts[i]`.
+///
+/// It rides cell KV rather than the cell-state store for two reasons that are
+/// the same reason: the KV lane already replicates, persists, re-meshes its
+/// section on a write, and dies with the block — and `ShapeState` is four
+/// bytes wide and read for EVERY cell in the mesher's hot neighbour scan.
+pub const PARTS_KV_KEY: &str = "petramond:parts";
+
+/// How many optional parts one model row may declare — the width of the mask.
+pub const MAX_MODEL_PARTS: usize = 32;
 
 /// A model cell's per-cell state: its authored footprint offset plus the
 /// placed facing. Absence decodes to the footprint origin with the canonical

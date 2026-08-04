@@ -162,12 +162,13 @@ impl Renderer {
                 let dist_sq = (cam - c).length_squared();
                 column_dist_sq = column_dist_sq.min(dist_sq);
                 column_has_opaque |= section.opaque_vertex_count > 0;
-                column_has_model |= section.model_idx_count > 0;
+                column_has_model |= section.model_idx_count > 0 || section.model_blend_idx_count > 0;
                 // Contact visibility is its OWN presence bit: a multi-cell
                 // model's contact triangles can sit in a section whose model
                 // index range is empty.
                 column_has_contact |= section.contact_vertex_count > 0;
-                any_model_visible |= section.model_idx_count > 0;
+                any_model_visible |=
+                    section.model_idx_count > 0 || section.model_blend_idx_count > 0;
                 any_transparent_visible |= section.transparent_vertex_count > 0
                     || section.transparent_ts_vertex_count > 0
                     || section.translucent_vertex_count > 0;
@@ -203,6 +204,8 @@ impl Renderer {
                     translucent_quads: section.translucent_vertex_count / 4,
                     model_index_start: section.model_index_start,
                     model_idx_count: section.model_idx_count,
+                    model_blend_index_start: section.model_blend_index_start,
+                    model_blend_idx_count: section.model_blend_idx_count,
                 });
             }
             let opaque_batched =
@@ -232,7 +235,8 @@ impl Renderer {
                     } else {
                         item.opaque_quads
                     } > 0;
-                let model_left = !model_batched && item.model_idx_count > 0;
+                let model_left = !model_batched
+                    && (item.model_idx_count > 0 || item.model_blend_idx_count > 0);
                 if opaque_left
                     || model_left
                     || item.transparent_quads > 0
@@ -627,6 +631,69 @@ impl Renderer {
                         0..item.translucent_quads * 6,
                         item.translucent_vertex_start as i32,
                         slot..slot + 1,
+                    );
+                }
+            }
+        }
+        // MODEL-BLEND PASS: the chunk's semi-transparent bbmodel faces (the
+        // `model_blend_idx` ranges of the same model vertex/index buffers) —
+        // alpha-blended but depth-WRITING, the ice precedent: overlapping
+        // blended faces of one model resolve their order through the depth
+        // buffer. Same ordering contract with the break overlay as ice (the
+        // crack decal draws on top of a mined model's glass). Drawn over the
+        // model pass's opaque depth, so blended glass correctly occludes and
+        // is occluded by the model's own solid parts.
+        if any_model_visible {
+            let mut pass = color_depth_pass(
+                enc,
+                view,
+                &self.targets.depth,
+                "model blend pass",
+                wgpu::LoadOp::Load,
+                Some(wgpu::LoadOp::Load),
+                self.gpu_timer.as_ref(),
+            );
+            pass.set_bind_group(0, &self.uniform_bind, &[]);
+            pass.set_bind_group(1, &self.model_atlas_bind, &[]);
+            pass.set_pipeline(&self.world_model_blend_pipe);
+            for (_, pos) in model_columns {
+                let Some(col) = self.terrain.columns.get(pos) else {
+                    continue;
+                };
+                if col.model_blend_idx_count == 0 {
+                    continue;
+                }
+                if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
+                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
+                    pass.set_index_buffer(
+                        self.terrain.geometry.slice(&ib.alloc, ib.len),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(
+                        col.model_idx_count..col.model_idx_count + col.model_blend_idx_count,
+                        0,
+                        0..1,
+                    );
+                }
+            }
+            for item in order.iter() {
+                if item.model_batched || item.model_blend_idx_count == 0 {
+                    continue;
+                }
+                let Some(col) = self.terrain.columns.get(&item.column_pos) else {
+                    continue;
+                };
+                if let (Some(vb), Some(ib)) = (&col.model_vbuf, &col.model_ibuf) {
+                    pass.set_vertex_buffer(0, self.terrain.geometry.slice(&vb.alloc, vb.len));
+                    pass.set_index_buffer(
+                        self.terrain.geometry.slice(&ib.alloc, ib.len),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(
+                        item.model_blend_index_start
+                            ..item.model_blend_index_start + item.model_blend_idx_count,
+                        0,
+                        0..1,
                     );
                 }
             }

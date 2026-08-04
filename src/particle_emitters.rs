@@ -344,7 +344,7 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EmitterBundle
                     .map_err(|e| format!("emitter '{}': {e}", r.emitter))?;
             }
             Ok(EmitterBundle {
-                id,
+                id: id as u8,
                 key: names.name(id).expect("id resolved from this table"),
                 tint: r.tint,
                 rows: Box::leak(r.particles.into_boxed_slice()),

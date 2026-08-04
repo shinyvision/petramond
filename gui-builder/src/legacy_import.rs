@@ -112,7 +112,11 @@ fn convert(legacy: &LegacyProject) -> Imported {
         h: Size::Px(legacy.canvas.h as i32),
         anchor: Some(Anchor {
             h: AnchorEdge::Center,
-            v: if class == DocClass::Hud { AnchorEdge::End } else { AnchorEdge::Center },
+            v: if class == DocClass::Hud {
+                AnchorEdge::End
+            } else {
+                AnchorEdge::Center
+            },
         }),
         ..LayoutProps::default()
     };
@@ -150,7 +154,13 @@ fn convert(legacy: &LegacyProject) -> Imported {
                     .file_name()
                     .map(|f| f.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.to_string_lossy().into_owned());
-                let mut node = Node::leaf(NodeKind::Image { image: name, fit: Default::default(), interactive: false });
+                let mut node = Node::leaf(NodeKind::Image {
+                    image: name,
+                    fit: Default::default(),
+                    frames: None,
+                    fps: None,
+                    interactive: false,
+                });
                 node.layout = abs_layout(layer.rect, true);
                 root.children.push(node);
             }
@@ -171,15 +181,29 @@ fn convert(legacy: &LegacyProject) -> Imported {
         if !slot.visible {
             continue;
         }
-        let (cols, rows) = slot.grid.as_ref().map(|g| (g.cols, g.rows)).unwrap_or((1, 1));
+        let (cols, rows) = slot
+            .grid
+            .as_ref()
+            .map(|g| (g.cols, g.rows))
+            .unwrap_or((1, 1));
         let node = match slot.role.as_str() {
             // Item-slot roles pass straight through.
-            "generic" | "storage" | "player_inv" | "hotbar" | "craft_result"
-            | "furnace_input" | "furnace_fuel" | "furnace_output" => {
+            "generic" | "storage" | "player_inv" | "hotbar" | "craft_result" | "furnace_input"
+            | "furnace_fuel" | "furnace_output" => {
                 let kind = if cols * rows <= 1 {
-                    NodeKind::Slot { role: slot.role.clone(), accepts: Vec::new(), take_only: false }
+                    NodeKind::Slot {
+                        role: slot.role.clone(),
+                        accepts: Vec::new(),
+                        take_only: false,
+                    }
                 } else {
-                    NodeKind::SlotGrid { role: slot.role.clone(), cols, rows, accepts: Vec::new(), take_only: false }
+                    NodeKind::SlotGrid {
+                        role: slot.role.clone(),
+                        cols,
+                        rows,
+                        accepts: Vec::new(),
+                        take_only: false,
+                    }
                 };
                 let mut n = Node::leaf(kind);
                 n.layout = abs_layout(slot.rect, false);
@@ -188,7 +212,13 @@ fn convert(legacy: &LegacyProject) -> Imported {
             // Shell buttons.
             role if button_label(role).is_some() => {
                 let (id, text) = button_label(role).unwrap();
-                let mut n = Node::leaf(NodeKind::Button { text: Some(text.to_owned()), icon: None });
+                let mut n = Node::leaf(NodeKind::Button {
+                    text: Some(text.to_owned()),
+                    icon: None,
+                    image: None,
+                    frames: None,
+                    fps: None,
+                });
                 n.id = Some(doc_edit::unique_id(&ids_doc, id));
                 n.layout = abs_layout(slot.rect, true);
                 n
@@ -196,7 +226,10 @@ fn convert(legacy: &LegacyProject) -> Imported {
             // Shell text inputs.
             "create_name_input" | "create_seed_input" => {
                 let id = slot.role.trim_end_matches("_input");
-                let mut n = Node::leaf(NodeKind::TextInput { placeholder: None, max_chars: 64 });
+                let mut n = Node::leaf(NodeKind::TextInput {
+                    placeholder: None,
+                    max_chars: 64,
+                });
                 n.id = Some(doc_edit::unique_id(&ids_doc, id));
                 n.layout = abs_layout(slot.rect, true);
                 n
@@ -219,7 +252,13 @@ fn convert(legacy: &LegacyProject) -> Imported {
     }
 
     Imported {
-        document: Document { format: FORMAT_VERSION, kind, class, compact_below_w: None, root },
+        document: Document {
+            format: FORMAT_VERSION,
+            kind,
+            class,
+            compact_below_w: None,
+            root,
+        },
         warnings,
     }
 }
@@ -237,22 +276,39 @@ fn abs_layout(rect: LegacyRect, sized: bool) -> LayoutProps {
     LayoutProps {
         w: if sized { Size::Px(rect.w) } else { Size::Auto },
         h: if sized { Size::Px(rect.h) } else { Size::Auto },
-        abs: Some(AbsPos { x: rect.x, y: rect.y }),
+        abs: Some(AbsPos {
+            x: rect.x,
+            y: rect.y,
+        }),
         ..LayoutProps::default()
     }
 }
 
 fn todo_label(text: String, rect: LegacyRect) -> Node {
-    let mut n = Node::leaf(NodeKind::Label { text: Some(text), wrap: false, scale: 1, small: false });
+    let mut n = Node::leaf(NodeKind::Label {
+        text: Some(text),
+        wrap: false,
+        scale: 1,
+        small: false,
+    });
     n.layout = abs_layout(rect, false);
     n
 }
 
 fn kind_of(gui_type: &str) -> (String, DocClass) {
     let kind = match gui_type {
-        "chest" | "inventory" | "crafting_table" | "furnace" | "hotbar"
-        | "furniture_workbench" | "title" | "world_select" | "world_settings" | "create_world"
-        | "delete_world" | "pause" => format!("petramond:{gui_type}"),
+        "chest"
+        | "inventory"
+        | "crafting_table"
+        | "furnace"
+        | "hotbar"
+        | "furniture_workbench"
+        | "title"
+        | "world_select"
+        | "world_settings"
+        | "create_world"
+        | "delete_world"
+        | "pause" => format!("petramond:{gui_type}"),
         _ => "custom:imported".to_owned(),
     };
     let class = crate::contracts::class_for(&kind);

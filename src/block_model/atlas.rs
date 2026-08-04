@@ -67,6 +67,58 @@ impl ModelAtlas {
         [uo + uv[0] * us, vo + uv[1] * vs]
     }
 
+    /// The face's UV rect inset by half an atlas texel per side (capped at the
+    /// rect's midpoint so a sub-texel rect still maps to its own texel). For
+    /// RENDER emission only: a quad-edge fragment's interpolated UV then lands
+    /// on the edge texel's CENTRE, so rasterizer float error can never spill
+    /// onto the sheet row/column above or beside the rect (the gray line along
+    /// the top of the forge furnace's `coals`). Picking and AO keep the
+    /// authored rect — a half-texel shift would move the pixel-perfect mapping.
+    pub fn inset_face_uv(&self, uv: [f32; 4]) -> [f32; 4] {
+        let (hw, hh) = (0.5 / self.w as f32, 0.5 / self.h as f32);
+        let inset = |lo: f32, hi: f32, half: f32| {
+            let mid = (lo + hi) * 0.5;
+            (
+                if lo < hi { (lo + half).min(mid) } else { (lo - half).max(mid) },
+                if hi > lo { (hi - half).max(mid) } else { (hi + half).min(mid) },
+            )
+        };
+        let (u0, u1) = inset(uv[0], uv[2], hw);
+        let (v0, v1) = inset(uv[1], uv[3], hh);
+        [u0, v0, u1, v1]
+    }
+
+    /// Alpha classification of the texels under an (atlas-space, possibly
+    /// flipped) UV rect `[u0, v0, u1, v1]`: `(visible, blend)`.
+    /// - `visible`: any texel with alpha > 0. A face with NO visible texel
+    ///   discards every fragment at mip 0 — and if the bake dropped it there
+    ///   would be nothing to see — but LEFT IN, the cutout mip chain
+    ///   (`build_cutout_mips`) promotes its transparent texels to opaque with
+    ///   the neighbouring artwork's averaged colour, so a fully transparent
+    ///   sliver face (the side of a 1px panel) renders as a bright line. The
+    ///   template bake drops these faces outright.
+    /// - `blend`: any PARTIAL alpha (`1..=254`) — the face must draw
+    ///   alpha-blended rather than opaque-cutout.
+    pub fn rect_alpha_class(&self, uv: [f32; 4]) -> (bool, bool) {
+        let u0 = uv[0].min(uv[2]);
+        let u1 = uv[0].max(uv[2]);
+        let v0 = uv[1].min(uv[3]);
+        let v1 = uv[1].max(uv[3]);
+        let x0 = ((u0 * self.w as f32) as i32).clamp(0, self.w as i32 - 1) as u32;
+        let x1 = ((u1 * self.w as f32).ceil() as i32).clamp(0, self.w as i32) as u32;
+        let y0 = ((v0 * self.h as f32) as i32).clamp(0, self.h as i32 - 1) as u32;
+        let y1 = ((v1 * self.h as f32).ceil() as i32).clamp(0, self.h as i32) as u32;
+        let (mut visible, mut blend) = (false, false);
+        for y in y0..y1.max(y0 + 1) {
+            for x in x0..x1.max(x0 + 1) {
+                let a = self.rgba[((y * self.w + x) * 4 + 3) as usize];
+                visible |= a > 0;
+                blend |= (1..=254).contains(&a);
+            }
+        }
+        (visible, blend)
+    }
+
     /// The alpha byte (`0..=255`) of the combined sheet at normalized `uv` (nearest
     /// texel; UV clamped to the edge) — the texel opacity the pixel-perfect ray pick
     /// ([`ray_vs_model`]) tests so a hit only lands on a non-transparent texel.
@@ -175,5 +227,27 @@ mod tests {
             let [u, v] = at.remap(WB, uv);
             assert!((0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v));
         }
+    }
+
+    /// The edge-spill guard: every rect edge moves half a texel INWARD, flipped
+    /// rects inset rather than explode, and a sub-texel rect collapses onto its
+    /// own midpoint instead of inverting.
+    #[test]
+    fn inset_face_uv_moves_edges_inward_and_never_past_the_midpoint() {
+        let at = ModelAtlas {
+            rgba: vec![0; 4 * 4 * 4],
+            w: 4,
+            h: 4,
+            xform: Vec::new(),
+        };
+        let [u0, v0, u1, v1] = at.inset_face_uv([0.0, 0.0, 1.0, 1.0]);
+        let half = 0.5 / 4.0;
+        assert_eq!([u0, v0, u1, v1], [half, half, 1.0 - half, 1.0 - half]);
+        // Flipped rect (v0 > v1): still an inset.
+        let [_, v0, _, v1] = at.inset_face_uv([0.0, 1.0, 1.0, 0.0]);
+        assert_eq!([v0, v1], [1.0 - half, half]);
+        // Sub-texel rect: both edges meet at the midpoint, never cross.
+        let [u0, _, u1, _] = at.inset_face_uv([0.4, 0.0, 0.5, 1.0]);
+        assert_eq!((u0, u1), (0.45, 0.45));
     }
 }

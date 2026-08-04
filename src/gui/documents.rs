@@ -13,7 +13,7 @@
 
 use super::GuiKind;
 use crate::container::{SlotSpec, MAX_CONTAINER_SLOTS};
-use petramond_ui::{Document, SlotContract};
+use petramond_ui::{DocClass, Document, Node, SlotContract};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
@@ -102,8 +102,29 @@ fn doc_entry_for(kind: GuiKind) -> Option<DocRef> {
         })
 }
 
-/// A mod document's `container` role slot semantics, in-role index order.
-/// Empty for engine kinds, widgets-only mod GUIs, and unknown kinds.
+/// Every LOADED document's kind key with the number of `container` role slots
+/// it declares — the developer-tool view of "was this pack's document
+/// accepted?".
+///
+/// A rejected document is the one failure in this area with no symptom: the
+/// kind still opens, the specs come back empty, and the pack machine silently
+/// becomes plain storage. Nothing else surfaces it without launching the game.
+pub(crate) fn loaded_documents() -> Vec<(&'static str, usize)> {
+    let mut guard = REGISTRY.lock().expect("gui document registry");
+    let registry = guard.get_or_insert_with(load);
+    let mut out: Vec<(&'static str, usize)> = registry
+        .entries
+        .iter()
+        .filter_map(|e| Some((super::kind::kind_key(e.kind)?, e.container_slots.len())))
+        .collect();
+    out.sort_unstable();
+    out
+}
+
+/// A document's `container` role slot semantics, in-role index order — for
+/// ENGINE kinds as well as mod ones (the chest's 27 unfiltered cells come from
+/// here; only the furnace's are hardcoded, in `ContainerMenu::slot_specs`).
+/// Empty for widgets-only mod GUIs and unknown kinds.
 pub(crate) fn container_slot_specs(kind: GuiKind) -> Arc<Vec<SlotSpec>> {
     doc_for(kind).map(|d| d.container_slots).unwrap_or_default()
 }
@@ -146,12 +167,15 @@ fn mod_contract_for(doc: &Document) -> Result<SlotContract, String> {
     Ok(SlotContract { roles })
 }
 
-/// A mod document's `container` slot semantics in in-role index order,
-/// checking the slot nodes' `accepts` tag names against the item-tag
-/// registry via the non-interning QUERY lookup — the interning resolve
-/// would register a misspelled tag as a fresh empty one and the slot
-/// would silently accept nothing. Unknown tag names are a document error
-/// (`Err` skips it loudly).
+/// A mod document's `container` slot semantics in in-role index order.
+///
+/// A TAG name is checked against the item-tag registry via the non-interning
+/// QUERY lookup — the interning resolve would register a misspelled tag as a
+/// fresh empty one and the slot would silently accept nothing. A DATA key is
+/// checked for being NAMESPACED and nothing else: data keys have no
+/// declaration anywhere (a row states one by carrying it), so "no row carries
+/// it yet" is a pack shipping its slot before its rows, not an error. Both
+/// failures are document errors (`Err` skips it loudly).
 fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
     let mut specs = Vec::new();
     for cell in doc.slot_semantics() {
@@ -165,19 +189,35 @@ fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
             }
             continue;
         }
-        let mut tags = Vec::new();
-        for name in &cell.accepts {
-            match crate::item::ItemTag::lookup(name) {
-                Some(tag) => tags.push(tag),
-                None => return Err(format!("unknown item tag '{name}' in a slot's accepts")),
-            }
+        let mut filters = Vec::new();
+        for accept in &cell.accepts {
+            filters.push(resolve_slot_filter(accept)?);
         }
         specs.push(SlotSpec {
-            accepts: tags,
+            accepts: filters,
             take_only: cell.take_only,
         });
     }
     Ok(specs)
+}
+
+/// One authored `accepts` entry → the runtime filter.
+fn resolve_slot_filter(
+    accept: &petramond_ui::doc::Accept,
+) -> Result<crate::container::SlotFilter, String> {
+    match accept {
+        petramond_ui::doc::Accept::Tag(name) => crate::item::ItemTag::lookup(name)
+            .map(crate::container::SlotFilter::Tag)
+            .ok_or_else(|| format!("unknown item tag '{name}' in a slot's accepts")),
+        petramond_ui::doc::Accept::Data { data } => {
+            if !crate::registry::is_namespaced(data) {
+                return Err(format!(
+                    "slot accepts data key '{data}': data keys must be namespaced ('mod_id:name')"
+                ));
+            }
+            Ok(crate::container::SlotFilter::Data(super::intern_str(data)))
+        }
+    }
 }
 
 /// The engine's slot expectations per kind. Mod kinds derive their contract
@@ -233,6 +273,113 @@ fn file_mtime(path: &std::path::Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
+/// Every image a document statically names — on `image`, `rotimage`, and
+/// image-backed `button` nodes alike — resolved beside the document in
+/// first-reference order. `Err` rejects the document: a statically named
+/// image whose file is missing used to only skip its quad, which no pack
+/// author ever saw until the screen drew wrong.
+fn collect_doc_images(doc: &Document, dir: &std::path::Path) -> Result<Vec<DocImageRef>, String> {
+    // First-reference order (the order feeds TexId::DocImage), keeping the
+    // first SEEN frames grid so an unframed reference cannot hide a framed
+    // one from the sheet check below.
+    let mut refs: Vec<(String, Option<[u32; 2]>)> = Vec::new();
+    doc.root.visit(&mut |node| {
+        let (name, frames) = match &node.kind {
+            petramond_ui::NodeKind::Image { image, frames, .. } => (image.as_str(), *frames),
+            petramond_ui::NodeKind::Rotimage { image, .. } => (image.as_str(), None),
+            petramond_ui::NodeKind::Button {
+                image: Some(image),
+                frames,
+                ..
+            } => (image.as_str(), *frames),
+            _ => return,
+        };
+        // An empty static name is the runtime-bound pattern (`bind.image`
+        // supplies the art, e.g. the world-settings pack icons) — there is
+        // no file to resolve beside the document.
+        if name.is_empty() {
+            return;
+        }
+        match refs.iter_mut().find(|(n, _)| n == name) {
+            Some(slot) => {
+                if slot.1.is_none() {
+                    slot.1 = frames;
+                }
+            }
+            None => refs.push((name.to_string(), frames)),
+        }
+    });
+    let mut images = Vec::with_capacity(refs.len());
+    for (name, frames) in refs {
+        let path = dir.join(&name);
+        let size =
+            image::image_dimensions(&path).map_err(|_| format!("names missing art {name}"))?;
+        if let Some(frames) = frames {
+            validate_frame_sheet(&name, size, frames)?;
+        }
+        images.push(DocImageRef { name, path, size });
+    }
+    Ok(images)
+}
+
+/// A framed sheet is uploaded whole and ONE frame is drawn per node, so the
+/// grid must divide the image exactly and both must stay inside the shared
+/// GUI image bounds — a bad grid mis-slices every frame of the sheet.
+fn validate_frame_sheet(name: &str, size: (u32, u32), frames: [u32; 2]) -> Result<(), String> {
+    let [cols, rows] = frames;
+    let (w, h) = size;
+    if cols == 0 || rows == 0 || w % cols != 0 || h % rows != 0 {
+        return Err(format!(
+            "image {name} is {w}x{h}, which the frames grid {cols}x{rows} does not divide evenly"
+        ));
+    }
+    if cols * rows > mod_api::GUI_IMAGE_MAX_FRAMES {
+        return Err(format!(
+            "image {name} declares {} frames; the cap is {}",
+            cols * rows,
+            mod_api::GUI_IMAGE_MAX_FRAMES
+        ));
+    }
+    if w > mod_api::GUI_IMAGE_MAX_SIDE || h > mod_api::GUI_IMAGE_MAX_SIDE {
+        return Err(format!(
+            "image {name} is {w}x{h}; the GUI image side cap is {}",
+            mod_api::GUI_IMAGE_MAX_SIDE
+        ));
+    }
+    Ok(())
+}
+
+/// The standard slot-tooltip chrome every CONTAINER document carries: hovering
+/// a filled slot floats the stack's item name (plus the item's optional `info`
+/// line) at the pointer, fed by the `item_tip_*` keys the host populates for
+/// every menu kind. Injected at load so every GUI that shows slots — engine
+/// containers and pack machine panels alike — has it without shipping the
+/// node by hand: one definition, never per-document drift. A document that
+/// binds `show_item_tip` itself keeps its own chrome instead.
+fn inject_item_tooltip(doc: &mut Document) {
+    /// Keep in sync with the `item_tip_*` keys in `assets/ui/bindings.json`.
+    const STANDARD: &str = r#"{
+        "type": "tooltip",
+        "style": "panel.inset",
+        "layout": { "max_w": 200, "abs": { "x": 4, "y": 4 }, "pad": [3, 2, 3, 3], "gap": 2, "align": "stretch" },
+        "bind": { "visible": "show_item_tip" },
+        "children": [
+            { "type": "label", "small": true, "bind": { "text": "item_tip_name" } },
+            { "type": "label", "small": true, "style": "label.muted", "wrap": true,
+              "bind": { "text": "item_tip_info", "visible": "item_tip_has_info" } }
+        ]
+    }"#;
+    fn binds_item_tip(node: &Node) -> bool {
+        node.bind.visible.as_deref() == Some("show_item_tip")
+            || node.children.iter().any(binds_item_tip)
+    }
+    if doc.class != DocClass::Container || binds_item_tip(&doc.root) {
+        return;
+    }
+    let node = serde_json::from_str(STANDARD).expect("standard item tooltip node parses");
+    doc.root.children.push(node);
+}
+
 fn load() -> Registry {
     struct Found {
         json: PathBuf,
@@ -273,13 +420,14 @@ fn load() -> Registry {
         let Ok(text) = std::fs::read_to_string(&found.json) else {
             continue;
         };
-        let doc = match Document::from_json(&text) {
+        let mut doc = match Document::from_json(&text) {
             Ok(doc) => doc,
             Err(e) => {
                 eprintln!("gui: ignoring {} — {e}", found.json.display());
                 continue;
             }
         };
+        inject_item_tooltip(&mut doc);
         let Some(kind) = super::intern_kind(&doc.kind) else {
             eprintln!(
                 "gui: ignoring {} — unknown kind '{}'",
@@ -318,33 +466,16 @@ fn load() -> Registry {
             }
         };
         // Collect referenced images (resolved beside the document) with
-        // their pixel sizes for layout naturals.
-        let mut images: Vec<DocImageRef> = Vec::new();
-        doc.root.visit(&mut |node| {
-            let name = match &node.kind {
-                petramond_ui::NodeKind::Image { image, .. } => image,
-                petramond_ui::NodeKind::Rotimage { image, .. } => image,
-                _ => return,
-            };
-            // An empty static name is the runtime-bound pattern (`bind.image`
-            // supplies the art, e.g. the world-settings pack icons) — there is
-            // no file to resolve beside the document.
-            if name.is_empty() || images.iter().any(|i| &i.name == name) {
-                return;
+        // their pixel sizes for layout naturals. Bad art — a missing file, a
+        // frame grid that does not divide its sheet — rejects the document
+        // loudly like any other validation failure.
+        let images = match collect_doc_images(&doc, &found.dir) {
+            Ok(images) => images,
+            Err(e) => {
+                eprintln!("gui: ignoring {} — {e}", found.json.display());
+                continue;
             }
-            let path = found.dir.join(name);
-            match image::image_dimensions(&path) {
-                Ok(size) => images.push(DocImageRef {
-                    name: name.clone(),
-                    path,
-                    size,
-                }),
-                Err(_) => eprintln!(
-                    "gui: {} names missing art {name}; the quad will not draw",
-                    found.json.display()
-                ),
-            }
-        });
+        };
         entries.push(DocEntry {
             kind,
             doc: Arc::new(doc),
@@ -692,6 +823,58 @@ mod tests {
         }
     }
 
+    fn show_item_tip_nodes(node: &petramond_ui::Node) -> usize {
+        usize::from(node.bind.visible.as_deref() == Some("show_item_tip"))
+            + node.children.iter().map(show_item_tip_nodes).sum::<usize>()
+    }
+
+    /// The slot tooltip is engine chrome, not per-document copy: every
+    /// container-class document — an engine container's or a pack machine
+    /// panel's — gets exactly one injected at load, so a new GUI can never
+    /// forget it. A document binding `show_item_tip` itself keeps its own.
+    #[test]
+    fn container_documents_get_the_item_tooltip_injected_at_load() {
+        let mut container = Document::from_json(
+            r#"{ "format": 1, "kind": "doctest:c", "class": "container",
+                 "root": { "type": "frame" } }"#,
+        )
+        .unwrap();
+        inject_item_tooltip(&mut container);
+        assert_eq!(show_item_tip_nodes(&container.root), 1);
+        inject_item_tooltip(&mut container);
+        assert_eq!(
+            show_item_tip_nodes(&container.root),
+            1,
+            "injection is idempotent (and yields to a document's own chrome)"
+        );
+
+        let mut screen = Document::from_json(
+            r#"{ "format": 1, "kind": "doctest:s", "class": "screen",
+                 "root": { "type": "frame" } }"#,
+        )
+        .unwrap();
+        inject_item_tooltip(&mut screen);
+        assert_eq!(
+            show_item_tip_nodes(&screen.root),
+            0,
+            "screens carry no slot chrome"
+        );
+
+        // Shipped documents, engine and pack alike, come out of the registry
+        // with the tooltip exactly once.
+        for key in [
+            "petramond:inventory",
+            "petramond:crafting_table",
+            "petramond:chest",
+            "petramond:furnace",
+            "forge:forging_furnace",
+        ] {
+            let kind = crate::gui::intern_kind(key).expect("kind interns");
+            let doc = doc_for(kind).unwrap_or_else(|| panic!("{key} document loads"));
+            assert_eq!(show_item_tip_nodes(&doc.doc.root), 1, "{key}");
+        }
+    }
+
     #[test]
     fn a_registered_station_kind_falls_back_to_the_crafting_table_document() {
         let kind = crate::gui::intern_kind("doctest:bench_station").unwrap();
@@ -724,6 +907,37 @@ mod tests {
         assert!(doc_container_specs(&doc("petramond:fuel")).is_ok());
         let err = doc_container_specs(&doc("doctest:no_such_tag")).unwrap_err();
         assert!(err.contains("unknown item tag"), "{err}");
+    }
+
+    /// A slot may name its group by row-DATA key as well as by tag, and the
+    /// two are validated by DIFFERENT rules on purpose: a tag has a registry
+    /// to be absent from, a data key has none (a row states one by carrying
+    /// it), so the only check a data key can carry is that it is namespaced.
+    /// Validating it like a tag would refuse every pack that ships its slot
+    /// before the rows that fill it.
+    #[test]
+    fn a_slot_may_accept_a_data_key_and_it_must_be_namespaced() {
+        let doc = |accepts: &str| {
+            Document::from_json(&format!(
+                r#"{{ "format": 1, "kind": "doctest:machine", "class": "container",
+                     "root": {{ "type": "slot", "role": "container", "accepts": [{accepts}] }} }}"#
+            ))
+            .expect("test document parses")
+        };
+        let specs = doc_container_specs(&doc(r#"{"data": "doctest:metal"}"#))
+            .expect("an unheard-of data key is legal");
+        assert_eq!(
+            specs[0].accepts,
+            vec![crate::container::SlotFilter::Data("doctest:metal")]
+        );
+        let err = doc_container_specs(&doc(r#"{"data": "metal"}"#)).unwrap_err();
+        assert!(err.contains("namespaced"), "{err}");
+
+        // Both forms in one list, since a slot admitting "fuel OR my metals"
+        // is exactly the case the second form exists for.
+        let specs = doc_container_specs(&doc(r#""petramond:fuel", {"data": "doctest:metal"}"#))
+            .expect("mixed accepts resolve");
+        assert_eq!(specs[0].accepts.len(), 2);
     }
 
     /// How long a value to seed every catalog `str` key with.
@@ -1009,11 +1223,13 @@ mod tests {
 
         // A floating panel is placed by the runtime, so what it owes is a
         // bounded natural size: an unbounded one covers the screen the moment
-        // a pack ships a long recipe name.
+        // a pack ships a long recipe name. 200 is the standard slot tooltip's
+        // `max_w` — at the tightest 320px viewport that is a panel beside the
+        // pointer, never a screen cover.
         let mut unbounded = Vec::new();
         for kind in SHELL_KINDS {
             walk_solved(*kind, 3, Seed::Long, |n| {
-                if matches!(n.inst.node.kind, petramond_ui::NodeKind::Tooltip) && n.rect.w > 160 {
+                if matches!(n.inst.node.kind, petramond_ui::NodeKind::Tooltip { .. }) && n.rect.w > 200 {
                     unbounded.push(format!("{kind:?}: floating panel is {}px wide", n.rect.w));
                 }
             });
@@ -1029,5 +1245,123 @@ mod tests {
         assert!(kind_permitted(kind, None).is_err());
         assert!(kind_permitted(GuiKind::Furnace, None).is_ok());
         assert!(kind_permitted(GuiKind::Title, Some("anypack")).is_ok());
+    }
+
+    /// A scratch dir of sheets for the collection tests below (the collector
+    /// resolves real files beside the document).
+    fn test_art_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "petramond-gui-doc-art-{tag}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    fn write_png(path: &std::path::Path, w: u32, h: u32) {
+        image::RgbaImage::new(w, h).save(path).expect("png writes");
+    }
+
+    fn art_doc(root: &str) -> Document {
+        Document::from_json(&format!(
+            r#"{{ "format": 1, "kind": "doctest:art", "class": "screen", "root": {root} }}"#
+        ))
+        .expect("test document parses")
+    }
+
+    /// Image-backed buttons name document-local sheets exactly like `image`
+    /// nodes do: both must resolve beside the document and land in the same
+    /// first-reference-ordered table that feeds `TexId::DocImage`.
+    #[test]
+    fn button_images_are_collected_beside_the_document() {
+        let dir = test_art_dir("button-collect");
+        write_png(&dir.join("flame.png"), 8, 4);
+        write_png(&dir.join("go.png"), 6, 3);
+        let doc = art_doc(
+            r#"{ "type": "column", "children": [
+                  { "type": "image", "image": "flame.png", "frames": [2, 2] },
+                  { "type": "button", "id": "go", "image": "go.png", "frames": [3, 1] }
+                ] }"#,
+        );
+        let images = collect_doc_images(&doc, &dir).expect("both sheets resolve");
+        let names: Vec<&str> = images.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["flame.png", "go.png"]);
+        assert_eq!(images[0].size, (8, 4));
+        assert_eq!(images[1].size, (6, 3));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A statically named image that does not exist rejects the document —
+    /// the old "quad will not draw" log left the screen half-drawn with no
+    /// symptom until someone opened it. The empty-name + `bind.image`
+    /// runtime pattern stays legal: there is no file to resolve.
+    #[test]
+    fn missing_static_art_rejects_but_bound_images_are_fileless() {
+        let dir = test_art_dir("missing");
+        let err = collect_doc_images(
+            &art_doc(r#"{ "type": "image", "image": "nope.png" }"#),
+            &dir,
+        )
+        .unwrap_err();
+        assert!(err.contains("missing art nope.png"), "{err}");
+        let bound = collect_doc_images(
+            &art_doc(r#"{ "type": "image", "image": "", "bind": { "image": "icon" } }"#),
+            &dir,
+        )
+        .expect("a runtime-bound image needs no file");
+        assert!(bound.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The framed-sheet guard: the grid must divide the sheet exactly, the
+    /// frame count stays under the cap, and the sheet fits the shared side
+    /// ceiling — each a document rejection, since the whole sheet uploads as
+    /// one texture.
+    #[test]
+    fn bad_frame_sheets_reject_the_document() {
+        let dir = test_art_dir("frames");
+        write_png(&dir.join("ok.png"), 8, 4);
+        write_png(&dir.join("ragged.png"), 10, 4);
+        write_png(&dir.join("many.png"), 65, 1);
+        write_png(&dir.join("huge.png"), 700, 8);
+
+        let doc = |image: &str, frames: &str| {
+            art_doc(&format!(
+                r#"{{ "type": "image", "image": "{image}", "frames": {frames} }}"#
+            ))
+        };
+        collect_doc_images(&doc("ok.png", "[2, 2]"), &dir).expect("an even grid passes");
+        // Unframed sheets carry no grid contract: only framed ones are sized.
+        collect_doc_images(
+            &art_doc(r#"{ "type": "image", "image": "huge.png" }"#),
+            &dir,
+        )
+        .expect("an unframed sheet skips the framed-sheet checks");
+
+        let err = collect_doc_images(&doc("ragged.png", "[4, 1]"), &dir).unwrap_err();
+        assert!(err.contains("does not divide evenly"), "{err}");
+        let err = collect_doc_images(&doc("many.png", "[65, 1]"), &dir).unwrap_err();
+        assert!(err.contains("frames; the cap is"), "{err}");
+        let err = collect_doc_images(&doc("huge.png", "[7, 1]"), &dir).unwrap_err();
+        assert!(err.contains("side cap"), "{err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The first SEEN frames grid wins even when the first reference to the
+    /// sheet is unframed — an unframed duplicate must not launder a bad
+    /// sheet past the check, on a button any more than on an image.
+    #[test]
+    fn an_unframed_reference_does_not_hide_a_sheet_grid() {
+        let dir = test_art_dir("launder");
+        write_png(&dir.join("ragged.png"), 10, 4);
+        let doc = art_doc(
+            r#"{ "type": "column", "children": [
+                  { "type": "image", "image": "ragged.png" },
+                  { "type": "button", "id": "go", "image": "ragged.png", "frames": [4, 1] }
+                ] }"#,
+        );
+        let err = collect_doc_images(&doc, &dir).unwrap_err();
+        assert!(err.contains("does not divide evenly"), "{err}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

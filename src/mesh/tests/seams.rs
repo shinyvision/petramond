@@ -15,7 +15,7 @@ fn cross_section_seam_culls_faces_and_samples_neighbour_ao_and_light() {
     let mut upper = Section::new(0, 1, 0);
     upper.set_block(9, 0, 8, Block::Stone);
 
-    let block_at = |wx: i32, wy: i32, wz: i32| -> u8 {
+    let block_at = |wx: i32, wy: i32, wz: i32| -> u16 {
         if !(0..SECTION_SIZE as i32).contains(&wx) || !(0..SECTION_SIZE as i32).contains(&wz) {
             return Block::Air.id();
         }

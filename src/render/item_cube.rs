@@ -616,6 +616,10 @@ pub(super) fn push_cell_local_face_turned(
     push_quad_with(verts, indices, corners, |corner, pos| {
         let [u, v] = crate::mesh::plane::cell_uv(face, local[corner]);
         let (u, v) = crate::block::ShapeFace::turn_uv(uv_turns, u, v);
+        // Cell-local UV is 0..=1 by definition; a caller whose box reaches past
+        // its cell (a mod draw prim spanning a multi-cell footprint) would
+        // otherwise pack a lane it cannot hold and sample past its own tile.
+        let (u, v) = (u.clamp(0.0, 1.0), v.clamp(0.0, 1.0));
         Vertex {
             pos,
             tint: light.block.tint_word(mat.tint),

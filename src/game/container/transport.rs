@@ -95,7 +95,11 @@ impl ContainerMenu {
                 let Some(i) = self.open_container_index(slot) else {
                     return 0;
                 };
-                if self.slot_specs().get(i).is_none_or(|spec| spec.take_only) {
+                // A drag is the same deliberate placement a click is, so it
+                // asks the same question. Checking only `take_only` here made
+                // `accepts` a filter that any held button walked straight
+                // through — on both this path and the client's mirror of it.
+                if !self.slot_admits(i, Some(held.item)) {
                     return 0;
                 }
                 self.container_pos()
@@ -106,6 +110,12 @@ impl ContainerMenu {
             }
             MenuSlot::CraftResult | MenuSlot::Widget(_) => 0,
         }
+    }
+
+    /// Whether container slot `i` accepts `held` on a deliberate placement —
+    /// this menu's specs through the shared [`crate::container::slot_admits`].
+    fn slot_admits(&self, i: usize, held: Option<crate::item::ItemType>) -> bool {
+        crate::container::slot_admits(&self.slot_specs(), i, held)
     }
 
     fn place_cursor_in(
@@ -123,7 +133,8 @@ impl ContainerMenu {
                 let Some(i) = self.open_container_index(slot) else {
                     return;
                 };
-                if self.slot_specs().get(i).is_none_or(|spec| spec.take_only) {
+                let held = inv.cursor().map(|c| c.item);
+                if !self.slot_admits(i, held) {
                     return;
                 }
                 let Some(pos) = self.container_pos() else {

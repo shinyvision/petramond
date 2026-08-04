@@ -197,7 +197,7 @@ mod tests {
         let names = handle_host_call(
             &mut store,
             HostCall::ItemNames {
-                items: vec![id, mod_api::ItemId(u8::MAX)],
+                items: vec![id, mod_api::ItemId(u16::MAX)],
             },
         );
         assert_eq!(
@@ -223,7 +223,7 @@ mod tests {
         let names = handle_host_call(
             &mut store,
             HostCall::BlockNames {
-                blocks: vec![mod_api::BlockId(0), mod_api::BlockId(u8::MAX)],
+                blocks: vec![mod_api::BlockId(0), mod_api::BlockId(u16::MAX)],
             },
         );
         assert_eq!(

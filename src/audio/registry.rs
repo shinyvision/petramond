@@ -251,7 +251,7 @@ struct RawFile {
 /// The runtime [`Sound`] registered under `name` (engine `petramond:*` and pack
 /// `mod_id:name` keys alike), or `None` when no such row is loaded.
 pub(crate) fn by_name(name: &str) -> Option<Sound> {
-    catalog().id(name).map(Sound)
+    catalog().id(name).map(|id| Sound(id as u8))
 }
 
 /// The loaded sound table, id-ordered (`defs()[sound.0]`). Loads exactly once;
@@ -289,7 +289,7 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<SoundDef>, St
                 .map(|v| &*Box::leak(v.into_boxed_str()))
                 .collect();
             Ok(SoundDef {
-                sound: Sound(id),
+                sound: Sound(id as u8),
                 name: names.name(id).expect("id resolved from this table"),
                 variants: Box::leak(variants.into_boxed_slice()),
                 gain: r.gain as f32,

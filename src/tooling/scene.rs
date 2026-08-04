@@ -189,8 +189,22 @@ impl SceneCapture {
     /// Render one frame and read it back as RGBA8.
     pub fn capture(&mut self) -> RenderedFrame {
         self.publish_camera();
+        self.publish_block_draws();
         self.drain_uploads();
         self.renderer.capture_frame()
+    }
+
+    /// Hand the world's mod DRAW SETS to the renderer, the way the game's
+    /// per-frame presentation does.
+    ///
+    /// Without this a capture photographs a world with every draw set stored
+    /// and none of them drawn — convincing, and wrong, exactly like the
+    /// static-fallback cube this harness used to shoot for custom shapes.
+    fn publish_block_draws(&mut self) {
+        let mut rows = Vec::new();
+        self.world
+            .collect_block_draws(&crate::camera::ViewVolume::unbounded(), &mut rows);
+        self.renderer.set_block_draws(&rows);
     }
 
     /// Publish this capture's camera + environment into the renderer uniforms,
@@ -235,6 +249,7 @@ impl SceneCapture {
     /// and readback would dominate a repeated timing.
     pub fn render_frame(&mut self) {
         self.publish_camera();
+        self.publish_block_draws();
         self.drain_uploads();
         self.renderer.render_offscreen();
     }

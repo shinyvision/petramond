@@ -865,33 +865,53 @@
     },
     {
       "type": "processing",
+      "recipe": "petramond:raw_iron_to_iron_ingot",
       "class": "petramond:smelting",
       "ingredient": "petramond:raw_iron",
       "result": "petramond:iron_ingot"
     },
     {
       "type": "processing",
+      "recipe": "petramond:raw_copper_to_copper_ingot",
       "class": "petramond:smelting",
       "ingredient": "petramond:raw_copper",
       "result": "petramond:copper_ingot"
     },
     {
       "type": "processing",
+      "recipe": "petramond:raw_gold_to_gold_ingot",
       "class": "petramond:smelting",
       "ingredient": "petramond:raw_gold",
       "result": "petramond:gold_ingot"
     },
     {
       "type": "processing",
+      "recipe": "petramond:cobblestone_to_stone",
       "class": "petramond:smelting",
       "ingredient": "petramond:cobblestone",
       "result": "petramond:stone"
     },
     {
       "type": "processing",
+      "recipe": "petramond:sand_to_glass",
       "class": "petramond:smelting",
       "ingredient": "petramond:sand",
       "result": "petramond:glass"
+    },
+    {
+      "type": "crafting",
+      "recipe": "petramond:clay_block",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "petramond:clay",
+          "count": 4
+        }
+      ],
+      "result": {
+        "item": "petramond:clay_block",
+        "count": 1
+      }
     },
     {
       "type": "crafting",

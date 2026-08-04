@@ -19,7 +19,7 @@ fn biome_pad_idx(x: usize, z: usize) -> usize {
 }
 
 pub(crate) struct SectionMeshPad<'a> {
-    pub blocks: &'a [u8],
+    pub blocks: &'a [u16],
     pub water: &'a [u8],
     pub skylight: &'a [u8],
     /// Per-cell block light, packed RGB — the mesher averages it PER CHANNEL
@@ -50,7 +50,7 @@ impl SectionMeshPad<'_> {
     }
 
     #[inline]
-    pub(super) fn block_world(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> u8 {
+    pub(super) fn block_world(&self, ox: i32, oy: i32, oz: i32, wx: i32, wy: i32, wz: i32) -> u16 {
         self.world_idx(ox, oy, oz, wx, wy, wz)
             .map_or(0, |i| self.blocks[i])
     }

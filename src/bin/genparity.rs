@@ -12,6 +12,14 @@ use petramond::tooling::worldgen::generate_chunk;
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
+fn fnv1a_u16(cells: &[u16], mut h: u64) -> u64 {
+    for &c in cells {
+        h ^= c as u64;
+        h = h.wrapping_mul(0x1000_0000_01b3);
+    }
+    h
+}
+
 fn fnv1a(bytes: &[u8], mut h: u64) -> u64 {
     for &b in bytes {
         h ^= b as u64;
@@ -39,7 +47,7 @@ fn main() {
         for &(cx, cz) in &COORDS {
             let chunk = generate_chunk(seed, cx, cz);
             let mut h = FNV_OFFSET;
-            h = fnv1a(chunk.blocks_slice(), h);
+            h = fnv1a_u16(chunk.blocks_slice(), h);
             h = fnv1a(chunk.biomes_slice(), h);
             println!("seed={seed:08x} cx={cx:>2} cz={cz:>2} hash={h:016x}");
             combined = fnv1a(&h.to_le_bytes(), combined);

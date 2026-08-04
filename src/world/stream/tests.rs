@@ -408,7 +408,7 @@ fn sealed_first_light_waits_for_player_proximity_then_bakes() {
     let mut world = World::new(0, 0);
     let center = SectionPos::new(0, 0, 0);
     let mut cavity = Section::new(0, 0, 0);
-    cavity.blocks_slice_mut().fill(Block::Stone.id());
+    cavity.blocks_mut().fill(Block::Stone.id());
     cavity.recompute_opaque_count();
     cavity.set_block(8, 8, 8, Block::Air);
     world.insert_section_for_test(center, cavity);
@@ -422,7 +422,7 @@ fn sealed_first_light_waits_for_player_proximity_then_bakes() {
     ] {
         let pos = SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz);
         let mut section = Section::new(pos.cx, pos.cy, pos.cz);
-        section.blocks_slice_mut().fill(Block::Stone.id());
+        section.blocks_mut().fill(Block::Stone.id());
         section.recompute_opaque_count();
         world.insert_section_for_test(pos, section);
     }
@@ -650,9 +650,9 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     assert!(light_settled(&mut world), "first-visit light bakes settle");
     let first_sections: Vec<SectionPos> = world.sections.keys().copied().collect();
     assert!(!first_sections.is_empty());
-    let first_blocks: std::collections::HashMap<SectionPos, Vec<u8>> = first_sections
+    let first_blocks: std::collections::HashMap<SectionPos, Vec<u16>> = first_sections
         .iter()
-        .map(|sp| (*sp, world.sections[sp].blocks_slice().to_vec()))
+        .map(|sp| (*sp, world.sections[sp].blocks_iter().collect::<Vec<_>>()))
         .collect();
     world.flush_modified_chunks();
     {
@@ -697,7 +697,7 @@ fn explored_terrain_reloads_from_disk_without_generating() {
             .get(sp)
             .unwrap_or_else(|| panic!("section {sp:?} reloaded"));
         assert_eq!(
-            section.blocks_slice(),
+            section.blocks_iter().collect::<Vec<_>>(),
             &blocks[..],
             "reloaded content diverged at {sp:?}"
         );

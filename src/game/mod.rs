@@ -251,7 +251,7 @@ pub struct Game {
     /// The block the place ghost predicted this frame (hand pop).
     local_placed_block: Option<crate::block::Block>,
     /// Optimistic place cell (cleared on accept/deny or replica delta).
-    place_ghost: Option<(IVec3, u8)>,
+    place_ghost: Option<(IVec3, u16)>,
     /// Cells this client already presented place/break for (local WorldEvent).
     /// Wire `BlockPlaced` / `BlockBroken` for these cells are dropped until the
     /// matching outcome clears the entry — never re-play sound/particles for

@@ -1,0 +1,239 @@
+{
+    "format": 1,
+    "kind": "forge:forging_furnace",
+    "class": "container",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": {
+            "pad": [
+                4,
+                2,
+                4,
+                4
+            ],
+            "gap": 6
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "Forging Furnace"
+            },
+            {
+                "type": "row",
+                "layout": {
+                    "gap": 12,
+                    "align": "center",
+                    "justify": "center"
+                },
+                "children": [
+                    {
+                        "type": "column",
+                        "layout": {
+                            "gap": 3,
+                            "align": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "slot",
+                                "role": "container",
+                                "accepts": [
+                                    {
+                                        "data": "forge:metal"
+                                    }
+                                ]
+                            },
+                            {
+                                "type": "gauge",
+                                "id": "flame",
+                                "mode": "deplete_td",
+                                "style": "gauge.flame",
+                                "bind": {
+                                    "value": "forge:burn01"
+                                },
+                                "layout": {
+                                    "w": 14,
+                                    "h": 14
+                                }
+                            },
+                            {
+                                "type": "slot",
+                                "role": "container",
+                                "accepts": [
+                                    "fuel"
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "type": "gauge",
+                        "id": "melt",
+                        "mode": "grow_lr",
+                        "style": "gauge.arrow",
+                        "bind": {
+                            "value": "forge:melt01"
+                        },
+                        "layout": {
+                            "w": 24,
+                            "h": 17
+                        }
+                    },
+                    {
+                        "type": "column",
+                        "layout": {
+                            "gap": 2,
+                            "align": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "label",
+                                "text": "Crucible",
+                                "small": true
+                            },
+                            {
+                                "type": "frame",
+                                "style": "panel.inset",
+                                "layout": {
+                                    "pad": [
+                                        2,
+                                        2,
+                                        2,
+                                        2
+                                    ]
+                                },
+                                "children": [
+                                    {
+                                        "type": "gauge",
+                                        "id": "crucible",
+                                        "mode": "deplete_td",
+                                        "style": "gauge.bar",
+                                        "bind": {
+                                            "value": "forge:crucible01",
+                                            "tint": "forge:crucible_color"
+                                        },
+                                        "layout": {
+                                            "w": 12,
+                                            "h": 32
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "type": "column",
+                        "layout": {
+                            "gap": 3,
+                            "align": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "label",
+                                "text": "Mould",
+                                "small": true
+                            },
+                            {
+                                "type": "slot",
+                                "role": "container",
+                                "accepts": [
+                                    {
+                                        "data": "forge:mould"
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "type": "column",
+                        "layout": {
+                            "gap": 3,
+                            "align": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "label",
+                                "text": "Pour",
+                                "small": true
+                            },
+                            {
+                                "type": "button",
+                                "id": "lever",
+                                "image": "pour_lever.png",
+                                "frames": [
+                                    8,
+                                    1
+                                ],
+                                "bind": {
+                                    "frame": "forge:lever_frame",
+                                    "enabled": "forge:lever_enabled"
+                                },
+                                "layout": {
+                                    "w": 26,
+                                    "h": 30
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "type": "spacer",
+                "layout": {
+                    "h": 2
+                }
+            },
+            {
+                "type": "slot_grid",
+                "role": "player_inv",
+                "cols": 9,
+                "rows": 3
+            },
+            {
+                "type": "slot_grid",
+                "role": "hotbar",
+                "cols": 9,
+                "rows": 1,
+                "layout": {
+                    "margin": [
+                        0,
+                        2,
+                        0,
+                        0
+                    ]
+                }
+            },
+            {
+                "type": "tooltip",
+                "hover": "crucible",
+                "style": "panel.inset",
+                "layout": {
+                    "max_w": 200,
+                    "abs": {
+                        "x": 4,
+                        "y": 4
+                    },
+                    "pad": [
+                        3,
+                        2,
+                        3,
+                        3
+                    ],
+                    "gap": 2,
+                    "align": "stretch"
+                },
+                "bind": {
+                    "visible": "forge:crucible_tip"
+                },
+                "children": [
+                    {
+                        "type": "label",
+                        "small": true,
+                        "bind": {
+                            "text": "forge:crucible_tip"
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+}

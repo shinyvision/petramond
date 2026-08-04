@@ -313,8 +313,9 @@ impl StyleLookup for Theme {
     }
 }
 
-/// The default part key per widget type (node `style` overrides it) — the
-/// exhaustive per-kind answer lives in [`crate::widget_policy::style_key`].
+/// The default part key per widget type (node `style` overrides it) — this is
+/// the public face of the crate-private `widget_policy::style_key` table,
+/// which holds the exhaustive per-kind answer.
 pub fn default_style_key(kind: &NodeKind) -> Option<&'static str> {
     crate::widget_policy::style_key(kind)
 }
@@ -406,7 +407,13 @@ impl LayoutEnv for ThemeEnv<'_> {
                     font.measure(text, if *wrap { avail_w } else { None })
                 }
             }
-            NodeKind::Button { icon, .. } => {
+            NodeKind::Button { icon, frames, .. } => {
+                // An image-backed button's natural size is ONE frame of its
+                // sheet, not the theme face's label metrics.
+                if let Some(name) = image {
+                    let sheet = (self.image_size)(name).unwrap_or((0, 0));
+                    return crate::paint_walk::frame_cell(sheet, *frames);
+                }
                 let icon_w = icon
                     .as_deref()
                     .and_then(|k| self.theme.part(k))
@@ -437,7 +444,13 @@ impl LayoutEnv for ThemeEnv<'_> {
                 )
             }
             NodeKind::Gauge { .. } => part_natural((0, 0)),
-            NodeKind::Image { .. } | NodeKind::Rotimage { .. } => image
+            NodeKind::Image { frames, .. } => {
+                let sheet = image
+                    .and_then(|name| (self.image_size)(name))
+                    .unwrap_or((0, 0));
+                crate::paint_walk::frame_cell(sheet, *frames)
+            }
+            NodeKind::Rotimage { .. } => image
                 .and_then(|name| (self.image_size)(name))
                 .unwrap_or((0, 0)),
             NodeKind::Badge { .. } => {

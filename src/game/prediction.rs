@@ -33,7 +33,7 @@ pub(crate) enum PredictionSnapshot {
     /// block id. Multi-cell clears (door, model) list the full footprint.
     World {
         inventory: Option<Inventory>,
-        cells: Vec<(IVec3, u8)>,
+        cells: Vec<(IVec3, u16)>,
     },
 }
 

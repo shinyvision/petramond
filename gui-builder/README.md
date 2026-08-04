@@ -54,14 +54,21 @@ duplicate, `Delete` remove selection.
   buttons/inputs, file-image layers; anything untranslatable becomes a
   `TODO:` label.
 
-Document images (`image`/`rotimage` nodes) are PNGs beside the project file /
-exported document; missing ones simply don't draw (the validation panel warns).
-The Image inspector's "Choose image…" copies a picked PNG next to the project,
-and Export copies every referenced image next to the `.gui.json`. Image nodes
-support fit modes (stretch / cover / tile / 9-slice with insets). Generated
-samples preserve shipped document image paths and preview them through the
-shipped `assets/ui/documents/` location when those files are not beside the
-sample project.
+Document images (`image`/`rotimage` nodes, and image-backed `button` faces)
+are PNGs beside the project file / exported document; missing ones simply
+don't draw (the validation panel warns). The Image inspector's "Choose image…"
+copies a picked PNG next to the project, and Export copies every referenced
+image next to the `.gui.json`. Image nodes support fit modes (stretch / cover /
+tile / 9-slice with insets) and an optional sprite-sheet grid (`frames`
+cols×rows) with an `fps` animation rate — one frame draws and sizes the node,
+`bind.frame` (a numeric state key, offered in the binding picker on framed
+nodes) picks the frame authoritatively and `fps` cycles otherwise. A button's
+"custom image" toggle swaps its theme chrome for a document image with the
+same optional frames/fps; an image-backed button carries no text, icon, or
+children, so those controls hide (and clear) while a custom image is set.
+Generated samples preserve shipped document image paths and preview them
+through the shipped `assets/ui/documents/` location when those files are not
+beside the sample project.
 
 ## Samples
 

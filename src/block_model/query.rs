@@ -87,7 +87,9 @@ pub fn outline_bounds(kind: BlockModelKind) -> ([f32; 3], [f32; 3]) {
 /// surface — every posed cube face is tested, and each candidate face is alpha-tested
 /// against the model texture so a hit registers only on an opaque texel. Transparent
 /// texels do NOT make the whole cube vanish from picking: the ray continues to later
-/// faces, matching the renderer's double-sided alpha-cutout model pass. The ray is in
+/// faces, matching the renderer. The model pipelines cull BACK faces, so a face met
+/// from behind (the far side of a cube, seen through the near face's cutout texels)
+/// is skipped here exactly as it is not drawn. The ray is in
 /// FOOTPRINT space (1 unit = 1 world cell; the caller subtracts the footprint-origin
 /// world cell), matching [`ModelInstance::cubes`]. `None` on a clean miss — so aiming
 /// through the gap between the legs, under the top, or through fully transparent model
@@ -129,6 +131,15 @@ where
         let dl = inv.transform_vector3(dir);
 
         for face in Face::ALL {
+            // Back-face rejection, mirroring the renderer's culling: a ray
+            // travelling WITH the face's outward normal meets the face's back
+            // side, which the model pass never draws (the far side of a cube
+            // seen through the near face's cutout, or every face from inside
+            // the cube) — so it must not pick either.
+            let (nx, ny, nz) = face.dir();
+            if dl.dot(Vec3::new(nx as f32, ny as f32, nz as f32)) > 0.0 {
+                continue;
+            }
             let Some((t, hit)) = ray_box_face_hit(ol, dl, mn, mx, face) else {
                 continue;
             };
@@ -147,8 +158,10 @@ where
 }
 
 /// Ray vs one face of the local axis-aligned box `[mn, mx]`: the crossing distance plus
-/// the local hit point. Faces are treated as double-sided because the model pass disables
-/// culling; alpha still decides whether that face contributes a visible/pickable pixel.
+/// the local hit point. The hit test itself is side-agnostic — the CALLER decides
+/// sidedness (the pixel-perfect pick rejects back-facing hits to mirror the model
+/// pipelines' back-face culling; the AO bake tests occluders from both sides);
+/// alpha still decides whether that face contributes a visible/pickable pixel.
 pub(super) fn ray_box_face_hit(
     o: Vec3,
     d: Vec3,
@@ -264,20 +277,61 @@ mod tests {
             origin: Vec3::ZERO,
             rotation: Vec3::ZERO,
             faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+            cull: [None; 6],
         };
 
+        // Through the transparent TOP face, the cube's own bottom face is met
+        // from its BACK side — culled by the model pipelines, so not pickable
+        // either: nothing renders along this ray, so nothing may pick.
+        assert!(
+            ray_vs_model_cubes(
+                Vec3::new(0.5, 2.0, 0.5),
+                Vec3::NEG_Y,
+                std::slice::from_ref(&cube),
+                |_, face, _, _, _| face == Face::NegY,
+            )
+            .is_none(),
+            "the far face's back side is neither drawn nor pickable"
+        );
+
+        // A SECOND cube behind the first picks on its front side — the ray
+        // genuinely continues past the cut-out near face.
+        let below = ModelCube {
+            from: Vec3::new(0.0, -1.0, 0.0),
+            to: Vec3::new(1.0, 0.0, 1.0),
+            ..cube.clone()
+        };
         let hit = ray_vs_model_cubes(
             Vec3::new(0.5, 2.0, 0.5),
             Vec3::NEG_Y,
+            &[cube.clone(), below],
+            |_, face, _, mx, _| mx.y <= 0.0 && face == Face::PosY,
+        )
+        .expect("the lower cube's top face is front-facing and opaque");
+        assert!((hit - 2.0).abs() < 1e-5, "ray should hit at y=0, got {hit}");
+    }
+
+    #[test]
+    fn ray_pick_takes_a_solid_faces_front_side() {
+        // The same face from OUTSIDE is front-facing and picks normally; the
+        // back-face rejection must not eat ordinary picks.
+        let cube = ModelCube {
+            name: String::new(),
+            from: Vec3::ZERO,
+            to: Vec3::ONE,
+            origin: Vec3::ZERO,
+            rotation: Vec3::ZERO,
+            faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+            cull: [None; 6],
+        };
+        let hit = ray_vs_model_cubes(
+            Vec3::new(0.5, -2.0, 0.5),
+            Vec3::Y,
             std::slice::from_ref(&cube),
             |_, face, _, _, _| face == Face::NegY,
         )
-        .expect("bottom face should be pickable through transparent top");
-
-        assert!(
-            (hit - 2.0).abs() < 1e-5,
-            "ray should hit the later opaque face, got {hit}"
-        );
+        .expect("the bottom face from below is front-facing");
+        assert!((hit - 2.0).abs() < 1e-5, "ray should hit at y=0, got {hit}");
     }
 
     #[test]

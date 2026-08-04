@@ -42,6 +42,10 @@ pub(crate) struct Scene {
     particle_emitters: Vec<ParticleEmitterInstance>,
     /// Baked placed-chest instances for this frame.
     chests: Vec<ChestInstance>,
+    /// Mod draw sets for this frame — a copy of the gather, already view-culled
+    /// there (`World::collect_block_draws`), which is where the rule puts it:
+    /// a presentation gather scales with what is VISIBLE, not what is loaded.
+    block_draws: Vec<crate::render::BlockDrawInstance>,
     /// Baked placed-door instances for this frame.
     doors: Vec<DoorInstance>,
     /// Baked (interpolated) mob instances for this frame.
@@ -71,6 +75,7 @@ impl Scene {
         self.solid_particles.clear();
         self.particle_emitters.clear();
         self.chests.clear();
+        self.block_draws.clear();
         self.doors.clear();
         self.mobs.clear();
         self.player = None;
@@ -89,6 +94,10 @@ impl Scene {
         // previous and current tick poses so they move smoothly at any frame rate.
         let alpha = presentation.tick_alpha;
         bake_item_entities(presentation.item_entities, alpha, &mut self.item_entities);
+        // Same row type end to end, so this is a clear + extend of an owned
+        // copy (the presentation borrow ends before `upload`), not a rebuild.
+        self.block_draws.clear();
+        self.block_draws.extend_from_slice(presentation.block_draws);
         bake_particles(
             presentation.particles,
             &mut self.particles,
@@ -171,6 +180,7 @@ impl Scene {
         renderer.set_held_item_light(self.held_item_skylight, self.held_item_blocklight);
         renderer.set_item_entities(&self.item_entities);
         renderer.set_chests(&self.chests);
+        renderer.set_block_draws(&self.block_draws);
         renderer.set_doors(&self.doors);
         renderer.set_mobs(&self.mobs);
         renderer.set_player(self.player);

@@ -308,11 +308,14 @@ mod tests {
             )
         };
 
+        let mut other_gui = crate::gui::empty_gui_state();
         let others = vec![crate::events::SessionPlayerRef {
             id: PlayerId(1),
             player: &mut other,
+            gui_state: &mut other_gui,
+            gui: None,
         }];
-        crate::events::with_sessions_scope(PlayerId(0), 0, others, || {
+        crate::events::with_sessions_scope(PlayerId(0), 0, None, others, || {
             let mut ctx = SimCtx {
                 world: &mut world,
                 player: &mut acting,

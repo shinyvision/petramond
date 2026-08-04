@@ -44,17 +44,20 @@ pub enum BindField {
     Selected,
     /// Image-name override (`bind.image`): string keys only.
     Image,
+    /// Sprite-sheet frame index (`bind.frame`): numeric keys.
+    Frame,
 }
 
 /// Whether a catalog key of `ty` is offerable for `field`: `items` wants
-/// lists, `selected` an i32, enabled/visible bools, `image` a str, text/value
-/// any scalar.
+/// lists, `selected` an i32, enabled/visible bools, `image` a str, `frame` a
+/// number, text/value any scalar.
 pub fn field_matches(field: BindField, ty: &str) -> bool {
     match field {
         BindField::Items => ty == "list",
         BindField::Selected => ty == "i32",
         BindField::Enabled | BindField::Visible => ty == "bool",
         BindField::Image => ty == "str",
+        BindField::Frame => matches!(ty, "i32" | "f32"),
         BindField::Text | BindField::Value => matches!(ty, "f32" | "i32" | "bool" | "str"),
     }
 }
@@ -101,7 +104,14 @@ impl Catalog {
                                 .state
                                 .into_iter()
                                 .map(|(name, key)| {
-                                    (name, StateKey { ty: key.ty, item: key.item, doc: key.doc })
+                                    (
+                                        name,
+                                        StateKey {
+                                            ty: key.ty,
+                                            item: key.item,
+                                            doc: key.doc,
+                                        },
+                                    )
                                 })
                                 .collect(),
                             handles: k.handles,
@@ -123,7 +133,10 @@ impl Catalog {
             match Catalog::parse(&json) {
                 Ok(c) => return Some(c),
                 Err(e) => {
-                    eprintln!("gui-builder: {e} (at {}); binding pickers disabled", path.display());
+                    eprintln!(
+                        "gui-builder: {e} (at {}); binding pickers disabled",
+                        path.display()
+                    );
                     return None;
                 }
             }
@@ -249,7 +262,10 @@ mod tests {
         assert_eq!(ws.state["worlds"].ty, "list");
         assert_eq!(ws.state["worlds"].item["name"], "str");
         assert_eq!(ws.handles["play"], "click: play the selected world");
-        assert!(c.kind("somemod:wheel").is_none(), "mod kinds are open-ended");
+        assert!(
+            c.kind("somemod:wheel").is_none(),
+            "mod kinds are open-ended"
+        );
         // The real repo file, when present, must parse too.
         if let Some(real) = Catalog::load() {
             assert!(real.kind("petramond:world_select").is_some());
@@ -263,12 +279,25 @@ mod tests {
         let names = |f| ws.keys_for(f).iter().map(|(n, _)| *n).collect::<Vec<_>>();
         assert_eq!(names(BindField::Items), vec!["worlds"]);
         assert_eq!(names(BindField::Selected), vec!["world_sel"]);
-        assert_eq!(names(BindField::Enabled), vec!["has_selection", "no_worlds"]);
-        assert_eq!(names(BindField::Visible), vec!["has_selection", "no_worlds"]);
+        assert_eq!(
+            names(BindField::Enabled),
+            vec!["has_selection", "no_worlds"]
+        );
+        assert_eq!(
+            names(BindField::Visible),
+            vec!["has_selection", "no_worlds"]
+        );
         // bind.image takes str keys only.
         assert_eq!(names(BindField::Image), vec!["filter_text"]);
-        assert!(field_matches(BindField::Image, "str"), "item icon fields qualify");
+        assert!(
+            field_matches(BindField::Image, "str"),
+            "item icon fields qualify"
+        );
         assert!(!field_matches(BindField::Image, "i32"));
+        // bind.frame takes numeric keys (it truncates/clamps into the sheet).
+        assert_eq!(names(BindField::Frame), vec!["world_sel"]);
+        assert!(field_matches(BindField::Frame, "f32"));
+        assert!(!field_matches(BindField::Frame, "str"));
         // text/value take any scalar, never the list.
         assert_eq!(
             names(BindField::Text),

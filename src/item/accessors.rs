@@ -15,13 +15,13 @@ impl ItemType {
 
     /// Stable numeric id.
     #[inline]
-    pub const fn id(self) -> u8 {
+    pub const fn id(self) -> u16 {
         self.0
     }
 
     /// Item for `id`, or `Air` if `id` is out of range.
     #[inline]
-    pub fn from_id(id: u8) -> ItemType {
+    pub fn from_id(id: u16) -> ItemType {
         data::from_id(id)
     }
 
@@ -170,6 +170,13 @@ impl ItemType {
     #[inline]
     pub fn name(self) -> &'static str {
         self.def().name
+    }
+
+    /// Optional info line shown under the name in the item's slot tooltip
+    /// (`"info"` in `items.json`) — usage hints a name alone cannot carry.
+    #[inline]
+    pub fn info(self) -> Option<&'static str> {
+        self.def().info
     }
 
     /// The sprite this item's ROW declares, if any — the art that wins over a

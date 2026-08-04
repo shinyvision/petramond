@@ -60,12 +60,14 @@
     },
     {
       "type": "processing",
+      "recipe": "farming:dough_to_bread",
       "class": "kitchen:cooking",
       "ingredient": "farming:dough",
       "result": "farming:bread"
     },
     {
       "type": "processing",
+      "recipe": "farming:wheat_to_flour",
       "class": "kitchen:milling",
       "ingredient": "farming:wheat",
       "result": "farming:flour"
@@ -87,6 +89,7 @@
     },
     {
       "type": "processing",
+      "recipe": "farming:potato_to_baked_potato",
       "class": "kitchen:cooking",
       "ingredient": "farming:potato",
       "result": "farming:baked_potato"

@@ -107,20 +107,20 @@ impl ShapeStateSnapshot {
 /// table.
 ///
 /// The flood relaxes tens of millions of edges per world load, so a cell's
-/// light word must cost ONE 1 KB-table read — never a registry `BlockDef`
+/// light word must cost ONE small-table read — never a registry `BlockDef`
 /// load and a virtual `ShapeSim::light_apertures` call, which is what asking
 /// `Block::light_shape` per edge used to pay.
 #[derive(Copy, Clone)]
 pub(super) struct LightCells<'a> {
-    blocks: &'a [u8],
+    blocks: &'a [u16],
     /// Per-cell aperture overrides, `NO_ENTRY` where the block's own answer
     /// stands. Present only when the gather found a stateful shaped cell.
     apertures: Option<&'a [u32]>,
-    cells: &'static [u32; 256],
+    cells: &'static [u32],
 }
 
 impl<'a> LightCells<'a> {
-    pub(super) fn new(blocks: &'a [u8], states: &'a ShapeStateSnapshot, dim: usize) -> Self {
+    pub(super) fn new(blocks: &'a [u16], states: &'a ShapeStateSnapshot, dim: usize) -> Self {
         debug_assert_eq!(blocks.len(), dim * dim * dim);
         Self {
             blocks,
@@ -133,7 +133,11 @@ impl<'a> LightCells<'a> {
     /// [`crate::block::LIGHT_CELL_DIRECT_SKY`] flag.
     #[inline]
     pub(super) fn word(self, idx: usize) -> u32 {
-        let w = self.cells[self.blocks[idx] as usize];
+        // A raw id past the loaded registry reads as AIR's word (row 0),
+        // the same degradation `Block::from_id` applies — never a panic on a
+        // light worker.
+        let id = self.blocks[idx] as usize;
+        let w = self.cells.get(id).copied().unwrap_or(self.cells[0]);
         if w & crate::block::LIGHT_CELL_SHAPED == 0 {
             return w;
         }

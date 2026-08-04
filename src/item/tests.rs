@@ -56,53 +56,14 @@ fn item_only_items_render_as_sprites_and_carry_tools() {
     // three families share one tier ladder; rung 1 is vacant since the wooden
     // tools were retired (shears still sit on it), so stone is the entry tool.
     use ToolKind::{Axe, Pickaxe, Shovel};
-    assert_eq!(
-        ItemType::StonePickaxe.tool(),
-        Some(Tool {
-            kind: Pickaxe,
-            tier: 2
-        })
-    );
-    assert_eq!(
-        ItemType::IronPickaxe.tool(),
-        Some(Tool {
-            kind: Pickaxe,
-            tier: 3
-        })
-    );
-    assert_eq!(
-        ItemType::DiamondPickaxe.tool(),
-        Some(Tool {
-            kind: Pickaxe,
-            tier: 4
-        })
-    );
-    assert_eq!(ItemType::StoneAxe.tool(), Some(Tool { kind: Axe, tier: 2 }));
-    assert_eq!(
-        ItemType::DiamondAxe.tool(),
-        Some(Tool { kind: Axe, tier: 4 })
-    );
-    assert_eq!(
-        ItemType::StoneShovel.tool(),
-        Some(Tool {
-            kind: Shovel,
-            tier: 2
-        })
-    );
-    assert_eq!(
-        ItemType::IronShovel.tool(),
-        Some(Tool {
-            kind: Shovel,
-            tier: 3
-        })
-    );
-    assert_eq!(
-        ItemType::DiamondShovel.tool(),
-        Some(Tool {
-            kind: Shovel,
-            tier: 4
-        })
-    );
+    assert_eq!(ItemType::StonePickaxe.tool(), Some(Tool::new(Pickaxe, 2)));
+    assert_eq!(ItemType::IronPickaxe.tool(), Some(Tool::new(Pickaxe, 3)));
+    assert_eq!(ItemType::DiamondPickaxe.tool(), Some(Tool::new(Pickaxe, 4)));
+    assert_eq!(ItemType::StoneAxe.tool(), Some(Tool::new(Axe, 2)));
+    assert_eq!(ItemType::DiamondAxe.tool(), Some(Tool::new(Axe, 4)));
+    assert_eq!(ItemType::StoneShovel.tool(), Some(Tool::new(Shovel, 2)));
+    assert_eq!(ItemType::IronShovel.tool(), Some(Tool::new(Shovel, 3)));
+    assert_eq!(ItemType::DiamondShovel.tool(), Some(Tool::new(Shovel, 4)));
     assert_eq!(ItemType::Stick.tool(), None);
     assert_eq!(ItemType::Cobblestone.tool(), None);
 }

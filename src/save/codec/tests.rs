@@ -491,3 +491,91 @@ fn corrupt_blob_is_none() {
     assert!(decode_section(p, &[1, 2, 3, 4]).is_none());
     assert!(decode_section(p, &[]).is_none());
 }
+
+/// The record's block cube must carry ids that do not fit a byte, at both
+/// index widths. The palette is EXPLICIT rather than the process-wide active
+/// one: this is a statement about the format, and the shipped registry has no
+/// id this high to reach it with.
+#[test]
+fn the_record_block_cube_carries_ids_past_one_byte() {
+    let pal = crate::save::palette::Palette::identity();
+    let roundtrip = |ids: &[u16]| {
+        let mut buf = Vec::new();
+        put_block_cube(&mut buf, &crate::section::BlockCube::from_ids(ids), &pal);
+        let mut r = Reader::new(&buf);
+        let back = get_block_cube(&mut r, &pal).expect("cube decodes");
+        assert_eq!(&back[..], ids);
+    };
+
+    // Narrow index (≤ 256 distinct) with high ids in the palette.
+    let mut ids = vec![3u16; SECTION_VOLUME];
+    ids[0] = 300;
+    ids[1] = 4095;
+    ids[2] = 255;
+    roundtrip(&ids);
+
+    // Past the narrow index: every cell distinct, so the wide arm runs.
+    let wide: Vec<u16> = (0..SECTION_VOLUME).map(|i| (i % 600) as u16).collect();
+    roundtrip(&wide);
+}
+
+/// The item slot's disk id must be TWO bytes, or an item registered past 255
+/// would decode as a different item. The width is asserted on the encoded
+/// record (`u16` id + `u8` count + `u16` blob length) rather than by feeding
+/// in a high id, because the id crosses the save palette — which pins only
+/// ids the registry actually has.
+#[test]
+fn an_item_slot_stores_a_two_byte_id() {
+    let mut slot = Vec::new();
+    put_item_slot(&mut slot, Some(ItemStack::new(ItemType::Stone, 5)));
+    assert_eq!(slot.len(), 5, "u16 id + u8 count + u16 blob length");
+    let mut r = Reader::new(&slot);
+    let back = get_item_slot(&mut r)
+        .expect("decodes")
+        .expect("non-empty slot");
+    assert_eq!((back.item, back.count), (ItemType::Stone, 5));
+}
+
+/// A section holding an id past one byte must survive the whole record — the
+/// cube, and a slab cell state's id-masked layer bytes, which are the only
+/// bytes the codec ever reinterprets.
+#[test]
+fn a_high_id_survives_the_whole_section_record() {
+    const HIGH_A: u16 = 300;
+    const HIGH_B: u16 = 1234;
+
+    let mut s = sec(2, -1, 3);
+    s.set_block_raw(1, 2, 3, HIGH_A);
+    s.set_block_raw(4, 5, 6, HIGH_B);
+    s.set_block(7, 8, 9, Block::Stone);
+    let [a_lo, a_hi] = crate::block::ShapeState::id_bytes(HIGH_A);
+    let [b_lo, b_hi] = crate::block::ShapeState::id_bytes(HIGH_B);
+    s.set_cell_state(
+        1,
+        2,
+        3,
+        crate::block::ShapeState::with_ids(&[0b0111, a_lo, a_hi, b_lo, b_hi], 0b0_1010),
+    );
+
+    // Explicit identity palette, for the same reason as the cube test above:
+    // a real save palette only pins ids the registry actually has.
+    let pal = crate::save::palette::Palette::identity();
+    let snap = SectionSnapshot::from_section(&s);
+    let rec = encode_snapshot_with(&snap, &pal);
+    let (back, ..) = decode_section_with(SectionPos::new(2, -1, 3), &rec, &pal).expect("decodes");
+
+    assert_eq!(back.block_raw(1, 2, 3), HIGH_A);
+    assert_eq!(back.block_raw(4, 5, 6), HIGH_B);
+    assert_eq!(back.block_raw(7, 8, 9), Block::Stone.id());
+    let state = back
+        .cell_states()
+        .get(&(crate::chunk::section_idx(1, 2, 3) as u16))
+        .copied()
+        .expect("cell state persisted");
+    assert_eq!(
+        (state.id_at(1), state.id_at(3)),
+        (HIGH_A, HIGH_B),
+        "id-masked state bytes carry whole two-byte block ids"
+    );
+    assert_eq!(state.byte(0), 0b0111, "non-id state bytes are untouched");
+}

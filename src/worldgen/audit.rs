@@ -23,7 +23,7 @@ use crate::worldgen::generate_chunk;
 
 /// Highest non-air block in a column + its Y (mirrors the previewer's column
 /// scan). Returns `(0, 0)` for an all-air column.
-fn top_block(c: &Chunk, x: usize, z: usize) -> (u8, i32) {
+fn top_block(c: &Chunk, x: usize, z: usize) -> (u16, i32) {
     for y in (0..CHUNK_SY).rev() {
         let b = c.block_raw(x, y, z);
         if b != 0 {
@@ -37,7 +37,7 @@ fn top_block(c: &Chunk, x: usize, z: usize) -> (u8, i32) {
 /// and built blocks are skipped so the roughness audit reads the natural ground
 /// surface rather than being skewed by huge tree canopies (e.g. redwoods).
 /// Returns `(0, 0)` for an all-terrain-air column.
-fn terrain_top_block(c: &Chunk, x: usize, z: usize) -> (u8, i32) {
+fn terrain_top_block(c: &Chunk, x: usize, z: usize) -> (u16, i32) {
     for y in (0..CHUNK_SY).rev() {
         let b = c.block_raw(x, y, z);
         if is_terrain(b) {
@@ -51,7 +51,7 @@ fn terrain_top_block(c: &Chunk, x: usize, z: usize) -> (u8, i32) {
 /// logs/leaves and built blocks)? The single terrain-solid predicate used by
 /// every audit.
 #[inline]
-fn is_terrain(b: u8) -> bool {
+fn is_terrain(b: u16) -> bool {
     Block::from_id(b).is_terrain_solid()
 }
 
@@ -182,7 +182,7 @@ pub fn audit(seed: u32) -> DebrisAudit {
                         .generate_section(SectionPos::new(cx as i32 - r, cy, cz as i32 - r), &col)
                 })
                 .collect();
-            let block_at = |x: usize, wy: i32, z: usize| -> u8 {
+            let block_at = |x: usize, wy: i32, z: usize| -> u16 {
                 if wy < 0 {
                     let si = ((wy - WORLD_MIN_Y) / SECTION_SIZE as i32) as usize;
                     deep[si].block_raw(x, wy.rem_euclid(SECTION_SIZE as i32) as usize, z)

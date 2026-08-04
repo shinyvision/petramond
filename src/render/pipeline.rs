@@ -139,6 +139,11 @@ pub(super) struct PipelineResources {
     /// sim's day/night sky scale at draw time, so placed models darken at
     /// night like terrain (their meshes don't rebake when the sun sets).
     pub world_model_pipe: wgpu::RenderPipeline,
+    /// The alpha-BLEND twin of `world_model_pipe` for the chunk's
+    /// semi-transparent bbmodel faces (`fs_world_model_blend`): same vertex
+    /// layout and depth test+write, drawn in the model-blend pass after the
+    /// translucent-block pass.
+    pub world_model_blend_pipe: wgpu::RenderPipeline,
     /// Break-overlay pipeline: the cracked-block destroy quad. Reuses the block
     /// `uniform_bind` (view_proj + uv_rects) + `atlas_bind`, alpha-blended, depth
     /// LessEqual / no-write over geometry coincident with the block faces.
@@ -396,7 +401,9 @@ pub(super) fn create_pipeline_resources(
         &item3d_vbuf_layout,
     );
     let world_model_pipe =
-        create_world_model_pipeline(device, format, sample_count, &shared.layout, &mob_shader);
+        create_world_model_pipeline(device, format, sample_count, &shared.layout, &mob_shader, false);
+    let world_model_blend_pipe =
+        create_world_model_pipeline(device, format, sample_count, &shared.layout, &mob_shader, true);
     let (break_pipe, break_vbuf, break_ibuf) =
         create_break_overlay_pipeline(device, format, sample_count, &shared.layout, &vbuf_layout);
     let contact_pipe = create_contact_pipeline(device, format, sample_count, &shared.uniform_bgl);
@@ -444,6 +451,7 @@ pub(super) fn create_pipeline_resources(
         item3d_vbuf,
         mob_pipe,
         world_model_pipe,
+        world_model_blend_pipe,
         break_pipe,
         contact_pipe,
         break_vbuf,

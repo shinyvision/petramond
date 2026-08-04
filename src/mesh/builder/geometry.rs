@@ -32,7 +32,7 @@ use super::{LeafMeshMode, MeshOptions};
 pub(super) fn section_geometry(
     section: &Section,
     pos: SectionPos,
-    neighbour_block: impl Fn(i32, i32, i32) -> u8,
+    neighbour_block: impl Fn(i32, i32, i32) -> u16,
     neighbour_cell_state: impl Fn(i32, i32, i32) -> crate::block::ShapeState,
     neighbour_water: impl Fn(i32, i32, i32) -> u8,
     neighbour_light: impl Fn(i32, i32, i32) -> u8,
@@ -48,6 +48,7 @@ pub(super) fn section_geometry(
     let mut translucent = vec![];
     let mut model: Vec<ModelVertex> = vec![];
     let mut model_idx: Vec<u32> = vec![];
+    let mut model_blend_idx: Vec<u32> = vec![];
     let mut contact: Vec<super::super::vertex::ContactShadowVertex> = vec![];
 
     let (ox, oy, oz) = pos.origin_world();
@@ -57,6 +58,9 @@ pub(super) fn section_geometry(
     // a multiply into the vertex tint lane. Sparse — empty on almost every
     // section, so the fast path is one `is_empty` test.
     let cell_tints = section.cell_tint_map();
+    // Per-cell model part masks (same lane, same sparsity): which of a model
+    // row's OPTIONAL parts this placed instance shows.
+    let cell_parts = section.cell_parts_map();
     // One cell's tint for one of its parts. A single-part cell (every cube,
     // stair, chair — anything but a stacked slab) carries only part 0, so the
     // scan ends on the first entry.
@@ -283,7 +287,7 @@ pub(super) fn section_geometry(
                 let id = section.block_raw(lx, ly, lz);
                 // ONE dense byte answers every dispatch question below (see
                 // `cell_class`). Air, chests and doors emit nothing here.
-                let class = classes[id as usize];
+                let class = super::cell_class::class_of(classes, id);
                 if class & SKIP != 0 {
                     continue;
                 }
@@ -475,9 +479,19 @@ pub(super) fn section_geometry(
                     let l = neighbour_light(wx, wy, wz) as u32;
                     let bl = neighbour_blocklight(wx, wy, wz).channels().map(u32::from);
                     let (sky6, blight) = fold_light(l, bl, SKY_FULL as u32);
+                    let cell = section_idx(lx, ly, lz);
+                    let parts = cell_parts.get(&(cell as u16)).copied().unwrap_or(0);
+                    let model_tint = match part_tint(cell, 0) {
+                        Some(m) => {
+                            let ch = |v: f32| ((v * 255.0).round() as u32).min(255);
+                            (ch(m[0]) << 16) | (ch(m[1]) << 8) | ch(m[2])
+                        }
+                        None => super::super::vertex::MODEL_TINT_NONE,
+                    };
                     emit_model_block(
                         &mut model,
                         &mut model_idx,
+                        &mut model_blend_idx,
                         kind,
                         offset,
                         facing,
@@ -486,6 +500,16 @@ pub(super) fn section_geometry(
                         wz,
                         sky6,
                         blight,
+                        parts,
+                        model_tint,
+                        // Cullface gate: the WORLD neighbour in the segment's
+                        // direction suppresses it when opaque (reads stay inside
+                        // the ±1 mesh pad; an unloaded neighbour reads as air
+                        // and keeps the face).
+                        |f: Face| {
+                            let (dx, dy, dz) = f.dir();
+                            block_at(wx + dx, wy + dy, wz + dz).is_opaque()
+                        },
                     );
                     // Contact shadow: only a BOTTOM footprint cell stamps, each
                     // single-cell piece (its own floor + its owned spill onto the
@@ -944,6 +968,7 @@ pub(super) fn section_geometry(
         translucent,
         model,
         model_idx,
+        model_blend_idx,
         contact,
         mesh_dirty: true,
         ..ChunkMesh::empty()
@@ -966,7 +991,7 @@ struct MeshNeighborhood<'a, B, S> {
 
 impl<B, S> crate::block::ShapeNeighborhood for MeshNeighborhood<'_, B, S>
 where
-    B: Fn(i32, i32, i32) -> u8,
+    B: Fn(i32, i32, i32) -> u16,
     S: Fn(i32, i32, i32) -> crate::block::ShapeState,
 {
     fn block(&self, pos: IVec3) -> Block {

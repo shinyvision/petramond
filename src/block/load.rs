@@ -369,25 +369,30 @@ pub(super) struct Registry {
     /// Session-local shape-kind table (see [`shape_kind`]); every
     /// `BlockDef::shape_kind` indexes it.
     pub shape_kinds: &'static [ShapeKindDef],
-    pub flags: [BlockFlags; 256],
-    pub emission: [u8; 256],
+    /// Every dense per-id table below is sized to `defs.len()`, NOT to the id
+    /// ceiling: block ids are `u16` now, so a fixed-size array would be 64 Ki
+    /// entries of mostly nothing and would evict the hot rows it exists to
+    /// keep. `Block::from_id` clamps out-of-range ids to air, and every id
+    /// that reaches a section has already crossed a validating boundary
+    /// (palette, net remap, mod write guard), so indexing is direct.
+    pub flags: Box<[BlockFlags]>,
+    pub emission: Box<[u8]>,
     /// Dense per-id PER-CHANNEL emission (`emission` scaled by the row's
     /// `light_color`), same rationale as [`emission`](Self::emission): the
     /// light flood's emitter gather reads it per cell over whole sections and
-    /// must never touch the big `BlockDef` table to do it. 256 entries because
-    /// a block id IS a `u8` everywhere it is stored.
-    pub emission_rgb: [[u8; 3]; 256],
+    /// must never touch the big `BlockDef` table to do it.
+    pub emission_rgb: Box<[[u8; 3]]>,
     /// Dense per-id copy of each block's [`ShapeFamily`] — the hot classifier
     /// the mesher/nav read per cell, one small-array read instead of the
     /// `def()`→`shape_kind`→table double indirection (same rationale as
     /// [`flags`](Self::flags)).
-    pub shape_family: [ShapeFamily; 256],
+    pub shape_family: Box<[ShapeFamily]>,
     /// Dense per-id copy of [`ShapeKindDef::refines`] — the refine cascade's
     /// and the load sweep's per-cell gate. The sweep walks whole sections' id
     /// buffers looking for refining cells, so this MUST NOT cost the
     /// `def()`→`shape_kind`→table chain per byte (same rationale as
     /// [`shape_family`](Self::shape_family)).
-    pub shape_refines: [bool; 256],
+    pub shape_refines: Box<[bool]>,
     /// Dense per-id TAG BITSET (bit `tag.0`). `Block::has_tag` is asked
     /// several times per cell by the mesher (`is_log`, `is_leaves`,
     /// `merges_with_self`, `is_snow_cover`) and once per neighbour by the
@@ -395,7 +400,7 @@ pub(super) struct Registry {
     /// over the row's heap tag slice behind a big-table `def()` load — is a
     /// pointer chase and a loop. Tag ids at or past 128 (only reachable with
     /// an implausible number of mod tags) fall back to that scan.
-    pub tag_bits: [u128; 256],
+    pub tag_bits: Box<[u128]>,
 }
 
 /// Highest tag id the dense [`Registry::tag_bits`] set can hold.
@@ -455,12 +460,13 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
     validate_stage_chains(defs)?;
     validate_facing_rows(defs)?;
     validate_roots_on(defs)?;
-    let mut flags = [BlockFlags::NONE; 256];
-    let mut emission = [0u8; 256];
-    let mut emission_rgb = [[0u8; 3]; 256];
-    let mut shape_family = [ShapeFamily::Cube; 256];
-    let mut shape_refines = [false; 256];
-    let mut tag_bits = [0u128; 256];
+    let n = defs.len();
+    let mut flags = vec![BlockFlags::NONE; n].into_boxed_slice();
+    let mut emission = vec![0u8; n].into_boxed_slice();
+    let mut emission_rgb = vec![[0u8; 3]; n].into_boxed_slice();
+    let mut shape_family = vec![ShapeFamily::Cube; n].into_boxed_slice();
+    let mut shape_refines = vec![false; n].into_boxed_slice();
+    let mut tag_bits = vec![0u128; n].into_boxed_slice();
     for d in defs {
         for t in d.tags {
             if t.id() <= TAG_BITS_MAX {
@@ -1243,7 +1249,7 @@ mod tests {
             "one fresh id past the engine set"
         );
         let def = &reg.defs[engine];
-        assert_eq!(def.block, Block(engine as u8));
+        assert_eq!(def.block, Block(engine as u16));
         // The row's properties resolve like any engine row's.
         assert!(def.flags.is_solid() && def.flags.is_opaque());
         assert_eq!(def.behavior.key(), "inert");

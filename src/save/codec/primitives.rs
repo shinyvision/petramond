@@ -111,7 +111,7 @@ pub(crate) fn write_u32(w: &mut impl Write, v: u32) -> io::Result<()> {
 pub fn put_item_slot(buf: &mut Vec<u8>, slot: Option<ItemStack>) {
     match slot {
         Some(s) if !s.is_empty() => {
-            put_u8(buf, super::palette::active().item_to_disk(s.item.id()));
+            put_u16(buf, super::palette::active().item_to_disk(s.item.id()));
             put_u8(buf, s.count);
             match crate::item::variant::blob(s.variant) {
                 Some(blob) => {
@@ -122,7 +122,7 @@ pub fn put_item_slot(buf: &mut Vec<u8>, slot: Option<ItemStack>) {
             }
         }
         _ => {
-            put_u8(buf, 0);
+            put_u16(buf, 0);
             put_u8(buf, 0);
             put_u16(buf, 0);
         }
@@ -134,7 +134,7 @@ pub fn put_item_slot(buf: &mut Vec<u8>, slot: Option<ItemStack>) {
 /// blob (a save touched by a newer/modded build) degrades to a plain stack
 /// with a warning, mirroring the palette's unknown-name policy.
 pub fn get_item_slot(r: &mut Reader) -> Option<Option<ItemStack>> {
-    let id = r.u8()?;
+    let id = r.u16()?;
     let count = r.u8()?;
     let blob_len = r.u16()? as usize;
     let blob = r.bytes(blob_len)?;

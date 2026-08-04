@@ -365,8 +365,12 @@ impl ServerGame {
         }
         // Forget the broken block's other entity records (machine state,
         // facing, torch orientation) in one generic sweep — no per-block
-        // ladder to extend for the next facing-bearing block.
-        self.world.forget_block_entity_records(event.pos);
+        // ladder to extend for the next facing-bearing block. Keyed at the
+        // ANCHOR resolved above, for the same reason the container is: by now
+        // the footprint is air, so asking for the anchor again would answer
+        // with the clicked cell and leave a multi-cell machine's records —
+        // including its drawing — hanging in the world.
+        self.world.forget_block_entity_records(container_pos);
         // ANY broken container block — chest, furnace, or a mod's — scatters
         // its whole contents, regardless of tool (the block ITEM's own drop
         // still gates on harvest via spawn_drops below).

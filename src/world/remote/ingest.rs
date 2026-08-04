@@ -105,6 +105,8 @@ impl World {
             return None;
         }
         let s = &payload.states;
+        // Before the section install, because that path takes `payload`.
+        let draws: Vec<crate::net::protocol::BlockDrawEntry> = s.draws.clone();
         let cell_kv: HashMap<u16, BTreeMap<String, Vec<u8>>> = s
             .cell_kv
             .iter()
@@ -117,7 +119,7 @@ impl World {
             pos.cx,
             pos.cy,
             pos.cz,
-            payload.blocks.0,
+            crate::section::BlockCube::from_ids(&payload.blocks.0),
             payload.water.map(|w| w.0),
             // No furnace machine state on a replica: burn/cook counters are sim
             // state (progress reaches clients through menu sync), and the lit
@@ -154,6 +156,23 @@ impl World {
         // height (a same-height block swap) — surface consumers gate on
         // the column revision, so it must move with every section install.
         self.bump_column_payload_revision(pos.chunk_pos());
+        // Retained mod drawings arrive WITH the section, so a machine placed
+        // before this client joined is drawn on the frame it streams in.
+        //
+        // The payload is this section's WHOLE draw state, like its cell states
+        // and its KV, so it REPLACES rather than merges: a re-install (a
+        // corrective resend, a re-stream) would otherwise leave a set the
+        // server has since cleared drawing on the replica forever.
+        self.forget_block_draws_in_section(pos);
+        for (cell, prims) in draws {
+            let (lx, ly, lz) = crate::chunk::section_local(cell as usize);
+            let at = crate::mathh::IVec3::new(
+                pos.cx * 16 + lx as i32,
+                pos.cy * 16 + ly as i32,
+                pos.cz * 16 + lz as i32,
+            );
+            self.apply_remote_block_draw(at, prims);
+        }
         // The post-ingest seam, minus gen/save bookkeeping (none exists here).
         self.refresh_block_entity_index(pos);
         self.refresh_particle_emitter_index(pos);
@@ -306,6 +325,10 @@ impl World {
         }
         self.refresh_block_entity_index(pos);
         self.refresh_particle_emitter_index(pos);
+        // The raw write replaced the cell's state, so a set that survives this
+        // delta (a corrective resend of an unchanged cell; the batch's clearing
+        // draw delta has not been applied yet) re-reads its cached placement.
+        self.refresh_block_draw_placement(delta.pos);
         // Heightmap keeps replica physics/sky queries truthful; the light it
         // would invalidate on a streaming world is server-owned here.
         let _ = self.update_column_heights_after_set(

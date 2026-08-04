@@ -22,6 +22,20 @@ pub(super) const FLAT_FACE_BIAS: f32 = 1.0 / 64.0;
 /// considered the surface a flat detail was authored onto.
 const FLAT_SUPPORT_MAX_GAP: f32 = 0.125;
 
+/// Whether the cube is an authored zero-thickness plane (flat on exactly one
+/// axis, so [`render_face_bias`] keeps exactly one of its faces). The kept face
+/// is the only model geometry that must render DOUBLE-sided — the model
+/// pipelines cull back faces, so the template bake duplicates it reversed.
+pub(crate) fn cube_is_flat_plane(cube: &ModelCube) -> bool {
+    let extent = (cube.to - cube.from).abs();
+    let flat = [
+        extent.x <= FLAT_FACE_EPS,
+        extent.y <= FLAT_FACE_EPS,
+        extent.z <= FLAT_FACE_EPS,
+    ];
+    flat.into_iter().filter(|&v| v).count() == 1
+}
+
 /// Whether `face` should be emitted for `cube`, plus a local-space positional bias to
 /// apply to each corner before the cube's static rotation. Non-flat cubes return a zero
 /// bias. A cube flat on exactly one axis keeps only one of the collapsed opposite faces,

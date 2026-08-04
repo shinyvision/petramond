@@ -233,7 +233,6 @@ impl Player {
         loop {
             let pos = IVec3::new(ix, iy, iz);
             let block = block_at(ix, iy, iz);
-            let t_exit = next_boundary_t(t_max);
             // The "solid body" selection branch: genuinely solid blocks plus the
             // shapes selectable by geometry the `solid` flag doesn't imply —
             // every shape needing a precise ray test (a box-set family, a
@@ -258,7 +257,7 @@ impl Player {
                 }
                 if let Some(shape) = shape_hit(eye, dir, pos, block) {
                     let t = shape.t;
-                    if t + EPS >= t_enter && t <= t_exit + EPS && t <= REACH {
+                    if t <= REACH && hit_in_cell(eye, dir, t, pos) {
                         return Some((hit(pos, shape.normal.unwrap_or(entry_normal), block), t));
                     }
                 }
@@ -270,7 +269,7 @@ impl Player {
                 // blocks behind/below it.
                 if let Some(shape) = ray_vs_aabb_hit(eye, dir, mn, mx) {
                     let t = shape.t;
-                    if t + EPS >= t_enter && t <= t_exit + EPS && t <= REACH {
+                    if t <= REACH && hit_in_cell(eye, dir, t, pos) {
                         return Some((hit(pos, shape.normal.unwrap_or(entry_normal), block), t));
                     }
                 }
@@ -533,11 +532,6 @@ fn axis_normal(axis: usize, sign: i32) -> IVec3 {
 }
 
 #[inline]
-fn next_boundary_t(t_max: Vec3) -> f32 {
-    t_max.x.min(t_max.y).min(t_max.z)
-}
-
-#[inline]
 fn sign(v: f32) -> i32 {
     if v > 0.0 {
         1
@@ -570,4 +564,26 @@ fn boundary_t(p: f32, d: f32) -> f32 {
     } else {
         (p - cell) / -d
     }
+}
+
+/// Whether a precise pick's hit point belongs to cell `pos`: inside the cell's
+/// box, or a seam's width outside it. Comparing the pick's `t` against the
+/// DDA's entry/exit times instead rejects a face lying EXACTLY on a cell seam:
+/// the boundary times accumulate float error cell by cell, so the face lands
+/// in the crack between one cell's exit and the next cell's entry and both
+/// cells reject it — the ray sails straight through solid geometry (the
+/// forging furnace's hood face sits exactly on its footprint's z-seam). The
+/// hit point comes from the pick's own `t`, and an inflated box accepts a seam
+/// face in the first tested cell that touches it — which is never a phantom
+/// hit, only ever the face's own cell or its seam neighbour.
+#[inline]
+fn hit_in_cell(eye: Vec3, dir: Vec3, t: f32, pos: IVec3) -> bool {
+    const SEAM: f32 = 1e-3;
+    let p = eye + dir * t;
+    for (v, c) in [(p.x, pos.x), (p.y, pos.y), (p.z, pos.z)] {
+        if v < c as f32 - SEAM || v > c as f32 + 1.0 + SEAM {
+            return false;
+        }
+    }
+    true
 }

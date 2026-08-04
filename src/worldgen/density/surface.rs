@@ -264,77 +264,78 @@ impl SurfaceDensitySystem {
         // Lazy: only the waterline section's frozen-candidate columns touch climate.
         let mut cells: Option<ClimateCellCache<'_>> = None;
         let holds_waterline = oy <= SEA_LEVEL && SEA_LEVEL <= section_top;
-        let blocks = section.blocks_slice_mut();
-        for z in 0..SECTION_SIZE {
-            for x in 0..SECTION_SIZE {
-                let i = z * SECTION_SIZE + x;
-                let s = surf[i];
-                let biome = Biome::from_id(biomes[i]);
-                let rule = spec(biome).surface;
-                let wx = ox + x as i32;
-                let wz = oz + z as i32;
-                let waterline =
-                    if holds_waterline && s < SEA_LEVEL && SEA_LEVEL - s <= SEA_ICE_MAX_DEPTH {
-                        let cells = cells.get_or_insert_with(|| self.climate_cells());
-                        self.waterline_block(cells, wx, wz, s)
-                    } else {
-                        Block::Water
-                    };
+        section.edit_ids_bulk(|blocks| {
+            for z in 0..SECTION_SIZE {
+                for x in 0..SECTION_SIZE {
+                    let i = z * SECTION_SIZE + x;
+                    let s = surf[i];
+                    let biome = Biome::from_id(biomes[i]);
+                    let rule = spec(biome).surface;
+                    let wx = ox + x as i32;
+                    let wz = oz + z as i32;
+                    let waterline =
+                        if holds_waterline && s < SEA_LEVEL && SEA_LEVEL - s <= SEA_ICE_MAX_DEPTH {
+                            let cells = cells.get_or_insert_with(|| self.climate_cells());
+                            self.waterline_block(cells, wx, wz, s)
+                        } else {
+                            Block::Water
+                        };
 
-                // Deep fast path: the entire section column is solid and below the
-                // deepest depth-gated skin band, so every voxel resolves to the SAME
-                // (depth-independent) block — compute it once and fill the column.
-                if section_top <= s && (s - section_top) > MAX_SKIN_BAND_DEPTH {
-                    let deep = self
-                        .surface
-                        .skin_block(
-                            &SurfaceCtx {
+                    // Deep fast path: the entire section column is solid and below the
+                    // deepest depth-gated skin band, so every voxel resolves to the SAME
+                    // (depth-independent) block — compute it once and fill the column.
+                    if section_top <= s && (s - section_top) > MAX_SKIN_BAND_DEPTH {
+                        let deep = self
+                            .surface
+                            .skin_block(
+                                &SurfaceCtx {
+                                    seed,
+                                    wx,
+                                    wz,
+                                    y: oy,
+                                    surf_y: s,
+                                    depth_from_top: (s - oy) as u32,
+                                },
+                                rule,
+                            )
+                            .id();
+                        for ly in 0..SECTION_SIZE {
+                            blocks[section_idx(x, ly, z)] = deep;
+                        }
+                        continue;
+                    }
+
+                    for ly in 0..SECTION_SIZE {
+                        let wy = oy + ly as i32;
+                        let id = if wy <= s {
+                            let ctx = SurfaceCtx {
                                 seed,
                                 wx,
                                 wz,
-                                y: oy,
+                                y: wy,
                                 surf_y: s,
-                                depth_from_top: (s - oy) as u32,
-                            },
-                            rule,
-                        )
-                        .id();
-                    for ly in 0..SECTION_SIZE {
-                        blocks[section_idx(x, ly, z)] = deep;
-                    }
-                    continue;
-                }
-
-                for ly in 0..SECTION_SIZE {
-                    let wy = oy + ly as i32;
-                    let id = if wy <= s {
-                        let ctx = SurfaceCtx {
-                            seed,
-                            wx,
-                            wz,
-                            y: wy,
-                            surf_y: s,
-                            depth_from_top: (s - wy) as u32,
+                                depth_from_top: (s - wy) as u32,
+                            };
+                            self.surface.skin_block(&ctx, rule).id()
+                        } else if wy == SEA_LEVEL {
+                            waterline.id()
+                        } else if wy < SEA_LEVEL {
+                            Block::Water.id()
+                        } else {
+                            continue; // air — section starts zeroed.
                         };
-                        self.surface.skin_block(&ctx, rule).id()
-                    } else if wy == SEA_LEVEL {
-                        waterline.id()
-                    } else if wy < SEA_LEVEL {
-                        Block::Water.id()
-                    } else {
-                        continue; // air — section starts zeroed.
-                    };
-                    blocks[section_idx(x, ly, z)] = id;
+                        blocks[section_idx(x, ly, z)] = id;
+                    }
                 }
             }
-        }
+        });
     }
 
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     fn fill_column(
         &self,
-        blocks: &mut [u8],
+        blocks: &mut [u16],
         lattice: &DensityLattice,
         x: usize,
         z: usize,

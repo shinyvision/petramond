@@ -1,6 +1,7 @@
 //! Save-side name↔id palette for blocks, items, and mobs.
 //!
-//! Chunk records, item slots, and mob records store raw `u8` ids. Those ids are
+//! Section records, item slots, and mob records store raw registry ids (two
+//! bytes for blocks and items, one for mobs). Those ids are
 //! only stable while the runtime registries never renumber — which stops being
 //! true the moment mod packs (or a future dynamic registry) can add content.
 //! The palette pins a save's ids to NAMES: `palette.json` in the save dir
@@ -42,13 +43,16 @@ use crate::block::Block;
 use crate::item::ItemType;
 use crate::mob::Mob;
 
-/// Bidirectional id maps for one save. Both directions are dense 256-entry
-/// LUTs, so remapping a section's 4096 block bytes is a table walk.
+/// Bidirectional id maps for one save. Every direction is a dense LUT sized to
+/// cover both the runtime registry and the save's own list, so remapping a
+/// section's 4096 cells is a table walk. Sized, not fixed at the id ceiling:
+/// blocks and items are `u16` now and a 64 Ki-entry pair of tables per
+/// direction would be pure cache pressure.
 pub struct Palette {
-    block_to_disk: [u8; 256],
-    block_from_disk: [u8; 256],
-    item_to_disk: [u8; 256],
-    item_from_disk: [u8; 256],
+    block_to_disk: Box<[u16]>,
+    block_from_disk: Box<[u16]>,
+    item_to_disk: Box<[u16]>,
+    item_from_disk: Box<[u16]>,
     /// `None` = a runtime species this palette has no disk pin for (a
     /// per-world DISABLED mod's species): such a mob cannot be persisted —
     /// there is no air-mob sentinel to write — so the encoder skips it.
@@ -57,44 +61,55 @@ pub struct Palette {
     mob_from_disk: [Option<u8>; 256],
 }
 
+/// An out-of-range id decodes/encodes to air (0) rather than panicking: a
+/// record from a wider build, or a runtime id this save never pinned, is
+/// exactly the "unknown name" case the module contract already answers with
+/// air.
+#[inline]
+fn lut(table: &[u16], id: u16) -> u16 {
+    table.get(id as usize).copied().unwrap_or(0)
+}
+
 impl Palette {
-    fn identity() -> Palette {
-        let mut id = [0u8; 256];
-        for (i, v) in id.iter_mut().enumerate() {
-            *v = i as u8;
-        }
+    /// Identity over the WHOLE id space, not just the loaded registry: this is
+    /// the palette a record round-trips through when no world is open, and a
+    /// codec test must be able to prove the record carries an id the shipped
+    /// registry happens not to have reached yet.
+    pub(crate) fn identity() -> Palette {
+        let ids = |n: usize| -> Box<[u16]> { (0..n as u16).collect::<Vec<_>>().into_boxed_slice() };
+        let n = crate::registry::WIDE_ID_CAP;
         let mut mob_identity = [None; 256];
         for (i, v) in mob_identity.iter_mut().enumerate() {
             *v = Some(i as u8);
         }
         Palette {
-            block_to_disk: id,
-            block_from_disk: id,
-            item_to_disk: id,
-            item_from_disk: id,
+            block_to_disk: ids(n),
+            block_from_disk: ids(n),
+            item_to_disk: ids(n),
+            item_from_disk: ids(n),
             mob_to_disk: mob_identity,
             mob_from_disk: mob_identity,
         }
     }
 
     #[inline]
-    pub fn block_to_disk(&self, id: u8) -> u8 {
-        self.block_to_disk[id as usize]
+    pub fn block_to_disk(&self, id: u16) -> u16 {
+        lut(&self.block_to_disk, id)
     }
 
     #[inline]
-    pub fn block_from_disk(&self, id: u8) -> u8 {
-        self.block_from_disk[id as usize]
+    pub fn block_from_disk(&self, id: u16) -> u16 {
+        lut(&self.block_from_disk, id)
     }
 
     #[inline]
-    pub fn item_to_disk(&self, id: u8) -> u8 {
-        self.item_to_disk[id as usize]
+    pub fn item_to_disk(&self, id: u16) -> u16 {
+        lut(&self.item_to_disk, id)
     }
 
     #[inline]
-    pub fn item_from_disk(&self, id: u8) -> u8 {
-        self.item_from_disk[id as usize]
+    pub fn item_from_disk(&self, id: u16) -> u16 {
+        lut(&self.item_from_disk, id)
     }
 
     /// The disk id for a runtime mob id, or `None` when this palette carries
@@ -224,9 +239,10 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
             path.display()
         );
     }
-    if file.blocks.len() > 256 || file.items.len() > 256 || file.mobs.len() > 256 {
+    let cap = crate::registry::WIDE_ID_CAP;
+    if file.blocks.len() > cap || file.items.len() > cap || file.mobs.len() > 256 {
         panic!(
-            "save palette {} exceeds 256 entries; the record format stores ids in one byte",
+            "save palette {} exceeds the id ceiling ({cap} blocks/items, 256 mobs)",
             path.display()
         );
     }
@@ -243,11 +259,16 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
     // vanishes for this session, and nothing at runtime can encode to their
     // disk ids. The to-disk side is total after the append above, except for
     // disabled species (mob_to_disk = None → the encoder skips the mob).
+    // Each direction must cover the wider of "every runtime id" and "every
+    // disk id", so neither side can index past its table.
+    let zeros = |n: usize| -> Box<[u16]> { vec![0u16; n].into_boxed_slice() };
+    let block_len = Block::all().len().max(file.blocks.len());
+    let item_len = ItemType::all().len().max(file.items.len());
     let mut p = Palette {
-        block_to_disk: [0; 256],
-        block_from_disk: [0; 256],
-        item_to_disk: [0; 256],
-        item_from_disk: [0; 256],
+        block_to_disk: zeros(block_len),
+        block_from_disk: zeros(block_len),
+        item_to_disk: zeros(item_len),
+        item_from_disk: zeros(item_len),
         mob_to_disk: [None; 256],
         mob_from_disk: [None; 256],
     };
@@ -259,7 +280,7 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
             ),
             Some(b) => {
                 p.block_from_disk[disk] = b.id();
-                p.block_to_disk[b.id() as usize] = disk as u8;
+                p.block_to_disk[b.id() as usize] = disk as u16;
             }
             None => log::warn!(
                 "save palette: unknown block '{name}' (disk id {disk}) decodes as air — \
@@ -275,7 +296,7 @@ pub fn load_or_create(dir: &Path, disabled: &BTreeSet<String>) -> std::io::Resul
             ),
             Some(i) => {
                 p.item_from_disk[disk] = i.id();
-                p.item_to_disk[i.id() as usize] = disk as u8;
+                p.item_to_disk[i.id() as usize] = disk as u16;
             }
             None => {
                 log::warn!("save palette: unknown item '{name}' (disk id {disk}) decodes as air")

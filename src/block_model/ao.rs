@@ -271,6 +271,7 @@ mod tests {
             origin: Vec3::ZERO,
             rotation: Vec3::ZERO,
             faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+            cull: [None; 6],
         }
     }
 

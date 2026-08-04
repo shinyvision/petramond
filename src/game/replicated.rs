@@ -712,6 +712,12 @@ impl Game {
         for delta in update.block_deltas {
             self.replica.apply_remote_delta(delta);
         }
+        // AFTER the block deltas for the same reason as the KV below: a block
+        // write drops the cell's draw set on both sides, so a same-batch
+        // write-block-then-draw sequence has to land in that order.
+        for d in update.block_draws {
+            self.replica.apply_remote_block_draw(d.pos, d.prims);
+        }
         // AFTER the block deltas: a block write wipes the cell's KV on both
         // sides, so a same-batch write-block-then-KV sequence lands in order.
         for kv in update.cell_kv_deltas {

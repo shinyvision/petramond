@@ -2,7 +2,7 @@ use crate::block::CellView;
 use crate::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME};
 
 use super::super::face::{Face, FACES};
-use super::cell_class::{FAST_CUBE, PAD_OPAQUE, PAD_SEALS, PAD_SLAB, SKIP};
+use super::cell_class::{class_of, FAST_CUBE, PAD_OPAQUE, PAD_SEALS, PAD_SLAB, SKIP};
 use super::cube_face::face_index;
 use super::pad::{mesh_pad_idx, SectionMeshPad, SECTION_PAD};
 
@@ -137,14 +137,14 @@ pub(super) fn build_exposed_masks(
             for lx in 0..SECTION_SIZE {
                 let i = mesh_pad_idx(lx + 1, ly + 1, lz + 1);
                 let id = pad.blocks[i];
-                if classes[id as usize] & SKIP == 0 {
+                if class_of(classes, id) & SKIP == 0 {
                     work |= 1u32 << lx;
                 }
-                if classes[id as usize] & FAST_CUBE == 0 {
+                if class_of(classes, id) & FAST_CUBE == 0 {
                     // Same-material full slab stacks take the cube fast path too;
                     // this MUST match the slab-branch fall-through in
                     // `section_geometry`.
-                    if pad_class[id as usize] & PAD_SLAB == 0
+                    if class_of(pad_class, id) & PAD_SLAB == 0
                         || !crate::slab::is_uniform_full_stack(
                             crate::block_state::SlabState::from_cell(pad.cell_states[i]),
                         )

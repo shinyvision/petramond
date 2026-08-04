@@ -255,6 +255,40 @@ impl Inventory {
         self.bump_revision();
         Self::apply_right_click(&mut self.cursor, slot);
     }
+    /// One container cell's click, spec and all — the SINGLE decision the
+    /// server's menu tick and the client's optimistic mirror both run.
+    ///
+    /// Two copies of this rule is a class of bug, not one bug: whatever the
+    /// client does differently shows up as a click that lands and then snaps
+    /// back a tick later, which reads as lag rather than as a refusal.
+    pub(crate) fn click_container_cell(
+        &mut self,
+        spec: Option<&crate::container::SlotSpec>,
+        cell: &mut Option<ItemStack>,
+        secondary: bool,
+    ) {
+        // A slot that declares what it ACCEPTS refuses everything else on a
+        // manual click, not only on shift-routing: a filter that holds for the
+        // convenience gesture and not the deliberate one is not a filter, and
+        // a machine reading a fixed slot index cannot defend itself against
+        // what it finds there. Refusing behaves exactly like a take-only slot —
+        // the click still takes the cell's contents out.
+        let refuses = match spec {
+            None => false,
+            Some(spec) => match self.cursor() {
+                Some(held) => !spec.admits(held.item),
+                None => spec.take_only,
+            },
+        };
+        if refuses {
+            self.click_take_only_external_slot(cell, secondary);
+        } else if secondary {
+            self.right_click_external_slot(cell);
+        } else {
+            self.click_external_slot(cell);
+        }
+    }
+
     /// Click a take-only output. Primary takes the whole output when it fits;
     /// secondary takes half onto an empty cursor, or one onto a compatible
     /// cursor. The held cursor stack is never placed into the output cell.
@@ -463,5 +497,60 @@ impl Inventory {
             active: active.min(HOTBAR_LEN as u8 - 1),
             revision: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod click_filter_tests {
+    use super::*;
+    use crate::container::SlotSpec;
+    use crate::item::{ItemTag, ItemType};
+
+    fn spec(accepts: Vec<crate::container::SlotFilter>, take_only: bool) -> SlotSpec {
+        SlotSpec { accepts, take_only }
+    }
+
+    /// A filtered slot refuses the cursor stack on a plain click, and refusing
+    /// still TAKES: the click is not swallowed, it just does not deposit.
+    ///
+    /// This exact call runs on BOTH sides of prediction — the client mirror in
+    /// `menu_prediction` and the server's menu tick — so a divergence here is
+    /// not a wrong pixel, it is a click that visibly lands and then snaps back
+    /// a tick later, which reads as lag rather than as a refusal.
+    #[test]
+    fn a_filtered_container_cell_refuses_a_place_but_still_gives_up_its_stack() {
+        let fuel_only = spec(
+            vec![crate::container::SlotFilter::Tag(ItemTag::FUEL)],
+            false,
+        );
+        let unfiltered = spec(Vec::new(), false);
+        let coal = ItemType::by_key("petramond:coal").expect("engine item");
+        let stone = ItemType::by_key("petramond:stone").expect("engine item");
+
+        let mut inv = Inventory::new();
+        *inv.cursor_mut() = Some(ItemStack::new(stone, 1));
+        let mut cell = None;
+        inv.click_container_cell(Some(&fuel_only), &mut cell, false);
+        assert!(
+            cell.is_none(),
+            "a non-fuel stack must not enter a fuel slot"
+        );
+        assert!(inv.cursor().is_some(), "and the cursor keeps it");
+
+        *inv.cursor_mut() = Some(ItemStack::new(coal, 1));
+        inv.click_container_cell(Some(&fuel_only), &mut cell, false);
+        assert!(cell.is_some(), "fuel enters a fuel slot");
+
+        // Refusing still takes: a filtered slot is not inert.
+        *inv.cursor_mut() = None;
+        let mut occupied = Some(ItemStack::new(coal, 3));
+        inv.click_container_cell(Some(&fuel_only), &mut occupied, false);
+        assert!(occupied.is_none(), "the click still empties the slot");
+
+        // An unfiltered slot is unchanged by any of this.
+        *inv.cursor_mut() = Some(ItemStack::new(stone, 1));
+        let mut open = None;
+        inv.click_container_cell(Some(&unfiltered), &mut open, false);
+        assert!(open.is_some(), "an unfiltered slot still takes anything");
     }
 }

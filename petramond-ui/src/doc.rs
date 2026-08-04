@@ -121,6 +121,15 @@ pub enum NodeKind {
         image: String,
         #[serde(default, skip_serializing_if = "ImageFit::is_stretch")]
         fit: ImageFit,
+        /// Sprite-sheet grid `[cols, rows]`: the image is a sheet of
+        /// `cols × rows` equal frames, row-major, and only ONE frame draws
+        /// (and sizes the node). `bind.frame` picks the frame; `fps` cycles.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        frames: Option<[u32; 2]>,
+        /// Animation rate in frames per second from `FrameState.now`. Only a
+        /// positive finite value animates; a bound `frame` wins over it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fps: Option<f32>,
         /// Emit local pointer down/move/up events for this image. This is the
         /// renderer-neutral canvas seam used by host-fed maps and other
         /// interactive raster surfaces.
@@ -144,6 +153,20 @@ pub enum NodeKind {
         /// the label) — e.g. `icon.edit` for a pencil button.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         icon: Option<String>,
+        /// A document image drawn as the button's face INSTEAD of the theme
+        /// chrome (an image-backed button: no text/icon/children — validation
+        /// rejects them). Click behavior is unchanged; the enabled/hover/
+        /// pressed affordance is a tint on the image. A bound `image` key
+        /// overrides the name per instance.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        image: Option<String>,
+        /// Sprite-sheet grid `[cols, rows]` for the button image (see
+        /// [`NodeKind::Image`]); the natural size is ONE frame.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        frames: Option<[u32; 2]>,
+        /// Animation rate for the button image (see [`NodeKind::Image`]).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fps: Option<f32>,
     },
     Checkbox,
     Toggle {
@@ -188,7 +211,7 @@ pub enum NodeKind {
     Slot {
         role: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        accepts: Vec<String>,
+        accepts: Vec<Accept>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         take_only: bool,
     },
@@ -200,7 +223,7 @@ pub enum NodeKind {
         cols: u32,
         rows: u32,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        accepts: Vec<String>,
+        accepts: Vec<Accept>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         take_only: bool,
     },
@@ -236,7 +259,14 @@ pub enum NodeKind {
     /// Visibility is ordinary host-bound state: bind `visible` and the tooltip
     /// exists only on the frames the host wants it. Content is ordinary nodes,
     /// so a tooltip carries no knowledge of what it describes.
-    Tooltip,
+    Tooltip {
+        /// Optional widget anchor: the tooltip expands only while a widget
+        /// with this `id` is under the cursor (one frame of lag, the same
+        /// contract as hover-revealed list content). Absent = hover of
+        /// anything (or nothing) shows it whenever `visible` holds.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hover: Option<String>,
+    },
 }
 
 /// One tab of a [`NodeKind::TabBar`].
@@ -264,7 +294,7 @@ impl NodeKind {
                 | NodeKind::Scroll { .. }
                 | NodeKind::List { .. }
                 | NodeKind::Button { .. }
-                | NodeKind::Tooltip
+                | NodeKind::Tooltip { .. }
         )
     }
 
@@ -311,7 +341,7 @@ impl NodeKind {
             NodeKind::Alert { .. } => "alert",
             NodeKind::TabBar { .. } => "tab_bar",
             NodeKind::Hook => "hook",
-            NodeKind::Tooltip => "tooltip",
+            NodeKind::Tooltip { .. } => "tooltip",
         }
     }
 
@@ -584,9 +614,26 @@ pub struct Bindings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected: Option<String>,
     /// Image-name override for `image`/`rotimage` nodes (`Str`) — per-row
-    /// icons in list templates.
+    /// icons in list templates. Also overrides the face of an image-backed
+    /// `button`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    /// Sprite-sheet frame index (numeric; truncates, clamps into the sheet)
+    /// for `image`/image-backed `button` nodes with `frames`. Authoritative
+    /// over `fps` — the host drives the frame directly (a smelting progress
+    /// flame, a charge meter). Presentation-only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<String>,
+    /// Multiply colour for a `gauge`'s FULL face (`I32`, packed `0xRRGGBB`) —
+    /// the one way a document draws something whose colour is content rather
+    /// than theme, a bar that fills with the colour of what it is measuring.
+    /// Absent = the theme's own colours, unmodified.
+    ///
+    /// It reaches the gauge's full face and NOTHING else: on any other node,
+    /// or on a gauge's empty face, it is silently ignored. Widen it by
+    /// threading `inst.tint` through the paint walk, not by binding and hoping.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tint: Option<String>,
 }
 
 impl Bindings {
@@ -687,8 +734,30 @@ impl Document {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SlotSemantics {
     pub role: String,
-    pub accepts: Vec<String>,
+    pub accepts: Vec<Accept>,
     pub take_only: bool,
+}
+
+/// One entry of a slot's `accepts` list: an item GROUP, named either way the
+/// content layer has of naming one.
+///
+/// `"fuel"` names a group by item TAG — a closed vocabulary a row opts into.
+/// `{"data": "forge:metal"}` names one by row-DATA key, which is the SAME
+/// statement a consuming system already makes about the items it understands:
+/// a mod enumerating `forge:metal` to build its whitelist and a slot admitting
+/// `forge:metal` are then one fact, not two kept in step by hand. It also
+/// reaches rows the naming pack does not own — a `patch` row may attach a data
+/// key to anyone's item, and may not attach a tag.
+///
+/// Like the rest of a slot's semantics the document runtime carries both forms
+/// verbatim and gives neither meaning; the host resolves them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Accept {
+    /// An item-tag name (bare engine tag or `mod_id:name`).
+    Tag(String),
+    /// Any item whose row carries this namespaced `data` key.
+    Data { data: String },
 }
 
 impl Node {
@@ -831,6 +900,33 @@ mod tests {
         let doc = Document::from_json(sample_doc()).unwrap();
         assert_eq!(doc.root.flow_dir(), Dir::Column);
         assert_eq!(doc.root.children[1].flow_dir(), Dir::Row);
+    }
+
+    #[test]
+    fn animation_fields_round_trip() {
+        let json = r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "column", "children": [
+                { "type": "image", "image": "flame.png", "frames": [4, 1], "fps": 8.0,
+                  "bind": { "frame": "flame_frame" } },
+                { "type": "button", "id": "go", "image": "go.png", "frames": [2, 2] }
+            ] }
+        }"#;
+        let doc = Document::from_json(json).unwrap();
+        let again = Document::from_json(&doc.to_json_pretty()).unwrap();
+        assert_eq!(
+            doc, again,
+            "frames/fps/bind.frame survive serialize → parse"
+        );
+        // Unset fields stay absent (no schema noise on plain nodes).
+        let plain = Document::from_json(
+            r#"{ "format": 1, "kind": "petramond:x", "class": "screen",
+                 "root": { "type": "image", "image": "a.png" } }"#,
+        )
+        .unwrap();
+        let out = plain.to_json_pretty();
+        assert!(!out.contains("frames"), "{out}");
+        assert!(!out.contains("fps"), "{out}");
     }
 
     #[test]

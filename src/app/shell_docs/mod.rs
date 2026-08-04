@@ -171,6 +171,59 @@ fn with_state(app: &mut App, f: impl FnOnce(&App, &mut UiState)) {
     *app.ui.state_mut() = state;
 }
 
+/// The widget id a GAME-MENU event activates — the one lane that reaches a
+/// mod through [`crate::game::Game::menu_click`].
+///
+/// A toggle rides it beside a button click because a machine's switch IS a
+/// widget the mod acts on, and the mod owns whether it ends up on: the node's
+/// own latch is presentation, the bound value is the truth. BOTH stay
+/// primary-only, like the legacy dispatch — a right-click on a machine's lever
+/// is not a pull, and this lane is the only thing standing between a stray
+/// secondary press and a mod acting on it.
+///
+/// Pulled out of `drive_doc_menu` because everything downstream of this hop is
+/// covered (`game/tests/menu.rs`) and the hop itself needs a live App with a
+/// mod document to reach any other way.
+pub(in crate::app) fn menu_widget_activation(ev: &petramond_ui::UiEvent) -> Option<&str> {
+    match ev {
+        petramond_ui::UiEvent::Click {
+            id,
+            button: petramond_ui::PointerButton::Primary,
+            ..
+        }
+        | petramond_ui::UiEvent::Toggle {
+            id,
+            button: petramond_ui::PointerButton::Primary,
+            ..
+        } => Some(id),
+        _ => None,
+    }
+}
+
+/// A press on a control by the SECONDARY button, which the shell drops before
+/// it reaches a screen's controller.
+///
+/// Buttons and checkboxes are primary-only, the same rule the game-menu lane
+/// applies ([`menu_widget_activation`]): secondary is the cursor-stack gesture
+/// wherever it means anything, and never a press on a control. It is filtered
+/// in one place rather than per screen because "which button pressed me" is
+/// not a question each Back button and each options checkbox should answer
+/// separately — and every screen that forgot to ask flipped under a
+/// right-click.
+fn is_secondary_activation(ev: &petramond_ui::UiEvent) -> bool {
+    use petramond_ui::PointerButton::Secondary;
+    matches!(
+        ev,
+        petramond_ui::UiEvent::Click {
+            button: Secondary,
+            ..
+        } | petramond_ui::UiEvent::Toggle {
+            button: Secondary,
+            ..
+        }
+    )
+}
+
 fn is_shell_activation(ev: &petramond_ui::UiEvent) -> bool {
     matches!(
         ev,
@@ -196,6 +249,9 @@ impl App {
         let dim = (ctl.dim)(self);
         self.ui.frame(kind, screen, now, dim);
         for ev in self.ui.take_events() {
+            if is_secondary_activation(&ev) {
+                continue;
+            }
             if is_shell_activation(&ev) {
                 self.audio.play(Sound::UiClick);
             }
@@ -238,6 +294,10 @@ impl App {
                 }
             }
         }
+        if let Some(game) = self.game.as_ref() {
+            let hover_slot = self.ui.out().hover_slot.clone();
+            crate::app::item_tooltip::populate(game, hover_slot.as_ref(), self.ui.state_mut());
+        }
         self.ui.frame(kind, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
         let modifier_shift = self.modifiers.shift;
         let to_button = |b: petramond_ui::PointerButton| match b {
@@ -255,23 +315,18 @@ impl App {
             if handled_crafting {
                 continue;
             }
-            match ev {
-                // Widget (mod GUI button) clicks: primary only, like the
-                // legacy dispatch.
-                petramond_ui::UiEvent::Click {
-                    id,
-                    button: petramond_ui::PointerButton::Primary,
-                    ..
-                } => {
-                    if let Some(game) = self.game.as_mut() {
-                        game.menu_click(
-                            crate::gui::MenuSlot::Widget(crate::gui::intern_str(&id)),
-                            crate::controls::PointerButton::Primary,
-                            modifier_shift,
-                            false,
-                        );
-                    }
+            if let Some(id) = menu_widget_activation(&ev) {
+                if let Some(game) = self.game.as_mut() {
+                    game.menu_click(
+                        crate::gui::MenuSlot::Widget(crate::gui::intern_str(id)),
+                        crate::controls::PointerButton::Primary,
+                        modifier_shift,
+                        false,
+                    );
                 }
+                continue;
+            }
+            match ev {
                 petramond_ui::UiEvent::SlotClick {
                     role,
                     index,

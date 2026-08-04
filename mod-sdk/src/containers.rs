@@ -19,8 +19,8 @@ host_fn! {
 host_fn! {
     /// Batched [`container_get`]: every listed position's slots in ONE crossing —
     /// the required shape for a machine mod's tick loop (never loop
-    /// `container_get` per placed machine). At most 4096 positions per call
-    /// (the sim batch cap); more disables the mod. Parallel to `positions`;
+    /// `container_get` per placed machine). At most [`crate::SIM_BATCH_MAX`] positions
+    /// per call; more disables the mod. Parallel to `positions`;
     /// `None` = unloaded or no container there yet.
     pub fn container_get_many(positions: Vec<[i32; 3]>) -> Vec<Option<Vec<Option<ItemStackData>>>>
         => ContainerGetMany { positions } => Containers

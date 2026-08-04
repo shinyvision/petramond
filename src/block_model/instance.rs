@@ -12,9 +12,9 @@ use crate::mesh::{ContactShadowVertex, SHADES};
 use super::ao::{bake_contact_field, bake_face_ao, CONTACT_GRID};
 use super::query::face_texel_opaque;
 use super::{
-    all, atlas, cell_of, clip_to_cell, def, oriented_cell_instance, placement_transform_fp,
-    posed_cube_bounds, render_face_bias, union_clip_to_cell, BlockModelKind, CollisionSpec,
-    FitMode, ModelCube, MODELS,
+    all, atlas, cell_of, clip_to_cell, cube_is_flat_plane, def, oriented_cell_instance,
+    placement_transform_fp, posed_cube_bounds, render_face_bias, union_clip_to_cell,
+    BlockModelKind, CollisionSpec, FitMode, ModelCube, MODELS,
 };
 
 // ---------------------------------------------------------------------------------
@@ -60,6 +60,9 @@ pub struct ModelTemplateVertex {
     pub pos: Vec3,
     pub uv: [f32; 2],
     pub shade: f32,
+    /// This vertex belongs to a cube the row listed in `tint_parts`, so the
+    /// cell's `petramond:tint` multiplies it.
+    pub tinted: bool,
 }
 
 /// The fully baked geometry of one occupied cell at one facing: the exact vertices +
@@ -72,6 +75,39 @@ pub struct ModelCellTemplate {
     /// or the flipped `1,2,3, 1,3,0` split when the baked corner AO calls for it —
     /// the same anisotropy fix terrain AO uses).
     pub indices: Vec<u32>,
+    /// The geometry as contiguous runs, each with its emit-time gate (parts-mask
+    /// bit, cullface neighbour test) and stream route (opaque-cutout vs
+    /// alpha-blend). Baking them contiguously is what lets the mesher emit an
+    /// arbitrary parts mask / neighbour configuration as a handful of slice
+    /// copies instead of a per-cube filter — and a row with no optional parts,
+    /// no cullfaces, and no semi-transparent faces bakes byte-identically to
+    /// what it did before segments existed (one ungated opaque segment).
+    pub segments: Vec<TemplateSegment>,
+}
+
+/// One contiguous run of a cell template plus when and where the mesher emits it.
+#[derive(Copy, Clone, Debug)]
+pub struct TemplateSegment {
+    pub run: PartRun,
+    /// Route into the chunk's alpha-BLEND index stream (the face's texture rect
+    /// holds partial-alpha texels) instead of the default opaque-cutout stream.
+    pub blend: bool,
+    /// `Some(i)` = the run draws only when the placed cell's parts mask has bit
+    /// `i` set (the row's `parts[i]`).
+    pub part: Option<u8>,
+    /// `Some(f)` = the run's cullface: the mesher skips it when the world
+    /// neighbour in direction `f` — already rotated into WORLD space by this
+    /// template's facing — is an opaque block.
+    pub cull: Option<Face>,
+}
+
+/// One contiguous run of a cell template's geometry.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct PartRun {
+    pub vert_start: u32,
+    pub vert_len: u32,
+    pub index_start: u32,
+    pub index_len: u32,
 }
 
 /// One single-cell piece of a contact-shadow stamp: non-indexed triangles over
@@ -132,6 +168,12 @@ pub struct ModelInstance {
     /// applied by the held/dropped/icon bakes (`render::item_model`) so every
     /// presentation shades identically.
     pub face_ao: Vec<[[f32; 4]; 6]>,
+    /// Per-cube, per-face draw flag: false when the face's atlas rect is FULLY    /// transparent. Such a face discards every fragment at mip 0, so it is
+    /// dropped from every bake — otherwise the cutout mip chain promotes its
+    /// texels to opaque with the neighbouring artwork's colour and an invisible
+    /// sliver face renders as a bright line at distance. Consulted by the
+    /// held/dropped/icon bakes too, so every presentation drops the same faces.
+    pub face_draw: Vec<[bool; 6]>,
     /// Per-facing, per-cell contact-shadow stamps, indexed exactly like
     /// [`Self::oriented_render`]. Non-bottom cells (and bottom cells whose field
     /// baked empty) hold an empty template.
@@ -248,6 +290,7 @@ impl ModelInstance {
                 to: to_fp(c.to),
                 origin: to_fp(c.origin),
                 rotation: c.rotation,
+                cull: c.cull,
                 faces: c.faces.map(|f| {
                     f.map(|[u0, v0, u1, v1]| {
                         let [au0, av0] = at.remap(kind, [u0, v0]);
@@ -333,6 +376,28 @@ impl ModelInstance {
         let face_ao = bake_face_ao(&cubes, |cube, face, mn, mx, hit| {
             face_texel_opaque(cube, face, mn, mx, hit, at)
         });
+        // Per-face alpha classification of the atlas rect: `face_blend` picks the
+        // stream route (any partial-alpha texel 1..=254 → alpha-blended instead of
+        // opaque-cutout); `face_draw` drops faces whose rect is FULLY transparent —
+        // they discard every fragment at mip 0 anyway, and keeping them lets the
+        // cutout mip chain promote their texels to opaque with the neighbouring
+        // artwork's colour (a 1px panel's invisible side sliver rendering as a
+        // bright line — the forge furnace coals).
+        let mut face_draw: Vec<[bool; 6]> = Vec::with_capacity(cubes.len());
+        let mut face_blend: Vec<[bool; 6]> = Vec::with_capacity(cubes.len());
+        for c in &cubes {
+            let mut draw = [false; 6];
+            let mut blend = [false; 6];
+            for (slot, f) in c.faces.iter().enumerate() {
+                if let Some(uv) = f {
+                    let (visible, b) = at.rect_alpha_class(*uv);
+                    draw[slot] = visible;
+                    blend[slot] = b;
+                }
+            }
+            face_draw.push(draw);
+            face_blend.push(blend);
+        }
         // Contact-shadow fields, authored space: every bottom footprint cell's
         // own floor, PLUS the one-cell dilation ring around the footprint so
         // the stamp can spill onto neighbouring terrain instead of shearing
@@ -409,7 +474,18 @@ impl ModelInstance {
             let base_xform = placement_transform_fp(IVec3::ZERO, footprint, facing);
             cells
                 .iter()
-                .map(|cell| bake_cell_template(base_xform, &cubes, &cell.cubes, &face_ao))
+                .map(|cell| {
+                    bake_cell_template(
+                        base_xform,
+                        &cubes,
+                        &cell.cubes,
+                        &face_ao,
+                        &face_draw,
+                        &face_blend,
+                        d.parts,
+                        d.tint_parts,
+                    )
+                })
                 .collect()
         });
         let oriented_contact = std::array::from_fn(|i| {
@@ -464,54 +540,145 @@ impl ModelInstance {
             oriented_cells,
             oriented_render,
             face_ao,
+            face_draw,
             oriented_contact,
             display_from_unit,
         }
     }
 }
 
-/// Bake one cell's render geometry at a given facing into a [`ModelCellTemplate`]. Mirrors
-/// the order the chunk mesher used to emit in (cube-by-cube in `cube_idx` order, then
-/// `Face::ALL` order), so the streamed geometry is unchanged — only the work moves to
-/// startup. `base_xform` is the facing transform with a ZERO base (see [`ModelInstance::build`]).
+/// Bake one cell's render geometry at a given facing into a [`ModelCellTemplate`]. Cubes
+/// are grouped by the part they belong to (so each part's geometry is contiguous), and
+/// within a group faces are sub-grouped by (blend route, cull gate) — every
+/// [`TemplateSegment`] is one contiguous run the mesher can gate and route with a slice
+/// copy. Within a segment the original `cube_idx` × `Face::ALL` order is preserved, and a
+/// model with no parts/cullfaces/blend faces produces exactly the single always-run it
+/// always did. `base_xform` is the facing transform with a ZERO base (see
+/// [`ModelInstance::build`]).
+#[allow(clippy::too_many_arguments)]
 fn bake_cell_template(
     base_xform: Mat4,
     cubes: &[ModelCube],
     cube_idx: &[u32],
     face_ao: &[[[f32; 4]; 6]],
+    face_draw: &[[bool; 6]],
+    face_blend: &[[bool; 6]],
+    parts: &[&'static str],
+    tint_parts: &[&'static str],
 ) -> ModelCellTemplate {
     let mut verts = Vec::new();
     let mut indices = Vec::new();
-    for &ci in cube_idx {
-        let cube = &cubes[ci as usize];
-        let m = base_xform
-            * Mat4::from_translation(cube.origin)
-            * Mat4::from_quat(euler_quat(cube.rotation))
-            * Mat4::from_translation(-cube.origin);
-        for (slot, face) in Face::ALL.into_iter().enumerate() {
-            let Some(uv) = cube.faces[slot] else { continue };
-            let Some(bias) = render_face_bias(cube, cubes, face) else {
-                continue;
-            };
-            push_template_face(
-                &mut verts,
-                &mut indices,
-                m,
-                face,
-                cube.from,
-                cube.to,
-                bias,
-                uv,
-                SHADES[face.shade_idx() as usize],
-                face_ao[ci as usize][slot],
-            );
+    let mut segments = Vec::new();
+    let part_of =
+        |ci: u32| -> Option<usize> { parts.iter().position(|p| *p == cubes[ci as usize].name) };
+    // An authored cullface direction is model-space; rotate it by the facing into
+    // a WORLD direction (a vector transform, so the footprint shift drops out).
+    // Deliberately NOT rotated by the cube's own static tilt: a cullface names
+    // the voxel neighbour that suppresses the face, and a tilted face's authored
+    // direction is the nearest axis — the same reading Blockbench/Minecraft give it.
+    let world_face = |face: Face| -> Face {
+        let (dx, dy, dz) = face.dir();
+        let w = base_xform.transform_vector3(Vec3::new(dx as f32, dy as f32, dz as f32));
+        Face::ALL
+            .into_iter()
+            .max_by(|&a, &b| {
+                let d = |f: Face| {
+                    let (x, y, z) = f.dir();
+                    w.dot(Vec3::new(x as f32, y as f32, z as f32))
+                };
+                d(a).total_cmp(&d(b))
+            })
+            .expect("Face::ALL is non-empty")
+    };
+    // Cubes are grouped by the part they belong to so each part's geometry is
+    // ONE run per (blend, cull) bucket. Within a group the original `cube_idx`
+    // order is preserved, so a row declaring no parts emits exactly the stream
+    // it always did.
+    for group in std::iter::once(None).chain((0..parts.len()).map(Some)) {
+        // This group's faces in emission order, each with its route + gate.
+        let mut group_faces: Vec<(u32, usize, bool, Option<Face>)> = Vec::new();
+        for &ci in cube_idx.iter().filter(|&&ci| part_of(ci) == group) {
+            let cube = &cubes[ci as usize];
+            for slot in 0..6 {
+                // Fully-transparent faces drop out entirely (see `face_draw`).
+                if cube.faces[slot].is_none() || !face_draw[ci as usize][slot] {
+                    continue;
+                }
+                let cull = cube.cull[slot].map(|d| world_face(Face::ALL[d as usize]));
+                group_faces.push((ci, slot, face_blend[ci as usize][slot], cull));
+            }
+        }
+        // Bucket order: opaque before blend, unculled before culled (`Face::ALL`
+        // order) — fixed so the baked stream is deterministic.
+        for blend in [false, true] {
+            for cull_bucket in 0..7 {
+                let bucket_cull = if cull_bucket == 0 {
+                    None
+                } else {
+                    Some(Face::ALL[cull_bucket - 1])
+                };
+                let (v0, i0) = (verts.len() as u32, indices.len() as u32);
+                for &(ci, slot, ..) in
+                    group_faces.iter().filter(|&&(_, _, b, c)| b == blend && c == bucket_cull)
+                {
+                    let cube = &cubes[ci as usize];
+                    let tinted = tint_parts.contains(&cube.name.as_str());
+                    let double_sided = cube_is_flat_plane(cube);
+                    let m = base_xform
+                        * Mat4::from_translation(cube.origin)
+                        * Mat4::from_quat(euler_quat(cube.rotation))
+                        * Mat4::from_translation(-cube.origin);
+                    let face = Face::ALL[slot];
+                    let Some(bias) = render_face_bias(cube, cubes, face) else {
+                        continue;
+                    };
+                    push_template_face(
+                        &mut verts,
+                        &mut indices,
+                        m,
+                        face,
+                        cube.from,
+                        cube.to,
+                        bias,
+                        cube.faces[slot].expect("filtered above"),
+                        SHADES[face.shade_idx() as usize],
+                        face_ao[ci as usize][slot],
+                        tinted,
+                        double_sided,
+                    );
+                }
+                let run = PartRun {
+                    vert_start: v0,
+                    vert_len: verts.len() as u32 - v0,
+                    index_start: i0,
+                    index_len: indices.len() as u32 - i0,
+                };
+                if run.vert_len > 0 {
+                    segments.push(TemplateSegment {
+                        run,
+                        blend,
+                        part: group.map(|g| g as u8),
+                        cull: bucket_cull,
+                    });
+                }
+            }
         }
     }
-    ModelCellTemplate { verts, indices }
+    ModelCellTemplate {
+        verts,
+        indices,
+        segments,
+    }
 }
 
 /// Append one textured cube face to a cell template. Cell light and warm tint are
 /// applied later by the mesher; the baked per-corner AO folds into `shade` here.
+///
+/// Faces are emitted ONCE with their outward CCW winding — the model pipelines
+/// cull back faces, so a solid cube's far side never ghosts through the near
+/// face's cutout texels. The exception is `double_sided` (the one kept face of
+/// a zero-thickness plane): it is emitted again with reversed winding (terrain's
+/// `push_back_face` pattern) so a decal stays visible from both sides.
 #[allow(clippy::too_many_arguments)]
 fn push_template_face(
     verts: &mut Vec<ModelTemplateVertex>,
@@ -524,6 +691,8 @@ fn push_template_face(
     uv: [f32; 4],
     shade: f32,
     ao: [f32; 4],
+    tinted: bool,
+    double_sided: bool,
 ) {
     let local = face_corners(face, from, to);
     let p: [Vec3; 4] = [
@@ -536,18 +705,28 @@ fn push_template_face(
         return;
     }
     // UV rect is [u0, v0_top, u1, v1_bottom]; assign per `quad_box` corner order
-    // (p0 bottom-left, p1 bottom-right, p2 top-right, p3 top-left).
-    let [u0, v0, u1, v1] = uv;
+    // (p0 bottom-left, p1 bottom-right, p2 top-right, p3 top-left). The rect is
+    // inset half an atlas texel so edge fragments can't spill onto neighbouring
+    // sheet texels (see `ModelAtlas::inset_face_uv`).
+    let [u0, v0, u1, v1] = atlas().inset_face_uv(uv);
     let corner_uv = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
-    let start = verts.len() as u32;
-    for i in 0..4 {
-        verts.push(ModelTemplateVertex {
-            pos: p[i],
-            uv: corner_uv[i],
-            shade: shade * ao[i],
-        });
+    let mut emit = |order: [usize; 4]| {
+        let start = verts.len() as u32;
+        for &i in &order {
+            verts.push(ModelTemplateVertex {
+                pos: p[i],
+                uv: corner_uv[i],
+                shade: shade * ao[i],
+                tinted,
+            });
+        }
+        let ordered_ao = order.map(|i| ao[i]);
+        indices.extend(model_face_tris(ordered_ao).map(|i| start + i));
+    };
+    emit([0, 1, 2, 3]);
+    if double_sided {
+        emit([0, 3, 2, 1]);
     }
-    indices.extend(model_face_tris(ao).map(|i| start + i));
 }
 
 /// The quad's triangulation for its corner AO: split along the darker diagonal
@@ -617,4 +796,139 @@ pub fn instance(kind: BlockModelKind) -> &'static ModelInstance {
 #[inline]
 pub fn footprint(kind: BlockModelKind) -> [u8; 3] {
     instance(kind).footprint
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn solid_cube(cull: [Option<u8>; 6]) -> ModelCube {
+        ModelCube {
+            name: "c".into(),
+            from: Vec3::ZERO,
+            to: Vec3::ONE,
+            origin: Vec3::ZERO,
+            rotation: Vec3::ZERO,
+            faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+            cull,
+        }
+    }
+
+    /// A cullface is authored in MODEL space but tested against the WORLD
+    /// neighbour, so the template bake must rotate it exactly like the
+    /// geometry: under a 90°-about-Y base transform the authored -Z cull
+    /// becomes a -X world test, and under identity it stays -Z.
+    #[test]
+    fn cullface_directions_rotate_with_the_facing_bake() {
+        let mut cull = [None; 6];
+        cull[5] = Some(5); // the north face culls against the north neighbour
+        let cubes = [solid_cube(cull)];
+        let ao = [[[1.0; 4]; 6]];
+        let draw = [[true; 6]];
+        let blend = [[false; 6]];
+
+        let turned = bake_cell_template(
+            Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2),
+            &cubes,
+            &[0],
+            &ao,
+            &draw,
+            &blend,
+            &[],
+            &[],
+        );
+        let culls: Vec<_> = turned.segments.iter().filter_map(|s| s.cull).collect();
+        assert_eq!(culls, vec![Face::NegX]);
+
+        let straight =
+            bake_cell_template(Mat4::IDENTITY, &cubes, &[0], &ao, &draw, &blend, &[], &[]);
+        let gated: Vec<_> = straight.segments.iter().filter(|s| s.cull.is_some()).collect();
+        assert_eq!(gated.len(), 1);
+        assert_eq!(gated[0].cull, Some(Face::NegZ));
+        assert_eq!(gated[0].run.vert_len, 4, "exactly the one gated face");
+        let ungated: u32 = straight
+            .segments
+            .iter()
+            .filter(|s| s.cull.is_none())
+            .map(|s| s.run.vert_len)
+            .sum();
+        assert_eq!(ungated, 20, "the other five faces stay ungated");
+    }
+
+    /// A face whose texture rect holds partial-alpha texels bakes into a
+    /// blend-routed segment of its own; everything else stays opaque.
+    #[test]
+    fn partial_alpha_faces_bake_into_blend_segments() {
+        let cubes = [solid_cube([None; 6])];
+        let ao = [[[1.0; 4]; 6]];
+        let draw = [[true; 6]; 1];
+        let mut blend = [[false; 6]; 1];
+        blend[0][2] = true; // the up face's rect holds semi-transparent texels
+        let t = bake_cell_template(Mat4::IDENTITY, &cubes, &[0], &ao, &draw, &blend, &[], &[]);
+        let blended: u32 = t
+            .segments
+            .iter()
+            .filter(|s| s.blend)
+            .map(|s| s.run.vert_len)
+            .sum();
+        let opaque: u32 = t
+            .segments
+            .iter()
+            .filter(|s| !s.blend)
+            .map(|s| s.run.vert_len)
+            .sum();
+        assert_eq!(blended, 4, "exactly the one semi-transparent face");
+        assert_eq!(opaque, 20);
+    }
+
+    /// The model pipelines cull back faces, so the one kept face of a
+    /// zero-thickness plane bakes a second, reversed copy of itself — a decal
+    /// stays visible from both sides while solid cubes stay single-sided.
+    #[test]
+    fn flat_planes_bake_their_kept_face_twice_with_reversed_winding() {
+        let mut plane = solid_cube([None; 6]);
+        plane.from = Vec3::new(0.0, 0.0, 0.5);
+        plane.to = Vec3::new(1.0, 1.0, 0.5); // flat on Z
+        let cubes = [plane];
+        let ao = [[[1.0; 4]; 6]];
+        let draw = [[true; 6]; 1];
+        let blend = [[false; 6]; 1];
+        let t = bake_cell_template(Mat4::IDENTITY, &cubes, &[0], &ao, &draw, &blend, &[], &[]);
+        let total: u32 = t.segments.iter().map(|s| s.run.vert_len).sum();
+        assert_eq!(total, 8, "one kept face, emitted front + reversed back");
+        // The second quad is the first reversed: same corner positions in
+        // [0, 3, 2, 1] order, i.e. the opposite winding over the same plane.
+        for i in 0..4 {
+            assert_eq!(t.verts[4 + i].pos, t.verts[[0, 3, 2, 1][i]].pos);
+        }
+    }
+
+    /// A face whose atlas rect is fully transparent discards every fragment at
+    /// mip 0 — so the bake drops it outright. Left in, the cutout mip chain
+    /// would promote its texels to opaque with the neighbouring artwork's
+    /// colour, and an invisible sliver face would render as a bright line.
+    #[test]
+    fn fully_transparent_faces_are_dropped_from_the_bake() {
+        let cubes = [solid_cube([None; 6])];
+        let ao = [[[1.0; 4]; 6]];
+        let mut draw = [[true; 6]; 1];
+        draw[0][3] = false; // the down face's rect is fully transparent
+        let blend = [[false; 6]; 1];
+        let t = bake_cell_template(Mat4::IDENTITY, &cubes, &[0], &ao, &draw, &blend, &[], &[]);
+        let total: u32 = t.segments.iter().map(|s| s.run.vert_len).sum();
+        assert_eq!(total, 20, "five faces bake; the invisible one is gone");
+        let mut all_hidden = [[false; 6]; 1];
+        all_hidden[0] = [false; 6];
+        let t = bake_cell_template(
+            Mat4::IDENTITY,
+            &cubes,
+            &[0],
+            &ao,
+            &all_hidden,
+            &blend,
+            &[],
+            &[],
+        );
+        assert!(t.segments.is_empty() && t.verts.is_empty());
+    }
 }

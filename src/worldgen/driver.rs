@@ -461,7 +461,7 @@ impl ChunkGenerator {
                 let inputs = GenInputs {
                     seed: self.seed,
                     section_pos: [cx, 0, cz],
-                    blocks: &[],
+                    blocks: None,
                     surface_heights: &top_surf,
                     biomes: &biome,
                 };
@@ -573,7 +573,7 @@ impl ChunkGenerator {
         //    underflow when a feature overwrites a random-tickable skin block (e.g. a tree
         //    trunk replacing surface grass) while the count still read zero.
         match self.replaced_terrain_fill(sp, col) {
-            Some(fill) => section.blocks_slice_mut().copy_from_slice(&fill),
+            Some(fill) => *section.blocks_mut() = crate::section::BlockCube::from_ids(&fill),
             None => {
                 self.surface_density
                     .fill_section(&mut section, &col.biome, &col.surf);
@@ -641,7 +641,7 @@ impl ChunkGenerator {
 
     /// The mod terrain replacement's 4096-block fill, or `None` when no
     /// replacement is registered / it failed (the engine fill+carve runs).
-    fn replaced_terrain_fill(&self, sp: SectionPos, col: &ColumnGen) -> Option<Vec<u8>> {
+    fn replaced_terrain_fill(&self, sp: SectionPos, col: &ColumnGen) -> Option<Vec<u16>> {
         let hooks = self.hooks.as_ref()?;
         if !hooks.replaces(WorldgenStage::Terrain) {
             return None;
@@ -649,7 +649,7 @@ impl ChunkGenerator {
         hooks.replace_terrain(&GenInputs {
             seed: self.seed,
             section_pos: [sp.cx, sp.cy, sp.cz],
-            blocks: &[],
+            blocks: None,
             surface_heights: &col.top_surf,
             biomes: &col.biome,
         })
@@ -675,7 +675,7 @@ impl ChunkGenerator {
             &GenInputs {
                 seed: self.seed,
                 section_pos: [sp.cx, sp.cy, sp.cz],
-                blocks: section.blocks_slice(),
+                blocks: Some(section.blocks()),
                 surface_heights: &col.top_surf,
                 biomes: &col.biome,
             },
@@ -710,7 +710,7 @@ impl ChunkGenerator {
                 &GenInputs {
                     seed: self.seed,
                     section_pos: [sp.cx, sp.cy, sp.cz],
-                    blocks: section.blocks_slice(),
+                    blocks: Some(section.blocks()),
                     surface_heights: &col.top_surf,
                     biomes: &col.biome,
                 },
@@ -778,8 +778,8 @@ mod tests {
                 let a = generator.generate_section(sp, &full);
                 let b = generator.generate_section(sp, &slim);
                 assert_eq!(
-                    a.blocks_slice(),
-                    b.blocks_slice(),
+                    a.blocks_iter().collect::<Vec<_>>(),
+                    b.blocks_iter().collect::<Vec<_>>(),
                     "slimmed rebuild diverged at cy {cy} of column ({cx},{cz})"
                 );
             }
@@ -816,8 +816,14 @@ mod tests {
         for cy in [lo.div_euclid(16), hi.div_euclid(16) + 1] {
             let sp = SectionPos::new(2, cy, -5);
             assert_eq!(
-                generator.generate_section(sp, &full).blocks_slice(),
-                generator.generate_section(sp, &cached).blocks_slice(),
+                generator
+                    .generate_section(sp, &full)
+                    .blocks_iter()
+                    .collect::<Vec<_>>(),
+                generator
+                    .generate_section(sp, &cached)
+                    .blocks_iter()
+                    .collect::<Vec<_>>(),
                 "cached column diverged at cy {cy}"
             );
         }

@@ -435,7 +435,12 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::BiomeAt { .. }
         | HostCall::SurfaceYAt { .. }
         | HostCall::FindBlocks { .. }
-        | HostCall::SwapModelBlock { .. } => blocks::handle_block_call(&data.mod_id, call),
+        | HostCall::SwapModelBlock { .. }
+        | HostCall::SetModelParts { .. }
+        | HostCall::SetBlockDraw { .. }
+        | HostCall::SetBlockDraws { .. }
+        | HostCall::SetModelPartsMany { .. }
+        | HostCall::BlockLocalToWorld { .. } => blocks::handle_block_call(&data.mod_id, call),
         HostCall::SpawnMob { .. }
         | HostCall::MobInfo { .. }
         | HostCall::MobCanReach { .. }
@@ -479,7 +484,9 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::WorldKvDelete { .. }
         | HostCall::SectionKvGet { .. }
         | HostCall::SectionKvSet { .. }
-        | HostCall::SectionKvDelete { .. } => kv::handle_kv_call(&data.mod_id, call),
+        | HostCall::SectionKvDelete { .. }
+        | HostCall::SectionKvGetMany { .. }
+        | HostCall::SectionKvSetMany { .. } => kv::handle_kv_call(&data.mod_id, call),
         HostCall::MobTagGet { .. }
         | HostCall::MobTagSet { .. }
         | HostCall::MobTagDelete { .. }
@@ -505,8 +512,11 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ResolveUndergroundBiome { .. }
         | HostCall::UndergroundBiomeAt { .. }
         | HostCall::UndergroundBiomesInBox { .. }
-        | HostCall::TerrainSolidAt { .. } => worldgen::handle_worldgen_call(data, call),
+        | HostCall::TerrainSolidAt { .. }
+        | HostCall::SurfaceBiomeAt { .. } => worldgen::handle_worldgen_call(data, call),
         HostCall::GuiStateSet { .. }
+        | HostCall::GuiStateSetFor { .. }
+        | HostCall::GuiViewers
         | HostCall::GuiStateGet { .. }
         | HostCall::GuiOpen { .. }
         | HostCall::GuiClose => gui::handle_gui_call(&data.mod_id, call),

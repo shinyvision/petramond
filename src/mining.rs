@@ -231,11 +231,12 @@ pub fn harvests(block: Block, tool: Option<Tool>) -> bool {
 /// Total seconds to break `block` with `tool` (`None` = bare hand). `0.0` for
 /// instant blocks; callers must not pass unbreakable blocks (`hardness < 0`). A
 /// tool of the block's [`preferred_tool`](Block::preferred_tool) kind that also
-/// meets its [`harvest_tier`](Block::harvest_tier) divides the hand time by
-/// [`tool_speed`] scaled by the kind's
+/// meets its [`harvest_tier`](Block::harvest_tier) divides the hand time by the
+/// tool's own [`speed`](crate::item::Tool::speed) (its row's, or the tier's
+/// rung — [`default_speed`](crate::item::default_speed)) scaled by the kind's
 /// [`mining_efficiency`](crate::item::ToolKind::mining_efficiency) (so a shovel
-/// digs slower than a pickaxe/axe of equal tier); a wrong-kind, insufficient, or
-/// absent tool mines at the bare-hand rate.
+/// digs slower than a pickaxe/axe of equal tier), floored at the bare-hand
+/// rate; a wrong-kind, insufficient, or absent tool mines at that rate.
 #[inline]
 pub fn break_time(block: Block, tool: Option<Tool>) -> f32 {
     let h = block.hardness();
@@ -252,24 +253,17 @@ pub fn break_time(block: Block, tool: Option<Tool>) -> f32 {
         // `power >= 1` means the tool's kind matched the block, so `tool` is Some.
         // Scale the shared tier ladder by the kind's efficiency so a clumsier kind —
         // the shovel — is uniformly slower than a pickaxe/axe of the same tier.
+        // A tool of the right kind that HARVESTS the block is never slower
+        // than a bare hand: a soft metal may dig no faster than a fist, and a
+        // clumsy kind may scale that down, but the two together must not make
+        // holding the tool worse than dropping it.
         let efficiency = tool.map_or(1.0, |t| t.kind.mining_efficiency());
-        base / (tool_speed(power) * efficiency)
+        let speed = tool.map_or(1.0, |t| t.speed);
+        base / (speed * efficiency).max(1.0)
     } else if !harvests(block, tool) {
         base * FRUITLESS_BREAK_PENALTY
     } else {
         base
-    }
-}
-
-/// Mining-speed multiplier of a tool tier over the bare hand.
-#[inline]
-fn tool_speed(tier: u8) -> f32 {
-    match tier {
-        0 => 1.0,
-        1 => 2.0,
-        2 => 4.0,
-        3 => 6.0,
-        _ => 8.0,
     }
 }
 
@@ -292,34 +286,22 @@ mod tests {
 
     /// A pickaxe of `tier` in hand.
     fn pick(tier: u8) -> Option<Tool> {
-        Some(Tool {
-            kind: ToolKind::Pickaxe,
-            tier,
-        })
+        Some(Tool::new(ToolKind::Pickaxe, tier))
     }
 
     /// An axe of `tier` in hand.
     fn axe(tier: u8) -> Option<Tool> {
-        Some(Tool {
-            kind: ToolKind::Axe,
-            tier,
-        })
+        Some(Tool::new(ToolKind::Axe, tier))
     }
 
     /// A shovel of `tier` in hand.
     fn shovel(tier: u8) -> Option<Tool> {
-        Some(Tool {
-            kind: ToolKind::Shovel,
-            tier,
-        })
+        Some(Tool::new(ToolKind::Shovel, tier))
     }
 
     /// Shears in hand (one tier only: tier 1, the ×2 rung of the shared ladder).
     fn shears() -> Option<Tool> {
-        Some(Tool {
-            kind: ToolKind::Shears,
-            tier: 1,
-        })
+        Some(Tool::new(ToolKind::Shears, 1))
     }
 
     /// The targeted cell, as the controller consumes it.
@@ -689,13 +671,15 @@ mod tests {
             );
             // ...yet slower than a full-efficiency (pickaxe/axe-grade) tool of the
             // same tier would be — the kind penalty applies across the board.
-            let full_speed = hand / tool_speed(tier);
+            let full_speed = hand / crate::item::default_speed(tier);
             assert!(
                 with_shovel > full_speed,
                 "shovel tier {tier} should be slower than a full-efficiency tool"
             );
-            // Exact: the shared tier ladder scaled by the kind's efficiency.
-            assert_eq!(with_shovel, hand / (tool_speed(tier) * eff));
+            // Exact: the tool's own speed scaled by the kind's efficiency,
+            // floored at the bare hand (a tool is never worse than no tool).
+            let want = (crate::item::default_speed(tier) * eff).max(1.0);
+            assert_eq!(with_shovel, hand / want);
         }
 
         // The whole dirt/sand family is shovel-sped (grass, gravel, clay, …).

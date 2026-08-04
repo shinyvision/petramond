@@ -196,7 +196,7 @@ fn mesh_with_sky(section: &Section, sky: impl Fn(i32, i32, i32) -> u8) -> ChunkM
 fn mesh_in_scene(
     section: &Section,
     pos: SectionPos,
-    block: impl Fn(i32, i32, i32) -> u8,
+    block: impl Fn(i32, i32, i32) -> u16,
     sky: impl Fn(i32, i32, i32) -> u8,
 ) -> ChunkMesh {
     build_section_mesh(

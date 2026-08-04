@@ -305,6 +305,22 @@
     "craft_tip_name": {
      "type": "str",
      "doc": "hovered recipe's result name + ×count, shown in the tooltip (drawn one gui-scale step smaller)"
+    },
+    "show_item_tip": {
+     "type": "bool",
+     "doc": "a filled slot is hovered while the cursor holds nothing: reveals the floating item tooltip"
+    },
+    "item_tip_name": {
+     "type": "str",
+     "doc": "hovered stack's item display name"
+    },
+    "item_tip_info": {
+     "type": "str",
+     "doc": "hovered item's optional info line (its items.json `info`)"
+    },
+    "item_tip_has_info": {
+     "type": "bool",
+     "doc": "the hovered item declares an info line"
     }
    },
    "handles": {
@@ -352,6 +368,22 @@
     "craft_tip_name": {
      "type": "str",
      "doc": "hovered recipe's result name + ×count, shown in the tooltip (drawn one gui-scale step smaller)"
+    },
+    "show_item_tip": {
+     "type": "bool",
+     "doc": "a filled slot is hovered while the cursor holds nothing: reveals the floating item tooltip"
+    },
+    "item_tip_name": {
+     "type": "str",
+     "doc": "hovered stack's item display name"
+    },
+    "item_tip_info": {
+     "type": "str",
+     "doc": "hovered item's optional info line (its items.json `info`)"
+    },
+    "item_tip_has_info": {
+     "type": "bool",
+     "doc": "the hovered item declares an info line"
     }
    },
    "handles": {
@@ -363,7 +395,24 @@
    "notes": "container: inventory/output slots route by role; recipe and tooltip icons occupy host hooks (recipe_result, craft_tip_result/_ingredients). The SELECTION is shown by the grid cell's own selected face, not by a detail line — that line cost two rows of the grid."
   },
   "petramond:chest": {
-   "state": {},
+   "state": {
+    "show_item_tip": {
+     "type": "bool",
+     "doc": "a filled slot is hovered while the cursor holds nothing: reveals the floating item tooltip"
+    },
+    "item_tip_name": {
+     "type": "str",
+     "doc": "hovered stack's item display name"
+    },
+    "item_tip_info": {
+     "type": "str",
+     "doc": "hovered item's optional info line (its items.json `info`)"
+    },
+    "item_tip_has_info": {
+     "type": "bool",
+     "doc": "the hovered item declares an info line"
+    }
+   },
    "handles": {},
    "notes": "container: slots route by role"
   },
@@ -376,6 +425,22 @@
     "burn01": {
      "type": "f32",
      "doc": "remaining fuel 0..1 (bind a deplete_td gauge)"
+    },
+    "show_item_tip": {
+     "type": "bool",
+     "doc": "a filled slot is hovered while the cursor holds nothing: reveals the floating item tooltip"
+    },
+    "item_tip_name": {
+     "type": "str",
+     "doc": "hovered stack's item display name"
+    },
+    "item_tip_info": {
+     "type": "str",
+     "doc": "hovered item's optional info line (its items.json `info`)"
+    },
+    "item_tip_has_info": {
+     "type": "bool",
+     "doc": "the hovered item declares an info line"
     }
    },
    "handles": {},
@@ -391,6 +456,22 @@
     "<any key a mod sets via GuiStateSet>": {
      "type": "f32|i32|str",
      "doc": "the mod's tick-owned GUI state map is mirrored into UiState every frame"
+    },
+    "show_item_tip": {
+     "type": "bool",
+     "doc": "host-populated for EVERY menu kind: a filled slot is hovered while the cursor holds nothing. The engine injects the tooltip chrome into every container-class document at load — a pack ships no node; binding `show_item_tip` in its own document opts OUT and keeps its custom chrome"
+    },
+    "item_tip_name": {
+     "type": "str",
+     "doc": "host-populated: hovered stack's item display name"
+    },
+    "item_tip_info": {
+     "type": "str",
+     "doc": "host-populated: hovered item's optional info line (its items.json `info`)"
+    },
+    "item_tip_has_info": {
+     "type": "bool",
+     "doc": "host-populated: the hovered item declares an info line"
     }
    },
    "handles": {

@@ -21,7 +21,7 @@ pub trait SinkTarget {
     /// `(min world corner, size in blocks)` of the writable footprint.
     fn world_box(&self) -> (IVec3, IVec3);
     fn block(&self, x: usize, y: usize, z: usize) -> Block;
-    fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8);
+    fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u16);
 }
 
 /// Worldgen voxel sink: writes into one [`SinkTarget`], in WORLD coords clipped to
@@ -87,7 +87,7 @@ impl SinkTarget for Chunk {
         Chunk::block(self, x, y, z)
     }
     #[inline]
-    fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8) {
+    fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u16) {
         Chunk::set_block_raw(self, x, y, z, id);
     }
 }
@@ -102,7 +102,7 @@ impl SinkTarget for Section {
         Section::block(self, x, y, z)
     }
     #[inline]
-    fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8) {
+    fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u16) {
         Section::set_block_raw(self, x, y, z, id);
     }
 }
@@ -122,7 +122,7 @@ pub type SectionSink<'a> = ClippedSink<'a, Section>;
 /// out-of-section writes drop, in-section writes go through the counted
 /// setter. That clip is the mod-feature seam mechanism: every section
 /// materialises exactly its own slice of a cross-boundary feature.
-pub(crate) fn apply_gen_writes(section: &mut Section, writes: &[([i32; 3], u8)]) {
+pub(crate) fn apply_gen_writes(section: &mut Section, writes: &[([i32; 3], u16)]) {
     let mut sink = SectionSink::new(section);
     for &([x, y, z], id) in writes {
         sink.set(IVec3::new(x, y, z), Block(id));

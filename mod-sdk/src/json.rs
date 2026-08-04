@@ -189,8 +189,7 @@ fn parse_string(b: &[u8], i: &mut usize) -> Option<String> {
                     b't' => out.push('\t'),
                     b'u' => {
                         let hex = b.get(*i + 1..*i + 5)?;
-                        let code =
-                            u32::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?;
+                        let code = u32::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?;
                         // Surrogate pairs are out of scope for row metadata;
                         // a lone surrogate reads as the replacement char.
                         out.push(char::from_u32(code).unwrap_or('\u{fffd}'));

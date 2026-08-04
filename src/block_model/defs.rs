@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::facing::Facing;
 
+use super::MAX_MODEL_PARTS;
+
 // ---------------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------------
@@ -160,6 +162,22 @@ pub struct BlockModelDef {
     /// composter's stages, a fluid level, a gauge needle. Name-sorted for
     /// deterministic application; empty for most rows.
     pub part_offsets: &'static [(&'static str, [f32; 3])],
+    /// Authored cube NAMES that are OPTIONAL per placed instance, in a fixed
+    /// order: bit `i` of a cell's parts mask shows `parts[i]`. Hidden unless
+    /// the mask says otherwise, so a row that declares them looks like its
+    /// base self until a mod sets the mask (`HostCall::SetModelParts`).
+    ///
+    /// This is what a machine with several INDEPENDENT visual states uses
+    /// instead of a block row per combination: the forge's basin holds any of
+    /// five moulds, with or without metal in it, while the furnace is lit or
+    /// not — 48 rows enumerated, one row with a mask.
+    ///
+    /// RENDER ONLY. Collision and selection stay the row's, so a placed
+    /// machine's hitbox never changes under the player.
+    pub parts: &'static [&'static str],
+    /// Authored cube NAMES the cell's `petramond:tint` multiplies. Empty (the
+    /// usual case) means the row ignores cell tint entirely.
+    pub tint_parts: &'static [&'static str],
 }
 
 /// How a model's authored geometry maps onto its footprint cell box.
@@ -208,6 +226,12 @@ struct RawModelDef {
     /// leaked slice stays name-ordered, deterministic).
     #[serde(default)]
     part_offsets: std::collections::BTreeMap<String, [f32; 3]>,
+    /// Optional-per-instance cube names, bit-indexed IN THIS ORDER (so the
+    /// order is part of the row's contract with the mod that drives it).
+    #[serde(default)]
+    parts: Vec<String>,
+    #[serde(default)]
+    tint_parts: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -219,9 +243,38 @@ struct RawModelFile {
 /// inconsistent `models.json` fails loudly at startup.
 fn defs() -> &'static [BlockModelDef] {
     static DEFS: LazyLock<&'static [BlockModelDef]> = LazyLock::new(|| {
-        crate::registry::read_catalog("models.json", "block model", parse_layers).rows()
+        let rows = crate::registry::read_catalog("models.json", "block model", parse_layers).rows();
+        if let Err(e) = check_shared_part_lists(rows) {
+            panic!("models.json: {e}");
+        }
+        rows
     });
     &DEFS
+}
+
+/// Rows sharing one `.bbmodel` must agree on their `parts` order.
+///
+/// The mask is per PLACED BLOCK and survives a row swap — a lit machine and its
+/// unlit twin are the same instance — so a bit that means "coals" on one row and
+/// "lever" on the other is a silent corruption of every placed block, visible
+/// only as a machine that changes shape when it lights. A row with NO optional
+/// parts is not a disagreement; it simply switches nothing.
+fn check_shared_part_lists(rows: &[BlockModelDef]) -> Result<(), String> {
+    let mut seen: Vec<(&str, &BlockModelDef)> = Vec::new();
+    for row in rows.iter().filter(|r| !r.parts.is_empty()) {
+        match seen.iter().find(|(f, _)| *f == row.model_file) {
+            Some((_, first)) if first.parts != row.parts => {
+                return Err(format!(
+                    "'{}' and '{}' share '{}' but declare different `parts` orders \
+                     ({:?} vs {:?}); the mask is per placed block and survives a row swap",
+                    first.key, row.key, row.model_file, first.parts, row.parts
+                ));
+            }
+            Some(_) => {}
+            None => seen.push((row.model_file, row)),
+        }
+    }
+    Ok(())
 }
 
 fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef>, String> {
@@ -247,6 +300,39 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef
                 .into_iter()
                 .map(|(p, off)| (&*Box::leak(p.into_boxed_str()), off))
                 .collect();
+            if r.parts.len() > MAX_MODEL_PARTS {
+                return Err(format!(
+                    "block model '{}' declares {} optional parts; the mask holds {MAX_MODEL_PARTS}",
+                    r.key,
+                    r.parts.len()
+                ));
+            }
+            // A name binds to the FIRST bit that carries it, so a repeat gives
+            // the later bit an empty run: a mask bit that shows nothing, on a
+            // row whose every name matches a real cube (so the missing-cube
+            // warning never fires either).
+            if let Some(dup) = r
+                .parts
+                .iter()
+                .enumerate()
+                .find_map(|(i, p)| r.parts[..i].contains(p).then_some(p))
+            {
+                return Err(format!(
+                    "block model '{}' lists optional part '{dup}' twice; each bit needs its own \
+                     cube, and the later bit would show nothing",
+                    r.key
+                ));
+            }
+            let parts: Vec<&'static str> = r
+                .parts
+                .into_iter()
+                .map(|p| &*Box::leak(p.into_boxed_str()))
+                .collect();
+            let tint_parts: Vec<&'static str> = r
+                .tint_parts
+                .into_iter()
+                .map(|p| &*Box::leak(p.into_boxed_str()))
+                .collect();
             Ok(BlockModelDef {
                 key: names.name(id).expect("id resolved from this table"),
                 model_file: Box::leak(r.model_file.into_boxed_str()),
@@ -257,6 +343,8 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef
                 hidden_parts: Box::leak(hidden_parts.into_boxed_slice()),
                 collision_hidden_parts: Box::leak(collision_hidden_parts.into_boxed_slice()),
                 part_offsets: Box::leak(part_offsets.into_boxed_slice()),
+                parts: Box::leak(parts.into_boxed_slice()),
+                tint_parts: Box::leak(tint_parts.into_boxed_slice()),
             })
         },
     )
@@ -266,4 +354,35 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef
 #[inline]
 pub fn def(kind: BlockModelKind) -> &'static BlockModelDef {
     &defs()[kind.0 as usize]
+}
+
+#[cfg(test)]
+mod part_list_tests {
+    use super::*;
+
+    fn row(key: &'static str, file: &'static str, parts: &'static [&'static str]) -> BlockModelDef {
+        BlockModelDef {
+            key,
+            model_file: file,
+            parts,
+            ..*def(BlockModelKind(0))
+        }
+    }
+
+    #[test]
+    fn rows_sharing_a_model_must_agree_on_part_order() {
+        let same = [
+            row("a", "m.bbmodel", &["coals", "lever"]),
+            row("b", "m.bbmodel", &["coals", "lever"]),
+            row("c", "m.bbmodel", &[]),
+            row("d", "other.bbmodel", &["lever", "coals"]),
+        ];
+        assert!(check_shared_part_lists(&same).is_ok());
+
+        let swapped = [
+            row("a", "m.bbmodel", &["coals", "lever"]),
+            row("b", "m.bbmodel", &["lever", "coals"]),
+        ];
+        assert!(check_shared_part_lists(&swapped).is_err());
+    }
 }

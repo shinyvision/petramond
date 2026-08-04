@@ -78,7 +78,7 @@ pub(super) fn parse_layers(texts: &[&str]) -> Result<UndergroundBiomes, String> 
         "underground biome",
         |r, id, names| {
             let name = names.name(id).expect("id resolved from this table");
-            convert(r, id, name).map_err(|e| format!("underground biome '{name}': {e}"))
+            convert(r, id as u8, name).map_err(|e| format!("underground biome '{name}': {e}"))
         },
     )?;
     Ok(compile(catalog))
@@ -141,7 +141,7 @@ fn convert(
     };
 
     let (lining, lining_name, shell, faces, face_names) = match r.lining {
-        None => (0u8, "", 1.0, None, [""; 3]),
+        None => (0u16, "", 1.0, None, [""; 3]),
         Some(l) => {
             if !(l.shell > 0.0 && l.shell <= SHELL_MAX) {
                 return Err(format!(
@@ -226,7 +226,7 @@ fn convert(
     })
 }
 
-fn convert_faces(f: RawFaces, base: u8, name: &'static str) -> Result<ConvertedFaces, String> {
+fn convert_faces(f: RawFaces, base: u16, name: &'static str) -> Result<ConvertedFaces, String> {
     if !(1..=LINING_FLOOR_DEPTH_MAX).contains(&f.floor_depth) {
         return Err(format!(
             "'lining.faces.floor_depth' {} is outside [1, {LINING_FLOOR_DEPTH_MAX}]",
@@ -503,8 +503,8 @@ fn compile(catalog: Catalog<UndergroundBiomeDef>) -> UndergroundBiomes {
         bounds.shell = bounds.shell.max(r.caliber.shell);
     }
 
-    let mut lining = [0u8; 256];
-    let mut faces = Box::new([None; 256]);
+    let mut lining = [0u16; 256];
+    let mut faces: Box<[Option<LiningFaces>; 256]> = Box::new([None; 256]);
     for (id, r) in rows.iter().enumerate() {
         lining[id] = r.lining;
         faces[id] = r.faces;

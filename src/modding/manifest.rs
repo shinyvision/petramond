@@ -196,7 +196,7 @@ type RowFilter = (&'static str, &'static str);
 /// A catalog's own check over its raw file text, beyond the shared row rules.
 type ExtraValidate = fn(&str) -> Result<(), String>;
 
-const CATALOGS: [CatalogSpec; 11] = {
+const CATALOGS: [CatalogSpec; 12] = {
     const fn plain(rel: &'static str, array: &'static str, key_field: &'static str) -> CatalogSpec {
         CatalogSpec {
             rel,
@@ -220,14 +220,12 @@ const CATALOGS: [CatalogSpec; 11] = {
         plain("effects.json", "effects", "effect"),
         plain("particle_emitters.json", "emitters", "emitter"),
         plain("textures/atlas.json", "tiles", "name"),
-        CatalogSpec {
-            // Only crafting rows carry a registering recipe id; processing
-            // rows register through their class strings, validated elsewhere.
-            row_filter: Some(("type", "crafting")),
-            ..plain("recipes.json", "recipes", "recipe")
-        },
+        // EVERY recipe row — crafting and processing alike — carries a
+        // namespaced `recipe` id, so both are ownership-checked here.
+        plain("recipes.json", "recipes", "recipe"),
         // Custom shape declarations (WASM-baked geometry).
         plain("shapes.json", "shapes", "key"),
+        plain("features.json", "features", "feature"),
         plain(
             "underground_biomes.json",
             "underground_biomes",
@@ -236,15 +234,39 @@ const CATALOGS: [CatalogSpec; 11] = {
     ]
 };
 
+/// The catalogs whose runtime ids are shared across every enabled pack, so
+/// the number of distinct registered names has a ceiling
+/// (`registry::NameTable::build`). These are the two an id budget has to be
+/// enforced for; everything else is either uncapped or process-local.
+pub(crate) const ID_CAPPED_CATALOGS: [&str; 2] = ["blocks.json", "items.json"];
+
+/// The id ceiling those catalogs share — `registry::WIDE_ID_CAP`, restated
+/// here so the admission rule and the registry can never drift apart (the
+/// assertion below is the guard).
+pub(crate) const ID_CAP: usize = crate::registry::WIDE_ID_CAP;
+
 /// Collect every registration-relevant catalog key the pack at `dir` states —
 /// the row keys of registry catalogs plus player-crafting recipe ids and atlas
 /// tile names. Used for namespace-prefix validation before the pack is
 /// admitted to the overlay. A malformed catalog is an error (the pack gets
 /// disabled rather than panicking the registry bootstrap later).
 pub(crate) fn registration_keys(dir: &std::path::Path) -> Result<Vec<String>, String> {
-    let mut keys = Vec::new();
+    Ok(registration_keys_by_catalog(dir)?
+        .into_iter()
+        .flat_map(|(_, keys)| keys)
+        .collect())
+}
+
+/// [`registration_keys`], kept per catalog file — what the id budget needs,
+/// because blocks and items own SEPARATE id tables and a pack's cost against
+/// each is its own row count.
+pub(crate) fn registration_keys_by_catalog(
+    dir: &std::path::Path,
+) -> Result<Vec<(&'static str, Vec<String>)>, String> {
+    let mut out = Vec::new();
     for spec in &CATALOGS {
         let rel = spec.rel;
+        let mut keys = Vec::new();
         let path = dir.join(rel);
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue; // the pack doesn't layer this catalog
@@ -278,8 +300,47 @@ pub(crate) fn registration_keys(dir: &std::path::Path) -> Result<Vec<String>, St
         if let Some(validate) = spec.extra_validate {
             validate(&text).map_err(|e| format!("{rel}: {e}"))?;
         }
+        out.push((rel, keys));
     }
-    Ok(keys)
+    Ok(out)
+}
+
+/// Which packs (indices into `costs`, in the given LOAD order) must be dropped
+/// to keep one shared-id catalog inside [`ID_CAP`], given the names the engine
+/// already occupies.
+///
+/// It is a per-PACK admission rule rather than a global assertion because that
+/// is the only form that degrades: the alternative — and what happened before
+/// this existed — is that the shared registry bootstrap panics after the
+/// catalogs merge, so installing one pack too many makes the game refuse to
+/// start with no indication of which pack to remove and no way back except
+/// editing the mods directory by hand.
+///
+/// A key already registered (engine row, or an earlier pack's) costs nothing:
+/// an override is not a new id, exactly as `NameTable::build` counts it. Later
+/// packs are dropped in load order, so an id budget is spent by the packs that
+/// were there first and the outcome does not depend on discovery order.
+pub(crate) fn id_budget_overflow(
+    engine_names: &[&str],
+    costs: &[Vec<String>],
+) -> Vec<(usize, usize)> {
+    let mut taken: std::collections::HashSet<&str> = engine_names.iter().copied().collect();
+    let mut over = Vec::new();
+    for (i, keys) in costs.iter().enumerate() {
+        let fresh: Vec<&str> = keys
+            .iter()
+            .map(String::as_str)
+            .filter(|k| !taken.contains(k))
+            .collect();
+        // Count the pack's own duplicates once — the merge does.
+        let distinct: std::collections::HashSet<&str> = fresh.iter().copied().collect();
+        if taken.len() + distinct.len() > ID_CAP {
+            over.push((i, taken.len() + distinct.len()));
+            continue;
+        }
+        taken.extend(distinct);
+    }
+    over
 }
 
 #[cfg(test)]
@@ -425,7 +486,7 @@ mod tests {
             dir.join("recipes.json"),
             r#"{"recipes":[
                 {"type":"crafting","recipe":"fixture:tool"},
-                {"type":"processing","class":"fixture:cooking"}
+                {"type":"processing","recipe":"fixture:bake","class":"fixture:cooking"}
             ]}"#,
         )
         .expect("write fixture");
@@ -433,9 +494,49 @@ mod tests {
         let keys = registration_keys(&dir).expect("catalog parses");
         let _ = std::fs::remove_dir_all(&dir);
 
-        assert_eq!(keys, vec!["fixture:tool"]);
+        // Both row kinds register: a processing row is a recipe a pack owns
+        // and another pack may retire, so it is namespace-checked too.
+        assert_eq!(keys, vec!["fixture:tool", "fixture:bake"]);
         assert!(foreign_namespaced_keys(Some("fixture"), &keys).is_empty());
         assert_eq!(foreign_namespaced_keys(Some("other"), &keys), keys);
+    }
+
+    /// Blocks and items share one id table, so the enabled pack set has a
+    /// ceiling. The invariant worth pinning is not the number — it is that
+    /// hitting it costs the OFFENDING pack and nothing else: the packs ahead
+    /// of it in load order keep their ids (so saves keep resolving), the ones
+    /// behind it are still considered, and an override is not a new id.
+    #[test]
+    fn the_shared_id_ceiling_disables_the_pack_that_crosses_it() {
+        let engine: Vec<String> = (0..ID_CAP - 6).map(|i| format!("petramond:e{i}")).collect();
+        let engine: Vec<&str> = engine.iter().map(String::as_str).collect();
+        let pack = |n: usize, prefix: &str| -> Vec<String> {
+            (0..n).map(|i| format!("{prefix}:r{i}")).collect()
+        };
+
+        // `ID_CAP - 6` plus 4 fits; the next pack's 5 would cross, so IT is
+        // dropped and the pack after it — which fits in what is left — still
+        // loads.
+        let costs = [pack(4, "a"), pack(5, "b"), pack(2, "c")];
+        assert_eq!(
+            id_budget_overflow(&engine, &costs)
+                .iter()
+                .map(|(i, _)| *i)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
+
+        // An OVERRIDE is not a new id: a pack restating engine rows is free,
+        // and so is restating a row an earlier pack registered.
+        let overrides: Vec<String> = engine.iter().take(20).map(|s| (*s).to_owned()).collect();
+        let costs = [pack(5, "a"), overrides, pack(1, "a")];
+        assert!(id_budget_overflow(&engine, &costs).is_empty());
+
+        // Nothing installed at all cannot overflow, and neither can a pack
+        // whose rows are all duplicates of each other.
+        assert!(id_budget_overflow(&engine, &[]).is_empty());
+        let dupes = vec!["d:one".to_owned(); 40];
+        assert!(id_budget_overflow(&engine, &[dupes]).is_empty());
     }
 
     /// `brain_extensions` register no keys, but a malformed block must fail

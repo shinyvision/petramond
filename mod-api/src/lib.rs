@@ -22,6 +22,7 @@ mod client;
 mod data;
 mod events;
 mod ids;
+mod limits;
 mod protocol;
 mod sched;
 mod shape;
@@ -34,6 +35,7 @@ pub use client::*;
 pub use data::*;
 pub use events::*;
 pub use ids::*;
+pub use limits::*;
 pub use protocol::*;
 pub use sched::*;
 /// Bulk byte payloads ride the wire as postcard bytes either way; this

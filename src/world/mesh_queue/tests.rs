@@ -9,7 +9,7 @@ use super::DirtyMeshQueue;
 
 fn solid_section(pos: SectionPos) -> Section {
     let mut section = Section::new(pos.cx, pos.cy, pos.cz);
-    section.blocks_slice_mut().fill(Block::Stone.id());
+    section.blocks_mut().fill(Block::Stone.id());
     section.recompute_opaque_count();
     section
 }
@@ -143,7 +143,7 @@ fn all_air_transition_removes_stale_ghost_mesh() {
     // Mine the section out entirely: all-air emits nothing.
     let before_revision = {
         let s = world.section_mut(center).unwrap();
-        s.blocks_slice_mut().fill(Block::Air.id());
+        s.blocks_mut().fill(Block::Air.id());
         s.recompute_opaque_count();
         s.mesh_revision
     };

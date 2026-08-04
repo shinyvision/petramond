@@ -8,7 +8,7 @@ use crate::worldgen::density::surface::SurfaceDensitySystem;
 use crate::worldgen::generate_chunk;
 use crate::worldgen::region::RegionCells;
 
-fn is_tree(id: u8) -> bool {
+fn is_tree(id: u16) -> bool {
     let block = Block::from_id(id);
     block.is_log() || block.is_leaves()
 }

@@ -87,7 +87,7 @@ pub(crate) fn read_msg<T: DeserializeOwned, R: Read>(r: &mut R) -> io::Result<T>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::protocol::{ClientToServer, SectionBytes, ServerToClient};
+    use crate::net::protocol::{ClientToServer, SectionBlocks, ServerToClient};
 
     fn frame_of<T: Serialize>(msg: &T) -> Vec<u8> {
         let mut out = Vec::new();
@@ -121,10 +121,10 @@ mod tests {
 
     #[test]
     fn large_section_payloads_ship_zlib_compressed_and_roundtrip() {
-        let blocks: Vec<u8> = (0..4096u32).map(|i| (i / 512) as u8).collect();
+        let blocks: Vec<u16> = (0..4096u32).map(|i| (i / 512) as u16).collect();
         let msg = ServerToClient::SectionData(Box::new(crate::net::protocol::SectionPayload {
             pos: crate::chunk::SectionPos::new(1, 4, -2),
-            blocks: SectionBytes(std::sync::Arc::from(blocks.into_boxed_slice())),
+            blocks: SectionBlocks(std::sync::Arc::from(blocks.into_boxed_slice())),
             metrics: Default::default(),
             water: None,
             skylight: None,

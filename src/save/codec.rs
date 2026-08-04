@@ -78,9 +78,17 @@ use super::palette;
 /// carries colour now. Skylight is untouched. Clean break — a v13 record's
 /// 4096-byte block-light blob is half the length this build reads; dev worlds
 /// regenerate.
-const SECTION_REC_VERSION: u8 = 14;
+/// v15 WIDENS the block id to two bytes and palette-compresses the block
+/// array: a record now stores `[distinct: u16][ids: u16 x distinct][index per
+/// cell]`, where the per-cell index is one byte while the section holds ≤ 256
+/// distinct blocks (every real section) and two bytes otherwise. A section's
+/// on-disk block payload therefore stays ~4 KiB even though ids doubled. The
+/// unified cell-state record's header also splits into `[len][id_mask]` and
+/// its id-masked entries are two bytes each. Clean break; dev worlds
+/// regenerate.
+const SECTION_REC_VERSION: u8 = 15;
 /// Oldest section-record version this build can still read.
-const SECTION_REC_MIN_VERSION: u8 = 14;
+const SECTION_REC_MIN_VERSION: u8 = 15;
 const FLAG_HAS_WATER: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
@@ -112,7 +120,7 @@ pub struct SectionSnapshot {
     /// Derived explored-terrain cache, not authoritative player/entity state.
     /// Routing metadata only; it is not encoded inside the section record.
     pub(crate) cache_only: bool,
-    pub blocks: Arc<[u8]>,
+    pub blocks: crate::section::BlockCube,
     pub water: Option<Arc<[u8]>>,
     /// Item entities resting in this section, captured at save time so their
     /// lifetime timers persist with it. Empty for the common case.
@@ -159,7 +167,7 @@ impl SectionSnapshot {
         Self {
             pos: SectionPos::new(s.cx, s.cy, s.cz),
             cache_only: false,
-            blocks: s.blocks_arc(),
+            blocks: s.block_cube(),
             water: s.water_arc(),
             entities: Vec::new(),
             furnaces: s.furnaces().clone(),
@@ -177,6 +185,13 @@ impl SectionSnapshot {
 /// water?, entities?, …]`, zlib-deflated. Each flag-gated payload is appended only
 /// when present, so a terrain-only section pays for just its block array.
 pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
+    encode_snapshot_with(s, &super::palette::active())
+}
+
+/// [`encode_snapshot`] against an explicit palette — the world's is a
+/// process-wide handle, and a test that means to state something about the
+/// FORMAT must not depend on which world happens to be open.
+pub(crate) fn encode_snapshot_with(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<u8> {
     let extra = s.water.as_ref().map_or(0, |w| w.len());
     let mut payload = Vec::with_capacity(4 + s.blocks.len() + extra);
     put_u8(&mut payload, SECTION_REC_VERSION);
@@ -215,8 +230,7 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     put_u8(&mut payload, flags3);
     // Block ids are stored as the SAVE's ids (see `super::palette`), so a
     // future registry renumbering can't corrupt old worlds.
-    let pal = super::palette::active();
-    payload.extend(s.blocks.iter().map(|&b| pal.block_to_disk(b)));
+    put_block_cube(&mut payload, &s.blocks, pal);
     if let Some(w) = &s.water {
         payload.extend_from_slice(w);
     }
@@ -227,17 +241,21 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
         super::furnace::put_furnaces(&mut payload, &s.furnaces);
     }
     if !s.cell_states.is_empty() {
-        // Each record is `[len<<4 | id_mask][len bytes]`; the id-masked bytes
+        // Each record is `[len][id_mask][len bytes]`; the id-masked bytes
         // are BLOCK IDS and go through the palette like the block array —
         // the ONLY interpretation this codec ever applies to state bytes.
-        put_indexed(&mut payload, &s.cell_states, 5, |buf, state| {
+        put_indexed(&mut payload, &s.cell_states, 8, |buf, state| {
             let bytes = state.bytes();
-            put_u8(buf, ((bytes.len() as u8) << 4) | state.id_mask());
-            for (i, &b) in bytes.iter().enumerate() {
-                if state.id_mask() & (1 << i) != 0 {
-                    put_u8(buf, pal.block_to_disk(b));
+            put_u8(buf, bytes.len() as u8);
+            put_u8(buf, state.id_mask());
+            let mut i = 0;
+            while i < bytes.len() {
+                if state.id_mask() & (1 << i) != 0 && i + 1 < bytes.len() {
+                    put_u16(buf, pal.block_to_disk(state.id_at(i)));
+                    i += 2;
                 } else {
-                    put_u8(buf, b);
+                    put_u8(buf, bytes[i]);
+                    i += 1;
                 }
             }
         });
@@ -264,12 +282,77 @@ pub fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     deflate(&payload)
 }
 
+/// A section's block cube on disk: `[distinct: u16][ids: u16 x distinct]` then
+/// one index per cell — a BYTE while the section holds ≤ 256 distinct blocks
+/// (every section a world ever produces) and a `u16` otherwise. The palette is
+/// what keeps the record ~4 KiB after block ids widened to two bytes, and it
+/// also gives deflate a much shorter dictionary to chew on.
+fn put_block_cube(buf: &mut Vec<u8>, blocks: &crate::section::BlockCube, pal: &palette::Palette) {
+    let mut ids: Vec<u16> = Vec::new();
+    let mut index: Vec<u16> = Vec::with_capacity(blocks.len());
+    for b in blocks.iter() {
+        let disk = pal.block_to_disk(b);
+        let at = match ids.iter().position(|&p| p == disk) {
+            Some(i) => i,
+            None => {
+                ids.push(disk);
+                ids.len() - 1
+            }
+        };
+        index.push(at as u16);
+    }
+    put_u16(buf, ids.len() as u16);
+    for id in &ids {
+        put_u16(buf, *id);
+    }
+    if ids.len() <= u8::MAX as usize + 1 {
+        buf.extend(index.iter().map(|&i| i as u8));
+    } else {
+        for i in &index {
+            put_u16(buf, *i);
+        }
+    }
+}
+
+/// Inverse of [`put_block_cube`], mapping each palette entry back through the
+/// save palette on the way out.
+fn get_block_cube(r: &mut Reader, pal: &palette::Palette) -> Option<Vec<u16>> {
+    let distinct = r.u16()? as usize;
+    if distinct == 0 || distinct > crate::registry::WIDE_ID_CAP {
+        return None;
+    }
+    let mut ids = Vec::with_capacity(distinct);
+    for _ in 0..distinct {
+        ids.push(pal.block_from_disk(r.u16()?));
+    }
+    let mut out = Vec::with_capacity(SECTION_VOLUME);
+    if distinct <= u8::MAX as usize + 1 {
+        for &i in r.bytes(SECTION_VOLUME)?.iter() {
+            out.push(*ids.get(i as usize)?);
+        }
+    } else {
+        for _ in 0..SECTION_VOLUME {
+            out.push(*ids.get(r.u16()? as usize)?);
+        }
+    }
+    Some(out)
+}
+
 /// Decode a compressed section record into a `Section` at `pos` plus any item
 /// entities and mobs stored with it. `None` on corrupt / wrong-version /
 /// wrong-length data.
 pub fn decode_section(
     pos: SectionPos,
     blob: &[u8],
+) -> Option<(Section, Vec<DroppedItem>, Vec<SavedMob>)> {
+    decode_section_with(pos, blob, &super::palette::active())
+}
+
+/// [`decode_section`] against an explicit palette (see [`encode_snapshot_with`]).
+pub(crate) fn decode_section_with(
+    pos: SectionPos,
+    blob: &[u8],
+    pal: &palette::Palette,
 ) -> Option<(Section, Vec<DroppedItem>, Vec<SavedMob>)> {
     let payload = inflate(blob)?;
     let mut r = Reader::new(&payload);
@@ -280,12 +363,7 @@ pub fn decode_section(
     let flags = r.u8()?;
     let flags2 = r.u8()?;
     let flags3 = r.u8()?;
-    let pal = super::palette::active();
-    let blocks: Box<[u8]> = r
-        .bytes(SECTION_VOLUME)?
-        .iter()
-        .map(|&b| pal.block_from_disk(b))
-        .collect();
+    let blocks = get_block_cube(&mut r, pal)?;
     let water = if flags & FLAG_HAS_WATER != 0 {
         Some(r.bytes(SECTION_VOLUME)?.to_vec().into_boxed_slice())
     } else {
@@ -303,19 +381,23 @@ pub fn decode_section(
     };
     let cell_states = if flags & FLAG_HAS_CELL_STATES != 0 {
         get_indexed(&mut r, |r| {
-            let header = r.u8()?;
-            let (len, id_mask) = ((header >> 4) as usize, header & 0x0F);
+            let len = r.u8()? as usize;
+            let id_mask = r.u8()?;
             if len > crate::block::SHAPE_STATE_MAX {
                 return None;
             }
             let mut bytes = [0u8; crate::block::SHAPE_STATE_MAX];
-            for (i, b) in bytes.iter_mut().take(len).enumerate() {
-                let raw = r.u8()?;
-                *b = if id_mask & (1 << i) != 0 {
-                    pal.block_from_disk(raw)
+            let mut i = 0;
+            while i < len {
+                if id_mask & (1 << i) != 0 && i + 1 < len {
+                    let [lo, hi] = ShapeState::id_bytes(pal.block_from_disk(r.u16()?));
+                    bytes[i] = lo;
+                    bytes[i + 1] = hi;
+                    i += 2;
                 } else {
-                    raw
-                };
+                    bytes[i] = r.u8()?;
+                    i += 1;
+                }
             }
             Some(ShapeState::with_ids(&bytes[..len], id_mask))
         })?
@@ -351,7 +433,7 @@ pub fn decode_section(
         pos.cx,
         pos.cy,
         pos.cz,
-        blocks,
+        &blocks,
         water,
         furnaces,
         containers,

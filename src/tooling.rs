@@ -7,6 +7,7 @@
 /// rather than a re-derivation of it — generation/light/mesh pumping, the
 /// resident-memory census, and deterministic ticking.
 pub mod stream {
+    pub use crate::facing::Facing;
     pub use crate::world::{MemoryCensus, World};
 
     /// Run `n` deterministic game ticks over a streamed world.
@@ -19,6 +20,52 @@ pub mod stream {
         for _ in 0..n {
             world.game_tick(&recipes);
         }
+    }
+
+    /// Place a block by row name at `place_pos` the way a player click on the
+    /// cell below would (the placement ladder: model footprints, orientation,
+    /// per-cell state), committed with no body-occupancy check. A preview tool
+    /// placing a MODEL block needs exactly this — a raw `set_block_world`
+    /// writes one cell with no facing/offset state and renders a fragment.
+    /// Returns false when the placement refuses (unknown row, blocked
+    /// footprint).
+    pub fn place_block(
+        world: &mut World,
+        name: &str,
+        place_pos: [i32; 3],
+        player_facing: crate::facing::Facing,
+    ) -> bool {
+        let Some(id) = super::block::id_by_name(name) else {
+            return false;
+        };
+        let block = crate::block::Block::from_id(id);
+        let p = crate::mathh::IVec3::new(place_pos[0], place_pos[1], place_pos[2]);
+        let inputs = crate::world::placement::PlaceInputs {
+            hit: p - crate::mathh::IVec3::Y,
+            normal: crate::mathh::IVec3::Y,
+            place_pos: p,
+            replacing_in_place: false,
+            player_facing,
+            held_rotation: crate::server::player::HeldRotation {
+                item: None,
+                rotation: 0,
+            },
+            held: None,
+        };
+        let Some(plan) = world.placement_plan(block, &inputs, &mut |_, _| false) else {
+            return false;
+        };
+        world.commit_placement(&plan, true)
+    }
+
+    /// Set a placed model block's per-instance parts mask (which optional
+    /// `parts` cubes draw), e.g. the forge furnace's `coals`.
+    pub fn set_model_parts(world: &mut World, pos: [i32; 3], parts: u32) -> bool {
+        world.set_model_parts(
+            crate::mathh::IVec3::new(pos[0], pos[1], pos[2]),
+            parts,
+            None,
+        )
     }
 }
 
@@ -68,6 +115,42 @@ pub mod mods {
     }
 }
 
+/// Recipe-catalog lookups for pack checks.
+pub mod recipes_query {
+    /// The `class` route for `item_key`, as the resulting item key — the same
+    /// answer a machine gets from `HostCall::RecipeResult`. `None` when the
+    /// item is unknown or the route does not exist.
+    pub fn process(
+        catalog: &crate::crafting::Recipes,
+        class: &str,
+        item_key: &str,
+    ) -> Option<String> {
+        let item = crate::item::ItemType::by_key(item_key)?;
+        catalog
+            .process(class, item)
+            .map(|s| s.item.key().to_owned())
+    }
+}
+
+/// Mod-driven per-block draw sets — the primitive a mod uses to draw what it
+/// SIMULATES. Exposed so a preview tool can submit the same geometry a mod
+/// would.
+pub mod draw {
+    pub use mod_api::DrawPrim;
+}
+
+/// The GUI documents every enabled pack ships, for tools that check a pack
+/// loaded cleanly.
+pub mod gui {
+    /// Every accepted `*.gui.json` document as `(kind key, container slot
+    /// count)`. A pack machine missing from this list, or listed with zero
+    /// container slots, has a REJECTED or mis-declared document — which
+    /// otherwise degrades silently to plain storage.
+    pub fn loaded_documents() -> Vec<(&'static str, usize)> {
+        crate::gui::documents::loaded_documents()
+    }
+}
+
 /// The loaded recipe catalog and the progression rule derived from it — what
 /// a developer tool needs to audit "which recipes does the player see once
 /// they have held X", without opening a world.
@@ -101,12 +184,12 @@ pub mod block {
     /// Runtime id of a namespaced block row key (`"petramond:torch"`), or
     /// `None` when no loaded catalog layer declares it. Ids shift as packs
     /// change, so tools must resolve by name rather than hardcode numbers.
-    pub fn id_by_name(name: &str) -> Option<u8> {
+    pub fn id_by_name(name: &str) -> Option<u16> {
         crate::registry::names().blocks.id(name)
     }
 
     /// The row key a runtime block id came from.
-    pub fn name_of(id: u8) -> Option<&'static str> {
+    pub fn name_of(id: u16) -> Option<&'static str> {
         crate::registry::names().blocks.name(id)
     }
 }

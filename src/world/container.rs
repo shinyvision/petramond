@@ -62,6 +62,13 @@ impl World {
     /// container itself is NOT taken here: breaking scatters it via
     /// [`take_container`](Self::take_container) at the anchor.
     pub fn forget_block_entity_records(&mut self, pos: IVec3) {
+        // A mod's drawing is per-block state like every other record here, and
+        // it is keyed at the group ANCHOR — clearing the clicked cell orphans
+        // the set for eleven of a twelve-cell machine. Callers on the BREAK
+        // path must therefore resolve the anchor before they clear the block:
+        // once the footprint is air this resolves to `pos` itself.
+        let anchor = self.container_anchor(pos);
+        self.forget_block_draw(anchor);
         if let Some((c, lx, ly, lz)) = self.chunk_at_world_mut(pos.x, pos.y, pos.z) {
             c.take_furnace(lx, ly, lz);
             self.note_block_entity_change(pos);

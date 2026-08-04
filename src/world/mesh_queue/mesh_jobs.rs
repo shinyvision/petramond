@@ -71,7 +71,7 @@ impl World {
                         .sections
                         .get(&SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz))
                         .map(|s| NeighborSnap {
-                            blocks: s.blocks_arc(),
+                            blocks: s.block_cube(),
                             water: s.water_arc(),
                             skylight: s.skylight_arc(),
                             blocklight: s.blocklight_arc(),

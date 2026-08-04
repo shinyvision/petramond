@@ -3,7 +3,19 @@
 # from the engine workspace (different target, different profiles).
 [workspace]
 resolver = "2"
-members = ["exploration", "farming", "furniture", "kitchen", "minimap", "monsters", "vehicles", "weather", "weather-core"]
+members = [
+    "exploration",
+    "farming",
+    "forge",
+    "furniture",
+    "kitchen",
+    "machine-core",
+    "minimap",
+    "monsters",
+    "vehicles",
+    "weather",
+    "weather-core",
+]
 
 # Guests must abort (trap) on panic — the host treats a trap as "disable the
 # mod for this session, keep ticking". Speed over size: bundled mod wasm runs

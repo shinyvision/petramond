@@ -11,7 +11,7 @@ use super::{ActionOutcome, ItemSlotWire, MenuSyncMsg, Transform};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BlockDelta {
     pub pos: IVec3,
-    pub block_id: u8,
+    pub block_id: u16,
     pub water: Option<u8>,
     /// The cell's opaque per-cell block state after the change, `None` when
     /// the cell carries none (the replica then CLEARS any stale state,
@@ -41,6 +41,17 @@ pub(crate) struct CellKvDelta {
     pub pos: IVec3,
     pub key: String,
     pub value: Option<Vec<u8>>,
+}
+
+/// One cell's mod DRAW SET as of the batch's tick, shipped WHOLE: the sets are
+/// a handful of prims and half a set draws nothing sensible. An empty `prims`
+/// clears the cell.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct BlockDrawDelta {
+    pub pos: IVec3,
+    /// SHARED with the world's stored set: filtering the lane per recipient
+    /// costs a refcount bump per delta, not a prim-list deep copy per viewer.
+    pub prims: crate::world::draw::DrawPrims,
 }
 
 /// One live mob's replicated state as of the batch's tick — everything the
@@ -92,7 +103,7 @@ pub(crate) struct ItemStateRow {
     /// Stable per-spawn identity (`DroppedItem::id`).
     pub id: u64,
     /// Wire item id.
-    pub item_id: u8,
+    pub item_id: u16,
     pub count: u8,
     /// Canonical instance-data blob (`None` = plain stack) — see
     /// [`super::ItemSlotWire::data`].
@@ -121,7 +132,7 @@ pub(crate) struct PlayerStateRow {
     /// False hides the body entirely: spectators and the dead.
     pub visible: bool,
     /// Selected hotbar item (wire item id); `None` for an empty hand.
-    pub held_item: Option<u8>,
+    pub held_item: Option<u16>,
     /// The held stack's canonical instance-data blob (`None` = plain) — so
     /// observers tint the remote body's held item.
     pub held_data: Option<Vec<u8>>,
@@ -251,7 +262,7 @@ pub(crate) struct SelfState {
 pub(crate) enum WorldEventMsg {
     BlockBroken {
         pos: IVec3,
-        block_id: u8,
+        block_id: u16,
         /// The mined face (directional burst spread), when known.
         normal: Option<IVec3>,
         /// The cell's `petramond:tint` at break time (burst fleck tint).
@@ -259,7 +270,7 @@ pub(crate) enum WorldEventMsg {
     },
     BlockPlaced {
         pos: IVec3,
-        block_id: u8,
+        block_id: u16,
     },
     /// A door toggled: the LOWER cell + its NEW open state.
     DoorToggled {
@@ -404,6 +415,8 @@ pub(crate) struct TickUpdate {
     /// This window's per-cell mod KV changes (loaded sections only), applied
     /// after `block_deltas`.
     pub cell_kv_deltas: Vec<CellKvDelta>,
+    /// This window's changed mod draw sets (see [`BlockDrawDelta`]).
+    pub block_draws: Vec<BlockDrawDelta>,
     /// Every live mob's state (interest scoping lands with per-player
     /// streaming).
     pub mobs: Vec<MobStateRow>,

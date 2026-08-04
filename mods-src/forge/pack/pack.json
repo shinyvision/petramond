@@ -1,0 +1,9 @@
+{
+  "name": "Forge",
+  "id": "forge",
+  "version": "0.1.0",
+  "description": "Clay from riverbanks and savanna, thrown into moulds on a pottery table and fired hard in a furnace. A forging furnace melts raw metal over coal and pours it into the mould waiting in its basin: an ingot, a plate, or a tool head you lash to two sticks. With the forge installed, metal tools are CAST, never assembled from ingots.",
+  "summary": "Cast metal tools: clay, moulds, and a forging furnace.",
+  "icon": "icon.png",
+  "wasm": "mod.wasm"
+}

@@ -112,6 +112,56 @@ fn tile_memo_idx(seed: u32, tcx: i32, tcz: i32) -> usize {
     (h >> (64 - TILE_MEMO_BITS)) as usize
 }
 
+/// One memo tile, computed if stale, with the slot still held.
+///
+/// Holding the slot lock across the miss computation is the single-flight: a
+/// second worker needing this tile blocks until the bytes exist instead of
+/// recomputing them. A poisoned slot (a panicked gen job) is safe to adopt —
+/// `init` is published only after the locals below are fully computed.
+fn cached_tile<'a>(
+    surface: &SurfaceDensitySystem,
+    caves: &crate::worldgen::noise::cave_field::CaveField,
+    seed: u32,
+    tcx: i32,
+    tcz: i32,
+) -> std::sync::MutexGuard<'a, RegionTile> {
+    const T: i32 = CHUNK_SX as i32;
+    let mut tile = TILE_MEMO[tile_memo_idx(seed, tcx, tcz)]
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !(tile.init && tile.seed == seed && tile.tcx == tcx && tile.tcz == tcz) {
+        let (tx0, tz0) = (tcx * T, tcz * T);
+        let bulk = surface.region(tx0, tz0, T as usize, T as usize);
+        let mut adj = [0i32; 256];
+        for (i, slot) in adj.iter_mut().enumerate() {
+            let wx = tx0 + (i % T as usize) as i32;
+            let wz = tz0 + (i / T as usize) as i32;
+            *slot = caves.feature_surface_after_caves(wx, wz, bulk.surf[i]);
+        }
+        tile.seed = seed;
+        tile.tcx = tcx;
+        tile.tcz = tcz;
+        tile.raw.copy_from_slice(&bulk.surf);
+        tile.adj = adj;
+        tile.biomes.copy_from_slice(&bulk.biomes);
+        tile.init = true;
+    }
+    tile
+}
+
+/// The BIOMES of one memo tile, and nothing else. The point-query twin of
+/// [`cached_feature_region`]: reading one column through that helper allocates
+/// a surface vector and a raw vector to throw both away.
+pub(crate) fn cached_tile_biomes(
+    surface: &SurfaceDensitySystem,
+    caves: &crate::worldgen::noise::cave_field::CaveField,
+    seed: u32,
+    tcx: i32,
+    tcz: i32,
+) -> [Biome; 256] {
+    cached_tile(surface, caves, seed, tcx, tcz).biomes
+}
+
 /// The feature window for `(x0,z0,w,h)`: cave-adjusted surfaces + biomes in
 /// the returned [`RegionCells`], plus the RAW (pre-adjustment) surfaces the
 /// column core needs. Assembled from per-thread memoized 16×16 world tiles:
@@ -144,31 +194,7 @@ pub(crate) fn cached_feature_region(
 
     for tcz in z0.div_euclid(T)..=(z1 - 1).div_euclid(T) {
         for tcx in x0.div_euclid(T)..=(x1 - 1).div_euclid(T) {
-            // Holding the slot lock across the miss computation is the
-            // single-flight: a second worker needing this tile blocks until
-            // the bytes exist instead of recomputing them. A poisoned slot
-            // (a panicked gen job) is safe to adopt — `init` is published
-            // only after the locals below are fully computed.
-            let mut tile = TILE_MEMO[tile_memo_idx(seed, tcx, tcz)]
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !(tile.init && tile.seed == seed && tile.tcx == tcx && tile.tcz == tcz) {
-                let (tx0, tz0) = (tcx * T, tcz * T);
-                let bulk = surface.region(tx0, tz0, T as usize, T as usize);
-                let mut adj = [0i32; 256];
-                for (i, slot) in adj.iter_mut().enumerate() {
-                    let wx = tx0 + (i % T as usize) as i32;
-                    let wz = tz0 + (i / T as usize) as i32;
-                    *slot = caves.feature_surface_after_caves(wx, wz, bulk.surf[i]);
-                }
-                tile.seed = seed;
-                tile.tcx = tcx;
-                tile.tcz = tcz;
-                tile.raw.copy_from_slice(&bulk.surf);
-                tile.adj = adj;
-                tile.biomes.copy_from_slice(&bulk.biomes);
-                tile.init = true;
-            }
+            let tile = cached_tile(surface, caves, seed, tcx, tcz);
             // Copy the tile ∩ window intersection.
             let (ix0, ix1) = (x0.max(tcx * T), x1.min(tcx * T + T));
             let (iz0, iz1) = (z0.max(tcz * T), z1.min(tcz * T + T));

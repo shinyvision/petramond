@@ -215,6 +215,18 @@ fn hostile_guest(body: &str) -> ModInstance {
 /// id-keyed [`super::host::HOST_CALL_TEST_HOOK`] without touching other
 /// tests' guests.
 fn hostile_guest_with_id(id: &str, body: &str) -> ModInstance {
+    guest_with_data(id, "", body)
+}
+
+/// Where [`calling_guest`] stages its call payloads: clear of the registration
+/// blob at 0 and of the fixed `mod_alloc` scratch at 4096 (host replies land
+/// there, and they must not overwrite a later call's bytes).
+const CALL_STAGE_ADDR: u32 = 1024;
+
+/// The shared guest template: `mod_init` issues one registration host-call,
+/// `mod_dispatch` runs `body`, and `extra_data` adds whatever data segments
+/// the body reads from.
+fn guest_with_data(id: &str, extra_data: &str, body: &str) -> ModInstance {
     let registration = mod_api::encode(&HostCall::RegisterTickSystem {
         stage: ApiStage::Mining,
         attach: AttachSide::Before,
@@ -222,7 +234,7 @@ fn hostile_guest_with_id(id: &str, body: &str) -> ModInstance {
         system_id: 7,
     })
     .unwrap();
-    let reg_bytes: String = registration.iter().map(|b| format!("\\{b:02x}")).collect();
+    let reg_bytes = wat_bytes(&registration);
     let reg_len = registration.len();
     let wat = format!(
         r#"(module
@@ -230,7 +242,7 @@ fn hostile_guest_with_id(id: &str, body: &str) -> ModInstance {
   (memory (export "memory") 1)
   (data (i32.const 0) "{reg_bytes}")
   (data (i32.const 512) "\00")
-  (func (export "mod_init")
+{extra_data}  (func (export "mod_init")
     (drop (call $hd (i32.const 0) (i32.const {reg_len}))))
   (func (export "mod_alloc") (param i32) (result i32) (i32.const 4096))
   (func (export "mod_free") (param i32 i32))
@@ -240,6 +252,36 @@ fn hostile_guest_with_id(id: &str, body: &str) -> ModInstance {
     let module = wasmtime::Module::new(super::host::engine(), wat.as_bytes())
         .expect("assemble hostile guest");
     ModInstance::from_module(id, &module, 1).expect("instantiate hostile guest")
+}
+
+fn wat_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("\\{b:02x}")).collect()
+}
+
+/// A guest whose every dispatch ISSUES `calls`, in order, and then answers
+/// `GuestRet::Unit`. The payloads are the real postcard encodings baked into
+/// data segments, so the engine decodes exactly what a compiled mod's SDK
+/// would have written and nothing in a test can route around the ABI — which
+/// is what makes this a composition fixture rather than a second call site for
+/// `handle_host_call`.
+fn calling_guest(id: &str, calls: &[HostCall]) -> ModInstance {
+    let mut data = String::new();
+    let mut body = String::new();
+    let mut at = CALL_STAGE_ADDR;
+    for call in calls {
+        let bytes = mod_api::encode(call).expect("encode a staged host call");
+        data.push_str(&format!(
+            "  (data (i32.const {at}) \"{}\")\n",
+            wat_bytes(&bytes)
+        ));
+        body.push_str(&format!(
+            "(drop (call $hd (i32.const {at}) (i32.const {})))\n    ",
+            bytes.len()
+        ));
+        at += bytes.len() as u32;
+    }
+    assert!(at < 4096, "staged calls run into the reply scratch");
+    guest_with_data(id, &data, &format!("{body}(i64.const 2199023255553)"))
 }
 
 /// Contract: a trapping mod is disabled for the session with the tick
@@ -411,6 +453,177 @@ fn watchdog_charges_guest_compute_only_inner() {
         ret.is_none() && runaway.disabled(),
         "the runaway loop trapped"
     );
+}
+
+/// A [`Sim`] holding one placed multi-cell model block, with its group anchor
+/// and a NON-anchor footprint cell — the cell a mod would address it by.
+fn sim_with_a_placed_machine() -> (Sim, crate::mathh::IVec3, crate::mathh::IVec3) {
+    use crate::mathh::IVec3;
+
+    let mut sim = Sim::new();
+    sim.world.clear_world();
+    sim.world
+        .insert_empty_column_for_test(crate::chunk::ChunkPos::new(0, 0));
+    let anchor = IVec3::new(5, 64, 5);
+    assert!(
+        sim.world
+            .place_model_block(anchor, crate::block::Block::FurnitureWorkbench),
+        "fixture: a multi-cell model block places"
+    );
+    let cells = sim.world.model_group(anchor).expect("a placed group").2;
+    let addressed = *cells.last().expect("a footprint cell");
+    assert!(
+        cells.len() > 1 && addressed != anchor,
+        "fixture: multi-cell, and addressed by a cell that is NOT the anchor"
+    );
+    (sim, anchor, addressed)
+}
+
+/// The parts mask stored at `c`.
+fn parts_mask_at(world: &World, c: crate::mathh::IVec3) -> Option<u32> {
+    world
+        .cell_kv_get(c.x, c.y, c.z, crate::block_model::PARTS_KV_KEY)
+        .map(<[u8; 4]>::try_from)
+        .and_then(Result::ok)
+        .map(u32::from_le_bytes)
+}
+
+/// The two presentation calls a machine makes every tick, addressed at `pos`.
+fn dressing_calls(pos: crate::mathh::IVec3, parts: u32, tint: [u8; 3]) -> Vec<HostCall> {
+    let item = crate::registry::names()
+        .items
+        .name(crate::item::ItemType::Dirt.id())
+        .expect("fixture: a registered item")
+        .to_owned();
+    let pos = [pos.x, pos.y, pos.z];
+    vec![
+        HostCall::SetModelParts {
+            pos,
+            parts,
+            tint: Some(tint),
+        },
+        HostCall::SetBlockDraw {
+            pos,
+            prims: vec![
+                mod_api::DrawPrim::Cuboid {
+                    min: [0.2, 0.0, 0.2],
+                    max: [0.8, 0.5, 0.8],
+                    tile: "stone".into(),
+                    tint: [255, 0, 0],
+                    emissive: true,
+                },
+                mod_api::DrawPrim::Item {
+                    at: [0.5, 0.6, 0.5],
+                    scale: 0.4,
+                    yaw: 0.0,
+                    pitch: 0.0,
+                    item,
+                    tint: [255, 255, 255],
+                },
+            ],
+        },
+    ]
+}
+
+/// The presentation seams IN COMPOSITION, driven by a real guest across the
+/// real ABI: a mod dresses a placed multi-cell machine from inside a tick
+/// dispatch, and a client joining afterwards ends up holding the same picture.
+///
+/// Every seam here has a unit test of its own; composition is where they
+/// disagree. The parts mask lands on EVERY FOOTPRINT CELL and the draw set at
+/// the group ANCHOR alone, both are addressed by whichever cell the mod
+/// happens to have, and the two reach a joiner by different routes — cell KV
+/// rides the section's own states, while a draw set is a world-level record
+/// the section payload has to go and fetch. A test per seam proves each rule;
+/// only running them together proves they are the same rule.
+#[test]
+fn a_guest_dresses_a_placed_machine_and_a_joiner_sees_it() {
+    const PARTS: u32 = 0b101;
+    const TINT: [u8; 3] = [12, 200, 34];
+
+    let (mut sim, anchor, addressed) = sim_with_a_placed_machine();
+    // The engine's own namespace: these calls dress the CALLER'S OWN block, and
+    // the only multi-cell model row a bare test registry has is an engine one —
+    // so the guest stands in for the pack that would ship the machine.
+    let mut host = ModHost::from_instances(vec![calling_guest(
+        crate::registry::ENGINE_NAMESPACE,
+        &dressing_calls(addressed, PARTS, TINT),
+    )]);
+    sim.init(&mut host);
+    sim.run_slot(Attach::Before(Stage::Mining));
+    assert!(
+        !host.probe(0).0,
+        "the guest's calls were replies, not traps"
+    );
+
+    for &c in &sim.world.model_group(anchor).expect("still placed").2 {
+        assert_eq!(parts_mask_at(&sim.world, c), Some(PARTS), "{c:?}");
+        assert_eq!(
+            sim.world
+                .cell_kv_get(c.x, c.y, c.z, crate::block::TINT_KV_KEY),
+            Some(&TINT[..]),
+            "{c:?} takes the tint with the mask"
+        );
+    }
+    let set = sim
+        .world
+        .block_draw_at(anchor)
+        .expect("the set is keyed at the group ANCHOR");
+    assert_eq!(set.resolved.len(), 2, "both prims resolved");
+    assert!(
+        sim.world.block_draw_at(addressed).is_none(),
+        "a set under a non-anchor cell would never be hit-tested nor forgotten on break"
+    );
+
+    // A client joining now streams the section, which is the ONLY way a
+    // machine that last redrew itself before the join can reach it.
+    let mut replica = World::new_with_pool(
+        0,
+        1,
+        crate::world::WorldRole::ClientReplica,
+        std::sync::Arc::new(crate::worker::JobPool::new(1)),
+    );
+    let cp = crate::chunk::ChunkPos::new(0, 0);
+    replica.install_remote_column(sim.world.column_payload(cp).expect("a column payload"));
+    let sp = crate::chunk::SectionPos::from_world(anchor.x, anchor.y, anchor.z).expect("in range");
+    replica.install_remote_section(sim.world.section_payload(sp).expect("a loaded section"));
+
+    assert_eq!(
+        parts_mask_at(&replica, anchor),
+        Some(PARTS),
+        "the joiner's model wears the mask"
+    );
+    assert_eq!(
+        replica
+            .block_draw_at(anchor)
+            .expect("the joiner sees the drawing")
+            .resolved
+            .len(),
+        2
+    );
+}
+
+/// The ownership gate holds through the whole dispatch, not just at the
+/// handler: a pack dresses ITS OWN machine and nothing else. Same guest, same
+/// calls, a foreign namespace — and the machine stays undressed rather than
+/// half dressed (the two calls are separate host calls, so a gate applied to
+/// one of them only is a machine wearing another pack's parts).
+#[test]
+fn a_foreign_mod_cannot_dress_someone_elses_machine() {
+    let (mut sim, anchor, addressed) = sim_with_a_placed_machine();
+    let mut host = ModHost::from_instances(vec![calling_guest(
+        "intruder",
+        &dressing_calls(addressed, 0b111, [9, 9, 9]),
+    )]);
+    sim.init(&mut host);
+    sim.run_slot(Attach::Before(Stage::Mining));
+
+    assert!(
+        !host.probe(0).0,
+        "a refused call is an error reply, not a trap"
+    );
+    assert_eq!(parts_mask_at(&sim.world, anchor), None);
+    assert!(sim.world.block_draw_at(anchor).is_none());
 }
 
 /// Contract: the disable-message diagnostics stay bounded — a call carrying a

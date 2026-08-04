@@ -312,7 +312,7 @@ impl ClientModRuntime {
         actor: &PlayerSnapshot,
         shape_key: &str,
         shape_kind: u8,
-        block_id: u8,
+        block_id: u16,
         inputs: mod_api::PlaceInputsView,
     ) -> Option<mod_api::ShapePlacementResult> {
         #[cfg(test)]

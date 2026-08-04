@@ -83,14 +83,13 @@ pub fn section_local(idx: usize) -> (usize, usize, usize) {
 }
 
 /// A legacy voxel column: the worldgen transfer format + column-era test
-/// fixture (see the module doc). Blocks stored as `Box<[u8; VOLUME]>`
-/// (64 KiB / chunk). Carries only what worldgen produces — blocks, water
+/// fixture (see the module doc). Blocks stored as `Box<[u16; VOLUME]>`. Carries only what worldgen produces — blocks, water
 /// metadata, heightmap, biome — never block entities. Live world storage is
 /// [`crate::section::Section`].
 pub struct Chunk {
     pub cx: i32,
     pub cz: i32,
-    blocks: Box<[u8]>,
+    blocks: Box<[u16]>,
     /// Per-block water state, parallel to `blocks`, only meaningful where the
     /// block is `Water`. Encodes the flow `falloff` (0 = source/full, 1..=8 =
     /// distance from a source) plus a `FALLING` bit (see `world::water`).
@@ -114,7 +113,7 @@ pub struct Chunk {
 
 impl Chunk {
     pub fn new(cx: i32, cz: i32) -> Self {
-        let blocks = vec![0u8; VOLUME].into_boxed_slice();
+        let blocks = vec![0u16; VOLUME].into_boxed_slice();
         let heightmap = Box::new([0u16; CHUNK_SX * CHUNK_SZ]);
         let biomes = Box::new([0u8; CHUNK_SX * CHUNK_SZ]);
         Self {
@@ -139,7 +138,7 @@ impl Chunk {
         Block::from_id(self.blocks[idx(x, y, z)])
     }
 
-    pub fn block_raw(&self, x: usize, y: usize, z: usize) -> u8 {
+    pub fn block_raw(&self, x: usize, y: usize, z: usize) -> u16 {
         self.blocks[idx(x, y, z)]
     }
 
@@ -151,7 +150,7 @@ impl Chunk {
         self.set_block_raw(x, y, z, b.id());
     }
 
-    pub fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u8) {
+    pub fn set_block_raw(&mut self, x: usize, y: usize, z: usize, id: u16) {
         let i = idx(x, y, z);
         let old = self.blocks[i];
         self.blocks[i] = id;
@@ -209,7 +208,7 @@ impl Chunk {
             .get_or_insert_with(|| vec![0u8; VOLUME].into_boxed_slice())[i] = meta;
     }
 
-    fn update_heightmap_after_set(&mut self, x: usize, y: usize, z: usize, id: u8) {
+    fn update_heightmap_after_set(&mut self, x: usize, y: usize, z: usize, id: u16) {
         let hi = z * CHUNK_SX + x;
         let h = self.heightmap[hi];
         if id != 0 {
@@ -239,7 +238,7 @@ impl Chunk {
     /// changing from `old_id` to `new_id`. Every block setter calls this, so the
     /// per-column gate stays exact through generation and runtime edits alike.
     #[inline]
-    fn adjust_random_tick_count(&mut self, old_id: u8, new_id: u8) {
+    fn adjust_random_tick_count(&mut self, old_id: u16, new_id: u16) {
         let was = Block::from_id(old_id).has_random_tick();
         let now = Block::from_id(new_id).has_random_tick();
         match (was, now) {
@@ -267,10 +266,10 @@ impl Chunk {
         self.random_tick_count > 0
     }
 
-    pub fn blocks_slice(&self) -> &[u8] {
+    pub fn blocks_slice(&self) -> &[u16] {
         &self.blocks
     }
-    pub fn blocks_slice_mut(&mut self) -> &mut [u8] {
+    pub fn blocks_slice_mut(&mut self) -> &mut [u16] {
         &mut self.blocks
     }
     pub fn biomes_slice(&self) -> &[u8] {

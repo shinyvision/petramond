@@ -48,40 +48,82 @@ impl ToolKind {
     }
 }
 
-/// A mining tool: its [`kind`](Self::kind) and material `tier` (`1` = wooden,
-/// `2` = stone, `3` = iron, `4` = diamond). Read from an item via
-/// [`ItemType::tool`]; the mining model (see [`crate::mining`]) keys both the
-/// speed multiplier and the harvest gate off it.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// A mining tool. Its three material properties are INDEPENDENT, and that is
+/// the whole shape of this type:
+///
+/// - `tier` gates what it may HARVEST at all.
+/// - `speed` is how fast it gets there.
+/// - `damage` is what it does to a mob.
+///
+/// One number cannot carry all three. A gold tool is the proof: it should
+/// reach everything a pickaxe is for and still dig no faster than a bare fist,
+/// which is unsayable while speed is a function of the harvest gate. So a row
+/// may state each one, and anything it leaves out is derived from `tier` — the
+/// shipped ladder is exactly what those defaults produce.
+///
+/// Read from an item via [`ItemType::tool`]; the mining model is
+/// [`crate::mining`].
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Tool {
     pub kind: ToolKind,
+    /// Harvest gate: the highest `harvest_tier` block this may break for its
+    /// drop, when it is also the block's preferred kind.
     pub tier: u8,
+    /// Mining speed as a multiplier over the bare hand, BEFORE the kind's
+    /// [`ToolKind::mining_efficiency`].
+    pub speed: f32,
+    /// Melee damage range `(min, max)`; the attacker rolls uniformly in it.
+    pub damage: (f32, f32),
+}
+
+/// The mining speed a `tier` implies when a row does not state one — the
+/// shipped ladder.
+pub fn default_speed(tier: u8) -> f32 {
+    match tier {
+        0 => 1.0,
+        1 => 2.0,
+        2 => 4.0,
+        3 => 6.0,
+        _ => 8.0,
+    }
+}
+
+/// The melee damage a `(kind, tier)` implies when a row does not state one.
+///
+/// Axes hit hardest, shovels and pickaxes share a gentler curve, and every
+/// diamond tool one-shots a small mob. The band (rather than a flat integer)
+/// is what lets a tool's hits-to-kill read as e.g. "3-4 hits" on 4 health.
+pub fn default_damage(kind: ToolKind, tier: u8) -> (f32, f32) {
+    use ToolKind::*;
+    if tier >= 4 {
+        return (5.0, 7.0);
+    }
+    match (kind, tier) {
+        (Axe, 1) => (1.5, 2.5),
+        (Axe, 2) => (2.0, 3.0),
+        (Axe, 3) => (4.0, 6.0),
+        (_, 1) => (1.0, 1.5),
+        (_, 2) => (1.0, 2.5),
+        (_, 3) => (2.5, 4.5),
+        _ => FIST_DAMAGE,
+    }
 }
 
 impl Tool {
-    /// The melee damage range `(min, max)` this tool rolls per hit. A weapon's damage
-    /// is a property of the tool itself — its KIND and material TIER: axes hit hardest,
-    /// shovels and pickaxes share a gentler curve, and every diamond tool one-shots a
-    /// small mob. The attacker rolls a uniform value in this range each swing, so a
-    /// tool's hits-to-kill against a given mob spans a small band rather than a fixed
-    /// count (a flat integer-per-hit couldn't produce e.g. "3–4 hits" on 4 health).
+    /// A tool with the ladder's own speed and damage for its `(kind, tier)` —
+    /// what a row that states nothing else resolves to.
+    pub fn new(kind: ToolKind, tier: u8) -> Tool {
+        Tool {
+            kind,
+            tier,
+            speed: default_speed(tier),
+            damage: default_damage(kind, tier),
+        }
+    }
+
+    /// The melee damage range `(min, max)` this tool rolls per hit.
     pub fn attack_damage(self) -> (f32, f32) {
-        use ToolKind::*;
-        // Diamond is uniformly lethal regardless of kind.
-        if self.tier >= 4 {
-            return (5.0, 7.0);
-        }
-        match (self.kind, self.tier) {
-            (Axe, 1) => (1.5, 2.5),
-            (Axe, 2) => (2.0, 3.0),
-            (Axe, 3) => (4.0, 6.0),
-            // Shovels and pickaxes share a curve (clumsier weapons than an axe).
-            (_, 1) => (1.0, 1.5),
-            (_, 2) => (1.0, 2.5),
-            (_, 3) => (2.5, 4.5),
-            // Tiers are 1..=4; anything else falls back to the fist baseline.
-            _ => FIST_DAMAGE,
-        }
+        self.damage
     }
 }
 

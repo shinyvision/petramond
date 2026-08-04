@@ -1,7 +1,7 @@
 use crate::block::{Block, BlockTag};
 use crate::chunk::{SECTION_SIZE, SECTION_VOLUME};
 
-use super::{uniform_cube, Section, SectionMetrics, SectionSummary};
+use super::{Section, SectionMetrics, SectionSummary};
 
 const MB_RANDOM_TICK: u8 = 1 << 0;
 const MB_OPAQUE: u8 = 1 << 1;
@@ -11,16 +11,19 @@ const MB_BIOME_TINT: u8 = 1 << 4;
 const MB_PARTICLE_EMITTER: u8 = 1 << 5;
 const MB_LIGHT_EMITTER: u8 = 1 << 6;
 
+/// Histogram width of the fast path in [`Section::metrics_from_blocks`].
+const LOW_HIST: usize = 256;
+
 /// Per-id metrics class bits, derived once from the SAME predicates the
 /// incremental setter path (`adjust_random_tick_count` / `adjust_opaque_count`)
 /// uses — the block registry loads exactly once per process, so this can never
 /// go stale. Ids beyond the registry read as `Air` through `Block::from_id`,
 /// matching the per-cell predicates on such ids.
-fn metrics_bits() -> &'static [u8; 256] {
-    static BITS: std::sync::LazyLock<[u8; 256]> = std::sync::LazyLock::new(|| {
-        let mut bits = [0u8; 256];
+fn metrics_bits() -> &'static [u8] {
+    static BITS: std::sync::LazyLock<Box<[u8]>> = std::sync::LazyLock::new(|| {
+        let mut bits = vec![0u8; Block::all().len()].into_boxed_slice();
         for (i, b) in bits.iter_mut().enumerate() {
-            let id = i as u8;
+            let id = i as u16;
             let block = Block::from_id(id);
             *b = ((block.has_random_tick() as u8) * MB_RANDOM_TICK)
                 | ((block.is_opaque() as u8) * MB_OPAQUE)
@@ -41,7 +44,7 @@ impl Section {
     /// Keep [`random_tick_count`](Self::random_tick_count) in step with one cell
     /// changing from `old_id` to `new_id`.
     #[inline]
-    pub(super) fn adjust_random_tick_count(&mut self, old_id: u8, new_id: u8) {
+    pub(super) fn adjust_random_tick_count(&mut self, old_id: u16, new_id: u16) {
         let was = Block::from_id(old_id).has_random_tick();
         let now = Block::from_id(new_id).has_random_tick();
         match (was, now) {
@@ -57,7 +60,7 @@ impl Section {
         self.random_tick_count = self
             .blocks
             .iter()
-            .filter(|&&id| Block::from_id(id).has_random_tick())
+            .filter(|&id| Block::from_id(id).has_random_tick())
             .count() as u32;
     }
 
@@ -70,8 +73,8 @@ impl Section {
         x: usize,
         y: usize,
         z: usize,
-        old_id: u8,
-        new_id: u8,
+        old_id: u16,
+        new_id: u16,
     ) {
         let was_op = Block::from_id(old_id).is_opaque();
         let now_op = Block::from_id(new_id).is_opaque();
@@ -158,22 +161,47 @@ impl Section {
     /// per-id [`metrics_bits`] class table (derived from the same predicates
     /// the incremental setters use, so the two paths cannot disagree), then a
     /// boundary-plane pass for `plane_opaque`.
-    pub(crate) fn metrics_from_blocks(blocks: &[u8]) -> SectionMetrics {
-        if blocks.len() != SECTION_VOLUME {
+    pub(crate) fn metrics_from_blocks(blocks: &[u16]) -> SectionMetrics {
+        Self::metrics_from(blocks.len(), |i| blocks[i])
+    }
+
+    /// [`metrics_from_blocks`](Self::metrics_from_blocks) over a stored cube —
+    /// the same pass without materialising the ids.
+    pub(crate) fn metrics_from_cube(cube: &super::BlockCube) -> SectionMetrics {
+        Self::metrics_from(cube.len(), |i| cube.get(i))
+    }
+
+    fn metrics_from(len: usize, at: impl Fn(usize) -> u16) -> SectionMetrics {
+        if len != SECTION_VOLUME {
             return SectionMetrics::default();
         }
-        let mut hist = [0u16; 256];
-        for &id in blocks {
-            hist[id as usize] += 1;
+        // Engine content owns the low ids and is what terrain is made of, so
+        // the fixed histogram still covers every generated section; a section
+        // holding a high-id pack block tallies those in a short side list
+        // rather than paying a registry-sized zeroed array per call.
+        let mut hist = [0u16; LOW_HIST];
+        let mut high: Vec<(u16, u32)> = Vec::new();
+        for id in (0..len).map(&at) {
+            match hist.get_mut(id as usize) {
+                Some(slot) => *slot += 1,
+                None => match high.iter_mut().find(|(i, _)| *i == id) {
+                    Some((_, n)) => *n += 1,
+                    None => high.push((id, 1)),
+                },
+            }
         }
         let bits = metrics_bits();
         let mut out = SectionMetrics::default();
-        for (id, &n) in hist.iter().enumerate() {
+        let tally = hist
+            .iter()
+            .enumerate()
+            .map(|(id, &n)| (id as u16, n as u32))
+            .chain(high.iter().copied());
+        for (id, n) in tally {
             if n == 0 {
                 continue;
             }
-            let n = n as u32;
-            let b = bits[id];
+            let b = bits.get(id as usize).copied().unwrap_or(0);
             if b & MB_RANDOM_TICK != 0 {
                 out.random_tick_count += n;
             }
@@ -198,7 +226,8 @@ impl Section {
         }
         if out.opaque_count > 0 {
             let opaque = |x: usize, y: usize, z: usize| {
-                (bits[blocks[crate::chunk::section_idx(x, y, z)] as usize] & MB_OPAQUE != 0) as u16
+                let id = at(crate::chunk::section_idx(x, y, z)) as usize;
+                (bits.get(id).copied().unwrap_or(0) & MB_OPAQUE != 0) as u16
             };
             let hi = SECTION_SIZE - 1;
             for a in 0..SECTION_SIZE {
@@ -234,7 +263,7 @@ impl Section {
                 self.blocks
                     .iter()
                     .enumerate()
-                    .filter(|(_, &id)| Self::id_has_particle_emitter(id))
+                    .filter(|&(_, id)| Self::id_has_particle_emitter(id))
                     .map(|(i, _)| i as u16),
             );
         }
@@ -257,7 +286,7 @@ impl Section {
     /// Recount opaque + non-air + water + mesh/presentation hint cells — for a bulk
     /// load that fills `blocks` directly.
     pub fn recompute_opaque_count(&mut self) {
-        self.install_metrics(Self::metrics_from_blocks(&self.blocks));
+        self.install_metrics(Self::metrics_from_cube(&self.blocks));
         self.compact_uniform_blocks();
     }
 
@@ -268,17 +297,17 @@ impl Section {
     /// that can actually be uniform.
     fn compact_uniform_blocks(&mut self) {
         let uniform_id = if self.non_air_count == 0 {
-            Some(0u8)
+            Some(0u16)
         } else if self.opaque_count as usize == SECTION_VOLUME
             || self.water_count as usize == SECTION_VOLUME
         {
-            let first = self.blocks[0];
-            self.blocks.iter().all(|&b| b == first).then_some(first)
+            let first = self.blocks.get(0);
+            self.blocks.iter().all(|b| b == first).then_some(first)
         } else {
             None
         };
         if let Some(id) = uniform_id {
-            self.blocks = uniform_cube(id);
+            self.blocks.fill(id);
         }
     }
 
@@ -388,7 +417,7 @@ impl Section {
     }
 
     #[inline]
-    fn id_uses_biome_tint(id: u8) -> bool {
+    fn id_uses_biome_tint(id: u16) -> bool {
         let block = Block::from_id(id);
         matches!(
             block,
@@ -397,12 +426,12 @@ impl Section {
     }
 
     #[inline]
-    fn id_has_particle_emitter(id: u8) -> bool {
+    fn id_has_particle_emitter(id: u16) -> bool {
         Block::from_id(id).particle_emitter().is_some()
     }
 
     #[inline]
-    fn id_emits_light(id: u8) -> bool {
+    fn id_emits_light(id: u16) -> bool {
         Block::from_id(id).light_emission() > 0
     }
 

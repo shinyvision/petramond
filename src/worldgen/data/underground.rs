@@ -209,7 +209,7 @@ impl Chamber {
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct FaceLining {
     /// Block written here; `0` (air) leaves the rock bare.
-    pub block: u8,
+    pub block: u16,
     /// Share of eligible cells painted. `1.0` takes NO roll at all, which is
     /// what makes a floor rule a guarantee rather than a high probability.
     pub weight: f32,
@@ -319,7 +319,7 @@ pub struct UndergroundBiomeDef {
     band: Option<(f64, f64)>,
     y: (i32, i32),
     /// Block id this biome lines cave walls with; `0` (air) = bare stone.
-    lining: u8,
+    lining: u16,
     lining_name: &'static str,
     /// Per-orientation override of `lining`; `None` = the one-block-everywhere
     /// shell every row had before.
@@ -387,7 +387,7 @@ pub struct UndergroundBiomes {
     pub caliber_varies: bool,
     /// Dense lining block id per biome id (`0` = none): the carve inner loop's
     /// only lining lookup.
-    lining: [u8; 256],
+    lining: [u16; 256],
     /// Dense per-orientation lining, parallel to [`Self::lining`].
     faces: Box<[Option<LiningFaces>; 256]>,
     /// Hoisted from `faces`: whether ANY row declares one. The single gate on
@@ -455,7 +455,7 @@ impl UndergroundBiomes {
 
     /// The lining block id for a biome id (`0` = bare stone).
     #[inline]
-    pub fn lining(&self, id: u8) -> u8 {
+    pub fn lining(&self, id: u8) -> u16 {
         self.lining[id as usize]
     }
 
@@ -566,7 +566,7 @@ impl UndergroundBiomes {
 
     /// The id registered under `name`, or `None` when no such row is loaded.
     pub fn id(&self, name: &str) -> Option<u8> {
-        self.catalog.id(name)
+        self.catalog.id(name).map(|id| id as u8)
     }
 
     /// The registry name of `id`, or `None` when out of range.

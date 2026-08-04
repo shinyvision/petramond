@@ -109,6 +109,7 @@ mod tests {
         Recipes::new(
             Vec::new(),
             vec![ProcessingRecipe {
+                key: "petramond:test_smelt".to_owned(),
                 class: SMELTING_CLASS.to_owned(),
                 input: ItemType::RawIron,
                 result: ItemStack::new(ItemType::IronIngot, 1),

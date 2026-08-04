@@ -205,7 +205,7 @@ host_fn! {
 /// authored in) into world space — the exact transform the engine places
 /// model geometry with, so a computed pose anchor lands on the authored seat
 /// cushion under every facing. `base`/`facing` come from
-/// [`block_model_group`]; `footprint` is your model's declared `cells`.
+/// [`crate::block_model_group`]; `footprint` is your model's declared `cells`.
 pub fn footprint_local_to_world(
     base: [i32; 3],
     footprint: [u8; 3],
@@ -220,11 +220,7 @@ pub fn footprint_local_to_world(
         Facing::East => (sz - z, x),
         Facing::West => (z, sx - x),
     };
-    [
-        base[0] as f32 + rx,
-        base[1] as f32 + y,
-        base[2] as f32 + rz,
-    ]
+    [base[0] as f32 + rx, base[1] as f32 + y, base[2] as f32 + rz]
 }
 
 /// The PLAYER-convention body yaw (yaw `0` faces `+Z`) that faces the same

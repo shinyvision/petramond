@@ -224,6 +224,28 @@ impl CraftingRecipe {
         &self.inherit
     }
 
+    /// The engine's `petramond:enabled` row vocabulary, read off compiled data
+    /// entries before the row joins the catalog: `false` drops it.
+    ///
+    /// This is how a pack RETIRES a recipe it does not own. A pack cannot
+    /// restate `petramond:iron_pickaxe` (namespace ownership) but it can attach
+    /// data to it with a patch row, so replacing a whole crafting route is
+    /// `{"patch": "<recipe>", "data": {"petramond:enabled": false}}` plus the
+    /// pack's own replacement rows. Recipes are the one pack-facing catalog
+    /// with no id space — nothing addresses a recipe by index and nothing
+    /// persists one — so dropping a row is safe in a way dropping a block or
+    /// item row could never be.
+    ///
+    /// Absent means enabled; a non-boolean value fails the row, like every
+    /// other engine data key.
+    pub(crate) fn row_enabled(data: &[(String, String)]) -> Result<bool, String> {
+        match data.iter().find(|(k, _)| k == "petramond:enabled") {
+            None => Ok(true),
+            Some((_, text)) => serde_json::from_str(text)
+                .map_err(|e| format!("malformed 'petramond:enabled' data: {e}")),
+        }
+    }
+
     /// Attach the row's compiled data entries, parsing the engine's
     /// `petramond:inherit` vocabulary strictly (a malformed entry fails the
     /// row, like fuel/tool on items).
@@ -427,9 +449,12 @@ impl CraftingCatalog {
     }
 }
 
-/// A machine-processing recipe, keyed by `(class, input)`.
+/// A machine-processing recipe, looked up by `(class, input)` and IDENTIFIED
+/// by its namespaced `recipe` key — the same identity a crafting row has, so
+/// the one patch surface reaches both kinds of row.
 #[derive(Clone, Debug)]
 pub struct ProcessingRecipe {
+    pub key: String,
     pub class: String,
     pub input: ItemType,
     pub result: ItemStack,

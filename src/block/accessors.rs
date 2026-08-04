@@ -52,7 +52,7 @@ impl Block {
     /// a bulk scan over a section's id buffer, which has no `Block` in hand and
     /// must not build one per cell.
     #[inline]
-    pub fn id_refines_shape(id: u8) -> bool {
+    pub fn id_refines_shape(id: u16) -> bool {
         data::shape_refines(id)
     }
 
@@ -193,12 +193,12 @@ impl Block {
     }
 
     #[inline]
-    pub const fn id(self) -> u8 {
+    pub const fn id(self) -> u16 {
         self.0
     }
 
     #[inline]
-    pub fn from_id(id: u8) -> Block {
+    pub fn from_id(id: u16) -> Block {
         data::from_id(id)
     }
 

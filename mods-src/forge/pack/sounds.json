@@ -1,0 +1,44 @@
+{
+  "sounds": [
+    {
+      "sound": "forge:lever",
+      "variants": ["sounds/door_close.ogg"],
+      "gain": 0.8,
+      "pitch": 1.45,
+      "pitch_variation": 0.04,
+      "attenuation_distance": 12.0,
+      "category": "block"
+    },
+    {
+      "sound": "forge:pour_land",
+      "variants": [
+        "sounds/water_splash_small1.ogg",
+        "sounds/water_splash_small2.ogg",
+        "sounds/water_splash_small3.ogg"
+      ],
+      "gain": 0.85,
+      "pitch": 0.55,
+      "pitch_variation": 0.06,
+      "attenuation_distance": 16.0,
+      "category": "block"
+    },
+    {
+      "sound": "forge:cast_free",
+      "variants": ["sounds/stone_place.ogg"],
+      "gain": 0.9,
+      "pitch": 1.25,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 14.0,
+      "category": "block"
+    },
+    {
+      "sound": "forge:fire_catch",
+      "variants": ["sounds/leaf_break.ogg"],
+      "gain": 0.7,
+      "pitch": 0.65,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 14.0,
+      "category": "block"
+    }
+  ]
+}

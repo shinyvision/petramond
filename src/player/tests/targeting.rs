@@ -233,3 +233,54 @@ fn intersects_block_strict_faces() {
     // Above the head does not.
     assert!(!pl.intersects_block(IVec3::new(0, 66, 0)));
 }
+
+/// A bbmodel block outlines its WHOLE model, from ANY of its cells.
+///
+/// The selection chain is one `else if` ladder and the model arm sits in the
+/// middle of it: split that ladder and the per-CELL box from the generic arm
+/// below silently overwrites the whole-model box, so a 2x2 workbench outlines
+/// a quarter of itself and looks like a bug in the model. Nothing else in the
+/// chain notices, which is why this is pinned here.
+#[test]
+fn a_multi_cell_model_block_outlines_its_whole_model_from_every_cell() {
+    use crate::block::Block;
+    use crate::chunk::{Chunk, ChunkPos};
+
+    let mut world = crate::world::World::new(1, 2);
+    for (cx, cz) in [(0, 0), (-1, 0), (0, -1), (-1, -1)] {
+        world.insert_chunk_for_test(ChunkPos::new(cx, cz), Chunk::new(cx, cz));
+    }
+    let base = IVec3::new(4, 64, 4);
+    assert!(
+        world.place_model_block(base, Block::FurnitureWorkbench),
+        "fixture: the workbench places"
+    );
+    let (_, _, cells) = world.model_group(base).expect("fixture: a placed group");
+    assert!(cells.len() > 1, "fixture: this row is multi-cell");
+
+    let mut checked = 0;
+    for cell in cells {
+        // Look along +X at the cell's own centre from outside the model, so
+        // the DDA lands on THAT cell rather than a neighbour.
+        let eye = Vec3::new(
+            base.x as f32 - 2.0,
+            cell.y as f32 + 0.5,
+            cell.z as f32 + 0.5,
+        );
+        let Some((hit, _)) = Player::raycast_with_dist(eye, Vec3::new(1.0, 0.0, 0.0), &world)
+        else {
+            continue;
+        };
+        let SelectionShape::Box { min, max } = hit.outline else {
+            panic!("a model block outlines as one box, got {:?}", hit.outline);
+        };
+        let span = max - min;
+        assert!(
+            span.x > 1.0 || span.y > 1.0 || span.z > 1.0,
+            "cell {:?} outlined one cell ({min:?}..{max:?}) instead of the model",
+            hit.block
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "fixture: at least one cell must be reachable");
+}

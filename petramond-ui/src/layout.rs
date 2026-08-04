@@ -288,6 +288,24 @@ fn clamp_opt(v: i32, min: Option<i32>, max: Option<i32>) -> i32 {
     }
 }
 
+/// The definite width a node's content may wrap against at measure time: its
+/// explicit width or the incoming hint, capped by the node's own `max_w` —
+/// the natural width can never exceed the cap, so a wrapping label inside a
+/// max-bounded AUTO container (a tooltip) must break there instead of
+/// measuring single-line and then ellipsizing into the clamped box.
+fn wrap_hint(l: &crate::doc::LayoutProps, pad_w: i32, avail_w: Option<i32>) -> Option<i32> {
+    let hint = match l.w {
+        Size::Px(p) => Some(p),
+        _ => avail_w,
+    };
+    let hint = match (hint, l.max_w) {
+        (Some(a), Some(m)) => Some(a.min(m)),
+        (None, Some(m)) => Some(m),
+        (a, None) => a,
+    };
+    hint.map(|a| (a - pad_w).max(0))
+}
+
 impl Solver<'_, '_, '_> {
     fn measure(&mut self, idx: u32, avail_w: Option<i32>) -> (i32, i32) {
         let tree = self.tree;
@@ -303,10 +321,7 @@ impl Solver<'_, '_, '_> {
             // Grid list: uniform cells, so the natural size is just the cell
             // size times the grid extent. Stamp margins play no part — cells
             // are the grid's, not the stamp's.
-            let content_avail_w = match l.w {
-                Size::Px(p) => Some((p - pad_w).max(0)),
-                _ => avail_w.map(|a| (a - pad_w).max(0)),
-            };
+            let content_avail_w = wrap_hint(&l, pad_w, avail_w);
             let cols_i = cols as i32;
             let cell_hint = content_avail_w.map(|a| ((a - l.gap * (cols_i - 1)) / cols_i).max(0));
             let (mut cell_w, mut cell_h) = (0i32, 0i32);
@@ -334,10 +349,7 @@ impl Solver<'_, '_, '_> {
             let cross = Ax {
                 horizontal: !main.horizontal,
             };
-            let content_avail_w = match l.w {
-                Size::Px(p) => Some((p - pad_w).max(0)),
-                _ => avail_w.map(|a| (a - pad_w).max(0)),
-            };
+            let content_avail_w = wrap_hint(&l, pad_w, avail_w);
             let mut main_sum = 0i32;
             let mut cross_max = 0i32;
             let mut n_flow = 0i32;
@@ -365,10 +377,7 @@ impl Solver<'_, '_, '_> {
             let (w, h) = main.pack(main_sum, cross_max);
             (w + pad_w, h + pad_h)
         } else {
-            let inner_avail = match l.w {
-                Size::Px(p) => Some((p - pad_w).max(0)),
-                _ => avail_w.map(|a| (a - pad_w).max(0)),
-            };
+            let inner_avail = wrap_hint(&l, pad_w, avail_w);
             let (w, h) =
                 self.env
                     .leaf_size(node, inst.text.as_deref(), inst.image_name(), inner_avail);
@@ -811,7 +820,7 @@ impl Solver<'_, '_, '_> {
 
 /// Whether instance `c` is a floating tooltip (its own subtree root).
 fn is_tooltip(tree: &InstTree<'_>, c: u32) -> bool {
-    matches!(tree.get(c).node.kind, NodeKind::Tooltip)
+    matches!(tree.get(c).node.kind, NodeKind::Tooltip { .. })
 }
 
 /// Whether an AUTO-sized `c` has a `grow` child along this axis, somewhere

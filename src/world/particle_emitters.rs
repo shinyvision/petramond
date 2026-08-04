@@ -67,8 +67,7 @@ pub fn emitter_envelope(e: &ParticleEmitter) -> Vec3 {
 fn max_emitter_reach() -> f32 {
     static REACH: LazyLock<f32> = LazyLock::new(|| {
         let mut reach: f32 = 0.0;
-        for id in 0..=u8::MAX {
-            let block = Block::from_id(id);
+        for &block in Block::all() {
             let Some(rows) = block.particle_emitter() else {
                 continue;
             };
@@ -117,7 +116,7 @@ impl World {
             }
             for &cell_idx in section.particle_emitter_cells() {
                 let idx = cell_idx as usize;
-                let block = Block::from_id(section.blocks_slice()[idx]);
+                let block = Block::from_id(section.block_at_idx(idx));
                 let Some(rows) = block.particle_emitter() else {
                     continue;
                 };

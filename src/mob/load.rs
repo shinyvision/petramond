@@ -348,7 +348,7 @@ fn parse_layers_labeled(layers: &[(&str, String)]) -> Result<LoadedMobs, String>
                 ));
             }
             let name = r.mob.clone();
-            convert(r, Mob(id), names).map_err(|e| format!("mob '{name}': {e}"))
+            convert(r, Mob(id as u8), names).map_err(|e| format!("mob '{name}': {e}"))
         },
     )?;
     let defs = catalog.rows();
@@ -381,7 +381,7 @@ fn parse_layers_labeled(layers: &[(&str, String)]) -> Result<LoadedMobs, String>
                     }
                     Ok(nodes)
                 })
-                .map(|nodes| (Mob(id), nodes))
+                .map(|nodes| (Mob(id as u8), nodes))
                 .map_err(|e| format!("for '{}': {e}", ext.mob)),
         };
         match validated {
@@ -401,7 +401,7 @@ fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> 
         Some(c) => Some(WanderCohesion {
             companion: names
                 .id(&c.companion)
-                .map(Mob)
+                .map(|id| Mob(id as u8))
                 .ok_or_else(|| format!("unknown companion mob '{}'", c.companion))?,
             search_radius_multiplier: c.search_radius_multiplier,
         }),

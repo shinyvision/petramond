@@ -76,10 +76,10 @@ impl World {
         c.section_structs =
             (std::mem::size_of::<crate::section::Section>() as u64) * (c.sections as u64);
         for s in self.sections.values() {
-            let blocks = s.blocks_slice();
-            if seen.insert(blocks.as_ptr() as usize) {
+            let (ptr, bytes) = s.block_cube_heap();
+            if seen.insert(ptr) {
                 c.block_cubes += 1;
-                c.block_bytes += blocks.len() as u64;
+                c.block_bytes += bytes;
             }
             if let Some(sky) = s.skylight_arc() {
                 if seen.insert(sky.as_ptr() as usize) {

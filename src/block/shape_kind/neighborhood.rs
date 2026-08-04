@@ -26,8 +26,10 @@
 //! The ONE thing the engine must see inside the bytes is BLOCK-ID references
 //! (a slab's two layer materials): the save palette and the net transport
 //! rewrite ids at their boundaries. [`ShapeState::id_mask`] declares which
-//! bytes are ids, so those boundaries stay generic — a future family with id
-//! bytes works without touching them.
+//! bytes START an id, so those boundaries stay generic — a future family with
+//! id bytes works without touching them. A block id is TWO bytes, so a set
+//! mask bit claims `bytes[i]` and `bytes[i + 1]` as one little-endian id;
+//! [`ShapeState::id_bytes`] and [`ShapeState::id_at`] are the pair.
 
 use serde::{Deserialize, Serialize};
 
@@ -36,10 +38,10 @@ use crate::mathh::IVec3;
 use super::super::{Aabb, Block, ShapeRenderBox};
 
 /// Widest per-cell shape state, in bytes. The engine's own families need at
-/// most four (a bbmodel cell's footprint offset plus its facing); the cap
-/// keeps [`ShapeState`] `Copy` and cheap to pass through the mesher's hot
-/// neighbour reads.
-pub const SHAPE_STATE_MAX: usize = 4;
+/// most five (a slab's split/mask byte plus two two-byte layer BLOCK IDS);
+/// the cap keeps [`ShapeState`] `Copy` and cheap to pass through the mesher's
+/// hot neighbour reads.
+pub const SHAPE_STATE_MAX: usize = 8;
 
 /// A cell's per-cell shape state as OPAQUE BYTES — meaningful only to the
 /// family that owns the cell's block. This exact value is what the unified
@@ -48,9 +50,10 @@ pub const SHAPE_STATE_MAX: usize = 4;
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShapeState {
     len: u8,
-    /// Bit `i` set = `bytes[i]` is a BLOCK-ID reference. Opaque to every
-    /// reader except the save palette and the net transport, which rewrite
-    /// masked bytes through their id mappings ([`remap_ids`](Self::remap_ids)).
+    /// Bit `i` set = `bytes[i..i + 2]` is a little-endian BLOCK-ID reference.
+    /// Opaque to every reader except the save palette and the net transport,
+    /// which rewrite masked ids through their mappings
+    /// ([`remap_ids`](Self::remap_ids)).
     id_mask: u8,
     bytes: [u8; SHAPE_STATE_MAX],
 }
@@ -69,8 +72,9 @@ impl ShapeState {
         Self::with_ids(bytes, 0)
     }
 
-    /// State from `bytes` where the bits of `id_mask` flag which bytes are
-    /// BLOCK-ID references (rewritten at the save/net boundaries).
+    /// State from `bytes` where the bits of `id_mask` flag which byte PAIRS
+    /// are BLOCK-ID references (rewritten at the save/net boundaries) — see
+    /// [`id_bytes`](Self::id_bytes).
     #[inline]
     pub fn with_ids(bytes: &[u8], id_mask: u8) -> Self {
         let len = bytes.len().min(SHAPE_STATE_MAX);
@@ -88,10 +92,24 @@ impl ShapeState {
         &self.bytes[..self.len as usize]
     }
 
-    /// Which bytes are block-id references (bit `i` = byte `i`).
+    /// Which byte pairs are block-id references (bit `i` = `bytes[i..i + 2]`).
     #[inline]
     pub fn id_mask(&self) -> u8 {
         self.id_mask
+    }
+
+    /// The two little-endian bytes a block id occupies inside a state — the
+    /// producer half of the id-reference convention.
+    #[inline]
+    pub fn id_bytes(id: u16) -> [u8; 2] {
+        id.to_le_bytes()
+    }
+
+    /// The block id starting at byte `i` (a short state reads as air, matching
+    /// [`byte`](Self::byte)).
+    #[inline]
+    pub fn id_at(&self, i: usize) -> u16 {
+        u16::from_le_bytes([self.byte(i), self.byte(i + 1)])
     }
 
     /// Byte `i`, or `0` when the state is shorter — so a family decoding a
@@ -105,16 +123,18 @@ impl ShapeState {
         }
     }
 
-    /// Rewrite every id-masked byte through `f` — the save palette / net
+    /// Rewrite every id-masked block id through `f` — the save palette / net
     /// transport boundary hook. Non-masked bytes are untouched.
     #[inline]
-    pub fn remap_ids(&mut self, f: impl Fn(u8) -> u8) {
+    pub fn remap_ids(&mut self, f: impl Fn(u16) -> u16) {
         let mut mask = self.id_mask;
         while mask != 0 {
             let i = mask.trailing_zeros() as usize;
             mask &= mask - 1;
-            if i < self.len as usize {
-                self.bytes[i] = f(self.bytes[i]);
+            if i + 1 < self.len as usize {
+                let [lo, hi] = f(self.id_at(i)).to_le_bytes();
+                self.bytes[i] = lo;
+                self.bytes[i + 1] = hi;
             }
         }
     }
@@ -200,11 +220,25 @@ mod tests {
         assert_eq!(ShapeState::NONE.byte(0), 0);
         assert!(ShapeState::NONE.is_empty());
 
-        let over = ShapeState::new(&[1, 2, 3, 4, 5, 6]);
+        let over = ShapeState::new(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         assert_eq!(
             over.bytes().len(),
             SHAPE_STATE_MAX,
             "over-cap state truncates instead of overflowing"
         );
+    }
+
+    /// A block id inside state bytes is a two-byte little-endian pair the
+    /// mask points at, and `remap_ids` must move the WHOLE id — a high-id
+    /// pack block truncating to its low byte would silently rewrite a slab's
+    /// layer to a different block at the save/wire boundary.
+    #[test]
+    fn id_masked_pairs_carry_and_remap_the_full_block_id() {
+        let [lo, hi] = ShapeState::id_bytes(300);
+        let mut s = ShapeState::with_ids(&[0b0111, lo, hi], 0b010);
+        assert_eq!(s.id_at(1), 300);
+        s.remap_ids(|id| id + 1000);
+        assert_eq!(s.id_at(1), 1300);
+        assert_eq!(s.byte(0), 0b0111, "non-masked bytes are untouched");
     }
 }

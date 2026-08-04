@@ -29,6 +29,13 @@ pub struct ModelCube {
     /// Normalized `[u0, v0_top, u1, v1_bottom]` per face, `Face::ALL` order. Raw corner
     /// order (flips preserved), exactly as the mob model stores it.
     pub faces: [Option<[f32; 4]>; 6],
+    /// The face's authored `cullface`, `Face::ALL` order: `Some(slot)` = the mesher
+    /// omits this face when the world neighbour in direction `slot` is an opaque
+    /// block. Block-only (mobs never sit in a chunk mesh), so the shared mob
+    /// frontend doesn't read it — [`BlockModel::compile`] parses it from the raw
+    /// JSON. Authored in MODEL space; the per-facing template bake rotates it to
+    /// a world direction.
+    pub cull: [Option<u8>; 6],
 }
 
 /// A compiled bbmodel block: cubes + the embedded RGBA texture, PLUS the collision
@@ -81,6 +88,47 @@ impl BlockModel {
         }
     }
 
+    /// Per-cube `cullface` directions parsed from the raw bbmodel JSON, zipped
+    /// onto the cubes [`from_model`](Self::from_model) produced (same `elements`
+    /// order, same non-cube filter). Each entry is `Face::ALL`-ordered: the
+    /// slot the NAMED face sits in holds the `Face::ALL` slot of the CULL
+    /// direction (`"cullface": "north"` on the `up` face → `cull[2] = Some(5)`).
+    fn parse_culls(root: &Value) -> Vec<[Option<u8>; 6]> {
+        // Blockbench direction name -> `Face::ALL` slot (matches parse.rs NAMES).
+        const DIRS: [(&str, u8); 6] = [
+            ("east", 0),
+            ("west", 1),
+            ("up", 2),
+            ("down", 3),
+            ("south", 4),
+            ("north", 5),
+        ];
+        let empty = Vec::new();
+        let elements = root
+            .get("elements")
+            .and_then(Value::as_array)
+            .unwrap_or(&empty);
+        elements
+            .iter()
+            .filter(|e| e.get("type").and_then(Value::as_str).unwrap_or("cube") == "cube")
+            .map(|e| {
+                let mut cull = [None; 6];
+                if let Some(faces) = e.get("faces") {
+                    for (name, slot) in DIRS {
+                        let dir = faces
+                            .get(name)
+                            .and_then(|f| f.get("cullface"))
+                            .and_then(Value::as_str)
+                            .and_then(|c| DIRS.iter().find(|(n, _)| *n == c))
+                            .map(|(_, s)| *s);
+                        cull[slot as usize] = dir;
+                    }
+                }
+                cull
+            })
+            .collect()
+    }
+
     /// Keep the cube geometry + texture from a parsed mob-frontend [`Model`] and BAKE
     /// the collision boxes + bounding box from that geometry. A block has no
     /// animations, but authored GROUP rotations are part of the rest pose Blockbench
@@ -103,6 +151,8 @@ impl BlockModel {
                         origin: c.origin,
                         rotation: c.rotation,
                         faces: c.faces,
+                        // Filled by `compile` (the mob frontend drops `cullface`).
+                        cull: [None; 6],
                     };
                 }
                 // Fold the bone-chain pose `A` into the cube: the posed cube
@@ -122,6 +172,7 @@ impl BlockModel {
                     origin,
                     rotation: Vec3::new(ex.to_degrees(), ey.to_degrees(), ez.to_degrees()),
                     faces: c.faces,
+                    cull: [None; 6],
                 }
             })
             .collect();
@@ -270,7 +321,8 @@ impl CompiledAsset for BlockModel {
     /// v7: the shared loader bakes element `inflate` into the cube box.
     /// v8: cubes carry their authored element NAME (per-row `hidden_parts`
     /// filtering needs it).
-    const FORMAT_VERSION: u32 = 8;
+    /// v9: cubes carry their per-face `cullface` directions.
+    const FORMAT_VERSION: u32 = 9;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llblock";
 
@@ -282,6 +334,13 @@ impl CompiledAsset for BlockModel {
         let mut model = BlockModel::from_model(&Model::load(src)?);
         let root: Value = serde_json::from_str(src).map_err(|e| format!("json: {e}"))?;
         model.display = BlockDisplay::parse(&root);
+        // Per-face cullfaces: the mob frontend drops them (a mob never meshes
+        // into a chunk), so they ride their own block-only parse.
+        let culls = Self::parse_culls(&root);
+        debug_assert_eq!(culls.len(), model.cubes.len(), "cullface/cube zip drifted");
+        for (cube, cull) in model.cubes.iter_mut().zip(culls) {
+            cube.cull = cull;
+        }
         // The display pivot follows the authoring grid: java_block authors 0..16
         // (corner grid), every other Blockbench format centres x/z about 0.
         let corner_grid = root
@@ -327,6 +386,17 @@ pub(super) static MODELS: LazyLock<Vec<BlockModel>> = LazyLock::new(|| {
             }
             if !d.collision_hidden_parts.is_empty() {
                 model.hide_collision_parts(d.collision_hidden_parts, d.hidden_parts, d.key);
+            }
+            // `parts` and `tint_parts` resolve by NAME at template-bake time,
+            // where a name matching no cube produces an empty run and the bit
+            // silently draws nothing. They carry a cross-file bit contract, so
+            // they warn like every other per-row name list here.
+            for (list, what) in [(d.parts, "part"), (d.tint_parts, "tint part")] {
+                for name in list {
+                    if !model.cubes.iter().any(|c| c.name == *name) {
+                        log::warn!("block model '{}': {what} '{name}' matches no cube", d.key);
+                    }
+                }
             }
             if !d.part_offsets.is_empty() {
                 model.offset_parts(d.part_offsets, d.hidden_parts, d.key);

@@ -54,7 +54,7 @@ fn edits_in_total_darkness_skip_light_invalidation_entirely() {
     let mut world = World::new(0, 4);
     let pos = SectionPos::new(0, 0, 0);
     let mut section = Section::new(0, 0, 0);
-    section.blocks_slice_mut().fill(Block::Stone.id());
+    section.blocks_mut().fill(Block::Stone.id());
     section.recompute_opaque_count();
     world.insert_section_for_test(pos, section);
     {

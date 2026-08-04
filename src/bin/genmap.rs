@@ -25,7 +25,7 @@ use petramond::tooling::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use petramond::tooling::worldgen::{generate_chunk, macro_surface_map};
 
 /// Highest non-air block in a column + its Y.
-fn top_block(c: &Chunk, x: usize, z: usize) -> (u8, i32) {
+fn top_block(c: &Chunk, x: usize, z: usize) -> (u16, i32) {
     for y in (0..CHUNK_SY).rev() {
         let b = c.block_raw(x, y, z);
         if b != 0 {
@@ -39,7 +39,7 @@ fn top_block(c: &Chunk, x: usize, z: usize) -> (u8, i32) {
 /// cartography average ([`Tile::map_rgb`](petramond::tooling::atlas::Tile::map_rgb)),
 /// with tinted tiles (grass/foliage/water) multiplied by a fixed Plains biome
 /// colour — the previewer has no per-column tint blend and doesn't need one.
-fn block_color(block: u8) -> [u8; 3] {
+fn block_color(block: u16) -> [u8; 3] {
     let b = Block::from_id(block);
     if b == Block::Air {
         return [12, 12, 14];
@@ -209,7 +209,7 @@ fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, p
             } else if proj > 0 {
                 // Project over a z-window: prefer logs, then leaves, then terrain,
                 // so a whole tree silhouette shows instead of one sliced plane.
-                let (mut log, mut leaf, mut terr) = (false, false, 0u8);
+                let (mut log, mut leaf, mut terr) = (false, false, 0u16);
                 for dz in -proj..=proj {
                     let zz = lz as i32 + dz;
                     if zz < 0 || zz >= CHUNK_SZ as i32 {
@@ -354,7 +354,7 @@ fn render_caveplan(seed: u32, out: &str, slice_y: i32, zoom: usize) {
                 for x in 0..16usize {
                     let wx = ccx * 16 + x as i32;
                     let wz = ccz * 16 + z as i32;
-                    let (mut any_air, mut any_marble, mut top) = (false, false, 0u8);
+                    let (mut any_air, mut any_marble, mut top) = (false, false, 0u16);
                     for ly in 0..SECTION_SIZE {
                         let wy = cy * SECTION_SIZE as i32 + ly as i32;
                         if wy > col.surface_y(x, z) {
@@ -407,7 +407,7 @@ fn cave_stats(seed: u32) {
     let mut band_cells = vec![0u64; bands];
     let mut band_air = vec![0u64; bands];
     let mut band_marble = vec![0u64; bands];
-    let mut ore_counts: HashMap<u8, u64> = HashMap::new();
+    let mut ore_counts: HashMap<u16, u64> = HashMap::new();
     let (mut mouth_columns, mut total_columns) = (0u64, 0u64);
     let mut chunks = 0u64;
 
@@ -586,7 +586,7 @@ fn render_shaded(
     let h = n * CHUNK_SZ;
     let ccx = center_x.div_euclid(CHUNK_SX as i32);
     let ccz = center_z.div_euclid(CHUNK_SZ as i32);
-    let mut top = vec![0u8; w * h]; // block id
+    let mut top = vec![0u16; w * h]; // block id
     let mut hgt = vec![0i32; w * h];
     for cz in 0..n {
         for cx in 0..n {
@@ -673,7 +673,7 @@ fn render_view(seed: u32, out: &str, cam_x: i32, cam_y: i32, cam_z: i32, scale: 
     let max_d = 420i32;
 
     let mut cache: HashMap<(i32, i32), Chunk> = HashMap::new();
-    let surf = |wx: i32, wz: i32, cache: &mut HashMap<(i32, i32), Chunk>| -> (u8, i32) {
+    let surf = |wx: i32, wz: i32, cache: &mut HashMap<(i32, i32), Chunk>| -> (u16, i32) {
         let cx = wx.div_euclid(CHUNK_SX as i32);
         let cz = wz.div_euclid(CHUNK_SZ as i32);
         let c = cache

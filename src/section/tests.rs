@@ -20,7 +20,7 @@ fn biome_tint_hint_tracks_incremental_and_bulk_blocks() {
     section.set_block(2, 2, 2, Block::Air);
     assert!(!section.has_biome_tint_blocks());
 
-    section.blocks_slice_mut()[0] = Block::OakLeaves.id();
+    section.blocks_mut().set(0, Block::OakLeaves.id());
     section.recompute_opaque_count();
     assert!(section.has_biome_tint_blocks());
 }
@@ -33,7 +33,8 @@ fn biome_tint_hint_tracks_incremental_and_bulk_blocks() {
 fn particle_emitter_hint_tracks_incremental_and_bulk_blocks() {
     fn check(section: &Section) {
         let scanned: Vec<u16> = section
-            .blocks_slice()
+            .blocks_iter()
+            .collect::<Vec<_>>()
             .iter()
             .enumerate()
             .filter(|(_, &id)| Block::from_id(id).particle_emitter().is_some())
@@ -70,14 +71,14 @@ fn particle_emitter_hint_tracks_incremental_and_bulk_blocks() {
     assert!(!section.has_particle_emitters());
     check(&section);
 
-    section.blocks_slice_mut()[0] = Block::Torch.id();
+    section.blocks_mut().set(0, Block::Torch.id());
     section.recompute_opaque_count();
     assert!(section.has_particle_emitters());
     check(&section);
 
     // Bulk install over a section that already carried emitters must not leave
     // the old cells behind.
-    section.blocks_slice_mut()[0] = Block::Stone.id();
+    section.blocks_mut().set(0, Block::Stone.id());
     section.recompute_opaque_count();
     check(&section);
 }

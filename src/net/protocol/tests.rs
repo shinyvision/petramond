@@ -147,7 +147,7 @@ fn representative_messages_roundtrip_through_postcard() {
 
 #[test]
 fn arc_backed_section_payloads_roundtrip_byte_exact() {
-    let blocks: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    let blocks: Vec<u16> = (0..4096u32).map(|i| (i % 251) as u16).collect();
     // A COLOURED light cube: two bytes per cell, all three channels distinct,
     // so a lane slip or an endianness flip in `SectionLight` cannot pass.
     let light: Vec<crate::light::LightRgb> = (0..4096u32)
@@ -161,7 +161,7 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
             cy: 2,
             cz: 17,
         },
-        blocks: SectionBytes(Arc::from(blocks.into_boxed_slice())),
+        blocks: SectionBlocks(Arc::from(blocks.into_boxed_slice())),
         metrics: Default::default(),
         water: None,
         skylight: None,
@@ -169,6 +169,7 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
             light.into_boxed_slice(),
         ))),
         states: SectionStatesPayload {
+            draws: Vec::new(),
             cell_states: vec![
                 (4095, crate::block::ShapeState::new(&[7])),
                 (9, crate::block::ShapeState::with_ids(&[5, 3, 0], 0b110)),
@@ -221,6 +222,17 @@ fn tick_updates_roundtrip() {
                 cell_kv: vec![],
             },
         ],
+        block_draws: vec![crate::net::protocol::BlockDrawDelta {
+            pos: IVec3::new(1, 2, 3),
+            prims: vec![mod_api::DrawPrim::Cuboid {
+                min: [0.0, 0.0, 0.0],
+                max: [1.0, 0.5, 1.0],
+                tile: "stone".into(),
+                tint: [200, 120, 60],
+                emissive: true,
+            }]
+            .into(),
+        }],
         cell_kv_deltas: vec![
             CellKvDelta {
                 pos: IVec3::new(4, 65, 4),
@@ -364,4 +376,37 @@ fn tick_updates_roundtrip() {
             },
         }),
     })));
+}
+
+/// The section payload's block cube is palette-packed on the wire, and the
+/// only thing that can go wrong there is silent narrowing. A cube spanning
+/// the byte boundary — and one past the NARROW palette index — must come back
+/// cell-for-cell.
+#[test]
+fn wire_block_cubes_carry_ids_past_one_byte() {
+    let cases: Vec<Vec<u16>> = vec![
+        vec![0, 1, 255, 256, 257, 4095, 0, 256],
+        // Every cell distinct, so the packer must take its wide-index arm.
+        (0..600u16).collect(),
+        // Uniform: the shortest possible palette.
+        vec![777; 4096],
+    ];
+    for cells in cases {
+        let payload = SectionPayload {
+            pos: SectionPos {
+                cx: 1,
+                cy: -2,
+                cz: 3,
+            },
+            blocks: SectionBlocks(Arc::from(cells.clone().into_boxed_slice())),
+            metrics: Default::default(),
+            water: None,
+            skylight: None,
+            blocklight: None,
+            states: Default::default(),
+        };
+        let bytes = postcard::to_allocvec(&payload).expect("encode");
+        let back: SectionPayload = postcard::from_bytes(&bytes).expect("decode");
+        assert_eq!(&back.blocks.0[..], &cells[..], "{} cells", cells.len());
+    }
 }

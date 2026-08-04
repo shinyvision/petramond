@@ -934,6 +934,26 @@
         }
       },
       "label_color": "text"
+    },
+    "gauge.bar": {
+      "states": {
+        "empty": {
+          "rect": [
+            208,
+            160,
+            2,
+            2
+          ]
+        },
+        "full": {
+          "rect": [
+            212,
+            160,
+            2,
+            2
+          ]
+        }
+      }
     }
   },
   "metrics": {

@@ -109,8 +109,9 @@ pub(crate) struct GenHooks {
 pub(crate) struct GenInputs<'a> {
     pub seed: u32,
     pub section_pos: [i32; 3],
-    /// Section snapshot at this attach point (empty for climate/terrain).
-    pub blocks: &'a [u8],
+    /// Section snapshot at this attach point (`None` for climate/terrain,
+    /// which run before the section has content).
+    pub blocks: Option<&'a crate::section::BlockCube>,
     /// Post-cave bare-ground top per column (`z*16 + x`).
     pub surface_heights: &'a [i32],
     /// Biome id per column (`z*16 + x`).
@@ -143,13 +144,13 @@ impl GenHooks {
         &self,
         idx: usize,
         inputs: &GenInputs,
-    ) -> Option<Vec<([i32; 3], u8)>> {
+    ) -> Option<Vec<([i32; 3], u16)>> {
         let hook = &self.features[idx];
         let call = GuestCall::GenFeature {
             feature_id: hook.feature_id,
             section_pos: inputs.section_pos,
             seed: inputs.seed,
-            blocks: inputs.blocks.to_vec(),
+            blocks: inputs.blocks.map_or_else(Vec::new, |c| c.iter().collect()),
             surface_heights: inputs.surface_heights.to_vec(),
             biomes: inputs.biomes.to_vec(),
             sea_level: SEA_LEVEL,
@@ -167,7 +168,7 @@ impl GenHooks {
         &self,
         stage: WorldgenStage,
         inputs: &GenInputs,
-    ) -> Option<Vec<([i32; 3], u8)>> {
+    ) -> Option<Vec<([i32; 3], u16)>> {
         let hook = self.replacements[stage_index(stage)].as_ref()?;
         let call = self.stage_call(hook, stage, inputs);
         let res = self.dispatch(hook.mod_idx, &call, |ret| match ret {
@@ -182,7 +183,7 @@ impl GenHooks {
 
     /// Run the registered terrain replacement: the full 4096-block fill.
     /// `None` = unregistered or failed (engine fill+carve runs).
-    pub(crate) fn replace_terrain(&self, inputs: &GenInputs) -> Option<Vec<u8>> {
+    pub(crate) fn replace_terrain(&self, inputs: &GenInputs) -> Option<Vec<u16>> {
         let stage = WorldgenStage::Terrain;
         let hook = self.replacements[stage_index(stage)].as_ref()?;
         let call = self.stage_call(hook, stage, inputs);
@@ -190,7 +191,7 @@ impl GenHooks {
             GuestRet::GenBlocks(fill) => {
                 if fill.len() != SECTION_VOLUME {
                     return Err(format!(
-                        "terrain replacement returned {} bytes; a section fill is exactly {}",
+                        "terrain replacement returned {} cells; a section fill is exactly {}",
                         fill.len(),
                         SECTION_VOLUME
                     ));
@@ -244,7 +245,7 @@ impl GenHooks {
             stage,
             section_pos: inputs.section_pos,
             seed: inputs.seed,
-            blocks: inputs.blocks.to_vec(),
+            blocks: inputs.blocks.map_or_else(Vec::new, |c| c.iter().collect()),
             surface_heights: inputs.surface_heights.to_vec(),
             biomes: inputs.biomes.to_vec(),
             sea_level: SEA_LEVEL,
@@ -360,7 +361,7 @@ fn reply_shape(call: &str, expected: &str, got: &GuestRet) -> String {
 
 /// Validate a write list's block ids against the loaded registry — an
 /// unregistered id must never reach a section buffer.
-fn validated_writes(w: Vec<mod_api::GenWrite>) -> Result<Vec<([i32; 3], u8)>, String> {
+fn validated_writes(w: Vec<mod_api::GenWrite>) -> Result<Vec<([i32; 3], u16)>, String> {
     let registered = Block::all().len();
     if let Some((_, bad)) = w.iter().find(|(_, id)| id.0 as usize >= registered) {
         return Err(format!(
@@ -617,8 +618,8 @@ mod tests {
             let a = hooked.generate_section(sp, &col_hooked);
             let b = engine.generate_section(sp, &col_engine);
             assert_eq!(
-                a.blocks_slice(),
-                b.blocks_slice(),
+                a.blocks_iter().collect::<Vec<_>>(),
+                b.blocks_iter().collect::<Vec<_>>(),
                 "engine fallback must be byte-identical at ({cx},{cy},{cz})"
             );
         }

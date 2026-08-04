@@ -168,6 +168,50 @@ pub(crate) fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
         .collect()
 }
 
+/// The final surface biome id at each world column for `seed` — the engine
+/// side of the mod ABI's `SurfaceBiomeAt`.
+///
+/// The day-surface twin of [`terrain_solid_at`], and it exists for the same
+/// reason: a worldgen hook's own column map covers only the dispatching
+/// section, so it can neither carry a cross-section acceptance decision nor
+/// answer anything about a NEIGHBOURING column. "Is there a river within N
+/// blocks" — what tells a river bank apart from ordinary plains — is exactly
+/// the second kind, and no column knows it about itself.
+///
+/// Read off the SAME world-anchored feature tile the feature stage reads, so
+/// the answer cannot drift from the biome a section is actually dressed with.
+pub(crate) fn surface_biome_at(seed: u32, columns: &[[i32; 2]]) -> Vec<u8> {
+    const TILE: i32 = crate::chunk::CHUNK_SX as i32;
+
+    let caves = cave_field(seed);
+    let surface = surface_system(seed);
+    // Answered TILE BY TILE rather than in the caller's order: a batch of
+    // neighbour probes around one column straddles a tile edge and would
+    // otherwise re-take the memo lock on every other query.
+    let mut order: Vec<u32> = (0..columns.len() as u32).collect();
+    let key = |i: &u32| {
+        let [x, _, z] = clamp_query([columns[*i as usize][0], 0, columns[*i as usize][1]]);
+        (z.div_euclid(TILE), x.div_euclid(TILE))
+    };
+    order.sort_unstable_by_key(key);
+
+    let mut out = vec![0u8; columns.len()];
+    let mut tile: Option<((i32, i32), [crate::biome::Biome; 256])> = None;
+    for i in order {
+        let [x, _, z] = clamp_query([columns[i as usize][0], 0, columns[i as usize][1]]);
+        let at = (x.div_euclid(TILE), z.div_euclid(TILE));
+        if !matches!(&tile, Some((k, _)) if *k == at) {
+            tile = Some((
+                at,
+                feature::cached_tile_biomes(&surface, &caves, seed, at.0, at.1),
+            ));
+        }
+        let biomes = &tile.as_ref().expect("tile just filled").1;
+        out[i as usize] = biomes[((z - at.1 * TILE) * TILE + (x - at.0 * TILE)) as usize] as u8;
+    }
+    out
+}
+
 /// Guest-supplied coordinates are clamped before any positional query: the
 /// cave lattice scales them by its step, so a position near the integer limits
 /// would overflow that multiply, and no host call may be steered into
@@ -441,9 +485,8 @@ mod tests {
                     for cy in 0..(CHUNK_SY / SECTION_SIZE) as i32 {
                         let section = generator.generate_section(SectionPos::new(cx, cy, cz), &col);
                         let expected = section
-                            .blocks_slice()
-                            .iter()
-                            .filter(|&&id| Block::from_id(id).has_random_tick())
+                            .blocks_iter()
+                            .filter(|&id| Block::from_id(id).has_random_tick())
                             .count() as u32;
                         assert_eq!(
                             section.random_tick_count(),

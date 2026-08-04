@@ -10,14 +10,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::block::Aabb;
 
-static CACHE: OnceLock<Mutex<HashMap<u8, Arc<[Aabb]>>>> = OnceLock::new();
+static CACHE: OnceLock<Mutex<HashMap<u16, Arc<[Aabb]>>>> = OnceLock::new();
 
-fn cache() -> &'static Mutex<HashMap<u8, Arc<[Aabb]>>> {
+fn cache() -> &'static Mutex<HashMap<u16, Arc<[Aabb]>>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Record a custom block's baked item boxes (cell-local, `0.0..1.0`).
-pub(crate) fn set_item_bake(block_id: u8, boxes: Vec<Aabb>) {
+pub(crate) fn set_item_bake(block_id: u16, boxes: Vec<Aabb>) {
     cache()
         .lock()
         .expect("item bake cache")
@@ -25,7 +25,7 @@ pub(crate) fn set_item_bake(block_id: u8, boxes: Vec<Aabb>) {
 }
 
 /// The baked item boxes for a custom block, or `None` if it never baked one.
-pub(crate) fn item_bake(block_id: u8) -> Option<Arc<[Aabb]>> {
+pub(crate) fn item_bake(block_id: u16) -> Option<Arc<[Aabb]>> {
     cache()
         .lock()
         .expect("item bake cache")

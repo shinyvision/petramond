@@ -208,7 +208,7 @@ mod tests {
 
     fn solid_section(pos: SectionPos) -> Section {
         let mut section = Section::new(pos.cx, pos.cy, pos.cz);
-        section.blocks_slice_mut().fill(Block::Stone.id());
+        section.blocks_mut().fill(Block::Stone.id());
         section.recompute_opaque_count();
         section
     }

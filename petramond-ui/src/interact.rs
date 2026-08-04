@@ -533,6 +533,7 @@ impl Interact<'_> {
                 id: key.id,
                 item: key.item,
                 on: !inst.value_bool.unwrap_or(false),
+                button,
             }),
             _ => {}
         }

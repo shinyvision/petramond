@@ -10,3 +10,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 mod-sdk = { path = "../../mod-sdk" }
+machine-core = { path = "../machine-core" }

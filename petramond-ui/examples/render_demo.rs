@@ -62,7 +62,16 @@ fn main() {
     let out_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "render_demo.png".to_owned());
-    let doc = Arc::new(Document::from_json(DEMO).expect("demo doc parses"));
+    // PETRAMOND_UI_DEMO_DOC previews any document file on the same rig — the
+    // only headless way to see a widget in the ROW it actually ships in.
+    // PETRAMOND_UI_DEMO_TRUE lists bind keys to seed (prefix `!` for false) —
+    // an UNSET key is not the same as a false one, so a disabled state needs
+    // the false.
+    let json = match std::env::var("PETRAMOND_UI_DEMO_DOC") {
+        Ok(path) => std::fs::read_to_string(&path).expect("read document"),
+        Err(_) => DEMO.to_owned(),
+    };
+    let doc = Arc::new(Document::from_json(&json).expect("demo doc parses"));
     // PETRAMOND_UI_THEME_DIR previews a real theme kit; unset = placeholder.
     let theme = Arc::new(match std::env::var("PETRAMOND_UI_THEME_DIR") {
         Ok(dir) => {
@@ -98,13 +107,29 @@ fn main() {
     })
     .collect();
     state.set("mods", UiValue::List(Arc::new(mods)));
+    if let Ok(keys) = std::env::var("PETRAMOND_UI_DEMO_TRUE") {
+        for key in keys.split(',').filter(|k| !k.is_empty()) {
+            match key.strip_prefix('!') {
+                Some(key) => state.set(key, UiValue::Bool(false)),
+                None => state.set(key, UiValue::Bool(true)),
+            }
+        }
+    }
 
     let rt = UiRuntime::new(doc, theme.clone());
     let mut fs = FrameState::new();
     let mut out = FrameOutput::default();
     let screen = (720, 560);
-    // Park the cursor over the CONFIRM button so a hover state renders.
-    let input = [InputEvent::PointerMove { x: 260.0, y: 74.0 }];
+    // Park the cursor over the CONFIRM button so a hover state renders;
+    // PETRAMOND_UI_DEMO_HOVER="x,y" aims it at any other widget (logical px).
+    let (hx, hy) = std::env::var("PETRAMOND_UI_DEMO_HOVER")
+        .ok()
+        .and_then(|s| {
+            let (a, b) = s.split_once(',')?;
+            Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+        })
+        .unwrap_or((260.0, 74.0));
+    let input = [InputEvent::PointerMove { x: hx, y: hy }];
     rt.frame(
         FrameArgs {
             screen,

@@ -118,7 +118,7 @@ impl ServerGame {
         s: usize,
         request_id: ClientRequestId,
         pos: IVec3,
-        tool_item_id: Option<u8>,
+        tool_item_id: Option<u16>,
         predicted: bool,
     ) {
         // A newer finish supersedes any in-flight latch OR deferred TooFast

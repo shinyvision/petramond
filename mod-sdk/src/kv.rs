@@ -4,8 +4,9 @@
 //!
 //! Keys are namespaced. Writes must use this mod's own prefix or an exposed
 //! engine `petramond:*` key (enforced by the host; a violation panics = disables the
-//! mod); reads may cross namespaces — the cross-mod interop surface. Key ≤ 256
-//! bytes, value ≤ 64 KiB.
+//! mod); reads may cross namespaces — the cross-mod interop surface. Keys and values
+//! are capped at [`crate::KV_MAX_KEY_BYTES`] / [`crate::KV_MAX_VALUE_BYTES`];
+//! a list longer than one value SHARDS across keys.
 
 use crate::__rt::host_fn;
 
@@ -48,3 +49,19 @@ host_fn! {
         => SectionKvDelete { pos, key: key.into() } => Bool
 }
 
+host_fn! {
+    /// [`section_kv_get`] for ONE key across many cells, reply parallel to
+    /// `positions` — the shape a machine kind reads its own state in, since
+    /// every placed machine of a kind stores its blob under the same key.
+    /// At most [`crate::SIM_BATCH_MAX`] positions.
+    pub fn section_kv_get_many(key: &str, positions: Vec<[i32; 3]>) -> Vec<Option<Vec<u8>>>
+        => SectionKvGetMany { key: key.into(), positions } => BytesMany
+}
+
+host_fn! {
+    /// [`section_kv_set`] / [`section_kv_delete`] for one key across many
+    /// cells (`None` value = delete), reply parallel to `writes`. At most
+    /// [`crate::SIM_BATCH_MAX`] writes.
+    pub fn section_kv_set_many(key: &str, writes: Vec<([i32; 3], Option<Vec<u8>>)>) -> Vec<bool>
+        => SectionKvSetMany { key: key.into(), writes } => Bools
+}

@@ -207,6 +207,10 @@ pub(in crate::world) struct ReplicationLog {
     /// the same [`replication_capture`](Self::replication_capture) gate.
     pub(in crate::world) cell_kv_delta_log:
         FxHashMap<(crate::mathh::IVec3, String), Option<Vec<u8>>>,
+    /// Cells whose mod DRAW SET changed this tick — drained by
+    /// [`take_block_draw_deltas`](Self::take_block_draw_deltas) as whole sets
+    /// (they are a handful of prims, and half a set draws nothing sensible).
+    pub(in crate::world) block_draw_log: FxHashSet<crate::mathh::IVec3>,
     /// ServerHeadless only: sections whose bake LANDED since the last
     /// streaming pump — drained by [`take_light_ship_log`](Self::take_light_ship_log)
     /// into per-connection `LightData` messages (filtered to each recipient's
@@ -245,6 +249,18 @@ pub(in crate::world) struct SessionState {
 /// store, the disabled set, the stream-event queue they subscribe to, and the
 /// custom-shape bake cache their WASM fills.
 pub(in crate::world) struct ModWorldState {
+    /// Per-cell mod DRAW SETS: retained presentation geometry a mod submits
+    /// for a placed block, redrawn every frame with no re-mesh. Sparse (empty
+    /// in almost every world) and per-cell, exactly like `custom_bake` — mod
+    /// state, so it lives with the rest of it rather than on the root.
+    pub(in crate::world) block_draws:
+        FxHashMap<crate::mathh::IVec3, crate::world::draw::PlacedDraw>,
+    /// The same sets indexed by the SECTION their anchor sits in, with a union
+    /// bound per section. Every consumer of this store is section-shaped (a
+    /// section payload, an eviction, a frame's view cull), and each of them
+    /// walked the whole map before this index existed.
+    pub(in crate::world) block_draw_sections:
+        FxHashMap<crate::chunk::SectionPos, crate::world::draw::SectionDraws>,
     /// Behavior hooks fired on mod-behavior blocks this tick (see
     /// `block::behavior::wasm`), in fire order. Drained by the game right
     /// after the world tick and dispatched to the owning mods; only blocks
@@ -485,6 +501,7 @@ impl World {
                 replication_capture: false,
                 block_delta_log: FxHashMap::default(),
                 cell_kv_delta_log: FxHashMap::default(),
+                block_draw_log: FxHashSet::default(),
                 terrain_revision: 0,
                 light_ship_log: FxHashSet::default(),
             },
@@ -495,6 +512,8 @@ impl World {
                 day_cycle_ticks: crate::server::daynight::DEFAULT_CYCLE_TICKS,
             },
             mods: ModWorldState {
+                block_draws: FxHashMap::default(),
+                block_draw_sections: FxHashMap::default(),
                 mod_block_hooks: Vec::new(),
                 stream_events: Vec::new(),
                 stream_events_enabled: false,

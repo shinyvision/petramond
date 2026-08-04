@@ -24,7 +24,8 @@ mod tree_select;
 mod tests;
 
 pub(crate) use self::field::{
-    cached_feature_region, ColumnFeatureField, FeatureField, RuntimeFeatureField, SurfaceHeights,
+    cached_feature_region, cached_tile_biomes, ColumnFeatureField, FeatureField,
+    RuntimeFeatureField, SurfaceHeights,
 };
 pub use self::sink::*;
 pub(crate) use self::tree_select::{place_features_section, place_features_with_field};

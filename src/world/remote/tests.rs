@@ -395,14 +395,14 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
     assert!(state_at(door + IVec3::Y).is_some());
     let slab_state = state_at(slab).expect("slab delta carries state");
     assert_eq!(
-        (slab_state.byte(1), slab_state.byte(2)),
+        (slab_state.id_at(1), slab_state.id_at(3)),
         (Block::CobblestoneSlab.id(), Block::Air.id()),
         "slab layers ride as raw block ids"
     );
     assert_eq!(
         slab_state.id_mask(),
-        0b110,
-        "the layer bytes are declared id references for the transport remap"
+        0b0_1010,
+        "each layer's TWO id bytes are declared id references for the transport remap"
     );
     assert!(state_at(log).is_some());
     assert!(state_at(model).is_some());
@@ -537,7 +537,7 @@ fn replica_deep_classification_heals_out_of_order_column_installs() {
     let deep_pos = SectionPos::new(0, -2, 0);
     let solid = {
         let mut s = Section::new(deep_pos.cx, deep_pos.cy, deep_pos.cz);
-        s.blocks_slice_mut().fill(Block::Stone.id());
+        s.blocks_mut().fill(Block::Stone.id());
         s.recompute_opaque_count();
         s
     };
@@ -822,7 +822,7 @@ fn sealed_mixed_section_is_not_final_without_light() {
     let mut world = World::new(0, 16);
     let center = SectionPos::new(0, 0, 0);
     let mut cavity = Section::new(0, 0, 0);
-    cavity.blocks_slice_mut().fill(Block::Stone.id());
+    cavity.blocks_mut().fill(Block::Stone.id());
     cavity.recompute_opaque_count();
     cavity.set_block(8, 8, 8, Block::Air);
     world.insert_section_for_test(center, cavity);
@@ -836,7 +836,7 @@ fn sealed_mixed_section_is_not_final_without_light() {
     ] {
         let pos = SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz);
         let mut section = Section::new(pos.cx, pos.cy, pos.cz);
-        section.blocks_slice_mut().fill(Block::Stone.id());
+        section.blocks_mut().fill(Block::Stone.id());
         section.recompute_opaque_count();
         world.insert_section_for_test(pos, section);
     }
@@ -990,4 +990,142 @@ fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
         None,
         "no ghost KV survives on the replica after the wipe"
     );
+}
+
+/// A draw set is RETAINED state, and the delta lane only carries changes — so
+/// a machine that last redrew itself before a player joined must still arrive,
+/// on the section, or it is invisible to everyone but the placer.
+#[test]
+fn retained_draw_sets_ride_the_section_to_a_late_joiner() {
+    use mod_api::DrawPrim;
+
+    let (mut server, mut replica) = server_and_replica();
+    let pos = IVec3::new(4, 65, 4);
+    assert!(server.set_block_world(pos.x, pos.y, pos.z, Block::Furnace));
+    server.set_block_draw(
+        pos,
+        vec![DrawPrim::Cuboid {
+            min: [0.2, 0.0, 0.2],
+            max: [0.8, 0.5, 0.8],
+            tile: "stone".into(),
+            tint: [255, 0, 0],
+            emissive: true,
+        }]
+        .into(),
+    );
+    // Everything the delta lane had to say has already been said.
+    let _ = server.take_block_draw_deltas();
+
+    for cp in server.columns.keys().copied().collect::<Vec<_>>() {
+        replica.install_remote_column(server.column_payload(cp).unwrap());
+    }
+    for sp in server.sections.keys().copied().collect::<Vec<_>>() {
+        replica.install_remote_section(server.section_payload(sp).unwrap());
+    }
+
+    let set = replica
+        .block_draw_at(pos)
+        .expect("the joiner sees the machine's drawing");
+    assert_eq!(set.wire.as_slice().len(), 1);
+    assert_eq!(set.resolved.len(), 1, "names resolved on the replica");
+}
+
+/// The two halves of a draw set's lifetime, both owned by the ENGINE because
+/// every mod-side memo of them is wrong on reload or unload.
+///
+/// Resubmitting the same picture is the every-tick idiom, so it must cost no
+/// delta at all; and a cell that becomes something ELSE must lose its set,
+/// on the replica too. Nothing else can clear it — `SetBlockDraw` is gated on
+/// owning the block that just stopped existing — so a set that outlives its
+/// block draws over a cell forever and rides the section payload to every
+/// player who joins afterwards.
+#[test]
+fn a_draw_set_costs_nothing_to_resubmit_and_dies_with_its_block() {
+    use mod_api::DrawPrim;
+
+    let (mut server, mut replica) = server_and_replica();
+    let pos = IVec3::new(4, 65, 4);
+    assert!(server.set_block_world(pos.x, pos.y, pos.z, Block::Furnace));
+    let picture = || {
+        crate::world::draw::DrawPrims::from(vec![DrawPrim::Cuboid {
+            min: [0.2, 0.0, 0.2],
+            max: [0.8, 0.5, 0.8],
+            tile: "stone".into(),
+            tint: [255, 0, 0],
+            emissive: false,
+        }])
+    };
+
+    server.set_replication_capture(true);
+    server.set_block_draw(pos, picture());
+    assert_eq!(
+        server.take_block_draw_deltas().len(),
+        1,
+        "the first submission is a change"
+    );
+    server.set_block_draw(pos, picture());
+    assert!(
+        server.take_block_draw_deltas().is_empty(),
+        "a machine at rest redraws itself every tick; that must not replicate"
+    );
+
+    for cp in server.columns.keys().copied().collect::<Vec<_>>() {
+        replica.install_remote_column(server.column_payload(cp).unwrap());
+    }
+    for sp in server.sections.keys().copied().collect::<Vec<_>>() {
+        replica.install_remote_section(server.section_payload(sp).unwrap());
+    }
+    assert!(replica.block_draw_at(pos).is_some(), "fixture: shipped");
+
+    // The cell becomes something else. Not a BREAK — a plain block write, the
+    // path whose own rule is that per-cell state dies with the block.
+    assert!(server.set_block_world(pos.x, pos.y, pos.z, Block::Stone));
+    assert!(
+        server.block_draw_at(pos).is_none(),
+        "the drawing went with the block that owned it"
+    );
+    for delta in server.take_block_draw_deltas() {
+        replica.apply_remote_block_draw(delta.pos, delta.prims);
+    }
+    assert!(
+        replica.block_draw_at(pos).is_none(),
+        "and the clear reached the replica"
+    );
+}
+
+/// A mod computing geometry can produce a non-finite corner (a divide by a
+/// zero-length pour). Those must not reach the vertex buffer.
+#[test]
+fn non_finite_draw_geometry_is_dropped_at_the_boundary() {
+    use mod_api::DrawPrim;
+
+    let (mut server, _replica) = server_and_replica();
+    let pos = IVec3::new(4, 65, 4);
+    server.set_block_draw(
+        pos,
+        vec![
+            DrawPrim::Cuboid {
+                min: [0.0, 0.0, 0.0],
+                max: [1.0, f32::INFINITY, 1.0],
+                tile: "stone".into(),
+                tint: [255, 255, 255],
+                emissive: false,
+            },
+            DrawPrim::Cuboid {
+                min: [0.0, 0.0, 0.0],
+                max: [1.0, 1.0, 1.0],
+                tile: "stone".into(),
+                tint: [255, 255, 255],
+                emissive: false,
+            },
+        ]
+        .into(),
+    );
+    let set = server.block_draw_at(pos).unwrap();
+    assert_eq!(
+        set.wire.as_slice().len(),
+        2,
+        "the wire keeps what the mod said"
+    );
+    assert_eq!(set.resolved.len(), 1, "the renderer only gets the sane box");
 }

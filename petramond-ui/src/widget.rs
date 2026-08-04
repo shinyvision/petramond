@@ -185,6 +185,38 @@ pub(crate) fn button_face_state(
     }
 }
 
+/// The face-name preference chain a checkbox/toggle paints, most specific
+/// first: try each with `face_if`, then fall back to the last (a plain state
+/// name, which every such part authors).
+///
+/// A part that only draws `off`/`on`/`disabled` is unaffected — the qualified
+/// names simply miss. The point is controls whose press or hover cannot be a
+/// tint of the resting picture: a handle that sits in a different PLACE in
+/// each position needs `off.hover` and `on.hover` as different drawings, while
+/// a part whose press looks the same either way (a control caught mid-throw)
+/// authors one shared `pressed` and both directions find it.
+pub(crate) fn toggle_face_chain(
+    enabled: bool,
+    on: bool,
+    pressed: bool,
+    hovered: bool,
+) -> [&'static str; 3] {
+    let base = if on { "on" } else { "off" };
+    if !enabled {
+        ["disabled"; 3]
+    } else if pressed {
+        [
+            if on { "on.pressed" } else { "off.pressed" },
+            "pressed",
+            base,
+        ]
+    } else if hovered {
+        [if on { "on.hover" } else { "off.hover" }, "hover", base]
+    } else {
+        [base; 3]
+    }
+}
+
 /// How many characters an input `inner_w` logical px wide can show.
 ///
 /// Derived from the WIDEST advance, never from the text currently in the
@@ -234,6 +266,29 @@ mod tests {
             button_face_state(false, true, false, false, true),
             "disabled"
         );
+    }
+
+    /// A part with only `off`/`on`/`disabled` (the base kit's checkbox and
+    /// toggle) must resolve exactly as it did before the chain existed — the
+    /// qualified names are an opt-in for parts that draw them.
+    #[test]
+    fn the_toggle_chain_always_ends_on_a_plain_state_name() {
+        for (enabled, on, pressed, hovered) in [
+            (true, false, false, false),
+            (true, true, true, true),
+            (true, false, false, true),
+            (false, true, true, true),
+        ] {
+            let chain = toggle_face_chain(enabled, on, pressed, hovered);
+            let expect = if !enabled {
+                "disabled"
+            } else if on {
+                "on"
+            } else {
+                "off"
+            };
+            assert_eq!(chain[2], expect, "{enabled} {on} {pressed} {hovered}");
+        }
     }
 
     #[test]

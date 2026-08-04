@@ -18,6 +18,9 @@ pub(super) struct ItemDef {
     /// Human-readable display name (UI only — not the recipe identity; see
     /// [`key`](Self::key)).
     pub name: &'static str,
+    /// Optional info line shown under the name in the item's slot tooltip
+    /// (`"info"` in `items.json`); `None` for ordinary items.
+    pub info: Option<&'static str>,
     pub max_stack_size: u8,
     /// First-person hold orientation when this item is held as a sprite (see
     /// [`ItemType::held_pose`](super::ItemType::held_pose)). Most items carry

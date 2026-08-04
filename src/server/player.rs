@@ -181,7 +181,7 @@ pub(crate) struct PendingBreakFinished {
     pub request_id: crate::net::protocol::ClientRequestId,
     pub pos: IVec3,
     /// Wire item id of the tool the client claims it used (`None` = bare hand).
-    pub tool_item_id: Option<u8>,
+    pub tool_item_id: Option<u16>,
     /// Whether the client presented the break optimistically — gates the
     /// initiator echo strip on accept (see `finish_player_break`).
     pub predicted: bool,

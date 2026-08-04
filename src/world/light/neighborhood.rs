@@ -11,7 +11,7 @@ use super::{nbhd_idx, NBHD_VOLUME};
 
 /// Shared block buffers of a section's 3x3x3 neighbourhood, indexed by [`arc_idx`].
 /// `None` for an absent neighbour, which reads as air.
-type BlockArcs = [Option<Arc<[u8]>>; 27];
+type BlockArcs = [Option<crate::section::BlockCube>; 27];
 
 pub(super) struct Snapshot {
     blocks: BlockArcs,
@@ -41,7 +41,7 @@ pub(super) fn gather(pos: SectionPos, sections: &FxHashMap<SectionPos, Arc<Secti
                 let Some(section) = sections.get(&npos) else {
                     continue;
                 };
-                blocks[arc_idx(dcx, dcy, dcz)] = Some(section.blocks_arc());
+                blocks[arc_idx(dcx, dcy, dcz)] = Some(section.block_cube());
                 let bx = ((dcx + 1) as usize) * SECTION_SIZE;
                 let by = ((dcy + 1) as usize) * SECTION_SIZE;
                 let bz = ((dcz + 1) as usize) * SECTION_SIZE;
@@ -74,7 +74,7 @@ pub(super) fn gather(pos: SectionPos, sections: &FxHashMap<SectionPos, Arc<Secti
 
 /// Assemble the neighbourhood block-id cube into `out` (a reused per-thread
 /// buffer of `NBHD_VOLUME` bytes). Absent neighbours read as air.
-pub(super) fn assemble_blocks(snapshot: &Snapshot, out: &mut [u8]) {
+pub(super) fn assemble_blocks(snapshot: &Snapshot, out: &mut [u16]) {
     debug_assert_eq!(out.len(), NBHD_VOLUME);
     out.fill(0);
     for dcy in -1..=1 {
@@ -91,7 +91,7 @@ pub(super) fn assemble_blocks(snapshot: &Snapshot, out: &mut [u8]) {
                     for lz in 0..SECTION_SIZE {
                         let d = nbhd_idx(bx, by + ly, bz + lz);
                         let s = section_idx(0, ly, lz);
-                        out[d..d + SECTION_SIZE].copy_from_slice(&src[s..s + SECTION_SIZE]);
+                        src.expand_row_into(s, &mut out[d..d + SECTION_SIZE]);
                     }
                 }
             }
@@ -135,7 +135,7 @@ pub(super) fn collect_section_emitters(
         return;
     }
     let (ox, oy, oz) = pos.origin_world();
-    for (idx, &id) in section.blocks_slice().iter().enumerate() {
+    for (idx, id) in section.blocks_iter().enumerate() {
         let block = crate::block::Block::from_id(id);
         if block.light_emission() > 0 {
             let [r, g, b] = block.light_emission_rgb();

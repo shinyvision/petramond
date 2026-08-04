@@ -6,7 +6,7 @@ use mod_api::{HostCall, HostRet};
 
 use crate::mathh::IVec3;
 
-use super::guards::{kv_write_guard, sim_call, sim_query, CELL_KV_MAX_KEYS};
+use super::guards::{batch_guard, kv_write_guard, sim_call, sim_query, CELL_KV_MAX_KEYS};
 
 /// Run one KV write behind [`kv_write_guard`], handing the key back to the
 /// operation when the guard passes (deletes guard with `value_len` 0).
@@ -67,6 +67,60 @@ pub(super) fn handle_kv_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(ctx.world.cell_kv_remove(p.x, p.y, p.z, &key))
             })
         }),
+        // ONE key across many cells: the shape a machine KIND reads and writes
+        // its state in, and the reason it exists is that the per-cell form
+        // made a mod's tick cost one crossing per placed machine.
+        HostCall::SectionKvGetMany { key, positions } => {
+            if let Some(err) = batch_guard("SectionKvGetMany position", positions.len()) {
+                return err;
+            }
+            sim_query(move |ctx| {
+                HostRet::BytesMany(
+                    positions
+                        .into_iter()
+                        .map(|pos| {
+                            let p = IVec3::from(pos);
+                            ctx.world
+                                .cell_kv_get(p.x, p.y, p.z, &key)
+                                .map(<[u8]>::to_vec)
+                        })
+                        .collect(),
+                )
+            })
+        }
+        HostCall::SectionKvSetMany { key, writes } => {
+            if let Some(err) = batch_guard("SectionKvSetMany write", writes.len()) {
+                return err;
+            }
+            // The value guard runs against the LARGEST write, so one oversized
+            // value fails the whole call exactly as it would alone.
+            let widest = writes
+                .iter()
+                .map(|(_, v)| v.as_ref().map_or(0, Vec::len))
+                .max()
+                .unwrap_or(0);
+            guarded_write(mod_id, key, widest, |key| {
+                sim_query(move |ctx| {
+                    HostRet::Bools(
+                        writes
+                            .into_iter()
+                            .map(|(pos, value)| {
+                                let p = IVec3::from(pos);
+                                let Some(value) = value else {
+                                    return ctx.world.cell_kv_remove(p.x, p.y, p.z, &key);
+                                };
+                                if ctx.world.cell_kv_get(p.x, p.y, p.z, &key).is_none()
+                                    && ctx.world.cell_kv_count(p.x, p.y, p.z) >= CELL_KV_MAX_KEYS
+                                {
+                                    return false;
+                                }
+                                ctx.world.cell_kv_set(p.x, p.y, p.z, key.clone(), value)
+                            })
+                            .collect(),
+                    )
+                })
+            })
+        }
         other => HostRet::Error(format!(
             "non-KV call {other:?} mis-routed to handle_kv_call (host bug)"
         )),

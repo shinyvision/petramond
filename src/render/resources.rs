@@ -243,6 +243,11 @@ pub struct GpuSectionMesh {
     pub translucent_vertex_count: u32,
     pub model_index_start: u32,
     pub model_idx_count: u32,
+    /// The section's alpha-BLEND model faces: an index range into the same
+    /// column index buffer, in the blend region that follows every section's
+    /// opaque indices (so the column's whole blend region stays contiguous).
+    pub model_blend_index_start: u32,
+    pub model_blend_idx_count: u32,
     pub model_vertex_start: u32,
     pub model_vertex_count: u32,
     /// Contact-shadow VERTEX range (the stream is non-indexed). Kept per section
@@ -276,6 +281,11 @@ pub struct GpuColumnMesh {
     pub model_vbuf: Option<Layer>,
     pub model_ibuf: Option<Layer>,
     pub model_idx_count: u32,
+    /// The column's whole alpha-BLEND model index region, appended after the
+    /// last opaque index (`model_idx_count .. model_idx_count + this`): one
+    /// contiguous range so the blend pass can batch per column like the model
+    /// pass does.
+    pub model_blend_idx_count: u32,
     /// The column's whole contact-shadow stream (non-indexed 16-byte
     /// `ContactShadowVertex`), drawn once per visible contact-bearing column.
     pub contact_vbuf: Option<Layer>,
@@ -302,6 +312,7 @@ pub(super) struct ColumnUploadScratch {
     translucent: Vec<TerrainVertex>,
     model: Vec<ModelVertex>,
     model_idx: Vec<u32>,
+    model_blend_idx: Vec<u32>,
     contact: Vec<ContactShadowVertex>,
 }
 
@@ -314,6 +325,7 @@ impl ColumnUploadScratch {
         self.translucent.clear();
         self.model.clear();
         self.model_idx.clear();
+        self.model_blend_idx.clear();
         self.contact.clear();
     }
 
@@ -336,6 +348,8 @@ impl ColumnUploadScratch {
             .reserve(meshes.iter().map(|(_, mesh)| mesh.model.len()).sum());
         self.model_idx
             .reserve(meshes.iter().map(|(_, mesh)| mesh.model_idx.len()).sum());
+        self.model_blend_idx
+            .reserve(meshes.iter().map(|(_, mesh)| mesh.model_blend_idx.len()).sum());
         self.contact
             .reserve(meshes.iter().map(|(_, mesh)| mesh.contact.len()).sum());
     }
@@ -787,6 +801,7 @@ fn section_index_hash(mesh: &ChunkMesh) -> u64 {
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     };
     eat(&mesh.model_idx);
+    eat(&mesh.model_blend_idx);
     h
 }
 
@@ -798,6 +813,7 @@ fn layer_sizes_match(mesh: &ChunkMesh, gpu: &GpuSectionMesh) -> bool {
         && mesh.translucent.len() as u32 == gpu.translucent_vertex_count
         && mesh.model.len() as u32 == gpu.model_vertex_count
         && mesh.model_idx.len() as u32 == gpu.model_idx_count
+        && mesh.model_blend_idx.len() as u32 == gpu.model_blend_idx_count
         && mesh.contact.len() as u32 == gpu.contact_vertex_count
 }
 
@@ -947,6 +963,12 @@ pub(super) fn upload_column_mesh(
     sections.clear();
     sections.reserve(meshes.len());
 
+    // The column index buffer lays out every section's OPAQUE model indices
+    // first, then every section's BLEND indices, so both regions batch as one
+    // contiguous range per column. The total is needed up front to place each
+    // section's blend range.
+    let model_opaque_total: u32 = meshes.iter().map(|(_, m)| m.model_idx.len() as u32).sum();
+
     for &(sp, mesh) in meshes {
         let (opaque_vertex_start, opaque_vertex_count) =
             append_quad_layer(&mut scratch.opaque, &mesh.opaque, col_ox, col_oz);
@@ -969,6 +991,13 @@ pub(super) fn upload_column_mesh(
                 &mesh.model,
                 &mesh.model_idx,
             );
+        // Same vertex buffer, blend index region: rebase onto this section's
+        // vertex start, positioned in the column-wide blend tail.
+        let model_blend_index_start = model_opaque_total + scratch.model_blend_idx.len() as u32;
+        let model_blend_idx_count = mesh.model_blend_idx.len() as u32;
+        scratch
+            .model_blend_idx
+            .extend(mesh.model_blend_idx.iter().map(|&i| i + model_vertex_start));
         let contact_vertex_start = scratch.contact.len() as u32;
         let contact_vertex_count = mesh.contact.len() as u32;
         scratch.contact.extend_from_slice(&mesh.contact);
@@ -988,6 +1017,8 @@ pub(super) fn upload_column_mesh(
                 translucent_vertex_count,
                 model_index_start,
                 model_idx_count,
+                model_blend_index_start,
+                model_blend_idx_count,
                 model_vertex_start,
                 model_vertex_count,
                 contact_vertex_start,
@@ -1011,6 +1042,11 @@ pub(super) fn upload_column_mesh(
             .max(scratch.translucent.len())
             / 4) as u32,
     );
+
+    // Fold the blend region into the column index buffer's tail (per-section
+    // blend ranges were already placed at `model_opaque_total + …`).
+    let model_blend_idx_count = scratch.model_blend_idx.len() as u32;
+    scratch.model_idx.append(&mut scratch.model_blend_idx);
 
     GpuColumnMesh {
         opaque_vbuf: upload_layer(
@@ -1063,7 +1099,8 @@ pub(super) fn upload_column_mesh(
             p_mi,
             bytemuck::cast_slice(&scratch.model_idx),
         ),
-        model_idx_count: scratch.model_idx.len() as u32,
+        model_idx_count: model_opaque_total,
+        model_blend_idx_count,
         contact_vbuf: upload_layer(
             device,
             queue,

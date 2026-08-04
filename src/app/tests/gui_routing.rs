@@ -794,6 +794,52 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
         .all(|hook| hook.kind != crate::gui::DocHookKind::TipResult));
 }
 
+/// Every filled slot names itself on hover now, not just the recipe grid: the
+/// item tooltip floats the stack's display name, hides over an empty slot,
+/// and steps aside while the cursor holds a stack (it would fight the held
+/// icon for the same pixels — the recipe tip's rule).
+#[test]
+fn hovering_a_filled_slot_publishes_the_item_tooltip() {
+    let mut app = app_with_grass();
+    app.handle_control(Control::ToggleInventory, true);
+    let screen = (1280u32, 720u32);
+
+    let (x, y) = cursor_over_slot(&mut app, screen, 0);
+    app.set_cursor_position(x, y);
+    // One frame resolves the hover, the next repopulates from it.
+    app.solve_menu_frame_for_test(screen);
+    app.solve_menu_frame_for_test(screen);
+
+    assert_eq!(app.ui.state_mut().get_bool("show_item_tip"), Some(true));
+    assert_eq!(
+        app.ui.state_mut().get_str("item_tip_name"),
+        Some(ItemType::Grass.name())
+    );
+    assert_eq!(
+        app.ui.state_mut().get_bool("item_tip_has_info"),
+        Some(false),
+        "grass declares no info line"
+    );
+
+    // An empty slot hides the tooltip entirely.
+    let (x, y) = cursor_over_slot(&mut app, screen, 5);
+    app.set_cursor_position(x, y);
+    app.solve_menu_frame_for_test(screen);
+    app.solve_menu_frame_for_test(screen);
+    assert_eq!(app.ui.state_mut().get_bool("show_item_tip"), Some(false));
+
+    // Back over the filled slot, then pick HALF the stack up: the slot stays
+    // filled but the held cursor stack suppresses the tooltip.
+    let (x, y) = cursor_over_slot(&mut app, screen, 0);
+    app.set_cursor_position(x, y);
+    app.right_click_screen_for_test(screen, 0.2);
+    assert!(app.inventory().cursor().is_some());
+    assert!(app.inventory().slot(0).is_some());
+    app.solve_menu_frame_for_test(screen);
+    app.solve_menu_frame_for_test(screen);
+    assert_eq!(app.ui.state_mut().get_bool("show_item_tip"), Some(false));
+}
+
 /// Selection is carried by the cell's own selected face, not by a detail
 /// line: spelling it out again cost two grid rows of the browser.
 #[test]
@@ -887,4 +933,64 @@ fn the_recipe_grid_tiles_nine_cells_per_row_in_filtered_order() {
             "icon {icon:?} escapes cell {cell:?}"
         );
     }
+}
+
+/// A machine's SWITCH must reach the mod the same way its buttons do.
+///
+/// A pack's lever is a `toggle` node, and a toggle resolves to `UiEvent::Toggle`
+/// rather than `Click` — a lane that reaches `Game::menu_click` and nothing
+/// else. Everything downstream of that hop is covered by `game/tests/menu.rs`;
+/// the hop itself needs a live App with a mod document open, so the decision it
+/// makes is pinned here instead.
+#[test]
+fn a_toggle_activates_its_widget_like_a_primary_click() {
+    use crate::app::shell_docs::menu_widget_activation;
+    use petramond_ui::{PointerButton, UiEvent};
+
+    let click = |button| UiEvent::Click {
+        id: "lever".into(),
+        item: None,
+        button,
+    };
+    assert_eq!(
+        menu_widget_activation(&click(PointerButton::Primary)),
+        Some("lever")
+    );
+    assert_eq!(
+        menu_widget_activation(&click(PointerButton::Secondary)),
+        None,
+        "widget clicks stay primary-only"
+    );
+
+    let toggle = |button, on| UiEvent::Toggle {
+        id: "lever".into(),
+        item: None,
+        on,
+        button,
+    };
+    for on in [false, true] {
+        assert_eq!(
+            menu_widget_activation(&toggle(PointerButton::Primary, on)),
+            Some("lever"),
+            "the node's own latch is presentation; the mod decides what it means"
+        );
+        // A toggle carries the button for the same reason a click does, and
+        // this lane applies the same rule to both: a right-click on a
+        // machine's lever must not reach the mod as a pull.
+        assert_eq!(
+            menu_widget_activation(&toggle(PointerButton::Secondary, on)),
+            None
+        );
+    }
+
+    // A slot click is the OTHER lane and must not be swallowed by this one.
+    assert_eq!(
+        menu_widget_activation(&UiEvent::SlotClick {
+            role: "container".into(),
+            index: 0,
+            button: PointerButton::Primary,
+            shift: false,
+        }),
+        None
+    );
 }

@@ -39,6 +39,12 @@ pub struct Inst<'d> {
     pub selected: Option<i32>,
     /// Resolved `image` binding: per-instance image-name override.
     pub image: Option<String>,
+    /// Resolved `frame` binding: the authoritative sprite-sheet frame index
+    /// (already truncated to an integer; the paint walk clamps it into the
+    /// sheet's grid).
+    pub frame: Option<i32>,
+    /// Resolved `tint` binding as a linear multiply colour.
+    pub tint: Option<[f32; 4]>,
     pub enabled: bool,
     /// Arena index of the parent instance (`None` for the root).
     pub parent: Option<u32>,
@@ -56,6 +62,18 @@ pub struct InstTree<'d> {
 
 pub const ROOT: u32 = 0;
 
+/// `0xRRGGBB` to a linear multiply colour. Packed as an `I32` because the GUI
+/// state map carries no colour type and a publisher already has the bytes.
+fn unpack_tint(packed: i32) -> [f32; 4] {
+    let v = packed as u32;
+    [
+        ((v >> 16) & 0xFF) as f32 / 255.0,
+        ((v >> 8) & 0xFF) as f32 / 255.0,
+        (v & 0xFF) as f32 / 255.0,
+        1.0,
+    ]
+}
+
 impl Inst<'_> {
     /// The effective flow direction for this instance's children.
     pub fn flow_dir(&self) -> crate::doc::Dir {
@@ -67,8 +85,9 @@ impl Inst<'_> {
         self.node.effective_align_of(self.layout)
     }
 
-    /// The effective image name for `image`/`rotimage` nodes: the bound
-    /// override, else the node's static name (`None` when empty).
+    /// The effective image name for `image`/`rotimage`/image-backed `button`
+    /// nodes: the bound override, else the node's static name (`None` when
+    /// empty).
     pub fn image_name(&self) -> Option<&str> {
         if let Some(name) = self.image.as_deref() {
             return (!name.is_empty()).then_some(name);
@@ -77,6 +96,9 @@ impl Inst<'_> {
             NodeKind::Image { image, .. } | NodeKind::Rotimage { image, .. } => {
                 (!image.is_empty()).then_some(image.as_str())
             }
+            NodeKind::Button {
+                image: Some(image), ..
+            } => (!image.is_empty()).then_some(image.as_str()),
             _ => None,
         }
     }
@@ -90,8 +112,22 @@ impl<'d> InstTree<'d> {
     /// Expand in normal or compact form (the caller resolves the document's
     /// breakpoint against its viewport — see [`Document::compact_active`]).
     pub fn expand_form(doc: &'d Document, state: &UiState, compact: bool) -> InstTree<'d> {
+        Self::expand_form_hover(doc, state, compact, None)
+    }
+
+    /// [`expand_form`](Self::expand_form) with the id of the widget under the
+    /// cursor (one frame old — the same contract as hover-revealed list
+    /// content): a tooltip whose `hover` anchor does not match expands as
+    /// invisible, so an anchored tooltip costs nothing on the frames its
+    /// widget is not pointed at.
+    pub fn expand_form_hover(
+        doc: &'d Document,
+        state: &UiState,
+        compact: bool,
+        hover: Option<&str>,
+    ) -> InstTree<'d> {
         let mut tree = InstTree { insts: Vec::new() };
-        tree.grow(&doc.root, state, None, None, None, true, compact);
+        tree.grow(&doc.root, state, None, None, None, true, compact, hover);
         tree
     }
 
@@ -136,9 +172,18 @@ impl<'d> InstTree<'d> {
         parent: Option<u32>,
         parent_enabled: bool,
         compact: bool,
+        hover: Option<&str>,
     ) -> Option<u32> {
         if !resolve_bool(state, item_map, &node.bind.visible, true) {
             return None;
+        }
+        if let NodeKind::Tooltip {
+            hover: Some(anchor),
+        } = &node.kind
+        {
+            if hover != Some(anchor.as_str()) {
+                return None;
+            }
         }
         let idx = self.insts.len() as u32;
         self.insts.push(Inst {
@@ -155,6 +200,13 @@ impl<'d> InstTree<'d> {
             enabled: parent_enabled && resolve_bool(state, item_map, &node.bind.enabled, true),
             image: resolve_key(state, item_map, &node.bind.image).and_then(|v| match v {
                 UiValue::Str(s) => Some(s.clone()),
+                _ => None,
+            }),
+            frame: resolve_key(state, item_map, &node.bind.frame)
+                .and_then(UiValue::as_f32)
+                .map(|f| f as i32),
+            tint: resolve_key(state, item_map, &node.bind.tint).and_then(|v| match v {
+                UiValue::I32(packed) => Some(unpack_tint(*packed)),
                 _ => None,
             }),
             parent,
@@ -188,6 +240,7 @@ impl<'d> InstTree<'d> {
                             Some(idx),
                             enabled,
                             compact,
+                            hover,
                         ) {
                             out.push(ci);
                         }
@@ -198,7 +251,7 @@ impl<'d> InstTree<'d> {
             _ => node
                 .children
                 .iter()
-                .filter_map(|c| self.grow(c, state, item_map, item, Some(idx), enabled, compact))
+                .filter_map(|c| self.grow(c, state, item_map, item, Some(idx), enabled, compact, hover))
                 .collect(),
         };
         self.insts[idx as usize].children = child_indices;

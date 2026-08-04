@@ -1,0 +1,159 @@
+{
+  "blocks": [
+    {
+      "block": "forge:pottery_table",
+      "shape": {
+        "model": "forge:pottery_table"
+      },
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": {
+        "open_gui": "forge:pottery_table"
+      },
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "oak_planks",
+        "oak_planks",
+        "oak_planks"
+      ],
+      "material": "wood",
+      "hardness": 2.0,
+      "drops": [
+        {
+          "item": "forge:pottery_table",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "forge:forging_furnace",
+      "shape": {
+        "model": "forge:forging_furnace"
+      },
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": {
+        "open_gui": "forge:forging_furnace"
+      },
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "stone",
+        "stone",
+        "cobblestone"
+      ],
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "hardness": 3.5,
+      "drops": [
+        {
+          "item": "forge:forging_furnace",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
+      "block": "forge:forging_furnace_lit",
+      "shape": {
+        "model": "forge:forging_furnace_lit"
+      },
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": {
+        "open_gui": "forge:forging_furnace"
+      },
+      "collision": [],
+      "emission": 10,
+      "tiles": [
+        "stone",
+        "stone",
+        "cobblestone"
+      ],
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "hardness": 3.5,
+      "drops": [
+        {
+          "item": "forge:forging_furnace",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ],
+      "light_color": [
+        1.0,
+        0.72,
+        0.42
+      ],
+      "particle_emitter": "forge:forge_fire"
+    },
+    {
+      "block": "forge:forging_furnace_pour",
+      "shape": {
+        "model": "forge:forging_furnace_pour"
+      },
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": {
+        "open_gui": "forge:forging_furnace"
+      },
+      "collision": [],
+      "emission": 13,
+      "tiles": [
+        "stone",
+        "stone",
+        "cobblestone"
+      ],
+      "material": "stone",
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "hardness": 3.5,
+      "drops": [
+        {
+          "item": "forge:forging_furnace",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ],
+      "light_color": [
+        1.0,
+        0.72,
+        0.42
+      ],
+      "particle_emitter": "forge:forge_pour"
+    }
+  ]
+}

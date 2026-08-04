@@ -438,6 +438,19 @@
         "yaw": 1.8,
         "roll": 0
       },
+      "sprite": "clay_ball",
+      "tags": []
+    },
+    {
+      "item": "petramond:clay_block",
+      "key": "petramond:clay_block",
+      "name": "Clay Block",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
       "tags": [],
       "block": "petramond:clay"
     },

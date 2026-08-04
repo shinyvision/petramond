@@ -609,6 +609,49 @@ fn tooltips_leave_the_flow_at_natural_size_and_unclipped() {
     assert!(s.overlay[2] && s.overlay[3], "the whole subtree is overlay");
 }
 
+/// A wrapping label inside a max-bounded AUTO container (a tooltip) breaks at
+/// the CAP, not at the incoming hint: the natural width can never exceed
+/// `max_w`, so measuring single-line against the parent hint and then
+/// ellipsizing into the clamped box would hide text the cap had room to show.
+#[test]
+fn a_wrap_label_inside_a_max_bounded_tooltip_wraps_at_the_cap() {
+    let (s, _) = solve_doc(
+        r#"{
+            "format": 1, "kind": "petramond:x", "class": "container",
+            "root": { "type": "frame", "children": [
+                { "type": "tooltip", "id": "tip", "bind": { "visible": "show" },
+                  "layout": { "max_w": 60, "abs": { "x": 4, "y": 4 } },
+                  "children": [
+                      { "type": "label", "id": "t", "wrap": true,
+                        "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+                  ] }
+            ] }
+        }"#,
+        (500, 500),
+    );
+    // 30 chars × 6 = 180 single-line; capped at 60 → 10 chars/line → 3 lines.
+    let tip = s.rects[1];
+    assert_eq!(tip.w, 60, "natural width clamps to max_w");
+    assert_eq!(tip.h, 3 * 9, "the label wraps at the cap");
+
+    // A short text still shrinks the tooltip to its content — the cap only
+    // ever bounds, it never pads.
+    let (s, _) = solve_doc(
+        r#"{
+            "format": 1, "kind": "petramond:x", "class": "container",
+            "root": { "type": "frame", "children": [
+                { "type": "tooltip", "id": "tip", "bind": { "visible": "show" },
+                  "layout": { "max_w": 60, "abs": { "x": 4, "y": 4 } },
+                  "children": [
+                      { "type": "label", "id": "t", "wrap": true, "text": "aaaaa" }
+                  ] }
+            ] }
+        }"#,
+        (500, 500),
+    );
+    assert_eq!((s.rects[1].w, s.rects[1].h), (5 * 6, 9));
+}
+
 /// The mods-list row: an icon, a text column, a spacer, and a toggle. Whatever
 /// a pack author writes in `desc` must not be able to shove the toggle off the
 /// panel — the player could not click it, and the label would paint across the

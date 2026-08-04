@@ -1,7 +1,9 @@
 //! Runtime name↔id registries for pack-extensible content.
 //!
-//! Blocks and items are opaque `u8` ids behind newtypes (`Block(u8)`,
-//! `ItemType(u8)`). Engine content owns the low ids in a compiled, frozen
+//! Blocks and items are opaque `u16` ids behind newtypes (`Block(u16)`,
+//! `ItemType(u16)`); the smaller catalogs (mobs, sounds, effects, emitters,
+//! models, features, biomes) stay one byte. Engine content owns the low ids in
+//! a compiled, frozen
 //! order (worldgen parity and existing saves depend on those ids never
 //! moving); engine content is named under the reserved `petramond:*` namespace.
 //! Mod packs ADD content by introducing rows with their own NAMESPACED keys
@@ -28,25 +30,43 @@ use serde::Deserialize;
 /// Reserved namespace for engine-owned public keys.
 pub(crate) const ENGINE_NAMESPACE: &str = "petramond";
 
+/// Id ceiling for the catalogs whose ids ride the save record and the wire as
+/// TWO bytes — blocks and items. Sixteen times the old one-byte ceiling, which
+/// is the whole point: the enabled pack set no longer shares 256 names per
+/// catalog. Dense per-id tables are sized to the registry's actual length, not
+/// to this number, so raising it costs nothing until the ids are used.
+pub(crate) const WIDE_ID_CAP: usize = 4096;
+
+/// Free ids below which [`names`] warns at boot: an ordinary content pack
+/// registers a few dozen rows, so this is "one more pack might not fit".
+pub(crate) const ID_HEADROOM_WARN: usize = 128;
+
+/// Id ceiling for the catalogs whose ids are still ONE byte (mobs, sounds,
+/// effects, emitters, models, features, biomes). None of them is near it — the
+/// shipped set uses at most 50 of 256 — and each has a `u8` wire field or
+/// dense table behind it, so this is the honest cap for them.
+pub(crate) const BYTE_ID_CAP: usize = 256;
+
 /// An id-ordered list of registered names: the compiled engine names first
 /// (index == frozen engine id), then pack-registered namespaced names in load
-/// order. Ids are `u8` — content tables stay 256 entries max. Carries a
+/// order. Ids are `u16`; each catalog declares its own ceiling
+/// ([`WIDE_ID_CAP`] / [`BYTE_ID_CAP`]) when it builds the table. Carries a
 /// name→id hash index built once here, so every name lookup (serde, palette,
 /// net remap, host calls) is O(1).
 #[derive(Debug)]
 pub(crate) struct NameTable {
     names: Vec<&'static str>,
-    ids: HashMap<&'static str, u8>,
+    ids: HashMap<&'static str, u16>,
 }
 
 impl NameTable {
     /// The runtime id of `name`, or `None` if it is not registered.
-    pub fn id(&self, name: &str) -> Option<u8> {
+    pub fn id(&self, name: &str) -> Option<u16> {
         self.ids.get(name).copied()
     }
 
     /// The registered name for `id`, or `None` if out of range.
-    pub fn name(&self, id: u8) -> Option<&'static str> {
+    pub fn name(&self, id: u16) -> Option<&'static str> {
         self.names.get(id as usize).copied()
     }
 
@@ -55,7 +75,7 @@ impl NameTable {
     }
 
     fn push(&mut self, name: &'static str) {
-        self.ids.insert(name, self.names.len() as u8);
+        self.ids.insert(name, self.names.len() as u16);
         self.names.push(name);
     }
 
@@ -63,11 +83,13 @@ impl NameTable {
     /// keys in order. A key that is an engine name (or an already-registered
     /// dynamic name) is an override — no new id. A non-`petramond` NAMESPACED key
     /// (`mod_id:name`) registers the next id. Bare keys and unknown `petramond:*`
-    /// keys are errors.
+    /// keys are errors. `cap` is the catalog's id ceiling — the same number
+    /// `modding::manifest` costs packs against at admission.
     pub fn build(
         engine: &[&'static str],
         layer_keys: &[Vec<String>],
         what: &str,
+        cap: usize,
     ) -> Result<NameTable, String> {
         let mut table = NameTable {
             names: Vec::with_capacity(engine.len()),
@@ -96,9 +118,9 @@ impl NameTable {
                 table.push(Box::leak(key.clone().into_boxed_str()));
             }
         }
-        if table.names.len() > 256 {
+        if table.names.len() > cap {
             return Err(format!(
-                "{} {what}s registered, but ids are one byte: the registry caps at 256 \
+                "{} {what}s registered, but the registry caps at {cap} \
                  (engine uses {}; remove or merge pack content)",
                 table.names.len(),
                 engine.len()
@@ -127,7 +149,7 @@ impl<D> Catalog<D> {
 
     /// The runtime id registered under `name` (engine `petramond:*` and pack
     /// `mod_id:name` keys alike), or `None` when no such row is loaded.
-    pub fn id(&self, name: &str) -> Option<u8> {
+    pub fn id(&self, name: &str) -> Option<u16> {
         self.names.id(name)
     }
 }
@@ -150,10 +172,10 @@ pub(crate) fn load_catalog<R, D>(
     row_key: fn(&R) -> &str,
     engine: &[&'static str],
     what: &str,
-    convert: impl FnMut(R, u8, &NameTable) -> Result<D, String>,
+    convert: impl FnMut(R, u16, &NameTable) -> Result<D, String>,
 ) -> Result<Catalog<D>, String> {
     let (merged, layer_keys) = parse_and_merge(texts, parse_layer, row_key)?;
-    let names = NameTable::build(engine, &layer_keys, what)?;
+    let names = NameTable::build(engine, &layer_keys, what, BYTE_ID_CAP)?;
     let rows = resolve_merged(merged, row_key, &names, what, convert)?;
     Ok(Catalog {
         rows: Box::leak(rows.into_boxed_slice()),
@@ -170,7 +192,7 @@ pub(crate) fn resolve_catalog<R, D>(
     row_key: fn(&R) -> &str,
     names: &NameTable,
     what: &str,
-    convert: impl FnMut(R, u8, &NameTable) -> Result<D, String>,
+    convert: impl FnMut(R, u16, &NameTable) -> Result<D, String>,
 ) -> Result<Vec<D>, String> {
     let (merged, _) = parse_and_merge(texts, parse_layer, row_key)?;
     resolve_merged(merged, row_key, names, what, convert)
@@ -309,7 +331,7 @@ fn resolve_merged<R, D>(
     row_key: fn(&R) -> &str,
     names: &NameTable,
     what: &str,
-    mut convert: impl FnMut(R, u8, &NameTable) -> Result<D, String>,
+    mut convert: impl FnMut(R, u16, &NameTable) -> Result<D, String>,
 ) -> Result<Vec<D>, String> {
     let mut rows: Vec<Option<D>> = (0..names.len()).map(|_| None).collect();
     for r in merged {
@@ -324,7 +346,7 @@ fn resolve_merged<R, D>(
             row.ok_or_else(|| {
                 format!(
                     "missing row for {what} '{}'",
-                    names.name(id as u8).unwrap_or("?")
+                    names.name(id as u16).unwrap_or("?")
                 )
             })
         })
@@ -559,8 +581,18 @@ pub(crate) fn build_names(
     let block_keys = layer_keys(block_texts, "blocks.json", "blocks", "block")?;
     let item_keys = layer_keys(item_texts, "items.json", "items", "item")?;
     Ok(ContentNames {
-        blocks: NameTable::build(crate::block::ENGINE_BLOCK_NAMES, &block_keys, "block")?,
-        items: NameTable::build(crate::item::ENGINE_ITEM_NAMES, &item_keys, "item")?,
+        blocks: NameTable::build(
+            crate::block::ENGINE_BLOCK_NAMES,
+            &block_keys,
+            "block",
+            WIDE_ID_CAP,
+        )?,
+        items: NameTable::build(
+            crate::item::ENGINE_ITEM_NAMES,
+            &item_keys,
+            "item",
+            WIDE_ID_CAP,
+        )?,
     })
 }
 
@@ -573,7 +605,23 @@ pub(crate) fn names() -> &'static ContentNames {
         let items = crate::assets::read_layers("items.json");
         let block_texts: Vec<&str> = blocks.iter().map(|(s, _)| s.as_str()).collect();
         let item_texts: Vec<&str> = items.iter().map(|(s, _)| s.as_str()).collect();
-        build_names(&block_texts, &item_texts).unwrap_or_else(|e| panic!("content registry: {e}"))
+        let names = build_names(&block_texts, &item_texts)
+            .unwrap_or_else(|e| panic!("content registry: {e}"));
+        // The ceiling is invisible until it is hit, and by then the only
+        // signal is a refused pack. Say where the world is against it at every
+        // boot, and say it LOUDLY once the remaining headroom is smaller than
+        // an ordinary pack.
+        for (what, used) in [("block", names.blocks.len()), ("item", names.items.len())] {
+            let left = WIDE_ID_CAP - used;
+            if left < ID_HEADROOM_WARN {
+                log::warn!(
+                    "{what} registry: {used}/{WIDE_ID_CAP} ids used, {left} left for further packs"
+                );
+            } else {
+                log::info!("{what} registry: {used}/{WIDE_ID_CAP} ids used");
+            }
+        }
+        names
     });
     &NAMES
 }
@@ -610,6 +658,26 @@ mod tests {
         );
     }
 
+    /// The reason the ids are two bytes: with EVERY shipped pack installed the
+    /// registries must still have room for more content, not a couple of dozen
+    /// free ids. This reads the real installed pack set, so it fails the day
+    /// the shipped packs genuinely crowd the table again.
+    #[test]
+    fn the_installed_pack_set_leaves_room_for_more_packs() {
+        // Comfortably more than any one content pack registers, and small
+        // enough that it is a real bound rather than a restatement of the cap.
+        const ROOM: usize = 1024;
+        let names = names();
+        for (what, used) in [("block", names.blocks.len()), ("item", names.items.len())] {
+            assert!(
+                used <= WIDE_ID_CAP && WIDE_ID_CAP - used >= ROOM,
+                "{what} registry: {used}/{WIDE_ID_CAP} ids used, only {} free — a further \
+                 content pack would be refused admission",
+                WIDE_ID_CAP - used,
+            );
+        }
+    }
+
     #[test]
     fn namespaced_keys_register_and_bare_unknowns_error() {
         let engine = &["petramond:air", "petramond:stone"];
@@ -618,6 +686,7 @@ mod tests {
             engine,
             &[vec!["petramond:stone".into(), "mymod:gadget".into()]],
             "block",
+            WIDE_ID_CAP,
         )
         .expect("valid layers");
         assert_eq!(table.len(), 3, "override adds no id; the addition does");
@@ -633,15 +702,21 @@ mod tests {
             engine,
             &[vec!["mymod:gadget".into()], vec!["mymod:gadget".into()]],
             "block",
+            WIDE_ID_CAP,
         )
         .unwrap();
         assert_eq!(table.len(), 3);
         // A NEW bare name is an error, not a registration.
-        let err = NameTable::build(engine, &[vec!["gadget".into()]], "block")
+        let err = NameTable::build(engine, &[vec!["gadget".into()]], "block", WIDE_ID_CAP)
             .expect_err("bare additions are refused");
         assert!(err.contains("gadget") && err.contains("namespace"), "{err}");
-        let err = NameTable::build(engine, &[vec!["petramond:gadget".into()]], "block")
-            .expect_err("unknown engine-namespace additions are refused");
+        let err = NameTable::build(
+            engine,
+            &[vec!["petramond:gadget".into()]],
+            "block",
+            WIDE_ID_CAP,
+        )
+        .expect_err("unknown engine-namespace additions are refused");
         assert!(
             err.contains("petramond") && err.contains("reserved"),
             "{err}"
@@ -654,11 +729,33 @@ mod tests {
     }
 
     #[test]
-    fn registry_caps_at_256_ids() {
+    fn registry_caps_at_its_declared_ceiling() {
+        // The wide (block/item) ceiling and the byte ceiling are separate
+        // numbers, and each catalog is held to its own.
         let engine = &["petramond:air"];
-        let keys: Vec<String> = (0..256).map(|i| format!("mymod:thing_{i}")).collect();
-        let err = NameTable::build(engine, &[keys], "block").expect_err("cap enforced");
-        assert!(err.contains("256"), "{err}");
+        let keys: Vec<String> = (0..WIDE_ID_CAP)
+            .map(|i| format!("mymod:thing_{i}"))
+            .collect();
+        let err = NameTable::build(engine, std::slice::from_ref(&keys), "block", WIDE_ID_CAP)
+            .expect_err("cap enforced");
+        assert!(err.contains(&WIDE_ID_CAP.to_string()), "{err}");
+        assert!(
+            NameTable::build(
+                engine,
+                &[keys[..WIDE_ID_CAP - 1].to_vec()],
+                "block",
+                WIDE_ID_CAP
+            )
+            .is_ok(),
+            "one under the ceiling still loads"
+        );
+        let byte_keys: Vec<String> = (0..BYTE_ID_CAP)
+            .map(|i| format!("mymod:thing_{i}"))
+            .collect();
+        assert!(
+            NameTable::build(engine, &[byte_keys], "mob", BYTE_ID_CAP).is_err(),
+            "a byte-capped catalog is held to 256, not to the wide ceiling"
+        );
     }
 
     /// End-to-end dynamic registration: a real pack (blocks.json + items.json
@@ -729,8 +826,8 @@ mod tests {
         // --- Registration: one fresh id past each engine set, name-addressed. ---
         assert_eq!(Block::all().len(), engine_blocks + 1);
         assert_eq!(ItemType::all().len(), engine_items + 1);
-        let glow = Block(engine_blocks as u8);
-        let glow_item = ItemType(engine_items as u8);
+        let glow = Block(engine_blocks as u16);
+        let glow_item = ItemType(engine_items as u16);
         assert_eq!(names().blocks.id("testmod:glowrock"), Some(glow.0));
         // Serde speaks registry names for dynamic content too.
         assert_eq!(
@@ -786,7 +883,7 @@ mod tests {
         for &b in Block::all() {
             assert_eq!(p.block_from_disk(p.block_to_disk(b.id())), b.id(), "{b:?}");
         }
-        for id in 0..engine_blocks as u8 {
+        for id in 0..engine_blocks as u16 {
             assert_eq!(
                 p.block_to_disk(id),
                 id,
@@ -795,7 +892,7 @@ mod tests {
         }
         // The dynamic block was appended AFTER the stranger, so its disk id
         // differs from its runtime id — the palette remaps by name.
-        assert_eq!(p.block_to_disk(glow.0), engine_blocks as u8 + 1);
+        assert_eq!(p.block_to_disk(glow.0), engine_blocks as u16 + 1);
         let text = std::fs::read_to_string(save.join("palette.json")).unwrap();
         assert!(
             text.contains("testmod:glowrock"),

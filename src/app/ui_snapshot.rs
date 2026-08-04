@@ -77,12 +77,17 @@ fn preview_capacity(
             .get(i)
             .map(|cell| slot_capacity(cell, held))
             .unwrap_or(0),
-        MenuSlot::Container(i) if specs.get(i).is_some_and(|spec| !spec.take_only) => snapshot
-            .container
-            .as_ref()
-            .and_then(|container| container.slots.get(i))
-            .map(|cell| slot_capacity(cell, held))
-            .unwrap_or(0),
+        // The same question the committed prediction and the server both ask
+        // (`container::slot_admits`). Asking a THIRD one here means the drag
+        // preview shows a split the click that follows it will not perform.
+        MenuSlot::Container(i) if crate::container::slot_admits(specs, i, Some(held.item)) => {
+            snapshot
+                .container
+                .as_ref()
+                .and_then(|container| container.slots.get(i))
+                .map(|cell| slot_capacity(cell, held))
+                .unwrap_or(0)
+        }
         MenuSlot::CraftResult | MenuSlot::Container(_) | MenuSlot::Widget(_) => 0,
     }
 }
@@ -102,10 +107,14 @@ fn preview_place(
     }
 
     let cell = match slot {
-        MenuSlot::Container(i) if specs.get(i).is_some_and(|spec| !spec.take_only) => snapshot
-            .container
-            .as_mut()
-            .and_then(|container| container.slots.get_mut(i)),
+        MenuSlot::Container(i)
+            if crate::container::slot_admits(specs, i, cursor.as_ref().map(|c| c.item)) =>
+        {
+            snapshot
+                .container
+                .as_mut()
+                .and_then(|container| container.slots.get_mut(i))
+        }
         MenuSlot::Inventory(_)
         | MenuSlot::CraftResult
         | MenuSlot::Container(_)

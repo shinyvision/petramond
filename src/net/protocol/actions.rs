@@ -131,7 +131,7 @@ pub(crate) enum PlayerAction {
         request_id: ClientRequestId,
         pos: IVec3,
         /// Wire item id of the tool used (`None` = bare hand).
-        tool_item_id: Option<u8>,
+        tool_item_id: Option<u16>,
         /// Whether the client applied the break optimistically (replica
         /// clear + local sound/burst). Gates the initiator's echo strip: a
         /// track-only finish (frozen ledger, replica disagreement) never

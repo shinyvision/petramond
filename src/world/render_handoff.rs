@@ -131,7 +131,7 @@ mod tests {
         let pos = SectionPos::new(0, 0, 0);
         let column = pos.chunk_pos();
         let mut section = Section::new(pos.cx, pos.cy, pos.cz);
-        section.blocks_slice_mut().fill(Block::Stone.id());
+        section.blocks_mut().fill(Block::Stone.id());
         section.recompute_opaque_count();
         world.insert_section_for_test(pos, section);
         world.mesh_section_blocking_for_test(pos);

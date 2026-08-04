@@ -109,7 +109,7 @@ mod parallel_parity_tests {
 
         let mesh_one = |item: &(SectionPos, Section)| -> ChunkMesh {
             let (pos, section) = item;
-            let nb = |wx: i32, wy: i32, wz: i32| -> u8 {
+            let nb = |wx: i32, wy: i32, wz: i32| -> u16 {
                 if wy < 0 || wy >= CHUNK_SY as i32 {
                     return 0;
                 }
@@ -247,7 +247,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
     // Resolve stored shape states (stair corners, pane masks) the way the
     // world's edit cascade would have — the fixture wrote raw cells.
     let section = super::refined(&section);
-    let block_at = |wx: i32, wy: i32, wz: i32| -> u8 {
+    let block_at = |wx: i32, wy: i32, wz: i32| -> u16 {
         if in_section(wx, wy, wz) {
             section.block_raw(wx as usize, wy as usize, wz as usize)
         } else if wy == 0
@@ -309,7 +309,7 @@ fn pad_local_section_mesher_matches_closure_mesher() {
         loaded_at,
     );
 
-    let mut blocks = vec![0u8; PAD_VOL];
+    let mut blocks = vec![0u16; PAD_VOL];
     let mut water = vec![0u8; PAD_VOL];
     let mut skylight = vec![SKY_FULL; PAD_VOL];
     let mut blocklight = vec![crate::light::LightRgb::ZERO; PAD_VOL];

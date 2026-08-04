@@ -1,0 +1,13 @@
+[package]
+name = "forge"
+version = "0.1.0"
+edition = "2021"
+description = "Casting metal: clay deposits on riverbanks and in savanna, a pottery table for moulds, and a forging furnace that melts raw metal over coal and pours it into the mould in its basin."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mod-sdk = { path = "../../mod-sdk" }
+machine-core = { path = "../machine-core" }

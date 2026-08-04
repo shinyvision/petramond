@@ -6,9 +6,9 @@ use crate::client::{
     ClientTextRun,
 };
 use crate::data::{
-    CollisionShape, EffectStateData, GuiValue, ItemInfoData, ItemStackData, LightData,
-    MobAnimStateData, MobRidersData, MobSnapshot, MobTagLookup, MobTagValue, PlayerInputData,
-    PlayerListEntry, PlayerSnapshot, RuntimeSide,
+    CollisionShape, EffectStateData, GuiValue, GuiViewerData, ItemInfoData, ItemStackData,
+    LightData, MobAnimStateData, MobRidersData, MobSnapshot, MobTagLookup, MobTagValue,
+    PlayerInputData, PlayerListEntry, PlayerSnapshot, RuntimeSide,
 };
 use crate::events::EventKind;
 use crate::ids::{BlockId, ItemId, MobId, PlayerId};
@@ -969,10 +969,10 @@ pub enum HostCall {
     /// Resolve session block ids back to their registry NAMES — the reverse of
     /// [`HostCall::ResolveBlock`], batched at the message level (resolve a
     /// whole [`HostCall::BlocksByTag`] result in one crossing). Reply parallel
-    /// to `blocks`; `None` = unregistered id. At most 4096 ids per call (the
-    /// sim batch cap; the id space is 256 — a legitimate batch never
-    /// approaches it). Registry-only: legal on any
-    /// instance, any time. → [`HostRet::Names`].
+    /// to `blocks`; `None` = unregistered id. At most
+    /// [`SIM_BATCH_MAX`](crate::SIM_BATCH_MAX) ids per call — a legitimate
+    /// batch never approaches it. Registry-only: legal on any instance, any
+    /// time. → [`HostRet::Names`].
     BlockNames {
         blocks: Vec<BlockId>,
     },
@@ -986,7 +986,8 @@ pub enum HostCall {
     },
     /// Resolve a mob species key (`"petramond:sheep"`, `"monsters:zombie"` —
     /// the `key` field of a `mobs.json` row, the same string
-    /// [`HostCall::SpawnMob`] and [`MobSnapshot::key`] speak) to its
+    /// [`HostCall::SpawnMob`] speaks; a [`MobSnapshot`] deliberately carries
+    /// only the numeric `kind`, which is what this resolves TO) to its
     /// session-scoped [`MobId`] — how a mod filters the `kind` in
     /// `mob_died`/`mob_spawned`/`mob_damage_pre` payloads without string
     /// round-trips. Registry-only like [`HostCall::ResolveBlock`]: legal on
@@ -1253,6 +1254,177 @@ pub enum HostCall {
         #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
+    /// The final SURFACE biome of each world column, reply parallel to
+    /// `columns` (`[x, z]`). The day-surface member of the positional
+    /// worldgen family, and subject to the same rules as
+    /// [`TerrainSolidAt`](Self::TerrainSolidAt): a pure function of (world
+    /// seed, column) read off the same world-anchored tile the feature stage
+    /// itself reads, so it answers on a detached worldgen instance with no
+    /// section loaded and agrees with [`GenCtx`'s own column
+    /// map](crate::GuestCall::GenFeature) by construction. Ids are
+    /// [`crate::biome`] names; there is no "unknown" — every column has a
+    /// biome. Bounded batch (4096 columns per call).
+    ///
+    /// It exists because a feature's own column data covers ONLY the
+    /// dispatching section's 16×16, so it cannot gate anything that spans
+    /// sections or reads a NEIGHBOURING column: a structure whose owner
+    /// checks the biome would be accepted in one section and rejected in the
+    /// next, and "is there a river within N blocks" — the question that
+    /// decides a river bank — is not a question one column knows the answer
+    /// to at all. Query ANCHORS and probe offsets, a handful per section,
+    /// never a volume.
+    /// → [`HostRet::SurfaceBiomes`].
+    SurfaceBiomeAt {
+        columns: Vec<[i32; 2]>,
+    },
+    /// Set the PER-INSTANCE presentation state of the model block at `pos`
+    /// (any of its footprint cells): `parts` is a bitmask over the row's
+    /// declared optional `parts` list — bit `i` shows `parts[i]` — and `tint`
+    /// is the multiply colour the row's `tint_parts` cubes take. `None` means
+    /// "I am not tinting", NOT "clear the tint": the colour rides the cell's
+    /// shared dye key, so a machine that never tints must not erase what a dye
+    /// put there. → [`HostRet::Bool`] (`false` = not a model block, or a
+    /// footprint cell is unloaded).
+    ///
+    /// This is the fine-grained sibling of
+    /// [`SwapModelBlock`](Self::SwapModelBlock), and it exists because
+    /// enumerating rows does not scale past ONE varying thing. A machine with
+    /// several INDEPENDENT visual states — the forge's basin holds any of five
+    /// moulds, with or without metal in it, while its fire is lit or not — is
+    /// 48 block rows enumerated and one row with a mask. Swap the ROW when the
+    /// block's identity changes (a lit furnace is a different row: different
+    /// emission, different drops); set PARTS when the same placed machine is
+    /// merely showing something different.
+    ///
+    /// RENDER ONLY: collision, selection and light stay the row's, so a
+    /// machine's hitbox never changes under the player. State rides the cell
+    /// KV lane, so it replicates, persists, and dies with the block.
+    SetModelParts {
+        pos: [i32; 3],
+        parts: u32,
+        tint: Option<[u8; 3]>,
+    },
+    /// Replace what this mod DRAWS on the block at `pos` with `prims`
+    /// ([`DrawPrim`](crate::DrawPrim), in the block's own space). An empty
+    /// list clears it. → [`HostRet::Bool`], where `false` means the cell is
+    /// UNLOADED (or not stream-final) — a clear is an accepted submission and
+    /// answers `true`. Submitting for a block this mod does not own is a
+    /// [`HostRet::Error`], not a `false`: on the single call that is a mod
+    /// bug, while the batched form answers `false` per entry, because losing
+    /// a race with a machine someone just broke is ordinary.
+    ///
+    /// The set is RETAINED and redrawn every frame from the replica, and it
+    /// costs NO re-mesh — which is the whole point. A block row swap or a
+    /// parts mask stages a picture; this draws one, so a mod can SIMULATE
+    /// what it shows (liquid running down a channel, a level rising) and
+    /// submit the result at tick rate without touching chunk geometry.
+    ///
+    /// Bounded at [`DRAW_PRIMS_MAX`](crate::DRAW_PRIMS_MAX) prims per block,
+    /// and every coordinate must be FINITE — a NaN draws nothing and defeats
+    /// the engine's unchanged-submission gate (`NaN != NaN`), so it is an
+    /// error rather than a quietly dropped box.
+    SetBlockDraw {
+        pos: [i32; 3],
+        prims: Vec<crate::DrawPrim>,
+    },
+    /// Carry `points`, in the BLOCK'S OWN space at `pos`, into WORLD
+    /// coordinates — reply parallel to the request. `None` = the cell is
+    /// unloaded or its streamed content is not final (retry later), the same
+    /// gate every other mod read answers on.
+    ///
+    /// It is the same space [`SetBlockDraw`](Self::SetBlockDraw) prims are
+    /// authored in: for a model block its FOOTPRINT space (16 authored px =
+    /// 1.0, origin at the footprint base, turned by the placed facing), and
+    /// otherwise the cell's `0..1`. A mod that already computes geometry
+    /// against its model — a spout, a ledge, the point a product pops out of —
+    /// asks HERE rather than re-deriving the placement transform, which is a
+    /// rule that then exists twice and only agrees at one of four facings.
+    ///
+    /// Bounded batch ([`SIM_BATCH_MAX`](crate::SIM_BATCH_MAX) points per
+    /// call). → [`HostRet::Points`].
+    BlockLocalToWorld {
+        pos: [i32; 3],
+        points: Vec<[f32; 3]>,
+    },
+    /// [`SetBlockDraw`](Self::SetBlockDraw) for MANY blocks in one crossing —
+    /// the form a mod with more than one placed machine wants. Reply parallel
+    /// to `sets`, each entry as the single call's ([`HostRet::Bools`]).
+    ///
+    /// This exists because the per-block call makes a mod's cost per TICK
+    /// proportional to how much of it the player has built: a hundred machines
+    /// is a hundred wasm→host crossings, every tick, for a submission the
+    /// engine usually drops as unchanged. Presentation is exactly the kind of
+    /// work that should cost one crossing however much of it there is.
+    ///
+    /// Bounded batch (4096 sets), each set bounded and finite-checked like the
+    /// single call. One bad set is an error for the WHOLE call, like every
+    /// other batched write.
+    ///
+    /// [`SetBlockDraw`]: Self::SetBlockDraw
+    SetBlockDraws {
+        sets: Vec<([i32; 3], Vec<crate::DrawPrim>)>,
+    },
+    /// [`SetModelParts`](Self::SetModelParts) for many blocks in one crossing —
+    /// `(pos, parts, tint)` per entry. Reply parallel to `sets`
+    /// ([`HostRet::Bools`]). Bounded batch (4096).
+    SetModelPartsMany {
+        sets: Vec<([i32; 3], u32, Option<[u8; 3]>)>,
+    },
+    /// [`SectionKvGet`](Self::SectionKvGet) for ONE key across many cells —
+    /// the shape a machine kind reads its own blob in (every placed machine of
+    /// a kind stores its state under the same key). Reply parallel to
+    /// `positions` ([`HostRet::BytesMany`]); `None` = absent or unloaded, the
+    /// same answers as the single call. Bounded batch
+    /// ([`SIM_BATCH_MAX`](crate::SIM_BATCH_MAX)).
+    SectionKvGetMany {
+        key: String,
+        positions: Vec<[i32; 3]>,
+    },
+    /// [`SectionKvSet`](Self::SectionKvSet) / [`SectionKvDelete`] for one key
+    /// across many cells: `None` value = delete. Reply parallel to `writes`
+    /// ([`HostRet::Bools`]) — `false` = the owning section is unloaded
+    /// (nothing stored), a delete of an absent key, or a NEW key on a cell
+    /// already holding [`CELL_KV_MAX_KEYS`](crate::CELL_KV_MAX_KEYS). That
+    /// last one is an ERROR on the single call: a batch is a whole machine
+    /// kind's writes, and one cell over the cap must not take the pack down.
+    /// Own-namespace key required, like the single call. Bounded batch
+    /// ([`SIM_BATCH_MAX`](crate::SIM_BATCH_MAX)).
+    ///
+    /// [`SectionKvDelete`]: Self::SectionKvDelete
+    SectionKvSetMany {
+        key: String,
+        writes: Vec<([i32; 3], Option<Vec<u8>>)>,
+    },
+    /// Every connected session with a mod GUI open right now, in session
+    /// order. → [`HostRet::GuiViewers`].
+    ///
+    /// This is the "who is looking" snapshot [`GuiStateSetFor`] is addressed
+    /// with, and it is a QUERY rather than a pair of events on purpose: a mod
+    /// that tracked opens and closes itself would have to be right about
+    /// disconnects, deaths and world unloads to stay in step, and it holds one
+    /// answer for the whole server anyway.
+    ///
+    /// [`GuiStateSetFor`]: Self::GuiStateSetFor
+    GuiViewers,
+    /// Write one key of a SPECIFIC session's GUI state map — the per-player
+    /// form of [`GuiStateSet`](Self::GuiStateSet). `false` = no such connected
+    /// session.
+    ///
+    /// The implicit call writes whichever session the running dispatch belongs
+    /// to, and a TICK SYSTEM belongs to the host session — so a machine
+    /// publishing gauges from its tick reached exactly one player's panel, and
+    /// on a dedicated server that player was whoever joined first. Every mod
+    /// with a live readout needs this one; nothing on the implicit surface can
+    /// substitute for it.
+    ///
+    /// Pair it with [`GuiViewers`](Self::GuiViewers): publish per viewer, and
+    /// the flat key space stops being a problem too — one session has one GUI
+    /// open, so its map cannot hold two machines' readings at once.
+    GuiStateSetFor {
+        player_id: PlayerId,
+        key: String,
+        value: GuiValue,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -1372,4 +1544,17 @@ pub enum HostRet {
     /// [`HostCall::TerrainSolidAt`]: one flag per requested position, in
     /// order.
     TerrainSolid(Vec<bool>),
+    /// [`HostCall::SurfaceBiomeAt`]: one biome id per requested column, in
+    /// order.
+    SurfaceBiomes(#[serde(with = "serde_bytes")] Vec<u8>),
+    /// [`HostCall::BlockLocalToWorld`]: one world point per requested point,
+    /// in order. `None` = the addressed cell is unloaded or not stream-final.
+    Points(Option<Vec<[f32; 3]>>),
+    /// The batched WRITE replies ([`HostCall::SetBlockDraws`],
+    /// [`HostCall::SetModelPartsMany`], [`HostCall::SectionKvSetMany`]):
+    /// one flag per requested entry, in order, meaning exactly what the
+    /// single call's `Bool` means.
+    Bools(Vec<bool>),
+    /// [`HostCall::GuiViewers`]: every session with a mod GUI open.
+    GuiViewers(Vec<GuiViewerData>),
 }
