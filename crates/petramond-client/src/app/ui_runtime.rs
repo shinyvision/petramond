@@ -373,7 +373,7 @@ impl AppUi {
                 .iter()
                 .filter_map(|s| {
                     let role = petramond::gui::Role::from_key(&s.role)?;
-                    Some(petramond::gui::DocSlot::new(
+                    let mut slot = petramond::gui::DocSlot::new(
                         role,
                         s.index,
                         petramond::gui::SlotRect {
@@ -382,7 +382,9 @@ impl AppUi {
                             w: s.rect.w as f32,
                             h: s.rect.h as f32,
                         },
-                    ))
+                    );
+                    slot.raised = s.raised;
+                    Some(slot)
                 })
                 .collect(),
         )
@@ -395,37 +397,60 @@ impl AppUi {
             self.out
                 .hooks
                 .iter()
-                .filter_map(|hook| {
-                    let kind = match hook.key.id.as_str() {
-                        "recipe_result" => petramond::gui::DocHookKind::RecipeResult,
-                        "craft_tip_result" => petramond::gui::DocHookKind::TipResult,
-                        "craft_tip_ingredients" => petramond::gui::DocHookKind::TipIngredients,
-                        _ => return None,
-                    };
-                    // Only the grid cells are list stamps; the detail and
-                    // tooltip hooks describe the recipe the snapshot names.
-                    let index = match kind {
-                        petramond::gui::DocHookKind::RecipeResult => hook.key.item? as usize,
-                        _ => 0,
-                    };
-                    let rect = petramond::gui::SlotRect {
-                        x: hook.rect.x as f32,
-                        y: hook.rect.y as f32,
-                        w: hook.rect.w as f32,
-                        h: hook.rect.h as f32,
-                    };
-                    let clip = hook.clip.map(|clip| petramond::gui::SlotRect {
-                        x: clip.x as f32,
-                        y: clip.y as f32,
-                        w: clip.w as f32,
-                        h: clip.h as f32,
-                    });
-                    Some(petramond::gui::DocHook {
-                        kind,
-                        index,
-                        rect,
-                        clip,
-                        overlay: hook.overlay,
+                .flat_map(|hook| {
+                    // An `item`-bound hook is generic (any document, any id):
+                    // its bound value is an ordered comma-list of item names
+                    // (the `petramond:overlay` convention), one composited
+                    // layer per name, first name bottom-most. Unknown names
+                    // contribute nothing — lenient like every by-reference
+                    // item read. The bare ids are the crafting browser's
+                    // bespoke hooks.
+                    let kinds: Vec<petramond::gui::DocHookKind> =
+                        if let Some(names) = hook.item.as_deref() {
+                            names
+                                .split(',')
+                                .filter_map(|name| {
+                                    Some(petramond::gui::DocHookKind::ItemView(
+                                        petramond_world::item::ItemType::by_name(name.trim())?,
+                                    ))
+                                })
+                                .collect()
+                        } else {
+                            match hook.key.id.as_str() {
+                                "recipe_result" => vec![petramond::gui::DocHookKind::RecipeResult],
+                                "craft_tip_result" => vec![petramond::gui::DocHookKind::TipResult],
+                                "craft_tip_ingredients" => {
+                                    vec![petramond::gui::DocHookKind::TipIngredients]
+                                }
+                                _ => Vec::new(),
+                            }
+                        };
+                    kinds.into_iter().filter_map(move |kind| {
+                        // Only the grid cells are list stamps; the detail and
+                        // tooltip hooks describe the recipe the snapshot names.
+                        let index = match kind {
+                            petramond::gui::DocHookKind::RecipeResult => hook.key.item? as usize,
+                            _ => 0,
+                        };
+                        let rect = petramond::gui::SlotRect {
+                            x: hook.rect.x as f32,
+                            y: hook.rect.y as f32,
+                            w: hook.rect.w as f32,
+                            h: hook.rect.h as f32,
+                        };
+                        let clip = hook.clip.map(|clip| petramond::gui::SlotRect {
+                            x: clip.x as f32,
+                            y: clip.y as f32,
+                            w: clip.w as f32,
+                            h: clip.h as f32,
+                        });
+                        Some(petramond::gui::DocHook {
+                            kind,
+                            index,
+                            rect,
+                            clip,
+                            overlay: hook.overlay,
+                        })
                     })
                 })
                 .collect(),

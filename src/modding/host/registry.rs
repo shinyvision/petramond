@@ -115,6 +115,29 @@ pub(super) fn handle_registry_call(call: HostCall) -> HostRet {
                 .data_value(&key)
                 .map(|v| v.as_bytes().to_vec()),
         ),
+        // The block twin of `ItemInfo`: the row's stable harvest facts, with
+        // the engine's own material→tool derivation answered rather than
+        // re-derived mod-side (the duplicated-constants trap).
+        HostCall::BlockInfo { block } => {
+            // Registration gates BEFORE any row accessor runs — an
+            // unregistered id must answer `None`, never index a row table.
+            HostRet::BlockInfo(petramond_world::registry::names().blocks.name(block.0).map(
+                |_| {
+                    let b = petramond_world::block::Block::from_id(block.0);
+                    Box::new(mod_api::BlockInfoData {
+                        material: material_name(b.material()).to_owned(),
+                        hardness: b.hardness(),
+                        harvest_tier: b.harvest_tier(),
+                        preferred_tool: b.preferred_tool().map(|t| t.name().to_owned()),
+                        item: {
+                            let item = petramond_world::item::ItemType::from_block(b);
+                            (item != petramond_world::item::ItemType::Air)
+                                .then_some(mod_api::ItemId(item.id()))
+                        },
+                    })
+                },
+            ))
+        }
         HostCall::BlocksWithData { key } => HostRet::BlockDataRows(
             petramond_world::block::Block::all()
                 .iter()
@@ -142,6 +165,8 @@ fn item_info_data(item: petramond_world::item::ItemType) -> mod_api::ItemInfoDat
         tool: item.tool().map(|t| mod_api::ToolInfoData {
             kind: t.kind.name().to_owned(),
             tier: t.tier,
+            speed: t.speed,
+            damage: [t.damage.0, t.damage.1],
         }),
         food: item.food().map(|f| mod_api::FoodInfoData {
             eat_ticks: f.eat_ticks,
@@ -155,6 +180,27 @@ fn item_info_data(item: petramond_world::item::ItemType) -> mod_api::ItemInfoDat
                 .collect(),
         }),
         item_use: item.item_use().map(|u| item_use_key(u).to_owned()),
+    }
+}
+
+/// The `blocks.json` `material` string a row's parsed class was declared as
+/// (the serde snake_case names, answered back verbatim). Exhaustive on
+/// purpose: a new material must pick its ABI name here.
+fn material_name(m: petramond_world::block::BlockMaterial) -> &'static str {
+    use petramond_world::block::BlockMaterial;
+    match m {
+        BlockMaterial::None => "none",
+        BlockMaterial::Dirt => "dirt",
+        BlockMaterial::Sand => "sand",
+        BlockMaterial::Stone => "stone",
+        BlockMaterial::Ore => "ore",
+        BlockMaterial::Wood => "wood",
+        BlockMaterial::Wool => "wool",
+        BlockMaterial::Foliage => "foliage",
+        BlockMaterial::Plant => "plant",
+        BlockMaterial::Glass => "glass",
+        BlockMaterial::Ice => "ice",
+        BlockMaterial::Other => "other",
     }
 }
 

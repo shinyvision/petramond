@@ -22,9 +22,11 @@
 //! shipping an item row and its processing rows, and nothing here or in the
 //! engine learns a new name. There is no `cast_iron_axe` anywhere.
 
+mod anvil;
 mod clay;
 mod content;
 mod furnace;
+mod gold;
 mod liquid;
 mod unlocks;
 
@@ -37,14 +39,17 @@ const TICK_SYSTEM: u32 = 1;
 const ON_BLOCK_PLACED: u32 = 1;
 const ON_CONTAINER_OPENED: u32 = 2;
 const ON_ITEM_OBTAINED: u32 = 3;
+const ON_BLOCK_BREAK: u32 = 4;
 const GEN_CLAY: u32 = 1;
 
 #[derive(Default)]
 struct Forge {
     furnace: ForgingFurnace,
+    anvil: anvil::Anvil,
     caches: Caches,
     clay: clay::Deposits,
     unlocks: unlocks::Unlocks,
+    gold: gold::Gold,
 }
 
 impl Mod for Forge {
@@ -67,25 +72,54 @@ impl Mod for Forge {
         self.unlocks = unlocks::Unlocks::resolve();
         register_event_handler(EventKind::ItemObtained, 0, ON_ITEM_OBTAINED);
 
-        if !self.furnace.init() {
+        // Gold's nondestructive mining: pure break-drops policy, independent
+        // of the machines.
+        self.gold = gold::Gold::resolve();
+        if !self.gold.is_empty() {
+            register_event_handler(EventKind::BlockBreakPre, 0, ON_BLOCK_BREAK);
+        }
+
+        let furnace_ok = self.furnace.init();
+        if !furnace_ok {
             log("forge: the forging furnace rows are missing; casting stays idle");
+        }
+        let anvil_ok = self.anvil.init();
+        if !anvil_ok {
+            log("forge: the anvil rows are missing; augments stay idle");
+        }
+        if !furnace_ok && !anvil_ok {
             return;
         }
         register_event_handler(EventKind::BlockPlaced, 0, ON_BLOCK_PLACED);
-        // The furnace is HANDLED, not just opened: a claim here is what makes
-        // the mould and the lever real interactions instead of GUI widgets.
+        // The machines are HANDLED, not just opened: a claim here is what
+        // makes the mould, the lever and the augment slots real interactions
+        // instead of GUI widgets.
         register_event_handler(EventKind::ContainerOpened, 0, ON_CONTAINER_OPENED);
         // After WorldScheduled = beside the engine's own furnace step.
         register_tick_system(Stage::WorldScheduled, AttachSide::After, 0, TICK_SYSTEM);
     }
 
     fn handle_event(&mut self, handler_id: u32, payload: &mut EventPayload) -> Outcome {
-        match (handler_id, &*payload) {
+        match (handler_id, &mut *payload) {
+            (
+                ON_BLOCK_BREAK,
+                EventPayload::BlockBreakPre {
+                    block,
+                    harvested,
+                    player,
+                    drops,
+                    ..
+                },
+            ) => {
+                self.gold.on_block_break(*block, *harvested, *player, drops);
+            }
             (ON_BLOCK_PLACED, EventPayload::BlockPlaced { pos, block }) => {
                 self.furnace.on_placed(*pos, *block);
+                self.anvil.on_placed(*pos, *block);
             }
             (ON_CONTAINER_OPENED, EventPayload::ContainerOpened { kind, pos }) => {
                 self.furnace.on_container_opened(kind, *pos);
+                self.anvil.on_container_opened(kind, *pos);
             }
             (ON_ITEM_OBTAINED, EventPayload::ItemObtained { player, item }) => {
                 self.unlocks.on_item_obtained(*player, *item);
@@ -95,20 +129,25 @@ impl Mod for Forge {
         Outcome::Continue
     }
 
-    /// A widget in one of this pack's documents was clicked. The forging
-    /// furnace has exactly one, and it is the pour.
+    /// A widget in one of this pack's documents was clicked: the forging
+    /// furnace's pour lever, or the anvil's Augment button.
     fn gui_click(&mut self, kind_key: &str, widget_id: &str, pos: Option<[i32; 3]>) {
         use machine_core::MachineSpec;
+        let Some(pos) = pos else {
+            return;
+        };
         if kind_key == furnace::ForgingFurnaceSpec::KIND_KEY && widget_id == furnace::WIDGET_LEVER {
-            if let Some(pos) = pos {
-                self.furnace.spec().pull_lever(pos, &mut self.caches);
-            }
+            self.furnace.spec().pull_lever(pos, &mut self.caches);
+        }
+        if kind_key == anvil::AnvilSpec::KIND_KEY && widget_id == anvil::WIDGET_AUGMENT {
+            self.anvil.spec_mut().request_apply(pos);
         }
     }
 
     fn tick_system(&mut self, system_id: u32) {
         if system_id == TICK_SYSTEM {
             self.furnace.tick(&mut self.caches);
+            self.anvil.tick(&mut self.caches);
         }
     }
 

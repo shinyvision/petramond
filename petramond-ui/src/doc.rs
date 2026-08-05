@@ -76,6 +76,13 @@ pub struct Node {
     /// part for its type, or unskinned for plain containers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style: Option<String>,
+    /// Paint this subtree in the OVERLAY tier: after the base tier's chrome
+    /// AND the host's base-tier content (item icons), before tooltips. For a
+    /// widget that must sit on TOP of host-drawn content — the anvil's
+    /// augment slot over its enlarged tool view. Unlike a tooltip, the node
+    /// stays in flow and stays fully interactive (hit testing is unchanged).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub overlay: bool,
     #[serde(default, skip_serializing_if = "Bindings::is_empty")]
     pub bind: Bindings,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -634,6 +641,22 @@ pub struct Bindings {
     /// threading `inst.tint` through the paint walk, not by binding and hoping.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tint: Option<String>,
+    /// `hook` nodes only: a `Str` key naming a game ITEM (registry name) the
+    /// host draws into the hook's rect, scaled to it — the generic "show an
+    /// item here" view (a machine's enlarged subject, a preview). The document
+    /// stays item-agnostic: what shows is entirely the published value, and an
+    /// empty string shows nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
+    /// Bound absolute position (logical px from the parent's content rect,
+    /// like `layout.abs`), for nodes that DECLARE `layout.abs`: the host moves
+    /// the widget by publishing `I32` values (a slot whose place depends on
+    /// what a machine holds). The authored `abs` is the resting position;
+    /// either axis may bind alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub abs_x: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub abs_y: Option<String>,
 }
 
 impl Bindings {
@@ -777,6 +800,7 @@ impl Node {
             layout: LayoutProps::default(),
             compact_layout: None,
             style: None,
+            overlay: false,
             bind: Bindings::default(),
             children: Vec::new(),
         }

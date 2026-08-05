@@ -46,6 +46,10 @@ pub enum BindField {
     Image,
     /// Sprite-sheet frame index (`bind.frame`): numeric keys.
     Frame,
+    /// Item-view (`bind.item`, hook nodes): string keys only.
+    Item,
+    /// Bound absolute position (`bind.abs_x`/`abs_y`): numeric keys.
+    Abs,
 }
 
 /// Whether a catalog key of `ty` is offerable for `field`: `items` wants
@@ -57,7 +61,8 @@ pub fn field_matches(field: BindField, ty: &str) -> bool {
         BindField::Selected => ty == "i32",
         BindField::Enabled | BindField::Visible => ty == "bool",
         BindField::Image => ty == "str",
-        BindField::Frame => matches!(ty, "i32" | "f32"),
+        BindField::Frame | BindField::Abs => matches!(ty, "i32" | "f32"),
+        BindField::Item => ty == "str",
         BindField::Text | BindField::Value => matches!(ty, "f32" | "i32" | "bool" | "str"),
     }
 }

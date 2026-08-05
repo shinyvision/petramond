@@ -31,12 +31,21 @@ pub struct BlockPlacePre {
 /// `block_break_pre` — cancel = unbreakable (the block stays; the spent mining
 /// progress is the cost). Fires only for player mining; sim-destroyed blocks
 /// (natural breaks) are not cancellable.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct BlockBreakPre {
     pub pos: IVec3,
     pub block: Block,
-    /// Whether the held tool harvests drops from this block.
+    /// Whether the held tool harvests drops from this block. Observational —
+    /// a `drops` override is honored regardless, so a handler that only
+    /// wants harvested breaks gates on this itself.
     pub harvested: bool,
+    /// The breaking session.
+    pub player: crate::player::PlayerId,
+    /// Mutable: `None` = the engine's drop tables roll as usual;
+    /// `Some(stacks)` = the break drops EXACTLY these stacks instead
+    /// (empty = nothing), spawned verbatim — a stack of the broken block's
+    /// own item still picks up the cell's carried data.
+    pub drops: Option<Vec<petramond_world::item::ItemStack>>,
 }
 
 /// `interact_attempt` — the player's use click as its most PRIMITIVE gesture:

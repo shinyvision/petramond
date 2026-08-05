@@ -104,12 +104,25 @@ pub(crate) struct PaintCtx<'a> {
 impl PaintCtx<'_> {
     pub fn paint(&self, p: &mut Painter<'_>) {
         self.node(ROOT, None, p);
-        // Floating tooltips paint last, in their own draw-list tier: the host
-        // layers its item icons over the base tier, so a tooltip painted in
-        // document order would have those icons showing through it.
-        // Unconditional, so "no tooltip this frame" is an EMPTY overlay tier
-        // rather than an unset boundary that would read as "all of it".
+        // The overlay tier paints last: the host layers its base item icons
+        // over the base tier, so anything that must sit ABOVE that content —
+        // `overlay: true` subtrees, then floating tooltips topmost — paints
+        // here instead of in document order. Unconditional, so "nothing
+        // raised this frame" is an EMPTY overlay tier rather than an unset
+        // boundary that would read as "all of it".
         p.list.begin_overlay();
+        for i in 0..self.tree.len() as u32 {
+            let inst = self.tree.get(i);
+            // A raised subtree's ROOT only (a raised parent paints its
+            // children itself), and never a tooltip's interior — tooltips
+            // keep their own pass below so they stay topmost.
+            let parent_raised = inst
+                .parent
+                .is_some_and(|par| self.solved.raised[par as usize]);
+            if inst.node.overlay && !parent_raised && !self.solved.overlay[i as usize] {
+                self.node(i, None, p);
+            }
+        }
         for i in 0..self.tree.len() as u32 {
             if matches!(self.tree.get(i).node.kind, NodeKind::Tooltip { .. }) {
                 self.node(i, None, p);
@@ -693,10 +706,17 @@ impl PaintCtx<'_> {
         }
 
         // Children in arena order; list stamps carry their row face state.
-        // Tooltip children are skipped here and painted by the overlay pass.
+        // Tooltip and `overlay: true` children are skipped here and painted
+        // by the overlay pass — unless THIS node is already painting in that
+        // pass, in which case its raised children belong to it.
         let is_list = matches!(inst.node.kind, NodeKind::List { .. });
+        let self_raised = self.solved.raised[i as usize];
         for (row, &c) in inst.children.iter().enumerate() {
-            if matches!(self.tree.get(c).node.kind, NodeKind::Tooltip { .. }) {
+            let child = self.tree.get(c);
+            if matches!(child.node.kind, NodeKind::Tooltip { .. }) {
+                continue;
+            }
+            if child.node.overlay && !self_raised {
                 continue;
             }
             let child_row_state = if is_list {

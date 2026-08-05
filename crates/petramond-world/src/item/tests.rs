@@ -10,12 +10,12 @@ fn attack_damage_ranges_are_ordered_and_positive() {
     // positive `lo <= hi`.
     assert_eq!(attack_damage(None), (1.0, 1.0), "fist is a deterministic 1");
     assert_eq!(
-        attack_damage(Some(ItemType::Dirt)),
+        attack_damage(Some(&ItemStack::new(ItemType::Dirt, 1))),
         (1.0, 1.0),
         "a non-weapon punches like a fist"
     );
     for &it in ItemType::all() {
-        let (lo, hi) = attack_damage(Some(it));
+        let (lo, hi) = attack_damage(Some(&ItemStack::new(it, 1)));
         assert!(lo > 0.0 && lo <= hi, "{it:?}: invalid range {lo}..{hi}");
     }
     // Every diamond tool one-shots a 4-health mob (its minimum damage alone is lethal).
@@ -25,10 +25,68 @@ fn attack_damage_ranges_are_ordered_and_positive() {
         ItemType::DiamondShovel,
     ] {
         assert!(
-            attack_damage(Some(it)).0 >= 4.0,
+            attack_damage(Some(&ItemStack::new(it, 1))).0 >= 4.0,
             "a diamond tool one-shots: {it:?}"
         );
     }
+}
+
+/// The instance-data `petramond:tool` override is what makes an AUGMENTED
+/// tool a data fact instead of a new item row: the stack's resolved tool —
+/// not the row's — must drive the harvest gate, the speed, and the damage.
+#[test]
+fn a_stack_tool_override_changes_tier_speed_and_damage_but_never_kind() {
+    let stone_pick = ItemStack::new(ItemType::StonePickaxe, 1);
+    let row = stone_pick.tool().expect("stone pickaxe is a tool");
+
+    let mut map = variant::VariantMap::new();
+    map.insert(
+        TOOL_DATA_KEY.to_string(),
+        br#"{"tier":4,"speed":8.0,"damage":[5.0,7.0]}"#.to_vec(),
+    );
+    let augmented = ItemStack::with_variant(
+        ItemType::StonePickaxe,
+        1,
+        variant::intern(&map).expect("valid variant"),
+    );
+    let t = augmented.tool().expect("still a tool");
+    assert_eq!(t.kind, row.kind, "kind is never overridable");
+    assert_eq!(t.tier, 4);
+    assert_eq!(t.speed, 8.0);
+    assert_eq!(t.damage, (5.0, 7.0));
+    // The override reaches the gameplay reads: the gate and the damage funnel.
+    assert!(
+        crate::mining::harvests(Block::DiamondOre, augmented.tool()),
+        "a tier-4 override unlocks what the row's tier 2 cannot"
+    );
+    assert!(!crate::mining::harvests(Block::DiamondOre, stone_pick.tool()));
+    assert_eq!(attack_damage(Some(&augmented)), (5.0, 7.0));
+}
+
+/// Instance data arrives from mods at runtime, so it parses LENIENTLY:
+/// malformed bytes or an invalid field degrade to the row's values, field by
+/// field — never a panic, never a half-applied override.
+#[test]
+fn a_malformed_tool_override_degrades_to_the_rows_values() {
+    let row = ItemType::StonePickaxe.tool().unwrap();
+    let stack_with = |bytes: &[u8]| {
+        let mut map = variant::VariantMap::new();
+        map.insert(TOOL_DATA_KEY.to_string(), bytes.to_vec());
+        ItemStack::with_variant(
+            ItemType::StonePickaxe,
+            1,
+            variant::intern(&map).expect("valid variant"),
+        )
+    };
+    // Not JSON at all: the whole override is ignored.
+    assert_eq!(stack_with(b"not json").tool(), Some(row));
+    // A bad field is dropped alone; the good field still applies.
+    let t = stack_with(br#"{"tier":3,"speed":-1.0}"#).tool().unwrap();
+    assert_eq!(t.tier, 3);
+    assert_eq!(t.speed, row.speed, "a non-positive speed is refused");
+    // An unordered damage band is refused; unknown fields are ignored.
+    let t = stack_with(br#"{"damage":[7.0,5.0],"future":1}"#).tool().unwrap();
+    assert_eq!(t.damage, row.damage);
 }
 
 #[test]

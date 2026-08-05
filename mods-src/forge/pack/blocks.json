@@ -1,6 +1,43 @@
 {
   "blocks": [
     {
+      "block": "forge:anvil",
+      "shape": {
+        "model": "forge:anvil"
+      },
+      "flags": [
+        "solid",
+        "directional_view"
+      ],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": {
+        "open_gui": "forge:anvil"
+      },
+      "collision": [],
+      "emission": 0,
+      "tiles": [
+        "stone",
+        "stone",
+        "stone"
+      ],
+      "material": "stone",
+      "hardness": 4.0,
+      "data": {
+        "petramond:harvest": {
+          "tier": 1
+        }
+      },
+      "drops": [
+        {
+          "item": "forge:anvil",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    },
+    {
       "block": "forge:pottery_table",
       "shape": {
         "model": "forge:pottery_table"

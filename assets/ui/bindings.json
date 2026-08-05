@@ -457,6 +457,14 @@
      "type": "f32|i32|str",
      "doc": "the mod's tick-owned GUI state map is mirrored into UiState every frame"
     },
+    "<bind.item on a hook node>": {
+     "type": "str",
+     "doc": "an ordered comma-list of item registry names the host draws composited into the hook's rect, first name bottom-most (empty = nothing; unknown names skipped) — the generic layered item view, same list convention as petramond:overlay instance data; first user: the forge anvil's enlarged tool + augment overlays"
+    },
+    "<bind.abs_x / bind.abs_y on a layout.abs node>": {
+     "type": "i32",
+     "doc": "per-frame override of the node's authored abs position, logical px from the parent's content rect — a widget whose place is machine state; generic and tested, currently no shipping user (built for a floated-slot anvil design later dropped)"
+    },
     "show_item_tip": {
      "type": "bool",
      "doc": "host-populated for EVERY menu kind: a filled slot is hovered while the cursor holds nothing. The engine injects the tooltip chrome into every container-class document at load — a pack ships no node; binding `show_item_tip` in its own document opts OUT and keeps its custom chrome"

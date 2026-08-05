@@ -220,6 +220,66 @@ fn abs_children_leave_the_flow() {
     );
 }
 
+/// A bound abs position must MOVE the widget (the anvil's augment slot
+/// follows the inserted tool), and the authored abs must stay the resting
+/// place when nothing is published — per axis.
+#[test]
+fn bound_abs_position_overrides_the_authored_one_per_axis() {
+    let json = r#"{
+        "format": 1, "kind": "petramond:x", "class": "screen",
+        "root": { "type": "frame", "layout": { "w": 100, "h": 100 },
+            "children": [
+                { "type": "checkbox", "id": "deco",
+                  "layout": { "abs": { "x": 5, "y": 7 } },
+                  "bind": { "abs_x": "px", "abs_y": "py" } }
+            ] }
+    }"#;
+    let doc = Document::from_json(json).unwrap();
+    let solve_with = |entries: &[(&str, i32)]| {
+        let mut state = UiState::new();
+        for (k, v) in entries {
+            state.set(*k, UiValue::I32(*v));
+        }
+        let tree = InstTree::expand(&doc, &state);
+        solve(&tree, &MockEnv, (100, 100), &|_| 0)
+    };
+    // Nothing published: the authored resting place.
+    let s = solve_with(&[]);
+    assert_eq!((s.rects[1].x, s.rects[1].y), (5, 7));
+    // Both axes bound: the published position wins.
+    let s = solve_with(&[("px", 40), ("py", 60)]);
+    assert_eq!((s.rects[1].x, s.rects[1].y), (40, 60));
+    // One axis bound: the other keeps its authored value.
+    let s = solve_with(&[("py", 33)]);
+    assert_eq!((s.rects[1].x, s.rects[1].y), (5, 33));
+}
+
+/// `overlay: true` raises a subtree's PAINT tier without the tooltip tier's
+/// hit exclusion — the anvil's augment slot must draw above the host's
+/// enlarged tool view AND still take the click.
+#[test]
+fn an_overlay_node_is_raised_but_still_hit_testable() {
+    let (s, _) = solve_doc(
+        r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "frame", "layout": { "w": 100, "h": 100 },
+                "children": [
+                    { "type": "checkbox", "id": "plain" },
+                    { "type": "checkbox", "id": "on_top", "overlay": true,
+                      "layout": { "abs": { "x": 5, "y": 5 } } }
+                ] }
+        }"#,
+        (100, 100),
+    );
+    assert!(!s.raised[1] && !s.overlay[1], "ordinary node: base tier");
+    assert!(s.raised[2], "flagged node paints in the raised tier");
+    assert!(
+        !s.overlay[2],
+        "raised is NOT the tooltip flag — the node stays hit-testable"
+    );
+    assert!(s.hit(2, 6, 6), "the raised widget still takes the pointer");
+}
+
 #[test]
 fn abs_grow_children_fill_parent_content() {
     let (s, _) = solve_doc(

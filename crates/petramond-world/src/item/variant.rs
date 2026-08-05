@@ -199,6 +199,32 @@ pub fn tint(id: VariantId) -> Option<[f32; 3]> {
     Some([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0])
 }
 
+/// The `petramond:overlay` instance-data key: the stack draws one or more
+/// OTHER items' sprites composited over its own, at every site the base
+/// sprite reaches (GUI icon, both hands, dropped entity). The value is a
+/// comma-separated list of item registry NAMES — always by reference, never
+/// pixels: pixels cannot fit the value cap, would mint a variant per pixmap,
+/// and could not be rendered by a client that does not run the writing mod.
+/// The overlay art is authored IN POSITION on its own transparent 16×16 (the
+/// forge's diamond tip sits at the tip of its tool sprite), so compositing is
+/// a plain stacked draw with no coordinates anywhere.
+pub const OVERLAY_DATA_KEY: &str = "petramond:overlay";
+
+/// The overlay items `id` names, resolved and in declared order. Lenient like
+/// every instance-data read: non-UTF-8 bytes or an unknown item name simply
+/// contribute nothing.
+pub fn overlay_items(id: VariantId) -> Vec<super::ItemType> {
+    let Some(v) = value(id, OVERLAY_DATA_KEY) else {
+        return Vec::new();
+    };
+    let Ok(s) = std::str::from_utf8(&v) else {
+        return Vec::new();
+    };
+    s.split(',')
+        .filter_map(|name| super::ItemType::by_name(name.trim()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +234,30 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_vec()))
             .collect()
+    }
+
+    /// The overlay key resolves BY REFERENCE and leniently: names resolve in
+    /// declared order, unknown names contribute nothing (a pack uninstalled
+    /// under a saved stack must degrade to the bare item, never error).
+    #[test]
+    fn overlay_items_resolve_names_in_order_and_skip_unknowns() {
+        use super::super::ItemType;
+        let id = |val: &[u8]| {
+            let mut m = VariantMap::new();
+            m.insert(OVERLAY_DATA_KEY.to_string(), val.to_vec());
+            intern(&m).unwrap()
+        };
+        assert_eq!(
+            overlay_items(id(b"petramond:stick, petramond:coal")),
+            vec![ItemType::Stick, ItemType::Coal]
+        );
+        assert_eq!(
+            overlay_items(id(b"gone:mod_item,petramond:stick")),
+            vec![ItemType::Stick],
+            "an unknown name is skipped, not an error"
+        );
+        assert_eq!(overlay_items(id(&[0xFF, 0xFE])), vec![], "non-UTF-8 = none");
+        assert_eq!(overlay_items(VariantId::NONE), vec![]);
     }
 
     #[test]

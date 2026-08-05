@@ -207,7 +207,7 @@ fn rgb(value: Option<&json::Value>) -> Option<[u8; 3]> {
 
 /// Enumerate every item carrying `key` and parse its value, resolving the ids
 /// back to registry names in ONE batched call.
-fn read_rows<T>(key: &str, parse: impl Fn(&json::Value) -> Option<T>) -> HashMap<String, T> {
+pub fn read_rows<T>(key: &str, parse: impl Fn(&json::Value) -> Option<T>) -> HashMap<String, T> {
     let rows = items_with_data(key);
     if rows.is_empty() {
         return HashMap::new();

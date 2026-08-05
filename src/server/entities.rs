@@ -100,7 +100,8 @@ impl ServerGame {
     /// The held weapon's damage roll for session `s` (the same roll a mob hit
     /// uses; deterministic off the spawn counter).
     fn roll_attack_damage(&mut self, s: usize) -> f32 {
-        let (lo, hi) = petramond_world::item::attack_damage(self.sessions[s].selected_item());
+        let (lo, hi) =
+            petramond_world::item::attack_damage(self.sessions[s].player.inventory.selected());
         self.spawn_counter = self.spawn_counter.wrapping_add(1);
         lo + crate::entity::hash01(self.spawn_counter as u64) * (hi - lo)
     }

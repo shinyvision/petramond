@@ -1,4 +1,17 @@
-use super::ItemType;
+use super::ItemStack;
+
+/// The `petramond:tool` INSTANCE-data key: a stack may carry a JSON override
+/// of its row-resolved tool properties (`{"tier": u8, "speed": f32,
+/// "damage": [min, max]}` — any subset; `kind` is deliberately not
+/// overridable). Same vocabulary as the row's data entry, resolved by
+/// [`ItemStack::tool`]: absent fields keep the row's values. This is how a
+/// pack upgrades ONE tool in the world (the forge's diamond augments) without
+/// minting an item row per combination.
+///
+/// Unlike row data — engine-parsed strictly at load — this arrives from mods
+/// at runtime, so it parses LENIENTLY: malformed JSON or an invalid field
+/// degrades to the row's value rather than erroring.
+pub const TOOL_DATA_KEY: &str = "petramond:tool";
 
 /// What family of tool an item is, for mining. A tool speeds up the block class
 /// it is *for* — a [`Pickaxe`](ToolKind::Pickaxe) mines stone & ore, an
@@ -109,7 +122,43 @@ pub fn default_damage(kind: ToolKind, tier: u8) -> (f32, f32) {
     }
 }
 
+/// The [`TOOL_DATA_KEY`] instance-data value — every field optional, unknown
+/// fields ignored (a later engine may write more than this one reads).
+#[derive(serde::Deserialize)]
+struct RawToolOverride {
+    #[serde(default)]
+    tier: Option<u8>,
+    #[serde(default)]
+    speed: Option<f32>,
+    #[serde(default)]
+    damage: Option<[f32; 2]>,
+}
+
 impl Tool {
+    /// This tool with a [`TOOL_DATA_KEY`] instance-data override merged over
+    /// it. Lenient by doctrine (see the key's docs): unparseable bytes or an
+    /// invalid field keep the row-resolved value, field by field.
+    pub fn with_override(self, bytes: &[u8]) -> Tool {
+        let Ok(raw) = serde_json::from_slice::<RawToolOverride>(bytes) else {
+            return self;
+        };
+        let mut t = self;
+        if let Some(tier) = raw.tier {
+            t.tier = tier;
+        }
+        if let Some(speed) = raw.speed {
+            if speed.is_finite() && speed > 0.0 {
+                t.speed = speed;
+            }
+        }
+        if let Some([lo, hi]) = raw.damage {
+            if lo.is_finite() && hi.is_finite() && 0.0 <= lo && lo <= hi {
+                t.damage = (lo, hi);
+            }
+        }
+        t
+    }
+
     /// A tool with the ladder's own speed and damage for its `(kind, tier)` —
     /// what a row that states nothing else resolves to.
     pub fn new(kind: ToolKind, tier: u8) -> Tool {
@@ -131,11 +180,13 @@ impl Tool {
 /// held. Deterministic: exactly 1 per hit (so a fist always takes 4 hits on 4 health).
 pub const FIST_DAMAGE: (f32, f32) = (1.0, 1.0);
 
-/// The melee damage range `(min, max)` for attacking with `item` in hand: the tool's
-/// range if it's a weapon, else the [`FIST_DAMAGE`] baseline (an empty hand and a
+/// The melee damage range `(min, max)` for attacking with `stack` in hand: the
+/// tool's range if it's a weapon (instance-data override included — see
+/// [`ItemStack::tool`]), else the [`FIST_DAMAGE`] baseline (an empty hand and a
 /// non-weapon item like a block both punch for 1).
-pub fn attack_damage(item: Option<ItemType>) -> (f32, f32) {
-    item.and_then(ItemType::tool)
+pub fn attack_damage(stack: Option<&ItemStack>) -> (f32, f32) {
+    stack
+        .and_then(ItemStack::tool)
         .map(Tool::attack_damage)
         .unwrap_or(FIST_DAMAGE)
 }

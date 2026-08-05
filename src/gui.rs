@@ -102,6 +102,13 @@ pub enum DocHookKind {
     /// The hovered recipe's result icon / ingredient strip, in the tooltip.
     TipResult,
     TipIngredients,
+    /// A document `hook` with an `item` binding: draw this item's icon scaled
+    /// into the hook's rect — the generic "show an item here" view (a mod
+    /// panel's enlarged subject). The bound value is an ordered comma-LIST of
+    /// registry names; each resolved name becomes one `ItemView` hook at the
+    /// same rect, in list order, so later names composite over earlier ones
+    /// (the anvil's tool + augment overlays).
+    ItemView(petramond_world::item::ItemType),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -210,11 +217,22 @@ pub struct DocSlot {
     pub role: Role,
     pub index: u32,
     pub rect: SlotRect,
+    /// The slot's cell paints in the document's RAISED (overlay) tier
+    /// (`"overlay": true` on a node), so its stack icon must draw in the
+    /// host's overlay content tier too or it would sink under its own cell
+    /// face. Generic and tested; currently no shipping document raises a
+    /// slot (built for a floated-slot anvil design later dropped).
+    pub raised: bool,
 }
 
 impl DocSlot {
     pub fn new(role: Role, index: u32, rect: SlotRect) -> DocSlot {
-        DocSlot { role, index, rect }
+        DocSlot {
+            role,
+            index,
+            rect,
+            raised: false,
+        }
     }
 }
 

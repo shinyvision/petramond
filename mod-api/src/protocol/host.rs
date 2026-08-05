@@ -6,7 +6,8 @@ use crate::client::{
     ClientTextRun,
 };
 use crate::data::{
-    CollisionShape, EffectStateData, GuiValue, GuiViewerData, ItemInfoData, ItemStackData,
+    BlockInfoData, CollisionShape, EffectStateData, GuiValue, GuiViewerData, ItemInfoData,
+    ItemStackData,
     LightData, MobAnimStateData, MobRidersData, MobSnapshot, MobTagLookup, MobTagValue,
     PlayerInputData, PlayerListEntry, PlayerSnapshot, RuntimeSide,
 };
@@ -1425,6 +1426,26 @@ pub enum HostCall {
         key: String,
         value: GuiValue,
     },
+    /// The block twin of [`ItemInfo`](Self::ItemInfo): the row's stable
+    /// harvest facts ([`BlockInfoData`](crate::BlockInfoData) — material,
+    /// hardness, harvest tier, the tool family the gate credits, and the
+    /// item that places the block). The engine's own material→tool ladder
+    /// answers here so a mod judging a break never re-derives it (the
+    /// duplicated-constants trap). Registry-only (legal on any instance,
+    /// any time). `None` = unregistered id. → [`HostRet::BlockInfo`].
+    BlockInfo {
+        block: BlockId,
+    },
+    /// The named session's currently HELD stack, instance data included —
+    /// the per-player, per-stack read [`PlayerState`](Self::PlayerState)'s
+    /// row-level `held` id cannot be: an augmented tool's `petramond:tool`
+    /// override lives in the stack's data, and only containers exposed it
+    /// before. `None` = empty hand, no such connected session, or a
+    /// dispatch site that publishes no sessions view (event handlers and
+    /// attached tick systems always do). → [`HostRet::HeldStack`].
+    PlayerHeld {
+        player: PlayerId,
+    },
 }
 
 /// Host → guest reply for a [`HostCall`].
@@ -1557,4 +1578,9 @@ pub enum HostRet {
     Bools(Vec<bool>),
     /// [`HostCall::GuiViewers`]: every session with a mod GUI open.
     GuiViewers(Vec<GuiViewerData>),
+    /// [`HostCall::BlockInfo`]: `None` = unregistered id. Boxed like
+    /// [`HostRet::ItemInfo`], for the same reply-size reason.
+    BlockInfo(Option<Box<BlockInfoData>>),
+    /// [`HostCall::PlayerHeld`]: `None` = empty hand / no such session.
+    HeldStack(Option<ItemStackData>),
 }

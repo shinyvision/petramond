@@ -473,6 +473,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::Players
         | HostCall::UnlockRecipe { .. }
         | HostCall::RecipeUnlocked { .. }
+        | HostCall::PlayerHeld { .. }
         | HostCall::ChatSend { .. } => player::handle_player_call(&data.mod_id, call),
         HostCall::EmitSound { .. }
         | HostCall::SoundPlayAt { .. }
@@ -505,7 +506,8 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::ItemDataGet { .. }
         | HostCall::ItemsWithData { .. }
         | HostCall::BlockDataGet { .. }
-        | HostCall::BlocksWithData { .. } => registry::handle_registry_call(call),
+        | HostCall::BlocksWithData { .. }
+        | HostCall::BlockInfo { .. } => registry::handle_registry_call(call),
         HostCall::RegisterWorldgenFeature { .. }
         | HostCall::RegisterStageReplacement { .. }
         | HostCall::RegisterGenerator { .. }

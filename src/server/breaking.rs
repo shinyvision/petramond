@@ -34,7 +34,7 @@ impl ServerGame {
             .player
             .inventory
             .selected()
-            .and_then(|st| st.item.tool());
+            .and_then(|st| st.tool());
         let look = self.sessions[s].look;
         let break_held = self.sessions[s].intent_break_held;
         let inventory_open = !self.sessions[s].intent_gameplay;
@@ -163,15 +163,24 @@ impl ServerGame {
             return;
         }
 
-        let auth_tool = self.sessions[s]
+        // The claim check compares ROW tools: the wire carries only the item
+        // id, so an instance-data override (a diamond augment) must not read
+        // as a mismatch. The authoritative STACK tool below is what actually
+        // times and harvests the break.
+        let auth_row_tool = self.sessions[s]
             .player
             .inventory
             .selected()
             .and_then(|st| st.item.tool());
+        let auth_tool = self.sessions[s]
+            .player
+            .inventory
+            .selected()
+            .and_then(|st| st.tool());
         let claimed_tool = tool_item_id
             .map(petramond_world::item::ItemType)
             .and_then(|it| it.tool());
-        if claimed_tool != auth_tool {
+        if claimed_tool != auth_row_tool {
             self.deny_break_finished(s, request_id, pos, ActionDenyReason::BadTool);
             return;
         }
@@ -268,11 +277,13 @@ impl ServerGame {
         events: &mut TickEvents,
         initiator_presented: bool,
     ) -> bool {
-        {
+        let drops_override = {
             let mut pre = BlockBreakPre {
                 pos: event.pos,
                 block: event.block,
                 harvested: event.harvested,
+                player: self.sessions[s].id,
+                drops: None,
             };
             let Self {
                 world,
@@ -293,7 +304,8 @@ impl ServerGame {
             if cancelled {
                 return false;
             }
-        }
+            pre.drops
+        };
         events.player(s).broke_block = Some(event.block);
         // Echo rule: strip the initiator's BlockBroken only on evidence they
         // already presented it locally; a client that never presented still
@@ -387,7 +399,22 @@ impl ServerGame {
             normal: hit_normal,
             tint: broken_tint,
         });
-        if event.harvested {
+        // A drops override from `block_break_pre` is final and spawns
+        // verbatim, harvested or not — the payload showed the handler
+        // `harvested`, so gating is the handler's own policy. A stack of the
+        // broken block's own item still picks up the cell's carried data
+        // (the dye a cauldron holds), matching `spawn_drops`' carry rule,
+        // unless the override already stamped its own instance data.
+        if let Some(stacks) = drops_override {
+            for mut stack in stacks {
+                if stack.item == petramond_world::item::ItemType::from_block(event.block)
+                    && stack.variant == petramond_world::item::VariantId::NONE
+                {
+                    stack.variant = carry_variant;
+                }
+                self.spawn_item_stack(event.pos, stack, (sky, blk));
+            }
+        } else if event.harvested {
             match part_drops {
                 Some(stacks) => {
                     for stack in stacks {

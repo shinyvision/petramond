@@ -326,6 +326,24 @@ fn walk<'a>(
         _ => {}
     }
 
+    // Cross-kind bind rules: an `item` bind is only ever read off a hook, and
+    // a bound abs position needs an authored `layout.abs` resting place (in
+    // at least one form) — anywhere else these silently do nothing, which is
+    // the worst failure a document can have.
+    if node.bind.item.is_some() && !matches!(node.kind, NodeKind::Hook) {
+        issue("'item' binding is only read on hook nodes".into());
+    }
+    if node.bind.abs_x.is_some() || node.bind.abs_y.is_some() {
+        let has_abs = node.layout.abs.is_some()
+            || node
+                .compact_layout
+                .as_ref()
+                .is_some_and(|l| l.abs.is_some());
+        if !has_abs {
+            issue("'abs_x'/'abs_y' bindings need layout.abs (the resting position)".into());
+        }
+    }
+
     if let (Some(styles), Some(style)) = (styles, &node.style) {
         if !styles.has_style(style) {
             issue(format!("unknown style '{style}'"));

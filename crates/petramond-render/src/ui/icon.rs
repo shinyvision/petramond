@@ -28,9 +28,22 @@ pub(super) fn push_slot_icon(
     stack: &petramond_world::item::ItemStack,
     r: SlotRect,
 ) {
-    build
-        .icon_quads
-        .push((stack.item, r, stack_tint(stack), stack_dyed(stack)));
+    push_stack_quads(&mut build.icon_quads, stack, r);
+}
+
+/// The quads one stack draws in rect `r`: its own icon, then any
+/// `petramond:overlay` items' icons stacked over it in declared order. The
+/// overlay draws white and undyed on purpose — a dyed TOOL tints its own
+/// body, never the augment riding on it.
+pub(super) fn push_stack_quads(
+    quads: &mut Vec<(petramond_world::item::ItemType, SlotRect, [f32; 4], bool)>,
+    stack: &petramond_world::item::ItemStack,
+    r: SlotRect,
+) {
+    quads.push((stack.item, r, stack_tint(stack), stack_dyed(stack)));
+    for overlay in petramond_world::item::variant::overlay_items(stack.variant) {
+        quads.push((overlay, r, [1.0; 4], false));
+    }
 }
 
 /// Whether the stack's icon should draw from its DYED atlas cell (the twin

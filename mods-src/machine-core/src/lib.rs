@@ -221,6 +221,12 @@ impl<S: MachineSpec> Machine<S> {
         &self.spec
     }
 
+    /// Mutable spec access, for handlers that stage work for the next step
+    /// (a panel button click recorded until the tick reads the slots).
+    pub fn spec_mut(&mut self) -> &mut S {
+        &mut self.spec
+    }
+
     /// Opening a panel self-heals a lost anchor. There is deliberately no
     /// CLOSE half: who is watching is not tracked mod-side at all any more.
     /// `container_opened`/`closed` name no player, so the best a mod could

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::data::MobTagValue;
+use crate::data::{ItemStackData, MobTagValue};
 use crate::ids::{BlockId, ItemId, MobId, PlayerId};
 
 /// A pre-event handler's verdict. The first `Cancel` wins AND ends the
@@ -169,12 +169,13 @@ impl Default for MobDamageFeedback {
 /// One event's data, mirrored from the engine payloads.
 /// Pre events hand the payload to the guest `&mut`; the engine reads
 /// back ONLY the fields the taxonomy marks mutable ([`MobDamagePre::amount`],
-/// [`MobDamagePre::feedback`], [`PlayerDamagePre::amount`]) — everything else
-/// is observational.
+/// [`MobDamagePre::feedback`], [`PlayerDamagePre::amount`],
+/// [`BlockBreakPre::drops`]) — everything else is observational.
 ///
 /// [`MobDamagePre::amount`]: EventPayload::MobDamagePre
 /// [`PlayerDamagePre::amount`]: EventPayload::PlayerDamagePre
 /// [`MobDamagePre::feedback`]: EventPayload::MobDamagePre
+/// [`BlockBreakPre::drops`]: EventPayload::BlockBreakPre
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum EventPayload {
     BlockPlacePre {
@@ -182,10 +183,30 @@ pub enum EventPayload {
         block: BlockId,
         facing: Facing,
     },
+    /// PRE — a player break that is about to clear the cell. Cancel =
+    /// unbreakable (the block stays). Fires for player mining only;
+    /// sim-destroyed blocks (natural breaks) never dispatch it.
     BlockBreakPre {
         pos: [i32; 3],
         block: BlockId,
+        /// Whether the held tool passes the block's harvest gate (drops
+        /// would spawn). Observational — a drops override is honored
+        /// regardless, so a handler that only wants harvested breaks gates
+        /// on this itself.
         harvested: bool,
+        /// The breaking session's player id (for per-player calls such as
+        /// [`HostCall::PlayerHeld`]).
+        ///
+        /// [`HostCall::PlayerHeld`]: crate::HostCall::PlayerHeld
+        player: PlayerId,
+        /// Mutable: written back by the engine after the dispatch. `None` =
+        /// the engine's own drop tables roll as usual; `Some(stacks)` = the
+        /// break drops EXACTLY these stacks instead (empty = nothing), the
+        /// engine spawns them verbatim — instance data included — and a
+        /// stack naming the broken block's own item still picks up the
+        /// cell's carried data. Later handlers in the chain see an earlier
+        /// handler's override and may leave or replace it.
+        drops: Option<Vec<ItemStackData>>,
     },
     /// PRE — the player's use click as its most PRIMITIVE gesture: what the
     /// crosshair held (a block cell + face, a live mob), nothing more.

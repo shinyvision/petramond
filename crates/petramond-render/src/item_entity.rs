@@ -111,12 +111,16 @@ pub fn build_item_sprite_entities(
         };
         // One extrusion per instance (light is per-instance, folded into the
         // tint); the layered pile copies just re-place the same model-space mesh.
-        let count =
-            super::item_model::build_extruded_item_lit(tile, inst_light(inst), env, scratch);
+        let count = super::item_model::build_extruded_stack_lit(
+            tile,
+            inst.variant,
+            inst_light(inst),
+            env,
+            scratch,
+        );
         if count == 0 {
             continue;
         }
-        super::item_model::dye_item_verts(scratch, inst.variant);
         let layers = (inst.count.max(1) as usize).min(STACK_MAX_LAYERS);
         let (s, c) = inst.spin.sin_cos();
         let bob_y = BOB_BASE + bob(inst.spin);

@@ -24,6 +24,7 @@ const RAW_ORE_TAG: &str = "petramond:raw_ore";
 
 const FORGING_FURNACE: &str = "forge:forging_furnace";
 const POTTERY_TABLE: &str = "forge:pottery_table";
+const ANVIL: &str = "forge:anvil";
 
 #[derive(Default)]
 pub struct Unlocks {
@@ -37,9 +38,13 @@ impl Unlocks {
             .into_iter()
             .map(|ore| (ore, FORGING_FURNACE))
             .collect();
+        // A first diamond earns the anvil: with the vanilla diamond tool
+        // recipes retired, the diamond in hand has no visible use until the
+        // player learns where augments are fitted.
         for (name, recipe) in [
             ("petramond:clay", POTTERY_TABLE),
             (FORGING_FURNACE, POTTERY_TABLE),
+            ("petramond:diamond", ANVIL),
         ] {
             if let Some(item) = resolve_item_logged(name) {
                 triggers.push((item, recipe));

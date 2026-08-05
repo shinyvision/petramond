@@ -169,3 +169,16 @@ host_fn! {
     pub fn blocks_with_data(key: &str) -> Vec<(BlockId, String)>
         => BlocksWithData { key: key.into() } => BlockDataRows
 }
+
+host_fn! {
+    /// The block twin of [`item_info`]: the row's stable harvest facts
+    /// (material, hardness, harvest tier, the tool family the break gate
+    /// credits, the item that places the block) — the engine's own
+    /// material→tool ladder answered rather than re-derived. `None` =
+    /// unregistered id. Registry-only, legal on any instance; cache it,
+    /// never re-ask per tick.
+    ///
+    /// [`item_info`]: crate::item_info
+    pub fn block_info(block: BlockId) -> Option<Box<mod_api::BlockInfoData>>
+        => BlockInfo { block } => BlockInfo
+}

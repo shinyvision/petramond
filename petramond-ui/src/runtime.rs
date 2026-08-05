@@ -46,6 +46,10 @@ pub struct SlotRectOut {
     pub role: String,
     pub index: u32,
     pub rect: RectI,
+    /// The slot paints in the RAISED tier (`overlay: true` subtree): the
+    /// host must draw its stack icon in the overlay content tier too, or the
+    /// icon would sink under the chrome its cell paints above.
+    pub raised: bool,
 }
 
 /// One host-drawn `hook` instance. The rect and inherited clip are physical
@@ -60,6 +64,10 @@ pub struct HookRectOut {
     /// overlay tier, drawn after the base tier's host content
     /// (see [`crate::DrawList`]).
     pub overlay: bool,
+    /// The hook's resolved `item` binding, if it carries one: the game item
+    /// the host should draw scaled into `rect` (`None` = a bespoke hook the
+    /// host recognises by id, or nothing published this frame).
+    pub item: Option<String>,
 }
 
 #[derive(Default)]
@@ -351,7 +359,10 @@ impl UiRuntime {
                         key: key.clone(),
                         rect,
                         clip: solved.clips[i].map(phys),
-                        overlay: solved.overlay[i],
+                        // Raised, not tooltip-only: host content follows the
+                        // PAINT tier its hook belongs to.
+                        overlay: solved.raised[i],
+                        item: inst.item_name.clone(),
                     });
                 }
             }
@@ -367,6 +378,7 @@ impl UiRuntime {
                     role: slot.role.clone(),
                     index: slot.base + c,
                     rect: phys(grid_cell(rect, cols, c, metrics)),
+                    raised: solved.raised[slot.inst as usize],
                 });
             }
         }

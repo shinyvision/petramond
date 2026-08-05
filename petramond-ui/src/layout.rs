@@ -133,9 +133,14 @@ pub struct Solved {
     /// thumb geometry).
     pub scroll_content: Vec<Option<(i32, i32)>>,
     /// Whether the instance belongs to a floating `tooltip` subtree: painted
-    /// in the overlay tier and excluded from every hit test, so a panel that
+    /// in the tooltip tier and excluded from every hit test, so a panel that
     /// follows the pointer can never swallow the input under it.
     pub overlay: Vec<bool>,
+    /// Whether the instance paints in the RAISED tier (an `overlay: true`
+    /// node's subtree, or a tooltip's): its chrome and host content draw
+    /// after the base tier's. Superset of [`Solved::overlay`]; unlike it,
+    /// raised-only instances stay fully hit-testable.
+    pub raised: Vec<bool>,
 }
 
 impl Solved {
@@ -174,11 +179,13 @@ pub fn solve(
         scroll_offset,
         naturals: vec![(0, 0); n],
         in_overlay: false,
+        in_raised: false,
         out: Solved {
             rects: vec![RectI::ZERO; n],
             clips: vec![None; n],
             scroll_content: vec![None; n],
             overlay: vec![false; n],
+            raised: vec![false; n],
         },
     };
     if n == 0 {
@@ -226,6 +233,8 @@ struct Solver<'t, 'd, 'e> {
     naturals: Vec<(i32, i32)>,
     /// Set while arranging a `tooltip` subtree (see [`Solved::overlay`]).
     in_overlay: bool,
+    /// Set while arranging a raised subtree (see [`Solved::raised`]).
+    in_raised: bool,
     out: Solved,
 }
 
@@ -397,9 +406,24 @@ impl Solver<'_, '_, '_> {
     }
 
     fn arrange(&mut self, idx: u32, rect: RectI, clip: Option<RectI>) {
+        let tree = self.tree;
+        let inst = tree.get(idx);
+        let node = inst.node;
         self.out.rects[idx as usize] = rect;
         self.out.clips[idx as usize] = clip;
         self.out.overlay[idx as usize] = self.in_overlay;
+        // An `overlay: true` node promotes its whole subtree to the RAISED
+        // paint tier (chrome + host content draw after the base tier's),
+        // WITHOUT the tooltip tier's hit-test exclusion — the two flags are
+        // deliberately separate: a raised widget is still a widget.
+        let was_raised = self.in_raised;
+        self.in_raised = self.in_raised || self.in_overlay || node.overlay;
+        self.out.raised[idx as usize] = self.in_raised;
+        self.arrange_children(idx, rect, clip);
+        self.in_raised = was_raised;
+    }
+
+    fn arrange_children(&mut self, idx: u32, rect: RectI, clip: Option<RectI>) {
         let tree = self.tree;
         let inst = tree.get(idx);
         let node = inst.node;
@@ -730,12 +754,18 @@ impl Solver<'_, '_, '_> {
         // natural/explicit size, unaffected by scroll offset.
         for &c in &inst.children {
             let cn = tree.get(c);
-            let Some(abs) = cn.layout.abs else {
+            let Some(authored) = cn.layout.abs else {
                 continue;
             };
             if is_tooltip(tree, c) {
                 continue;
             }
+            // Bound abs position overrides the authored one per axis — the
+            // authored value is the resting place, the binding moves it.
+            let abs = crate::doc::AbsPos {
+                x: cn.abs_x.unwrap_or(authored.x),
+                y: cn.abs_y.unwrap_or(authored.y),
+            };
             let (nw, nh) = self.naturals[c as usize];
             let w = match cn.layout.w {
                 Size::Px(p) => p,

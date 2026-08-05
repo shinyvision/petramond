@@ -42,6 +42,17 @@
       "tint_parts": []
     },
     {
+      "key": "forge:anvil",
+      "model_file": "models/anvil.bbmodel",
+      "cells": [
+        1,
+        1,
+        1
+      ],
+      "orientation": "left_to_right",
+      "fit": "native"
+    },
+    {
       "key": "forge:forging_furnace_pour",
       "model_file": "models/forging_furnace.bbmodel",
       "cells": [

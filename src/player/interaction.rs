@@ -406,10 +406,23 @@ fn precise_shape_hit(
         let facing = world.model_facing_at(pos.x, pos.y, pos.z);
         let base = petramond_world::block_model::base_from_cell(pos, kind, off, facing);
         let inv = petramond_world::block_model::placement_transform(base, kind, facing).inverse();
-        return petramond_world::block_model::ray_vs_model(
+        // Restrict crossings to THIS cell (in footprint space): a `fit: native`
+        // model's overhang lives outside every footprint cell, so a global
+        // first crossing on it would veto the in-cell geometry behind it and
+        // let the ray select the block beyond the machine. The placement
+        // transform is a 90° yaw + translation, so the cell stays a box.
+        let ca = inv.transform_point3(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32));
+        let cb = inv.transform_point3(Vec3::new(
+            pos.x as f32 + 1.0,
+            pos.y as f32 + 1.0,
+            pos.z as f32 + 1.0,
+        ));
+        return petramond_world::block_model::ray_vs_model_within(
             inv.transform_point3(eye),
             inv.transform_vector3(dir),
             kind,
+            ca.min(cb),
+            ca.max(cb),
         )
         .map(ShapeHit::distance);
     }

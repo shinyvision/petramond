@@ -57,6 +57,7 @@ pub use placement::{
 };
 pub use query::{
     collision_boxes, collision_boxes_oriented, model_render_boxes, outline_bounds, ray_vs_model,
+    ray_vs_model_within,
     selection_aabb, selection_aabb_oriented,
 };
 

@@ -476,6 +476,43 @@
                 "item": "forge:gold_shovel",
                 "count": 1
             }
+        },
+        {
+            "type": "crafting",
+            "recipe": "forge:anvil",
+            "station": "petramond:crafting_table",
+            "ingredients": [
+                {
+                    "item": "petramond:iron_ingot",
+                    "count": 5
+                },
+                {
+                    "item": "forge:iron_plate",
+                    "count": 1
+                }
+            ],
+            "result": {
+                "item": "forge:anvil",
+                "count": 1
+            }
+        },
+        {
+            "patch": "petramond:diamond_pickaxe",
+            "data": {
+                "petramond:enabled": false
+            }
+        },
+        {
+            "patch": "petramond:diamond_axe",
+            "data": {
+                "petramond:enabled": false
+            }
+        },
+        {
+            "patch": "petramond:diamond_shovel",
+            "data": {
+                "petramond:enabled": false
+            }
         }
     ]
 }

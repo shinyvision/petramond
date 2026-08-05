@@ -222,6 +222,10 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 }
                 t.hit(r);
             });
+            // Raised paint tier: draws after the base tier's chrome AND host
+            // content, stays interactive (not the tooltip tier).
+            let r = ui.checkbox(&mut edited.overlay, "overlay tier");
+            t.hit(r);
         });
 
     egui::CollapsingHeader::new("Bindings")
@@ -247,6 +251,21 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             ];
             if frame_relevant {
                 rows.push(("frame", BindField::Frame, &mut edited.bind.frame));
+            }
+            // `item` is only read on hooks; the abs binds need an authored
+            // `layout.abs` resting position (either form) — mirror the
+            // engine-side validation.
+            if matches!(edited.kind, NodeKind::Hook) {
+                rows.push(("item", BindField::Item, &mut edited.bind.item));
+            }
+            let abs_relevant = edited.layout.abs.is_some()
+                || edited
+                    .compact_layout
+                    .as_ref()
+                    .is_some_and(|l| l.abs.is_some());
+            if abs_relevant {
+                rows.push(("abs_x", BindField::Abs, &mut edited.bind.abs_x));
+                rows.push(("abs_y", BindField::Abs, &mut edited.bind.abs_y));
             }
             for (label, field, v) in rows {
                 match &bind_opts {

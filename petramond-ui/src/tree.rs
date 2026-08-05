@@ -45,6 +45,13 @@ pub struct Inst<'d> {
     pub frame: Option<i32>,
     /// Resolved `tint` binding as a linear multiply colour.
     pub tint: Option<[f32; 4]>,
+    /// Resolved `item` binding (hook nodes): the game item to draw in the
+    /// hook's rect (empty string resolves to `None` — nothing to show).
+    pub item_name: Option<String>,
+    /// Resolved `abs_x`/`abs_y` bindings: per-frame overrides of the node's
+    /// authored `layout.abs` position.
+    pub abs_x: Option<i32>,
+    pub abs_y: Option<i32>,
     pub enabled: bool,
     /// Arena index of the parent instance (`None` for the root).
     pub parent: Option<u32>,
@@ -209,6 +216,16 @@ impl<'d> InstTree<'d> {
                 UiValue::I32(packed) => Some(unpack_tint(*packed)),
                 _ => None,
             }),
+            item_name: resolve_key(state, item_map, &node.bind.item).and_then(|v| match v {
+                UiValue::Str(s) if !s.is_empty() => Some(s.clone()),
+                _ => None,
+            }),
+            abs_x: resolve_key(state, item_map, &node.bind.abs_x)
+                .and_then(UiValue::as_f32)
+                .map(|f| f as i32),
+            abs_y: resolve_key(state, item_map, &node.bind.abs_y)
+                .and_then(UiValue::as_f32)
+                .map(|f| f as i32),
             parent,
             children: Vec::new(),
             key: node.id.as_ref().map(|id| InstKey {

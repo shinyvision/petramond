@@ -184,6 +184,32 @@ fn push_doc_game_content(
         if stack.item == ItemType::Air || stack.count == 0 {
             continue;
         }
+        if slot.raised {
+            // A raised slot's cell chrome paints in the overlay tier, so its
+            // content must land there too or it would sink under its own
+            // cell face. The overlay tier's quads carry no tint lane — a
+            // dyed stack in a raised slot would show undyed; nothing puts
+            // one there today.
+            let tier = build.tier(true);
+            tier.icons.push(HookIconQuad {
+                item: stack.item,
+                rect: r,
+                clip: None,
+                dim: false,
+            });
+            for overlay in petramond_world::item::variant::overlay_items(stack.variant) {
+                tier.icons.push(HookIconQuad {
+                    item: overlay,
+                    rect: r,
+                    clip: None,
+                    dim: false,
+                });
+            }
+            if stack.count > 1 {
+                icon::push_count(tier.counts, screen, stack.count as u32, r, scale);
+            }
+            continue;
+        }
         icon::push_slot_icon(build, screen, &stack, r);
         if stack.count > 1 {
             icon::push_count(&mut build.counts, screen, stack.count as u32, r, scale);
@@ -210,12 +236,7 @@ fn push_doc_game_content(
                     w: s,
                     h: s,
                 };
-                build.drag_icon_quads.push((
-                    stack.item,
-                    r,
-                    icon::stack_tint(&stack),
-                    icon::stack_dyed(&stack),
-                ));
+                icon::push_stack_quads(&mut build.drag_icon_quads, &stack, r);
                 if stack.count > 1 {
                     icon::push_count(&mut build.drag_counts, screen, stack.count as u32, r, scale);
                 }
@@ -256,9 +277,30 @@ fn push_recipe_hook_content(
 ) {
     use petramond::gui::DocHookKind as Kind;
     for hook in hooks {
+        // An item-view hook names its item directly: one centred, rect-scaled
+        // icon, undimmed, no snapshot involved.
+        if let Kind::ItemView(item) = hook.kind {
+            let side = hook.rect.w.min(hook.rect.h);
+            let Some(clip) = effective_hook_clip(*hook) else {
+                continue;
+            };
+            build.tier(hook.overlay).icons.push(HookIconQuad {
+                item,
+                rect: SlotRect {
+                    x: hook.rect.x + (hook.rect.w - side) * 0.5,
+                    y: hook.rect.y + (hook.rect.h - side) * 0.5,
+                    w: side,
+                    h: side,
+                },
+                clip: Some(clip),
+                dim: false,
+            });
+            continue;
+        }
         let recipe = match hook.kind {
             Kind::RecipeResult => ui.craft_recipes.get(hook.index),
             Kind::TipResult | Kind::TipIngredients => ui.craft_tip.as_ref(),
+            Kind::ItemView(_) => unreachable!("handled above"),
         };
         let Some(recipe) = recipe else {
             continue;
@@ -284,6 +326,7 @@ fn push_recipe_hook_content(
             Kind::TipIngredients => {
                 push_ingredient_strip(recipe, build, *hook, screen, scale);
             }
+            Kind::ItemView(_) => unreachable!("handled above"),
         }
     }
 }

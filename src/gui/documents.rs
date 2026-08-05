@@ -868,6 +868,7 @@ mod tests {
             "petramond:chest",
             "petramond:furnace",
             "forge:forging_furnace",
+            "forge:anvil",
         ] {
             let kind = crate::gui::intern_kind(key).expect("kind interns");
             let doc = doc_for(kind).unwrap_or_else(|| panic!("{key} document loads"));

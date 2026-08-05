@@ -1,0 +1,306 @@
+{
+    "format": 1,
+    "kind": "forge:anvil",
+    "class": "container",
+    "root": {
+        "type": "frame",
+        "style": "panel.large",
+        "layout": {
+            "pad": [
+                4,
+                2,
+                4,
+                4
+            ],
+            "gap": 4,
+            "align": "center"
+        },
+        "children": [
+            {
+                "type": "label",
+                "text": "Anvil",
+                "scale": 2,
+                "style": "label.gold"
+            },
+            {
+                "type": "row",
+                "layout": {
+                    "gap": 6,
+                    "align": "center",
+                    "justify": "center"
+                },
+                "children": [
+                    {
+                        "type": "column",
+                        "layout": {
+                            "w": 40,
+                            "gap": 2,
+                            "align": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "label",
+                                "text": "Tool",
+                                "small": true,
+                                "style": "label.muted"
+                            },
+                            {
+                                "type": "slot",
+                                "role": "container",
+                                "accepts": [
+                                    {
+                                        "data": "forge:augment_slots"
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "type": "image",
+                        "image": "arrow.png",
+                        "layout": {
+                            "w": 12,
+                            "h": 9
+                        }
+                    },
+                    {
+                        "type": "frame",
+                        "style": "panel.inset",
+                        "layout": {
+                            "w": 88,
+                            "h": 88,
+                            "pad": [
+                                0,
+                                1,
+                                0,
+                                0
+                            ],
+                            "align": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "hook",
+                                "id": "anvil_tool_view",
+                                "layout": {
+                                    "w": 64,
+                                    "h": 64,
+                                    "abs": {
+                                        "x": 9,
+                                        "y": 8
+                                    }
+                                },
+                                "bind": {
+                                    "item": "forge:tool_view"
+                                }
+                            },
+                            {
+                                "type": "label",
+                                "small": true,
+                                "style": "label.muted",
+                                "bind": {
+                                    "text": "forge:anvil_hint",
+                                    "visible": "forge:anvil_hint"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "type": "image",
+                        "image": "arrow.png",
+                        "layout": {
+                            "w": 12,
+                            "h": 9
+                        }
+                    },
+                    {
+                        "type": "column",
+                        "layout": {
+                            "w": 88,
+                            "gap": 2,
+                            "align": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "label",
+                                "text": "Preview",
+                                "small": true,
+                                "style": "label.muted"
+                            },
+                            {
+                                "type": "label",
+                                "small": true,
+                                "style": "label.accent",
+                                "bind": {
+                                    "text": "forge:preview_speed",
+                                    "visible": "forge:preview_speed"
+                                }
+                            },
+                            {
+                                "type": "label",
+                                "small": true,
+                                "style": "label.accent",
+                                "bind": {
+                                    "text": "forge:preview_damage",
+                                    "visible": "forge:preview_damage"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "type": "row",
+                "layout": {
+                    "gap": 2,
+                    "align": "center",
+                    "justify": "center"
+                },
+                "children": [
+                    {
+                        "type": "slot",
+                        "role": "container",
+                        "accepts": [
+                            {
+                                "data": "forge:augment"
+                            }
+                        ]
+                    },
+                    {
+                        "type": "frame",
+                        "style": "slot",
+                        "layout": {
+                            "w": 18,
+                            "h": 18,
+                            "align": "center",
+                            "justify": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "image",
+                                "image": "lock.png",
+                                "layout": {
+                                    "w": 8,
+                                    "h": 9
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "type": "frame",
+                        "style": "slot",
+                        "layout": {
+                            "w": 18,
+                            "h": 18,
+                            "align": "center",
+                            "justify": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "image",
+                                "image": "lock.png",
+                                "layout": {
+                                    "w": 8,
+                                    "h": 9
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "type": "frame",
+                        "style": "slot",
+                        "layout": {
+                            "w": 18,
+                            "h": 18,
+                            "align": "center",
+                            "justify": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "image",
+                                "image": "lock.png",
+                                "layout": {
+                                    "w": 8,
+                                    "h": 9
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "type": "frame",
+                        "style": "slot",
+                        "layout": {
+                            "w": 18,
+                            "h": 18,
+                            "align": "center",
+                            "justify": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "image",
+                                "image": "lock.png",
+                                "layout": {
+                                    "w": 8,
+                                    "h": 9
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "type": "frame",
+                        "style": "slot",
+                        "layout": {
+                            "w": 18,
+                            "h": 18,
+                            "align": "center",
+                            "justify": "center"
+                        },
+                        "children": [
+                            {
+                                "type": "image",
+                                "image": "lock.png",
+                                "layout": {
+                                    "w": 8,
+                                    "h": 9
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "type": "spacer",
+                        "layout": {
+                            "w": 4
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "id": "augment",
+                        "text": "Augment",
+                        "bind": {
+                            "enabled": "forge:can_augment"
+                        }
+                    }
+                ]
+            },
+            {
+                "type": "slot_grid",
+                "role": "player_inv",
+                "cols": 9,
+                "rows": 3
+            },
+            {
+                "type": "slot_grid",
+                "role": "hotbar",
+                "cols": 9,
+                "rows": 1,
+                "layout": {
+                    "margin": [
+                        0,
+                        2,
+                        0,
+                        0
+                    ]
+                }
+            }
+        ]
+    }
+}

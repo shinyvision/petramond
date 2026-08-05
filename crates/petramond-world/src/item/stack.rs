@@ -1,5 +1,5 @@
 use super::variant::VariantId;
-use super::ItemType;
+use super::{variant, ItemType, Tool};
 
 /// A run of identical items occupying one inventory slot. Identity for
 /// stacking is (`item`, `variant`): instance-data-bearing stacks merge only
@@ -39,6 +39,23 @@ impl ItemStack {
             variant,
             ..ItemStack::new(item, count)
         }
+    }
+
+    /// This STACK as a mining [`Tool`]: the row-resolved
+    /// [`ItemType::tool`](super::ItemType::tool) with any
+    /// [`TOOL_DATA_KEY`](super::tool::TOOL_DATA_KEY) instance-data override
+    /// merged over it. Every gameplay consumer of a HELD tool (mining speed,
+    /// harvest gate, attack damage) must resolve through this, never through
+    /// the bare item — a bare-item read silently ignores augments.
+    #[inline]
+    pub fn tool(&self) -> Option<Tool> {
+        let base = self.item.tool()?;
+        Some(
+            match variant::value(self.variant, super::tool::TOOL_DATA_KEY) {
+                Some(bytes) => base.with_override(&bytes),
+                None => base,
+            },
+        )
     }
 
     /// `true` if this slot holds nothing (`Air` or zero count).

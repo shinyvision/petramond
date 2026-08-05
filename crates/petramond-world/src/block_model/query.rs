@@ -103,15 +103,62 @@ pub fn ray_vs_model(eye: Vec3, dir: Vec3, kind: BlockModelKind) -> Option<f32> {
     })
 }
 
+/// [`ray_vs_model`] restricted to crossings inside the FOOTPRINT-space box
+/// `[wmn, wmx]` — the per-cell form the DDA needs over an overhanging model
+/// (see [`ray_vs_model_cubes_within`] for why a global first crossing is
+/// wrong there).
+pub fn ray_vs_model_within(
+    eye: Vec3,
+    dir: Vec3,
+    kind: BlockModelKind,
+    wmn: Vec3,
+    wmx: Vec3,
+) -> Option<f32> {
+    let inst = instance(kind);
+    let at = atlas();
+    ray_vs_model_cubes_within(
+        eye,
+        dir,
+        &inst.cubes,
+        Some((wmn, wmx)),
+        |cube, face, mn, mx, hit| face_texel_opaque(cube, face, mn, mx, hit, at),
+    )
+}
+
 fn ray_vs_model_cubes<F>(
     eye: Vec3,
     dir: Vec3,
     cubes: &[ModelCube],
+    face_opaque: F,
+) -> Option<f32>
+where
+    F: FnMut(&ModelCube, Face, Vec3, Vec3, Vec3) -> bool,
+{
+    ray_vs_model_cubes_within(eye, dir, cubes, None, face_opaque)
+}
+
+/// [`ray_vs_model_cubes`] with an optional FOOTPRINT-space acceptance box: a
+/// face crossing counts only when its surface point lies inside `within`.
+/// This exists for per-cell attribution over a model whose geometry OVERHANGS
+/// its footprint (`fit: native`): the DDA tests the whole model from each
+/// footprint cell and must take the nearest crossing INSIDE that cell — with
+/// only a global first-crossing, an out-of-footprint horn met first would
+/// veto the in-cell body behind it, and the ray would select whatever block
+/// is beyond the machine (the anvil, 2026-08-05). The overhang itself stays
+/// deliberately unselectable (selection never extends beyond the footprint).
+fn ray_vs_model_cubes_within<F>(
+    eye: Vec3,
+    dir: Vec3,
+    cubes: &[ModelCube],
+    within: Option<(Vec3, Vec3)>,
     mut face_opaque: F,
 ) -> Option<f32>
 where
     F: FnMut(&ModelCube, Face, Vec3, Vec3, Vec3) -> bool,
 {
+    // The same tolerance the DDA's own cell attribution uses (`hit_in_cell`),
+    // so a crossing exactly on a cell seam is accepted by both or neither.
+    const SEAM: f32 = 1e-3;
     let mut best = f32::INFINITY;
     for cube in cubes {
         let mn = cube.from.min(cube.to);
@@ -145,6 +192,20 @@ where
             };
             if t >= best {
                 continue;
+            }
+            if let Some((wmn, wmx)) = within {
+                // The acceptance box is in the shared (posed) frame; the hit is
+                // in the cube's local frame — re-pose it before comparing.
+                let posed = tilt.transform_point3(hit);
+                if posed.x < wmn.x - SEAM
+                    || posed.y < wmn.y - SEAM
+                    || posed.z < wmn.z - SEAM
+                    || posed.x > wmx.x + SEAM
+                    || posed.y > wmx.y + SEAM
+                    || posed.z > wmx.z + SEAM
+                {
+                    continue;
+                }
             }
             // Pixel-perfect: only an OPAQUE texel of this visible face counts. If the
             // nearer face is cut out here, a later face may still be the first rendered
@@ -309,6 +370,53 @@ mod tests {
         )
         .expect("the lower cube's top face is front-facing and opaque");
         assert!((hit - 2.0).abs() < 1e-5, "ray should hit at y=0, got {hit}");
+    }
+
+    /// The per-cell acceptance box: an overhanging horn met FIRST must not
+    /// veto the in-cell body behind it — the anvil bug (2026-08-05), where a
+    /// ray clipping the out-of-footprint horn selected the wall beyond the
+    /// machine. The overhang itself stays unselectable inside the box.
+    #[test]
+    fn a_crossing_outside_the_acceptance_box_yields_to_one_inside() {
+        let cube = |from: Vec3, to: Vec3| ModelCube {
+            name: String::new(),
+            from,
+            to,
+            origin: Vec3::ZERO,
+            rotation: Vec3::ZERO,
+            faces: [Some([0.0, 0.0, 1.0, 1.0]); 6],
+            cull: [None; 6],
+        };
+        // A horn overhanging past x=1 and the body inside 0..1.
+        let horn = cube(Vec3::new(1.0, 0.4, 0.4), Vec3::new(1.3, 0.8, 0.8));
+        let body = cube(Vec3::new(0.1, 0.0, 0.1), Vec3::new(0.9, 0.75, 0.9));
+        let cubes = [horn, body];
+        // A ray from +X that clips the horn first, then reaches the body.
+        let eye = Vec3::new(3.0, 0.6, 0.6);
+        let dir = Vec3::NEG_X;
+        let all = |_: &ModelCube, _: Face, _: Vec3, _: Vec3, _: Vec3| true;
+        // Unrestricted: the horn is the first crossing.
+        let first = ray_vs_model_cubes(eye, dir, &cubes, all).expect("hits the horn");
+        assert!((first - 1.7).abs() < 1e-4, "horn face at x=1.3, got {first}");
+        // Restricted to the 0..1 cell: the horn is skipped, the body picks.
+        let within = ray_vs_model_cubes_within(
+            eye,
+            dir,
+            &cubes,
+            Some((Vec3::ZERO, Vec3::ONE)),
+            all,
+        )
+        .expect("the in-cell body still picks");
+        assert!((within - 2.1).abs() < 1e-4, "body face at x=0.9, got {within}");
+        // And a box that covers neither crossing yields a clean miss.
+        assert!(ray_vs_model_cubes_within(
+            eye,
+            dir,
+            &cubes,
+            Some((Vec3::new(2.0, 0.0, 0.0), Vec3::new(3.0, 1.0, 1.0))),
+            all,
+        )
+        .is_none());
     }
 
     #[test]

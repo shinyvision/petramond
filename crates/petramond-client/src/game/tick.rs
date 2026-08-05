@@ -386,11 +386,7 @@ impl Game {
     /// fully applies the break it can see (cell clear, hand, local world
     /// event).
     fn tick_local_mining(&mut self, dt: f32, input: &GameInput) {
-        let tool = self
-            .self_view
-            .inventory
-            .selected()
-            .and_then(|st| st.item.tool());
+        let tool = self.self_view.inventory.selected().and_then(|st| st.tool());
         let look = self.look.map(|h| h.block);
         let inventory_open = !input.gameplay_enabled;
         let event = self.local_mining.update(

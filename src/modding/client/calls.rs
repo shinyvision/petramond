@@ -55,6 +55,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::ItemsWithData { .. }
         | HostCall::BlockDataGet { .. }
         | HostCall::BlocksWithData { .. }
+        | HostCall::BlockInfo { .. }
         | HostCall::ResolveUndergroundBiome { .. }
         // Pure (world seed, position) → the underground-biome partition, the
         // same answer the carver reads. It touches no simulation state and no
@@ -139,6 +140,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::RegisterGenerator { .. }
         | HostCall::GuiStateSet { .. }
         | HostCall::GuiStateSetFor { .. }
+        | HostCall::PlayerHeld { .. }
         | HostCall::GuiViewers
         | HostCall::GuiStateGet { .. }
         | HostCall::GuiOpen { .. }

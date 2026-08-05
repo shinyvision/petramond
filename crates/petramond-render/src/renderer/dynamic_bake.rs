@@ -178,13 +178,13 @@ impl Renderer {
                     .map(|(tile, mvp)| (tile, self.hand_shake_mat() * mvp))
             {
                 let mut iv = std::mem::take(&mut self.hand.item3d_verts);
-                let count = crate::item_model::build_extruded_item_lit(
+                let count = crate::item_model::build_extruded_stack_lit(
                     tile,
+                    self.hand.held_item.variant,
                     self.held_item_light(),
                     self.light_env(),
                     &mut iv,
                 );
-                crate::item_model::dye_item_verts(&mut iv, self.hand.held_item.variant);
                 let cap = crate::pipeline::MAX_ITEM3D_VERTICES as usize;
                 if count > 0 && iv.len() <= cap {
                     self.queue
@@ -545,13 +545,13 @@ impl Renderer {
                     // triangle list; transform in place, then append with
                     // sequential offset indices to ride the indexed draw.
                     let m = crate::player_model::held_sprite_transform(hand);
-                    let count = crate::item_model::build_extruded_item_lit(
+                    let count = crate::item_model::build_extruded_stack_lit(
                         tile,
+                        held.variant,
                         light,
                         env,
                         &mut sprite_scratch,
                     );
-                    crate::item_model::dye_item_verts(&mut sprite_scratch, held.variant);
                     crate::player_model::transform_positions(
                         sprite_scratch.iter_mut().map(|v| &mut v.pos),
                         m,

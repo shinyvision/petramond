@@ -74,6 +74,16 @@ impl Value {
             _ => None,
         }
     }
+
+    /// The object's fields in declaration order, or `None` for a non-object —
+    /// for consumers that treat an object as a MAP with unknown keys (a
+    /// per-family art table) rather than fetching named fields.
+    pub fn as_object(&self) -> Option<&[(String, Value)]> {
+        match self {
+            Value::Obj(fields) => Some(fields),
+            _ => None,
+        }
+    }
 }
 
 fn skip_ws(b: &[u8], i: &mut usize) {

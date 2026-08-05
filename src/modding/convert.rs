@@ -154,7 +154,57 @@ pub(super) fn block_break_pre(ev: &BlockBreakPre) -> api::EventPayload {
         pos: ivec(ev.pos),
         block: api::BlockId(ev.block.id()),
         harvested: ev.harvested,
+        player: api::PlayerId(ev.player.0),
+        // An earlier handler's override is part of the live event — later
+        // handlers in the chain must see it to leave or replace it.
+        drops: ev
+            .drops
+            .as_ref()
+            .map(|stacks| stacks.iter().map(item_stack_out).collect()),
     }
+}
+
+/// Engine stack → its ABI crossing (registry name + count + instance data).
+pub(super) fn item_stack_out(stack: &petramond_world::item::ItemStack) -> api::ItemStackData {
+    let data = petramond_world::item::variant::get(stack.variant)
+        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+    api::ItemStackData {
+        item: petramond_world::registry::names()
+            .items
+            .name(stack.item.id())
+            .unwrap_or("?")
+            .to_owned(),
+        count: stack.count,
+        data,
+    }
+}
+
+/// ABI stack → engine stack, LENIENT: this is runtime data from a mod (an
+/// event-payload drops override), so an unknown item name drops the stack
+/// with a warning and malformed instance data degrades to a plain stack —
+/// never an error, the instance-data rule.
+pub(super) fn item_stack_in(data: &api::ItemStackData) -> Option<petramond_world::item::ItemStack> {
+    use petramond_world::item::{variant, ItemStack, ItemType};
+    let Some(item) = ItemType::by_name(&data.item) else {
+        log::warn!("event drops override names unknown item '{}'", data.item);
+        return None;
+    };
+    let variant = if data.data.is_empty() {
+        variant::VariantId::NONE
+    } else {
+        let mut map = variant::VariantMap::new();
+        for (k, v) in &data.data {
+            map.insert(k.clone(), v.clone());
+        }
+        if variant::valid(&map) {
+            variant::intern(&map).unwrap_or(variant::VariantId::NONE)
+        } else {
+            log::warn!("event drops override for '{}': invalid instance data", data.item);
+            variant::VariantId::NONE
+        }
+    };
+    Some(ItemStack::with_variant(item, data.count, variant))
 }
 
 pub(super) fn interact_attempt(ev: &InteractAttempt) -> api::EventPayload {
@@ -348,5 +398,45 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
             key: key.clone(),
             data: data.clone(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A drops override is runtime data from a mod, so its ingestion is
+    /// LENIENT like every instance-data read: an unknown item name drops
+    /// that stack (never errors the break), malformed instance data degrades
+    /// to a plain stack, and well-formed data survives the round trip.
+    #[test]
+    fn a_drops_override_ingests_leniently_and_round_trips() {
+        let unknown = api::ItemStackData {
+            item: "nomod:nothing".into(),
+            count: 1,
+            data: Vec::new(),
+        };
+        assert!(item_stack_in(&unknown).is_none());
+
+        let bare_key = api::ItemStackData {
+            item: "petramond:coal".into(),
+            count: 2,
+            data: vec![("barekey".into(), vec![1])],
+        };
+        let stack = item_stack_in(&bare_key).expect("known item ingests");
+        assert_eq!(
+            stack.variant,
+            petramond_world::item::variant::VariantId::NONE,
+            "malformed instance data degrades to a plain stack"
+        );
+
+        let good = api::ItemStackData {
+            item: "petramond:coal".into(),
+            count: 2,
+            data: vec![("m:k".into(), vec![7])],
+        };
+        let stack = item_stack_in(&good).expect("known item ingests");
+        let back = item_stack_out(&stack);
+        assert_eq!(back, good, "well-formed data survives the round trip");
     }
 }

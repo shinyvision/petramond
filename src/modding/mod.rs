@@ -731,7 +731,14 @@ fn wire_event_handler(
         EventKind::BlockBreakPre => {
             bus.on_block_break_pre(priority, move |ctx, ev| {
                 match call_event(&inst, ctx, handler_id, convert::block_break_pre(ev)) {
-                    Some((outcome, _)) => convert::outcome(outcome),
+                    Some((outcome, echoed)) => {
+                        if let EventPayload::BlockBreakPre { drops, .. } = echoed {
+                            ev.drops = drops.map(|stacks| {
+                                stacks.iter().filter_map(convert::item_stack_in).collect()
+                            });
+                        }
+                        convert::outcome(outcome)
+                    }
                     None => Outcome::Continue,
                 }
             })

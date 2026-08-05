@@ -109,6 +109,19 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             })
         }
+        // The per-player, per-stack held read: the stack's instance data
+        // rides along, which the row-level `PlayerState.held` cannot carry.
+        // Resolvable sessions come from the published sessions view (the
+        // acting session always resolves through the ctx's own borrow);
+        // an unresolvable id answers `None`, like every id-addressed read.
+        HostCall::PlayerHeld { player } => sim_query(move |ctx| {
+            let id = crate::player::PlayerId(player.0);
+            HostRet::HeldStack(
+                ctx.with_player(id, |p| p.inventory.selected().copied())
+                    .flatten()
+                    .map(super::guards::item_stack_data),
+            )
+        }),
         // Atomic: only a selected stack holding at least `count` of `item`
         // consumes — the held stack IS the validation, so no registry check.
         HostCall::ConsumeHeld { item, count } => sim_query(|ctx| {

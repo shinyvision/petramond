@@ -376,6 +376,215 @@ thread_local! {
         std::cell::RefCell::new(rustc_hash::FxHashMap::default());
 }
 
+/// How a `petramond:overlay` slab floats off the base slab it decorates: a
+/// Build the full extruded mesh a STACK shows for its sprite `tile`: the base
+/// sprite with its `petramond:overlay` items COMPOSITED over it, baked at
+/// runtime into ONE slab, then dyed (base texels only — a dyed tool tints its
+/// body, never the augment riding on it). Clears `out`; returns the vertex
+/// count. Every world-space sprite presentation (both hands, dropped
+/// entities) must build through this rather than the bare slab, or augmented
+/// items silently lose their overlay there.
+///
+/// WHY a baked composite and not a second slab: any second slab has to float
+/// off the first to avoid z-fighting, and floating means its texels leave the
+/// base's pixel grid — visibly misaligned at 16 px (Rachel, 2026-08-05). The
+/// composite is one slab on one grid, pixel-perfect by construction. And
+/// because per-texel compositing never BLENDS — every composited texel is
+/// owned outright by the topmost opaque layer — the bake needs no new
+/// texture: each texel run samples its OWNER tile's own atlas rect, so mips,
+/// the dye-base half, and the one-atlas draw batching all keep working.
+pub(super) fn build_extruded_stack_lit(
+    tile: Tile,
+    variant: petramond_world::item::VariantId,
+    light: DynLight,
+    env: LightEnv,
+    out: &mut Vec<ItemVertex>,
+) -> u32 {
+    let overlay_tiles: Vec<Tile> = petramond_world::item::variant::overlay_items(variant)
+        .into_iter()
+        .filter_map(|item| match item.render_kind() {
+            petramond_world::item::ItemRenderKind::Sprite(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    if overlay_tiles.is_empty() {
+        let count = build_extruded_item_lit(tile, light, env, out);
+        if count == 0 {
+            return 0;
+        }
+        dye_item_verts(out, variant);
+        return out.len() as u32;
+    }
+
+    // Per-tile foliage tint is baked into the cached geometry (it is a
+    // property of each OWNER tile); only the light fold is per-call.
+    let fold = lighting::fold_tint([1.0, 1.0, 1.0], light, env);
+    out.clear();
+    COMPOSITE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let geom = cache
+            .entry((tile, overlay_tiles.clone()))
+            .or_insert_with(|| build_composited_geometry(tile, &overlay_tiles));
+        let lit = |v: &ItemVertex| ItemVertex {
+            tint: [
+                v.tint[0] * fold[0],
+                v.tint[1] * fold[1],
+                v.tint[2] * fold[2],
+            ],
+            ..*v
+        };
+        out.extend(geom.base.iter().map(lit));
+        // The dye reaches exactly the BASE-owned geometry: the split is why
+        // the cache keeps two vecs instead of one.
+        dye_item_verts(out, variant);
+        out.extend(geom.over.iter().map(lit));
+    });
+    out.len() as u32
+}
+
+/// Cached composited-slab geometry, split by texel OWNER so the stack's dye
+/// can reach the base sprite's geometry and nothing else.
+struct CompositeGeometry {
+    base: Vec<ItemVertex>,
+    over: Vec<ItemVertex>,
+}
+
+thread_local! {
+    /// Per-(base, overlays) composited slab geometry, foliage-tinted, unlit.
+    /// Thread-local like [`SPRITE_CACHE`], and bounded by the augment combos
+    /// that actually appear in a session.
+    static COMPOSITE_CACHE: std::cell::RefCell<
+        rustc_hash::FxHashMap<(Tile, Vec<Tile>), CompositeGeometry>,
+    > = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+}
+
+/// The composited slab for `tile` under `overlays` (in declared order,
+/// later on top): one extrusion over the COMPOSITE alpha, every face
+/// sampling the atlas rect of the texel's owning tile.
+fn build_composited_geometry(tile: Tile, overlays: &[Tile]) -> CompositeGeometry {
+    // The texel's owner: the topmost opaque overlay, else the opaque base,
+    // else nothing. Off-grid coordinates own nothing (wall probes).
+    let owner = |tx: i32, ty: i32| -> Option<Tile> {
+        if !(0..GRID as i32).contains(&tx) || !(0..GRID as i32).contains(&ty) {
+            return None;
+        }
+        for &o in overlays.iter().rev() {
+            if opaque(o, tx, ty) {
+                return Some(o);
+            }
+        }
+        opaque(tile, tx, ty).then_some(tile)
+    };
+    let mut geom = CompositeGeometry {
+        base: Vec::new(),
+        over: Vec::new(),
+    };
+    let zf = DEPTH * 0.5;
+    let zb = -DEPTH * 0.5;
+
+    // FRONT + BACK faces: per row, greedy runs of texels sharing one owner —
+    // each run is one quad over the owner's own atlas sub-rect, so the
+    // composite is sampled where its pixels actually live.
+    for ty in 0..GRID as i32 {
+        let mut tx = 0;
+        while tx < GRID as i32 {
+            let Some(own) = owner(tx, ty) else {
+                tx += 1;
+                continue;
+            };
+            let start = tx;
+            while tx < GRID as i32 && owner(tx, ty) == Some(own) {
+                tx += 1;
+            }
+            let tint = foliage_tint::face_material(own).tint;
+            let out = if own == tile {
+                &mut geom.base
+            } else {
+                &mut geom.over
+            };
+            let [su0, sv0, _, _] = texel_uv_rect(own, start, ty);
+            let [_, _, eu1, ev1] = texel_uv_rect(own, tx - 1, ty);
+            let (xl, xr) = (px(start), px(tx));
+            let (yt, yb) = (py(ty), py(ty + 1));
+            push_quad(
+                out,
+                [[xl, yb, zf], [xr, yb, zf], [xr, yt, zf], [xl, yt, zf]],
+                [[su0, ev1], [eu1, ev1], [eu1, sv0], [su0, sv0]],
+                SHADE_FRONT,
+                tint,
+            );
+            push_quad(
+                out,
+                [[xr, yb, zb], [xl, yb, zb], [xl, yt, zb], [xr, yt, zb]],
+                [[eu1, ev1], [su0, ev1], [su0, sv0], [eu1, sv0]],
+                SHADE_BACK,
+                tint,
+            );
+        }
+    }
+
+    // SIDE WALLS: on the COMPOSITE's alpha boundary, each wall textured with
+    // the owning texel's own single-texel patch (its centre UV), exactly like
+    // the plain extrusion's rim.
+    for ty in 0..GRID as i32 {
+        for tx in 0..GRID as i32 {
+            let Some(own) = owner(tx, ty) else {
+                continue;
+            };
+            let tint = foliage_tint::face_material(own).tint;
+            let out = if own == tile {
+                &mut geom.base
+            } else {
+                &mut geom.over
+            };
+            let [tu0, tv0, tu1, tv1] = texel_uv_rect(own, tx, ty);
+            let uc = [(tu0 + tu1) * 0.5, (tv0 + tv1) * 0.5];
+            let xl = px(tx);
+            let xr = px(tx + 1);
+            let yt = py(ty);
+            let yb = py(ty + 1);
+            if owner(tx - 1, ty).is_none() {
+                push_quad(
+                    out,
+                    [[xl, yb, zb], [xl, yb, zf], [xl, yt, zf], [xl, yt, zb]],
+                    [uc, uc, uc, uc],
+                    SHADE_SIDE,
+                    tint,
+                );
+            }
+            if owner(tx + 1, ty).is_none() {
+                push_quad(
+                    out,
+                    [[xr, yb, zf], [xr, yb, zb], [xr, yt, zb], [xr, yt, zf]],
+                    [uc, uc, uc, uc],
+                    SHADE_SIDE,
+                    tint,
+                );
+            }
+            if owner(tx, ty - 1).is_none() {
+                push_quad(
+                    out,
+                    [[xl, yt, zf], [xr, yt, zf], [xr, yt, zb], [xl, yt, zb]],
+                    [uc, uc, uc, uc],
+                    SHADE_SIDE,
+                    tint,
+                );
+            }
+            if owner(tx, ty + 1).is_none() {
+                push_quad(
+                    out,
+                    [[xl, yb, zb], [xr, yb, zb], [xr, yb, zf], [xl, yb, zf]],
+                    [uc, uc, uc, uc],
+                    SHADE_SIDE,
+                    tint,
+                );
+            }
+        }
+    }
+
+    geom
+}
+
 /// [`build_extruded_item_lit`]'s geometry, untinted.
 fn build_extruded_item_geometry(tile: Tile) -> Vec<ItemVertex> {
     let mut verts = Vec::new();
@@ -511,6 +720,44 @@ mod tests {
                 v.shade
             );
         }
+    }
+
+    /// The composited slab is ONE extrusion on ONE pixel grid — the invariant
+    /// the floating-second-slab approach broke (misaligned overlay texels,
+    /// 2026-08-05). Every coordinate sits exactly on the 1/16 texel grid at
+    /// the plain slab's own depth, and both owners' geometry samples its OWN
+    /// tile's atlas rect.
+    #[test]
+    fn composited_slab_stays_on_the_pixel_grid_and_samples_both_owners() {
+        let base = Tile::named("stone_pickaxe");
+        let over = Tile::named("diamond");
+        let geom = build_composited_geometry(base, &[over]);
+        assert!(!geom.base.is_empty(), "base-owned texels remain visible");
+        assert!(!geom.over.is_empty(), "overlay-owned texels exist");
+        let on_grid = |v: f32| {
+            let scaled = (v + 0.5) * GRID as f32;
+            (scaled - scaled.round()).abs() < 1e-4
+        };
+        let in_rect = |uv: [f32; 2], r: [f32; 4]| {
+            uv[0] >= r[0] - 1e-4 && uv[0] <= r[2] + 1e-4 && uv[1] >= r[1] - 1e-4 && uv[1] <= r[3] + 1e-4
+        };
+        let (br, or) = (tile_uv(base), tile_uv(over));
+        for v in geom.base.iter().chain(&geom.over) {
+            assert!(on_grid(v.pos[0]) && on_grid(v.pos[1]), "off-grid: {:?}", v.pos);
+            assert!(
+                (v.pos[2].abs() - DEPTH * 0.5).abs() < 1e-5,
+                "one slab, one depth: {:?}",
+                v.pos
+            );
+        }
+        assert!(
+            geom.base.iter().all(|v| in_rect(v.uv, br)),
+            "base geometry samples the base tile only"
+        );
+        assert!(
+            geom.over.iter().all(|v| in_rect(v.uv, or)),
+            "overlay geometry samples the overlay tile only"
+        );
     }
 
     #[test]

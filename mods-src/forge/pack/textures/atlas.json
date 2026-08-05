@@ -111,6 +111,30 @@
         {
             "name": "forge:gold_shovel",
             "file": "gold_shovel.png"
+        },
+        {
+            "name": "forge:diamond_tip",
+            "file": "diamond_tip.png"
+        },
+        {
+            "name": "forge:diamond_axe_blade",
+            "file": "diamond_axe_blade.png"
+        },
+        {
+            "name": "forge:diamond_shovel_blade",
+            "file": "diamond_shovel_blade.png"
+        },
+        {
+            "name": "forge:diamond_tip_stone",
+            "file": "diamond_tip_stone.png"
+        },
+        {
+            "name": "forge:diamond_axe_blade_stone",
+            "file": "diamond_axe_blade_stone.png"
+        },
+        {
+            "name": "forge:diamond_shovel_blade_stone",
+            "file": "diamond_shovel_blade_stone.png"
         }
     ]
 }

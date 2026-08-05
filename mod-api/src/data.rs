@@ -381,7 +381,7 @@ pub struct ItemStackData {
 /// engine-side. Session-stable: cache it mod-side, never re-ask per tick.
 ///
 /// [`HostCall::ItemInfo`]: crate::HostCall::ItemInfo
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ItemInfoData {
     /// Effective per-slot stack cap (durable items — tools — never stack).
     pub max_stack: u8,
@@ -406,13 +406,49 @@ pub struct ItemInfoData {
     pub item_use: Option<String>,
 }
 
-/// An item's mining-tool row data (see [`ItemInfoData::tool`]).
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+/// An item's mining-tool row data (see [`ItemInfoData::tool`]), RESOLVED: a
+/// row that states only `kind` and `tier` answers the tier ladder's derived
+/// speed and damage here, so a mod computing over a tool (the forge's anvil
+/// multiplying an augment onto a base tool) never re-implements the engine's
+/// default ladder — the duplicated-constants trap.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ToolInfoData {
     /// Tool family: `"pickaxe"`, `"axe"`, `"shovel"`, or `"shears"`.
     pub kind: String,
     /// Material tier `1..=4` (wooden, stone, iron, diamond).
     pub tier: u8,
+    /// Mining speed as a multiplier over the bare hand (the row's, or the
+    /// tier's derived rung).
+    pub speed: f32,
+    /// Melee damage range `[min, max]` (the row's, or the derived rung).
+    pub damage: [f32; 2],
+}
+
+/// One block's registry row (see [`HostCall::BlockInfo`]) — the stable,
+/// mod-relevant harvest facts of its `blocks.json` row, the same data the
+/// engine's own break gate reads (so a mod computing over a break never
+/// re-implements the material→tool ladder). Session-stable: cache it
+/// mod-side, never re-ask per tick.
+///
+/// [`HostCall::BlockInfo`]: crate::HostCall::BlockInfo
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct BlockInfoData {
+    /// The row's `material` string (`"stone"`, `"dirt"`, `"ore"`, `"wood"`,
+    /// …; `"none"` for the unset default) — the sound/tool class the row
+    /// declared, verbatim.
+    pub material: String,
+    /// Break hardness (seconds-scale; the row's value).
+    pub hardness: f32,
+    /// The tool tier the harvest gate demands (`0` = harvested by hand).
+    pub harvest_tier: u8,
+    /// The tool family the gate credits against this block (`"pickaxe"`,
+    /// `"axe"`, `"shovel"`), or `None` when any hand harvests — the engine's
+    /// own material→tool derivation, answered rather than re-derived.
+    pub preferred_tool: Option<String>,
+    /// Session id of the ITEM that places this block (the reverse of
+    /// [`ItemInfoData::block`]; lowest item id wins when several link), or
+    /// `None` when no item places it. Resolve a name via `ItemNames`.
+    pub item: Option<ItemId>,
 }
 
 /// An item's edible row data (see [`ItemInfoData::food`]).

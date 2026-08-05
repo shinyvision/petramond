@@ -10,6 +10,7 @@
     "text_muted": "#93A3B1",
     "text_disabled": "#5C6873",
     "accent": "#57C956",
+    "gold": "#E8C170",
     "danger": "#E4574F",
     "selection": "#2E5C8A",
     "dim": "#00000080"
@@ -772,6 +773,19 @@
         }
       },
       "label_color": "accent"
+    },
+    "label.gold": {
+      "states": {
+        "default": {
+          "rect": [
+            249,
+            118,
+            1,
+            1
+          ]
+        }
+      },
+      "label_color": "gold"
     },
     "icon.edit": {
       "rect": [

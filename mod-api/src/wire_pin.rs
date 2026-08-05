@@ -346,6 +346,8 @@ fn samples() -> Samples {
     s.pin("HostCall::GuiStateSetFor", &HostCall::GuiStateSetFor {
         player_id: PlayerId(2), key: "k".into(), value: GuiValue::F32(0.5),
     });
+    s.pin("HostCall::BlockInfo", &HostCall::BlockInfo { block: BlockId(300) });
+    s.pin("HostCall::PlayerHeld", &HostCall::PlayerHeld { player: PlayerId(2) });
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -373,7 +375,12 @@ fn samples() -> Samples {
     s.pin("HostRet::ItemInfo", &HostRet::ItemInfo(Some(Box::new(ItemInfoData {
         max_stack: 64, fuel_burn_ticks: 0, tags: vec!["t".into()],
         display_name: "N".into(), block: Some(BlockId(2)),
-        tool: Some(ToolInfoData { kind: "pickaxe".into(), tier: 1 }),
+        tool: Some(ToolInfoData {
+            kind: "pickaxe".into(),
+            tier: 1,
+            speed: 2.0,
+            damage: [1.0, 1.5],
+        }),
         food: Some(FoodInfoData {
             eat_ticks: 60,
             effects: vec![FoodEffectData { effect: "m:e".into(), ticks: 100 }],
@@ -445,6 +452,13 @@ fn samples() -> Samples {
     s.pin("HostRet::GuiViewers", &HostRet::GuiViewers(vec![GuiViewerData {
         player_id: PlayerId(2), kind: "m:g".into(), anchor: Some([1, 2, 3]),
     }]));
+    s.pin("HostRet::BlockInfo", &HostRet::BlockInfo(Some(Box::new(BlockInfoData {
+        material: "stone".into(), hardness: 1.5, harvest_tier: 1,
+        preferred_tool: Some("pickaxe".into()), item: Some(ItemId(300)),
+    }))));
+    s.pin("HostRet::HeldStack", &HostRet::HeldStack(Some(ItemStackData {
+        item: "m:i".into(), count: 1, data: vec![("m:k".into(), vec![7])],
+    })));
 
     // --- GuestCall: every variant, declaration order -------------------------
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
@@ -570,7 +584,10 @@ fn samples() -> Samples {
         pos: [1, 2, 3], block: BlockId(1), facing: Facing::North,
     });
     s.pin("EventPayload::BlockBreakPre", &EventPayload::BlockBreakPre {
-        pos: [1, 2, 3], block: BlockId(1), harvested: true,
+        pos: [1, 2, 3], block: BlockId(1), harvested: true, player: PlayerId(2),
+        drops: Some(vec![ItemStackData {
+            item: "m:i".into(), count: 1, data: vec![("m:k".into(), vec![7])],
+        }]),
     });
     s.pin("EventPayload::InteractAttempt", &EventPayload::InteractAttempt {
         block: Some([1, 2, 3]), face: Some([0, 1, 0]), mob: Some(7), player: PlayerId(0),
@@ -877,6 +894,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::SectionKvSetMany", "8601036d3a6b02020406010107080a0c00"),
     ("HostCall::GuiViewers", "8701"),
     ("HostCall::GuiStateSetFor", "880102016b000000003f"),
+    ("HostCall::BlockInfo", "8901ac02"),
+    ("HostCall::PlayerHeld", "8a0102"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),
@@ -890,7 +909,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobTag", "0a020001"),
     ("HostRet::GuiValue", "0b01000000803f"),
     ("HostRet::ContainerSlots", "0c010201036d3a69010000"),
-    ("HostRet::ItemInfo", "0d014000010174014e010201077069636b61786501013c01036d3a6564010b6275636b65745f66696c6c"),
+    ("HostRet::ItemInfo", "0d014000010174014e010201077069636b61786501000000400000803f0000c03f013c01036d3a6564010b6275636b65745f66696c6c"),
     ("HostRet::ItemStack", "0e01036d3a690200"),
     ("HostRet::Effects", "0f01036d3a6509"),
     ("HostRet::Containers", "100201010000"),
@@ -926,6 +945,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Points", "2e01010000c03f0000204000006040"),
     ("HostRet::Bools", "2f020100"),
     ("HostRet::GuiViewers", "300102036d3a6701020406"),
+    ("HostRet::BlockInfo", "31010573746f6e650000c03f0101077069636b61786501ac02"),
+    ("HostRet::HeldStack", "3201036d3a690101036d3a6b0107"),
     ("GuestCall::TickSystem", "0001"),
     ("GuestCall::HandleEvent", "01010c"),
     ("GuestCall::GenFeature", "020102040604020102010a01060e"),
@@ -959,7 +980,7 @@ const PINS: &[(&str, &str)] = &[
     ("GuestRet::BakedItem", "0900"),
     ("GuestRet::ShapePlacement", "0a01000200010002000102"),
     ("EventPayload::BlockPlacePre", "000204060100"),
-    ("EventPayload::BlockBreakPre", "010204060101"),
+    ("EventPayload::BlockBreakPre", "010204060101020101036d3a690101036d3a6b0107"),
     ("EventPayload::InteractAttempt", "020102040601000200010700"),
     ("EventPayload::ItemUsePre", "030101020406"),
     ("EventPayload::MobDamagePre", "0407020000404000010000803f00000040000040400600010000003f020000803f0000003f030004050a"),

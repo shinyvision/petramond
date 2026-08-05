@@ -27,6 +27,17 @@ host_fn! {
 }
 
 host_fn! {
+    /// The named session's currently held stack, INSTANCE DATA included — the
+    /// per-player, per-stack read [`player_state`]'s row-level `held` id
+    /// cannot be (an augmented tool's `petramond:tool` override lives in the
+    /// stack's data). `None` = empty hand, no such connected session, or a
+    /// dispatch site without a sessions view (event handlers and attached
+    /// tick systems always have one).
+    pub fn player_held(player: PlayerId) -> Option<mod_api::ItemStackData>
+        => PlayerHeld { player } => HeldStack
+}
+
+host_fn! {
     /// Consume `count` units of the ACTING player's held stack, atomically, only
     /// when it holds `item` with at least `count` — the spend primitive for item
     /// uses that place no block (spawning an entity from an `item_use_pre`
