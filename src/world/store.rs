@@ -70,6 +70,11 @@ pub(in crate::world) struct TerrainRenderState {
     /// XZ columns whose packed render buffer must be rebuilt from `meshes`.
     /// Kept explicitly so the renderer does not scan every section mesh each frame.
     pub(in crate::world) mesh_upload_dirty_columns: FxHashSet<ChunkPos>,
+    /// Columns a synchronous click presentation just installed meshes into.
+    /// The renderer drains these each frame and uploads them without waiting
+    /// out its quiet-gate coalescing — the player is pointing at them, so
+    /// coalescing latency is exactly the wrong trade there.
+    pub(in crate::world) upload_urgent_columns: FxHashSet<ChunkPos>,
     /// Uploaded columns scheduled to release their CPU mesh buffers once they have
     /// been upload-quiet long enough (value = earliest release frame). The retained
     /// CPU copy exists only so a column repack can re-pack sibling sections; a
@@ -364,6 +369,7 @@ impl World {
                 mesh_column_cys: FxHashMap::default(),
                 mesh_upload_revisions: FxHashMap::default(),
                 mesh_upload_dirty_columns: FxHashSet::default(),
+                upload_urgent_columns: FxHashSet::default(),
                 mesh_release_after: FxHashMap::default(),
                 repack_forced: FxHashSet::default(),
                 mesh_pump_frame: 0,

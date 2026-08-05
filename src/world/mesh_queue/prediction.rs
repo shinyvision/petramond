@@ -266,6 +266,42 @@ impl World {
                 }
             }
         }
+
+        // A click must not leave its own neighbourhood to the budgeted async
+        // queues: any section ADJACENT to an edited cell that is already
+        // pending in the pipeline — queued, light-blocked, or first-bake
+        // deferred (the stragglers of fresh streaming) — joins the
+        // synchronous bundle, so the terrain the player is pointing at
+        // completes WITH the click instead of a dozen budgeted frames later.
+        // Bounded: at most the edited cells' 3×3×3, and only sections that
+        // had work coming anyway. Parked-invisible sections (sealed/hidden)
+        // stay parked.
+        for &(cell, _) in previous {
+            let Some((center, _, _, _)) = WorldData::split_world(cell.x, cell.y, cell.z) else {
+                continue;
+            };
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    for dx in -1..=1 {
+                        let pos = SectionPos::new(center.cx + dx, center.cy + dy, center.cz + dz);
+                        if seen.contains(&pos) || !self.sections.contains_key(&pos) {
+                            continue;
+                        }
+                        let pending = self.terrain.dirty_meshes.contains(pos)
+                            || self.terrain.light_blocked_meshes.contains(&pos)
+                            || self.light_deferred.contains(&pos)
+                            // A mesh job queued on / in flight through the
+                            // worker pool: the bundle's fresh build supersedes
+                            // it (install cancels the job; a stale result is
+                            // revision-fenced at the drain).
+                            || self.terrain.mesh_job_cancels.contains_key(&pos);
+                        if pending && seen.insert(pos) {
+                            candidates.push(pos);
+                        }
+                    }
+                }
+            }
+        }
         (candidates, always_mesh)
     }
 
@@ -364,6 +400,7 @@ impl World {
                 }
             }
             installed.insert(pos);
+            self.terrain.upload_urgent_columns.insert(pos.chunk_pos());
             self.terrain.dirty_meshes.remove(pos);
             self.terrain.light_blocked_meshes.remove(&pos);
             self.terrain.hidden_parked.remove(&pos);

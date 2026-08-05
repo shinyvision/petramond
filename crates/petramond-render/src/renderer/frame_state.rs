@@ -418,6 +418,19 @@ impl Renderer {
                     .push(Reverse((hidden, distance, cx, cz, revision)));
             }
         });
+        // Columns a synchronous click presentation installed into skip the
+        // quiet gate: the player is pointing at them, and one more frame of
+        // coalescing is visible latency on the thing they just did.
+        for column in terrain.take_urgent_columns() {
+            if let Some(pending) = self.terrain.upload_pending.get_mut(&column) {
+                pending.quiet_after = upload_frame;
+                pending.deadline = pending.deadline.min(upload_frame);
+                let (hidden, distance, cx, cz) = priority(column);
+                self.terrain
+                    .upload_heap
+                    .push(Reverse((hidden, distance, cx, cz, pending.revision)));
+            }
+        }
 
         let device = &self.device;
         let queue = &self.queue;

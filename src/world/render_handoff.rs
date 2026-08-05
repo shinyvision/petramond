@@ -26,6 +26,17 @@ impl TerrainRenderHandoff<'_> {
         self.world.column_has_mesh(pos)
     }
 
+    /// Columns a synchronous click presentation just installed meshes into,
+    /// drained. The caller's upload scheduler should upload these without
+    /// waiting out its quiet-gate coalescing.
+    pub fn take_urgent_columns(&mut self) -> Vec<ChunkPos> {
+        self.world
+            .terrain
+            .upload_urgent_columns
+            .drain()
+            .collect()
+    }
+
     pub fn for_dirty_columns(&self, f: &mut dyn FnMut(ChunkPos, u64)) {
         for &column in &self.world.terrain.mesh_upload_dirty_columns {
             f(
