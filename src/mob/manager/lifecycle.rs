@@ -1,30 +1,25 @@
 use std::collections::HashMap;
 
-use petramond_world::chunk::{ChunkPos, SectionPos};
-use petramond_math::math::{voxel_at, Vec3};
 use crate::mob::{populate, spawn, Instance, Mob, SavedMob};
 use crate::world::World;
+use petramond_math::math::{voxel_at, Vec3};
+use petramond_world::chunk::{ChunkPos, SectionPos};
 
 use super::Mobs;
 
-/// Hard cap on simultaneous mobs, so a spawn loop / debug key can't run the world
-/// out of memory. Spawns past this are dropped.
-const MAX_MOBS: usize = 256;
-
 impl Mobs {
-    /// Spawn a mob of `kind` at `pos` (feet) facing `yaw`. Returns `false` if the
-    /// mob cap is reached (the spawn is dropped).
+    /// Spawn a mob of `kind` at `pos` (feet) facing `yaw`.
     pub fn spawn(&mut self, kind: Mob, pos: Vec3, yaw: f32) -> bool {
-        self.spawn_lit(kind, pos, yaw, 63, petramond_world::light::BlockLight6::DARK)
-            .is_some()
+        self.spawn_lit(
+            kind,
+            pos,
+            yaw,
+            63,
+            petramond_world::light::BlockLight6::DARK,
+        )
+        .is_some()
     }
 
-    /// Spawn a mob with its render light initialized for the first presentation
-    /// frame. Use this from world-owned spawn paths where the spawn cell's light
-    /// is already available; otherwise a cave spawn can render full-bright until
-    /// the next mob tick refreshes cached light. Returns the newborn's stable
-    /// session id (the mob's one mod-facing address), or `None` when the mob
-    /// cap dropped the spawn.
     pub fn spawn_lit(
         &mut self,
         kind: Mob,
@@ -33,9 +28,6 @@ impl Mobs {
         skylight: u8,
         blocklight: petramond_world::light::BlockLight6,
     ) -> Option<u64> {
-        if self.list.len() >= MAX_MOBS {
-            return None;
-        }
         self.spawn_counter = self.spawn_counter.wrapping_add(1);
         let mut mob = Instance::new(kind, pos, yaw, self.spawn_counter);
         mob.skylight = skylight;
@@ -86,8 +78,8 @@ impl Mobs {
 
     /// Run one worldgen-population step around `player_pos` (see `populate`):
     /// roll a budgeted batch of nearby unchecked chunks and place their one-time
-    /// herds, ignoring the population caps (worldgen stock — only the `MAX_MOBS`
-    /// memory backstop applies). Returns the spawns performed plus the chunks to
+    /// herds, ignoring the population caps (worldgen stock).
+    /// Returns the spawns performed plus the chunks to
     /// record as populated; the caller owns the persisted populated set, and a
     /// chunk is only recorded once at least one member actually spawned, so a
     /// fully-failed placement retries in a later session.
@@ -160,7 +152,7 @@ impl Mobs {
 
     /// Re-spawn mobs read back from a section's save record now that its section has
     /// loaded. Each gets a fresh AI brain (a reloaded owl simply resumes wandering) and
-    /// is subject to the mob cap like any spawn. The saved tag map carries over —
+    /// restores like any spawn. The saved tag map carries over —
     /// health, shear regrowth, confinement, mod keys — overlaid on the spawn tags,
     /// so a shorn, wounded sheep reloads shorn and wounded.
     pub fn restore(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {

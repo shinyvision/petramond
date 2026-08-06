@@ -7,8 +7,10 @@
 //! - **Placing** (`item_use_pre`): the boat item's `use_ray: water` row makes
 //!   its use click target the water surface; a click on a water cell with air
 //!   above spawns the `vehicles:boat` mob (bow away from the player) and
-//!   consumes the item (`consume_held`). The boat floats on the engine's own
-//!   mob buoyancy.
+//!   consumes the item (`consume_held`). A shore-hugging click nudges the
+//!   hull to the nearest nearby water cell it fits ([`NUDGE_OFFSETS`]);
+//!   water too small for the hull refuses and refunds. The boat floats on
+//!   the engine's own mob buoyancy.
 //! - **Boarding** (`mob_interact`): a use click on the boat seats the player
 //!   in the first free seat (`mob_mount`; the row declares two). The FIRST
 //!   player aboard steers; the engine's sneak gesture (or death, or the boat
@@ -48,6 +50,39 @@ const ON_INTERACT_ATTEMPT: u32 = 2;
 const ON_DISMOUNTED: u32 = 3;
 
 const BOAT_KEY: &str = "vehicles:boat";
+
+/// Candidate cells for a shore-hugging boat click, nearest first: the clicked
+/// cell itself, then the surrounding water cells out to two blocks. The
+/// checked spawn sweeps the whole hull, so a click right at the water's edge
+/// slides the boat toward open water instead of silently refusing; a pond
+/// with no fitting spot within this ring is genuinely too small for the hull.
+const NUDGE_OFFSETS: [(i32, i32); 25] = [
+    (0, 0),
+    (-1, 0),
+    (0, -1),
+    (0, 1),
+    (1, 0),
+    (-1, -1),
+    (-1, 1),
+    (1, -1),
+    (1, 1),
+    (-2, 0),
+    (0, -2),
+    (0, 2),
+    (2, 0),
+    (-2, -1),
+    (-2, 1),
+    (-1, -2),
+    (-1, 2),
+    (1, -2),
+    (1, 2),
+    (2, -1),
+    (2, 1),
+    (-2, -2),
+    (-2, 2),
+    (2, -2),
+    (2, 2),
+];
 
 /// Forward acceleration per tick of full input (m/s per tick at 20 TPS).
 const ACCEL: f32 = 0.26;
@@ -185,7 +220,10 @@ impl Mod for Vehicles {
 
 impl Vehicles {
     /// A use click with the boat item: on a water surface cell with air above,
-    /// spend the item and launch a hull facing away from the player.
+    /// spend the item and launch a hull facing away from the player — at the
+    /// clicked cell, or nudged to the nearest nearby water cell the hull fits
+    /// when the click hugs the shore. Water too small for the hull anywhere
+    /// nearby refuses (the item is refunded).
     fn on_boat_item_use(&mut self, item: ItemId, target: Option<[i32; 3]>) -> Outcome {
         if Some(item) != self.boat_item {
             return Outcome::Continue;
@@ -201,19 +239,27 @@ impl Vehicles {
             return Outcome::Continue;
         }
         // Spend first, launch second: a raced-empty hand refuses cleanly, and
-        // a failed spawn (mob cap) refunds — the item is never lost.
+        // a failed spawn refunds — the item is never lost.
         if !consume_held(item, 1) {
             return Outcome::Continue;
         }
         let player = player_state();
         // Bow away from the player: mob yaw is π from player yaw.
         let yaw = player.yaw + std::f32::consts::PI;
-        let feet = [
-            pos[0] as f32 + 0.5,
-            pos[1] as f32 + 0.9,
-            pos[2] as f32 + 0.5,
-        ];
-        if spawn_mob_checked(BOAT_KEY, feet, yaw).is_none() {
+        let spawned = NUDGE_OFFSETS.iter().find_map(|&(dx, dz)| {
+            let c = [pos[0] + dx, pos[1], pos[2] + dz];
+            // A nudge candidate must itself be open water (the clicked cell
+            // was already checked above).
+            if (dx != 0 || dz != 0)
+                && (get_block(c) != Some(water)
+                    || get_block([c[0], c[1] + 1, c[2]]) != Some(BlockId::AIR))
+            {
+                return None;
+            }
+            let feet = [c[0] as f32 + 0.5, c[1] as f32 + 0.9, c[2] as f32 + 0.5];
+            spawn_mob_checked(BOAT_KEY, feet, yaw)
+        });
+        if spawned.is_none() {
             give_item(BOAT_KEY, 1);
         }
         Outcome::Cancel

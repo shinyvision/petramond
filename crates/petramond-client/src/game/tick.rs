@@ -586,11 +586,23 @@ impl Game {
     /// this player (bed tuck, wake/respawn teleports, mod `Teleport`,
     /// mob-strike knockback). Per-field against the transform we last SENT:
     /// a field still equal to our last claim is the server echoing us — the
-    /// local value (possibly a frame newer: look, movement) wins; a differing
+    /// local value (possibly a frame newer: movement) wins; a differing
     /// field is a genuine server-side mutation. A position change adopts via
     /// `Player::teleport` so the client's own fall bookkeeping re-anchors too.
     /// Without a `last_sent_transform` (before the first frame) everything
     /// adopts — the values are the shared restore, so it is a no-op.
+    ///
+    /// YAW/PITCH ARE NEVER ADOPTED: the look is client-owned INPUT (like the
+    /// hotbar index), not physics — no server tick steers it, so a correction
+    /// can only ever carry the one-RTT-old echo of our own look. The old
+    /// per-field adoption made that echo look like a server-side set the
+    /// moment the player turned: while a correction STREAM flows (claims
+    /// rejected over not-yet-final terrain — routine when two players drag
+    /// far-apart streaming windows), every look change was reverted before
+    /// the server could see it, which silently killed everything that needs
+    /// the server's own view ray to agree (the `use_ray: water` boat click).
+    /// If a server feature must one day force a look, it needs an explicit
+    /// signal on the wire, not this echo channel.
     pub fn adopt_authoritative_transform(
         &mut self,
         t: &petramond::net::protocol::SelfTransform,
@@ -601,12 +613,6 @@ impl Game {
         }
         if sent.is_none_or(|s| s.transform.vel != t.transform.vel) {
             self.player.vel = t.transform.vel;
-        }
-        if sent.is_none_or(|s| s.transform.yaw != t.transform.yaw) {
-            self.player.yaw = t.transform.yaw;
-        }
-        if sent.is_none_or(|s| s.transform.pitch != t.transform.pitch) {
-            self.player.pitch = t.transform.pitch;
         }
         if sent.is_none_or(|s| s.on_ground != t.on_ground) {
             self.player.on_ground = t.on_ground;

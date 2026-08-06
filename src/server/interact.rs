@@ -519,3 +519,168 @@ impl ServerGame {
         ));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use petramond_math::math::{IVec3, Vec3};
+    use petramond_world::block::Block;
+    use petramond_world::item::{ItemStack, ItemType};
+    use crate::net::protocol::{PlayerAction, TargetRef};
+    use crate::player::Player;
+
+    /// Placing a boat on water is the whole `use_ray: water` pipeline end to
+    /// end: the receipt-time water-ray validator accepts the claimed surface
+    /// cell, the consumer registry carries the click past every earlier rung
+    /// to `item_use_pre`, and the vehicles pack's real WASM handler spends
+    /// the item and spawns the hull — here from a SHORE-HUGGING click, so the
+    /// mod's nudge search (the clicked cell clips the ring; a nearby open
+    /// cell fits) is what places the boat. Pack rows + wasm need the fixture
+    /// registry, so the assertions run in a child process (the established
+    /// `PETRAMOND_MODS` re-spawn pattern).
+    #[test]
+    fn boat_use_click_on_water_spawns_the_hull() {
+        let Some(root) = crate::modding::tests::stage_mods_fixture(
+            "boat-place",
+            &[
+                "exploration",
+                "farming",
+                "forge",
+                "furniture",
+                "kitchen",
+                "monsters",
+                "vehicles",
+                "weather",
+            ],
+        )
+        else {
+            return;
+        };
+        crate::modding::tests::run_child_test(
+            &root,
+            "server::interact::tests::boat_use_click_on_water_spawns_the_hull_inner",
+        );
+    }
+
+    /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
+    /// pointing at the staged vehicles pack before first registry touch).
+    #[test]
+    #[ignore = "spawned by boat_use_click_on_water_spawns_the_hull with the vehicles pack env"]
+    fn boat_use_click_on_water_spawns_the_hull_inner() {
+        let mut server = crate::server::session_build::build_server_inline("", 1, 2);
+        // Inline pool: pumping drains the spawn area's gen/light work to
+        // stream-final, which the mod's gated `get_block` reads require.
+        for _ in 0..40 {
+            server.pump_tagged(0.06, &mut Vec::new(), &[]);
+        }
+
+        // A contained one-cell pool two cells ahead of the player (+x):
+        // stone floor and ring so the source cannot spread, air above.
+        let feet = server.sessions[0].player.pos;
+        let (bx, by, bz) = (
+            feet.x.floor() as i32,
+            feet.y.floor() as i32,
+            feet.z.floor() as i32,
+        );
+        let (wx, wy, wz) = (bx + 5, by, bz);
+        for dx in -4..=4 {
+            for dz in -4..=4 {
+                let edge = dx == -4 || dx == 4 || dz == -4 || dz == 4;
+                server.world.set_block_world(wx + dx, wy - 1, wz + dz, Block::Stone);
+                server.world.set_block_world(
+                    wx + dx,
+                    wy,
+                    wz + dz,
+                    if edge { Block::Stone } else { Block::Water },
+                );
+                // The checked spawn sweeps the whole hull: clear headroom.
+                for dy in 1..=3 {
+                    server.world.set_block_world(wx + dx, wy + dy, wz + dz, Block::Air);
+                }
+            }
+        }
+
+        let boat = ItemType::by_key("vehicles:boat").expect("the vehicles pack item registered");
+        server.sessions[0]
+            .player
+            .inventory
+            .add(ItemStack::new(boat, 1));
+        assert_eq!(
+            server.sessions[0].player.inventory.selected().map(|st| st.item),
+            Some(boat),
+            "the boat sits in the selected hotbar slot"
+        );
+
+        // Aim the authoritative view ray at the pool (the server validates
+        // the claim against ITS OWN water-stopping ray, so the claimed
+        // target is derived from that same ray).
+        {
+            let sess = &mut server.sessions[0];
+            let eye = crate::server::movement::reach_eye(sess);
+            // Aim at the SURFACE, not the cell centre — the centre aim would
+            // clip the near containment wall on the way down — and at the
+            // shore-hugging interior cell (right against the ring): the hull
+            // does NOT fit there, so only the nudge search can place it.
+            let dir = (Vec3::new(wx as f32 - 3.0 + 0.5, wy as f32 + 0.95, wz as f32 + 0.5) - eye)
+                .normalize();
+            sess.player.pitch = dir.y.asin();
+            sess.player.yaw = dir.x.atan2(dir.z);
+        }
+        let (eye, fwd) = {
+            let sess = &server.sessions[0];
+            (
+                crate::server::movement::reach_eye(sess),
+                sess.player.forward(),
+            )
+        };
+        let (hit, _) = Player::raycast_including_water(eye, fwd, &server.world)
+            .expect("the aim ray reaches the pool");
+        assert_eq!(
+            hit.block,
+            IVec3::new(wx - 3, wy, wz),
+            "test geometry: the shore-hugging water cell is the first hit"
+        );
+
+        server.apply_action(
+            0,
+            PlayerAction::UseClick {
+                mob: None,
+                target: Some(TargetRef {
+                    block: hit.block,
+                    normal: hit.normal,
+                }),
+                request_id: None,
+                predicted: false,
+                jabbed: false,
+            },
+        );
+        assert!(
+            server.sessions[0]
+                .pending_use_click
+                .is_some_and(|c| c.target.is_some()),
+            "the receipt-time water-ray validator accepted the claimed cell"
+        );
+        server.pump_tagged(0.06, &mut Vec::new(), &[]);
+
+        let kind = crate::mob::by_key("vehicles:boat").expect("the boat species registered");
+        let hulls: Vec<Vec3> = server
+            .world
+            .mobs()
+            .instances()
+            .iter()
+            .filter(|m| m.kind == kind)
+            .map(|m| m.pos)
+            .collect();
+        assert_eq!(hulls.len(), 1, "the click launched exactly one hull");
+        assert!(
+            hulls[0].x > wx as f32 - 2.5,
+            "the hull was nudged toward open water, off the shore-hugging click"
+        );
+        assert_ne!(
+            server.sessions[0].player.inventory.selected().map(|st| st.item),
+            Some(boat),
+            "the placed boat item was spent"
+        );
+    }
+}
+
+

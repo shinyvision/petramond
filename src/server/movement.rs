@@ -122,7 +122,9 @@ impl ServerGame {
                 world, sessions, ..
             } = self;
             let sess = &mut sessions[s];
-            if spectator || sess.player.columns_loaded(world) {
+            if spectator
+                || (sess.player.columns_loaded(world) && body_terrain_final(&sess.player, world))
+            {
                 sess.player
                     .update_with_obstacles(TICK_DT, world, input, obstacles);
                 (!spectator && sess.player.on_ground).then_some(sess.player.pos.y)
@@ -260,6 +262,40 @@ pub fn claim_within_drift(spectator: bool, gap_ticks: u32, delta: Vec3) -> bool 
     let horizontal = Vec3::new(delta.x, 0.0, delta.z).length();
     horizontal <= drift_ring(CLAIM_H_SPEED * CLAIM_VEL_SLACK, gap_ticks)
         && delta.y.abs() <= drift_ring(player::TERMINAL * CLAIM_VEL_SLACK, gap_ticks)
+}
+
+/// Whether every cell the player's body spans (plus one below the feet — the
+/// support the next step lands on) is a TRUTHFUL physics read: present, or
+/// absent with a generated summary proving uniform contents. A column counts
+/// as "loaded" from its FIRST restored section, so a freshly joined session
+/// could otherwise integrate while the sections around its body are still
+/// re-streaming — reading them as air and free-falling through terrain that
+/// pops in a moment later (buried-on-join). Until the body's cells are final,
+/// the authoritative body holds still; the client's claims (which gate on its
+/// own replica the same way) take over the moment terrain is real.
+fn body_terrain_final(player: &crate::player::Player, world: &crate::world::World) -> bool {
+    let (x0, x1) = (
+        (player.pos.x - player::HALF_W).floor() as i32,
+        (player.pos.x + player::HALF_W).floor() as i32,
+    );
+    let (z0, z1) = (
+        (player.pos.z - player::HALF_W).floor() as i32,
+        (player.pos.z + player::HALF_W).floor() as i32,
+    );
+    let (y0, y1) = (
+        (player.pos.y - 1.0).floor() as i32,
+        (player.pos.y + player::HEIGHT).floor() as i32,
+    );
+    for y in y0..=y1 {
+        for z in z0..=z1 {
+            for x in x0..=x1 {
+                if !world.physics_cell_final_at(x, y, z) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 /// The eye every block-reach check for this session measures from: the

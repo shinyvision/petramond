@@ -25,7 +25,7 @@ impl World {
 
     /// Spawn a mob and initialize its cached render light immediately, so a mob
     /// created after the mob tick does not render full-bright until the next tick.
-    /// Returns the newborn's stable session id, or `None` when the cap dropped it.
+    /// Returns the newborn's stable session id.
     pub fn spawn_mob(&mut self, kind: crate::mob::Mob, pos: Vec3, yaw: f32) -> Option<u64> {
         let (sky, block) = self.mob_render_light_at(pos);
         self.mobs.spawn_lit(kind, pos, yaw, sky, block)

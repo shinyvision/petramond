@@ -1720,3 +1720,41 @@ fn multi_deny_rollback_is_emission_order_independent() {
         "rollback must be allocation-ordered, not emission-ordered"
     );
 }
+
+/// A `SelfTransform` correction never adopts yaw/pitch: the look is
+/// client-owned input (like the hotbar index), so a correction can only carry
+/// the one-RTT-old echo of the client's own look — adopting it reverts every
+/// look change for as long as a correction stream flows (rejected claims over
+/// still-streaming terrain), and the server never sees the player's aim.
+#[test]
+fn corrections_never_adopt_the_look() {
+    let mut game = game();
+    game.game.player.yaw = 1.25;
+    game.game.player.pitch = -0.5;
+    game.game.last_sent_transform = Some(SelfTransform {
+        transform: petramond::net::protocol::Transform {
+            pos: game.game.player.pos,
+            vel: Vec3::ZERO,
+            yaw: 1.25,
+            pitch: -0.5,
+        },
+        on_ground: true,
+    });
+
+    // The in-flight correction carries the PREVIOUS look (the echo) and a
+    // genuinely server-moved position.
+    let corrected_pos = game.game.player.pos + Vec3::new(0.0, -2.0, 0.0);
+    game.game.adopt_authoritative_transform(&SelfTransform {
+        transform: petramond::net::protocol::Transform {
+            pos: corrected_pos,
+            vel: Vec3::ZERO,
+            yaw: 0.0,
+            pitch: 0.0,
+        },
+        on_ground: false,
+    });
+
+    assert_eq!(game.game.player.pos, corrected_pos, "position corrections still adopt");
+    assert_eq!(game.game.player.yaw, 1.25, "the stale yaw echo must not revert the look");
+    assert_eq!(game.game.player.pitch, -0.5, "the stale pitch echo must not revert the look");
+}

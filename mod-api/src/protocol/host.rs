@@ -163,7 +163,7 @@ pub enum HostCall {
     /// terrain collision overlap, no live solid mob overlap — validated and
     /// inserted as one atomic sim operation (use it for player-placed bodies:
     /// a failed call mutates nothing, so the item can be refunded). The reply
-    /// carries the newborn's STABLE id (`None` = unknown key, the mob cap, or
+    /// carries the newborn's STABLE id (`None` = unknown key, or
     /// a failed check) so the spawner can immediately tag/configure it.
     /// → [`HostRet::SpawnedMob`].
     SpawnMob {
@@ -1543,7 +1543,7 @@ pub enum HostRet {
     MobTags(Option<Vec<(String, MobTagValue)>>),
     /// [`HostCall::SpawnMob`]: the newborn's STABLE session id — the address
     /// every mob call speaks, so a spawner can immediately tag/configure what
-    /// it created. `None` = unknown key, the mob cap, or a failed check.
+    /// it created. `None` = unknown key or a failed check.
     SpawnedMob(Option<u64>),
     /// [`HostCall::FindBlocks`]: matching cells in scan order; `None` = some
     /// cell in the box is unloaded / streamed content not yet final.
