@@ -8,8 +8,9 @@ name: Release
 #                                    artifacts (no release), for testing.
 #
 # Each bundle is the native binary plus the `assets/` and `mods/` folders next
-# to it; the game resolves both relative to the executable (see src/assets.rs),
-# so a player just unzips and double-clicks.
+# to it; the game resolves both relative to the executable (see the `assets`
+# module in the petramond-world crate), so a player just unzips and
+# double-clicks.
 on:
   push:
     tags:
@@ -73,9 +74,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `server: true` also builds the headless dedicated server into this
+          # bundle. It is a matrix flag rather than a platform test because
+          # which platforms want one is a packaging decision, not a property
+          # of the code — every target can build it.
           - id: linux-amd64
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            server: true
           - id: linux-arm64
             runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
@@ -106,9 +112,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev
 
+      # `petramond_native` belongs to the `petramond-client` crate, not the
+      # workspace root package, so it must be named with `-p`: a bare
+      # `--bin` resolves only against the default-run packages and fails with
+      # "no bin target named petramond_native". The binary still lands in the
+      # shared workspace target dir that the staging step below copies from.
       - name: Build
         shell: bash
-        run: cargo build --release --bin petramond_native --target ${{ matrix.target }}
+        run: cargo build --release -p petramond-client --bin petramond_native --target ${{ matrix.target }}
+
+      # The headless server is the ENGINE crate's own bin, and its tree has no
+      # wgpu/winit/rodio at all — so it needs no GPU, no display and no ALSA on
+      # the box that runs it. Built separately rather than as a second `--bin`
+      # so a server-only bundle stays one flag away.
+      - name: Build headless server
+        if: matrix.server
+        shell: bash
+        run: cargo build --release -p petramond --bin petramond_server --target ${{ matrix.target }}
 
       - name: Download bundled mods
         uses: actions/download-artifact@v4
@@ -135,6 +155,10 @@ jobs:
           DEST="stage/$PKG"
           mkdir -p "$DEST/mods"
           cp "target/${{ matrix.target }}/release/petramond_native${EXT}" "$DEST/petramond${EXT}"
+          if [ "${{ matrix.server }}" = "true" ]; then
+            cp "target/${{ matrix.target }}/release/petramond_server${EXT}" \
+               "$DEST/petramond-server${EXT}"
+          fi
           cp -r assets "$DEST/assets"
           # Every staged pack ships; the list lives in the mods job, not here.
           cp -r staged-mods/. "$DEST/mods/"
@@ -186,11 +210,39 @@ jobs:
               ;;
           esac
 
+          if [ "${{ matrix.server }}" = "true" ]; then
+            {
+              echo
+              echo "DEDICATED SERVER"
+              echo "  petramond-server runs a world headlessly for other players to"
+              echo "  join. It needs no GPU, no display and no audio libraries."
+              echo
+              echo "    ./petramond-server <world-name>"
+              echo
+              echo "  The world name is the only argument; everything else is an"
+              echo "  environment variable:"
+              echo "    PETRAMOND_PORT=<port>   listen port (default 7434)"
+              echo "    PETRAMOND_RD=<4..64>    streaming radius for this run"
+              echo "    PETRAMOND_SEED=<u32>    seed, used only when creating the world"
+              echo
+              echo "  Console commands: stop (saves and exits), save, say, op, deop,"
+              echo "  time. Player chat is logged here too."
+              echo
+              echo "  It writes a settings.json next to itself on first run; that is"
+              echo "  where the server's view-distance ceiling lives. The world itself"
+              echo "  is saved in your user data folder, like the game's."
+              echo
+              echo "  With nobody connected the simulation pauses, so an idle server"
+              echo "  costs almost nothing."
+            } >> "$README"
+          fi
+
           {
             echo
             echo "IMPORTANT"
-            echo "  Keep the \"assets\" and \"mods\" folders next to the petramond"
-            echo "  program. The game loads them from here."
+            echo "  Keep the \"assets\" and \"mods\" folders next to the program you"
+            echo "  run. Both are loaded from here, and a server must have the same"
+            echo "  mods as the players joining it."
             echo
             echo "MODS"
             echo "  Bundled: ${BUNDLED}."

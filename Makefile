@@ -44,8 +44,9 @@ run-release: build-native
 	$(NV_OFFLOAD) PETRAMOND_SEED=$(SEED) $(if $(RD),PETRAMOND_RD=$(RD)) \
 		$(CARGO) run --release -p petramond-client --bin petramond_native
 
-# Headless dedicated server (no GPU, no window, no audio libs — built without
-# the default `audio` feature). `make run-server WORLD=myworld`.
+# Headless dedicated server (no GPU, no window, no audio libs — the engine
+# crate's tree simply has none, so there is no feature to switch off).
+# `make run-server WORLD=myworld`.
 PORT ?= 7434
 run-server:
 	@test -n "$(WORLD)" || { echo "usage: make run-server WORLD=<world-name> [PORT=7434]"; exit 2; }
