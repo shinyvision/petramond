@@ -58,7 +58,11 @@ use crate::sched::{AttachSide, Stage, WorldgenStage};
 /// [`HostCall::MobMount`], [`HostCall::ChatSend`] targets, event payloads
 /// like `InteractAttempt`/`PlayerDismounted`). This is the frozen rule for NEW
 /// surface: a player-touching call takes a `player_id` — never a bare `u8`,
-/// and never a new implicit-player call. The older single-player-era calls
+/// and never a new implicit-player call. [`HostCall::GiveItemTo`] (a give)
+/// and [`HostCall::SetPlayerHeldData`] (a write onto that player's held
+/// stack) are the reference examples: each names the session it acts on
+/// rather than inheriting one, and answers `false` when no such session is
+/// connected. The older single-player-era calls
 /// ([`HostCall::PlayerState`], [`HostCall::DamagePlayer`],
 /// [`HostCall::GiveItem`], [`HostCall::Teleport`], ...) address the ACTING
 /// session's player as a documented default — the session whose dispatch is
@@ -1445,6 +1449,42 @@ pub enum HostCall {
     /// attached tick systems always do). → [`HostRet::HeldStack`].
     PlayerHeld {
         player: PlayerId,
+    },
+    /// [`GiveItem`](Self::GiveItem) addressed to a NAMED session (the
+    /// explicit-player addressing doctrine): fill that player's inventory,
+    /// drop whatever doesn't fit at that player's feet, `data` as the
+    /// stack's instance data. The delivery a machine owes a specific viewer
+    /// — a transient panel returning its contents on close — where the
+    /// implicit acting session would be whoever the tick system happens to
+    /// run as. `false` = unknown item name or no such connected session
+    /// (deliver another way — e.g. spawn at the machine); a malformed
+    /// `data` map is [`HostRet::Error`]. → [`HostRet::Bool`].
+    GiveItemTo {
+        player: PlayerId,
+        item: String,
+        count: u8,
+        data: Vec<(String, Vec<u8>)>,
+    },
+    /// Rewrite the INSTANCE DATA on the stack `player` is holding, iff that
+    /// stack is still an `expect_item` carrying exactly `expect_data` — the
+    /// compare half of a compare-and-set, over the VALUE being replaced and
+    /// not merely the item's identity. A hand swapped, or the same stack
+    /// re-stamped by another handler or another mod, between the mod's read
+    /// and this write refuses rather than clobbers: two writers that both
+    /// read one tool would otherwise silently drop one of the two updates.
+    /// The write a wear/repair system needs: an augment record lives on the
+    /// HELD tool's stack, and only a machine's own cells were mod-writable
+    /// before. `expect_data` is the map the mod READ off the stack (empty =
+    /// expect a plain stack); `data` is the FULL replacement map (empty
+    /// clears it); count and item stay. `false` = empty/other hand, unknown
+    /// `expect_item`, data that no longer matches `expect_data`, or no such
+    /// connected session; a malformed `data` map is [`HostRet::Error`].
+    /// → [`HostRet::Bool`].
+    SetPlayerHeldData {
+        player: PlayerId,
+        expect_item: String,
+        expect_data: Vec<(String, Vec<u8>)>,
+        data: Vec<(String, Vec<u8>)>,
     },
 }
 

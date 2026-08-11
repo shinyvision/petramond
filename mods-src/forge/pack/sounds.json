@@ -2,11 +2,11 @@
   "sounds": [
     {
       "sound": "forge:lever",
-      "variants": ["sounds/door_close.ogg"],
-      "gain": 0.8,
-      "pitch": 1.45,
+      "variants": ["sounds/forge_pour.ogg"],
+      "gain": 0.85,
+      "pitch": 1.0,
       "pitch_variation": 0.04,
-      "attenuation_distance": 12.0,
+      "attenuation_distance": 16.0,
       "category": "block"
     },
     {
@@ -24,19 +24,37 @@
     },
     {
       "sound": "forge:cast_free",
-      "variants": ["sounds/stone_place.ogg"],
+      "variants": ["sounds/forge_clank.ogg"],
       "gain": 0.9,
-      "pitch": 1.25,
-      "pitch_variation": 0.08,
+      "pitch": 1.0,
+      "pitch_variation": 0.04,
       "attenuation_distance": 14.0,
       "category": "block"
     },
     {
+      "sound": "forge:augment_fit",
+      "variants": ["sounds/forge_clank.ogg"],
+      "gain": 0.9,
+      "pitch": 1.0,
+      "pitch_variation": 0.04,
+      "attenuation_distance": 12.0,
+      "category": "block"
+    },
+    {
+      "sound": "forge:augment_unlock",
+      "variants": ["sounds/augment_unlock.ogg"],
+      "gain": 0.9,
+      "pitch": 1.0,
+      "pitch_variation": 0.04,
+      "attenuation_distance": 12.0,
+      "category": "block"
+    },
+    {
       "sound": "forge:fire_catch",
-      "variants": ["sounds/leaf_break.ogg"],
-      "gain": 0.7,
-      "pitch": 0.65,
-      "pitch_variation": 0.08,
+      "variants": ["sounds/forge_start.ogg"],
+      "gain": 0.9,
+      "pitch": 1.0,
+      "pitch_variation": 0.04,
       "attenuation_distance": 14.0,
       "category": "block"
     }

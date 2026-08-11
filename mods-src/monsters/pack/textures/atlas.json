@@ -1,0 +1,12 @@
+{
+    "tiles": [
+        {
+            "name": "monsters:hushjaw_tooth",
+            "file": "hushjaw_tooth.png"
+        },
+        {
+            "name": "monsters:fang",
+            "file": "fang.png"
+        }
+    ]
+}

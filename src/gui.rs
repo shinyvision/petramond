@@ -107,8 +107,14 @@ pub enum DocHookKind {
     /// panel's enlarged subject). The bound value is an ordered comma-LIST of
     /// registry names; each resolved name becomes one `ItemView` hook at the
     /// same rect, in list order, so later names composite over earlier ones
-    /// (the anvil's tool + augment overlays).
-    ItemView(petramond_world::item::ItemType),
+    /// (the anvil's tool + augment overlays). A name prefixed `~` draws as a
+    /// GHOST — the dimmed face unaffordable recipe results use — so a panel
+    /// can show "what was here / what goes here" without a real stack (the
+    /// anvil's occupied-socket icons).
+    ItemView {
+        item: petramond_world::item::ItemType,
+        dim: bool,
+    },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]

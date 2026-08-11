@@ -12,8 +12,8 @@
 //! restart.
 
 use super::GuiKind;
-use petramond_world::container::{SlotSpec, MAX_CONTAINER_SLOTS};
-use petramond_ui::{DocClass, Document, Node, SlotContract};
+use petramond_world::container::{SlotSpec, MAX_CONTAINER_SLOTS, MAX_SLOT_FILTERS};
+use petramond_ui::{DocClass, Document, Node, NodeKind, SlotContract};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
@@ -189,6 +189,13 @@ fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
             }
             continue;
         }
+        if cell.accepts.len() > MAX_SLOT_FILTERS {
+            return Err(format!(
+                "a container slot declares {} accepts filters; the cap is {MAX_SLOT_FILTERS} \
+                 (the runtime accepts mask spends one bit per filter)",
+                cell.accepts.len()
+            ));
+        }
         let mut filters = Vec::new();
         for accept in &cell.accepts {
             filters.push(resolve_slot_filter(accept)?);
@@ -196,6 +203,7 @@ fn doc_container_specs(doc: &Document) -> Result<Vec<SlotSpec>, String> {
         specs.push(SlotSpec {
             accepts: filters,
             take_only: cell.take_only,
+            accepts_bind: cell.accepts_bind.as_deref().map(super::intern_str),
         });
     }
     Ok(specs)
@@ -380,6 +388,83 @@ fn inject_item_tooltip(doc: &mut Document) {
     doc.root.children.push(node);
 }
 
+/// How many LINES the injected slot tooltip shows, and how many coloured
+/// SPANS each line carries. THE statement of the tooltip's shape: the node is
+/// generated from these and the host publishes exactly the keys
+/// [`slot_tip_keys`] names, so widening the tooltip is these numbers alone.
+pub const SLOT_TIP_LINES: usize = 3;
+pub const SLOT_TIP_SPANS: usize = 2;
+
+/// The `(text, palette)` state keys one span of the injected slot tooltip
+/// binds — the naming authority for the injected node and for the host that
+/// populates it alike.
+pub fn slot_tip_keys(line: usize, span: usize) -> (String, String) {
+    (
+        format!("slot_tip_l{line}s{span}"),
+        format!("slot_tip_c{line}s{span}"),
+    )
+}
+
+/// The key whose `Bool` reveals the injected slot tooltip. Named here with
+/// the span keys because the host that sets it lives in another crate — a
+/// literal on each side is a rename that silently stops the tip appearing.
+pub const SHOW_SLOT_TIP: &str = "show_slot_tip";
+
+/// The BOUND slot tooltip: a machine may publish per-slot tooltip LINES
+/// under the gui-state key `slot{index}:tip` — lines separated by newline,
+/// each line up to [`SLOT_TIP_SPANS`] SPANS separated by tab, each span a
+/// `palette|text` pair (the palette half naming a theme palette entry) — and
+/// hovering that slot while it holds NO stack floats them at the pointer (the
+/// item tip owns a hovered stack, so the two never show together). Spans are
+/// what colour one WORD of a line without painting the rest (Rachel,
+/// 2026-08-10: "Great" green, "Diamond Tip" plain). Injected like the item
+/// tip: one definition for every container document; binding
+/// [`SHOW_SLOT_TIP`] itself keeps a document's own chrome.
+fn inject_slot_tooltip(doc: &mut Document) {
+    const CHROME: &str = r#"{
+        "type": "tooltip",
+        "style": "panel.inset",
+        "layout": { "max_w": 200, "abs": { "x": 4, "y": 4 }, "pad": [3, 2, 3, 3], "gap": 2, "align": "stretch" },
+        "bind": { }
+    }"#;
+    fn binds_slot_tip(node: &Node) -> bool {
+        node.bind.visible.as_deref() == Some(SHOW_SLOT_TIP)
+            || node.children.iter().any(binds_slot_tip)
+    }
+    if doc.class != DocClass::Container || binds_slot_tip(&doc.root) {
+        return;
+    }
+    let mut tip: Node = serde_json::from_str(CHROME).expect("standard slot tooltip node parses");
+    tip.bind.visible = Some(SHOW_SLOT_TIP.to_owned());
+    tip.children = (0..SLOT_TIP_LINES)
+        .map(|line| {
+            let mut row = Node::leaf(NodeKind::Row);
+            // A line with no first span has nothing to show.
+            row.bind.visible = Some(slot_tip_keys(line, 0).0);
+            row.children = (0..SLOT_TIP_SPANS)
+                .map(|span| slot_tip_span(line, span))
+                .collect();
+            row
+        })
+        .collect();
+    doc.root.children.push(tip);
+}
+
+/// One span of one slot-tooltip line: secondary-sized text whose colour is
+/// state (`bind.palette`).
+fn slot_tip_span(line: usize, span: usize) -> Node {
+    let (text, palette) = slot_tip_keys(line, span);
+    let mut label = Node::leaf(NodeKind::Label {
+        text: None,
+        wrap: false,
+        scale: 1,
+        small: true,
+    });
+    label.bind.text = Some(text);
+    label.bind.palette = Some(palette);
+    label
+}
+
 fn load() -> Registry {
     struct Found {
         json: PathBuf,
@@ -428,6 +513,7 @@ fn load() -> Registry {
             }
         };
         inject_item_tooltip(&mut doc);
+        inject_slot_tooltip(&mut doc);
         let Some(kind) = super::intern_kind(&doc.kind) else {
             eprintln!(
                 "gui: ignoring {} — unknown kind '{}'",
@@ -874,6 +960,89 @@ mod tests {
             let doc = doc_for(kind).unwrap_or_else(|| panic!("{key} document loads"));
             assert_eq!(show_item_tip_nodes(&doc.doc.root), 1, "{key}");
         }
+    }
+
+    /// The BOUND slot tooltip injects like the item one: containers exactly
+    /// once (idempotent, yielding to a document's own chrome), screens not
+    /// at all.
+    #[test]
+    fn container_documents_get_the_slot_tooltip_injected_at_load() {
+        fn show_slot_tip_nodes(node: &Node) -> usize {
+            usize::from(node.bind.visible.as_deref() == Some(SHOW_SLOT_TIP))
+                + node.children.iter().map(show_slot_tip_nodes).sum::<usize>()
+        }
+        let mut container = Document::from_json(
+            r#"{ "format": 1, "kind": "doctest:c", "class": "container",
+                 "root": { "type": "frame" } }"#,
+        )
+        .unwrap();
+        inject_slot_tooltip(&mut container);
+        inject_slot_tooltip(&mut container);
+        assert_eq!(show_slot_tip_nodes(&container.root), 1, "idempotent");
+        let mut screen = Document::from_json(
+            r#"{ "format": 1, "kind": "doctest:s", "class": "screen",
+                 "root": { "type": "frame" } }"#,
+        )
+        .unwrap();
+        inject_slot_tooltip(&mut screen);
+        assert_eq!(show_slot_tip_nodes(&screen.root), 0, "screens carry none");
+        let kind = crate::gui::intern_kind("forge:anvil").expect("kind interns");
+        let doc = doc_for(kind).expect("anvil document loads");
+        assert_eq!(show_slot_tip_nodes(&doc.doc.root), 1, "forge:anvil");
+    }
+
+    /// The injected node binds exactly the `(text, palette)` pairs
+    /// [`slot_tip_keys`] names, in line-then-span order, for the whole
+    /// [`SLOT_TIP_LINES`] × [`SLOT_TIP_SPANS`] grid.
+    ///
+    /// It cannot fail on a BUMP of either constant — node and expectation
+    /// derive from the same two numbers, which is the point of stating the
+    /// shape once. What it catches is the shape drifting from the naming:
+    /// a swapped `(line, span)` or `(text, palette)`, a row that forgot a
+    /// span, a key pattern changed in one place. The client half
+    /// (`item_tooltip.rs`) generates its keys through the same function and
+    /// cannot be reached from this crate, so its argument order is not
+    /// covered here.
+    #[test]
+    fn the_injected_slot_tooltip_binds_exactly_the_published_span_keys() {
+        let mut doc = Document::from_json(
+            r#"{ "format": 1, "kind": "doctest:c", "class": "container",
+                 "root": { "type": "frame" } }"#,
+        )
+        .unwrap();
+        inject_slot_tooltip(&mut doc);
+        let mut bound: Vec<(String, String)> = Vec::new();
+        doc.root.visit(&mut |node| {
+            if let (Some(text), Some(palette)) = (&node.bind.text, &node.bind.palette) {
+                bound.push((text.clone(), palette.clone()));
+            }
+        });
+        let expected: Vec<(String, String)> = (0..SLOT_TIP_LINES)
+            .flat_map(|line| (0..SLOT_TIP_SPANS).map(move |span| slot_tip_keys(line, span)))
+            .collect();
+        assert_eq!(bound, expected);
+    }
+
+    /// A slot's runtime `accepts` mask spends one bit per authored filter, so
+    /// filter 33 could never be activated. Refuse it at load — a silently
+    /// inert filter is the failure this whole area exists to prevent.
+    #[test]
+    fn a_slot_may_not_declare_more_filters_than_the_mask_has_bits() {
+        let doc = |n: usize| {
+            let accepts: Vec<String> = (0..n)
+                .map(|i| format!(r#"{{"data": "doctest:f{i}"}}"#))
+                .collect();
+            Document::from_json(&format!(
+                r#"{{ "format": 1, "kind": "doctest:machine", "class": "container",
+                     "root": {{ "type": "slot", "role": "container", "accepts": [{}] }} }}"#,
+                accepts.join(", ")
+            ))
+            .expect("test document parses")
+        };
+        let specs = doc_container_specs(&doc(MAX_SLOT_FILTERS)).expect("a full mask's worth loads");
+        assert_eq!(specs[0].accepts.len(), MAX_SLOT_FILTERS);
+        let err = doc_container_specs(&doc(MAX_SLOT_FILTERS + 1)).unwrap_err();
+        assert!(err.contains("accepts filters; the cap is"), "{err}");
     }
 
     #[test]

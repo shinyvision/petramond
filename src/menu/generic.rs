@@ -95,6 +95,7 @@ impl ContainerMenu {
         &self,
         world: &mut World,
         inv: &mut Inventory,
+        gui: Option<&petramond_world::gui_state::GuiStateMap>,
         i: usize,
         button: PointerButton,
         shift: bool,
@@ -105,7 +106,7 @@ impl ContainerMenu {
         } else if gather {
             self.collect_to_cursor_in_container(world, inv);
         } else {
-            self.container_click_slot(world, inv, i, button == PointerButton::Secondary);
+            self.container_click_slot(world, inv, gui, i, button == PointerButton::Secondary);
         }
     }
 
@@ -113,6 +114,7 @@ impl ContainerMenu {
         &self,
         world: &mut World,
         inv: &mut Inventory,
+        gui: Option<&petramond_world::gui_state::GuiStateMap>,
         i: usize,
         secondary: bool,
     ) {
@@ -121,7 +123,7 @@ impl ContainerMenu {
             let Some(slot) = c.slots.get_mut(i) else {
                 return;
             };
-            inv.click_container_cell(specs.get(i), slot, secondary);
+            inv.click_container_cell(specs.get(i), gui, slot, secondary);
         });
     }
 
@@ -162,6 +164,7 @@ impl ContainerMenu {
         &self,
         world: &mut World,
         inv: &mut Inventory,
+        gui: Option<&petramond_world::gui_state::GuiStateMap>,
         i: usize,
     ) {
         let Some(pos) = self.container_pos() else {
@@ -172,7 +175,7 @@ impl ContainerMenu {
             return;
         };
         let specs = self.slot_specs();
-        if !specs.iter().any(|s| s.routes(item)) {
+        if !specs.iter().any(|s| s.routes(item, s.accepts_mask(gui))) {
             inv.shift_move_slot(i);
             return;
         }
@@ -181,11 +184,18 @@ impl ContainerMenu {
                 return;
             };
             let by_filter = (0..container.slots.len())
-                .filter(|&s| specs.get(s).is_some_and(|spec| spec.routes_by_filter(item)));
+                .filter(|&s| {
+                specs
+                    .get(s)
+                    .is_some_and(|spec| spec.routes_by_filter(item, spec.accepts_mask(gui)))
+            });
             let open = (0..container.slots.len()).filter(|&s| {
                 specs
                     .get(s)
-                    .is_some_and(|spec| !spec.routes_by_filter(item) && spec.routes(item))
+                    .is_some_and(|spec| {
+                        let mask = spec.accepts_mask(gui);
+                        !spec.routes_by_filter(item, mask) && spec.routes(item, mask)
+                    })
             });
             let routed: Vec<usize> = by_filter.chain(open).collect();
             // Merge-then-fill over the routed order (the inventory's

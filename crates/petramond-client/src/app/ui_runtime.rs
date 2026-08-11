@@ -401,7 +401,8 @@ impl AppUi {
                     // An `item`-bound hook is generic (any document, any id):
                     // its bound value is an ordered comma-list of item names
                     // (the `petramond:overlay` convention), one composited
-                    // layer per name, first name bottom-most. Unknown names
+                    // layer per name, first name bottom-most; a `~` prefix
+                    // marks that layer a GHOST (drawn dimmed). Unknown names
                     // contribute nothing — lenient like every by-reference
                     // item read. The bare ids are the crafting browser's
                     // bespoke hooks.
@@ -410,9 +411,11 @@ impl AppUi {
                             names
                                 .split(',')
                                 .filter_map(|name| {
-                                    Some(petramond::gui::DocHookKind::ItemView(
-                                        petramond_world::item::ItemType::by_name(name.trim())?,
-                                    ))
+                                    let (name, dim) = item_view_layer(name);
+                                    Some(petramond::gui::DocHookKind::ItemView {
+                                        item: petramond_world::item::ItemType::by_name(name)?,
+                                        dim,
+                                    })
                                 })
                                 .collect()
                         } else {
@@ -466,9 +469,29 @@ impl AppUi {
     }
 }
 
+/// One entry of a `bind.item` layer list: the registry name, and whether the
+/// `~` GHOST marker asks for the dimmed draw (the unaffordable-recipe face).
+/// The marker is a cross-surface string convention — a mod publishes it, this
+/// side parses it — so its shape is pinned by a test like any shared key.
+fn item_view_layer(name: &str) -> (&str, bool) {
+    let name = name.trim();
+    match name.strip_prefix('~') {
+        Some(bare) => (bare.trim_start(), true),
+        None => (name, false),
+    }
+}
+
 #[cfg(test)]
 mod frame_stamp_tests {
     use super::*;
+
+    #[test]
+    fn an_item_view_layers_ghost_marker_is_the_tilde_prefix() {
+        assert_eq!(item_view_layer("petramond:diamond"), ("petramond:diamond", false));
+        assert_eq!(item_view_layer("~petramond:diamond"), ("petramond:diamond", true));
+        assert_eq!(item_view_layer(" ~ petramond:diamond "), ("petramond:diamond", true));
+        assert_eq!(item_view_layer(""), ("", false));
+    }
 
     #[test]
     fn a_solved_document_keeps_its_generation_until_it_is_resolved_again() {

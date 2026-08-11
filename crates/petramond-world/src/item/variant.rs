@@ -41,11 +41,15 @@ pub type VariantMap = BTreeMap<String, Vec<u8>>;
 pub const MAX_KEYS: usize = 4;
 /// Longest key, in bytes (namespaced `ns:name`).
 pub const MAX_KEY_BYTES: usize = 64;
-/// Longest value, in bytes.
-pub const MAX_VALUE_BYTES: usize = 64;
+/// Longest value, in bytes. Sized for the longest legitimate value we ship:
+/// `petramond:overlay` holding one art name per augment socket (4 sockets of
+/// ~31-char names, comma-joined).
+pub const MAX_VALUE_BYTES: usize = 128;
 /// Most distinct variants one process will intern (excluding `NONE`) — the
 /// `u16` id ceiling. The table never evicts (outstanding ids must stay
-/// valid), so this bounds a process-lifetime cache at ~10 MB worst case.
+/// valid), so this bounds a process-lifetime cache: at the per-map caps
+/// above, and counting the canonical blob each row keeps beside its map,
+/// roughly 100 MB worst case. Raising [`MAX_VALUE_BYTES`] moves this figure.
 pub const MAX_VARIANTS: usize = u16::MAX as usize;
 
 /// `true` if `data` fits every per-map cap and every key is namespaced.
@@ -184,6 +188,24 @@ pub fn blob(id: VariantId) -> Option<Arc<Vec<u8>>> {
     t.rows.get(id.0 as usize - 1).map(|(_, b)| b.clone())
 }
 
+/// `true` if the stack interned as `id` carries exactly `data` (`NONE`
+/// matches only the empty map) — the equality a compare-and-set needs.
+///
+/// It compares CANONICAL BLOBS rather than interning `data` and comparing
+/// ids, because the table never evicts ([`MAX_VARIANTS`]): a losing compare
+/// must not be able to mint a permanent row, or any caller polling a CAS in
+/// a loop would leak the table away. Byte identity IS map identity here, so
+/// the cheaper route is also the exact one.
+pub fn matches(id: VariantId, data: &VariantMap) -> bool {
+    match blob(id) {
+        Some(b) => b.as_slice() == encode(data),
+        // Only the plain stack answers `true` here. An id past the table's
+        // end has no blob either, but a compare it cannot READ must never be
+        // one it wins — the wrong default for a CAS is the permissive one.
+        None => id.is_none() && data.is_empty(),
+    }
+}
+
 /// One value out of `id`'s map.
 pub fn value(id: VariantId, key: &str) -> Option<Vec<u8>> {
     get(id).and_then(|m| m.get(key).cloned())
@@ -284,7 +306,11 @@ mod tests {
     fn invalid_maps_and_malformed_blobs_are_refused() {
         assert_eq!(intern(&VariantMap::new()), None, "empty = no variant");
         assert_eq!(intern(&map(&[("bare_key", &[1])])), None, "bare key");
-        assert_eq!(intern(&map(&[("m:big", &[0u8; 65])])), None, "value cap");
+        assert_eq!(
+            intern(&map(&[("m:big", &[0u8; MAX_VALUE_BYTES + 1])])),
+            None,
+            "value cap"
+        );
         let over: VariantMap = (0..5).map(|i| (format!("m:k{i}"), vec![0u8])).collect();
         assert_eq!(intern(&over), None, "key-count cap");
         assert_eq!(decode(&[]), None);

@@ -5,9 +5,10 @@
 use mod_api::{HostCall, HostRet, PlayerSnapshot};
 
 use crate::events::ModAction;
+use petramond_world::item::variant::{self, VariantMap};
 use petramond_world::item::ItemStack;
 
-use super::entities::give_item;
+use super::entities::{give_item, give_item_to};
 use super::guards::{batch_guard, finite3, item_by_name, sim_call, sim_query};
 use super::intern_mod_id;
 
@@ -109,6 +110,25 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(true)
             })
         }
+        HostCall::GiveItemTo {
+            player,
+            item,
+            count,
+            data,
+        } => {
+            let variant = match super::guards::intern_abi_data("GiveItemTo", &data) {
+                Ok(v) => v,
+                Err(e) => return e,
+            };
+            sim_query(move |ctx| {
+                let Some(item_ty) = item_by_name(&item) else {
+                    log::warn!("[mod {mod_id}] GiveItemTo: unknown item '{item}'");
+                    return HostRet::Bool(false);
+                };
+                let id = crate::player::PlayerId(player.0);
+                HostRet::Bool(give_item_to(ctx, id, item_ty, count, variant))
+            })
+        }
         // The per-player, per-stack held read: the stack's instance data
         // rides along, which the row-level `PlayerState.held` cannot carry.
         // Resolvable sessions come from the published sessions view (the
@@ -122,6 +142,62 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
                     .map(super::guards::item_stack_data),
             )
         }),
+        // The compare-and-set write onto the HELD stack: the mod names both
+        // the item and the exact data it computed the new map against, so a
+        // hand swapped OR a stack another writer re-stamped in between
+        // refuses rather than clobbers. Explicit player addressing like
+        // GiveItemTo; the slot write bumps the inventory revision, so
+        // replication is automatic.
+        HostCall::SetPlayerHeldData {
+            player,
+            expect_item,
+            expect_data,
+            data,
+        } => {
+            let variant = match super::guards::intern_abi_data("SetPlayerHeldData", &data) {
+                Ok(v) => v,
+                Err(e) => return e,
+            };
+            // The EXPECTATION is compared, never interned. The two maps are
+            // deliberately treated differently: the replacement above is one
+            // the mod means to write, so a malformed one is a loud error
+            // whatever the compare answers, and re-interning it is free (rows
+            // are keyed by blob, so a retry reuses the row). The expectation
+            // is whatever the stack happened to hold and VARIES per attempt —
+            // interning that would let a caller losing a CAS in a loop mint a
+            // fresh permanent row every time, and the table never evicts.
+            let expect_map: VariantMap = expect_data.into_iter().collect();
+            sim_query(move |ctx| {
+                let Some(expect_ty) = item_by_name(&expect_item) else {
+                    log::warn!("[mod {mod_id}] SetPlayerHeldData: unknown item '{expect_item}'");
+                    return HostRet::Bool(false);
+                };
+                let id = crate::player::PlayerId(player.0);
+                let ok = ctx
+                    .with_player(id, |p| {
+                        let active = p.inventory.active_slot() as usize;
+                        match p.inventory.selected().copied() {
+                            Some(st)
+                                if st.item == expect_ty
+                                    && variant::matches(st.variant, &expect_map) =>
+                            {
+                                p.inventory
+                                    .slot_mut(active)
+                                    .map(|slot| {
+                                        *slot = Some(ItemStack::with_variant(
+                                            st.item, st.count, variant,
+                                        ));
+                                        true
+                                    })
+                                    .unwrap_or(false)
+                            }
+                            _ => false,
+                        }
+                    })
+                    .unwrap_or(false);
+                HostRet::Bool(ok)
+            })
+        }
         // Atomic: only a selected stack holding at least `count` of `item`
         // consumes — the held stack IS the validation, so no registry check.
         HostCall::ConsumeHeld { item, count } => sim_query(|ctx| {
@@ -230,9 +306,9 @@ pub(super) fn handle_player_call(mod_id: &str, call: HostCall) -> HostRet {
             }) {
                 Some(unlocked) => HostRet::Bool(unlocked),
                 // No such session — or a dispatch site that publishes no
-                // sessions roster (the not-yet-migrated pre-event sites; see
-                // the sessions-view notes in WIKI/modding.md). Silence here
-                // would look exactly like "already unlocked", so say which.
+                // sessions roster (the pre-event sites that still dispatch
+                // without `with_sessions_view`). Silence here would look
+                // exactly like "already unlocked", so say which.
                 None => {
                     log::warn!(
                         "[mod {mod_id}] UnlockRecipe '{recipe}': player {} is not reachable from \
@@ -268,6 +344,66 @@ mod tests {
     use crate::modding::scope;
     use crate::player::Player;
     use crate::world::World;
+
+    /// The held-data write compares the VALUE it is replacing, not just the
+    /// item: a stack that another handler re-stamped between the mod's read
+    /// and its write refuses instead of silently dropping that other write.
+    #[test]
+    fn held_data_write_refuses_a_stack_restamped_under_it() {
+        use petramond_world::item::{variant, ItemStack, ItemType};
+
+        let stamp = |n: u8| variant::VariantMap::from([("m:cond".to_owned(), vec![n])]);
+        let abi = |m: &variant::VariantMap| -> Vec<(String, Vec<u8>)> {
+            m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+        let write = |data: &mut ModStoreData, expect: &variant::VariantMap| {
+            handle_host_call(
+                data,
+                HostCall::SetPlayerHeldData {
+                    player: mod_api::PlayerId(0),
+                    expect_item: "petramond:stick".into(),
+                    expect_data: abi(expect),
+                    data: abi(&stamp(1)),
+                },
+            )
+        };
+
+        let mut data = ModStoreData::new("alpha", 1);
+        let mut world = World::new(1, 1);
+        let mut acting = Player::new(Vec3::new(0.0, 80.0, 0.0));
+        let held = variant::intern(&stamp(2)).expect("the fixture map interns");
+        let active = acting.inventory.active_slot() as usize;
+        *acting.inventory.slot_mut(active).expect("hotbar slot") =
+            Some(ItemStack::with_variant(ItemType::Stick, 1, held));
+        let mut feed = TickEvents::default();
+        let mut queue = PostQueue::default();
+        let mut gui = petramond_world::gui_state::empty_gui_state();
+
+        crate::events::with_sessions_scope(crate::player::PlayerId(0), 0, None, Vec::new(), || {
+            let mut ctx = SimCtx {
+                world: &mut world,
+                player: &mut acting,
+                gui_state: &mut gui,
+                feed: &mut feed,
+                queue: &mut queue,
+            };
+            scope::enter(&mut ctx, || {
+                assert_eq!(
+                    write(&mut data, &stamp(9)),
+                    HostRet::Bool(false),
+                    "data the stack no longer carries loses the compare"
+                );
+                assert_eq!(
+                    write(&mut data, &variant::VariantMap::new()),
+                    HostRet::Bool(false),
+                    "an empty expectation means PLAIN, not 'any data'"
+                );
+                assert_eq!(write(&mut data, &stamp(2)), HostRet::Bool(true));
+            });
+        });
+        let after = acting.inventory.selected().expect("the stack survives");
+        assert_eq!(*variant::get(after.variant).expect("data"), stamp(1));
+    }
 
     /// The progression arms: unlocking is per-player, idempotent (`true` only
     /// on the call that changed it), refuses a key no catalog row owns, and

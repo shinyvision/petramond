@@ -278,8 +278,9 @@ fn push_recipe_hook_content(
     use petramond::gui::DocHookKind as Kind;
     for hook in hooks {
         // An item-view hook names its item directly: one centred, rect-scaled
-        // icon, undimmed, no snapshot involved.
-        if let Kind::ItemView(item) = hook.kind {
+        // icon, no snapshot involved; a ghost layer draws with the same dim
+        // the unaffordable recipe results use.
+        if let Kind::ItemView { item, dim } = hook.kind {
             let side = hook.rect.w.min(hook.rect.h);
             let Some(clip) = effective_hook_clip(*hook) else {
                 continue;
@@ -293,14 +294,14 @@ fn push_recipe_hook_content(
                     h: side,
                 },
                 clip: Some(clip),
-                dim: false,
+                dim,
             });
             continue;
         }
         let recipe = match hook.kind {
             Kind::RecipeResult => ui.craft_recipes.get(hook.index),
             Kind::TipResult | Kind::TipIngredients => ui.craft_tip.as_ref(),
-            Kind::ItemView(_) => unreachable!("handled above"),
+            Kind::ItemView { .. } => unreachable!("handled above"),
         };
         let Some(recipe) = recipe else {
             continue;
@@ -326,7 +327,7 @@ fn push_recipe_hook_content(
             Kind::TipIngredients => {
                 push_ingredient_strip(recipe, build, *hook, screen, scale);
             }
-            Kind::ItemView(_) => unreachable!("handled above"),
+            Kind::ItemView { .. } => unreachable!("handled above"),
         }
     }
 }

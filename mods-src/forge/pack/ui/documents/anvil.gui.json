@@ -143,6 +143,15 @@
                                     "text": "forge:preview_damage",
                                     "visible": "forge:preview_damage"
                                 }
+                            },
+                            {
+                                "type": "label",
+                                "small": true,
+                                "style": "label.accent",
+                                "bind": {
+                                    "text": "forge:preview_gentle",
+                                    "visible": "forge:preview_gentle"
+                                }
                             }
                         ]
                     }
@@ -157,110 +166,233 @@
                 },
                 "children": [
                     {
-                        "type": "slot",
-                        "role": "container",
-                        "accepts": [
-                            {
-                                "data": "forge:augment"
-                            }
-                        ]
-                    },
-                    {
                         "type": "frame",
-                        "style": "slot",
                         "layout": {
                             "w": 18,
-                            "h": 18,
-                            "align": "center",
-                            "justify": "center"
+                            "h": 18
                         },
                         "children": [
                             {
-                                "type": "image",
-                                "image": "lock.png",
+                                "type": "slot",
+                                "role": "container",
+                                "accepts": [
+                                    {
+                                        "data": "forge:augment"
+                                    },
+                                    {
+                                        "data": "forge:socket_key"
+                                    }
+                                ],
+                                "bind": {
+                                    "accepts": "forge:sock0_acc"
+                                }
+                            },
+                            {
+                                "type": "hook",
+                                "id": "sock0_view",
                                 "layout": {
-                                    "w": 8,
-                                    "h": 9
+                                    "w": 16,
+                                    "h": 16,
+                                    "abs": {
+                                        "x": 1,
+                                        "y": 1
+                                    }
+                                },
+                                "bind": {
+                                    "item": "forge:sock0_ghost"
+                                }
+                            },
+                            {
+                                "type": "image",
+                                "image": "socket_states.png",
+                                "frames": [
+                                    3,
+                                    1
+                                ],
+                                "layout": {
+                                    "w": 18,
+                                    "h": 18,
+                                    "abs": {
+                                        "x": 0,
+                                        "y": 0
+                                    }
+                                },
+                                "bind": {
+                                    "frame": "forge:sock0_st"
                                 }
                             }
                         ]
                     },
                     {
                         "type": "frame",
-                        "style": "slot",
                         "layout": {
                             "w": 18,
-                            "h": 18,
-                            "align": "center",
-                            "justify": "center"
+                            "h": 18
                         },
                         "children": [
                             {
-                                "type": "image",
-                                "image": "lock.png",
+                                "type": "slot",
+                                "role": "container",
+                                "accepts": [
+                                    {
+                                        "data": "forge:augment"
+                                    },
+                                    {
+                                        "data": "forge:socket_key"
+                                    }
+                                ],
+                                "bind": {
+                                    "accepts": "forge:sock1_acc"
+                                }
+                            },
+                            {
+                                "type": "hook",
+                                "id": "sock1_view",
                                 "layout": {
-                                    "w": 8,
-                                    "h": 9
+                                    "w": 16,
+                                    "h": 16,
+                                    "abs": {
+                                        "x": 1,
+                                        "y": 1
+                                    }
+                                },
+                                "bind": {
+                                    "item": "forge:sock1_ghost"
+                                }
+                            },
+                            {
+                                "type": "image",
+                                "image": "socket_states.png",
+                                "frames": [
+                                    3,
+                                    1
+                                ],
+                                "layout": {
+                                    "w": 18,
+                                    "h": 18,
+                                    "abs": {
+                                        "x": 0,
+                                        "y": 0
+                                    }
+                                },
+                                "bind": {
+                                    "frame": "forge:sock1_st"
                                 }
                             }
                         ]
                     },
                     {
                         "type": "frame",
-                        "style": "slot",
                         "layout": {
                             "w": 18,
-                            "h": 18,
-                            "align": "center",
-                            "justify": "center"
+                            "h": 18
                         },
                         "children": [
                             {
-                                "type": "image",
-                                "image": "lock.png",
+                                "type": "slot",
+                                "role": "container",
+                                "accepts": [
+                                    {
+                                        "data": "forge:augment"
+                                    },
+                                    {
+                                        "data": "forge:socket_key"
+                                    }
+                                ],
+                                "bind": {
+                                    "accepts": "forge:sock2_acc"
+                                }
+                            },
+                            {
+                                "type": "hook",
+                                "id": "sock2_view",
                                 "layout": {
-                                    "w": 8,
-                                    "h": 9
+                                    "w": 16,
+                                    "h": 16,
+                                    "abs": {
+                                        "x": 1,
+                                        "y": 1
+                                    }
+                                },
+                                "bind": {
+                                    "item": "forge:sock2_ghost"
+                                }
+                            },
+                            {
+                                "type": "image",
+                                "image": "socket_states.png",
+                                "frames": [
+                                    3,
+                                    1
+                                ],
+                                "layout": {
+                                    "w": 18,
+                                    "h": 18,
+                                    "abs": {
+                                        "x": 0,
+                                        "y": 0
+                                    }
+                                },
+                                "bind": {
+                                    "frame": "forge:sock2_st"
                                 }
                             }
                         ]
                     },
                     {
                         "type": "frame",
-                        "style": "slot",
                         "layout": {
                             "w": 18,
-                            "h": 18,
-                            "align": "center",
-                            "justify": "center"
+                            "h": 18
                         },
                         "children": [
                             {
-                                "type": "image",
-                                "image": "lock.png",
-                                "layout": {
-                                    "w": 8,
-                                    "h": 9
+                                "type": "slot",
+                                "role": "container",
+                                "accepts": [
+                                    {
+                                        "data": "forge:augment"
+                                    },
+                                    {
+                                        "data": "forge:socket_key"
+                                    }
+                                ],
+                                "bind": {
+                                    "accepts": "forge:sock3_acc"
                                 }
-                            }
-                        ]
-                    },
-                    {
-                        "type": "frame",
-                        "style": "slot",
-                        "layout": {
-                            "w": 18,
-                            "h": 18,
-                            "align": "center",
-                            "justify": "center"
-                        },
-                        "children": [
+                            },
+                            {
+                                "type": "hook",
+                                "id": "sock3_view",
+                                "layout": {
+                                    "w": 16,
+                                    "h": 16,
+                                    "abs": {
+                                        "x": 1,
+                                        "y": 1
+                                    }
+                                },
+                                "bind": {
+                                    "item": "forge:sock3_ghost"
+                                }
+                            },
                             {
                                 "type": "image",
-                                "image": "lock.png",
+                                "image": "socket_states.png",
+                                "frames": [
+                                    3,
+                                    1
+                                ],
                                 "layout": {
-                                    "w": 8,
-                                    "h": 9
+                                    "w": 18,
+                                    "h": 18,
+                                    "abs": {
+                                        "x": 0,
+                                        "y": 0
+                                    }
+                                },
+                                "bind": {
+                                    "frame": "forge:sock3_st"
                                 }
                             }
                         ]

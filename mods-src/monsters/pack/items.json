@@ -1,0 +1,64 @@
+{
+  "items": [
+    {
+      "item": "monsters:hushjaw_tooth",
+      "key": "monsters:hushjaw_tooth",
+      "name": "Hushjaw Tooth",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "monsters:hushjaw_tooth",
+      "tags": [],
+      "data": {
+        "forge:augment": [
+          {
+            "tool": "pickaxe",
+            "damage_mult": 1.3333,
+            "cost": 3,
+            "overlay": "monsters:fang",
+            "wear": {
+              "on": "hit",
+              "max": 800
+            }
+          },
+          {
+            "tool": "axe",
+            "damage_mult": 1.3333,
+            "cost": 3,
+            "overlay": "monsters:fang",
+            "wear": {
+              "on": "hit",
+              "max": 800
+            }
+          },
+          {
+            "tool": "shovel",
+            "damage_mult": 1.3333,
+            "cost": 3,
+            "overlay": "monsters:fang",
+            "wear": {
+              "on": "hit",
+              "max": 800
+            }
+          }
+        ]
+      }
+    },
+    {
+      "item": "monsters:fang",
+      "key": "monsters:fang",
+      "name": "Hushjaw Fang",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "sprite": "monsters:fang",
+      "tags": []
+    }
+  ]
+}

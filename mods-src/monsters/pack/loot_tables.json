@@ -1,0 +1,7 @@
+{
+  "tables": {
+    "monsters:hushjaw": [
+      { "item": "monsters:hushjaw_tooth", "min": 1, "max": 2 }
+    ]
+  }
+}

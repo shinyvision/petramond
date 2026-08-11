@@ -390,9 +390,13 @@ impl ApplicationHandler for NativeHost {
         };
         let now = Instant::now();
         // Fixed frame-capped loop: every wake runs one `App::update` and draws it.
-        // `Game::tick`'s fixed-step accumulator holds the sim at 20 TPS regardless.
-        // A released cursor means a modal screen (title/pause/inventory) is up, so
-        // the cheaper menu cap applies — still rendering every frame.
+        // The SERVER thread owns the fixed-step accumulator holding the sim at
+        // 20 TPS (`src/server/handle.rs`); updates here only exchange messages
+        // with it. A released cursor means a modal screen is up — SHELL screens
+        // take the cheaper menu cap, but a game menu (container/machine panel)
+        // keeps the gameplay cadence: its bound state is answering the server,
+        // and halving the frame rate taxes every round trip twice (input
+        // sampling and drain-to-present).
         if now >= self.next_update {
             let update_start = Instant::now();
             app.update(renderer);
@@ -409,7 +413,7 @@ impl ApplicationHandler for NativeHost {
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
-            let frame = if app.cursor_policy().grabbed {
+            let frame = if app.cursor_policy().grabbed || app.game_menu_open() {
                 self.frame
             } else {
                 self.menu_frame

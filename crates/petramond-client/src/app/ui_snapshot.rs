@@ -81,7 +81,14 @@ fn preview_capacity(
         // The same question the committed prediction and the server both ask
         // (`container::slot_admits`). Asking a THIRD one here means the drag
         // preview shows a split the click that follows it will not perform.
-        MenuSlot::Container(i) if petramond_world::container::slot_admits(specs, i, Some(held.item)) => {
+        MenuSlot::Container(i)
+            if petramond_world::container::slot_admits(
+                specs,
+                i,
+                Some(held.item),
+                snapshot.gui_state.as_deref(),
+            ) =>
+        {
             snapshot
                 .container
                 .as_ref()
@@ -109,7 +116,12 @@ fn preview_place(
 
     let cell = match slot {
         MenuSlot::Container(i)
-            if petramond_world::container::slot_admits(specs, i, cursor.as_ref().map(|c| c.item)) =>
+            if petramond_world::container::slot_admits(
+                specs,
+                i,
+                cursor.as_ref().map(|c| c.item),
+                snapshot.gui_state.as_deref(),
+            ) =>
         {
             snapshot
                 .container

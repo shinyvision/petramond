@@ -89,9 +89,11 @@ impl ServerGame {
                         }
                     } else {
                         let sess = &mut self.sessions[s];
+                        let gui = sess.gui_state.clone();
                         sess.menu.click(
                             &mut self.world,
                             &mut sess.player.inventory,
+                            Some(&gui),
                             slot,
                             button,
                             shift,
@@ -115,9 +117,11 @@ impl ServerGame {
                     request_id,
                 } => {
                     let sess = &mut self.sessions[s];
+                    let gui = sess.gui_state.clone();
                     sess.menu.drag_slots(
                         &mut self.world,
                         &mut sess.player.inventory,
+                        Some(&gui),
                         &slots,
                         button,
                     );

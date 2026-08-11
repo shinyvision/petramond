@@ -6,6 +6,8 @@
 //!   beside them, and in patches across savanna. Pure data plus one positional
 //!   field; the only host call in it is the batched biome probe that tells a
 //!   BANK apart from ordinary ground.
+//! - `ore.rs` — petramond ore, the socket-carving gem's source, in rare
+//!   veins below the cave floor. Purely positional, zero host calls.
 //! - the pottery table — no code at all. A block row whose interaction opens
 //!   `forge:pottery_table` plus recipe rows naming that station is a whole
 //!   crafting bench; the engine runs the ordinary crafting session.
@@ -23,11 +25,13 @@
 //! engine learns a new name. There is no `cast_iron_axe` anywhere.
 
 mod anvil;
+mod augments;
 mod clay;
 mod content;
 mod furnace;
 mod gold;
 mod liquid;
+mod ore;
 mod unlocks;
 
 use machine_core::Caches;
@@ -36,11 +40,14 @@ use mod_sdk::*;
 use furnace::ForgingFurnace;
 
 const TICK_SYSTEM: u32 = 1;
+const ANVIL_TICK_SYSTEM: u32 = 2;
 const ON_BLOCK_PLACED: u32 = 1;
 const ON_CONTAINER_OPENED: u32 = 2;
 const ON_ITEM_OBTAINED: u32 = 3;
 const ON_BLOCK_BREAK: u32 = 4;
+const ON_MOB_DAMAGED: u32 = 5;
 const GEN_CLAY: u32 = 1;
+const GEN_ORE: u32 = 2;
 
 #[derive(Default)]
 struct Forge {
@@ -48,6 +55,7 @@ struct Forge {
     anvil: anvil::Anvil,
     caches: Caches,
     clay: clay::Deposits,
+    ore: ore::Ore,
     unlocks: unlocks::Unlocks,
     gold: gold::Gold,
 }
@@ -59,6 +67,8 @@ impl Mod for Forge {
         // must not depend on anything sim-side.
         self.clay.init();
         register_worldgen_feature(WorldgenStage::Underground, GEN_CLAY);
+        self.ore.init();
+        register_worldgen_feature(WorldgenStage::Underground, GEN_ORE);
 
         // Everything below reaches the SIMULATION — the anchor registry lives
         // in world KV. Worldgen instances run `mod_init` detached, with no
@@ -75,9 +85,6 @@ impl Mod for Forge {
         // Gold's nondestructive mining: pure break-drops policy, independent
         // of the machines.
         self.gold = gold::Gold::resolve();
-        if !self.gold.is_empty() {
-            register_event_handler(EventKind::BlockBreakPre, 0, ON_BLOCK_BREAK);
-        }
 
         let furnace_ok = self.furnace.init();
         if !furnace_ok {
@@ -86,6 +93,15 @@ impl Mod for Forge {
         let anvil_ok = self.anvil.init();
         if !anvil_ok {
             log("forge: the anvil rows are missing; augments stay idle");
+        }
+        // Breaks feed gold's drops policy AND augment wear; mob hits feed
+        // wear alone. Registered before the machine gate — gold works even
+        // with both machines idle.
+        if !self.gold.is_empty() || anvil_ok {
+            register_event_handler(EventKind::BlockBreakPre, 0, ON_BLOCK_BREAK);
+        }
+        if anvil_ok {
+            register_event_handler(EventKind::MobDamaged, 0, ON_MOB_DAMAGED);
         }
         if !furnace_ok && !anvil_ok {
             return;
@@ -97,6 +113,11 @@ impl Mod for Forge {
         register_event_handler(EventKind::ContainerOpened, 0, ON_CONTAINER_OPENED);
         // After WorldScheduled = beside the engine's own furnace step.
         register_tick_system(Stage::WorldScheduled, AttachSide::After, 0, TICK_SYSTEM);
+        // The anvil steps right AFTER the menu stage: a click's slot change
+        // is adjudicated (carve, return, masks, preview) in the same tick,
+        // immediately after the stage that applied it — the panel can never
+        // show last tick's answer to this tick's click.
+        register_tick_system(Stage::Menu, AttachSide::After, 0, ANVIL_TICK_SYSTEM);
     }
 
     fn handle_event(&mut self, handler_id: u32, payload: &mut EventPayload) -> Outcome {
@@ -111,7 +132,21 @@ impl Mod for Forge {
                     ..
                 },
             ) => {
-                self.gold.on_block_break(*block, *harvested, *player, drops);
+                let proc = self.gold.on_block_break(*block, *harvested, *player, drops);
+                // Every completed break wears break-keyed augments; a gentle
+                // proc additionally wears the augment that granted it.
+                self.anvil
+                    .spec()
+                    .wear_held(*player, anvil::WearOn::Break, proc.as_deref());
+            }
+            (
+                ON_MOB_DAMAGED,
+                EventPayload::MobDamaged {
+                    source: DamageSource::PlayerAttack { id },
+                    ..
+                },
+            ) => {
+                self.anvil.spec().wear_held(*id, anvil::WearOn::Hit, None);
             }
             (ON_BLOCK_PLACED, EventPayload::BlockPlaced { pos, block }) => {
                 self.furnace.on_placed(*pos, *block);
@@ -147,6 +182,8 @@ impl Mod for Forge {
     fn tick_system(&mut self, system_id: u32) {
         if system_id == TICK_SYSTEM {
             self.furnace.tick(&mut self.caches);
+        }
+        if system_id == ANVIL_TICK_SYSTEM {
             self.anvil.tick(&mut self.caches);
         }
     }
@@ -154,6 +191,7 @@ impl Mod for Forge {
     fn gen_feature(&mut self, feature_id: u32, ctx: &GenCtx) -> Vec<GenWrite> {
         match feature_id {
             GEN_CLAY => self.clay.generate(ctx),
+            GEN_ORE => self.ore.generate(ctx),
             _ => Vec::new(),
         }
     }

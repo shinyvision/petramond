@@ -657,6 +657,22 @@ pub struct Bindings {
     pub abs_x: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub abs_y: Option<String>,
+    /// `slot`/`slot_grid` nodes with authored `accepts` only: an `I32` key
+    /// whose value NARROWS the authored filters at runtime — bit `i` set =
+    /// `accepts[i]` active, absent = all active, `0` = the slot admits
+    /// nothing. Machine state made admission (a socket cell that is locked,
+    /// occupied, or absent for the current tool), enforced by the HOST on
+    /// clicks, drags, shift-routing and their predictions alike; the
+    /// document only names the key. On a grid, every cell reads the same
+    /// key. Takes are never gated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepts: Option<String>,
+    /// `label` nodes only: a `Str` key naming a THEME PALETTE entry that
+    /// overrides the label's colour this frame — text whose colour IS state
+    /// (a condition word painted by its severity). Empty resolves to the
+    /// node's own style; a disabled node keeps the disabled colour.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub palette: Option<String>,
 }
 
 impl Bindings {
@@ -729,6 +745,7 @@ impl Document {
                 role: role.clone(),
                 accepts: accepts.clone(),
                 take_only: *take_only,
+                accepts_bind: node.bind.accepts.clone(),
             }),
             NodeKind::SlotGrid {
                 role,
@@ -742,6 +759,7 @@ impl Document {
                         role: role.clone(),
                         accepts: accepts.clone(),
                         take_only: *take_only,
+                        accepts_bind: node.bind.accepts.clone(),
                     });
                 }
             }
@@ -759,6 +777,9 @@ pub struct SlotSemantics {
     pub role: String,
     pub accepts: Vec<Accept>,
     pub take_only: bool,
+    /// The node's `bind.accepts` key (see [`Bindings::accepts`]) — the host
+    /// resolves it into the slot's runtime filter mask.
+    pub accepts_bind: Option<String>,
 }
 
 /// One entry of a slot's `accepts` list: an item GROUP, named either way the

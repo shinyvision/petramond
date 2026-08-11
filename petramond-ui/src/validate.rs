@@ -343,6 +343,24 @@ fn walk<'a>(
             issue("'abs_x'/'abs_y' bindings need layout.abs (the resting position)".into());
         }
     }
+    if node.bind.accepts.is_some() {
+        let filtered = match &node.kind {
+            NodeKind::Slot { accepts, .. } | NodeKind::SlotGrid { accepts, .. } => {
+                !accepts.is_empty()
+            }
+            _ => false,
+        };
+        if !filtered {
+            issue(
+                "an 'accepts' binding needs a slot/slot_grid node with authored accepts \
+                 (the mask narrows the authored filters)"
+                    .into(),
+            );
+        }
+    }
+    if node.bind.palette.is_some() && !matches!(node.kind, NodeKind::Label { .. }) {
+        issue("'palette' binding is only read on label nodes".into());
+    }
 
     if let (Some(styles), Some(style)) = (styles, &node.style) {
         if !styles.has_style(style) {
@@ -407,6 +425,48 @@ mod tests {
             all.contains("'mystery' is not in this kind's contract"),
             "{all}"
         );
+    }
+
+    /// An `accepts` bind without authored filters (or off a slot entirely)
+    /// would silently narrow nothing — the inert-bind failure mode.
+    #[test]
+    fn an_accepts_bind_needs_a_filtered_slot() {
+        let d = doc(r#"{
+            "format": 1, "kind": "somemod:machine", "class": "container",
+            "root": { "type": "column", "children": [
+                { "type": "slot", "role": "container",
+                  "bind": { "accepts": "somemod:cell0" } },
+                { "type": "label", "text": "x", "bind": { "accepts": "somemod:oops" } },
+                { "type": "slot", "role": "container",
+                  "accepts": ["fuel"],
+                  "bind": { "accepts": "somemod:cell2" } }
+            ] }
+        }"#);
+        let issues = d.validate(None, None);
+        let inert: Vec<_> = issues
+            .iter()
+            .filter(|i| i.message.contains("'accepts' binding"))
+            .collect();
+        assert_eq!(inert.len(), 2, "the unfiltered slot and the label: {issues:?}");
+    }
+
+    /// A `palette` bind anywhere but a label would silently recolour
+    /// nothing — the inert-bind failure mode.
+    #[test]
+    fn a_palette_bind_is_label_only() {
+        let d = doc(r#"{
+            "format": 1, "kind": "somemod:machine", "class": "container",
+            "root": { "type": "column", "children": [
+                { "type": "label", "text": "x", "bind": { "palette": "somemod:col" } },
+                { "type": "frame", "bind": { "palette": "somemod:oops" } }
+            ] }
+        }"#);
+        let issues = d.validate(None, None);
+        let inert: Vec<_> = issues
+            .iter()
+            .filter(|i| i.message.contains("'palette' binding"))
+            .collect();
+        assert_eq!(inert.len(), 1, "only the frame: {issues:?}");
     }
 
     #[test]

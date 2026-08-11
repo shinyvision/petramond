@@ -185,6 +185,7 @@ mod tests {
         menu.click(
             &mut world,
             &mut inv,
+            None,
             MenuSlot::CraftResult,
             PointerButton::Secondary,
             false,
@@ -211,6 +212,7 @@ mod tests {
         menu.click(
             &mut world,
             &mut inv,
+            None,
             MenuSlot::Container(petramond_world::furnace::SLOT_OUTPUT),
             PointerButton::Secondary,
             false,
@@ -242,6 +244,7 @@ mod tests {
         menu.drag_slots(
             &mut world,
             &mut inv,
+            None,
             &[
                 MenuSlot::Inventory(9),
                 MenuSlot::Container(0),
@@ -459,7 +462,7 @@ mod tests {
         inv.add(ItemStack::new(ItemType::OakPlanks, 4));
 
         // Coal -> fuel slot.
-        menu.container_shift_from_inventory(&mut world, &mut inv, 0);
+        menu.container_shift_from_inventory(&mut world, &mut inv, None, 0);
         assert!(inv.slot(0).is_none(), "coal left the inventory");
         assert_eq!(
             world.container_at(pos).unwrap().slots[petramond_world::furnace::SLOT_FUEL],
@@ -468,7 +471,7 @@ mod tests {
         );
 
         // Raw iron -> input slot.
-        menu.container_shift_from_inventory(&mut world, &mut inv, 1);
+        menu.container_shift_from_inventory(&mut world, &mut inv, None, 1);
         assert!(inv.slot(1).is_none(), "raw iron left the inventory");
         assert_eq!(
             world.container_at(pos).unwrap().slots[petramond_world::furnace::SLOT_INPUT],
@@ -478,7 +481,7 @@ mod tests {
 
         // A non-fuel, non-smeltable item is not pulled into the furnace; it falls
         // back to the ordinary hotbar->main-grid shuffle.
-        menu.container_shift_from_inventory(&mut world, &mut inv, 2);
+        menu.container_shift_from_inventory(&mut world, &mut inv, None, 2);
         assert!(inv.slot(2).is_none(), "plank moved out of the hotbar slot");
         let c = world.container_at(pos).unwrap();
         for slot in &c.slots {
@@ -505,7 +508,7 @@ mod tests {
 
         let mut inv = Inventory::new();
         inv.add(ItemStack::new(ItemType::Coal, 10));
-        menu.container_shift_from_inventory(&mut world, &mut inv, 0);
+        menu.container_shift_from_inventory(&mut world, &mut inv, None, 0);
 
         // 4 top up the fuel slot to 64; the remaining 6 stay in the inventory.
         assert_eq!(
@@ -532,7 +535,7 @@ mod tests {
 
         let mut inv = Inventory::new();
         inv.add(ItemStack::new(ItemType::Coal, 10));
-        menu.container_shift_from_inventory(&mut world, &mut inv, 0);
+        menu.container_shift_from_inventory(&mut world, &mut inv, None, 0);
 
         let c = world.container_at(pos).unwrap();
         assert_eq!(c.slots[0], None, "no new stack opened while one can merge");

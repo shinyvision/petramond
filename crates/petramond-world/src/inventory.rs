@@ -264,6 +264,7 @@ impl Inventory {
     pub fn click_container_cell(
         &mut self,
         spec: Option<&crate::container::SlotSpec>,
+        gui_state: Option<&crate::gui_state::GuiStateMap>,
         cell: &mut Option<ItemStack>,
         secondary: bool,
     ) {
@@ -272,11 +273,13 @@ impl Inventory {
         // convenience gesture and not the deliberate one is not a filter, and
         // a machine reading a fixed slot index cannot defend itself against
         // what it finds there. Refusing behaves exactly like a take-only slot —
-        // the click still takes the cell's contents out.
+        // the click still takes the cell's contents out. The session's
+        // `gui_state` narrows a bound slot's filters the same way on both
+        // mirrors (see `SlotSpec::accepts_mask`).
         let refuses = match spec {
             None => false,
             Some(spec) => match self.cursor() {
-                Some(held) => !spec.admits(held.item),
+                Some(held) => !spec.admits(held.item, spec.accepts_mask(gui_state)),
                 None => spec.take_only,
             },
         };
@@ -507,7 +510,7 @@ mod click_filter_tests {
     use crate::item::{ItemTag, ItemType};
 
     fn spec(accepts: Vec<crate::container::SlotFilter>, take_only: bool) -> SlotSpec {
-        SlotSpec { accepts, take_only }
+        SlotSpec { accepts, take_only, accepts_bind: None }
     }
 
     /// A filtered slot refuses the cursor stack on a plain click, and refusing
@@ -530,7 +533,7 @@ mod click_filter_tests {
         let mut inv = Inventory::new();
         *inv.cursor_mut() = Some(ItemStack::new(stone, 1));
         let mut cell = None;
-        inv.click_container_cell(Some(&fuel_only), &mut cell, false);
+        inv.click_container_cell(Some(&fuel_only), None, &mut cell, false);
         assert!(
             cell.is_none(),
             "a non-fuel stack must not enter a fuel slot"
@@ -538,19 +541,19 @@ mod click_filter_tests {
         assert!(inv.cursor().is_some(), "and the cursor keeps it");
 
         *inv.cursor_mut() = Some(ItemStack::new(coal, 1));
-        inv.click_container_cell(Some(&fuel_only), &mut cell, false);
+        inv.click_container_cell(Some(&fuel_only), None, &mut cell, false);
         assert!(cell.is_some(), "fuel enters a fuel slot");
 
         // Refusing still takes: a filtered slot is not inert.
         *inv.cursor_mut() = None;
         let mut occupied = Some(ItemStack::new(coal, 3));
-        inv.click_container_cell(Some(&fuel_only), &mut occupied, false);
+        inv.click_container_cell(Some(&fuel_only), None, &mut occupied, false);
         assert!(occupied.is_none(), "the click still empties the slot");
 
         // An unfiltered slot is unchanged by any of this.
         *inv.cursor_mut() = Some(ItemStack::new(stone, 1));
         let mut open = None;
-        inv.click_container_cell(Some(&unfiltered), &mut open, false);
+        inv.click_container_cell(Some(&unfiltered), None, &mut open, false);
         assert!(open.is_some(), "an unfiltered slot still takes anything");
     }
 }

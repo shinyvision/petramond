@@ -119,6 +119,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::DamagePlayer { .. }
         | HostCall::ApplyKnockback { .. }
         | HostCall::GiveItem { .. }
+        | HostCall::GiveItemTo { .. }
         | HostCall::SetHealth { .. }
         | HostCall::Teleport { .. }
         | HostCall::EmitSound { .. }
@@ -141,6 +142,7 @@ pub(in crate::modding) fn client_capability(call: &HostCall) -> bool {
         | HostCall::GuiStateSet { .. }
         | HostCall::GuiStateSetFor { .. }
         | HostCall::PlayerHeld { .. }
+        | HostCall::SetPlayerHeldData { .. }
         | HostCall::GuiViewers
         | HostCall::GuiStateGet { .. }
         | HostCall::GuiOpen { .. }

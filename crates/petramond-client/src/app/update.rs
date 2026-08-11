@@ -3,10 +3,34 @@ use petramond_render::Renderer;
 
 impl App {
     /// Advance input and the simulation for this frame. The host calls this once per
-    /// frame wake and then draws; [`Game::tick`](crate::game::Game::tick)'s fixed-step
-    /// accumulator holds the world at 20 TPS regardless of frame rate.
+    /// frame wake and then draws; the SERVER thread owns the fixed-step accumulator
+    /// that holds the world at 20 TPS (`src/server/handle.rs`) —
+    /// [`Game::tick`](crate::game::Game::tick) only ships this frame's messages and
+    /// drains what the server produced.
     pub fn update(&mut self, renderer: &Renderer) {
         self.update_in_viewport(renderer.ui_viewport());
+    }
+
+    /// Whether a document-backed GAME menu is up with a live session behind
+    /// it — the host paces these at the full gameplay cadence: the panel's
+    /// bound state answers the server, and a menu frame cap would tax every
+    /// round trip twice (input sampling and drain-to-present).
+    pub fn game_menu_open(&self) -> bool {
+        self.game.is_some() && self.game_menu_kind().is_some()
+    }
+
+    /// The document solved as a GAME MENU this frame: a container / machine
+    /// panel or a gameplay overlay — anything driven with the simulation still
+    /// running behind it. `None` for SHELL documents, which their own branch
+    /// populates and drives, and for client-mod GUIs, which have their own
+    /// drive route. The single spelling of the condition: the menu is solved
+    /// twice per frame and paced by [`game_menu_open`](Self::game_menu_open),
+    /// and those must not disagree about what is on screen.
+    fn game_menu_kind(&self) -> Option<petramond_world::gui_state::GuiKind> {
+        if self.screen.client_ui_open() || self.doc_shell_kind().is_some() {
+            return None;
+        }
+        self.doc_ui_kind()
     }
 
     /// [`update`](Self::update) behind the renderer handoff — the whole frame
@@ -65,8 +89,18 @@ impl App {
                 self.drive_client_doc_ui(kind, screen_size, now);
             }
             self.pointer.clear_edges();
-        } else if let Some(kind) = self.doc_ui_kind() {
-            self.drive_doc_menu(kind, screen_size, now);
+        } else if self.doc_ui_kind().is_some() {
+            // A shell document is the SHELL branch's to drive, and
+            // `game_menu_kind` withholds it here: the multiplayer
+            // fall-through reaches this arm, and the shell doc just driven
+            // may have flipped the screen to ANOTHER shell doc. Driving that
+            // as a menu would stamp a frame its controller never populated —
+            // presenting one frame of unbound state (the options title
+            // backdrop over a live game). The edges clear either way: a
+            // document is up, so the click was never the world's.
+            if let Some(kind) = self.game_menu_kind() {
+                self.drive_doc_menu(kind, screen_size, now);
+            }
             self.pointer.clear_edges();
         }
 
@@ -86,6 +120,15 @@ impl App {
             .tick(dt, &game_input);
         self.adopt_chat_lines(now);
         self.handle_open_screen_events(&events);
+        // The tick above just drained the server: an open menu's read model
+        // (slot mirrors, mod gui_state) may have moved. RE-SOLVE the panel so
+        // THIS frame presents this tick's answer — solved only before the
+        // drain, every server response would cost one extra whole frame on
+        // screen. The input queue was consumed by the first solve, so this
+        // pass is pure presentation: no event fires twice.
+        if let Some(kind) = self.game_menu_kind() {
+            self.drive_doc_menu(kind, screen_size, now);
+        }
         let mining_block = (self.screen.gameplay_enabled() && game_input.break_held)
             .then(|| {
                 self.game

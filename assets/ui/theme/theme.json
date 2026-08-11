@@ -12,6 +12,8 @@
     "accent": "#57C956",
     "gold": "#E8C170",
     "danger": "#E4574F",
+    "warn": "#DCCB4E",
+    "arcane": "#B583E6",
     "selection": "#2E5C8A",
     "dim": "#00000080"
   },

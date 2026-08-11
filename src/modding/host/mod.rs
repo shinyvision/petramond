@@ -463,6 +463,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::DamagePlayer { .. }
         | HostCall::ApplyKnockback { .. }
         | HostCall::GiveItem { .. }
+        | HostCall::GiveItemTo { .. }
         | HostCall::ConsumeHeld { .. }
         | HostCall::ReplaceHeldOne { .. }
         | HostCall::SetHealth { .. }
@@ -474,6 +475,7 @@ pub(in crate::modding) fn handle_host_call(data: &mut ModStoreData, call: HostCa
         | HostCall::UnlockRecipe { .. }
         | HostCall::RecipeUnlocked { .. }
         | HostCall::PlayerHeld { .. }
+        | HostCall::SetPlayerHeldData { .. }
         | HostCall::ChatSend { .. } => player::handle_player_call(&data.mod_id, call),
         HostCall::EmitSound { .. }
         | HostCall::SoundPlayAt { .. }

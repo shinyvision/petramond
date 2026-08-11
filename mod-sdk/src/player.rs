@@ -94,6 +94,51 @@ host_fn! {
 }
 
 host_fn! {
+    /// [`give_item`] addressed to a NAMED session (the explicit-player
+    /// addressing doctrine): fill THAT player's inventory, drop the overflow
+    /// at that player's feet, `data` as the stack's instance data (pass `&[]`
+    /// for a plain stack). The delivery a machine owes a specific viewer —
+    /// a transient panel returning its contents on close. `false` = unknown
+    /// item name or no such connected session (deliver another way, e.g.
+    /// `spawn_item` at the machine).
+    pub fn give_item_to(player: PlayerId, item: &str, count: u8, data: &[(&str, &[u8])]) -> bool
+        => GiveItemTo {
+            player,
+            item: item.into(),
+            count,
+            data: data.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect(),
+        } => Bool
+}
+
+host_fn! {
+    /// Rewrite the instance data on the stack `player` is HOLDING, iff it is
+    /// still an `expect_item` carrying exactly `expect_data` — the
+    /// compare-and-set a wear system needs to restamp a tool between the event
+    /// it observed and this write. The compare covers the VALUE being
+    /// replaced, not just the item: a hand swapped OR the same stack
+    /// re-stamped by another handler or another mod in between refuses rather
+    /// than clobbers, so two writers in one tick cannot silently drop one of
+    /// the two updates. Pass the map you READ off the stack as `expect_data`
+    /// (`&[]` expects a plain stack) and the FULL replacement as `data` (≤4
+    /// namespaced keys; `&[]` clears it); the item and count stay. `false` =
+    /// empty/other hand, data that no longer matches `expect_data`, unknown
+    /// item name, or no such connected session — re-read the stack and
+    /// recompute rather than retrying the same write.
+    pub fn set_player_held_data(
+        player: PlayerId,
+        expect_item: &str,
+        expect_data: &[(&str, &[u8])],
+        data: &[(&str, &[u8])],
+    ) -> bool
+        => SetPlayerHeldData {
+            player,
+            expect_item: expect_item.into(),
+            expect_data: expect_data.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect(),
+            data: data.iter().map(|(k, v)| (k.to_string(), v.to_vec())).collect(),
+        } => Bool
+}
+
+host_fn! {
     /// Overwrite the player's health (clamped to `0..=20` half-hearts), bypassing
     /// the damage funnel — the heal/set primitive, no events fire.
     pub fn set_health(value: i32) => SetHealth { value }

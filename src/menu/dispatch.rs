@@ -20,6 +20,7 @@ impl ContainerMenu {
         &mut self,
         world: &mut World,
         inv: &mut Inventory,
+        gui: Option<&petramond_world::gui_state::GuiStateMap>,
         slot: MenuSlot,
         button: PointerButton,
         shift: bool,
@@ -33,7 +34,7 @@ impl ContainerMenu {
                     // SlotSpecs, and otherwise it shuffles hotbar↔main-grid.
                     match self.target.kind() {
                         Some(kind) if ContainerTarget::kind_block_backed(kind) => {
-                            self.container_shift_from_inventory(world, inv, i)
+                            self.container_shift_from_inventory(world, inv, gui, i)
                         }
                         _ => inv.shift_move_slot(i),
                     }
@@ -51,7 +52,7 @@ impl ContainerMenu {
             }
             MenuSlot::CraftResult => self.craft_take_output(inv, button, shift),
             MenuSlot::Container(i) => {
-                self.container_slot_interaction(world, inv, i, button, shift, gather);
+                self.container_slot_interaction(world, inv, gui, i, button, shift, gather);
             }
             // Widget clicks mutate no container: `Game::tick_menu` intercepts
             // them before this decode and dispatches to the owning mod.

@@ -297,6 +297,11 @@ impl App {
         if let Some(game) = self.game.as_ref() {
             let hover_slot = self.ui.out().hover_slot.clone();
             crate::app::item_tooltip::populate(game, hover_slot.as_ref(), self.ui.state_mut());
+            crate::app::item_tooltip::populate_slot_tip(
+                game,
+                hover_slot.as_ref(),
+                self.ui.state_mut(),
+            );
         }
         self.ui.frame(kind, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
         let modifier_shift = self.modifiers.shift;

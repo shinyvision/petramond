@@ -21,6 +21,7 @@ impl ContainerMenu {
         &mut self,
         world: &mut World,
         inv: &mut Inventory,
+        gui: Option<&petramond_world::gui_state::GuiStateMap>,
         slots: &[MenuSlot],
         button: PointerButton,
     ) {
@@ -36,10 +37,10 @@ impl ContainerMenu {
             hits,
             held.count,
             button == PointerButton::Secondary,
-            |slot| self.drag_capacity(world, inv, slot, &held),
+            |slot| self.drag_capacity(world, inv, gui, slot, &held),
         );
         for (slot, wanted) in plan {
-            self.place_cursor_in(world, inv, slot, wanted);
+            self.place_cursor_in(world, inv, gui, slot, wanted);
         }
     }
 
@@ -82,6 +83,7 @@ impl ContainerMenu {
         &self,
         world: &World,
         inv: &Inventory,
+        gui: Option<&petramond_world::gui_state::GuiStateMap>,
         slot: MenuSlot,
         held: &ItemStack,
     ) -> u8 {
@@ -99,7 +101,7 @@ impl ContainerMenu {
                 // asks the same question. Checking only `take_only` here made
                 // `accepts` a filter that any held button walked straight
                 // through — on both this path and the client's mirror of it.
-                if !self.slot_admits(i, Some(held.item)) {
+                if !self.slot_admits(i, Some(held.item), gui) {
                     return 0;
                 }
                 self.container_pos()
@@ -114,14 +116,20 @@ impl ContainerMenu {
 
     /// Whether container slot `i` accepts `held` on a deliberate placement —
     /// this menu's specs through the shared [`petramond_world::container::slot_admits`].
-    fn slot_admits(&self, i: usize, held: Option<petramond_world::item::ItemType>) -> bool {
-        petramond_world::container::slot_admits(&self.slot_specs(), i, held)
+    fn slot_admits(
+        &self,
+        i: usize,
+        held: Option<petramond_world::item::ItemType>,
+        gui: Option<&petramond_world::gui_state::GuiStateMap>,
+    ) -> bool {
+        petramond_world::container::slot_admits(&self.slot_specs(), i, held, gui)
     }
 
     fn place_cursor_in(
         &mut self,
         world: &mut World,
         inv: &mut Inventory,
+        gui: Option<&petramond_world::gui_state::GuiStateMap>,
         slot: MenuSlot,
         wanted: u8,
     ) {
@@ -134,7 +142,7 @@ impl ContainerMenu {
                     return;
                 };
                 let held = inv.cursor().map(|c| c.item);
-                if !self.slot_admits(i, held) {
+                if !self.slot_admits(i, held, gui) {
                     return;
                 }
                 let Some(pos) = self.container_pos() else {

@@ -480,6 +480,22 @@
     "item_tip_has_info": {
      "type": "bool",
      "doc": "host-populated: the hovered item declares an info line"
+    },
+    "slot{N}:tip": {
+     "type": "str",
+     "doc": "per-slot BOUND tooltip a machine publishes for container cell N (in-role index): lines separated by newline, each line split into SPANS by tab, each span 'palette|text' (palette = theme palette entry) — spans colour one word without painting the line; shown by the injected slot tooltip while that cell is hovered EMPTY; empty/absent = no tip. Lines and spans past what the injected tooltip carries (gui::documents SLOT_TIP_LINES / SLOT_TIP_SPANS) are dropped. The three separators — newline, tab, '|' — are RESERVED and have NO escape: strip them from published text, or a line splits where you did not mean it to"
+    },
+    "show_slot_tip": {
+     "type": "bool",
+     "doc": "an empty container cell with a published slot{N}:tip is hovered: reveals the floating bound tooltip"
+    },
+    "slot_tip_l{line}s{span}": {
+     "type": "str",
+     "doc": "host-populated: one span's text, for every line/span the injected tooltip carries (both counts live in gui::documents; keys are zero-based). An empty span 0 hides its whole line"
+    },
+    "slot_tip_c{line}s{span}": {
+     "type": "str",
+     "doc": "host-populated: the matching span's theme palette entry (bind.palette on the span's label); empty = the label's own style"
     }
    },
    "handles": {

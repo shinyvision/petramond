@@ -267,6 +267,23 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 rows.push(("abs_x", BindField::Abs, &mut edited.bind.abs_x));
                 rows.push(("abs_y", BindField::Abs, &mut edited.bind.abs_y));
             }
+            // `accepts` narrows a slot's AUTHORED filters at runtime — only
+            // meaningful on a slot/slot_grid that declares some (mirrors the
+            // engine-side validation).
+            let filtered_slot = match &edited.kind {
+                NodeKind::Slot { accepts, .. } | NodeKind::SlotGrid { accepts, .. } => {
+                    !accepts.is_empty()
+                }
+                _ => false,
+            };
+            if filtered_slot {
+                rows.push(("accepts", BindField::Value, &mut edited.bind.accepts));
+            }
+            // `palette` recolours a LABEL from a bound theme-palette entry —
+            // only read there (mirrors the engine-side validation).
+            if matches!(edited.kind, NodeKind::Label { .. }) {
+                rows.push(("palette", BindField::Value, &mut edited.bind.palette));
+            }
             for (label, field, v) in rows {
                 match &bind_opts {
                     Some(opts) => bind_pick(ui, label, field, v, opts, &mut t),

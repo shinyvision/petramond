@@ -82,7 +82,14 @@ impl Game {
             // same helper: a slot one side counts and the other refuses does
             // not just snap that leg back — the split is by the NUMBER of
             // destinations, so every other slot of the drag lands wrong too.
-            MenuSlot::Container(i) if petramond_world::container::slot_admits(specs, i, Some(held.item)) => {
+            MenuSlot::Container(i)
+                if petramond_world::container::slot_admits(
+                    specs,
+                    i,
+                    Some(held.item),
+                    self.menu_view.gui_state.as_deref(),
+                ) =>
+            {
                 self.menu_view
                     .container
                     .as_ref()
@@ -114,6 +121,7 @@ impl Game {
                     specs,
                     i,
                     inventory.cursor().map(|held| held.item),
+                    menu.gui_state.as_deref(),
                 ) =>
             {
                 if let Some(cell) = menu
@@ -153,11 +161,43 @@ impl Game {
                 // click never leaves the inventory.
                 !(shift || gather) || v.container.is_none()
             }
-            MenuSlot::Container(_) => {
-                !shift && !gather && v.container.is_some() && v.container_kind.is_some()
+            MenuSlot::Container(i) => {
+                !shift
+                    && !gather
+                    && v.container.is_some()
+                    && v.container_kind.is_some()
+                    && !self.mask_decides(i)
             }
             _ => false,
         }
+    }
+
+    /// Whether a runtime `accepts` MASK is the deciding voice on placing the
+    /// cursor stack into container cell `i`: the authored filters admit it but
+    /// the currently MIRRORED mask refuses. The mirror is one round trip
+    /// stale, so a mask-decided refusal is not the client's call to make — the
+    /// click rides track-only and the server (whose mask is current) decides.
+    /// Without this, inserting a tool and quickly dropping a gem into a socket
+    /// the tool just unlocked gets locally refused — the icon never appears —
+    /// until the forced sync overrules; a prediction that can only be wrong in
+    /// the refusing direction is worse than no prediction. Genuine refusals
+    /// look identical either way (nothing moves), just one round trip later.
+    fn mask_decides(&self, i: usize) -> bool {
+        let Some(kind) = self.menu_view.container_kind else {
+            return false;
+        };
+        let Some(held) = self.self_view.inventory.cursor().map(|c| c.item) else {
+            return false;
+        };
+        let specs = petramond::gui::documents::container_slot_specs(kind);
+        let Some(spec) = specs.get(i) else {
+            return false;
+        };
+        if spec.accepts_bind.is_none() {
+            return false;
+        }
+        let mask = spec.accepts_mask(self.menu_view.gui_state.as_deref());
+        spec.admits(held, petramond_world::container::FULL_MASK) && !spec.admits(held, mask)
     }
 
     /// Apply click prediction; callers gate on
@@ -199,7 +239,12 @@ impl Game {
                     .as_mut()
                     .and_then(|container| container.slots.get_mut(i))
                 {
-                    inv.click_container_cell(specs.get(i), cell, secondary);
+                    inv.click_container_cell(
+                        specs.get(i),
+                        self.menu_view.gui_state.as_deref(),
+                        cell,
+                        secondary,
+                    );
                 }
             }
             _ => {}

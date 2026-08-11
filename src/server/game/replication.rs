@@ -395,9 +395,14 @@ impl ServerGame {
             .is_some_and(|kind| kind.is_mod())
             .then(|| self.mod_gui_state_for_menu_sync(s, target));
         let sess = &mut self.sessions[s];
+        // Pointer identity first (the no-publish fast path), then VALUE
+        // equality: a machine that re-publishes identical readings every tick
+        // (the anvil's ~20 keys, every gauge) forces `Arc::make_mut` onto a
+        // fresh allocation each time — ptr inequality alone re-shipped the
+        // whole map 20×/s per viewer for zero information.
         let gui_changed = match (&gui_arc, &sess.last_sent_gui_state) {
             (None, None) => false,
-            (Some(a), Some(b)) => !std::sync::Arc::ptr_eq(a, b),
+            (Some(a), Some(b)) => !std::sync::Arc::ptr_eq(a, b) && **a != **b,
             _ => true,
         };
         let base_changed = sess.last_menu_sync.as_ref() != Some(&base);

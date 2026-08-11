@@ -383,7 +383,63 @@
       "data": {
         "forge:metal": {
           "melts_to": "petramond:raw_gold"
-        }
+        },
+        "forge:augment": [
+          {
+            "tool": "pickaxe",
+            "speed_mult": 0.8,
+            "cost": 3,
+            "overlay": "forge:gold_inlay",
+            "overlays": {
+              "default": "forge:gold_inlay_pickaxe",
+              "stone": "forge:gold_inlay_pickaxe_stone"
+            },
+            "gentle": {
+              "chance": 25
+            },
+            "wear": {
+              "on": "proc",
+              "max": 300
+            }
+          },
+          {
+            "tool": "axe",
+            "speed_mult": 0.8,
+            "cost": 3,
+            "overlay": "forge:gold_inlay",
+            "overlays": {
+              "default": "forge:gold_inlay_axe",
+              "stone": "forge:gold_inlay_axe_stone"
+            },
+            "gentle": {
+              "chance": 25,
+              "blocks": [
+                "petramond:leaves"
+              ]
+            },
+            "wear": {
+              "on": "proc",
+              "max": 300
+            }
+          },
+          {
+            "tool": "shovel",
+            "speed_mult": 0.8,
+            "cost": 3,
+            "overlay": "forge:gold_inlay",
+            "overlays": {
+              "default": "forge:gold_inlay_shovel",
+              "stone": "forge:gold_inlay_shovel_stone"
+            },
+            "gentle": {
+              "chance": 25
+            },
+            "wear": {
+              "on": "proc",
+              "max": 300
+            }
+          }
+        ]
       }
     },
     {
@@ -597,7 +653,11 @@
             1.5
           ]
         },
-        "forge:nondestructive": true
+        "forge:nondestructive": {
+          "blocks": [
+            "petramond:leaves"
+          ]
+        }
       }
     },
     {
@@ -657,6 +717,36 @@
       },
       "tags": [],
       "block": "forge:anvil"
+    },
+    {
+      "item": "forge:petramond",
+      "key": "forge:petramond",
+      "sprite": "forge:petramond",
+      "name": "Petramond",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "info": "Unlocks an augment slot at the anvil.",
+      "tags": [],
+      "data": {
+        "forge:socket_key": true
+      }
+    },
+    {
+      "item": "forge:petramond_ore",
+      "key": "forge:petramond_ore",
+      "name": "Petramond Ore",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "forge:petramond_ore"
     },
     {
       "item": "forge:diamond_tip",
@@ -737,12 +827,102 @@
       "tags": []
     },
     {
+      "item": "forge:gold_inlay",
+      "key": "forge:gold_inlay",
+      "sprite": "forge:gold_inlay",
+      "name": "Gold Inlay",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "forge:gold_inlay_pickaxe",
+      "key": "forge:gold_inlay_pickaxe",
+      "sprite": "forge:gold_inlay_pickaxe",
+      "name": "Gold Inlay (Pickaxe)",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "forge:gold_inlay_pickaxe_stone",
+      "key": "forge:gold_inlay_pickaxe_stone",
+      "sprite": "forge:gold_inlay_pickaxe_stone",
+      "name": "Gold Inlay (Stone Pickaxe)",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "forge:gold_inlay_axe",
+      "key": "forge:gold_inlay_axe",
+      "sprite": "forge:gold_inlay_axe",
+      "name": "Gold Inlay (Axe)",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "forge:gold_inlay_axe_stone",
+      "key": "forge:gold_inlay_axe_stone",
+      "sprite": "forge:gold_inlay_axe_stone",
+      "name": "Gold Inlay (Stone Axe)",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "forge:gold_inlay_shovel",
+      "key": "forge:gold_inlay_shovel",
+      "sprite": "forge:gold_inlay_shovel",
+      "name": "Gold Inlay (Shovel)",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
+      "item": "forge:gold_inlay_shovel_stone",
+      "key": "forge:gold_inlay_shovel_stone",
+      "sprite": "forge:gold_inlay_shovel_stone",
+      "name": "Gold Inlay (Stone Shovel)",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 0,
+        "roll": 0
+      },
+      "tags": []
+    },
+    {
       "patch": "petramond:diamond",
       "data": {
         "forge:augment": [
           {
             "tool": "pickaxe",
-            "slot": "tip",
             "tier": 4,
             "speed_mult": 1.3334,
             "damage_mult": 1.5,
@@ -750,11 +930,14 @@
             "overlay": "forge:diamond_tip",
             "overlays": {
               "stone": "forge:diamond_tip_stone"
+            },
+            "wear": {
+              "on": "break",
+              "max": 3000
             }
           },
           {
             "tool": "axe",
-            "slot": "blade",
             "tier": 4,
             "speed_mult": 1.3334,
             "damage_mult": 1.5,
@@ -762,11 +945,14 @@
             "overlay": "forge:diamond_axe_blade",
             "overlays": {
               "stone": "forge:diamond_axe_blade_stone"
+            },
+            "wear": {
+              "on": "break",
+              "max": 3000
             }
           },
           {
             "tool": "shovel",
-            "slot": "blade",
             "tier": 4,
             "speed_mult": 1.3334,
             "damage_mult": 1.5,
@@ -774,6 +960,10 @@
             "overlay": "forge:diamond_shovel_blade",
             "overlays": {
               "stone": "forge:diamond_shovel_blade_stone"
+            },
+            "wear": {
+              "on": "break",
+              "max": 3000
             }
           }
         ]
@@ -783,15 +973,6 @@
       "patch": "petramond:stone_pickaxe",
       "data": {
         "forge:augment_slots": {
-          "slots": [
-            {
-              "slot": "tip",
-              "at": [
-                13,
-                7
-              ]
-            }
-          ],
           "family": "stone"
         }
       }
@@ -800,15 +981,7 @@
       "patch": "petramond:iron_pickaxe",
       "data": {
         "forge:augment_slots": {
-          "slots": [
-            {
-              "slot": "tip",
-              "at": [
-                5,
-                3
-              ]
-            }
-          ]
+          "lockable": 3
         }
       }
     },
@@ -816,47 +989,20 @@
       "patch": "forge:copper_pickaxe",
       "data": {
         "forge:augment_slots": {
-          "slots": [
-            {
-              "slot": "tip",
-              "at": [
-                5,
-                3
-              ]
-            }
-          ]
+          "lockable": 2
         }
       }
     },
     {
       "patch": "forge:gold_pickaxe",
       "data": {
-        "forge:augment_slots": {
-          "slots": [
-            {
-              "slot": "tip",
-              "at": [
-                5,
-                3
-              ]
-            }
-          ]
-        }
+        "forge:augment_slots": {}
       }
     },
     {
       "patch": "petramond:stone_axe",
       "data": {
         "forge:augment_slots": {
-          "slots": [
-            {
-              "slot": "blade",
-              "at": [
-                8,
-                3
-              ]
-            }
-          ],
           "family": "stone"
         }
       }
@@ -865,15 +1011,7 @@
       "patch": "petramond:iron_axe",
       "data": {
         "forge:augment_slots": {
-          "slots": [
-            {
-              "slot": "blade",
-              "at": [
-                8,
-                2
-              ]
-            }
-          ]
+          "lockable": 3
         }
       }
     },
@@ -881,47 +1019,20 @@
       "patch": "forge:copper_axe",
       "data": {
         "forge:augment_slots": {
-          "slots": [
-            {
-              "slot": "blade",
-              "at": [
-                8,
-                2
-              ]
-            }
-          ]
+          "lockable": 2
         }
       }
     },
     {
       "patch": "forge:gold_axe",
       "data": {
-        "forge:augment_slots": {
-          "slots": [
-            {
-              "slot": "blade",
-              "at": [
-                8,
-                2
-              ]
-            }
-          ]
-        }
+        "forge:augment_slots": {}
       }
     },
     {
       "patch": "petramond:stone_shovel",
       "data": {
         "forge:augment_slots": {
-          "slots": [
-            {
-              "slot": "blade",
-              "at": [
-                13,
-                4
-              ]
-            }
-          ],
           "family": "stone"
         }
       }
@@ -930,15 +1041,7 @@
       "patch": "petramond:iron_shovel",
       "data": {
         "forge:augment_slots": {
-          "slots": [
-            {
-              "slot": "blade",
-              "at": [
-                14,
-                3
-              ]
-            }
-          ]
+          "lockable": 3
         }
       }
     },
@@ -946,32 +1049,14 @@
       "patch": "forge:copper_shovel",
       "data": {
         "forge:augment_slots": {
-          "slots": [
-            {
-              "slot": "blade",
-              "at": [
-                14,
-                3
-              ]
-            }
-          ]
+          "lockable": 2
         }
       }
     },
     {
       "patch": "forge:gold_shovel",
       "data": {
-        "forge:augment_slots": {
-          "slots": [
-            {
-              "slot": "blade",
-              "at": [
-                14,
-                3
-              ]
-            }
-          ]
-        }
+        "forge:augment_slots": {}
       }
     }
   ]

@@ -282,6 +282,43 @@ fn multiplayer_pause_menu_does_not_freeze_the_client() {
     assert_eq!(app.screen, AppScreen::Pause, "the menu itself stays up");
 }
 
+/// Behind the multiplayer pause menu the update falls through to the sim, so
+/// the frame that flips Pause→Options reaches the game-menu chain with the
+/// NEW screen. Driving the options document there would stamp a frame its
+/// controller never populated — with unbound state the options title-flow
+/// backdrop (`screenshot.png`) defaults visible, and render() would present
+/// one frame of another world over a live game. The shell branch owns shell
+/// documents: on the transition frame the stamp must stay stale (render
+/// re-updates instead of presenting), and any stamped options frame over a
+/// live game must have populated `show_backdrop = false`.
+#[test]
+fn lan_menu_transition_never_stamps_an_unpopulated_shell_frame() {
+    let mut app = app();
+    app.lan_port = Some(7434);
+    app.server.lan_ever_opened = true;
+
+    app.handle_control(Control::CloseScreen, true); // ESC → Pause
+    app.handle_control(Control::CloseScreen, false);
+    app.update_frame(SCREEN); // solve the pause document
+    assert_eq!(app.screen, AppScreen::Pause);
+
+    click_doc_id(&mut app, "options");
+    app.update_frame(SCREEN); // the transition frame: the click flips the screen
+    assert_eq!(app.screen, AppScreen::Options);
+    if let Some((GuiKind::Options, _)) = app.ui.frame_stamp() {
+        assert_eq!(
+            app.ui.state_mut().get_bool("show_backdrop"),
+            Some(false),
+            "an options frame stamped over a live game must be populated"
+        );
+    }
+
+    // Settled: the shell branch drives Options with its populate.
+    app.update_frame(SCREEN);
+    assert!(matches!(app.ui.frame_stamp(), Some((GuiKind::Options, _))));
+    assert_eq!(app.ui.state_mut().get_bool("show_backdrop"), Some(false));
+}
+
 /// The real thing over loopback TCP: a spawned host opened to LAN on an
 /// ephemeral port, the UI connect worker joining it, and the remote-session
 /// disconnect leaving cleanly.

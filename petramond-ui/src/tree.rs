@@ -52,6 +52,9 @@ pub struct Inst<'d> {
     /// authored `layout.abs` position.
     pub abs_x: Option<i32>,
     pub abs_y: Option<i32>,
+    /// Resolved `palette` binding (labels): the theme palette entry that
+    /// colours the text this frame (empty string resolves to `None`).
+    pub palette: Option<String>,
     pub enabled: bool,
     /// Arena index of the parent instance (`None` for the root).
     pub parent: Option<u32>,
@@ -226,6 +229,10 @@ impl<'d> InstTree<'d> {
             abs_y: resolve_key(state, item_map, &node.bind.abs_y)
                 .and_then(UiValue::as_f32)
                 .map(|f| f as i32),
+            palette: resolve_key(state, item_map, &node.bind.palette).and_then(|v| match v {
+                UiValue::Str(s) if !s.is_empty() => Some(s.clone()),
+                _ => None,
+            }),
             parent,
             children: Vec::new(),
             key: node.id.as_ref().map(|id| InstKey {

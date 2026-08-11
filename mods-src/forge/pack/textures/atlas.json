@@ -135,6 +135,42 @@
         {
             "name": "forge:diamond_shovel_blade_stone",
             "file": "diamond_shovel_blade_stone.png"
+        },
+        {
+            "name": "forge:gold_inlay",
+            "file": "gold_inlay.png"
+        },
+        {
+            "name": "forge:gold_inlay_pickaxe",
+            "file": "gold_inlay_pickaxe.png"
+        },
+        {
+            "name": "forge:gold_inlay_pickaxe_stone",
+            "file": "gold_inlay_pickaxe_stone.png"
+        },
+        {
+            "name": "forge:gold_inlay_axe",
+            "file": "gold_inlay_axe.png"
+        },
+        {
+            "name": "forge:gold_inlay_axe_stone",
+            "file": "gold_inlay_axe_stone.png"
+        },
+        {
+            "name": "forge:gold_inlay_shovel",
+            "file": "gold_inlay_shovel.png"
+        },
+        {
+            "name": "forge:gold_inlay_shovel_stone",
+            "file": "gold_inlay_shovel_stone.png"
+        },
+        {
+            "name": "forge:petramond",
+            "file": "petramond.png"
+        },
+        {
+            "name": "forge:petramond_ore",
+            "file": "petramond_ore.png"
         }
     ]
 }

@@ -348,6 +348,24 @@ fn samples() -> Samples {
     });
     s.pin("HostCall::BlockInfo", &HostCall::BlockInfo { block: BlockId(300) });
     s.pin("HostCall::PlayerHeld", &HostCall::PlayerHeld { player: PlayerId(2) });
+    s.pin(
+        "HostCall::GiveItemTo",
+        &HostCall::GiveItemTo {
+            player: PlayerId(2),
+            item: "i".into(),
+            count: 3,
+            data: vec![("k".into(), vec![7])],
+        },
+    );
+    s.pin(
+        "HostCall::SetPlayerHeldData",
+        &HostCall::SetPlayerHeldData {
+            player: PlayerId(2),
+            expect_item: "i".into(),
+            expect_data: vec![("k".into(), vec![6])],
+            data: vec![("k".into(), vec![7])],
+        },
+    );
 
     // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
@@ -896,6 +914,8 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::GuiStateSetFor", "880102016b000000003f"),
     ("HostCall::BlockInfo", "8901ac02"),
     ("HostCall::PlayerHeld", "8a0102"),
+    ("HostCall::GiveItemTo", "8b010201690301016b0107"),
+    ("HostCall::SetPlayerHeldData", "8c0102016901016b010601016b0107"),
     ("HostRet::Unit", "00"),
     ("HostRet::U64", "0101"),
     ("HostRet::Error", "020165"),

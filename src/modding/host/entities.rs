@@ -400,26 +400,66 @@ pub(super) fn give_item(
     count: u8,
     variant: petramond_world::item::VariantId,
 ) {
+    let (leftovers, at) = fill_inventory(ctx.player, item, count, variant);
+    drop_leftovers(ctx.world, at, leftovers);
+}
+
+/// The inventory half of a give: fill `player`'s inventory, returning what
+/// did not fit plus where its overflow should drop (the player's body). Split
+/// from the drop half so an EXPLICIT-player give (`GiveItemTo`) can run it
+/// inside the sessions-view borrow and spawn the drops outside it — one
+/// arithmetic for both addressings.
+fn fill_inventory(
+    player: &mut crate::player::Player,
+    item: ItemType,
+    count: u8,
+    variant: petramond_world::item::VariantId,
+) -> (Vec<ItemStack>, petramond_math::math::Vec3) {
+    let mut leftovers = Vec::new();
     let mut remaining = count;
     while remaining > 0 {
         let put = remaining.min(item.max_stack_size());
         remaining -= put;
-        if let Some(leftover) = ctx
-            .player
-            .inventory
-            .add(ItemStack::with_variant(item, put, variant))
-        {
-            let at = ctx.player.body_center();
-            let seed = drop_seed(ctx.world.current_tick(), at, remaining as u32);
-            let cell = petramond_math::math::voxel_at(at);
-            let mut drop = DroppedItem::new(at, leftover, seed);
-            drop.skylight = ctx.world.skylight6_at_world(cell.x, cell.y, cell.z);
-            drop.blocklight = petramond_world::light::BlockLight6::from_x2(
-                ctx.world.blocklight_rgb_at_world(cell.x, cell.y, cell.z),
-            );
-            ctx.world.spawn_item(drop);
+        if let Some(leftover) = player.inventory.add(ItemStack::with_variant(item, put, variant)) {
+            leftovers.push(leftover);
         }
     }
+    (leftovers, player.body_center())
+}
+
+/// The world half of a give: drop what the inventory refused, at `at`.
+fn drop_leftovers(
+    world: &mut crate::world::World,
+    at: petramond_math::math::Vec3,
+    leftovers: Vec<ItemStack>,
+) {
+    for (i, leftover) in leftovers.into_iter().enumerate() {
+        let seed = drop_seed(world.current_tick(), at, i as u32);
+        let cell = petramond_math::math::voxel_at(at);
+        let mut drop = DroppedItem::new(at, leftover, seed);
+        drop.skylight = world.skylight6_at_world(cell.x, cell.y, cell.z);
+        drop.blocklight = petramond_world::light::BlockLight6::from_x2(
+            world.blocklight_rgb_at_world(cell.x, cell.y, cell.z),
+        );
+        world.spawn_item(drop);
+    }
+}
+
+/// [`give_item`] addressed to a NAMED session through the sessions view:
+/// `false` when the id resolves to no connected player.
+pub(super) fn give_item_to(
+    ctx: &mut SimCtx<'_>,
+    player: crate::player::PlayerId,
+    item: ItemType,
+    count: u8,
+    variant: petramond_world::item::VariantId,
+) -> bool {
+    let Some((leftovers, at)) = ctx.with_player(player, |p| fill_inventory(p, item, count, variant))
+    else {
+        return false;
+    };
+    drop_leftovers(ctx.world, at, leftovers);
+    true
 }
 
 #[cfg(test)]
