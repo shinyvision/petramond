@@ -1,6 +1,110 @@
 {
   "mobs": [
     {
+      "mob": "farming:rabbit",
+      "key": "farming:rabbit",
+      "model": "models/rabbit.bbmodel",
+      "scale": 0.06,
+      "size": {
+        "half_width": 0.28,
+        "height": 0.75
+      },
+      "tags": {
+        "petramond:health": 3.0
+      },
+      "walk_speed": 2.4,
+      "jump_speed": 7.2,
+      "turn_rate": 7.0,
+      "walk_anim_rate": 1.1,
+      "category": "passive",
+      "cap": 12,
+      "spawn": {
+        "biomes": [
+          "plains",
+          "forest",
+          "meadow",
+          "wooded_hills",
+          "foothills",
+          "wetland",
+          "swamp",
+          "mountain_edge",
+          "windswept_hills",
+          "beach",
+          "river",
+          "ocean",
+          "deep_ocean",
+          "redwood_forest",
+          "savanna",
+          "taiga",
+          "old_growth_taiga",
+          "mountains",
+          "grove",
+          "stony_peaks",
+          "snowy_taiga",
+          "snowy_slopes",
+          "desert_lakes",
+          "desert",
+          "snowy_tundra",
+          "snowy_plains",
+          "snowy_peaks"
+        ],
+        "chances": {
+          "redwood_forest": 0.7,
+          "savanna": 0.6,
+          "taiga": 0.5,
+          "old_growth_taiga": 0.5,
+          "mountains": 0.5,
+          "grove": 0.35,
+          "stony_peaks": 0.35,
+          "snowy_taiga": 0.25,
+          "snowy_slopes": 0.25,
+          "desert_lakes": 0.25,
+          "desert": 0.2,
+          "snowy_tundra": 0.15,
+          "snowy_plains": 0.15,
+          "snowy_peaks": 0.1
+        },
+        "ground": [
+          "petramond:grass",
+          "petramond:dirt",
+          "petramond:podzol",
+          "petramond:coarse_dirt",
+          "petramond:sand",
+          "petramond:red_sand",
+          "petramond:gravel",
+          "petramond:stone",
+          "petramond:snow_block"
+        ]
+      },
+      "spawn_group": {
+        "min": 1,
+        "max": 3
+      },
+      "wander": {
+        "chance_per_tick": 0.015,
+        "radius": 10,
+        "avoid_ground": [
+          "petramond:rock"
+        ]
+      },
+      "habitat": {
+        "avoid": [],
+        "prefer": []
+      },
+      "avoid_water": true,
+      "damage_feedback": [],
+      "brain": [
+        {
+          "node": "wander",
+          "priority": 0
+        },
+        {
+          "node": "head_look",
+          "priority": 10
+        }
+      ]
+    },
+    {
       "mob": "farming:lamb",
       "key": "farming:lamb",
       "model": "models/lamb.bbmodel",
@@ -29,6 +133,9 @@
       "wander": {
         "chance_per_tick": 0.012,
         "radius": 8,
+        "avoid_ground": [
+          "petramond:rock"
+        ],
         "cohesion": {
           "companion": "petramond:sheep",
           "search_radius_multiplier": 2
@@ -71,7 +178,10 @@
         {
           "node": "farming:follow_wheat",
           "priority": 20,
-          "inputs": ["player_held", "player_foothold"]
+          "inputs": [
+            "player_held",
+            "player_foothold"
+          ]
         },
         {
           "node": "farming:husbandry_goal",

@@ -131,6 +131,11 @@ struct RawMobDef {
 struct RawSpawn {
     /// Biome names (see [`Biome::from_name`]). Empty = never natural-spawned.
     biomes: Vec<String>,
+    /// Optional per-biome spawn chance in `(0, 1]`, keyed by a name from
+    /// `biomes`; unlisted biomes spawn at full chance. See
+    /// [`SpawnRule::chances`].
+    #[serde(default)]
+    chances: std::collections::BTreeMap<String, f64>,
     ground: Vec<Block>,
 }
 
@@ -139,6 +144,12 @@ struct RawSpawn {
 struct RawWander {
     chance_per_tick: f64,
     radius: i32,
+    /// BLOCK TAG names whose members the wander AI refuses as a
+    /// destination's floor (see [`WanderTuning::avoid_ground`]). A tag
+    /// nothing lists resolves to nothing — cross-pack semantics, like
+    /// `BlocksByTag`: the tag may belong to a pack that isn't loaded.
+    #[serde(default)]
+    avoid_ground: Vec<String>,
     #[serde(default)]
     cohesion: Option<RawCohesion>,
 }
@@ -382,14 +393,12 @@ fn convert(r: RawMobDef, mob: Mob, names: &NameTable) -> Result<MobDef, String> 
         category: r.category,
         despawn_radius,
         cap: r.cap,
-        spawn: SpawnRule {
-            biomes: resolve_biomes(r.spawn.biomes)?,
-            ground: Box::leak(r.spawn.ground.into_boxed_slice()),
-        },
+        spawn: convert_spawn(r.spawn)?,
         spawn_group: r.spawn_group,
         wander: WanderTuning {
             chance_per_tick: r.wander.chance_per_tick as f32,
             radius: r.wander.radius,
+            avoid_ground: resolve_block_tags(r.wander.avoid_ground),
             cohesion,
         },
         habitat: Habitat {
@@ -521,6 +530,54 @@ fn convert_spawn_tags(
     }
     tags.insert(super::tags::HEALTH.to_owned(), MobTagValue::Float(health));
     Ok(Box::leak(Box::new(tags)))
+}
+
+/// Resolve a row's spawn rule: the biome list, the optional per-biome chance
+/// map (validated to name only listed biomes, values in `(0, 1]`, and aligned
+/// index-for-index with the biome list — see [`SpawnRule::chances`]), and the
+/// ground block list.
+fn convert_spawn(raw: RawSpawn) -> Result<SpawnRule, String> {
+    let biomes = resolve_biomes(raw.biomes)?;
+    let chances: &'static [f32] = if raw.chances.is_empty() {
+        &[]
+    } else {
+        let mut chances = vec![1.0f32; biomes.len()];
+        for (name, chance) in raw.chances {
+            let biome =
+                Biome::from_name(&name).ok_or_else(|| format!("spawn chance for unknown biome '{name}'"))?;
+            let at = biomes.iter().position(|&b| b == biome).ok_or_else(|| {
+                format!("spawn chance for '{name}', which is not in the spawn biomes list")
+            })?;
+            if !chance.is_finite() || chance <= 0.0 || chance > 1.0 {
+                return Err(format!(
+                    "spawn chance for '{name}' must be in (0, 1], got {chance} — drop the biome from the list instead of zeroing it"
+                ));
+            }
+            chances[at] = chance as f32;
+        }
+        Box::leak(chances.into_boxed_slice())
+    };
+    Ok(SpawnRule {
+        biomes,
+        chances,
+        ground: Box::leak(raw.ground.into_boxed_slice()),
+    })
+}
+
+/// Resolve BLOCK TAG names into the blocks carrying them, sorted + deduped.
+/// A tag nothing lists resolves to nothing rather than erroring (`BlocksByTag`
+/// semantics): the tag may belong to a pack that isn't loaded, and a mob row
+/// must not break when an optional pack's blocks are absent.
+fn resolve_block_tags(tags: Vec<String>) -> &'static [Block] {
+    let mut out: Vec<Block> = Vec::new();
+    for name in tags {
+        if let Some(tag) = petramond_world::block::BlockTag::lookup(&name) {
+            out.extend(Block::all().iter().copied().filter(|b| b.has_tag(tag)));
+        }
+    }
+    out.sort_by_key(|b| b.id());
+    out.dedup();
+    Box::leak(out.into_boxed_slice())
 }
 
 fn resolve_biomes(names: Vec<String>) -> Result<&'static [Biome], String> {

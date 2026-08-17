@@ -26,6 +26,7 @@
 //! could never reach.
 
 use petramond_world::biome::Biome;
+use petramond_world::block::Block;
 use petramond_math::math::{IVec3, Vec3};
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
@@ -75,6 +76,14 @@ const AVOID_ESCAPE: u32 = 5;
 /// many times, then accept a wet one rather than refuse to move. Crossing water on
 /// the way to a dry destination is unaffected — that's the pathfinder's call.
 const WATER_ESCAPE: u32 = 3;
+
+/// Same idea for avoided GROUND (`WanderTuning::avoid_ground` — the
+/// cave-mouth rule: surface animals steering off stone/ore/marble floors):
+/// re-roll a destination whose floor is avoided this many times, then accept
+/// one rather than refuse to move — a mob standing amid avoided ground (it
+/// fell into a cave) must still wander, including back out. Crossing such
+/// ground en route is unaffected, like water.
+const GROUND_ESCAPE: u32 = 5;
 
 pub struct WanderAi {
     tuning: WanderTuning,
@@ -173,7 +182,7 @@ fn pick_destination(
         )
     });
     let escape_water = avoid_water && ctx.in_water;
-    let mut picker = Picker::new(AVOID_ESCAPE, WATER_ESCAPE);
+    let mut picker = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
     let mut wet_fallback = None;
     let mut unreachable_seen = 0u32;
     for _ in 0..PICK_ATTEMPTS {
@@ -218,6 +227,11 @@ fn pick_destination(
         // destination that sits in water — up to the escape hatch, after which
         // a wet spot is accepted rather than refusing.
         if avoid_water && !escape_water && picker.reject_water(wet) {
+            continue;
+        }
+        // Avoided ground (the cave-mouth rule): re-roll a destination whose
+        // floor the species steers off — same escape-hatch semantics.
+        if picker.reject_ground(floor_avoided(ctx, tuning.avoid_ground, dest)) {
             continue;
         }
         if let Some((rule, origin_has_companion)) = cohesion {
@@ -298,7 +312,7 @@ fn pick_region_destination(
     let r2 = radius * radius;
     let path_params = PathParams::for_body(ctx.head, ctx.half_width);
     let escape_water = avoid_water && ctx.in_water;
-    let mut picker = Picker::new(AVOID_ESCAPE, WATER_ESCAPE);
+    let mut picker = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
     let mut wet_fallback = None;
     for _ in 0..PICK_ATTEMPTS {
         let roll = ctx.rng.next_range(0, region.cells.len() as i32 - 1);
@@ -327,11 +341,25 @@ fn pick_region_destination(
                 continue;
             }
         }
+        if picker.reject_ground(floor_avoided(ctx, tuning.avoid_ground, dest)) {
+            continue;
+        }
         if let Some(dest) = picker.offer(dest, fit) {
             return Some(dest);
         }
     }
     picker.into_fallback().or(wet_fallback)
+}
+
+/// Whether the FLOOR under foothold `dest` — the block the feet would rest
+/// on — is one the species steers off (`WanderTuning::avoid_ground`).
+fn floor_avoided(ctx: &AiCtx, avoid: &[Block], dest: IVec3) -> bool {
+    !avoid.is_empty()
+        && avoid.contains(&Block::from_id(ctx.world.chunk_block(
+            dest.x,
+            dest.y - 1,
+            dest.z,
+        )))
 }
 
 /// The navigation foothold Y in column `(x, z)` closest to `y0`, scanning outward
@@ -456,16 +484,20 @@ struct Picker {
     avoided_seen: u32,
     water_escape: u32,
     water_seen: u32,
+    ground_escape: u32,
+    ground_seen: u32,
     fallback: Option<IVec3>,
 }
 
 impl Picker {
-    fn new(avoid_escape: u32, water_escape: u32) -> Self {
+    fn new(avoid_escape: u32, water_escape: u32, ground_escape: u32) -> Self {
         Picker {
             avoid_escape,
             avoided_seen: 0,
             water_escape,
             water_seen: 0,
+            ground_escape,
+            ground_seen: 0,
             fallback: None,
         }
     }
@@ -488,6 +520,19 @@ impl Picker {
     fn reject_water(&mut self, in_water: bool) -> bool {
         if in_water && self.water_seen < self.water_escape {
             self.water_seen += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Should this candidate be skipped for standing on avoided ground? Counts
+    /// the skip toward the ground escape hatch; once `ground_escape` are
+    /// counted the rule lifts and such floors become fallback-eligible — a mob
+    /// surrounded by avoided ground still moves.
+    fn reject_ground(&mut self, avoided: bool) -> bool {
+        if avoided && self.ground_seen < self.ground_escape {
+            self.ground_seen += 1;
             true
         } else {
             false
@@ -588,7 +633,7 @@ mod tests {
 
     #[test]
     fn picker_takes_a_preferred_candidate_immediately() {
-        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE);
+        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
         let neutral = IVec3::new(1, 0, 0);
         let preferred = IVec3::new(2, 0, 0);
         // A neutral spot is only remembered, not taken...
@@ -600,7 +645,7 @@ mod tests {
 
     #[test]
     fn picker_falls_back_to_the_first_neutral_when_no_preferred() {
-        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE);
+        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
         let first = IVec3::new(1, 0, 0);
         assert_eq!(p.offer(first, BiomeFit::Neutral), None);
         assert_eq!(p.offer(IVec3::new(2, 0, 0), BiomeFit::Neutral), None);
@@ -613,7 +658,7 @@ mod tests {
 
     #[test]
     fn picker_rejects_avoided_until_the_escape_hatch_lifts_it() {
-        let mut p = Picker::new(3, WATER_ESCAPE);
+        let mut p = Picker::new(3, WATER_ESCAPE, GROUND_ESCAPE);
         // The first 3 avoided candidates are rejected (counting toward the hatch)...
         for _ in 0..3 {
             assert!(p.reject_avoided(BiomeFit::Avoided));
@@ -628,7 +673,7 @@ mod tests {
 
     #[test]
     fn picker_never_rejects_neutral_or_preferred() {
-        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE);
+        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
         assert!(!p.reject_avoided(BiomeFit::Neutral));
         assert!(!p.reject_avoided(BiomeFit::Preferred));
     }
@@ -855,6 +900,7 @@ mod tests {
         WanderTuning {
             chance_per_tick: 1.0,
             radius,
+            avoid_ground: &[],
             cohesion: None,
         }
     }
@@ -995,7 +1041,7 @@ mod tests {
 
     #[test]
     fn picker_rejects_water_until_the_escape_hatch_lifts_it() {
-        let mut p = Picker::new(AVOID_ESCAPE, 3);
+        let mut p = Picker::new(AVOID_ESCAPE, 3, GROUND_ESCAPE);
         // The first 3 wet candidates are rejected (counting toward the hatch)...
         for _ in 0..3 {
             assert!(p.reject_water(true));
@@ -1012,8 +1058,86 @@ mod tests {
     }
 
     #[test]
+    fn picker_rejects_avoided_ground_until_the_escape_hatch_lifts_it() {
+        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, 3);
+        for _ in 0..3 {
+            assert!(p.reject_ground(true));
+        }
+        // After the hatch, avoided floors stop being rejected and become
+        // fallback-eligible — a mob surrounded by rock still moves.
+        assert!(!p.reject_ground(true));
+        let rocky = IVec3::new(5, 0, 0);
+        assert_eq!(p.offer(rocky, BiomeFit::Neutral), None);
+        assert_eq!(p.into_fallback(), Some(rocky));
+        // A clear floor is never rejected.
+        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
+        assert!(!p.reject_ground(false));
+    }
+
+    /// The cave-mouth rule end to end: with grass available, a species that
+    /// avoids stone floors never wanders onto the stone half of its disc —
+    /// while a mob standing amid nothing but stone still picks somewhere to
+    /// go (the escape hatch; it must be able to wander back out of a cave).
+    #[test]
+    fn wander_steers_off_avoided_floors_but_never_freezes_on_them() {
+        static AVOID_STONE: &[Block] = &[Block::Stone];
+        let tuning = |radius| WanderTuning {
+            chance_per_tick: 1.0,
+            radius,
+            avoid_ground: AVOID_STONE,
+            cohesion: None,
+        };
+        // East half of the disc is stone floor, west half grass.
+        let world = flat_grass_world(|chunk| {
+            for z in 0..CHUNK_SZ {
+                for x in 8..CHUNK_SX {
+                    chunk.set_block(x, 64, z, Block::Stone);
+                }
+            }
+        });
+        let mut picked = 0;
+        for seed in 0..30 {
+            let mut rng = MobRng::new(seed);
+            let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(7.5, 65.0, 7.5));
+            let pick = pick_destination(&mut ctx, tuning(6), plains_habitat(), true);
+            if let Some(goal) = pick.goal {
+                picked += 1;
+                assert!(
+                    goal.x < 8,
+                    "goal {goal:?} stands on the avoided stone floor"
+                );
+            }
+        }
+        assert!(picked > 0, "grass destinations are still picked");
+
+        // All-stone floor: the hatch lifts and the mob still moves.
+        let world = flat_grass_world(|chunk| {
+            for z in 0..CHUNK_SZ {
+                for x in 0..CHUNK_SX {
+                    chunk.set_block(x, 64, z, Block::Stone);
+                }
+            }
+        });
+        let mut picked = 0;
+        for seed in 0..30 {
+            let mut rng = MobRng::new(seed);
+            let mut ctx = make_ctx(&world, &mut rng, &[], 0, Vec3::new(7.5, 65.0, 7.5));
+            if pick_destination(&mut ctx, tuning(6), plains_habitat(), true)
+                .goal
+                .is_some()
+            {
+                picked += 1;
+            }
+        }
+        assert!(
+            picked > 0,
+            "a mob amid avoided ground must still wander (and escape a cave)"
+        );
+    }
+
+    #[test]
     fn picker_never_rejects_a_dry_candidate() {
-        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE);
+        let mut p = Picker::new(AVOID_ESCAPE, WATER_ESCAPE, GROUND_ESCAPE);
         assert!(!p.reject_water(false));
     }
 
@@ -1030,6 +1154,7 @@ mod tests {
             WanderTuning {
                 chance_per_tick: 0.0,
                 radius: 4,
+                avoid_ground: &[],
                 cohesion: None,
             },
             plains_habitat(),
@@ -1061,6 +1186,7 @@ mod tests {
             WanderTuning {
                 chance_per_tick: 0.0,
                 radius: 4,
+                avoid_ground: &[],
                 cohesion: None,
             },
             plains_habitat(),

@@ -224,6 +224,29 @@ impl Instance {
             self.anim_time = 0.0;
             self.prev_anim_time = 0.0;
         }
+        // An upward launch from a walking gait re-phases the walk clip
+        // FORWARD to the next cycle boundary. A repeating launch's period
+        // (a mod-authored hop) can sit near the clip's own length, and a
+        // free-running clock then drifts into anti-phase and stays there for
+        // whole walk legs (legs tucking at takeoff, kicking at landing).
+        // Forward only, never a reset to 0: the replica interpolates raw
+        // prev→curr snapshots, so a backward phase jump sweeps the clip in
+        // reverse on clients for a frame at every launch. A walk leg's first
+        // launch starts at phase 0 already (the kind change above just
+        // reset the clock).
+        if std::mem::take(&mut self.walk_launch) && kind == AnimKind::Walk {
+            let walk_len = named_anims
+                .binary_search_by(|m| m.name.as_str().cmp("walk"))
+                .ok()
+                .map(|at| named_anims[at].length)
+                .filter(|len| *len > 1e-4);
+            if let Some(len) = walk_len {
+                let residue = self.anim_time.rem_euclid(len);
+                if residue > 1e-4 {
+                    self.anim_time += len - residue;
+                }
+            }
+        }
         // Advance the active animation: walk at the species' rate, idle at its
         // natural rate, rest frozen (the renderer shows the static rest pose).
         // Named mod layers do NOT ride this clock — each advances its own

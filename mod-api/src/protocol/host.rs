@@ -808,20 +808,44 @@ pub enum HostCall {
     MobRiders {
         mob_id: u64,
     },
-    /// Drive the live mob `mob_id` kinematically for THIS tick: `vel` is a
-    /// horizontal world-space velocity (m/s) that replaces the brain's wish
-    /// locomotion (vertical physics — gravity, water buoyancy — and collision
-    /// stay engine-owned), and `yaw`, when present, sets the absolute facing
-    /// (mob convention: yaw `0` faces `-Z`, facing `(-sin yaw, 0, -cos yaw)`).
+    /// Drive the live mob `mob_id` kinematically for THIS tick — full 3-D
+    /// velocity access, each part independently optional so a mod composes
+    /// with, or replaces, the engine's own locomotion:
+    /// - `horizontal`: a world-space `[x, z]` velocity (m/s) that REPLACES
+    ///   the brain's wish locomotion for the tick (a vehicle; the mob does
+    ///   not read as walking). `None` leaves the brain's walking untouched.
+    /// - `vertical`: a vertical velocity (m/s) set for the tick; gravity
+    ///   resumes next tick, and water buoyancy stays engine-owned. Composes
+    ///   with EITHER horizontal source — an upward value from the ground is
+    ///   a launch (the walking gait carries through the arc), which is how a
+    ///   pack authors a gait like a hop without the engine knowing the word.
+    ///   An engine navigation step-jump keeps priority over it on the tick
+    ///   both fire.
+    /// - `yaw`, when present, sets the absolute facing (mob convention: yaw
+    ///   `0` faces `-Z`, facing `(-sin yaw, 0, -cos yaw)`).
+    ///
     /// Like the wish it is an intent, not a state: re-issue it every tick
     /// (friction, steering feel, and control policy are the driving mod's) —
     /// a mod that stops calling leaves the mob to its brain. Knockback
-    /// stagger overrides the drive for its duration. `false` = unknown or
-    /// dead mob. → [`HostRet::Bool`].
+    /// stagger overrides the drive for its duration. Collision always stays
+    /// engine-owned.
+    ///
+    /// `while_walking` carries the intent's PREMISE: when `true`, the intent
+    /// is consumed only on a tick whose brain locomotion is actually walking
+    /// the mob (the snapshot's `moving` fact) and silently dropped
+    /// otherwise. A latched intent is decided from LAST tick's state, and
+    /// the walk it was premised on can end in between (arrival, a route
+    /// abandoned, knockback) — an unconditional launch then fires one stale
+    /// in-place bounce at the destination. A walking-gated intent cannot
+    /// carry `horizontal` (walking IS the horizontal locomotion; the host
+    /// refuses the combination). `false` = unknown or dead mob.
+    /// → [`HostRet::Bool`].
     MobDrive {
         mob_id: u64,
-        vel: [f32; 2],
+        horizontal: Option<[f32; 2]>,
+        vertical: Option<f32>,
         yaw: Option<f32>,
+        while_walking: bool,
     },
     /// Toggle a NAMED model animation on the live mob `mob_id` — the
     /// animation sibling of [`HostCall::MobEmitterSet`]: presentation-only,

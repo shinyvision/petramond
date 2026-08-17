@@ -100,6 +100,21 @@ pub struct MobSnapshot {
     ///
     /// [`HostCall::MobDrive`]: crate::HostCall::MobDrive
     pub vel: [f32; 3],
+    /// Whether the body rests on the ground this tick (the same fact the
+    /// engine's own locomotion gates jumps on) — with
+    /// [`moving`](Self::moving), what a gait policy needs to decide a
+    /// [`HostCall::MobDrive`] launch.
+    ///
+    /// [`HostCall::MobDrive`]: crate::HostCall::MobDrive
+    pub on_ground: bool,
+    /// Whether the brain's WALKING locomotion drove the body this tick — the
+    /// same fact that selects the walk pose. Deliberate motion only: shoves
+    /// from other bodies, knockback flights, and kinematic drives all read
+    /// `false`, while a ballistic arc that began as a walk stays `true`
+    /// through its unsteered descent. THE intent signal for a gait policy:
+    /// [`vel`](Self::vel) alone cannot distinguish a mob going somewhere
+    /// from a mob being pushed around.
+    pub moving: bool,
 }
 
 /// What a player is attached to, for mount HostCalls and

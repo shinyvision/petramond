@@ -224,7 +224,7 @@ fn samples() -> Samples {
     s.pin("HostCall::MobDismount", &HostCall::MobDismount { player_id: PlayerId(1) });
     s.pin("HostCall::MobRiders", &HostCall::MobRiders { mob_id: 7 });
     s.pin("HostCall::MobDrive", &HostCall::MobDrive {
-        mob_id: 7, vel: [1.0, 2.0], yaw: Some(0.5),
+        mob_id: 7, horizontal: Some([1.0, 2.0]), vertical: Some(4.5), yaw: Some(0.5), while_walking: true,
     });
     s.pin("HostCall::MobAnimSet", &HostCall::MobAnimSet {
         mob_id: 7, anim: "row".into(), active: true,
@@ -377,7 +377,7 @@ fn samples() -> Samples {
     s.pin("HostRet::Light", &HostRet::Light(Some(LightData { combined: 1, sky: 2, block: 3, block_rgb: [3, 2, 1] })));
     s.pin("HostRet::Mobs", &HostRet::Mobs(vec![MobSnapshot {
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
-        yaw: 0.5, vel: [1.0, 0.0, 2.0],
+        yaw: 0.5, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
     }]));
     s.pin("HostRet::Player", &HostRet::Player(PlayerSnapshot {
         pos: [1.0, 2.0, 3.0], vel: [0.0, 0.0, 0.0], yaw: 0.5, pitch: 0.25,
@@ -457,7 +457,7 @@ fn samples() -> Samples {
     s.pin("HostRet::FoundBlocks", &HostRet::FoundBlocks(Some(vec![[1, -2, 3]])));
     s.pin("HostRet::Mob", &HostRet::Mob(Some(MobSnapshot {
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
-        yaw: 0.5, vel: [1.0, 0.0, 2.0],
+        yaw: 0.5, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
     })));
     s.pin("HostRet::BytesMany", &HostRet::BytesMany(vec![Some(vec![1, 2]), None]));
     s.pin("HostRet::ItemDataRows", &HostRet::ItemDataRows(vec![(ItemId(3), "{}".into())]));
@@ -860,7 +860,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostCall::MobMount", "52070100"),
     ("HostCall::MobDismount", "5301"),
     ("HostCall::MobRiders", "5407"),
-    ("HostCall::MobDrive", "55070000803f00000040010000003f"),
+    ("HostCall::MobDrive", "5507010000803f000000400100009040010000003f01"),
     ("HostCall::MobAnimSet", "560703726f7701"),
     ("HostCall::MobAnimRate", "570703726f77000080bf"),
     ("HostCall::MobAnimSeek", "580703726f770000c03f0000403f"),
@@ -923,7 +923,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::Block", "040101"),
     ("HostRet::Blocks", "0502000102"),
     ("HostRet::Light", "0601010203030201"),
-    ("HostRet::Mobs", "070101020000803f000000400000404000008040050000003f0000803f0000000000000040"),
+    ("HostRet::Mobs", "070101020000803f000000400000404000008040050000003f0000803f00000000000000400100"),
     ("HostRet::Player", "080000803f00000040000040400000000000000000000000000000003f0000803e28010001010203010000c03f00000040000060c0"),
     ("HostRet::Bytes", "09010101"),
     ("HostRet::MobTag", "0a020001"),
@@ -955,7 +955,7 @@ const PINS: &[(&str, &str)] = &[
     ("HostRet::MobTags", "240101036d3a6b0001"),
     ("HostRet::SpawnedMob", "250107"),
     ("HostRet::FoundBlocks", "260101020306"),
-    ("HostRet::Mob", "270101020000803f000000400000404000008040050000003f0000803f0000000000000040"),
+    ("HostRet::Mob", "270101020000803f000000400000404000008040050000003f0000803f00000000000000400100"),
     ("HostRet::BytesMany", "28020102010200"),
     ("HostRet::ItemDataRows", "290103027b7d"),
     ("HostRet::BlockDataRows", "2a0104027b7d"),

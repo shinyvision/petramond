@@ -42,6 +42,7 @@ mod follow;
 mod forage;
 mod growth;
 mod hemp;
+mod hop;
 mod husbandry;
 mod kv_counter;
 mod predict;
@@ -90,6 +91,7 @@ const AI_HUSBANDRY_GOAL: u32 = 2;
 
 // Tick system id.
 const TICK_HUSBANDRY: u32 = 1;
+const TICK_HOP: u32 = 2;
 
 #[derive(Default)]
 struct Farming {
@@ -141,6 +143,9 @@ impl Mod for Farming {
         // Right after the mobs move, so the sweep measures this tick's
         // positions and its steering tags are in place for the next.
         register_tick_system(Stage::Mobs, AttachSide::After, 0, TICK_HUSBANDRY);
+        // The rabbit's hop gait: pack policy over the generic vertical-drive
+        // seam, decided from each tick's fresh landings (see `hop`).
+        register_tick_system(Stage::Mobs, AttachSide::After, 0, TICK_HOP);
     }
 
     fn tick_system(&mut self, system_id: u32) {
@@ -149,6 +154,9 @@ impl Mod for Farming {
         };
         if system_id == TICK_HUSBANDRY {
             husbandry::on_tick(content);
+        }
+        if system_id == TICK_HOP {
+            hop::on_tick(content);
         }
     }
 

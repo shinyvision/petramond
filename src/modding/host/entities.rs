@@ -51,6 +51,8 @@ pub(super) fn mob_snapshot(index: usize, m: &crate::mob::Instance) -> MobSnapsho
         id: m.id(),
         yaw: m.yaw,
         vel: m.vel().to_array(),
+        on_ground: m.on_ground(),
+        moving: m.moving,
     }
 }
 
@@ -216,13 +218,34 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
         }
         // Kinematic drive intent for this tick (see `Instance::set_drive`);
         // immediate like every presentation/locomotion primitive.
-        HostCall::MobDrive { mob_id, vel, yaw } => {
-            if !vel.iter().all(|c| c.is_finite()) || yaw.is_some_and(|y| !y.is_finite()) {
+        HostCall::MobDrive {
+            mob_id,
+            horizontal,
+            vertical,
+            yaw,
+            while_walking,
+        } => {
+            if horizontal.is_some_and(|v| !v.iter().all(|c| c.is_finite()))
+                || vertical.is_some_and(|v| !v.is_finite())
+                || yaw.is_some_and(|y| !y.is_finite())
+            {
                 return HostRet::Error("MobDrive: non-finite velocity/yaw".into());
             }
-            if vel[0].hypot(vel[1]) > MAX_MOB_DRIVE_SPEED {
+            if while_walking && horizontal.is_some() {
+                return HostRet::Error(
+                    "MobDrive: a walking-gated intent cannot carry horizontal velocity — \
+                     walking IS the horizontal locomotion"
+                        .into(),
+                );
+            }
+            if horizontal.is_some_and(|v| v[0].hypot(v[1]) > MAX_MOB_DRIVE_SPEED) {
                 return HostRet::Error(format!(
                     "MobDrive: horizontal speed exceeds {MAX_MOB_DRIVE_SPEED} m/s"
+                ));
+            }
+            if vertical.is_some_and(|v| v.abs() > MAX_MOB_DRIVE_SPEED) {
+                return HostRet::Error(format!(
+                    "MobDrive: vertical speed exceeds {MAX_MOB_DRIVE_SPEED} m/s"
                 ));
             }
             sim_query(move |ctx| {
@@ -232,7 +255,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: HostCall) -> HostRet {
                 HostRet::Bool(
                     ctx.world
                         .mobs_mut()
-                        .set_mob_drive(index, vel[0], vel[1], yaw),
+                        .set_mob_drive(index, horizontal, vertical, yaw, while_walking),
                 )
             })
         }
@@ -679,8 +702,24 @@ mod tests {
         });
         rejected(HostCall::MobDrive {
             mob_id: 1,
-            vel: [super::MAX_MOB_DRIVE_SPEED * 2.0, 0.0],
+            horizontal: Some([super::MAX_MOB_DRIVE_SPEED * 2.0, 0.0]),
+            vertical: None,
             yaw: None,
+            while_walking: false,
+        });
+        rejected(HostCall::MobDrive {
+            mob_id: 1,
+            horizontal: None,
+            vertical: Some(super::MAX_MOB_DRIVE_SPEED * 2.0),
+            yaw: None,
+            while_walking: false,
+        });
+        rejected(HostCall::MobDrive {
+            mob_id: 1,
+            horizontal: Some([1.0, 0.0]),
+            vertical: Some(1.0),
+            yaw: None,
+            while_walking: true,
         });
     }
 
@@ -822,8 +861,10 @@ mod tests {
                 &mut data,
                 HostCall::MobDrive {
                     mob_id,
-                    vel: [1.0, 0.0],
+                    horizontal: Some([1.0, 0.0]),
+                    vertical: None,
                     yaw: None,
+                    while_walking: false,
                 },
             );
             refused(

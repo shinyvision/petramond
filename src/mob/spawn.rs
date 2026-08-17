@@ -139,6 +139,12 @@ pub(super) fn attempt(
     let site =
         |world: &World, kind: Mob, wx: i32, wz: i32| spawn_site(world, player_pos, kind, wx, wz);
     let first = spawn_with(world, kind, wx, wz, rng, &site)?;
+    // Climate rarity: the species' per-biome spawn chance gates the WHOLE
+    // attempt with one roll — never per group member, so rarity thins spawn
+    // events, not group size.
+    if !biome_chance_passes(world, kind, wx, wz, rng) {
+        return None;
+    }
     let mut spawns = Vec::with_capacity(want as usize);
     spawns.push(first);
 
@@ -200,6 +206,30 @@ pub(super) fn site_for(world: &World, kind: Mob, wx: i32, wz: i32) -> Option<Vec
     }
 
     Some(feet_pos)
+}
+
+/// Roll the species' per-biome spawn chance for the column's biome — the
+/// climate-rarity gate shared by the trickle attempt and the worldgen herds,
+/// drawn ONCE per attempt/herd (see [`super::SpawnRule::chances`]). A
+/// full-chance biome draws NOTHING, so rows without the field leave every
+/// existing RNG stream exactly as it was.
+pub(super) fn biome_chance_passes(
+    world: &World,
+    kind: Mob,
+    wx: i32,
+    wz: i32,
+    rng: &mut MobRng,
+) -> bool {
+    let Some(biome) = world.column_biome(wx, wz).map(Biome::from_id) else {
+        return false;
+    };
+    chance_gate(def(kind).spawn.chance_in(biome), || rng.next_f32())
+}
+
+/// Pure chance gate: certain at full chance (no roll consumed), else decided
+/// by the lazily-drawn roll in `[0, 1)`.
+fn chance_gate(chance: f32, roll: impl FnOnce() -> f32) -> bool {
+    chance >= 1.0 || roll() < chance
 }
 
 /// Whether `kind` can physically stand with its feet in `feet`.
@@ -713,6 +743,15 @@ mod tests {
         assert_eq!(cap_room(0, 8, 25, 25), 0);
         // Both full -> no.
         assert_eq!(cap_room(8, 8, 25, 25), 0);
+    }
+
+    #[test]
+    fn the_chance_gate_is_certain_at_full_chance_and_rolls_below_it() {
+        // Full chance draws NOTHING — existing rows must leave every RNG
+        // stream exactly as it was before per-biome chances existed.
+        assert!(chance_gate(1.0, || unreachable!("full chance draws no roll")));
+        assert!(chance_gate(0.2, || 0.19));
+        assert!(!chance_gate(0.2, || 0.2));
     }
 
     #[test]

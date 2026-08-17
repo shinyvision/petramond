@@ -48,24 +48,32 @@ const JUMP_TRIGGER_FRONT_XZ: f32 = 0.7;
 const STUCK_TICKS: u32 = 40;
 /// Squared per-tick displacement below which the mob counts as "not progressing".
 const STUCK_EPS_SQ: f32 = 0.015 * 0.015;
-/// A waypoint also counts as reached on OVERSHOOT — the mob PASSED it: its
-/// offset flipped sign since last tick, or it stopped getting closer — while
-/// having come within this radius (just inside the waypoint's own cell). A
-/// fast mob's per-tick step can exceed the tightened
-/// [`arrive_xz`](Navigator::arrive_xz) window several times over (the hushjaw:
-/// 0.24 m/tick vs a 0.05 m window), so it overflies the centre, turns 180°,
-/// and orbits the waypoint instead of walking the route. The sign flip catches
-/// the overfly BEFORE a single reversed step is emitted; the stalled-distance
-/// signal catches symmetric orbits and grazes ("distance grew" alone misses an
-/// orbit whose radius is constant). Closest approach is as near as that body
-/// at that speed was ever going to get, so consuming there keeps the wide-body
-/// corner-clearance contract intact: while the mob still closes in on a corner
-/// waypoint nothing changes.
-const OVERSHOOT_RADIUS: f32 = 0.45;
-/// Minimum per-tick radial improvement that still counts as "getting closer" —
-/// well below any real walk speed's per-tick step, so a slow mob's honest
-/// approach can't be mistaken for an orbit.
-const OVERSHOOT_EPS: f32 = 1e-3;
+/// Steered ticks without the body improving its BEST-ACHIEVED distance to the
+/// held goal before the route is abandoned. Raw displacement cannot prove
+/// liveness for a ballistic gait: a hopper whose ~1-block stride cannot
+/// resolve a pocket smaller than itself ping-pongs between its faces at full
+/// speed forever — plenty of movement, zero progress (the 2026-08-17 rabbit
+/// cliff-edge trap). Net progress toward the GOAL is the definition of going
+/// somewhere, and it survives repaths (unlike any per-waypoint signal — a
+/// repath can legitimately re-target a just-passed cell). Sized above any
+/// honest non-improving phase of a local detour, far below "forever".
+const GOAL_STALL_CALLS: u32 = 60;
+/// Lateral distance (m) from a route segment's line within which the body
+/// counts as ON that segment for passing consumption (see
+/// [`Navigator::advance_cursor`]). Wide enough to absorb a ballistic
+/// landing's drift off the line and a shove; narrow enough that a parallel
+/// corridor one cell over never reads as this one.
+const PASS_CORRIDOR: f32 = 0.6;
+/// Minimum progress (m) past a waypoint — along its outgoing segment, or
+/// beyond the end of its incoming one — that counts as having PASSED it.
+/// Big enough that float noise at a corner can't consume the turn before
+/// the body actually rounds it; far below one tick's step for any real
+/// walk speed.
+const PASS_EPS: f32 = 0.05;
+/// How many waypoints ahead of the cursor the passing scan examines. A
+/// ballistic arc (a mod-driven hop, a knockback flight) can carry the body
+/// past at most a couple of one-cell waypoints between two ticks.
+const PASS_LOOKAHEAD: usize = 3;
 /// Re-pathfind toward an *unchanged* goal once this many ticks have passed since the
 /// current path was computed — once a second at 20 TPS. Long enough that holding a goal
 /// across ticks is cheap, short enough that a path computed against an earlier world
@@ -76,18 +84,6 @@ const OVERSHOOT_EPS: f32 = 1e-3;
 const REPATH_TICKS: u32 = 20;
 /// Longest same-goal retry interval after repeated partial/failed searches.
 const MAX_REPATH_BACKOFF_TICKS: u32 = 200;
-
-/// One waypoint's approach history: how near the mob has come and which way the
-/// waypoint last lay — the overshoot detector's inputs (see follow()).
-struct WaypointApproach {
-    /// Which `path` index this history belongs to.
-    index: usize,
-    /// Closest horizontal distance achieved so far.
-    best: f32,
-    /// Horizontal offset toward the waypoint on the previous tick; a sign flip
-    /// against the current offset means the mob passed it this tick.
-    toward: (f32, f32),
-}
 
 pub struct Navigator {
     path: Vec<IVec3>,
@@ -104,9 +100,13 @@ pub struct Navigator {
     height: f32,
     stuck: u32,
     last_pos: Vec3,
-    /// The overshoot detector's memory of the CURRENT waypoint's approach
-    /// (see [`OVERSHOOT_RADIUS`]). Reset whenever the path or cursor changes.
-    approach: Option<WaypointApproach>,
+    /// Best horizontal distance to the held goal achieved so far, and the
+    /// steered ticks since it last improved — the [`GOAL_STALL_CALLS`]
+    /// liveness signal. Reset on goal change only; deliberately NOT on
+    /// repath (the tally must keep climbing across route refreshes, like
+    /// [`stuck`](Self::stuck)).
+    goal_best: f32,
+    goal_stall: u32,
     /// Ticks since the current path was computed; at [`REPATH_TICKS`] the held goal is
     /// re-pathed to refresh a route gone stale (see the constant).
     since_path: u32,
@@ -129,7 +129,8 @@ impl Navigator {
             height,
             stuck: 0,
             last_pos: Vec3::ZERO,
-            approach: None,
+            goal_best: f32::INFINITY,
+            goal_stall: 0,
             since_path: 0,
             repath_interval: REPATH_TICKS,
             #[cfg(test)]
@@ -160,7 +161,8 @@ impl Navigator {
         self.goal = None;
         self.path_reaches_goal = false;
         self.stuck = 0;
-        self.approach = None;
+        self.goal_best = f32::INFINITY;
+        self.goal_stall = 0;
         self.since_path = 0;
         self.repath_interval = REPATH_TICKS;
     }
@@ -199,6 +201,8 @@ impl Navigator {
                     self.recompute(start, g, world, obstacles, true);
                     self.goal = Some(g);
                     self.stuck = 0;
+                    self.goal_best = f32::INFINITY;
+                    self.goal_stall = 0;
                 } else {
                     // Same goal held: refresh the route at the current interval. A
                     // reachable route uses the normal cadence; repeated partial/failed
@@ -273,7 +277,6 @@ impl Navigator {
         } else {
             self.path.len()
         };
-        self.approach = None;
         self.since_path = 0;
         if self.path_reaches_goal || goal_changed {
             self.repath_interval = REPATH_TICKS;
@@ -317,57 +320,90 @@ impl Navigator {
         )
     }
 
+    /// Advance the waypoint cursor from the body's LIVE position — stateless
+    /// per tick and MONOTONIC over the route, so steering back to a place
+    /// the body has already been past is impossible by construction (the
+    /// prior approach-history overshoot detector could refuse a pass it
+    /// hadn't watched closely, turning fast or ballistic movers around —
+    /// the hop-off-a-ledge rubber-band, the hushjaw backtrack).
+    ///
+    /// Two rules, evaluated fresh from geometry every tick:
+    /// - PASSING (projection): waypoint `j` is consumed once the body has
+    ///   provably progressed past it along the route — its horizontal
+    ///   projection lies more than [`PASS_EPS`] along `j`'s OUTGOING segment,
+    ///   or beyond the far end of `j`'s INCOMING one (an overrun straight
+    ///   through) — while within [`PASS_CORRIDOR`] of that segment's line
+    ///   and within [`ARRIVE_Y`] of one of its endpoints' levels (a route
+    ///   crossing a different storey never consumes). The farthest passed
+    ///   waypoint within [`PASS_LOOKAHEAD`] wins, so an arc that clears two
+    ///   cells consumes both. A body approaching a corner projects at zero
+    ///   progress onto the turn's outgoing segment until it actually rounds
+    ///   it, so the wide-body corner-clearance contract holds untouched.
+    /// - ARRIVAL: the current target within [`arrive_xz`](Self::arrive_xz)
+    ///   at level — the only rule that can consume a waypoint the body
+    ///   stops ON (projection needs motion past it).
+    ///
+    /// Called from [`follow`](Self::follow) every steered tick and directly
+    /// (as the whole bookkeeping) while steering is suspended — a hop's
+    /// descent, a fall, a knockback flight — because a ballistic arc passes
+    /// waypoints between steered ticks.
+    pub fn advance_cursor(&mut self, pos: Vec3) {
+        // Passing: scan the lookahead window; the farthest passed wins.
+        let end = self
+            .path
+            .len()
+            .saturating_sub(1)
+            .min(self.index + PASS_LOOKAHEAD);
+        let mut passed: Option<usize> = None;
+        for j in self.index..=end {
+            if j == 0 {
+                continue;
+            }
+            let level_ok = |cell: IVec3| (pos.y - cell.y as f32).abs() <= ARRIVE_Y;
+            // Overrun of the incoming segment: projection beyond its far end.
+            let (t_in, lat_in, len_in) = project_horizontal(pos, self.path[j - 1], self.path[j]);
+            let over_in = t_in > len_in + PASS_EPS
+                && lat_in <= PASS_CORRIDOR
+                && (level_ok(self.path[j - 1]) || level_ok(self.path[j]));
+            // Progress along the outgoing segment (when one exists).
+            let over_out = j + 1 < self.path.len() && {
+                let (t_out, lat_out, _) = project_horizontal(pos, self.path[j], self.path[j + 1]);
+                t_out > PASS_EPS
+                    && lat_out <= PASS_CORRIDOR
+                    && (level_ok(self.path[j]) || level_ok(self.path[j + 1]))
+            };
+            if over_in || over_out {
+                passed = Some(j);
+            }
+        }
+        if let Some(j) = passed {
+            self.index = self.index.max(j + 1);
+        }
+        // Arrival cascade on the (possibly advanced) current target.
+        let arrive_xz = self.arrive_xz();
+        while self.index < self.path.len() {
+            let wp = self.path[self.index];
+            let (dx, dz) = (wp.x as f32 + 0.5 - pos.x, wp.z as f32 + 0.5 - pos.z);
+            let horiz = (dx * dx + dz * dz).sqrt();
+            let dy = (pos.y - wp.y as f32).abs();
+            if horiz <= arrive_xz && dy <= ARRIVE_Y {
+                self.index += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
     /// This tick's locomotion: a unit horizontal `wish` direction toward the current
     /// waypoint, and whether to jump. Consumes waypoints as they're reached and
     /// abandons the path if the mob stalls.
     pub fn follow(&mut self, pos: Vec3, on_ground: bool) -> (Vec3, bool) {
-        let arrive_xz = self.arrive_xz();
-        while self.index < self.path.len() {
+        self.advance_cursor(pos);
+        if self.index < self.path.len() {
             let wp = self.path[self.index];
             let (tx, tz) = (wp.x as f32 + 0.5, wp.z as f32 + 0.5);
             let (dx, dz) = (tx - pos.x, tz - pos.z);
             let horiz = (dx * dx + dz * dz).sqrt();
-            let dy = (pos.y - wp.y as f32).abs();
-
-            if horiz <= arrive_xz && dy <= ARRIVE_Y {
-                self.approach = None;
-                self.index += 1;
-                continue; // reached this waypoint; aim at the next
-            }
-
-            // Overshoot: consume a waypoint the mob has PASSED. A fast mob's
-            // per-tick step can be several times the arrive window, so it may
-            // never land inside it; without this it turns 180° back and
-            // orbits the waypoint (often at a symmetric distance either side)
-            // instead of walking the route. Two passing signals, both gated on
-            // having come within [`OVERSHOOT_RADIUS`]: the waypoint's offset
-            // FLIPPED sign since last tick (the overfly itself — caught before
-            // a single reversed step is emitted), or the mob has stopped
-            // getting closer (the symmetric orbit / a graze).
-            if dy <= ARRIVE_Y {
-                match &mut self.approach {
-                    Some(a) if a.index == self.index => {
-                        let flipped = a.toward.0 * dx + a.toward.1 * dz < 0.0;
-                        let improving = horiz + OVERSHOOT_EPS < a.best;
-                        if (flipped || !improving) && a.best.min(horiz) <= OVERSHOOT_RADIUS {
-                            self.approach = None;
-                            self.index += 1;
-                            continue;
-                        }
-                        // Not passing yet: still far out and honestly closing
-                        // in (or wedged — the stuck tally owns that case).
-                        a.best = a.best.min(horiz);
-                        a.toward = (dx, dz);
-                    }
-                    _ => {
-                        self.approach = Some(WaypointApproach {
-                            index: self.index,
-                            best: horiz,
-                            toward: (dx, dz),
-                        });
-                    }
-                }
-            }
 
             // Progress / stuck tracking.
             let progress_dx = pos.x - self.last_pos.x;
@@ -381,6 +417,23 @@ impl Navigator {
             if self.stuck >= STUCK_TICKS {
                 self.clear();
                 return (Vec3::ZERO, false);
+            }
+            // Goal-progress liveness (see GOAL_STALL_CALLS): moving a lot is
+            // not going somewhere — abandon a route whose best-achieved
+            // distance to the goal has stopped improving.
+            if let Some(goal) = self.goal {
+                let (gx, gz) = (goal.x as f32 + 0.5 - pos.x, goal.z as f32 + 0.5 - pos.z);
+                let goal_dist = (gx * gx + gz * gz).sqrt();
+                if goal_dist + 1e-3 < self.goal_best {
+                    self.goal_best = goal_dist;
+                    self.goal_stall = 0;
+                } else {
+                    self.goal_stall += 1;
+                    if self.goal_stall >= GOAL_STALL_CALLS {
+                        self.clear();
+                        return (Vec3::ZERO, false);
+                    }
+                }
             }
 
             let dir = if horiz > 1e-4 {
@@ -410,6 +463,23 @@ impl Navigator {
     fn arrive_xz(&self) -> f32 {
         MAX_ARRIVE_XZ.min((0.5 - self.half_width).max(MIN_ARRIVE_XZ))
     }
+}
+
+/// Horizontal projection of `pos` onto the route segment between cell centres
+/// `a` and `b`: (signed distance along the segment direction from `a` in
+/// metres — may be negative or beyond the length — the perpendicular distance
+/// from the segment's line, and the segment's length).
+fn project_horizontal(pos: Vec3, a: IVec3, b: IVec3) -> (f32, f32, f32) {
+    let (ax, az) = (a.x as f32 + 0.5, a.z as f32 + 0.5);
+    let (bx, bz) = (b.x as f32 + 0.5, b.z as f32 + 0.5);
+    let (dx, dz) = (bx - ax, bz - az);
+    let len = (dx * dx + dz * dz).sqrt();
+    let (px, pz) = (pos.x - ax, pos.z - az);
+    if len <= 1e-6 {
+        return (0.0, (px * px + pz * pz).sqrt(), 0.0);
+    }
+    let (ux, uz) = (dx / len, dz / len);
+    (px * ux + pz * uz, (px * uz - pz * ux).abs(), len)
 }
 
 /// How far ahead (m) the steering probe sweeps the body along the wish. About
@@ -1161,6 +1231,102 @@ mod tests {
         // But not while airborne.
         let (_w2, jump_air) = nav.follow(Vec3::new(0.7, 1.0, 0.5), false);
         assert!(!jump_air, "no jump while off the ground");
+    }
+
+    /// The hop-off-a-ledge rubber-band regression: a ballistic arc carries
+    /// the body past waypoints — including between steered ticks — and the
+    /// cursor must advance past every one of them (monotonic projection
+    /// consumption, [`Navigator::advance_cursor`]) no matter how far beyond
+    /// a centre the flight lands; steering back to a place the body has
+    /// already been past must be impossible.
+    #[test]
+    fn a_ballistic_pass_advances_the_cursor_and_never_turns_the_mob_back() {
+        let mut nav = Navigator::new(1, 0.35, 0.9);
+        nav.path = vec![
+            IVec3::new(0, 1, 0),
+            IVec3::new(1, 1, 0),
+            IVec3::new(2, 1, 0),
+            IVec3::new(3, 1, 0),
+        ];
+        nav.index = 1;
+        nav.goal = Some(IVec3::new(3, 1, 0));
+        nav.path_reaches_goal = true;
+
+        let (wish, _) = nav.follow(Vec3::new(0.6, 1.0, 0.5), true);
+        assert!(wish.x > 0.9, "heads toward the waypoint: {wish:?}");
+        // The arc carries the body past TWO waypoint centres, unsteered,
+        // landing far outside any arrive window.
+        for x in [0.9, 1.4, 2.0, 2.6] {
+            nav.advance_cursor(Vec3::new(x, 1.3, 0.5));
+        }
+        // Steering resumes well past both — the wish must aim FORWARD.
+        let (wish, _) = nav.follow(Vec3::new(2.7, 1.0, 0.5), true);
+        assert!(
+            wish.x > 0.9,
+            "passed waypoints were consumed mid-flight; no turning back: {wish:?}"
+        );
+
+        // The same guarantee on a STEERED overshoot (the hushjaw backtrack
+        // shape): a fast walker that steps far past a waypoint centre in one
+        // tick keeps going forward, never orbits back to it.
+        let mut nav = Navigator::new(1, 0.45, 0.9);
+        nav.path = vec![
+            IVec3::new(0, 1, 0),
+            IVec3::new(1, 1, 0),
+            IVec3::new(2, 1, 0),
+        ];
+        nav.index = 1;
+        nav.goal = Some(IVec3::new(2, 1, 0));
+        nav.path_reaches_goal = true;
+        let (wish, _) = nav.follow(Vec3::new(1.2, 1.0, 0.5), true);
+        assert!(wish.x > 0.9, "closing in: {wish:?}");
+        let (wish, _) = nav.follow(Vec3::new(1.9, 1.0, 0.5), true);
+        assert!(
+            wish.x > 0.9,
+            "a big step past the centre keeps aiming forward: {wish:?}"
+        );
+    }
+
+    /// Moving a lot is not going somewhere: a ballistic gait ping-ponging in
+    /// a pocket its stride cannot resolve keeps raw displacement high every
+    /// tick, so only GOAL-progress liveness can abandon the route (the
+    /// 2026-08-17 rabbit cliff-edge trap). An honest approach never trips it.
+    #[test]
+    fn a_route_with_movement_but_no_goal_progress_is_abandoned() {
+        let mut nav = Navigator::new(1, 0.35, 0.9);
+        nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(8, 1, 0)];
+        nav.index = 1;
+        nav.goal = Some(IVec3::new(8, 1, 0));
+        nav.path_reaches_goal = true;
+        // Ping-pong across a whole block each call — far beyond the raw
+        // displacement epsilon — while never getting nearer the goal.
+        for call in 0..2 * GOAL_STALL_CALLS {
+            if nav.is_idle() {
+                break;
+            }
+            let x = if call % 2 == 0 { 0.5 } else { 1.5 };
+            nav.follow(Vec3::new(x, 1.0, 0.5), true);
+        }
+        assert!(
+            nav.is_idle(),
+            "a movement-rich, progress-free route must be abandoned"
+        );
+
+        // An honest (even slow) approach keeps the route alive well past the
+        // stall budget: the best-achieved goal distance keeps improving.
+        let mut nav = Navigator::new(1, 0.35, 0.9);
+        nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(200, 1, 0)];
+        nav.index = 1;
+        nav.goal = Some(IVec3::new(200, 1, 0));
+        nav.path_reaches_goal = true;
+        for call in 0..3 * GOAL_STALL_CALLS {
+            let x = 0.5 + call as f32 * 0.05;
+            nav.follow(Vec3::new(x, 1.0, 0.5), true);
+        }
+        assert!(
+            !nav.is_idle(),
+            "honest closing progress never reads as a stall"
+        );
     }
 
     #[test]

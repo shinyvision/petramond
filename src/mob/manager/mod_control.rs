@@ -52,19 +52,28 @@ impl Mobs {
     }
 
     /// Latch a mod's kinematic locomotion intent on the mob at `index` for
-    /// THIS tick (see `Instance::set_drive`): a horizontal world-space
-    /// velocity plus optionally an absolute yaw (the mob-facing convention:
-    /// yaw `0` faces `-Z`, facing `(-sin yaw, 0, -cos yaw)`). `false` for a
-    /// bad index or a dead mob.
+    /// THIS tick (see `Instance::set_drive`): an optional horizontal
+    /// world-space velocity (replaces wish locomotion), an optional vertical
+    /// velocity (composes; upward from the ground = a launch), and
+    /// optionally an absolute yaw (the mob-facing convention: yaw `0` faces
+    /// `-Z`, facing `(-sin yaw, 0, -cos yaw)`). `false` for a bad index or a
+    /// dead mob.
     pub fn set_mob_drive(
         &mut self,
         index: usize,
-        vel_x: f32,
-        vel_z: f32,
+        horizontal: Option<[f32; 2]>,
+        vertical: Option<f32>,
         yaw: Option<f32>,
+        while_walking: bool,
     ) -> bool {
-        self.mob_mut(index)
-            .is_some_and(|m| m.set_drive(vel_x, vel_z, yaw))
+        self.mob_mut(index).is_some_and(|m| {
+            m.set_drive(super::super::kinematics::DriveIntent {
+                horizontal,
+                vertical,
+                yaw,
+                while_walking,
+            })
+        })
     }
 
     /// A live mob's tag value.

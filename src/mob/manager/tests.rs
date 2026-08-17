@@ -32,7 +32,7 @@ fn a_frozen_tick_discards_its_drive_intent() {
     let world = World::new(0, 1);
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, Vec3::new(8.5, 64.0, 8.5), 0.0));
-    assert!(mobs.set_mob_drive(0, 2.0, 0.0, Some(1.0)));
+    assert!(mobs.set_mob_drive(0, Some([2.0, 0.0]), None, Some(1.0), false));
     assert!(mobs.instances()[0].drive_pending());
 
     mobs.tick(

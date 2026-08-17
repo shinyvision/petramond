@@ -492,6 +492,8 @@ fn abi_roundtrip_host_and_guest_calls() {
         id: 123,
         yaw: 0.5,
         vel: [1.0, 0.0, -2.0],
+        on_ground: true,
+        moving: false,
     }]));
     roundtrip(HostRet::Player(PlayerSnapshot {
         pos: [0.5, 80.0, 0.5],

@@ -115,6 +115,9 @@
       "wander": {
         "chance_per_tick": 0.01,
         "radius": 10,
+        "avoid_ground": [
+          "petramond:rock"
+        ],
         "cohesion": {
           "companion": "petramond:sheep",
           "search_radius_multiplier": 2

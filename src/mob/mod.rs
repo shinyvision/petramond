@@ -275,6 +275,13 @@ impl MobCategory {
 pub struct SpawnRule {
     /// Biomes the species may spawn in.
     pub biomes: &'static [Biome],
+    /// Per-biome spawn chance in `(0, 1]`, aligned index-for-index with
+    /// `biomes`; empty = every listed biome spawns at full chance. A value
+    /// below 1 makes natural spawns in that biome proportionally rarer — the
+    /// spawner rolls it ONCE per trickle attempt / worldgen herd (see
+    /// [`spawn::biome_chance_passes`]), never per group member, so rarity
+    /// thins spawn events, not group size.
+    pub chances: &'static [f32],
     /// Blocks the species accepts as the ground under its feet (the cell it rests on).
     pub ground: &'static [Block],
 }
@@ -283,6 +290,16 @@ impl SpawnRule {
     /// Whether a site in `biome`, standing on `ground`, satisfies this rule.
     pub fn admits(&self, biome: Biome, ground: Block) -> bool {
         self.biomes.contains(&biome) && self.ground.contains(&ground)
+    }
+
+    /// The chance in `[0, 1]` that a spawn event in `biome` passes this rule's
+    /// climate rarity: the row's per-biome chance (default 1 for a listed
+    /// biome), or 0 for a biome the rule doesn't list at all.
+    pub fn chance_in(&self, biome: Biome) -> f32 {
+        match self.biomes.iter().position(|&b| b == biome) {
+            Some(i) => self.chances.get(i).copied().unwrap_or(1.0),
+            None => 0.0,
+        }
     }
 
     /// Whether this rule can admit any site at all — `false` marks a species the
@@ -350,6 +367,14 @@ impl WanderCohesion {
 pub struct WanderTuning {
     pub chance_per_tick: f32,
     pub radius: i32,
+    /// Blocks the wander AI refuses as the FLOOR under a destination —
+    /// resolved at load from the row's `avoid_ground` BLOCK-TAG list (e.g.
+    /// `"petramond:rock"`: stone, ores, marble), empty = no preference. A
+    /// destination policy exactly like water aversion: it steers where the
+    /// mob CHOOSES to head (so surface animals stop strolling into cave
+    /// mouths), never where routes may pass, and a bounded escape hatch
+    /// keeps a mob standing amid avoided ground moving.
+    pub avoid_ground: &'static [Block],
     pub cohesion: Option<WanderCohesion>,
 }
 

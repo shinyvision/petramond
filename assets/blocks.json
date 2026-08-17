@@ -124,7 +124,8 @@
         "ao_occluder"
       ],
       "tags": [
-        "terrain"
+        "terrain",
+        "rock"
       ],
       "behavior": "inert",
       "interaction": "none",
@@ -1748,7 +1749,9 @@
         "opaque",
         "ao_occluder"
       ],
-      "tags": [],
+      "tags": [
+        "rock"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [
@@ -1842,7 +1845,9 @@
         "opaque",
         "ao_occluder"
       ],
-      "tags": [],
+      "tags": [
+        "rock"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [
@@ -1889,7 +1894,9 @@
         "opaque",
         "ao_occluder"
       ],
-      "tags": [],
+      "tags": [
+        "rock"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [
@@ -1936,7 +1943,9 @@
         "opaque",
         "ao_occluder"
       ],
-      "tags": [],
+      "tags": [
+        "rock"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [
@@ -1983,7 +1992,9 @@
         "opaque",
         "ao_occluder"
       ],
-      "tags": [],
+      "tags": [
+        "rock"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [
@@ -2030,7 +2041,9 @@
         "opaque",
         "ao_occluder"
       ],
-      "tags": [],
+      "tags": [
+        "rock"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [

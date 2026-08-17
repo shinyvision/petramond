@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn lethal_damage_discards_a_pending_drive_intent() {
         let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-        assert!(owl.set_drive(2.0, 0.0, Some(1.0)));
+        assert!(owl.set_drive(crate::mob::kinematics::DriveIntent { horizontal: Some([2.0, 0.0]), vertical: None, yaw: Some(1.0), while_walking: false }));
         assert!(owl.drive_pending());
         assert!(owl.damage(
             100.0,

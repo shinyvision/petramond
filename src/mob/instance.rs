@@ -163,6 +163,18 @@ pub struct Instance {
     /// names; the renderer layers every active one over the walk/idle/rest
     /// base pose and silently skips names the model doesn't have.
     pub(super) active_anims: Vec<AnimLayer>,
+    /// An upward launch from a WALKING gait happened THIS tick (a mod's
+    /// vertical drive, a navigation step jump — see
+    /// [`integrate_with_flow`](Self::integrate_with_flow)) — consumed by
+    /// [`apply_expression`](Self::apply_expression), which re-phases the walk
+    /// clip forward to the next cycle boundary so an authored takeoff clip
+    /// stays in phase with the physical arc. Transient; never persisted.
+    pub(super) walk_launch: bool,
+    /// The current airborne phase counts as a WALK (it began from walking
+    /// locomotion and horizontal motion still carries) — keeps the gait
+    /// expression through the whole ballistic arc. Maintained by
+    /// [`integrate_with_flow`](Self::integrate_with_flow); transient.
+    pub(super) air_walk: bool,
     /// A mod's kinematic locomotion intent for THIS tick (the `MobDrive`
     /// HostCall), consumed by [`integrate_with_flow`](Self::integrate_with_flow):
     /// while present it replaces the brain's wish-velocity overwrite, so a mod
@@ -244,6 +256,8 @@ impl Instance {
             confined_free_age: 0,
             active_emitters: Vec::new(),
             active_anims: Vec::new(),
+            walk_launch: false,
+            air_walk: false,
             drive: None,
             death: DeathState::Alive,
             anim_kind: AnimKind::Rest,
@@ -685,6 +699,21 @@ impl Instance {
         let (wish, jump) = if can_steer {
             self.nav.follow_steered(self.pos, self.on_ground, world)
         } else {
+            // Steering is suspended while falling, but route bookkeeping
+            // keeps watching the body: a ballistic arc (a mod-driven hop's
+            // descent, a knockback flight) passes waypoints between steered
+            // ticks, and the cursor must advance past them or steering
+            // resumes pointed backward.
+            self.nav.advance_cursor(self.pos);
+            // An arc stops reading as a WALK the moment its route completes
+            // (arrival consumed mid-descent): the walk expression — and any
+            // mod gait policy gating launches on `moving` — must not outlive
+            // the navigation that drove it, or the one-tick drive-intent
+            // pipeline fires one stale parting hop AT the destination (the
+            // "one hop too often" playtest report: ~one per wander leg).
+            if self.nav.is_idle() {
+                self.air_walk = false;
+            }
             (Vec3::ZERO, false)
         };
         // A wish driving straight into a touching body veers around it, so two
@@ -722,6 +751,20 @@ impl Instance {
             &water_surface,
             &water_flow,
         );
+        // Post-move arrival: feed the tick's LANDED position back to the
+        // route before anything reads this tick's state. A landing inside
+        // the goal's arrive window must end the walk THIS tick — the route
+        // otherwise notices only next tick, and the one-tick drive-intent
+        // pipeline (a mod gait policy latching on `moving`) fires one stale
+        // parting hop AT the destination. Also stops the walk clip exactly
+        // at arrival instead of one step past it.
+        if self.on_ground {
+            self.nav.advance_cursor(self.pos);
+            if self.nav.is_idle() {
+                self.moving = false;
+                self.air_walk = false;
+            }
+        }
         self.apply_expression(dt, d, named_anims, &decision);
         Some((was_on_ground, motion_start + Vec3::Y * healed))
     }

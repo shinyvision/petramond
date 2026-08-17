@@ -275,7 +275,7 @@ fn an_airborne_drive_cannot_replace_carry_or_yaw() {
     let still = |_: Vec3| Vec3::ZERO;
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 5.0, 0.5), 0.25, 1);
     owl.vel.x = 1.0;
-    assert!(owl.set_drive(-5.0, 0.0, Some(1.5)));
+    assert!(owl.set_drive(DriveIntent { horizontal: Some([-5.0, 0.0]), vertical: None, yaw: Some(1.5), while_walking: false }));
 
     owl.integrate_with_flow(
         1.0 / 20.0,
@@ -347,7 +347,7 @@ fn a_drive_intent_moves_the_mob_for_one_tick_then_expires() {
     // yaw set, does not read as walking, and — like the brain's wish —
     // the intent must be re-issued or the next tick's overwrite parks it.
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
-    assert!(owl.set_drive(2.0, 0.0, Some(1.0)));
+    assert!(owl.set_drive(DriveIntent { horizontal: Some([2.0, 0.0]), vertical: None, yaw: Some(1.0), while_walking: false }));
     owl.integrate(
         1.0 / 20.0,
         owl_def(),
@@ -388,7 +388,7 @@ fn knockback_stagger_overrides_a_drive_intent() {
     let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
     let from = Vec3::new(2.0, 0.0, 0.5); // hit from +X: knockback pushes -X
     owl.damage(1.0, Some(from), true, None, &default_feedback());
-    assert!(owl.set_drive(5.0, 0.0, Some(1.0)));
+    assert!(owl.set_drive(DriveIntent { horizontal: Some([5.0, 0.0]), vertical: None, yaw: Some(1.0), while_walking: false }));
     owl.integrate(
         1.0 / 20.0,
         owl_def(),
@@ -662,5 +662,225 @@ fn a_mob_in_flowing_water_is_carried_downstream() {
         (calm.pos.x - 0.5).abs() < 1e-3,
         "no current → no horizontal drift: x {}",
         calm.pos.x
+    );
+}
+
+/// The generic velocity seam a pack authors a gait (a hop) from: a VERTICAL
+/// drive composes with the brain's own walking — launch, arc, the walking
+/// expression carried through the unsteered descent, and the walk clip
+/// re-phased FORWARD onto a cycle boundary at each takeoff. No gait
+/// vocabulary exists engine-side; this drives exactly what a mod does.
+#[test]
+fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
+    let d = owl_def();
+    let solid = floor_at_zero;
+    let dry = |_: IVec3| false;
+    let still = |_: Vec3| Vec3::ZERO;
+    let named = [crate::mob::model_meta::NamedAnimMeta {
+        name: "walk".into(),
+        length: 0.5,
+        looping: true,
+    }];
+    let dt = 1.0 / 60.0;
+    let mut mob = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+
+    // Walk +X under the real steering gate, issuing the launch the way a mod
+    // does: a vertical-only drive latched whenever the LAST tick ended
+    // grounded and walking (the mod's tick system reads post-move state and
+    // its intent is consumed by the next integration).
+    let mut launches = 0;
+    let mut descent_ticks = 0;
+    let mut unmoving_descent_ticks = 0;
+    let mut last_anim = 0.0f32;
+    for _ in 0..600 {
+        let was_grounded = mob.on_ground();
+        if was_grounded && mob.vel().x * mob.vel().x + mob.vel().z * mob.vel().z > 0.25 {
+            assert!(mob.set_drive(DriveIntent {
+                horizontal: None,
+                vertical: Some(4.6),
+                yaw: None,
+                while_walking: true,
+            }));
+        }
+        let can_steer = route_steering_supported(mob.on_ground(), false, mob.vel().y);
+        let wish = if can_steer {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::ZERO
+        };
+        mob.integrate_with_flow(
+            dt,
+            d,
+            wish,
+            false,
+            can_steer,
+            &boxes_of(&solid),
+            &[],
+            &[],
+            &solid,
+            &dry,
+            &|_| None,
+            &still,
+        );
+        let launched = was_grounded && !mob.on_ground() && mob.vel().y > 0.0;
+        mob.apply_expression(
+            dt,
+            d,
+            &named,
+            &crate::mob::brain::BehaviorOutput::default(),
+        );
+        if launched {
+            launches += 1;
+            let phase = (mob.anim_time - d.walk_anim_rate * dt).rem_euclid(0.5);
+            assert!(
+                phase < 1e-3 || 0.5 - phase < 1e-3,
+                "a takeoff starts a walk-clip cycle (phase {phase})"
+            );
+        }
+        assert!(
+            mob.anim_time >= last_anim,
+            "the walk-clip clock only moves FORWARD ({last_anim} -> {}) — a backward \
+             jump sweeps the clip in reverse on replicas",
+            mob.anim_time
+        );
+        last_anim = mob.anim_time;
+        if !mob.on_ground() && mob.vel().y < 0.0 {
+            descent_ticks += 1;
+            if !mob.moving {
+                unmoving_descent_ticks += 1;
+            }
+        }
+    }
+    assert!(launches >= 3, "the drive keeps launching hops: {launches}");
+    assert!(descent_ticks > 0, "hops have a falling half");
+    assert_eq!(
+        unmoving_descent_ticks, 0,
+        "a descending arc that began as a walk still reads as walking"
+    );
+    assert!(
+        mob.pos.x > 5.0,
+        "hopping still covers ground: x={}",
+        mob.pos.x
+    );
+
+    // A navigation step jump keeps priority over the vertical drive on the
+    // tick both fire: launched at the full jump_speed, which clears the
+    // one-block ledge the route depends on.
+    let mut jumper = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    for _ in 0..60 {
+        jumper.integrate(dt, d, Vec3::ZERO, false, &solid, &dry);
+    }
+    assert!(jumper.on_ground());
+    assert!(jumper.set_drive(DriveIntent { horizontal: None, vertical: Some(4.6), yaw: None, while_walking: false }));
+    jumper.integrate(dt, d, Vec3::new(1.0, 0.0, 0.0), true, &solid, &dry);
+    assert!(
+        jumper.vel().y > 4.6,
+        "a nav jump launches at jump_speed, not the drive: vy={}",
+        jumper.vel().y
+    );
+
+    // A HORIZONTAL drive keeps its vehicle semantics: driven is not walking.
+    let mut driven = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    for _ in 0..60 {
+        driven.integrate(dt, d, Vec3::ZERO, false, &solid, &dry);
+    }
+    assert!(driven.set_drive(DriveIntent { horizontal: Some([2.0, 0.0]), vertical: None, yaw: None, while_walking: false }));
+    driven.integrate(dt, d, Vec3::ZERO, false, &solid, &dry);
+    assert!(!driven.moving, "a horizontally-driven mob never reads as walking");
+    assert!(driven.vel().x > 1.9, "the drive velocity applies");
+}
+
+/// A shove is not a walk: the soft entity push moves the body but never sets
+/// `moving` — mod gait policies (the rabbit hop) gate launches on the
+/// deliberate-locomotion fact, so a pushed-around mob must slide, not gait.
+#[test]
+fn a_shoved_mob_moves_without_reading_as_walking() {
+    let d = owl_def();
+    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    for _ in 0..60 {
+        owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+    }
+    assert!(owl.on_ground());
+
+    owl.set_push(Vec3::new(3.0, 0.0, 0.0));
+    owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+    assert!(owl.pos.x > 0.5, "the push displaces the body");
+    assert!(!owl.moving, "a shove never reads as walking");
+
+    // A WALKING mob that also gets shoved keeps its intent.
+    owl.set_push(Vec3::new(0.0, 0.0, 3.0));
+    owl.integrate(
+        1.0 / 60.0,
+        d,
+        Vec3::new(1.0, 0.0, 0.0),
+        false,
+        &floor_at_zero,
+        &|_| false,
+    );
+    assert!(owl.moving, "walking while shoved is still walking");
+}
+
+/// A walking-gated drive validates its premise at CONSUMPTION: the intent is
+/// decided from last tick's state, and if the walk it was premised on ended
+/// in between (arrival, an abandoned route), it must drop whole — or every
+/// wander leg ends with one stale in-place bounce at the destination.
+#[test]
+fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
+    let d = owl_def();
+    let mut owl = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    for _ in 0..60 {
+        owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+    }
+    assert!(owl.on_ground());
+
+    // Premise broken: latched while walking, consumed on an idle tick.
+    assert!(owl.set_drive(DriveIntent {
+        horizontal: None,
+        vertical: Some(4.6),
+        yaw: None,
+        while_walking: true,
+    }));
+    owl.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+    assert!(
+        owl.on_ground() && owl.vel().y <= 0.0,
+        "the stale gated intent is dropped: no parting bounce"
+    );
+    assert!(owl.drive.is_none(), "the dropped intent still expires");
+
+    // Premise holds: same intent on a walking tick launches.
+    assert!(owl.set_drive(DriveIntent {
+        horizontal: None,
+        vertical: Some(4.6),
+        yaw: None,
+        while_walking: true,
+    }));
+    owl.integrate(
+        1.0 / 60.0,
+        d,
+        Vec3::new(1.0, 0.0, 0.0),
+        false,
+        &floor_at_zero,
+        &|_| false,
+    );
+    assert!(
+        !owl.on_ground() && owl.vel().y > 0.0,
+        "a gated intent whose premise holds launches normally"
+    );
+
+    // An UNGATED intent stays unconditional (a startle jump from standstill).
+    let mut idle = Instance::new(Mob::Owl, Vec3::new(0.5, 0.0, 0.5), 0.0, 1);
+    for _ in 0..60 {
+        idle.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+    }
+    assert!(idle.set_drive(DriveIntent {
+        horizontal: None,
+        vertical: Some(4.6),
+        yaw: None,
+        while_walking: false,
+    }));
+    idle.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero, &|_| false);
+    assert!(
+        !idle.on_ground() && idle.vel().y > 0.0,
+        "an ungated launch from standstill still applies"
     );
 }

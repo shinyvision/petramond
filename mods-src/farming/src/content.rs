@@ -213,6 +213,8 @@ pub struct Content {
     pub water_bucket: ItemId,
     /// The breedable species, one [`HusbandryDef`] per [`HUSBANDRY`] row.
     pub husbandry: Vec<HusbandryDef>,
+    /// The pack's rabbit — the hop gait's species (see [`crate::hop`]).
+    pub rabbit: MobId,
 }
 
 impl Content {
@@ -327,6 +329,13 @@ impl Content {
             wooden_bucket: item("petramond:wooden_bucket")?,
             water_bucket: item("petramond:water_bucket")?,
             husbandry,
+            rabbit: {
+                let Some(rabbit) = resolve_mob("farming:rabbit") else {
+                    log("farming: unknown mob 'farming:rabbit'");
+                    return None;
+                };
+                rabbit
+            },
         })
     }
 

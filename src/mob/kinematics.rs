@@ -47,13 +47,22 @@ const SURFACE_DRAFT: f32 = 0.1;
 /// [`SWIM_RISE`]), so a hull settles level with no overshoot and NO bob.
 const SURFACE_FLOAT_RATE: f32 = 6.0;
 
-/// One tick's mod-issued locomotion: a horizontal velocity (m/s, world space)
-/// and optionally an absolute facing. See [`Instance::set_drive`].
+/// One tick's mod-issued locomotion — full 3-D velocity access, each part
+/// independently optional (see [`Instance::set_drive`] and the MobDrive ABI
+/// doc): `horizontal` REPLACES the brain's wish locomotion (a vehicle);
+/// `vertical` sets this tick's vertical velocity (gravity resumes next tick)
+/// and composes with either horizontal source — an upward value from the
+/// ground is a launch; `yaw` sets the absolute facing.
 #[derive(Copy, Clone)]
 pub(super) struct DriveIntent {
-    pub vel_x: f32,
-    pub vel_z: f32,
+    pub horizontal: Option<[f32; 2]>,
+    pub vertical: Option<f32>,
     pub yaw: Option<f32>,
+    /// The intent's premise (see the MobDrive ABI doc): when set, consume
+    /// only on a tick whose brain locomotion is walking the mob (`moving`);
+    /// drop silently otherwise. A latched intent is decided from LAST
+    /// tick's state — the walk it was premised on can end in between.
+    pub while_walking: bool,
 }
 
 impl Instance {
@@ -70,11 +79,11 @@ impl Instance {
     /// Latch a mod's locomotion intent for this tick (see [`DriveIntent`] and
     /// the consumption in [`integrate_with_flow`](Self::integrate_with_flow)).
     /// Refused on a dead mob.
-    pub(super) fn set_drive(&mut self, vel_x: f32, vel_z: f32, yaw: Option<f32>) -> bool {
+    pub(super) fn set_drive(&mut self, intent: DriveIntent) -> bool {
         if self.death.is_dead() {
             return false;
         }
-        self.drive = Some(DriveIntent { vel_x, vel_z, yaw });
+        self.drive = Some(intent);
         true
     }
 
@@ -185,7 +194,9 @@ impl Instance {
         water_surface: &impl Fn(IVec3) -> Option<f32>,
         water_flow: &impl Fn(Vec3) -> Vec3,
     ) -> f32 {
-        if jump && self.on_ground {
+        let was_grounded = self.on_ground;
+        let nav_jumped = jump && self.on_ground;
+        if nav_jumped {
             self.vel.y = d.jump_speed;
             self.on_ground = false;
         }
@@ -202,32 +213,72 @@ impl Instance {
             self.vel.z = self.knockback.z;
             self.knockback *= KNOCKBACK_DAMP;
             self.moving = false;
-        } else if let Some(drive) = drive {
-            // A driven mob is deliberately not `moving`: drive is not a walk —
-            // no walk animation, no footstep noise, no wish-facing. Gated on
-            // `can_steer` like the wish so a driven body has no more air or
-            // stagger control than a walking one. Long-body yaw is clamped by
-            // the same segmented geometry that resolves its translation.
+        } else if let Some([vx, vz]) = drive.and_then(|dr| dr.horizontal) {
+            // A horizontally-driven mob is deliberately not `moving`: the
+            // drive is not a walk — no walk animation, no footstep noise, no
+            // wish-facing. Gated on `can_steer` like the wish so a driven
+            // body has no more air or stagger control than a walking one.
+            // Long-body yaw is clamped by the same segmented geometry that
+            // resolves its translation.
             if can_steer {
-                self.vel.x = drive.vel_x;
-                self.vel.z = drive.vel_z;
-                requested_yaw = drive.yaw;
+                self.vel.x = vx;
+                self.vel.z = vz;
             }
             self.moving = false;
+        } else if can_steer {
+            self.vel.x = wish.x * d.walk_speed;
+            self.vel.z = wish.z * d.walk_speed;
+            self.moving = wish.length_squared() > 1e-6;
+            if self.moving {
+                let target = heading_yaw(wish);
+                requested_yaw = Some(turn_toward(self.yaw, target, d.turn_rate * dt));
+            }
         } else {
-            if can_steer {
-                self.vel.x = wish.x * d.walk_speed;
-                self.vel.z = wish.z * d.walk_speed;
-                self.moving = wish.length_squared() > 1e-6;
-                if self.moving {
-                    let target = heading_yaw(wish);
-                    requested_yaw = Some(turn_toward(self.yaw, target, d.turn_rate * dt));
+            // Unsteered mid-air (a fall's descent) a mob whose airborne arc
+            // BEGAN as a walk still reads as walking while its horizontal
+            // motion carries — the gait clip plays through the whole
+            // ballistic arc instead of snapping to the rest pose at the
+            // apex (a mod-authored hop, a navigation jump, a walked-off
+            // ledge alike).
+            self.moving = self.air_walk
+                && !self.on_ground
+                && self.vel.x * self.vel.x + self.vel.z * self.vel.z > 1e-6;
+        }
+        // The intent's premise: a `while_walking` drive was decided from
+        // LAST tick's state on the promise the mob is walking — if the walk
+        // ended in between (arrival, an abandoned route, a backoff pause),
+        // the stale intent is dropped whole, or it fires one in-place bounce
+        // exactly where the mob came to rest (the "one hop too often"
+        // playtest report).
+        let premise_holds = drive.is_none_or(|dr| !dr.while_walking || self.moving);
+        // A mod's vertical drive: set this tick's vertical velocity (gravity
+        // resumes below), composing with EITHER horizontal source. An upward
+        // value from the ground is a launch. The navigator's step jump above
+        // keeps priority on a tick both fire — its full `jump_speed` is
+        // sized to clear the one-block ledge the route depends on.
+        if let Some(vy) = drive.and_then(|dr| dr.vertical) {
+            if premise_holds && can_steer && !nav_jumped && self.stagger_timer <= 0.0 {
+                self.vel.y = vy;
+                if vy > 0.0 && self.on_ground {
+                    self.on_ground = false;
                 }
-            } else {
-                self.moving = false;
             }
         }
-        if let Some(yaw) = requested_yaw {
+        // An upward launch that starts from a walking gait re-phases the walk
+        // clip forward onto a cycle boundary (see `apply_expression`), so an
+        // authored takeoff clip stays locked to the physical arc.
+        if self.moving && !self.on_ground && self.vel.y > 0.0 && was_grounded {
+            self.walk_launch = true;
+        }
+        // A drive's absolute yaw obeys the same gates as its velocities: no
+        // steering while unsupported, the knockback stagger owns its tick,
+        // and a walking-gated intent's premise must hold.
+        let drive_yaw = if premise_holds && can_steer && self.stagger_timer <= 0.0 {
+            drive.and_then(|dr| dr.yaw)
+        } else {
+            None
+        };
+        if let Some(yaw) = drive_yaw.or(requested_yaw) {
             self.yaw =
                 super::clamp_body_yaw(self.pos, self.yaw, yaw, d.size, boxes, obstacles, self.id);
         }
@@ -334,6 +385,13 @@ impl Instance {
         if grounded && self.vel.y < 0.0 {
             self.vel.y = 0.0;
         }
+        // The air-walk latch: an airborne phase counts as a WALK while it
+        // began from (or continues) walking locomotion and horizontal motion
+        // carries — read by the unsteered branch above so the gait
+        // expression survives the whole ballistic arc. Landing clears it.
+        self.air_walk = !grounded
+            && (self.moving
+                || (self.air_walk && self.vel.x * self.vel.x + self.vel.z * self.vel.z > 1e-6));
         healed
     }
 
@@ -407,7 +465,9 @@ impl Instance {
         step_at(base) || step_at(base + 1)
     }
 
-    #[cfg(test)]
+    /// Whether the body rests on the ground this tick — the same fact the
+    /// engine's own locomotion gates jumps on, exposed to the ABI snapshot
+    /// so a mod gait policy can decide a vertical-drive launch.
     pub fn on_ground(&self) -> bool {
         self.on_ground
     }

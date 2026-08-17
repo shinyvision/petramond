@@ -623,3 +623,75 @@ fn dynamic_pack_mob_inner() {
         "the dynamic mob is pinned in palette.json"
     );
 }
+
+/// Per-biome spawn chances resolve aligned with the biome list (unlisted
+/// biomes stay at full chance, unlisted-in-`biomes` and out-of-range values
+/// are load errors), and `chance_in` answers 0 outside the rule entirely.
+/// A wander `avoid_ground` tag list resolves through the block-tag registry
+/// (the shipped sheep row references `petramond:rock`); an unknown tag
+/// resolves to NOTHING rather than erroring — cross-pack semantics, the tag
+/// may belong to a pack that isn't loaded.
+#[test]
+fn wander_avoid_ground_resolves_tags_and_forgives_unknown_ones() {
+    let defs = parse_layers(&[&base()]).expect("base loads").defs;
+    let sheep = defs
+        .iter()
+        .find(|d| d.key == "petramond:sheep")
+        .expect("sheep row");
+    assert!(
+        !sheep.wander.avoid_ground.is_empty(),
+        "the sheep's avoid_ground tag resolves to its members"
+    );
+
+    let mut value: serde_json::Value = serde_json::from_str(&base()).unwrap();
+    let row = value["mobs"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|r| r["mob"] == "petramond:sheep")
+        .unwrap();
+    row["wander"]["avoid_ground"] = serde_json::json!(["ghost_pack:lava_crust"]);
+    let text = serde_json::to_string(&value).unwrap();
+    let defs = parse_layers(&[&text]).expect("an unloaded pack's tag is not an error").defs;
+    let sheep = defs.iter().find(|d| d.key == "petramond:sheep").unwrap();
+    assert!(sheep.wander.avoid_ground.is_empty(), "unknown tag = empty set");
+}
+
+#[test]
+fn spawn_chances_resolve_aligned_and_bad_rows_fail_the_load() {
+    let owl_with = |edit: fn(&mut serde_json::Value)| {
+        let mut value: serde_json::Value = serde_json::from_str(&base()).unwrap();
+        let row = value["mobs"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|r| r["mob"] == "petramond:owl")
+            .unwrap();
+        edit(row);
+        serde_json::to_string(&value).unwrap()
+    };
+
+    let text = owl_with(|row| {
+        row["spawn"]["chances"] = serde_json::json!({"redwood_forest": 0.25});
+    });
+    let defs = parse_layers(&[&text]).expect("a valid chance map loads").defs;
+    let spawn = &defs[Mob::Owl.0 as usize].spawn;
+    use petramond_world::biome::Biome;
+    assert_eq!(spawn.chance_in(Biome::Forest), 1.0, "unmapped listed biome");
+    assert_eq!(spawn.chance_in(Biome::RedwoodForest), 0.25, "mapped biome");
+    assert_eq!(spawn.chance_in(Biome::Desert), 0.0, "unlisted biome");
+
+    let unlisted = parse_layers(&[&owl_with(|row| {
+        row["spawn"]["chances"] = serde_json::json!({"desert": 0.5});
+    })])
+    .map(|_| ())
+    .expect_err("a chance for a biome outside the spawn list fails");
+    assert!(unlisted.contains("not in the spawn biomes list"), "{unlisted}");
+
+    let zeroed = parse_layers(&[&owl_with(|row| {
+        row["spawn"]["chances"] = serde_json::json!({"forest": 0.0});
+    })])
+    .map(|_| ())
+    .expect_err("a zero chance fails (drop the biome instead)");
+    assert!(zeroed.contains("(0, 1]"), "{zeroed}");
+}

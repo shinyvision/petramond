@@ -341,6 +341,10 @@ impl Game {
         std::mem::take(&mut self.outbox)
     }
 
+
+
+
+
     /// Apply replicated view refreshes a test harness built server-side,
     /// standing in for the next batch (`SelfState` + optional menu sync).
     #[cfg(test)]

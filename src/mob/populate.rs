@@ -27,7 +27,8 @@ use petramond_math::math::{IVec3, Vec3};
 use crate::world::World;
 
 use super::spawn::{
-    mob_census_ready, nearby_spawn, site_for, spawn_with, species_enabled, splitmix, Spawn,
+    biome_chance_passes, mob_census_ready, nearby_spawn, site_for, spawn_with, species_enabled,
+    splitmix, Spawn,
 };
 use super::{def, defs, Mob, MobCategory, MobRng};
 
@@ -167,6 +168,13 @@ pub(super) fn attempt(
 /// there" when the player arrives) and no population caps.
 fn place_herd(world: &World, chunk: ChunkPos, rng: &mut MobRng) -> Option<Vec<Spawn>> {
     let (kind, first) = anchor_member(world, chunk, rng)?;
+    // Climate rarity: one roll gates the whole herd, from the chunk's own
+    // deterministic stream — a failed roll re-rolls the same nothing next
+    // session, like a failed chance draw.
+    let (ax, az) = (first.pos.x.floor() as i32, first.pos.z.floor() as i32);
+    if !biome_chance_passes(world, kind, ax, az, rng) {
+        return None;
+    }
     let want = def(kind).spawn_group.roll(rng);
     let origin = IVec3::new(first.pos.x.floor() as i32, 0, first.pos.z.floor() as i32);
     let mut spawns = vec![first];
@@ -361,3 +369,4 @@ mod tests {
         assert!(!spawned.is_empty(), "worldgen herds bypass the caps");
     }
 }
+

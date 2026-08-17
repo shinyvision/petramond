@@ -156,8 +156,32 @@ host_fn! {
     /// see [`mob_facing_xz`]). Vertical physics (gravity, water buoyancy) and
     /// collision stay engine-owned. An INTENT, not a state: re-issue every tick;
     /// friction and steering feel are your policy. `false` = unknown or dead mob.
+    /// For the vertical axis see [`mob_drive_vertical`]; the raw `MobDrive`
+    /// call composes all three parts at once.
     pub fn mob_drive(mob_id: u64, vel: [f32; 2], yaw: Option<f32>) -> bool
-        => MobDrive { mob_id, vel, yaw } => Bool
+        => MobDrive { mob_id, horizontal: Some(vel), vertical: None, yaw, while_walking: false } => Bool
+}
+
+host_fn! {
+    /// Set a live mob's VERTICAL velocity (m/s) for THIS tick, leaving the
+    /// brain's own walking untouched — gravity resumes next tick, water
+    /// buoyancy stays engine-owned, and an upward value from the ground is a
+    /// launch (the walking gait carries through the arc, and the walk clip
+    /// re-phases onto a cycle boundary). The engine's own navigation step
+    /// jump keeps priority on a tick both fire. This is how a pack authors a
+    /// gait — a hop, a pounce, a lunge — from generic velocity access: read
+    /// the snapshot's `moving` + `on_ground` to decide when.
+    ///
+    /// `while_walking` carries the intent's PREMISE: pass `true` for a GAIT
+    /// launch so the engine drops the intent if the walk it was premised on
+    /// ended before consumption (a latched intent is decided from LAST
+    /// tick's state — arrival or an abandoned route in between otherwise
+    /// fires one stale in-place bounce at the destination). Pass `false`
+    /// for an unconditional launch (a startle jump from standstill). An
+    /// INTENT like [`mob_drive`]: re-issue per launch. `false` = unknown or
+    /// dead mob.
+    pub fn mob_drive_vertical(mob_id: u64, vel: f32, while_walking: bool) -> bool
+        => MobDrive { mob_id, horizontal: None, vertical: Some(vel), yaw: None, while_walking } => Bool
 }
 
 host_fn! {

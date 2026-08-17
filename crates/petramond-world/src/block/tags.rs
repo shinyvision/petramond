@@ -34,6 +34,7 @@ static BLOCK_TAGS: crate::registry::TagTable = crate::registry::TagTable::new(&[
     "bed",
     "merges_with_self",
     "snow_bedded",
+    "rock",
 ]);
 
 impl BlockTag {
@@ -155,6 +156,16 @@ impl BlockTag {
     /// from the neighbours at mesh time and never stored per cell, exactly like
     /// the snowy-grass side swap, so it heals the moment snow is placed or dug.
     pub const SNOW_BEDDED: BlockTag = BlockTag(19);
+    /// Bare rocky ground — natural stone-family blocks (stone, the ores,
+    /// marble; packs opt their own in by listing the tag): the floor of
+    /// caves and peaks rather than living surface. Consumed as
+    /// CATEGORISATION only — the first reader is the mob wander policy's
+    /// `avoid_ground` (surface animals steer their destinations off it, so
+    /// sheep stop strolling into cave mouths), resolved by tag so any pack's
+    /// cave block joins by editing its row. Deliberately NOT carried by
+    /// crafted stone (cobblestone, bricks, stairs): a player-built stone
+    /// path or floor should not repel animals.
+    pub const ROCK: BlockTag = BlockTag(20);
 
     /// Resolve a `blocks.json` row tag name (see [`crate::registry::TagTable`]).
     pub fn resolve(name: &str) -> Result<BlockTag, String> {

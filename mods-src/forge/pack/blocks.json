@@ -200,7 +200,9 @@
         "opaque",
         "ao_occluder"
       ],
-      "tags": [],
+      "tags": [
+        "rock"
+      ],
       "behavior": "inert",
       "interaction": "none",
       "collision": [
